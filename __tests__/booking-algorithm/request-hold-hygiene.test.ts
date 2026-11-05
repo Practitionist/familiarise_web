@@ -1,4 +1,7 @@
 /**
+ * @jest-environment node
+ */
+/**
  * Anti-scalper cap for request-for-approval holds (booking-journey audit B1)
  * and the 48h PENDING-consultation expiry that keeps it honest.
  *
@@ -8,6 +11,7 @@
  * constant, the count query shape, and the expiry's slot release.
  */
 
+import { BEING_MOVED } from "@/lib/data/needs-you";
 import "./setup";
 
 jest.mock("../../lib/prisma", () => {
@@ -17,6 +21,11 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn().mockResolvedValue(null),
       updateMany: jest.fn(),
       count: jest.fn(),
+    },
+    // The week-reminder scan sizes its consultant rotation first.
+    consultantProfile: {
+      count: jest.fn().mockResolvedValue(0),
+      findMany: jest.fn().mockResolvedValue([]),
     },
     subscription: {
       findMany: jest.fn(),
@@ -42,6 +51,7 @@ jest.mock("../../lib/prisma", () => {
   };
   // The payment-pending arm now expires each request in its own transaction.
   db.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(db));
+  db.$queryRaw = jest.fn().mockResolvedValue([]);
   return { __esModule: true, default: db };
 });
 
@@ -94,6 +104,14 @@ import {
 } from "../../lib/booking/request-caps";
 import { expireStaleRequests } from "../../scripts/appointments/expire-stale-requests";
 
+type ConsultationExpiryRead = {
+  where: Record<string, unknown>;
+  select?: Record<string, unknown>;
+};
+
+const isIdOnlyProjection = (select: Record<string, unknown> | undefined) =>
+  select?.id === true && Object.keys(select).length === 1;
+
 // Source-text pin (same style as approval-path-correctness.test.ts): the RFA
 // route must acquire the CONSULTEE lock before the slot atoms — direct
 // checkout uses consultee → atoms, and the reverse order here would be a
@@ -104,14 +122,14 @@ const rfaRoute = readFileSync(
 );
 
 describe("RFA route lock order", () => {
-  it("takes the consultee lock before the slot atoms", () => {
+  it("takes the request cap, then the consultee lock, then the slot atoms", () => {
+    const capAt = rfaRoute.indexOf("lockRequestCap(consultantProfileId)");
     const consulteeAt = rfaRoute.indexOf(
       "lockConsulteeBooking(session.user.id)",
     );
-    const atomsAt = rfaRoute.indexOf(
-      "lockSlotBooking(consultantProfileId, startsAt, endsAt)",
-    );
-    expect(consulteeAt).toBeGreaterThan(-1);
+    const atomsAt = rfaRoute.indexOf("lockSlotBatch([");
+    expect(capAt).toBeGreaterThan(-1);
+    expect(consulteeAt).toBeGreaterThan(capAt);
     expect(atomsAt).toBeGreaterThan(consulteeAt);
   });
 
@@ -126,7 +144,7 @@ describe("RFA active-request cap", () => {
     expect(MAX_ACTIVE_REQUESTS_PER_USER).toBe(3);
   });
 
-  it("counts only PENDING consultations of this consultee", async () => {
+  it("counts only PENDING submitted requests of this consultee", async () => {
     (prisma.consultation.count as jest.Mock).mockResolvedValue(2);
     const n = await countActiveConsultationRequests(
       prisma as never,
@@ -137,6 +155,10 @@ describe("RFA active-request cap", () => {
       where: {
         requestedById: "consultee-profile-1",
         status: "PENDING",
+        bookingSource: "REQUEST_SUBMITTED",
+        requestedAt: { gte: expect.any(Date) },
+        // A booking a reschedule put back to PENDING is not a new request.
+        NOT: { appointment: BEING_MOVED },
       },
     });
   });
@@ -145,6 +167,7 @@ describe("RFA active-request cap", () => {
 describe("48h PENDING consultation expiry releases pinned slots", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.subscription.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.subscription.updateMany as jest.Mock).mockResolvedValue({
       count: 0,
@@ -152,20 +175,24 @@ describe("48h PENDING consultation expiry releases pinned slots", () => {
   });
 
   it("expires stale consultations by id and soft-cancels their tentative slots", async () => {
-    // Once: the 48 h cohort. The 7 d pay-link fallback reads the same table
-    // later in the run and now notifies too (#1589 N-P0-03), so it gets [].
-    (prisma.consultation.findMany as jest.Mock)
-      .mockResolvedValueOnce([
-        {
-          id: "c1",
-          appointment: { id: "apt-1", organizationId: null, occurrences: [] },
-          requestedBy: { user: { id: "u1", name: "Sam" } },
-          consultationPlan: { title: "Plan" },
-        },
-        { id: "c2", appointment: { id: "apt-2" } },
-        { id: "c3", appointment: null }, // slot-less placeholder
-      ])
-      .mockResolvedValue([]);
+    const expiredRows = [
+      {
+        id: "c1",
+        appointment: { id: "apt-1", organizationId: null, occurrences: [] },
+        requestedBy: { user: { id: "u1", name: "Sam" } },
+        consultationPlan: { title: "Plan" },
+      },
+      { id: "c2", appointment: { id: "apt-2" } },
+      { id: "c3", appointment: null }, // slot-less placeholder
+    ];
+    // Both the bounded hold probe and the capped cohort share the stale WHERE;
+    // the id-only projection identifies the probe regardless of query order.
+    (prisma.consultation.findMany as jest.Mock).mockImplementation(
+      async ({ where, select }: ConsultationExpiryRead) => {
+        if (isIdOnlyProjection(select)) return [];
+        return where.status === "PENDING" ? expiredRows : [];
+      },
+    );
     // PR 2c — the sweep now refunds SUCCEEDED payments of expired rows.
     (prisma.appointment.findMany as jest.Mock).mockResolvedValue([]);
     (refundBookingPayment as jest.Mock).mockResolvedValue({

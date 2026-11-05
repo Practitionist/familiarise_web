@@ -17,7 +17,12 @@ import {
 } from "@/lib/support/attachment-policy";
 
 const MB = 1024 * 1024;
-const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
+const IMAGE_TYPES = [
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+] as const;
 
 export interface BucketPolicy {
   public: boolean;
@@ -58,14 +63,10 @@ export const BUCKET_POLICIES = {
   },
 } as const satisfies Record<string, BucketPolicy>;
 
-/** The policy for a listed bucket, or a caller override merged over it. */
+/** The policy for a listed bucket, with caller limits merged over it; visibility is never overridable. */
 export function bucketPolicyFor(
   bucketName: string,
-  override?: {
-    public?: boolean;
-    fileSizeLimit?: number;
-    allowedMimeTypes?: readonly string[];
-  },
+  override?: Omit<Partial<BucketPolicy>, "public">,
 ): BucketPolicy | null {
   const base = (BUCKET_POLICIES as Record<string, BucketPolicy | undefined>)[
     bucketName
@@ -74,7 +75,7 @@ export function bucketPolicyFor(
   // options: adding the bucket to the registry is the review gate.
   if (!base) return null;
   return {
-    public: override?.public ?? base.public,
+    public: base.public,
     fileSizeLimit: override?.fileSizeLimit ?? base.fileSizeLimit,
     allowedMimeTypes: override?.allowedMimeTypes ?? base.allowedMimeTypes,
   };

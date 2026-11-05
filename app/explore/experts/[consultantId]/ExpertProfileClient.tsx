@@ -9,30 +9,38 @@ import type {
   TReviewTrackPresence,
 } from "@/types/review";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
-import { differenceInCalendarDays, startOfDay } from "date-fns";
+import { differenceInCalendarDays } from "date-fns";
 import { useSession } from "@/lib/auth-client";
 import { AboutSection } from "./components/AboutSection";
 import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
+import { DigitalProductsSection } from "./components/DigitalProductsSection";
+import type { PublicProductCard } from "@/lib/data/digital-products-public";
 import { ConsultantAvailability } from "./components/ConsultantAvailability";
 import { ExperienceSection } from "./components/ExperienceSection";
 import { ExpertPricing } from "./components/ExpertPricing";
 import { ProfileHeader } from "./components/ProfileHeader";
+import {
+  ProfileAnchorTabs,
+  PROFILE_SECTION_SCROLL_MARGIN,
+} from "./components/ProfileAnchorTabs";
 import { ReviewsSection } from "./components/ReviewsSection";
 import { ProfileReviewComposer } from "@/components/reviews/ProfileReviewComposer";
-import { useTimezone } from "@/hooks/useTimezone";
+import { useNowTick } from "@/hooks/use-now-tick";
+import { calendarDateKey, calendarDayOf } from "@/lib/time/grid-zone";
+import { useDisplayZone, type DisplayZone } from "@/lib/time/use-display-zone";
 import {
+  AVAILABILITY_READ_FAILED_MESSAGE,
   invalidateAvailability,
   useAvailabilityMonth,
   useAvailabilityWindow,
-} from "./hooks/useAvailabilityWindow";
+} from "@/lib/scheduling/use-availability-window";
 import { dayState, isSelectableDay } from "./day-state";
 import { zonedWeekWindow } from "./utils/time";
-import { formatInTimeZone } from "date-fns-tz";
 import { cn } from "@/utils/tailwind";
 
 interface ExpertProfileClientProps {
@@ -42,6 +50,7 @@ interface ExpertProfileClientProps {
   reviewTracks: TReviewTrackPresence;
   /** Strikes in the last 90 days, only when they reach the public threshold. */
   reliabilityStrikes: number | null;
+  digitalProducts: PublicProductCard[];
 }
 
 export function ExpertProfileClient({
@@ -50,13 +59,12 @@ export function ExpertProfileClient({
   reviews,
   reviewTracks,
   reliabilityStrikes,
+  digitalProducts,
 }: ExpertProfileClientProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { data: session } = useSession();
+  const { data: session, isPending: isSessionPending } = useSession();
   const queryClient = useQueryClient();
-  const { timezone: browserTimezone, isLoading: isTimezoneLoading } =
-    useTimezone();
   const { toast } = useToast();
   const pricingRef = useRef<HTMLDivElement>(null);
   const [autoOpenTrial, setAutoOpenTrial] = useState(false);
@@ -74,7 +82,30 @@ export function ExpertProfileClient({
       : 1,
   );
 
-  const timezone = browserTimezone || userDetails?.timezone;
+  // Every time on the page is drawn in the VIEWER's profile zone, switchable
+  // to the device zone. Reads wait for the session and the device zone so the
+  // first request is already in the right zone.
+  const zone = useDisplayZone(session?.user?.timezone ?? null);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const zoneReady = mounted && !isSessionPending;
+  const timezone = zone.zone;
+  const now = useNowTick(60_000);
+  const { toggle: toggleZone } = zone;
+  const switchZone = useCallback(() => {
+    toggleZone();
+    setSelectedSlot(null);
+  }, [toggleZone]);
+  const displayZone = useMemo<DisplayZone>(
+    () => ({
+      zone: zone.zone,
+      usingDeviceZone: zone.usingDeviceZone,
+      canSwitch: zone.canSwitch,
+      toggle: switchZone,
+    }),
+    [zone.zone, zone.usingDeviceZone, zone.canSwitch, switchZone],
+  );
+
   const consulteeUserId =
     session?.user?.id && session.user.id !== consultantDetails.userId
       ? session.user.id
@@ -91,27 +122,21 @@ export function ExpertProfileClient({
   // ConsultantAvailability's weekOffset, so an overlapping reader joins the
   // single in-flight request instead of firing its own 1-day compute. Day
   // clicks inside a loaded week cost zero requests (staleTime 30s).
-  const todayStart = startOfDay(new Date());
-  // Calendar-day arithmetic: a DST transition makes seven days 167 or 169
-  // elapsed hours, which would park the selected day in the wrong week.
+  // Calendar dates (local fields) on both sides: today is today in the
+  // display zone, and seven calendar days are a week across DST.
+  const today = calendarDayOf(now, timezone);
   const selectedWeekOffset = selectedDate
-    ? Math.max(
-        0,
-        Math.floor(
-          differenceInCalendarDays(startOfDay(selectedDate), todayStart) / 7,
-        ),
-      )
+    ? Math.max(0, Math.floor(differenceInCalendarDays(selectedDate, today) / 7))
     : 0;
-  const pricingWeek =
-    selectedDate && timezone
-      ? zonedWeekWindow(new Date(), selectedWeekOffset, timezone)
-      : null;
+  const pricingWeek = selectedDate
+    ? zonedWeekWindow(now, selectedWeekOffset, timezone)
+    : null;
 
   const dayQuery = useAvailabilityWindow({
     consultantId: consultantDetails?.id,
     startUtc: pricingWeek?.start ?? null,
     endUtc: pricingWeek?.end ?? null,
-    timezone: !isTimezoneLoading ? (timezone ?? null) : null,
+    timezone: zoneReady ? timezone : null,
     consulteeUserId,
     bypassRef: bypassCacheOnce,
   });
@@ -122,25 +147,24 @@ export function ExpertProfileClient({
   const monthQuery = useAvailabilityMonth({
     consultantId: consultantDetails?.id,
     monthStart: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1),
-    timezone: !isTimezoneLoading ? (timezone ?? null) : null,
+    timezone: zoneReady ? timezone : null,
     consulteeUserId,
   });
 
   const selectedDateKey =
-    selectedDate && timezone && !isTimezoneLoading
-      ? formatInTimeZone(selectedDate, timezone, "yyyy-MM-dd")
-      : null;
+    selectedDate && zoneReady ? calendarDateKey(selectedDate) : null;
   const slotTimings: TIntervalTiming[] =
     (selectedDateKey && dayQuery.data?.[selectedDateKey]) || [];
 
   // A failed background poll keeps the last good answer on screen, so only a
-  // read with nothing to show is worth a toast.
+  // read with nothing to show is worth a toast. The server's own text stays
+  // in the console (useAvailabilityWindow logs it).
   const dayQueryHasData = dayQuery.data !== undefined;
   useEffect(() => {
     if (dayQuery.error && !dayQueryHasData) {
       toast({
-        title: "Error fetching slots",
-        description: dayQuery.error.message || "Please try again",
+        title: "Couldn't load the available times",
+        description: AVAILABILITY_READ_FAILED_MESSAGE,
         variant: "destructive",
       });
     }
@@ -182,7 +206,7 @@ export function ExpertProfileClient({
   const handleConsultationBooking = useCallback(
     async (consultationPlanId: string) => {
       if (!selectedSlot || !consultantDetails) {
-        toast({ title: "Please select a slot", variant: "destructive" });
+        toast({ title: "Pick a time first", variant: "destructive" });
         return;
       }
 
@@ -198,10 +222,7 @@ export function ExpertProfileClient({
       const params = new URLSearchParams();
       const startsAt = new Date(selectedSlot.startsAt);
       const endsAt = new Date(selectedSlot.endsAt);
-      if (
-        (selectedSlot as TIntervalTiming & { type: "WEEKLY" | "CUSTOM" })
-          .type === "WEEKLY"
-      ) {
+      if (selectedSlot.type === "WEEKLY") {
         params.append(
           "availabilityWindowWeeklyId",
           selectedSlot.availabilityWindowId,
@@ -305,9 +326,9 @@ export function ExpertProfileClient({
 
     const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
     const days = [];
-    const now = new Date();
     const marks = monthQuery.data ?? null;
-    const marksLoading = monthQuery.isPending && !!timezone;
+    const marksLoading = monthQuery.isPending && zoneReady;
+    const selectedKey = selectedDate ? calendarDateKey(selectedDate) : null;
 
     for (let i = 0; i < adjustedFirstDay; i++) {
       days.push(
@@ -316,23 +337,21 @@ export function ExpertProfileClient({
     }
 
     for (let i = 1; i <= daysInMonth; i++) {
+      // A calendar date: only its local fields are read, and the grid keys
+      // its days `yyyy-MM-dd` in the display zone.
       const date = new Date(
         currentDate.getFullYear(),
         currentDate.getMonth(),
         i,
+        12,
       );
-      const isSelected =
-        selectedDate?.getDate() === i &&
-        selectedDate?.getMonth() === currentDate.getMonth() &&
-        selectedDate?.getFullYear() === currentDate.getFullYear();
-      const key = timezone
-        ? formatInTimeZone(date, timezone, "yyyy-MM-dd")
-        : null;
+      const key = calendarDateKey(date);
+      const isSelected = selectedKey === key;
       const state = dayState(
         date,
         now,
-        marks && key ? (marks[key] ?? []) : null,
-        timezone || "UTC",
+        marks ? (marks[key] ?? []) : null,
+        timezone,
         selectedDuration,
       );
       const isToday = state.startsWith("today");
@@ -397,6 +416,8 @@ export function ExpertProfileClient({
     currentDate,
     selectedDate,
     timezone,
+    now,
+    zoneReady,
     selectedDuration,
     monthQuery.data,
     monthQuery.isPending,
@@ -418,6 +439,20 @@ export function ExpertProfileClient({
         </div>
       </div>
 
+      <ProfileAnchorTabs
+        present={{
+          about: true,
+          sessions:
+            consultantDetails.consultationPlans.length > 0 ||
+            consultantDetails.subscriptionPlans.length > 0,
+          programs:
+            consultantDetails.classPlans.length > 0 ||
+            consultantDetails.webinarPlans.length > 0,
+          products: digitalProducts.length > 0,
+          reviews: consultantDetails._count.reviews > 0,
+        }}
+      />
+
       {/* Main Content Area - Profile, About, Availability + Pricing */}
       <div className="w-full px-4 md:px-8 lg:px-12 py-8 md:py-12">
         <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
@@ -436,10 +471,12 @@ export function ExpertProfileClient({
                 reliabilityStrikes={reliabilityStrikes}
               />
 
-              <AboutSection
-                userDetails={userDetails}
-                consultantDetails={consultantDetails}
-              />
+              <div id="about" className={PROFILE_SECTION_SCROLL_MARGIN}>
+                <AboutSection
+                  userDetails={userDetails}
+                  consultantDetails={consultantDetails}
+                />
+              </div>
 
               <ExperienceSection
                 workExperiences={userDetails.workExperiences || []}
@@ -447,14 +484,13 @@ export function ExpertProfileClient({
                 certifications={userDetails.certifications || []}
               />
 
-              {/* Gated on timezone resolution: the overview used to fire
-                  immediately with the "UTC" fallback and then refire with the
-                  real zone — a third, wrong-zone allocation compute per visit.
-                  One effect-tick delay is invisible inside the page fade-in. */}
-              {!isTimezoneLoading && timezone ? (
+              {/* Gated on zone resolution: firing before the session and the
+                  device zone are known would compute the week in a fallback
+                  zone and then again in the real one. */}
+              {zoneReady ? (
                 <ConsultantAvailability
                   consultantDetails={consultantDetails}
-                  timezone={timezone}
+                  displayZone={displayZone}
                   consulteeUserId={consulteeUserId}
                   bypassRef={bypassCacheOnce}
                 />
@@ -465,7 +501,11 @@ export function ExpertProfileClient({
           {/* Sidebar - Pricing */}
           <motion.div
             ref={pricingRef}
-            className="w-full xl:w-[450px] 2xl:w-[500px] flex-shrink-0"
+            id="sessions"
+            className={cn(
+              PROFILE_SECTION_SCROLL_MARGIN,
+              "w-full xl:w-[450px] 2xl:w-[500px] flex-shrink-0",
+            )}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
@@ -481,9 +521,10 @@ export function ExpertProfileClient({
               setCurrentDate={setCurrentDate}
               renderCalendar={renderCalendar}
               slotTimings={slotTimings}
+              slotsReady={dayQueryHasData && selectedDateKey !== null}
               selectedSlot={selectedSlot}
               setSelectedSlot={setSelectedSlot}
-              timezone={timezone || "UTC"}
+              displayZone={displayZone}
               autoOpenTrial={autoOpenTrial}
               onRefreshSlots={refreshSlots}
               onDurationChange={setSelectedDuration}
@@ -501,10 +542,22 @@ export function ExpertProfileClient({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.2 }}
           >
-            <ClassesAndWebinars
-              classPlans={consultantDetails.classPlans}
-              webinarPlans={consultantDetails.webinarPlans}
-            />
+            <div className="space-y-8">
+              {(consultantDetails.classPlans.length > 0 ||
+                consultantDetails.webinarPlans.length > 0) && (
+                <div id="programs" className={PROFILE_SECTION_SCROLL_MARGIN}>
+                  <ClassesAndWebinars
+                    classPlans={consultantDetails.classPlans}
+                    webinarPlans={consultantDetails.webinarPlans}
+                  />
+                </div>
+              )}
+              {digitalProducts.length > 0 && (
+                <div id="products" className={PROFILE_SECTION_SCROLL_MARGIN}>
+                  <DigitalProductsSection products={digitalProducts} />
+                </div>
+              )}
+            </div>
           </motion.div>
           {/* Spacer to match pricing sidebar width */}
           <div className="hidden xl:block w-[450px] 2xl:w-[500px] flex-shrink-0" />

@@ -4,7 +4,7 @@ type: how-to
 band: 70-operations
 audience: sde3
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-02
 ---
 
 # Money go-live checklist
@@ -21,9 +21,11 @@ Use this page to take the money subsystem from sandbox to real money: first the 
 
 ### 1.2 Keys and the test-key guard
 
+- Before the live keys go in, the daily ops digest reads clean ([Part 3](#part-3-the-daily-ops-digest-reads-clean)). Live collection keys are what turn a standing config skip into a page.
 - `RAZORPAY_KEY_ID` and `RAZORPAY_SECRET` hold the live pair (`rzp_live_...`). `NEXT_PUBLIC_RAZORPAY_KEY_ID` holds the same key id. A secret is never given a `NEXT_PUBLIC_` prefix.
 - `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION` is deleted from production. While it is unset, `lib/payments/core/razorpay.ts` throws `RAZORPAY_TEST_KEY_IN_PRODUCTION` at boot if a test key ever reaches production; set to `true` it only logs, which is for a pre-launch deploy that must not move money.
 - `RAZORPAY_WEBHOOK_SECRET` holds the live payment-webhook secret.
+- `PLATFORM_GSTIN` holds the platform's GSTIN as soon as GST registration is granted. Until then `heal-consumer-invoices`, `gst-outward-register-export` and `irp-uploader` record a config skip on every run (reason `PLATFORM_GSTIN not configured`) and checkout mints no consumer tax invoice. After setting it and redeploying, run `heal-consumer-invoices` from the System Jobs page and confirm its row is `completed`, then confirm `/api/health/jobs` no longer lists any of the three under `configSkips`. A malformed or other-state value fails these runs instead of skipping them.
 
 ### 1.3 Webhooks (dashboard)
 
@@ -82,12 +84,27 @@ flowchart TD
 ### 2.1 Pre-flip checks
 
 - **RazorpayX account** is live, KYB is complete, and its balance covers the first batch. `RAZORPAYX_KEY_ID`, `RAZORPAYX_KEY_SECRET` and `RAZORPAYX_ACCOUNT_NUMBER` hold live values (the key pair falls back to the Razorpay pair if unset). With the flag on, `getRazorpayPayoutsService` throws `RAZORPAYX_TEST_KEYS_IN_LIVE_MODE` for a test key, because a test key would let the ledger mark payouts `COMPLETED` while no bank account is ever debited.
-- **Static egress.** Live RazorpayX APIs answer only allowlisted source IPs, and Netlify has no static egress. `RAZORPAYX_EGRESS_PROXY_URL` must be set: without it every payout call with a live key refuses with `RAZORPAYX_EGRESS_NOT_CONFIGURED`, and the boot check reports it to Sentry once per process. Add the proxy's egress addresses to the RazorpayX allowlist.
+- **Static egress.** Live RazorpayX APIs answer only allowlisted source IPs, and Netlify has no static egress. `RAZORPAYX_EGRESS_PROXY_URL` must be set: without it every payout call with a live key refuses with `RAZORPAYX_EGRESS_NOT_CONFIGURED`, and the boot check reports it to Sentry once per process. The proxy is bought only for the first live payout ([owner decision of 2026-11-01](../../decisions/2026-11-01-observability-gaps-and-launch-posture.md)):
+  1. Buy QuotaGuard Static in the Mumbai region and copy its proxy URL and its static egress addresses.
+  2. Set `RAZORPAYX_EGRESS_PROXY_URL` to the proxy URL in the Netlify production environment (Functions scope) and redeploy. The `ProxyAgent` in `lib/payments/payouts/razorpay-payouts.ts` then routes every RazorpayX call through it.
+  3. Add every egress address to the RazorpayX API allowlist.
+  4. Make the ₹1 canary payout in 2.3. A `RAZORPAYX_EGRESS_NOT_CONFIGURED` refusal means the variable is missing. An authentication error can mean either wrong live keys or a missing allowlist entry, so first confirm `RAZORPAYX_KEY_ID` and `RAZORPAYX_KEY_SECRET` are the live pair, and only then check that the proxy's egress addresses are on the allowlist.
 - **Payout accounts verified** for every payee in the first batch: `PayoutAccount.isVerified` for consultants and `OrganizationPayoutAccount.status = VERIFIED` for organisations. RazorpayX test mode does not run penny-drop or reverse-penny-drop, so an account "verified" on a preview was verified by hand and must be verified again after the purge in 1.5.
 - **PAN and TDS.** Every payable consultant has a verified PAN, otherwise withholding uses the no-PAN rate. Confirm `TDS_ENGINE` is unset (the default is the Section 194-O engine; `LEGACY` is a flag-only fallback) and `ENABLE_TDS_194O_GROSS` is not `"false"`. See [TDS withholding](../40-payouts/06-tds-withholding.md).
 - **Idempotency.** Every payout carries its deterministic idempotency key so a retry cannot pay twice; the schema makes it unique.
 - **Reconcile is clean:** `reconcile-ledgers` reports `ok: true` with no unbaselined findings, including `ORG_PAYOUT_TOTAL_MISMATCH`.
 - **Monitoring is on:** `handle-stuck-payouts` and the webhook sweep report to Sentry, and a Sentry alert exists for them.
+- **Better Stack launch plan is bought.** Until launch Better Stack stays on the free plan (3-day logs, email and Slack alerts). At launch buy the responder seat (phone and SMS, about $29 to $34 a month) and the Telemetry Nano bundle (30-day retention, about $25 a month billed yearly, EU region), then add phone and SMS to the four money backlog alerts (`refundsOwed`, `payoutsStuck`, `dunningNotices`, `disputesDue`) described in the [Better Stack setup guide](../../maintenance/00-betterstack-setup.md#owner-step-the-oldest-pending-age-alerts).
+- **The job-freshness monitor exists and is green.** A Better Stack uptime monitor polls `https://familiarisenow.com/api/health/jobs` every 5 minutes with `Authorization: Bearer <CRON_SECRET>` and alerts on any non-2xx status (keyword `"healthy":false` as a belt). It exists since 2026-11-05 (monitor `familiarise job fleet probe (prod)`; see [the detector rollout decision](../../decisions/2026-11-05-detector-rollout-and-redundancy.md)). At launch, confirm it still shows Up, is not paused, and that its body reads `"healthy":true`; the [runbook](../../maintenance/00-betterstack-setup.md#runbook-create-the-better-stack-monitor-owner-step-done-2026-11-05) recreates it.
+- **Better Stack backlog alerts are unmuted.** The freshness alert and the seven backlog alerts are created muted before launch, because seeded and QA money rows on the shared database would fire them. Unmute them after the go-live data reset, once every money gauge in the latest `cron-tick summary` event reads zero. The digest cannot see these Telemetry alerts, so tick each one off here:
+  - [ ] `Ticker telemetry stale` (the tick-summary freshness alert)
+  - [ ] `Backlog: refundsOwed`
+  - [ ] `Backlog: payoutsStuck`
+  - [ ] `Backlog: dunningNotices`
+  - [ ] `Backlog: disputesDue`
+  - [ ] `Backlog: webhookEvents`
+  - [ ] `Backlog: emailRetries`
+  - [ ] `Backlog: notificationRetries`
 
 ### 2.2 Sandbox proof
 
@@ -101,6 +118,17 @@ Run `npx tsx scripts/smoke/org-payout-sandbox-smoke.ts` with a RazorpayX test ke
 4. Run `reconcile-ledgers` and expect no unbaselined findings, then release the held payouts.
 
 **Rollback:** set the flag to `false` and redeploy. New runs stop submitting; payouts already submitted keep settling through their webhooks, because a transfer cannot be un-sent. A wrong disbursement is recovered by the clawback path, which nets the amount against the payee's future payouts; see [organisation payouts and clawbacks](../40-payouts/05-org-payouts-and-clawbacks.md). A row stuck in `PROCESSING` with no terminal webhook is polled by `handle-stuck-payouts`.
+
+## Part 3: the daily ops digest reads clean
+
+The [daily ops digest](../../maintenance/00-betterstack-setup.md#daily-ops-digest-and-its-heartbeat) lists everything that is parked, held or muted. Before the first live key, its latest email must show:
+
+- **Zero standing config skips.** The "Config skips" section is empty. Once `RAZORPAY_KEY_ID` is live, any paging job that has skipped for a missing setting for more than 7 days makes `/api/health/jobs` answer 503 (`STANDING_CONFIG_SKIP`) at once, and the streak usually started weeks earlier. Set each missing setting (typically `PLATFORM_GSTIN`), redeploy, run the skipping jobs and then `ops-digest` from the System Jobs page, and confirm the section is empty.
+- **No paused or muted Better Stack monitor or heartbeat.** For each one the "Better Stack" section lists, unmute it or resume it, and record the date here:
+  - [ ] every monitor and heartbeat in the digest's "Better Stack" section is active (list each by name in the cutover issue)
+- **`EMAIL_DELIVERY_MODE=live`.** The "Settings" line reads `EMAIL_DELIVERY_MODE: live`. Any other value holds every email to a domain other than ours and the allowlist; the "Held email" line counts what it held in the last 24 hours.
+- **The digest heartbeat and the second watcher exist.** The "ops digest" Better Stack heartbeat is Up, and the Sentry uptime monitor on `/api/health/jobs` shows a recent successful check.
+- **Release lag is known, or knowingly unknown.** `GITHUB_RELEASE_LAG_TOKEN` is optional by owner decision (2026-11-05), so the "Release lag" section may read "Unknown" and nothing pages. If it does, record that a held release is then caught only by reading the digest and the deploy list. Create the token when releases become routine enough that a held one would go unnoticed. A commit count also needs `BUILD_SHA`, which `next.config.mjs` inlines only when the host provides `COMMIT_REF` (Netlify) or `VERCEL_GIT_COMMIT_SHA` (Vercel), and a successful GitHub read; a host with neither, such as a plain Docker build, stays "Unknown".
 
 ## Where in code
 
@@ -122,5 +150,5 @@ Run `npx tsx scripts/smoke/org-payout-sandbox-smoke.ts` with a RazorpayX test ke
 
 1. **The top-level `payment_capture: 1` order parameter.** Orders now set the nested `payment` capture options (`holdCaptureSettings` in `lib/payments/core/razorpay.ts`).
 2. **Webhook secret rotation without a grace slot.** Both products now have a `_PREVIOUS` slot.
-3. **`RAZORPAY_KEY_SECRET` as the secret name.** `RAZORPAY_SECRET` is the name; only the `reconcile-payment-status` script still accepts the legacy spelling as a fallback, and new environments must not rely on it.
+3. **`RAZORPAY_KEY_SECRET` as the secret name.** `RAZORPAY_SECRET` is the only name any code reads; the legacy spelling is no longer accepted anywhere, including the `reconcile-payment-status` script.
 4. **A purge that clears `isVerified` on `OrganizationPayoutAccount`.** That table has `status`, not `isVerified`.

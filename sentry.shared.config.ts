@@ -6,6 +6,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { isExpectedError } from "@/lib/observability/expected";
+import { isTranslateDomMutationNoise } from "@/lib/observability/translate-dom-noise";
 import {
   scrubSentryBreadcrumb,
   scrubSentryEvent,
@@ -20,13 +21,6 @@ import {
 type SentryInitOptions = NonNullable<Parameters<typeof Sentry.init>[0]>;
 
 export function resolveDefaultTracesSampleRate(): number {
-  const rawOverride = process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE;
-  if (rawOverride !== undefined && rawOverride !== "") {
-    const parsed = Number(rawOverride);
-    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) {
-      return parsed;
-    }
-  }
   if (
     isProductionEnvironment() ||
     process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT === "preview"
@@ -38,7 +32,7 @@ export function resolveDefaultTracesSampleRate(): number {
 
 /**
  * Route-aware trace sampling (#1926):
- * - Non-production: 20% (or NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE override)
+ * - Non-production: 20%
  * - Health probes & static assets (`/api/health`, `/_next/`, `/favicon.ico`, `/robots.txt`): 0%
  * - Background cleanup cron endpoints (`/api/cleanup/`): 2%
  * - Critical payment, checkout, and webhook routes (`/api/webhooks/`, `/api/payments/`, `/api/checkout`): 50% (or parent decision)
@@ -244,34 +238,9 @@ function exceedsErrorBudget(
   return false;
 }
 
-// Previews keep a tenth of ordinary errors (the 2026-09-21 flood), but an
-// uncaught throw in a Next server wrapper — onRequestError, server component,
-// route handler, server action — is exactly what a preview exists to surface.
-const PREVIEW_ERROR_SAMPLE_RATE = 0.1;
-const NEXT_SERVER_MECHANISM_PREFIX = "auto.function.nextjs.";
-
-export function isUncaughtNextServerError(event: Sentry.Event): boolean {
-  return (event.exception?.values ?? []).some(
-    (v) =>
-      v.mechanism?.handled === false &&
-      v.mechanism.type.startsWith(NEXT_SERVER_MECHANISM_PREFIX),
-  );
-}
-
-/**
- * Preview thinning lives here, not in `sampleRate`: the SDK samples before
- * `beforeSend` and cannot see the mechanism, so a global rate would also drop
- * nine in ten uncaught server errors.
- */
-export function isThinnedOnPreview(
-  event: Sentry.Event,
-  random: number = Math.random(),
-): boolean {
-  return (
-    process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT === "preview" &&
-    !isUncaughtNextServerError(event) &&
-    random >= PREVIEW_ERROR_SAMPLE_RATE
-  );
+/** Preview deploys send no events to the shared production project; previews log only. */
+export function isPreviewDeploy(): boolean {
+  return process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT === "preview";
 }
 
 /** The `beforeSend` budget stage, exported so a test can drive it directly. */
@@ -376,11 +345,8 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     enabled: Boolean(dsn) && isNotDevelopmentEnvironment(),
     environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
 
-    // #1086 — deploy previews used to report to a SEPARATE Sentry project, so
-    // an error found on a preview was invisible in the one anybody watches and
-    // had to be dug out of Netlify function logs. They now share the production
-    // project; `environment` ("preview" vs "production") keeps them out of
-    // production alerting, and this tag says WHICH branch produced it.
+    // Previews share the production project but `beforeSend` drops their
+    // error events; their traces and logs carry this branch tag.
     initialScope: {
       tags: {
         ...(process.env.NEXT_PUBLIC_SENTRY_BRANCH
@@ -390,8 +356,7 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     },
 
     // Sample 10% of traces in production/preview (with route-aware overrides via
-    // tracesSampler) and 20% in non-production unless overridden via
-    // NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE.
+    // tracesSampler) and 20% in non-production.
     tracesSampleRate: resolveDefaultTracesSampleRate(),
     ...(overrides?.tracesSampleRate !== undefined ? {} : { tracesSampler }),
 
@@ -483,16 +448,15 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     // re-levels one. (FAMILIARISE_WEB-10)
     beforeSend(event, hint) {
       stripUngatedPII(event);
+      if (isTranslateDomMutationNoise(event)) return null;
       if (isExpectedError(hint?.originalException)) {
         event.level = "warning";
         event.tags = { ...event.tags, expected: "true" };
       }
-      // Thin previews (uncaught server errors exempt), then drop expected-info,
-      // fingerprint the flood families, throttle per key, cap per process.
-      // Returning null drops before transport, so dropped events never consume
-      // quota. Keyed on "preview", not "not production", so an unset
-      // environment (a bare job runner, a test) fails open.
-      if (isThinnedOnPreview(event)) return null;
+      // Drop previews, then expected-info, fingerprint the flood families,
+      // throttle per key and cap per process. A null drops before transport, so
+      // it spends no quota. Keyed on "preview", so an unset environment fails open.
+      if (isPreviewDeploy()) return null;
       if (applyErrorBudget(event) === null) return null;
       // #1861 S4 — scrub AFTER the relabel/throttle above: this pass only
       // removes data, it never changes a drop/keep or level decision.

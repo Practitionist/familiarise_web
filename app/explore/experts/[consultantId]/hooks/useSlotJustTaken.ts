@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { SLOT_JUST_TAKEN_MESSAGE } from "@/lib/errors/mapping/payment-error-toast-map";
-import { invalidateAvailability } from "./useAvailabilityWindow";
+import { invalidateAvailability } from "@/lib/scheduling/use-availability-window";
 
 /**
  * Refetches the expert's grid, says the time was taken, and returns the buyer to the grid;

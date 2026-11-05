@@ -10,7 +10,10 @@ import { useToast } from "@/hooks/use-toast";
 import { libraryKeys, recordingKeys } from "@/lib/documents/query-keys";
 import { LibraryBrowser } from "./LibraryBrowser";
 
-const SyncResultSchema = z.object({ synced: z.number().optional() });
+const SyncResultSchema = z.object({
+  synced: z.number().optional(),
+  failed: z.number().optional(),
+});
 
 /** Pulls recordings Stream has finished but the webhook has not delivered yet. */
 function SyncFromStream() {
@@ -32,13 +35,21 @@ function SyncFromStream() {
           if (!res.ok) throw new Error("sync failed");
           const parsed = SyncResultSchema.safeParse(await res.json());
           const synced = parsed.success ? (parsed.data.synced ?? 0) : 0;
-          toast({
-            title: synced > 0 ? "Recordings synced" : "Up to date",
-            description:
-              synced > 0
-                ? `${synced} recording(s) added.`
-                : "No new recordings were found.",
-          });
+          const failed = parsed.success ? (parsed.data.failed ?? 0) : 0;
+          toast(
+            failed > 0
+              ? {
+                  title: "Partly synced",
+                  description: `${synced} recording(s) added. ${failed} session(s) couldn't be checked; try again in a moment.`,
+                }
+              : {
+                  title: synced > 0 ? "Recordings synced" : "Up to date",
+                  description:
+                    synced > 0
+                      ? `${synced} recording(s) added.`
+                      : "No new recordings were found.",
+                },
+          );
           await queryClient.invalidateQueries({
             queryKey: recordingKeys.library(),
           });

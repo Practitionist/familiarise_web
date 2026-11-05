@@ -22,6 +22,7 @@ jest.mock("../../lib/payments/operations/refund", () => {
     constructor(
       message: string,
       public code: string,
+      public detail?: Record<string, unknown>,
     ) {
       super(message);
       this.name = "RefundValidationError";
@@ -88,7 +89,11 @@ import { POST } from "../../app/api/admin/refunds/route";
 const { RefundValidationError, RefundGatewayError } = jest.requireMock(
   "../../lib/payments/operations/refund",
 ) as {
-  RefundValidationError: new (m: string, c: string) => Error;
+  RefundValidationError: new (
+    m: string,
+    c: string,
+    detail?: Record<string, unknown>,
+  ) => Error;
   RefundGatewayError: new (m: string, c: string) => Error;
 };
 
@@ -188,6 +193,26 @@ describe("a thrown refund answers with its typed code", () => {
     expect(body.error).toContain("open dispute");
   });
 
+  it("keeps ids out of the copy and answers them as detail", async () => {
+    refundPayment.mockRejectedValue(
+      new RefundValidationError(
+        "This payment was not made with credits. Refund an amount instead.",
+        "NOT_CREDIT_FUNDED",
+        { paymentId: "pay_row_1" },
+      ),
+    );
+
+    const res = await POST(refundRequest(SINGLE), ROUTE);
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      code: "NOT_CREDIT_FUNDED",
+      error:
+        "This payment was not made with credits. Refund an amount instead.",
+      paymentId: "pay_row_1",
+    });
+  });
+
   it("maps RefundGatewayError to 502", async () => {
     refundPayment.mockRejectedValue(
       new RefundGatewayError("Razorpay refund failed", "GATEWAY_REFUND_FAILED"),
@@ -247,6 +272,38 @@ describe("the success paths", () => {
       kind: "class",
       alreadyRefunded: true,
       refunded: 0,
+    });
+  });
+});
+
+describe("a whole-event refund a held refund marker refuses", () => {
+  it("answers 409 with the operator copy naming the seat payment and the next step", async () => {
+    const { Refusal } = jest.requireActual<
+      typeof import("@/lib/errors/refusal")
+    >("@/lib/errors/refusal");
+    refundWholeEventPayments.mockRejectedValue(
+      new Refusal({
+        code: "REFUND_NEEDS_SUPPORT",
+        httpStatus: 409,
+        userMessage: "host copy",
+        context: {
+          paymentId: "pay_seat_1",
+          heldKey: "occ:occ-1:pay:pay_seat_1",
+          subject: "class",
+        },
+      }),
+    );
+
+    const res = await POST(
+      refundRequest({ classId: "cls_1", reason: "class cancelled" }),
+      ROUTE,
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: "REFUND_NEEDS_SUPPORT",
+      error:
+        "Seat payment pay_seat_1 has a refund still owed from another action (occ:occ-1:pay:pay_seat_1); settle it from Refunds → Needs human, then run this again.",
     });
   });
 });

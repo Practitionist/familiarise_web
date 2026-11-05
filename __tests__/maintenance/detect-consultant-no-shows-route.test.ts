@@ -18,6 +18,7 @@ jest.mock("@sentry/nextjs", () => ({
 
 jest.mock("../../lib/maintenance-cron", () => ({
   assertNotInMaintenance: jest.fn(),
+  MaintenanceUnavailableError: class MaintenanceUnavailableError extends Error {},
   MaintenanceActiveError: class MaintenanceActiveError extends Error {
     httpStatus = 503;
     phase: string;
@@ -95,7 +96,6 @@ describe("POST /api/cleanup/detect-consultant-no-shows", () => {
       detected: 2,
       refunded: 2,
       contradicted: 0,
-      bothAbsentTickets: 1,
       errors: [],
       timestamp: "2026-09-13T00:00:00.000Z",
     });
@@ -123,7 +123,6 @@ describe("POST /api/cleanup/detect-consultant-no-shows", () => {
       detected: 0,
       refunded: 0,
       contradicted: 0,
-      bothAbsentTickets: 0,
       errors: [],
       timestamp: "2026-09-13T00:00:00.000Z",
     });

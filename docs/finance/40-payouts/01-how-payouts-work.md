@@ -3,7 +3,7 @@ title: How payouts work
 type: explanation
 audience: new engineers, the owner, support and finance operators
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-04
 ---
 
 # How payouts work
@@ -22,7 +22,7 @@ When a learner's payment is confirmed, the platform keeps its fee and records th
 
 1. **PENDING, the hold.** The earning waits out a hold so that a cancellation, a refund or a no-show can still be handled before money leaves. The hold is 24 hours after a consultation or a class, 48 hours after a webinar and 7 days for a subscription, counted from the later of the capture and the end of the last live session (`computeHoldUntil`, `lib/payments/payouts/earnings-hold.ts`). A new expert waits 7 days longer, while their first earning is under 30 days old or their lifetime share after refunds is under ₹50,000 (`withNewExpertHold`).
 2. **HELD, a freeze.** An earning is HELD while at least one hold is active on it. A hold has a reason: a chargeback on the payment, a ban of the expert, an operator's decision, an unpaid member overage, or a service complaint that staff froze. Each owner releases only its own hold. The [earnings lifecycle](02-earnings-lifecycle.md) lists the rules.
-3. **READY.** Once the hold has passed and the payment has no open refund, the `release-earnings` job marks the earning READY. It runs every 15 minutes on the ticker.
+3. **READY.** Once the hold has passed and the payment has no open refund and owes none (no owed-refund marker), the `release-earnings` job marks the earning READY. It runs every 15 minutes on the ticker.
 4. **BATCHED, Monday night.** On Mondays from 20:00 UTC, which is 01:30 IST on Tuesday, for three hours, the `create-payout-batch` job runs in small slices. It gathers each expert's READY earnings into one payout if the total is at least ₹500. The earnings become BATCHED, which means promised to that payout but not yet sent. An expert who owes the platform more than ₹10,000 of clawback is skipped until the debt comes down, and an expert whose default payout account is less than 48 hours old or frozen is skipped.
 5. **Approval.** A payout below ₹5,000 is approved automatically. A payout of ₹5,000 or more waits for a platform administrator, who approves or rejects it with a reason. While the platform has more than one administrator, the administrator who created a payout cannot approve it, and the one who approved it cannot trigger its disbursement by hand.
 6. **Sent, hourly.** The `process-payouts` job runs every hour. It takes an APPROVED payout, works out the TDS to withhold, and sends the remainder to the bank through RazorpayX. The payout becomes PROCESSING.

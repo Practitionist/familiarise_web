@@ -20,7 +20,14 @@ export type AppointmentBucket =
   "upcoming" | "needsAction" | "waiting" | "inRequests" | "past" | "cancelled";
 
 export type NeedsActionReason =
-  "PAY_NOW" | "PENDING_APPROVAL" | "UNSCHEDULED" | "TENTATIVE";
+  | "PAY_NOW"
+  | "PENDING_APPROVAL"
+  | "UNSCHEDULED"
+  | "TENTATIVE"
+  /** Approved, and no session has been placed yet (a plan awaiting its first cycle). */
+  | "AWAITING_SCHEDULING"
+  /** Approved, but every session it had was released or cancelled. */
+  | "NEEDS_RESCHEDULING";
 
 /**
  * Minimal structural occurrence shape. Both Prisma's bare AppointmentOccurrence

@@ -2,7 +2,6 @@ import * as Sentry from "@sentry/nextjs";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma from "@/lib/prisma";
 import { Prisma, AppointmentStatus } from "@prisma/client";
-import { addMonths } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
 import {
   approvalMintConflict,
@@ -22,7 +21,8 @@ import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   APPROVAL_STATUSES_DETAIL_ONLY,
   refuseMalformedEventId,
-  refusePlanNotOwned,
+  NOT_BEING_MOVED,
+  assertNotBeingMoved,
   releaseDeclinedRequestHold,
   validateDetailRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
@@ -38,15 +38,18 @@ import {
 } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { assertNoLiveCheckoutHold } from "@/lib/booking/request-cohort";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
+import {
+  assertHeldTimesStillFree,
+  HELD_TIME_TAKEN,
+} from "@/lib/booking/approve-recheck";
 import { stageSubscriptionLifecycleEmail } from "@/lib/email/senders/booking";
 import { notifySubscriptionStarted } from "@/lib/novu";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { goHref } from "@/lib/dashboard/go";
-import {
-  UpdateSubscriptionSchema,
-  PatchSubscriptionStatusSchema,
-} from "@/schemas/subscriptions";
+import { PatchSubscriptionStatusSchema } from "@/schemas/subscriptions";
 import {
   requireApiAuth,
   isPrivileged,
@@ -129,133 +132,6 @@ export async function GET(
     console.error("Error fetching subscription:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the subscription" },
-      { status: 500 },
-    );
-  }
-}
-
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ subscriptionId: string }> },
-) {
-  // Require authentication
-  const authResult = await requireApiAuth();
-  if (authResult.error) return authResult.error;
-  const { session } = authResult;
-
-  try {
-    const { subscriptionId } = await params;
-    const malformedId = refuseMalformedEventId(subscriptionId);
-    if (malformedId) return malformedId;
-    const body = await request.json();
-    const result = UpdateSubscriptionSchema.safeParse(body);
-    if (!result.success) {
-      return NextResponse.json(
-        { error: "Validation failed", details: result.error.issues },
-        { status: 400 },
-      );
-    }
-    const validatedData = result.data;
-
-    // Verify ownership before allowing update
-    const existingSubscription = await prisma.subscription.findUnique({
-      where: { id: subscriptionId },
-      include: {
-        subscriptionPlan: {
-          include: {
-            consultantProfile: { select: { id: true } },
-          },
-        },
-        // bookingOrgId's fallback when the plan carries no org.
-        appointment: { select: { organizationId: true } },
-      },
-    });
-
-    if (!existingSubscription) {
-      return NextResponse.json(
-        { error: "Subscription not found" },
-        { status: 404 },
-      );
-    }
-
-    // Check authorization: must be a participant or privileged
-    const isConsultant =
-      !!existingSubscription.subscriptionPlan?.consultantProfile?.id &&
-      existingSubscription.subscriptionPlan.consultantProfile.id ===
-        session.user.consultantProfileId;
-    const isConsultee =
-      !!existingSubscription.requestedById &&
-      existingSubscription.requestedById === session.user.consulteeProfileId;
-    if (!isPrivileged(session.user.role) && !isConsultant && !isConsultee) {
-      return forbiddenResponse(
-        "You can only modify subscriptions you are a participant in",
-      );
-    }
-
-    // #1704 — a planId is only accepted from the same consultant as the
-    // request; connecting any plan let a request migrate to another seller.
-    const planRefusal = await refusePlanNotOwned(
-      validatedData.planId,
-      {
-        consultantProfileId:
-          existingSubscription.subscriptionPlan?.consultantProfileId,
-        organizationId: bookingOrgId(existingSubscription),
-      },
-      () =>
-        prisma.subscriptionPlan.findUnique({
-          where: { id: validatedData.planId },
-          select: { consultantProfileId: true, organizationId: true },
-        }),
-    );
-    if (planRefusal) return planRefusal;
-
-    const subscriptionData = await prisma.subscription.update({
-      where: { id: subscriptionId },
-      data: {
-        schedulingPeriodStartsAt: validatedData.schedulingPeriodStartsAt,
-        schedulingPeriodEndsAt: validatedData.schedulingPeriodEndsAt,
-        requestNotes: validatedData.requestNotes,
-        subscriptionPlan: validatedData.planId
-          ? {
-              connect: { id: validatedData.planId },
-            }
-          : undefined,
-      },
-      include: {
-        subscriptionPlan: {
-          include: {
-            consultantProfile: PARTY_PROFILE_SELECT,
-          },
-        },
-        requestedBy: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-              },
-            },
-          },
-        },
-        appointment: {
-          include: {
-            occurrences: true,
-          },
-        },
-      },
-    });
-
-    return NextResponse.json({ data: subscriptionData }, { status: 200 });
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "bookings" } },
-    );
-    console.error("Error updating subscription:", error);
-    return NextResponse.json(
-      { error: "An error occurred while updating the subscription" },
       { status: 500 },
     );
   }
@@ -388,12 +264,6 @@ export async function PATCH(
     );
     if (patchError) return patchError;
 
-    const startDate = new Date();
-    const endDate = addMonths(
-      startDate,
-      existingSubscription.subscriptionPlan.durationInMonths,
-    );
-
     // LAYER 1: Distributed lock (only for APPROVED status changes)
     let lock: ApprovalLock | null = null;
     if (status === AppointmentStatus.APPROVED) {
@@ -470,11 +340,25 @@ export async function PATCH(
               }
             }
 
+            // A decline, like an approval, waits for the buyer's own live
+            // checkout to finish or lapse.
+            if (status === AppointmentStatus.REJECTED) {
+              await assertNoLiveCheckoutHold(
+                tx,
+                "subscription",
+                subscriptionId,
+              );
+            }
+            await assertNotBeingMoved(
+              tx,
+              { subscriptionId },
+              status === AppointmentStatus.REJECTED ? "decline" : "approve",
+            );
             // #836 — allowed-from guard rides the WHERE; the idempotency
             // pre-checks above are only friendly error text. updateMany
             // returns no row, so re-read for the heavy include.
             await transitionSubscriptionRequest(tx, {
-              where: { id: subscriptionId },
+              where: { id: subscriptionId, ...NOT_BEING_MOVED },
               to: status,
               data:
                 status === AppointmentStatus.REJECTED
@@ -523,6 +407,11 @@ export async function PATCH(
             // #1775 C-1 — a plan is paid at purchase: approval needs a settled
             // payment, and the throw rolls the APPROVED write above back.
             if (status === AppointmentStatus.APPROVED) {
+              await assertNoLiveCheckoutHold(
+                tx,
+                "subscription",
+                subscriptionId,
+              );
               const settled = await tx.subscription.count({
                 where: { id: subscriptionId, ...SETTLED_SUBSCRIPTION },
               });
@@ -532,18 +421,11 @@ export async function PATCH(
                   "This plan is paid at purchase — the request has no successful payment.",
                 );
               }
-              await tx.subscription.update({
-                where: { id: subscriptionId },
-                data: {
-                  schedulingPeriodStartsAt: startDate,
-                  schedulingPeriodEndsAt: endDate,
-                },
-              });
-
               // Confirm existing tentative sessions. RESCHEDULED rows keep their
               // ORIGINAL startsAt; flipping them re-confirms the time the
               // consultee asked to leave (#1169 PR 2).
               if (subscription.appointment) {
+                await assertHeldTimesStillFree(tx, subscription.appointment.id);
                 await tx.appointmentOccurrence.updateMany({
                   where: {
                     appointmentId: subscription.appointment.id,
@@ -788,6 +670,13 @@ export async function PATCH(
     }
   } catch (error) {
     if (error instanceof BookingRuleError) return bookingRuleResponse(error);
+    // The exclusion constraint backstopping the held-time re-check.
+    if (isExclusionViolation(error)) {
+      return NextResponse.json(
+        { error: HELD_TIME_TAKEN, code: "SCHEDULE_CONFLICT" },
+        { status: 409 },
+      );
+    }
     if (error instanceof ApprovalLockLostError) {
       return NextResponse.json(
         { error: error.message, code: error.code },

@@ -2,6 +2,7 @@ import { MessagesSquare } from "lucide-react";
 
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { SupportHealthAndComplianceOverview } from "@/components/dashboard/backoffice/support/SupportHealthAndComplianceOverview";
+import styles from "@/components/dashboard/backoffice/support/support-layout.module.css";
 import { requireBackofficePage } from "@/lib/auth-guard";
 
 export default async function SupportInboxPage({
@@ -12,7 +13,9 @@ export default async function SupportInboxPage({
   return (
     <div>
       <SupportHealthAndComplianceOverview tree={tree} />
-      <div className="rounded-lg border border-dashed border-border">
+      <div
+        className={`${styles.emptySelection} rounded-lg border border-dashed border-border`}
+      >
         <EmptyState
           icon={MessagesSquare}
           title="Pick a case"

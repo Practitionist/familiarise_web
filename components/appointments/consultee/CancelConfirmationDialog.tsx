@@ -24,7 +24,10 @@ import {
 import {
   cancelPreviewQueryKey,
   cancelPreviewUrl,
+  cancelRefusalFrom,
+  CancelRefusedError,
   type ShownCancelQuote,
+  UNPAID_CANCEL_QUOTE,
 } from "@/lib/appointments/cancel-requote";
 
 /** #1780 — `GET …/cancel/preview?scope=seat`: leaving the viewer's own seat. */
@@ -71,6 +74,12 @@ interface CancelConfirmationDialogProps {
    * trial cancel passes `/api/trials/[trialId]/cancel/preview`.
    */
   previewUrl?: string | null;
+  /**
+   * Who is cancelling. The consultant cancels someone else's booking: the
+   * client is refunded in full and it counts against the consultant's
+   * reliability, so the buyer's "you paid" copy never reaches them.
+   */
+  viewerRole?: "consultee" | "consultant";
 }
 
 export function CancelConfirmationDialog({
@@ -85,8 +94,10 @@ export function CancelConfirmationDialog({
   mode = "cancel",
   appointmentId,
   previewUrl,
+  viewerRole = "consultee",
 }: Readonly<CancelConfirmationDialogProps>) {
   const isLeave = mode === "leave";
+  const asConsultant = viewerRole === "consultant";
 
   // Only the cancel path: an unpaid request has nothing to quote, and leaving a
   // group event refunds through the roster route rather than this one.
@@ -97,6 +108,7 @@ export function CancelConfirmationDialog({
     data: preview,
     isLoading: isPreviewLoading,
     isError: isPreviewError,
+    error: previewError,
   } = useQuery<CancelRefundPreview>({
     queryKey: cancelPreviewQueryKey(quoteUrl ?? ""),
     queryFn: async () => {
@@ -108,7 +120,13 @@ export function CancelConfirmationDialog({
         // behind a spinner that never stopped.
         { signal: AbortSignal.timeout(8_000) },
       );
-      if (!response.ok) throw new Error("Could not estimate the refund");
+      if (!response.ok) {
+        const refusal =
+          response.status === 409
+            ? cancelRefusalFrom(await response.json().catch(() => null))
+            : null;
+        throw refusal ?? new Error("Could not estimate the refund");
+      }
       const parsed = CancelRefundPreviewSchema.safeParse(await response.json());
       if (!parsed.success) throw new Error("Could not estimate the refund");
       return parsed.data;
@@ -141,6 +159,8 @@ export function CancelConfirmationDialog({
       retry: false,
     });
   const seatRefused = !!seatPreview?.seated && seatPreview.refused;
+  const cancelRefusal =
+    previewError instanceof CancelRefusedError ? previewError.message : null;
 
   const renderLeaveLine = () => {
     if (seatPreview?.seated && seatPreview.refused) {
@@ -183,6 +203,27 @@ export function CancelConfirmationDialog({
     dialogTitle = `Cancel ${appointmentType}?`;
   }
 
+  // The consultant's line names the client's full refund and the reliability
+  // cost; the cost stands even when the quote could not be loaded.
+  const consultantRefundLine = (quoted?: {
+    paise: number;
+    currency: string;
+  }) => (
+    <p className="text-muted-foreground text-sm">
+      {quoted ? (
+        <>
+          {consultant} gets a full refund of{" "}
+          <strong className="text-foreground">
+            {formatCurrencyAmount(quoted.paise, quoted.currency)}
+          </strong>
+        </>
+      ) : (
+        <>If they paid, {consultant} gets a full refund</>
+      )}
+      . Cancelling a paid booking counts against your reliability.
+    </p>
+  );
+
   /**
    * The refund line. A quote only replaces the policy sentence when the server
    * actually produced one — a 403, a network failure or a booking the preview
@@ -198,7 +239,13 @@ export function CancelConfirmationDialog({
         </p>
       );
     }
+    if (cancelRefusal) {
+      return (
+        <p className="text-red-600 text-sm font-medium">{cancelRefusal}</p>
+      );
+    }
     if (!preview) {
+      if (asConsultant) return consultantRefundLine();
       // A quote that timed out or 500'd is a different fact from a booking that
       // was never priced, and the difference matters to someone deciding: one
       // says "we can't tell you right now", the other "there is nothing to
@@ -250,6 +297,12 @@ export function CancelConfirmationDialog({
         </p>
       );
     }
+    if (asConsultant) {
+      return consultantRefundLine({
+        paise: preview.estimatedRefundPaise,
+        currency: preview.currency,
+      });
+    }
     // One sentence per rail, shared with the payments surfaces (#1675 X6).
     // #1846 — a quote that knows the paid amount shows the breakdown too.
     return (
@@ -274,10 +327,23 @@ export function CancelConfirmationDialog({
           </p>
         )}
         <p className="text-muted-foreground text-sm">
-          {refundRailLine(preview.fundingRail, preview)}
+          {preview.creditReturnNeedsReview
+            ? "Your refund will be reviewed by our team, who will return the credit for the sessions not yet held."
+            : refundRailLine(preview.fundingRail, preview)}
         </p>
       </>
     );
+  };
+
+  /** What the click binds to: the quote shown, or the unpaid screen of an approval awaiting payment. */
+  const shownQuote = (): ShownCancelQuote | undefined => {
+    if (isPendingPayment) return UNPAID_CANCEL_QUOTE;
+    if (!preview || preview.paid === false) return undefined;
+    return {
+      estimatedRefundPaise: preview.estimatedRefundPaise,
+      creditRestoresInFull: preview.creditRestoresInFull,
+      expectedPaid: preview.expectedPaid,
+    };
   };
 
   return (
@@ -320,24 +386,16 @@ export function CancelConfirmationDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={onCancel} disabled={isLoading}>
-            {isLeave ? "Stay enrolled" : "Keep Appointment"}
+            {isLeave ? "Stay enrolled" : "Keep booking"}
           </AlertDialogCancel>
           <AlertDialogAction
-            onClick={() =>
-              onConfirm(
-                preview && preview.paid !== false
-                  ? {
-                      estimatedRefundPaise: preview.estimatedRefundPaise,
-                      creditRestoresInFull: preview.creditRestoresInFull,
-                    }
-                  : undefined,
-              )
-            }
+            onClick={() => onConfirm(shownQuote())}
             disabled={
               isLoading ||
               isPreviewLoading ||
               isSeatPreviewLoading ||
-              seatRefused
+              seatRefused ||
+              !!cancelRefusal
             }
             className="bg-red-600 text-white hover:bg-red-700 focus:ring-red-600"
           >
@@ -348,8 +406,10 @@ export function CancelConfirmationDialog({
               </>
             ) : isLeave ? (
               "Yes, Leave"
+            ) : asConsultant ? (
+              "Cancel and refund"
             ) : (
-              "Yes, Cancel"
+              "Cancel booking"
             )}
           </AlertDialogAction>
         </AlertDialogFooter>

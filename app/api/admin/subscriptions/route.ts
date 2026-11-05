@@ -9,32 +9,99 @@ import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
 import {
+  schedulableSessionsOf,
+  subscriptionPlanEnd,
+} from "@/lib/booking/entitlement";
+import {
   CANCELLABLE_FROM,
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 
+type PlanEndBucket = "active" | "expiring_soon" | "expired";
+
+/** Rows read per page of the rows without a stored plan end. */
+const NULL_END_PAGE = 500;
+/** The most of them one request reads; past it the rest are left out and reported. */
+const NULL_END_CAP = 5_000;
+
+const NULL_END_SELECT = {
+  id: true,
+  planEndsAt: true,
+  schedulingPeriodStartsAt: true,
+  schedulingTimezone: true,
+  subscriptionPlan: { select: { durationInMonths: true } },
+} satisfies Prisma.SubscriptionSelect;
+
+/**
+ * Rows from before plan ends were stored carry none; each is bucketed by its
+ * derived end, exactly as the list renders it. New rows always store their
+ * end, so this set only shrinks: it is read in keyset pages, up to a cap.
+ */
+async function nullEndBuckets(
+  now: Date,
+  soonThreshold: Date,
+): Promise<Record<PlanEndBucket, string[]>> {
+  const buckets: Record<PlanEndBucket, string[]> = {
+    active: [],
+    expiring_soon: [],
+    expired: [],
+  };
+  let cursor: string | null = null;
+  for (let read = 0; read < NULL_END_CAP; read += NULL_END_PAGE) {
+    const rows: Prisma.SubscriptionGetPayload<{
+      select: typeof NULL_END_SELECT;
+    }>[] = await prisma.subscription.findMany({
+      where: {
+        planEndsAt: null,
+        status: { not: "CANCELLED" },
+        ...(cursor ? { id: { gt: cursor } } : {}),
+      },
+      orderBy: { id: "asc" },
+      take: NULL_END_PAGE,
+      select: NULL_END_SELECT,
+    });
+    for (const row of rows) {
+      const end = subscriptionPlanEnd(row).getTime();
+      if (end <= now.getTime()) buckets.expired.push(row.id);
+      else if (end <= soonThreshold.getTime())
+        buckets.expiring_soon.push(row.id);
+      else buckets.active.push(row.id);
+    }
+    if (rows.length < NULL_END_PAGE) return buckets;
+    cursor = rows[rows.length - 1].id;
+  }
+  Sentry.captureMessage(
+    "admin subscriptions: rows without a plan end exceed the read cap",
+    {
+      level: "warning",
+      extra: { cap: NULL_END_CAP },
+    },
+  );
+  return buckets;
+}
+
+// Plan-end filters read the stored `planEndsAt`, or the derived end of a row without one.
 function buildSubscriptionFilter(
   status: string | null,
   now: Date,
   soonThreshold: Date,
+  nullEnds: Record<PlanEndBucket, string[]>,
 ): Prisma.SubscriptionWhereInput | undefined {
+  const byEnd = (
+    bucket: PlanEndBucket,
+    planEndsAt: Prisma.DateTimeNullableFilter,
+  ): Prisma.SubscriptionWhereInput => ({
+    status: { not: "CANCELLED" },
+    OR: [{ planEndsAt }, { planEndsAt: null, id: { in: nullEnds[bucket] } }],
+  });
   if (status === "active") {
-    return {
-      status: { not: "CANCELLED" },
-      schedulingPeriodEndsAt: { gt: soonThreshold },
-    };
+    return byEnd("active", { gt: soonThreshold });
   }
   if (status === "expiring_soon") {
-    return {
-      status: { not: "CANCELLED" },
-      schedulingPeriodEndsAt: { gt: now, lte: soonThreshold },
-    };
+    return byEnd("expiring_soon", { gt: now, lte: soonThreshold });
   }
   if (status === "expired") {
-    return {
-      status: { not: "CANCELLED" },
-      schedulingPeriodEndsAt: { lte: now },
-    };
+    return byEnd("expired", { lte: now });
   }
   if (status === "cancelled") {
     return { status: "CANCELLED" };
@@ -67,11 +134,10 @@ export async function GET(req: NextRequest) {
 
     const now = new Date();
     const soonThreshold = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    const subscriptionFilter = buildSubscriptionFilter(
-      status,
-      now,
-      soonThreshold,
-    );
+    const nullEnds = await nullEndBuckets(now, soonThreshold);
+    const filterFor = (s: string | null) =>
+      buildSubscriptionFilter(s, now, soonThreshold, nullEnds);
+    const subscriptionFilter = filterFor(status);
 
     const where: Prisma.PaymentWhereInput = {
       appointment: {
@@ -103,6 +169,17 @@ export async function GET(req: NextRequest) {
         appointmentType: "SUBSCRIPTION" as const,
       },
     };
+
+    const countIn = (bucket: PlanEndBucket) =>
+      prisma.payment.count({
+        where: {
+          ...baseWhere,
+          appointment: {
+            appointmentType: "SUBSCRIPTION",
+            subscription: filterFor(bucket),
+          },
+        },
+      });
 
     const [subscriptions, total, activeCount, expiringCount, expiredCount] =
       await Promise.all([
@@ -146,42 +223,9 @@ export async function GET(req: NextRequest) {
             paymentStatus: "SUCCEEDED",
           },
         }),
-        prisma.payment.count({
-          where: {
-            ...baseWhere,
-            appointment: {
-              appointmentType: "SUBSCRIPTION",
-              subscription: {
-                status: { not: "CANCELLED" },
-                schedulingPeriodEndsAt: { gt: soonThreshold },
-              },
-            },
-          },
-        }),
-        prisma.payment.count({
-          where: {
-            ...baseWhere,
-            appointment: {
-              appointmentType: "SUBSCRIPTION",
-              subscription: {
-                status: { not: "CANCELLED" },
-                schedulingPeriodEndsAt: { gt: now, lte: soonThreshold },
-              },
-            },
-          },
-        }),
-        prisma.payment.count({
-          where: {
-            ...baseWhere,
-            appointment: {
-              appointmentType: "SUBSCRIPTION",
-              subscription: {
-                status: { not: "CANCELLED" },
-                schedulingPeriodEndsAt: { lte: now },
-              },
-            },
-          },
-        }),
+        countIn("active"),
+        countIn("expiring_soon"),
+        countIn("expired"),
       ]);
 
     const formattedSubscriptions = subscriptions.map((s) => {
@@ -198,10 +242,11 @@ export async function GET(req: NextRequest) {
           o.completionStatus !== "CANCELLED",
       ).length;
       const sessionsScheduled = occurrences.length;
-      const sessionsTotal =
-        subscription?.sessionsTotal ?? plan?.totalSessions ?? 0;
+      const sessionsTotal = subscription
+        ? (schedulableSessionsOf(subscription) ?? 0)
+        : (plan?.totalSessions ?? 0);
 
-      const endDate = subscription?.schedulingPeriodEndsAt;
+      const endDate = subscription ? subscriptionPlanEnd(subscription) : null;
       const isCancelled = subscription?.status === "CANCELLED";
       const isActive = Boolean(
         !isCancelled && endDate && new Date(endDate) > now,
@@ -226,13 +271,14 @@ export async function GET(req: NextRequest) {
         consultantEmail: consultantUser?.email ?? null,
         planTitle: plan?.title ?? "Subscription Plan",
         durationInMonths: plan?.durationInMonths ?? 1,
-        sessionsPerWeek: plan?.sessionsPerWeek ?? 1,
+        sessionsPerWeek:
+          subscription?.sessionsPerWeek ?? plan?.sessionsPerWeek ?? 1,
         sessionsTotal,
         sessionsCompleted,
         sessionsUpcoming,
         sessionsScheduled,
         startDate: subscription?.schedulingPeriodStartsAt,
-        endDate: subscription?.schedulingPeriodEndsAt,
+        endDate,
         subscriptionStatus: subscription?.status,
         status: deriveSubscriptionDisplayStatus(
           isCancelled,

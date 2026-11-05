@@ -90,7 +90,7 @@ flowchart LR
 | **Payment**              | Consultee completes payment in the gateway's UI (Razorpay modal or Stripe form). This happens entirely on the client side.                                                                                               | None (gateway-side only)                                                                                                           | Payment gateway client-side SDK                      |
 | **Webhook Confirms**     | Gateway sends a webhook. The handler runs in two phases: Phase 1 (transaction) marks payment SUCCEEDED and confirms slots; Phase 2 (post-transaction) creates earnings, invoice, and sends notifications.                | Updates: Payment status to SUCCEEDED, AppointmentOccurrence.isTentative to false, event record status. Creates: Earnings, Invoice. | `lib/payments/webhooks/handlers.ts`                  |
 | **Session**              | Consultant and consultee meet for the scheduled session(s).                                                                                                                                                              | None (managed by video/meeting integration)                                                                                        | External integrations                                |
-| **Auto-Complete**        | Cron job runs hourly. Marks sessions as COMPLETED one hour after their end time. For trials, also creates an ActivityLog entry and sets completedAt.                                                                     | Updates: event record status to COMPLETED                                                                                          | `scripts/appointments/auto-complete-appointments.ts` |
+| **Auto-Complete**        | Cron job runs hourly. Marks sessions as COMPLETED one hour after their end time. For trials, also sets completedAt.                                                                                                      | Updates: event record status to COMPLETED                                                                                          | `scripts/appointments/auto-complete-appointments.ts` |
 
 ---
 
@@ -198,7 +198,7 @@ Every approval of a REQUEST-mode consultation or subscription from the UI — "U
 
 #### While the approval waits for payment (#1775)
 
-An approved request that nobody has paid for gives the consultant two actions on its detail page. **Remind** re-sends the approval's own pay-link email with the existing `pendingPaymentUrl` and the open order's amount and expiry; nothing is minted, and the route (`POST /api/bookings/{consultations,subscriptions}/[id]/remind`) is limited to one call per 24 hours per appointment, measured from the last manual reminder's own outbox row (the Upstash window reports its reset on the UTC day bucket, so it is only the same-second burst guard underneath), answering `429 REMIND_RATE_LIMITED` with `nextAllowedAt` = the last send plus 24 hours when the window has not passed and `409 NOT_AWAITING_PAYMENT` when there is no live PENDING order to remind about. The manual reminder's outbox row carries its own email type (`PAYMENT_LINK_MANUAL_REMINDER`), so the sweep's automatic half-window reminder (`PAYMENT_LINK_REMINDER`) and a manual one never dedupe each other in either direction. **Withdraw approval** (`POST …/[id]/withdraw-approval`) runs the shared lapse core (`lib/booking/lapse-approved-request.ts`, the same per-row body the 7-day sweep uses) under the appointment lock in one Serializable transaction: the request moves `APPROVED_PENDING_PAYMENT → EXPIRED` by a CAS whose WHERE also carries the money predicate, the open PENDING order is tombstoned to `EXPIRED` by status (a Razorpay order cannot be voided, so the row is the tombstone), the tentative holds are released by status, and the consultee is told after the commit. Both race orders are safe. A capture that wins first has already flipped the request through the single writer, so the withdraw's CAS matches zero rows and the route answers `409 REQUEST_CHANGED_ELSEWHERE` with nothing written. A capture that lands after the withdraw meets the `EXPIRED` Payment row and takes the webhook handler's `captured_after_release` arm, which claims the row as `SUCCEEDED` and refunds through the booking front door, so the late payment refunds itself. Separately, both detail PATCH routes now refuse an approval status from a user who is both the consultant and the consultee of the same request (`403 SELF_APPROVAL`) unless privileged; the participant check alone let a dual-profile user approve their own booking.
+An approved request that nobody has paid for gives the consultant two actions on its detail page. **Remind** re-sends the approval's own pay-link email with the existing `pendingPaymentUrl` and the open order's amount and expiry; nothing is minted, and the route (`POST /api/bookings/{consultations,subscriptions}/[id]/remind`) is limited to one call per 24 hours per appointment, measured from the last manual reminder's own outbox row (the Upstash window reports its reset on the UTC day bucket, so it is only the same-second burst guard underneath), answering `429 REMIND_RATE_LIMITED` with `nextAllowedAt` = the last send plus 24 hours when the window has not passed and `409 NOT_AWAITING_PAYMENT` ("There is no open payment link to remind about. It may have expired or already been paid.") when the request fails the inbox's reminder predicate, `liveReminderPayment`: no link, no appointment, no consultee email, or no newest PENDING order whose `expiresAt` is still ahead. The manual reminder's outbox row carries its own email type (`PAYMENT_LINK_MANUAL_REMINDER`), so the sweep's automatic half-window reminder (`PAYMENT_LINK_REMINDER`) and a manual one never dedupe each other in either direction. **Withdraw approval** (`POST …/[id]/withdraw-approval`) runs the shared lapse core (`lib/booking/lapse-approved-request.ts`, the same per-row body the 7-day sweep uses) under the appointment lock in one Serializable transaction: the request moves `APPROVED_PENDING_PAYMENT → EXPIRED` by a CAS whose WHERE also carries the money predicate, the open PENDING order is tombstoned to `EXPIRED` by status (a Razorpay order cannot be voided, so the row is the tombstone), the tentative holds are released by status, and the consultee is told after the commit. Both race orders are safe. A capture that wins first has already flipped the request through the single writer, so the withdraw's CAS matches zero rows and the route answers `409 REQUEST_CHANGED_ELSEWHERE` with nothing written. A capture that lands after the withdraw meets the `EXPIRED` Payment row and takes the webhook handler's `captured_after_release` arm, which claims the row as `SUCCEEDED` and refunds through the booking front door, so the late payment refunds itself. Separately, both detail PATCH routes now refuse an approval status from a user who is both the consultant and the consultee of the same request (`403 SELF_APPROVAL`) unless privileged; the participant check alone let a dual-profile user approve their own booking.
 
 #### When the time someone wants is held (#1778)
 
@@ -655,7 +655,7 @@ A free trial bypasses the checkout and payment pipeline entirely, and a paid tri
 1. The consultee requests a trial (creates a PENDING Trial record)
 2. The consultant approves and schedules a specific time slot (PENDING --> SCHEDULED)
 3. The session takes place
-4. The cron auto-completes it (SCHEDULED --> COMPLETED, sets `completedAt`, creates ActivityLog)
+4. The cron auto-completes it (SCHEDULED --> COMPLETED, sets `completedAt`)
 5. Optionally, the consultee later purchases a subscription, and the trial is marked CONVERTED
 
 #### Sequence Diagram
@@ -681,7 +681,6 @@ sequenceDiagram
 
     CRON->>DB: Find SCHEDULED trials where slot ended > 1hr ago
     CRON->>DB: UPDATE Trial status = COMPLETED, completedAt = now()
-    CRON->>DB: CREATE ActivityLog (activityType=TRIAL_COMPLETED)
     CRON->>CE: Novu: trial-session-completed
     CRON->>CT: Novu: trial-session-completed
 
@@ -700,15 +699,13 @@ The `completeTrials()` function in the auto-complete cron does more than other e
 1. Finds SCHEDULED trials where all slots ended > 1 hour ago
 2. Updates status to COMPLETED
 3. Sets `completedAt` timestamp (used for analytics -- how long ago did the trial complete?)
-4. Creates an `ActivityLog` entry with type `TRIAL_COMPLETED` (used for the consultant's activity feed)
 
-No other event type creates an ActivityLog entry during auto-completion. The reason trials are special is that the conversion funnel tracking depends on knowing exactly when the trial completed.
+Trials get this treatment because the conversion funnel tracking depends on knowing exactly when the trial completed. The `ActivityLog` model and its writers, which once fed a per-consultant activity feed, are removed from the code because nothing read them, and the table is dropped once that release is on production ([retention decision](../decisions/2026-11-01-data-retention-windows.md)); the booking's transitions are recorded in `BookingStatusHistory`.
 
 #### Source References
 
 - `completeTrials()`: `scripts/appointments/auto-complete-appointments.ts`
 - Trial conversion in subscription checkout: `linkCompletedTrialToSubscription()` in `lib/payments/checkout/handlers/subscription.ts`
-- ActivityLog creation: `scripts/appointments/auto-complete-appointments.ts`
 
 ---
 
@@ -860,7 +857,7 @@ The inbox has three type tabs (Consultations, Subscriptions, Trials), a chip row
 
 Every word a row shows about a booking comes from `deriveBookingPresentation` in `lib/dashboard/money-state.ts`: the state badge, the money line and the next action are the derivation's, and the inbox carries no status switch of its own. The only label the derivation cannot supply is the badge for a finished cycle with sessions left, which the inbox's label map names "Next cycle open". A subscription row reads its entitlement words ("Schedule the next 2 · 4 of 24 booked"), never a bare slot count.
 
-Each row has one primary action, mirroring the detail page's needs-you callout. A requested row offers Approve, which opens the existing requested-times dialog when the consultee's held times cover what the plan needs (or answers an open consultee proposal through the respond endpoint) and otherwise links to the allocate page; Decline sits in the row's secondary menu behind a confirmation. Rows whose approval needs no dialog can be selected and batch-approved: the bar approves them one after another through the same allocate PATCH a single approval uses, because each call takes its own lock and mints its own pay order, and a 409 is reported and never retried. An awaiting-payment row offers Remind as its primary action and Withdraw approval as its secondary one; both call routes that the sibling PR-B ships under a fixed contract (`POST /api/bookings/{consultations|subscriptions}/[id]/remind` answering `200 { nextAllowedAt }` or `429 { code: "REMIND_RATE_LIMITED", nextAllowedAt }`, and `POST …/[id]/withdraw-approval` answering `200 { status: "EXPIRED" }` or `409 { code: "REQUEST_CHANGED_ELSEWHERE" }`), and the row renders "Remind sent · next in N h" from `nextAllowedAt`. A next-cycle row offers Allocate, linking to the allocate page. A 409 from any write keeps the row, shows "This request changed elsewhere — refreshed" and refetches in place.
+Each row has one primary action, mirroring the detail page's needs-you callout. A requested row offers Approve, which opens the existing requested-times dialog when the consultee's held times cover what the plan needs (or answers an open consultee proposal through the respond endpoint) and otherwise links to the allocate page; Decline sits in the row's secondary menu behind a confirmation. Rows whose approval needs no dialog can be selected and batch-approved: the bar approves them one after another through the same allocate PATCH a single approval uses, because each call takes its own lock and mints its own pay order, and a 409 is reported and never retried. An awaiting-payment row offers Remind as its primary action only while there is a live pay order to resend, and Withdraw approval as its secondary one in every case. The inbox read and the remind route share one predicate, `liveReminderPayment` (`lib/booking/payment-reminder-eligibility.ts`): the request is `APPROVED_PENDING_PAYMENT`, carries a `pendingPaymentUrl`, has an appointment and a consultee email, and its newest PENDING payment has an `expiresAt` still in the future. An older live order never stands in for an expired newest one. The read ships only that order's expiry (`reminderExpiresAt`), never the link or the email, and the row re-renders at that instant so Remind leaves an inbox that stays open; a reminder attempt refetches the inbox whatever its answer. Both actions call routes that the sibling PR-B ships under a fixed contract (`POST /api/bookings/{consultations|subscriptions}/[id]/remind` answering `200 { nextAllowedAt }` or `429 { code: "REMIND_RATE_LIMITED", nextAllowedAt }`, and `POST …/[id]/withdraw-approval` answering `200 { status: "EXPIRED" }` or `409 { code: "REQUEST_CHANGED_ELSEWHERE" }`), and the row renders "Remind sent · next in N h" from `nextAllowedAt`. A next-cycle row offers Allocate, linking to the allocate page. A 409 from any write keeps the row, shows "This request changed elsewhere — refreshed" and refetches in place.
 
 Trials fold into the inbox as a type tab. A pending trial's primary action is "Pick a time", which opens the schedule dialog lifted out of the old Trials tab (`TrialAcceptDialog`), and Decline is its secondary action; a paid trial awaiting payment shows only its countdown, because no reminder route exists for trials yet. Scheduled trials stay on the Appointments page, where the former Trial requests tab now points at the inbox. Home's "Pending requests" card is the first five rows of the same read, and Home's pending, awaiting-payment and next-cycle counts read the same `needs-you.ts` predicates the inbox reads, so the two surfaces cannot disagree about a number.
 
@@ -949,7 +946,7 @@ stateDiagram-v2
     PENDING --> REJECTED: Consultant declines the trial request
     PENDING --> CANCELLED: Consultee withdraws their request
 
-    SCHEDULED --> COMPLETED: Cron runs after session ended + 1hr buffer (sets completedAt, creates ActivityLog)
+    SCHEDULED --> COMPLETED: Cron runs after session ended + 1hr buffer (sets completedAt)
     SCHEDULED --> CANCELLED: Either party cancels before session
 
     COMPLETED --> CONVERTED: Consultee purchases subscription from same consultant
@@ -1202,13 +1199,13 @@ Background jobs run on schedules via GitHub Actions and are also exposed as API 
 
 The auto-complete cron (`autoCompleteAppointments()`) runs five separate queries, one for each event type:
 
-| Function                  | Finds                                                                                          | Transition          | Extra Actions                                               |
-| ------------------------- | ---------------------------------------------------------------------------------------------- | ------------------- | ----------------------------------------------------------- |
-| `completeWebinars()`      | SCHEDULED or IN_PROGRESS webinars where every slot's endsAt < bufferTime                       | Status -> COMPLETED | None                                                        |
-| `completeClasses()`       | SCHEDULED or IN_PROGRESS classes where every appointment's every slot's endsAt < bufferTime    | Status -> COMPLETED | None                                                        |
-| `completeConsultations()` | APPROVED or SCHEDULED consultations where every slot's endsAt < bufferTime                     | status -> COMPLETED | None                                                        |
-| `completeSubscriptions()` | APPROVED or SCHEDULED subscriptions where every appointment's every slot's endsAt < bufferTime | status -> COMPLETED | None                                                        |
-| `completeTrials()`        | SCHEDULED trials where every slot's endsAt < bufferTime                                        | status -> COMPLETED | Sets `completedAt`, creates `ActivityLog` (TRIAL_COMPLETED) |
+| Function                  | Finds                                                                                          | Transition          | Extra Actions      |
+| ------------------------- | ---------------------------------------------------------------------------------------------- | ------------------- | ------------------ |
+| `completeWebinars()`      | SCHEDULED or IN_PROGRESS webinars where every slot's endsAt < bufferTime                       | Status -> COMPLETED | None               |
+| `completeClasses()`       | SCHEDULED or IN_PROGRESS classes where every appointment's every slot's endsAt < bufferTime    | Status -> COMPLETED | None               |
+| `completeConsultations()` | APPROVED or SCHEDULED consultations where every slot's endsAt < bufferTime                     | status -> COMPLETED | None               |
+| `completeSubscriptions()` | APPROVED or SCHEDULED subscriptions where every appointment's every slot's endsAt < bufferTime | status -> COMPLETED | None               |
+| `completeTrials()`        | SCHEDULED trials where every slot's endsAt < bufferTime                                        | status -> COMPLETED | Sets `completedAt` |
 
 **Buffer time**: 1 hour. The reason for the buffer is to give participants time for post-session activities (filling feedback forms, downloading materials) before the system considers the session complete. The `COMPLETION_BUFFER_HOURS` constant is defined at the top of the auto-complete script.
 

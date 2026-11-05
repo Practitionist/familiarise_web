@@ -5,30 +5,17 @@ import { TAppointment } from "@/types/appointment";
  * Types for the consultant dashboard API response
  * Matches the API in /api/dashboard/consultant/[consultantId]/route.ts
  *
- * Naming convention: T prefix for types (e.g., TConsultantActivity)
+ * Naming convention: T prefix for types (e.g., TConsultantOrgSession)
  */
 
-// Activity type for recent client activities
-// Matches the API response from /api/dashboard/consultant/[consultantId]/route.ts
-interface TConsultantActivity {
-  id: string;
-  type: string;
-  description: string;
-  actorId: string;
-  actorName: string;
-  actorImage: string | null;
-  metadata: Record<string, unknown> | null;
-  createdAt: string;
-  timeAgo: string;
-}
-
-// Approval type for pending consultation/subscription requests
-interface TConsultantApproval {
-  id: string;
-  name: string;
-  type: string;
-  date: string;
-  time: string;
+export interface TConsultantClientBooking {
+  occurrenceId: string;
+  appointmentId: string;
+  startsAt: Date | string;
+  endsAt: Date | string | null;
+  expertName: string;
+  /** The session on the consultant's learner dashboard; null without a learner profile. */
+  href: string | null;
 }
 
 export interface TConsultantOrgSession {
@@ -47,72 +34,27 @@ export interface TConsultantOrgSession {
   } | null;
 }
 
-// Performance snapshot for consultant dashboard KPIs
+/** The published ratings Home's This month card shows. */
 export interface TPerformanceSnapshot {
-  /** Earnings this month in paise (divide by 100 for INR) */
-  earningsThisMonth: number;
-  /** Earnings last month in paise (divide by 100 for INR) */
-  earningsLastMonth: number;
-  earningsTrend: number;
-  /** Session completion rate (last 30 days). null when no data. */
-  completionRate: number | null;
-  averageRating: number;
-  totalReviews: number;
-  publishedRatingOneToOne?: number | null;
-  publishedRatingGroup?: number | null;
-  ratedClientsOneToOne?: number;
-  ratedEventsGroup?: number;
-  /** Trial conversion rate (last 90 days). null when no data. */
-  trialConversionRate: number | null;
+  publishedRatingOneToOne: number | null;
+  publishedRatingGroup: number | null;
+  ratedClientsOneToOne: number;
+  ratedEventsGroup: number;
 }
 
-// Financial summary for consultant dashboard home
+/** Home shows the Earnings page's "Available" tile: READY + BATCHED, net of refunds, in paise. */
 export interface TFinancialSummary {
-  /** Net earnings in paise (divide by 100 for INR) */
-  netEarnings: number;
-  /** Next payout amount in paise (divide by 100 for INR) — READY-only, the
-   *  payout-eligibility value (excludes BATCHED, which is already committed
-   *  to a payout run). */
-  nextPayout: number;
-  /**
-   * #1527 review — the Earnings page's "Available" tile (READY + BATCHED,
-   * net of refunds); `nextPayout` alone under-reports it for anyone with a
-   * payout batch in flight.
-   */
   availableEarnings: number;
-  payoutStatus: string;
-  activeClients: number;
-  activePrograms: number;
 }
 
-/** #1766 — an APPROVED subscription whose live cycle is done with entitlement left. */
-export interface TConsultantNextCycle {
-  subscriptionId: string;
-  consulteeName: string;
-  planTitle: string;
-  nextBatch: number;
-  held: number;
-  total: number;
-  windowStart: Date;
-  windowEnd: Date;
-  /** The existing allocate route for this request. */
-  href: string;
-}
-
-// Full API response type for consultant dashboard
+/** Exactly what the consultant Home renders; nothing else is read. */
 export interface TConsultantDashboardResponse {
   appointments: TAppointment[];
-  activities: TConsultantActivity[];
-  approvals: TConsultantApproval[];
-  /** Total pending requests — `approvals` is a capped preview, so don't count it. */
-  pendingRequestsCount: number;
-  /** Approved-but-unpaid requests: total plus the newest three. #1703 */
-  awaitingPayment: { count: number; items: TConsultantApproval[] };
-  /** Next org-funded sessions to deliver, metadata only (ADR 20). #1703 */
+  /** Next org-hosted sessions to deliver, metadata only. */
   orgSessions: TConsultantOrgSession[];
-  /** Subscriptions whose next cycle is waiting to be scheduled. #1766 */
-  nextCycles: TConsultantNextCycle[];
-  /** Share of requests answered within a day over the last 30 days. #1703 */
+  /** Next sessions this consultant booked as a client; read-only busy time. */
+  clientBookings?: TConsultantClientBooking[];
+  /** Share of requests answered within a day over the last 30 days. */
   responseRate: {
     withinTarget: number;
     total: number;
@@ -120,10 +62,10 @@ export interface TConsultantDashboardResponse {
   };
   performanceSnapshot: TPerformanceSnapshot;
   financialSummary: TFinancialSummary;
-  /** #1675 PR-Y2 — earnings exist and the payout account is what stops them. */
+  /** Earnings exist and the payout account is what stops them. */
   payoutSetup?: { needed: boolean; href: string; livePayoutsEnabled: boolean };
-  /** #1527 — Home's Needs you strip; absent when its read failed. */
+  /** Home's Needs you strip, the requests count included; absent when its read failed. */
   needsYou?: ConsultantNeedsYou;
-  /** #1527 — Home's This month card and milestone line. */
+  /** Home's This month card and milestone line. */
   sessionsDelivered?: { thisMonth: number; lifetime: number };
 }

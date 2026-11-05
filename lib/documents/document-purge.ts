@@ -6,7 +6,7 @@
  */
 import type { DocumentRemovalReason, Prisma } from "@prisma/client";
 
-import prisma, { type Db } from "@/lib/prisma";
+import prisma, { type Db, type PrismaLike } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 // The marker-free leaf module, so this job can run from a bare Node process.
 import { deleteAppointmentDocument } from "@/lib/supabase-storage-core";
@@ -38,6 +38,10 @@ export interface PurgeDeletedDocumentsResult {
   failedRows: number;
   byReason: Partial<Record<ReasonKey, number>>;
   remaining: number;
+}
+
+function retentionCutoff(now: Date): Date {
+  return new Date(now.getTime() - DOCUMENT_RETENTION_DAYS * DAY_MS);
 }
 
 /** Bookings that may be past retention; the pure date rule makes the final call. */
@@ -74,7 +78,7 @@ async function tombstoneExpiredBookings(
   now: Date,
   options: PurgeOptions,
 ): Promise<{ tombstoned: number; failed: number }> {
-  const cutoff = new Date(now.getTime() - DOCUMENT_RETENTION_DAYS * DAY_MS);
+  const cutoff = retentionCutoff(now);
   // The caller's limit budgets rows to purge; each due booking here costs a
   // lock and a write, so cap this arm at the same number. Counting only due
   // bookings keeps a run with few expiries from spending its whole budget on
@@ -143,7 +147,7 @@ interface PurgeCounts {
 }
 
 export interface PurgeOptions {
-  /** Stop after this many rows have been purged. */
+  /** Stop after this many rows have been attempted, purged or failed. */
   limit?: number;
 }
 
@@ -163,6 +167,15 @@ function purgeableWhere(
       },
     ],
   };
+}
+
+function siblingsOnPath(
+  db: Pick<Db, "appointmentDocument">,
+  doc: { id: string; storagePath: string },
+): Promise<number> {
+  return db.appointmentDocument.count({
+    where: { storagePath: doc.storagePath, id: { not: doc.id } },
+  });
 }
 
 /**
@@ -189,10 +202,10 @@ export async function purgeTombstonedDocuments(
   const attempted = new Set<string>();
 
   for (let batch = 0; batch < MAX_BATCHES_PER_RUN; batch += 1) {
-    if (counts.purged >= limit) break;
+    if (attempted.size >= limit) break;
     const take = Math.min(
       BATCH_SIZE,
-      Number.isFinite(limit) ? Math.max(1, limit - counts.purged) : BATCH_SIZE,
+      Number.isFinite(limit) ? limit - attempted.size : BATCH_SIZE,
     );
     const candidates = await db.appointmentDocument.findMany({
       where: {
@@ -213,10 +226,14 @@ export async function purgeTombstonedDocuments(
     if (candidates.length === 0) break;
 
     for (const doc of candidates) {
-      if (counts.purged >= limit) break;
+      if (attempted.size >= limit) break;
       attempted.add(doc.id);
+      // Only live rows are unique on a path; a sibling row still owns the object.
+      const shared =
+        !doc.isStorageMissing && (await siblingsOnPath(db, doc)) > 0;
       const storageCleared =
         doc.isStorageMissing ||
+        shared ||
         (await deleteAppointmentDocument(doc.storagePath).catch(() => false));
       if (!storageCleared) {
         counts.failedStorage += 1;
@@ -230,6 +247,15 @@ export async function purgeTombstonedDocuments(
       } catch (error) {
         console.error(`[purge-deleted-documents] row ${doc.id}:`, error);
         counts.failedRows += 1;
+        continue;
+      }
+      // A concurrent purge may have removed the sibling meanwhile; the last row out deletes the object.
+      if (
+        shared &&
+        (await siblingsOnPath(db, doc)) === 0 &&
+        !(await deleteAppointmentDocument(doc.storagePath).catch(() => false))
+      ) {
+        counts.failedStorage += 1;
       }
     }
     if (candidates.length < take) break;
@@ -240,17 +266,43 @@ export async function purgeTombstonedDocuments(
   return counts;
 }
 
+/** Tombstones past the delete grace window. */
+function graceExpiredWhere(now: Date): Prisma.AppointmentDocumentWhereInput {
+  return {
+    deletedAt: {
+      lt: new Date(now.getTime() - DOCUMENT_DELETE_GRACE_DAYS * DAY_MS),
+    },
+  };
+}
+
+/** Ticker idle probe: a retention candidate booking or a purgeable tombstone past grace. */
+export async function hasDocumentPurgeWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const booking = await db.appointment.findFirst({
+    where: retentionCandidateWhere(retentionCutoff(now)),
+    select: { id: true },
+  });
+  if (booking) return true;
+  if (outOfTime()) return true;
+  const doc = await db.appointmentDocument.findFirst({
+    where: purgeableWhere(graceExpiredWhere(now)),
+    select: { id: true },
+  });
+  return doc !== null;
+}
+
 async function purgeDeletedDocumentsUnlocked(
   now: Date,
   options: PurgeOptions,
 ): Promise<PurgeDeletedDocumentsResult> {
   const { tombstoned, failed: failedTombstones } =
     await tombstoneExpiredBookings(now, options);
-  const graceCutoff = new Date(
-    now.getTime() - DOCUMENT_DELETE_GRACE_DAYS * DAY_MS,
-  );
   const counts = await purgeTombstonedDocuments(
-    { deletedAt: { lt: graceCutoff } },
+    graceExpiredWhere(now),
     prisma,
     options,
   );

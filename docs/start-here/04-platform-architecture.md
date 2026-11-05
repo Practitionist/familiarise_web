@@ -64,14 +64,9 @@ A scheduled job in this repository is a single function in a single domain modul
 
 Adding a parallel `route.ts` plus a `jobs/` wrapper plus a `scripts/` wrapper for the same job is explicitly banned, because in practice those three copies drift apart and only one of them gets updated.
 
-There are exactly two schedulers, and every job is reached by at least one of them:
+There is exactly one scheduler, and every job is reached by it: `netlify/functions/cron-tick.mts` runs every five minutes and dispatches all 77 targets, from the **latency-sensitive recovery sweeps** (every 5 to 15 minutes) to the **daily, weekly and statutory batch work** (a window inside which a target fires on its slot). No GitHub Actions workflow schedules a registry job, so a job that is missing from the ticker runs nowhere. The ticker dispatches at most 12 targets per tick and the busiest tick has 11. Overlapping runs of the same job are safe because of the shared Postgres lease: whichever runner loses answers 409.
 
-- `netlify/functions/cron-tick.mts` runs every five minutes and drives the **latency-sensitive recovery sweeps**. It currently dispatches 28 targets.
-- The GitHub Actions cron workflows (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`) drive the **daily, weekly and statutory batch work**, where a delay of an hour or more is harmless.
-
-Most jobs sit on exactly one. A handful are deliberately on both — `alert-orphaned-payments` is a ticker target _and_ a daily Actions step, which buys fast recovery plus an unbounded safety net — and the shared Postgres lease makes the overlap safe: whichever runner loses answers 409.
-
-There is no silent gap: a test, `__tests__/maintenance/cleanup-job-scheduler-drift.test.ts`, fails the build if a registered job has no scheduler at all.
+There is no silent gap: a test, `__tests__/maintenance/cleanup-job-scheduler-drift.test.ts`, fails the build if a registered job has no ticker target and no explicit manual-only entry.
 
 ### 4. Status transitions are compare-and-set, never read-then-write
 
@@ -131,14 +126,13 @@ The rule that follows from this shape is written into the repository's own agent
 
 ## How scheduled work runs
 
-Fifty-seven jobs are registered in `lib/cron/cleanup-registry.ts`. Each entry declares a slug, the cron job name, a lazy import of its core module, and an optional summariser. The registry is the only place a job is defined, and it is read by tests that check the job holds a lock and has a scheduler.
+Seventy-six jobs are registered in `lib/cron/cleanup-registry.ts`. Each entry declares a slug, the cron job name, a lazy import of its core module, and an optional summariser. The registry is the only place a job is defined, and it is read by tests that check the job holds a lock and has a scheduler.
 
 The dispatch path is:
 
 ```mermaid
 flowchart LR
-    S1["Netlify ticker<br/>every 5 min · 28 targets"] --> R
-    S2["GitHub Actions<br/>daily / weekly / statutory"] --> R
+    S1["Netlify ticker<br/>every 5 min · 77 targets"] --> R
     R["app/api/cleanup/[job]/route.ts<br/>CRON_SECRET"] --> G["assertNotInMaintenance(job)"]
     G --> L["withCronLock(jobName, failMode)"]
     L --> C["core module<br/>the only implementation"]
@@ -228,6 +222,6 @@ Related issues: the infrastructure and maintenance audit tracked as issue 2157, 
 
 **A keep-warm pinger for the ticker.** Added to fight cold starts, then deleted once `preloadEntriesOnStart: false` and `appDocumentPreloading: false` in `next.config.mjs` brought cold starts down to about one second. `__tests__/lib/next-config-preload.test.ts` actively asserts the file stays deleted.
 
-**A third scheduler layer.** The `jobs/` directory contains bare Node entrypoints that GitHub Actions invokes directly; these are runtime shims for jobs that have no HTTP twin, not a separate implementation layer. Where both exist, the registry is authoritative.
+**A third scheduler layer.** The `jobs/` directory once held bare Node entrypoints that GitHub Actions invoked directly. Those wrappers are deleted; the modules left under `jobs/` are core implementations that the registry imports, and the ticker is the only scheduler.
 
 **Named constraint drift.** Earlier agent instructions cited a constraint called `slot_no_confirmed_overlap`. No such object exists; the real name is `occurrence_no_confirmed_overlap` in `prisma/sql/check-constraints.sql`. If you find a name in prose that does not grep in the sidecars, assume the prose is wrong and verify before building on it.

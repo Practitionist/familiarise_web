@@ -21,14 +21,14 @@
  * Schedule: Runs hourly via GitHub Actions
  */
 
-import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
+import { AWAITING_HUMAN, EARNINGS_HOLDING_MISS } from "@/lib/booking/misses";
 import {
   EarningStatus,
   OccurrenceCompletionStatus,
   Prisma,
   RefundStatus,
 } from "@prisma/client";
-import prisma from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
@@ -91,9 +91,13 @@ export const UNDELIVERED_OCCURRENCE = {
  * #1569 D10 — NO_UNSETTLED_MISS rides the same payment filter: a booking owing
  * a make-up or a refund for a host-cancelled or voided session, or holding a
  * session parked for ops, keeps its earning PENDING (a hold, not a clawback).
+ * A subscription's misses do not hold it (`EARNINGS_HOLDING_MISS`).
  */
 export const RELEASABLE_PAYMENT = {
   refunds: { none: { status: RefundStatus.PENDING, deletedAt: null } },
+  // A refund some door still owes (retrying, or spent and waiting on support)
+  // holds every earning on the payment until the marker clears.
+  refundOwedKey: null,
   NOT: {
     appointment: {
       occurrences: { some: UNDELIVERED_OCCURRENCE },
@@ -104,7 +108,7 @@ export const RELEASABLE_PAYMENT = {
     {
       appointment: {
         AND: [
-          { occurrences: { none: UNSETTLED_MISS } },
+          { occurrences: { none: EARNINGS_HOLDING_MISS } },
           { occurrences: { none: AWAITING_HUMAN } },
         ],
       },
@@ -120,6 +124,48 @@ const NO_OPEN_REFUND: Prisma.ConsultantEarningsWhereInput = {
 const NO_OPEN_REFUND_ORG: Prisma.OrganizationEarningsWhereInput = {
   payment: RELEASABLE_PAYMENT,
 };
+
+/** Consultant earnings past their hold; shared with the ticker's idle probe. */
+function releasableEarningsWhere(
+  now: Date,
+): Prisma.ConsultantEarningsWhereInput {
+  return {
+    status: EarningStatus.PENDING,
+    holdUntil: { lte: now },
+    ...NO_OPEN_REFUND,
+  };
+}
+
+/** Host-organisation earnings past their hold; shared with the ticker's idle probe. */
+function releasableOrgEarningsWhere(
+  now: Date,
+): Prisma.OrganizationEarningsWhereInput {
+  return {
+    status: EarningStatus.PENDING,
+    holdUntil: { lte: now },
+    ...NO_OPEN_REFUND_ORG,
+  };
+}
+
+/** True when either earnings table holds a row the run would release. */
+export async function hasReleasableEarningsWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const consultant = await db.consultantEarnings.findFirst({
+    where: releasableEarningsWhere(now),
+    select: { id: true },
+  });
+  if (consultant) return true;
+  if (outOfTime()) return true;
+  const org = await db.organizationEarnings.findFirst({
+    where: releasableOrgEarningsWhere(now),
+    select: { id: true },
+  });
+  return org !== null;
+}
 
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
@@ -162,11 +208,7 @@ async function releaseEarningsFromHoldUnlocked(
     const { earningsToRelease, releasedCount } = await prisma.$transaction(
       async (tx) => {
         const rows = await tx.consultantEarnings.findMany({
-          where: {
-            status: EarningStatus.PENDING,
-            holdUntil: { lte: now },
-            ...NO_OPEN_REFUND,
-          },
+          where: releasableEarningsWhere(now),
           include: {
             consultantProfile: {
               include: {
@@ -218,11 +260,7 @@ async function releaseEarningsFromHoldUnlocked(
       await prisma.$transaction(
         async (tx) => {
           const rows = await tx.organizationEarnings.findMany({
-            where: {
-              status: EarningStatus.PENDING,
-              holdUntil: { lte: now },
-              ...NO_OPEN_REFUND_ORG,
-            },
+            where: releasableOrgEarningsWhere(now),
             select: {
               id: true,
               orgSharePaise: true,

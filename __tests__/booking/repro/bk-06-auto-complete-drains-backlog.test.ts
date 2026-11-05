@@ -24,6 +24,7 @@ jest.mock("../../../lib/cron/with-cron-lock", () => ({
 jest.mock("../../../lib/booking/session-outcome-sweep", () => ({
   __esModule: true,
   OUTCOME_SLOT_SELECT: {},
+  createStreamWitnessBudget: () => ({ remaining: 100, failures: 0 }),
   readOutageWindows: async () => [],
   alertStaleNeedsHuman: async () => undefined,
   decideSlotOutcome: async (slot: Slot) => {

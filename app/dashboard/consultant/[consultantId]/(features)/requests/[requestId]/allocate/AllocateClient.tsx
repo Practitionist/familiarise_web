@@ -6,7 +6,6 @@ import {
   allocatePolicy,
   type TimePickerSubject,
 } from "@/components/scheduling/time-picker-policy";
-import { toast } from "@/components/ui/use-toast";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 
 /**
@@ -17,12 +16,15 @@ import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-overrid
  */
 export function AllocateClient({
   subject,
+  settled,
   backHref,
   title,
   pinnedAt,
   viewerZone,
 }: Readonly<{
   subject: TimePickerSubject;
+  /** Paid (or free): decides the lead time a placed session needs. */
+  settled: boolean;
   backHref: string;
   title: string;
   /** Open the grid on this instant instead of the resolved focus (#1703 F5). */
@@ -39,22 +41,16 @@ export function AllocateClient({
     router.refresh();
   };
 
-  const policy = allocatePolicy({
-    onSubmit: () => {
-      toast({
-        title: "Schedule confirmed",
-        description: "All session times have been scheduled.",
-      });
-      goBack();
+  // The grid's hook already announced the outcome (full, partial or saved
+  // times), so these only navigate.
+  const policy = allocatePolicy(
+    {
+      onSubmit: goBack,
+      // Allocated elsewhere, or no longer allocatable: the list is the answer.
+      onConflict: goBack,
     },
-    // 409: another session allocated this request first. The hook already
-    // toasted allocatedElsewhere() — this only navigates (a second toast
-    // here double-announced it). The list IS the answer — the row will
-    // simply be gone.
-    onConflict: () => {
-      goBack();
-    },
-  });
+    { settled },
+  );
 
   return (
     <TimePicker
@@ -64,6 +60,8 @@ export function AllocateClient({
       focusAt={pinnedAt ?? undefined}
       viewerZone={viewerZone}
       onCancel={goBack}
+      // Only the request's tentative count moved: reload it and stay here.
+      onRequestRefresh={router.refresh}
       // The legend lives between the grid and the action footer here: the
       // footer is always on screen, and the top space goes to the heatmap.
       legendPosition="bottom"

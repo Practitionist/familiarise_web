@@ -20,9 +20,9 @@
  *
  * Retention: `auditRetainedUntil` = grant + 7y, restarted to
  * withdrawal + 7y when the user withdraws, per DPDP Rules (Nov 2025). A
- * weekly sweeper (jobs/compliance/consent-retention-sweeper) reports rows
- * past that date and only deletes them when DPDP_SWEEPER_DELETE is set —
- * this endpoint does NOT delete.
+ * weekly ticker sweep (`consent-retention-sweeper`) counts rows
+ * past that date and deletes only when run with delete enabled — this
+ * endpoint does NOT delete.
  */
 
 import * as Sentry from "@sentry/nextjs";

@@ -14,15 +14,28 @@
 import "./setup";
 
 // Mock prisma (relative path required — @/ aliases fail in jest.mock)
+// The in-transaction availability re-read has its own suite; these isolate the allocator.
+jest.mock("../../lib/booking/allocation/coverage", () => ({
+  assertSlotsStillPublished: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    // The allocator counts what the event already holds to record how it was scheduled.
+    appointmentOccurrence: { count: jest.fn().mockResolvedValue(0) },
+    // The allocator's slot batch reads co-host seats and an expert consultee's own profile.
+    consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
+    collaborator: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn(),
     consultation: { findUnique: jest.fn() },
     subscription: { findUnique: jest.fn() },
     webinar: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
-    appointment: { findMany: jest.fn(), findUnique: jest.fn() },
+    appointment: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+    },
     rescheduleRequest: { findFirst: jest.fn() },
   },
   ALLOCATION_TX_MAX_WAIT_MS: 8000,
@@ -31,6 +44,10 @@ jest.mock("../../lib/prisma", () => ({
 
 // Mock appointmentlock to avoid the @upstash/redis ESM import under Jest.
 jest.mock("../../utils/appointmentlock", () => ({
+  // allocate() takes an existing booking's appointment lock first.
+  withAppointmentLock: (_id: string, fn: (lock: unknown) => unknown) =>
+    fn({ key: "appointment-lock" }),
+  renewAppointmentLock: async () => true,
   lockAutoAllocate: jest
     .fn()
     .mockResolvedValue({ key: "mock-key", value: "mock-value" }),
@@ -39,6 +56,9 @@ jest.mock("../../utils/appointmentlock", () => ({
     .fn()
     .mockResolvedValue({ key: "mock-consultee-key", value: "mock-value" }),
   unlockConsulteeBooking: jest.fn().mockResolvedValue(undefined),
+  tryLockSlotBatch: jest.fn().mockResolvedValue({ ok: true, grant: [] }),
+  extendSlotInterval: jest.fn().mockResolvedValue(true),
+  unlockSlotInterval: jest.fn().mockResolvedValue(undefined),
 }));
 
 // Slot discovery stays REAL — the weekly-cap seeding and the booked-slot set
@@ -60,6 +80,7 @@ import prisma from "@/lib/prisma";
 import { attemptTrigger, notifyAppointmentBooked } from "@/lib/novu";
 import { allocate } from "@/lib/booking/allocation";
 import { ScheduleType, DayOfWeek } from "@prisma/client";
+import { SOLD_TERMS_DEFAULTS } from "../fixtures/booking.mockData";
 
 /** One 09:00–11:00 UTC window on `day`; the 1/day cap makes it one session. */
 function morningOn(day: DayOfWeek) {
@@ -129,6 +150,7 @@ function makeSubscription(
   return {
     id: "sub-topup",
     sessionsTotal: 4,
+    ...SOLD_TERMS_DEFAULTS,
     schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
     schedulingPeriodEndsAt: new Date("2025-01-12T23:59:59Z"),
     schedulingTimezone: "UTC",

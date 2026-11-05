@@ -35,6 +35,10 @@
  * a select allow-list that stops at id and name (#946 — no email, ever).
  */
 
+import {
+  SCHEDULE_REASON_COPY,
+  parseScheduleReason,
+} from "@/lib/booking/allocation/schedule-choice";
 import type {
   BookingHistoryEntity,
   RescheduleInitiatorRole,
@@ -83,8 +87,6 @@ export interface BookingTimelineEntry {
   createdAt: string;
   /** Reschedule rows only — how many concrete times the proposal named. */
   proposedSlotCount?: number;
-  /** Reschedule rows only — always 1 now that the counter-round is gone. */
-  round?: number;
   /** Reschedule rows only — which side raised it. */
   initiatorRole?: RescheduleInitiatorRole;
   /** Reschedule rows only — null while the proposal is still open. */
@@ -152,7 +154,6 @@ export async function getBookingTimeline(
         select: {
           id: true,
           status: true,
-          round: true,
           reason: true,
           initiatorRole: true,
           createdAt: true,
@@ -236,7 +237,8 @@ export async function getBookingTimeline(
       entityId: row.entityId,
       from: row.fromStatus,
       to: row.toStatus,
-      reason: row.reason,
+      // A scheduling token reads as words; any other reason is already copy.
+      reason: scheduleReasonCopy(row.reason),
       actor: row.actorUser
         ? { id: row.actorUser.id, name: row.actorUser.name }
         : null,
@@ -257,7 +259,6 @@ export async function getBookingTimeline(
         : null,
       createdAt: request.createdAt.toISOString(),
       proposedSlotCount: request._count.proposedTimes,
-      round: request.round,
       initiatorRole: request.initiatorRole,
       resolvedAt: request.resolvedAt ? request.resolvedAt.toISOString() : null,
     }));
@@ -277,4 +278,9 @@ export async function getBookingTimeline(
     entries: merged.slice(0, TIMELINE_LIMIT),
     truncated,
   };
+}
+
+function scheduleReasonCopy(reason: string | null): string | null {
+  const token = parseScheduleReason(reason);
+  return token ? SCHEDULE_REASON_COPY[token] : reason;
 }

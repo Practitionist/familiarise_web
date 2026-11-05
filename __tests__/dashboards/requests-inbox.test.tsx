@@ -95,7 +95,7 @@ describe("Requests inbox anatomy (A-4)", () => {
     );
     expect(html).toContain("Requested");
     expect(html).toContain("Awaiting payment");
-    expect(html).toContain("Schedule the next 2 · 4 of 24 booked");
+    expect(html).toContain("Schedule the next 1 · 4 of 24 booked");
     expect(html).not.toMatch(/\d+ slots/);
     // QA #1783 case 2 — every row carries a money line with an amount.
     const moneyLines = [
@@ -112,6 +112,7 @@ describe("Requests inbox anatomy (A-4)", () => {
       return rowActions(
         row,
         deriveBookingPresentation(row.presentation, "CONSULTANT", { now: NOW }),
+        NOW,
       );
     };
     expect(actionsOf("s-awaiting")).toEqual({
@@ -134,9 +135,20 @@ describe("Requests inbox anatomy (A-4)", () => {
     expect(html).toContain(">Approve<");
   });
 
-  it("the approve toast follows the allocate response's awaitingPayment flag", () => {
+  it("the approve toast follows the allocate response's awaitingPayment flag and names the real pay deadline", () => {
+    // A window clamped to 15 minutes before a session, not a flat 24 h.
+    expect(
+      approvedToast(
+        {
+          awaitingPayment: true,
+          payExpiresAt: new Date("2026-09-24T08:45:00.000Z"),
+        },
+        { zone: "Asia/Kolkata" },
+      ),
+    ).toBe("Approved — the learner has until Thu, 24 Sept, 2:15 pm to pay");
+    // No deadline on the response (a link already live): no number invented.
     expect(approvedToast({ awaitingPayment: true })).toBe(
-      "Approved — the learner has 24 h to pay",
+      "Approved — waiting for the learner to pay",
     );
     // Absent or false → today's behaviour.
     expect(approvedToast({})).toBe("Approved");

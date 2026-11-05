@@ -13,7 +13,7 @@ export const CP = "cp-1";
 
 const profile = (id: string, name: string) => ({
   id,
-  user: { id: `u-${id}`, name, image: null },
+  user: { id: `u-${id}`, name, image: null, email: `${id}@example.test` },
 });
 const consultant = profile("cp-1", "Asha Rao");
 
@@ -63,9 +63,10 @@ function wrapper(
   };
 }
 
-const pendingConsultation = {
+export const pendingConsultation = {
   id: "c-pending",
   status: "PENDING",
+  pendingPaymentUrl: null,
   requestedAt: hoursAgo(30),
   bookingSource: "REQUEST_SUBMITTED",
   requestNotes: "Career switch",
@@ -113,14 +114,16 @@ const subscriptionBase = {
   schedulingPeriodEndsAt: hoursAhead(24 * 60),
   schedulingTimezone: "Asia/Kolkata",
   sessionsTotal: 24,
+  sessionsRefunded: 0,
   subscriptionPlan,
   requestedBy: profile("ce-2", "Rahul Sen"),
 };
 
-const awaitingSubscription = {
+export const awaitingSubscription = {
   ...subscriptionBase,
   id: "s-awaiting",
   status: "APPROVED_PENDING_PAYMENT",
+  pendingPaymentUrl: "https://pay.example.test/subscription",
   requestedAt: hoursAgo(5),
   appointment: wrapper("a-s1", {
     occurrences: [
@@ -203,16 +206,68 @@ const awaitingTrial = {
   }),
 };
 
-type Where = { status?: string | { in?: string[] } };
-const statusMatches = (row: { status: string }, where: Where) => {
+type Where = {
+  status?: string | { in?: string[] };
+  bookingSource?: unknown;
+  appointment?: {
+    payment?: {
+      some?: { paymentStatus?: string };
+      none?: { paymentStatus?: string };
+    };
+  };
+  AND?: Where[];
+  OR?: Where[];
+};
+type Row = {
+  status: string;
+  bookingSource?: string | null;
+  appointment?: { payment?: { paymentStatus: string }[] } | null;
+};
+const statusMatches = (row: Row, where: Where): boolean => {
+  const none = where.appointment?.payment?.none?.paymentStatus;
+  if (
+    none &&
+    (row.appointment?.payment ?? []).some((p) => p.paymentStatus === none)
+  ) {
+    return false;
+  }
   const s = where.status;
-  if (s === undefined) return true;
-  if (typeof s === "string") return row.status === s;
-  return (s.in ?? []).includes(row.status);
+  if (typeof s === "string" && row.status !== s) return false;
+  if (s && typeof s === "object" && !(s.in ?? []).includes(row.status)) {
+    return false;
+  }
+  if (
+    typeof where.bookingSource === "string" &&
+    row.bookingSource !== where.bookingSource
+  ) {
+    return false;
+  }
+  if (!(where.AND ?? []).every((part) => statusMatches(row, part))) {
+    return false;
+  }
+  // OR arms the fake understands: a bookingSource exclusion or a payment
+  // status on the wrapper; any other arm counts as a match.
+  return !where.OR || where.OR.some((part) => orArmMatches(row, part));
+};
+const orArmMatches = (row: Row, arm: Where): boolean => {
+  const source = arm.bookingSource;
+  if (source && typeof source === "object" && "not" in source) {
+    return row.bookingSource !== source.not;
+  }
+  const some = arm.appointment?.payment?.some?.paymentStatus;
+  if (some) {
+    return (row.appointment?.payment ?? []).some(
+      (p) => p.paymentStatus === some,
+    );
+  }
+  return true;
 };
 
-/** A tiny fake DB: every read honours `where.status`, nothing else. */
-export function serve<T extends { status: string }>(rows: T[]) {
+/**
+ * A tiny fake DB: every read honours `status` and an exact `bookingSource`,
+ * at the top level or inside `AND`, nothing else.
+ */
+export function serve<T extends Row>(rows: T[]) {
   return {
     findMany: async ({ where }: { where: Where }) =>
       rows.filter((r) => statusMatches(r, where)),
@@ -240,4 +295,51 @@ export function serveInboxFixture(prisma: {
   prisma.trial.findMany.mockImplementation(t.findMany);
   prisma.trial.count.mockImplementation(t.count);
   prisma.membership.findMany.mockResolvedValue([]);
+}
+
+/**
+ * A paid 1:1 a reschedule put back to PENDING: its one session released, and
+ * the proposal open (who asked, and whether they named times, vary by case).
+ */
+export function movingConsultation(
+  initiatorRole: "CONSULTEE" | "CONSULTANT",
+  withTimes: boolean,
+) {
+  const appointment = wrapper("a-m", {
+    occurrences: [
+      {
+        startsAt: hoursAhead(72),
+        isTentative: true,
+        completionStatus: "RESCHEDULED",
+      },
+    ],
+    payment: [{ status: "SUCCEEDED", amount: 150000, expiresAt: null }],
+  });
+  return {
+    ...pendingConsultation,
+    id: "c-moving",
+    requestedAt: hoursAgo(1),
+    appointment: {
+      ...appointment,
+      rescheduleRequests: [
+        {
+          id: "rr-1",
+          status: "PENDING_REVIEW",
+          reason: null,
+          expiresAt: hoursAhead(20),
+          initiatorRole,
+          preferredTimeOfDay: null,
+          preferredDays: null,
+          proposedTimes: withTimes
+            ? [
+                {
+                  startsAt: hoursAhead(96),
+                  endsAt: hoursAhead(96.5),
+                },
+              ]
+            : [],
+        },
+      ],
+    },
+  };
 }

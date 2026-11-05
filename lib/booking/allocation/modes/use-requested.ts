@@ -17,17 +17,30 @@ import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleVal
 import {
   lockAutoAllocate,
   unlockAutoAllocate,
+  ALLOCATOR_LOCK_RETRY_CONFIG,
   lockConsulteeBooking,
   unlockConsulteeBooking,
+  unlockSlotInterval,
+  type SlotBatchGrant,
   type ApprovalLock,
 } from "@/utils/appointmentlock";
-import { isUniqueViolation } from "@/lib/db/pg-errors";
+import {
+  allocationBatchProfiles,
+  lockPickedSlots,
+  renewAllocationBatch,
+} from "@/lib/booking/allocation/slot-batch";
 import {
   AllocationValidationError,
   AllocationNotFoundError,
   AllocationConflictError,
 } from "@/utils/scheduling-engine/errors";
 import { stageAllocationNotices } from "@/lib/booking/allocation/notify";
+import { leadMsFor } from "@/lib/booking/lead-time";
+import { checkoutInProgressError } from "@/lib/booking/request-cohort";
+import {
+  slotTakenRefusal,
+  validationRefusal,
+} from "@/lib/booking/allocation/refusal-copy";
 import {
   getConsulteeUserId,
   getEventRelationField,
@@ -40,6 +53,7 @@ import {
 import {
   isCarriedTentativeOccurrence,
   tentativeSlotCountOf,
+  isVoidRequestRow,
 } from "@/lib/booking/allocation/counts";
 import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
 import {
@@ -85,7 +99,7 @@ export async function useRequestedSlots(
   // slots; reject upfront before touching idempotency or locks.
   if (eventType === "webinar" || eventType === "class") {
     throw new AllocationValidationError(
-      `Requested-slot allocation is not supported for ${eventType} events; only consultations and subscriptions have consultee-requested slots.`,
+      "Only consultations and plans have times requested by the client. Pick the times instead.",
       "INVALID_MODE",
     );
   }
@@ -108,11 +122,6 @@ export async function useRequestedSlots(
     throw new AllocationNotFoundError(`${eventType} not found`);
   }
   const lock = await lockAutoAllocate(consultantProfileId);
-  if (!lock) {
-    throw new AllocationConflictError(
-      "Another allocation is in progress for this consultant. Please try again.",
-    );
-  }
 
   // #898 follow-up — serialize on the consultee too. The GiST overlap guard
   // is consultant-keyed, so it cannot see a cross-consultant double-booking,
@@ -121,11 +130,16 @@ export async function useRequestedSlots(
   // consultant both pass their conflict validation under Read Committed and
   // both commit. Lock order matches the other two paths: consultant → consultee.
   let consulteeLock: ApprovalLock | null = null;
+  let slotGrant: SlotBatchGrant | null = null;
 
   try {
     const consulteeLockUserId = await getConsulteeUserId(eventType, eventId);
     if (consulteeLockUserId) {
-      consulteeLock = await lockConsulteeBooking(consulteeLockUserId);
+      consulteeLock = await lockConsulteeBooking(
+        consulteeLockUserId,
+        undefined,
+        ALLOCATOR_LOCK_RETRY_CONFIG,
+      );
     }
 
     // #837 TOCTOU — same re-check the auto/manual paths do: the pre-lock
@@ -149,8 +163,16 @@ export async function useRequestedSlots(
       throw new AllocationNotFoundError(`${eventType} not found`);
     }
 
-    const { consultant, config, requestedSlots, consulteeUserId, planId } =
-      eventData;
+    const {
+      consultant,
+      config,
+      requestedSlots,
+      consulteeUserId,
+      planId,
+      settled,
+    } = eventData;
+    if (eventData.checkoutInProgress) throw checkoutInProgressError();
+    const leadTimeMs = leadMsFor("allocate", { settled });
 
     if (!requestedSlots || requestedSlots.length === 0) {
       throw new AllocationValidationError("No requested slots found");
@@ -176,9 +198,7 @@ export async function useRequestedSlots(
 
     if (existingAppointments.length === 0) {
       throw new AllocationValidationError(
-        "Cannot approve requested slots: No appointments found. " +
-          "The consultee may not have created appointments yet, or they were deleted. " +
-          "Please ask the consultee to resubmit their request.",
+        "This request has no requested times left. Ask the client to send the request again, or pick the times yourself.",
       );
     }
 
@@ -194,9 +214,9 @@ export async function useRequestedSlots(
 
     if (rescheduledSlots.length > 0) {
       throw new AllocationValidationError(
-        `Cannot reuse requested times: ${rescheduledSlots.length} slot(s) are awaiting reschedule, ` +
-          `so the stored times are the ones being moved away from. ` +
-          `Allocate new times instead.`,
+        "Some of these sessions are being moved, so their stored times are the ones being given up. Pick new times instead.",
+        "VALIDATION_ERROR",
+        { releasedRows: rescheduledSlots.length },
       );
     }
 
@@ -215,18 +235,17 @@ export async function useRequestedSlots(
     const existingAtomCount = existingAppointments.reduce(
       (sum, appointment) =>
         sum +
-        appointment.occurrences.reduce(
-          (atoms, slot) => atoms + intervalCountOf(slot),
-          0,
-        ),
+        appointment.occurrences
+          .filter((slot) => !isVoidRequestRow(slot))
+          .reduce((atoms, slot) => atoms + intervalCountOf(slot), 0),
       0,
     );
 
     if (existingAtomCount !== requestedSlots.length) {
       throw new AllocationValidationError(
-        `Appointment mismatch: the existing appointments cover ${existingAtomCount} ` +
-          `half-hour atoms but ${requestedSlots.length} were requested. ` +
-          `The appointments may have been modified. Please review and try again.`,
+        "The requested times changed since this page loaded. Reload and try again.",
+        "VALIDATION_ERROR",
+        { heldAtoms: existingAtomCount, requestedAtoms: requestedSlots.length },
       );
     }
 
@@ -246,23 +265,38 @@ export async function useRequestedSlots(
         overrideAvailabilityWindow,
         // Co-host arm: the consultant's own ACCEPTED seats occupy too.
         consultantProfileId,
+        leadTimeMs,
       },
     );
 
     if (!validation.isValid) {
-      throw new AllocationValidationError(
-        `Validation failed: ${validation.errors.join("; ")}`,
-      );
+      throw validationRefusal(validation.errors);
     }
 
     // The rows the flip below targets, fingerprinted so the in-txn re-read
     // can prove they are the rows that were validated.
     const validatedOccurrenceIds = existingAppointments
-      .flatMap((appointment) => appointment.occurrences.map((o) => o.id))
+      .flatMap((appointment) =>
+        appointment.occurrences
+          .filter((o) => !isVoidRequestRow(o))
+          .map((o) => o.id),
+      )
       .sort((a, b) => a.localeCompare(b));
+
+    // Lock order: consultant → consultee → slot batch over every busy profile.
+    slotGrant = await lockPickedSlots(
+      requestedSlots,
+      await allocationBatchProfiles({
+        eventType,
+        planId,
+        consultantProfileId,
+        consulteeUserId,
+      }),
+    );
 
     return await prisma.$transaction(
       async (tx) => {
+        await renewAllocationBatch(slotGrant);
         // Multi-tab guard: another tab already confirmed slots for this
         // event → typed 409 instead of re-approving over it. Advisory-locked
         // in-txn so it can't race the manual/auto write transactions; a
@@ -297,7 +331,14 @@ export async function useRequestedSlots(
             },
           },
         });
-        const liveOccurrenceIds = liveRows
+        // Tombstoned and cancelled rows hold no time and are never flipped.
+        const heldRows = liveRows.map((appointment) => ({
+          ...appointment,
+          occurrences: appointment.occurrences.filter(
+            (o) => !isVoidRequestRow(o),
+          ),
+        }));
+        const liveOccurrenceIds = heldRows
           .flatMap((appointment) => appointment.occurrences.map((o) => o.id))
           .sort((a, b) => a.localeCompare(b));
         const liveTentativeCount = liveRows.reduce(
@@ -320,7 +361,7 @@ export async function useRequestedSlots(
         // concurrent tombstone or cancel lands exactly here: the id-set
         // above still matches, so without this gate the approval would
         // succeed while the guarded flip silently skipped the dead row.
-        const flippableCount = liveRows.reduce(
+        const flippableCount = heldRows.reduce(
           (count, appointment) =>
             count +
             appointment.occurrences.filter(
@@ -331,7 +372,7 @@ export async function useRequestedSlots(
             ).length,
           0,
         );
-        const totalCount = liveRows.reduce(
+        const totalCount = heldRows.reduce(
           (count, appointment) => count + appointment.occurrences.length,
           0,
         );
@@ -354,10 +395,7 @@ export async function useRequestedSlots(
           consultantProfileId,
         );
         if (!recheck.isValid) {
-          throw new AllocationConflictError(
-            `Slot taken during allocation: ${recheck.errors.join("; ")}`,
-            "SLOT_TAKEN",
-          );
+          throw slotTakenRefusal(recheck.errors);
         }
 
         // AE-2 (#784) — confirming the consultee's stored times is a time
@@ -380,6 +418,7 @@ export async function useRequestedSlots(
           requestedSlots[0],
           config,
           txOptions.approvableFrom,
+          txOptions.historyReason,
         );
 
         // CRITICAL FIX: Clear isTentative flag on all slots after approval
@@ -417,30 +456,19 @@ export async function useRequestedSlots(
 
         // #837 — stamp the batch's key on the FIRST appointment so a retry
         // replays this approval instead of re-running it (mirrors
-        // createAppointments). The @unique index turns a concurrent
-        // duplicate submit into a typed 409.
+        // createAppointments). A concurrent same-key submit meets the @unique
+        // index; allocate() replays the winner's committed batch.
         if (idempotencyKey) {
-          try {
-            await tx.appointment.update({
-              where: { id: appointmentIds[0] },
-              data: { allocationIdempotencyKey: idempotencyKey },
-            });
-          } catch (err) {
-            // Not captured here — useRequestedSlots only ever runs inside
-            // allocate()'s try, whose catch reports every error reaching it
-            // (including this one, same instance) with the correct modeled
-            // classification. A second capture here would be a pure dupe.
-            if (isUniqueViolation(err)) {
-              // A same-key retry losing this race is the ordinary replay
-              // case (#837).
-              throw new AllocationConflictError(
-                "This allocation was already submitted; the original result applies.",
-              );
-            }
-            throw err;
-          }
+          await tx.appointment.update({
+            where: { id: appointmentIds[0] },
+            data: { allocationIdempotencyKey: idempotencyKey },
+          });
         }
-        await txOptions.inTx?.(tx);
+        await txOptions.inTx?.(tx, {
+          consultantProfileId,
+          freedWindows: [],
+          placed: [],
+        });
 
         return {
           success: true,
@@ -464,6 +492,7 @@ export async function useRequestedSlots(
       },
     );
   } finally {
+    if (slotGrant) await unlockSlotInterval(slotGrant);
     if (consulteeLock) await unlockConsulteeBooking(consulteeLock);
     await unlockAutoAllocate(lock);
   }

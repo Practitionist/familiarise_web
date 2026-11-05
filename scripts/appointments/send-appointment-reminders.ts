@@ -7,15 +7,14 @@
  *
  * This module exports the core function.
  * It is imported by:
- * - jobs/appointments/send-appointment-reminders.ts (GitHub Actions)
- * - app/api/cleanup/appointment-reminders/route.ts (API endpoint)
+ * - lib/cron/cleanup-registry.ts (the /api/cleanup/[job] twin and the ticker)
  *
  * Schedule: Every 15 minutes
  */
 
 import prisma from "../../lib/prisma";
+import type { PrismaLike } from "../../lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
-import redis from "../../lib/redis";
 import {
   notifyAppointmentReminder,
   type TriggerOptions,
@@ -62,23 +61,10 @@ export interface ReminderResult {
 
 const MAX_SESSIONS_PER_WINDOW_PER_RUN = 25;
 
-/** Redis dedupe key for one slot+window. */
-function reminderKey(slotId: string, window: ReminderWindowLabel): string {
-  return `reminder:${slotId}:${window}`;
-}
-
 /** The `FailedEmail.entityRef` the email twin stages under. */
 function reminderEntityRef(appointmentId: string, window: ReminderWindowLabel) {
   return appointmentReminderEntityRef(appointmentId, window);
 }
-
-/** Dedupe TTL extending past the end of the reminder window (+1 min safety margin). */
-function fullDedupeTtlSeconds(window: { maxMs: number }): number {
-  return Math.ceil(window.maxMs / 1000) + 60;
-}
-
-/** Short in-flight claim TTL before full promotion post-send. */
-const IN_FLIGHT_TTL_SECONDS = 300;
 
 const USER_BATCH_SELECT = {
   id: true,
@@ -133,8 +119,9 @@ interface PreloadedWindowContext {
   emailTx?: StagingTx;
 }
 
-/** Slack past one window-width when bounding the staged-reminder read. */
-const STAGED_LOOKBACK_MARGIN_MS = 5 * 60 * 1000;
+/** Slack past one window-width so a late tick does not push already-staged
+ * slots back into the capped cohort; the dedupe read itself is unbounded. */
+const STAGED_LOOKBACK_MARGIN_MS = 20 * 60 * 1000;
 
 /**
  * Slot ids whose reminder for this window is already staged, so the bounded
@@ -172,6 +159,15 @@ async function stagedReminderSlotIds(
   return [...ids];
 }
 
+// Shared by the window read, the run's early return and the ticker's idle probe.
+function reminderWindowWhere(windowStart: Date, windowEnd: Date) {
+  return {
+    startsAt: { gte: windowStart, lte: windowEnd },
+    isTentative: false,
+    completionStatus: "SCHEDULED" as const,
+  };
+}
+
 function queryUpcomingOccurrences(
   windowStart: Date,
   windowEnd: Date,
@@ -181,12 +177,7 @@ function queryUpcomingOccurrences(
   return prisma.appointmentOccurrence.findMany({
     where: {
       ...(stagedSlotIds.length > 0 ? { id: { notIn: stagedSlotIds } } : {}),
-      startsAt: {
-        gte: windowStart,
-        lte: windowEnd,
-      },
-      isTentative: false,
-      completionStatus: "SCHEDULED",
+      ...reminderWindowWhere(windowStart, windowEnd),
     },
     orderBy: { startsAt: "asc" },
     take: maxPerRun,
@@ -614,6 +605,8 @@ async function sendRemindersForWindow(
     legacyReminderEntityRef,
   );
 
+  // The required job lease serializes email staging; staged rows suppress replay
+  // after a completed or interrupted run, and the bell has its own unique outbox key.
   for (const item of preparedSlots) {
     if (
       alreadyStaged.has(reminderEntityRef(item.slotId, window.label)) ||
@@ -626,110 +619,79 @@ async function sendRemindersForWindow(
     }
 
     try {
-      const redisKey = reminderKey(item.slotId, window.label);
-      try {
-        const alreadySent = await redis.set(redisKey, "1", {
-          nx: true,
-          ex: IN_FLIGHT_TTL_SECONDS,
-        });
-        if (!alreadySent) continue;
-      } catch {
-        continue;
+      const formattedPlanTitle = planTitleOrSessionLabel(
+        item.planTitle,
+        item.appointmentType,
+      );
+      const dashboardUrl = notificationHref(
+        item.organizationId,
+        "appointments",
+      );
+      const bellPayload = {
+        ...notificationScope(item.organizationId),
+        appointmentType: item.appointmentType,
+        consultantName: item.consultantName,
+        consulteeName: item.consulteeName,
+        planTitle: formattedPlanTitle,
+        dateTime: item.startsAt.toISOString(),
+        dashboardUrl,
+      };
+
+      if (bellTx) {
+        const bellResults = await notifyAppointmentReminder(
+          item.uniqueUserIds,
+          bellPayload,
+          `${item.slotId}:${window.label}`,
+          { tx: bellTx },
+        );
+        const stagedRows = new Map(
+          bellResults
+            .map((result) => result.staged)
+            .filter((row): row is NonNullable<typeof row> => Boolean(row))
+            .map((row) => [row.id, row] as const),
+        );
+        await Promise.all(
+          [...stagedRows.values()].map((row) => attemptTrigger(row)),
+        );
+      } else {
+        await notifyAppointmentReminder(
+          item.uniqueUserIds,
+          bellPayload,
+          `${item.slotId}:${window.label}`,
+        );
       }
 
-      let claimExtendable = true;
-      try {
-        const formattedPlanTitle = planTitleOrSessionLabel(
-          item.planTitle,
-          item.appointmentType,
+      const emailArgs = {
+        appointmentId: item.appointmentId,
+        occurrenceId: item.slotId,
+        userIds: item.uniqueUserIds,
+        collaboratorUserIds: item.collabIds,
+        windowLabel: window.label,
+        consultantUserId: item.consultantUserId,
+        consultantName: item.consultantName,
+        consulteeName: item.consulteeName,
+        planTitle: formattedPlanTitle,
+        appointmentType: item.appointmentType,
+        startsAt: item.startsAt,
+        dashboardUrl,
+      };
+
+      if (emailTx && reminderSpec) {
+        const staged = await stageSpecGuarded(
+          reminderSpec(emailArgs),
+          item.uniqueUserIds,
+          emailTx,
         );
-        const dashboardUrl = notificationHref(
-          item.organizationId,
-          "appointments",
+        await attemptStaged(
+          staged,
+          APPOINTMENT_REMINDER_EMAIL_TYPE,
+          EMAIL_BUDGET_MS.JOB,
         );
-        const bellPayload = {
-          ...notificationScope(item.organizationId),
-          appointmentType: item.appointmentType,
-          consultantName: item.consultantName,
-          consulteeName: item.consulteeName,
-          planTitle: formattedPlanTitle,
-          dateTime: item.startsAt.toISOString(),
-          dashboardUrl,
-        };
-
-        if (bellTx) {
-          const bellResults = await notifyAppointmentReminder(
-            item.uniqueUserIds,
-            bellPayload,
-            `${item.slotId}:${window.label}`,
-            { tx: bellTx },
-          );
-          const stagedRows = new Map(
-            bellResults
-              .map((result) => result.staged)
-              .filter((row): row is NonNullable<typeof row> => Boolean(row))
-              .map((row) => [row.id, row] as const),
-          );
-          await Promise.all(
-            [...stagedRows.values()].map((row) => attemptTrigger(row)),
-          );
-        } else {
-          await notifyAppointmentReminder(
-            item.uniqueUserIds,
-            bellPayload,
-            `${item.slotId}:${window.label}`,
-          );
-        }
-
-        const emailArgs = {
-          appointmentId: item.appointmentId,
-          occurrenceId: item.slotId,
-          userIds: item.uniqueUserIds,
-          collaboratorUserIds: item.collabIds,
-          windowLabel: window.label,
-          consultantUserId: item.consultantUserId,
-          consultantName: item.consultantName,
-          consulteeName: item.consulteeName,
-          planTitle: formattedPlanTitle,
-          appointmentType: item.appointmentType,
-          startsAt: item.startsAt,
-          dashboardUrl,
-        };
-
-        if (emailTx && reminderSpec) {
-          const staged = await stageSpecGuarded(
-            reminderSpec(emailArgs),
-            item.uniqueUserIds,
-            emailTx,
-          );
-          await attemptStaged(
-            staged,
-            APPOINTMENT_REMINDER_EMAIL_TYPE,
-            EMAIL_BUDGET_MS.JOB,
-          );
-        } else {
-          await sendAppointmentReminderEmail(emailArgs, EMAIL_BUDGET_MS.JOB);
-        }
-
-        sent++;
-      } catch (error) {
-        claimExtendable = false;
-        errors.push(
-          `Failed to send ${window.label} reminder for appointment ${item.appointmentId}: ${error instanceof Error ? error.message : "Unknown error"}`,
-        );
-      } finally {
-        if (claimExtendable) {
-          await redis
-            .set(redisKey, "1", { ex: fullDedupeTtlSeconds(window) })
-            .catch(() => {
-              errors.push(
-                `Could not extend the reminder dedupe for slot ${item.slotId}; the next tick may repeat it`,
-              );
-            });
-        } else {
-          await redis.del(redisKey).catch(() => {});
-        }
+      } else {
+        await sendAppointmentReminderEmail(emailArgs, EMAIL_BUDGET_MS.JOB);
       }
+
+      sent++;
     } catch (error) {
       errors.push(
         `Failed to send ${window.label} reminder for appointment ${item.appointmentId}: ${error instanceof Error ? error.message : "Unknown error"}`,
@@ -776,9 +738,33 @@ export async function sendAppointmentReminders(opts?: {
     opts?.maxPerWindow && opts.maxPerWindow > 0
       ? Math.floor(opts.maxPerWindow)
       : MAX_SESSIONS_PER_WINDOW_PER_RUN;
-  return withCronLock("send-appointment-reminders", { failMode: "open" }, () =>
-    sendAppointmentRemindersUnlocked(maxPerWindow),
+  return withCronLock(
+    "send-appointment-reminders",
+    { failMode: "closed" },
+    () => sendAppointmentRemindersUnlocked(maxPerWindow),
   );
+}
+
+/** One indexed read: is any live session inside either reminder window? */
+export async function hasAppointmentReminderWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  const at = now.getTime();
+  const offsetWindowWhere = (window: { minMs: number; maxMs: number }) =>
+    reminderWindowWhere(
+      new Date(at + window.minMs),
+      new Date(at + window.maxMs),
+    );
+  if (outOfTime()) return true;
+  const found = await db.appointmentOccurrence.findFirst({
+    where: {
+      OR: [offsetWindowWhere(REMINDER_24H), offsetWindowWhere(REMINDER_1H)],
+    },
+    select: { id: true },
+  });
+  return found !== null;
 }
 
 async function sendAppointmentRemindersUnlocked(
@@ -786,6 +772,16 @@ async function sendAppointmentRemindersUnlocked(
 ): Promise<ReminderResult> {
   console.log("🔔 Starting appointment reminders scan...");
   console.log(`   Per-window cap: ${maxPerWindow} slot(s)`);
+
+  if (!(await hasAppointmentReminderWork(prisma, new Date(), () => false))) {
+    return {
+      success: true,
+      reminders24h: 0,
+      reminders1h: 0,
+      errors: [],
+      timestamp: new Date().toISOString(),
+    };
+  }
 
   const [result24h, result1h] = await Promise.all([
     sendRemindersForWindow(REMINDER_24H, maxPerWindow),

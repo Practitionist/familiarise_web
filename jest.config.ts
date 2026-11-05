@@ -6,11 +6,12 @@
 import type { Config } from "jest";
 import nextJest from "next/jest.js";
 
-// The database tier (`jest.db.config.ts`): its suites plus their guard and
-// seed helpers. Only CI's disposable Postgres runs them, so this config skips them.
+// The database tier (`jest.db.config.ts`): its suites plus their guard, seed and
+// harness helpers. Only CI's disposable Postgres runs them, so this config skips them.
 export const DB_TIER_PATTERNS = [
   String.raw`\.db\.test\.ts$`,
   String.raw`/__tests__/db/(guard|seed)\.ts$`,
+  String.raw`/__tests__/db/.*harness[^/]*\.ts$`,
 ];
 
 const createJestConfig = nextJest({
@@ -269,6 +270,8 @@ export default async (): Promise<Config> => {
       "(?:^|/)lib/redis-edge$": "<rootDir>/__mocks__/redis-edge.ts",
       "^\\./redis-edge$": "<rootDir>/__mocks__/redis-edge.ts",
       ...resolved.moduleNameMapper,
+      // Worktrees share dependencies; resolve source aliases in the current checkout.
+      "^@/(.*)$": "<rootDir>/$1",
     },
     transformIgnorePatterns: patterns.map((p) =>
       p.startsWith(NODE_MODULES_LOOKAHEAD)

@@ -12,7 +12,11 @@ import {
 } from "@/app/checkout/components/referral-credits";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutPlanSkeleton } from "@/app/checkout/CheckoutSkeletons";
-import { firstCycleWindow } from "@/lib/booking/entitlement";
+import { firstCycleWindow, lastInstantBefore } from "@/lib/booking/entitlement";
+import {
+  planDurationText,
+  planPriceLabel,
+} from "@/lib/offerings/plan-length-copy";
 import {
   CheckoutInput,
   SubscriptionSearchParams,
@@ -36,17 +40,14 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import {
-  createHandleApiError,
-  createRazorpayCheckoutHandlers,
-  paymentGateways,
-} from "../../utils";
+import { createRazorpayCheckoutHandlers, paymentGateways } from "../../utils";
+import { useHandleApiError } from "../../use-handle-api-error";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import { useReferralPricing } from "../../useReferralPricing";
 import {
-  mintClientIdempotencyKey,
+  useCheckoutAttemptKey,
   busyRetryToast,
   fetchCheckoutWithBusyRetry,
   reportPaymentsError,
@@ -103,8 +104,7 @@ export default function SubscriptionCheckoutPage({
     );
   const [staleError, setStaleError] = useState<string | null>(null);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
-  // #828 — useState's lazy initializer runs once per mount.
-  const [idempotencyKey] = useState(mintClientIdempotencyKey);
+  const attemptKey = useCheckoutAttemptKey();
   const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
@@ -281,7 +281,7 @@ export default function SubscriptionCheckoutPage({
   };
 
   // Create utility functions using the toast instance
-  const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
+  const handleApiError = useHandleApiError(toast);
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   // Common API request logic
@@ -295,12 +295,11 @@ export default function SubscriptionCheckoutPage({
         body: JSON.stringify({
           ...checkoutData,
           isMockPayment,
-          // #828 — stable per-mount; the server dedupes retries on this key.
-          clientIdempotencyKey: idempotencyKey,
+          clientIdempotencyKey: attemptKey(checkoutData),
         }),
       });
     },
-    [idempotencyKey],
+    [attemptKey],
   );
 
   const handleCheckout = useCallback(
@@ -625,7 +624,7 @@ export default function SubscriptionCheckoutPage({
                     <div className="text-muted-foreground">First cycle</div>
                     <div className="text-right text-sm">
                       {firstCycle.start.toLocaleDateString()} →{" "}
-                      {firstCycle.end.toLocaleDateString()} ·{" "}
+                      {lastInstantBefore(firstCycle.end).toLocaleDateString()} ·{" "}
                       {planData?.data?.sessionsPerWeek || 1} session
                       {(planData?.data?.sessionsPerWeek || 1) === 1
                         ? ""
@@ -640,7 +639,7 @@ export default function SubscriptionCheckoutPage({
             )}
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Duration</div>
-              <div>{planData?.data?.durationInMonths || 1} months</div>
+              <div>{planDurationText(planData?.data ?? {})}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Sessions per Week</div>
@@ -800,8 +799,8 @@ export default function SubscriptionCheckoutPage({
           <CardContent className="grid gap-4">
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
-                <div>Monthly Fee</div>
-                <div>{formatPrice(planData?.data?.price || 100)}</div>
+                <div>{planPriceLabel(planData?.data ?? {})}</div>
+                <div>{formatPrice(planData?.data?.price ?? 0)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center">

@@ -7,10 +7,12 @@
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
 import {
   sessionsTotalOf,
+  soldTermsOf,
   subscriptionEntitlement,
   type SubscriptionEntitlement,
 } from "@/lib/booking/entitlement";
 import { isSponsoredPayment } from "./payment-display";
+import { normalizeOccurrences } from "./normalize";
 import { seriesLedgerFrom } from "@/lib/booking/class-series";
 import {
   requestHoldDeadline,
@@ -64,15 +66,14 @@ export function detailEntitlement(
     return null;
   }
   return subscriptionEntitlement({
-    sessionsTotal: sub.sessionsTotal ?? plan.totalSessions,
-    sessionsPerWeek: plan.sessionsPerWeek,
-    durationInMonths: plan.durationInMonths,
-    occurrences: a.occurrences.map((o) => ({
+    ...soldTermsOf({ ...sub, subscriptionPlan: plan }),
+    occurrences: normalizeOccurrences(a.occurrences).map((o) => ({
       ...o,
       endsAt: o.endsAt ?? o.startsAt,
     })),
     schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt ?? now,
     schedulingTimezone: sub.schedulingTimezone ?? "Asia/Kolkata",
+    planEndsAt: sub.planEndsAt ?? null,
     now,
   });
 }
@@ -192,7 +193,7 @@ export function toPresentationInput(
   return {
     appointmentType: a.appointmentType,
     request,
-    occurrences: a.occurrences,
+    occurrences: normalizeOccurrences(a.occurrences),
     payments,
     refunds: a.payment.flatMap((p) => p.refunds),
     disputes: a.payment.flatMap((p) => p.disputes),
@@ -217,7 +218,7 @@ function classSeriesSummary(a: Detail): BookingPresentationInput["series"] {
   if (!a.class || !N) return null;
   const ledger = seriesLedgerFrom({
     N,
-    occurrences: a.occurrences
+    occurrences: normalizeOccurrences(a.occurrences)
       .filter((o) => !o.deletedAt && !o.isTentative)
       .map((o) => ({
         ordinal: o.ordinal,
@@ -240,10 +241,22 @@ function classSeriesSummary(a: Detail): BookingPresentationInput["series"] {
   };
 }
 
-function entitlementSummary(
+/**
+ * The card's entitlement facts. "Not held" is what was never placed or
+ * delivered: a placed session awaiting its outcome is not counted yet.
+ */
+export function entitlementSummary(
   e: SubscriptionEntitlement | null,
+  now = new Date(),
 ): BookingPresentationInput["entitlement"] {
-  return e ? { remaining: e.remaining, nextBatch: e.cycle.nextBatch } : null;
+  return e
+    ? {
+        remaining: e.remaining,
+        nextBatch: e.cycle.nextBatch,
+        notHeld: e.remaining,
+        planEnded: now.getTime() >= e.planEndsAt.getTime(),
+      }
+    : null;
 }
 
 /** Who pays and who delivers, by name; the derivation swaps in "you" per viewer. */

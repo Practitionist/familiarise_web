@@ -13,6 +13,9 @@ import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 
 const HOUR_MS = 60 * 60 * 1000;
 
+/** Better Auth's sliding session length (`session.expiresIn` in lib/auth.ts). */
+export const SESSION_EXPIRES_IN_SECONDS = 30 * 24 * 60 * 60;
+
 /** Enrolled operator: 12 hours from sign-in, however active. */
 export const OPERATOR_SESSION_MAX_AGE_MS = 12 * HOUR_MS;
 /** Operator who has not enrolled 2FA yet: long enough to enrol, no more. */

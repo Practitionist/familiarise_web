@@ -163,6 +163,33 @@ describe("confirming the address", () => {
     expect(stageMock.mock.calls[0][0].text).toContain("Withheld staff reply");
   });
 
+  it("withholds presenter replies while digesting the staff ones", async () => {
+    db.supportCase.findFirst.mockResolvedValue(caseRow);
+    db.supportCaseEvent.findFirst.mockResolvedValue(null);
+    db.supportCaseMessage.findMany.mockResolvedValue([
+      {
+        body: "Withheld staff reply",
+        createdAt: new Date(),
+        metadata: null,
+      },
+      {
+        body: "Presenter-only reply",
+        createdAt: new Date(),
+        metadata: { actorKind: "PRESENTER" },
+      },
+    ]);
+
+    await confirmExternalRequesterEmail({
+      caseId: "case-1",
+      token: externalEmailToken("case-1", "outside@example.com", issuedAt),
+      issuedAt,
+    });
+
+    const digest = stageMock.mock.calls[0][0].text;
+    expect(digest).toContain("Withheld staff reply");
+    expect(digest).not.toContain("Presenter-only reply");
+  });
+
   it("is a no-op for a link already used", async () => {
     db.supportCase.findFirst.mockResolvedValue(caseRow);
     db.supportCaseEvent.findFirst.mockResolvedValue({ id: "verified" });

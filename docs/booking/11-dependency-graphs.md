@@ -281,63 +281,20 @@ sequenceDiagram
 
 ## 5. Maintenance & Cleanup Flow
 
-How the GitHub Actions crons keep the booking subsystem healthy. Every job listed here first calls `abortIfMaintenance()` (`lib/maintenance-cron.ts`), which refuses to run while the platform is in a declared maintenance freeze.
+The active platform ticker dispatches booking recovery through authenticated cleanup handlers and their canonical implementations. Maintenance admission runs at the cleanup boundary; financial classification determines DEGRADED holds, and OFFLINE holds non-exempt cleanup work. Job leases, domain CAS and vendor idempotency protect different failure boundaries.
 
 ```mermaid
 flowchart LR
-  subgraph triggers ["GitHub Actions (Cron Triggers)"]
-    GH1["cleanup-tentative-occurrences.yml\nevery 2 hours at :38"]
-    GH2["auto-complete-appointments.yml\nhourly at :07"]
-    GH3["cleanup-invalid-appointments.yml\nhourly at :12"]
-    GH4["reconcile-occurrence-availability.yml\nhourly at :32"]
-    GH5["expire-stale-requests.yml\nhourly at :10"]
-    GH6["cleanup-stale-pending-consultations.yml\nhourly at :37"]
-    GH7["expire-reschedule-proposals.yml\nhourly at :45"]
-    GH8["expire-unpaid-trials.yml\nhourly at :40"]
-  end
-
-  subgraph jobs ["jobs/**.ts (thin GH Actions wrappers)"]
-    J1["appointments/cleanup-tentative-occurrences.ts"]
-    J2["appointments/auto-complete-appointments.ts"]
-    J3["appointments/cleanup-invalid-appointments.ts"]
-    J4["appointments/reconcile-occurrence-availability.ts"]
-    J5["appointments/expire-stale-requests.ts"]
-    J6["appointments/cleanup-stale-pending-consultations.ts"]
-    J7["appointments/expire-reschedule-proposals.ts"]
-    J8["trials/expire-unpaid-trials.ts"]
-  end
-
-  subgraph scripts ["scripts/**.ts (the actual logic)"]
-    S1["appointments/cleanup-tentative-occurrences.ts"]
-    S2["appointments/auto-complete-appointments.ts"]
-    S3["appointments/cleanup-invalid-appointments.ts"]
-    S4["appointments/reconcile-occurrence-availability.ts"]
-    S5["appointments/expire-stale-requests.ts"]
-    S6["appointments/cleanup-stale-pending-consultations.ts"]
-    S7["appointments/expire-reschedule-proposals.ts"]
-    S8["trials/expire-unpaid-trials.ts"]
-  end
-
-  subgraph cleanup_actions ["What They Do"]
-    A1["Delete stale isTentative slots with no SUCCEEDED payment;\nnever a confirmed or payment-bearing appointment"]
-    A2["transitionOccurrenceCompletion(COMPLETED) for past appointments"]
-    A3["Remove orphaned records with missing FKs"]
-    A4["Detect double-booking / sync slot availability with appointments"]
-    A5["transitionConsultationRequest/transitionSubscriptionRequest(EXPIRED) for stale PENDING"]
-    A6["transitionConsultationRequest(CANCELLED) + transitionOccurrenceCompletion(CANCELLED)\nfor approved consultations with no SUCCEEDED payment after 7 days"]
-    A7["RescheduleRequest -> EXPIRED for proposals nobody answered by their deadline"]
-    A8["Trial -> CANCELLED once paymentDueAt passes, which frees the slot by status alone"]
-  end
-
-  GH1 --> J1 --> S1 --> A1
-  GH2 --> J2 --> S2 --> A2
-  GH3 --> J3 --> S3 --> A3
-  GH4 --> J4 --> S4 --> A4
-  GH5 --> J5 --> S5 --> A5
-  GH6 --> J6 --> S6 --> A6
-  GH7 --> J7 --> S7 --> A7
-  GH8 --> J8 --> S8 --> A8
+  T["Active platform ticker"] --> C["lib/cron/schedule.ts: due slots, limits and windows"]
+  C --> R["Authenticated cleanup registry + maintenance admission"]
+  R --> L["Canonical worker + Postgres job lease"]
+  L --> O["Conditional domain transitions and durable obligations"]
+  O --> V["Provider confirmation or retry"]
 ```
+
+The catalog runs appointment completion and consultant no-show detection every 30 minutes; request expiry, tentative cleanup, reschedule expiry and unpaid-trial expiry have their own configured slots. Exact offsets and request bounds belong to the [generated job inventory](../maintenance/04-cron-jobs-reference.md), not a duplicate list of former Actions workflows. `reconcile-occurrence-availability` is a ticker target like the rest; no Actions workflow schedules it. Legacy cleanup functions are not automatically scheduled just because their files remain.
+
+The completion worker shares the session-outcome verdict with no-show handling. Retention and expiry writers recheck current eligibility; a timeout does not establish process cancellation or completed business effects. Use the [SRE orientation](../start-here/09-infra-and-maintenance-sre-orientation.md) for cross-job races and recovery evidence.
 
 ---
 

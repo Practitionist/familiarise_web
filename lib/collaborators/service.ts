@@ -1,5 +1,11 @@
 import * as Sentry from "@sentry/nextjs";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { OCCUPYING_OCCURRENCE_WHERE } from "@/utils/scheduling-engine/occupancyPolicy";
+import {
+  hostBatchEntries,
+  HostTimeHeldError,
+  withHostSlotBatch,
+} from "@/lib/booking/host-slot-batch";
 import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { Prisma, type CollaboratorRole } from "@prisma/client";
 import type { Collaborator, CollaboratorStatus } from "@prisma/client";
@@ -15,6 +21,8 @@ import {
 } from "@/lib/stream-client";
 import { CALL_MEMBER_ROLE, STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
 import { MAX_CALL_DURATION_MS } from "@/lib/meetings/duration-cap";
+import { enqueueCollaboratorRevocationRetry } from "@/lib/stream/access-revocation";
+import { getPlatformVideoConfig } from "@/lib/stream/video-config";
 import type { RevenueSplit } from "@/types/collaborators";
 import {
   WEBINAR_COLLABORATOR_ROLES,
@@ -278,8 +286,7 @@ async function assertInviteeAvailableForPlanEvents(
 
   const planOccurrences = await db.appointmentOccurrence.findMany({
     where: {
-      deletedAt: null,
-      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED", "VOIDED"] },
+      ...OCCUPYING_OCCURRENCE_WHERE,
       appointment: livePlanAppointmentsWhere(planType, planId),
     },
     select: {
@@ -498,6 +505,7 @@ async function syncOpenCallPresenterRole(
     const appointmentType = planType === "webinar" ? "WEBINAR" : "CLASS";
     const { buildCallSettingsOverride } =
       await import("@/lib/meetings/room-ready");
+    const videoConfig = await getPlatformVideoConfig();
     const video = getStreamVideoClient().video;
 
     const results = await Promise.allSettled(
@@ -510,6 +518,8 @@ async function syncOpenCallPresenterRole(
         const settingsOverride = buildCallSettingsOverride(
           appointmentType,
           maxDurationSeconds,
+          undefined,
+          videoConfig,
         );
         const call = video.call(STREAM_CALL_TYPE, meeting.streamCallId);
         return [
@@ -518,9 +528,7 @@ async function syncOpenCallPresenterRole(
               data: {
                 created_by_id: hostUserId,
                 members: [{ user_id: userId, role: callRole }],
-                ...(settingsOverride
-                  ? { settings_override: settingsOverride }
-                  : {}),
+                settings_override: settingsOverride,
               },
             });
             await call.updateCallMembers({
@@ -622,39 +630,68 @@ export async function respondToInvitation(
   if (!planId || collab.status !== "PENDING") return null;
 
   let acceptedUserId: string | null = null;
-  const updated = await withSerializableRetry(() =>
-    prisma.$transaction(
-      async (tx) => {
-        if (response === "ACCEPTED") {
-          await assertPlanOpen(planType, planId, tx);
-          const invitee = await assertInviteeEligible(consultantProfileId, tx);
-          if (!invitee) return null;
-          await assertNotAttendee(planType, planId, invitee.userId, tx);
-          await assertInviteeAvailableForPlanEvents(
-            planType,
-            planId,
-            consultantProfileId,
-            invitee.userId,
-            tx,
-          );
-          acceptedUserId = invitee.userId;
-        }
+  // Accepting makes the invitee busy at every live session of the plan: hold
+  // those atoms on their calendar across the commit.
+  const acceptWindows =
+    response === "ACCEPTED"
+      ? await prisma.appointmentOccurrence.findMany({
+          where: {
+            ...OCCUPYING_OCCURRENCE_WHERE,
+            appointment: livePlanAppointmentsWhere(planType, planId),
+          },
+          select: { startsAt: true, endsAt: true },
+        })
+      : [];
+  const updated = await withHostSlotBatch(
+    hostBatchEntries([consultantProfileId], acceptWindows),
+    (renewHostBatch) =>
+      withSerializableRetry(() =>
+        prisma.$transaction(
+          async (tx) => {
+            await renewHostBatch();
+            if (response === "ACCEPTED") {
+              await assertPlanOpen(planType, planId, tx);
+              const invitee = await assertInviteeEligible(
+                consultantProfileId,
+                tx,
+              );
+              if (!invitee) return null;
+              await assertNotAttendee(planType, planId, invitee.userId, tx);
+              await assertInviteeAvailableForPlanEvents(
+                planType,
+                planId,
+                consultantProfileId,
+                invitee.userId,
+                tx,
+              );
+              acceptedUserId = invitee.userId;
+            }
 
-        const moved = await tx.collaborator.updateMany({
-          where: { id: collaborationId, status: "PENDING" },
-          data: { status: response, respondedAt: new Date() },
-        });
-        if (moved.count === 0) return null;
-        return tx.collaborator.findUniqueOrThrow({
-          where: { id: collaborationId },
-        });
-      },
-      {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        timeout: 10000,
-      },
-    ),
-  );
+            const moved = await tx.collaborator.updateMany({
+              where: { id: collaborationId, status: "PENDING" },
+              data: { status: response, respondedAt: new Date() },
+            });
+            if (moved.count === 0) return null;
+            return tx.collaborator.findUniqueOrThrow({
+              where: { id: collaborationId },
+            });
+          },
+          {
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+            timeout: 10000,
+          },
+        ),
+      ),
+  ).catch((err: unknown) => {
+    // Only a held atom is transient; a standing conflict keeps its own answer.
+    if (err instanceof HostTimeHeldError) {
+      throw new CollaboratorIneligibleError(
+        "Your calendar is being booked at one of these sessions right now. Try again in a moment.",
+        409,
+      );
+    }
+    throw err;
+  });
   if (!updated) return null;
 
   if (response === "ACCEPTED") {
@@ -960,6 +997,13 @@ export async function removeCollaborator(
         notify: false,
       })
     ).success;
+    if (!accessRevoked) {
+      await enqueueCollaboratorRevocationRetry(
+        planType,
+        planId,
+        profile.userId,
+      );
+    }
   }
 
   if (!withdrawn && profile?.userId) {

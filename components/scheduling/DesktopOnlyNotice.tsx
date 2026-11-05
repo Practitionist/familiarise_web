@@ -23,7 +23,13 @@ import { Monitor } from "lucide-react";
 export function DesktopOnlyNotice({
   children,
   className,
-}: Readonly<{ children: React.ReactNode; className?: string }>) {
+  mobileAction,
+}: Readonly<{
+  children: React.ReactNode;
+  className?: string;
+  /** What a phone can still do here (e.g. auto-schedule), under the notice. */
+  mobileAction?: React.ReactNode;
+}>) {
   const [isDesktop, setIsDesktop] = useState(false);
 
   useEffect(() => {
@@ -33,7 +39,7 @@ export function DesktopOnlyNotice({
     // Latches: once true it never goes back. Unmounting on a shrink would
     // destroy the calendar's own slot selection while TimePicker keeps its
     // copy, so a resize, a split screen or a browser zoom leaves the footer
-    // claiming "N slots selected" over a grid showing none — and submitting
+    // claiming times are picked over a grid showing none — and submitting
     // sends times the user can no longer see. The CSS gate still hides the
     // subtree below `lg`, which is what the notice is actually for; this only
     // decides whether the fetch-on-mount ever happens.
@@ -56,6 +62,7 @@ export function DesktopOnlyNotice({
           Choosing times needs a wider screen than this one. Everything else in
           your dashboard works here.
         </p>
+        {mobileAction}
       </div>
 
       {/* Flex, not block: the calendar sizes itself with `flex-1`, which needs

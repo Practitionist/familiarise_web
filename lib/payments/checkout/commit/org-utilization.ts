@@ -16,6 +16,7 @@ import {
   type PendingOverageNotification,
 } from "@/lib/payments/billing/overage-settlement";
 import type { CheckoutCommitInput } from "@/lib/payments/checkout/commit/types";
+import { recordRelatedPartyBooking } from "@/lib/enterprise/related-party";
 
 export async function recordCheckoutUtilization(
   tx: Tx,
@@ -77,6 +78,22 @@ export async function recordCheckoutUtilization(
         amountPaise: isOrgLicensedPayment ? 0 : amount,
         sourceRef: programAssignmentId,
       },
+    });
+  }
+
+  // Org rails never fund a trial; the guard narrows the plan kind.
+  if (
+    isOrgSponsoredPayment &&
+    organizationId &&
+    validatedData.appointmentType !== "TRIAL"
+  ) {
+    await recordRelatedPartyBooking(tx, {
+      organizationId,
+      planKind: validatedData.appointmentType,
+      planId: validatedData.planId,
+      paymentId: payment.id,
+      appointmentId: createdAppointment?.id ?? null,
+      buyerMembershipId: callerMembershipId ?? null,
     });
   }
 

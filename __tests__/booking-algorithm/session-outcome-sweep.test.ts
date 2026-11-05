@@ -16,13 +16,13 @@ jest.mock("../../lib/novu/stage-bell", () => ({
   stageBell: (...a: unknown[]) => stageBell(...a),
 }));
 const reportStandingFinding = jest.fn(
-  async (_args: unknown, report: () => void) => {
-    report();
+  async (_args: unknown, report?: () => void) => {
+    report?.();
     return true;
   },
 );
 jest.mock("../../lib/observability/standing-finding", () => ({
-  reportStandingFinding: (a: unknown, r: () => void) =>
+  reportStandingFinding: (a: unknown, r?: () => void) =>
     reportStandingFinding(a, r),
 }));
 const reportSentryError = jest.fn();
@@ -57,6 +57,7 @@ jest.mock("../../lib/prisma", () => {
 
 import {
   alertStaleNeedsHuman,
+  createStreamWitnessBudget,
   decideSlotOutcome,
   type OutcomeSlot,
 } from "../../lib/booking/session-outcome-sweep";
@@ -96,6 +97,7 @@ it.each([
     const d = await decideSlotOutcome(slot(hostLeaves), {
       now: at(120),
       outages: [],
+      witness: createStreamWitnessBudget(),
     });
     expect(d).toMatchObject({ kind: "written", to, moved: true });
     expect(transition).toHaveBeenCalledWith(
@@ -116,7 +118,11 @@ it.each([
 ])(
   "host leaves at %i → %i seat write: present learners move CONFIRMED → ATTENDED only on COMPLETED",
   async (hostLeaves, writes) => {
-    await decideSlotOutcome(slot(hostLeaves), { now: at(120), outages: [] });
+    await decideSlotOutcome(slot(hostLeaves), {
+      now: at(120),
+      outages: [],
+      witness: createStreamWitnessBudget(),
+    });
     expect(seatUpdate.mock.calls).toEqual(
       Array.from({ length: writes }, () => [
         {
@@ -150,7 +156,11 @@ it.each([
       subscriptionId: null,
       classId: "cls-1",
     } as OutcomeSlot["appointment"];
-    await decideSlotOutcome(group, { now: at(120), outages: [] });
+    await decideSlotOutcome(group, {
+      now: at(120),
+      outages: [],
+      witness: createStreamWitnessBudget(),
+    });
     // Only the absent seat, keyed like the 1:1 no-show bell.
     expect(stageBell.mock.calls.map((c) => c[1])).toEqual(
       Array.from({ length: bells }, () =>
@@ -164,7 +174,7 @@ it.each([
   },
 );
 
-it("a needs-human item older than 72 h raises one warning keyed on the queued ids", async () => {
+it("a needs-human item older than 72 h records one finding keyed on the queued ids, not a Sentry event", async () => {
   const db = {
     appointmentOccurrence: {
       count: jest.fn(async () => 2),
@@ -174,10 +184,7 @@ it("a needs-human item older than 72 h raises one warning keyed on the queued id
   await alertStaleNeedsHuman(db as never, at(0));
   expect(reportStandingFinding).toHaveBeenCalledWith(
     expect.objectContaining({ ids: ["o1", "o2", "count:2"] }),
-    expect.any(Function),
+    undefined,
   );
-  expect(reportSentryError).toHaveBeenCalledWith(
-    expect.any(Error),
-    expect.objectContaining({ level: "warning", extra: { stale: 2 } }),
-  );
+  expect(reportSentryError).not.toHaveBeenCalled();
 });

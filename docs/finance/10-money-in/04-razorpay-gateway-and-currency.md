@@ -43,7 +43,7 @@ The payment records `buyerCountry` and `isInternational`. These are tax facts, n
 
 A buyer can switch the site to a supported foreign currency. The conversion happens in the browser from INR paise and is shown with a note under the total: "Estimated in USD. You will be charged ₹5,000.00 in INR by the payment gateway; your card issuer's rate applies." (`app/checkout/components/FxEstimateNote.tsx`). Two fields on `Payment` record what the buyer saw for audit: `displayCurrencyAtCheckout`, validated against `SUPPORTED_CURRENCY_CODES` in `lib/currency-codes.ts`, and `exchangeRateAtCheckout`. No stored amount is ever derived from either.
 
-Rates come from ExchangeRate-API's open endpoint, configured by `EXCHANGE_RATE_API_URL` and defaulting to `https://open.er-api.com/v6/latest/INR`. `lib/currency.ts` keeps the last response for one hour in a per-instance variable and never serves one older than 24 hours; after that `getExchangeRates` throws, `/api/currency` answers 500, and the client falls back to INR and rupee symbols so the display degrades together. The CDN is the cache that matters: `/api/currency` sends `Cache-Control: public, s-maxage=3600, stale-while-revalidate=86400` and is limited to thirty requests a minute per IP (`currencyLimiter`), because the provider locks out abusive callers. The provider's licence requires visible attribution wherever its rates appear, which `RATE_PROVIDER_NAME` and `RATE_PROVIDER_URL` supply to every surface.
+Rates come from ExchangeRate-API's open endpoint, fixed in `lib/currency.ts` at `https://open.er-api.com/v6/latest/INR` with no environment override. `lib/currency.ts` keeps the last response for one hour in a per-instance variable and never serves one older than 24 hours; after that `getExchangeRates` throws, `/api/currency` answers 500, and the client falls back to INR and rupee symbols so the display degrades together. The CDN is the cache that matters: `/api/currency` sends `Cache-Control: public, s-maxage=3600, stale-while-revalidate=86400` and is limited to thirty requests a minute per IP (`currencyLimiter`), because the provider locks out abusive callers. The provider's licence requires visible attribution wherever its rates appear, which `RATE_PROVIDER_NAME` and `RATE_PROVIDER_URL` supply to every surface.
 
 ## 4. Environment
 
@@ -62,8 +62,8 @@ Server-side variables are read at runtime. `NEXT_PUBLIC_RAZORPAY_KEY_ID` is inli
 | `RAZORPAYX_EGRESS_PROXY_URL`                | Static-egress proxy; a live RazorpayX key without it makes each payout call refuse (see [RazorpayX](../40-payouts/04-razorpayx.md)). |
 | `ENABLE_LIVE_PAYOUTS`                       | Gates real payout submission and the live-key guard for the payouts client.                                                          |
 | `ENABLE_SAVED_CARDS`, `ENABLE_CHECKOUT_EMI` | Opt-in checkout features (section 5).                                                                                                |
-| `ENABLE_MOCK_PAYMENTS`                      | Allows mock payment helpers outside development; checkout itself honours a mock request only when `NODE_ENV` is `development`.       |
-| `EXCHANGE_RATE_API_URL`                     | Display-currency rate source (section 3).                                                                                            |
+
+Mock payments exist only under `next dev` (`shouldEnableMockPayments` in `lib/payments/operations/mock.ts` checks `NODE_ENV` is `development`); no environment variable enables them elsewhere.
 
 **Test-key guard.** `lib/payments/core/razorpay.ts` runs a check when it loads: a key starting `rzp_test_` with `NODE_ENV=production` throws `RAZORPAY_TEST_KEY_IN_PRODUCTION` (pinned by `__tests__/payments/razorpay-test-key-guard.test.ts`). It is skipped during `next build`, because builds run with `NODE_ENV=production` and legitimately hold test keys, and the override variable downgrades it to an error log while the site runs on test keys before launch. A live RazorpayX key without the egress proxy is reported once per process at load.
 
@@ -96,3 +96,5 @@ Razorpay's fees, settlement cycle and international card availability are commer
 ## Deprecated & Superseded Approaches
 
 Stripe was a live fallback gateway until it was removed in October 2026; its checkout-session code, webhook handler, forex-fee table and `createStripeCheckoutSession` guard call are gone, and the `STRIPE` enum value remains only as a refused label. International buyers were once described as routed to a separate rail at one percent with zero forex markup; that was a different Razorpay product the code never used. A "Future Phases" plan for multi-currency pricing, Wise payouts, EU VAT and Australian GST is not scheduled and is not code. Documents that listed `assertNoTestKeysInLiveProduction` as a function describe a guard that is now a module-load block. Delete any of these if found.
+
+- **`ENABLE_MOCK_PAYMENTS` and `EXCHANGE_RATE_API_URL`**: both env keys were removed. Mock payments follow `NODE_ENV=development` alone, and the rate source is a constant.

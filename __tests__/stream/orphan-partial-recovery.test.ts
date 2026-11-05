@@ -1,168 +1,130 @@
-/**
- * @jest-environment node
- */
-
-/**
- * #1280 — the orphan reconciler could only see a session that received NOTHING.
- *
- * Stream fires `call.recording_ready` once per FILE and splits any session over
- * two hours into separate files, so a three-file session is three deliveries.
- * Lose the second and third and the session has one `Recording` row, fails the
- * `recordings: { none: {} }` candidate filter, and is never examined again — the
- * missing segments are silently gone when Stream deletes them at day fourteen.
- *
- * Not hypothetical: the webhook endpoint rejected every delivery for months
- * because it demanded a secret Stream does not issue, and exactly one Stream
- * event has been received since that was fixed. Partial delivery is the
- * expected shape of recovery here, not an edge case.
- */
-
+/** @jest-environment node */
 const mockFindMany = jest.fn();
-const mockCount = jest.fn();
 const mockSync = jest.fn();
-
+const mockCheckpoint = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     meeting: {
-      findMany: (...a: unknown[]) => mockFindMany(...a),
-      count: (...a: unknown[]) => mockCount(...a),
+      findMany: (...args: unknown[]) => mockFindMany(...args),
+      count: jest.fn().mockResolvedValue(0),
     },
-    $disconnect: jest.fn(),
   },
 }));
-
 jest.mock("../../lib/cron/with-cron-lock", () => ({
-  withCronLock: (_name: string, _opts: unknown, fn: () => unknown) => fn(),
+  withCronLock: (_job: string, _opts: unknown, run: () => unknown) => run(),
+  readJobCheckpoint: () => mockCheckpoint(),
 }));
-
 jest.mock("../../lib/stream-client", () => ({
   isStreamConfigured: () => true,
 }));
-
 jest.mock("../../lib/stream/recording-service", () => ({
   RecordingService: {
-    syncSessionRecordings: (...a: unknown[]) => mockSync(...a),
+    syncSessionRecordings: (...args: unknown[]) => mockSync(...args),
   },
 }));
-
 import { reconcileOrphanedRecordings } from "../../scripts/stream/reconcile-orphaned-recordings";
-
-/** Was this findMany the orphan pass or the partial pass? */
-const isPass = (call: unknown[], key: "none" | "some") =>
-  JSON.stringify((call[0] as { where?: unknown })?.where ?? {}).includes(
-    `"${key}":{}`,
-  );
-
+const session = (id: string, partial = false) => ({
+  id,
+  streamCallId: `call-${id}`,
+  occurrence: { appointment: null },
+  recordings: partial ? [{ id: "existing" }] : [],
+});
 beforeEach(() => {
   jest.clearAllMocks();
-  mockCount.mockResolvedValue(0);
+  mockCheckpoint.mockResolvedValue(null);
+  mockFindMany.mockResolvedValue([]);
   mockSync.mockResolvedValue({ ok: true });
 });
+afterEach(() => jest.restoreAllMocks());
 
-describe("orphan reconciler — partially delivered sessions", () => {
-  it("re-examines sessions that already have a Recording", async () => {
-    mockFindMany.mockImplementation((args: { where?: unknown }) =>
-      Promise.resolve(
-        JSON.stringify(args.where).includes('"some":{}')
-          ? [{ id: "partial-1", streamCallId: "slot-1" }]
-          : [],
-      ),
-    );
-
-    const result = await reconcileOrphanedRecordings();
-
-    const passes = mockFindMany.mock.calls;
-    expect(passes.some((c) => isPass(c, "none"))).toBe(true);
-    // Without the second pass this is false: a session holding one file of
-    // three never appears as a candidate.
-    expect(passes.some((c) => isPass(c, "some"))).toBe(true);
-    expect(result.partialScanned).toBe(1);
-    expect(mockSync).toHaveBeenCalledTimes(1);
+it("takes a snapshot containing both zero-row and partially delivered sessions before recovery", async () => {
+  mockFindMany.mockResolvedValue([session("a"), session("b", true)]);
+  mockSync.mockImplementation(async (_session, recovered) => {
+    recovered.push({ id: "new-segment" });
+    return { ok: true };
   });
-
-  it("counts a recovered segment separately from a wholly-missing session", async () => {
-    mockFindMany.mockImplementation((args: { where?: unknown }) =>
-      Promise.resolve(
-        JSON.stringify(args.where).includes('"some":{}')
-          ? [{ id: "partial-1", streamCallId: "slot-1" }]
-          : [],
-      ),
-    );
-    // syncSessionRecordings pushes newly created rows into the array it is given.
-    mockSync.mockImplementation((_s: unknown, out: unknown[]) => {
-      out.push({ id: "rec-segment-2" });
-      return Promise.resolve({ ok: true });
-    });
-
-    const result = await reconcileOrphanedRecordings();
-
-    // A row created here means a session we believed complete was missing a
-    // file — a different and more alarming signal than one that never arrived.
-    expect(result.partialRecovered).toBe(1);
-    expect(result.recovered).toBe(0);
+  const result = await reconcileOrphanedRecordings();
+  expect(result).toMatchObject({
+    success: true,
+    scanned: 1,
+    recovered: 1,
+    partialScanned: 1,
+    partialRecovered: 1,
+    checkpoint: "b",
   });
-
-  it("spends its budget on wholly-orphaned sessions first", async () => {
-    // The orphan pass fills the entire run budget, so nothing is left over.
-    const many = Array.from({ length: 200 }, (_, i) => ({
-      id: `orphan-${i}`,
-      streamCallId: `slot-${i}`,
-    }));
-    mockFindMany.mockImplementation((args: { where?: unknown }) =>
-      Promise.resolve(
-        JSON.stringify(args.where).includes('"none":{}') ? many : [],
-      ),
-    );
-
-    const result = await reconcileOrphanedRecordings();
-
-    expect(mockFindMany.mock.calls.some((c) => isPass(c, "some"))).toBe(false);
-    expect(result.partialScanned).toBe(0);
+  expect(mockFindMany).toHaveBeenCalledTimes(1);
+  expect(mockFindMany.mock.calls[0][0]).toMatchObject({
+    take: 25,
+    orderBy: { id: "asc" },
+    include: { recordings: { take: 1 } },
   });
+  expect(mockFindMany.mock.calls[0][0].where.recordings).toBeUndefined();
+  expect(mockSync.mock.calls.every((call) => call[2].notify === true)).toBe(
+    true,
+  );
+});
 
-  it("treats a SWALLOWED sync failure as a failure, not as an empty result", async () => {
-    // `syncSessionRecordings` catches Stream and persistence errors internally so
-    // one bad session cannot abort a batch — so it RESOLVES on failure and the
-    // try/catch below almost never fires in production. Reading that as "no
-    // recordings found" is the exact mistake this job exists to catch: an
-    // unreachable Stream would be counted as checked-and-empty, run still green.
-    mockFindMany.mockImplementation((args: { where?: unknown }) =>
-      Promise.resolve(
-        JSON.stringify(args.where).includes('"none":{}')
-          ? [{ id: "orphan-1", streamCallId: "slot-1" }]
-          : [],
-      ),
-    );
-    mockSync.mockResolvedValue({ ok: false, reason: "stream-unreachable" });
-
-    const result = await reconcileOrphanedRecordings();
-
-    expect(result.success).toBe(false);
-    expect(result.errors[0]).toContain("stream-unreachable");
-    // And crucially NOT counted as a session Stream had nothing for.
-    expect(result.stillMissing).toBe(0);
+it("reaches the partial-delivery tail despite a persistent empty-source prefix", async () => {
+  const rows = Array.from({ length: 26 }, (_, i) =>
+    session(String(i).padStart(3, "0"), i === 25),
+  );
+  mockFindMany.mockImplementation(async ({ where, take }) =>
+    rows.filter((r) => !where.id || r.id > where.id.gt).slice(0, take),
+  );
+  const first = await reconcileOrphanedRecordings();
+  mockCheckpoint.mockResolvedValue(first.checkpoint);
+  const second = await reconcileOrphanedRecordings();
+  expect(first).toMatchObject({
+    scanned: 25,
+    stillMissing: 25,
+    hasMore: true,
+    checkpoint: "024",
   });
+  expect(second).toMatchObject({ partialScanned: 1, checkpoint: "025" });
+  expect(mockSync).toHaveBeenCalledTimes(26);
+});
 
-  it("does not let one failing session abort the rest of the pass", async () => {
-    mockFindMany.mockImplementation((args: { where?: unknown }) =>
-      Promise.resolve(
-        JSON.stringify(args.where).includes('"some":{}')
-          ? [
-              { id: "partial-bad", streamCallId: "slot-bad" },
-              { id: "partial-ok", streamCallId: "slot-ok" },
-            ]
-          : [],
-      ),
-    );
-    mockSync.mockImplementationOnce(() =>
-      Promise.reject(new Error("stream 500")),
-    );
-
-    const result = await reconcileOrphanedRecordings();
-
-    expect(mockSync).toHaveBeenCalledTimes(2);
-    expect(result.success).toBe(false);
-    expect(result.errors[0]).toContain("partial session partial-bad");
+it("wraps using an ID bound even if the saved cursor row was deleted", async () => {
+  mockCheckpoint.mockResolvedValue("deleted-tail");
+  mockFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([session("a")]);
+  expect(await reconcileOrphanedRecordings()).toMatchObject({
+    checkpoint: "a",
+    scanned: 1,
   });
+  expect(mockFindMany.mock.calls[0][0].where.id).toEqual({
+    gt: "deleted-tail",
+  });
+  expect(mockFindMany.mock.calls[1][0].where.id).toBeUndefined();
+});
+
+it("treats swallowed provider failure as failure and still examines the next session", async () => {
+  mockFindMany.mockResolvedValue([session("a"), session("b", true)]);
+  mockSync.mockResolvedValueOnce({ ok: false, reason: "stream-unreachable" });
+  const result = await reconcileOrphanedRecordings();
+  expect(result).toMatchObject({
+    success: false,
+    stillMissing: 0,
+    partialScanned: 1,
+    checkpoint: "b",
+  });
+  expect(result.errors).toEqual([
+    expect.stringContaining("stream-unreachable"),
+  ]);
+});
+
+it("stops starting work at its time budget and leaves unstarted rows before the next cursor", async () => {
+  let now = Date.now();
+  jest.spyOn(Date, "now").mockImplementation(() => now);
+  mockFindMany.mockResolvedValue([session("a"), session("b")]);
+  mockSync.mockImplementation(async () => {
+    now += 6 * 60_000;
+    return { ok: true };
+  });
+  expect(await reconcileOrphanedRecordings()).toMatchObject({
+    scanned: 1,
+    checkpoint: "a",
+    hasMore: true,
+  });
+  expect(mockSync).toHaveBeenCalledTimes(1);
 });

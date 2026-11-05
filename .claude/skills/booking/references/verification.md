@@ -27,7 +27,9 @@ race, the no-show refund front door and the slot/session fix pins.
 write block, the abandoned-payments reversal, the `SystemJobExecution` prune and
 workflow import-env. `__tests__/collaborators/` holds only `availability.test.ts`
 — the wave-5 co-host work landed under `__tests__/booking-algorithm/` instead,
-so grep both. Run everything with `npm run test`.
+so grep both. Run everything with `npm run test`. Races between real
+transactions live in a sixth folder, `__tests__/db/booking/`, which the unit run
+never executes; see §11.
 
 ## 2. The mocking patterns these suites actually use
 
@@ -74,22 +76,25 @@ A warm incremental `tsc` can also hide type errors here: clear the
 
 The only workflow that runs unconditionally on every pull request is
 `.github/workflows/ci.yaml` (`pull_request` against `dev`, `staging`, `prod`).
-Three others carry a `pull_request` trigger but are conditional and never gate a
-booking change: `stream-webhook-drift.yml` fires only on a `paths:` filter over
-three `lib/stream/` files, `claude-code-review.yml` only on a `labeled` event,
-and `claude.yml` only when a comment or review body contains `@claude`.
+Two others carry a `pull_request` trigger but are conditional and never gate a
+booking change: `claude-code-review.yml` fires only on a `labeled` event, and
+`claude.yml` only when a comment or review body contains `@claude`.
 
-CI's `test-and-build` job is the gate: it passes only when the `typecheck`
-job (`npm audit`, `prisma generate`, `npx tsc --noEmit`, and the money-column,
-auth-schema and workflow-hygiene guards), the unit-test job (full sharded `unit-tests` on pushes and PRs into `prod`;
-`unit-tests-changed`, `jest --changedSince`, on other PRs)
-and the `build` job (`npm run build`) all pass. The `db-guards` job runs the
-DB-sidecar guard against a throwaway Postgres. There is no `typecheck`
+CI's `test-and-build` job is the gate: it passes only when the `checks` job
+(lint on changed files, `npm audit`, `prisma generate`, `npx tsc --noEmit`, the
+money-column, auth-schema and workflow-hygiene guards, `jest --changedSince` on
+non-prod PRs, and the DB-sidecar guard plus the database tier
+`jest -c jest.db.config.ts` against a throwaway Postgres whenever `prisma/**`
+or `scripts/ci/check-db*` changed) passes, and, on PRs into `prod` and pushes to
+`staging` or `prod`, the full sharded `unit-tests` and the `build` job
+(`npm run build`) pass too. Draft PRs run nothing. There is no `typecheck`
 script, so type-check locally by typing `npx tsc --noEmit` yourself.
 
-In the separate `lint` job ESLint errors fail the job; the Prettier step carries
-`continue-on-error: true`, so formatting is advisory in CI. There is no
-`--max-warnings` anywhere, and the config marks almost everything `warn`; only
+In the `checks` job ESLint errors fail the job, and on non-release runs ESLint
+checks only the changed files with `--max-warnings=0`, so a warning in a touched
+file fails; release runs lint everything with warnings advisory. The Prettier
+step carries `continue-on-error: true`, so formatting is advisory in CI. The
+config marks almost everything `warn`; only
 `react-hooks/rules-of-hooks` and `no-restricted-imports` are errors. That
 layering guard is the one lint rule that catches a bad booking refactor — it
 forbids `lib/**`, `components/**`, `hooks/**`, `types/**` and `schemas/**` from
@@ -146,7 +151,8 @@ before merge.
 
 One Supabase project serves both development and production, and every `fw-*`
 worktree's `.env` symlinks to the same `DATABASE_URL`. `npm run db:push` is
-therefore a production operation, as are `--force-reset`, the seed scripts and
+therefore a production operation (the one exception is a throwaway local
+database, §11), as are `--force-reset`, the seed scripts and
 the availability coalesce scripts (which is why those default to dry-run and
 require `--apply`). The reset itself is a scheduled, owner-approved event with
 its own procedure in `docs/prisma/README.md`. If a change needs
@@ -241,3 +247,80 @@ unit test.
   `timezone`, `localStartDay`, `localStartMinutes`, `localEndDay` and
   `localEndMinutes` as well as the UTC columns (the corpus convention is
   Asia/Kolkata, offset 330, except the cases that name another zone).
+
+## 11. The database tier: real-Postgres race tests on a throwaway database
+
+A race between two transactions is proven against real Postgres, never against
+mocks. The tier is `__tests__/db/**/*.db.test.ts`, run by `jest.db.config.ts`
+(Node environment, one worker because the suites share one database, 30-second
+test timeout). `jest.config.ts` exports `DB_TIER_PATTERNS`, which keeps every
+`*.db.test.ts`, `__tests__/db/guard.ts`, `__tests__/db/seed.ts` and every
+`__tests__/db/**/*harness*.ts` module out of the unit runner, so a harness never
+counts as an empty suite. Put a new shared race helper in a file whose name
+contains `harness`, beside `__tests__/db/booking/harness.ts`.
+
+`__tests__/db/guard.ts` runs as the tier's global setup and refuses to start
+unless `CI=true` and `DATABASE_URL` points at `localhost` or `127.0.0.1` with the
+database named `ci`. Run it locally like this, and only like this:
+
+1. Start a local Postgres 16 or newer with the `btree_gist` extension available
+   (the overlap constraint needs it), and create a **fresh, empty** database named
+   `ci`.
+2. From a worktree that has **no `.env`** (`next/jest` loads `.env`, and the main
+   checkout's points at the shared database), pass both URLs inline and confirm
+   they say `localhost` and `/ci` before running anything:
+   `DIRECT_URL=postgresql://ci@localhost:<port>/ci DATABASE_URL=postgresql://ci@localhost:<port>/ci node_modules/.bin/prisma db push`,
+   then the same two variables in front of `npm run db:sidecars`. A plain
+   `prisma db push` drops the ledger triggers and every CHECK, which is why the
+   sidecars always follow it.
+3. Never pass `--accept-data-loss`: an empty database never needs it, and
+   Prisma refuses it without the owner's consent. If a push wants data loss,
+   drop and re-create the throwaway database instead.
+4. Run `CI=true DATABASE_URL=postgresql://ci@localhost:<port>/ci npx jest -c jest.db.config.ts <paths>`,
+   then stop the server and delete its data directory.
+
+Most booking suites in `__tests__/db/booking/` make two writers meet at a real
+conflict and assert exactly one commit, one typed refusal, and a raw-SQL
+invariant (no two time-holding rows overlap per host profile or per buyer):
+
+| Suite                                    | What it pins                                                          |
+| ---------------------------------------- | --------------------------------------------------------------------- |
+| `allocator-races.db.test.ts`             | The allocator against checkout, webinar publish and itself            |
+| `subscription-period-races.db.test.ts`   | Subscription-period allocation against concurrent buyer checkouts     |
+| `host-time-races.db.test.ts`             | Host-time writers against the allocator and the request door          |
+| `makeup-vs-holds.db.test.ts`             | A class make-up against every hold kind                               |
+| `event-retime.db.test.ts`                | Webinar re-time, attendee clashes and the free leave                  |
+| `reschedule-lifecycle.db.test.ts`        | Preference-only requests, withdraw and expiry restores, free restores |
+| `place-new-time.db.test.ts`              | Placing a new time on a booking with no live session                  |
+| `cancel-vs-capture.db.test.ts`           | A cancel and a capture landing together                               |
+| `cancel-money.db.test.ts`                | The cancel window, and a refund another door already owns             |
+| `notice-floor-real-path.db.test.ts`      | The notice floor read from real release records                       |
+| `capture-recheck-freed-time.db.test.ts`  | A capture on time a cancelled or returned row freed                   |
+| `blocked-capture-sweep.db.test.ts`       | A blocked capture's hold against the tentative-clear sweep            |
+| `approval-mint-paid.db.test.ts`          | A pay-link mint for a request that is already paid                    |
+| `approval-pay-window.db.test.ts`         | The pay window and the too-close-to-start lapse                       |
+| `reject-live-checkout.db.test.ts`        | A decline against the buyer's own live checkout                       |
+| `decline-while-rescheduling.db.test.ts`  | Every decline door refusing a booking being moved, with nothing moved |
+| `trial-conversion-at-capture.db.test.ts` | A trial left COMPLETED at checkout start and converted at capture     |
+| `checkout-tabs.db.test.ts`               | Two tabs, one plan, and the request fingerprint                       |
+| `seat-races.db.test.ts`                  | The seat herd and whole-event cancel against seat checkout            |
+| `seat-hold-grace.db.test.ts`             | A late capture inside the seat's capture grace                        |
+| `buyer-lapsed-seat.db.test.ts`           | A lapsed seat no longer blocking a dual-role buyer                    |
+| `seat-leave-redrive.db.test.ts`          | A seat-leave crash re-driven by the owed-refund sweep                 |
+| `seat-leave-owned-marker.db.test.ts`     | A seat leave refused by another door's owed marker                    |
+| `owed-refund-earnings.db.test.ts`        | A failing plan-end refund holding both earnings arms past their hold  |
+| `zero-total-checkout.db.test.ts`         | A fully discounted order taking the no-gateway rail                   |
+| `unique-violation-shape.db.test.ts`      | The real shape of a unique violation, classified by constraint        |
+
+Read each suite's header before trusting a row of this table; the file is the
+contract. `__tests__/db/scope/` and `__tests__/db/support/` hold the scoping and
+support races on the same harness.
+
+## Deprecated & Superseded Approaches
+
+- **Mock-only race tests.** Interleaving `jest.fn()` transactions proved only
+  the order the test author imagined. A concurrency claim now needs a
+  `__tests__/db/` suite on real Postgres.
+- **`--accept-data-loss` on a test database.** It was once the habit when a push
+  complained. On a fresh database it is never needed, and the guard rails refuse
+  it; re-create the database instead.

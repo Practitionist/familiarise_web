@@ -77,7 +77,7 @@ R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
 1. Navigate to **Dashboard** → **Create New App**
 2. Choose app name (e.g., "Familiarise Dev")
 3. Select region closest to your users
-   - 🇺🇸 US East (Virginia / `gcp-us-east5`)
+   - 🇺🇸 US East (Virginia; the production app runs in region `gcp-us-east4`, placement `gcp-us-east4.vega`)
    - 🇪🇺 EU West (Ireland)
    - 🇸🇬 Singapore
    - 🇦🇺 Australia
@@ -148,9 +148,9 @@ Stream runs two separate apps. The production app (API key `k4n5crxtstrx`, app i
 | Netlify deploy-preview and branch-deploy context | Familiarise-dev | `NETLIFY === "true"` and `CONTEXT` is anything else                                                        |
 | Vercel production                                | Production app  | `VERCEL === "1"` and `VERCEL_ENV === "production"`                                                         |
 | Vercel preview and development                   | Familiarise-dev | `VERCEL === "1"` and `VERCEL_ENV` is anything else                                                         |
-| Container host, GitHub Actions cron twins, local | see below       | Production only when `NEXT_PUBLIC_SENTRY_ENVIRONMENT === "production"`, the marker Novu key selection uses |
+| Container host, local                            | see below       | Production only when `NEXT_PUBLIC_SENTRY_ENVIRONMENT === "production"`, the marker Novu key selection uses |
 
-Every `cron-*.yml` job sets that marker to `production`, so the scheduled jobs keep the production keys, and a container host in production must set it too. A laptop does not set it, so a laptop holding the production key is refused. A Netlify runtime that does not expose `CONTEXT` falls back to the same marker.
+The scheduled Stream jobs run on the production deployment through the ticker, so they keep the production keys; a container host in production must set the marker. A laptop does not set it, so a laptop holding the production key is refused. A Netlify runtime that does not expose `CONTEXT` falls back to the same marker.
 
 ### What the Guard Does
 
@@ -164,7 +164,7 @@ The browser gets no separate guard: tokens come from the server, which has alrea
 
 ### Owner Scripts Against Production
 
-The `scripts/stream/*` CLIs build their clients through the same functions, so a laptop holding the production key is refused unless the command line says `--target=production` (`scripts/stream/target.ts`). There is deliberately no environment variable that does the same. The daily `stream-webhook-drift` workflow passes the flag because it reads the production app from GitHub Actions without the Sentry marker.
+The `scripts/stream/*` CLIs build their clients through the same functions, so a laptop holding the production key is refused unless the command line says `--target=production` (`scripts/stream/target.ts`). There is deliberately no environment variable that does the same. The daily `stream-control-plane-drift` ticker job runs inside the production deployment, so it needs no flag.
 
 ```bash
 # Production app from a laptop (dry run first; --apply writes)
@@ -191,11 +191,11 @@ npx tsx scripts/stream/ensure.ts --target=production
 
 ## Production Operator Cutover & Verification Runbook
 
-Stream application settings, call-type permission grants, webhook subscriptions, and external storage are managed via idempotent scripts under `scripts/stream/` rather than manual dashboard edits. Pre-image backups are written automatically to `.stream-backups/` (and `os.tmpdir()` for call-type settings drift) before any write.
+Stream application settings, call-type permission grants, chat channel-type uploads, webhook subscriptions, and external storage are managed via idempotent scripts under `scripts/stream/` rather than manual dashboard edits. Pre-image backups are written automatically to `.stream-backups/` (and `os.tmpdir()` for call-type settings drift) before any write.
 
 ### 1. App Settings, Call-Type Hardening & Webhook Subscription (`scripts/stream/ensure.ts`)
 
-Run the unified provisioning orchestrator to inspect and apply all Stream control-plane invariants in one pass:
+Run the unified provisioning orchestrator to inspect and apply the Stream control-plane invariants it owns in one pass:
 
 ```bash
 # Step 1a: Dry run (inspects live Stream state and prints pending diffs without mutating)
@@ -205,24 +205,52 @@ npx tsx scripts/stream/ensure.ts
 npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed
 # (Also accepts --confirm-join-route-deployed on ensure.ts / ensure-call-type-grants.ts)
 
-# Step 1c: Verify and widen webhook event subscriptions for all handled chat & video events
+# Step 1c: Verify and reconcile the webhook hooks (one per product: enabled, URL, event list).
+# With NEXT_PUBLIC_APP_URL set, --apply also creates a missing product hook (the `chat` hook).
 npx tsx scripts/stream/ensure-webhook-subscription.ts --check
-npx tsx scripts/stream/ensure-webhook-subscription.ts --apply
+NEXT_PUBLIC_APP_URL=https://familiarisenow.com npx tsx scripts/stream/ensure-webhook-subscription.ts --apply
+# Only from the production environment, and only when an existing hook really points at the wrong origin:
+npx tsx scripts/stream/ensure-webhook-subscription.ts --apply --rewrite-url
 ```
+
+`--apply` reconciles each hook's event list and enabled flag, and creates the `chat` hook if it is missing, using `NEXT_PUBLIC_APP_URL` only when that URL is public https and already used by an existing hook, so a preview origin can never receive a new hook. It leaves an existing hook's URL alone. One Stream app serves every environment, so a run from a laptop or a preview with its own `NEXT_PUBLIC_APP_URL` would otherwise redirect production webhooks. An existing URL is rewritten only when `--rewrite-url` is passed as well.
+
+Apply the chat hook and the reminder settings only after the build that handles `user.unread_message_reminder` is live in production. An earlier delivery is harmless, because the route acknowledges an unhandled type with `handled: false`, but those reminders are lost.
+
+The intended state lives in one module, `lib/stream/control-plane-contract.ts`. The ensure scripts write it and the daily drift detector (below) reads it, so the two cannot disagree about what "correct" means.
 
 What the orchestrator enforces:
 
 - **App-Level Settings (`ensure-app-settings.ts`)**: Configures `webhook_url` (`https://<origin>/api/stream/webhooks`), `AsyncModerationConfiguration`, `guest_user_creation_disabled: true`, and `enable_hook_payload_compression: false` after running a no-op fingerprint probe (`lib/stream/config-fingerprint.ts`) to guarantee `updateApp` merges rather than replaces unrelated app fields.
 - **Billable Permissions + Scope Suffix Stripping (`ensure-call-type-grants.ts` & `harden-unused-call-types.ts`)**: Strips all billable permissions (`BILLABLE_PERMISSIONS`: `start-recording`, `stop-recording`, `start-frame-recording`, `stop-frame-recording`, `start-raw-recording`, `stop-raw-recording`, `start-individual-recording`, `stop-individual-recording`, `start-transcription`, `stop-transcription`, `start-closed-captions`, `stop-closed-captions`, `start-broadcasting`, `stop-broadcasting`, `start-rtmp-broadcasts`, `stop-rtmp-broadcast`, `stop-all-rtmp-broadcasts`, `use-noise-cancellation`, `enable-noise-cancellation`) **including their `-owner` and `-any-team` scoped suffixes** (`matchesPermissionWithScope`) across all four built-in call types (`default`, `livestream`, `audio_room`, and `development`).
-- **Least-Privilege Call Admission on `default`**: Revokes `create-call`, `join-call`, `join-ended-call`, and `update-call-permissions` from `user` and `guest`, and revokes `create-call` and `end-call` from `user`, `guest`, and `call_member`. Only `call_member` and `co_presenter` (both assigned server-side after `resolveMeetingAccess`) and `admin` can join an active room. The `call_member` role holds only the `-owner` variants of `update-call-permissions`, `mute-users` and `pin-call-track`. The custom `co_presenter` role adds `mute-users`, `pin-call-track` and `join-backstage` for accepted presenter collaborators, and the script leaves that role untouched.
+- **Least-Privilege Call Admission on `default`**: Revokes `create-call`, `join-call`, `join-ended-call`, and `update-call-permissions` from `user` and `guest`, and revokes `create-call` and `end-call` from `user`, `guest`, and `call_member`. Only `call_member` and `co_presenter` (both assigned server-side after `resolveMeetingAccess`) and `admin` can join an active room. The `call_member` role holds only the `-owner` variants of `update-call-permissions`, `mute-users` and `pin-call-track`. Both `user` and `call_member` also hold only `remove-call-member-owner` and `update-call-member-owner`: every member add, update and removal runs server-side as admin (`app/api/meetings/[meetingId]/join/route.ts`, `lib/collaborators/service.ts`), and no client code calls `updateCallMembers`, so the unscoped variants grant nothing the app uses. Neither `call_member` nor `co_presenter` holds `join-ended-call`. A room Stream has ended is therefore sealed at Stream as well as at `/join`: no client can rejoin it with a token it already holds, and reopening always rotates to a fresh call id. The custom `co_presenter` role adds `mute-users`, `pin-call-track` and `join-backstage` for accepted presenter collaborators.
 - **Unused Call-Type Reach Lockdown**: Strips `REACH_PERMISSIONS` (`create-call`, `join-call`, `join-backstage`, `join-ended-call` and `-any-team` variants) from `livestream`, `audio_room`, and `development` across all end-user roles (`user`, `guest`, `anonymous`, `speaker`, `host`, `call_member`).
 - **Empty Room Auto-Close**: Enforces `session.inactivity_timeout_seconds = 300` (5 minutes) on the `default` call type.
+- **Chat Channel Ownership (`ensure-messaging-grants.ts`)**: Removes `truncate-channel-owner`, `delete-channel-owner`, `update-channel-members-owner`, `recreate-channel-owner` and `update-channel-owner` from the `user` role of the `messaging` chat channel type, so a channel owner cannot mutate membership or history from the client and every such change goes through a server action. Stream replaces grants per role, so the script derives the new `user` list from the live one, writes only that role and keeps every other grant. Run it alone with `npx tsx scripts/stream/ensure-messaging-grants.ts --apply` (a dry run without `--apply`); `ensure.ts` runs it as step 6.
+- **Chat Unread Reminders (`ensureChatReminders`, step 7)**: Turns on `reminders` and `read_events` on the `messaging` channel type and sets the app's `reminders_interval` to 1800 seconds (`TARGET_CHAT_REMINDERS`), so Stream emits `user.unread_message_reminder` for the chat unread digest. Thirty minutes matches the digest window, gives a correspondent time to read a message in the app before an email goes out, and keeps a busy thread to at most two digests an hour.
+
+### 1a. Daily Control-Plane Drift Detector (`stream-control-plane-drift`)
+
+Because the Stream app is configured outside this repository, narrowing a grant or disabling the hook leaves no commit and no failing test. The cleanup job `stream-control-plane-drift` (`lib/stream/control-plane-drift.ts`, registered in `lib/cron/cleanup-registry.ts` and reachable at `/api/cleanup/stream-control-plane-drift`) reads the live app once a day and compares it with the contract. The Netlify ticker fires it in a single slot at 01:15 UTC; there is no GitHub Actions workflow for it. The run takes a fail-open `withCronLock` lease and so writes a run row like every other target. That row is what lets `/api/health/jobs` notice a detector that has silently stopped (a missed day turns the probe to 503); drift itself is still reported by the one Sentry message, and the run is recorded as `attention`.
+
+It checks, and never writes:
+
+- the webhook hooks: one `video` hook and one `chat` hook, each enabled, with `webhook_url` equal to `<NEXT_PUBLIC_APP_URL>/api/stream/webhooks`, that product's exact event list and no wildcard, plus no active legacy V1 wildcard;
+- the chat unread reminders: `reminders` and `read_events` on the `messaging` channel type and `reminders_interval` of 1800 seconds (`channel_type:messaging:reminders`, `channel_type:messaging:read_events`, `app:reminders_interval`);
+- the `default` call type: the least-privilege grants above, the owner-scoped member grants, the `co_presenter` role and its exact grant set, and the 300 second inactivity timeout;
+- the `messaging` channel type: no owner-scoped truncate, delete, recreate, update or member-update grant on `user` (finding keys look like `channel_type:messaging:grant:user:update-channel-members-owner`);
+- `livestream`, `audio_room` and `development`: no reach or billable permission on any end-user role, so `user` holds neither `create-call` nor `join-call`;
+- `guest_user_creation_disabled: true`. `enable_hook_payload_compression` is write-only on Stream and is reported as unverified.
+
+On drift the run sends one Sentry message listing finding keys (for example `webhook:<hookId>:disabled` or `call_type:livestream:grant:user:create-call`), never URLs or secrets, and answers 207. Fix drift by running the ensure scripts above; the detector stays quiet again on the next run.
+
+Chat text-only is a separate script: run `npx tsx scripts/stream/ensure-chat-text-only.ts --apply` after any control-plane restore (see the channel-type section below).
 
 ### 2. Cloudflare R2 Recording Storage
 
 Every READY recording is copied server-side from Stream's signed recording URL into Cloudflare R2 by the `transfer-recordings` job (S3-compatible multipart streaming via `lib/storage/r2-client.ts` and `lib/stream/recording-transfer-service.ts`, HEAD-verified after upload). R2 is the only destination; preview clips and thumbnails stay in the public Supabase `recordings-previews` bucket.
 
-Set `R2_S3_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` in Netlify (playback presigning, deletes) and as GitHub Actions secrets (`cron-intra-day.yml` for `transfer-recordings`, `cron-daily.yml` for `expire-recordings`).
+Set `R2_S3_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` on the active application host and on the standby Netlify site (playback presigning, deletes, and the `transfer-recordings` and `expire-recordings` jobs, which run on the Netlify ticker). No GitHub Actions secret is needed.
 
 ### 3. Live Stream Rate-Limit Ceilings & Batch Pacing Invariant
 
@@ -235,7 +263,7 @@ Stream enforces strict per-minute rate limits per endpoint at the application le
 | `ExportUsers`        | **60 / min**     | Compliance / DSAR export workflows                                            |
 | `UpdateUsers`        | **300 / min**    | `actions/stream/chat/user.action.ts` (`upsertUsersToStream`, 100-user chunks) |
 | `UpdateUsersPartial` | **300 / min**    | User profile and role synchronization                                         |
-| `SendMessage`        | **1,000 / min**  | `app/api/stream/channels/open/route.ts` (`booking-ctx-` receipt cards)        |
+| `SendMessage`        | **1,000 / min**  | `lib/stream/support-intervention.ts`, `lib/stream/system-message.ts`          |
 | `QueryChannels`      | **10,000 / min** | `lib/stream/batch.ts` (`queryChannelsPaged`, 30-channel page ceiling)         |
 
 > [!IMPORTANT]
@@ -307,14 +335,15 @@ Stream provides default channel types. For Familiarise, configure:
 
 #### messaging (1-on-1 Chats)
 
-| Setting           | Value       | Purpose             |
-| ----------------- | ----------- | ------------------- |
-| Type Name         | `messaging` | Built-in type       |
-| Max Members       | 10          | Small group chats   |
-| Read Events       | ✅ Enabled  | Show read receipts  |
-| Reactions         | ✅ Enabled  | Message reactions   |
-| Replies           | ✅ Enabled  | Threaded replies    |
-| Typing Indicators | ✅ Enabled  | "User is typing..." |
+| Setting           | Value       | Purpose                          |
+| ----------------- | ----------- | -------------------------------- |
+| Type Name         | `messaging` | Built-in type                    |
+| Max Members       | 10          | Small group chats                |
+| Read Events       | ✅ Enabled  | Show read receipts               |
+| Reactions         | ✅ Enabled  | Message reactions                |
+| Replies           | ✅ Enabled  | Threaded replies                 |
+| Typing Indicators | ✅ Enabled  | "User is typing..."              |
+| File Uploads      | ❌ Disabled | Text-only chat (script-enforced) |
 
 **Use Cases:**
 
@@ -324,20 +353,23 @@ Stream provides default channel types. For Familiarise, configure:
 
 #### team (Group Channels)
 
-| Setting            | Value      | Purpose          |
-| ------------------ | ---------- | ---------------- |
-| Type Name          | `team`     | Built-in type    |
-| Max Members        | Unlimited  | Large events     |
-| Read Events        | ✅ Enabled | Track attendance |
-| Reactions          | ✅ Enabled | Engagement       |
-| Replies            | ✅ Enabled | Discussions      |
-| Push Notifications | ✅ Enabled | Event updates    |
+| Setting            | Value       | Purpose                          |
+| ------------------ | ----------- | -------------------------------- |
+| Type Name          | `team`      | Built-in type                    |
+| Max Members        | Unlimited   | Large events                     |
+| Read Events        | ✅ Enabled  | Track attendance                 |
+| Reactions          | ✅ Enabled  | Engagement                       |
+| Replies            | ✅ Enabled  | Discussions                      |
+| Push Notifications | ✅ Enabled  | Event updates                    |
+| File Uploads       | ❌ Disabled | Text-only chat (script-enforced) |
 
 **Use Cases:**
 
 - Webinars (broadcast + Q&A)
 - Online classes (instructor + students)
 - Group events
+
+Chat is text-only: `scripts/stream/ensure-chat-text-only.ts` pins `uploads: false` on both channel types and strips `upload-file`, `upload-attachment`, and `create-attachment` from every role. The `-owner` and `-any-team` attachment grants and the giphy command stay, because GIFs are attachments and `uploads: false` is what blocks files. It is dry-run by default; run it with `--apply` after any control-plane restore. In the app, the composer overrides `AttachmentSelector` to remove the remaining paperclip, and appointment-linked chats show a Documents hint.
 
 ### 2. Set Up Roles & Permissions
 
@@ -357,22 +389,22 @@ Every account, platform `ADMIN` and `STAFF` included, receives the standard Stre
 
 Operators (`ADMIN`, `STAFF`) hold no extra Stream permission in the browser. Their moderation and support powers (report actions, bans, message removal) run in server routes that use the API-secret clients in `lib/stream-client.ts`, which bypass Stream's permission checks and are audited on our side. See `docs/stream/07-user-management.md` for the rollout step that downgrades operators who still hold `admin`.
 
-### 3. Enable Chat Features
+### 3. Configure Chat Features
 
 **Navigation:** Dashboard → Chat → Settings
 
-Enable these features:
+Configure these features:
 
-| Feature            | Status    | Purpose                      |
-| ------------------ | --------- | ---------------------------- |
-| Message Search     | ✅ Enable | Search chat history          |
-| Push Notifications | ✅ Enable | Mobile/browser notifications |
-| Typing Indicators  | ✅ Enable | Real-time typing status      |
-| Read Receipts      | ✅ Enable | Message read status          |
-| Reactions          | ✅ Enable | Emoji reactions              |
-| Threads            | ✅ Enable | Reply threading              |
-| URL Enrichment     | ✅ Enable | Link previews                |
-| File Uploads       | ✅ Enable | Image/document sharing       |
+| Feature            | Status      | Purpose                          |
+| ------------------ | ----------- | -------------------------------- |
+| Message Search     | ✅ Enable   | Search chat history              |
+| Push Notifications | ✅ Enable   | Mobile/browser notifications     |
+| Typing Indicators  | ✅ Enable   | Real-time typing status          |
+| Read Receipts      | ✅ Enable   | Message read status              |
+| Reactions          | ✅ Enable   | Emoji reactions                  |
+| Threads            | ✅ Enable   | Reply threading                  |
+| URL Enrichment     | ✅ Enable   | Link previews                    |
+| File Uploads       | ❌ Disabled | Text-only chat (script-enforced) |
 
 ### 4. Configure Video Settings
 
@@ -1126,7 +1158,9 @@ railway variables set STREAM_API_SECRET=xxx
 ## Deprecated & Superseded Approaches
 
 - **`NEXTAUTH_SECRET` / `NEXTAUTH_URL`**: Replaced by `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL`.
+- **`.github/workflows/stream-webhook-drift.yml`**: it compared only the event list, never the hook's enabled flag or URL, and ran on budget-blocked GitHub Actions. Superseded by the ticker job `stream-control-plane-drift`, which covers the whole contract.
 - **Manual dashboard clicks for call-type grants and app settings**: Superseded by `scripts/stream/ensure.ts` (`ensure-app-settings.ts` and `harden-unused-call-types.ts` write pre-image backups to `.stream-backups/`, while `ensure-call-type-grants.ts` writes a drift snapshot to `os.tmpdir()` when settings drift is detected and verifies post-write state).
+- **Dashboard-toggled chat file uploads**: Superseded by `scripts/stream/ensure-chat-text-only.ts`, which pins `uploads: false` and strips the base attachment grants on `messaging` and `team` (with `.stream-backups/channel-type-<name>-<timestamp>.json` pre-images); re-run it with `--apply` after any control-plane restore.
 
 ---
 

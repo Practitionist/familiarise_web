@@ -19,6 +19,7 @@
 // ─── Module Mocks ───────────────────────────────────────────────────────────
 
 // Mock prisma (relative path required — @/ aliases fail in jest.mock)
+jest.mock("next/headers", () => ({ headers: async () => new Headers() }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -34,7 +35,11 @@ jest.mock("../../lib/prisma", () => ({
     },
     // #1003 — group-event cancel reads the attendee roster off the payments so
     // it can notify them. Default to an empty event.
-    payment: { findMany: jest.fn().mockResolvedValue([]) },
+    payment: {
+      findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     // #1780 R-3 — free seats are read off the participant rows as well.
     appointmentParticipant: { findMany: jest.fn().mockResolvedValue([]) },
     // #1580 C-P1-5 — group-event cancel and reschedule read the ACCEPTED
@@ -68,6 +73,9 @@ jest.mock("../../utils/appointmentlock", () => ({
   __esModule: true,
   withAppointmentLock: jest.fn(
     async (_id: string, fn: () => Promise<unknown>) => fn(),
+  ),
+  withEventCheckoutLock: jest.fn(
+    async (_key: unknown, fn: () => Promise<unknown>) => fn(),
   ),
   BookingLockUnavailableError: class extends Error {},
   AppointmentBusyError: class extends Error {},
@@ -165,6 +173,7 @@ function makeSlot(
   overrides: Record<string, unknown> = {},
 ) {
   return {
+    ordinal: 1,
     id,
     startsAt,
     endsAt: new Date(startsAt.getTime() + 30 * 60 * 1000),
@@ -189,6 +198,7 @@ function makeConsultationAppointment(overrides: Record<string, unknown> = {}) {
     ],
     consultation: {
       id: "cons-1",
+      status: "APPROVED",
       requestedById: "ce-1",
       consultationPlan: {
         title: "Test Plan",
@@ -219,6 +229,7 @@ function makeSubscriptionAppointment(overrides: Record<string, unknown> = {}) {
     consultation: null,
     subscription: {
       id: "sub-1",
+      status: "APPROVED",
       requestedById: "ce-1",
       subscriptionPlan: {
         title: "Monthly Plan",
@@ -317,6 +328,12 @@ function makeMockTx() {
       updateManyAndReturn: jest.fn().mockResolvedValue([{ id: "slot-1" }]),
       deleteMany: jest.fn(),
     },
+    // The cancel expires the booking's live payments in its own commit.
+    payment: {
+      findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     appointmentParticipant: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -330,6 +347,7 @@ function makeMockTx() {
     // openForAppointmentId reservation is released and the expiry cron cannot
     // act on a cancelled booking. Reschedule creates one when times are proposed.
     rescheduleRequest: {
+      findFirst: jest.fn().mockResolvedValue(null),
       // The cancel route reads the open proposals, then CASes each by id.
       findMany: jest.fn().mockResolvedValue([]),
       findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
@@ -611,7 +629,7 @@ describe("Reschedule Route Handler - POST", () => {
           where: {
             appointmentId: "apt-1",
             // #837 — reschedule never resurrects COMPLETED/CANCELLED history
-            completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
+            completionStatus: { in: ["SCHEDULED"] },
           },
           data: { isTentative: true, completionStatus: "RESCHEDULED" },
         }),
@@ -621,14 +639,7 @@ describe("Reschedule Route Handler - POST", () => {
       expect(mockTx.consultation.updateMany).toHaveBeenCalledWith({
         where: {
           id: "cons-1",
-          status: {
-            in: [
-              "PENDING",
-              "APPROVED",
-              "APPROVED_PENDING_PAYMENT",
-              "SCHEDULED",
-            ],
-          },
+          status: { in: ["APPROVED"] },
         },
         // E2E-audit P0 — the PENDING flip MUST refresh requestedAt. The
         // stale-request expiry sweep keys its PENDING cohort on that column,
@@ -643,9 +654,14 @@ describe("Reschedule Route Handler - POST", () => {
   // ─── Reschedule caps (counted from the release history) ─────────────────
 
   describe("caps", () => {
-    const releaseActs = (n: number) =>
+    /** Requests on the side that moved session 1 (released, never restored). */
+    const moves = (n: number, status = "ACCEPTED") =>
       Array.from({ length: n }, (_, i) => ({
+        id: `req-${i}`,
+        status,
         createdAt: new Date(Date.UTC(2026, 9, 1 + i)),
+        releasedSessions: [{ ordinal: 1, startsAt: FUTURE_DATE.toISOString() }],
+        releasedOccurrenceIds: [`gone-${i}`],
       }));
 
     it("refuses an expert's third reschedule, proposal or not", async () => {
@@ -655,7 +671,7 @@ describe("Reschedule Route Handler - POST", () => {
       mockTx.appointment.findUnique.mockResolvedValue(
         makeConsultationAppointment(),
       );
-      mockTx.bookingStatusHistory.groupBy.mockResolvedValue(releaseActs(2));
+      mockTx.rescheduleRequest.findMany.mockResolvedValue(moves(2));
 
       const res = await rescheduleHandler(
         makeRescheduleRequest("apt-1", "CONSULTATION"),
@@ -664,29 +680,24 @@ describe("Reschedule Route Handler - POST", () => {
 
       expect(res.status).toBe(409);
       expect((await res.json()).code).toBe("EXPERT_RESCHEDULE_CAP");
-      expect(mockTx.bookingStatusHistory.groupBy).toHaveBeenCalledWith(
+      expect(mockTx.rescheduleRequest.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            entity: "OCCURRENCE",
-            toStatus: "RESCHEDULED",
+            appointmentId: "apt-1",
+            initiatorRole: "CONSULTANT",
+            status: { not: "WITHDRAWN" },
           }),
         }),
       );
     });
 
-    it("holds the consultee cap across accept → reschedule again (replaced rows are gone)", async () => {
-      // Two accepted reschedules: the allocator deleted the replaced rows, so
-      // only the history remembers them; one live session is left.
+    it("holds the consultee cap per session across accept → reschedule again (replaced rows are gone)", async () => {
       mockTx.appointment.findUnique.mockResolvedValue(
         makeConsultationAppointment({
           occurrences: [makeSlot("slot-3", FUTURE_DATE)],
         }),
       );
-      mockTx.rescheduleRequest.findMany.mockResolvedValue([
-        { initiatedById: "user-1", status: "ACCEPTED" },
-        { initiatedById: "user-1", status: "ACCEPTED" },
-      ]);
-      mockTx.bookingStatusHistory.groupBy.mockResolvedValue(releaseActs(2));
+      mockTx.rescheduleRequest.findMany.mockResolvedValue(moves(2));
 
       const res = await rescheduleHandler(
         makeRescheduleRequest("apt-1", "CONSULTATION"),
@@ -697,16 +708,14 @@ describe("Reschedule Route Handler - POST", () => {
       expect((await res.json()).code).toBe("MAX_RESCHEDULES_EXCEEDED");
     });
 
-    it("does not charge a withdrawn proposal", async () => {
+    it("does not charge a request whose ending put the booking back", async () => {
       mockTx.appointment.findUnique.mockResolvedValue(
         makeConsultationAppointment({
           occurrences: [makeSlot("slot-3", FUTURE_DATE)],
         }),
       );
-      mockTx.rescheduleRequest.findMany.mockResolvedValue([
-        { initiatedById: "user-1", status: "WITHDRAWN" },
-      ]);
-      mockTx.bookingStatusHistory.groupBy.mockResolvedValue(releaseActs(2));
+      // The database answers only unrestored requests.
+      mockTx.rescheduleRequest.findMany.mockResolvedValue([]);
 
       const res = await rescheduleHandler(
         makeRescheduleRequest("apt-1", "CONSULTATION"),
@@ -714,6 +723,11 @@ describe("Reschedule Route Handler - POST", () => {
       );
 
       expect(res.status).toBe(200);
+      expect(mockTx.rescheduleRequest.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ restoredAt: null }),
+        }),
+      );
     });
   });
 
@@ -741,7 +755,7 @@ describe("Reschedule Route Handler - POST", () => {
         expect.objectContaining({
           where: {
             appointmentId: "apt-1",
-            completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
+            completionStatus: { in: ["SCHEDULED"] },
           },
           data: { isTentative: true, completionStatus: "RESCHEDULED" },
         }),
@@ -751,14 +765,7 @@ describe("Reschedule Route Handler - POST", () => {
       expect(mockTx.subscription.updateMany).toHaveBeenCalledWith({
         where: {
           id: "sub-1",
-          status: {
-            in: [
-              "PENDING",
-              "APPROVED",
-              "APPROVED_PENDING_PAYMENT",
-              "SCHEDULED",
-            ],
-          },
+          status: { in: ["APPROVED"] },
         },
         // E2E-audit P0 — the PENDING flip MUST refresh requestedAt. The
         // stale-request expiry sweep keys its PENDING cohort on that column,
@@ -793,7 +800,7 @@ describe("Reschedule Route Handler - POST", () => {
           where: {
             appointmentId: "apt-1",
             id: { in: ["slot-1"] },
-            completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
+            completionStatus: { in: ["SCHEDULED"] },
           },
           data: { isTentative: true, completionStatus: "RESCHEDULED" },
         }),
@@ -832,17 +839,7 @@ describe("Reschedule Route Handler - POST", () => {
 
       expect(res.status).toBe(409);
       expect(mockTx.subscription.updateMany).toHaveBeenCalledWith({
-        where: {
-          id: "sub-1",
-          status: {
-            in: [
-              "PENDING",
-              "APPROVED",
-              "APPROVED_PENDING_PAYMENT",
-              "SCHEDULED",
-            ],
-          },
-        },
+        where: { id: "sub-1", status: "APPROVED" },
         data: { updatedAt: expect.any(Date) },
       });
     });
@@ -880,7 +877,7 @@ describe("Reschedule Route Handler - POST", () => {
   // ─── WEBINAR Reschedule ─────────────────────────────────────────────────
 
   describe("WEBINAR", () => {
-    it("should mark slots tentative and update webinar to SCHEDULED", async () => {
+    it("refuses a webinar release: webinars re-time instead", async () => {
       const appointment = makeWebinarAppointment();
       mockTx.appointment.findUnique.mockResolvedValue(appointment);
 
@@ -888,35 +885,15 @@ describe("Reschedule Route Handler - POST", () => {
       const res = await rescheduleHandler(req, makeParams("apt-1"));
       const body = await res.json();
 
-      expect(res.status).toBe(200);
-      expect(body.success).toBe(true);
-      expect(body.rescheduleType).toBe("entire_booking");
-
-      expect(
-        mockTx.appointmentOccurrence.updateManyAndReturn,
-      ).toHaveBeenCalledWith(
-        // objectContaining: `select` is the helper's own business.
-        expect.objectContaining({
-          where: {
-            appointmentId: "apt-1",
-            // #837 — reschedule never resurrects COMPLETED/CANCELLED history
-            completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
-          },
-          data: { isTentative: true, completionStatus: "RESCHEDULED" },
-        }),
-      );
-
-      expect(mockTx.webinar.updateMany).toHaveBeenCalledWith({
-        where: { id: "web-1", status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
-        data: { status: "SCHEDULED" },
-      });
+      expect(res.status).toBe(400);
+      expect(body.code).toBe("USE_RETIME");
     });
   });
 
   // ─── CLASS Reschedule ───────────────────────────────────────────────────
 
   describe("CLASS", () => {
-    it("should mark slots tentative and update class to SCHEDULED", async () => {
+    it("refuses a class release: class sessions cancel + make-up instead", async () => {
       const appointment = makeClassAppointment();
       mockTx.appointment.findUnique.mockResolvedValue(appointment);
 
@@ -924,13 +901,8 @@ describe("Reschedule Route Handler - POST", () => {
       const res = await rescheduleHandler(req, makeParams("apt-1"));
       const body = await res.json();
 
-      expect(res.status).toBe(200);
-      expect(body.success).toBe(true);
-
-      expect(mockTx.class.updateMany).toHaveBeenCalledWith({
-        where: { id: "cls-1", status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
-        data: { status: "SCHEDULED" },
-      });
+      expect(res.status).toBe(400);
+      expect(body.code).toBe("USE_SESSION_CANCEL");
     });
   });
 
@@ -977,7 +949,7 @@ describe("Reschedule Route Handler - POST", () => {
     expect(res.status).toBe(200);
   });
 
-  it("should handle appointment with no slots", async () => {
+  it("refuses a release with no session to move", async () => {
     const appointment = makeConsultationAppointment({
       occurrences: [],
     });
@@ -988,9 +960,8 @@ describe("Reschedule Route Handler - POST", () => {
     const res = await rescheduleHandler(req, makeParams("apt-1"));
     const body = await res.json();
 
-    expect(res.status).toBe(200);
-    expect(body.slotsAffected).toBe(0);
-    expect(body.slotsMoved).toBe(0);
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("NO_RESCHEDULABLE_SLOTS");
   });
 
   it("should return 409 NO_RESCHEDULABLE_SLOTS when booking has occurrences but zero live slots moved", async () => {
@@ -1004,6 +975,48 @@ describe("Reschedule Route Handler - POST", () => {
 
     expect(res.status).toBe(409);
     expect(body.code).toBe("NO_RESCHEDULABLE_SLOTS");
+  });
+
+  it("refuses a party release of a parked session as nothing to move, not as a 24-hour window", async () => {
+    const appointment = makeConsultationAppointment({
+      occurrences: [
+        makeSlot("slot-1", NEAR_DATE, {
+          completionStatus: "RESCHEDULED",
+          isTentative: true,
+        }),
+      ],
+    });
+    mockTx.appointment.findUnique.mockResolvedValue(appointment);
+    mockTx.appointmentOccurrence.updateManyAndReturn.mockResolvedValueOnce([]);
+
+    const req = makeRescheduleRequest("apt-1", "CONSULTATION");
+    const res = await rescheduleHandler(req, makeParams("apt-1"));
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("NO_RESCHEDULABLE_SLOTS");
+  });
+
+  it("releases only SCHEDULED rows for a party, so a restore never revives a parked one", async () => {
+    mockTx.appointment.findUnique.mockResolvedValue(
+      makeConsultationAppointment({
+        occurrences: [
+          makeSlot("slot-1", FUTURE_DATE),
+          makeSlot("slot-2", NEAR_DATE, {
+            completionStatus: "RESCHEDULED",
+            isTentative: true,
+          }),
+        ],
+      }),
+    );
+
+    const req = makeRescheduleRequest("apt-1", "CONSULTATION");
+    const res = await rescheduleHandler(req, makeParams("apt-1"));
+
+    expect(res.status).toBe(200);
+    const flip = mockTx.appointmentOccurrence.updateManyAndReturn.mock
+      .calls[0][0] as { where: { completionStatus: unknown } };
+    expect(flip.where.completionStatus).toEqual({ in: ["SCHEDULED"] });
   });
 
   it("should return 500 for unexpected errors", async () => {
@@ -1115,12 +1128,8 @@ describe("Cancel Route Handler - POST", () => {
         where: {
           id: "cons-1",
           status: {
-            in: [
-              "PENDING",
-              "APPROVED",
-              "APPROVED_PENDING_PAYMENT",
-              "SCHEDULED",
-            ],
+            // Pinned to the status this cancel read in its own transaction.
+            in: ["SCHEDULED"],
           },
         },
         data: expect.objectContaining({
@@ -1191,13 +1200,11 @@ describe("Cancel Route Handler - POST", () => {
         where: {
           id: "sub-1",
           status: {
-            in: [
-              "PENDING",
-              "APPROVED",
-              "APPROVED_PENDING_PAYMENT",
-              "SCHEDULED",
-            ],
+            // Pinned to the status this cancel read in its own transaction.
+            in: ["SCHEDULED"],
           },
+          // Pinned to the removed-session count the quote was priced on.
+          sessionsRefunded: 0,
         },
         data: expect.objectContaining({
           status: "CANCELLED",
@@ -1269,7 +1276,7 @@ describe("Cancel Route Handler - POST", () => {
       where: {
         id: "cons-1",
         status: {
-          in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
+          in: ["SCHEDULED"],
         },
       },
       data: expect.objectContaining({

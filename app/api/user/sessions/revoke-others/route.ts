@@ -4,6 +4,7 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 import { applyRateLimit, sessionMgmtUserLimiter } from "@/lib/rate-limit";
 import { sessionRouteError } from "@/lib/auth/session-response";
 import { revokeUserSessionsExcept } from "@/lib/auth/session-revoke";
+import { stampSessionEnds } from "@/lib/auth/session-access-log";
 
 /**
  * POST /api/user/sessions/revoke-others — end every session except the
@@ -25,11 +26,12 @@ export async function POST() {
     );
     if (limited) return limited;
 
-    const { revoked } = await revokeUserSessionsExcept(
+    const { revoked, ended } = await revokeUserSessionsExcept(
       prisma,
       userId,
       auth.session.session.id,
     );
+    await stampSessionEnds(ended);
 
     return NextResponse.json({ revoked }, { status: 200 });
   } catch (error) {

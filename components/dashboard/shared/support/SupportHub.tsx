@@ -205,7 +205,7 @@ export function SupportHub({
   } else if (query.isError) {
     requestList = (
       <ErrorState
-        title="Couldn't load your support requests"
+        title="Couldn't load your support cases"
         onRetry={() => void query.refetch()}
       />
     );
@@ -215,10 +215,10 @@ export function SupportHub({
         icon={Inbox}
         title={
           context || status
-            ? "No requests match these filters"
-            : "No support requests yet"
+            ? "No support cases match these filters"
+            : "No support cases yet"
         }
-        description="Requests you raise personally appear here. Organization-owned requests stay in that organization’s Help & support area."
+        description="Support cases you raise personally appear here. Organization-owned cases stay in that organization’s Help & support area."
       />
     );
   } else {

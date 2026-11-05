@@ -187,6 +187,17 @@ export type VerifiedObjectProblem =
   | "FILE_TOO_LARGE"
   | "UNSUPPORTED_FILE_TYPE";
 
+/** The object's first 4 KiB; null when the read fails, which proves nothing about the object. */
+async function readHeaderBytes(signedUrl: string): Promise<Uint8Array | null> {
+  try {
+    const res = await fetch(signedUrl, { headers: { Range: "bytes=0-4095" } });
+    if (!res.ok) return null;
+    return new Uint8Array((await res.arrayBuffer()).slice(0, 4096));
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Verifies a direct-uploaded object by metadata and a 4 KB magic-byte read,
  * without buffering it; deletes the object on any violation.
@@ -232,13 +243,8 @@ export async function verifyDirectUploadedObject(params: {
   if (signErr || !signedData?.signedUrl) {
     return { ok: false, code: storageProblem(signErr) };
   }
-  const rangeRes = await fetch(signedData.signedUrl, {
-    headers: { Range: "bytes=0-4095" },
-  });
-  if (!rangeRes.ok) return { ok: false, code: "STORAGE_UNAVAILABLE" };
-  const headerBytes = new Uint8Array(
-    (await rangeRes.arrayBuffer()).slice(0, 4096),
-  );
+  const headerBytes = await readHeaderBytes(signedData.signedUrl);
+  if (!headerBytes) return { ok: false, code: "STORAGE_UNAVAILABLE" };
 
   const check = detectMagicMimeType(headerBytes, params.claimedMimeType);
   if (!check.valid) {

@@ -88,10 +88,13 @@ describe("weekKey (default Asia/Kolkata)", () => {
 
   it("matches startOfWeekSundayInTz exactly", () => {
     const d = new Date("2026-07-15T10:00:00.000Z");
-    const weekStartInstant = ScheduleCalculationService.startOfWeekSundayInTz(d);
+    const weekStartInstant =
+      ScheduleCalculationService.startOfWeekSundayInTz(d);
     // The instant is Sunday 00:00 IST = Saturday 18:30Z.
     expect(weekStartInstant.toISOString()).toBe("2026-07-11T18:30:00.000Z");
-    expect(ScheduleCalculationService.dayKey(weekStartInstant)).toBe(weekKey(d));
+    expect(ScheduleCalculationService.dayKey(weekStartInstant)).toBe(
+      weekKey(d),
+    );
   });
 
   it("handles a DST-observing timezone (Europe/London week boundary)", () => {
@@ -171,9 +174,18 @@ describe("client/server bucketing parity at day boundaries", () => {
 
   it("client groupSlotsByDay and ScheduleCalculationService.groupSlotsByDay agree on boundary slots", () => {
     const boundarySlots = [
-      { startTime: new Date("2026-07-19T18:00:00.000Z"), endTime: new Date("2026-07-19T18:30:00.000Z") },
-      { startTime: new Date("2026-07-19T18:30:00.000Z"), endTime: new Date("2026-07-19T19:00:00.000Z") },
-      { startTime: new Date("2026-07-20T00:00:00.000Z"), endTime: new Date("2026-07-20T00:30:00.000Z") },
+      {
+        startTime: new Date("2026-07-19T18:00:00.000Z"),
+        endTime: new Date("2026-07-19T18:30:00.000Z"),
+      },
+      {
+        startTime: new Date("2026-07-19T18:30:00.000Z"),
+        endTime: new Date("2026-07-19T19:00:00.000Z"),
+      },
+      {
+        startTime: new Date("2026-07-20T00:00:00.000Z"),
+        endTime: new Date("2026-07-20T00:30:00.000Z"),
+      },
     ] as CalendarInterval[];
     const clientKeys = Array.from(groupSlotsByDay(boundarySlots).keys()).sort();
     const serverKeys = Array.from(

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { MoreHorizontal, PanelRight } from "lucide-react";
+import { MoreHorizontal, PanelRight, X } from "lucide-react";
 import { z } from "zod";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
@@ -54,6 +54,8 @@ import { CaseDetails } from "./CaseDetails";
 import { SupportInChatPill } from "./CaseChatPanel";
 import { CaseConversation, type ComposerMode } from "./CaseConversation";
 import { useCaseMutations } from "./useCaseMutations";
+import styles from "./support-layout.module.css";
+import { cn } from "@/utils/tailwind";
 
 const UNASSIGNED = "unassigned";
 const SETTLED = new Set(["RESOLVED", "CLOSED"]);
@@ -93,12 +95,6 @@ function useDetailsOpen() {
   const open = useSyncExternalStore(subscribeDetails, readDetails, () => false);
   return [open, writeDetails] as const;
 }
-
-// Pushes the conversation narrower at >=1440px; below, it overlays the right
-// edge without a backdrop so the conversation stays usable.
-const DETAILS_PANEL =
-  "absolute inset-y-0 right-0 z-20 w-80 max-w-[calc(100%-1rem)] overflow-y-auto rounded-lg border border-border bg-card p-4 shadow-xl " +
-  "[@media(min-width:1440px)]:static [@media(min-width:1440px)]:w-72 [@media(min-width:1440px)]:max-w-none [@media(min-width:1440px)]:shrink-0 [@media(min-width:1440px)]:self-start [@media(min-width:1440px)]:shadow-none";
 
 const Operators = z.object({
   users: z.array(z.object({ id: z.string(), name: z.string().nullable() })),
@@ -351,14 +347,14 @@ export function CaseWorkspace({
       : null;
 
   return (
-    <div className="min-w-0 space-y-3">
+    <div className={cn(styles.workspace, "space-y-3")}>
       <header className="space-y-2 rounded-lg border border-border bg-card px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 items-baseline gap-2">
-            <h2 className="truncate text-base font-semibold text-foreground">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+            <h2 className="min-w-0 break-words text-base font-semibold text-foreground">
               {data.subject}
             </h2>
-            <span className="shrink-0 text-xs text-muted-foreground">
+            <span className="min-w-0 break-words text-xs text-muted-foreground">
               {[
                 data.reference,
                 CASE_TOPIC_LABEL[data.topic],
@@ -450,7 +446,7 @@ export function CaseWorkspace({
             </Button>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 break-words text-xs text-muted-foreground [&>span]:min-w-0">
           <span>
             <span className="font-medium text-foreground">
               {data.person.name ?? "Unknown user"}
@@ -659,8 +655,26 @@ export function CaseWorkspace({
           aria-label="Case details"
           hidden={!detailsOpen}
           ref={detailsPanel}
-          className={DETAILS_PANEL}
+          className={cn(
+            styles.detailsPanel,
+            "rounded-lg border border-border bg-card p-4 shadow-xl",
+          )}
         >
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">Case details</h3>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8"
+              aria-label="Close case details"
+              onClick={() => {
+                setDetailsOpen(false);
+                detailsToggle.current?.focus();
+              }}
+            >
+              <X className="h-4 w-4" aria-hidden />
+            </Button>
+          </div>
           <CaseDetails data={data} />
         </aside>
       </div>

@@ -25,6 +25,7 @@ import type {
 } from "@prisma/client";
 
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { casMiss } from "@/lib/cron/run-counters";
 import { reportSentryMessage } from "@/lib/observability/report";
 
 /**
@@ -233,6 +234,7 @@ export async function transitionConsultationRequest(
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) {
+    casMiss();
     throw new IllegalTransitionError("Consultation", args.to, {
       entityId: args.where.id,
       from: before?.status ?? null,
@@ -250,6 +252,25 @@ export async function transitionConsultationRequest(
     },
   );
 }
+
+/** The statuses under which a subscription still holds its entitlement. */
+export const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
+  "PENDING",
+  "APPROVED",
+  "APPROVED_PENDING_PAYMENT",
+];
+
+// A subscription goes from APPROVED straight to COMPLETED; it never enters
+// SCHEDULED (Consultation keeps that state for the incident rebook).
+export const SUBSCRIPTION_ALLOWED_FROM: Record<
+  AppointmentStatus,
+  AppointmentStatus[]
+> = {
+  ...REQUEST_ALLOWED_FROM,
+  SCHEDULED: [],
+  COMPLETED: ["APPROVED"],
+  CANCELLED: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT"],
+};
 
 export async function transitionSubscriptionRequest(
   tx: Pick<Tx, "subscription" | "bookingStatusHistory">,
@@ -275,11 +296,18 @@ export async function transitionSubscriptionRequest(
   const res = await tx.subscription.updateMany({
     where: {
       ...args.where,
-      status: { in: args.fromIn ?? REQUEST_ALLOWED_FROM[args.to] },
+      // No fromIn widens a subscription into SCHEDULED.
+      status: {
+        in:
+          args.to === "SCHEDULED"
+            ? []
+            : (args.fromIn ?? SUBSCRIPTION_ALLOWED_FROM[args.to]),
+      },
     },
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) {
+    casMiss();
     throw new IllegalTransitionError("Subscription", args.to, {
       entityId: args.where.id,
       from: before?.status ?? null,
@@ -347,6 +375,7 @@ export async function transitionWebinarEvent(
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) {
+    casMiss();
     throw new IllegalTransitionError("Webinar", args.to, {
       entityId: args.where.id,
       from: before?.status ?? null,
@@ -384,6 +413,7 @@ export async function transitionClassEvent(
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) {
+    casMiss();
     throw new IllegalTransitionError("Class", args.to, {
       entityId: args.where.id,
       from: before?.status ?? null,
@@ -476,6 +506,7 @@ export async function transitionOccurrenceCompletion(
     select: { id: true, appointmentId: true },
   });
   if (moved.length === 0 && !args.allowZero) {
+    casMiss();
     const entityId =
       typeof args.where.id === "string" ? args.where.id : undefined;
     throw new IllegalTransitionError(
@@ -552,6 +583,7 @@ export async function transitionTrial(
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) {
+    casMiss();
     throw new IllegalTransitionError("Trial", args.to, {
       entityId: args.where.id,
       from: before?.status ?? null,
@@ -644,6 +676,7 @@ export async function transitionRescheduleRequest(
     },
   });
   if (res.count === 0) {
+    casMiss();
     throw new IllegalTransitionError("RescheduleRequest", args.to, {
       entityId: args.where.id,
       from: before?.status ?? null,

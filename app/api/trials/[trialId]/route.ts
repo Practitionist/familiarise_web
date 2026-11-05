@@ -1,7 +1,6 @@
 import { PROFILE_WITH_USER_SELECT } from "@/lib/booking/list-selects";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
-  liveParticipant,
   recordParticipants,
   transitionParticipant,
 } from "@/lib/booking/participants";
@@ -18,6 +17,7 @@ import {
 import {
   assertTrialQuoteConfirmed,
   quoteTrialRefund,
+  trialCancelWindowRefusal,
   refundCancelledTrial,
   softCancelTrialAppointment,
   softCancelTrialAppointmentInTx,
@@ -26,18 +26,15 @@ import {
   type TrialRefundOutcome,
 } from "@/lib/trials/cancellation";
 import {
+  heldMarkerRefusal,
+  recordRefundNeedsSupport,
   stampRefundOwed,
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
 import { TrialStatus, AppointmentsType, Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import {
-  logTrialCompleted,
-  logTrialScheduled,
-  logTrialConverted,
-} from "@/lib/activity/log-activity";
-import {
-  lockSlotBooking,
+  lockSlotBatch,
   unlockSlotBooking,
   lockConsulteeBooking,
   unlockConsulteeBooking,
@@ -49,6 +46,7 @@ import {
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { transitionTrial } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { isRefusal } from "@/lib/errors/refusal";
 import {
   notifyTrialScheduled,
   notifyTrialCompleted,
@@ -57,10 +55,10 @@ import {
 import { UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import {
-  buildCohostCommitmentFilter,
-  buildDeadHoldFilter,
-  buildOccupiedAppointmentFilter,
+  buildConsultantOccupancyWhere,
+  OCCUPYING_OCCURRENCE_WHERE,
 } from "@/utils/scheduling-engine/occupancyPolicy";
+import { consulteeHasOverlappingSession } from "@/lib/payments/checkout/occupancy-validate";
 import {
   findUncoveredAtom,
   loadPublishedCoverage,
@@ -68,9 +66,10 @@ import {
 } from "@/utils/scheduling-engine/availabilityCoverage";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import {
+  prepareTrialScheduledEmail,
   stageTrialLifecycleEmail,
-  stageTrialScheduledEmail,
 } from "@/lib/email/senders/booking";
+import { stagePreparedEmails } from "@/lib/email/send-to-recipients";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { getAppUrl } from "@/lib/url";
 import { reportSentryError } from "@/lib/observability/report";
@@ -233,56 +232,40 @@ class OutsideAvailabilityWindowError extends Error {
  */
 async function validateSlotAvailability(
   db: Tx,
-  consultantProfileId: string,
+  seller: { consultantProfileId: string; userId: string },
   consulteeUserId: string,
   startTime: Date,
   endTime: Date,
+  selfHoldAppointmentIds: string[],
 ): Promise<boolean> {
-  // Use canonical occupancy policy for consistent conflict detection
-  const occupiedFilter = buildOccupiedAppointmentFilter(consultantProfileId);
-
+  // The host's calendar under checkout's own predicate: every occupying row
+  // they host, sit in as a client, or co-host, minus lapsed holds.
   const overlapping = await db.appointmentOccurrence.findFirst({
     where: {
-      appointment: {
-        AND: [
-          {
-            OR: [
-              ...occupiedFilter,
-              ...buildCohostCommitmentFilter(consultantProfileId),
-            ],
-          },
-          { OR: buildOccupiedAppointmentFilter() },
-          // #1319 — a lapsed checkout hold is not a booking (parity with checkout).
-          { NOT: buildDeadHoldFilter(new Date()) },
-        ],
-      },
-      // Canonical overlap predicate
+      ...OCCUPYING_OCCURRENCE_WHERE,
+      ...(selfHoldAppointmentIds.length > 0
+        ? { appointmentId: { notIn: selfHoldAppointmentIds } }
+        : {}),
+      appointment: buildConsultantOccupancyWhere(
+        seller.consultantProfileId,
+        seller.userId,
+        new Date(),
+      ),
       startsAt: { lt: endTime },
       endsAt: { gt: startTime },
     },
+    select: { id: true },
   });
   if (overlapping) return false;
 
-  // #1093 §1 follow-through — the consultee's own calendar. The GiST
-  // constraint is consultant-keyed, so a consultee double-booked across two
-  // consultants is only ever caught here (mirrors validateNoConflicts).
-  const consulteeConflict = await db.appointmentOccurrence.findFirst({
-    where: {
-      completionStatus: "SCHEDULED",
-      appointment: {
-        deletedAt: null,
-        participants: { some: liveParticipant(consulteeUserId) },
-        AND: [
-          { OR: buildOccupiedAppointmentFilter() },
-          { NOT: buildDeadHoldFilter(new Date()) },
-        ],
-      },
-      startsAt: { lt: endTime },
-      endsAt: { gt: startTime },
-    },
-  });
-
-  return !consulteeConflict;
+  // The consultee's calendar under checkout's buyer predicate (dual-role and
+  // lapsed seats included); the GiST constraint is consultant-keyed.
+  return !(await consulteeHasOverlappingSession(db, {
+    userId: consulteeUserId,
+    startsAt: startTime,
+    endsAt: endTime,
+    selfHoldAppointmentIds,
+  }));
 }
 
 /**
@@ -455,6 +438,15 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       // #1846 — a paid trial's cancel shows its refund quote first, and only
       // the quoted DELETE refunds, so this PATCH refuses to cancel one.
       if (status === TrialStatus.CANCELLED) {
+        const windowRefusal = await trialCancelWindowRefusal(
+          existingTrial.appointmentId,
+        );
+        if (windowRefusal) {
+          return NextResponse.json(
+            { error: windowRefusal.userMessage, code: windowRefusal.code },
+            { status: windowRefusal.httpStatus },
+          );
+        }
         const quote = await quoteTrialRefund({
           appointmentId: existingTrial.appointmentId,
           paymentId: existingTrial.paymentId,
@@ -554,10 +546,20 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           consulteeLock = await lockConsulteeBooking(
             existingTrial.consulteeProfile.user.id,
           );
-          lock = await lockSlotBooking(
-            existingTrial.consultantProfileId,
-            startTime.toISOString(),
-            endTime.toISOString(),
+          // Self atoms: a consultee who is an expert too is busy on their
+          // own calendar, in the same all-or-nothing batch as the host's.
+          const buyerProfile = await prisma.consultantProfile.findUnique({
+            where: { userId: existingTrial.consulteeProfile.user.id },
+            select: { id: true },
+          });
+          lock = await lockSlotBatch(
+            [existingTrial.consultantProfileId, buyerProfile?.id]
+              .filter((id): id is string => !!id)
+              .map((consultantProfileId) => ({
+                consultantProfileId,
+                startsAt: startTime,
+                endsAt: endTime,
+              })),
           );
         } catch (error) {
           if (consulteeLock) {
@@ -581,10 +583,24 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         }
 
         try {
+          // Rendered before the transaction: the schedule stages only its rows.
+          const preparedEmails = await prepareTrialScheduledEmail({
+            trialId,
+            consulteeUserId: existingTrial.consulteeProfile.user.id,
+            consultantUserId: existingTrial.consultantProfile.user.id,
+            consulteeName: existingTrial.consulteeProfile.user.name || "User",
+            consultantName:
+              existingTrial.consultantProfile.user.name || "Consultant",
+            planTitle: existingTrial.subscriptionPlan.title,
+            startsAt: startTime,
+            awaitingPayment: false,
+            dashboardUrl: `${getAppUrl()}${goHref("auto", "appointments")}`,
+            paymentUrl: null,
+          });
           // 2+3. Validate and write in ONE transaction — the availability
           // check previously ran on the global client before the transaction
           // opened, a classic check-then-act window (#1093 §1).
-          const result = await prisma.$transaction(async (tx) => {
+          const scheduled = await prisma.$transaction(async (tx) => {
             // The published window first — the same union coverage rule
             // checkout applies, on this transaction's client. Enforced even
             // when the consultant is the one scheduling: a trial is a booking.
@@ -605,10 +621,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
             const isAvailable = await validateSlotAvailability(
               tx,
-              existingTrial.consultantProfileId,
+              {
+                consultantProfileId: existingTrial.consultantProfileId,
+                userId: existingTrial.consultantProfile.user.id,
+              },
               existingTrial.consulteeProfile.user.id,
               startTime,
               endTime,
+              placeholderId ? [placeholderId] : [],
             );
             if (!isAvailable) {
               throw new TrialSlotUnavailableError();
@@ -704,71 +724,44 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               },
             });
 
-            return updatedTrial;
+            // The notices commit with the schedule, so a rollback takes them too.
+            const bellPayload = {
+              consultantName:
+                existingTrial.consultantProfile.user.name || "Consultant",
+              consulteeName: existingTrial.consulteeProfile.user.name || "User",
+              planTitle: existingTrial.subscriptionPlan.title,
+              dateTime: startTime.toISOString(),
+              status: TrialStatus.SCHEDULED,
+            };
+            const consulteeBell = await notifyTrialScheduled(
+              existingTrial.consulteeProfile.user.id,
+              {
+                ...bellPayload,
+                dashboardUrl: goHref("client", "appointments"),
+              },
+              { deferAttempt: true, tx },
+            );
+            const consultantBell = await notifyTrialScheduled(
+              existingTrial.consultantProfile.user.id,
+              {
+                ...bellPayload,
+                dashboardUrl: goHref("expert", "appointments"),
+              },
+              { deferAttempt: true, tx },
+            );
+            const scheduledEmails = await stagePreparedEmails(
+              tx,
+              preparedEmails,
+            );
+
+            return {
+              trial: updatedTrial,
+              staged: { consulteeBell, consultantBell, scheduledEmails },
+            };
           });
-
-          // 4. Log activity (outside transaction for non-critical operation)
-          await logTrialScheduled(
-            existingTrial.consultantProfileId,
-            trialId,
-            {
-              id: existingTrial.consulteeProfile.user.id,
-              name: existingTrial.consulteeProfile.user.name,
-              image: existingTrial.consulteeProfile.user.image,
-            },
-            existingTrial.subscriptionPlan.title,
-            startTime,
-          );
-
-          const [consulteeBell, consultantBell, scheduledEmails] =
-            await Promise.all([
-              Promise.resolve(
-                notifyTrialScheduled(
-                  existingTrial.consulteeProfile.user.id,
-                  {
-                    consultantName:
-                      existingTrial.consultantProfile.user.name || "Consultant",
-                    consulteeName:
-                      existingTrial.consulteeProfile.user.name || "User",
-                    planTitle: existingTrial.subscriptionPlan.title,
-                    dateTime: startTime.toISOString(),
-                    status: TrialStatus.SCHEDULED,
-                    dashboardUrl: goHref("client", "appointments"),
-                  },
-                  { deferAttempt: true },
-                ),
-              ).catch(() => null),
-              Promise.resolve(
-                notifyTrialScheduled(
-                  existingTrial.consultantProfile.user.id,
-                  {
-                    consultantName:
-                      existingTrial.consultantProfile.user.name || "Consultant",
-                    consulteeName:
-                      existingTrial.consulteeProfile.user.name || "User",
-                    planTitle: existingTrial.subscriptionPlan.title,
-                    dateTime: startTime.toISOString(),
-                    status: TrialStatus.SCHEDULED,
-                    dashboardUrl: goHref("expert", "appointments"),
-                  },
-                  { deferAttempt: true },
-                ),
-              ).catch(() => null),
-              stageTrialScheduledEmail(prisma, {
-                trialId,
-                consulteeUserId: existingTrial.consulteeProfile.user.id,
-                consultantUserId: existingTrial.consultantProfile.user.id,
-                consulteeName:
-                  existingTrial.consulteeProfile.user.name || "User",
-                consultantName:
-                  existingTrial.consultantProfile.user.name || "Consultant",
-                planTitle: existingTrial.subscriptionPlan.title,
-                startsAt: startTime,
-                awaitingPayment: false,
-                dashboardUrl: `${getAppUrl()}${goHref("auto", "appointments")}`,
-                paymentUrl: null,
-              }).catch(() => []),
-            ]);
+          const { consulteeBell, consultantBell, scheduledEmails } =
+            scheduled.staged;
+          const result = scheduled.trial;
 
           await flushNotificationsAfter(
             {
@@ -831,20 +824,6 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       // Handle completion
       if (status === TrialStatus.COMPLETED) {
         updateData.completedAt = new Date();
-
-        // Log activity
-        afterCommit.push(() =>
-          logTrialCompleted(
-            existingTrial.consultantProfileId,
-            trialId,
-            {
-              id: existingTrial.consulteeProfile.user.id,
-              name: existingTrial.consulteeProfile.user.name,
-              image: existingTrial.consulteeProfile.user.image,
-            },
-            existingTrial.subscriptionPlan.title,
-          ),
-        );
 
         // Notify both parties that the trial is completed
         afterCommit.push(async () => {
@@ -1064,21 +1043,6 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         updateData.convertedToSubscription = {
           connect: { id: subscriptionId },
         };
-
-        // Log the conversion activity
-        afterCommit.push(() =>
-          logTrialConverted(
-            existingTrial.consultantProfileId,
-            trialId,
-            subscriptionId,
-            {
-              id: existingTrial.consulteeProfile.user.id,
-              name: existingTrial.consulteeProfile.user.name || "User",
-              image: existingTrial.consulteeProfile.user.image,
-            },
-            existingTrial.subscriptionPlan.title,
-          ),
-        );
       }
     }
 
@@ -1141,7 +1105,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           quote,
           isConsultantInitiated: deferredCancellation.isConsultantInitiated,
         });
-        if (owed) await stampRefundOwed(tx, owed);
+        if (owed && !(await stampRefundOwed(tx, owed))) {
+          throw await heldMarkerRefusal(tx, owed.paymentId, { trialId });
+        }
         declinedRefund.quote = quote;
         declinedRefund.owed = owed;
       }
@@ -1258,6 +1224,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (error instanceof IllegalTransitionError) {
       return NextResponse.json(
         { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
+    if (isRefusal(error)) {
+      await recordRefundNeedsSupport(error);
+      return NextResponse.json(
+        { error: error.userMessage, code: error.code },
         { status: error.httpStatus },
       );
     }
@@ -1379,7 +1352,11 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         }
         // The confirmed refund commits with the cancel, so a death before the
         // refund leaves a marker the retry sweep drives.
-        if (owed) await stampRefundOwed(tx, owed);
+        // Only the door that owns the marker drives it; another door's refund
+        // still owed refuses the cancel with nothing committed.
+        if (owed && !(await stampRefundOwed(tx, owed))) {
+          throw await heldMarkerRefusal(tx, owed.paymentId, { trialId });
+        }
         return cancelled;
       });
     // #1846 — a paid trial refunds only the amount the caller confirmed from
@@ -1387,6 +1364,8 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     // booking between the check and the cancel, and the refund below pays
     // exactly that quote.
     const quoteThenCancel = async () => {
+      const windowRefusal = await trialCancelWindowRefusal(lockId);
+      if (windowRefusal) throw windowRefusal;
       const quote = await quoteTrialRefund({
         appointmentId: existingTrial.appointmentId,
         paymentId: existingTrial.paymentId,
@@ -1479,6 +1458,13 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     if (error instanceof TrialRefundQuoteError) {
       return NextResponse.json(
         { error: error.message, code: error.code, quote: error.quote },
+        { status: error.httpStatus },
+      );
+    }
+    if (isRefusal(error)) {
+      await recordRefundNeedsSupport(error);
+      return NextResponse.json(
+        { error: error.userMessage, code: error.code },
         { status: error.httpStatus },
       );
     }

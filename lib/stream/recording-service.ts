@@ -5,12 +5,15 @@
 
 import {
   getStreamVideoClient,
+  isExpectedStreamError,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import prisma from "@/lib/prisma";
 import { RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import { mapBounded } from "@/lib/stream/batch";
+import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
 import { liveParticipant } from "@/lib/booking/participants";
 import {
@@ -23,6 +26,7 @@ import {
   wasDeclinedDuringRecording,
 } from "@/lib/stream/recording-decline";
 import {
+  absorbIntoErasedRecording,
   createReadyRecordingOrAdoptRace,
   stageAndSendRecordingReadyNotifications,
 } from "@/lib/stream/recording-handlers";
@@ -62,6 +66,11 @@ export interface StreamRecording {
   session_id: string;
 }
 
+export type StreamRecordingListing =
+  | { status: "listed"; recordings: StreamRecording[] }
+  | { status: "call-not-found" }
+  | { status: "unavailable"; error: string };
+
 /**
  * The slice of a Meeting the recording sync actually reads. Structural
  * rather than a Prisma payload type: the consultant and consultee paths reach
@@ -83,13 +92,61 @@ export type SyncableSession = {
   };
 };
 
-/**
- * Recording Service class for managing video call recordings
- */
 /** Whether a session sync actually completed, and why not if it did not. */
 export interface SyncOutcome {
   ok: boolean;
   reason?: "stream-unreachable" | "persist-failed";
+}
+
+/** A user sync reaches back this far; Stream holds no copy older than 14 days. */
+const SYNC_WINDOW_DAYS = 30;
+/** Meetings per sync call; `nextCursor` continues from the last one. */
+export const SYNC_PAGE_SIZE = 25;
+
+export interface UserSyncResult {
+  synced: number;
+  recordings: RecordingRow[];
+  /** Sessions Stream did not answer for or that failed to persist; retry later. */
+  failed: number;
+  nextCursor: string | null;
+}
+
+const syncMeetingInclude = {
+  occurrence: {
+    include: {
+      appointment: {
+        include: {
+          consultation: { include: { consultationPlan: true } },
+          subscription: { include: { subscriptionPlan: true } },
+          trial: { include: { subscriptionPlan: true } },
+          webinar: { include: { webinarPlan: true } },
+          class: { include: { classPlan: true } },
+        },
+      },
+    },
+  },
+} as const;
+
+const syncWindowStart = () =>
+  new Date(Date.now() - SYNC_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+
+/** Newest first, one row past the page so the caller learns whether more remain. */
+function syncPageArgs(cursor: string | undefined) {
+  return {
+    orderBy: [{ createdAt: "desc" as const }, { id: "desc" as const }],
+    take: SYNC_PAGE_SIZE + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  };
+}
+
+function splitSyncPage<T extends { id: string }>(
+  rows: T[],
+): { page: T[]; nextCursor: string | null } {
+  const page = rows.slice(0, SYNC_PAGE_SIZE);
+  return {
+    page,
+    nextCursor: rows.length > SYNC_PAGE_SIZE ? page[page.length - 1].id : null,
+  };
 }
 
 export class RecordingService {
@@ -178,43 +235,42 @@ export class RecordingService {
   }
 
   /**
-   * Get recordings for a specific call from Stream
-   * @param streamCallId The Stream call ID
-   */
-  /**
-   * What Stream holds for a call, or `null` when Stream could not be asked.
-   *
-   * `null` is not an empty list. Returning `[]` for a transport failure made a
-   * Stream outage indistinguishable from "this call has no recordings", so the
-   * orphan reconciler counted an unreachable session as checked-and-empty and
-   * reported success (#1280).
+   * What Stream holds for a call. `call-not-found` (404 / code 16) means every
+   * copy is gone; `unavailable` means Stream was not asked or did not answer.
+   * Failures are returned, not reported, so loop callers report once per run.
    */
   static async getCallRecordingsFromStream(
     streamCallId: string,
-  ): Promise<StreamRecording[] | null> {
+  ): Promise<StreamRecordingListing> {
     try {
-      const client = getStreamVideoClient();
-
-      const callType = STREAM_CALL_TYPE;
-      const callId = toCallId(streamCallId);
-
-      const call = client.video.call(callType, callId);
-      const response = await withStreamCircuitBreaker(() =>
-        call.listRecordings(),
+      const call = getStreamVideoClient().video.call(
+        STREAM_CALL_TYPE,
+        toCallId(streamCallId),
       );
-
-      return response.recordings.map((r) => ({
-        filename: r.filename,
-        url: r.url,
-        start_time: r.start_time,
-        end_time: r.end_time,
-        session_id: r.session_id,
-      }));
+      // The fallback answers an open breaker without a per-call Sentry event.
+      const listed = await withStreamCircuitBreaker<StreamRecording[] | null>(
+        async () =>
+          (await call.listRecordings()).recordings.map((r) => ({
+            filename: r.filename,
+            url: r.url,
+            start_time: r.start_time,
+            end_time: r.end_time,
+            session_id: r.session_id,
+          })),
+        () => null,
+      );
+      if (listed === null) {
+        return { status: "unavailable", error: "Stream circuit is open" };
+      }
+      return { status: "listed", recordings: listed };
     } catch (error) {
-      streamLogger.error("Failed to get call recordings from Stream", error, {
+      if (isExpectedStreamError(error)) return { status: "call-not-found" };
+      const message = error instanceof Error ? error.message : String(error);
+      streamLogger.warn("Stream recording listing failed", {
         streamCallId,
+        error: scrubStringValue(message),
       });
-      return null;
+      return { status: "unavailable", error: message };
     }
   }
 
@@ -377,8 +433,8 @@ export class RecordingService {
   }
 
   /**
-   * Persist a single Stream recording segment and trigger idempotent ready notifications.
-   * Existing rows re-run notification staging so transient outbox/provider errors self-heal on retry.
+   * Persist one Stream segment. Ready notices go out only when `notify` is set;
+   * their per-recipient claims make a repeat silent.
    */
   private static async syncSingleRecordingSegment(params: {
     sessionId: string;
@@ -386,6 +442,7 @@ export class RecordingService {
     appointment: SyncableSession["occurrence"]["appointment"];
     streamRec: StreamRecording;
     syncedRecordings: RecordingRow[];
+    notify: boolean;
   }): Promise<void> {
     const {
       sessionId,
@@ -393,6 +450,7 @@ export class RecordingService {
       appointment,
       streamRec,
       syncedRecordings,
+      notify,
     } = params;
 
     if (
@@ -405,7 +463,6 @@ export class RecordingService {
       await discardDeclinedRecording({
         meetingId: sessionId,
         streamCallId,
-        sessionId: streamRec.session_id,
         filename: streamRec.filename,
       });
       return;
@@ -416,418 +473,208 @@ export class RecordingService {
         meetingId: sessionId,
         streamRecordingId: streamRec.filename,
       },
+      select: { id: true, status: true },
     });
 
+    let recordingId: string;
     if (existingRecording) {
-      await stageAndSendRecordingReadyNotifications(
-        appointment,
-        existingRecording.id,
-      ).catch((err) =>
-        streamLogger.error(
-          "Failed to retry recording ready notifications during sync",
-          err,
-          { recordingId: existingRecording.id, streamCallId },
-        ),
-      );
-      streamLogger.info("Recording already exists, skipping creation", {
-        recordingId: existingRecording.id,
+      // A removed recording never sends a ready notice.
+      if (existingRecording.status === RecordingStatus.EXPIRED) return;
+      recordingId = existingRecording.id;
+    } else {
+      const startDate = new Date(streamRec.start_time);
+      const endDate = new Date(streamRec.end_time);
+      const absorbed = await absorbIntoErasedRecording({
+        meetingId: sessionId,
+        streamCallId,
         filename: streamRec.filename,
+        streamUrlExpiresAt: streamCopyExpiresAt(endDate),
       });
-      return;
+      if (absorbed) return;
+      const rawDurationMs = endDate.getTime() - startDate.getTime();
+      const durationInMinutes = Number.isFinite(rawDurationMs)
+        ? Math.max(0, Math.round(rawDurationMs / (1000 * 60)))
+        : 0;
+
+      const recording = await createReadyRecordingOrAdoptRace({
+        meetingId: sessionId,
+        streamCallId,
+        filename: streamRec.filename,
+        title: generateRecordingTitle(appointment, startDate),
+        url: streamRec.url,
+        durationInMinutes,
+        startDate,
+        streamUrlExpiresAt: streamCopyExpiresAt(endDate),
+        organizationId: appointment?.organizationId ?? null,
+      });
+      syncedRecordings.push(recording);
+      recordingId = recording.id;
     }
 
-    const startDate = new Date(streamRec.start_time);
-    const endDate = new Date(streamRec.end_time);
-    const rawDurationMs = endDate.getTime() - startDate.getTime();
-    const durationInMinutes = Number.isFinite(rawDurationMs)
-      ? Math.max(0, Math.round(rawDurationMs / (1000 * 60)))
-      : 0;
-
-    const title = generateRecordingTitle(appointment, startDate);
-    const streamUrlExpiresAt = streamCopyExpiresAt(endDate);
-
-    const recording = await createReadyRecordingOrAdoptRace({
-      meetingId: sessionId,
-      streamCallId,
-      filename: streamRec.filename,
-      title,
-      url: streamRec.url,
-      durationInMinutes,
-      startDate,
-      streamUrlExpiresAt,
-      organizationId: appointment?.organizationId ?? null,
-    });
-
-    syncedRecordings.push(recording);
-
+    if (!notify) return;
     await stageAndSendRecordingReadyNotifications(
       appointment,
-      recording.id,
+      recordingId,
     ).catch((err) =>
-      streamLogger.error(
-        "Failed to stage recording ready notifications during sync",
-        err,
-        { recordingId: recording.id, streamCallId },
-      ),
-    );
-
-    streamLogger.info("Recording synced successfully", {
-      recordingId: recording.id,
-      sessionId,
-      title,
-      durationInMinutes,
-    });
-  }
-
-  private static async syncSegmentsSequentially(
-    segments: StreamRecording[],
-    index: number,
-    sessionId: string,
-    streamCallId: string,
-    appointment: SyncableSession["occurrence"]["appointment"],
-    syncedRecordings: RecordingRow[],
-  ): Promise<void> {
-    if (index >= segments.length) return;
-    await this.syncSingleRecordingSegment({
-      sessionId,
-      streamCallId,
-      appointment,
-      streamRec: segments[index],
-      syncedRecordings,
-    });
-    return this.syncSegmentsSequentially(
-      segments,
-      index + 1,
-      sessionId,
-      streamCallId,
-      appointment,
-      syncedRecordings,
+      streamLogger.warn("Recording ready notifications not staged", {
+        recordingId,
+        streamCallId,
+        error: err instanceof Error ? err.message : String(err),
+      }),
     );
   }
 
   /**
-   * Mirrors one session's Stream recordings into the database and stages ready notifications.
-   * Shared by user-triggered sync endpoints and `reconcile-orphaned-recordings`.
+   * Mirrors one session's Stream recordings into the database. Shared by the
+   * user sync (rows only) and `reconcile-orphaned-recordings` (`notify: true`).
    */
   static async syncSessionRecordings(
     session: SyncableSession,
     syncedRecordings: RecordingRow[],
+    opts: { notify: boolean } = { notify: false },
   ): Promise<SyncOutcome> {
     if (!session.streamCallId) return { ok: true };
 
     try {
-      const streamRecordings = await this.getCallRecordingsFromStream(
+      const listing = await this.getCallRecordingsFromStream(
         session.streamCallId,
       );
-
-      if (streamRecordings === null)
+      if (listing.status === "unavailable") {
         return { ok: false, reason: "stream-unreachable" };
+      }
+      if (listing.status === "call-not-found") return { ok: true };
 
-      await this.syncSegmentsSequentially(
-        streamRecordings,
-        0,
-        session.id,
-        session.streamCallId,
-        session.occurrence.appointment,
-        syncedRecordings,
-      );
-      return { ok: true };
-    } catch (sessionError) {
-      streamLogger.error(
-        "Failed to sync recordings for session",
-        sessionError,
-        {
+      for (const streamRec of listing.recordings) {
+        await this.syncSingleRecordingSegment({
           sessionId: session.id,
           streamCallId: session.streamCallId,
-        },
-      );
-      // Swallowed so one bad session cannot abort a batch — but REPORTED, so a
-      // caller that is deciding whether a recording is genuinely missing does
-      // not read a persistence failure as an answer.
+          appointment: session.occurrence.appointment,
+          streamRec,
+          syncedRecordings,
+          notify: opts.notify,
+        });
+      }
+      return { ok: true };
+    } catch (sessionError) {
+      streamLogger.warn("Failed to sync recordings for session", {
+        sessionId: session.id,
+        streamCallId: session.streamCallId,
+        error:
+          sessionError instanceof Error
+            ? sessionError.message
+            : String(sessionError),
+      });
+      // Swallowed so one bad session cannot abort a batch, but reported so a
+      // caller never reads a persistence failure as "no recordings".
       return { ok: false, reason: "persist-failed" };
     }
   }
 
+  /** One bounded page of a user sync: Stream calls run at most STREAM_CONCURRENCY_LIMIT wide. */
+  private static async syncMeetingPage(
+    page: SyncableSession[],
+  ): Promise<{ recordings: RecordingRow[]; failed: number }> {
+    const recordings: RecordingRow[] = [];
+    const outcomes = await mapBounded(page, (session) =>
+      this.syncSessionRecordings(session, recordings),
+    );
+    return { recordings, failed: outcomes.filter((o) => !o.ok).length };
+  }
+
   /**
-   * Sync recordings from Stream API for a consultant's sessions
-   * Creates Recording records for any recordings not already in DB
-   * @param consultantProfileId The consultant profile ID
+   * Sync a consultant's own and collaborated sessions from the last
+   * SYNC_WINDOW_DAYS, newest first, SYNC_PAGE_SIZE meetings per call.
    */
   static async syncRecordingsForConsultant(
     consultantProfileId: string,
-  ): Promise<{ synced: number; recordings: RecordingRow[] }> {
-    const syncedRecordings: RecordingRow[] = [];
+    opts: { cursor?: string } = {},
+  ): Promise<UserSyncResult> {
+    const accepted = {
+      some: { consultantProfileId, status: "ACCEPTED" as const },
+    };
+    const rows = await prisma.meeting.findMany({
+      where: {
+        streamCallId: { not: "" },
+        createdAt: { gte: syncWindowStart() },
+        occurrence: {
+          appointment: {
+            OR: [
+              { webinar: { webinarPlan: { consultantProfileId } } },
+              { webinar: { webinarPlan: { collaborators: accepted } } },
+              { class: { classPlan: { consultantProfileId } } },
+              { class: { classPlan: { collaborators: accepted } } },
+              { consultation: { consultationPlan: { consultantProfileId } } },
+              { subscription: { subscriptionPlan: { consultantProfileId } } },
+              { trial: { subscriptionPlan: { consultantProfileId } } },
+            ],
+          },
+        },
+      },
+      include: syncMeetingInclude,
+      ...syncPageArgs(opts.cursor),
+    });
+    const { page, nextCursor } = splitSyncPage(rows);
+    const { recordings, failed } = await this.syncMeetingPage(page);
+    streamLogger.info("Recording sync completed", {
+      consultantProfileId,
+      sessionCount: page.length,
+      syncedCount: recordings.length,
+      failedCount: failed,
+    });
+    return { synced: recordings.length, recordings, failed, nextCursor };
+  }
 
-    try {
-      // Define the include for meeting sessions with full appointment details
-      const meetingInclude = {
+  /**
+   * Sync the sessions a consultee holds a live (not fully refunded) payment
+   * for, over the same window and page bounds as the consultant sync.
+   */
+  static async syncRecordingsForConsultee(
+    userId: string,
+    opts: { cursor?: string } = {},
+  ): Promise<UserSyncResult> {
+    const paidByUser = {
+      userId,
+      paymentStatus: "SUCCEEDED" as const,
+      deletedAt: null,
+    };
+    const rows = await prisma.meeting.findMany({
+      where: {
+        streamCallId: { not: "" },
+        createdAt: { gte: syncWindowStart() },
+        occurrence: { appointment: { payment: { some: paidByUser } } },
+      },
+      include: {
         occurrence: {
           include: {
             appointment: {
               include: {
-                consultation: {
-                  include: {
-                    consultationPlan: true,
-                  },
-                },
-                subscription: {
-                  include: {
-                    subscriptionPlan: true,
-                  },
-                },
-                trial: {
-                  include: {
-                    subscriptionPlan: true,
-                  },
-                },
-                webinar: {
-                  include: {
-                    webinarPlan: true,
-                  },
-                },
-                class: {
-                  include: {
-                    classPlan: true,
+                ...syncMeetingInclude.occurrence.include.appointment.include,
+                payment: {
+                  where: paidByUser,
+                  select: {
+                    amount: true,
+                    refunds: { select: { amountPaise: true, status: true } },
                   },
                 },
               },
             },
           },
         },
-      } as const;
-
-      // Get all Meetings for consultant's sessions (owned or collaborated)
-      const meetings = await prisma.meeting.findMany({
-        where: {
-          streamCallId: { not: "" },
-          occurrence: {
-            appointment: {
-              OR: [
-                // Owned webinars
-                {
-                  webinar: {
-                    webinarPlan: { consultantProfileId },
-                  },
-                },
-                // Collaborated webinars
-                {
-                  webinar: {
-                    webinarPlan: {
-                      collaborators: {
-                        some: { consultantProfileId, status: "ACCEPTED" },
-                      },
-                    },
-                  },
-                },
-                // Owned classes
-                {
-                  class: {
-                    classPlan: { consultantProfileId },
-                  },
-                },
-                // Collaborated classes
-                {
-                  class: {
-                    classPlan: {
-                      collaborators: {
-                        some: { consultantProfileId, status: "ACCEPTED" },
-                      },
-                    },
-                  },
-                },
-                // Owned consultations
-                {
-                  consultation: {
-                    consultationPlan: { consultantProfileId },
-                  },
-                },
-                // Owned subscriptions
-                {
-                  subscription: {
-                    subscriptionPlan: { consultantProfileId },
-                  },
-                },
-                // Owned trials
-                {
-                  trial: {
-                    subscriptionPlan: { consultantProfileId },
-                  },
-                },
-              ],
-            },
-          },
-        },
-        include: meetingInclude,
-      });
-
-      streamLogger.info("Syncing recordings for consultant", {
-        consultantProfileId,
-        sessionCount: meetings.length,
-      });
-
-      // For each session, fetch recordings from Stream and sync
-      for (const session of meetings) {
-        await this.syncSessionRecordings(session, syncedRecordings);
-      }
-
-      streamLogger.info("Recording sync completed", {
-        consultantProfileId,
-        syncedCount: syncedRecordings.length,
-      });
-
-      return {
-        synced: syncedRecordings.length,
-        recordings: syncedRecordings,
-      };
-    } catch (error) {
-      streamLogger.error("Failed to sync recordings for consultant", error, {
-        consultantProfileId,
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * Sync recordings from Stream API for a consultee's enrolled sessions
-   * Creates Recording records for any recordings not already in DB
-   * @param consulteeProfileId The consultee profile ID
-   * @param userId The user ID (for payment lookup)
-   */
-  static async syncRecordingsForConsultee(
-    consulteeProfileId: string,
-    userId?: string,
-  ): Promise<{ synced: number; recordings: RecordingRow[] }> {
-    const syncedRecordings: RecordingRow[] = [];
-
-    try {
-      // Get the user ID from consultee profile if not provided
-      let effectiveUserId = userId;
-      if (!effectiveUserId) {
-        const consulteeProfile = await prisma.consulteeProfile.findUnique({
-          where: { id: consulteeProfileId },
-          select: { user: { select: { id: true } } },
-        });
-        effectiveUserId = consulteeProfile?.user?.id;
-      }
-
-      if (!effectiveUserId) {
-        streamLogger.warn("Could not find user for consultee profile", {
-          consulteeProfileId,
-        });
-        return { synced: 0, recordings: [] };
-      }
-
-      // Find all paid enrollments through Payment records
-      const paidEnrollments = await prisma.payment.findMany({
-        where: {
-          userId: effectiveUserId,
-          paymentStatus: "SUCCEEDED",
-          appointment: {
-            OR: [
-              { webinar: { isNot: null } },
-              { class: { isNot: null } },
-              { consultation: { isNot: null } },
-              { subscription: { isNot: null } },
-              { trial: { isNot: null } },
-            ],
-          },
-        },
-        include: {
-          // #689 — net refunds so a fully-refunded enrollment doesn't re-sync recordings.
-          refunds: { select: { amountPaise: true, status: true } },
-          appointment: {
-            include: {
-              occurrences: {
-                include: {
-                  meeting: {
-                    include: {
-                      occurrence: {
-                        include: {
-                          appointment: {
-                            include: {
-                              consultation: {
-                                include: {
-                                  consultationPlan: true,
-                                },
-                              },
-                              subscription: {
-                                include: {
-                                  subscriptionPlan: true,
-                                },
-                              },
-                              trial: {
-                                include: {
-                                  subscriptionPlan: true,
-                                },
-                              },
-                              webinar: {
-                                include: {
-                                  webinarPlan: true,
-                                },
-                              },
-                              class: {
-                                include: {
-                                  classPlan: true,
-                                },
-                              },
-                            },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      });
-
-      // Collect all meeting sessions from paid enrollments
-      type MeetingWithDetails = NonNullable<
-        (typeof paidEnrollments)[0]["appointment"]
-      >["occurrences"][0]["meeting"];
-      const meetings: NonNullable<MeetingWithDetails>[] = [];
-
-      for (const payment of paidEnrollments) {
-        if (!payment.appointment) continue;
-        if (!isPaymentEntitled(payment)) continue; // #689 — skip fully-refunded
-        for (const slot of payment.appointment.occurrences) {
-          if (slot.meeting && slot.meeting.streamCallId) {
-            meetings.push(slot.meeting);
-          }
-        }
-      }
-
-      // Deduplicate sessions by ID
-      const uniqueSessions = Array.from(
-        new Map(meetings.map((s) => [s.id, s])).values(),
-      );
-
-      streamLogger.info("Syncing recordings for consultee", {
-        consulteeProfileId,
-        sessionCount: uniqueSessions.length,
-      });
-
-      // For each session, fetch recordings from Stream and sync
-      for (const session of uniqueSessions) {
-        await this.syncSessionRecordings(session, syncedRecordings);
-      }
-
-      streamLogger.info("Recording sync completed for consultee", {
-        consulteeProfileId,
-        syncedCount: syncedRecordings.length,
-      });
-
-      return {
-        synced: syncedRecordings.length,
-        recordings: syncedRecordings,
-      };
-    } catch (error) {
-      streamLogger.error("Failed to sync recordings for consultee", error, {
-        consulteeProfileId,
-      });
-      throw error;
-    }
+      },
+      ...syncPageArgs(opts.cursor),
+    });
+    const { page, nextCursor } = splitSyncPage(rows);
+    // A fully refunded enrollment no longer reaches its recordings.
+    const entitled = page.filter((meeting) =>
+      meeting.occurrence.appointment.payment.some(isPaymentEntitled),
+    );
+    const { recordings, failed } = await this.syncMeetingPage(entitled);
+    streamLogger.info("Recording sync completed for consultee", {
+      userId,
+      sessionCount: entitled.length,
+      syncedCount: recordings.length,
+      failedCount: failed,
+    });
+    return { synced: recordings.length, recordings, failed, nextCursor };
   }
 }

@@ -14,10 +14,16 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
+import {
+  soldSessionMinutes,
+  soldSessionsPerWeek,
+} from "@/lib/booking/entitlement";
 import { requestListOrderBy } from "@/lib/booking/list-query";
 import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   parseRequestListQueryOrRespond,
+  NOT_BEING_MOVED,
+  assertNotBeingMoved,
   releaseDeclinedRequestHold,
   validateListRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
@@ -28,6 +34,8 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
+import { assertNoLiveCheckoutHold } from "@/lib/booking/request-cohort";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 
 export async function GET(request: NextRequest) {
   // Require authentication
@@ -182,6 +190,9 @@ export async function GET(request: NextRequest) {
           schedulingTimezone: true,
           // #1766 — the Requests tab sizes the first cycle off the entitlement.
           sessionsTotal: true,
+          sessionsPerWeek: true,
+          sessionMinutes: true,
+          sessionsRefunded: true,
           subscriptionPlan: {
             select: {
               id: true,
@@ -205,7 +216,16 @@ export async function GET(request: NextRequest) {
     ]);
 
     return NextResponse.json({
-      data: subscriptions,
+      // Every consumer sizes a sold plan off the plan block, so it carries the
+      // weekly cap and session length the buyer bought.
+      data: subscriptions.map((sub) => ({
+        ...sub,
+        subscriptionPlan: {
+          ...sub.subscriptionPlan,
+          sessionsPerWeek: soldSessionsPerWeek(sub),
+          sessionDurationInHours: soldSessionMinutes(sub) / 60,
+        },
+      })),
       meta: {
         total,
         page,
@@ -320,8 +340,10 @@ export async function PATCH(request: NextRequest) {
       // row, so re-read for the heavy include.
       const { holdNotices, rejectionPlan } = await prisma.$transaction(
         async (tx) => {
+          await assertNoLiveCheckoutHold(tx, "subscription", id);
+          await assertNotBeingMoved(tx, { subscriptionId: id }, "decline");
           await transitionSubscriptionRequest(tx, {
-            where: { id },
+            where: { id, ...NOT_BEING_MOVED },
             to: status,
             data: { pendingPaymentUrl: null },
           });
@@ -398,6 +420,7 @@ export async function PATCH(request: NextRequest) {
 
       return NextResponse.json({ data: subscription, rejectionRefund });
     } catch (error) {
+      if (error instanceof BookingRuleError) throw error;
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
         { tags: { subsystem: "bookings" } },
@@ -409,7 +432,10 @@ export async function PATCH(request: NextRequest) {
       throw error;
     }
   } catch (error) {
-    if (error instanceof IllegalTransitionError) {
+    if (
+      error instanceof IllegalTransitionError ||
+      error instanceof BookingRuleError
+    ) {
       return NextResponse.json(
         { error: error.message, code: error.code },
         { status: error.httpStatus },

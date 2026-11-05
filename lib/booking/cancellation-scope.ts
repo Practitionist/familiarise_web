@@ -23,7 +23,7 @@
  * the next undelivered session starts, and how much has already been consumed.
  */
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 import prisma, { type Db, type Tx } from "@/lib/prisma";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
@@ -36,6 +36,12 @@ import {
   POLICY_TERMS_INCLUDE,
   termsFromPolicyRow,
 } from "@/lib/payments/operations/cancellation-policy-store";
+import { occurrenceRefundsPaise } from "@/lib/booking/class-series";
+import { countedReleases } from "@/lib/booking/released-sessions";
+import {
+  cancelWindowState,
+  type SessionWindowState,
+} from "@/lib/booking/session-window";
 import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
@@ -49,6 +55,12 @@ export const LIVE_SLOT_WHERE = {
   deletedAt: null,
   completionStatus: { in: [...LIVE_SLOT_STATUSES] },
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** A payment that funds its booking now: captured and not retired. */
+export const LIVE_SUCCEEDED_PAYMENT_WHERE = {
+  paymentStatus: "SUCCEEDED",
+  deletedAt: null,
+} as const satisfies Prisma.PaymentWhereInput;
 
 export type BookingRefundContext = {
   /** The single SUCCEEDED payment funding this booking (zero-amount credit-funded included), if any. */
@@ -74,8 +86,8 @@ export type BookingRefundContext = {
   policy: CancellationPolicyTerms;
   /**
    * Hours until the earliest session that has not been delivered or cancelled,
-   * or null when the booking has no live session at all (an unallocated
-   * subscription, or one whose sessions have all been held).
+   * capped by the shortest notice the consultee gave when moving that session;
+   * null when the booking has no live session at all.
    */
   hoursUntilNextSession: number | null;
   /** Sessions delivered — COMPLETED or UNVERIFIED (#1006, #1766). */
@@ -88,8 +100,16 @@ export type BookingRefundContext = {
    * for every other booking, which quotes off its slots.
    */
   sessionsTotal: number | null;
+  /** Sessions a support refund removed from the plan (0 for any other booking). */
+  sessionsRefunded: number;
   /** #1766 — start instants (epoch ms, ascending) of the sessions still scheduled. */
   scheduledStarts: number[];
+  /**
+   * Subscriptions: what the payment already got back for single sessions
+   * (voids, incidents) and money-only support remedies. A session-count remedy
+   * is counted through `sessionsRefunded` instead, never both.
+   */
+  alreadyRefundedPaise: number;
   /**
    * Slots of ANY status on the booking. Zero means no session was ever
    * scheduled, which is a different fact from "every session is terminal" —
@@ -97,6 +117,10 @@ export type BookingRefundContext = {
    * consultant never held time for this buyer.
    */
   slotsTotal: number;
+  /** Slots of any status that were ever confirmed (not an unpaid tentative hold). */
+  confirmedSlotsTotal: number;
+  /** Where the booking stands against the clock; the cancel doors refuse unless BEFORE. */
+  windowState: SessionWindowState;
 };
 
 /** Identifies a booking: the parent request/event, or a lone appointment. */
@@ -125,6 +149,9 @@ export function bookingAppointmentFilter(
   throw new Error("bookingAppointmentFilter: no booking identifier given");
 }
 
+/** The notice a never-replaced released session counts as: past every policy tier. */
+const NEVER_REPLACED_NOTICE_HOURS = 24 * 365;
+
 export async function resolveBookingRefundContext(
   ref: BookingRef,
   /**
@@ -151,12 +178,11 @@ export async function resolveBookingRefundContext(
       cancellationPolicy: POLICY_TERMS_INCLUDE,
       payment: {
         where: {
-          paymentStatus: "SUCCEEDED",
           // #1161 — no amount floor: a fully-credit-funded payment (amount 0,
           // free_ intent) must surface here or the cancel route's credit-
           // restoration branch can never fire (it was dead code behind this
           // filter — caught by the #1180 preview work).
-          deletedAt: null,
+          ...LIVE_SUCCEEDED_PAYMENT_WHERE,
           ...(payerUserId ? { userId: payerUserId } : {}),
         },
         select: {
@@ -173,6 +199,7 @@ export async function resolveBookingRefundContext(
       subscription: {
         select: {
           sessionsTotal: true,
+          sessionsRefunded: true,
           subscriptionPlan: { select: { totalSessions: true } },
         },
       },
@@ -183,9 +210,10 @@ export async function resolveBookingRefundContext(
         where: { deletedAt: null },
         select: {
           startsAt: true,
+          endsAt: true,
+          ordinal: true,
           completionStatus: true,
           isTentative: true,
-          updatedAt: true,
         },
       },
     },
@@ -232,12 +260,11 @@ export async function resolveBookingRefundContext(
   const policy = termsFromPolicyRow(row?.cancellationPolicy ?? null);
 
   const slots = row?.occurrences ?? [];
-  const liveStarts = slots
+  const liveSlots = slots
     .filter((s) =>
       (LIVE_SLOT_STATUSES as readonly string[]).includes(s.completionStatus),
     )
-    .map((s) => s.startsAt.getTime())
-    .sort((a, b) => a - b);
+    .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
 
   // A RESCHEDULED row is the tombstone of a moved session, so it is not on the
   // calendar twice; a tentative row is an unpaid hold, not an entitlement.
@@ -246,91 +273,136 @@ export async function resolveBookingRefundContext(
     .map((s) => s.startsAt.getTime())
     .sort((a, b) => a - b);
 
-  const rawHoursUntilNextSession =
-    liveStarts.length > 0 ? (liveStarts[0] - Date.now()) / 3_600_000 : null;
-  const noticeFloorHours = await computeRescheduleNoticeFloorHours(
-    db,
-    row?.id,
-    slots,
+  const nowMs = Date.now();
+  // A session that already ended but is not swept yet is not outstanding.
+  const outstanding = liveSlots.filter(
+    (s) => s.completionStatus === "RESCHEDULED" || s.endsAt.getTime() > nowMs,
   );
-  let hoursUntilNextSession = rawHoursUntilNextSession;
-  if (rawHoursUntilNextSession !== null && noticeFloorHours !== null) {
-    hoursUntilNextSession = Math.min(
-      rawHoursUntilNextSession,
-      noticeFloorHours,
-    );
-  } else if (noticeFloorHours !== null) {
-    hoursUntilNextSession = noticeFloorHours;
-  }
+  // The notice the client gave when they released a session caps its notice.
+  const floors =
+    row && outstanding.length > 0
+      ? await consulteeReleaseNoticeFloors(db, row.id)
+      : new Map<number, number>();
+  // A released session whose time has passed was never given a new one: it
+  // counts as full notice, unless the client released it themselves.
+  const noticeHoursOf = (s: (typeof liveSlots)[number]) => {
+    const raw =
+      s.completionStatus === "RESCHEDULED" && s.startsAt.getTime() <= nowMs
+        ? NEVER_REPLACED_NOTICE_HOURS
+        : (s.startsAt.getTime() - nowMs) / 3_600_000;
+    const floor = floors.get(s.ordinal);
+    return floor === undefined ? raw : Math.min(raw, floor);
+  };
+  // The booking's notice is the shortest effective notice among its
+  // outstanding sessions; null with none left (the cancel door refuses
+  // through cancelWindowState before it ever quotes).
+  const hoursUntilNextSession =
+    outstanding.length > 0
+      ? Math.min(...outstanding.map((s) => noticeHoursOf(s)))
+      : null;
+
+  const sessionsCompleted = slots.filter(isCompletedOccurrence).length;
+  const alreadyRefundedPaise =
+    row?.subscription && payment
+      ? (await occurrenceRefundsPaise(db, payment.id)) +
+        (await moneyOnlySupportRefundsPaise(db, payment.id))
+      : 0;
+  const sessionsTotal = row?.subscription
+    ? sessionsTotalOf(row.subscription)
+    : null;
+  const sessionsRefunded = row?.subscription?.sessionsRefunded ?? 0;
+  // Sessions a support refund removed are not unscheduled entitlement.
+  const schedulable =
+    sessionsTotal === null ? null : sessionsTotal - sessionsRefunded;
+  const windowState = cancelWindowState(slots, new Date(nowMs), {
+    hasUnscheduledEntitlement:
+      schedulable !== null &&
+      schedulable - sessionsCompleted - scheduledStarts.length > 0,
+  });
 
   return {
     paidPayment,
     policy,
     hoursUntilNextSession,
-    sessionsCompleted: slots.filter(isCompletedOccurrence).length,
-    sessionsRemaining: liveStarts.length,
+    sessionsCompleted,
+    sessionsRemaining: liveSlots.length,
     slotsTotal: slots.length,
-    sessionsTotal: row?.subscription ? sessionsTotalOf(row.subscription) : null,
+    confirmedSlotsTotal: slots.filter((s) => !s.isTentative).length,
+    sessionsTotal,
+    sessionsRefunded,
     scheduledStarts,
+    alreadyRefundedPaise,
+    windowState,
   };
 }
 
-function noticeHoursBetween(
-  startsAt: Date,
-  stampedAt: Date | null | undefined,
-): number | null {
-  if (!(stampedAt instanceof Date)) return null;
-  const hours = (startsAt.getTime() - stampedAt.getTime()) / 3_600_000;
-  return hours >= 0 ? hours : null;
+/**
+ * Live money-only support refunds (goodwill) on a payment: an advance against
+ * what the plan owes, so a cancel nets them as the plan end does. A
+ * session-count remedy is netted through `sessionsRefunded` instead.
+ */
+async function moneyOnlySupportRefundsPaise(
+  db: Pick<Tx, "refund">,
+  paymentId: string,
+): Promise<number> {
+  const rows = await db.refund.findMany({
+    where: {
+      paymentId,
+      status: { in: ["SUCCEEDED", "PENDING"] },
+      supportRecommendation: { is: { sessionsRemoved: null } },
+    },
+    select: { amountPaise: true },
+  });
+  return rows.reduce((sum, r) => sum + Number(r.amountPaise), 0);
 }
 
-async function computeRescheduleNoticeFloorHours(
-  db: unknown,
-  appointmentId: string | undefined,
-  slots: Array<{
-    startsAt: Date;
-    updatedAt?: Date | null;
-    completionStatus: string;
-  }>,
-): Promise<number | null> {
-  const occurrenceDelegate = (
-    db as {
-      appointmentOccurrence?: {
-        findMany?: (args: unknown) => Promise<
-          Array<{
-            startsAt: Date;
-            deletedAt?: Date | null;
-            completionStatus: string;
-          }>
-        >;
-      };
+/**
+ * The clock state of a group event (or any booking with no refund context),
+ * read on the caller's client so the cancel transaction sees its own snapshot.
+ */
+export async function readCancelWindowState(
+  db: Db | Tx,
+  appointmentId: string,
+  now: Date = new Date(),
+): Promise<SessionWindowState> {
+  const occurrences = await db.appointmentOccurrence.findMany({
+    where: { appointmentId, deletedAt: null },
+    select: {
+      startsAt: true,
+      endsAt: true,
+      completionStatus: true,
+      isTentative: true,
+    },
+  });
+  return cancelWindowState(occurrences, now);
+}
+
+/**
+ * Per session (its ordinal), the shortest notice the consultee side gave when
+ * it moved it, read from the release records on its reschedule requests: the
+ * original start against the instant of the release.
+ */
+async function consulteeReleaseNoticeFloors(
+  db: Db | Tx,
+  appointmentId: string,
+): Promise<Map<number, number>> {
+  const releases = await countedReleases(db, {
+    appointmentId,
+    initiatorRole: "CONSULTEE",
+  });
+  const floors = new Map<number, number>();
+  for (const release of releases) {
+    for (const session of release.sessions) {
+      const hours =
+        (new Date(session.startsAt).getTime() - release.createdAt.getTime()) /
+        3_600_000;
+      if (hours < 0) continue;
+      const known = floors.get(session.ordinal);
+      floors.set(
+        session.ordinal,
+        known === undefined ? hours : Math.min(known, hours),
+      );
     }
-  ).appointmentOccurrence;
-
-  const tombstonedSlots = appointmentId
-    ? ((await occurrenceDelegate?.findMany?.({
-        where: {
-          appointmentId,
-          deletedAt: { not: null },
-          completionStatus: "RESCHEDULED",
-        },
-        select: {
-          startsAt: true,
-          deletedAt: true,
-          completionStatus: true,
-        },
-      })) ?? [])
-    : [];
-
-  const liveRescheduledNotices = slots
-    .filter((s) => s.completionStatus === "RESCHEDULED")
-    .map((s) => noticeHoursBetween(s.startsAt, s.updatedAt));
-  const tombstonedNotices = tombstonedSlots
-    .filter((t) => t.completionStatus === "RESCHEDULED")
-    .map((t) => noticeHoursBetween(t.startsAt, t.deletedAt));
-
-  const validNotices = [...liveRescheduledNotices, ...tombstonedNotices].filter(
-    (h): h is number => h !== null,
-  );
-  return validNotices.length > 0 ? Math.min(...validNotices) : null;
+  }
+  return floors;
 }

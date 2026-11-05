@@ -2,7 +2,10 @@ import React, { useMemo, useState } from "react";
 import { DayOfWeek } from "@prisma/client";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { roundTime, timeToMinutes12h } from "../utils/time";
-import { mergeConsecutiveSlotsForDisplay } from "../utils/mergeSlots";
+import {
+  mergeConsecutiveSlotsForDisplay,
+  overviewStatusKey,
+} from "../utils/mergeSlots";
 import type { PickerInterval } from "../types";
 import { SLOT_STATUS_TOKENS } from "@/lib/scheduling/interval-status-tokens";
 
@@ -10,6 +13,8 @@ type PickerIntervalsByDay = Record<DayOfWeek, PickerInterval[]>;
 
 interface WeeklyAvailabilityProps {
   slotsByDay: PickerIntervalsByDay;
+  /** The display zone; booked dates are read in it. */
+  zone: string;
 }
 
 const VISIBLE_SLOT_COUNT = 5;
@@ -24,19 +29,21 @@ const DAY_NAMES: DayOfWeek[] = [
   "SUNDAY",
 ];
 
-function formatShortSlotDate(iso: string | undefined): string {
+function formatShortSlotDate(iso: string | undefined, zone: string): string {
   if (!iso) return "";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
+    timeZone: zone,
   });
 }
 
 function getBookedSlotDate(
   slot: PickerInterval,
   rawDaySlots: PickerInterval[],
+  zone: string,
 ): string {
   const slotStartMs = slot.startsAt
     ? new Date(slot.startsAt).getTime()
@@ -47,9 +54,7 @@ function getBookedSlotDate(
       ? rawDaySlots.filter((raw) => {
           if (!raw.startsAt) return false;
           const rawStart = new Date(raw.startsAt).getTime();
-          const rawEnd = raw.endsAt
-            ? new Date(raw.endsAt).getTime()
-            : rawStart;
+          const rawEnd = raw.endsAt ? new Date(raw.endsAt).getTime() : rawStart;
           return rawStart >= slotStartMs && rawEnd <= slotEndMs;
         })
       : [];
@@ -65,17 +70,20 @@ function getBookedSlotDate(
     const uniqueDates = Array.from(
       new Set(
         underlying
-          .map((raw) => formatShortSlotDate(raw.startsAt))
+          .map((raw) => formatShortSlotDate(raw.startsAt, zone))
           .filter(Boolean),
       ),
     );
     return uniqueDates.length === 1 ? uniqueDates[0] : "";
   }
 
-  return formatShortSlotDate(slot.startsAt);
+  return formatShortSlotDate(slot.startsAt, zone);
 }
 
-export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
+export function WeeklyAvailability({
+  slotsByDay,
+  zone,
+}: WeeklyAvailabilityProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const mergedSlotsByDay = useMemo(() => {
@@ -129,13 +137,12 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
                 <div className="space-y-2">
                   {visibleSlots.length > 0 ? (
                     visibleSlots.map((slot) => {
-                      const bookingStatus = slot.bookingStatus || "available";
-                      const isFullyBooked = bookingStatus === "fully-booked";
-                      const isPartiallyBooked =
-                        bookingStatus === "partially-booked";
+                      const statusKey = overviewStatusKey(slot);
+                      const isFullyBooked = statusKey === "fullyBooked";
+                      const isPartiallyBooked = statusKey === "partiallyBooked";
                       const bookedDate =
                         isFullyBooked || isPartiallyBooked
-                          ? getBookedSlotDate(slot, rawDaySlots)
+                          ? getBookedSlotDate(slot, rawDaySlots, zone)
                           : "";
 
                       return (
@@ -144,13 +151,7 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
                           className={`
                             w-full min-h-[4.5rem] px-2 py-2 text-xs rounded-xl
                             border shadow-lg backdrop-blur-sm relative overflow-hidden
-                            ${
-                              isFullyBooked
-                                ? SLOT_STATUS_TOKENS.fullyBooked.className
-                                : isPartiallyBooked
-                                  ? SLOT_STATUS_TOKENS.partiallyBooked.className
-                                  : SLOT_STATUS_TOKENS.available.className
-                            }
+                            ${SLOT_STATUS_TOKENS[statusKey].className}
                           `}
                         >
                           {/* Glossy overlay for buttons */}
@@ -181,13 +182,19 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
                                 Booked{bookedDate ? ` (${bookedDate})` : ""}
                               </div>
                             )}
+                            {(statusKey === "tooSoon" ||
+                              statusKey === "limitReached") && (
+                              <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
+                                {SLOT_STATUS_TOKENS[statusKey].label}
+                              </div>
+                            )}
                           </div>
                         </div>
                       );
                     })
                   ) : (
                     <div className="h-16 flex items-center justify-center text-xs text-muted-foreground/70 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-border shadow-sm">
-                      No slots
+                      No times
                     </div>
                   )}
                 </div>
@@ -211,7 +218,7 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
               ) : (
                 <>
                   <ChevronDown className="w-3.5 h-3.5" />
-                  Show {totalHidden} more slots
+                  Show {totalHidden} more times
                 </>
               )}
             </button>

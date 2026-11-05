@@ -36,11 +36,24 @@ function mockTx(opts: {
   } | null;
   existingCreditNote?: { id: string } | null;
   invoice?: Record<string, unknown> | null;
+  invoiceStatus?: string;
 }) {
   const creditNoteCreate = jest
     .fn()
     .mockImplementation(async () => ({ id: "cn-new" }));
+  const invoice = opts.invoice ?? {
+    id: "inv1",
+    status: opts.invoiceStatus ?? "ISSUED",
+    providerPaymentOrderId: "order_old_amount",
+    issuedAt: new Date("2026-05-01T00:00:00.000Z"),
+    subtotalPaise: 1000,
+    totalPaise: 1180,
+    igstPaise: 0,
+    cgstPaise: 90,
+    sgstPaise: 90,
+  };
   return {
+    _invoice: invoice,
     _creditNoteCreate: creditNoteCreate,
     $executeRaw: jest.fn().mockResolvedValue(1),
     payment: { findUnique: jest.fn().mockResolvedValue(opts.payment) },
@@ -51,22 +64,25 @@ function mockTx(opts: {
       aggregate: jest.fn().mockResolvedValue({ _sum: { totalPaise: null } }),
     },
     organizationInvoice: {
-      findUnique: jest.fn().mockResolvedValue(
-        opts.invoice ?? {
-          id: "inv1",
-          // #776 — credit notes only mint against an issued invoice.
-          status: "ISSUED",
-          issuedAt: new Date("2026-05-01T00:00:00.000Z"),
-          // #812 — subtotalPaise drives the gross-up (tax over SUBTOTAL, not
-          // total); omitting it silently zeroed taxFraction and the test
-          // affirmed the old under-credit bug.
-          subtotalPaise: 1000,
-          totalPaise: 1180,
-          igstPaise: 0,
-          cgstPaise: 90,
-          sgstPaise: 90,
+      updateMany: jest.fn(
+        async ({
+          where,
+          data,
+        }: {
+          where: { id: string; status: { in: string[] } };
+          data: { providerPaymentOrderId: null };
+        }) => {
+          if (
+            where.id !== invoice.id ||
+            !where.status.in.includes(String(invoice.status))
+          ) {
+            return { count: 0 };
+          }
+          invoice.providerPaymentOrderId = data.providerPaymentOrderId;
+          return { count: 1 };
         },
       ),
+      findUnique: jest.fn().mockResolvedValue(invoice),
     },
     organization: {
       findUnique: jest.fn().mockResolvedValue({
@@ -93,30 +109,35 @@ const INVOICED_PAYMENT = {
 };
 
 describe("mintRefundCreditNote", () => {
-  it("mints a credit note for an invoiced refund", async () => {
-    const tx = mockTx({ payment: INVOICED_PAYMENT });
-    const res = await mintRefundCreditNote(tx as never, {
-      paymentId: "p1",
-      refundId: "ref1",
-      amountPaise: 1180,
-      reason: "test",
-    });
-    expect(res.creditNoteId).toBe("cn-new");
-    expect(tx._creditNoteCreate).toHaveBeenCalledTimes(1);
-    const data = tx._creditNoteCreate.mock.calls[0][0].data;
-    expect(data.refundId).toBe("ref1");
-    expect(data.invoiceId).toBe("inv1");
-    // A full refund of a ₹11.80 booking reverses its own ₹1.80 GST, never more.
-    expect(data.subtotalPaise).toBe(1000);
-    expect(data.cgstPaise).toBe(90);
-    expect(data.sgstPaise).toBe(90);
-    expect(data.igstPaise).toBe(0);
-    expect(data.totalPaise).toBe(1180);
-    // #789 — the prefix is capped so the number satisfies CGST Rule 53's
-    // 16-character limit; "ACME-CN-2026-0001" (17 chars) was itself a breach.
-    expect(data.creditNoteNumber).toBe("ACM-CN-2026-0001");
-    expect(data.creditNoteNumber.length).toBeLessThanOrEqual(16);
-  });
+  it.each(["ISSUED", "OVERDUE"])(
+    "mints a credit and preserves gateway recovery of an %s invoice",
+    async (invoiceStatus) => {
+      const tx = mockTx({ payment: INVOICED_PAYMENT, invoiceStatus });
+      const res = await mintRefundCreditNote(tx as never, {
+        paymentId: "p1",
+        refundId: "ref1",
+        amountPaise: 1180,
+        reason: "test",
+      });
+      expect(res.creditNoteId).toBe("cn-new");
+      expect(tx._creditNoteCreate).toHaveBeenCalledTimes(1);
+      const data = tx._creditNoteCreate.mock.calls[0][0].data;
+      expect(data.refundId).toBe("ref1");
+      expect(data.invoiceId).toBe("inv1");
+      // A full refund of a ₹11.80 booking reverses its own ₹1.80 GST, never more.
+      expect(data.subtotalPaise).toBe(1000);
+      expect(data.cgstPaise).toBe(90);
+      expect(data.sgstPaise).toBe(90);
+      expect(data.igstPaise).toBe(0);
+      expect(data.totalPaise).toBe(1180);
+      // #789 — the prefix is capped so the number satisfies CGST Rule 53's
+      // 16-character limit; "ACME-CN-2026-0001" (17 chars) was itself a breach.
+      expect(data.creditNoteNumber).toBe("ACM-CN-2026-0001");
+      expect(data.creditNoteNumber.length).toBeLessThanOrEqual(16);
+      expect(tx._invoice.providerPaymentOrderId).toBe("order_old_amount");
+      expect(tx.organizationInvoice.updateMany).not.toHaveBeenCalled();
+    },
+  );
 
   it("#776 — does NOT mint a credit note against a DRAFT invoice", async () => {
     const tx = mockTx({
@@ -155,6 +176,7 @@ describe("mintRefundCreditNote", () => {
     expect(res.creditNoteId).toBe("cn-existing");
     expect(tx._creditNoteCreate).not.toHaveBeenCalled();
     expect(tx.orgCreditNoteCounter.upsert).not.toHaveBeenCalled();
+    expect(tx.organizationInvoice.updateMany).not.toHaveBeenCalled();
   });
 
   it("is a no-op for a non-invoiced payment", async () => {

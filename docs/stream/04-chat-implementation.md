@@ -10,7 +10,9 @@
 - [Member Management](#member-management)
 - [Channel Creation Flow](#channel-creation-flow)
 - [Code Examples](#code-examples)
+- [Appointment Chat Sheet and Booking Tag](#appointment-chat-sheet-and-booking-tag)
 - [Best Practices](#best-practices)
+- [Unread Message Digest](#unread-message-digest)
 
 ---
 
@@ -594,6 +596,76 @@ export function useUserChannels(userId: string) {
 }
 ```
 
+### Client behaviour the sidebar, badge and messages rely on
+
+The channel list does not assume the first page is everything. When a `message.new` or `notification.message_new` event names a channel the sidebar does not hold, and the first page has already loaded, `ChatSidebar` watches that channel and inserts it at the top, provided it matches the current org scope (and, for a direct message, `isUsableDmChannel`). Inserts are deduplicated by cid, so a burst of events costs one `watch`. Pages appended by "Load more" go through `appendUniqueChannels` (`components/chat/utils/channelList.ts`) so a channel that moved between pages is never shown twice.
+
+The personal navigation badge (`hooks/useChatUnreadCount.ts`) starts from Stream's own `total_unread_count`, read from `client.user` and refreshed by every `message.new` and `notification.*` event that carries it, so it counts channels the sidebar has not loaded. That total is global and includes org-tagged channels, which belong to the org dashboard's own entry, so their unread is subtracted. The subtraction is local while loaded channels explain the whole total. When unread exists beyond them, one `getUnreadCount` call (at most every 30 seconds) lists unread per channel, and one `queryChannels` per 30 newly seen cids classifies them as personal or org; classifications are cached for the life of the mount.
+
+### The Messages inbox
+
+**Order.** `ChatSidebar` lists Conversations (1:1 chats) above Channels (events), so a client's message never sits below a run of empty event channels. Both queries sort `[{ pinned_at: -1 }, { last_message_at: -1 }]`, which keeps pinned chats on page one and paging correct. `pinnedFirst` (`components/chat/utils/channelUtils.ts`) shows a pin changed in this session at once, before the rebase described under "Paging after a pin, unpin or hide" re-reads the server's order. Once a re-read returns that row and no pin request for it is still in flight (`pendingPinsRef`), the local value is dropped and the row's own `pinned_at` from Stream decides its place. Stream stamps `pinned_at` when it handles each request, so three pins clicked 150 ms apart can be stored in a different order from the clicks, and the list then settles on the stored order, the same one a reload shows. Rows show a messenger-style time from `formatRowTime`: the clock time today, "Yesterday", the weekday within a week, then the date.
+
+**Pin and remove.** Each row has an options menu (`components/chat/ChannelItem.tsx`). Pin, unpin and "Remove from list" go through `POST /api/stream/channels/preference`. It finds the channel with the caller in `members` and acts only on their own membership (`pin`, `unpin`, `hide(userId, false)`), so Stream's narrow grants for the `user` role do not matter and nobody can touch a conversation they are not in. Both apply at once in the browser and undo themselves, with a toast, if the server refuses. Hiding keeps the history. A hidden channel returns on its next message (the sidebar lists it from `message.new` or `notification.message_new`) or when it is reopened, because `/open` calls `show` for the caller. There is no per-user history clear and no leaving a 1:1: a thread is one shared record that support, moderation and retention rely on.
+
+**Paging after a pin, unpin or hide.** "Load more" asks Stream for the next page by offset, and the offset counts the raw rows Stream has returned (`fetchedCountRef`). A pin, unpin or hide moves rows across that offset. With 21 conversations, the first pinned, page one holds the pinned one and the 19 newest; unpinning it moves it to 21st place, so the conversation that was 21st becomes 20th and a next page at offset 20 would return only the row already on screen. Once the server accepts the change, `rebaseList` re-reads as many rows as are loaded (one 20-row page per page loaded, in parallel), replaces that list and resets its offset to match. The open and deep-linked conversations stay listed even when the new order puts them past the loaded rows. Each list has a generation counter (`listGenerationRef`) that a rebase or a full refresh bumps, so a "Load more" page requested before the list was replaced is dropped rather than appended. A full refresh (`fetchChannels`, which is also the silent refresh after a refused hide) bumps both counters when it starts, as a rebase does, so whichever started last wins for each list: a refresh that started before an unpin and lands after the unpin's rebase is dropped for that list, and a refresh that started after a rebase is kept even when the rebase lands first. A dropped read is not harmless: `client.queryChannels` writes each response's `membership` (including `pinned_at`) into the shared stream-chat `Channel` objects the rows render from before the sidebar sees it, so a dropped older read would bring back a pin the server no longer has. When a refresh, rebase or "Load more" page is dropped and the newest read of that list has already landed (`appliedGenerationRef` equals `listGenerationRef`), `rebaseList` reads the list once more; when a newer read is still in flight, its own response overwrites the membership and nothing more is needed. The scope check (`isScopeSuperseded`) is a separate condition, so a page cut for another organisation never lands either way. The server has already saved the change by the time a rebase runs, so a failed re-read must not leave the old offset in use. `rebaseList` reads once more straight away; if that read fails too, the list stays marked stale (`staleListRef`, set when a rebase starts and cleared when a rebase or refresh lands), and the next "Load more" re-reads the loaded rows plus one more page instead of paging from the old offset. Reopening a hidden conversation needs no rebase: an added row only pushes later rows down, so the next page repeats a row that `appendUniqueChannels` drops and nothing is skipped. `__tests__/chat/sidebar-pagination-rebase.test.tsx` runs these cases against a Stream mock that orders and slices pages.
+
+**Reopening.** The DM arm of `POST /api/stream/channels/open` re-adds both people to the pair's channel with an idempotent `addMembers`, since `create()` only seeds a channel that is new. Someone who left or lost membership keeps their eligibility, so searching for them and clicking restores the same thread with its history. Search and the picker offer only people the viewer shares a consultation or subscription with, so a DM that exists only through a webinar or class link (a host or presenter and a seat holder) is not offered after "Remove from list": it returns with its next message or through a deep link. A DM the caller only hid still holds both people, so `/open` shows it on that path too. A failed re-add fails the open rather than returning a channel the caller is not in.
+
+**Search and New message.** The search box narrows the loaded list instantly (`filterChannelsByTerm`) and asks the server only for what the list cannot hold (`GET /api/stream/channels/search-appointments`: people, plan titles, an event host, a consultee's email for their consultant, and a session date in the viewer's zone). The `+` beside Conversations opens `NewMessageDialog`, which calls the same route with `mode=people`: with no text it lists the viewer's most recent connections (bookings only, never events), and with text it searches them. Search and the picker open a conversation through `useOpenConversation`, so the server's booking check is the only gate, and report the channel back so the sidebar lists it.
+
+**Frozen conversations.** When `channel.data.frozen` is set, `ChatContainer` replaces the composer with `FrozenChannelNotice`. Stream grants `use-frozen-channel` to no role, so a send would otherwise fail without saying why. A DM freezes after a long quiet spell and reopens with the pair's next booking; an event channel closes after its session (see [17. Channel Lifecycle](./17-channel-lifecycle.md)).
+
+`components/chat/CustomMessage.tsx` shows the delivery state of the viewer's own messages. A message the SDK holds with `status === "failed"` renders "Not sent" with a Retry button that calls the message context's `handleRetry` (stream-chat-react's `retrySendMessage`, which resends the same message id), and one with `status === "sending"` renders "Sending…". Without this a failed send looked identical to a delivered one.
+
+---
+
+## Appointment Chat Sheet and Booking Tag
+
+### The side sheet
+
+On an appointment's detail page (consultee, consultant and the organisation views, which all render `AppointmentDetailClient`) and in the appointments list's quick-view drawer (`AppointmentSheet`, mounted by `AppointmentsShell`), the chat actions open a right-side sheet instead of leaving the page. The sheet is full screen on a phone.
+
+- `chatAffordancesForVm` (`components/appointments/consultee/ConsulteeAppointmentsAdapter.tsx`) gives each chat action a `chat` target (`AppointmentChatTarget` in `lib/appointments/adapter.ts`) as well as its Messages `href`. The detail page and the quick view open the target through `LazyAppointmentChatSheet`; the quick view closes first, so only one sheet is open at a time. The row ⋯ menus still navigate to Messages.
+- The DM label names the other person ("Message Liam Anderson"), using the name carried on the same user record as the DM's counterparty id (`messageLabel`); it falls back to **Message Consultant** / **Message Consultee** only when no name exists. The group channel is **Class chat** / **Webinar chat**. For a class or webinar the DM is offered in `OPENABLE_EVENT_STATUSES` (including `IN_PROGRESS`), the same states the server's DM gate accepts for events; consultations and subscriptions use `DM_ELIGIBLE_STATUSES`.
+- `AppointmentChatSheet` (`components/appointments/detail/AppointmentChatSheet.tsx`) is loaded with `next/dynamic` (`components/appointments/LazyAppointmentChatSheet.tsx`) on first open, so the chat SDK stays off the detail page bundle. It renders `ChatSurface` with the sheet's own children, so the app's one Stream client, `ChatUnavailable` and the "Reconnecting…" banner behave as they do on the Messages page.
+- Inside the surface the sheet calls `POST /api/stream/channels/open` with the same body the Messages deep link sends (including the org scope from `useOrgScope`), watches the returned channel (skipped when the client already watches it), sets it active, and mounts `ChatContainer`. As soon as the route answers, the booking-tag lookup is prefetched into react-query in parallel with `watch`, so the chip is ready with the composer. A refusal from the route is shown in the sheet.
+- The sheet keeps each resolved channel (per user and request body) for the page session, so reopening skips the route and, when the client already watches the channel, the network entirely. A failed watch drops the cached entry.
+- The route answers DM eligibility from one `pairBookingContexts` lookup, which is the same question `canDirectMessage` answers. Alongside it, one Stream `queryChannels` (no messages) reads the requested scope's DM. When eligibility passes and that DM already holds both people under the expected `organization_id`, the route returns it without user upserts or a create call; otherwise it falls through to `createDirectMessageChannel`. Skipping the upsert loses nothing: each user's own profile is synced when their client connects, the sync cache already skipped it for five minutes, and an existing DM is reachable from the sidebar without this route.
+- The sheet provides `ChatPaneContext` without `backToList`, so the channel header shows no back arrow and the sheet's own close button (40 × 40 px on a phone) and Escape are the ways out.
+- The sheet header links **Open in Messages** to the full deep link. That link, and the deep links in notifications and emails, keep working unchanged.
+
+### The booking tag
+
+Opening a DM with an appointment context posts nothing. Instead the composer offers a removable chip above the message box:
+
+> About: Career coaching · next session Tue, 3 Nov, 4:00 PM
+
+- `ChatContainer` takes `contextAppointmentId`. The Messages page passes the `contextAppointmentId` URL parameter (through `ChatLayout`); the sheet passes the appointment it was opened from.
+- `BookingTagComposer` (`components/chat/BookingTag.tsx`) asks the server for the tag. The chip shows only when the server answers. If every session is over it reads "last session" instead of "next session".
+- The chip text wraps on narrow screens rather than truncating. While the lookup is in flight a skeleton chip holds the row's height, and it collapses if the server answers 404.
+- The chip uses `MessageComposer`'s `overrideSubmitHandler` to add `booking_appointment_id` to the **next** message the user sends, on both the optimistic copy and the request, so a retried send keeps it. The chip then disappears. Removing it, or sending nothing, writes nothing.
+
+### Why a rendered tag cannot be forged
+
+Message custom fields are written by the sender's browser, so a member could put any title or date on a message. The tag therefore never reads them.
+
+- `GET /api/stream/booking-tag?appointmentId=…&cid=messaging:…` (`app/api/stream/booking-tag/route.ts`) parses its query with `bookingTagQuerySchema` and returns `{ title, kind, nextSessionAt, lastSessionAt }` or 404.
+- The appointment (one joined query) and the DM's members (one Stream `queryChannels`) are read in parallel.
+- It answers only when the DM's two human members (Familiarise Support and the retired booking-card user are ignored) are the caller and one other person, `resolveVerifiedBookingContextTitle` confirms both are parties to the appointment (consultee, consultant, or an accepted presenter collaborator on a webinar or class), and `isDmChannelIdEligible` confirms the DM is one the pair may open under the open route's org-scope rules.
+- The next session is the earliest live, non-tentative occurrence that has not ended (`pickSessionAnchor` in `lib/stream/booking-tag.ts`); with none left it is the latest one.
+- `MessageBookingTag` renders a message's tag only from that response, through react-query keyed on `(appointmentId, cid)`. It reads nothing else from the message and has no Get help link. Old server-posted cards are left out of the message list (`withoutLegacyBookingCards` in `lib/stream/system-users.ts`), so a DM holding only those shows the normal empty state.
+
+### Message actions, dates and previews
+
+- With a mouse, a bubble's react, reply and more actions float above it on hover, as before. On touch (`(hover: hover) and (pointer: fine)` does not match), they appear beside the bubble only after a tap on it and hide on a tap elsewhere (`CustomMessage`).
+- Below 640 px the SDK's floating date pill is not rendered (`ChatDateSeparator` in `ChatContainer`), because it covered the top bubble; the in-list date separators remain.
+- A channel row in the Messages sidebar previews the latest message that is not a retired booking card (`lastVisibleMessage` in `components/chat/utils/channelUtils.ts`), or "No messages yet".
+
+### Group channel header and empty state
+
+For a `webinar-` or `class-` channel, `CustomChannelHeader` shows the title and then `eventChannelSubtitle` (`components/chat/utils/channelUtils.ts`), for example "group chat · Asha (host) + 4 classmates · Everyone in this class can read this". The host is the channel's `created_by`, and the count is the channel's `member_count` minus the host. An empty class channel says "Say hello to your class"; an empty webinar channel says "Say hello to everyone in this webinar". DMs keep the SDK's empty state.
+
 ---
 
 ## Best Practices
@@ -722,10 +794,41 @@ additionalData: {
 
 ---
 
+## Unread Message Digest
+
+Chat is pull-only: Stream push providers are disabled, so nobody learns of a new message until they open the dashboard. The one push the app sends is a durable unread digest, delivered as an email and an in-app bell, and built on Stream's [unread reminders](https://getstream.io/chat/docs/node/unread-reminders/) ([ADR-09](./18-architecture-decision-records.md#adr-09-unread-digest-via-stream-unread-reminders)).
+
+### How a digest is produced
+
+1. The `messaging` channel type has `reminders: true` and `read_events: true`, and the app's `reminders_interval` is 1800 seconds. Both live in `TARGET_CHAT_REMINDERS` in `lib/stream/control-plane-contract.ts`.
+2. When a member of a channel with ten or fewer members has left a regular or system message unread for longer than the interval, Stream sends `user.unread_message_reminder` to the `chat` webhook hook at `/api/stream/webhooks`. The event names the user and carries up to ten channels, each with its member list and its last five messages.
+3. The route verifies the signature, writes the `WebhookEvent` receipt, acknowledges, and dispatches to `handleUnreadMessageReminder` in `lib/stream/chat/unread-digest.ts`.
+4. The handler stages one bell (`CHAT_UNREAD_DIGEST`, in the `appointment` Novu family) and one email (`CHAT_UNREAD_DIGEST`) inside a single transaction, then flushes them after the response. The outbox relays deliver anything the inline attempt misses.
+
+### Who receives it
+
+- Stream user ids are our user ids. The handler skips `familiarise-support`, any id with no user row (which covers every synthetic user), and any user who is banned or erased.
+- Only `messaging` channels count, and the support user is never listed as a counterpart. A counterpart who has been erased is dropped, and a channel left with no live counterpart, or whose new messages are all system messages, produces no line.
+- The digest honours the `appointments` preference category, because chat is booking-scoped. The bell also honours `inAppEnabled`, workspace routing and quiet hours (`stageBell` with `deferrable: true`). The email honours `emailEnabled`, `allNotifications`, suppressions and the pre-launch delivery guard, because it is staged through `deliver()`'s outbox. Email has no quiet-hours concept in this repo, so the digest email is not deferred.
+
+### What it says
+
+Each line reads, for example, "You have 2 new messages from Asha about your session on 12 Nov 2026." and links to `/dashboard/go/auto/messages?channelId=<id>`, or to the organisation's messages page when the pair's session is org-hosted. The count is the number of regular messages from others that are newer than the recipient's own latest message among Stream's last five; when all five qualify the line says "5+". The session date is the pair's next live occurrence, or their latest past one.
+
+The digest never quotes message content. `streamUnreadMessageReminderSchema` (`schemas/webhooks/stream.ts`) does not declare a message's `text`, so the text is neither parsed nor stored in `WebhookEvent.payload`.
+
+### Exactly one digest per user per window
+
+The window is the 30-minute slot that contains the event's `created_at`, so a retry or a sweeper re-drive computes the same window. The transaction first inserts an `IdempotencyRecord` with scope `stream.chat-digest`, key `<windowStart>` and the user's id; its `(scope, key, userId)` unique turns a second delivery into a rolled-back no-op. The bell's `NotificationOutbox.transactionId` derives from the dedupe key `chat-digest:<userId>:<windowStart>`, and the email's `entityRef` is the same key. The claim expires after 24 hours and is pruned by `cleanup-auth-tokens`.
+
 ## Deprecated & Superseded Approaches
 
-- **Separate `consultation-{id}` and `subscription-{id}` Channels**: Superseded by one canonical `messaging` DM per human pair (`dm-<a>-<b>` for personal scope, `dmo-<orgHash>-<pairHash>` for enterprise scope) with `booking-ctx-` receipt cards.
+- **Separate `consultation-{id}` and `subscription-{id}` Channels**: Superseded by one canonical `messaging` DM per human pair (`dm-<a>-<b>` for personal scope, `dmo-<orgHash>-<pairHash>` for enterprise scope) and a verified booking tag on the message that refers to a booking.
 - **Locale-Dependent `localeCompare` ID Sorting**: Superseded by UTF-16 code-unit sorting (`a < b ? [a, b] : [b, a]`) capped at 64 characters (`lib/stream-channel-ids.ts`).
+- **Server-Posted Booking Cards (`booking-ctx-`, `system-booking-context`)**: Opening a DM from an appointment used to post a receipt card as a server user named "Familiarise". People read it as a support message, it showed a Get help link and a duplicate title line, its date was the first session rather than the next, and it was written for both people even when nobody replied. Replaced by the booking tag on the sender's next message. Old cards in Stream are hidden by `CustomMessage`, and `LEGACY_BOOKING_CONTEXT_USER_ID` survives only for that and to keep the user out of DM member counts.
+- **Channels Listed Above Conversations**: The sidebar used to show event channels first, so the only DM could sit below several empty ones. Conversations now lead and pinned chats lead within each list.
+- **Leaving a 1:1 to Tidy the List, and Relying on `create()` to Re-Add**: There is no leave or delete for a 1:1; "Remove from list" hides it per user. `create()` does not add members to an existing channel, so a person who had left was sent to a channel they were not in. `/open` now re-adds both people.
+- **A Pin Change Kept Only in the Browser's Order**: The sidebar used to reorder a pinned or unpinned row locally and leave the paging offset alone, so an unpin or hide shifted a row behind the offset and "Load more" never showed it. Superseded by `rebaseList`.
 - **Unmoderated Consultant-Consultee Threads**: Superseded by explicit `channel_moderator` assignment to `dm_consultant_user_id` at channel creation.
 
 ---

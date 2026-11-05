@@ -65,20 +65,20 @@ These items are designed but not implemented. They are tracked together as the s
 
 The table below lists where each part of the system lives.
 
-| Area                                   | Location                                                                                               |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Codes, apply, credits, refund restores | `lib/referrals/service.ts`                                                                             |
-| Attribution at checkout                | `lib/referrals/attribution.ts`, `lib/referrals/attribution-token.ts`                                   |
-| Capture inside the payment transaction | `lib/referrals/capture.ts`                                                                             |
-| Vest, void, reopen, breakage           | `lib/referrals/vesting.ts`                                                                             |
-| Configuration and budget               | `lib/referrals/program-config.ts`                                                                      |
-| Discount and credit arithmetic         | `lib/referrals/promo-math.ts`, `lib/payments/pricing/derive-checkout-amount.ts`                        |
-| Take rate, waiver, schedule approval   | `lib/payments/pricing/platform-fee.ts`                                                                 |
-| Share links                            | `app/r/[code]/route.ts`, the `?via=` handling in `middleware.ts`                                       |
-| User routes                            | `app/api/referrals/**`, `app/api/checkout/referral-pricing/route.ts`                                   |
-| Admin routes                           | `app/api/admin/referrals/**`, `app/api/admin/fee-schedules/**`                                         |
-| Job registration                       | `lib/cron/cleanup-registry.ts`, `netlify/functions/cron-tick.mts`, `.github/workflows/cron-weekly.yml` |
-| Ledger reconciliation                  | `scripts/reconcile/reconcile-ledgers.ts`                                                               |
+| Area                                   | Location                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------- |
+| Codes, apply, credits, refund restores | `lib/referrals/service.ts`                                                      |
+| Attribution at checkout                | `lib/referrals/attribution.ts`, `lib/referrals/attribution-token.ts`            |
+| Capture inside the payment transaction | `lib/referrals/capture.ts`                                                      |
+| Vest, void, reopen, breakage           | `lib/referrals/vesting.ts`                                                      |
+| Configuration and budget               | `lib/referrals/program-config.ts`                                               |
+| Discount and credit arithmetic         | `lib/referrals/promo-math.ts`, `lib/payments/pricing/derive-checkout-amount.ts` |
+| Take rate, waiver, schedule approval   | `lib/payments/pricing/platform-fee.ts`                                          |
+| Share links                            | `app/r/[code]/route.ts`, the `?via=` handling in `middleware.ts`                |
+| User routes                            | `app/api/referrals/**`, `app/api/checkout/referral-pricing/route.ts`            |
+| Admin routes                           | `app/api/admin/referrals/**`, `app/api/admin/fee-schedules/**`                  |
+| Job registration                       | `lib/cron/cleanup-registry.ts`, `netlify/functions/cron-tick.mts`               |
+| Ledger reconciliation                  | `scripts/reconcile/reconcile-ledgers.ts`                                        |
 
 ## Related documents
 

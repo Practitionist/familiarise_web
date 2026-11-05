@@ -1,5 +1,6 @@
 import * as React from "react";
 import { Body, Container, Head, Html, Preview, Section } from "react-email";
+import { goHref } from "@/lib/dashboard/go";
 import { getAppUrl } from "@/lib/url";
 import { EmailFooter } from "./EmailFooter";
 import { EmailLogo } from "./EmailLogo";
@@ -35,7 +36,9 @@ export const EmailLayout = ({
         <EmailFooter
           unsubscribeLink={unsubscribeUrl ?? undefined}
           preferencesLink={
-            requiredNotice ? undefined : `${getAppUrl()}/profile`
+            requiredNotice
+              ? undefined
+              : `${getAppUrl()}${goHref("auto", "settings/notifications")}`
           }
           requiredNotice={requiredNotice}
           showSupport={showSupport}

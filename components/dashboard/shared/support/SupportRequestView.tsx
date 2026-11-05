@@ -58,7 +58,7 @@ import { SessionConversation } from "./SessionConversation";
 export interface SupportRequestViewProps {
   /** `c_<caseId>` or `b_<appointmentId>` (lib/support/case-key.ts). */
   caseKey: string;
-  /** The Support requests list, for the back link. */
+  /** The Support cases list, for the back link. */
   requestsHref: string;
   /** `<tree>/appointments` when this dashboard has booking pages. */
   appointmentsBase?: string;
@@ -75,7 +75,10 @@ const day = (iso: string | null | undefined) =>
 function StatusTimeline({ stage }: Readonly<{ stage: RequestStage }>) {
   const steps = [...REQUEST_STEPS.slice(0, 2), stage.settledLabel];
   return (
-    <ol className="flex items-center gap-2 text-xs" aria-label="Request status">
+    <ol
+      className="flex items-center gap-2 text-xs"
+      aria-label="Support case status"
+    >
       {steps.map((label, i) => {
         const reached = i <= stage.step;
         return (
@@ -185,7 +188,7 @@ function SessionRequest({
         ]
           .filter(Boolean)
           .join(" · ")}
-        back={{ href: props.requestsHref, label: "Support requests" }}
+        back={{ href: props.requestsHref, label: "Support cases" }}
       />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="min-w-0 space-y-4">
@@ -205,7 +208,7 @@ function SessionRequest({
           )}
         </div>
         <aside className="order-first space-y-4 lg:order-last">
-          <h2 className="text-sm font-semibold">Request context</h2>
+          <h2 className="text-sm font-semibold">Support case context</h2>
           {booking && (
             <ContextCard
               icon={CalendarDays}
@@ -246,6 +249,7 @@ function TicketComposer({
   closed,
   resolved,
   resolvedAt,
+  canReopen = true,
   requestsHref,
   draft,
   sending,
@@ -256,6 +260,7 @@ function TicketComposer({
   closed: boolean;
   resolved: boolean;
   resolvedAt: string | null | undefined;
+  canReopen?: boolean;
   requestsHref: string;
   draft: string;
   sending: boolean;
@@ -266,12 +271,12 @@ function TicketComposer({
   if (closed) {
     return (
       <p className="text-sm text-muted-foreground">
-        This request is closed.{" "}
+        This support case is closed.{" "}
         <Link
           href={requestsHref}
           className="font-medium text-foreground underline underline-offset-4"
         >
-          Start a new request
+          Start a new support case
         </Link>{" "}
         if you still need help.
       </p>
@@ -287,7 +292,7 @@ function TicketComposer({
         field.current?.focus();
       }}
     >
-      {resolved && (
+      {resolved && canReopen && (
         <ResolvedFollowUp
           caseId={caseId}
           resolvedAt={resolvedAt}
@@ -298,7 +303,9 @@ function TicketComposer({
       <Textarea
         ref={field}
         aria-label="Reply"
-        aria-describedby={resolved ? "support-reply-follow-up" : undefined}
+        aria-describedby={
+          resolved && canReopen ? "support-reply-follow-up" : undefined
+        }
         rows={3}
         value={draft}
         onChange={(e) => onDraftChange(e.target.value)}
@@ -406,14 +413,17 @@ function TicketRequest({
   const booking = useQuery({
     queryKey: supportKeys.thread(appointmentId ?? ""),
     queryFn: () => fetchSupportThread(appointmentId ?? ""),
-    enabled: appointmentId !== null && data?.canReply === true,
+    enabled:
+      appointmentId !== null &&
+      data?.canReply === true &&
+      data?.viewerIsPresenter !== true,
     select: (thread) => thread.booking,
   });
   useSetBreadcrumbLabel(data?.subject);
   if (query.isError && !data) {
     return (
       <ErrorState
-        title="This request could not be loaded"
+        title="This support case could not be loaded"
         onRetry={() => void query.refetch()}
         variant="page"
       />
@@ -437,7 +447,7 @@ function TicketRequest({
   return (
     <>
       <PageHeader
-        title={data.subject || "Support request"}
+        title={data.subject || "Support case"}
         description={[
           CASE_TOPIC_LABEL[data.topic],
           data.reference,
@@ -445,12 +455,12 @@ function TicketRequest({
         ]
           .filter(Boolean)
           .join(" · ")}
-        back={{ href: props.requestsHref, label: "Support requests" }}
+        back={{ href: props.requestsHref, label: "Support cases" }}
       />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="min-w-0 space-y-4">
           <StatusTimeline stage={requestStage({ status: data.status })} />
-          {data.canReply && (
+          {data.canReply && !data.viewerIsPresenter && (
             <div id={CASE_RESOLUTION_ANCHOR}>
               <CustomerCaseResolution caseId={data.caseId} />
             </div>
@@ -475,7 +485,7 @@ function TicketRequest({
               )}
               {data.filedByOrganizationNotice && (
                 <p className="text-sm text-muted-foreground">
-                  Your organization filed this request. The conversation is
+                  Your organization filed this support case. The conversation is
                   managed by its authorized team.
                 </p>
               )}
@@ -487,6 +497,7 @@ function TicketRequest({
                     author={m.author}
                     authorName={m.author === "USER" ? null : m.authorName}
                     body={m.body}
+                    actorKind={m.actorKind}
                     at={m.at}
                   />
                 ))}
@@ -496,7 +507,7 @@ function TicketRequest({
                   {describeWait(data.ackDueAt)}
                 </p>
               )}
-              {data.canReply && (
+              {data.canReply && !data.viewerIsPresenter && (
                 <CaseCsat
                   key={data.caseId}
                   caseId={data.caseId}
@@ -525,7 +536,7 @@ function TicketRequest({
                 </div>
               )}
             </div>
-            {!data.filedByOrganizationNotice && (
+            {!data.filedByOrganizationNotice && !data.viewerIsPresenter && (
               <CaseAttachments
                 caseId={data.caseId}
                 canUpload={data.canReply && !closed}
@@ -538,6 +549,7 @@ function TicketRequest({
                   closed={closed}
                   resolved={resolved}
                   resolvedAt={data.resolvedAt}
+                  canReopen={!data.viewerIsPresenter}
                   requestsHref={props.requestsHref}
                   draft={draft}
                   sending={reply.isPending}
@@ -551,7 +563,7 @@ function TicketRequest({
           </div>
         </div>
         <aside className="order-first space-y-4 lg:order-last">
-          <h2 className="text-sm font-semibold">Request details</h2>
+          <h2 className="text-sm font-semibold">Support case details</h2>
           <div className="space-y-2 rounded-lg border border-border p-4 text-sm">
             <p className="text-xs text-muted-foreground">{data.reference}</p>
             <StatusBadge

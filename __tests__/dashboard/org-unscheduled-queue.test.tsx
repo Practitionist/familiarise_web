@@ -32,6 +32,7 @@ jest.mock(
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { readOrgPendingRequests } from "@/lib/data/org-pending-requests";
+import { orgOwnedAppointmentWhere } from "@/lib/api/scope/list-appointments";
 import { PayerRequestsView } from "../../app/dashboard/organization/[orgId]/appointments/PayerRequestsView";
 
 const row = (id: string, status: string) => ({
@@ -54,17 +55,25 @@ beforeEach(() => {
   subscriptionFindMany.mockResolvedValue([]);
 });
 
-it("reads PENDING and APPROVED-unallocated rows under the same org pin", async () => {
+it("reads PENDING and APPROVED-unallocated rows on bookings the org owns", async () => {
   const rows = await readOrgPendingRequests("o1");
 
+  const owned = orgOwnedAppointmentWhere("o1");
   const [{ where }] = consultationFindMany.mock.calls[0];
   expect(where.OR).toEqual([
-    { status: "PENDING", appointment: { organizationId: "o1" } },
+    { status: "PENDING", appointment: owned },
     {
       status: "APPROVED",
       appointment: {
-        organizationId: "o1",
+        ...owned,
         occurrences: { none: expect.objectContaining({ isTentative: false }) },
+        // Only the org's own money makes an approved row allocatable by it.
+        payment: {
+          some: expect.objectContaining({
+            organizationId: "o1",
+            paymentMethod: { in: ["WALLET", "INVOICE", "LICENSE"] },
+          }),
+        },
       },
     },
   ]);

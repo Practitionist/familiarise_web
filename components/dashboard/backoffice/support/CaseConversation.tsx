@@ -175,6 +175,7 @@ export function CaseConversation({
                 author={m.author}
                 authorName={m.authorName}
                 body={m.body}
+                actorKind={m.actorKind}
                 at={m.at}
                 internal={m.internal}
               />

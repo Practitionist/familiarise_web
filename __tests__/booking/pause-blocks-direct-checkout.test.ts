@@ -2,7 +2,8 @@
  * @jest-environment node
  */
 
-// Invariant: a paused expert (acceptingRequests false) takes no new direct booking of any product.
+// Invariant: a paused expert (acceptingRequests false) takes no new direct 1:1
+// booking; webinar and class seats keep selling.
 
 import "../booking-algorithm/setup";
 import {
@@ -39,20 +40,25 @@ const plan = {
 const event = { id: "event-1", status: "SCHEDULED", appointment: null };
 const START = new Date(Date.now() + 72 * 3600_000);
 
-const cases: Array<[CheckoutInput["appointmentType"], Partial<CheckoutInput>]> =
+const oneToOne: Array<
+  [CheckoutInput["appointmentType"], Partial<CheckoutInput>]
+> = [
   [
-    [
-      "CONSULTATION",
-      {
-        availabilityWindowWeeklyId: "win-1",
-        startsAt: START.toISOString(),
-        endsAt: new Date(START.getTime() + 3600_000).toISOString(),
-      },
-    ],
-    ["SUBSCRIPTION", {}],
-    ["WEBINAR", { eventId: "event-1" }],
-    ["CLASS", { eventId: "event-1" }],
-  ];
+    "CONSULTATION",
+    {
+      availabilityWindowWeeklyId: "win-1",
+      startsAt: START.toISOString(),
+      endsAt: new Date(START.getTime() + 3600_000).toISOString(),
+    },
+  ],
+  ["SUBSCRIPTION", {}],
+];
+const groupEvents: Array<
+  [CheckoutInput["appointmentType"], Partial<CheckoutInput>]
+> = [
+  ["WEBINAR", { eventId: "event-1" }],
+  ["CLASS", { eventId: "event-1" }],
+];
 
 beforeEach(() => {
   createPaymentIntent.mockReset();
@@ -67,7 +73,7 @@ beforeEach(() => {
 });
 afterEach(() => jest.restoreAllMocks());
 
-it.each(cases)(
+it.each(oneToOne)(
   "%s checkout refuses with 409 NOT_ACCEPTING_BOOKINGS before any gateway call",
   async (appointmentType, extra) => {
     const input = buildCheckoutInput({ appointmentType, ...extra });
@@ -82,5 +88,21 @@ it.each(cases)(
       code: "NOT_ACCEPTING_BOOKINGS",
     });
     expect(createPaymentIntent).not.toHaveBeenCalled();
+  },
+);
+
+it.each(groupEvents)(
+  "%s seats keep selling while the expert pauses 1:1 bookings",
+  async (appointmentType, extra) => {
+    const input = buildCheckoutInput({ appointmentType, ...extra });
+
+    const error = await handleCheckout(input, "buyer").then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+
+    const code =
+      error && typeof error === "object" && "code" in error ? error.code : null;
+    expect(code).not.toBe("NOT_ACCEPTING_BOOKINGS");
   },
 );

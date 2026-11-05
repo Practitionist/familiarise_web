@@ -1,58 +1,40 @@
 /**
- * DPDP §11 Data Export Worker — Core Logic
- *
- * Picks PENDING `OrgDataExportJob` rows and builds a JSON bundle
- * containing every org-scoped entity (members, contracts, programs,
- * invoices, earnings, payouts, audit-log). The bundle is uploaded to
- * Supabase Storage under `org-exports/{orgId}/{jobId}.json` with a
- * 7-day signed-URL expiry, and the job row is marked READY with the
- * URL + expiry stamped.
- *
- * Why a JSON bundle (not zipped JSON+CSV)
- * --------------------------------------
- * The plan originally called for `adm-zip` + an 8-CSV companion set.
- * In v1 we ship the JSON-only path because:
- *   1. Compliance reviewers (the actual DPDP §11 audience) prefer JSON
- *      — easier to grep, no separator escaping ambiguity.
- *   2. Adding `adm-zip` as a hard dependency is a footprint hit the
- *      caller doesn't actually need; integrators that want CSV can
- *      convert the JSON locally with `jq -r '@csv'`.
- *   3. The bundle is signed-URL gated for 7 days — long enough to
- *      run any post-export ETL.
- * The contract is forward-compatible: future versions can return a
- * zip with the same file naming scheme, and the dashboard's existing
- * "Download bundle" link will keep working.
- *
- * Concurrency
- * -----------
- * One worker per org per tick. We use a Postgres advisory lock on
- * `hashtextextended('export:' || orgId)` so two workers picking up
- * the same job collapse safely (the second waits, observes status =
- * PROCESSING, skips).
- *
- * Schedule: every 10 minutes via `.github/workflows/process-data-exports.yml`.
+ * Owns each immutable export object until confirmed removal. Only the current
+ * status/startedAt attempt may publish or fail its job.
  */
 
 import prisma from "../../lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
 import { recordSystemError } from "../../lib/enterprise/system-events";
 import { checkConsentBatch } from "../../lib/compliance/dpdp";
 import { PURPOSE_CODES } from "../../lib/compliance/purpose-codes";
 import { notifyOrgDataExportReady } from "../../lib/novu/org-workflows";
 import { getAppUrl } from "../../lib/url";
-import { sendOrgOperationalEmail } from "../../lib/email/senders/money";
+import { stageOrgOperationalEmail } from "../../lib/email/senders/money";
+import { attemptStaged } from "../../lib/email/send-to-recipients";
+import { EMAIL_BUDGET_MS } from "../../lib/email/config";
+import { attemptTrigger } from "../../lib/novu/outbox";
+import { adminStorage, removeObjects } from "../../lib/supabase-storage-core";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
-import type { OrgDataExportKind } from "@prisma/client";
+import { startDeadline } from "@/lib/cron/run-deadline";
+import type { OrgDataExportKind, Prisma } from "@prisma/client";
+import { z } from "zod";
 import {
   bundleKinds,
   canHandleExportKind,
   type DataExportKind,
 } from "@/lib/enterprise/data-export-kinds";
 
+const missingExportObjectSchema = z.object({ code: z.literal("NoSuchKey") });
+
 export interface DataExportResult {
   picked: number;
   succeeded: number;
   failed: number;
+  superseded: number;
+  expired: number;
+  expiryFailed: number;
   success: boolean;
   errors: string[];
 }
@@ -222,75 +204,79 @@ async function buildFullBundleFor(
 }
 
 async function uploadBundle(
-  organizationId: string,
-  jobId: string,
+  bucket: string,
+  storagePath: string,
   bundle: ExportBundle,
-): Promise<{ url: string; sizeBytes: number; expiresAt: Date } | null> {
-  // Supabase Storage upload — gated on the env vars being present so
-  // local-dev runs without Supabase keys fall through to a "saved to
-  // local /tmp" stub. Production always has the env keys.
+): Promise<number> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const bucket = process.env.SUPABASE_DATA_EXPORT_BUCKET ?? "org-exports";
+  if (!supabaseUrl || !supabaseServiceKey) {
+    throw new Error("Data export storage is not configured");
+  }
 
   const json = JSON.stringify(bundle, null, 2);
   const sizeBytes = Buffer.byteLength(json, "utf8");
-  const sevenDays = 7 * 24 * 60 * 60;
-
-  if (!supabaseUrl || !supabaseServiceKey) {
-    // Local-dev fallback — write to /tmp + return a file:// URL. The
-    // route handler will refuse to issue this URL to a client (signed
-    // URLs are http(s)-only) but it lets the worker complete its
-    // happy path during local QA.
-    const fs = await import("node:fs/promises");
-    const path = await import("node:path");
-    const dir = "/tmp/familiarise-data-exports";
-    await fs.mkdir(dir, { recursive: true });
-    const filePath = path.join(dir, `${organizationId}_${jobId}.json`);
-    await fs.writeFile(filePath, json, "utf8");
-    return {
-      url: `file://${filePath}`,
-      sizeBytes,
-      expiresAt: new Date(Date.now() + sevenDays * 1000),
-    };
-  }
-
-  // We dynamic-import @supabase/supabase-js because the cron job runs
-  // in a thin tsx process; it's not in the hot-path bundle for the
-  // edge runtime and avoids a peer-dep cycle at build time.
   const { createClient } = await import("@supabase/supabase-js");
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
-  const objectPath = `${organizationId}/${jobId}.json`;
   const { error: uploadErr } = await supabase.storage
     .from(bucket)
-    .upload(objectPath, json, {
+    .upload(storagePath, json, {
       contentType: "application/json",
-      upsert: true,
+      upsert: false,
     });
   if (uploadErr) {
     throw new Error(`Supabase upload failed: ${uploadErr.message}`);
   }
-  const { data: signed, error: signedErr } = await supabase.storage
-    .from(bucket)
-    .createSignedUrl(objectPath, sevenDays);
-  if (signedErr || !signed) {
-    throw new Error(
-      `Supabase signed URL creation failed: ${signedErr?.message ?? "unknown"}`,
-    );
-  }
+  return sizeBytes;
+}
+
+/** Pending jobs and PROCESSING jobs whose attempt started before `staleBefore`. */
+function claimableExportWhere(
+  staleBefore: Date,
+): Prisma.OrgDataExportJobWhereInput {
   return {
-    url: signed.signedUrl,
-    sizeBytes,
-    expiresAt: new Date(Date.now() + sevenDays * 1000),
+    OR: [
+      { status: "PENDING" },
+      {
+        status: "PROCESSING",
+        OR: [{ startedAt: null }, { startedAt: { lte: staleBefore } }],
+      },
+    ],
   };
 }
 
-// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
-// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
+function expiredArtifactWhere(
+  now: Date,
+): Prisma.OrgDataExportArtifactWhereInput {
+  return { expiresAt: { lte: now } };
+}
+
+/** Ticker idle probe: an expired artifact or a claimable export job. */
+export async function hasDataExportWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const artifact = await db.orgDataExportArtifact.findFirst({
+    where: expiredArtifactWhere(now),
+    select: { exportJobId: true },
+  });
+  if (artifact) return true;
+  if (outOfTime()) return true;
+  const job = await db.orgDataExportJob.findFirst({
+    where: claimableExportWhere(new Date(now.getTime() - LONG_JOB_TTL_MS)),
+    select: { id: true },
+  });
+  return job !== null;
+}
+
+// The shared lock is fail-closed because duplicate export builds consume data,
+// storage, and notification work even though the attempt CAS remains safe.
 export async function processDataExports(): Promise<DataExportResult> {
   return withCronLock(
     "process-data-exports",
-    { failMode: "open", ttlMs: LONG_JOB_TTL_MS },
+    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
     () => processDataExportsUnlocked(),
   );
 }
@@ -300,140 +286,205 @@ async function processDataExportsUnlocked(): Promise<DataExportResult> {
     picked: 0,
     succeeded: 0,
     failed: 0,
+    superseded: 0,
+    expired: 0,
+    expiryFailed: 0,
     success: true,
     errors: [],
   };
+  const pastDeadline = startDeadline();
+  await expireExportArtifacts(result, pastDeadline);
+  if (pastDeadline()) return result;
 
-  // Pick one PENDING job at a time. The 10-min cron + the 1-export-per-
-  // org-per-24h API rate limit means concurrent backlog is rare; if it
-  // grows we widen to N rows per tick.
+  const staleBefore = new Date(Date.now() - LONG_JOB_TTL_MS);
   const job = await prisma.orgDataExportJob.findFirst({
-    where: { status: "PENDING" },
+    where: claimableExportWhere(staleBefore),
     orderBy: { createdAt: "asc" },
   });
   if (!job) return result;
   result.picked = 1;
+  if (pastDeadline()) {
+    result.picked = 0;
+    return result;
+  }
 
-  // Mark PROCESSING so a second worker tick (or a re-fire) observes
-  // the in-flight row and skips it. Idempotent — second hit is a no-op.
-  await prisma.orgDataExportJob.update({
-    where: { id: job.id, status: "PENDING" },
-    data: { status: "PROCESSING", startedAt: new Date() },
+  const priorStartedAt = job.startedAt;
+  const claimAt = new Date(
+    Math.max(Date.now(), (priorStartedAt?.getTime() ?? 0) + 1),
+  );
+  const bucket = process.env.SUPABASE_DATA_EXPORT_BUCKET ?? "org-exports";
+  const storagePath = `${job.organizationId}/${job.id}/${claimAt.getTime()}.json`;
+  const artifactExpiry = new Date(claimAt.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const claimed = await prisma.$transaction(async (tx) => {
+    const changed = await tx.orgDataExportJob.updateMany({
+      where: {
+        id: job.id,
+        status: job.status,
+        startedAt: priorStartedAt,
+      },
+      data: { status: "PROCESSING", startedAt: claimAt, error: null },
+    });
+    if (changed.count !== 1) return false;
+    await tx.orgDataExportArtifact.create({
+      data: {
+        exportJobId: job.id,
+        attemptStartedAt: claimAt,
+        bucket,
+        storagePath,
+        expiresAt: artifactExpiry,
+      },
+    });
+    return true;
   });
+  if (!claimed) {
+    result.picked = 0;
+    result.superseded = 1;
+    return result;
+  }
 
   try {
     if (!(await requesterMayExport(job.requestedByMembershipId, job.kind))) {
-      // Org-visible (job.error) — plain words, no internals.
-      throw new Error(
-        "The member who requested this export no longer holds the grant for it.",
+      throw new ExportFailure(
+        "The member who requested this export no longer has access to it.",
+        "The requester no longer has the grant for this export.",
       );
     }
     const bundle = await buildBundleFor(job.organizationId, job.kind);
-    const uploaded = await uploadBundle(job.organizationId, job.id, bundle);
-    if (!uploaded) {
-      throw new Error("Bundle upload returned null");
-    }
-
-    await prisma.$transaction(async (tx) => {
-      await tx.orgDataExportJob.update({
-        where: { id: job.id },
+    const sizeBytes = await uploadBundle(bucket, storagePath, bundle);
+    const completedAt = new Date();
+    const expiresAt = new Date(completedAt.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const staged = await prisma.$transaction(async (tx) => {
+      const changed = await tx.orgDataExportJob.updateMany({
+        where: { id: job.id, status: "PROCESSING", startedAt: claimAt },
         data: {
           status: "READY",
-          fileUrl: uploaded.url,
-          fileSizeBytes: BigInt(uploaded.sizeBytes),
-          expiresAt: uploaded.expiresAt,
-          completedAt: new Date(),
+          fileUrl: null,
+          fileSizeBytes: BigInt(sizeBytes),
+          expiresAt,
+          completedAt,
+          error: null,
         },
       });
+      if (changed.count !== 1) return null;
+      const ownerChanged = await tx.orgDataExportArtifact.updateMany({
+        where: { exportJobId: job.id, attemptStartedAt: claimAt },
+        data: { expiresAt, fileSizeBytes: BigInt(sizeBytes) },
+      });
+      if (ownerChanged.count !== 1) {
+        throw new Error("Export artifact owner row missing during publication");
+      }
       await tx.orgAuditLog.create({
         data: {
           organizationId: job.organizationId,
           category: "SYSTEM",
           action: AUDIT_ACTIONS.SYSTEM.DATA_EXPORT_GENERATED,
-          description: `Generated data export bundle (${uploaded.sizeBytes} bytes)`,
+          description: `Generated data export bundle (${sizeBytes} bytes)`,
           details: {
             exportId: job.id,
-            fileSizeBytes: uploaded.sizeBytes,
-            expiresAt: uploaded.expiresAt.toISOString(),
+            fileSizeBytes: sizeBytes,
+            expiresAt: expiresAt.toISOString(),
           },
         },
       });
+      const [orgRow, requesterMembership, ownerRows] = await Promise.all([
+        tx.organization.findUnique({
+          where: { id: job.organizationId },
+          select: { name: true },
+        }),
+        tx.membership.findUnique({
+          where: { id: job.requestedByMembershipId },
+          select: { userId: true },
+        }),
+        tx.membership.findMany({
+          where: {
+            organizationId: job.organizationId,
+            role: "OWNER",
+            status: "ACTIVE",
+          },
+          select: { userId: true },
+        }),
+      ]);
+      const recipientUserIds = Array.from(
+        new Set([
+          ...ownerRows.map((o) => o.userId),
+          ...(requesterMembership?.userId ? [requesterMembership.userId] : []),
+        ]),
+      );
+      const dashboardUrl = `${getAppUrl()}/dashboard/organization/${job.organizationId}/settings/data-exports`;
+      const emailRows = orgRow
+        ? await stageOrgOperationalEmail(tx, {
+            recipientUserIds,
+            organizationId: job.organizationId,
+            orgName: orgRow.name,
+            kind: "DATA_EXPORT_READY",
+            expiresAt,
+            actionUrl: dashboardUrl,
+            entityRef: `export:${job.id}`,
+          })
+        : [];
+      const notificationRows = orgRow
+        ? await notifyOrgDataExportReady(
+            job.organizationId,
+            {
+              orgName: orgRow.name,
+              exportId: job.id,
+              fileSizeBytes: sizeBytes,
+              expiresAt: expiresAt.toISOString(),
+              downloadUrl: dashboardUrl,
+              dashboardUrl,
+            },
+            {
+              tx,
+              deferAttempt: true,
+              entityRef: `export:${job.id}`,
+              dedupeKey: `data-export-ready:${job.id}`,
+            },
+          )
+        : [];
+      return { emailRows, notificationRows };
     });
 
-    const [orgRow, requesterMembership, ownerRows] = await Promise.all([
-      prisma.organization.findUnique({
-        where: { id: job.organizationId },
-        select: { name: true },
-      }),
-      prisma.membership.findUnique({
-        where: { id: job.requestedByMembershipId },
-        select: { userId: true },
-      }),
-      prisma.membership.findMany({
-        where: {
-          organizationId: job.organizationId,
-          role: "OWNER",
-          status: "ACTIVE",
-        },
-        select: { userId: true },
-      }),
-    ]);
-
-    const recipientUserIds = Array.from(
-      new Set([
-        ...ownerRows.map((o) => o.userId),
-        ...(requesterMembership?.userId ? [requesterMembership.userId] : []),
-      ]),
+    if (!staged) {
+      result.superseded = 1;
+      return result;
+    }
+    await attemptStaged(
+      staged.emailRows,
+      "ORG_DATA_EXPORT_READY",
+      EMAIL_BUDGET_MS.JOB,
+    ).catch(() =>
+      console.error(
+        `[process-data-exports] email attempt failed for ${job.id}`,
+      ),
     );
-
-    if (orgRow) {
-      await sendOrgOperationalEmail({
-        recipientUserIds,
-        organizationId: job.organizationId,
-        orgName: orgRow.name,
-        kind: "DATA_EXPORT_READY",
-        expiresAt: uploaded.expiresAt,
-        actionUrl: uploaded.url,
-      }).catch((err) => {
+    for (const row of staged.notificationRows) {
+      await attemptTrigger(row).catch(() =>
         console.error(
-          `[process-data-exports] email send failed for job ${job.id}:`,
-          err,
-        );
-      });
-
-      await notifyOrgDataExportReady(job.organizationId, {
-        orgName: orgRow.name,
-        exportId: job.id,
-        fileSizeBytes: uploaded.sizeBytes,
-        expiresAt: uploaded.expiresAt.toISOString(),
-        downloadUrl: uploaded.url,
-        // The exports panel is a settings section (#1842), not the
-        // long-removed /integrations/data-exports route.
-        dashboardUrl: `${getAppUrl()}/dashboard/organization/${job.organizationId}/settings/data-exports`,
-      });
+          `[process-data-exports] notification attempt failed for ${job.id}`,
+        ),
+      );
     }
 
     result.succeeded = 1;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    result.failed = 1;
-    result.success = false;
-    result.errors.push(`job=${job.id}: ${message}`);
-
-    // Split the failure across two surfaces:
-    //   - OrgAuditLog gets a CLEAN, org-visible description. Never
-    //     interpolate raw error messages here — they can carry Prisma
-    //     schema names, stack frames, and other engineering noise that
-    //     leaks internals to the org owner.
-    //   - SystemEvent gets the raw error + stack for platform engineering.
-    //     Same incident, two views, no information leakage. See
-    //     lib/enterprise/audit-sanitize.ts for the read-side guard
-    //     that catches any legacy rows that pre-date this discipline.
-    await prisma.$transaction(async (tx) => {
-      await tx.orgDataExportJob.update({
-        where: { id: job.id },
-        data: { status: "FAILED", error: message, completedAt: new Date() },
+    const failure =
+      err instanceof ExportFailure
+        ? err
+        : new ExportFailure(
+            "The data export could not be generated. Please retry or contact support.",
+            "Data export bundle failed",
+          );
+    const completedAt = new Date();
+    const failed = await prisma.$transaction(async (tx) => {
+      const changed = await tx.orgDataExportJob.updateMany({
+        where: { id: job.id, status: "PROCESSING", startedAt: claimAt },
+        data: {
+          status: "FAILED",
+          error: failure.safeMessage,
+          completedAt,
+        },
       });
+      if (changed.count !== 1) return false;
       await tx.orgAuditLog.create({
         data: {
           organizationId: job.organizationId,
@@ -447,16 +498,19 @@ async function processDataExportsUnlocked(): Promise<DataExportResult> {
           details: { exportId: job.id },
         },
       });
+      return true;
     });
-
-    // Best-effort write to the engineering-only system_events table.
-    // Carries the full Prisma error + stack trace, indexed by job ID
-    // for correlation. Outside the audit transaction so a slow insert
-    // doesn't hold the export-job lock.
+    if (!failed) {
+      result.superseded = 1;
+      return result;
+    }
+    result.failed = 1;
+    result.success = false;
+    result.errors.push(`job=${job.id}: ${failure.safeMessage}`);
     await recordSystemError({
       organizationId: job.organizationId,
       category: "DATA_EXPORT",
-      summary: "Data export bundle failed",
+      summary: failure.systemSummary,
       err,
       context: { exportId: job.id },
       correlationId: job.id,
@@ -464,6 +518,105 @@ async function processDataExportsUnlocked(): Promise<DataExportResult> {
   }
 
   return result;
+}
+
+class ExportFailure extends Error {
+  constructor(
+    readonly safeMessage: string,
+    readonly systemSummary: string,
+  ) {
+    super(systemSummary);
+  }
+}
+
+async function expireExportArtifacts(
+  result: DataExportResult,
+  pastDeadline: () => boolean,
+): Promise<void> {
+  const now = new Date();
+  const due = await prisma.orgDataExportArtifact.findMany({
+    where: expiredArtifactWhere(now),
+    orderBy: [
+      { lastDeleteAttemptedAt: { sort: "asc", nulls: "first" } },
+      { expiresAt: "asc" },
+      { createdAt: "asc" },
+      { exportJobId: "asc" },
+    ],
+    take: 10,
+  });
+  for (const artifact of due) {
+    if (pastDeadline()) break;
+    const activeAttempt = await prisma.orgDataExportJob.findFirst({
+      where: {
+        id: artifact.exportJobId,
+        status: "PROCESSING",
+        startedAt: artifact.attemptStartedAt,
+      },
+      select: { id: true },
+    });
+    if (activeAttempt) continue;
+    const claimed = await prisma.orgDataExportArtifact.updateMany({
+      where: {
+        exportJobId: artifact.exportJobId,
+        attemptStartedAt: artifact.attemptStartedAt,
+        lastDeleteAttemptedAt: artifact.lastDeleteAttemptedAt,
+        expiresAt: { lte: now },
+      },
+      data: { lastDeleteAttemptedAt: now },
+    });
+    if (claimed.count !== 1) continue;
+    const removed = await removeObjects(artifact.bucket, [
+      artifact.storagePath,
+    ]);
+    if (!removed) {
+      recordExpiryFailure(result, artifact.exportJobId);
+      continue;
+    }
+    try {
+      const { data: metadata, error } = await adminStorage()
+        .from(artifact.bucket)
+        .info(artifact.storagePath);
+      if (
+        metadata !== null ||
+        !missingExportObjectSchema.safeParse(error).success
+      ) {
+        recordExpiryFailure(result, artifact.exportJobId);
+        continue;
+      }
+      await prisma.$transaction(async (tx) => {
+        await tx.orgDataExportJob.updateMany({
+          where: {
+            id: artifact.exportJobId,
+            status: "READY",
+            startedAt: artifact.attemptStartedAt,
+            expiresAt: { lte: now },
+          },
+          data: { status: "EXPIRED" },
+        });
+        await tx.orgDataExportArtifact.deleteMany({
+          where: {
+            exportJobId: artifact.exportJobId,
+            attemptStartedAt: artifact.attemptStartedAt,
+            lastDeleteAttemptedAt: now,
+          },
+        });
+      });
+      result.expired += 1;
+    } catch {
+      recordExpiryFailure(result, artifact.exportJobId);
+    }
+  }
+}
+
+function recordExpiryFailure(
+  result: DataExportResult,
+  exportJobId: string,
+): void {
+  result.expiryFailed += 1;
+  result.success = false;
+  result.errors.push(
+    `export=${exportJobId}: artifact expiry could not be confirmed; owner retained for retry`,
+  );
 }
 
 export async function disconnectDatabase(): Promise<void> {

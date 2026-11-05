@@ -1,48 +1,36 @@
 /**
- * Shared read for the consultant Home dashboard. #890
- *
- * Single source of truth for the consultant dashboard payload the Home
- * tab renders. Both the API route (`/api/dashboard/consultant/[id]`) and
- * the consultant home server page call this directly so SSR hydration and
- * the client `useQuery` resolve identical payloads — the route wraps it in
- * `{ success, data }`, the prefetch returns it raw (matching
- * `fetchWithErrorHandling`'s `json.data` unwrap).
+ * Shared read for the consultant Home dashboard: the API route
+ * (`/api/dashboard/consultant/[id]`) and the Home server page both call it,
+ * so SSR hydration and the client `useQuery` resolve identical payloads. It
+ * reads only what Home renders, every read bounded through `runBounded` for
+ * the one-connection serverless pool.
  *
  * Auth + access checks stay in the route; this function carries no
  * request/session coupling and is callable from a Server Component.
  *
- * Serialization: money fields are `number` here — read-path includes go
- * through the prisma `$extends` (bigint/Decimal→number), and the `_sum`
- * aggregates (which bypass that extension) are run through `sumPaise`.
- * Slot/activity `Date` values stay raw `Date`; they round-trip through
- * RSC dehydration and the client helpers wrap every value in `new Date()`.
+ * Money fields are `number` (read-path `$extends`); the `_sum` aggregates
+ * bypass that extension and go through `sumPaise`. Dates stay raw `Date`.
  */
 
-import { HOST_ATTRIBUTED_OUTCOMES } from "@/lib/booking/session-outcome";
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import prisma from "@/lib/prisma";
-import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
-import { readByIds } from "@/lib/data/read-by-ids";
+import { liveParticipant } from "@/lib/booking/participants";
 import {
-  consultationRequestWhere,
-  nextCycleSubscriptionWhere,
-  pendingConsultationWhere,
-  pendingSubscriptionWhere,
-  readPayoutSetupNeeded,
-  subscriptionRequestWhere,
-} from "@/lib/data/needs-you";
+  PERSONAL_PLAN_HOST,
+  READABLE_ORG_PLAN_HOST,
+} from "@/lib/api/scope/parse";
+import { runBounded } from "@/lib/db/bounded";
+import { readByIds } from "@/lib/data/read-by-ids";
+import { readPayoutSetupNeeded } from "@/lib/data/needs-you";
 import { payoutSettingsHref } from "@/lib/payments/payouts/payout-requirements";
 import { reportSentryError } from "@/lib/observability/report";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
-import {
-  sessionsTotalOf,
-  subscriptionEntitlement,
-} from "@/lib/booking/entitlement";
-import { Prisma, type EarningStatus } from "@prisma/client";
-import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
+import type { Prisma } from "@prisma/client";
+import { subscriptionPlanEnd } from "@/lib/booking/entitlement";
 import { getConsultantResponseRate } from "@/lib/booking/response-rate";
-import { countExpertStrikes } from "@/lib/booking/expert-reliability";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { toPlain } from "@/lib/data/serialize";
+import { resolveViewerZone } from "@/lib/time/viewer-zone";
 import {
   readConsultantNeedsYou,
   readSessionsDelivered,
@@ -61,227 +49,166 @@ const userSelectFields = {
   image: true,
 } as const;
 
-/** Approvals list only needs the requester display name. */
-const pendingUserSelect = {
-  id: true,
-  name: true,
-  image: true,
-} as const;
-
 /** Home surfaces a handful of cards — history lives on /appointments. */
 const HOME_APPOINTMENTS_TAKE = 20;
-const HOME_PENDING_TAKE = 20;
-/** The "Awaiting payment" pipeline row shows a count and the first three. */
-const HOME_AWAITING_PAYMENT_TAKE = 3;
-/** Home is a personal (B2C) surface; every request read below pins it. */
-const PERSONAL_SCOPE = { kind: "personal" } as const;
-
-/**
- * #1166 ORG-1 — personal Home is B2C only (ADR 19), matching the sibling
- * Appointments page's personal filter; org delivery lives on that org's own
- * dashboard. #674 defect 13 — the pin is taken from the shared projector
- * rather than written out as a literal at each of the four sites below, so
- * "what personal means" has exactly one definition on the platform.
- */
-const PERSONAL_ORG_PIN = scopeToWhereOrgId({ kind: "personal" });
 
 /** The "Organisation sessions" strip shows the next few, not the book. */
 const HOME_ORG_SESSIONS_TAKE = 5;
-/** The "Next cycle" strip shows the first few plans that need scheduling. */
-const HOME_NEXT_CYCLE_TAKE = 5;
-/** Candidates read before the JS `remaining > 0` filter (#1766). */
-const HOME_NEXT_CYCLE_SCAN = 50;
-
-export const NON_HOST_UNVERIFIED_REASONS: readonly string[] = [
-  "OFFLINE",
-  "INCONCLUSIVE",
-  "NOBODY_JOINED",
-  "CONSULTEE_NO_SHOW",
-];
 
 /**
- * The consultant's 30-day completion rate from grouped occurrence counts. Only
- * host-attributed misses count against it (ADR session-outcomes D6): host
- * voids, unexplained UNVERIFIED rows and reliability strikes (expert cancels of
- * paid bookings, consultant no-shows). A consultee's cancel or return does not.
+ * Home splits delivery on the plan's host org: personal is every session on a
+ * plan no org hosts (sponsor-funded ones included, money as metadata only);
+ * the "Organisation sessions" strip is the org-hosted rest, trials included.
  */
-export function computeConsultantCompletionRate(
-  slotCounts: ReadonlyArray<{
-    completionStatus: string;
-    outcome?: string | null;
-    unverifiedReason?: string | null;
-    _count: number;
-  }>,
-  strikes = 0,
-): number | null {
-  const countOf = (keep: (s: (typeof slotCounts)[number]) => boolean) =>
-    slotCounts.filter(keep).reduce((sum, s) => sum + s._count, 0);
-  const completedSlots = countOf((s) => s.completionStatus === "COMPLETED");
-  const unverifiedSlots = countOf((s) => {
-    if (s.completionStatus !== "UNVERIFIED") return false;
-    const reason = s.outcome ?? s.unverifiedReason ?? null;
-    return !reason || !NON_HOST_UNVERIFIED_REASONS.includes(reason);
-  });
-  const hostVoidedSlots = countOf(
-    (s) =>
-      s.completionStatus === "VOIDED" &&
-      !!s.outcome &&
-      (HOST_ATTRIBUTED_OUTCOMES as readonly string[]).includes(s.outcome),
-  );
-  const completionDenom =
-    completedSlots + strikes + unverifiedSlots + hostVoidedSlots;
-  return completionDenom > 0
-    ? Math.round((completedSlots / completionDenom) * 100)
-    : null;
-}
 
-/**
- * #1766 — subscriptions whose live cycle is finished and whose entitlement
- * is not: derived at read time, no job. Two steps because the predicate can
- * say "delivered, nothing live" but only the helper can say "sessions left";
- * top-level, never inside a transaction (PG_POOL_MAX=1).
- */
-async function readNextCycles(
-  consultantProfileId: string,
-  now: Date,
-): Promise<TConsultantDashboardResponse["nextCycles"]> {
-  const candidates = await prisma.subscription.findMany({
-    where: nextCycleSubscriptionWhere(consultantProfileId, PERSONAL_SCOPE),
-    select: {
-      id: true,
-      sessionsTotal: true,
-      schedulingPeriodStartsAt: true,
-      schedulingTimezone: true,
-      subscriptionPlan: {
-        select: {
-          title: true,
-          totalSessions: true,
-          sessionsPerWeek: true,
-          durationInMonths: true,
-        },
-      },
-      requestedBy: { select: { user: { select: { name: true } } } },
-      appointment: {
-        select: {
-          occurrences: {
-            select: {
-              completionStatus: true,
-              isTentative: true,
-              deletedAt: true,
-              startsAt: true,
-              endsAt: true,
-            },
-          },
-        },
-      },
-    },
-    orderBy: { updatedAt: "asc" },
-    take: HOME_NEXT_CYCLE_SCAN,
-    relationLoadStrategy: "join",
-  });
-  return candidates
-    .map((row) => {
-      const entitlement = subscriptionEntitlement({
-        sessionsTotal: sessionsTotalOf(row),
-        sessionsPerWeek: row.subscriptionPlan.sessionsPerWeek,
-        durationInMonths: row.subscriptionPlan.durationInMonths,
-        occurrences: row.appointment?.occurrences ?? [],
-        schedulingPeriodStartsAt: row.schedulingPeriodStartsAt,
-        schedulingTimezone: row.schedulingTimezone,
-        now,
-      });
-      return {
-        subscriptionId: row.id,
-        consulteeName: row.requestedBy?.user?.name ?? "Learner",
-        planTitle: row.subscriptionPlan.title,
-        nextBatch: entitlement.cycle.nextBatch,
-        held: entitlement.held,
-        total: entitlement.total,
-        windowStart: entitlement.cycle.windowStart,
-        windowEnd: entitlement.cycle.windowEnd,
-        remaining: entitlement.remaining,
-        href: `/dashboard/consultant/${encodeURIComponent(consultantProfileId)}/requests/${encodeURIComponent(row.id)}/allocate?type=subscription`,
-      };
-    })
-    .filter((row) => row.remaining > 0)
-    .slice(0, HOME_NEXT_CYCLE_TAKE)
-    .map(({ remaining: _remaining, ...row }) => row);
-}
-
-/**
- * Every appointment this consultant owns or collaborates on. Shared by the
- * Home display read and the active-clients count so the two can never drift.
- */
 const consultantAppointmentScope = (consultantProfileId: string) =>
   ({
-    ...PERSONAL_ORG_PIN,
-    OR: consultantDeliveryArms(consultantProfileId),
+    OR: [
+      ...consultantDeliveryArms(consultantProfileId, PERSONAL_PLAN_HOST),
+      {
+        trial: {
+          consultantProfileId,
+          status: "SCHEDULED" as const,
+          subscriptionPlan: PERSONAL_PLAN_HOST,
+        },
+      },
+    ],
   }) satisfies Prisma.AppointmentWhereInput;
 
-/**
- * #1703 B13 — the same delivery predicate with the personal pin inverted:
- * an org-funded session this consultant must still show up for. Read as
- * metadata only (ADR 20): org name, time, join state.
- */
+/** Org-hosted sessions this consultant must still show up for; metadata only (ADR 20). */
 const consultantOrgAppointmentScope = (consultantProfileId: string) =>
   ({
-    organizationId: { not: null },
-    OR: consultantDeliveryArms(consultantProfileId),
+    OR: [
+      ...consultantDeliveryArms(consultantProfileId, READABLE_ORG_PLAN_HOST),
+      {
+        trial: {
+          consultantProfileId,
+          status: "SCHEDULED" as const,
+          subscriptionPlan: READABLE_ORG_PLAN_HOST,
+        },
+      },
+    ],
   }) satisfies Prisma.AppointmentWhereInput;
+
+const HOST_ORG = { select: { id: true, name: true } } as const;
+/** The org hosting the delivered plan, whichever kind it is. */
+const HOST_ORG_SELECT = {
+  consultation: {
+    select: { consultationPlan: { select: { organization: HOST_ORG } } },
+  },
+  subscription: {
+    select: { subscriptionPlan: { select: { organization: HOST_ORG } } },
+  },
+  webinar: { select: { webinarPlan: { select: { organization: HOST_ORG } } } },
+  trial: {
+    select: { subscriptionPlan: { select: { organization: HOST_ORG } } },
+  },
+  class: { select: { classPlan: { select: { organization: HOST_ORG } } } },
+} satisfies Prisma.AppointmentSelect;
+
+type HostOrg = { id: string; name: string } | null;
+function hostOrgOf(a: {
+  consultation: { consultationPlan: { organization: HostOrg } } | null;
+  subscription: { subscriptionPlan: { organization: HostOrg } } | null;
+  webinar: { webinarPlan: { organization: HostOrg } } | null;
+  class: { classPlan: { organization: HostOrg } } | null;
+  trial: { subscriptionPlan: { organization: HostOrg } } | null;
+}): HostOrg {
+  return (
+    a.consultation?.consultationPlan.organization ??
+    a.subscription?.subscriptionPlan.organization ??
+    a.webinar?.webinarPlan.organization ??
+    a.class?.classPlan.organization ??
+    a.trial?.subscriptionPlan.organization ??
+    null
+  );
+}
+
+/** Home lists the next few sessions booked as a client, not the history. */
+const HOME_CLIENT_BOOKINGS_TAKE = 5;
+
+const EXPERT_NAME = {
+  select: {
+    consultantProfile: { select: { user: { select: { name: true } } } },
+  },
+} as const;
+const CLIENT_EXPERT_SELECT = {
+  consultation: { select: { consultationPlan: EXPERT_NAME } },
+  subscription: { select: { subscriptionPlan: EXPERT_NAME } },
+  webinar: { select: { webinarPlan: EXPERT_NAME } },
+  class: { select: { classPlan: EXPERT_NAME } },
+} satisfies Prisma.AppointmentSelect;
+
+type PlanExpert = {
+  consultantProfile: { user: { name: string | null } } | null;
+};
+function expertNameOf(a: {
+  consultation: { consultationPlan: PlanExpert } | null;
+  subscription: { subscriptionPlan: PlanExpert } | null;
+  webinar: { webinarPlan: PlanExpert } | null;
+  class: { classPlan: PlanExpert } | null;
+}): string | null {
+  const plan =
+    a.consultation?.consultationPlan ??
+    a.subscription?.subscriptionPlan ??
+    a.webinar?.webinarPlan ??
+    a.class?.classPlan;
+  return plan?.consultantProfile?.user.name ?? null;
+}
+
+/** A webinar or class still to deliver, as the other live-event readers count it. */
+const LIVE_EVENT = { in: ["SCHEDULED" as const, "IN_PROGRESS" as const] };
 
 const consultantDeliveryArms = (
   consultantProfileId: string,
+  planHost: typeof PERSONAL_PLAN_HOST | typeof READABLE_ORG_PLAN_HOST,
 ): Prisma.AppointmentWhereInput[] => [
   {
     consultation: {
-      consultationPlan: { consultantProfileId },
+      consultationPlan: { consultantProfileId, ...planHost },
       status: "APPROVED" as const,
     },
   },
   {
     subscription: {
-      subscriptionPlan: { consultantProfileId },
+      subscriptionPlan: { consultantProfileId, ...planHost },
       status: "APPROVED" as const,
     },
   },
   {
     webinar: {
-      webinarPlan: { consultantProfileId },
-      status: "SCHEDULED" as const,
+      webinarPlan: { consultantProfileId, ...planHost },
+      status: LIVE_EVENT,
     },
   },
   {
     // Collaborated webinars (co-host, moderator, etc.)
     webinar: {
       webinarPlan: {
+        ...planHost,
         collaborators: {
           some: { consultantProfileId, status: "ACCEPTED" as const },
         },
       },
-      status: "SCHEDULED" as const,
+      status: LIVE_EVENT,
     },
   },
   {
     class: {
-      classPlan: { consultantProfileId },
-      status: "SCHEDULED" as const,
+      classPlan: { consultantProfileId, ...planHost },
+      status: LIVE_EVENT,
     },
   },
   {
     // Collaborated classes (co-instructor, TA, etc.)
     class: {
       classPlan: {
+        ...planHost,
         collaborators: {
           some: { consultantProfileId, status: "ACCEPTED" as const },
         },
       },
-      status: "SCHEDULED" as const,
-    },
-  },
-  {
-    trial: {
-      consultantProfileId,
-      status: "SCHEDULED" as const,
+      status: LIVE_EVENT,
     },
   },
 ];
@@ -358,9 +285,11 @@ const appointmentSelect = {
       },
       requestedBy: { select: { id: true, user: { select: userSelectFields } } },
       schedulingPeriodStartsAt: true,
-      schedulingPeriodEndsAt: true,
+      planEndsAt: true,
       // #1766 — Home's session progress reads the frozen entitlement.
       sessionsTotal: true,
+      sessionsPerWeek: true,
+      sessionsRefunded: true,
       schedulingTimezone: true,
       status: true,
     },
@@ -412,132 +341,29 @@ const appointmentSelect = {
   },
 } satisfies Prisma.AppointmentSelect;
 
-/** Pending-approvals widget only needs id + requester name + requestedAt. */
-const pendingConsultationInclude = {
-  requestedBy: {
-    include: {
-      user: {
-        select: pendingUserSelect,
-      },
-    },
-  },
-} satisfies Prisma.ConsultationInclude;
-
-const pendingSubscriptionInclude = {
-  requestedBy: {
-    include: {
-      user: {
-        select: pendingUserSelect,
-      },
-    },
-  },
-} satisfies Prisma.SubscriptionInclude;
-
-// Derive types from the include objects via the extended client — raw
-// GetPayload would re-introduce bigint money fields (#780).
+// Derived via the extended client — raw GetPayload would re-introduce
+// bigint money fields.
 type DashboardAppointment = Prisma.Result<
   typeof prisma.appointment,
   { select: typeof appointmentSelect },
   "findFirstOrThrow"
 >;
-type DashboardConsultation = Prisma.Result<
-  typeof prisma.consultation,
-  { include: typeof pendingConsultationInclude },
-  "findFirstOrThrow"
->;
-type DashboardSubscription = Prisma.Result<
-  typeof prisma.subscription,
-  { include: typeof pendingSubscriptionInclude },
-  "findFirstOrThrow"
->;
-
-// =============================================================================
-// Helper Functions
-// =============================================================================
-
-function formatDate(dateString?: string | Date | null): string {
-  if (!dateString) return "Date not set";
-  const date = new Date(dateString);
-  if (isNaN(date.getTime())) return "Invalid date";
-
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function formatTime(dateString?: string | Date | null): string {
-  if (!dateString) return "Time not set";
-  const date = new Date(dateString);
-  if (isNaN(date.getTime())) return "Invalid time";
-
-  return date.toLocaleString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
-}
-
-function getRelativeTime(date: Date): string {
-  const now = new Date();
-  // Use Math.max to handle potential future dates (e.g., clock skew)
-  const diffMs = Math.max(0, now.getTime() - new Date(date).getTime());
-  const diffSeconds = Math.floor(diffMs / 1000);
-  const diffMinutes = Math.floor(diffSeconds / 60);
-  const diffHours = Math.floor(diffMinutes / 60);
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffSeconds < 60) {
-    return "just now";
-  } else if (diffMinutes < 60) {
-    return `${diffMinutes}m ago`;
-  } else if (diffHours < 24) {
-    return `${diffHours}h ago`;
-  } else if (diffDays === 1) {
-    return "1d ago";
-  } else if (diffDays < 7) {
-    return `${diffDays}d ago`;
-  } else {
-    return formatDate(date);
-  }
-}
-
-/** Request rows in the Home widget's display shape, newest first. */
-function toRequestRows(
-  consultations: DashboardConsultation[],
-  subscriptions: DashboardSubscription[],
-) {
-  return [
-    ...consultations.map((consultation) => ({
-      id: consultation.id,
-      type: "Consultation",
-      name: consultation.requestedBy?.user?.name ?? "Unknown",
-      requestedAt: consultation.requestedAt,
-    })),
-    ...subscriptions.map((subscription) => ({
-      id: subscription.id,
-      type: "Subscription",
-      name: subscription.requestedBy?.user?.name ?? "Unknown",
-      requestedAt: subscription.requestedAt,
-    })),
-  ]
-    .sort(
-      (a, b) =>
-        new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime(),
-    )
-    .map((row) => ({
-      id: row.id,
-      type: row.type,
-      name: row.name,
-      date: formatDate(row.requestedAt),
-      time: formatTime(row.requestedAt),
-    }));
-}
 
 // =============================================================================
 // Shared Read
 // =============================================================================
+
+/** Midnight today and on the 1st of this month, on the consultant's own clock. */
+export function homeBoundaries(
+  now: Date,
+  zone: string,
+): { startOfToday: Date; startOfMonth: Date } {
+  const day = formatInTimeZone(now, zone, "yyyy-MM-dd");
+  return {
+    startOfToday: fromZonedTime(`${day}T00:00:00`, zone),
+    startOfMonth: fromZonedTime(`${day.slice(0, 7)}-01T00:00:00`, zone),
+  };
+}
 
 /**
  * Read + transform the consultant Home dashboard payload. Returns the
@@ -546,89 +372,129 @@ function toRequestRows(
  */
 export async function getConsultantDashboard(
   consultantProfileId: string,
+  now: Date = new Date(),
 ): Promise<TConsultantDashboardResponse> {
-  // --- Performance Snapshot date boundaries ---
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  // "Today" and "this month" are the consultant's own days, whichever server
+  // renders them; an unknown saved zone falls back to UTC.
+  const profile = await prisma.consultantProfile.findUnique({
+    where: { id: consultantProfileId },
+    select: {
+      publishedRatingOneToOne: true,
+      publishedRatingGroup: true,
+      ratedClientsOneToOne: true,
+      ratedEventsGroup: true,
+      userId: true,
+      user: { select: { timezone: true, consulteeProfileId: true } },
+    },
+  });
+  const zone = resolveViewerZone({ userTimezone: profile?.user.timezone });
+  const { startOfToday, startOfMonth } = homeBoundaries(now, zone);
 
-  // Which appointments Home actually shows. Appointment has no top-level start
-  // column, so a plain `orderBy: createdAt` + `take` truncated on the wrong key:
-  // a consultant who booked next month a fortnight ago and then took a burst of
-  // bookings for last week got 20 rows that were all in the past, and both the
-  // Today and Upcoming widgets rendered empty. Rank on the slot table instead —
-  // it has @@index([startsAt, endsAt]) — and keep only the soonest ids. Slots
-  // are per-appointment, so over-fetch before deduping to ids.
-  //
-  // Anchor on endsAt >= start of today, NOT on a lower bound in the past:
-  // ordering ascending from 90 days ago returns the OLDEST slots in the window,
-  // which reproduces the empty-widget bug in a new disguise. Using endsAt keeps
-  // a session that started earlier today and is still running.
-  const startOfToday = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-  );
-  // The two head reads are independent (same scope inputs, no data flow
-  // between them) — fire together instead of serially. Each is one indexed
-  // round trip; serialising them doubled the pooler wait on every home load.
-  const [soonestSlots, orgSessionRows] = await Promise.all([
-    prisma.appointmentOccurrence.findMany({
-      where: {
-        deletedAt: null,
-        // B7 — a released (RESCHEDULED) slot keeps its original startsAt on an
-        // APPROVED parent; without this guard it seeded "Today's Appointments"
-        // with a session that no longer exists. Tentative holds belong to the
-        // Requests tab, not the home calendar.
-        completionStatus: "SCHEDULED",
-        isTentative: false,
-        endsAt: { gte: startOfToday },
-        appointment: consultantAppointmentScope(consultantProfileId),
-      },
-      select: { appointmentId: true },
-      orderBy: { startsAt: "asc" },
-      take: HOME_APPOINTMENTS_TAKE * 5,
-    }),
-    // #1703 B13 — the next org-funded sessions this consultant delivers. Same
-    // occurrence predicate as above with the org pin inverted; metadata only.
-    prisma.appointmentOccurrence.findMany({
-      where: {
-        deletedAt: null,
-        completionStatus: "SCHEDULED",
-        isTentative: false,
-        endsAt: { gte: startOfToday },
-        appointment: consultantOrgAppointmentScope(consultantProfileId),
-      },
-      select: {
-        id: true,
-        appointmentId: true,
-        startsAt: true,
-        endsAt: true,
-        isTentative: true,
-        completionStatus: true,
-        meeting: { select: { id: true, endedAt: true, endedReason: true } },
-        appointment: {
-          select: {
-            organizationId: true,
-            organization: { select: { name: true } },
+  // Which appointments Home shows: Appointment has no start column, so rank
+  // on the slot table (indexed on startsAt, endsAt) and keep the soonest ids.
+  // Anchored on endsAt >= start of today so a session running now survives.
+  const [soonestSlots, orgSessionRows, earningsByStatus, clientRows] =
+    await runBounded([
+      () =>
+        prisma.appointmentOccurrence.findMany({
+          where: {
+            deletedAt: null,
+            // A released (RESCHEDULED) slot keeps its old time and a tentative
+            // hold belongs to the Requests tab; neither is on the Home calendar.
+            completionStatus: "SCHEDULED",
+            isTentative: false,
+            endsAt: { gte: startOfToday },
+            appointment: consultantAppointmentScope(consultantProfileId),
           },
-        },
-      },
-      orderBy: { startsAt: "asc" },
-      take: HOME_ORG_SESSIONS_TAKE,
-      relationLoadStrategy: "join",
-    }),
-  ]);
+          select: { appointmentId: true },
+          orderBy: { startsAt: "asc" },
+          take: HOME_APPOINTMENTS_TAKE * 5,
+        }),
+      // The next org-funded sessions this consultant delivers: the same
+      // occurrence predicate with the org pin inverted; metadata only.
+      () =>
+        prisma.appointmentOccurrence.findMany({
+          where: {
+            deletedAt: null,
+            completionStatus: "SCHEDULED",
+            isTentative: false,
+            endsAt: { gte: startOfToday },
+            appointment: consultantOrgAppointmentScope(consultantProfileId),
+          },
+          select: {
+            id: true,
+            appointmentId: true,
+            startsAt: true,
+            endsAt: true,
+            isTentative: true,
+            completionStatus: true,
+            meeting: { select: { id: true, endedAt: true, endedReason: true } },
+            appointment: { select: HOST_ORG_SELECT },
+          },
+          orderBy: { startsAt: "asc" },
+          take: HOME_ORG_SESSIONS_TAKE,
+          relationLoadStrategy: "join",
+        }),
+      // Deliberately GLOBAL (no org filter): payouts settle one instrument
+      // across every context. Available = READY + BATCHED, net of refunds.
+      () =>
+        prisma.consultantEarnings.groupBy({
+          by: ["status"],
+          where: { consultantProfileId, status: { in: ["READY", "BATCHED"] } },
+          _sum: { consultantSharePaise: true, refundedShareAmount: true },
+        }),
+      // Sessions this consultant booked as a client with another expert: the
+      // same seat arm the public grid paints busy, shown read-only on Home.
+      () =>
+        profile
+          ? prisma.appointmentOccurrence.findMany({
+              where: {
+                deletedAt: null,
+                completionStatus: "SCHEDULED",
+                isTentative: false,
+                endsAt: { gte: startOfToday },
+                appointment: {
+                  deletedAt: null,
+                  participants: {
+                    some: {
+                      ...liveParticipant(profile.userId),
+                      role: "CONSULTEE",
+                    },
+                  },
+                },
+              },
+              select: {
+                id: true,
+                appointmentId: true,
+                startsAt: true,
+                endsAt: true,
+                appointment: { select: CLIENT_EXPERT_SELECT },
+              },
+              orderBy: { startsAt: "asc" },
+              take: HOME_CLIENT_BOOKINGS_TAKE,
+              relationLoadStrategy: "join",
+            })
+          : Promise.resolve([]),
+    ] as const);
   const homeAppointmentIds = [
     ...new Set(soonestSlots.map((s) => s.appointmentId)),
   ].slice(0, HOME_APPOINTMENTS_TAKE);
+  const learnerId = profile?.user.consulteeProfileId ?? null;
+  const clientBookings = clientRows.map((row) => ({
+    occurrenceId: row.id,
+    appointmentId: row.appointmentId,
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+    expertName: expertNameOf(row.appointment) ?? "another expert",
+    href: learnerId
+      ? `/dashboard/consultee/${learnerId}/appointments/${row.appointmentId}`
+      : null,
+  }));
   const orgSessions = orgSessionRows.map((row) => ({
     occurrenceId: row.id,
     appointmentId: row.appointmentId,
-    organizationId: row.appointment.organizationId ?? "",
-    organizationName: row.appointment.organization?.name ?? "Organisation",
+    organizationId: hostOrgOf(row.appointment)?.id ?? "",
+    organizationName: hostOrgOf(row.appointment)?.name ?? "Organisation",
     startsAt: row.startsAt,
     endsAt: row.endsAt,
     isTentative: row.isTentative,
@@ -636,235 +502,18 @@ export async function getConsultantDashboard(
     meeting: row.meeting,
   }));
 
-  // PERFORMANCE FIX #364: Use direct Prisma queries instead of internal HTTP fetches
-  // This eliminates network overhead and reduces response time significantly
-  const [
-    appointmentsRaw,
-    activeBookRows,
-    pendingConsultations,
-    pendingSubscriptions,
-    pendingConsultationCount,
-    pendingSubscriptionCount,
-    awaitingPaymentConsultations,
-    awaitingPaymentSubscriptions,
-    awaitingPaymentConsultationCount,
-    awaitingPaymentSubscriptionCount,
-    recentActivities,
-    earningsThisMonth,
-    earningsLastMonth,
-    ratingAgg,
-    slotCounts,
-    trialCounts,
-    earningsByStatus,
-    recentStrikes,
-  ] = await Promise.all([
-    // The appointments Home renders, in one joined statement. readByIds skips
-    // the read for an empty id list; every read below is consultant-scoped and
-    // still runs.
-    readByIds(homeAppointmentIds, () =>
-      prisma.appointment.findMany({
-        where: { id: { in: homeAppointmentIds } },
-        select: appointmentSelect,
-        relationLoadStrategy: "join",
-      }),
-    ),
-    // Active clients / programs are counted over the consultant's whole active
-    // book, not the handful of rows Home renders. Deriving them from the
-    // display array meant the Financial Summary card under-reported for anyone
-    // with more appointments than the page shows. Ids only — no include graph.
+  // The appointments Home renders, in one joined statement; an empty id list
+  // costs no round trip.
+  const appointmentsRaw = await readByIds(homeAppointmentIds, () =>
     prisma.appointment.findMany({
-      where: {
-        ...consultantAppointmentScope(consultantProfileId),
-        AND: [
-          {
-            occurrences: {
-              some: { deletedAt: null, startsAt: { gte: ninetyDaysAgo } },
-            },
-          },
-          {
-            occurrences: {
-              some: {
-                deletedAt: null,
-                completionStatus: { notIn: ["COMPLETED", "CANCELLED"] },
-              },
-            },
-          },
-        ],
-      },
-      select: {
-        consultation: { select: { requestedBy: { select: { id: true } } } },
-        subscription: {
-          select: { id: true, requestedBy: { select: { id: true } } },
-        },
-        class: { select: { id: true } },
-        trial: { select: { consulteeProfile: { select: { id: true } } } },
-      },
+      where: { id: { in: homeAppointmentIds } },
+      select: appointmentSelect,
       relationLoadStrategy: "join",
     }),
-    // Pending previews. #1703 — the list reads the SAME predicate and window
-    // as the badge count below (no 90-day floor: the badge never had one, and
-    // the expiry sweep bounds PENDING at 48 h anyway), so the preview can no
-    // longer disagree with the number beside it.
-    prisma.consultation.findMany({
-      where: pendingConsultationWhere(consultantProfileId, PERSONAL_SCOPE),
-      include: pendingConsultationInclude,
-      orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
-      take: HOME_PENDING_TAKE,
-      relationLoadStrategy: "join",
-    }),
-    prisma.subscription.findMany({
-      where: pendingSubscriptionWhere(consultantProfileId, PERSONAL_SCOPE),
-      include: pendingSubscriptionInclude,
-      orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
-      take: HOME_PENDING_TAKE,
-      relationLoadStrategy: "join",
-    }),
-    // The approvals badge is a total, not a list length. Counting the capped
-    // list made it disagree with NeedsYou — which counts properly — on the very
-    // same screen once a consultant had more pending requests than the cap.
-    //
-    // Deliberately unbounded by date, unlike the list above. NeedsYou counts
-    // every pending request regardless of age, and these two numbers render
-    // inches apart, so matching its definition is what stops them contradicting
-    // each other. The 90-day bound stays on the list, which is only a preview.
-    //
-    // #1345 — and the predicate itself is NeedsYou's, not a re-typed copy. Home
-    // is a personal (B2C) surface like PERSONAL_ORG_PIN below, so an org-funded
-    // pending request belongs to that org's dashboard and must not inflate this
-    // badge while the card underneath it excludes the same row.
-    prisma.consultation.count({
-      where: pendingConsultationWhere(consultantProfileId, PERSONAL_SCOPE),
-    }),
-    prisma.subscription.count({
-      where: pendingSubscriptionWhere(consultantProfileId, PERSONAL_SCOPE),
-    }),
-    // #1703 — approved-but-unpaid rows are neither pending nor bookable, so
-    // consultantAppointmentScope (APPROVED only) never showed them anywhere on
-    // Home. A small pipeline row keeps them out of Today/Upcoming.
-    prisma.consultation.findMany({
-      where: consultationRequestWhere(
-        consultantProfileId,
-        PERSONAL_SCOPE,
-        "APPROVED_PENDING_PAYMENT",
-      ),
-      include: pendingConsultationInclude,
-      orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
-      take: HOME_AWAITING_PAYMENT_TAKE,
-      relationLoadStrategy: "join",
-    }),
-    prisma.subscription.findMany({
-      where: subscriptionRequestWhere(
-        consultantProfileId,
-        PERSONAL_SCOPE,
-        "APPROVED_PENDING_PAYMENT",
-      ),
-      include: pendingSubscriptionInclude,
-      orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
-      take: HOME_AWAITING_PAYMENT_TAKE,
-      relationLoadStrategy: "join",
-    }),
-    prisma.consultation.count({
-      where: consultationRequestWhere(
-        consultantProfileId,
-        PERSONAL_SCOPE,
-        "APPROVED_PENDING_PAYMENT",
-      ),
-    }),
-    prisma.subscription.count({
-      where: subscriptionRequestWhere(
-        consultantProfileId,
-        PERSONAL_SCOPE,
-        "APPROVED_PENDING_PAYMENT",
-      ),
-    }),
-    // Fetch recent activities
-    prisma.activityLog.findMany({
-      where: {
-        consultantProfileId,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-      take: 10,
-    }),
-    // --- Performance Snapshot Queries ---
-    // 1a. Earnings this month (consultant share from ConsultantEarnings, excluding refunded, minus partial refunds)
-    // #1166 ORG-2 — personal (B2C) only, the same filter the Earnings tab
-    // applies (lib/data/consultant-earnings-analytics.ts), so Home and
-    // Earnings show the same number.
-    prisma.consultantEarnings.aggregate({
-      _sum: { consultantSharePaise: true, refundedShareAmount: true },
-      where: {
-        consultantProfileId,
-        status: { not: "REFUNDED" },
-        createdAt: { gte: startOfMonth },
-        payment: { ...PERSONAL_ORG_PIN },
-      },
-    }),
-    // 1b. Earnings last month
-    prisma.consultantEarnings.aggregate({
-      _sum: { consultantSharePaise: true, refundedShareAmount: true },
-      where: {
-        consultantProfileId,
-        status: { not: "REFUNDED" },
-        createdAt: { gte: startOfLastMonth, lt: startOfMonth },
-        payment: { ...PERSONAL_ORG_PIN },
-      },
-    }),
-    // 2. Average rating
-    prisma.consultantReview.aggregate({
-      _avg: { rating: true },
-      _count: { rating: true },
-      // #693 — mirror the moderation recalc: removed reviews don't count
-      where: { consultantProfileId, deletedAt: null },
-    }),
-    // 3. Session completion rate (last 30 days)
-    prisma.appointmentOccurrence.groupBy({
-      // #1569 D6 — the outcome splits host-caused voids from platform ones.
-      by: ["completionStatus", "outcome"],
-      _count: true,
-      where: {
-        appointment: {
-          // #1166 ORG-1 — this predicate is rebuilt rather than shared with
-          // consultantAppointmentScope (different status rules), so the
-          // personal pin has to be repeated or Home's completion rate counts
-          // org sessions the rest of the page excludes.
-          ...PERSONAL_ORG_PIN,
-          OR: [
-            { consultation: { consultationPlan: { consultantProfileId } } },
-            { subscription: { subscriptionPlan: { consultantProfileId } } },
-            { webinar: { webinarPlan: { consultantProfileId } } },
-            { class: { classPlan: { consultantProfileId } } },
-            { trial: { consultantProfileId } },
-          ],
-        },
-        startsAt: { gte: thirtyDaysAgo, lt: now },
-      },
-    }),
-    // 4. Trial conversion rate (90-day window)
-    prisma.trial.groupBy({
-      by: ["status"],
-      _count: true,
-      where: { consultantProfileId, createdAt: { gte: ninetyDaysAgo } },
-    }),
-    // --- Financial Summary Queries ---
-    // Deliberately GLOBAL (no org filter): payouts settle one instrument
-    // across every context (ADR 19 — views split, instruments don't).
-    // 5–7. Net, Ready and Available from one grouped read. A READY row never
-    // carries a payoutId: batching sets it and moves the row to BATCHED.
-    prisma.consultantEarnings.groupBy({
-      by: ["status"],
-      where: { consultantProfileId },
-      _sum: { consultantSharePaise: true, refundedShareAmount: true },
-    }),
-    // 8. D10 — personal reliability strikes in the completion-rate window.
-    countExpertStrikes(consultantProfileId, thirtyDaysAgo, {
-      personalOnly: true,
-    }),
-  ]);
+  );
 
   // Sort appointments by slot start time (matching original API behavior)
-  const sortedAppointments = appointmentsRaw.sort((a, b) => {
+  const sortedAppointments = appointmentsRaw.toSorted((a, b) => {
     const aTime = a.occurrences?.[0]?.startsAt;
     const bTime = b.occurrences?.[0]?.startsAt;
 
@@ -931,11 +580,13 @@ export async function getConsultantDashboard(
             startDate: new Date(
               appointment.subscription.schedulingPeriodStartsAt,
             ).toISOString(),
-            endDate: new Date(
-              appointment.subscription.schedulingPeriodEndsAt,
+            endDate: subscriptionPlanEnd(
+              appointment.subscription,
             ).toISOString(),
             // #1766 — the entitlement inputs calculateSessionProgress reads.
             sessionsTotal: appointment.subscription.sessionsTotal,
+            sessionsPerWeek: appointment.subscription.sessionsPerWeek,
+            sessionsRefunded: appointment.subscription.sessionsRefunded,
             schedulingPeriodStartsAt:
               appointment.subscription.schedulingPeriodStartsAt,
             schedulingTimezone: appointment.subscription.schedulingTimezone,
@@ -982,191 +633,57 @@ export async function getConsultantDashboard(
     }),
   );
 
-  // #1703 D4 — read-only on the requests card; two indexed history reads.
-  const responseRate = await getConsultantResponseRate(
-    consultantProfileId,
-    now,
-  );
-  // #1766 — the next-cycle strip; sequential like the read above.
-  const nextCycles = await readNextCycles(consultantProfileId, now);
-  // #1527 — the Needs you strip and the This month card. A failure degrades
-  // to no strip, never to a broken Home.
+  // Supplementary cards: a failed read degrades its card, never Home. Each
+  // runs its own reads in sequence, so these stay within the pool bound.
+  const [responseRate, sessionsDelivered, payoutNeeded] = await runBounded([
+    () => getConsultantResponseRate(consultantProfileId, now),
+    () =>
+      readSessionsDelivered(consultantProfileId, startOfMonth).catch(
+        () => undefined,
+      ),
+    () =>
+      readPayoutSetupNeeded(consultantProfileId).catch((error) => {
+        reportSentryError(error, { subsystem: "payments", expected: true });
+        return false;
+      }),
+  ] as const);
+  // NeedsYou bounds its own count, so it runs alone.
   const needsYou = await readConsultantNeedsYou(consultantProfileId, now).catch(
     (error) => {
       reportSentryError(error, { subsystem: "dashboard", expected: true });
       return undefined;
     },
   );
-  const sessionsDelivered = await readSessionsDelivered(
-    consultantProfileId,
-    startOfMonth,
-  ).catch(() => undefined);
-  const profileRatings =
-    (await prisma.consultantProfile
-      ?.findUnique?.({
-        where: { id: consultantProfileId },
-        select: {
-          publishedRatingOneToOne: true,
-          publishedRatingGroup: true,
-          ratedClientsOneToOne: true,
-          ratedEventsGroup: true,
-        },
-      })
-      .catch(() => null)) ?? null;
 
-  // #1675 PR-Y2 — "Add your bank account to get paid". Sequential like the
-  // reads above; a failure degrades to no row, never to a broken Home.
-  const payoutSetup = {
-    needed: await readPayoutSetupNeeded(consultantProfileId).catch((error) => {
-      reportSentryError(error, { subsystem: "payments", expected: true });
-      return false;
-    }),
-    href: payoutSettingsHref(consultantProfileId),
-    // Server-only flag, so it rides the payload to word the row.
-    livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
-  };
-
-  const approvals = toRequestRows(pendingConsultations, pendingSubscriptions);
-  const awaitingPayment = {
-    count: awaitingPaymentConsultationCount + awaitingPaymentSubscriptionCount,
-    items: toRequestRows(
-      awaitingPaymentConsultations,
-      awaitingPaymentSubscriptions,
-    ).slice(0, HOME_AWAITING_PAYMENT_TAKE),
-  };
-
-  // Total pending requests, independent of how many the widget lists.
-  const pendingRequestsCount =
-    pendingConsultationCount + pendingSubscriptionCount;
-
-  // Transform activities for display
-  const activities = recentActivities.map((activity) => ({
-    id: activity.id,
-    type: activity.activityType,
-    description: activity.description,
-    actorId: activity.actorId,
-    actorName: activity.actorName,
-    actorImage: activity.actorImage,
-    metadata: activity.metadata,
-    createdAt: activity.createdAt,
-    // Formatted time for display
-    timeAgo: getRelativeTime(activity.createdAt),
-  }));
-
-  // --- Compute Performance Snapshot derived values ---
-  // #780 — _sum bypasses the result extension: bigint until sumPaise'd.
-  const earningsThisMonthVal =
-    sumPaise(earningsThisMonth._sum.consultantSharePaise) -
-    sumPaise(earningsThisMonth._sum.refundedShareAmount);
-  const earningsLastMonthVal =
-    sumPaise(earningsLastMonth._sum.consultantSharePaise) -
-    sumPaise(earningsLastMonth._sum.refundedShareAmount);
-
-  // Earnings trend: percentage change (guard against division by zero)
-  const earningsTrend =
-    earningsLastMonthVal > 0
-      ? Math.round(
-          ((earningsThisMonthVal - earningsLastMonthVal) /
-            earningsLastMonthVal) *
-            100,
-        )
-      : earningsThisMonthVal > 0
-        ? 100
-        : 0;
-
-  // Session completion rate from slot counts
-  const completionRate = computeConsultantCompletionRate(
-    slotCounts,
-    recentStrikes,
+  const availableEarnings = earningsByStatus.reduce(
+    (sum, group) =>
+      sum +
+      sumPaise(group._sum.consultantSharePaise) -
+      sumPaise(group._sum.refundedShareAmount),
+    0,
   );
 
-  // Trial conversion rate
-  const trialCountMap = new Map(trialCounts.map((t) => [t.status, t._count]));
-  const completedTrials = trialCountMap.get("COMPLETED") ?? 0;
-  const convertedTrials = trialCountMap.get("CONVERTED") ?? 0;
-  const trialDenom = completedTrials + convertedTrials;
-  const trialConversionRate =
-    trialDenom > 0 ? Math.round((convertedTrials / trialDenom) * 100) : null;
-
-  // --- Financial Summary derived values ---
-  const netOf = (keep: (status: EarningStatus) => boolean) =>
-    earningsByStatus
-      .filter((group) => keep(group.status))
-      .reduce(
-        (sum, group) =>
-          sum +
-          sumPaise(group._sum.consultantSharePaise) -
-          sumPaise(group._sum.refundedShareAmount),
-        0,
-      );
-  const netEarningsVal = netOf((status) => status !== "REFUNDED");
-  const readyEarningsVal = netOf((status) => status === "READY");
-  const availableEarningsVal = netOf(
-    (status) => status === "READY" || status === "BATCHED",
-  );
-  const payoutMinimum = PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT;
-  const payoutEligible = readyEarningsVal >= payoutMinimum;
-
-  // Active clients + programs: single pass over the full active book. The
-  // query already excludes fully completed/cancelled appointments, so every
-  // row here counts.
-  const activeClientIds = new Set<string>();
-  const activeSubIds = new Set<string>();
-  const activeClassIds = new Set<string>();
-  for (const apt of activeBookRows) {
-    const consulteeId =
-      apt.consultation?.requestedBy?.id ??
-      apt.subscription?.requestedBy?.id ??
-      apt.trial?.consulteeProfile?.id;
-    if (consulteeId) activeClientIds.add(consulteeId);
-    if (apt.subscription?.id) activeSubIds.add(apt.subscription.id);
-    if (apt.class?.id) activeClassIds.add(apt.class.id);
-  }
-
-  const financialSummary = {
-    netEarnings: netEarningsVal,
-    nextPayout: readyEarningsVal,
-    availableEarnings: availableEarningsVal,
-    payoutStatus: payoutEligible
-      ? "Ready"
-      : readyEarningsVal > 0
-        ? `₹${(readyEarningsVal / 100).toLocaleString("en-IN")} / ₹${(PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT / 100).toLocaleString("en-IN")}`
-        : "No ready earnings yet",
-    activeClients: activeClientIds.size,
-    activePrograms: activeSubIds.size + activeClassIds.size,
-  };
-
-  // toPlain — transformedAppointments spreads the four money-extended plan
-  // rows (consultation/subscription/webinar/classPlan, each carries an
-  // inspect symbol via the #780/#781 result extension), so the payload must
-  // be plainified before it crosses the RSC→Client HydrationBoundary. The
-  // route path (NextResponse.json) was always fine — JSON drops symbols —
-  // so this only matters for the SSR prefetch. Preserves Dates as Dates.
+  // toPlain — the plan rows carry the money extension's inspect symbol, so the
+  // payload is plainified before it crosses the RSC→Client HydrationBoundary.
   return toPlain({
     appointments: transformedAppointments,
-    activities,
-    approvals,
-    pendingRequestsCount,
-    awaitingPayment,
     orgSessions,
-    nextCycles,
+    clientBookings,
     responseRate,
-    payoutSetup,
+    payoutSetup: {
+      needed: payoutNeeded,
+      href: payoutSettingsHref(consultantProfileId),
+      // Server-only flag, so it rides the payload to word the row.
+      livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
+    },
     needsYou,
     sessionsDelivered,
     performanceSnapshot: {
-      earningsThisMonth: earningsThisMonthVal,
-      earningsLastMonth: earningsLastMonthVal,
-      earningsTrend,
-      completionRate,
-      averageRating: ratingAgg._avg.rating ?? 0,
-      totalReviews: ratingAgg._count.rating,
-      publishedRatingOneToOne: profileRatings?.publishedRatingOneToOne ?? null,
-      publishedRatingGroup: profileRatings?.publishedRatingGroup ?? null,
-      ratedClientsOneToOne: profileRatings?.ratedClientsOneToOne ?? 0,
-      ratedEventsGroup: profileRatings?.ratedEventsGroup ?? 0,
-      trialConversionRate,
+      publishedRatingOneToOne: profile?.publishedRatingOneToOne ?? null,
+      publishedRatingGroup: profile?.publishedRatingGroup ?? null,
+      ratedClientsOneToOne: profile?.ratedClientsOneToOne ?? 0,
+      ratedEventsGroup: profile?.ratedEventsGroup ?? 0,
     },
-    financialSummary,
+    financialSummary: { availableEarnings },
   }) as unknown as TConsultantDashboardResponse;
 }

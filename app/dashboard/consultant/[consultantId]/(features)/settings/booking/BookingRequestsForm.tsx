@@ -1,36 +1,52 @@
 "use client";
 
-import type { FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type { TConsultantProfile } from "types/consultant";
 import { Card, CardContent } from "@/components/ui/card";
-import { SettingsSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { useToast } from "@/hooks/use-toast";
 import { BookingRequestsSection } from "../sections/BookingRequestsSection";
 import { SettingsFormActions } from "../SettingsFormActions";
-import { useConsultantSettingsForm } from "../use-consultant-settings-form";
+import {
+  bookingRequestSettingsChange,
+  getInitialBookingRequestSettings,
+} from "../settings";
 import { useSaveBookingRequestSettings } from "../use-save-booking-request-settings";
 
 /**
- * The Booking requests section's form (#1703 D1/D4). It saves only its three
- * fields through the narrow PATCH (#1527), so a stale availability overlap
- * cannot refuse a booking-settings change.
+ * The Booking requests section's form. It sends only the fields the user
+ * changed, each with the value it replaces, so a save can never undo a change
+ * made in another tab (the server answers SETTINGS_CHANGED instead).
  */
 export function BookingRequestsForm({
   consultant,
 }: Readonly<{ consultant: TConsultantProfile }>) {
-  const form = useConsultantSettingsForm(consultant);
   const save = useSaveBookingRequestSettings(consultant.id);
   const { toast } = useToast();
-
-  if (form.timezoneLoading) return <SettingsSkeleton />;
+  const { bookingMode, acceptingRequests, maxOpenRequests } =
+    getInitialBookingRequestSettings(consultant);
+  const [settings, setSettings] = useState({
+    bookingMode,
+    acceptingRequests,
+    maxOpenRequests,
+  });
+  // New server values (a save, or a change made elsewhere) replace the form.
+  useEffect(() => {
+    setSettings({ bookingMode, acceptingRequests, maxOpenRequests });
+  }, [bookingMode, acceptingRequests, maxOpenRequests]);
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
-    const { bookingMode, acceptingRequests, maxOpenRequests } = form.formData;
-    save.mutate(
+    const change = bookingRequestSettingsChange(
       { bookingMode, acceptingRequests, maxOpenRequests },
-      { onSuccess: () => toast({ title: "Booking settings saved" }) },
+      settings,
     );
+    if (!change) {
+      toast({ title: "Nothing to save" });
+      return;
+    }
+    save.mutate(change, {
+      onSuccess: () => toast({ title: "Booking settings saved" }),
+    });
   };
 
   return (
@@ -41,13 +57,15 @@ export function BookingRequestsForm({
     >
       <Card>
         <CardContent className="p-6 space-y-8">
-          <BookingRequestsSection
-            formData={form.formData}
-            setFormData={form.setFormData}
-          />
+          <BookingRequestsSection value={settings} onChange={setSettings} />
         </CardContent>
       </Card>
-      <SettingsFormActions isSaving={save.isPending} onReset={form.reset} />
+      <SettingsFormActions
+        isSaving={save.isPending}
+        onReset={() =>
+          setSettings({ bookingMode, acceptingRequests, maxOpenRequests })
+        }
+      />
     </form>
   );
 }

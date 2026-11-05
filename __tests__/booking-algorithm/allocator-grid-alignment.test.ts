@@ -18,9 +18,18 @@
 
 import "./setup";
 
+// The in-transaction availability re-read has its own suite; these isolate the allocator.
+jest.mock("../../lib/booking/allocation/coverage", () => ({
+  assertSlotsStillPublished: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    // The allocator counts what the event already holds to record how it was scheduled.
+    appointmentOccurrence: { count: jest.fn().mockResolvedValue(0) },
+    // The allocator's slot batch reads co-host seats and an expert consultee's own profile.
+    consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
+    collaborator: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn(),
     consultation: { findUnique: jest.fn() },
     subscription: { findUnique: jest.fn() },
@@ -42,6 +51,9 @@ jest.mock("../../utils/appointmentlock", () => ({
     .fn()
     .mockResolvedValue({ key: "mock-consultee-key", value: "mock-value" }),
   unlockConsulteeBooking: jest.fn().mockResolvedValue(undefined),
+  tryLockSlotBatch: jest.fn().mockResolvedValue({ ok: true, grant: [] }),
+  extendSlotInterval: jest.fn().mockResolvedValue(true),
+  unlockSlotInterval: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock("@sentry/nextjs", () => ({

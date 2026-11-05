@@ -18,6 +18,8 @@ const mockRefundBookingPayment = jest.fn(
   }),
 );
 const mockExecuteRaw = jest.fn(async () => 1);
+/** The marker the seat's payment carries when the stamp's ownership check reads it. */
+const held = { key: null as string | null, attempts: 0 };
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) =>
     mockRefundBookingPayment(...(a as [never])),
@@ -49,26 +51,40 @@ jest.mock("../../lib/prisma", () => {
                 paymentIntent: "order_a",
                 refunds: [],
                 disputes: [],
+                refundOwedKey: held.key,
               },
             ],
       ),
+      findUnique: jest.fn(async () => ({
+        refundOwedKey: held.key,
+        refundOwedAttempts: held.attempts,
+        disputes: [],
+      })),
       updateMany: jest.fn(async () => ({ count: 1 })),
     },
     dispute: { findMany: jest.fn(async () => []) },
+    appointmentParticipant: {
+      findMany: jest.fn(async () => [{ userId: "u-a", paymentId: "pay-a" }]),
+    },
     $executeRaw: (...a: unknown[]) => mockExecuteRaw(...(a as [])),
     $transaction: (fn: (tx: unknown) => unknown) => fn(db),
   };
   return { __esModule: true, default: db };
 });
 
+import prisma from "@/lib/prisma";
 import { seriesCancelRefundPaise } from "@/lib/booking/class-series";
-import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
+import {
+  refundWholeEventPayments,
+  stampWholeEventRefundsOwed,
+} from "@/lib/payments/operations/event-refunds";
 
 const ledger = {
   N: 8,
   heldCount: 8,
   unitPaise: BigInt(10_000),
   deliveredHeld: 3,
+  inProgressHeld: 0,
   remaining: [],
   neverScheduled: 5,
 };
@@ -90,4 +106,71 @@ it("N = 8 with 3 delivered refunds each seat 5 units, keyed on the event and pay
       dedupeKey: KEY,
     }),
   );
+});
+
+describe("a whole-event cancel owns every seat's refund marker or commits nothing", () => {
+  const stamp = () =>
+    prisma.$transaction((tx) =>
+      stampWholeEventRefundsOwed(tx, {
+        kind: "class",
+        eventId: "cls-1",
+        reason: "host cancelled",
+        ledgers: new Map([["pay-a", ledger]]),
+      }),
+    );
+
+  beforeEach(() => {
+    held.key = null;
+    held.attempts = 0;
+    mockExecuteRaw.mockClear();
+    mockRefundBookingPayment.mockClear();
+  });
+
+  it("refuses with REFUND_IN_PROGRESS when another door's retrying marker holds a seat", async () => {
+    mockExecuteRaw.mockResolvedValueOnce(0);
+    held.key = "occ:occ-2:pay:pay-a";
+    await expect(stamp()).rejects.toMatchObject({
+      code: "REFUND_IN_PROGRESS",
+      httpStatus: 409,
+      userMessage: expect.stringMatching(/class couldn't be cancelled yet/),
+    });
+  });
+
+  it("refuses with REFUND_NEEDS_SUPPORT when that marker spent its attempts", async () => {
+    mockExecuteRaw.mockResolvedValueOnce(0);
+    held.key = "occ:occ-2:pay:pay-a";
+    held.attempts = 3;
+    await expect(stamp()).rejects.toMatchObject({
+      code: "REFUND_NEEDS_SUPPORT",
+      httpStatus: 409,
+    });
+  });
+
+  it("refuses when the stamp matched nothing and no marker is there to own", async () => {
+    mockExecuteRaw.mockResolvedValueOnce(0);
+    await expect(stamp()).rejects.toMatchObject({ code: "REFUND_IN_PROGRESS" });
+  });
+
+  it("owns a replay of its own key", async () => {
+    mockExecuteRaw.mockResolvedValueOnce(0);
+    held.key = KEY;
+    const plans = await stamp();
+    expect(plans.get("pay-a")).toMatchObject({
+      kind: "owe",
+      marker: { key: KEY, amountPaise: 50_000 },
+    });
+  });
+
+  it("drives only its own markers after the commit", async () => {
+    await refundWholeEventPayments("class", "cls-1", "host cancelled", null, {
+      ledgers: new Map([["pay-a", ledger]]),
+    });
+    const db = jest.requireMock("../../lib/prisma").default as {
+      payment: { findMany: jest.Mock };
+    };
+    const markerRead = db.payment.findMany.mock.calls.find(
+      ([args]) => args.where.refundOwedKey,
+    );
+    expect(markerRead?.[0].where.refundOwedKey).toEqual({ in: [KEY] });
+  });
 });

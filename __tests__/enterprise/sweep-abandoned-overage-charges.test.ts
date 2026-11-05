@@ -64,6 +64,11 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   LONG_JOB_TTL_MS: 35 * 60 * 1000,
 }));
 
+const mockReportError = jest.fn();
+jest.mock("../../lib/observability/report", () => ({
+  reportSentryError: (...args: unknown[]) => mockReportError(...args),
+}));
+
 import prisma from "../../lib/prisma";
 import { transitionOverage } from "../../lib/payments/billing/overage-transitions";
 import { restoreOverageBaseCarve } from "../../lib/payments/billing/overage-base-carve";
@@ -165,6 +170,12 @@ describe("sweepAbandonedOverageCharges (#785)", () => {
     expect(auditWritePeak).toBeLessThanOrEqual(10);
     // And the writes are still all made — batching must not drop them.
     expect(mockSafeAudit).toHaveBeenCalledTimes(COUNT);
+    // The audit rows skip Sentry; the run reports once with the count.
+    for (const call of mockSafeAudit.mock.calls) {
+      expect(call[0]).toMatchObject({ skipSentry: true });
+    }
+    expect(mockReportError).toHaveBeenCalledTimes(1);
+    expect(mockReportError.mock.calls[0][1].extra.count).toBe(COUNT);
   });
 
   it("empty scan → no transition", async () => {

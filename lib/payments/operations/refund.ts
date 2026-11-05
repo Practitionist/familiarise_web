@@ -37,6 +37,7 @@
  * the paise.
  */
 
+import { casMiss } from "@/lib/cron/run-counters";
 import {
   reportSentryError,
   reportSentryMessage,
@@ -75,6 +76,7 @@ import {
 // barrel is imported at the single gateway call below instead.
 import type { createRefund as createGatewayRefund } from "@/lib/payments";
 import {
+  GATEWAY_NOT_FOUND,
   isDefinitiveRefundRefusal,
   RefundError,
 } from "@/lib/payments/core/types";
@@ -122,14 +124,22 @@ import {
 } from "@/lib/payments/ledger/unapplied-receipts";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
-import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
+import { revokeStandaloneSaleEntitlement } from "@/lib/payments/digital-product-entitlement";
 import { refundReversalBasis } from "@/lib/payments/ledger/refund-reversal-basis";
 import {
   overageCaptureCredits,
   reverseOverageCapture,
 } from "@/lib/payments/ledger/overage-capture-reversal";
 // Late-bound cycle: refund-owed reaches refundPayment through booking-refund.
-import { stampRefundOwed, type RefundOwedMarker } from "./refund-owed";
+import {
+  claimOwedMarker,
+  clearOwedMarkerSettledBy,
+  failRefund,
+  stampOwedOrHeld,
+  type HandSettledOwed,
+  type OwedMarkerInput,
+  type RefundOwedMarker,
+} from "./refund-owed";
 
 import {
   applyCappedEarningReversal,
@@ -157,7 +167,7 @@ export type RefundInput = {
    */
   dedupeKey?: string;
   supportRecommendationId?: string;
-};
+} & OwedMarkerInput;
 
 export type RefundResult = {
   refundId: string;
@@ -175,6 +185,8 @@ export type RefundResult = {
    * `pending_` placeholder and the reconcile cron owns recovery (release
    * #1014 review: never surface "" as a gateway id). */
   gatewayRefundId?: string;
+  /** The owed refund this hand refund settled and cleared. */
+  settledOwed?: HandSettledOwed;
 };
 
 /**
@@ -220,6 +232,8 @@ export class RefundValidationError extends Error {
   constructor(
     message: string,
     public code: string,
+    /** Developer detail (ids) the refusal carries beside its plain copy. */
+    public detail?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "RefundValidationError";
@@ -443,10 +457,12 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // outcome, not an anomaly. Unwrapped, that surfaced to the caller as a raw
   // Prisma error instead of being retried into the correct answer (either a
   // successful reservation or a typed AMOUNT_EXCEEDS_REFUNDABLE rejection).
+  let settledOwed = null as HandSettledOwed | null;
   const reserveRefund = () =>
     withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {
+          settledOwed = null;
           // Re-derive `refundable` inside the Serializable tx — defends
           // against two refunds racing through the outer read. Must mirror the
           // outer computation EXACTLY (refunds + lost chargebacks): the outer
@@ -506,6 +522,12 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
             throw err;
           }
 
+          settledOwed = await claimOwedMarker(tx, input.paymentId, input, {
+            kind: "amount",
+            handPaise: requested,
+            refundableBeforePaise: remainingNow,
+          });
+
           return tx.refund.create({
             data: {
               paymentId: input.paymentId,
@@ -528,6 +550,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
               metadata: {
                 initiatedByUserId: input.initiatedByUserId ?? null,
                 source: "app",
+                ...(settledOwed ? { settledOwed } : {}),
               } as Prisma.InputJsonValue,
             },
           });
@@ -629,29 +652,40 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       subsystem: "payments",
       tags: { feature: "refund" },
       extra: { paymentId: input.paymentId, refundRowId: reserved.id },
+      // A permanent unknown payment is reported once, by the caller's stuck alert.
+      expected: err instanceof RefundError && err.code === GATEWAY_NOT_FOUND,
     });
     const gatewayError = err instanceof Error ? err.message : String(err);
     const metadata = {
       initiatedByUserId: input.initiatedByUserId ?? null,
       source: "app",
+      ...(settledOwed ? { settledOwed } : {}),
       gateway_error: gatewayError,
     } as Prisma.InputJsonValue;
     // A definitive refusal created no gateway refund, so the reservation is
     // FAILED now and frees the balance and the key for a retry. Anything
     // ambiguous stays PENDING for the reconcile cron to resolve by lookup.
-    await prisma.refund
-      .updateMany({
+    const keep = () =>
+      prisma.refund.updateMany({
         where: { id: reserved.id, status: RefundStatus.PENDING },
-        data: isDefinitiveRefundRefusal(err)
-          ? {
-              metadata,
-              status: RefundStatus.FAILED,
-              failureReason: gatewayError,
-              failedAt: new Date(),
-            }
-          : { metadata },
-      })
-      .catch(() => undefined); // best-effort; the reconcile cron is the backstop
+        data: { metadata },
+      });
+    // Best-effort; the reconcile cron is the backstop.
+    await (
+      isDefinitiveRefundRefusal(err)
+        ? failRefund(reserved.id, (tx) =>
+            tx.refund.updateMany({
+              where: { id: reserved.id, status: RefundStatus.PENDING },
+              data: {
+                metadata,
+                status: RefundStatus.FAILED,
+                failureReason: gatewayError,
+                failedAt: new Date(),
+              },
+            }),
+          )
+        : keep()
+    ).catch(() => undefined);
     throw new RefundGatewayError(
       `Gateway refund failed for payment ${input.paymentId}: ${err instanceof Error ? err.message : String(err)}`,
       "GATEWAY_REFUND_FAILED",
@@ -666,30 +700,32 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // id — no heuristic amount+time matching needed.
   if (gateway.status === "FAILED") {
     try {
-      await prisma.refund.updateMany({
-        where: { id: reserved.id, status: RefundStatus.PENDING },
-        data: {
-          refundId: gateway.refundId || reserved.refundId,
-          status: RefundStatus.FAILED,
-          failureReason: "Gateway declined the refund",
-          failedAt: new Date(),
-        },
-      });
+      await failRefund(reserved.id, (tx) =>
+        tx.refund.updateMany({
+          where: { id: reserved.id, status: RefundStatus.PENDING },
+          data: {
+            refundId: gateway.refundId || reserved.refundId,
+            status: RefundStatus.FAILED,
+            failureReason: "Gateway declined the refund",
+            failedAt: new Date(),
+          },
+        }),
+      );
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
       // A gateway event beat us to the real refund id. Keep the placeholder
       // (it still records the decline via the reconciler) and never surface a
       // raw P2002 for a refund whose money state is already correct.
-      await prisma.refund
-        .updateMany({
+      await failRefund(reserved.id, (tx) =>
+        tx.refund.updateMany({
           where: { id: reserved.id, status: RefundStatus.PENDING },
           data: {
             status: RefundStatus.FAILED,
             failureReason: "Gateway declined the refund",
             failedAt: new Date(),
           },
-        })
-        .catch(() => undefined);
+        }),
+      ).catch(() => undefined);
     }
     const declineErr = new RefundGatewayError(
       `Gateway declined refund for payment ${input.paymentId}`,
@@ -797,6 +833,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       clawbackInitiated: false,
       status: "PENDING" as const,
       gatewayRefundId: gateway.refundId || undefined,
+      ...(settledOwed ? { settledOwed } : {}),
     };
   }
 
@@ -823,6 +860,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
             data: { status: RefundStatus.SUCCEEDED },
           });
           if (settledClaim.count === 0) {
+            casMiss();
             const current = await tx.refund.findUnique({
               where: { id: boundRefundRowId },
               select: { status: true },
@@ -942,7 +980,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     ),
   ]);
 
-  return settled;
+  return settledOwed ? { ...settled, settledOwed } : settled;
 }
 
 /** The refund a fully-refunded booking owes on one CHARGE_MEMBER side-payment. */
@@ -1001,6 +1039,7 @@ export async function applyRefundCascade(
     data: { cascadedAt: new Date() },
   });
   if (claim.count === 0) {
+    casMiss();
     // Idempotency short-circuit — the system working as designed (a
     // redelivered webhook or a racing cron lost the claim). Reported for
     // volume/pattern visibility only.
@@ -1050,11 +1089,21 @@ export async function applyRefundCascade(
           status: true,
           cascadedAt: true,
           deletedAt: true,
+          dedupeKey: true,
         },
       },
       disputes: REFUNDABLE_BALANCE_SELECT.disputes,
     },
   });
+  // The refund its owed marker waited on has settled, whoever settled it.
+  if (payment.refundOwedKey) {
+    await clearOwedMarkerSettledBy(
+      tx,
+      payment.id,
+      payment.refunds.find((r) => r.id === rawInput.refundId)?.dedupeKey ??
+        null,
+    );
+  }
 
   // #1582 C-P0-03 — cumulative cap at cascade time closes the PENDING-then-LOST
   // window: every other returned refund and every LOST/CHARGE_REFUNDED dispute
@@ -1106,10 +1155,9 @@ export async function applyRefundCascade(
   const completesFullRefund =
     otherCascadedPaise + input.amountPaise >= payment.amount;
 
-  // Replay sales are the only appointment-less payments that grant playback;
-  // only a full refund revokes it, so a partial goodwill refund keeps access.
+  // A full refund of a standalone sale revokes its entitlement; a partial goodwill refund keeps access.
   if (payment.appointmentId === null && completesFullRefund) {
-    await revokeReplayEntitlement(tx, payment.paymentIntent);
+    await revokeStandaloneSaleEntitlement(tx, payment);
   }
 
   if (payment.amount <= 0 || input.amountPaise <= 0) {
@@ -1613,7 +1661,8 @@ export async function applyRefundCascade(
         charged.overageBehavior === "CHARGE_MEMBER" &&
         charged.paymentId
       ) {
-        await stampRefundOwed(
+        // Another door's owed refund keeps the side-payment (first writer wins) and is recorded.
+        await stampOwedOrHeld(
           tx,
           overageCreditBackOwed(payment.id, charged.paymentId),
         );
@@ -2204,6 +2253,7 @@ export async function mintRefundCreditNote(
     },
     select: { id: true },
   });
+  // Retain the order until gateway inspection; its capture webhook may be missing.
   await restorePurchaseOrderForCredit(tx, {
     invoice,
     credit: {

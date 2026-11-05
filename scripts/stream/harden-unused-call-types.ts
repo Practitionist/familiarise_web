@@ -9,74 +9,14 @@ import "dotenv/config";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { getStreamVideoClient } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
+import {
+  END_USER_ROLES,
+  UNUSED_CALL_TYPES,
+  shouldStripFromUnusedCallType,
+} from "../../lib/stream/control-plane-contract";
 import { scriptClientOptions } from "./target";
 
 const BACKUP_DIR = ".stream-backups";
-
-export const UNUSED_TYPES = [
-  "livestream",
-  "audio_room",
-  "development",
-] as const;
-
-export const END_USER_ROLES = [
-  "user",
-  "guest",
-  "anonymous",
-  "speaker",
-  "host",
-  "call_member",
-];
-
-export const REACH_PERMISSIONS = [
-  "create-call",
-  "create-call-any-team",
-  "join-call",
-  "join-call-any-team",
-  "join-backstage",
-  "join-backstage-any-team",
-  "join-ended-call",
-  "join-ended-call-any-team",
-];
-
-export const BILLABLE_PERMISSIONS = [
-  "start-recording",
-  "stop-recording",
-  "start-frame-recording",
-  "stop-frame-recording",
-  "start-raw-recording",
-  "stop-raw-recording",
-  "start-individual-recording",
-  "stop-individual-recording",
-  "start-transcription",
-  "stop-transcription",
-  "start-closed-captions",
-  "stop-closed-captions",
-  "start-broadcasting",
-  "stop-broadcasting",
-  "start-rtmp-broadcasts",
-  "stop-rtmp-broadcast",
-  "stop-all-rtmp-broadcasts",
-  "use-noise-cancellation",
-  "enable-noise-cancellation",
-];
-
-/** Matches a permission or its `-owner` / `-any-team` scoped variants against a base permission list. */
-export function matchesPermissionWithScope(
-  perm: string,
-  basePermissions: readonly string[],
-): boolean {
-  return basePermissions.some(
-    (base) =>
-      perm === base || perm === `${base}-owner` || perm === `${base}-any-team`,
-  );
-}
-
-const STRIP_BASE = [...REACH_PERMISSIONS, ...BILLABLE_PERMISSIONS];
-
-export function shouldStripFromUnusedCallType(perm: string): boolean {
-  return matchesPermissionWithScope(perm, STRIP_BASE);
-}
 
 export interface HardenUnusedOptions {
   apply: boolean;
@@ -147,7 +87,7 @@ export async function hardenUnusedCallTypes(
 ): Promise<number> {
   const client = getStreamVideoClient(scriptClientOptions());
 
-  if ((UNUSED_TYPES as readonly string[]).includes(STREAM_CALL_TYPE)) {
+  if ((UNUSED_CALL_TYPES as readonly string[]).includes(STREAM_CALL_TYPE)) {
     console.error(
       `\n🚨 ${STREAM_CALL_TYPE} is the type this app USES and is in the strip list.` +
         `\n   Refusing — this would lock every user out of every call.`,
@@ -157,7 +97,7 @@ export async function hardenUnusedCallTypes(
 
   let changedTypes = 0;
 
-  for (const typeName of UNUSED_TYPES) {
+  for (const typeName of UNUSED_CALL_TYPES) {
     const { changed, failed } = await hardenOne(client, typeName, opts.apply);
     if (failed) return 1;
     if (changed) changedTypes++;

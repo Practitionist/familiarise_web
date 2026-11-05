@@ -451,6 +451,7 @@ describe("replay fingerprint", () => {
     amountPaise: BigInt(100_000),
     reason: "Late start",
     releaseSeat: false,
+    sessionsRemoved: null,
     proposedById: "admin-1",
   };
 
@@ -470,6 +471,15 @@ describe("replay fingerprint", () => {
     );
     await expect(
       performCaseAction("case-1", admin, recommend({ amountPaise: 90_000 })),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_REUSED" });
+  });
+
+  it("refuses a recommendation replay with another session count", async () => {
+    db.supportFinancialRecommendation.findUnique.mockResolvedValue(
+      storedRecommendation as never,
+    );
+    await expect(
+      performCaseAction("case-1", admin, recommend({ sessions: 3 })),
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_REUSED" });
   });
 

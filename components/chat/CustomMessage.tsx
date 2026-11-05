@@ -2,11 +2,7 @@
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { format } from "date-fns";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useState } from "react";
-import { goHref } from "@/lib/dashboard/go";
-import { caseKeyOf, parseCaseKey } from "@/lib/support/case-key";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import {
   Attachment,
   useChatContext,
@@ -22,8 +18,6 @@ import {
   CheckIcon,
   XIcon,
   FlagIcon,
-  CalendarIcon,
-  LifeBuoyIcon,
   ShieldCheckIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -57,10 +51,12 @@ import {
   SUPPORT_STREAM_USER_NAME,
 } from "@/lib/stream/support-user";
 import { SystemMessage } from "./SystemMessage";
+import { LEGACY_BOOKING_CONTEXT_USER_ID } from "@/lib/stream/system-users";
+import { BOOKING_TAG_FIELD } from "@/lib/stream/booking-tag";
+import { MessageBookingTag } from "./BookingTag";
 
 export const CustomMessage = () => {
-  const pathname = usePathname();
-  const { message } = useMessageContext();
+  const { message, handleRetry } = useMessageContext();
   const { client, channel } = useChatContext();
   const messageComposer = useMessageComposerController();
   const { toast } = useToast();
@@ -86,6 +82,22 @@ export const CustomMessage = () => {
     "(hover: hover) and (pointer: fine)",
     true,
   );
+  // Touch shows a bubble's actions only after a tap on it; a tap elsewhere hides them.
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !rowRef.current?.contains(event.target)
+      ) {
+        setActionsOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [actionsOpen]);
 
   // Map Stream reaction types to actual emoji characters
   const reactionTypeToEmoji: Record<string, string> = {
@@ -133,54 +145,22 @@ export const CustomMessage = () => {
   // Check if this message is a reply to another message
   const hasQuotedMessage = !!message.quoted_message;
 
-  // Inspect message for booking context metadata
-  const msgRecord = message as unknown as Record<string, unknown>;
-  const customRecord =
-    typeof msgRecord.custom === "object" && msgRecord.custom !== null
-      ? (msgRecord.custom as Record<string, unknown>)
-      : undefined;
-  const readMessageString = (key: string): string | null => {
-    const direct = msgRecord[key];
-    if (typeof direct === "string") return direct;
-    const nested = customRecord?.[key];
-    return typeof nested === "string" ? nested : null;
-  };
-  const bookingAppointmentId = readMessageString("booking_appointment_id");
-  const bookingRef = parseCaseKey(`b_${bookingAppointmentId ?? ""}`);
-  const dashboardBase = pathname?.match(
-    /^\/dashboard\/(?:organization|consultant|consultee|org-workspace)\/[A-Za-z0-9-]+(?=\/|$)/,
-  )?.[0];
-  const requestsBase = dashboardBase
-    ? `${dashboardBase}/support/requests`
-    : goHref("auto", "support/requests");
-  const bookingHelpHref = bookingRef
-    ? `${requestsBase}/${caseKeyOf(bookingRef)}`
-    : null;
-  const isBookingContext = Boolean(
-    bookingAppointmentId ||
-    msgRecord.kind === "booking_context" ||
-    customRecord?.kind === "booking_context",
-  );
-  const bookingType = (
-    readMessageString("booking_type") ?? "CONSULTATION"
-  ).toUpperCase();
-  const bookingTitle =
-    readMessageString("booking_title") ?? "Scheduled Session";
-  const bookingStartsAtRaw = readMessageString("booking_starts_at");
-  const bookingStartsAtDate = bookingStartsAtRaw
-    ? new Date(bookingStartsAtRaw)
-    : null;
-  const formattedBookingStartsAt =
-    bookingStartsAtDate && !Number.isNaN(bookingStartsAtDate.getTime())
-      ? format(bookingStartsAtDate, "PPp")
+  // Message fields are user-writable: only the id is read, and the tag renders from the server's answer.
+  const taggedField: unknown = message[BOOKING_TAG_FIELD];
+  const bookingAppointmentId =
+    channel?.type === "messaging" && typeof taggedField === "string"
+      ? taggedField
       : null;
+
+  // The retired server-posted booking cards stay hidden.
+  if (message.user?.id === LEGACY_BOOKING_CONTEXT_USER_ID) return null;
 
   if (message.type === "system" && !isDeleted) {
     return <SystemMessage message={message} />;
   }
 
   // Avoid rendering empty messages
-  if (!hasText && !hasAttachments && !isBookingContext && !isDeleted) {
+  if (!hasText && !hasAttachments && !isDeleted) {
     return null;
   }
 
@@ -260,6 +240,20 @@ export const CustomMessage = () => {
   const handleReplyClick = () => {
     // Use Stream Chat's MessageComposer controller API to set quoted message
     messageComposer.setQuotedMessage(message);
+    setActionsOpen(false);
+  };
+
+  const touchActionsVisible =
+    !isFinePointer && (actionsOpen || showEmojiPicker || showMoreOptions);
+  const handleBubbleTap = (event: MouseEvent<HTMLDivElement>) => {
+    if (isFinePointer) return;
+    if (
+      event.target instanceof Element &&
+      event.target.closest("a, button, input, textarea")
+    ) {
+      return;
+    }
+    setActionsOpen((open) => !open);
   };
 
   // Report a message (flags in Stream + persists to DB)
@@ -304,8 +298,8 @@ export const CustomMessage = () => {
     }
   };
 
-  // One toolbar, two placements: floating on hover for a mouse, inline and
-  // permanent for touch. Both are Radix now, which brings Escape, a focus trap
+  // One toolbar, two placements: floating on hover for a mouse, inline after a
+  // tap on the bubble for touch. Both are Radix now, which brings Escape, a focus trap
   // and focus return that the hand-rolled mousedown-only dropdowns never had.
   const actionToolbar = (
     <div className="flex items-center gap-0.5 rounded-lg border border-border bg-popover shadow-lg">
@@ -405,6 +399,7 @@ export const CustomMessage = () => {
 
   return (
     <div
+      ref={rowRef}
       className={`flex items-end ${isMyMessage ? "justify-end" : "justify-start"} mb-4 group relative`}
     >
       {/* Avatar for other users' messages */}
@@ -427,7 +422,7 @@ export const CustomMessage = () => {
       )}
 
       {/* Touch placement: outside the bubble, on the side away from the edge. */}
-      {!isFinePointer && isMyMessage && (
+      {touchActionsVisible && isMyMessage && (
         <div className="mr-1 shrink-0">{actionToolbar}</div>
       )}
 
@@ -457,6 +452,8 @@ export const CustomMessage = () => {
 
         {/* Message Bubble */}
         <div
+          data-testid="message-bubble"
+          onClick={handleBubbleTap}
           className={cn(
             "rounded-lg px-3 py-2",
             isMyMessage
@@ -506,58 +503,12 @@ export const CustomMessage = () => {
             )
           )}
 
-          {/* Booking Context Card */}
-          {isBookingContext && (
-            <div
-              data-testid="booking-context-card"
-              className={cn(
-                "mb-2 rounded-md border p-2.5 text-left",
-                isMyMessage
-                  ? "border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground"
-                  : "border-border bg-background/80 text-foreground",
-              )}
-            >
-              <div className="flex items-center gap-2 mb-1">
-                <CalendarIcon className="h-3.5 w-3.5 shrink-0 opacity-80" />
-                <span
-                  className={cn(
-                    "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
-                    isMyMessage
-                      ? "bg-primary-foreground/20 text-primary-foreground"
-                      : "bg-secondary text-secondary-foreground",
-                  )}
-                >
-                  {bookingType}
-                </span>
-              </div>
-              <div className="text-xs font-semibold leading-snug">
-                {bookingTitle}
-              </div>
-              {formattedBookingStartsAt && (
-                <div
-                  className={cn(
-                    "mt-0.5 text-[11px]",
-                    isMyMessage
-                      ? "text-primary-foreground/80"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  {formattedBookingStartsAt}
-                </div>
-              )}
-              {bookingHelpHref && (
-                <Link
-                  href={bookingHelpHref}
-                  prefetch={false}
-                  className="mt-2 inline-flex min-h-9 items-center gap-1.5 rounded px-1 text-xs font-medium underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-                  aria-label={`Get help with ${bookingTitle}`}
-                  title="Contact the Familiarise team about this appointment"
-                >
-                  <LifeBuoyIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                  Get help
-                </Link>
-              )}
-            </div>
+          {bookingAppointmentId && channel?.cid && (
+            <MessageBookingTag
+              appointmentId={bookingAppointmentId}
+              cid={channel.cid}
+              mine={isMyMessage}
+            />
           )}
 
           {/* Render Attachments if they exist */}
@@ -655,10 +606,33 @@ export const CustomMessage = () => {
           >
             {message.created_at && format(new Date(message.created_at), "p")}
           </div>
+
+          {/* The SDK keeps a failed send in the list with status "failed";
+              without this it reads exactly like a delivered message. */}
+          {isMyMessage && message.status === "sending" && (
+            <div className="mt-0.5 text-right text-xs text-primary-foreground/80">
+              Sending…
+            </div>
+          )}
+          {isMyMessage && message.status === "failed" && (
+            <div
+              role="alert"
+              className="mt-0.5 flex items-center justify-end gap-2 text-xs font-semibold text-primary-foreground"
+            >
+              <span>Not sent</span>
+              <button
+                type="button"
+                className="font-medium underline underline-offset-2"
+                onClick={() => void handleRetry(message)}
+              >
+                Retry
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
-      {!isFinePointer && !isMyMessage && (
+      {touchActionsVisible && !isMyMessage && (
         <div className="ml-1 shrink-0">{actionToolbar}</div>
       )}
 

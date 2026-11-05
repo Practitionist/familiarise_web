@@ -29,11 +29,14 @@ export type BatchOutcome = {
 export function BatchApproveBar({
   rows,
   busy,
+  onRunningChange,
   onClear,
   onFinished,
 }: Readonly<{
   rows: InboxRowInput[];
   busy: boolean;
+  /** The inbox locks the selected rows' own actions while a run is in flight. */
+  onRunningChange: (running: boolean) => void;
   onClear: () => void;
   onFinished: (outcomes: BatchOutcome[]) => void;
 }>) {
@@ -46,6 +49,7 @@ export function BatchApproveBar({
 
   const run = async () => {
     setRunning(true);
+    onRunningChange(true);
     const done: BatchOutcome[] = [];
     for (const row of rows) {
       const ref = { current: keysRef.current.get(row.id) ?? null };
@@ -76,6 +80,7 @@ export function BatchApproveBar({
       setOutcomes([...done]);
     }
     setRunning(false);
+    onRunningChange(false);
     onFinished(done);
   };
 

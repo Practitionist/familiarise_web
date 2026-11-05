@@ -90,7 +90,7 @@ It is worth stating precisely what the law does and does not demand. Rule 46(b) 
 
 ### e-invoice / IRN
 
-`OrganizationInvoice.{irn, ackNumber, signedQrPayload, irpStatus, irpRetryCount}` are schema-final. The IRP uploader is body-live but env-gated behind `ENABLE_IRP_UPLOADER` plus ClearTax GSP credentials (`jobs/compliance/irp-uploader.ts` → `lib/compliance/irp.ts` `generateIrn`, payload mapper `lib/compliance/irp-payload.ts`). When credentials are absent, `generateIrn` returns `{ status: "FAILED", reason: "STUB" }` and the cron records it as an ordinary retry. The relevant thresholds are unchanged: e-invoicing (IRN generation) is mandatory at PAN-level aggregate annual turnover (AATO) of **≥ ₹5 crore**, a level in force since 1 August 2023, and the stricter 30-day IRP reporting window binds only filers at **AATO ≥ ₹10 crore**, effective 1 April 2025. B2C remains a voluntary pilot and is not IRN-reportable today, so we report IRNs only on `OrganizationInvoice` (B2B) documents.
+`OrganizationInvoice.{irn, ackNumber, signedQrPayload, irpStatus, irpRetryCount}` are schema-final. The IRP uploader is body-live but env-gated on `PLATFORM_GSTIN` plus ClearTax GSP credentials (`jobs/compliance/irp-uploader.ts` → `lib/compliance/irp.ts` `generateIrn`, payload mapper `lib/compliance/irp-payload.ts`). When `PLATFORM_GSTIN` or a ClearTax credential is absent, the uploader touches no invoice and returns `skipped: "<NAME> not configured"`, which the run row stores as outcome `skipped`. The relevant thresholds are unchanged: e-invoicing (IRN generation) is mandatory at PAN-level aggregate annual turnover (AATO) of **≥ ₹5 crore**, a level in force since 1 August 2023, and the stricter 30-day IRP reporting window binds only filers at **AATO ≥ ₹10 crore**, effective 1 April 2025. B2C remains a voluntary pilot and is not IRN-reportable today, so we report IRNs only on `OrganizationInvoice` (B2B) documents.
 
 - **Source (primary):** NIC IRN spec https://einv-apisandbox.nic.in/irn.html; 30-day window advisory https://einvoice6.gst.gov.in/content/revised-time-limit-for-e-invoice-reporting-for-businesses-with-aato-of-%E2%82%B910-crores-above/.
 
@@ -238,14 +238,14 @@ Note two structural facts the diagram encodes: `DataBreach` has **no foreign key
 
 ## 5. Compliance crons
 
-Each cron runs as a GitHub Action (`.github/workflows/*.yml`) calling a thin shim in `jobs/compliance/*`; each also exposes a `CRON_SECRET`-gated manual trigger at `POST /api/cleanup/*`.
+Each job is one implementation registered in `lib/cron/cleanup-registry.ts` and run by the Netlify ticker through `/api/cleanup/<job>`, which is also the `CRON_SECRET`-gated manual trigger.
 
 - `irp-uploader` performs e-invoice IRN generation (env-gated, see §1).
-- `consent-retention-sweeper` purges `ConsentArtifact` rows past `auditRetainedUntil`.
+- `consent-retention-sweeper` counts `ConsentArtifact` rows past `auditRetainedUntil`; deleting them needs its `?delete=1` gate, which stays off until the hash-only consent archive exists.
 - `databreach-deadline-alerts` runs the 72-hour DPDP breach-reporting clock hourly.
 - `msme-payment-alerts` warns finance before the 15/45-day deadline a default would lock.
 
-Audit-log retention (7 years for INVOICE/PAYOUT/WALLET/CONTRACT/CONSENT categories, 2 years otherwise) is enforced by `prune-audit-logs` (`jobs/cleanup/`).
+Audit-log retention (8 years for INVOICE/PAYOUT/WALLET/CONTRACT/CONSENT categories, 2 years otherwise) is enforced by `prune-audit-logs` (`scripts/cleanup/prune-audit-logs.ts`); see the [retention table](../../compliance/02-dpdp-and-privacy.md#retention-windows).
 
 ## 6. Other rails
 

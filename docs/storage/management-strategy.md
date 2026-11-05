@@ -187,13 +187,13 @@ documents/                                              # Private bucket (signed
 
 ### 1. Bucket Management
 
-Every bucket the app provisions has one explicit policy in `lib/storage/bucket-policies.ts`: visibility, object-size limit and MIME allowlist. `ensureBucketExists(bucket, overrides?)` merges the caller's overrides over that policy, creates the bucket if missing and reconciles the settings of an existing one. A bucket with no policy entry is **refused**, never created with a fallback.
+Every bucket the app provisions has one explicit policy in `lib/storage/bucket-policies.ts`: visibility, object-size limit and MIME allowlist. `ensureBucketExists(bucket, overrides?)` merges the caller's size and MIME overrides over that policy, creates the bucket if missing (a lost concurrent create counts as success once the bucket exists) and reconciles the settings of an existing one. Visibility is never a caller override; it comes only from the registry. A bucket with no policy entry is **refused**, never created with a fallback.
 
 | Bucket                | Visibility | Limit | MIME source                                                     |
 | --------------------- | ---------- | ----- | --------------------------------------------------------------- |
 | `documents`           | private    | 10 MB | `lib/documents/file-policy.ts` (PDF, Office, images, text, CSV) |
-| `plan-images`         | public     | 5 MB  | JPEG, PNG, WebP                                                 |
-| `profile-images`      | public     | 2 MB  | JPEG, PNG, WebP                                                 |
+| `plan-images`         | public     | 5 MB  | JPEG (`image/jpeg`, `image/jpg`), PNG, WebP                     |
+| `profile-images`      | public     | 2 MB  | JPEG (`image/jpeg`, `image/jpg`), PNG, WebP                     |
 | `organization-images` | public     | 5 MB  | JPEG, PNG, WebP, SVG                                            |
 | `recordings-previews` | public     | 50 MB | MP4, WebM, JPEG, PNG, WebP                                      |
 | `support-attachments` | private    | 20 MB | `lib/support/attachment-policy.ts`                              |
@@ -216,7 +216,7 @@ await storage.createBucket(bucketName, {
 - **MIME reconciliation**: An existing bucket is updated when its allowlist drifts, so a video preview is not rejected by a document-only list
 - **Signed URL generation**: Uses `supabaseAdmin.storage.from(bucket).createSignedUrl()` with service role
 - **Service role required**: Every storage call (upload, list, signed URL, delete, bucket create and reconcile) runs on the server's service-role client through `adminStorage()` in `lib/supabase-storage-core.ts`. There is no anon storage client. If `SUPABASE_SERVICE_ROLE_KEY` is missing, storage operations fail with an explicit error.
-- **Verified deletes**: `removeObjects()` returns `true` only when every requested path is gone afterwards. Storage's batch delete returns only the objects it removed, so a path missing from that answer is checked with `exists()`. Routes answer `502` and keep the row when a delete is not confirmed.
+- **Verified deletes**: `removeObjects()` confirms every requested path through a deletion receipt or explicit missing-key metadata. Storage's batch delete returns only the objects it removed, so a path missing from that answer is checked with `info()`. Only an explicit `NoSuchKey` error confirms absence; a remaining object or ambiguous response leaves the deletion unconfirmed. Profile-image deletion returns `502` and preserves the stored image pointer when confirmation fails; appointment-document purge retains its tombstoned row for retry. Plan-material deletion commits removal of its database row first, then attempts storage cleanup, reporting failures to Sentry while returning success. That path does not restore the row; vendor cleanup can remain outstanding.
 
 ### 2. Folder Creation
 
@@ -354,19 +354,26 @@ sequenceDiagram
 
 Every storage write, delete and signing call runs on the server-side client, never the public one, and private buckets are served only through access-checked signed URLs. The rules are these.
 
-- **Deletes are verified.** `removeObjects` in `lib/supabase-storage-core.ts` returns true only when every path is gone afterwards. Storage's batch delete answers with just the objects it removed, so each path missing from that answer is re-checked with an existence call. `deleteAsset`, `deleteAppointmentDocument` and the feature deletes all route through it, and callers act on the boolean: a route whose storage delete may have left the object behind reports once to Sentry and answers an error, and it keeps the database row so the delete can be retried. A delete that cannot be proven is never reported as a success.
-- **Rollbacks use the same path.** When a database insert fails after an upload, the object just written is removed with the same helper, so a failed save does not strand a file.
+- **Shared delete confirmation.** `removeObjects` in `lib/supabase-storage-core.ts` requires a deletion receipt or an explicit `NoSuchKey` metadata response for every requested key. The installed SDK's `exists()` turns HTTP 400/404 into `data: false` while hiding the underlying error code in a HEAD response. This deployment returns HTTP 400 with `NoSuchKey` for an absent object's metadata, so status alone cannot distinguish absence from an invalid request. Ambiguous responses, missing buckets and transport failures return `false`; callers retain their retry/error handling. Confirmation describes the vendor observation, while the caller still owns retention, authorisation and concurrent-writer fencing. [Supabase storage error codes](https://supabase.com/docs/guides/storage/debugging/error-codes).
+
+- **Rollbacks use the same path.** When a database insert fails after an upload, removal of the new object is attempted through the same helper. Failed removal remains an orphan-cleanup obligation.
 - **Private buckets hand out short-lived signed URLs only.** Support attachments, appointment documents, plan materials and the finance PDFs are never linked by a stored URL. The app route checks the caller's access, signs a URL (60 seconds for support attachments) and redirects with `Cache-Control: private, no-store`. Rows written before a bucket became private may still hold an old stored URL, so readers map the row to the app route rather than rendering the stored value.
 - **Public buckets stay public deliberately.** Avatars, organisation logos and landing assets are served from their public endpoint; they hold nothing that needs an access check.
 - **Orphans are swept by reconciliation.** `scripts/cleanup/reconcile-document-storage.ts` treats every path referenced by a database row as live and removes unreferenced objects after a grace period, and it aborts on a listing error rather than deleting on partial information.
 
-See [support attachments](../support/08-intake-callbacks-attachments-and-limits.md#attachments) for the worked example.
+See [support attachments](../support/04-evidence-and-attachments.md#attachments) for the support bucket, its checks and its signed downloads.
 
 ## Supabase for documents, R2 for recordings
 
 Session documents and plan materials live in the private Supabase `documents` bucket: small files (up to 10 MB), opened rarely, uploaded straight from the browser and signed on demand. Recordings live in the private Cloudflare R2 recordings bucket: hundreds of MB to several GB, streamed repeatedly, pulled in server-side by `transfer-recordings`. The split follows object size and read pattern. R2 charges no egress and has no per-plan upload cap, while Supabase Storage caps a single upload by plan. Each store has one signing helper. Public preview clips stay in the Supabase `recordings-previews` bucket. See [session documents](../documents/README.md#storage-supabase-for-documents-r2-for-recordings) and [recordings](../stream/19-recordings-lifecycle-and-access.md).
 
 Session documents are tombstoned 90 days after the booking ends (or is cancelled) and purged 7 days later by the registered `purge-deleted-documents` job (`lib/documents/document-purge.ts`), which runs hourly on the Netlify ticker with `limit=100` (the route still accepts up to 200 for a manual drain). A tombstoned row keeps its object until the purge, and `reconcile-document-storage` imports the same `DOCUMENT_DELETE_GRACE_DAYS` constant so it never sweeps an object the purge still owns. The 10 MB limit and the allowed types come from one policy, `lib/documents/file-policy.ts`. See [session documents](../documents/README.md#retention-and-the-purge).
+
+## R2 for digital product files
+
+Files an expert sells as a digital product live in their own private R2 bucket, named by `R2_DIGITAL_PRODUCTS_BUCKET` and reached with the recordings bucket's credentials. They can be up to 250 MB each and are downloaded repeatedly, which is the R2 read pattern; Supabase Storage holds only the product's public cover image (`plan-images/digital-products/<productId>/`). The browser PUTs each file to a 15-minute presigned URL that signs its type, its length and `If-None-Match: *`, so each key is written once; the commit route verifies it by ranged reads fenced to the object's ETag, and a buyer downloads through a 300-second presigned GET that the app hands out only after an entitlement check. Keys are `products/<productId>/<lineageId>/<assetId>.<ext>`, fresh for every upload; a replacement shares its file's lineage folder with the next version number.
+
+`reconcile-digital-product-storage` (every 6 hours) keeps the bucket equal to its rows. It deletes the object of a version superseded more than 30 days ago, or of one with two newer versions in its lineage (each file keeps only its current and previous version's objects; the replacing commit purges older ones itself and the sweep retries what it could not), and stamps `purgedAt` on the row, which stays as download evidence; it deletes rejected and abandoned uploads older than a day; and it pages through the bucket from a checkpoint deleting objects older than a day that no row names. An erased creator's objects are deleted after the erasure commit. See [digital products](../digital-products/01-architecture.md).
 
 ## Cleanup Strategy
 
@@ -653,7 +660,7 @@ This comprehensive strategy ensures reliable, efficient, and secure document sto
    - All user documents, plan materials, verification submissions, and support attachments are now stored in private buckets (`public: false`) and served exclusively via authenticated 60-second signed URLs (`Cache-Control: private, no-store`). Only marketing/profile avatars (`plan-images`, `profile-images`, `organization-images`, `recordings-previews`) use public buckets.
 2. **Unverified Client-Side or Public-Key Deletes**:
    - Calling `.remove()` through an anon client or ignoring partial batch deletion arrays silently left unreferenced blobs in storage while reporting `200 OK` to callers.
-   - All storage mutations run exclusively through `adminStorage()` (`lib/supabase-storage-core.ts`), and `removeObjects()` re-verifies any path missing from batch responses via `exists()` before reporting success.
+   - All storage mutations run exclusively through `adminStorage()` (`lib/supabase-storage-core.ts`), and `removeObjects()` re-verifies a key missing from batch responses with metadata and accepts only an explicit `NoSuchKey` response. A boolean existence result or HTTP status alone does not confirm deletion.
 3. **Serverless Memory Buffering (`arrayBuffer()`) on Document Downloads**:
    - Buffering full PDF/DOCX byte arrays through Next.js API routes exhausted serverless function memory and added double-hop latency.
    - Download endpoints now validate permissions and session state, generate a 60-second signed Supabase URL (`createSignedStorageUrl`), and either return JSON metadata (`?format=json`) for inline preview frames or issue an HTTP `302` redirect.

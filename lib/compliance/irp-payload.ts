@@ -12,10 +12,9 @@
  * line so ItemList sums reconcile to ValDtls exactly — the IRP rejects any
  * mismatch between per-line totals and invoice totals.
  *
- * State codes: the IRP wants the 2-digit NUMERIC GST state code (e.g. "29"
- * Karnataka). The GSTIN's first 2 chars ARE that code, so we derive Pos /
- * Stcd from the GSTIN where available and fall back to an alpha→numeric
- * lookup for the env-sourced seller state.
+ * State codes: the IRP wants the 2-digit NUMERIC GST state code (e.g. "06"
+ * Haryana). The GSTIN's first 2 chars ARE that code, so Pos / Stcd come from
+ * the GSTIN where available, with an alpha→numeric lookup as the fallback.
  */
 
 import { numericStateCode } from "./state-codes";
@@ -51,7 +50,7 @@ interface IrpPayloadBuyer {
 }
 
 interface IrpPayloadSeller {
-  gstin: string; // platform GSTIN (env-sourced in the cron)
+  gstin: string; // PLATFORM_GSTIN
   legalName: string;
   address1: string;
   location: string;
@@ -104,16 +103,23 @@ export function buildIrpPayload(
   const docType = input.docType ?? "INV";
 
   // CRN payloads must reference the adjusted document (NIC v1.1 OrigDocDtls).
-  if (docType === "CRN" && (!input.originalInvoiceNumber || !input.originalInvoiceDate)) {
+  if (
+    docType === "CRN" &&
+    (!input.originalInvoiceNumber || !input.originalInvoiceDate)
+  ) {
     return {
       ok: false,
-      reason: "docType CRN requires originalInvoiceNumber and originalInvoiceDate",
+      reason:
+        "docType CRN requires originalInvoiceNumber and originalInvoiceDate",
     };
   }
 
   // B2B e-invoice requires the buyer GSTIN (the whole point of the IRP).
   if (!buyer.gstin) {
-    return { ok: false, reason: "buyer GSTIN missing (B2B e-invoice requires it)" };
+    return {
+      ok: false,
+      reason: "buyer GSTIN missing (B2B e-invoice requires it)",
+    };
   }
   if (!invoice.invoiceNumber) {
     return { ok: false, reason: "invoiceNumber missing" };
@@ -125,7 +131,10 @@ export function buildIrpPayload(
     return { ok: false, reason: "no line items" };
   }
   if (!seller.gstin) {
-    return { ok: false, reason: "seller GSTIN missing (PLATFORM_GSTIN env unset)" };
+    return {
+      ok: false,
+      reason: "seller GSTIN missing (PLATFORM_GSTIN env unset)",
+    };
   }
 
   const sellerStcd = numericStateCode(seller.gstin, seller.stateCode);
@@ -145,9 +154,7 @@ export function buildIrpPayload(
   const isInterState = invoice.igstPaise > 0;
 
   // Assessable (taxable) base in paise — line totals must sum to this.
-  const lineAssessable = lineItems.map(
-    (li) => li.quantity * li.unitPricePaise,
-  );
+  const lineAssessable = lineItems.map((li) => li.quantity * li.unitPricePaise);
   const assessableTotalFromLines = lineAssessable.reduce((a, b) => a + b, 0);
 
   // The invoice's stored subtotal is the source of truth for ValDtls.AssVal.

@@ -29,9 +29,16 @@ export interface CancellationPolicyTerms {
   source: "PLATFORM" | "ORG";
   version: number;
   tiers: RefundTier[];
-  /** Consultant-initiated cancellations always refund this percentage. */
+  /**
+   * What a cancellation that was not the buyer's choice refunds: always
+   * `CONSULTANT_INITIATED_PCT` for a booking; only the back-office override
+   * door quotes another figure through it.
+   */
   consultantInitiatedPct: number;
 }
+
+/** An expert, admin or host-org cancel refunds the buyer in full; no ladder changes that. */
+export const CONSULTANT_INITIATED_PCT = 100;
 
 // Industry-standard defaults (Calendly/Cal.com-style): full refund a day out,
 // half inside the day, nothing inside two hours. Consultant-initiated is
@@ -51,7 +58,7 @@ export const PLATFORM_DEFAULT_TERMS: CancellationPolicyTerms = {
   source: "PLATFORM",
   version: 1,
   tiers: PLATFORM_DEFAULT_TIERS,
-  consultantInitiatedPct: 100,
+  consultantInitiatedPct: CONSULTANT_INITIATED_PCT,
 };
 
 /**
@@ -176,10 +183,17 @@ export interface BookingRefundQuoteInput {
    * allocated-slot proration above.
    */
   sessionsTotal?: number | null;
+  /** Sessions a support refund already removed and paid for (0 off a plan); never quoted again. */
+  sessionsRefunded: number;
   /** #1766 — sessions delivered (COMPLETED or UNVERIFIED). */
   sessionsCompleted?: number;
   /** #1766 — start instants (epoch ms) of every session still scheduled. */
   scheduledStarts?: number[];
+  /**
+   * Subscriptions only: what single sessions of this payment already got back
+   * (a voided session refunded one unit), netted so no session refunds twice.
+   */
+  alreadyRefundedPaise?: number;
   /** The instant the notice is measured from; defaults to now. */
   nowMs?: number;
 }
@@ -203,6 +217,11 @@ export interface BookingRefundQuote {
   refundPaise: number;
   /** #1500 — the credit is restored whole rather than at the tier percentage. */
   creditRestoresInFull: boolean;
+  /**
+   * A credit-funded subscription with sessions delivered: the credits rail
+   * restores whole or not at all, so the undelivered share goes to a human.
+   */
+  creditReturnNeedsReview: boolean;
 }
 
 /**
@@ -348,11 +367,14 @@ function quoteUnusedSessions(
 } {
   const total = input.sessionsTotal;
   const completed = Math.min(input.sessionsCompleted ?? 0, total);
+  // Sessions a support refund removed were paid back already; the denominator
+  // stays the sessions sold so this share plus that refund is the plan-end share.
+  const owed = Math.max(0, total - input.sessionsRefunded - completed);
   const now = input.nowMs ?? Date.now();
   const scheduled = [...(input.scheduledStarts ?? [])]
     .sort((a, b) => a - b)
-    .slice(0, Math.max(0, total - completed));
-  const neverScheduled = Math.max(0, total - completed - scheduled.length);
+    .slice(0, owed);
+  const neverScheduled = Math.max(0, owed - scheduled.length);
   const noticeHours =
     scheduled.length > 0
       ? (scheduled[0] - now) / 3_600_000
@@ -380,9 +402,7 @@ function quoteUnusedSessions(
       input.isConsultantInitiated,
     ),
     noticeHours,
-    proratedBasePaise: Number(
-      (gross * BigInt(total - completed)) / BigInt(total),
-    ),
+    proratedBasePaise: Number((gross * BigInt(owed)) / BigInt(total)),
     refundBeforeClamp: Number(refundBeforeClamp),
   };
 }
@@ -401,30 +421,49 @@ export function quoteBookingRefund(
       sessionsTotal: input.sessionsTotal,
     });
     // #1500 — same credit rule as below, asked of the next session's tier.
+    // Once a session was delivered, restoring the whole credit would also
+    // reverse the delivered sessions' earnings, so the rest goes to a human.
+    const delivered = (input.sessionsCompleted ?? 0) > 0;
     const creditRestoresInFull =
-      input.isFreeCreditFunded && unused.tierRefundPct > 0;
+      input.isFreeCreditFunded && !delivered && unused.tierRefundPct > 0;
+    // Queued only when the ladder owes the undelivered sessions something,
+    // priced on a notional unit because the money gross of a credit plan is 0.
+    const creditReturnNeedsReview =
+      input.isFreeCreditFunded &&
+      delivered &&
+      quoteUnusedSessions({
+        ...input,
+        sessionsTotal: input.sessionsTotal,
+        grossPaise: input.sessionsTotal * 10_000,
+      }).refundBeforeClamp > 0;
+    // A session already refunded on its own (a void) sits in the unscheduled
+    // remainder too, so its unit comes off once here.
+    const netPaise = Math.max(
+      0,
+      unused.refundBeforeClamp - (input.alreadyRefundedPaise ?? 0),
+    );
     const refundPaise = Math.min(
-      creditRestoresInFull
-        ? unused.proratedBasePaise
-        : unused.refundBeforeClamp,
+      creditRestoresInFull ? unused.proratedBasePaise : netPaise,
       input.refundablePaise,
     );
     // Mixed tiers have no single rung to quote, so the percentage shown is
     // the effective share of the undelivered base, to two decimals.
     const effectivePct =
       unused.proratedBasePaise > 0
-        ? Math.round(
-            (unused.refundBeforeClamp * 10_000) / unused.proratedBasePaise,
-          ) / 100
+        ? Math.round((netPaise * 10_000) / unused.proratedBasePaise) / 100
         : unused.tierRefundPct;
+    let refundPct = creditRestoresInFull ? 100 : effectivePct;
+    // Nothing returns automatically; the dialog says a human reviews it.
+    if (creditReturnNeedsReview) refundPct = 0;
     return {
-      refundPct: creditRestoresInFull ? 100 : effectivePct,
+      refundPct,
       tierRefundPct: unused.tierRefundPct,
       noticeHours: unused.noticeHours,
       proratedBasePaise: unused.proratedBasePaise,
       prorated: (input.sessionsCompleted ?? 0) > 0,
       refundPaise,
       creditRestoresInFull,
+      creditReturnNeedsReview,
     };
   }
 
@@ -470,5 +509,6 @@ export function quoteBookingRefund(
     prorated: isProratable && input.sessionsRemaining < input.slotsTotal,
     refundPaise: Math.min(refundBeforeClamp, input.refundablePaise),
     creditRestoresInFull,
+    creditReturnNeedsReview: false,
   };
 }

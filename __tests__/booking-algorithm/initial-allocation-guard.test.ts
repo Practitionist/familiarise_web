@@ -15,6 +15,9 @@ import "./setup";
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    // The allocator's slot batch reads co-host seats and an expert consultee's own profile.
+    consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
+    collaborator: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn(),
     consultation: { findUnique: jest.fn() },
     subscription: { findUnique: jest.fn() },
@@ -48,6 +51,10 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 
 // Mock appointmentlock to avoid @upstash/redis ESM import issues in Jest
 jest.mock("../../utils/appointmentlock", () => ({
+  // allocate() takes an existing booking's appointment lock first.
+  withAppointmentLock: (_id: string, fn: (lock: unknown) => unknown) =>
+    fn({ key: "appointment-lock" }),
+  renewAppointmentLock: async () => true,
   lockAutoAllocate: jest
     .fn()
     .mockResolvedValue({ key: "mock-key", value: "mock-value" }),
@@ -56,6 +63,9 @@ jest.mock("../../utils/appointmentlock", () => ({
     .fn()
     .mockResolvedValue({ key: "mock-consultee-key", value: "mock-value" }),
   unlockConsulteeBooking: jest.fn().mockResolvedValue(undefined),
+  tryLockSlotBatch: jest.fn().mockResolvedValue({ ok: true, grant: [] }),
+  extendSlotInterval: jest.fn().mockResolvedValue(true),
+  unlockSlotInterval: jest.fn().mockResolvedValue(undefined),
 }));
 
 const reportSentryError = jest.fn();
@@ -104,6 +114,8 @@ const SUBSCRIPTION_ROW = {
   schedulingPeriodStartsAt: new Date("2026-08-02T00:00:00.000Z"),
   schedulingPeriodEndsAt: new Date("2026-08-29T23:59:59.000Z"),
   schedulingTimezone: "Asia/Kolkata",
+  // A plan end well ahead of the real clock: these rows are mid-plan.
+  planEndsAt: new Date("2099-01-01T00:00:00.000Z"),
 };
 
 beforeEach(() => {
@@ -165,7 +177,12 @@ describe("manual allocation with initialAllocation", () => {
       slots: FUTURE_SLOTS,
     });
 
-    expect(mockPrisma.appointmentOccurrence.count).not.toHaveBeenCalled();
+    // The allocator still counts what the plan holds (to record how it was
+    // scheduled), but never runs the confirmed-slots guard (`notIn` dead).
+    const guardReads = mockPrisma.appointmentOccurrence.count.mock.calls.filter(
+      ([args]) => JSON.stringify(args).includes('"notIn"'),
+    );
+    expect(guardReads).toEqual([]);
     expect(result.error).not.toContain("already allocated in another session");
   });
 });
@@ -174,7 +191,7 @@ describe("manual allocation: transaction race window", () => {
   it("409s when the pre-lock count sees zero but the in-txn count sees confirmed slots", async () => {
     // Tab B commits between tab A's out-of-txn guard and its write txn: the
     // first count returns 0, the advisory-locked in-txn count returns 2.
-    mockPrisma.appointmentOccurrence.count.mockResolvedValueOnce(0);
+    mockPrisma.appointmentOccurrence.count.mockResolvedValue(0);
     mockValidateFn.mockResolvedValue({
       isValid: true,
       errors: [],
@@ -264,6 +281,8 @@ function wireRequestedSubscription() {
     schedulingPeriodStartsAt: new Date("2026-08-02T00:00:00.000Z"),
     schedulingPeriodEndsAt: new Date("2026-08-29T23:59:59.000Z"),
     schedulingTimezone: "Asia/Kolkata",
+    // A plan end well ahead of the real clock: these rows are mid-plan.
+    planEndsAt: new Date("2099-01-01T00:00:00.000Z"),
   });
   mockPrisma.appointment.findMany.mockResolvedValue([REQUESTED_ROW]);
   mockValidateFn.mockResolvedValue({ isValid: true, errors: [], warnings: [] });
@@ -375,6 +394,8 @@ describe("#1692 — a non-fresh (reschedule) manual allocation is advisory-locke
       schedulingPeriodStartsAt: new Date("2026-08-02T00:00:00.000Z"),
       schedulingPeriodEndsAt: new Date("2026-12-29T23:59:59.000Z"),
       schedulingTimezone: "Asia/Kolkata",
+      // A plan end well ahead of the real clock: these rows are mid-plan.
+      planEndsAt: new Date("2099-01-01T00:00:00.000Z"),
     });
     // Confirmed rows exist → not a fresh allocation; the key is not stamped
     // yet when the base client looks, so the pre-lock replay misses.
@@ -458,7 +479,9 @@ describe("#1697 — pre-lock occupancy probe on manual allocation", () => {
       consultantProfileId: "cp-1",
       isTentative: false,
       deletedAt: null,
-      appointment: { NOT: { subscriptionId: "sub-1" } },
+      appointment: {
+        OR: [{ subscriptionId: null }, { subscriptionId: { not: "sub-1" } }],
+      },
     });
   });
 });
@@ -489,6 +512,8 @@ describe("expected refusals report as expected", () => {
       schedulingPeriodStartsAt: new Date("2026-08-02T00:00:00.000Z"),
       schedulingPeriodEndsAt: new Date("2026-08-29T23:59:59.000Z"),
       schedulingTimezone: "Asia/Kolkata",
+      // A plan end well ahead of the real clock: these rows are mid-plan.
+      planEndsAt: new Date("2099-01-01T00:00:00.000Z"),
     });
 
     const odd = await allocate({
@@ -500,7 +525,7 @@ describe("expected refusals report as expected", () => {
     expect(odd.httpStatus).toBe(400);
     expect(reportSentryError).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        message: expect.stringContaining("Invalid slot count"),
+        message: expect.stringContaining("Pick whole sessions"),
       }),
       expect.objectContaining({ expected: true }),
     );

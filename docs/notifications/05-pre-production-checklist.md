@@ -1,6 +1,6 @@
 # Pre-Production Checklist — Email, Notifications & Newsletter
 
-> Production readiness runbook for outbound email (`lib/email/`), Novu in-app feed notifications (`lib/novu/`), ImprovMX inbound routing, DMARC/SPF/DKIM alignment, scheduled outbox relays, and environment variables.
+> Production readiness runbook for outbound email (`lib/email/`), Novu in-app feed notifications (`lib/novu/`), DMARC/SPF/DKIM alignment, scheduled outbox relays, and environment variables.
 
 **Last Updated**: 2026-10-11
 **Live Domain**: `familiarisenow.com` (Netlify DNS)
@@ -9,10 +9,10 @@
 
 ## Table of Contents
 
-- [Sending Domains, Inbound Routing & DMARC Architecture](#sending-domains-inbound-routing--dmarc-architecture)
+- [Sending Domains & DMARC Architecture](#sending-domains--dmarc-architecture)
 - [Service Free Tier Limits & Quotas](#service-free-tier-limits--quotas)
 - [Pre-Launch Checklist (Free Tier, \$0/month)](#pre-launch-checklist-free-tier-0month)
-- [DNS Setup for Resend, ImprovMX & DMARC](#dns-setup-for-resend-improvmx--dmarc)
+- [DNS Setup for Resend & DMARC](#dns-setup-for-resend--dmarc)
 - [Novu Environment & Workflow Configuration](#novu-environment--workflow-configuration)
 - [Scheduled Outbox Drains & Sweep Cadences](#scheduled-outbox-drains--sweep-cadences)
 - [Environment Variables](#environment-variables)
@@ -24,9 +24,9 @@
 
 ---
 
-## Sending Domains, Inbound Routing & DMARC Architecture
+## Sending Domains & DMARC Architecture
 
-Outbound mail splits sender reputations across two dedicated Resend subdomains on `familiarisenow.com` (dispatched from Resend region `ap-northeast-1` Tokyo), while inbound operator mailboxes route through ImprovMX on the root apex `@`:
+Outbound mail splits sender reputations across two dedicated Resend subdomains on `familiarisenow.com` (dispatched from Resend region `ap-northeast-1` Tokyo), while `familiarisenow.com` itself is send-only (it publishes a null MX) and every inbound address is `connect@practitionist.com` (`SUPPORT_EMAIL`):
 
 ```text
 Outbound Transactional & Ops (@mail.familiarisenow.com):
@@ -37,17 +37,13 @@ Outbound Transactional & Ops (@mail.familiarisenow.com):
   finance@mail.familiarisenow.com        -- Org billing receipts, invoices, wallet low, overage due
   dpdp@mail.familiarisenow.com           -- DPDP compliance & data-export notifications
   noreply@mail.familiarisenow.com        -- Automated system notifications
-  system@mail.familiarisenow.com         -- Familiarise Ops alerts (Reply-To: ops@familiarisenow.com)
+  system@mail.familiarisenow.com         -- Familiarise Ops alerts (Reply-To: connect@practitionist.com)
 
 Outbound Bulk / Waitlist (@news.familiarisenow.com):
   newsletter@news.familiarisenow.com     -- Waitlist confirmation, welcome & broadcasts
 
-Inbound Operator Mailboxes (@familiarisenow.com via ImprovMX):
-  support@familiarisenow.com             -- Default Reply-To & customer support inbox
-  ops@familiarisenow.com                 -- Reply-To for ops/canary/quota/compliance alerts (OPS_EMAIL)
-  dpdp@familiarisenow.com                -- Privacy & DPDP statutory contact
-  billing@familiarisenow.com             -- Supplier invoice & finance contact
-  dmarc@familiarisenow.com               -- Aggregate DMARC reports (rua=mailto:dmarc@familiarisenow.com)
+Inbound (practitionist.com):
+  connect@practitionist.com              -- The one live mailbox (SUPPORT_EMAIL): Reply-To, support, contact, billing, grievance and compliance alerts
 ```
 
 ---
@@ -85,7 +81,7 @@ Inbound Operator Mailboxes (@familiarisenow.com via ImprovMX):
 **Development vs. Production Tenants:**
 
 - Novu's Development and Production environments are fully isolated tenants with distinct workflows, subscribers, and secret keys.
-- `lib/novu/secret-key.ts` selects `NOVU_PRODUCTION_KEY` when `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production` (Netlify production deploys and GitHub Actions crons) and `NOVU_DEVELOPMENT_KEY` everywhere else.
+- `lib/novu/secret-key.ts` selects `NOVU_PRODUCTION_KEY` when `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production` (Netlify production deploys, including the ticker-run crons) and `NOVU_DEVELOPMENT_KEY` everywhere else.
 - `/api/novu/subscriber` authenticates subscribers via deterministic HMAC-SHA256 hashes (`computeSubscriberHash(subscriberId)` in `lib/novu/subscriber.ts`).
 
 ---
@@ -95,8 +91,10 @@ Inbound Operator Mailboxes (@familiarisenow.com via ImprovMX):
 ### Step 1: Domain & Inbound Forwarding
 
 - [x] Subdomain architecture active in `lib/email/config.ts`: `mail.familiarisenow.com` (transactional/ops) and `news.familiarisenow.com` (newsletter)
-- [ ] Configure ImprovMX forwarding for `support@`, `ops@`, `dpdp@`, `billing@`, and `dmarc@` on `familiarisenow.com`
-- [ ] Publish root SPF (`v=spf1 -all`) and DMARC (`v=DMARC1; p=quarantine; rua=mailto:dmarc@familiarisenow.com`) TXT records in Netlify DNS
+- [x] `familiarisenow.com` is send-only: its null MX (`0 .`) is live, and all inbound mail goes to `connect@practitionist.com`
+- [x] Root SPF `v=spf1 -all` and DMARC `p=none` with `rua=mailto:connect@practitionist.com` are live (verified 2026-10-28)
+- [ ] Owner: add TXT `familiarisenow.com._report._dmarc` = `v=DMARC1` in the `practitionist.com` zone at GoDaddy, and confirm auto-renew on both domains (see [Domains and DNS records](../deployment/README.md#domains-and-dns-records))
+- [ ] After about two weeks of clean reports, raise DMARC to `quarantine`, then `reject`
 
 ### Step 2: Resend Subdomain Verification & Webhook Registration
 
@@ -118,7 +116,8 @@ Inbound Operator Mailboxes (@familiarisenow.com via ImprovMX):
 ### Step 5: Environment Variables & Pre-Launch Delivery Guard Cutover
 
 - [ ] Confirm all required environment variables are configured in Netlify Dashboard and GitHub Actions secrets
-- [ ] **Launch Cutover Gate**: Flip `EMAIL_DELIVERY_MODE=live` in both Netlify production env vars and GitHub Actions repository variables (`cron-intra-day.yml`, `cron-daily.yml`) when opening public traffic (while unset or `allowlist`, external recipients are held safely as `DEAD_LETTER` `held:pre-launch` in `FailedEmail`)
+- [ ] Move Resend from Free to Pro just before launch, before the first marketing batch, or when real volume needs it, whichever comes first: Free stops sending at 100 emails a day (see [Resend billing guardrails](../../.claude/skills/billing-guardrails/references/resend.md#5-when-to-move-to-pro-owner-decision-2026-11-03))
+- [ ] **Launch Cutover Gate**: Flip `EMAIL_DELIVERY_MODE=live` in the production env vars of the active application host and of the standby Netlify site (every scheduled job that sends mail runs on the Netlify ticker, so no Actions variable is read by a cron job) when opening public traffic (while unset or `allowlist`, external recipients are held safely as `DEAD_LETTER` `held:pre-launch` in `FailedEmail`)
 
 ### Step 6: Smoke Test Verification
 
@@ -130,21 +129,18 @@ Inbound Operator Mailboxes (@familiarisenow.com via ImprovMX):
 
 ---
 
-## DNS Setup for Resend, ImprovMX & DMARC
+## DNS Setup for Resend & DMARC
 
-Publish all records below in **Netlify DNS** (`familiarisenow.com` zone):
+All records are live in **Netlify DNS** (`familiarisenow.com` zone); the authoritative list is in [Domains and DNS records](../deployment/README.md#domains-and-dns-records). Per sending subdomain (`mail` and `news`) the zone holds:
 
-| Type | Host                     | Value                                                         | Purpose                                                    |
-| ---- | ------------------------ | ------------------------------------------------------------- | ---------------------------------------------------------- |
-| MX   | `@`                      | `mx1.improvmx.com` (priority 10), `mx2.improvmx.com` (20)     | Inbound forwarding (`support@`, `ops@`, `dpdp@`, `dmarc@`) |
-| TXT  | `@`                      | `v=spf1 -all`                                                 | Prevents spoofing on non-sending root apex                 |
-| TXT  | `_dmarc`                 | `v=DMARC1; p=quarantine; rua=mailto:dmarc@familiarisenow.com` | Enforces domain DMARC policy & aggregate reports           |
-| TXT  | `resend._domainkey.mail` | `p=MIGfMA0GCSq...` (from Resend dashboard)                    | DKIM public key for transactional mail                     |
-| TXT  | `send.mail`              | `v=spf1 include:amazonses.com ~all`                           | SPF authorization for transactional envelope sender        |
-| MX   | `send.mail`              | `feedback-smtp.ap-northeast-1.amazonses.com` (priority 10)    | Return-Path bounce handling for transactional mail         |
-| TXT  | `resend._domainkey.news` | `p=MIGfMA0GCSq...` (from Resend dashboard)                    | DKIM public key for newsletter mail                        |
-| TXT  | `send.news`              | `v=spf1 include:amazonses.com ~all`                           | SPF authorization for newsletter envelope sender           |
-| MX   | `send.news`              | `feedback-smtp.ap-northeast-1.amazonses.com` (priority 10)    | Return-Path bounce handling for newsletter mail            |
+| Type  | Host                      | Value                                             | Purpose                       |
+| ----- | ------------------------- | ------------------------------------------------- | ----------------------------- |
+| TXT   | `resend._domainkey.<sub>` | DKIM public key (from the Resend dashboard)       | Signs mail from the subdomain |
+| MX    | `send.<sub>`              | `feedback-smtp.ap-northeast-1.amazonses.com` (10) | Return-Path bounce handling   |
+| TXT   | `send.<sub>`              | `v=spf1 include:amazonses.com ~all`               | SPF for the envelope sender   |
+| CNAME | `rsend.<sub>`             | `send.forge.rmta.net`                             | Resend tracking host          |
+
+The apex carries SPF `v=spf1 -all`, a null MX `0 .`, and `_dmarc` is `v=DMARC1; p=none; rua=mailto:connect@practitionist.com; fo=1`.
 
 ---
 
@@ -163,15 +159,15 @@ Publish all records below in **Netlify DNS** (`familiarisenow.com` zone):
 
 ## Scheduled Outbox Drains & Sweep Cadences
 
-Sub-hourly latency-sensitive relays run on the phase-staggered Netlify scheduled function (`netlify/functions/cron-tick.mts`, `*/5 * * * *`), while batch maintenance jobs run in GitHub Actions (`.github/workflows/cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`):
+Sub-hourly latency-sensitive relays run on the phase-staggered Netlify scheduled function (`netlify/functions/cron-tick.mts`, `*/5 * * * *`), and so do the daily and weekly batch maintenance jobs: no GitHub Actions workflow schedules a registry job:
 
-| Job Target                    | Driver          | Cadence & Offset                  | Batch / Timeout       | Purpose                                                           |
-| ----------------------------- | --------------- | --------------------------------- | --------------------- | ----------------------------------------------------------------- |
-| `drain-notification-outbox`   | `cron-tick.mts` | Every **10m** at offset **`:05`** | `limit=20`, `20s` cap | Replays due `NotificationOutbox` rows (`notBefore <= now`)        |
-| `retry-failed-emails`         | `cron-tick.mts` | Every **15m** at offset **`:00`** | `limit=20`, `20s` cap | Replays due `FailedEmail` & `FailedEmailBatch` with RFC 8058 hdrs |
-| `appointment-reminders`       | `cron-tick.mts` | Every **15m** at offset **`:10`** | `limit=25`, `20s` cap | Dispatches pre-session email & in-app appointment reminders       |
-| `auto-complete-appointments`  | `cron-tick.mts` | Every **30m** at offset **`:15`** | `limit=25`, `20s` cap | Auto-completes past sessions and triggers post-session flows      |
-| `prune-system-job-executions` | GitHub Actions  | Daily (`cron-daily.yml`)          | Unbounded             | Scrubs `SENT` email HTML/text after 7d; prunes terminal rows      |
+| Job Target                    | Driver          | Cadence & Offset                                      | Batch / Timeout        | Purpose                                                           |
+| ----------------------------- | --------------- | ----------------------------------------------------- | ---------------------- | ----------------------------------------------------------------- |
+| `drain-notification-outbox`   | `cron-tick.mts` | Every **10m** at offset **`:05`**                     | `limit=20`, `20s` cap  | Replays due `NotificationOutbox` rows (`notBefore <= now`)        |
+| `retry-failed-emails`         | `cron-tick.mts` | Every **15m** at offset **`:00`**                     | `limit=20`, `20s` cap  | Replays due `FailedEmail` & `FailedEmailBatch` with RFC 8058 hdrs |
+| `appointment-reminders`       | `cron-tick.mts` | Every **15m** at offset **`:10`**                     | `limit=25`, `20s` cap  | Dispatches pre-session email & in-app appointment reminders       |
+| `auto-complete-appointments`  | `cron-tick.mts` | Every **30m** at offset **`:15`**                     | `limit=25`, `20s` cap  | Auto-completes past sessions and triggers post-session flows      |
+| `prune-system-job-executions` | `cron-tick.mts` | Every **30m** at offset **`:25`**, 20:00 to 23:30 UTC | `limit=500`, `24s` cap | Scrubs `SENT` email HTML/text after 7d; prunes terminal rows      |
 
 Every target routes through `/api/cleanup/[job]`, authenticates via `CRON_SECRET`, and acquires an atomic Postgres lease on `SystemJobExecution` (`withCronLock`).
 
@@ -181,27 +177,20 @@ Every target routes through `/api/cleanup/[job]`, authenticates via `CRON_SECRET
 
 Set these in **Netlify Dashboard → Site → Environment Variables** (and matching GitHub Actions secrets/variables where noted):
 
-| Variable                     | Value / Source                                               | Required                                                 |
-| ---------------------------- | ------------------------------------------------------------ | -------------------------------------------------------- |
-| `NEXT_PUBLIC_APP_URL`        | `https://familiarisenow.com`                                 | Yes                                                      |
-| `EMAIL_DELIVERY_MODE`        | `live` at launch (defaults to `allowlist` pre-launch)        | Yes (Netlify + GitHub Actions variables)                 |
-| `EMAIL_ALLOWLIST`            | Comma-separated emails/`@domains` allowed pre-launch         | Optional (used when `EMAIL_DELIVERY_MODE != live`)       |
-| `RESEND_API_KEY`             | Resend API key (`re_...`)                                    | Yes (Netlify + GitHub Actions secrets)                   |
-| `RESEND_WEBHOOK_SECRET`      | Svix signing secret (`whsec_...`)                            | Yes (Netlify production context)                         |
-| `EMAIL_TRANSACTIONAL_DOMAIN` | `mail.familiarisenow.com`                                    | Optional (default)                                       |
-| `EMAIL_NEWSLETTER_DOMAIN`    | `news.familiarisenow.com`                                    | Optional (default)                                       |
-| `NEXT_PUBLIC_SUPPORT_EMAIL`  | `support@familiarisenow.com`                                 | Optional (default)                                       |
-| `CONTACT_INBOX_ADDRESS`      | Defaults to `NEXT_PUBLIC_SUPPORT_EMAIL`                      | Optional                                                 |
-| `BILLING_EMAIL`              | `billing@familiarisenow.com` (fallback: `supportEmail()`)    | Optional                                                 |
-| `OBSERVABILITY_ALERT_EMAIL`  | Ops recipient for Sentry canary/quota alerts                 | Optional (fallback: `supportEmail()`)                    |
-| `DATABREACH_ALERT_EMAIL`     | Compliance recipient for DPDP 72h alerts                     | Yes                                                      |
-| `MSME_ALERT_EMAIL`           | Finance recipient for MSME Section 43B(h) alerts             | Yes                                                      |
-| `SLACK_OPS_WEBHOOK_URL`      | Slack incoming webhook for dead-letter & ops fallback alerts | Optional (recommended)                                   |
-| `NOVU_DEVELOPMENT_KEY`       | Novu Development secret key                                  | Yes                                                      |
-| `NOVU_PRODUCTION_KEY`        | Novu Production secret key                                   | Yes (Netlify production + GitHub Actions secrets)        |
-| `NEXT_PUBLIC_NOVU_APP_ID`    | Novu Application Identifier                                  | Yes                                                      |
-| `CRON_SECRET`                | `openssl rand -hex 32`                                       | Yes (Netlify + GitHub Actions secrets)                   |
-| `WAITLIST_HMAC_SECRET`       | `openssl rand -hex 32`                                       | Yes (signs stateless email & waitlist unsubscribe links) |
+| Variable                    | Value / Source                                                                              | Required                                                 |
+| --------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `NEXT_PUBLIC_APP_URL`       | `https://familiarisenow.com`                                                                | Yes                                                      |
+| `EMAIL_DELIVERY_MODE`       | `live` at launch (defaults to `allowlist` pre-launch)                                       | Yes (Netlify + GitHub Actions variables)                 |
+| `EMAIL_ALLOWLIST`           | Comma-separated emails/`@domains` allowed pre-launch (includes `connect@practitionist.com`) | Optional (used when `EMAIL_DELIVERY_MODE != live`)       |
+| `RESEND_API_KEY`            | Resend API key (`re_...`)                                                                   | Yes (Netlify + GitHub Actions secrets)                   |
+| `RESEND_WEBHOOK_SECRET`     | Svix signing secret (`whsec_...`)                                                           | Yes (Netlify production context)                         |
+| `OBSERVABILITY_ALERT_EMAIL` | Ops recipient for Sentry canary/quota alerts                                                | Optional (fallback: `supportEmail()`)                    |
+| `SLACK_OPS_WEBHOOK_URL`     | Slack incoming webhook for dead-letter & ops fallback alerts                                | Optional (recommended)                                   |
+| `NOVU_DEVELOPMENT_KEY`      | Novu Development secret key                                                                 | Yes                                                      |
+| `NOVU_PRODUCTION_KEY`       | Novu Production secret key                                                                  | Yes (Netlify production + GitHub Actions secrets)        |
+| `NEXT_PUBLIC_NOVU_APP_ID`   | Novu Application Identifier                                                                 | Yes                                                      |
+| `CRON_SECRET`               | `openssl rand -hex 32`                                                                      | Yes (Netlify + GitHub Actions secrets)                   |
+| `WAITLIST_HMAC_SECRET`      | `openssl rand -hex 32`                                                                      | Yes (signs stateless email & waitlist unsubscribe links) |
 
 ---
 
@@ -243,6 +232,9 @@ _Kit free tier covers 10K subscribers. Creator (\$39/mo) is only needed for auto
 
 ## Deprecated & Superseded Approaches
 
-- **Sending From Unowned `@familiarise.com` & Unrouted Root Mailboxes**: Replaced by `mail.familiarisenow.com` and `news.familiarisenow.com` verified in Resend (`ap-northeast-1`), paired with ImprovMX inbound routing on `@familiarisenow.com` and `_dmarc` `p=quarantine`.
+- **Sending From Unowned `@familiarise.com` & Unrouted Root Mailboxes**: Replaced by `mail.familiarisenow.com` and `news.familiarisenow.com` verified in Resend (`ap-northeast-1`), with the live `_dmarc` policy at `p=none`.
 - **Standalone Sub-Hourly GitHub Actions Workflows (`cron-notifications.yml`, `cron-auto-complete.yml`)**: Superseded by phase-staggered dispatch in `netlify/functions/cron-tick.mts` (`drain-notification-outbox` every 10m at `:05`, `retry-failed-emails` every 15m at `:00`, `appointment-reminders` every 15m at `:10`, `auto-complete-appointments` every 30m at `:15`), avoiding GitHub Actions sub-hourly scheduling lag and duplicate cron workflows.
 - **Replaying 422 Invalid-Domain Sends Across Backoff**: Superseded by `terminalSendReason()` dead-lettering 422 validation errors immediately on attempt 1.
+- **Env-driven sender domains and contact addresses**: `EMAIL_TRANSACTIONAL_DOMAIN`, `EMAIL_NEWSLETTER_DOMAIN`, `NEXT_PUBLIC_SUPPORT_EMAIL`, `CONTACT_INBOX_ADDRESS`, `BILLING_EMAIL` and `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS` were replaced by constants in `lib/company.ts`. The footer and newsletters always print the registered-office postal line, and the broadcast route no longer refuses with 412 when it is missing. Remove any leftover copies from Netlify.
+- **Inbound forwarding via ImprovMX (planned, never configured)**: role addresses on `familiarisenow.com` were to be forwarded through ImprovMX MX records. The records were never created, and the apex now publishes a null MX; all inbound mail goes to `connect@practitionist.com`.
+- **Personal-inbox DMARC reports and an unpublished root SPF**: replaced on 2026-10-28 by the live records above.

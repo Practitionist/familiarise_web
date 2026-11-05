@@ -7,10 +7,7 @@
 import type { AppointmentKind } from "@/lib/appointments/view-model";
 
 export type ConsulteeDestructiveAction =
-  | "cancel-booking"
-  | "cancel-trial"
-  | "leave-event"
-  | "none";
+  "cancel-booking" | "cancel-trial" | "leave-event" | "none";
 
 /** Reschedule is 1:1 only — group events are organiser-managed; trials have no path. */
 export function consulteeMayReschedule(kind: AppointmentKind): boolean {
@@ -44,14 +41,12 @@ export interface OpenRescheduleProposal {
   id: string;
   status: string;
   reason: string | null;
-  round: number;
   expiresAt: string | Date;
   initiatorRole: string;
   initiatedById: string;
   proposedTimes: {
     startsAt: string | Date;
     endsAt: string | Date;
-    round: number;
   }[];
 }
 
@@ -76,17 +71,4 @@ export function openProposalTarget(
     if (proposal) return { appointmentId: appointment.id, proposal };
   }
   return null;
-}
-
-/** The times currently on offer.
- *
- * `round` filtering is retained even though every request is round 1: the column
- * is what a resurrected counter-proposal would need, and the filter is the only
- * thing standing between a two-round row and a card that offers the other side's
- * own rejected times back to them. It costs one equality test on a list that is
- * already in memory. */
-export function currentRoundProposedSlots(
-  proposal: Pick<OpenRescheduleProposal, "round" | "proposedTimes">,
-): OpenRescheduleProposal["proposedTimes"] {
-  return proposal.proposedTimes.filter((slot) => slot.round === proposal.round);
 }

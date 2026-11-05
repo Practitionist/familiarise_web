@@ -12,6 +12,8 @@
 jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
 }));
+// reportSentryError and the shared loggers capture through @sentry/core; share the one mock.
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
 import * as Sentry from "@sentry/nextjs";
 import {

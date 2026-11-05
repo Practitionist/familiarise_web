@@ -12,11 +12,17 @@
  *
  * VALIDATION LAYERS:
  * 1. Zod schemas (this file) - Validates data types and formats
- * 2. SlotValidationService - Validates business rules (conflicts, availability)
- * 3. SlotAllocationService - Executes allocation logic
+ * 2. ScheduleValidationService - Validates business rules (conflicts, availability)
+ * 3. lib/booking/allocation - Executes allocation logic
  */
 
 import { z } from "zod";
+
+/**
+ * The most 30-minute atoms one allocation can need: the largest plan the plan
+ * schemas allow (7 sessions a week for 24 months, 4-hour sessions).
+ */
+export const MAX_ALLOCATION_SLOTS = 7 * 4 * 24 * (4 * 2);
 
 /**
  * ALLOCATION REQUEST SCHEMA
@@ -110,6 +116,7 @@ export const allocationRequestSchema = z
             "Each slot must be a valid ISO 8601 datetime string (e.g., '2025-01-15T10:00:00Z')",
         }),
       )
+      .max(MAX_ALLOCATION_SLOTS, "Too many times picked for one booking")
       .optional(),
   })
   .refine(

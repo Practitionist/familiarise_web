@@ -1,35 +1,11 @@
-/**
- * Stream User Sync - Core Logic
- *
- * Identifies and soft-deletes stale Stream Chat users that no longer exist in the database.
- * Uses distributed locking via Redis to prevent concurrent runs.
- *
- * Features:
- * - Pagination for large user sets
- * - Dry-run mode for testing
- * - Comprehensive error handling
- * - Rate limiting between batch deletions
- *
- * This module exports the core function.
- * It is imported by:
- * - jobs/stream/stream-sync.ts (GitHub Actions)
- * - app/api/cleanup/stream-sync/route.ts (API endpoint)
- *
- * Schedule: Daily at 03:40 UTC (09:10 IST; #709 minute map)
- */
+/** A bounded, checkpointed comparison of Stream principals against database ownership. */
 
-import { StreamChat, UserResponse } from "stream-chat";
+import { StreamChat, type UserResponse } from "stream-chat";
 import prisma from "../../lib/prisma";
-import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { readJobCheckpoint, withCronLock } from "@/lib/cron/with-cron-lock";
 import { SUPPORT_STREAM_USER_ID } from "@/lib/stream/support-user";
 import { assertStreamKeyAllowedHere } from "@/lib/stream/environment-guard";
 import { scriptClientOptions } from "./target";
-
-// Types
-interface FailedDeletionFromSDK {
-  user_id: string;
-  message: string;
-}
 
 export interface FailedDeletionEntry {
   id: string;
@@ -40,11 +16,14 @@ export interface SyncSummary {
   success: boolean;
   totalStreamUsersProcessed: number;
   totalStaleUsersIdentified: number;
-  totalStaleUsersDeleted: number;
-  totalHardDeletedUsers?: number;
+  totalDeletionRequestsAccepted: number;
+  totalHardDeletionRequestsAccepted?: number;
   totalFailedDeletions: number;
   failedDeletionDetails: FailedDeletionEntry[];
   timestamp: string;
+  deletionTaskIds: string[];
+  checkpoint: string | null;
+  hasMore: boolean;
 }
 
 export interface SyncOptions {
@@ -83,16 +62,8 @@ function getExcludedUserIds(): Set<string> {
 // System user prefixes that should be excluded
 const SYSTEM_USER_PREFIXES = ["system-", "recording-egress-"];
 
-// Distributed lock configuration. The key itself is now derived by
-// `withCronLock` from the job name ("cron:lock:stream-sync"); only the TTL
-// is still ours to choose.
-// #1134 P1-21 — was 10 minutes, which is SHORTER than the run it guards. At
-// 100k users this walks 1,000 pages with a 500ms sleep between deletions (8
-// minutes of sleep alone) plus a Stream round-trip and a Prisma query per page:
-// 15-30 minutes realistically. The lock expired mid-run and a second scheduled
-// run could start deleting concurrently. Matched to the workflow's own
-// timeout-minutes so the lock outlives any run that can exist.
-const SYNC_LOCK_TTL = 40 * 60 * 1000;
+const SYNC_LOCK_TTL = 15 * 60 * 1000;
+const MAX_PAGES_PER_RUN = 5;
 
 /**
  * Check if a user ID should be excluded from deletion
@@ -137,7 +108,7 @@ function getStreamClient(): StreamChat {
   assertStreamKeyAllowedHere(streamApiKey, scriptClientOptions());
 
   return StreamChat.getInstance(streamApiKey, streamApiSecret, {
-    timeout: 30000, // 30 seconds timeout
+    timeout: 15000,
   });
 }
 
@@ -151,7 +122,7 @@ function sleep(ms: number): Promise<void> {
 /**
  * Perform Stream user synchronization
  *
- * Runs under the fleet cron lock, then fetches every Stream user page by page,
+ * Runs under a Postgres lease, then fetches at most five Stream user pages,
  * compares each against the database and soft-deletes the ones that no longer
  * exist here. Throws `CronLockHeldError` when another runner already holds the
  * lock, which `runJob` treats as a clean skip rather than a failure.
@@ -194,10 +165,13 @@ async function performStreamUserSyncUnlocked(
 
   let totalStreamUsersProcessed = 0;
   let totalStaleUsersIdentified = 0;
-  let totalStaleUsersDeleted = 0;
-  let totalHardDeletedUsers = 0;
+  let totalDeletionRequestsAccepted = 0;
+  let totalHardDeletionRequestsAccepted = 0;
   const allFailedDeletions: FailedDeletionEntry[] = [];
-  let lastStreamUserId: string | undefined = undefined;
+  const priorCheckpoint = await readJobCheckpoint("stream-sync");
+  let lastStreamUserId: string | undefined = priorCheckpoint ?? undefined;
+  let hasMore = false;
+  const deletionTaskIds: string[] = [];
   let deleteCallsIssued = 0;
 
   const runDeleteUsersBatch = async (
@@ -216,27 +190,9 @@ async function performStreamUserSyncUnlocked(
           messages: mode,
         });
 
-        const sdkFailedDeletions: FailedDeletionFromSDK[] =
-          (deleteResponse as { failed_delete_users?: FailedDeletionFromSDK[] })
-            .failed_delete_users || [];
-
-        if (sdkFailedDeletions.length > 0) {
-          const failures = sdkFailedDeletions.map((f) => ({
-            id: f.user_id,
-            error: f.message || "Unknown error",
-          }));
-          allFailedDeletions.push(...failures);
-          console.warn(
-            `   ⚠️ ${failures.length} ${mode}-deletions failed:`,
-            failures.map((f) => f.id).join(", "),
-          );
-        }
-
-        const succeeded = batch.length - sdkFailedDeletions.length;
-        totalStaleUsersDeleted += succeeded;
-        if (mode === "hard") {
-          totalHardDeletedUsers += succeeded;
-        }
+        deletionTaskIds.push(deleteResponse.task_id);
+        totalDeletionRequestsAccepted += batch.length;
+        if (mode === "hard") totalHardDeletionRequestsAccepted += batch.length;
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Batch deletion failed";
@@ -250,7 +206,7 @@ async function performStreamUserSyncUnlocked(
 
   try {
     // Paginate through all Stream users (including deactivated/soft-deleted)
-    while (true) {
+    for (let page = 0; page < MAX_PAGES_PER_RUN; page++) {
       console.log(
         `   Fetching users (after: ${lastStreamUserId || "start"})...`,
       );
@@ -268,10 +224,12 @@ async function performStreamUserSyncUnlocked(
       const currentPageUsers: UserResponse[] = streamUsersResponse.users;
 
       if (currentPageUsers.length === 0) {
-        console.log("   No more users to process.");
+        lastStreamUserId = undefined;
+        hasMore = false;
         break;
       }
 
+      hasMore = currentPageUsers.length === effectivePageLimit;
       totalStreamUsersProcessed += currentPageUsers.length;
       lastStreamUserId = currentPageUsers[currentPageUsers.length - 1].id;
 
@@ -305,12 +263,8 @@ async function performStreamUserSyncUnlocked(
         if (activeUserIdSet.has(userId)) continue;
         if (shouldExcludeUser(userId, excludedSet, excludeUserIds)) continue;
 
-        const raw = streamUser as UserResponse & {
-          deactivated_at?: string;
-          deleted_at?: string;
-        };
         const isAlreadyDeactivatedOrSoftDeleted = Boolean(
-          raw.deactivated_at || raw.deleted_at,
+          streamUser.deactivated_at || streamUser.deleted_at,
         );
         if (erasedUserIdSet.has(userId)) {
           hardDeleteUsers.push(userId);
@@ -346,42 +300,17 @@ async function performStreamUserSyncUnlocked(
       success: allFailedDeletions.length === 0,
       totalStreamUsersProcessed,
       totalStaleUsersIdentified,
-      totalStaleUsersDeleted,
-      totalHardDeletedUsers,
+      totalDeletionRequestsAccepted,
+      totalHardDeletionRequestsAccepted,
       totalFailedDeletions: allFailedDeletions.length,
       failedDeletionDetails: allFailedDeletions,
       timestamp: new Date().toISOString(),
+      deletionTaskIds,
+      checkpoint: dryRun ? priorCheckpoint : (lastStreamUserId ?? null),
+      hasMore,
     };
   } catch (error) {
     console.error("❌ Synchronization failed:", error);
     throw error;
   }
-}
-
-/**
- * Print sync summary to console
- */
-export function printSyncSummary(summary: SyncSummary): void {
-  console.log("\n📊 Stream Sync Summary:");
-  console.log(`   Total Users Processed: ${summary.totalStreamUsersProcessed}`);
-  console.log(
-    `   Stale Users Identified: ${summary.totalStaleUsersIdentified}`,
-  );
-  console.log(`   Users Soft-Deleted: ${summary.totalStaleUsersDeleted}`);
-  console.log(`   Failed Deletions: ${summary.totalFailedDeletions}`);
-  console.log(`   Success: ${summary.success}`);
-
-  if (summary.failedDeletionDetails.length > 0) {
-    console.log("\n⚠️ Failed Deletions:");
-    summary.failedDeletionDetails.forEach((failure) => {
-      console.log(`   - ${failure.id}: ${failure.error}`);
-    });
-  }
-}
-
-/**
- * Disconnect from database - call this when done
- */
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
 }

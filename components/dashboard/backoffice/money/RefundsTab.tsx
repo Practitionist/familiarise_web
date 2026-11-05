@@ -1,13 +1,16 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { z } from "zod";
 
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useToast } from "@/hooks/use-toast";
+import { callOpsDoor } from "./ops-door";
 import { RefundDoorDialog, type RefundDoor } from "./RefundDoorDialog";
 
 const NeedsHumanList = z.object({
@@ -17,13 +20,28 @@ const NeedsHumanList = z.object({
       message: z.string(),
       createdAt: z.string(),
       paymentId: z.string().nullable(),
-      /** A credit seat gets the credit door, a held paid seat the refund door, a support remedy its case. */
+      /** A credit seat gets the credit door; a held paid seat, a stuck owed refund or a held top-up the refund door; a support remedy its case. */
       kind: z
-        .enum(["credit", "held-paid-seat", "support-recommendation"])
+        .enum([
+          "credit",
+          "held-paid-seat",
+          "stuck-owed-refund",
+          "owed-already-held",
+          "support-recommendation",
+        ])
         .optional(),
       occurrenceId: z.string().nullish(),
       unitPaise: z.number().nullish(),
+      /** A held top-up's amount, preset in the refund door. */
+      amountPaise: z.number().nullish(),
+      /** A paid top-up whose own hold may now be released. */
+      holdRef: z.string().nullish(),
+      releasable: z.boolean().optional(),
       caseId: z.string().nullish(),
+      /** Record refs (plan, refund) kept out of the message. */
+      details: z.string().nullish(),
+      /** An ended credit plan: ops may answer that no credit is owed. */
+      creditPlan: z.boolean().optional(),
     }),
   ),
 });
@@ -38,6 +56,21 @@ async function fetchNeeds(): Promise<{ items: NeedsHuman[] }> {
 /** #1834 — a held seat opens the refund door keyed to its session, at its unit. */
 function doorFor(item: NeedsHuman) {
   const paymentId = item.paymentId ?? undefined;
+  // A hand refund settles a stuck owed marker and unblocks the cancel.
+  if (item.kind === "stuck-owed-refund") {
+    return { door: "issue" as const, paymentId };
+  }
+  // Another door's refund held this one: refund its amount by hand, then release the hold.
+  if (item.kind === "owed-already-held") {
+    return {
+      door: "issue" as const,
+      paymentId,
+      amountRupees:
+        typeof item.amountPaise === "number"
+          ? (item.amountPaise / 100).toFixed(2)
+          : undefined,
+    };
+  }
   if (item.kind !== "held-paid-seat") {
     return { door: "credits" as const, paymentId };
   }
@@ -71,6 +104,12 @@ export function RefundDoorsPanel() {
       ? { door: "issue", paymentId: linkedPayment }
       : null,
   );
+  // The credit plan an operator is answering "no credit owed" for.
+  const [closing, setClosing] = useState<string | null>(null);
+  // The paid top-up whose hold an operator is releasing.
+  const [releasing, setReleasing] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const { data } = useQuery({
     queryKey: ["money-refund-needs"],
     queryFn: fetchNeeds,
@@ -110,7 +149,15 @@ export function RefundDoorsPanel() {
                   key={item.id}
                   className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm"
                 >
-                  <span className="min-w-0 flex-1">{item.message}</span>
+                  <div className="min-w-0 flex-1">
+                    <span>{item.message}</span>
+                    {item.details && (
+                      <details className="text-xs text-muted-foreground">
+                        <summary>Details</summary>
+                        {item.details}
+                      </details>
+                    )}
+                  </div>
                   {item.kind === "support-recommendation" && item.caseId && (
                     <Button size="sm" variant="outline" asChild>
                       <Link
@@ -120,15 +167,41 @@ export function RefundDoorsPanel() {
                       </Link>
                     </Button>
                   )}
-                  {item.kind !== "support-recommendation" && item.paymentId && (
+                  {item.kind !== "support-recommendation" &&
+                    item.paymentId &&
+                    // A settled top-up only waits for its hold release, on the earning.
+                    !(
+                      item.kind === "owed-already-held" &&
+                      typeof item.amountPaise !== "number"
+                    ) && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setOpen(doorFor(item))}
+                      >
+                        {item.kind === "held-paid-seat" ||
+                        item.kind === "stuck-owed-refund" ||
+                        item.kind === "owed-already-held"
+                          ? "Issue refund"
+                          : "Return credits"}
+                      </Button>
+                    )}
+                  {item.releasable && item.holdRef && (
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => setOpen(doorFor(item))}
+                      onClick={() => setReleasing(item.holdRef ?? null)}
                     >
-                      {item.kind === "held-paid-seat"
-                        ? "Issue refund"
-                        : "Return credits"}
+                      Release hold
+                    </Button>
+                  )}
+                  {item.creditPlan && item.paymentId && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setClosing(item.paymentId)}
+                    >
+                      No credit owed
                     </Button>
                   )}
                 </li>
@@ -145,6 +218,48 @@ export function RefundDoorsPanel() {
         presetAmountRupees={open?.amountRupees}
         onClose={() => setOpen(null)}
       />
+      {releasing !== null && (
+        <ConfirmDialog
+          open
+          onOpenChange={(o) => !o && setReleasing(null)}
+          title="Release the top-up's hold"
+          description="The top-up is paid. This releases only its own hold; the earnings stay held while anything else holds them."
+          confirmLabel="Release hold"
+          requireReason={{}}
+          onConfirm={async ({ reason }) => {
+            await callOpsDoor("/api/admin/earnings/top-up-hold", {
+              correlationId: releasing,
+              reason,
+            });
+            toast({ title: "Hold released" });
+            void queryClient.invalidateQueries({
+              queryKey: ["money-refund-needs"],
+            });
+            setReleasing(null);
+          }}
+        />
+      )}
+      {closing !== null && (
+        <ConfirmDialog
+          open
+          onOpenChange={(o) => !o && setClosing(null)}
+          title="No credit owed"
+          description="Nothing goes back to the buyer. The expert's earnings for this plan are released on the usual hold."
+          confirmLabel="Close without credit"
+          requireReason={{}}
+          onConfirm={async ({ reason }) => {
+            await callOpsDoor("/api/admin/refunds/credits/close", {
+              paymentId: closing,
+              reason,
+            });
+            toast({ title: "Closed — no credit owed" });
+            void queryClient.invalidateQueries({
+              queryKey: ["money-refund-needs"],
+            });
+            setClosing(null);
+          }}
+        />
+      )}
     </Card>
   );
 }

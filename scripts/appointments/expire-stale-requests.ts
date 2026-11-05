@@ -1,23 +1,8 @@
-/**
- * Stale PENDING Request Expiration - Core Logic
- *
- * Auto-expires consultations and subscriptions stuck in PENDING state for too long.
- * This happens when:
- * - Consultant never responded to a request
- * - Consultee abandoned the request
- * - System error prevented status update
- *
- * This module exports the core expiration function.
- * It is imported by:
- * - jobs/expire-stale-requests.ts (GitHub Actions)
- * - app/api/cleanup/expire-stale-requests/route.ts (API endpoint)
- *
- * Schedule: Hourly (booking-journey audit B1 — a PENDING consultation holds
- * a tentative slot, so the old daily cadence plus a 30-day threshold let a
- * single account pin a consultant's calendar for a month).
- */
+/** Stale-request expiry core, shared by the cleanup registry and admin recovery door. */
 
+import { nudgeUnplacedPlanWeeks } from "@/lib/booking/week-nudge";
 import prisma from "../../lib/prisma";
+import type { PrismaLike } from "../../lib/prisma";
 import {
   AppointmentStatus,
   PaymentStatus,
@@ -25,6 +10,17 @@ import {
   Prisma,
 } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { startDeadline } from "@/lib/cron/run-deadline";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { refundableBalancePaiseSql } from "@/lib/payments/refundable-balance-sql";
+import {
+  driveRefundOwed,
+  markerFromRow,
+  MAX_REFUND_OWED_ATTEMPTS,
+  REFUND_OWED_SELECT,
+  stampRefundsOwed,
+  type RefundOwedMarker,
+} from "@/lib/payments/operations/refund-owed";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import {
   RESCHEDULE_OPEN_STATUSES,
@@ -33,11 +29,14 @@ import {
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { SLOT_TRANSITION_TX_OPTIONS } from "@/lib/booking/slot-release";
 import {
-  SLOT_TRANSITION_TX_OPTIONS,
-  transitionSlotsInChunks,
-} from "@/lib/booking/slot-release";
-import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
+  expireBackupInterest,
+  flushBackupInterestNotices,
+  hasLapsedBackupInterest,
+  stageNoticesForAppointmentHolds,
+  stageNoticesForFreedWindows,
+} from "@/lib/booking/backup-interest";
 import { lapseApprovedRequest } from "@/lib/booking/lapse-approved-request";
 import {
   notifyConsulteeRequestExpired,
@@ -52,7 +51,6 @@ import { deriveTransactionId } from "@/lib/novu/outbox";
 import { stageBell } from "@/lib/novu/stage-bell";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
-import { expireBackupInterest } from "@/lib/booking/backup-interest";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import type { Tx } from "@/lib/prisma";
 import {
@@ -62,6 +60,12 @@ import {
   unscheduledNudgeEntityRef,
 } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
+import {
+  DEFAULT_NOTIFICATION_TIMEZONE,
+  formatNotificationDateTime,
+  resolveRecipientTimezones,
+} from "@/lib/novu/humanize";
 
 // The per-cohort WHERE guards below (PENDING by requestedAt,
 // APPROVED_PENDING_PAYMENT by updatedAt) are deliberate subsets of
@@ -98,22 +102,8 @@ const MAX_REQUESTS_PER_RUN = 500;
 const MAX_SLOT_RELEASES_PER_RUN = 2000;
 
 /**
- * #1583 P1 — the per-run bite, overridable per invocation.
- *
- * The constants above bound a GitHub Actions run. They do NOT bound the Netlify
- * ticker, which drives the same core from a 20 s abort: this sweep has seven
- * cohort arms, so "500 per arm" is 3,500 rows and up to seven sequential
- * transaction streams against a budget that also has to cover a gateway refund
- * per expired payment. At production volume that is a 10–20 minute job inside
- * a 20-second window, i.e. the ticker aborted it on every tick and no cohort
- * ever finished.
- *
- * Every arm here is oldest-first with a per-run cap and NO persisted cursor,
- * and every arm's write removes the row from its cohort (EXPIRED, CANCELLED, or
- * a soft-cancel tombstone), so a smaller cap is a BUDGET and not a drop: the
- * next run collects the next-oldest rows and the backlog drains. That property
- * is the whole reason a cap is safe here and would not be on a job that read a
- * window and then had to remember where it stopped.
+ * Per-arm caps bound request reads. Only the paid-unallocated family also
+ * bounds payment staging and shares an admission deadline across its phases.
  */
 export interface StaleRequestRunLimits {
   /** Rows one cohort arm may read and transition this run. */
@@ -215,6 +205,176 @@ const HAS_SUCCEEDED_PAYMENT = {
   },
 } satisfies Prisma.SubscriptionWhereInput;
 
+// Cohort predicates shared by each arm's read and the ticker's idle probe.
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+/** A1: the payment filter splits the cohort into the expirable read and the marker-held read. */
+function stalePendingConsultationWhere(
+  expirationDate: Date,
+  payment?: Prisma.PaymentListRelationFilter,
+) {
+  return {
+    status: AppointmentStatus.PENDING,
+    requestedAt: { lt: expirationDate },
+    // Never reap a booking whose reschedule proposal is still live or
+    // that is parked with an unplaced RESCHEDULED slot awaiting placement.
+    ...NO_UNPLACED_SLOT,
+    appointment: {
+      rescheduleRequests: {
+        none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+      },
+      ...(payment ? { payment } : {}),
+    },
+  } satisfies Prisma.ConsultationWhereInput;
+}
+
+function stalePendingSubscriptionWhere(expirationDate: Date) {
+  return {
+    status: AppointmentStatus.PENDING,
+    requestedAt: { lt: expirationDate },
+    ...noLiveProposal(),
+    // A paid PENDING plan belongs to the 48 h arm.
+    NOT: HAS_SUCCEEDED_PAYMENT,
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+function approvedUnallocatedWhere(cutoff: Date) {
+  return {
+    status: AppointmentStatus.APPROVED,
+    updatedAt: { lt: cutoff },
+    ...NO_LIVE_SESSION,
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+function pendingUnallocatedWhere(
+  cohort: ReturnType<typeof unallocatedCohortWhere>,
+) {
+  return {
+    status: AppointmentStatus.PENDING,
+    ...cohort,
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+/** The 48 h arm's cohort: a paid plan still waiting for cycle 1. */
+function unscheduledPaidPlanWhere(firstStageCutoff: Date) {
+  return {
+    status: AppointmentStatus.PENDING,
+    deletedAt: null,
+    AND: [
+      NO_LIVE_SESSION,
+      noLiveProposal(),
+      paidCapturedBefore(firstStageCutoff),
+    ],
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+/** The release CAS re-states this; the read adds the RESCHEDULED status. */
+function staleRescheduledHoldWhere(cutoff: Date) {
+  return {
+    isTentative: true as const,
+    deletedAt: null,
+    updatedAt: { lt: cutoff },
+    appointment: {
+      subscriptionId: { not: null },
+      subscription: { status: AppointmentStatus.APPROVED },
+    },
+  };
+}
+
+function staleRescheduledSlotWhere(cutoff: Date) {
+  return {
+    ...staleRescheduledHoldWhere(cutoff),
+    completionStatus: OccurrenceCompletionStatus.RESCHEDULED,
+  } satisfies Prisma.AppointmentOccurrenceWhereInput;
+}
+
+// The money predicate is repeated in the lapse core's CAS WHERE, so these
+// read filters are an optimisation rather than the guard.
+function unpaidLapsedConsultationWhere(expirationDate: Date) {
+  return {
+    status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+    updatedAt: { lt: expirationDate },
+    appointment: {
+      payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+    },
+  } satisfies Prisma.ConsultationWhereInput;
+}
+
+/** One wrapper per subscription, or none yet: either way no paid payment hangs off it. */
+function unpaidLapsedSubscriptionWhere(expirationDate: Date) {
+  return {
+    status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+    updatedAt: { lt: expirationDate },
+    OR: [
+      { appointment: null },
+      {
+        appointment: {
+          payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+        },
+      },
+    ],
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+/** Every arm, the partial-marker holds and the retained-obligation report included. */
+export async function hasStaleRequestWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  const at = now.getTime();
+  if (outOfTime()) return true;
+  const consultation = await db.consultation.findFirst({
+    where: {
+      OR: [
+        stalePendingConsultationWhere(
+          new Date(at - PENDING_CONSULTATION_EXPIRATION_HOURS * HOUR_MS),
+        ),
+        unpaidLapsedConsultationWhere(
+          new Date(at - PAYMENT_PENDING_EXPIRATION_DAYS * DAY_MS),
+        ),
+      ],
+    },
+    select: { id: true },
+  });
+  if (consultation) return true;
+  if (outOfTime()) return true;
+  const subscription = await db.subscription.findFirst({
+    where: {
+      OR: [
+        stalePendingSubscriptionWhere(
+          new Date(at - PENDING_EXPIRATION_DAYS * DAY_MS),
+        ),
+        approvedUnallocatedWhere(
+          new Date(at - PENDING_EXPIRATION_DAYS * DAY_MS),
+        ),
+        pendingUnallocatedWhere(unallocatedCohortWhere(at)),
+        unscheduledPaidPlanWhere(
+          new Date(at - SUBSCRIPTION_NUDGE_HOURS[0] * HOUR_MS),
+        ),
+        unpaidLapsedSubscriptionWhere(
+          new Date(at - PAYMENT_PENDING_EXPIRATION_DAYS * DAY_MS),
+        ),
+      ],
+    },
+    select: { id: true },
+  });
+  if (subscription) return true;
+  if (outOfTime()) return true;
+  const slot = await db.appointmentOccurrence.findFirst({
+    where: staleRescheduledSlotWhere(
+      new Date(at - STALE_RESCHEDULED_HOURS * HOUR_MS),
+    ),
+    select: { id: true },
+  });
+  if (slot) return true;
+  if (outOfTime()) return true;
+  if (await hasLapsedBackupInterest(db, now)) return true;
+  if (outOfTime()) return true;
+  return unallocatedObligationsRemain(undefined, db);
+}
+
 export interface ExpireStaleRequestsResult {
   success: boolean;
   consultationsExpired: number;
@@ -232,6 +392,9 @@ export interface ExpireStaleRequestsResult {
   refundsIssued: number;
   refundFailures: number;
   errors: string[];
+  /** Remaining or held work in the 48-hour paid-unallocated family. */
+  unallocatedHasMore: boolean;
+  unallocatedRefundsDeferred: number;
   timestamp: string;
 }
 
@@ -246,6 +409,25 @@ export interface ExpireStaleRequestsResult {
  */
 type ExpiredRefundArm =
   "pending-consultation" | "pending-subscription" | "approved-unallocated";
+
+class ExpiredRefundMarkerRaceError extends Error {
+  constructor(arm: ExpiredRefundArm) {
+    super(`${arm} refund marker changed; expiry was rolled back`);
+  }
+}
+
+class ExpiredRefundPartialMarkerError extends Error {
+  constructor(arm: ExpiredRefundArm) {
+    super(`${arm} payment has a partial refund marker; expiry was rolled back`);
+  }
+}
+
+const PARTIAL_REFUND_MARKER_PAYMENT = {
+  paymentStatus: PaymentStatus.SUCCEEDED,
+  deletedAt: null,
+  refundOwedKey: { not: null },
+  refundOwedPaise: { not: null },
+} satisfies Prisma.PaymentWhereInput;
 
 const ARM_WRAPPER: Record<ExpiredRefundArm, "consultation" | "subscription"> = {
   "pending-consultation": "consultation",
@@ -316,6 +498,73 @@ async function refundPaymentsForExpired(
   return { issued, failures, failureMsgs };
 }
 
+function expiredRefundMarker(
+  arm: ExpiredRefundArm,
+  paymentId: string,
+): RefundOwedMarker {
+  const kind = ARM_WRAPPER[arm];
+  return {
+    paymentId,
+    amountPaise: null,
+    key: expiredRefundKey(arm, paymentId),
+    reason: `${kind} expired unallocated/unanswered — automatic full refund`,
+  };
+}
+
+/** Stage an expiry arm's full-balance obligations in the winning CAS transaction. */
+async function stageExpiredRefunds(
+  tx: Tx,
+  arm: ExpiredRefundArm,
+  entityId: string,
+): Promise<RefundOwedMarker[]> {
+  const kind = ARM_WRAPPER[arm];
+  const relation =
+    kind === "consultation" ? "consultationId" : "subscriptionId";
+  const payments = await tx.$queryRaw<
+    {
+      id: string;
+      refundOwedKey: string | null;
+      refundOwedPaise: bigint | null;
+    }[]
+  >(Prisma.sql`
+    SELECT p.id, p."refundOwedKey", p."refundOwedPaise"
+    FROM "Payment" p
+    JOIN "Appointment" a ON a.id = p."appointmentId"
+    WHERE a.${Prisma.raw(`"${relation}"`)} = ${entityId}
+      AND p."paymentStatus" = 'SUCCEEDED'
+      AND p."deletedAt" IS NULL
+    ORDER BY p."createdAt" ASC, p.id ASC
+  `);
+  const markers = payments.flatMap((payment) => {
+    if (payment.refundOwedKey === null)
+      return [expiredRefundMarker(arm, payment.id)];
+    // A null amount means full balance; preserve that marker's owner and retry state.
+    // Hold expiry when an existing partial marker cannot cover this obligation.
+    if (payment.refundOwedPaise === null) return [];
+    throw new ExpiredRefundPartialMarkerError(arm);
+  });
+  const stamped = await stampRefundsOwed(tx, markers);
+  if (stamped !== markers.length) {
+    throw new ExpiredRefundMarkerRaceError(arm);
+  }
+  return markers;
+}
+
+async function driveExpiredRefunds(markers: readonly RefundOwedMarker[]) {
+  const out = { issued: 0, failures: 0, failureMsgs: [] as string[] };
+  for (const marker of markers) {
+    const outcome = await driveRefundOwed(marker);
+    if (outcome.kind === "refunded") out.issued += 1;
+    else if (outcome.kind === "failed") {
+      out.failures += 1;
+      out.failureMsgs.push(
+        `Refund failed for payment ${marker.paymentId}: ${outcome.error}`,
+      );
+    }
+  }
+  return out;
+}
+
 /**
  * Expire stale PENDING consultations and release the tentative slots they
  * pinned. The slot release happens HERE rather than waiting for the
@@ -342,18 +591,9 @@ async function expirePendingConsultations(
     // Find stale PENDING consultations (with their appointment ids so the
     // slot release below can target exactly the expired rows).
     const staleConsultations = await prisma.consultation.findMany({
-      where: {
-        status: AppointmentStatus.PENDING,
-        requestedAt: { lt: expirationDate },
-        // Never reap a booking whose reschedule proposal is still live or
-        // that is parked with an unplaced RESCHEDULED slot awaiting placement.
-        ...NO_UNPLACED_SLOT,
-        appointment: {
-          rescheduleRequests: {
-            none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
-          },
-        },
-      },
+      where: stalePendingConsultationWhere(expirationDate, {
+        none: PARTIAL_REFUND_MARKER_PAYMENT,
+      }),
       select: {
         id: true,
         appointment: {
@@ -380,7 +620,20 @@ async function expirePendingConsultations(
       orderBy: { requestedAt: "asc" },
       take: limits.maxRequests,
     });
+    const heldPartialMarker = await prisma.consultation.findMany({
+      where: stalePendingConsultationWhere(expirationDate, {
+        some: PARTIAL_REFUND_MARKER_PAYMENT,
+      }),
+      select: { id: true },
+      take: 1,
+    });
+    let partialMarkerHoldSeen = heldPartialMarker.length > 0;
     warnIfCapped("consultation", staleConsultations.length, limits);
+    if (partialMarkerHoldSeen) {
+      errors.push(
+        "Pending consultation expiry held by a partial refund marker",
+      );
+    }
 
     console.log(
       `Found ${staleConsultations.length} consultations in PENDING for >${PENDING_CONSULTATION_EXPIRATION_HOURS}h`,
@@ -395,42 +648,59 @@ async function expirePendingConsultations(
     // leave an EXPIRED request still holding the consultant's calendar. A
     // lost CAS (approved between the read and the write) is skipped, not fatal.
     const expiredIds: string[] = [];
+    const markers: RefundOwedMarker[] = [];
     let slotsReleased = 0;
     let skipped = 0;
     for (const stale of staleConsultations) {
       try {
-        const releasedForOne = await prisma.$transaction(async (tx) => {
-          await transitionConsultationRequest(tx, {
-            where: {
-              id: stale.id,
-              // Repeat the cohort read's age predicate inside the CAS WHERE so
-              // a reschedule-refreshed requestedAt between read and write
-              // matches zero rows instead of expiring a live request.
-              requestedAt: { lt: expirationDate },
-              ...NO_UNPLACED_SLOT,
-              appointment: {
-                rescheduleRequests: {
-                  none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+        const stagedForOne = await withSerializableRetry(() =>
+          prisma.$transaction(
+            async (tx) => {
+              await transitionConsultationRequest(tx, {
+                where: {
+                  id: stale.id,
+                  // Repeat the cohort read's age predicate inside the CAS WHERE so
+                  // a reschedule-refreshed requestedAt between read and write
+                  // matches zero rows instead of expiring a live request.
+                  requestedAt: { lt: expirationDate },
+                  ...NO_UNPLACED_SLOT,
+                  appointment: {
+                    rescheduleRequests: {
+                      none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+                    },
+                  },
                 },
-              },
+                to: AppointmentStatus.EXPIRED,
+                fromIn: [AppointmentStatus.PENDING],
+              });
+              const owed = await stageExpiredRefunds(
+                tx,
+                "pending-consultation",
+                stale.id,
+              );
+              if (!stale.appointment) return { released: 0, markers: owed };
+              await stageNoticesForAppointmentHolds(tx, stale.appointment.id);
+              const released = await transitionOccurrenceCompletion(tx, {
+                where: {
+                  appointmentId: stale.appointment.id,
+                  isTentative: true,
+                  deletedAt: null,
+                },
+                to: OccurrenceCompletionStatus.CANCELLED,
+                data: { deletedAt: new Date() },
+                allowZero: true,
+              });
+              return { released, markers: owed };
             },
-            to: AppointmentStatus.EXPIRED,
-            fromIn: [AppointmentStatus.PENDING],
-          });
-          if (!stale.appointment) return 0;
-          return transitionOccurrenceCompletion(tx, {
-            where: {
-              appointmentId: stale.appointment.id,
-              isTentative: true,
-              deletedAt: null,
+            {
+              ...SLOT_TRANSITION_TX_OPTIONS,
+              isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
             },
-            to: OccurrenceCompletionStatus.CANCELLED,
-            data: { deletedAt: new Date() },
-            allowZero: true,
-          });
-        }, SLOT_TRANSITION_TX_OPTIONS);
+          ),
+        );
         expiredIds.push(stale.id);
-        slotsReleased += releasedForOne;
+        slotsReleased += stagedForOne.released;
+        markers.push(...stagedForOne.markers);
         // #1703 D2 — after the commit: the consultee learns nobody answered.
         if (stale.appointment && stale.requestedBy?.user) {
           await notifyConsulteeRequestExpired({
@@ -448,18 +718,29 @@ async function expirePendingConsultations(
           });
         }
       } catch (error) {
-        if (!(error instanceof IllegalTransitionError)) throw error;
+        if (
+          !(error instanceof IllegalTransitionError) &&
+          !(error instanceof ExpiredRefundMarkerRaceError) &&
+          !(error instanceof ExpiredRefundPartialMarkerError)
+        ) {
+          throw error;
+        }
+        if (error instanceof ExpiredRefundPartialMarkerError) {
+          if (!partialMarkerHoldSeen) {
+            partialMarkerHoldSeen = true;
+            errors.push(
+              "Pending consultation expiry held by a partial refund marker",
+            );
+          }
+        }
         skipped++;
       }
     }
     console.log(
-      `✅ Expired ${expiredIds.length} PENDING consultations (${skipped} moved on before the write)`,
+      `✅ Expired ${expiredIds.length} PENDING consultations (${skipped} skipped)`,
     );
     console.log(`✅ Released ${slotsReleased} tentative slots from them`);
-    const refunds = await refundPaymentsForExpired(
-      "pending-consultation",
-      expiredIds,
-    );
+    const refunds = await driveExpiredRefunds(markers);
     errors.push(...refunds.failureMsgs);
 
     return { expired: expiredIds.length, slotsReleased, ...refunds, errors };
@@ -490,13 +771,7 @@ async function expirePendingSubscriptions(
   try {
     // Find stale PENDING subscriptions
     const staleSubscriptions = await prisma.subscription.findMany({
-      where: {
-        status: AppointmentStatus.PENDING,
-        requestedAt: { lt: expirationDate },
-        ...noLiveProposal(),
-        // #1775 C-3 — a paid PENDING plan belongs to the 48 h arm.
-        NOT: HAS_SUCCEEDED_PAYMENT,
-      },
+      where: stalePendingSubscriptionWhere(expirationDate),
       include: {
         requestedBy: {
           include: { user: { select: { email: true, name: true } } },
@@ -596,26 +871,32 @@ async function expirePendingSubscriptions(
 }
 
 /**
- * PR 2c money fix — the IMMORTAL cohort (audit gap #3): PAID subscriptions
- * whose consultant never allocated a single session. APPROVED was not in
- * EXPIRED's allowed-from and no sweep covered it, so a buyer could stay paid-
- * with-nothing forever. Cohort narrowed to APPROVED with ZERO live confirmed
- * slots (a booking mid-allocation is untouched); expiry refunds via the
- * front door. REQUEST_ALLOWED_FROM.EXPIRED was widened to APPROVED to make
- * this transition legal (lib/booking/transitions.ts).
- */
-/**
- * PR 2e (#1192) — release tentative-RESCHEDULED slots on APPROVED
- * subscriptions past the same 30-day window as PENDING expiry. A partial
- * reschedule flips released slots to tentative+RESCHEDULED but leaves the
- * parent APPROVED with no transition edge back — so without this cleanup,
- * those ghost holds block availability forever.
- *
- * Scoped to isTentative AND completionStatus RESCHEDULED so confirmed and
- * SCHEDULED rows are never touched. The parent subscription is NOT expired
- * (it has live confirmed sessions).
+ * A subscription session released for a reschedule and never re-placed within
+ * the window goes back to the plan: the ghost hold is released, the
+ * entitlement offers it again, plan-end settlement refunds it if it is never
+ * placed, and both parties are told in the same commit as the release.
  */
 const STALE_RESCHEDULED_HOURS = PENDING_EXPIRATION_DAYS * 24;
+const STALE_RESCHEDULE_RETURN_REASON = "STALE_RESCHEDULE_RETURNED";
+
+const STALE_RELEASE_PARTIES_SELECT = {
+  id: true,
+  organizationId: true,
+  subscription: {
+    select: {
+      id: true,
+      requestedBy: { select: { user: { select: { id: true, name: true } } } },
+      subscriptionPlan: {
+        select: {
+          title: true,
+          consultantProfile: {
+            select: { user: { select: { id: true, name: true } } },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.AppointmentSelect;
 
 async function releaseStaleRescheduledSlots(
   limits: StaleRequestRunLimits,
@@ -623,48 +904,151 @@ async function releaseStaleRescheduledSlots(
   released: number;
   errors: string[];
 }> {
+  const errors: string[] = [];
+  let released = 0;
   try {
     const cutoff = new Date(
       Date.now() - STALE_RESCHEDULED_HOURS * 60 * 60 * 1000,
     );
-    const staleRescheduled = {
-      isTentative: true as const,
-      deletedAt: null,
-      updatedAt: { lt: cutoff },
-      appointment: {
-        subscriptionId: { not: null },
-        subscription: { status: AppointmentStatus.APPROVED },
-      },
-    };
-    // Bounded, oldest first, released in chunked transactions; the CAS
-    // re-states the cohort's guards on every chunk.
+    const staleRescheduled = staleRescheduledHoldWhere(cutoff);
+    // Bounded, oldest first, one transaction per plan; the CAS re-states the
+    // cohort's guards.
     const stale = await prisma.appointmentOccurrence.findMany({
-      where: {
-        ...staleRescheduled,
-        completionStatus: OccurrenceCompletionStatus.RESCHEDULED,
+      where: staleRescheduledSlotWhere(cutoff),
+      select: {
+        id: true,
+        appointmentId: true,
+        startsAt: true,
+        endsAt: true,
+        consultantProfileId: true,
       },
-      select: { id: true },
       orderBy: { updatedAt: "asc" },
       take: limits.maxSlotReleases,
     });
-    const released = await transitionSlotsInChunks(
-      stale.map((s) => s.id),
-      (idChunk) => ({
-        where: { id: { in: idChunk }, ...staleRescheduled },
-        to: OccurrenceCompletionStatus.CANCELLED,
-        data: { deletedAt: new Date() },
-        fromIn: [OccurrenceCompletionStatus.RESCHEDULED],
-        allowZero: true,
-      }),
-    );
+    const byAppointment = new Map<string, typeof stale>();
+    for (const row of stale) {
+      byAppointment.set(row.appointmentId, [
+        ...(byAppointment.get(row.appointmentId) ?? []),
+        row,
+      ]);
+    }
+    for (const [appointmentId, rows] of byAppointment) {
+      try {
+        const committed = await prisma.$transaction(async (tx) => {
+          const moved = await transitionOccurrenceCompletion(tx, {
+            where: { id: { in: rows.map((r) => r.id) }, ...staleRescheduled },
+            to: OccurrenceCompletionStatus.CANCELLED,
+            data: { deletedAt: new Date() },
+            fromIn: [OccurrenceCompletionStatus.RESCHEDULED],
+            reason: STALE_RESCHEDULE_RETURN_REASON,
+            allowZero: true,
+          });
+          if (moved === 0) return { moved, bells: [], emails: [] };
+          // Only the rows this release moved free a window, each under its own host.
+          const freed = await tx.appointmentOccurrence.findMany({
+            where: {
+              id: { in: rows.map((r) => r.id) },
+              completionStatus: OccurrenceCompletionStatus.CANCELLED,
+            },
+            select: { id: true },
+          });
+          const freedIds = new Set(freed.map((r) => r.id));
+          const byHost = new Map<string, typeof rows>();
+          for (const row of rows) {
+            if (!row.consultantProfileId || !freedIds.has(row.id)) continue;
+            byHost.set(row.consultantProfileId, [
+              ...(byHost.get(row.consultantProfileId) ?? []),
+              row,
+            ]);
+          }
+          for (const [host, hostRows] of byHost) {
+            await stageNoticesForFreedWindows(tx, host, hostRows);
+          }
+          const wrapper = await tx.appointment.findUnique({
+            where: { id: appointmentId },
+            select: STALE_RELEASE_PARTIES_SELECT,
+          });
+          const sub = wrapper?.subscription;
+          if (!sub) return { moved, bells: [], emails: [] };
+          const expert = sub.subscriptionPlan.consultantProfile.user;
+          const consultee = sub.requestedBy.user;
+          const reason =
+            "it was not rebooked within 30 days, so it went back to the plan to be booked again";
+          const dashboardUrl = notificationHref(
+            wrapper.organizationId,
+            "appointments",
+          );
+          const firstStart = rows[0].startsAt;
+          const zones = await resolveRecipientTimezones(
+            [expert.id, consultee.id],
+            tx,
+          );
+          const bells = [];
+          for (const userId of [expert.id, consultee.id]) {
+            bells.push(
+              await stageBell(tx, {
+                workflowId: NOVU_WORKFLOWS.APPOINTMENT_CANCELLED,
+                recipients: [userId],
+                payload: {
+                  appointmentType: "subscription session",
+                  planTitle: sub.subscriptionPlan.title,
+                  consultantName: expert.name ?? "Consultant",
+                  consulteeName: consultee.name ?? "Client",
+                  cancelledBy: "Familiarise",
+                  reason,
+                  dateTime: formatNotificationDateTime(
+                    firstStart,
+                    zones.get(userId) ?? DEFAULT_NOTIFICATION_TIMEZONE,
+                  ),
+                  dashboardUrl,
+                },
+                dedupeKey: `stale-resched:${appointmentId}:${rows[0].id}:${userId}`,
+              }),
+            );
+          }
+          const emails = await stageAppointmentCancelledEmail(tx, {
+            appointmentId,
+            userIds: [expert.id, consultee.id],
+            startsAt: firstStart,
+            cancelledBy: "Familiarise",
+            reason,
+            dashboardUrl,
+          });
+          await recordSystemEvent({
+            db: tx,
+            category: "BOOKING",
+            severity: "INFO",
+            organizationId: wrapper.organizationId,
+            message: `Released ${moved} stale rescheduled session(s) back to subscription ${sub.id}`,
+            context: { subscriptionId: sub.id, appointmentId, released: moved },
+            correlationId: `stale-resched:${appointmentId}:${rows[0].id}`,
+          });
+          return { moved, bells, emails };
+        }, SLOT_TRANSITION_TX_OPTIONS);
+        released += committed.moved;
+        await flushNotificationsAfter(
+          {
+            bells: committed.bells,
+            emails: [
+              { rows: committed.emails, emailType: "APPOINTMENT_CANCELLED" },
+            ],
+          },
+          "expire-stale-requests.stale-reschedule",
+        );
+      } catch (error) {
+        errors.push(
+          `Failed to release stale rescheduled slots on ${appointmentId}: ${error}`,
+        );
+      }
+    }
     console.log(
       `✅ Released ${released} stale RESCHEDULED tentative slots from APPROVED subscriptions`,
     );
-    return { released, errors: [] };
+    return { released, errors };
   } catch (error) {
     const msg = `Failed to release stale rescheduled slots: ${error}`;
     console.error(`❌ ${msg}`);
-    return { released: 0, errors: [msg] };
+    return { released, errors: [...errors, msg] };
   }
 }
 
@@ -743,11 +1127,20 @@ async function expireApprovedUnallocatedSubscriptions(
   );
 
   try {
+    const cohortWhere = approvedUnallocatedWhere(cutoff);
+
     const stale = await prisma.subscription.findMany({
       where: {
-        status: AppointmentStatus.APPROVED,
-        updatedAt: { lt: cutoff },
-        ...NO_LIVE_SESSION,
+        AND: [
+          cohortWhere,
+          {
+            NOT: {
+              appointment: {
+                payment: { some: PARTIAL_REFUND_MARKER_PAYMENT },
+              },
+            },
+          },
+        ],
       },
       select: {
         ...EXPIRY_NOTICE_SELECT,
@@ -758,10 +1151,27 @@ async function expireApprovedUnallocatedSubscriptions(
       orderBy: { updatedAt: "asc" },
       take: limits.maxRequests,
     });
+    const heldPartialMarker = await prisma.subscription.findMany({
+      where: {
+        ...cohortWhere,
+        appointment: {
+          payment: { some: PARTIAL_REFUND_MARKER_PAYMENT },
+        },
+      },
+      select: { id: true },
+      take: 1,
+    });
+    let partialMarkerHoldSeen = heldPartialMarker.length > 0;
     warnIfCapped("subscription", stale.length, limits);
+    if (partialMarkerHoldSeen) {
+      errors.push(
+        "Approved-unallocated expiry held by a partial refund marker",
+      );
+    }
 
-    if (stale.length === 0)
+    if (stale.length === 0) {
       return { expired: 0, issued: 0, failures: 0, errors };
+    }
 
     console.log(
       `Found ${stale.length} APPROVED subscriptions with zero allocated sessions for >${PENDING_EXPIRATION_DAYS} days`,
@@ -774,25 +1184,37 @@ async function expireApprovedUnallocatedSubscriptions(
     // moves through the CAS helper, and the refund is handed exactly the ids
     // the helper transitioned.
     const expiredIds: string[] = [];
+    const markers: RefundOwedMarker[] = [];
     let skipped = 0;
     for (const subscription of stale) {
       try {
-        await prisma.$transaction((tx) =>
-          transitionSubscriptionRequest(tx, {
-            where: {
-              id: subscription.id,
-              updatedAt: { lt: cutoff },
-              ...NO_LIVE_SESSION,
+        const stagedForOne = await withSerializableRetry(() =>
+          prisma.$transaction(
+            async (tx) => {
+              await transitionSubscriptionRequest(tx, {
+                where: {
+                  id: subscription.id,
+                  updatedAt: { lt: cutoff },
+                  ...NO_LIVE_SESSION,
+                },
+                to: AppointmentStatus.EXPIRED,
+                // Deliberate subset of REQUEST_ALLOWED_FROM.EXPIRED: this cohort
+                // is the abandoned-APPROVED shape only.
+                fromIn: [AppointmentStatus.APPROVED],
+                actorUserId: null,
+                reason: `Auto-expired: APPROVED with zero allocated sessions for more than ${PENDING_EXPIRATION_DAYS} days`,
+              });
+              return stageExpiredRefunds(
+                tx,
+                "approved-unallocated",
+                subscription.id,
+              );
             },
-            to: AppointmentStatus.EXPIRED,
-            // Deliberate subset of REQUEST_ALLOWED_FROM.EXPIRED: this cohort
-            // is the abandoned-APPROVED shape only.
-            fromIn: [AppointmentStatus.APPROVED],
-            actorUserId: null,
-            reason: `Auto-expired: APPROVED with zero allocated sessions for more than ${PENDING_EXPIRATION_DAYS} days`,
-          }),
+            { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          ),
         );
         expiredIds.push(subscription.id);
+        markers.push(...stagedForOne);
         // #1589 N-P0-03 — after the commit: the consultee learns why, and
         // that the refund below follows.
         const notice = expiryNoticeFor(
@@ -803,20 +1225,31 @@ async function expireApprovedUnallocatedSubscriptions(
         );
         if (notice) await notifyConsulteeRequestExpired(notice);
       } catch (error) {
-        if (!(error instanceof IllegalTransitionError)) throw error;
+        if (
+          !(error instanceof IllegalTransitionError) &&
+          !(error instanceof ExpiredRefundMarkerRaceError) &&
+          !(error instanceof ExpiredRefundPartialMarkerError)
+        ) {
+          throw error;
+        }
+        if (error instanceof ExpiredRefundPartialMarkerError) {
+          if (!partialMarkerHoldSeen) {
+            partialMarkerHoldSeen = true;
+            errors.push(
+              "Approved-unallocated expiry held by a partial refund marker",
+            );
+          }
+        }
         skipped++;
       }
     }
 
     console.log(
       `✅ Expired ${expiredIds.length} APPROVED-unallocated subscriptions` +
-        (skipped > 0 ? ` (${skipped} moved on before the write)` : ""),
+        (skipped > 0 ? ` (${skipped} skipped)` : ""),
     );
 
-    const refunds = await refundPaymentsForExpired(
-      "approved-unallocated",
-      expiredIds,
-    );
+    const refunds = await driveExpiredRefunds(markers);
     errors.push(...refunds.failureMsgs);
 
     return {
@@ -879,73 +1312,119 @@ async function stageUnallocatedRefundBell(
 
 const unallocatedRefundKey = (paymentId: string) => `sub-unalloc:${paymentId}`;
 
-/** Plans expired UNALLOCATED_48H in the last 14 days (the retry cohort). */
-async function recentlyUnallocatedSubscriptionIds(
-  limits: StaleRequestRunLimits,
-): Promise<string[]> {
-  const rows = await prisma.bookingStatusHistory.findMany({
-    where: {
-      entity: "SUBSCRIPTION",
-      reason: "UNALLOCATED_48H",
-      toStatus: AppointmentStatus.EXPIRED,
-      createdAt: { gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) },
-    },
-    select: { entityId: true },
-    take: limits.maxRequests,
-  });
-  return rows?.map((r) => r.entityId) ?? [];
+const UNALLOCATED_REFUND_REASON =
+  "subscription not scheduled within 48 h — automatic full refund";
+
+const unallocatedMarker = (paymentId: string): RefundOwedMarker => ({
+  paymentId,
+  amountPaise: null,
+  key: unallocatedRefundKey(paymentId),
+  reason: UNALLOCATED_REFUND_REASON,
+});
+
+// Payment status remains SUCCEEDED after refund. Exclude settled obligations
+// before the page cap, including zero-paise credit restorations under another key.
+function unstampedUnallocatedRefundPredicate(): Prisma.Sql {
+  return Prisma.sql`
+    p."paymentStatus" = 'SUCCEEDED' AND p."deletedAt" IS NULL
+    AND p."refundOwedKey" IS NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM "Refund" spent
+      WHERE spent."dedupeKey" = 'sub-unalloc:' || p.id
+        AND spent.status IN ('SUCCEEDED', 'PENDING')
+    )
+    AND (
+      (left(p."paymentIntent", 5) = 'free_' AND NOT EXISTS (
+        SELECT 1 FROM "Refund" returned
+        WHERE returned."paymentId" = p.id
+          AND returned.status IN ('SUCCEEDED', 'PENDING')
+      ))
+      OR (left(p."paymentIntent", 5) <> 'free_'
+        AND ${refundableBalancePaiseSql(Prisma.sql`p.id`, Prisma.sql`p.amount`)} > 0)
+    )`;
 }
 
-/**
- * #1775 C-3 — the full refund of each expired plan's SUCCEEDED payment,
- * keyed `sub-unalloc:<paymentId>`: a key already spent is skipped, so a retry
- * never refunds twice. Failures are counted, never thrown.
- */
-async function refundUnallocatedPlans(subscriptionIds: string[]) {
-  const out = { issued: 0, failures: 0, failureMsgs: [] as string[] };
-  if (subscriptionIds.length === 0) return out;
-  const payments = await prisma.payment.findMany({
-    where: {
-      appointment: { subscriptionId: { in: subscriptionIds } },
-      paymentStatus: PaymentStatus.SUCCEEDED,
-      deletedAt: null,
-    },
-    select: { id: true },
-  });
-  const spent = new Set(
-    (
-      await prisma.refund.findMany({
-        where: {
-          dedupeKey: { in: payments.map((p) => unallocatedRefundKey(p.id)) },
-          status: { notIn: ["FAILED", "CANCELLED"] },
-        },
-        select: { dedupeKey: true },
-      })
-    ).map((r) => r.dedupeKey),
-  );
-  for (const payment of payments) {
-    const dedupeKey = unallocatedRefundKey(payment.id);
-    if (spent.has(dedupeKey)) continue;
-    try {
-      await refundBookingPayment({
-        paymentId: payment.id,
-        reason:
-          "subscription not scheduled within 48 h — automatic full refund",
-        initiatedByUserId: null,
-        dedupeKey,
-      });
+async function stageUnallocatedRefunds(
+  tx: Tx,
+  paymentIds: readonly string[],
+): Promise<RefundOwedMarker[]> {
+  const markers = paymentIds.map(unallocatedMarker);
+  const stamped = await stampRefundsOwed(tx, markers);
+  if (stamped !== markers.length) {
+    throw new Error(
+      "Unallocated refund marker changed; expiry was rolled back",
+    );
+  }
+  return markers;
+}
+
+/** Retained obligations remain visible even when retired or owned by another refund door. */
+async function unallocatedObligationsRemain(
+  subscriptionId?: string,
+  db: PrismaLike = prisma,
+): Promise<boolean> {
+  const rows = await db.$queryRaw<{ id: string }[]>(Prisma.sql`
+    SELECT p.id FROM "Payment" p
+    JOIN "Appointment" a ON a.id = p."appointmentId"
+    JOIN "Subscription" s ON s.id = a."subscriptionId"
+    WHERE ${retainedUnallocatedObligationWhere(subscriptionId)}
+    LIMIT ${1}
+  `);
+  return rows.length > 0;
+}
+
+// Shared by the backlog check and the ticker's idle probe.
+function retainedUnallocatedObligationWhere(subscriptionId?: string) {
+  return Prisma.sql`s."requestStatus" = 'EXPIRED' AND p."paymentStatus" = 'SUCCEEDED'
+      ${subscriptionId ? Prisma.sql`AND s.id = ${subscriptionId}` : Prisma.empty}
+      AND p."deletedAt" IS NULL AND p."refundOwedKey" IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM "BookingStatusHistory" h
+        WHERE h."entityId" = s.id AND h.entity = 'SUBSCRIPTION'
+          AND h.reason = 'UNALLOCATED_48H' AND h."toStatus" = 'EXPIRED'
+      )`;
+}
+
+async function driveUnallocatedRefunds(
+  markers: readonly RefundOwedMarker[],
+  limit: number,
+  pastDeadline: () => boolean,
+) {
+  const out = {
+    issued: 0,
+    failures: 0,
+    failureMsgs: [] as string[],
+    deferred: 0,
+  };
+  let driven = 0;
+  for (const marker of markers) {
+    if (driven >= limit || pastDeadline()) {
+      out.deferred += 1;
+      continue;
+    }
+    driven += 1;
+    const outcome = await driveRefundOwed(marker);
+    if (outcome.kind === "refunded") {
       out.issued += 1;
-    } catch (err) {
+      if (outcome.refund.status === "PENDING") out.deferred += 1;
+    } else if (outcome.kind === "failed") {
       out.failures += 1;
-      out.failureMsgs.push(`Refund failed for payment ${payment.id}: ${err}`);
+      out.failureMsgs.push(
+        `Refund failed for payment ${marker.paymentId}: ${outcome.error}`,
+      );
+    } else if (
+      outcome.kind === "blocked" ||
+      (outcome.kind === "replayed" && outcome.refund.status === "PENDING")
+    ) {
+      out.deferred += 1;
     }
   }
   return out;
 }
 
 /** #1775 C-3 — the 48 h cohort, re-stated in the CAS WHERE (#1423). */
-function unallocatedCohort() {
-  const cutoff = new Date(Date.now() - PAID_UNALLOCATED_HOURS * 60 * 60 * 1000);
+function unallocatedCohortWhere(nowMs = Date.now()) {
+  const cutoff = new Date(nowMs - PAID_UNALLOCATED_HOURS * 60 * 60 * 1000);
   return {
     // Narrowest guard last, and every one of them rides the CAS WHERE as well
     // as this read: a booking whose slot was released between the two matches
@@ -971,25 +1450,75 @@ const UNALLOCATED_SELECT = {
   },
 } satisfies Prisma.SubscriptionSelect;
 
-/** The CAS and its bell for one plan; false when the plan left the cohort. */
+class UnallocatedPaymentCapacityError extends Error {
+  constructor(
+    readonly kind: "envelope" | "allowance",
+    subscriptionId: string,
+    limit: number,
+  ) {
+    super(
+      kind === "envelope"
+        ? `Unallocated subscription ${subscriptionId} exceeds the payment envelope (${limit}); expiry held`
+        : `Unallocated subscription ${subscriptionId} needs a fresh payment allowance`,
+    );
+  }
+}
+
+/** The CAS, refund markers and bell commit together; null when the cohort CAS loses. */
 async function expireOneUnallocated(
   subscription: Prisma.SubscriptionGetPayload<{
     select: typeof UNALLOCATED_SELECT;
   }>,
-  cohort: ReturnType<typeof unallocatedCohort>,
-): Promise<boolean> {
+  cohort: ReturnType<typeof unallocatedCohortWhere>,
+  paymentLimit: number,
+  pastDeadline: () => boolean,
+  remainingPaymentAllowance = paymentLimit,
+): Promise<RefundOwedMarker[] | null> {
   try {
-    const staged = await prisma.$transaction(async (tx) => {
-      await transitionSubscriptionRequest(tx, {
-        where: { id: subscription.id, ...cohort },
-        to: AppointmentStatus.EXPIRED,
-        fromIn: [AppointmentStatus.PENDING],
-        actorUserId: null,
-        reason: "UNALLOCATED_48H",
-      });
-      // #1775 C-6 — the bell rides the CAS: a lost race stages nothing.
-      return stageUnallocatedRefundBell(tx, subscription);
+    const staged = await withSerializableRetry(async () => {
+      if (pastDeadline()) return null;
+      return prisma.$transaction(
+        async (tx) => {
+          await transitionSubscriptionRequest(tx, {
+            where: { id: subscription.id, ...cohort },
+            to: AppointmentStatus.EXPIRED,
+            fromIn: [AppointmentStatus.PENDING],
+            actorUserId: null,
+            reason: "UNALLOCATED_48H",
+          });
+          const due = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+        SELECT p.id FROM "Payment" p
+        JOIN "Appointment" a ON a.id = p."appointmentId"
+        WHERE a."subscriptionId" = ${subscription.id}
+          AND ${unstampedUnallocatedRefundPredicate()}
+        ORDER BY p."createdAt" ASC, p.id ASC
+        LIMIT ${paymentLimit + 1}
+      `);
+          if (due.length > paymentLimit) {
+            throw new UnallocatedPaymentCapacityError(
+              "envelope",
+              subscription.id,
+              paymentLimit,
+            );
+          }
+          if (due.length > remainingPaymentAllowance) {
+            throw new UnallocatedPaymentCapacityError(
+              "allowance",
+              subscription.id,
+              remainingPaymentAllowance,
+            );
+          }
+          const markers = await stageUnallocatedRefunds(
+            tx,
+            due.map((row) => row.id),
+          );
+          const notice = await stageUnallocatedRefundBell(tx, subscription);
+          return { ...notice, markers };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
     });
+    if (!staged) return null;
     const emailRows = staged?.emailArgs
       ? await stageAppointmentCancelledEmail(prisma, staged.emailArgs).catch(
           (err) => {
@@ -1013,10 +1542,10 @@ async function expireOneUnallocated(
       },
       "expire-stale-requests.unallocated",
     );
-    return true;
+    return staged.markers;
   } catch (error) {
     if (!(error instanceof IllegalTransitionError)) throw error;
-    return false;
+    return null;
   }
 }
 
@@ -1032,12 +1561,14 @@ export async function expireUnallocatedPaidSubscriptionForOne(
   issued: number;
   failures: number;
   errors: string[];
+  hasMore: boolean;
 }> {
   return withCronLock(
     "expire-stale-requests",
     { failMode: "closed" },
     async () => {
-      const cohort = unallocatedCohort();
+      const pastDeadline = startDeadline();
+      const cohort = unallocatedCohortWhere();
       const row = await prisma.subscription.findFirst({
         where: {
           id: subscriptionId,
@@ -1046,84 +1577,175 @@ export async function expireUnallocatedPaidSubscriptionForOne(
         },
         select: UNALLOCATED_SELECT,
       });
-      const expired = row ? await expireOneUnallocated(row, cohort) : false;
-      const history = expired
-        ? null
-        : await prisma.bookingStatusHistory.findFirst({
+      const markers = row
+        ? await expireOneUnallocated(
+            row,
+            cohort,
+            DEFAULT_RUN_LIMITS.maxRequests,
+            pastDeadline,
+          )
+        : null;
+      const persisted = pastDeadline()
+        ? []
+        : await prisma.payment.findMany({
             where: {
-              entity: "SUBSCRIPTION",
-              entityId: subscriptionId,
-              reason: "UNALLOCATED_48H",
-              toStatus: AppointmentStatus.EXPIRED,
+              appointment: {
+                subscriptionId,
+                subscription: { status: AppointmentStatus.EXPIRED },
+                statusHistory: {
+                  some: {
+                    entity: "SUBSCRIPTION",
+                    entityId: subscriptionId,
+                    reason: "UNALLOCATED_48H",
+                    toStatus: AppointmentStatus.EXPIRED,
+                  },
+                },
+              },
+              paymentStatus: PaymentStatus.SUCCEEDED,
+              deletedAt: null,
+              refundOwedKey: { startsWith: "sub-unalloc:" },
+              refundOwedAttempts: { lt: MAX_REFUND_OWED_ATTEMPTS },
             },
-            select: { id: true },
+            orderBy: [{ refundOwedAt: "asc" }, { id: "asc" }],
+            take: DEFAULT_RUN_LIMITS.maxRequests + 1,
+            select: REFUND_OWED_SELECT,
           });
-      if (!expired && !history) {
-        return { expired: false, issued: 0, failures: 0, errors: [] };
-      }
-      const refunds = await refundUnallocatedPlans([subscriptionId]);
+      const persistedMarkers = persisted
+        .slice(0, DEFAULT_RUN_LIMITS.maxRequests)
+        .flatMap((payment) =>
+          payment.refundOwedKey === unallocatedRefundKey(payment.id)
+            ? (markerFromRow(payment) ?? [])
+            : [],
+        );
+      const refunds = await driveUnallocatedRefunds(
+        persistedMarkers,
+        DEFAULT_RUN_LIMITS.maxRequests,
+        pastDeadline,
+      );
       return {
-        expired,
+        expired: markers !== null,
         issued: refunds.issued,
         failures: refunds.failures,
         errors: refunds.failureMsgs,
+        hasMore:
+          refunds.deferred > 0 ||
+          refunds.failures > 0 ||
+          persisted.length > DEFAULT_RUN_LIMITS.maxRequests ||
+          pastDeadline() ||
+          (await unallocatedObligationsRemain(subscriptionId)),
       };
     },
   );
 }
 
-/**
- * #1775 C-3 — a paid plan (PENDING, SUCCEEDED payment captured more than 48 h
- * ago) with no live session and no live proposal expires with reason
- * UNALLOCATED_48H and is refunded in full through the front door. Failure
- * matrix: allocation first → the cohort CAS matches 0 rows; sweep first → the
- * allocation's PENDING→APPROVED CAS rolls back (409 to the consultant).
- */
+async function stageFreshUnallocatedRefunds(
+  limits: StaleRequestRunLimits,
+  cohort: ReturnType<typeof unallocatedCohortWhere>,
+  pastDeadline: () => boolean,
+) {
+  const stale = await prisma.subscription.findMany({
+    where: pendingUnallocatedWhere(cohort),
+    select: UNALLOCATED_SELECT,
+    orderBy: [{ requestedAt: "asc" }, { id: "asc" }],
+    take: limits.maxRequests + 1,
+  });
+  const markers: RefundOwedMarker[] = [];
+  const errors: string[] = [];
+  const out = {
+    expired: 0,
+    markers,
+    errors,
+    hasMore: stale.length > limits.maxRequests,
+  };
+  let remainingPayments = limits.maxRequests;
+  for (const subscription of stale.slice(0, limits.maxRequests)) {
+    if (pastDeadline() || remainingPayments === 0) {
+      out.hasMore = true;
+      break;
+    }
+    try {
+      const stamped = await expireOneUnallocated(
+        subscription,
+        cohort,
+        limits.maxRequests,
+        pastDeadline,
+        remainingPayments,
+      );
+      if (stamped !== null) {
+        out.expired += 1;
+        remainingPayments -= stamped.length;
+        out.markers.push(...stamped);
+      }
+    } catch (error) {
+      out.hasMore = true;
+      if (
+        error instanceof UnallocatedPaymentCapacityError &&
+        error.kind === "allowance"
+      )
+        break;
+      out.errors.push(
+        `Failed to expire unallocated subscription ${subscription.id}: ${error}`,
+      );
+    }
+  }
+  return out;
+}
+
+/** Current expiry staging shares admission with sequential refund delivery. */
 async function expireUnallocatedPaidSubscriptions(
   limits: StaleRequestRunLimits,
-): Promise<{
-  expired: number;
-  issued: number;
-  failures: number;
-  errors: string[];
-}> {
-  const errors: string[] = [];
-  const cohort = unallocatedCohort();
+) {
+  const out = {
+    expired: 0,
+    issued: 0,
+    failures: 0,
+    errors: [] as string[],
+    hasMore: false,
+    deferred: 0,
+  };
+  // Shared by current expiries and inline drives; this is an
+  // admission deadline for this family, not cancellation of work in flight.
+  const pastDeadline = startDeadline();
+  const cohort = unallocatedCohortWhere();
+  const markers: RefundOwedMarker[] = [];
   try {
-    const stale = await prisma.subscription.findMany({
-      where: { status: AppointmentStatus.PENDING, ...cohort },
-      select: UNALLOCATED_SELECT,
-      orderBy: { requestedAt: "asc" },
-      take: limits.maxRequests,
-    });
-    warnIfCapped("subscription", stale.length, limits);
-
-    const expiredIds: string[] = [];
-    for (const subscription of stale) {
-      if (await expireOneUnallocated(subscription, cohort)) {
-        expiredIds.push(subscription.id);
-      }
+    if (pastDeadline()) {
+      out.hasMore = true;
+    } else {
+      const fresh = await stageFreshUnallocatedRefunds(
+        limits,
+        cohort,
+        pastDeadline,
+      );
+      out.expired += fresh.expired;
+      out.hasMore ||= fresh.hasMore;
+      out.errors.push(...fresh.errors);
+      markers.push(...fresh.markers);
     }
-
-    // Keyed per payment, and retried from the history for a refund that
-    // failed after an earlier run's CAS (the row is EXPIRED by then).
-    const retry = await recentlyUnallocatedSubscriptionIds(limits);
-    const refunds = await refundUnallocatedPlans([
-      ...new Set([...expiredIds, ...retry]),
-    ]);
-    errors.push(...refunds.failureMsgs);
-    return {
-      expired: expiredIds.length,
-      issued: refunds.issued,
-      failures: refunds.failures,
-      errors,
-    };
   } catch (error) {
-    const msg = `Failed to expire unallocated paid subscriptions: ${error}`;
-    console.error(`❌ ${msg}`);
-    errors.push(msg);
-    return { expired: 0, issued: 0, failures: 0, errors };
+    out.errors.push(`Failed to stage unallocated refunds: ${error}`);
+    out.hasMore = true;
   }
+  const refunds = await driveUnallocatedRefunds(
+    markers,
+    limits.maxRequests,
+    pastDeadline,
+  );
+  out.issued = refunds.issued;
+  out.failures = refunds.failures;
+  out.deferred = refunds.deferred;
+  out.errors.push(...refunds.failureMsgs);
+  out.hasMore ||=
+    refunds.deferred > 0 || refunds.failures > 0 || pastDeadline();
+  if (!out.hasMore) {
+    try {
+      out.hasMore = await unallocatedObligationsRemain();
+    } catch (error) {
+      out.errors.push(`Failed to check unallocated refund backlog: ${error}`);
+      out.hasMore = true;
+    }
+  }
+  return out;
 }
 
 /**
@@ -1172,16 +1794,7 @@ async function nudgeUnscheduledSubscriptions(
 
   try {
     const waiting = await prisma.subscription.findMany({
-      // #1775 C-4 — the 48 h arm's cohort: a paid plan still waiting for cycle 1.
-      where: {
-        status: AppointmentStatus.PENDING,
-        deletedAt: null,
-        AND: [
-          NO_LIVE_SESSION,
-          noLiveProposal(),
-          paidCapturedBefore(firstStageCutoff),
-        ],
-      },
+      where: unscheduledPaidPlanWhere(firstStageCutoff),
       select: {
         id: true,
         requestedBy: { select: { user: { select: { name: true } } } },
@@ -1372,35 +1985,11 @@ async function expirePaymentPendingRequests(
     Date.now() - PAYMENT_PENDING_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
   );
 
-  // The money predicate is repeated in the lapse core's CAS WHERE, so these
-  // read filters are an optimisation rather than the guard.
-  const UNPAID_CONSULTATION = {
-    appointment: {
-      payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
-    },
-  };
-  // #1554 — one wrapper per subscription, or none yet: either way no paid
-  // payment hangs off it. The money predicate is repeated in the CAS WHERE.
-  const UNPAID_SUBSCRIPTION = {
-    OR: [
-      { appointment: null },
-      {
-        appointment: {
-          payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
-        },
-      },
-    ],
-  };
-
   try {
     const staleConsultations = await prisma.consultation.findMany({
       take: limits.maxRequests,
       orderBy: { updatedAt: "asc" },
-      where: {
-        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-        updatedAt: { lt: expirationDate },
-        ...UNPAID_CONSULTATION,
-      },
+      where: unpaidLapsedConsultationWhere(expirationDate),
       select: {
         ...EXPIRY_NOTICE_SELECT,
         consultationPlan: EXPIRY_NOTICE_PLAN_SELECT,
@@ -1452,11 +2041,7 @@ async function expirePaymentPendingRequests(
     const staleSubscriptions = await prisma.subscription.findMany({
       take: limits.maxRequests,
       orderBy: { updatedAt: "asc" },
-      where: {
-        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-        updatedAt: { lt: expirationDate },
-        ...UNPAID_SUBSCRIPTION,
-      },
+      where: unpaidLapsedSubscriptionWhere(expirationDate),
       select: {
         ...EXPIRY_NOTICE_SELECT,
         subscriptionPlan: EXPIRY_NOTICE_PLAN_SELECT,
@@ -1526,7 +2111,13 @@ export async function expireStaleRequests(opts?: {
   limits?: Partial<StaleRequestRunLimits>;
 }): Promise<ExpireStaleRequestsResult> {
   const limits: StaleRequestRunLimits = {
-    maxRequests: opts?.limits?.maxRequests ?? DEFAULT_RUN_LIMITS.maxRequests,
+    maxRequests: Math.min(
+      MAX_REQUESTS_PER_RUN,
+      Math.max(
+        1,
+        Math.floor(opts?.limits?.maxRequests ?? DEFAULT_RUN_LIMITS.maxRequests),
+      ),
+    ),
     maxSlotReleases:
       opts?.limits?.maxSlotReleases ?? DEFAULT_RUN_LIMITS.maxSlotReleases,
   };
@@ -1573,13 +2164,12 @@ async function expireStaleRequestsUnlocked(
   const nudges = await nudgeUnscheduledSubscriptions(limits);
   allErrors.push(...nudges.errors);
 
-  // Release stale tentative-RESCHEDULED slots on APPROVED subscriptions
-  // (PR 2e, #1192 — audit B-P2-02). A partial reschedule flips released
-  // slots to tentative+RESCHEDULED but leaves the parent APPROVED; if the
-  // consultant never allocates replacements those ghosts block the calendar
-  // forever (no sweep cohort covered them). This pass deletes tentative-
-  // RESCHEDULED slots past the threshold so the calendar frees up. The
-  // parent stays APPROVED (it has confirmed sessions); only the ghosts go.
+  // Every later plan week with sessions still to place: bell + email at +0/24/72 h.
+  const weekNudges = await nudgeUnplacedPlanWeeks(limits);
+  allErrors.push(...weekNudges.errors);
+
+  // Stale tentative-RESCHEDULED holds on APPROVED subscriptions go back to
+  // the plan; the parent stays APPROVED and both parties are told.
   const staleRescheduledReleased = await releaseStaleRescheduledSlots(limits);
   allErrors.push(...staleRescheduledReleased.errors);
 
@@ -1653,6 +2243,8 @@ async function expireStaleRequestsUnlocked(
       approvedUnallocated.failures +
       paidUnallocated.failures,
     errors: allErrors,
+    unallocatedHasMore: paidUnallocated.hasMore,
+    unallocatedRefundsDeferred: paidUnallocated.deferred,
     timestamp: new Date().toISOString(),
   };
 }

@@ -4,7 +4,7 @@
  */
 
 import prisma from "../../lib/prisma";
-import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { readJobCheckpoint, withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   RecordingService,
   type SyncableSession,
@@ -30,6 +30,8 @@ export interface OrphanedRecordingResult {
   partialRecovered: number;
   success: boolean;
   errors: string[];
+  checkpoint: string | null;
+  hasMore: boolean;
 }
 
 /**
@@ -52,68 +54,11 @@ const STREAM_RETENTION_DAYS = 14;
 const MIN_AGE_HOURS = 2;
 
 /** Bounded per run so one backlog cannot hold the workflow open. */
-const MAX_SESSIONS_PER_RUN = 200;
+const MAX_SESSIONS_PER_RUN = 25;
+const START_BUDGET_MS = 5 * 60 * 1000;
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
-
-/**
- * Re-ask Stream what it holds for each session, and create whatever rows are
- * missing.
- *
- * Shared by both passes. `syncSessionRecordings` is idempotent — it skips any
- * `streamRecordingId` that already has a row — so this is safe to run over a
- * session that is already complete, and the two passes differ only in which
- * sessions they select and how the result is counted.
- *
- * One failing session must not abort the rest: a Stream 500 on one call says
- * nothing about the next, and this job's whole purpose is to notice recordings
- * that are quietly missing.
- */
-async function runRecoveryPass(
-  sessions: unknown[],
-  errorLabel: string,
-  result: OrphanedRecordingResult,
-): Promise<{ created: number; empty: number }> {
-  let created = 0;
-  let empty = 0;
-
-  for (const session of sessions) {
-    const recovered: RecordingRow[] = [];
-    const id = (session as { id: string }).id;
-    let outcome;
-    try {
-      outcome = await RecordingService.syncSessionRecordings(
-        session as SyncableSession,
-        recovered,
-      );
-    } catch (error) {
-      result.success = false;
-      result.errors.push(
-        `${errorLabel} ${id}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      continue;
-    }
-
-    // `syncSessionRecordings` swallows Stream and persistence failures so one
-    // bad session cannot abort a batch, which means the throw above almost never
-    // fires in production. Reading a swallowed failure as "no recordings found"
-    // is exactly the mistake this job exists to catch — an unreachable Stream
-    // would have been counted as checked-and-empty, with the run still green.
-    if (!outcome.ok) {
-      result.success = false;
-      result.errors.push(
-        `${errorLabel} ${id}: sync failed (${outcome.reason})`,
-      );
-      continue;
-    }
-
-    if (recovered.length > 0) created += recovered.length;
-    else empty++;
-  }
-
-  return { created, empty };
-}
 
 /**
  * The appointment shape `syncSessionRecordings` needs to title a recording and
@@ -137,12 +82,40 @@ const orphanedSessionInclude = {
 } as const;
 
 export async function reconcileOrphanedRecordings(): Promise<OrphanedRecordingResult> {
-  // Postgres-backed fail-open cron lock prevents concurrent scheduler/manual sweeps.
+  // A failed lease acquisition must never admit a concurrent vendor sweep.
   return withCronLock(
     "reconcile-orphaned-recordings",
-    { failMode: "open" },
+    { failMode: "closed" },
     () => reconcileOrphanedRecordingsUnlocked(),
   );
+}
+
+async function recoverSession(
+  session: SyncableSession & { recordings: readonly { id: string }[] },
+  result: OrphanedRecordingResult,
+): Promise<void> {
+  const partial = session.recordings.length > 0;
+  if (partial) result.partialScanned++;
+  else result.scanned++;
+  const recovered: RecordingRow[] = [];
+  try {
+    const outcome = await RecordingService.syncSessionRecordings(
+      session,
+      recovered,
+      { notify: true },
+    );
+    if (!outcome.ok) throw new Error(`sync failed (${outcome.reason})`);
+    if (partial) result.partialRecovered += recovered.length;
+    else {
+      result.recovered += recovered.length;
+      if (!recovered.length) result.stillMissing++;
+    }
+  } catch (error) {
+    result.success = false;
+    result.errors.push(
+      `session ${session.id}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingResult> {
@@ -155,6 +128,8 @@ async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingR
     partialRecovered: 0,
     success: true,
     errors: [],
+    checkpoint: await readJobCheckpoint("reconcile-orphaned-recordings"),
+    hasMore: false,
   };
 
   if (!isStreamConfigured()) {
@@ -170,27 +145,25 @@ async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingR
   const notBefore = new Date(now - STREAM_RETENTION_DAYS * DAY_MS);
   const notAfter = new Date(now - MIN_AGE_HOURS * HOUR_MS);
 
-  // The indicator is `recordingStartedAt`, not `isRecording`. `isRecording` is
-  // cleared when the call stops, so it is false for exactly the sessions this
-  // job cares about; `recordingStartedAt` is the durable record that a
-  // recording was started, and our own code wrote it rather than a webhook.
-  const orphaned = await prisma.meeting.findMany({
-    where: {
-      recordingStartedAt: { gte: notBefore, lt: notAfter },
-      streamCallId: { not: "" },
-      recordings: { none: {} },
-    },
-    orderBy: { recordingStartedAt: "asc" },
-    take: MAX_SESSIONS_PER_RUN,
-    include: orphanedSessionInclude,
-  });
-
-  result.scanned = orphaned.length;
-
-  // Past the retention window there is nothing left to fetch. Counted and
-  // reported so the number is visible — it is the count of recordings this
-  // platform has permanently lost, which is the figure that should drive
-  // whether the webhook itself gets more attention.
+  const eligible = {
+    recordingStartedAt: { gte: notBefore, lt: notAfter },
+    streamCallId: { not: "" },
+  };
+  const readPage = (after: string | null) =>
+    prisma.meeting.findMany({
+      where: { ...eligible, ...(after ? { id: { gt: after } } : {}) },
+      orderBy: { id: "asc" },
+      take: MAX_SESSIONS_PER_RUN,
+      include: {
+        ...orphanedSessionInclude,
+        recordings: { select: { id: true }, take: 1 },
+      },
+    });
+  let sessions = await readPage(result.checkpoint);
+  if (sessions.length === 0 && result.checkpoint) {
+    result.checkpoint = null;
+    sessions = await readPage(null);
+  }
   result.unrecoverable = await prisma.meeting.count({
     where: {
       recordingStartedAt: { lt: notBefore },
@@ -198,82 +171,16 @@ async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingR
       recordings: { none: {} },
     },
   });
-
-  // Select the partial candidates BEFORE the orphan pass runs.
-  //
-  // The orphan pass creates Recording rows. A session it repairs then matches
-  // `recordings: { some: {} }`, so querying afterwards would hand this run its
-  // own output — consuming the partial budget, inflating `partialScanned`, and
-  // displacing a session that was genuinely short all along. Snapshotting first
-  // means the two passes see disjoint sets.
-  const partialBudget = MAX_SESSIONS_PER_RUN - orphaned.length;
-  const partial =
-    partialBudget > 0
-      ? await prisma.meeting.findMany({
-          where: {
-            recordingStartedAt: { gte: notBefore, lt: notAfter },
-            streamCallId: { not: "" },
-            recordings: { some: {} },
-          },
-          orderBy: { recordingStartedAt: "asc" },
-          take: partialBudget,
-          include: orphanedSessionInclude,
-        })
-      : [];
-
-  const orphanPass = await runRecoveryPass(orphaned, "session", result);
-  result.recovered += orphanPass.created;
-  result.stillMissing += orphanPass.empty;
-
-  // Second pass: sessions that already have a Recording.
-  //
-  // `recordings: { none: {} }` above can only see a session that received
-  // NOTHING. But Stream fires `call.recording_ready` once per FILE, and splits
-  // any session over two hours into separate files — so a three-file session is
-  // three deliveries. Lose the second and third and the session has one row,
-  // fails `none: {}`, and is never looked at again. The missing segments are
-  // silently gone at day fourteen.
-  //
-  // That is not hypothetical here: the webhook endpoint rejected every delivery
-  // for months (it required a secret Stream does not issue), and exactly one
-  // Stream event has been received since the fix. Partial delivery is the
-  // expected shape of recovery, not an edge case.
-  //
-  // Shares the orphan pass's budget, so a session with nothing is always
-  // preferred over one that merely might be short. `syncSessionRecordings` is
-  // idempotent — it skips any `streamRecordingId` that already has a row — so
-  // re-examining a complete session costs one Stream read and writes nothing.
-  result.partialScanned = partial.length;
-  if (partial.length > 0) {
-    // Counted separately from `recovered`: a row created here means an earlier
-    // delivery was lost for a session we already believed complete, which is a
-    // different and more alarming signal than one that never arrived at all.
-    // `empty` is not tracked — a complete session legitimately yields nothing.
-    const partialPass = await runRecoveryPass(
-      partial,
-      "partial session",
-      result,
-    );
-    result.partialRecovered += partialPass.created;
+  const deadline = now + START_BUDGET_MS;
+  for (const session of sessions) {
+    if (Date.now() >= deadline) {
+      result.hasMore = true;
+      break;
+    }
+    await recoverSession(session, result);
+    // Rotate even failures and empty sources so they cannot pin the partial-delivery tail.
+    result.checkpoint = session.id;
   }
-
-  console.log(
-    JSON.stringify({
-      event: "reconcile_orphaned_recordings",
-      scanned: result.scanned,
-      recovered: result.recovered,
-      stillMissing: result.stillMissing,
-      unrecoverable: result.unrecoverable,
-      partialScanned: result.partialScanned,
-      partialRecovered: result.partialRecovered,
-      errorCount: result.errors.length,
-      timestamp: new Date().toISOString(),
-    }),
-  );
-
+  result.hasMore ||= sessions.length === MAX_SESSIONS_PER_RUN;
   return result;
-}
-
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
 }

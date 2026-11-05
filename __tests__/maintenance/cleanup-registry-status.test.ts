@@ -15,17 +15,23 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 jest.mock("../../lib/maintenance-cron", () => ({
   assertNotInMaintenance: jest.fn(),
   MaintenanceActiveError: class MaintenanceActiveError extends Error {},
+  MaintenanceUnavailableError: class MaintenanceUnavailableError extends Error {},
 }));
 jest.mock("../../jobs/notifications/drain-notification-outbox", () => ({
   drainNotificationOutbox: jest.fn(),
 }));
-jest.mock("../../lib/stream/recording-transfer-service", () => ({
-  transferRecordings: jest.fn(),
+jest.mock("../../lib/cron/dispatch-background", () => ({
+  dispatchBackgroundJob: jest.fn(),
 }));
 
+jest.mock("../../lib/payments/billing/reconcile-invoice-payments", () => ({
+  reconcileOrgInvoicePayments: jest.fn(),
+}));
+
+import { reconcileOrgInvoicePayments } from "../../lib/payments/billing/reconcile-invoice-payments";
 import { getCleanupJobHandlers } from "../../lib/cron/cleanup-registry";
 import { drainNotificationOutbox } from "../../jobs/notifications/drain-notification-outbox";
-import { transferRecordings } from "../../lib/stream/recording-transfer-service";
+import { dispatchBackgroundJob } from "../../lib/cron/dispatch-background";
 
 const SECRET = "test-cron-secret";
 
@@ -77,17 +83,48 @@ describe("cleanup registry status callbacks are authoritative", () => {
     });
   });
 
-  it("transfer-recordings keeps its deliberate 200 when copies failed", async () => {
-    jest.mocked(transferRecordings).mockResolvedValue({
-      processed: 3,
-      succeeded: 1,
-      failed: 2,
-      exhaustedReported: 1,
-      errors: ["Recording r1: timeout", "Recording r2: timeout"],
-    } as never);
+  it("transfer-recordings acknowledges dispatch without running a synchronous copy", async () => {
+    jest
+      .mocked(dispatchBackgroundJob)
+      .mockResolvedValue({ accepted: true, job: "transfer-recordings" });
     await expect(hit("transfer-recordings")).resolves.toEqual({
-      status: 200,
+      status: 202,
       outcome: "success",
     });
+    expect(dispatchBackgroundJob).toHaveBeenCalledWith("transfer-recordings");
   });
+  it("does not acknowledge failed worker admission", async () => {
+    jest.mocked(dispatchBackgroundJob).mockRejectedValue(new Error("HTTP 503"));
+    await expect(hit("transfer-recordings")).resolves.toEqual({
+      status: 500,
+      outcome: "failure",
+    });
+  });
+
+  it.each([
+    { success: true, unapplied: 1, expectedStatus: 207, outcome: "success" },
+    { success: false, unapplied: 1, expectedStatus: 500, outcome: "failure" },
+    { success: true, unapplied: 0, expectedStatus: 200, outcome: "success" },
+  ])(
+    "separates parked invoice liability from worker failures ($expectedStatus)",
+    async ({ success, unapplied, expectedStatus, outcome }) => {
+      jest.mocked(reconcileOrgInvoicePayments).mockResolvedValue({
+        success,
+        scanned: 1,
+        captured: unapplied,
+        paid: 0,
+        unapplied,
+        live: 0,
+        empty: 0,
+        failed: success ? 0 : 1,
+        checkpoint: "invoice-a",
+        errors: [],
+        timestamp: new Date().toISOString(),
+      });
+      await expect(hit("reconcile-org-invoice-payments")).resolves.toEqual({
+        status: expectedStatus,
+        outcome,
+      });
+    },
+  );
 });

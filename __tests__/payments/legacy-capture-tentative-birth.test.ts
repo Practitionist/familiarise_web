@@ -68,6 +68,8 @@ const txStub = {
     // reads an empty run.
     findMany: jest.fn().mockResolvedValue([]),
   },
+  // The capture recheck reads whether the payer is an expert too.
+  consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
   // #1319 A9 — the creators shadow-write participant rows in the same tx.
   appointmentParticipant: {
     createMany: participantCreateMany,

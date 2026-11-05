@@ -6,7 +6,8 @@ export interface ClassSeriesView {
   appointmentId: string;
   title: string;
   status: string;
-  series: SeriesLedger;
+  /** The series ledger; the host-miss times stay on the server. */
+  series: Omit<SeriesLedger, "hostMissAts">;
   reliability: { active: boolean; since: string | null };
   upcoming: { id: string; ordinal: number; startsAt: string }[];
   cancelledSessions: {

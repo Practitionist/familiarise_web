@@ -22,9 +22,11 @@ import { ZodError } from "zod";
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
 import {
+  categorizeValidationErrors,
   conflictDetailsBySlot,
-  describeConflict,
 } from "@/lib/booking/validate-conflict-view";
+import { leadMsFor } from "@/lib/booking/lead-time";
+import { SETTLED_CONSULTATION } from "@/lib/booking/approve-request";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
 const consultationInclude = {
@@ -160,6 +162,13 @@ export async function POST(
         {
           consulteeUserId,
           consultantProfileId: consultationPlan.consultantProfileId,
+          // The same lead time the allocator applies: 2 h while unpaid.
+          leadTimeMs: leadMsFor("allocate", {
+            settled:
+              (await prisma.consultation.count({
+                where: { id: consultationId, ...SETTLED_CONSULTATION },
+              })) > 0,
+          }),
         },
       );
       const viewer = {
@@ -180,78 +189,31 @@ export async function POST(
         });
       }
 
-      // Categorize errors by prefix instead of brittle regex
-      const result: SlotConflictResult = {
-        conflicts: [],
-        outsideAvailability: [],
-        validSlots: [],
-      };
-
-      for (const error of validationResult.errors) {
-        if (error.startsWith("[CONFLICT]")) {
-          const message = error.replace("[CONFLICT] ", "");
-          // Extract slot time from error message
-          const slotMatch = message.match(
-            /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
-          );
-          if (slotMatch) {
-            // #1721 — the event's consultant gets the booking id
-            // and the other party by name; everyone else keeps "Another user".
-            result.conflicts.push(
-              describeConflict(
-                slotMatch[1],
-                conflictDetails.get(slotMatch[1]),
-                viewer,
-                message.includes("subscription")
-                  ? "Subscription"
-                  : "Consultation",
-              ),
-            );
-          }
-        } else if (error.startsWith("[OUTSIDE_AVAILABILITY]")) {
-          const message = error.replace("[OUTSIDE_AVAILABILITY] ", "");
-          const slotMatch = message.match(
-            /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
-          );
-          if (slotMatch) {
-            result.outsideAvailability.push({ slot: slotMatch[1] });
-          } else {
-            // Error doesn't contain specific ISO timestamps (e.g. weekly schedule
-            // availability check returns "Saturday at 15:00 UTC" format).
-            // Mark ALL provided slots as outside availability.
-            for (const bodySlot of body.slots) {
-              const normalized = new Date(bodySlot).toISOString().slice(0, 19);
-              if (
-                !result.outsideAvailability.some((o) => o.slot === normalized)
-              ) {
-                result.outsideAvailability.push({ slot: normalized });
-              }
-            }
-          }
-        }
-        // [VALIDATION] errors don't need slot-level parsing
-      }
-
-      // Valid slots are those not in conflicts or outside availability.
-      // FIX: Normalize both sides to seconds-precision UTC ISO (strip .000Z suffix)
-      // so "2026-02-23T04:30:00.000Z" and "2026-02-23T04:30:00" compare equal.
-      result.validSlots = body.slots.filter((bodySlot) => {
-        const bodySlotSeconds = new Date(bodySlot).toISOString().slice(0, 19);
-        return (
-          !result.conflicts.some((c) => c.slot === bodySlotSeconds) &&
-          !result.outsideAvailability.some((o) => o.slot === bodySlotSeconds)
-        );
+      const result: SlotConflictResult = categorizeValidationErrors({
+        errors: validationResult.errors,
+        slots: body.slots,
+        conflictDetails,
+        viewer,
+        resolveFallbackType: (message) =>
+          message.includes("subscription") ? "Subscription" : "Consultation",
       });
 
       return NextResponse.json({ data: result });
     } catch (validationError) {
-      // Zod validation errors - return 400 Bad Request
+      // The issue paths are developer detail: logged, never the user copy.
       if (validationError instanceof ZodError) {
-        const errorMessage = validationError.errors
-          .map((err) => `${err.path.join(".")}: ${err.message}`)
-          .join("; ");
-
-        return NextResponse.json({ error: errorMessage }, { status: 400 });
+        console.error(
+          "Validation request refused:",
+          JSON.stringify(validationError.errors),
+        );
+        return NextResponse.json(
+          {
+            error:
+              "This request couldn't be read. Reload the page and try again.",
+            errorCode: "VALIDATION_ERROR",
+          },
+          { status: 400 },
+        );
       }
       throw validationError; // Re-throw non-validation errors
     }
@@ -264,8 +226,8 @@ export async function POST(
     );
     return NextResponse.json(
       {
-        error:
-          error instanceof Error ? error.message : "Failed to validate slots",
+        error: "Couldn't check these times. Try again in a moment.",
+        errorCode: "UNKNOWN_ERROR",
       },
       { status: 500 },
     );

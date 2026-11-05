@@ -1,3 +1,4 @@
+import { isTooSoonFor } from "@/lib/booking/lead-time";
 import {
   MINIMUM_BOOKING_LEAD_TIME_MS,
   MINIMUM_BOOKING_LEAD_TIME_MINUTES,
@@ -37,10 +38,8 @@ export type SlotStartRefusalCode = "SLOT_NOT_ON_GRID" | "SLOT_TOO_SOON";
 /**
  * #1583 E-P1-03 / #1592 A-P1-04 — one edge check for every client-picked
  * start (request-for-approval and checkout): on the :00/:30 UTC grid, and at
- * least the checkout lead time ahead. The allocator's own re-validation keeps
- * its 5-second BUFFER_MS (ScheduleValidationService.validateSlotsInFuture)
- * because the slots it re-checks are server-picked moments earlier, not a
- * client's stale form; the two bounds are deliberately different.
+ * least the checkout lead time ahead. The allocator applies the same 15 minutes
+ * to a settled booking and 2 hours to an unpaid approval (`leadMsFor`).
  */
 export function slotStartRefusal(
   slotStart: Date,
@@ -49,7 +48,9 @@ export function slotStartRefusal(
   if (slotStart.getTime() % SLOT_GRID_MS !== 0) {
     return { code: "SLOT_NOT_ON_GRID", message: SLOT_NOT_ON_GRID_MESSAGE };
   }
-  if (slotStart.getTime() <= now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS) {
+  if (
+    isTooSoonFor("book", { settled: true }, slotStart.getTime(), now.getTime())
+  ) {
     return {
       code: "SLOT_TOO_SOON",
       message:

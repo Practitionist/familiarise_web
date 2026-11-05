@@ -1,253 +1,228 @@
 ---
-title: Org-wide data export (DPDP §11)
+title: Organization data exports
 band: 40-compliance-and-data
 audience: sde2
 status: live
-last-reviewed: 2026-06-05
+last-reviewed: 2026-10-26
 ---
 
-# Org-wide data export (DPDP §11)
+# Organization data exports
 
-Familiarise honours DPDP §11 right-to-access at the organization level
-via an async export job (the `OrgDataExportJob` model). OWNER +
-BILLING_ADMIN can request a JSON bundle of every entity scoped to their
-org; the worker builds the bundle, uploads it to Supabase Storage, and
-emails the requester with a 7-day signed-URL link.
+Organization exports produce an asynchronous, kind-scoped JSON bundle. The
+request creates a durable job; the ten-minute ticker invokes the registered
+worker; authorized members obtain a fresh short-lived download link after the
+bundle is ready. The seven-day artifact lifetime is separate from the download
+link lifetime. The [privacy reference](../../compliance/02-dpdp-and-privacy.md)
+owns legal scope and commencement analysis; this page describes the implemented
+organization export mechanism. Per-person erasure remains a
+[separate flow](02-deletion-policy.md).
 
-> DPDP Act §11 (web-validated 2026-06-05) is the data principal's
-> right of access: a summary of the personal data being processed plus
-> the identities of every Data Fiduciary and Data Processor with whom it
-> has been shared. This export is the org-tenant analogue — a full
-> snapshot of the org-scoped rows the operator is entitled to. The
-> per-data-principal §12 erasure path is a separate flow; see
-> [deletion policy](02-deletion-policy.md).
->
-> Rule 14 of the DPDP Rules 2025 requires us only to publish the means by
-> which such a request is made and the identifier needed to authenticate
-> it; it sets **no fixed statutory turnaround** for the access response
-> itself. Our asynchronous job model — the request returns `202`, a
-> worker builds the bundle out-of-band, and a 7-day signed URL delivers
-> it — therefore comfortably satisfies the Rule, and the polling surface
-> and rate limit are operational choices rather than compliance
-> constraints. None of this is enforceable against an operator of our
-> size before **13 May 2027**, when Rule 14 commences eighteen months
-> after the 13 November 2025 notification; the intervening runway is the
-> build window, and the `OrgDataExportJob` schema is already in place.
-> (Source: DPDP Rules 2025 Rule 14, https://www.dpdpa.com/dpdparules/rule14.html;
-> commencement Rule 1(4).) Authoritative: [docs/compliance/02-dpdp-and-privacy.md](../../compliance/02-dpdp-and-privacy.md).
+## Access and bundle contents
 
-## Schema
+| Kind                    | Permission            | Roles holding the permission | Bundle sections                                     |
+| ----------------------- | --------------------- | ---------------------------- | --------------------------------------------------- |
+| PEOPLE                  | `dataExports.people`  | OWNER, MAINTAINER            | Members, memberships and audit log                  |
+| FINANCE                 | `dataExports.finance` | OWNER, BILLING_ADMIN         | Contracts, programs, invoices, earnings and payouts |
+| FULL (legacy rows only) | Both                  | OWNER                        | Both sets                                           |
 
-```prisma
-model OrgDataExportJob {
-  id                      String              @id @default(cuid())
-  organizationId          String
-  organization            Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  requestedByMembershipId String
-  status                  OrgDataExportStatus @default(PENDING)
-  fileUrl                 String?
-  fileSizeBytes           BigInt?
-  expiresAt               DateTime?
-  error                   String?             @db.Text
-  createdAt               DateTime            @default(now())
-  startedAt               DateTime?
-  completedAt             DateTime?
+Every bundle also includes organization metadata, generation time, schema
+version and the exported kinds. New POST requests accept `people` or `finance`;
+FULL remains a stored kind for existing rows. List and download filter by the
+caller's current grants. The worker checks that the requesting membership is
+still active and entitled to the requested kind before building.
 
-  @@index([organizationId, createdAt(sort: Desc)])
-}
+The current builder reads the full organization graph before projecting the
+requested kind. It applies primary-processing consent filtering to member
+name/email data and the embedded membership users. This is not a claim that
+every field across the financial and audit graph has a separate consent filter.
+It exports retained rows; it cannot reconstruct rows already pruned by their
+retention policy. A whole organization is still built in memory, so a one-job
+selection limit does not prove a byte-size, snapshot-isolation or runtime bound.
 
-enum OrgDataExportStatus {
-  PENDING
-  PROCESSING
-  READY
-  FAILED
-  EXPIRED
-}
-```
+## JSON bundle examples
 
-`PENDING → PROCESSING → READY` is the green path; `FAILED` carries the
-error on the row (org-safe — the raw cause goes to `SystemEvent`, never
-the job row); `EXPIRED` is the post-7-day terminal state once the
-signed URL has lapsed.
+Flat JSON, schemaVersion `1`. New requests select one kind; keys from the
+other kind are absent. These examples show the top-level shape with empty
+collections.
 
-## Lifecycle
-
-The export is **asynchronous on purpose**: the request returns `202`
-immediately and a cron builds the bundle out-of-band. The states are
-`PENDING → PROCESSING → READY → EXPIRED` (with `FAILED` as the off-ramp).
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Officer as BILLING_ADMIN / OWNER
-    participant API as /data-exports route
-    participant Job as OrgDataExportJob
-    participant Worker as processDataExports<br/>(~10-min cron)
-    participant Store as Supabase Storage
-
-    Officer->>API: POST /data-exports
-    API->>Job: insert · status=PENDING<br/>audit DATA_EXPORT_REQUESTED
-    API-->>Officer: 202 { export: PENDING }
-
-    loop every ~10 min
-        Worker->>Job: findFirst PENDING (oldest)
-        Worker->>Job: claim → PROCESSING (startedAt)<br/>2nd tick sees PROCESSING & skips
-        Worker->>Worker: build bundle<br/>($transaction, 8-entity snapshot)
-        alt build + upload OK
-            Worker->>Store: upload {orgId}/{jobId}.json
-            Store-->>Worker: createSignedUrl (7-day TTL)
-            Worker->>Job: READY · fileUrl · expiresAt<br/>audit DATA_EXPORT_GENERATED
-            Worker-->>Officer: Resend email + Novu notify OWNERs
-        else error
-            Worker->>Job: FAILED · error (org-safe msg)<br/>raw cause → SystemEvent
-        end
-    end
-
-    Officer->>API: GET /data-exports/[id]/download
-    API->>Job: check status + expiry
-    alt READY & now < expiresAt
-        API-->>Officer: { url, expiresAt }<br/>audit DATA_EXPORT_DOWNLOADED
-    else past expiresAt
-        API-->>Officer: 410 EXPORT_EXPIRED
-    end
-```
-
-> **Trade-off — async job + expiring URL, not a synchronous download.**
-> The bundle is an 8-entity, full-org snapshot (members, contracts,
-> programs, invoices, earnings, payouts, audit log). Streaming that
-> inline off the `POST` would hold a request open for an unbounded build
-> and pin financial PII in the response buffer. Instead the worker writes
-> it to object storage behind a **7-day signed URL** (`createSignedUrl`),
-> so the heavy build is off the request path and the PII lives behind a
-> short-lived, revocable link rather than a permanent download route. The
-> cost is the polling surface (`GET /data-exports` lists recent jobs) and
-> the `PENDING → READY` wait — acceptable for a once-per-24h compliance
-> artifact. v1 ships **JSON-only** (no zipped JSON+CSV); see "Why
-> JSON-only" below.
-
-**Persona — Wipro's compliance officer files a DPDP §11 access
-request.** Wipro (a SPONSOR enterprise in the design-partner set) gets a
-regulator query and needs a full snapshot of the org-scoped personal
-data the platform holds. Their compliance officer — who holds
-BILLING_ADMIN, the governance floor these routes require — hits
-`POST /data-exports`, gets a `202`, and polls the dashboard until the
-job flips `READY`. The 7-day signed URL is long enough to run their
-post-export ETL; after that the link lapses to `EXPIRED` and a fresh
-request is needed. The §11 _access_ path is org-tenant-wide; the
-per-data-principal §12 _erasure_ path is separate (see
-[deletion policy](02-deletion-policy.md)).
-
-## Routes
-
-Three endpoints form the request-poll-download lifecycle of a DPDP §11 export bundle; all are gated to OWNER or BILLING_ADMIN because every bundle contains financial PII.
-
-| Verb   | Path                                                          | Behaviour                                                                                                                                                   |
-| ------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST` | `/api/organizations/[orgId]/data-exports`                     | Files a request, inserts `OrgDataExportJob(PENDING)`, returns `202 { export }`.                                                                             |
-| `GET`  | `/api/organizations/[orgId]/data-exports`                     | Lists this org's jobs from the last 30 days (take 50), newest first. Polling surface for the dashboard.                                                     |
-| `GET`  | `/api/organizations/[orgId]/data-exports/[exportId]/download` | Resolves the signed URL when `status=READY`. `409 EXPORT_NOT_READY` if not ready; `410 EXPORT_EXPIRED` once past `expiresAt`. Returns `{ url, expiresAt }`. |
-
-All three call `requireOrgAccess(orgId, { permission: ["dataExports.people", "dataExports.finance"] })`,
-so a caller needs at least one export key. Each bundle has a kind: the
-`people` bundle needs `dataExports.people` (OWNER, MAINTAINER) and the
-`finance` bundle needs `dataExports.finance` (OWNER, BILLING_ADMIN),
-because it carries financial PII. A caller may request, list and download
-only the kinds they hold. A legacy `FULL` job, written before the split,
-carries both bundles, so listing or downloading it needs both keys, which
-in practice means an OWNER; a new request accepts only `people` or
-`finance` and can never create a `FULL` job.
-
-The worker logic lives in `scripts/cleanup/process-data-exports.ts`
-(`processDataExports`). It is scheduled as a GitHub Actions cron
-(`.github/workflows/process-data-exports.yml`, every ~10 min) via the
-thin wrapper `jobs/cleanup/process-data-exports.ts`; the same logic is
-also reachable as a `CRON_SECRET`-gated manual trigger at
-`POST /api/cleanup/process-data-exports`.
-
-## Bundle shape
-
-Flat JSON, schemaVersion `1`. Top-level keys:
+`PEOPLE`:
 
 ```json
 {
   "organizationId": "org_xxx",
   "generatedAt": "2026-05-15T10:00:00.000Z",
   "schemaVersion": 1,
-  "organization": { ... },
-  "members": [ { id, name, email } ],
-  "memberships": [ ... ],
-  "contracts": [ ... ],
-  "programs": [ ... ],
-  "invoices": [ ... ],
-  "earnings": [ ... ],
-  "payouts": [ ... ],
-  "auditLog": [ ... ]
+  "kinds": ["PEOPLE"],
+  "organization": { "id": "org_xxx" },
+  "members": [],
+  "memberships": [],
+  "auditLog": [],
+  "excludedForConsent": 0
 }
 ```
 
-The audit log included reflects the platform-wide retention policy
-(7y for INVOICE / PAYOUT / WALLET / CONTRACT / CONSENT; 2y for
-everything else — see `scripts/cleanup/prune-audit-logs.ts`). Older
-rows have already been pruned by the `prune-audit-logs` cron and are
-NOT recoverable through this export.
+`FINANCE`:
 
-**Why JSON-only (not zipped JSON+CSV).** The worker ships a single
-JSON object, not a zip with a CSV companion set. The DPDP §11 audience
-is compliance reviewers who prefer JSON (greppable, no separator-escape
-ambiguity), and adding `adm-zip` as a hard dependency is a footprint
-hit the caller doesn't need — integrators who want CSV convert locally
-(`jq -r '@csv'`). The file naming scheme is forward-compatible, so a
-future zip variant keeps the dashboard's download link working. (Note:
-a couple of route/schema header comments still say "JSON+CSV" — those
-are aspirational; the worker is the behaviour of record and emits JSON.)
-
-The bundle is uploaded to Supabase Storage at
-`{bucket}/{orgId}/{jobId}.json` (`bucket` = `SUPABASE_DATA_EXPORT_BUCKET`,
-default `org-exports`) with a 7-day `createSignedUrl`.
-
-## Rate limit
-
-`orgDataExportLimiter` — 1 export per organization per 24 hours
-(enforced by the rate limiter, not a DB constraint). The bundle build
-is O(N × 8 entities); we don't want a single tenant running 24 exports
-a day even if their compliance pipeline allows it.
-
-## Audit trail
-
-Every state transition writes an `OrgAuditLog` row under SYSTEM:
-
-- `DATA_EXPORT_REQUESTED` — at job creation, actor is the requester.
-- `DATA_EXPORT_GENERATED` — worker success.
-- `DATA_EXPORT_FAILED` — worker error path (carries the message).
-- `DATA_EXPORT_DOWNLOADED` — each `GET /download` call.
-
-## Local development
-
-When `NEXT_PUBLIC_SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY` is not
-set, the worker writes the bundle to `/tmp/familiarise-data-exports/`
-and returns a `file://` URL. The download route refuses to serve
-non-http URLs, so the end-to-end happy path requires the Supabase
-env vars to be configured even locally.
-
-## Verification
-
-```bash
-# As OWNER or BILLING_ADMIN — returns 202
-curl -X POST $BASE/api/organizations/$ORG/data-exports \
-  -H "Cookie: $OWNER_COOKIE"
-# 202 {"export":{"id":"...","status":"PENDING", ...}}
-
-# Trigger the worker manually (the GitHub Actions cron runs it ≤10 min
-# otherwise). This HTTP route is CRON_SECRET-gated and shares the global
-# Prisma client — it does NOT disconnect, unlike the standalone job wrapper.
-curl -X POST $BASE/api/cleanup/process-data-exports \
-  -H "Authorization: Bearer $CRON_SECRET"
-
-# Poll until READY
-curl $BASE/api/organizations/$ORG/data-exports -H "Cookie: $OWNER_COOKIE"
-
-# Pull download link
-curl $BASE/api/organizations/$ORG/data-exports/$EXPORT_ID/download \
-  -H "Cookie: $OWNER_COOKIE"
-# {"url":"https://...signed-url","expiresAt":"..."}
+```json
+{
+  "organizationId": "org_xxx",
+  "generatedAt": "2026-05-15T10:00:00.000Z",
+  "schemaVersion": 1,
+  "kinds": ["FINANCE"],
+  "organization": { "id": "org_xxx" },
+  "contracts": [],
+  "programs": [],
+  "invoices": [],
+  "earnings": [],
+  "payouts": []
+}
 ```
+
+An existing `FULL` job combines both sets and declares both entries in `kinds`.
+New requests do not accept `FULL`.
+
+## Routes and user workflow
+
+| Verb | Path under `/api/organizations/[orgId]` | Behavior                                                                                                                                                       |
+| ---- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST | `/data-exports`                         | Validates requested kind, applies the per-organization request limiter, commits PENDING plus request audit and returns 202                                     |
+| GET  | `/data-exports`                         | Lists at most 50 jobs from the last 30 days, newest first, filtered by grants; failed rows expose fixed safe error text                                        |
+| GET  | `/data-exports/[exportId]/download`     | Requires READY, current grants and exact ownership; audits successful signing after its expiry check, then rechecks expiry before returning `{url, expiresAt}` |
+
+A request is limited to one export per organization per 24 hours through
+`orgDataExportLimiter`; this is a rate limiter, not a database uniqueness
+constraint. The dashboard polls the list. Email and in-app notices link to the
+authenticated settings panel, never a stored storage bearer URL.
+
+Download returns 409 `EXPORT_NOT_READY` while unavailable by state; 410
+`EXPORT_EXPIRED` at the expiry boundary; 410 `EXPORT_UNAVAILABLE` if exact
+ownership is missing; and 503 for a reported signing failure. A kind the caller
+does not hold reads as absent. Responses carrying download information are
+`private, no-store` and vary by Cookie. A successful response signs only the
+exact owned bucket/path, for at most 60 seconds and capped by the remaining
+artifact lifetime using a fresh clock after the owner lookup. If signing or
+audit latency crosses the artifact deadline, the route returns `EXPORT_EXPIRED`
+without returning the URL.
+
+`DATA_EXPORT_DOWNLOAD_REQUESTED` is written after signing succeeds and the
+post-signing expiry check passes. Signing failures and requests that expire
+before or during signing write no audit row. The row can still exist if audit
+latency later crosses the deadline; it does not assert that the URL was returned
+or that the recipient read any bytes.
+
+An issued signed URL remains a bearer capability under the provider's contract.
+Changing a member's role prevents a new authorized download but does not
+retroactively revoke a token already issued. See
+[Supabase private downloads](https://supabase.com/docs/guides/storage/serving/downloads).
+
+## Durable job and attempt ownership
+
+The canonical implementation is
+`scripts/cleanup/process-data-exports.ts:processDataExports`, lazily imported by
+`lib/cron/cleanup-registry.ts`. The ticker runs it every ten minutes through the
+authenticated cleanup route. Staff can use the existing System Jobs door; there
+is no separate scheduled Actions owner. The Postgres job lease fails closed.
+
+`OrgDataExportJob` retains PENDING → PROCESSING → READY → EXPIRED, with FAILED
+for generation failure. A PROCESSING row older than the long-job lease is
+eligible for reclaim. The exact observed status and `startedAt` participate in
+the claim CAS; each claim writes a distinct millisecond timestamp. Terminal
+updates require PROCESSING and that same attempt token. A superseded worker
+cannot publish or fail a successor's job.
+
+The claim transaction also creates `OrgDataExportArtifact` before upload. That
+row owns the bucket, immutable storage path, attempt identity and expiry. It has
+no parent foreign key, so deleting the organization or job cannot delete the
+remote cleanup responsibility. The path is
+`{organizationId}/{exportId}/{attemptStartedAtMilliseconds}.json`; upload uses
+`upsert:false`. Separate paths prevent a late worker from replacing a newer
+attempt's bytes. The bucket uses `SUPABASE_DATA_EXPORT_BUCKET`, default
+`org-exports`; the deployment must provide private storage and service access.
+
+```mermaid
+sequenceDiagram
+    actor Member
+    participant API
+    participant DB as Postgres
+    participant Worker
+    participant Storage
+    participant Relay as Existing delivery relays
+    Member->>API: Request people or finance export
+    API->>DB: PENDING and request audit in one transaction
+    API-->>Member: 202
+    Worker->>DB: Claim CAS and exact artifact owner
+    Worker->>Storage: Upload immutable attempt path
+    Worker->>DB: Owned READY, audit, email and bell outboxes in one transaction
+    Relay->>Member: Authenticated panel link
+    Member->>API: Download with current membership
+    API->>DB: Check grants, state, expiry and owner
+    API->>Storage: Sign exact path briefly
+    API-->>Member: URL and artifact expiry
+```
+
+Publication and delivery are separate. READY commits with its audit and existing
+email/notification outboxes, using only the transaction client inside that
+transaction. Provider attempts occur after commit and can fail independently;
+the existing relays retain delivery responsibility. A notice failure never
+rewrites READY as FAILED. Safe job/list error text stays organization-visible;
+engineering diagnostics go to the system-event surface keyed by export ID.
+Missing storage configuration fails the job rather than publishing a local
+`file://` artifact.
+
+## Artifact expiry
+
+The same worker first examines at most ten expired artifact owners, with a
+shared admission deadline. `lastDeleteAttemptedAt` rotates failed delete work.
+Every attempt retains its exact owner until its seven-day expiry, including
+unpublished and superseded uploads. Cleanup avoids deleting the exact attempt
+while the job still reports it as PROCESSING.
+
+Remove failure, uncertain presence, permission error or local commit failure
+retains the owner and makes the run unsuccessful. After removal reports success,
+an exact `info()` read must identify `NoSuchKey`. A missing bucket, generic 404,
+ambiguous response or `exists()` false value with an error does not qualify.
+Only that key-specific absence permits retiring the owner and marking the matching published job
+EXPIRED transactionally. A parent deletion does not remove that obligation.
+This grace assumes invocation and transport lifetimes remain far shorter than
+seven days; the row cap and admission deadline do not cancel a vendor call that
+has already started.
+
+## Rollout, verification and operations
+
+The release owner applies only `prisma/sql/org-data-export-artifacts.sql` and
+verifies the live catalog before deploying the new reader. Mock data is reset
+before cutover; this rollout neither adopts old URLs nor migrates old artifact
+ownership. New attempts record their own owner before uploading. An ownerless
+stored URL is never a download fallback. Preserve owned artifacts on rollback
+and keep incompatible old writers from creating new unowned objects.
+
+The [worker recovery guide](../../maintenance/12-worker-recovery.md) contains the
+full failure matrix and operating gates. `/api/health/jobs` requires an owned
+successful export-core completion within 50 minutes in the current deployment
+environment. That does not measure oldest queued work, sufficient drain rate,
+private-bucket configuration or human alert receipt.
+
+Mocked regression tests cover stale reclaim, losing claim/finalization, immutable
+paths, retained delete obligations after uncertain responses, postcommit notice
+failure, safe legacy errors and fresh authorized download signing. Deployed
+verification must separately establish schema/catalog correctness, storage
+permissions and representative bundle size/runtime. Tests must not create real
+exports or write the shared database as fixtures.
+
+## Deprecated & Superseded Approaches
+
+The worker formerly selected PENDING only, so killed PROCESSING jobs could be
+stranded indefinitely. It uploaded with upsert to `{orgId}/{jobId}.json`, stored a
+seven-day signed URL on the job and sent that URL in notices. Link expiry alone
+did not delete the bytes. Exact attempt ownership, immutable paths and confirmed
+expiry replace those mechanisms.
+
+Notices formerly ran after READY inside the same generation catch boundary;
+their failure could overwrite READY with FAILED and expose raw error text.
+Transactional outbox staging and safe read responses replace that coupling.
+A local `/tmp` export fallback and the old per-job Actions schedule are no longer
+the runtime contract. The bundle remains JSON-only; no CSV/ZIP generation is
+implemented.
+
+Historical `DATA_EXPORT_DOWNLOADED` audit rows are retained as recorded; the new
+request action makes the observed attempt explicit without claiming delivery.

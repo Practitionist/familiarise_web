@@ -1,4 +1,10 @@
-import { AppointmentStatus, type Prisma } from "@prisma/client";
+import { AppointmentStatus, BookingSource, type Prisma } from "@prisma/client";
+import {
+  BEING_MOVED,
+  countOpenRequestsForCap,
+  holdingSince,
+  type RequestCounters,
+} from "@/lib/data/needs-you";
 
 /**
  * Anti-scalper cap for request-for-approval holds (booking-journey audit B1).
@@ -14,7 +20,9 @@ import { AppointmentStatus, type Prisma } from "@prisma/client";
 export const MAX_ACTIVE_REQUESTS_PER_USER = 3;
 
 /**
- * How many PENDING consultation requests this consultee currently has open.
+ * How many consultation requests this consultee has waiting for an answer:
+ * PENDING, actually submitted as a request (a checkout hold is not one) and
+ * still inside its hold window.
  *
  * Structurally typed rather than Pick<PrismaClient, …>: the extended client
  * (lib/prisma) is a DynamicClientExtensionThis whose comparison against
@@ -24,26 +32,34 @@ export async function countActiveConsultationRequests(
   db: {
     consultation: {
       count: (args: {
-        where: {
-          requestedById: string;
-          status: AppointmentStatus;
-        };
+        where: Prisma.ConsultationWhereInput;
       }) => Promise<number>;
     };
   },
   consulteeProfileId: string,
+  now: Date = new Date(),
 ): Promise<number> {
   return db.consultation.count({
     where: {
       requestedById: consulteeProfileId,
       status: AppointmentStatus.PENDING,
+      bookingSource: BookingSource.REQUEST_SUBMITTED,
+      // A request past its hold window no longer holds anything, swept or not.
+      requestedAt: { gte: holdingSince("CONSULTATION", now) },
+      NOT: { appointment: BEING_MOVED },
     },
   });
 }
 
+/** The consultee's own cap, as a typed refusal with plain copy. */
+export const REQUEST_CAP_REACHED = {
+  code: "REQUEST_CAP_REACHED",
+  message: `You already have ${MAX_ACTIVE_REQUESTS_PER_USER} requests waiting for an answer. Wait for an expert to reply, or withdraw one from your dashboard, then try again.`,
+} as const;
+
 /**
  * #1703 D4 — the consultant-side gate: a pause toggle and an optional cap on
- * open PENDING requests (consultations and subscriptions, live rows only).
+ * open submitted requests (see `countOpenRequestsForCap`).
  * Null cap means off. The route answers a typed 409 for either refusal.
  */
 export type ConsultantRequestRefusal = {
@@ -63,39 +79,6 @@ export const CONSULTANT_AT_CAPACITY: ConsultantRequestRefusal = {
     "This expert's request queue is full — try again in a day or two, or pick another expert.",
 };
 
-// Prisma's WhereInput (not a hand-rolled shape) so tsc rejects a dropped column.
-type OpenRequestCounters = {
-  consultation: {
-    count: (args: { where: Prisma.ConsultationWhereInput }) => Promise<number>;
-  };
-  subscription: {
-    count: (args: { where: Prisma.SubscriptionWhereInput }) => Promise<number>;
-  };
-};
-
-/** Open PENDING requests against this consultant, both request kinds. */
-export async function countOpenRequestsForConsultant(
-  db: OpenRequestCounters,
-  consultantProfileId: string,
-): Promise<number> {
-  const [consultations, subscriptions] = await Promise.all([
-    db.consultation.count({
-      where: {
-        status: AppointmentStatus.PENDING,
-        consultationPlan: { consultantProfileId },
-      },
-    }),
-    db.subscription.count({
-      where: {
-        status: AppointmentStatus.PENDING,
-        deletedAt: null,
-        subscriptionPlan: { consultantProfileId },
-      },
-    }),
-  ]);
-  return consultations + subscriptions;
-}
-
 /** The pause refusal, decided before any lock is taken. */
 export function pausedRefusal(profile: {
   acceptingRequests: boolean;
@@ -104,14 +87,16 @@ export function pausedRefusal(profile: {
 }
 
 /**
- * The cap refusal. Call it inside the consultant-keyed lock: the count is the
- * guard, and a cap of null skips the read entirely.
+ * The cap refusal. Call it inside the `request-cap` lock with the write
+ * transaction: the count (real submitted requests and trial requests, the
+ * same one the inbox shows) is the guard, and a cap of null skips the read.
  */
 export async function capacityRefusal(
-  db: OpenRequestCounters,
+  db: RequestCounters,
   profile: { id: string; maxOpenRequests: number | null },
+  now: Date = new Date(),
 ): Promise<ConsultantRequestRefusal | null> {
   if (profile.maxOpenRequests === null) return null;
-  const open = await countOpenRequestsForConsultant(db, profile.id);
+  const open = await countOpenRequestsForCap(profile.id, db, now);
   return open >= profile.maxOpenRequests ? CONSULTANT_AT_CAPACITY : null;
 }

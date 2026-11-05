@@ -1,16 +1,17 @@
-"use client";
-
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { FileText } from "lucide-react";
 import { MESSAGE_REVIEW_ARTICLE_HREF } from "@/lib/compliance/purpose-codes";
-import {
-  COMPANY_INFO,
-  PAGE_META,
-  POLICY_DATES,
-  getMailtoLink,
-} from "../constants";
+import { CompanyDetails } from "../CompanyDetails";
+import { COMPANY_INFO } from "@/lib/company";
+import { PAGE_META, POLICY_DATES, getMailtoLink } from "../constants";
+
+export const metadata: Metadata = {
+  title: `${PAGE_META.terms.title} | Familiarise`,
+  description: PAGE_META.terms.description,
+};
 
 export default function TermsPage() {
   return (
@@ -396,8 +397,10 @@ export default function TermsPage() {
               <ul>
                 <li>Cancellation rules vary by service type</li>
                 <li>Refunds are processed based on timing of cancellation</li>
-                <li>Platform may charge cancellation fees in certain cases</li>
-                <li>Refunds are processed within 5-7 business days</li>
+                <li>
+                  Card and UPI refunds take 5–7 working days to arrive; credit
+                  and organisation-funded refunds are returned straight away
+                </li>
               </ul>
 
               <Separator className="my-6" />
@@ -764,19 +767,7 @@ export default function TermsPage() {
                 If you have any questions about these Terms & Conditions, please
                 contact us:
               </p>
-              <div className="bg-muted p-4 rounded-lg mt-4">
-                <p>
-                  <strong>Company Name:</strong> {COMPANY_INFO.name}
-                </p>
-                <p>
-                  <strong>Email:</strong>{" "}
-                  <a
-                    href={getMailtoLink()}
-                    className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
-                  >
-                    {COMPANY_INFO.email}
-                  </a>
-                </p>
+              <CompanyDetails>
                 <p>
                   <strong>Contact Form:</strong>{" "}
                   <a
@@ -786,7 +777,7 @@ export default function TermsPage() {
                     Contact Us
                   </a>
                 </p>
-              </div>
+              </CompanyDetails>
 
               <Separator className="my-6" />
 

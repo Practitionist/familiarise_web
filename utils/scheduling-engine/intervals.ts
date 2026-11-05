@@ -1,6 +1,4 @@
 import type { DayOfWeek } from "@prisma/client";
-import { addDays, isBefore, startOfDay } from "date-fns";
-import { toZonedTime, fromZonedTime } from "date-fns-tz";
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import { TIntervalTiming } from "@/types/slots";
 import {
@@ -350,60 +348,6 @@ export function processCustomSlots(
 }
 
 /**
- * Split slots that cross midnight in the target timezone
- */
-export function splitSlotsByDay(
-  slots: AvailabilityInterval[],
-  timezone: string,
-): AvailabilityInterval[] {
-  const splitSlots: AvailabilityInterval[] = [];
-
-  slots.forEach((slot) => {
-    let current = slot.start;
-
-    while (isBefore(current, slot.end)) {
-      const zonedCurrent = toZonedTime(current, timezone);
-      const dayStart = startOfDay(zonedCurrent);
-      // #1415 — day segments are half-open: a segment ends at the NEXT day's
-      // midnight, not at 23:59:59.999. The old `endOfDay` bound cut the last
-      // millisecond off every block that runs to local midnight, and a
-      // 23:30–23:59:59.999 remainder is not a 30-minute atom, so a block
-      // ending at midnight silently lost its final bookable slot everywhere.
-      const nextDayStart = fromZonedTime(addDays(dayStart, 1), timezone);
-
-      const slotPartEnd = isBefore(slot.end, nextDayStart)
-        ? slot.end
-        : nextDayStart;
-
-      // Skip zero-length segments
-      if (slotPartEnd.getTime() === current.getTime()) {
-        break;
-      }
-
-      // Push valid segment
-      if (isBefore(current, slotPartEnd)) {
-        splitSlots.push({
-          start: current,
-          end: slotPartEnd,
-          availabilityId: slot.availabilityId,
-          type: slot.type,
-        });
-      }
-
-      if (
-        isBefore(nextDayStart, current) ||
-        nextDayStart.getTime() === current.getTime()
-      ) {
-        break;
-      }
-      current = nextDayStart;
-    }
-  });
-
-  return splitSlots;
-}
-
-/**
  * Check if a slot is allocated by comparing with appointment slots
  */
 export function isSlotAllocated(
@@ -701,11 +645,14 @@ export function breakDownSlotsByDuration(
   const durationInMillis = durationInHours * 60 * 60 * 1000;
 
   slots.forEach((slot) => {
-    const start = new Date(slot.startsAt);
     const end = new Date(slot.endsAt);
 
-    // Generate sliding windows
-    let currentStart = start;
+    // Windows start on the absolute UTC half-hour lattice, whatever the
+    // block's or the viewer's offset (a :45 zone's midnight is off-lattice).
+    let currentStart = new Date(
+      Math.ceil(new Date(slot.startsAt).getTime() / slidingIntervalMillis) *
+        slidingIntervalMillis,
+    );
     while (currentStart.getTime() + durationInMillis <= end.getTime()) {
       const currentEnd = new Date(currentStart.getTime() + durationInMillis);
 
@@ -731,6 +678,8 @@ export function breakDownSlotsByDuration(
       brokenDownSlots.push({
         ...slot,
         slotId: `${slot.availabilityWindowId}-${currentStart.getTime()}`,
+        dateInISO: currentStart.toISOString(),
+        dayOfWeek: dayMap[loc.dayIndex(currentStart)],
         startsAt: currentStart.toISOString(),
         endsAt: currentEnd.toISOString(),
         localStartTime: loc.timeP(currentStart),
@@ -831,11 +780,9 @@ export function processAvailabilitySlots(
     endDate,
   );
 
-  // Combine all slots
+  // Combine all slots. Blocks are not cut at the viewer's midnight: each
+  // window is keyed by the viewer day its own start falls on (groupSlotsByDate).
   const allSlots = [...processedWeeklySlots, ...processedCustomSlots];
-
-  // Split slots that cross midnight
-  const splitSlots = splitSlotsByDay(allSlots, timezone);
 
   // #907 — bucket booked slots once and share the index across both passes.
   const apptIndex = buildAppointmentIndex(appointmentSlots);
@@ -844,7 +791,7 @@ export function processAvailabilitySlots(
   // discarded by breakDownSlotsByDuration (which recomputes per sub-window), so
   // skip the redundant O(slots × appts) pass entirely.
   const slotTimings = convertToSlotTimings(
-    splitSlots,
+    allSlots,
     appointmentSlots,
     timezone,
     apptIndex,
@@ -959,4 +906,82 @@ export function breakDownSlotsPreservingStatus(
   );
 
   return result;
+}
+
+export type GridCell = TIntervalTiming & {
+  isAllocated: boolean;
+  bookingStatus: BookingStatus;
+};
+
+/**
+ * Busy cells for occupied time the published windows do not cover: an
+ * occurrence `[s, e)` paints every 30-min UTC atom `[floor30(s), ceil30(e))`
+ * that no existing cell overlaps, clipped to `[rangeStart, rangeEnd)`. Each
+ * synthetic cell is exactly one atom, so off-grid and long occurrences never
+ * overlap a cell or each other.
+ */
+export function synthesizeOrphanCells(args: {
+  existing: Iterable<{ startsAt: string; endsAt: string }>;
+  occupied: Iterable<{ startsAt: Date | string; endsAt: Date | string }>;
+  rangeStart: Date;
+  rangeEnd: Date;
+  timezone: string;
+  type: "WEEKLY" | "CUSTOM";
+}): GridCell[] {
+  const coveredAtoms = new Set<number>();
+  const markAtoms = (startMs: number, endMs: number) => {
+    for (
+      let atom = Math.floor(startMs / THIRTY_MIN_MS);
+      atom * THIRTY_MIN_MS < endMs;
+      atom++
+    ) {
+      coveredAtoms.add(atom);
+    }
+  };
+  for (const cell of args.existing) {
+    const startMs = new Date(cell.startsAt).getTime();
+    const endMs = new Date(cell.endsAt).getTime();
+    if (Number.isNaN(startMs) || Number.isNaN(endMs) || endMs <= startMs)
+      continue;
+    markAtoms(startMs, endMs);
+  }
+
+  const loc = makeLocalizer(args.timezone);
+  const rangeStartMs = args.rangeStart.getTime();
+  const rangeEndMs = args.rangeEnd.getTime();
+  const cells: GridCell[] = [];
+  for (const occurrence of args.occupied) {
+    const startMs = new Date(occurrence.startsAt).getTime();
+    const endMs = new Date(occurrence.endsAt).getTime();
+    if (Number.isNaN(startMs) || Number.isNaN(endMs) || endMs <= startMs)
+      continue;
+    for (
+      let atom = Math.floor(startMs / THIRTY_MIN_MS);
+      atom * THIRTY_MIN_MS < endMs;
+      atom++
+    ) {
+      const atomStartMs = atom * THIRTY_MIN_MS;
+      const atomEndMs = atomStartMs + THIRTY_MIN_MS;
+      if (atomEndMs <= rangeStartMs || atomStartMs >= rangeEndMs) continue;
+      if (coveredAtoms.has(atom)) continue;
+      coveredAtoms.add(atom);
+      const start = new Date(atomStartMs);
+      const end = new Date(atomEndMs);
+      cells.push({
+        slotId: `orphan-${atomStartMs}`,
+        dateInISO: start.toISOString(),
+        dayOfWeek: dayMap[loc.dayIndex(start)],
+        startsAt: start.toISOString(),
+        endsAt: end.toISOString(),
+        availabilityWindowId: "",
+        appointmentOccurrenceId: "",
+        localStartTime: loc.timeP(start),
+        localEndTime: loc.timeP(end),
+        type: args.type,
+        isAllocated: true,
+        bookingStatus: BOOKING_STATUS.FULLY_BOOKED,
+      });
+    }
+  }
+  return cells;
 }

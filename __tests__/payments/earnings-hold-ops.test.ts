@@ -85,9 +85,14 @@ it("refuses a release when only a settlement-owned hold freezes the row", async 
   expect(holdUpdateMany).not.toHaveBeenCalled();
 });
 
-it("releases the operator hold and restores the matured row to READY", async () => {
-  const { db: tx } = db(row("HELD"), 1, [{ reason: "OPERATOR" }]);
+it("releases the operator hold and returns a matured row with no recorded prior to PENDING", async () => {
+  const { db: tx, updateMany } = db(row("HELD"), 1, [{ reason: "OPERATOR" }]);
   await expect(
     releaseHeldEarnings(tx, "e1", "reviewed, all good", "admin_1"),
-  ).resolves.toEqual({ side: "consultant", status: "READY" });
+  ).resolves.toEqual({ side: "consultant", status: "PENDING" });
+  // The restore never filters on the hold window: the release job's guards decide READY.
+  const restore = (
+    updateMany.mock.calls as unknown as [{ where: object }][]
+  ).at(-1)?.[0];
+  expect(restore?.where).not.toHaveProperty("holdUntil");
 });

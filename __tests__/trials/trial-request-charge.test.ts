@@ -33,10 +33,13 @@ jest.mock("../../lib/rate-limit", () => ({
   applyRateLimit: async () => null,
   trialRequestLimiter: {},
 }));
-jest.mock("../../lib/activity/log-activity", () => ({
-  logTrialRequested: jest.fn(),
-}));
 jest.mock("../../lib/novu", () => ({ notifyTrialRequested: jest.fn() }));
+jest.mock("../../utils/appointmentlock", () => ({
+  lockRequestCap: jest.fn(async () => ({ key: "request-cap" })),
+  unlockRequestCap: jest.fn(async () => undefined),
+  RequestCapBusyError: class extends Error {},
+  BookingLockUnavailableError: class extends Error {},
+}));
 
 const plan = { trialPriceInPaise: 0, acceptingRequests: true };
 const appointmentCreate = jest.fn(async () => ({ id: "apt-1" }));
@@ -68,6 +71,7 @@ jest.mock("../../lib/prisma", () => {
           trialPriceInPaise: plan.trialPriceInPaise,
           consultantProfile: {
             acceptingRequests: plan.acceptingRequests,
+            maxOpenRequests: null,
             user: { id: "u-expert" },
           },
         })),

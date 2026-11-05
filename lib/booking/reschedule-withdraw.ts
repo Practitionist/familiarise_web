@@ -16,16 +16,17 @@ import { notifyRescheduleRestored } from "@/lib/booking/reschedule-outcome-notic
 
 /**
  * The initiator takes their own reschedule back, and the booking returns to
- * exactly what it was. The restore itself is shared with expiry
- * (`lib/booking/reschedule-restore.ts`, #1846); a decline is the one ending
- * that leaves the slots released.
+ * exactly what it was, through the restore expiry and decline share
+ * (`lib/booking/reschedule-restore.ts`).
  */
 export async function withdrawRescheduleRequest(args: {
   rescheduleRequestId: string;
   /** Must be the initiator. The caller is responsible for proving that. */
   withdrawnById: string;
+  /** False when the counterparty never heard of the request, so no notice goes out. */
+  notify?: boolean;
 }): Promise<{ withdrawn: boolean; reason?: string }> {
-  const { rescheduleRequestId, withdrawnById } = args;
+  const { rescheduleRequestId, withdrawnById, notify = true } = args;
 
   const request = await prisma.rescheduleRequest.findUnique({
     where: { id: rescheduleRequestId },
@@ -36,6 +37,7 @@ export async function withdrawRescheduleRequest(args: {
       releasedOccurrenceIds: true,
       appointmentId: true,
       createdAt: true,
+      originStatus: true,
       appointment: {
         select: {
           consultationId: true,
@@ -112,11 +114,13 @@ export async function withdrawRescheduleRequest(args: {
 
   // PR 2e — the initiator withdrew their own proposal; both parties learn
   // the booking stays at its original times.
-  await notifyRescheduleRestored(
-    rescheduleRequestId,
-    "WITHDRAWN",
-    EMAIL_BUDGET_MS.REQUEST,
-  );
+  if (notify) {
+    await notifyRescheduleRestored(
+      rescheduleRequestId,
+      "WITHDRAWN",
+      EMAIL_BUDGET_MS.REQUEST,
+    );
+  }
 
   return { withdrawn: true };
 }

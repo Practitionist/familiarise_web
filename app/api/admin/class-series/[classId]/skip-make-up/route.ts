@@ -23,7 +23,7 @@ export const POST = withOpsAction(
     }),
     run: async ({ params, body, actor }) => {
       await assertMoneyOpsBudget(actor.userId);
-      const hosted = await hostedForClass(params.classId, actor.userId);
+      const hosted = await hostedForClass(params.classId);
       const result = await skipClassMakeUp({
         appointmentId: hosted.appointment.id,
         sourceOccurrenceId: body.occurrenceId,

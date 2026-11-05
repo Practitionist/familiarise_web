@@ -39,7 +39,8 @@ import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
 import { computeRefundPct } from "@/lib/payments/operations/cancellation-policy";
 import {
   driveRefundOwed,
-  stampRefundOwed,
+  stampOwedOrHeld,
+  type OwedRefundAlreadyHeld,
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
 import { isFreeCreditIntent } from "@/lib/payments/funding-rail";
@@ -50,12 +51,15 @@ export type RejectionRefundOutcome = {
   amountRefundedPaise: number;
   /** Set when the refund leg failed; the rejection still stands. */
   failed?: boolean;
+  /** Another door's refund was already owed, so this rejection added nothing. */
+  alreadyOwed?: OwedRefundAlreadyHeld;
 };
 
 /** What a rejection owes, decided in the reject commit; null when nothing was paid. */
 export type RejectionRefundPlan = {
   refundPct: number;
   owed: RefundOwedMarker | null;
+  alreadyOwed?: OwedRefundAlreadyHeld;
 };
 
 type RejectionArgs = {
@@ -112,7 +116,9 @@ export async function stampRejectionRefundOwed(
     refundPct > 0 && (amountPaise === null || amountPaise > 0)
       ? { paymentId: paid.id, amountPaise, key, reason }
       : null;
-  if (owed) await stampRefundOwed(tx, owed);
+  const alreadyOwed = owed ? await stampOwedOrHeld(tx, owed) : null;
+  // First writer wins: the owed refund already on the payment is the one driven.
+  if (alreadyOwed) return { refundPct, owed: null, alreadyOwed };
   return { refundPct, owed };
 }
 
@@ -142,7 +148,13 @@ export async function refundRejectedRequest(
   }
   const { plan } = args;
   if (!plan) return null;
-  if (!plan.owed) return { refundPct: plan.refundPct, amountRefundedPaise: 0 };
+  if (!plan.owed) {
+    return {
+      refundPct: plan.refundPct,
+      amountRefundedPaise: 0,
+      ...(plan.alreadyOwed ? { alreadyOwed: plan.alreadyOwed } : {}),
+    };
+  }
 
   const outcome = await driveRefundOwed(plan.owed, {
     initiatedByUserId: args.initiatedByUserId,

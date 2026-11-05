@@ -5,12 +5,12 @@ import {
   endOfWeek,
   startOfMonth,
   endOfMonth,
-  addDays,
-  getDaysInMonth,
   type Day,
 } from "date-fns";
-import { useToast } from "@/hooks/use-toast";
-import { AllocationService } from "@/lib/scheduling/allocationService";
+import {
+  AllocationService,
+  type GridLead,
+} from "@/lib/scheduling/allocationService";
 import {
   availabilityPollJitterMs,
   createAvailabilityPoller,
@@ -20,32 +20,28 @@ import {
 import { ApiResponseError } from "@/lib/fetch-helpers";
 import {
   availabilityFreshness,
+  sameFreshness,
   FRESHNESS_TICK_MS,
+  type AvailabilityFreshnessState,
 } from "@/lib/labels/availability-freshness";
-import { cellInstant, dayRangeBounds } from "@/lib/time/grid-zone";
+import type { GridQuota } from "@/lib/scheduling/grid-quota";
+import type {
+  OverlapDetail,
+  ServerCell,
+} from "@/lib/scheduling/week-grid-model";
+import { dayRangeBounds } from "@/lib/time/grid-zone";
 import { gridTimeZone } from "@/lib/scheduling/time-picker-focus";
-import { INTERVALS } from "@/utils/scheduling-engine/interval-meta";
 import type { BookableInterval } from "@/utils/scheduling-engine/types";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
+import { byCodeUnit } from "@/lib/scheduling/code-unit-order";
 
 /**
- * CALENDAR DATA SYNCHRONIZATION REFACTOR
- * =====================================
- *
- * PROBLEM SOLVED:
- * - Three calendar views (Settings, Expert Profile, Planner) showed inconsistent booking status
- * - Manual calculation logic in UnifiedCalendar didn't match server-calculated status
- * - Date filtering issues caused "stray booked slots" from different time periods
- * - Mixed TypeScript interfaces caused confusion and bugs
- *
- * SOLUTION:
- * - Unified data source: All calendars now use server-calculated `bookingStatus`
- * - Enhanced TypeScript interfaces with clear separation of concerns
- * - Optimized slot status calculation using raw availability data
- * - Proper date filtering and timezone handling
+ * The dashboard grid's data: consultant details, the server-resolved
+ * availability window (one cell per 30-minute atom), and this booking's own
+ * sessions. The server is the only source of a cell's status; the client adds
+ * only what depends on the clock (past) in the component.
  */
 
-// Enhanced TypeScript interfaces - FIXED: Replaced 'any' types with proper interfaces
 export interface UseCalendarDataOptions {
   consultantId: string;
   eventType?: "consultation" | "subscription" | "webinar" | "class";
@@ -54,46 +50,26 @@ export interface UseCalendarDataOptions {
   view: "week" | "month";
   currentDate: Date;
   mode: "view" | "select" | "allocate";
-  /** The scheduling period. It bounds what is SELECTABLE, enforced by the
-   * calendar's own range guard; the fetch window follows the visible
-   * week/month, so a cell outside the period still shows what is really
-   * there rather than reading as absent. */
+  /** The scheduling period bounds what is SELECTABLE (the calendar's range
+   * guard); the fetch window always follows the visible week or month. */
   allowedStart?: Date;
   allowedEnd?: Date;
-  /** #997 Phase 3 — subscription per-call slot count, sent to the event-slots
-   * fetch so the server can bucket `weeklyConfirmedCallCounts` the same way
-   * the interactive weekly-limit guard needs it. Ignored for other event types. */
-  sessionDurationInHours?: number;
-  /** The user whose calendar is being booked. Allocation counts their bookings
-   * with ANY consultant as occupied, so passing it keeps the grid from showing
-   * cells that allocation will reject. */
+  /** The user whose calendar is being booked; their other bookings read busy. */
   consulteeUserId?: string;
-  /**
-   * The zone the grid is drawn in — the viewer's profile zone (#1703 QA-1).
-   * Cells, the fetch window and the `timezone` query all derive from it.
-   * Defaults to the browser zone.
-   */
+  /** The zone the grid is drawn in; cells, the fetch window and `timezone` follow it. */
   gridZone?: string;
-  /**
-   * #1775 — the day the week grid starts on (a subscription's cycle start);
-   * the fetch window and the visible dates follow it so the columns drawn
-   * are the columns fetched. Defaults to Sunday, which the quota bucketing
-   * (weekKey/countWeeks) stays pinned to regardless.
-   */
+  /** The day the week grid starts on; the fetch window follows it. */
   weekStartsOn?: Day;
-  /**
-   * Request the per-interval tooltip metadata (title/participant of an
-   * overlapping appointment). Defaults FALSE — the route 403s the request for
-   * anyone who is not the owning consultant, so a surface that asks for it
-   * speculatively loses its whole calendar rather than losing a tooltip.
-   */
+  /** Per-cell overlap detail; the route refuses it to anyone but the owner. */
   includeAppointmentDetails?: boolean;
+  /** Occurrences a reschedule would release; the plan-limit overlay counts them free. */
+  releasingOccurrenceIds?: readonly string[];
+  /** The writer the grid is drawn for; its lead time decides "too soon". */
+  lead?: GridLead;
 }
 
-// #1554 — the picker cell is the engine's BookableInterval; one declaration, re-exported here.
-export type { BookableInterval };
+export type { BookableInterval, OverlapDetail, ServerCell };
 
-/** Minimal plan info shape for event types used in appointment title/status extraction */
 interface EventPlanInfo {
   title?: string;
 }
@@ -113,22 +89,31 @@ interface AppointmentSubscription {
     totalSessions?: number;
   };
   requestedBy?: { user?: { name?: string } };
-  /** #1766 — the entitlement frozen at purchase (null on pre-#1766 rows). */
+  /** The entitlement frozen at purchase (null on older rows). */
   sessionsTotal?: number | null;
+  /** The weekly cap frozen at purchase; null reads the plan. */
+  sessionsPerWeek?: number | null;
+  /** Sessions a support partial refund removed from the plan. */
+  sessionsRefunded?: number;
   schedulingPeriodStartsAt?: string;
   schedulingTimezone?: string;
+  /** The fixed, exclusive plan end (incident extensions move it). */
+  planEndsAt?: string | null;
 }
 
-/** #1766 — what the cycle heading needs from the subscription row. */
+/** What the cycle heading needs from the subscription row. */
 export interface SubscriptionMeta {
   sessionsTotal: number;
+  sessionsRefunded: number;
   sessionsPerWeek: number;
   durationInMonths: number;
   schedulingPeriodStartsAt: string;
   schedulingTimezone: string;
+  /** Null on rows written before the fixed plan end existed. */
+  planEndsAt: string | null;
 }
 
-/** #1766 — one live-or-dead row of the event's wrapper, as the helper reads it. */
+/** One live-or-dead row of the event's wrapper, as the entitlement helper reads it. */
 export interface EventOccurrence {
   startsAt: string;
   endsAt: string;
@@ -151,7 +136,6 @@ interface AppointmentSlotRaw {
   startsAt: string;
   endsAt: string;
   isTentative?: boolean;
-  /** Present on occurrence rows; absent on older payloads — see the split below. */
   completionStatus?: string | null;
   deletedAt?: string | null;
   user?: Array<{ name?: string }>;
@@ -177,122 +161,86 @@ function subscriptionMetaOf(
     !subscription.schedulingTimezone ||
     plan?.sessionsPerWeek === undefined ||
     plan.durationInMonths === undefined ||
-    plan.totalSessions === undefined
+    plan.totalSessions === undefined ||
+    subscription.sessionsRefunded === undefined
   ) {
     return null;
   }
   return {
     sessionsTotal: subscription.sessionsTotal ?? plan.totalSessions,
-    sessionsPerWeek: plan.sessionsPerWeek,
+    sessionsRefunded: subscription.sessionsRefunded,
+    sessionsPerWeek: subscription.sessionsPerWeek ?? plan.sessionsPerWeek,
     durationInMonths: plan.durationInMonths,
     schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
     schedulingTimezone: subscription.schedulingTimezone,
+    planEndsAt: subscription.planEndsAt ?? null,
   };
 }
 
 interface ConsultantData {
   id: string;
   name: string;
-  // Add other consultant properties as needed
+  timezone?: string | null;
 }
 
-/**
- * RAW SLOT DATA - Server-calculated booking status
- * BEFORE: Used manual calculation with date filtering issues
- * AFTER: Uses server-calculated `bookingStatus` field for consistency
- */
+/** One server cell as the grid answers it. */
 export interface RawSlotData {
   slotId: string;
   startsAt: string;
   endsAt: string;
-  bookingStatus: "available" | "partially-booked" | "fully-booked"; // KEY: Server-calculated status
+  bookingStatus: "available" | "partially-booked" | "fully-booked";
   type: "WEEKLY" | "CUSTOM";
-  dayOfWeek?: string;
-  localStartTime?: string;
-  localEndTime?: string;
-  /** #997 Phase 2 — server-precomputed tooltip metadata for this interval
-   * (title/participant of any overlapping appointment). Only present because
-   * fetchAvailabilitySlots requests `includeAppointmentDetails`. */
-  overlappingAppointments?: Array<{
-    id: string;
-    type: string;
-    title: string;
-    with?: string;
-  }>;
+  tooSoon?: boolean;
+  limitReached?: boolean;
+  overlappingAppointments?: OverlapDetail[];
 }
 
-/**
- * SLOT STATUS RESULT - Enhanced with clear status flags
- * BEFORE: Confusing mix of isBooked, isConflicting, etc.
- * AFTER: Clear separation: isBookedForDisplay (gray), isPartiallyBooked (yellow)
- */
-interface SlotStatusResult {
-  isAvailable: boolean;
-  isBooked: boolean; // For backwards compatibility
-  isBookedForDisplay: boolean; // Fully booked (gray) - FIXED: Clear naming
-  isPartiallyBooked: boolean; // Partially booked (yellow) - FIXED: Clear naming
-  isDisabled: boolean;
-  isInPast: boolean;
-  intervalStartUTCString: string;
-  intervalEndUTCString: string;
-  localStartTime: Date;
-  localEndTime: Date;
-  overlappingAppointments: Array<{
-    id: string;
-    type: string;
-    title: string;
-    with?: string;
-  }>;
-}
+const NO_OVERLAPS: OverlapDetail[] = [];
+const ATOM = 30 * 60 * 1000;
+
+/** Plain copy only; the raw cause goes to the console and Sentry, never the screen. */
+export const CALENDAR_LOAD_ERROR =
+  "We couldn't load this calendar. Check your connection and try again.";
 
 interface CalendarData {
   consultantDetails: ConsultantData | null;
+  /** Server cells by start ms; identity changes only when the data does. */
+  serverCells: ReadonlyMap<number, ServerCell>;
   availableSlots: BookableInterval[];
-  rawAvailabilitySlots: {
-    weekly: RawSlotData[];
-    custom: RawSlotData[];
-  };
   eventSlots: BookableInterval[];
-  // This event's OWN tentative slots (being rescheduled) — rendered as a distinct
-  // "Rescheduling" state, separate from confirmed eventSlots and foreign bookings.
+  /** This event's own sessions released for a reschedule ("Being moved"). */
   eventTentativeSlots: BookableInterval[];
-  // #997 Phase 3 — confirmed (non-tentative) call counts for THIS event,
-  // bucketed by scheduling-timezone week key (ADR B9). Server-computed
-  // alongside eventSlots; replaces re-deriving this from a separate
-  // whole-window appointment fetch on every slot click.
-  weeklyConfirmedCallCounts: Record<string, number>;
-  /** #1766 — the event's own wrapper rows, raw, for the entitlement helper. */
   eventOccurrences: EventOccurrence[];
-  /** #1766 — null until the subscription row has arrived (or for other types). */
   subscriptionMeta: SubscriptionMeta | null;
+  /** The plan's weekly/day limit for the subscription being booked, if any. */
+  quota: GridQuota | null;
+  /** The half-open window `serverCells` answers for; null before the first answer. */
+  cellsWindow: { startMs: number; endMs: number } | null;
+  /** First load only: until consultant details and the first window settle. */
   loading: boolean;
+  /** A navigation or explicit refetch is in flight; the grid stays mounted. */
+  refreshing: boolean;
   error: string | null;
+  /** A refresh failed after a good load; the last cells stay on screen. */
+  refreshFailed: boolean;
+  /** The booking's own sessions failed to load; caps and own-time paint may be wrong. */
+  eventSlotsFailed: boolean;
 }
 
 export interface UseCalendarDataReturn extends CalendarData {
+  /** The lead time the server applied to these cells; re-applied between polls. */
+  leadMs: number | null;
   refetch: () => Promise<void>;
-  refetchConsultant: () => Promise<void>;
   refetchAvailability: () => Promise<void>;
   refetchEventSlots: () => Promise<void>;
-  getSlotStatusForInterval: (
-    interval: { hour: number; minute: number },
-    date: Date,
-  ) => SlotStatusResult;
-  slotStatusMap: Map<string, SlotStatusResult>;
-  /** #1863 — age of the cells on screen. Informational only; see the badge. */
-  availabilityFreshness: ReturnType<typeof availabilityFreshness>;
+  /** Age of the cells on screen. Informational only. */
+  availabilityFreshness: AvailabilityFreshnessState;
 }
 
-/**
- * Enhanced calendar data hook with proper TypeScript interfaces and optimized data processing
- *
- * KEY IMPROVEMENTS:
- * 1. Uses server-calculated booking status instead of manual calculation
- * 2. Proper date filtering for appointments
- * 3. Enhanced TypeScript coverage
- * 4. Individual refetch functions for granular control
- * 5. Optimized performance with useCallback and useMemo
- */
+function isValidRawSlot(slot: RawSlotData | null | undefined): boolean {
+  return Boolean(slot?.startsAt && slot.endsAt);
+}
+
 export function useCalendarData(
   options: UseCalendarDataOptions,
 ): UseCalendarDataReturn {
@@ -303,146 +251,143 @@ export function useCalendarData(
     autoLoad = true,
     view,
     currentDate,
-    sessionDurationInHours,
     consulteeUserId,
     includeAppointmentDetails = false,
     weekStartsOn = 0,
+    releasingOccurrenceIds,
+    lead,
   } = options;
+  const leadPurpose = lead?.purpose;
+  const leadUnpaid = lead?.unpaid === true;
+  const releasing = releasingOccurrenceIds?.length
+    ? [...releasingOccurrenceIds].sort(byCodeUnit).join(",")
+    : undefined;
   const gridZone = options.gridZone ?? gridTimeZone();
-  const { toast } = useToast();
 
-  // State management - ENHANCED: Better TypeScript coverage
   const [consultantDetails, setConsultantDetails] =
     useState<ConsultantData | null>(null);
-  const [rawAvailabilitySlots, setRawAvailabilitySlots] = useState<{
-    weekly: RawSlotData[];
-    custom: RawSlotData[];
-  }>({ weekly: [], custom: [] });
+  const [rawSlots, setRawSlots] = useState<RawSlotData[]>([]);
+  const [quota, setQuota] = useState<GridQuota | null>(null);
+  const [leadMs, setLeadMs] = useState<number | null>(null);
+  const [cellsWindow, setCellsWindow] = useState<{
+    startMs: number;
+    endMs: number;
+  } | null>(null);
   const [eventSlots, setEventSlots] = useState<BookableInterval[]>([]);
-  // The current event's OWN tentative slots (being rescheduled). Tracked
-  // separately from eventSlots (confirmed) so the calendar can render them as a
-  // distinct "Rescheduling" state instead of mislabeling them as foreign "Booked".
   const [eventTentativeSlots, setEventTentativeSlots] = useState<
     BookableInterval[]
   >([]);
-  // #997 Phase 3 — see CalendarData.weeklyConfirmedCallCounts.
-  const [weeklyConfirmedCallCounts, setWeeklyConfirmedCallCounts] = useState<
-    Record<string, number>
-  >({});
-  // #1766 — see CalendarData.eventOccurrences / subscriptionMeta.
   const [eventOccurrences, setEventOccurrences] = useState<EventOccurrence[]>(
     [],
   );
   const [subscriptionMeta, setSubscriptionMeta] =
     useState<SubscriptionMeta | null>(null);
-  // Start loading on mount when autoLoad is on so the first paint shows the
-  // grid skeleton instead of the "No calendar data available" empty state.
-  const [loading, setLoading] = useState(autoLoad);
-  const [error, setError] = useState<string | null>(null);
-  // Flicker fix — a fetch for week N can resolve after the user has already
-  // navigated to week N+1 (no AbortController here). Only the response
-  // matching the MOST RECENTLY issued request may commit state; a stale one
-  // is silently dropped instead of repainting the wrong week.
+  const [eventSlotsFailed, setEventSlotsFailed] = useState(false);
+  const [settled, setSettled] = useState({
+    consultant: !autoLoad,
+    availability: !autoLoad,
+  });
+  const [refreshing, setRefreshing] = useState(false);
+  const [consultantError, setConsultantError] = useState<string | null>(null);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(
+    null,
+  );
+
+  // Only the response to the most recently issued request may commit state.
   const availabilityRequestIdRef = useRef(0);
-  // #1164 — when the last availability fetch was ISSUED (nav or poll), read
-  // by the poll timer to schedule the next tick and by the return-to-tab
-  // listeners to decide between refetch-now and re-arm.
+  // When the last availability fetch SETTLED (success or failure): the poll's clock.
   const availabilityFetchedAtRef = useRef(Number.NaN);
-  // #1863 — the two halves of "how old are these cells", published to the
-  // component so it can say so. `availabilityFetchedAtRef` alone is invisible:
-  // it is read only by the poller for timing, so a grid that had not updated
-  // in forty minutes looked exactly like one that had updated a second ago.
-  // Consecutive FAILURES matter separately from age, because background poll
-  // failures are silent by design (#1164) and silence plus a frozen picture is
-  // indistinguishable from a healthy grid unless something says otherwise.
-  const [availabilityFreshnessState, setAvailabilityFreshnessState] = useState<
-    ReturnType<typeof availabilityFreshness>
-  >({ freshness: "unknown", label: null, failed: false });
+  // When the last availability fetch SUCCEEDED: what the freshness label measures.
+  const lastSuccessAtRef = useRef(Number.NaN);
   const availabilityFailedPollsRef = useRef(0);
-  // Re-render the badge on a timer rather than only on fetch settle, so the age
-  // it prints keeps moving while the grid sits untouched — a badge frozen at
-  // "2 min ago" on a grid that is now ten minutes old is its own lie. 15 s is
-  // frequent enough to read smoothly and cheap: it is a `setState` on one
-  // number, not a request.
+  const [availabilityFreshnessState, setAvailabilityFreshnessState] =
+    useState<AvailabilityFreshnessState>({
+      freshness: "unknown",
+      label: null,
+      failed: false,
+    });
+  // Re-read the clock on a timer so the age keeps moving; an equal state is
+  // dropped so an idle grid does not re-render every tick.
   useEffect(() => {
     if (!autoLoad || !consultantId) return;
-    const tick = () =>
-      setAvailabilityFreshnessState(
-        availabilityFreshness(
-          availabilityFetchedAtRef.current,
-          Date.now(),
-          availabilityFailedPollsRef.current,
-        ),
+    const tick = () => {
+      const next = availabilityFreshness(
+        lastSuccessAtRef.current,
+        Date.now(),
+        availabilityFailedPollsRef.current,
       );
+      setAvailabilityFreshnessState((previous) =>
+        sameFreshness(previous, next) ? previous : next,
+      );
+    };
     tick();
     const id = setInterval(tick, FRESHNESS_TICK_MS);
     return () => clearInterval(id);
-  }, [autoLoad, consultantId, rawAvailabilitySlots, error]);
-  // The availability fetch currently in flight, or null. A poll must not start
-  // one while a NAVIGATION fetch is still running: the poll bumps the request
-  // id, and the navigation's own `finally` is id-guarded, so it would skip its
-  // `setLoading(false)` while the background request — which never touches
-  // `loading` — leaves the grid on the skeleton for good. Above 60s of
-  // response time that is the whole first load. The poll waits for it instead.
+  }, [autoLoad, consultantId, rawSlots, availabilityError]);
+
+  // A poll waits on an in-flight navigation fetch instead of racing it.
   const availabilityInFlightRef = useRef<Promise<void> | null>(null);
-  // #1319 PR 9 — the last availability response's ETag, echoed back as
-  // If-None-Match so an unchanged poll costs the server one indexed read and
-  // this hook one early return. Not keyed by window: the tag itself encodes
-  // the window and the viewer, so a tag from another week simply misses and
-  // the route answers 200.
+  // The last ETag, echoed as If-None-Match; the tag encodes window and viewer.
   const availabilityEtagRef = useRef<string | null>(null);
-  // The event-slots read in flight; a re-issue or unmount aborts it so a torn
-  // read is a quiet cancel, not a Sentry fault (#1703 QA-4).
+  // A re-issue or unmount aborts the in-flight event-slots read.
   const eventSlotsAbortRef = useRef<AbortController | null>(null);
   useEffect(() => () => eventSlotsAbortRef.current?.abort(), []);
+  // Read by the poll, so a failed event-slots read retries with it.
+  const eventSlotsFailedRef = useRef(false);
+  useEffect(() => {
+    eventSlotsFailedRef.current = eventSlotsFailed;
+  }, [eventSlotsFailed]);
 
-  // PERFORMANCE: Computed available slots from raw data using useMemo
-  const availableSlots = useMemo((): BookableInterval[] => {
-    const allRawSlots = [
-      ...(rawAvailabilitySlots.weekly || []),
-      ...(rawAvailabilitySlots.custom || []),
-    ];
+  const serverCells = useMemo(() => {
+    const map = new Map<number, ServerCell>();
+    for (const slot of rawSlots) {
+      const startMs = new Date(slot.startsAt).getTime();
+      const endMs = new Date(slot.endsAt).getTime();
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
+      map.set(startMs, {
+        startMs,
+        endMs,
+        bookingStatus: slot.bookingStatus,
+        tooSoon: slot.tooSoon === true,
+        limitReached: slot.limitReached === true,
+        overlappingAppointments: slot.overlappingAppointments ?? NO_OVERLAPS,
+      });
+    }
+    return map;
+  }, [rawSlots]);
 
-    return allRawSlots.map((slot: RawSlotData) => ({
-      startTime: new Date(slot.startsAt),
-      endTime: new Date(slot.endsAt),
-      isAvailable:
-        slot.bookingStatus === "available" ||
-        slot.bookingStatus === "partially-booked",
-      isBooked: slot.bookingStatus === "fully-booked",
-    }));
-  }, [rawAvailabilitySlots]);
+  const availableSlots = useMemo(
+    (): BookableInterval[] =>
+      rawSlots.map((slot) => ({
+        startTime: new Date(slot.startsAt),
+        endTime: new Date(slot.endsAt),
+        isAvailable:
+          slot.bookingStatus === "available" ||
+          slot.bookingStatus === "partially-booked",
+        isBooked: slot.bookingStatus === "fully-booked",
+      })),
+    [rawSlots],
+  );
 
-  // PERFORMANCE: Data fetching functions with useCallback optimization
   const fetchConsultantDetails = useCallback(async (): Promise<void> => {
     if (!consultantId) return;
-
     try {
       const data = await AllocationService.fetchConsultantData(consultantId);
       setConsultantDetails(data);
-    } catch (error) {
-      console.error("Error fetching consultant details:", error);
-      // Not captured here — AllocationService.fetchConsultantData already
-      // reports this exact error (with httpStatus-based expected
-      // classification) before rethrowing; a second capture here would only
-      // add a worse, always-unexpected duplicate.
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : "Failed to fetch consultant data";
-      setError(errorMessage);
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: errorMessage,
-      });
+    } catch (fetchError) {
+      // AllocationService already reported it; the screen gets plain copy.
+      console.error("Error fetching consultant details:", fetchError);
+      setConsultantError(CALENDAR_LOAD_ERROR);
+    } finally {
+      setSettled((previous) =>
+        previous.consultant ? previous : { ...previous, consultant: true },
+      );
     }
-  }, [consultantId, toast]);
+  }, [consultantId]);
 
-  // FIXED: Proper date range filtering for availability slots
   const fetchAvailabilitySlots = useCallback(
-    async (options?: {
-      /** A poll nobody asked for: report failure silently (see the catch). */
+    async (fetchOptions?: {
+      /** A poll nobody asked for: fail silently and count it. */
       background?: boolean;
       /** Skip the browser HTTP cache — the caller just changed the data. */
       fresh?: boolean;
@@ -450,33 +395,16 @@ export function useCalendarData(
       if (!consultantId) return;
 
       const requestId = ++availabilityRequestIdRef.current;
-
-      // Published so the poll can WAIT on this request instead of racing it.
-      // Resolve-only, so a waiter's `finally` can never see a rejection.
       let settleInFlight: () => void = () => {};
       const inFlight = new Promise<void>((resolve) => {
         settleInFlight = resolve;
       });
       availabilityInFlightRef.current = inFlight;
+      if (!fetchOptions?.background) setRefreshing(true);
 
       try {
-        // The window is the VISIBLE range, never the scheduling period — at
-        // either end. Starting at the view's own start is what lets a pre-period
-        // week show the consultant's real availability behind an "Outside Period"
-        // label instead of blank cells; the same argument governs the end, and
-        // used not to. Clamping to `allowedEnd` left every cell past it with no
-        // server row, and the route's slots-in-window filter drops the
-        // APPOINTMENTS in that range too, so booked cells disappeared exactly
-        // like available ones. One week further on the range inverted, the
-        // server returned nothing, and the whole grid blanked.
-        //
-        // `allowedStart`/`allowedEnd` govern SELECTABILITY — the range guard in
-        // `handleSlotClick` and the "Outside Period" label already enforce it —
-        // and must never govern visibility. Capping an allocate request at one
-        // week instead of the remainder of the period is also a direct win on
-        // the endpoint #997 measured in tens of seconds.
-        // Bounds are the first and last instant of those calendar days as
-        // read in the grid zone, so the window matches the columns drawn.
+        // The VISIBLE range, never the scheduling period: the period governs
+        // selectability, and clamping the window to it blanked real cells.
         const { start: startDate, end: endDate } = dayRangeBounds(
           view === "week"
             ? startOfWeek(currentDate, { weekStartsOn })
@@ -487,135 +415,89 @@ export function useCalendarData(
           gridZone,
         );
 
-        // #997 Phase 2 — the server-computed tooltip/orphan-slot detail. The
-        // route re-verifies ownership regardless of this flag, and 403s rather
-        // than downgrading, so only a surface that KNOWS it is the owning
-        // consultant may ask for it.
-        type FetchAvailabilityFn = (
-          ...args: [
-            ...Parameters<typeof AllocationService.fetchAvailabilitySlots>,
-            { webinarId?: string; classId?: string }?,
-          ]
-        ) => ReturnType<typeof AllocationService.fetchAvailabilitySlots>;
-        const data = await (
-          AllocationService as { fetchAvailabilitySlots: FetchAvailabilityFn }
-        ).fetchAvailabilitySlots(
+        const data = await AllocationService.fetchAvailabilitySlots(
           consultantId,
           startDate,
           endDate,
           gridZone,
           includeAppointmentDetails,
           consulteeUserId,
-          options?.fresh,
+          fetchOptions?.fresh,
           availabilityEtagRef.current,
           {
             webinarId: eventType === "webinar" ? eventId : undefined,
             classId: eventType === "class" ? eventId : undefined,
+            subscriptionId: eventType === "subscription" ? eventId : undefined,
+            releasing,
+            lead: leadPurpose
+              ? { purpose: leadPurpose, unpaid: leadUnpaid }
+              : undefined,
           },
         );
 
-        // A newer request was issued (user moved on) while this one was in
-        // flight — its result is stale, discard rather than repaint.
         if (requestId !== availabilityRequestIdRef.current) return;
-
-        // #1319 PR 9 — 304: nothing this grid depends on moved. Keep the state
-        // (and the tag) exactly as they are; calling setState with a fresh but
-        // equal object would re-render every calendar cell for nothing.
-        if (data?.notModified) return;
-
-        // A shape the route cannot legitimately return. Emptying the grid on it
-        // is the failure this change exists to remove: an empty grid is a valid
-        // answer for a quiet week, so the consultant cannot tell it apart from a
-        // broken response. Surface it instead.
+        // 304: nothing changed. Keep the state (and tag) as they are.
+        if (data?.notModified) {
+          availabilityFailedPollsRef.current = 0;
+          lastSuccessAtRef.current = Date.now();
+          setAvailabilityError(null);
+          return;
+        }
         if (!data || typeof data !== "object") {
-          setError(
-            "Could not read the availability response. Please try again.",
-          );
+          console.error("Unreadable availability response", data);
+          setAvailabilityError(CALENDAR_LOAD_ERROR);
           return;
         }
 
-        // Defensive: Ensure arrays exist and are valid
-        const validatedData = {
-          weekly: Array.isArray(data.weekly)
-            ? data.weekly.filter((slot: RawSlotData) => {
-                if (!slot || !slot.startsAt || !slot.endsAt) {
-                  console.warn(
-                    "⚠️ fetchAvailabilitySlots: Filtering out invalid weekly slot",
-                  );
-                  return false;
-                }
-                return true;
-              })
-            : [],
-          custom: Array.isArray(data.custom)
-            ? data.custom.filter((slot: RawSlotData) => {
-                if (!slot || !slot.startsAt || !slot.endsAt) {
-                  console.warn(
-                    "⚠️ fetchAvailabilitySlots: Filtering out invalid custom slot",
-                  );
-                  return false;
-                }
-                return true;
-              })
-            : [],
-        };
+        const validated = [
+          ...(Array.isArray(data.weekly) ? data.weekly : []),
+          ...(Array.isArray(data.custom) ? data.custom : []),
+        ].filter(isValidRawSlot);
 
-        // Stamped only once the body validated — a tag paired with a payload we
-        // rejected would 304 the next poll into keeping the rejected state.
+        // Stamped only once the body validated, so a rejected payload is never 304'd into place.
         availabilityEtagRef.current = data.etag ?? null;
-        // #1863 — a success ends the failure run. Reset here rather than in a
-        // `finally` so a fetch that both failed and settled is not counted as
-        // a success (the `finally` below stamps time for failures too, which
-        // is correct for poll timing and would be wrong here).
         availabilityFailedPollsRef.current = 0;
-        setRawAvailabilitySlots(validatedData);
-      } catch (error) {
-        // A stale request's failure must not clobber the error state of
-        // whatever the user has since navigated to.
+        lastSuccessAtRef.current = Date.now();
+        setRawSlots(validated);
+        setCellsWindow({
+          startMs: startDate.getTime(),
+          endMs: endDate.getTime(),
+        });
+        setQuota(data.quota ?? null);
+        setLeadMs(data.leadMs ?? null);
+        setAvailabilityError(null);
+      } catch (fetchError) {
         if (requestId !== availabilityRequestIdRef.current) return;
-
-        console.error("Error fetching availability slots:", error);
-        // Not captured here — AllocationService.fetchAvailabilitySlots already
-        // reports this exact error (see fetchConsultantDetails above).
-        const errorMessage =
-          error instanceof Error
-            ? error.message
-            : "Failed to fetch availability";
-        // #1164 — a background poll failed: the grid still shows the last good
-        // answer and the next tick retries, so neither the banner nor a toast is
-        // the user's problem. A flaky minute would otherwise toast every 60s.
-        // A 429 is the exception: it hands the poller the server's Retry-After
-        // so the retry waits it out instead of re-tripping the limiter (#1697).
-        if (options?.background) {
-          // #1863 — counted, not surfaced. Silence stays the right default for
-          // the transient case, but three failures in a row is a grid that has
-          // stopped updating rather than a flaky minute, and the freshness
-          // indicator is what says so.
+        // AllocationService already reported it (refusals are not faults).
+        console.error("Error fetching availability slots:", fetchError);
+        if (fetchOptions?.background) {
           availabilityFailedPollsRef.current += 1;
-          if (error instanceof ApiResponseError && error.status === 429) {
+          if (
+            fetchError instanceof ApiResponseError &&
+            fetchError.status === 429
+          ) {
             return {
               rateLimitedForMs:
-                error.retryAfterMs ?? RATE_LIMIT_FALLBACK_BACKOFF_MS,
+                fetchError.retryAfterMs ?? RATE_LIMIT_FALLBACK_BACKOFF_MS,
             };
           }
           return;
         }
-        setError(errorMessage);
-        toast({
-          variant: "destructive",
-          title: "Error",
-          description: errorMessage,
-        });
+        setAvailabilityError(CALENDAR_LOAD_ERROR);
       } finally {
-        // Freshness is stamped when the fetch SETTLES, not when it is issued:
-        // the poll delay is measured from this stamp, so a slow response (or a
-        // failing endpoint) can no longer drive the delay to zero and turn the
-        // 60s poll into a hot retry loop exactly when the server is struggling.
+        // Poll timing is measured from SETTLE, so a failing endpoint cannot
+        // turn the 60 s poll into a hot loop.
         availabilityFetchedAtRef.current = Date.now();
-        // Clear only if no LATER request has taken the ref over — that one owns
-        // it until it settles itself.
         if (availabilityInFlightRef.current === inFlight) {
           availabilityInFlightRef.current = null;
+        }
+        if (requestId === availabilityRequestIdRef.current) {
+          if (!fetchOptions?.background) setRefreshing(false);
+          setSettled((previous) =>
+            previous.availability
+              ? previous
+              : { ...previous, availability: true },
+          );
         }
         settleInFlight();
       }
@@ -624,345 +506,131 @@ export function useCalendarData(
       consultantId,
       eventType,
       eventId,
-      toast,
       view,
       currentDate,
       consulteeUserId,
       includeAppointmentDetails,
       gridZone,
       weekStartsOn,
+      releasing,
+      leadPurpose,
+      leadUnpaid,
     ],
   );
 
   const fetchEventSlots = useCallback(async (): Promise<void> => {
-    // Fetch event slots for ALL event types (subscription, consultation, webinar, class)
-    // This allows the calendar to show "This Event" (black) instead of "Booked" (gray)
-    // for slots belonging to the current event being viewed
     if (!eventType || !eventId) {
       setEventSlots([]);
       setEventTentativeSlots([]);
-      setWeeklyConfirmedCallCounts({});
       setEventOccurrences([]);
       setSubscriptionMeta(null);
+      setEventSlotsFailed(false);
       return;
     }
 
+    eventSlotsAbortRef.current?.abort();
+    const controller = new AbortController();
+    eventSlotsAbortRef.current = controller;
     try {
-      // #997 Phase 3 — pass slotsPerCall (subscriptions only) so the server
-      // can also return weeklyConfirmedCallCounts alongside this event's slots.
-      const slotsPerCall =
-        eventType === "subscription"
-          ? Math.ceil((sessionDurationInHours || 1) / 0.5)
-          : undefined;
-      eventSlotsAbortRef.current?.abort();
-      const controller = new AbortController();
-      eventSlotsAbortRef.current = controller;
-      const { data, weeklyConfirmedCallCounts: weeklyCounts } =
-        await AllocationService.fetchEventSlots(
-          eventType,
-          eventId,
-          consultantId,
-          slotsPerCall,
-          controller.signal,
-        );
-      // Superseded by a newer read: its answer, not this empty one, commits.
+      const { data } = await AllocationService.fetchEventSlots(
+        eventType,
+        eventId,
+        consultantId,
+        controller.signal,
+      );
       if (controller.signal.aborted) return;
-      setWeeklyConfirmedCallCounts(weeklyCounts);
 
-      if (data && Array.isArray(data) && data.length > 0) {
-        // Filter out cancelled/rejected appointments from event slots
-        const activeData = data.filter((appt: Appointment) => {
-          if (appt.consultation?.status) {
+      const activeData: Appointment[] = Array.isArray(data)
+        ? data.filter((appt: Appointment) => {
+            const dead = ["REJECTED", "CANCELLED", "EXPIRED"];
             if (
-              ["REJECTED", "CANCELLED", "EXPIRED"].includes(
-                appt.consultation.status,
-              )
+              appt.consultation?.status &&
+              dead.includes(appt.consultation.status)
             )
               return false;
-          }
-          if (appt.subscription?.status) {
             if (
-              ["REJECTED", "CANCELLED", "EXPIRED"].includes(
-                appt.subscription.status,
-              )
+              appt.subscription?.status &&
+              dead.includes(appt.subscription.status)
             )
               return false;
-          }
-          if (appt.webinar?.status === "CANCELLED") return false;
-          if (appt.class?.status === "CANCELLED") return false;
-          return true;
-        });
+            if (appt.webinar?.status === "CANCELLED") return false;
+            if (appt.class?.status === "CANCELLED") return false;
+            return true;
+          })
+        : [];
 
-        // Process ALL appointments, not just the first one, expanding each
-        // appointment slot into 30-min display intervals.
-        //
-        // Confirmed slots → eventSlots ("This Event", black). Only genuine
-        // reschedule releases (tentative + RESCHEDULED) go to
-        // eventTentativeSlots ("Being moved" amber): a fresh request's holds
-        // are tentative too, but those times ARE the request — painting them
-        // "Being moved" sent consultants hunting for a reschedule that never
-        // happened. Same canonical predicate as the list/dialog gates.
-        const confirmedSlots: BookableInterval[] = [];
-        const tentativeSlots: BookableInterval[] = [];
-        for (const appointment of activeData) {
-          for (const slot of (appointment.occurrences ||
-            []) as AppointmentSlotRaw[]) {
-            if (slot.deletedAt) continue;
-            const start = new Date(slot.startsAt);
-            const end = new Date(slot.endsAt);
-            const durationMinutes =
-              (end.getTime() - start.getTime()) / (1000 * 60);
-            const numIntervals = Math.round(durationMinutes / 30);
-            const target = isReleasedForReschedule(slot)
-              ? tentativeSlots
-              : confirmedSlots;
-
-            for (let i = 0; i < numIntervals; i++) {
-              const intervalStart = new Date(
-                start.getTime() + i * 30 * 60 * 1000,
-              );
-              const intervalEnd = new Date(
-                intervalStart.getTime() + 30 * 60 * 1000,
-              );
-              target.push({
-                startTime: intervalStart,
-                endTime: intervalEnd,
-                isAvailable: true,
-                isBooked: true, // Event slots are considered booked/allocated
-              });
-            }
+      // Confirmed sessions (and a fresh request's own holds) paint "This
+      // booking"; only genuine reschedule releases paint "Being moved". Each
+      // session paints every atom it touches, so an off-grid start still
+      // lines up with the server's 30-minute cells.
+      const confirmedSlots: BookableInterval[] = [];
+      const tentativeSlots: BookableInterval[] = [];
+      for (const appointment of activeData) {
+        for (const slot of appointment.occurrences ?? []) {
+          if (slot.deletedAt) continue;
+          const startMs = new Date(slot.startsAt).getTime();
+          const endMs = new Date(slot.endsAt).getTime();
+          if (!Number.isFinite(startMs) || !(endMs > startMs)) continue;
+          const target = isReleasedForReschedule(slot)
+            ? tentativeSlots
+            : confirmedSlots;
+          for (
+            let atom = Math.floor(startMs / ATOM) * ATOM;
+            atom < endMs;
+            atom += ATOM
+          ) {
+            target.push({
+              startTime: new Date(atom),
+              endTime: new Date(atom + ATOM),
+              isAvailable: true,
+              isBooked: true,
+            });
           }
         }
-        setEventSlots(confirmedSlots);
-        setEventTentativeSlots(tentativeSlots);
-        // #1766 — the raw rows and the row's entitlement inputs travel as-is;
-        // the helper, not this hook, turns them into the cycle heading.
-        setEventOccurrences(
-          activeData.flatMap((appointment) =>
-            ((appointment.occurrences || []) as AppointmentSlotRaw[]).map(
-              (slot) => ({
-                startsAt: slot.startsAt,
-                endsAt: slot.endsAt,
-                completionStatus: slot.completionStatus ?? null,
-                isTentative: slot.isTentative ?? false,
-                deletedAt: slot.deletedAt ?? null,
-              }),
-            ),
-          ),
-        );
-        setSubscriptionMeta(subscriptionMetaOf(activeData[0]?.subscription));
-      } else {
-        setEventSlots([]);
-        setEventTentativeSlots([]);
-        setEventOccurrences([]);
-        setSubscriptionMeta(null);
       }
-    } catch (error) {
-      console.error("Error fetching event slots:", error);
-      // Silent degrade to empty (no toast/setError, unlike the two siblings
-      // above) — the calendar just shows no "This Event" slots, which reads
-      // as "nothing booked yet" rather than "the fetch broke". Not captured
-      // here either — AllocationService.fetchEventSlots already reports it.
-      setEventSlots([]);
-      setEventTentativeSlots([]);
-      setWeeklyConfirmedCallCounts({});
-      setEventOccurrences([]);
-      setSubscriptionMeta(null);
-    }
-  }, [eventType, eventId, consultantId, sessionDurationInHours]);
-
-  /**
-   * PERFORMANCE: Compute visible dates for the current view so the slotStatusMap
-   * can precompute statuses for every cell in a single pass.
-   */
-  const visibleDates = useMemo((): Date[] => {
-    const dates: Date[] = [];
-    if (view === "week") {
-      // Explicit start, never the locale default: weekKey/countWeeks bucket
-      // quota weeks on Sundays regardless, and the grid's own start (#1775)
-      // must match the fetch window above or cells go blank.
-      const weekStart = startOfWeek(currentDate, { weekStartsOn });
-      for (let i = 0; i < 7; i++) {
-        dates.push(addDays(weekStart, i));
-      }
-    } else {
-      const monthStart = startOfMonth(currentDate);
-      const daysInMonth = getDaysInMonth(currentDate);
-      for (let i = 0; i < daysInMonth; i++) {
-        dates.push(addDays(monthStart, i));
-      }
-    }
-    return dates;
-  }, [currentDate, view, weekStartsOn]);
-
-  /**
-   * #997 Phase 2 — the server (availability-with-allocation, requested with
-   * includeAppointmentDetails) already returns bookingStatus AND
-   * overlappingAppointments per 30-min interval. Index it ONCE by UTC ISO
-   * start so every cell below is an O(1) lookup instead of the old
-   * O(cells × (availabilitySlots + appointments)) cross-reference join.
-   */
-  // The past/now boundary re-derives once a minute, so a slot greys out as it passes.
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNowMs(Date.now()), 60_000);
-    return () => clearInterval(id);
-  }, []);
-
-  const serverGridByISO = useMemo(() => {
-    const map = new Map<string, RawSlotData>();
-    const allRaw = [
-      ...(rawAvailabilitySlots.weekly || []),
-      ...(rawAvailabilitySlots.custom || []),
-    ];
-    for (const slot of allRaw) {
-      map.set(new Date(slot.startsAt).toISOString(), slot);
-    }
-    return map;
-  }, [rawAvailabilitySlots]);
-
-  /**
-   * Derives the cell's display status from ONE server grid lookup. The
-   * server already resolved bookingStatus (incl. the "appointment with no
-   * backing availability row" edge case via a synthesized fully-booked
-   * entry, #997 Phase 2) — only past/disabled stay client-computed since
-   * they depend on wall-clock "now", not on server-fetched data.
-   */
-  const deriveStatusFromServerGrid = useCallback(
-    (localStart: Date, localEnd: Date, now: number): SlotStatusResult => {
-      const serverSlot = serverGridByISO.get(localStart.toISOString());
-
-      let isAvailable = false;
-      let isBookedForDisplay = false;
-      let isPartiallyBooked = false;
-      let overlappingAppointments: SlotStatusResult["overlappingAppointments"] =
-        [];
-
-      if (serverSlot) {
-        isAvailable = serverSlot.bookingStatus === "available";
-        isBookedForDisplay = serverSlot.bookingStatus === "fully-booked";
-        isPartiallyBooked = serverSlot.bookingStatus === "partially-booked";
-        overlappingAppointments = serverSlot.overlappingAppointments || [];
-      }
-
-      const endMs = localEnd.getTime();
-      const isInPast = endMs < now;
-      const isDisabled = !isAvailable || isBookedForDisplay || isInPast;
-
-      return {
-        isAvailable,
-        isBooked: isBookedForDisplay || isPartiallyBooked,
-        isBookedForDisplay,
-        isPartiallyBooked,
-        isDisabled,
-        isInPast,
-        intervalStartUTCString: localStart.toISOString(),
-        intervalEndUTCString: localEnd.toISOString(),
-        localStartTime: localStart,
-        localEndTime: localEnd,
-        overlappingAppointments,
-      };
-    },
-    [serverGridByISO],
-  );
-
-  /**
-   * PERFORMANCE: Precompute slot status for every visible cell.
-   * Converts 336 × O(W+C+A×S) → 1 index build + 336 × O(1) Map lookups.
-   * Key format: `${year}-${month}-${day}-${hour}-${minute}`
-   */
-  const slotStatusMap = useMemo((): Map<string, SlotStatusResult> => {
-    const map = new Map<string, SlotStatusResult>();
-    const now = nowMs;
-
-    for (const date of visibleDates) {
-      const y = date.getFullYear();
-      const m = date.getMonth();
-      const d = date.getDate();
-
-      for (const interval of INTERVALS) {
-        const key = `${y}-${m}-${d}-${interval.hour}-${interval.minute}`;
-
-        // The cell's wall clock as an instant in the GRID zone (#1703 QA-1).
-        const localStart = cellInstant(
-          date,
-          interval.hour,
-          interval.minute,
-          gridZone,
-        );
-        const localEnd = new Date(localStart.getTime() + 30 * 60 * 1000);
-
-        map.set(key, deriveStatusFromServerGrid(localStart, localEnd, now));
-      }
-    }
-
-    return map;
-  }, [visibleDates, deriveStatusFromServerGrid, gridZone, nowMs]);
-
-  /**
-   * SLOT STATUS LOOKUP — O(1) via precomputed Map.
-   * Falls back to inline computation for cells not in the visible range
-   * (e.g. month view overflow days).
-   */
-  const getSlotStatusForInterval = useCallback(
-    (
-      interval: { hour: number; minute: number },
-      date: Date,
-    ): SlotStatusResult => {
-      const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}-${interval.hour}-${interval.minute}`;
-      const cached = slotStatusMap.get(key);
-      if (cached) return cached;
-
-      // Fallback for cells outside the precomputed visible range
-      const localIntervalStartDate = cellInstant(
-        date,
-        interval.hour,
-        interval.minute,
-        gridZone,
+      setEventSlots(confirmedSlots);
+      setEventTentativeSlots(tentativeSlots);
+      setEventOccurrences(
+        activeData.flatMap((appointment) =>
+          (appointment.occurrences ?? []).map((slot) => ({
+            startsAt: slot.startsAt,
+            endsAt: slot.endsAt,
+            completionStatus: slot.completionStatus ?? null,
+            isTentative: slot.isTentative ?? false,
+            deletedAt: slot.deletedAt ?? null,
+          })),
+        ),
       );
-      const localIntervalEndDate = new Date(
-        localIntervalStartDate.getTime() + 30 * 60 * 1000,
-      );
+      setSubscriptionMeta(subscriptionMetaOf(activeData[0]?.subscription));
+      setEventSlotsFailed(false);
+    } catch (fetchError) {
+      // Superseded by a newer read or unmounted: not a failure.
+      if (controller.signal.aborted) return;
+      // Keep the last good answer: zeroing it would paint this booking's own
+      // sessions as someone else's and read the weekly counts as 0. The
+      // calendar says so and the server re-checks every save.
+      console.error("Error fetching event slots:", fetchError);
+      setEventSlotsFailed(true);
+    }
+  }, [eventType, eventId, consultantId]);
 
-      return deriveStatusFromServerGrid(
-        localIntervalStartDate,
-        localIntervalEndDate,
-        nowMs,
-      );
-    },
-    [slotStatusMap, deriveStatusFromServerGrid, gridZone, nowMs],
-  );
-
-  // PERFORMANCE: Fetch all data function with parallel API calls
   const fetchAllData = useCallback(async (): Promise<void> => {
     if (!consultantId) return;
-
-    setLoading(true);
-    setError(null);
-
+    setConsultantError(null);
+    setAvailabilityError(null);
     try {
-      // OPTIMIZATION: Parallel data fetching for better performance
       await Promise.all([
         fetchConsultantDetails(),
-        fetchAvailabilitySlots(),
+        fetchAvailabilitySlots({ fresh: true }),
         fetchEventSlots(),
       ]);
-    } catch (error) {
-      console.error("Error fetching calendar data:", error);
-      // Believed unreachable: the three awaited fetchers each self-catch and
-      // never reject, so Promise.all here shouldn't throw. Capturing anyway
-      // (not tagged expected) — if this ever fires, that invariant broke.
-      reportSentryError(error, {
+    } catch (fetchError) {
+      // The fetchers self-catch; reaching here means that invariant broke.
+      reportSentryError(fetchError, {
         subsystem: "client",
         tags: { feature: "scheduling-calendar" },
       });
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : "Failed to fetch calendar data";
-      setError(errorMessage);
-    } finally {
-      setLoading(false);
+      setConsultantError(CALENDAR_LOAD_ERROR);
     }
   }, [
     consultantId,
@@ -971,104 +639,35 @@ export function useCalendarData(
     fetchEventSlots,
   ]);
 
-  // PERFORMANCE: Split into two effects so date-independent fetches don't re-fire on week navigation.
-
-  // Effect 1 — Date-independent: runs on dialog open only (consultantDetails + eventSlots)
+  // Date-independent reads: once per open.
   useEffect(() => {
     if (autoLoad && consultantId) {
-      Promise.all([fetchConsultantDetails(), fetchEventSlots()]).catch(
-        (error) => {
-          console.error("Error fetching date-independent data:", error);
-          // Believed unreachable — see fetchAllData's identical comment.
-          reportSentryError(error, {
-            subsystem: "client",
-            tags: { feature: "scheduling-calendar" },
-          });
-          setError(
-            error instanceof Error
-              ? error.message
-              : "Failed to fetch calendar data",
-          );
-        },
-      );
+      void fetchConsultantDetails();
+      void fetchEventSlots();
     }
   }, [autoLoad, consultantId, fetchConsultantDetails, fetchEventSlots]);
 
-  // Effect 2 — Date-dependent: runs on dialog open + week/month navigation
-  const weeklySlotCount = rawAvailabilitySlots.weekly.length;
-  // Latest-value ref: consultantDetails/weeklySlotCount are SET BY this
-  // effect's own fetch, so they must be read without being effect triggers —
-  // listing them would re-fire it every time the fetch it just ran completes,
-  // a self-triggering refetch loop on every week navigation.
-  // Synced in an effect declared before the fetch effect (effects run in
-  // order), not during render (react.dev: refs are not written while rendering).
-  const hasLoadedDataRef = useRef(false);
-  useEffect(() => {
-    hasLoadedDataRef.current =
-      Boolean(consultantDetails) || weeklySlotCount > 0;
-  }, [consultantDetails, weeklySlotCount]);
+  // Date-dependent read: on open and on every week/month navigation.
   useEffect(() => {
     if (autoLoad && consultantId) {
-      // Only show loading spinner on initial load, not on background refetches
-      const isInitialLoad = !hasLoadedDataRef.current;
-      if (isInitialLoad) {
-        setLoading(true);
-      }
-      setError(null);
-
-      const pending = fetchAvailabilitySlots();
-      // Read AFTER the call: the id is bumped synchronously, before the first
-      // await, so this is that call's own id. Without it a stale reply's
-      // `finally` clears the spinner a newer request is still waiting on —
-      // the success and error paths are already guarded this way.
-      const requestId = availabilityRequestIdRef.current;
-
-      pending
-        .catch((error) => {
-          console.error("Error fetching date-dependent data:", error);
-          // Believed unreachable — see fetchAllData's identical comment.
-          reportSentryError(error, {
-            subsystem: "client",
-            tags: { feature: "scheduling-calendar" },
-          });
-          setError(
-            error instanceof Error
-              ? error.message
-              : "Failed to fetch calendar data",
-          );
-        })
-        .finally(() => {
-          if (requestId !== availabilityRequestIdRef.current) return;
-          setLoading(false);
-        });
+      void fetchAvailabilitySlots();
     }
   }, [autoLoad, consultantId, fetchAvailabilitySlots]);
 
-  // Effect 3 — #1164 background freshness. The grid never refreshed after
-  // open, so a slot booked elsewhere stayed green until the user navigated.
-  // Poll the date-dependent availability (~60s), paused while the tab is
-  // hidden, with an immediate refetch on a stale return (visibility/focus).
-  // Polling, not push: the grid is a hint and allocation re-validates
-  // server-side (see lib/scheduling/availabilityPolling.ts). A poll landing
-  // after a navigation is discarded by the availabilityRequestIdRef guard in
-  // fetchAvailabilitySlots, exactly like any other stale response.
+  // Background freshness: ~60 s poll, paused while hidden, refetch on return.
   useEffect(() => {
     if (!autoLoad || !consultantId) return;
     if (typeof document === "undefined") return;
 
-    // Timers + the two decisions live in lib/scheduling/availabilityPolling so
-    // the loop can be driven by fake timers. Focus and visibilitychange BOTH
-    // fire on a tab return; whichever runs first refetches and stamps
-    // availabilityFetchedAtRef, so the second sees sub-floor staleness and only
-    // re-arms (see shouldRefetchOnReturn).
     const poller = createAvailabilityPoller({
-      // Read, not captured: the literal `true` this replaced made the gate a
-      // dead branch that could never say no.
       isEnabled: () => Boolean(autoLoad && consultantId),
       visibilityState: () => document.visibilityState,
       msSinceLastFetch: () => Date.now() - availabilityFetchedAtRef.current,
       inFlight: () => availabilityInFlightRef.current,
-      fetch: () => fetchAvailabilitySlots({ background: true }),
+      fetch: () => {
+        if (eventSlotsFailedRef.current) void fetchEventSlots();
+        return fetchAvailabilitySlots({ background: true });
+      },
       jitterMs: availabilityPollJitterMs,
     });
 
@@ -1084,61 +683,38 @@ export function useCalendarData(
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("focus", onReturn);
     };
-  }, [autoLoad, consultantId, fetchAvailabilitySlots]);
+  }, [autoLoad, consultantId, fetchAvailabilitySlots, fetchEventSlots]);
 
-  // ENHANCEMENT: Individual refetch functions for granular control
-  const refetchConsultant = useCallback(async (): Promise<void> => {
-    setLoading(true);
-    try {
-      await fetchConsultantDetails();
-    } finally {
-      setLoading(false);
-    }
-  }, [fetchConsultantDetails]);
-
-  const refetchAvailability = useCallback(async (): Promise<void> => {
-    setLoading(true);
-    try {
-      // The explicit refetch is what runs after an allocation, so it must not
-      // be answered from the 30s browser cache the route now permits (#1164).
-      await fetchAvailabilitySlots({ fresh: true });
-    } finally {
-      setLoading(false);
-    }
-  }, [fetchAvailabilitySlots]);
-
-  const refetchEventSlots = useCallback(async (): Promise<void> => {
-    setLoading(true);
-    try {
-      await fetchEventSlots();
-    } finally {
-      setLoading(false);
-    }
-  }, [fetchEventSlots]);
+  // Explicit refetches (after a save, after a stay-open refusal) keep the grid
+  // mounted: `refreshing` shows progress, `loading` is first paint only.
+  const refetchAvailability = useCallback(
+    () => fetchAvailabilitySlots({ fresh: true }).then(() => undefined),
+    [fetchAvailabilitySlots],
+  );
 
   return {
-    // Data
     consultantDetails,
+    serverCells,
     availableSlots,
-    rawAvailabilitySlots,
     eventSlots,
     eventTentativeSlots,
-    weeklyConfirmedCallCounts,
     eventOccurrences,
     subscriptionMeta,
-    loading,
-    error,
-    // #1863 — how old the cells on screen are, and whether the poll behind them
-    // is still answering. Purely informational: the allocator re-validates
-    // server-side whatever this says, so nothing here gates an action.
+    quota,
+    leadMs,
+    cellsWindow,
+    loading: Boolean(
+      autoLoad && consultantId && !(settled.consultant && settled.availability),
+    ),
+    refreshing,
+    // Before any window has loaded there is nothing to keep on screen; after,
+    // a failed refresh keeps the last cells and says so inline.
+    error: consultantError ?? (cellsWindow === null ? availabilityError : null),
+    refreshFailed: cellsWindow !== null && availabilityError !== null,
+    eventSlotsFailed,
     availabilityFreshness: availabilityFreshnessState,
-
-    // Actions - ENHANCEMENT: Granular refetch control
     refetch: fetchAllData,
-    refetchConsultant,
     refetchAvailability,
-    refetchEventSlots,
-    getSlotStatusForInterval, // KEY: Unified slot status calculation
-    slotStatusMap, // PERFORMANCE: Precomputed status map for O(1) lookups
+    refetchEventSlots: fetchEventSlots,
   };
 }

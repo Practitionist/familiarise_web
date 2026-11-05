@@ -37,9 +37,24 @@ const orgFiled = {
   requesterUserId: "member",
   submitterUserId: "operator",
   externalRequesterEmail: null,
+  appointmentId: "appt-1",
+  callbackPhone: "+919999999999",
+  callbackWindow: "09:00-12:00 IST",
+  csatRating: 4,
+  csatAt: at,
   deletedAt: null,
   createdAt: at,
-  subjects: [],
+  subjects: [
+    {
+      id: "s1",
+      subjectType: "APPOINTMENT",
+      subjectId: "appt-1",
+      isPrimary: true,
+    },
+    { id: "s2", subjectType: "PAYMENT", subjectId: "pay-1", isPrimary: false },
+    { id: "s3", subjectType: "REFUND", subjectId: "ref-1", isPrimary: false },
+    { id: "s4", subjectType: "INVOICE", subjectId: "inv-1", isPrimary: false },
+  ],
   messages: [
     {
       id: "m1",
@@ -56,6 +71,8 @@ const orgFiled = {
 beforeEach(() => {
   jest.clearAllMocks();
   db.supportCase.findUnique.mockResolvedValue(orgFiled);
+  db.appointment.findMany.mockResolvedValue([]);
+  db.consultantProfile.findMany.mockResolvedValue([]);
   db.membership.findUnique.mockImplementation(
     async ({
       where,
@@ -76,7 +93,7 @@ describe("reading an organization-filed case", () => {
     });
     expect(view).toMatchObject({
       id: "case-1",
-      title: "Organization support request",
+      title: "Organization support case",
       description: "",
       messages: [],
       filedByOrganizationNotice: true,
@@ -91,6 +108,49 @@ describe("reading an organization-filed case", () => {
         isStaff: false,
       }),
     ).resolves.toBeNull();
+  });
+
+  it("gives an accepted presenter the thread with financial and callback data redacted", async () => {
+    db.appointment.findMany.mockResolvedValue([
+      {
+        id: "appt-1",
+        participants: [],
+        consultation: null,
+        subscription: null,
+        webinar: {
+          webinarPlan: {
+            consultantProfileId: null,
+            collaborators: [{ consultantProfileId: "presenter-profile" }],
+          },
+        },
+        class: null,
+        payment: [],
+      },
+    ]);
+    db.consultantProfile.findMany.mockResolvedValue([
+      { id: "presenter-profile", user: { id: "presenter-user" } },
+    ]);
+    const view = await readSupportCaseForViewer("case-1", {
+      userId: "presenter-user",
+      isStaff: false,
+    });
+    expect(view).toMatchObject({
+      viewerIsPresenter: true,
+      filedByOrganizationNotice: false,
+      callbackWindow: null,
+      csatRating: null,
+      csatAt: null,
+    });
+    expect(view?.messages).toHaveLength(1);
+    expect(view?.subjects).toEqual([
+      {
+        id: "s1",
+        subjectType: "APPOINTMENT",
+        subjectId: "appt-1",
+        isPrimary: true,
+      },
+    ]);
+    expect(JSON.stringify(view)).not.toContain("pay-1");
   });
 
   it("shows the full case to a current operator with the grant", async () => {

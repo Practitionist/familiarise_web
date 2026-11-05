@@ -153,17 +153,17 @@ graph LR
    - Ask the team lead for the actual values
    - Key variables you need to know about (don't worry about the values yet):
 
-   | Variable                                  | What It Does                             |
-   | ----------------------------------------- | ---------------------------------------- |
-   | `DATABASE_URL`                            | Connects to Supabase PostgreSQL database |
-   | `NEXT_PUBLIC_STREAM_API_KEY`              | Stream.io video/chat (public key)        |
-   | `STREAM_API_SECRET`                       | Stream.io server-side key                |
-   | `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | Razorpay payment gateway                 |
-   | `STRIPE_SECRET_KEY`                       | Stripe payment gateway                   |
-   | `RESEND_API_KEY`                          | Email sending                            |
-   | `NOVU_API_KEY`                            | In-app notifications                     |
-   | `UPSTASH_REDIS_*`                         | Redis for caching and rate limiting      |
-   | `BETTER_AUTH_SECRET`                      | Authentication encryption key            |
+   | Variable                              | What It Does                             |
+   | ------------------------------------- | ---------------------------------------- |
+   | `DATABASE_URL`                        | Connects to Supabase PostgreSQL database |
+   | `NEXT_PUBLIC_STREAM_API_KEY`          | Stream.io video/chat (public key)        |
+   | `STREAM_API_SECRET`                   | Stream.io server-side key                |
+   | `RAZORPAY_KEY_ID` / `RAZORPAY_SECRET` | Razorpay payment gateway                 |
+   | `STRIPE_SECRET_KEY`                   | Stripe payment gateway                   |
+   | `RESEND_API_KEY`                      | Email sending                            |
+   | `NOVU_API_KEY`                        | In-app notifications                     |
+   | `UPSTASH_REDIS_*`                     | Redis for caching and rate limiting      |
+   | `BETTER_AUTH_SECRET`                  | Authentication encryption key            |
 
 4. **Run the development server:**
 
@@ -292,7 +292,7 @@ graph TD
 
 **What:** Consultants create the services they want to offer. This is the core feature.
 
-**Where:** `/dashboard/consultant/[id]/planner`
+**Where:** `/dashboard/consultant/[id]/sell/sessions` and `sell/programs`
 
 **Who:** Consultant
 
@@ -351,7 +351,7 @@ graph TD
 
 **What:** Consultants set when they're available for bookings. Two modes: weekly recurring slots and custom one-off slots.
 
-**Where:** `/dashboard/consultant/[id]/planner` (schedule tab)
+**Where:** `/dashboard/consultant/[id]/availability`
 
 **Who:** Consultant
 
@@ -504,8 +504,9 @@ sequenceDiagram
 1. Go to Chats
 2. Select a conversation with a consultee
 3. Send a text message
-4. Send a file attachment
-5. Check that messages appear in real-time on both sides
+4. Confirm the composer has no attachment/paperclip button, and a dropped or pasted file is rejected
+5. Open a chat tied to an appointment and confirm the composer shows "Share files under Documents for this session", linking to that appointment's Documents tab
+6. Check that messages appear in real-time on both sides
 
 ### Collaborations
 
@@ -742,12 +743,12 @@ graph TD
 
 ### Resources & Materials
 
-**Where:** `/dashboard/consultee/[id]/resources`
+**Where:** `/dashboard/consultee/[id]/library?tab=documents`
 
 **How to test:**
 
 1. Book a session with a consultant who has uploaded materials
-2. After booking, check Resources
+2. After booking, open Library › Documents (the plan materials table)
 3. You should see downloadable files (PDFs, documents, etc.)
 4. Try downloading a resource
 
@@ -799,7 +800,7 @@ graph LR
 
 - 1:1 direct messaging
 - Group channels for webinars/classes
-- File sharing (images, documents)
+- Text-only chat — no composer attachment selector; dropped, pasted, and API uploads are rejected
 - Message history (searchable)
 - Typing indicators
 - Read receipts
@@ -811,8 +812,9 @@ graph LR
 2. Go to Messages/Chats
 3. Find the conversation channel
 4. Send a text message — it should appear instantly on both sides
-5. Send a file attachment
-6. Search for a past message
+5. Confirm the composer has no attachment/paperclip button, and a dropped or pasted file is rejected
+6. Open the appointment-linked chat and confirm the Documents hint links to that appointment's Documents tab
+7. Search for a past message
 
 ---
 
@@ -1111,7 +1113,7 @@ Admins have everything staff has, plus:
 
 ### Approval Payments
 
-**Where:** `/dashboard/admin/approval-payments`
+**Where:** `/dashboard/admin/appointments?tab=awaiting-payment`
 
 - Manual payment approvals for special cases
 - Override payment flows when needed
@@ -1244,7 +1246,7 @@ Use these checklists to systematically test every feature. Check off each item a
 - [ ] Use screen sharing in a call
 - [ ] Use in-call chat
 - [ ] Send a message via Chat
-- [ ] Send a file in Chat
+- [ ] Confirm the composer has no attachment button and rejects dropped or pasted files
 - [ ] Leave a review after session
 - [ ] Upload a document for review
 - [ ] Subscribe to a subscription plan

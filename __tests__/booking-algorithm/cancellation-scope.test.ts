@@ -24,6 +24,9 @@
 
 const mockAppointmentFindFirst = jest.fn();
 const mockRecordSystemError = jest.fn();
+const mockRescheduleFindMany = jest.fn(
+  async (..._args: unknown[]) => [] as unknown[],
+);
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -31,6 +34,12 @@ jest.mock("../../lib/prisma", () => ({
     appointment: {
       findFirst: (...a: unknown[]) => mockAppointmentFindFirst(...a),
     },
+    // No session was released by a reschedule or refunded on its own.
+    appointmentOccurrence: { findMany: async () => [] },
+    rescheduleRequest: {
+      findMany: (...a: unknown[]) => mockRescheduleFindMany(...a),
+    },
+    refund: { findMany: async () => [] },
   },
 }));
 
@@ -78,9 +87,24 @@ function subscriptionRow() {
     cancellationPolicy: null,
     payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
     occurrences: [
-      { startsAt: hoursFromNow(-48), completionStatus: "COMPLETED" },
-      { startsAt: hoursFromNow(72), completionStatus: "SCHEDULED" },
-      { startsAt: hoursFromNow(96), completionStatus: "SCHEDULED" },
+      {
+        startsAt: hoursFromNow(-48),
+        endsAt: hoursFromNow(-48 + 1),
+        ordinal: 1,
+        completionStatus: "COMPLETED",
+      },
+      {
+        startsAt: hoursFromNow(72),
+        endsAt: hoursFromNow(72 + 1),
+        ordinal: 1,
+        completionStatus: "SCHEDULED",
+      },
+      {
+        startsAt: hoursFromNow(96),
+        endsAt: hoursFromNow(96 + 1),
+        ordinal: 1,
+        completionStatus: "SCHEDULED",
+      },
     ],
   };
 }
@@ -164,7 +188,12 @@ describe("resolveBookingRefundContext", () => {
       cancellationPolicy: null,
       payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
       occurrences: [
-        { startsAt: hoursFromNow(30), completionStatus: "RESCHEDULED" },
+        {
+          startsAt: hoursFromNow(30),
+          endsAt: hoursFromNow(30 + 1),
+          ordinal: 1,
+          completionStatus: "RESCHEDULED",
+        },
       ],
     });
 
@@ -173,6 +202,94 @@ describe("resolveBookingRefundContext", () => {
     expect(ctx.sessionsRemaining).toBe(1);
     expect(ctx.sessionsCompleted).toBe(0);
     expect(ctx.hoursUntilNextSession).toBeGreaterThan(29);
+  });
+
+  it("quotes a released session that was never given a new time at full notice", async () => {
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+      occurrences: [
+        {
+          startsAt: hoursFromNow(-5),
+          endsAt: hoursFromNow(-4),
+          ordinal: 1,
+          completionStatus: "RESCHEDULED",
+        },
+      ],
+    });
+
+    const ctx = await resolveBookingRefundContext({
+      consultationId: "c-stranded",
+    });
+
+    // Not the lowest tier for a time that already passed.
+    expect(ctx.hoursUntilNextSession).toBeGreaterThan(24 * 30);
+  });
+
+  it("applies the client's own late release before picking the shortest notice", async () => {
+    // The client released session 1 with an hour's notice; session 2 is in 2 h.
+    const releasedStart = hoursFromNow(-5);
+    mockRescheduleFindMany.mockResolvedValueOnce([
+      {
+        id: "rr-1",
+        status: "EXPIRED",
+        createdAt: new Date(releasedStart.getTime() - HOUR),
+        releasedSessions: [
+          { ordinal: 1, startsAt: releasedStart.toISOString() },
+        ],
+      },
+    ]);
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+      occurrences: [
+        {
+          startsAt: releasedStart,
+          endsAt: hoursFromNow(-4),
+          ordinal: 1,
+          completionStatus: "RESCHEDULED",
+        },
+        {
+          startsAt: hoursFromNow(2),
+          endsAt: hoursFromNow(3),
+          ordinal: 2,
+          completionStatus: "SCHEDULED",
+        },
+      ],
+    });
+
+    const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
+
+    expect(ctx.hoursUntilNextSession).toBeCloseTo(1, 5);
+  });
+
+  it("never lets a never-replaced session outrank an imminent one", async () => {
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+      occurrences: [
+        {
+          startsAt: hoursFromNow(-5),
+          endsAt: hoursFromNow(-4),
+          ordinal: 1,
+          completionStatus: "RESCHEDULED",
+        },
+        {
+          startsAt: hoursFromNow(2),
+          endsAt: hoursFromNow(3),
+          ordinal: 2,
+          completionStatus: "SCHEDULED",
+        },
+      ],
+    });
+
+    const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
+
+    expect(ctx.hoursUntilNextSession).toBeGreaterThan(1.9);
+    expect(ctx.hoursUntilNextSession).toBeLessThan(2.1);
   });
 
   it("reports no live session for a paid but unallocated subscription", async () => {
@@ -336,7 +453,12 @@ describe("resolveBookingRefundContext", () => {
       cancellationPolicy: null,
       payment: [{ id: "pay-c", amount: 250_000, refunds: [], disputes: [] }],
       occurrences: [
-        { startsAt: hoursFromNow(5), completionStatus: "SCHEDULED" },
+        {
+          startsAt: hoursFromNow(5),
+          endsAt: hoursFromNow(5 + 1),
+          ordinal: 1,
+          completionStatus: "SCHEDULED",
+        },
       ],
     });
 
@@ -429,7 +551,12 @@ describe("resolveBookingRefundContext", () => {
       cancellationPolicy: null,
       payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
       occurrences: [
-        { startsAt: hoursFromNow(48), completionStatus: "CANCELLED" },
+        {
+          startsAt: hoursFromNow(48),
+          endsAt: hoursFromNow(48 + 1),
+          ordinal: 1,
+          completionStatus: "CANCELLED",
+        },
       ],
     });
     const cancelled = await resolveBookingRefundContext({

@@ -50,6 +50,12 @@ Platform-wide orientation and end-to-end cross-subsystem explainers.
 
 ---
 
+### Dashboard
+
+- [information-architecture.md](./dashboard/information-architecture.md) - The dashboard glossary, the current navigation trees for every role, and the planned regrouping phases
+
+---
+
 ### Booking
 
 Booking system, slot allocation, validation, and scheduling logic for all 5 event types.
@@ -68,6 +74,9 @@ Booking system, slot allocation, validation, and scheduling logic for all 5 even
 - [12-concurrency-and-locking.md](./booking/12-concurrency-and-locking.md) - Distributed locks, Prisma transactions, race condition prevention
 - [13-cron-jobs-and-background-tasks.md](./booking/13-cron-jobs-and-background-tasks.md) - 6+ background jobs for lifecycle management
 - [14-local-development-and-testing.md](./booking/14-local-development-and-testing.md) - Dev setup, mock payments, test scenarios, debugging
+- [research/README.md](./booking/research/README.md) - The 2026-11-03 V2A booking review (with appendices A to D) and V2B retention review, as dated research snapshots
+- [2026-11-03-booking-v2-direction.md](./decisions/2026-11-03-booking-v2-direction.md) - Booking v2 direction: the correctness fixes and multi-week Phase 0, fixed plan weeks plus Regular time, retention phase 1 and the attendance policy
+- [2026-11-04-booking-v2-train-b.md](./decisions/2026-11-04-booking-v2-train-b.md) - Booking v2 train B: Regular time, the rolling 4-week horizon, the plan-end choice, frozen plan terms, and earnings that wait for owed refunds
 - [01-booking-system-hld.md](./start-here/01-booking-system-hld.md) - Booking system high-level design: pipeline, allocation, concurrency layers, state machines, cron architecture
 - [02-money-system-hld.md](./start-here/02-money-system-hld.md) - Money system high-level design: pricing, capture, legs, ledger, earnings, payouts, refunds and policy decisions
 - [03-booking-and-money-machinery.md](./start-here/03-booking-and-money-machinery.md) - Worked guide with the seeded cast, entity model and end-to-end ledger examples
@@ -95,6 +104,14 @@ The money subsystem: checkout and pricing, capture and webhooks, the double-entr
 - [finance/00-overview/01-money-map.md](./finance/00-overview/01-money-map.md) - Diagram-first system map
 - [finance/70-operations/05-money-runbooks.md](./finance/70-operations/05-money-runbooks.md) - Symptom-first money runbooks
 - [finance/90-decisions/README.md](./finance/90-decisions/README.md) - The money ADRs and the gateway decision
+
+---
+
+### Digital Products
+
+Standalone file sales: upload and verification, purchase and free claim, downloads, refunds and the R2 bucket setup.
+
+- [01-architecture.md](./digital-products/01-architecture.md) - Data model, sequence diagrams, verification rules, background jobs and the R2 setup runbook
 
 ---
 
@@ -166,18 +183,25 @@ Notification system: Resend (transactional email) + Novu (multi-channel orchestr
 
 ### Support
 
-The `#support-hub` system: per-appointment support threads, stateless platform
-intake, org triage, ticket references, SLA clocks, and the deflection counter.
+The support case system: one `SupportCase` per request, guided self-service and
+intake, the transition table, immutable decisions and appeals, evidence, money
+remedies through the owning domain's doors, staff chat access, the SLA sweep,
+privacy and retention.
 
-- [README.md](./support/README.md) - System overview, the three sibling subsystems, source code map, recommended reading order
-- [01-architecture.md](./support/01-architecture.md) - Two scopes on one engine, the error envelope and Sentry policy, the authz gate, the hub surfaces
-- [02-the-grid.md](./support/02-the-grid.md) - What each record is anchored to, who may see it, and when it exists, across every actor and booking shape
-- [03-ticket-references-and-sla.md](./support/03-ticket-references-and-sla.md) - The `FAM-` reference series and the statutory SLA model
-- [04-deflection-and-support-csat.md](./support/04-deflection-and-support-csat.md) - What fraction the tree resolves, and the two halves of support CSAT
-- [05-schema-reference.md](./support/05-schema-reference.md) - Every support column and index, and why
-- [06-invariants-and-testing.md](./support/06-invariants-and-testing.md) - Sixteen invariants to know before editing, the test map, and how to run the end-to-end QA suite
-- [07-ticket-lifecycle-and-concurrency.md](./support/07-ticket-lifecycle-and-concurrency.md) - Ticket statuses, reopening rules, thread mirroring and the compare-and-set guards
-- [08-intake-callbacks-attachments-and-limits.md](./support/08-intake-callbacks-attachments-and-limits.md) - Intake doors, validated callbacks, receipts, private attachments and per-route rate limits
+- [README.md](./support/README.md) - Index, module map, status vocabulary and reading order
+- [01-intake-and-flows.md](./support/01-intake-and-flows.md) - Intake doors, guided flows, deflection, dedupe and references
+- [02-case-lifecycle.md](./support/02-case-lifecycle.md) - The case service, the status transition table, messages, clocks and CSAT
+- [03-decisions-appeals-and-supersede.md](./support/03-decisions-appeals-and-supersede.md) - Immutable decisions, the appeal window, independent appeals and supersede
+- [04-evidence-and-attachments.md](./support/04-evidence-and-attachments.md) - Evidence requests to the other party, private attachments and their limits
+- [05-money-remedies.md](./support/05-money-remedies.md) - Refund recommendations, the refund doors, staff caps, second-admin approval and payout holds
+- [06-chat-access-and-intervention.md](./support/06-chat-access-and-intervention.md) - Case-linked chat read grants, transcripts and visible Familiarise Support intervention
+- [07-sla-sweep.md](./support/07-sla-sweep.md) - The leased sweep and its arms: notices, auto-close, cascade, purge and the chat backstop
+- [08-privacy-and-retention.md](./support/08-privacy-and-retention.md) - Export, erasure, the 180-day evidence purge and legal hold
+- [09-org-scopes-and-visibility.md](./support/09-org-scopes-and-visibility.md) - Ownership scopes, who can see which record, and support beside feedback and reviews
+- [10-notifications.md](./support/10-notifications.md) - The durable outbox, recipients and guarded delivery
+- [11-schema-and-invariants.md](./support/11-schema-and-invariants.md) - Every support table, each invariant and the enforcer behind it
+- [12-runbooks.md](./support/12-runbooks.md) - Stuck refund, failed purge, stuck intervention seat, legal hold, DDL end-phase checklist
+- [13-decision-records.md](./support/13-decision-records.md) - Short records of the owner decisions that shaped the system
 
 ---
 
@@ -244,10 +268,39 @@ strategy documents to the individual slow-query investigations.
 
 How errors, findings and job failures reach a human. The Sentry set records the one project and its DSNs, the reporting conventions that keep modelled refusals out of the fault list, the GitHub Actions failure sink and the day it started delivering, and the triage runbook that turns a sweep into decisions.
 
+- [observability/README.md](./observability/README.md) - The index of this folder, with a reading order by question
+- [00-system-design.md](./observability/00-system-design.md) - The whole subsystem: signal sources and sinks, the three questions and their layers, quota rules, ticker failure escalation, and the planned operations console
+- [01-ownership-sentry-betterstack.md](./observability/01-ownership-sentry-betterstack.md) - Which tool answers which question (Better Stack, Sentry, Postgres, the console), the planned per-item history and backlog alerts, and every option considered
+- [02-research-per-item-history-and-vendors.md](./observability/02-research-per-item-history-and-vendors.md) - The vendor comparison, the warehouse triggers and the log-table inventory behind the ownership decisions
+- [three-layers.md](./observability/three-layers.md) - Sentry for failures, Better Stack for jobs that did not run, and the entity trace and job run metrics for what happened to one payment, with a worked missing-refund trace
 - [sentry/01-setup-and-configuration.md](./observability/sentry/01-setup-and-configuration.md) - The project, the two DSN variables and who reads each, the SDK files and knobs, the source-map token history
 - [sentry/02-conventions.md](./observability/sentry/02-conventions.md) - `expected:true` for modelled outcomes, findings as messages, the tags that carry meaning, SystemEvent versus Sentry, what an issue status means
 - [sentry/03-actions-failure-sink.md](./observability/sentry/03-actions-failure-sink.md) - `notify-ops-failure.sh`, the envelope endpoint, the dead DSN that silenced it for three weeks, how to tell it is working
 - [sentry/04-triage-runbook.md](./observability/sentry/04-triage-runbook.md) - Scope by release, attribute every issue to one of three causes, decide with a written reason, the chronic ids, the tools
+- [sentry/05-identity-and-triage.md](./observability/sentry/05-identity-and-triage.md) - Request-scoped user and organisation stamping, the back-office lookup, and the data-protection gate
+- [sentry/06-ingest-canary.md](./observability/sentry/06-ingest-canary.md) - The 2026-09-22 quota outage, the six canary verdicts and why the canary emails instead of reporting
+- [sentry/07-verifying-end-to-end.md](./observability/sentry/07-verifying-end-to-end.md) - The evidence ladder and the deploy-preview probe procedure
+- [sentry/08-error-telemetry-privacy-reference.md](./observability/sentry/08-error-telemetry-privacy-reference.md) - The privacy and lawful-basis reasoning for sending error data to a hosted vendor
+- [maintenance/11-job-machinery-catalog.md](./maintenance/11-job-machinery-catalog.md) - How every scheduled job runs, what each run records and reports, the observability gaps, and the operations dashboard spec
+- [infrastructure/README.md](./infrastructure/README.md) - Index of the infrastructure roadmap and the 2026-10-31 hosting and job-runtime research, numbered in reading order
+- [infrastructure/01-scale-path-research.md](./infrastructure/01-scale-path-research.md) - Research summary for the jobs and web-tier scale path, the main finding and the recorded owner decisions
+- [infrastructure/03-background-jobs-and-cron-options.md](./infrastructure/03-background-jobs-and-cron-options.md) - Background jobs and cron: 25 options, what startups do, the cheapest path per stage
+- [infrastructure/05-mumbai-vm-provider-research.md](./infrastructure/05-mumbai-vm-provider-research.md) - Mumbai VM provider research: Lightsail recommended, EC2 and GCP runners-up, latency figures are estimates until the probe runs
+- [infrastructure/04-mumbai-hosting-comparison.md](./infrastructure/04-mumbai-hosting-comparison.md) - Costed comparison of hosting in Mumbai
+- [infrastructure/06-queue-prototype-owed-refunds.md](./infrastructure/06-queue-prototype-owed-refunds.md) - pg-boss against a hand-written Prisma Job table on the owed-refund job
+- [infrastructure/02-runtime-strategy-review.md](./infrastructure/02-runtime-strategy-review.md) - Unbiased review of job and runtime strategy (a dissenting analysis, not the plan)
+- [infrastructure/07-job-runtime-system-designs.md](./infrastructure/07-job-runtime-system-designs.md) - Mermaid system designs for each candidate runtime
+- [maintenance/14-background-job-runtime-options.md](./maintenance/14-background-job-runtime-options.md) - Comparison matrix, request-flow and state diagrams, worked example, official sources and the owner's Q&A for Netlify, Inngest, QStash, Upstash Workflow, Trigger.dev, pg-boss, DBOS and Vercel `bom1`
+- [maintenance/15-job-runtime-layer-matrix.md](./maintenance/15-job-runtime-layer-matrix.md) - The eight layers of the jobs subsystem, the five compatibility rules and the eleven coherent stacks, with an HLD and a decision flowchart
+- [maintenance/18-monitoring-and-tracing-failures.md](./maintenance/18-monitoring-and-tracing-failures.md) - The four monitoring layers, the one-user-or-a-group flowchart, how each failure mode is handled and the filed gaps
+- [maintenance/17-target-architecture-and-roadmap.md](./maintenance/17-target-architecture-and-roadmap.md) - Executive summary, the greenfield target design (a proposal), the path from today and the Netlify billing status
+- [maintenance/16-job-machinery-and-portability.md](./maintenance/16-job-machinery-and-portability.md) - Job machinery line counts, what a host move removes, the Netlify-specific surface and portability as ports and adapters
+- [maintenance/experiments/2026-10-31-job-runtime/README.md](./maintenance/experiments/2026-10-31-job-runtime/README.md) - Index of the raw experiment reports, the method, the honesty labels, the dashboards to browse and the cleanup log
+- [2026-10-31-job-runtime-experiments.md](./decisions/2026-10-31-job-runtime-experiments.md) - Evidence and the launch runtime decision (ticker plus Background Functions, then a choice between Vercel `bom1` and a Mumbai VM)
+- [2026-11-01-dunning-atomic-notices.md](./decisions/2026-11-01-dunning-atomic-notices.md) - Every dunning stage stages its overdue bell and email inside the winning claim transaction; a roster or render failure rolls the claim back and counts as a failed run item
+- [2026-10-31-gpt-issue-triage.md](./decisions/2026-10-31-gpt-issue-triage.md) - Triage of the GPT-6.1 durable-jobs issues: org invoice rail off at launch, no second-scheduler pilot, fix order for the owner
+- [2026-10-26-launch-sweep-observability-and-money-holds.md](./decisions/2026-10-26-launch-sweep-observability-and-money-holds.md) - ADR-01 to ADR-12: money holds, invoice healing, tax identity, auth abuse controls, the three observability layers, ticker escalation and the Sentry quota posture
+- [2026-10-31-ci-on-github-hosted-with-cuts.md](./decisions/2026-10-31-ci-on-github-hosted-with-cuts.md) - CI stays on GitHub-hosted runners: the cuts applied, the roughly $15 a month hard-stop budget, the launch-pace target and the runner fallback
 
 ---
 
@@ -259,6 +312,7 @@ Live hosting operations on Netlify Pro, multi-platform Mumbai compute evaluation
 - [multi-platform-evaluation.md](./deployment/multi-platform-evaluation.md) - Ranked 10-platform evaluation scorecard (`Cloud Run asia-south1`, `Vercel Pro bom1`, `Fly.io bom`, `Netlify Pro sin`, etc.)
 - [emergency-failback-runbook.md](./deployment/emergency-failback-runbook.md) - `< 90s` hot-standby failback runbook (`Platform X -> Netlify` with zero code reverts)
 - [netlify.md](./deployment/netlify.md) - Full operating handbook for live Netlify Pro (`sin`) deployments, env contexts, and build/cold-start controls
+- [netlify-vs-vercel-product-map.md](./deployment/netlify-vs-vercel-product-map.md) - Netlify, Vercel and Cloudflare products by layer, how they map onto each other, and the measured 2026-10-31 facts
 - [google-cloud.md](./deployment/google-cloud.md) - GCP project `familiarise` (`384845845365`), Google OAuth setup, and `gcloud` CLI guide
 
 ## Guides & Developer Resources

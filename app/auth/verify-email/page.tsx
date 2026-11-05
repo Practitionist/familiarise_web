@@ -1,5 +1,6 @@
 "use client";
 
+import { SUPPORT_EMAIL } from "@/lib/company";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +16,13 @@ import {
   type AuthActionTarget,
 } from "@/components/auth/AuthErrorAffordance";
 import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
+import { RECIPIENT_DAILY_CAP } from "@/lib/email/recipient-cap-policy";
+import {
+  TurnstileWidget,
+  awaitingCaptcha,
+  captchaHeaders,
+  useTurnstile,
+} from "@/components/auth/Turnstile";
 import { emailOtp, useSession } from "@/lib/auth-client";
 import {
   clearPendingVerificationEmail,
@@ -26,10 +34,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { z } from "zod";
 import { AuthCardSkeleton } from "../AuthCardSkeleton";
-
-/** Customer-facing support mailbox. Mirrors `lib/labels/org-errors.ts`. */
-const SUPPORT_EMAIL =
-  process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@familiarisenow.com";
 
 const CODE_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -68,6 +72,7 @@ function VerifyEmailContent() {
   const [errorCopy, setErrorCopy] = useState<AuthErrorCopy | null>(null);
   const verifyRetryAfter = useRetryAfterCapture();
   const resendRetryAfter = useRetryAfterCapture();
+  const captcha = useTurnstile();
 
   useEffect(() => {
     const stashed = EmailSchema.safeParse(readPendingVerificationEmail() ?? "");
@@ -104,6 +109,10 @@ function VerifyEmailContent() {
     if (cooldown > 0 || resending) return;
     const target = parsedEmail();
     if (!target) return;
+    if (awaitingCaptcha(captcha)) {
+      setErrorCopy(humanizeAuthError("verify", { code: "MISSING_RESPONSE" }));
+      return;
+    }
     setResending(true);
     setErrorCopy(null);
     resendRetryAfter.clear();
@@ -111,7 +120,10 @@ function VerifyEmailContent() {
       const { error } = await emailOtp.sendVerificationOtp({
         email: target,
         type: "email-verification",
-        fetchOptions: resendRetryAfter.fetchOptions,
+        fetchOptions: {
+          ...resendRetryAfter.fetchOptions,
+          headers: captchaHeaders(captcha),
+        },
       });
       if (error) {
         const wait = resendRetryAfter.take();
@@ -125,11 +137,14 @@ function VerifyEmailContent() {
       setCooldown(RESEND_COOLDOWN_SECONDS);
       toast({
         title: "Code sent",
-        description: `If ${target} is waiting to be verified, a new code is on its way. It expires in 10 minutes.`,
+        // Always shown: the cap is enforced after the response, and naming
+        // it only when hit would reveal that the address has an account.
+        description: `If ${target} can receive mail and is waiting to be verified, a new code is on its way. It expires in 10 minutes. You can request at most ${RECIPIENT_DAILY_CAP} codes a day.`,
       });
     } catch {
       setErrorCopy(humanizeAuthError("verify", { status: 0 }));
     } finally {
+      captcha.reset();
       setResending(false);
     }
   };
@@ -285,6 +300,8 @@ function VerifyEmailContent() {
               ? `Resend code in ${cooldown}s`
               : "Resend code"}
         </Button>
+
+        <TurnstileWidget handle={captcha} />
 
         <AuthErrorAffordance action={errorCopy?.action} target={errorTarget} />
 

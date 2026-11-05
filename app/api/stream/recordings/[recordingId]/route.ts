@@ -16,6 +16,7 @@ import { RecordingService } from "@/lib/stream/recording-service";
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import { purgeExpiredRecordingAssets } from "@/lib/stream/recording-retention";
 import prisma from "@/lib/prisma";
+import { purgeRecordingSurfaces } from "@/lib/data/public-cache";
 import { streamLogger } from "@/lib/stream-logger";
 import {
   viewerPlaybackAccess,
@@ -65,16 +66,19 @@ function metadataOnlyResponse(
   metadata: Record<string, unknown>,
   reason: string,
 ) {
-  return NextResponse.json({
-    recording: {
-      ...metadata,
-      playbackUrl: null,
-      thumbnailUrl: null,
-      previewClipUrl: null,
-      previewTranscript: null,
+  return NextResponse.json(
+    {
+      recording: {
+        ...metadata,
+        playbackUrl: null,
+        thumbnailUrl: null,
+        previewClipUrl: null,
+        previewTranscript: null,
+      },
+      access: { level: "METADATA_ONLY" as const, reason },
     },
-    access: { level: "METADATA_ONLY" as const, reason },
-  });
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
 }
 
 /** Org members with operations or catalog roles see the recording's metadata, never the media. */
@@ -319,6 +323,10 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       writeTarget(recording),
     );
     if (!access.allowed) return fileApiError("FORBIDDEN");
+    // Already removed: a repeat must not re-stamp the removal or re-notify.
+    if (recording.status === RecordingStatus.EXPIRED) {
+      return recordingGoneResponse(recording);
+    }
 
     // Always block deletion when any PENDING or SUCCEEDED purchase exists,
     // regardless of current listingStatus (prevents unpublish-then-delete bypass).
@@ -358,6 +366,7 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
           unpublishedAt: new Date(),
         },
       });
+      purgeRecordingSurfaces();
       const racedPurchase = await findActivePurchase();
       if (racedPurchase) return fileApiError("RECORDING_HAS_BUYERS");
     }

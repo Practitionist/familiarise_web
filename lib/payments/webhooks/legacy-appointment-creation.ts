@@ -13,7 +13,7 @@ import {
 } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import { buildOccurrenceForWindow } from "@/lib/appointments/occurrences";
-import { firstCycleWindow } from "@/lib/booking/entitlement";
+import { firstCycleWindow, purchaseTermsOf } from "@/lib/booking/entitlement";
 import {
   liveParticipant,
   recordParticipants,
@@ -259,7 +259,7 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
       schedulingPeriodStartsAt: startDate,
       schedulingPeriodEndsAt: endDate,
       schedulingTimezone,
-      sessionsTotal: plan.totalSessions,
+      ...purchaseTermsOf(plan, startDate, schedulingTimezone),
     },
   });
 

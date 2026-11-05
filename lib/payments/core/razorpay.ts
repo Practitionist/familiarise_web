@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { reportSentryError } from "@/lib/observability/report";
+import { razorpayKeyMode } from "@/lib/payments/core/razorpay-key-mode";
 import Razorpay from "razorpay";
 import { createHash } from "node:crypto";
 import {
@@ -9,6 +10,7 @@ import {
   RefundResult,
   PaymentError,
   RefundError,
+  GATEWAY_NOT_FOUND,
 } from "./types";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { assertInrSettlement } from "@/lib/payments/validation/currency-guards";
@@ -77,9 +79,9 @@ import {
   // reported once per process at load; collections keep booting and each payout call refuses.
   if (
     process.env.NEXT_PHASE !== "phase-production-build" &&
-    (process.env.RAZORPAYX_KEY_ID || process.env.RAZORPAY_KEY_ID)?.startsWith(
-      "rzp_live_",
-    ) &&
+    razorpayKeyMode(
+      process.env.RAZORPAYX_KEY_ID || process.env.RAZORPAY_KEY_ID,
+    ) === "live" &&
     !process.env.RAZORPAYX_EGRESS_PROXY_URL
   ) {
     reportSentryError(
@@ -337,13 +339,16 @@ export function sanitizeRazorpayNotes(
 /**
  * Create a Razorpay Order
  */
-export async function createRazorpayOrder({
-  amount,
-  currency,
-  metadata,
-  customerId,
-  holdExpiresAt,
-}: PaymentIntentParams): Promise<PaymentIntent> {
+export async function createRazorpayOrder(
+  {
+    amount,
+    currency,
+    metadata,
+    customerId,
+    holdExpiresAt,
+  }: PaymentIntentParams,
+  timeoutMs: number = SDK_CALL_TIMEOUT_MS,
+): Promise<PaymentIntent> {
   // Normalise settlement currency before client initialisation so non-INR orders
   // never reach Razorpay on any call path.
   const settlementCurrency = assertInrSettlement(
@@ -370,21 +375,23 @@ export async function createRazorpayOrder({
   }
 
   const sanitizedNotes = sanitizeRazorpayNotes(metadata);
-  const submitOrder = (resolvedCustomerId?: string) =>
-    Sentry.startSpan({ op: "http.client", name: "razorpay.createOrder" }, () =>
-      withRazorpaySdkTimeout("orders.create", () =>
-        razorpayClient.orders.create({
-          amount,
-          currency: settlementCurrency,
-          notes: sanitizedNotes,
-          receipt: `receipt_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`,
-          ...(resolvedCustomerId ? { customer_id: resolvedCustomerId } : {}),
-          ...(holdExpiresAt
-            ? { payment: holdCaptureSettings(holdExpiresAt) }
-            : {}),
-        }),
-      ),
+  const submitOrder = (resolvedCustomerId?: string) => {
+    const call = () =>
+      razorpayClient.orders.create({
+        amount,
+        currency: settlementCurrency,
+        notes: sanitizedNotes,
+        receipt: `receipt_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`,
+        ...(resolvedCustomerId ? { customer_id: resolvedCustomerId } : {}),
+        ...(holdExpiresAt
+          ? { payment: holdCaptureSettings(holdExpiresAt) }
+          : {}),
+      });
+    return Sentry.startSpan(
+      { op: "http.client", name: "razorpay.createOrder" },
+      () => withRazorpaySdkTimeout("orders.create", call, timeoutMs),
     );
+  };
 
   try {
     let effectiveCustomerId = customerId;
@@ -637,9 +644,16 @@ export async function cancelRazorpayOrder(
 
 /** What an order holds at the gateway: its captured payment, an uncaptured live one, or nothing. */
 export type RazorpayOrderHolding =
-  | { kind: "captured"; paymentId: string; amountPaise: number }
+  | {
+      kind: "captured";
+      paymentId: string;
+      amountPaise: number;
+      /** Razorpay's `method` (card, netbanking, upi, wallet, ...). */
+      method?: string;
+    }
   | { kind: "live" }
-  | { kind: "empty" };
+  /** `onlyFailed`: the order has attempts and every one of them failed. */
+  | { kind: "empty"; onlyFailed: boolean };
 
 /**
  * Reads the order's payments; an order Razorpay does not know holds nothing.
@@ -648,41 +662,62 @@ export type RazorpayOrderHolding =
  */
 export async function readRazorpayOrderHolding(
   orderId: string,
+  timeoutMs: number = SDK_CALL_TIMEOUT_MS,
 ): Promise<RazorpayOrderHolding> {
   const razorpayClient = getRazorpayClient();
   if (!razorpayClient) throw new Error("RAZORPAY_NOT_INITIALIZED");
   let payments;
   try {
-    payments = await withRazorpaySdkTimeout("orders.fetchPayments", () =>
-      razorpayClient.orders.fetchPayments(orderId),
+    payments = await withRazorpaySdkTimeout(
+      "orders.fetchPayments",
+      () => razorpayClient.orders.fetchPayments(orderId),
+      timeoutMs,
     );
   } catch (error) {
-    if (isUnknownOrderId(error)) return { kind: "empty" };
+    if (isUnknownOrderId(error)) return { kind: "empty", onlyFailed: false };
     throw error;
   }
   const captured = payments.items.find((p) => p.status === "captured");
   if (captured) {
     const amountPaise = Number(captured.amount);
-    if (!Number.isSafeInteger(amountPaise) || captured.currency !== "INR") {
+    if (
+      !Number.isSafeInteger(amountPaise) ||
+      amountPaise <= 0 ||
+      captured.currency !== "INR"
+    ) {
       throw new Error(
-        `Order ${orderId} captured ${String(captured.amount)} ${captured.currency}, not whole INR paise`,
+        `Order ${orderId} captured ${String(captured.amount)} ${captured.currency}, not positive whole INR paise`,
       );
     }
-    return { kind: "captured", paymentId: captured.id, amountPaise };
+    return {
+      kind: "captured",
+      paymentId: captured.id,
+      amountPaise,
+      ...(captured.method ? { method: captured.method } : {}),
+    };
   }
-  return payments.items.some((p) => LIVE_ORDER_PAYMENT_STATUSES.has(p.status))
-    ? { kind: "live" }
-    : { kind: "empty" };
+  if (payments.items.some((p) => LIVE_ORDER_PAYMENT_STATUSES.has(p.status))) {
+    return { kind: "live" };
+  }
+  return {
+    kind: "empty",
+    onlyFailed:
+      payments.items.length > 0 &&
+      payments.items.every((p) => p.status === "failed"),
+  };
 }
 
 /** The gateway's own order record; null without a client, throws when Razorpay cannot answer. */
 export async function fetchRazorpayOrder(
   orderId: string,
+  timeoutMs: number = SDK_CALL_TIMEOUT_MS,
 ): Promise<RazorpayOrderEntity | null> {
   const razorpayClient = getRazorpayClient();
   if (!razorpayClient) return null;
-  const order = await withRazorpaySdkTimeout("orders.fetch", () =>
-    razorpayClient.orders.fetch(orderId),
+  const order = await withRazorpaySdkTimeout(
+    "orders.fetch",
+    () => razorpayClient.orders.fetch(orderId),
+    timeoutMs,
   );
   return razorpayOrderEntitySchema.parse(order);
 }
@@ -814,6 +849,15 @@ async function postRefund({
     // Razorpay's error body is `{ error: { code, description } }` — the shape
     // handleRazorpayRefundError already parses, so throw it through unchanged.
     const parsed = await res.json().catch(() => null);
+    if (res.status === 404) {
+      throw new RefundError(
+        readRazorpayErrorBody(parsed)?.description ??
+          "Razorpay has no such payment for these keys",
+        GATEWAY_NOT_FOUND,
+        "RAZORPAY",
+        { statusCode: 404, body: parsed },
+      );
+    }
     if (parsed && typeof parsed === "object" && "error" in parsed) {
       throw parsed;
     }
@@ -920,14 +964,17 @@ export async function createRazorpayRefund({
     // NO_PAYMENT_FOUND/etc are our own pre-gateway validation (thrown above in
     // this same try), not a gateway fault — tag by origin so the dashboard
     // doesn't conflate "Razorpay is down" with "this order has no payment".
+    const refundError = handleRazorpayRefundError(error);
+    // An unknown payment is permanent; the refund-owed stuck alert is its one report.
     const isModelledValidation =
-      error instanceof RefundError && error.code !== "UNKNOWN_ERROR";
+      (error instanceof RefundError && error.code !== "UNKNOWN_ERROR") ||
+      refundError.code === GATEWAY_NOT_FOUND;
     reportSentryError(error, {
       subsystem: "payments",
       tags: { provider: "razorpay" },
       expected: isModelledValidation,
     });
-    throw handleRazorpayRefundError(error);
+    throw refundError;
   }
 }
 
@@ -1196,6 +1243,21 @@ function handleRazorpayRefundError(error: unknown): RefundError {
   }
 
   const razorpayError = readRazorpayErrorBody(error);
+  const notFound =
+    typeof error === "object" &&
+    error !== null &&
+    "statusCode" in error &&
+    error.statusCode === 404;
+  if (notFound) {
+    return new RefundError(
+      razorpayError?.description ??
+        "Razorpay has no such payment or order for these keys",
+      GATEWAY_NOT_FOUND,
+      "RAZORPAY",
+      error,
+      razorpayError?.reason,
+    );
+  }
   if (razorpayError) {
     const code = razorpayError.code || "UNKNOWN_ERROR";
     const description = razorpayError.description || "Failed to process refund";

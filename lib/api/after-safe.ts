@@ -19,7 +19,7 @@
  * not an acceptable failure channel for money-path side effects.
  */
 
-import { after } from "next/server";
+import { after } from "next/server.js";
 
 import { reportSentryError } from "@/lib/observability/report";
 

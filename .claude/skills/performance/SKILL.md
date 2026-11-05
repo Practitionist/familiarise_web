@@ -58,6 +58,8 @@ You are working on performance, Core Web Vitals (LCP, TBT, INP, CLS), or Lightho
    - On dark (`bg-black` / `bg-zinc-950`) surfaces such as `Footer.tsx`, use `text-zinc-400` (`7.93:1`), never `text-zinc-500` or `text-zinc-600` for readable copy.
 5. **Label-Content-Name Alignment (WCAG 2.5.3)**: When a component has both visible text and an `aria-label` (such as `CookieConsent.tsx`), the `aria-label` must match or start with the exact visible button text.
 
+6. **Taxonomy Reads Go Through the Cache**: Domain, SubDomain and Tag lists come from `lib/data/taxonomy.ts` (`unstable_cache`, tag `taxonomy`), never a direct Prisma read in a route; any new write to those tables must call `purgeTaxonomy()` after it commits.
+
 ---
 
 ## Verification Workflow

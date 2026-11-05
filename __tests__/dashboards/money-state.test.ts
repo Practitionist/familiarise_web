@@ -15,6 +15,9 @@ import {
   type BookingPresentationInput,
   type PaymentInput,
 } from "@/lib/dashboard/money-state";
+import { exitThresholdFor } from "@/lib/booking/class-series";
+import { PLAN_END_REFUND_REASON } from "@/lib/payments/refund-reasons";
+import { formatCurrencyAmount } from "@/utils/formatting";
 
 const NOW = new Date("2026-09-20T09:12:00Z");
 const IN_4D = new Date("2026-09-24T09:12:00Z");
@@ -433,10 +436,25 @@ describe("ALLOCATE (#1775 C-5)", () => {
       label: "Schedule the next 4",
     });
   });
+
+  it("words the next-cycle wait the same for both sides, naming nobody", () => {
+    const input = base({
+      request: req("APPROVED"),
+      occurrences: [slot(false, PAST)],
+      payments: paid,
+      holdExpiresAt: null,
+      entitlement: { remaining: 4, nextBatch: 4 },
+    });
+    for (const role of ["CONSULTANT", "CONSULTEE"] as const) {
+      expect(
+        deriveBookingPresentation(input, role, { now: NOW }).bookingState.why,
+      ).toBe("Week done · the next 4 to be scheduled.");
+    }
+  });
 });
 
-// #1780 E-5 — a confirmed class seat whose host missed three sessions (or a
-// quarter) is offered a full-refund exit; below the threshold it is not.
+// #1780 E-5 — a confirmed class seat past the exit threshold is offered a
+// full-refund exit; below the threshold it is not.
 describe("EXIT_SERIES (#1780 E-5)", () => {
   const classSeat = (misses: number, N: number) =>
     base({
@@ -448,14 +466,15 @@ describe("EXIT_SERIES (#1780 E-5)", () => {
       series: {
         misses,
         N,
-        exitRight: misses >= 3 || 4 * misses >= N,
+        exitRight: misses >= exitThresholdFor(N),
         undelivered: 6,
       },
     });
   it.each([
     [3, 12, "EXIT_SERIES"],
     [2, 12, "NONE"],
-    [2, 8, "EXIT_SERIES"],
+    [14, 100, "NONE"],
+    [15, 100, "EXIT_SERIES"],
   ])("%i misses of %i → %s", (misses, N, kind) => {
     expect(
       deriveBookingPresentation(classSeat(misses, N), "CONSULTEE", { now: NOW })
@@ -507,5 +526,62 @@ describe("the refund timeline (#1780)", () => {
     const [step] = refundStep(r);
     expect(step.kind).toBe(kind);
     expect(step.label).toMatch(label);
+  });
+});
+
+describe("a plan that ended with sessions not held", () => {
+  const ended = (
+    status: string,
+    refunds: BookingPresentationInput["refunds"],
+  ) =>
+    base({
+      request: req(status),
+      occurrences: [slot(false, PAST)],
+      payments: paid,
+      refunds,
+      holdExpiresAt: null,
+      entitlement: { remaining: 2, nextBatch: 0, notHeld: 2, planEnded: true },
+    });
+  const whyFor = (input: BookingPresentationInput) =>
+    (["CONSULTANT", "CONSULTEE"] as const).map(
+      (role) =>
+        deriveBookingPresentation(input, role, { now: NOW }).bookingState,
+    );
+
+  it("says so before the plan-end sweep, for both sides", () => {
+    for (const state of whyFor(ended("APPROVED", []))) {
+      expect(state).toMatchObject({
+        state: "COMPLETED",
+        why: "Plan ended · 2 sessions were not held.",
+      });
+    }
+  });
+
+  it("adds the settlement's refund once the sweep has paid it", () => {
+    const refunds = [
+      {
+        amountPaise: 177_000,
+        status: "SUCCEEDED",
+        reason: PLAN_END_REFUND_REASON,
+      },
+      // An earlier, unrelated refund is not the settlement.
+      { amountPaise: 50_000, status: "SUCCEEDED", reason: "operator goodwill" },
+    ];
+    for (const { why } of whyFor(ended("COMPLETED", refunds))) {
+      expect(why).toBe(
+        `Plan ended · 2 sessions were not held. ${formatCurrencyAmount(177_000, "INR")} refunded.`,
+      );
+    }
+  });
+
+  it("keeps the held wording for a plan that delivered everything", () => {
+    const input = base({
+      request: req("COMPLETED"),
+      occurrences: [slot(false, PAST)],
+      payments: paid,
+      holdExpiresAt: null,
+      entitlement: { remaining: 0, nextBatch: 0, notHeld: 0, planEnded: true },
+    });
+    expect(whyFor(input)[0].why).toBe("Every session has been held.");
   });
 });

@@ -18,6 +18,7 @@
  * Schedule: Hourly
  */
 
+import { planIdsOnAuto } from "@/lib/data/plan-schedule-choice";
 import prisma from "../../lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import {
@@ -26,6 +27,8 @@ import {
   OccurrenceCompletionStatus,
 } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
+import { AUTO_REFUND_PENDING_PREFIX } from "@/lib/payments/webhooks/auto-refund-marker";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
 import {
@@ -33,7 +36,7 @@ import {
   OCCUPIED_EVENT_STATUSES,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import {
-  sessionsTotalOf,
+  soldTermsOf,
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
 import { allocate } from "@/lib/booking/allocation";
@@ -136,6 +139,14 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
             OR: [
               { consultation: { status: "PENDING" } },
               { subscription: { status: "PENDING" } },
+              // A capture parked for auto-refund (a double-booking loser) never confirms its slots.
+              {
+                payment: {
+                  some: {
+                    description: { startsWith: AUTO_REFUND_PENDING_PREFIX },
+                  },
+                },
+              },
             ],
           },
         },
@@ -163,33 +174,50 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
     }
 
     if (slotsToFix.length > 0) {
-      // Bulk update to clear tentative flag — use exact IDs from the filtered
-      // query so we never touch a slot outside the cohort, AND repeat the
-      // cohort's own predicate so we never touch a slot that LEFT the cohort
-      // between the read and this write (#1424).
-      const ids = slotsToFix.map((s) => s.id);
-      const result = await prisma.appointmentOccurrence.updateMany({
-        where: { id: { in: ids }, ...LIVE_TENTATIVE_SLOT },
-        data: { isTentative: false },
-      });
+      // One write per row, repeating the cohort predicate: a row that left the
+      // cohort is skipped, and an overlap with a confirmed row (23P01) skips
+      // only that row; the double-booking scan below reports it.
+      let cleared = 0;
+      let overlapping = 0;
+      for (const slot of slotsToFix) {
+        try {
+          const result = await prisma.appointmentOccurrence.updateMany({
+            where: { id: slot.id, ...LIVE_TENTATIVE_SLOT },
+            data: { isTentative: false },
+          });
+          cleared += result.count;
+        } catch (error) {
+          if (!isExclusionViolation(error)) throw error;
+          overlapping += 1;
+        }
+      }
 
-      console.log(`✅ Cleared tentative flag on ${result.count} slots`);
-      if (result.count < ids.length) {
+      console.log(`✅ Cleared tentative flag on ${cleared} slots`);
+      if (overlapping > 0) {
+        console.warn(
+          JSON.stringify({
+            event: "reconcile_tentative_clear_overlap",
+            overlapping,
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      }
+      if (cleared + overlapping < slotsToFix.length) {
         // Not an error: the skipped rows were rescheduled, cancelled or
         // soft-deleted mid-run and will be picked up by the cohort that owns
         // them. Logged so a persistent gap is visible rather than silent.
         console.warn(
           JSON.stringify({
             event: "reconcile_tentative_clear_raced",
-            read: ids.length,
-            cleared: result.count,
-            skipped: ids.length - result.count,
+            read: slotsToFix.length,
+            cleared,
+            skipped: slotsToFix.length - cleared - overlapping,
             note: "slots left the cohort between the read and the write",
             timestamp: new Date().toISOString(),
           }),
         );
       }
-      return { cleared: result.count, errors };
+      return { cleared, errors };
     }
 
     return { cleared: 0, errors };
@@ -542,6 +570,11 @@ async function detectDoubleBookings(): Promise<{
  * than a new, unbounded one; whatever is skipped is picked up next hour.
  */
 const TOP_UP_MAX_EVENTS_PER_RUN = 25;
+/**
+ * A plan week opens on the calendar, not on an availability edit, so an event
+ * last attempted this long ago is retried even when no hours changed.
+ */
+const TOP_UP_RETRY_MS = 6 * 60 * 60_000;
 const TOP_UP_TIME_BUDGET_MS = 60_000;
 /** Ceiling on the candidate READ, which is cheap per row but not free. */
 const TOP_UP_SCAN_LIMIT = 200;
@@ -624,10 +657,15 @@ function requiredSessionsFor(
 async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
   const candidates: TopUpCandidate[] = [];
 
+  // Only plans whose consultant scheduled with Auto are placed by the sweep;
+  // every other plan waits for its consultant (the week reminder). Filtering
+  // in the query keeps by-hand plans from taking the bounded scan's pages.
+  const autoPlanIds = await planIdsOnAuto();
   let cursor: string | undefined;
   for (let page = 0; page < TOP_UP_SCAN_PAGES; page++) {
     const subscriptions = await prisma.subscription.findMany({
       where: {
+        id: { in: autoPlanIds },
         status: AppointmentStatus.APPROVED,
         deletedAt: null,
         // #1766 — no stored-window bound: the row keeps the first cycle only
@@ -646,8 +684,11 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
         id: true,
         updatedAt: true,
         sessionsTotal: true,
+        sessionsPerWeek: true,
+        sessionsRefunded: true,
         schedulingPeriodStartsAt: true,
         schedulingTimezone: true,
+        planEndsAt: true,
         subscriptionPlan: {
           select: {
             consultantProfileId: true,
@@ -680,12 +721,11 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
     for (const subscription of subscriptions) {
       const plan = subscription.subscriptionPlan;
       const entitlement = subscriptionEntitlement({
-        sessionsTotal: sessionsTotalOf(subscription),
-        sessionsPerWeek: plan.sessionsPerWeek,
-        durationInMonths: plan.durationInMonths,
+        ...soldTermsOf(subscription),
         occurrences: subscription.appointment?.occurrences ?? [],
         schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
         schedulingTimezone: subscription.schedulingTimezone,
+        planEndsAt: subscription.planEndsAt,
         now,
       });
       if (entitlement.cycle.nextBatch === 0) continue;
@@ -854,9 +894,10 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
 
   console.log("🔍 Finding recurring events short of sessions...");
 
-  let due: (TopUpCandidate & { availabilityChangedAt: Date })[];
+  let due: (TopUpCandidate & { availabilityChangedAt: Date | null })[];
+  const now = new Date();
   try {
-    const candidates = await collectTopUpCandidates(new Date());
+    const candidates = await collectTopUpCandidates(now);
     if (candidates.length === 0) {
       console.log("✅ No incomplete recurring events");
       return summary;
@@ -869,25 +910,36 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
     due = candidates
       .flatMap((candidate) => {
         const changedAt = lastChange.get(candidate.consultantProfileId);
-        // Nothing has been published since this event was last attempted, so
-        // the search would walk the same calendar to the same answer.
-        if (!changedAt || changedAt <= candidate.updatedAt) return [];
-        return [{ ...candidate, availabilityChangedAt: changedAt }];
+        const changed = !!changedAt && changedAt > candidate.updatedAt;
+        // With no new hours, only a rested attempt is retried: the week in
+        // play may have opened since, but the calendar is otherwise the same.
+        const rested =
+          now.getTime() - candidate.updatedAt.getTime() >= TOP_UP_RETRY_MS;
+        if (!changed && !rested) return [];
+        return [
+          { ...candidate, availabilityChangedAt: changed ? changedAt : null },
+        ];
       })
-      // Most recently opened-up calendars first, so the cap below spends the
-      // budget on the consultants who just made room rather than on the tail
-      // of events that have had none for weeks.
-      .sort(
-        (a, b) =>
-          b.availabilityChangedAt.getTime() - a.availabilityChangedAt.getTime(),
-      );
+      // Calendars that just opened up first (newest change first), then the
+      // rested ones oldest-attempt first: a fair rotation under the cap.
+      .sort((a, b) => {
+        if (a.availabilityChangedAt && b.availabilityChangedAt) {
+          return (
+            b.availabilityChangedAt.getTime() -
+            a.availabilityChangedAt.getTime()
+          );
+        }
+        if (a.availabilityChangedAt) return -1;
+        if (b.availabilityChangedAt) return 1;
+        return a.updatedAt.getTime() - b.updatedAt.getTime();
+      });
   } catch (error) {
     console.error(`❌ Failed to collect top-up candidates: ${error}`);
     return summary;
   }
 
   console.log(
-    `Found ${due.length} event(s) whose consultant published availability since the last attempt`,
+    `Found ${due.length} event(s) due: new availability since the last attempt, or a rested attempt`,
   );
 
   const startedAt = Date.now();
@@ -904,14 +956,27 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
         mode: "auto",
         topUp: true,
         allowPartial: true,
-        idempotencyKey: `topup:${candidate.eventType}:${candidate.eventId}:${candidate.confirmedSessions}->${candidate.requiredSessions}:${candidate.availabilityChangedAt?.toISOString() ?? "none"}`,
+        bySweep: true,
+        idempotencyKey: `topup:${candidate.eventType}:${candidate.eventId}:${candidate.confirmedSessions}->${candidate.requiredSessions}:${candidate.availabilityChangedAt?.toISOString() ?? `rested-${Math.floor(now.getTime() / TOP_UP_RETRY_MS)}`}`,
       });
 
-      // Every outcome advances the event's `updatedAt`, which is the attempt
-      // marker: a no-change or failed event rotates to the tail of the
-      // `updatedAt` order and is re-tried only after the consultant's
-      // availability moves again, instead of heading the list every hour.
-      await touchTopUpMarker(candidate);
+      // Every outcome advances the event's `updatedAt`, the attempt marker: a
+      // no-change or failed event is re-tried only after the consultant's
+      // availability moves again. A timed-out search never saw the whole
+      // calendar, so its first timeout keeps it due (marker just below the
+      // change) for one retry; a second timeout on the same change rests it.
+      if (
+        result.errorCode === "SEARCH_TIMEOUT" &&
+        candidate.availabilityChangedAt &&
+        !retriedAfterTimeout(candidate, candidate.availabilityChangedAt)
+      ) {
+        await touchTopUpMarker(
+          candidate,
+          new Date(candidate.availabilityChangedAt.getTime() - 1),
+        );
+      } else {
+        await touchTopUpMarker(candidate);
+      }
       if (!result.success) {
         summary.failed++;
         console.log(
@@ -960,8 +1025,11 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
  * write, so it does not go through the CAS helpers; it exists only so the
  * `updatedAt` order rotates attempted events to the tail.
  */
-async function touchTopUpMarker(candidate: TopUpCandidate): Promise<void> {
-  const data = { updatedAt: new Date() };
+async function touchTopUpMarker(
+  candidate: TopUpCandidate,
+  at: Date = new Date(),
+): Promise<void> {
+  const data = { updatedAt: at };
   if (candidate.eventType === "subscription") {
     await prisma.subscription.update({
       where: { id: candidate.eventId },
@@ -970,6 +1038,14 @@ async function touchTopUpMarker(candidate: TopUpCandidate): Promise<void> {
   } else {
     await prisma.class.update({ where: { id: candidate.eventId }, data });
   }
+}
+
+/** The event already had its one retry after timing out on this availability change. */
+function retriedAfterTimeout(
+  candidate: TopUpCandidate,
+  availabilityChangedAt: Date,
+): boolean {
+  return candidate.updatedAt.getTime() === availabilityChangedAt.getTime() - 1;
 }
 
 export async function reconcileOccurrenceAvailability(): Promise<SlotReconciliationResult> {

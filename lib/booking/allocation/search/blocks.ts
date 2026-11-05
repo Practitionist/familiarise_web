@@ -17,8 +17,10 @@ import { weeklyRowIntervalsInRange } from "@/utils/schedule/weekly-projection";
 import {
   type AllocationWalkContext,
   type ProjectableWeeklyRow,
+  type RowSpan,
   DAY_MS,
 } from "@/lib/booking/allocation/search/constants";
+import { customSpansInStartOrder } from "@/lib/booking/allocation/search/recurrence";
 import {
   isWithinAvailability,
   candidateStartsInRow,
@@ -156,8 +158,7 @@ export function bestFittingBlockInRow(
  *
  * `budget` bounds the row walk only. The remembered best survives a truncated
  * walk, so a search that ran out of time still returns the best block it had
- * found rather than nothing — which is what lets the caller answer with a
- * shortage instead of a timeout.
+ * found; a truncated walk that found nothing answers SEARCH_TIMEOUT upstream.
  */
 export function bestBlockForSingleSession(
   eventType: EventType,
@@ -166,7 +167,7 @@ export function bestBlockForSingleSession(
   bookedSlots: Set<string>,
   now: Date,
   sortedWeekly: ProjectableWeeklyRow[],
-  sortedCustom: ConsultantAllocationData["availabilityWindowsCustom"],
+  customRows: ConsultantAllocationData["availabilityWindowsCustom"],
   schedulingTimezone?: string,
   preference?: AllocationPreference,
   walk?: AllocationWalkContext,
@@ -178,36 +179,38 @@ export function bestBlockForSingleSession(
   let bestBlock: Date[] | null = null;
   let bestScore = -1;
 
-  /** Row {start, endMs} pairs, in the order the search has always used them. */
-  const rowStarts: { start: Date; endMs: number }[] = [];
+  const horizon = new Date(now.getTime() + (maxWeeksToSearch * 7 + 1) * DAY_MS);
+  /** Row spans in walk order: week-major weekly occurrences, or custom slices by start. */
+  let rowStarts: Iterable<RowSpan>;
   if (consultant.scheduleType === ScheduleType.WEEKLY) {
     // Week-major, row-minor: each row's next `maxWeeksToSearch` occurrences
     // after now, projected per date so a DST change moves the instant, not the wall clock.
-    const horizon = new Date(
-      now.getTime() + (maxWeeksToSearch * 7 + 1) * DAY_MS,
-    );
+    const weeklyStarts: RowSpan[] = [];
+    rowStarts = weeklyStarts;
     const occurrencesByRow = sortedWeekly.map((slot) =>
+      // A row still running now keeps its remaining candidates (each one is
+      // skipped below if it starts before now), exactly as a custom row does.
       weeklyRowIntervalsInRange(slot, now, horizon)
-        .filter((occurrence) => occurrence.start > now)
+        .filter((occurrence) => occurrence.end > now)
         .slice(0, maxWeeksToSearch),
     );
     for (let week = 0; week < maxWeeksToSearch; week++) {
       for (const occurrences of occurrencesByRow) {
         const occurrence = occurrences[week];
         if (!occurrence) continue;
-        rowStarts.push({
+        weeklyStarts.push({
           start: occurrence.start,
           endMs: occurrence.end.getTime(),
         });
       }
     }
   } else {
-    for (const slot of sortedCustom) {
-      rowStarts.push({
-        start: new Date(slot.startsAt),
-        endMs: new Date(slot.endsAt).getTime(),
-      });
-    }
+    // Custom rows as scheduling-zone day slices in start order, inside the
+    // same horizon as the weekly arm; sliced lazily, so a first fit stops it.
+    rowStarts = customSpansInStartOrder(customRows, schedulingTimezone, {
+      startMs: now.getTime(),
+      endMs: horizon.getTime(),
+    });
   }
 
   for (const { start: rowStart, endMs: rowEndMs } of rowStarts) {

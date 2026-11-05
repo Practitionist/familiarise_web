@@ -111,7 +111,10 @@ describe("calendar availability window — the period never narrows the view", (
     expect(startDate).toEqual(startOfWeek(WEEK_OF_PERIOD_END));
     // The property that matters: the end of the WEEK, not the end of the
     // period. The three days between them are where booked cells vanished.
-    expect(endDate).toEqual(endOfWeek(WEEK_OF_PERIOD_END));
+    // The window end is exclusive: the next day's first instant.
+    expect(endDate).toEqual(
+      new Date(endOfWeek(WEEK_OF_PERIOD_END).getTime() + 1),
+    );
     expect(endDate.getTime()).toBeGreaterThan(PERIOD_END.getTime());
   });
 
@@ -124,14 +127,20 @@ describe("calendar availability window — the period never narrows the view", (
     // scan, returns nothing, and every cell — booked ones included — blanks.
     expect(endDate.getTime()).toBeGreaterThan(startDate.getTime());
     expect(startDate).toEqual(startOfWeek(WEEK_AFTER_PERIOD));
-    expect(endDate).toEqual(endOfWeek(WEEK_AFTER_PERIOD));
+    // The window end is exclusive: the next day's first instant.
+    expect(endDate).toEqual(
+      new Date(endOfWeek(WEEK_AFTER_PERIOD).getTime() + 1),
+    );
   });
 
   it("asks for one week's worth, not the rest of the period", async () => {
     // The old window ran from the visible week to allowedEnd, so a period with
     // months left made every navigation a months-wide scan of the endpoint
     // #997 measured in tens of seconds.
-    const farOff = { ...allocateOptions(PERIOD_START), allowedEnd: new Date(2027, 0, 1) };
+    const farOff = {
+      ...allocateOptions(PERIOD_START),
+      allowedEnd: new Date(2027, 0, 1),
+    };
     await renderHookWith(farOff);
 
     const { startDate, endDate } = lastWindow();
@@ -152,6 +161,9 @@ describe("calendar availability window — the period never narrows the view", (
     const { startDate, endDate } = lastWindow();
 
     expect(startDate).toEqual(startOfWeek(WEEK_OF_PERIOD_END));
-    expect(endDate).toEqual(endOfWeek(WEEK_OF_PERIOD_END));
+    // The window end is exclusive: the next day's first instant.
+    expect(endDate).toEqual(
+      new Date(endOfWeek(WEEK_OF_PERIOD_END).getTime() + 1),
+    );
   });
 });

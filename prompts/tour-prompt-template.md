@@ -5,6 +5,11 @@
 > The output of this meta-prompt is a single Markdown file that an AI
 > agent can run end-to-end with a human at its side, pausing to explain
 > at every step.
+>
+> **MCP write rule:** the Supabase MCP is read-only. Users and fixtures are
+> created through the product UI in the chosen `auto` or `manual` flow; only
+> direct SQL writes are operator-run, prepared by the agent with a pause for
+> the human.
 
 ---
 
@@ -170,7 +175,8 @@ not to drop or reorder these top-level sections.
 3. **Mode of operation** — single paragraph stating: tour-guide
    walkthrough, paused at every stop, NOT a test, two-flavor input.
 4. **MCP toolkit** — explicit list of permitted MCP tools (Chrome
-   DevTools functions allowed; Supabase MCP `execute_sql` allowed)
+   DevTools functions allowed; Supabase MCP `execute_sql` for read-only
+   queries, with direct SQL writes operator-run)
    and the prohibited list `<MCP_PROHIBITIONS>`.
 5. **Standing rules** — verbatim from this template, placeholders
    substituted.

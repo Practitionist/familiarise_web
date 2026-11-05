@@ -211,11 +211,9 @@ export function purchaseCancellationCopy(props: {
     }
     // The one asymmetry the buyer cannot infer from a ladder of their own
     // cancellation: the expert changing the booking is always fully refunded.
-    if (terms.consultantInitiatedPct >= 100) {
-      lines.push(
-        "If your consultant moves or ends the booking, you are refunded in full.",
-      );
-    }
+    lines.push(
+      "If your consultant moves or ends the booking, you are refunded in full.",
+    );
     return { heading: "If you cancel", lines };
   }
 

@@ -15,7 +15,7 @@
  * against the route's source text — would all still pass.
  */
 
-jest.mock("@sentry/nextjs", () => ({
+jest.mock("@sentry/core", () => ({
   captureException: jest.fn(),
   captureMessage: jest.fn(),
   flush: jest.fn().mockResolvedValue(true),
@@ -31,7 +31,14 @@ jest.mock("@sentry/nextjs", () => ({
  * test must not need a Redis to prove a status code.
  */
 jest.mock("../../lib/cron/with-cron-lock", () => ({
-  CronLockHeldError: class CronLockHeldError extends Error {},
+  CronLockHeldError: class CronLockHeldError extends Error {
+    constructor(
+      readonly jobName: string,
+      readonly holderRunId: string | null = null,
+    ) {
+      super(jobName);
+    }
+  },
   // #1822 Q-2 — cleanup-route.ts now checks `instanceof CronLockUnavailableError`
   // too; without this export the check throws on `undefined`.
   CronLockUnavailableError: class CronLockUnavailableError extends Error {},
@@ -40,6 +47,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 
 jest.mock("../../lib/maintenance-cron", () => ({
   assertNotInMaintenance: jest.fn(),
+  MaintenanceUnavailableError: class MaintenanceUnavailableError extends Error {},
   MaintenanceActiveError: class MaintenanceActiveError extends Error {
     httpStatus = 503;
     phase: string;
@@ -50,8 +58,24 @@ jest.mock("../../lib/maintenance-cron", () => ({
   },
 }));
 
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    systemJobExecution: {
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      create: jest.fn().mockResolvedValue({ id: "row" }),
+    },
+  },
+}));
+
 import type { NextRequest } from "next/server";
-import * as Sentry from "@sentry/nextjs";
+import prisma from "../../lib/prisma";
+import {
+  currentRun,
+  noteRunFinished,
+  noteRunId,
+} from "../../lib/cron/run-context";
+import * as Sentry from "@sentry/core";
 
 import {
   cleanupRoute,
@@ -64,20 +88,29 @@ import {
   CronLockUnavailableError,
 } from "../../lib/cron/with-cron-lock";
 import { resetThrottledCaptureForTesting } from "../../lib/observability/throttled-capture";
+import { BackgroundDispatchRefusedError } from "../../lib/cron/dispatch-refusal";
 import {
   assertNotInMaintenance,
   MaintenanceActiveError,
+  MaintenanceUnavailableError,
 } from "../../lib/maintenance-cron";
 
 const guard = assertNotInMaintenance as jest.Mock;
 
 const SECRET = "test-cron-secret";
 
-function request(auth: string | null = `Bearer ${SECRET}`): NextRequest {
-  const headers = new Headers();
+const TICK = "6f1c2b8e-3d4a-4f5b-9c6d-7e8f9a0b1c2d";
+
+function request(
+  auth: string | null = `Bearer ${SECRET}`,
+  extra: Record<string, string> = {},
+): NextRequest {
+  const headers = new Headers({ "x-tick-id": TICK, ...extra });
   if (auth !== null) headers.set("authorization", auth);
   return { headers } as unknown as NextRequest;
 }
+
+const executions = jest.mocked(prisma.systemJobExecution);
 
 describe("statusFor", () => {
   it("puts failure ahead of the needs-attention flag", () => {
@@ -147,6 +180,7 @@ describe("cleanupRoute", () => {
     resetThrottledCaptureForTesting();
     guard.mockResolvedValue(undefined);
     process.env = { ...OLD_ENV, CRON_SECRET: SECRET };
+    delete process.env.GITHUB_ACTIONS;
   });
 
   afterAll(() => {
@@ -215,6 +249,63 @@ describe("cleanupRoute", () => {
     expect((await POST(request())).status).toBe(409);
   });
 
+  it("answers an off-production background dispatch with the typed refusal and a CANCELLED row", async () => {
+    const { POST } = cleanupRoute({
+      job: "expire-event-channels",
+      run: async () => {
+        throw new BackgroundDispatchRefusedError("expire-event-channels");
+      },
+      status: () => 202,
+    });
+
+    const res = await POST(request());
+
+    expect(res.status).toBe(409);
+    expect(res.headers.get("x-run-outcome")).toBe("refused");
+    expect(await res.json()).toMatchObject({
+      code: "BACKGROUND_DISPATCH_PRODUCTION_ONLY",
+    });
+    expect(executions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "CANCELLED",
+          result: expect.objectContaining({
+            outcome: "refused",
+            reason: "background-dispatch-production-only",
+          }),
+        }),
+      }),
+    );
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it("refuses every job on a preview deploy, which shares production's database", async () => {
+    process.env.SITE_ID = "site";
+    process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "preview";
+    const run = jest.fn();
+    const { POST } = cleanupRoute({ job: "process-payouts", run });
+
+    const res = await POST(request());
+
+    expect(run).not.toHaveBeenCalled();
+    expect(res.status).toBe(409);
+    expect(res.headers.get("x-run-outcome")).toBe("refused");
+    expect(await res.json()).toMatchObject({ code: "JOB_RUN_PRODUCTION_ONLY" });
+    expect(executions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "CANCELLED",
+          result: expect.objectContaining({
+            outcome: "refused",
+            reason: "job-run-production-only",
+            environment: "preview",
+          }),
+        }),
+      }),
+    );
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
   // #1822 owner decision — one shared key, 15-min window: two jobs, one capture.
   it("reports lock-unavailable once across different jobs within 15 min", async () => {
     resetThrottledCaptureForTesting();
@@ -241,6 +332,21 @@ describe("cleanupRoute", () => {
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ phase: "DEGRADED" });
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("reports unreadable state as an operational failure without a planned phase", async () => {
+    guard.mockRejectedValue(new MaintenanceUnavailableError());
+    const run = jest.fn();
+    const { POST } = cleanupRoute({ job: "test-job", run });
+
+    const response = await POST(request());
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: "",
+      code: "MAINTENANCE_STATE_UNREADABLE",
+    });
+    expect(run).not.toHaveBeenCalled();
+    expect(Sentry.flush).toHaveBeenCalled();
   });
 
   it("passes the job name to the maintenance guard, since DEGRADED keys on it", async () => {
@@ -313,5 +419,213 @@ describe("cleanupRoute", () => {
 
     expect(res.status).toBe(500);
     expect(Sentry.flush).toHaveBeenCalledWith(2_000);
+  });
+});
+
+describe("cleanupRoute run record", () => {
+  const OLD_ENV = process.env;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    resetThrottledCaptureForTesting();
+    guard.mockResolvedValue(undefined);
+    process.env = { ...OLD_ENV, CRON_SECRET: SECRET };
+    delete process.env.GITHUB_ACTIONS;
+  });
+
+  afterAll(() => {
+    process.env = OLD_ENV;
+  });
+
+  it("records a 207 run as FAILED/partial with its summary, items and tick", async () => {
+    const { POST } = cleanupRoute({
+      job: "retry-auto-refunds",
+      run: async () => {
+        noteRunId("exec-1");
+        noteRunFinished("exec-1", { checkpoint: "c-2" });
+        return { success: true, scanned: 4, failed: 1 };
+      },
+      status: () => 207,
+    });
+
+    const res = await POST(request());
+    expect(res.status).toBe(207);
+    expect(res.headers.get("x-run-outcome")).toBe("partial");
+    expect(executions.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "exec-1",
+        status: { in: ["COMPLETED", "FAILED", "CANCELLED"] },
+      },
+      data: {
+        status: "FAILED",
+        result: expect.objectContaining({
+          outcome: "partial",
+          httpStatus: 207,
+          tickId: TICK,
+          checkpoint: "c-2",
+          summary: { success: true, scanned: 4, failed: 1 },
+          counters: expect.objectContaining({ casMiss: 0 }),
+        }),
+        itemsProcessed: 4,
+        errorCount: 1,
+      },
+    });
+    expect(executions.create).not.toHaveBeenCalled();
+  });
+
+  it("records the job's own item counts when its summary has no recognised key", async () => {
+    const { POST } = cleanupRoute({
+      job: "expire-reschedule-proposals",
+      run: async () => {
+        noteRunId("exec-3");
+        noteRunFinished("exec-3", null);
+        return { proposalsExpired: 6 };
+      },
+      items: (r) => ({ processed: r.proposalsExpired }),
+    });
+
+    await POST(request());
+    expect(executions.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ itemsProcessed: 6, errorCount: null }),
+      }),
+    );
+  });
+
+  it("records findings with no failing item as COMPLETED/attention, and findings with failures as partial", async () => {
+    const route = (errors: string[]) =>
+      cleanupRoute({
+        job: "reconcile-org-invoice-payments",
+        run: async () => {
+          noteRunId("exec-2");
+          noteRunFinished("exec-2", null);
+          return { success: true, scanned: 3, unapplied: 1, errors };
+        },
+        needsAttention: (r) => r.unapplied > 0,
+      }).POST;
+
+    expect((await route([])(request())).status).toBe(207);
+    expect(executions.updateMany.mock.calls[0][0].data).toMatchObject({
+      status: "COMPLETED",
+      result: expect.objectContaining({ outcome: "attention" }),
+    });
+
+    expect((await route(["inv-9: gateway 502"])(request())).status).toBe(207);
+    expect(executions.updateMany.mock.calls[1][0].data).toMatchObject({
+      status: "FAILED",
+      result: expect.objectContaining({ outcome: "partial" }),
+    });
+  });
+
+  it("records a 207 whose failures appear only in the summary as partial, not attention", async () => {
+    const { POST } = cleanupRoute({
+      job: "retry-auto-refunds",
+      run: async () => {
+        noteRunId("exec-3");
+        noteRunFinished("exec-3", null);
+        return { success: true, failed: 0, owed: { failed: 2, stuck: [] } };
+      },
+      summarize: (r) => ({ failed: r.failed + r.owed.failed }),
+      needsAttention: (r) => r.owed.failed > 0,
+    });
+
+    expect((await POST(request())).status).toBe(207);
+    expect(executions.updateMany.mock.calls[0][0].data).toMatchObject({
+      status: "FAILED",
+      result: expect.objectContaining({ outcome: "partial" }),
+      errorCount: 2,
+    });
+  });
+
+  it("takes the run trigger header only behind a valid bearer, and only in the allowed shape", async () => {
+    const seen: (string | undefined)[] = [];
+    const { POST } = cleanupRoute({
+      job: "transfer-recordings",
+      run: async () => {
+        seen.push(currentRun()?.triggeredBy);
+        return { success: true };
+      },
+    });
+    const admin = { "x-run-trigger": "admin:user_1" };
+
+    const refused = await POST(
+      request("Bearer wrong-secret-of-equal-length", admin),
+    );
+    expect(refused.status).toBe(401);
+    expect(executions.create).not.toHaveBeenCalled();
+    await POST(request(undefined, { "x-run-trigger": "admin:x;drop" }));
+    await POST(request(undefined, admin));
+    expect(seen).toEqual(["cron", "admin:user_1"]);
+  });
+
+  it("writes a zero-duration CANCELLED held row naming the holder on a 409", async () => {
+    const { POST } = cleanupRoute({
+      job: "appointment-reminders",
+      run: async () => {
+        throw new CronLockHeldError("send-appointment-reminders", "exec-live");
+      },
+    });
+
+    expect((await POST(request())).status).toBe(409);
+    expect(executions.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        jobName: "send-appointment-reminders",
+        status: "CANCELLED",
+        durationMs: 0,
+        triggeredBy: "cron",
+        result: expect.objectContaining({
+          outcome: "held",
+          holderRunId: "exec-live",
+          tickId: TICK,
+        }),
+      }),
+      select: { id: true },
+    });
+  });
+
+  it("writes a refused row when maintenance holds the job, and nothing for a bad bearer", async () => {
+    guard.mockRejectedValue(new MaintenanceActiveError("test-job", "DEGRADED"));
+    const { POST } = cleanupRoute({ job: "test-job", run: jest.fn() });
+
+    await POST(request("Bearer wrong-secret-of-equal-length"));
+    expect(executions.create).not.toHaveBeenCalled();
+
+    expect((await POST(request())).status).toBe(503);
+    expect(executions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          jobName: "test-job",
+          status: "CANCELLED",
+          result: expect.objectContaining({
+            outcome: "refused",
+            reason: "maintenance:DEGRADED",
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("records a config skip as CANCELLED/skipped even when the core opened no row", async () => {
+    const { POST } = cleanupRoute({
+      job: "heal-consumer-invoices",
+      run: async () => ({
+        scanned: 0,
+        failed: 0,
+        skipped: "PLATFORM_GSTIN not configured",
+      }),
+    });
+
+    expect((await POST(request())).status).toBe(200);
+    expect(executions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "CANCELLED",
+          result: expect.objectContaining({
+            outcome: "skipped",
+            reason: "PLATFORM_GSTIN not configured",
+          }),
+        }),
+      }),
+    );
   });
 });

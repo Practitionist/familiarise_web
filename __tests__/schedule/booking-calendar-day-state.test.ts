@@ -51,6 +51,32 @@ describe("dayState (#1785 L-4)", () => {
     expect(dayState(date, NOW, slots)).toBe(expected);
   });
 
+  it("marks a day like the list: a contended free time rings, a partly booked one does not", () => {
+    const contended = [at(20, 9, { isAllocated: true })];
+    expect(dayState(day(20), NOW, contended)).toBe("bookable");
+    // Every writer refuses part of a booked half-hour, so no buyer is offered it.
+    const partly = [
+      at(20, 9, { isAllocated: true, bookingStatus: "partially-booked" }),
+    ];
+    expect(dayState(day(20), NOW, partly)).toBe("none");
+  });
+
+  it("does not ring a day whose times are all too soon or over a plan limit", () => {
+    expect(dayState(day(20), NOW, [at(20, 9, { tooSoon: true })])).toBe("none");
+    expect(dayState(day(20), NOW, [at(20, 9, { limitReached: true })])).toBe(
+      "none",
+    );
+  });
+
+  it("reads today in the display zone, not the device's", () => {
+    // 20:00 UTC on 14 Oct is already 15 Oct in Kolkata.
+    const lateUtc = new Date("2026-10-14T20:00:00.000Z");
+    expect(dayState(day(14), lateUtc, [], "Asia/Kolkata")).toBe("past");
+    expect(dayState(day(15), lateUtc, null, "Asia/Kolkata")).toBe(
+      "today+unknown",
+    );
+  });
+
   it("lets a consultee pick anything but a past or known-empty day", () => {
     expect(isSelectableDay("bookable")).toBe(true);
     expect(isSelectableDay("unknown")).toBe(true);

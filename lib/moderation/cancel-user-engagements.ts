@@ -27,9 +27,13 @@ import { EMAIL_BUDGET_MS, sendAppointmentCancelledEmail } from "@/lib/email";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
+import { isRefusal } from "@/lib/errors/refusal";
 import {
   driveRefundOwed,
-  stampRefundOwed,
+  opsHeldMarkerMessage,
+  recordRefundNeedsSupport,
+  stampOwedOrHeld,
+  type OwedRefundAlreadyHeld,
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
 import { isModelledRefundRefusal } from "@/lib/payments/operations/refund";
@@ -39,6 +43,7 @@ import {
   classSeriesLedgers,
   refundWholeEventPayments,
   stampWholeEventRefundsOwed,
+  type EventSeatPlan,
 } from "@/lib/payments/operations/event-refunds";
 import {
   CANCELLABLE_FROM,
@@ -53,7 +58,10 @@ import {
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
-import { withAppointmentLock } from "@/utils/appointmentlock";
+import {
+  withAppointmentLock,
+  withEventCheckoutLock,
+} from "@/utils/appointmentlock";
 
 export interface BulkCancelSummary {
   engagementsCancelled: number;
@@ -79,6 +87,8 @@ export interface BulkCancelSummary {
   }>;
   /** Work items not reached inside the time budget — safe to re-run. */
   remaining: Array<{ kind: string; id: string }>;
+  /** Payments that already owed another door's refund, so the ban added nothing; top up by hand. */
+  refundsAlreadyOwed: OwedRefundAlreadyHeld[];
 }
 
 interface BulkCancelOptions {
@@ -120,6 +130,7 @@ export async function cancelFutureEngagementsForUser(
     failures: [],
     refundedInFullOnUnreadableLedger: [],
     remaining: [],
+    refundsAlreadyOwed: [],
   };
 
   const target = await prisma.user.findUnique({
@@ -320,9 +331,14 @@ async function runWorkItem(
     summary.failures.push({
       kind: item.kind,
       id: item.id,
-      error: errMsg(error),
+      error:
+        (isRefusal(error)
+          ? opsHeldMarkerMessage(error, "re-run the ban's bulk cancel")
+          : null) ?? errMsg(error),
     });
-    captureModerationError(error);
+    // A held refund marker refused the cancel with nothing committed; a re-run retries it.
+    if (isRefusal(error)) await recordRefundNeedsSupport(error);
+    else captureModerationError(error);
   }
 }
 
@@ -424,7 +440,7 @@ async function casCancelExclusiveEngagement(
   appointmentId: string | null,
   owed: RefundOwedMarker[],
   ctx: { initiatedByUserId: string; notes?: string },
-): Promise<RefundOwedMarker[] | null> {
+): Promise<{ owed: RefundOwedMarker[]; held: OwedRefundAlreadyHeld[] } | null> {
   const now = new Date();
   const cancellationData = {
     cancellationReason: "MODERATION" as const,
@@ -463,8 +479,15 @@ async function casCancelExclusiveEngagement(
         if (err instanceof IllegalTransitionError) return null;
         throw err;
       }
-      // Every refund the ban owes commits with the cancel.
-      for (const marker of owed) await stampRefundOwed(tx, marker);
+      // Every refund the ban owes commits with the cancel; one another door
+      // already owes is reported instead (first writer wins).
+      const stamped: RefundOwedMarker[] = [];
+      const held: OwedRefundAlreadyHeld[] = [];
+      for (const marker of owed) {
+        const h = await stampOwedOrHeld(tx, marker);
+        if (h) held.push(h);
+        else stamped.push(marker);
+      }
       await releaseEngagementOccurrences(
         tx,
         kind === "consultation"
@@ -478,7 +501,7 @@ async function casCancelExclusiveEngagement(
       if (appointmentId) {
         await declineOpenReschedules(tx, appointmentId, audit);
       }
-      return owed;
+      return { owed: stamped, held };
     });
   // A request that never got a wrapper has no atom to lock; its CAS decides.
   return appointmentId ? withAppointmentLock(appointmentId, cancel) : cancel();
@@ -601,18 +624,19 @@ async function cancelExclusiveEngagement(
   const engagement = await loadExclusiveEngagement(kind, engagementId);
   if (!engagement) return;
 
-  const owed = await casCancelExclusiveEngagement(
+  const cancelled = await casCancelExclusiveEngagement(
     kind,
     engagementId,
     engagement.appointments[0]?.id ?? null,
     refundableEngagementPayments(engagement),
     ctx,
   );
-  if (!owed) return; // lost the CAS — already terminal, no refund
+  if (!cancelled) return; // lost the CAS — already terminal, no refund
 
   ctx.summary.engagementsCancelled += 1;
+  ctx.summary.refundsAlreadyOwed.push(...cancelled.held);
 
-  for (const marker of owed) {
+  for (const marker of cancelled.owed) {
     await issueFullRefund(marker, ctx.initiatedByUserId, ctx.summary);
   }
 
@@ -621,15 +645,16 @@ async function cancelExclusiveEngagement(
 
 /**
  * The event's guarded status move plus the slot release, under the event
- * wrapper's appointment lock (#1846 SM-B14). Returns 0 when the CAS found
- * nothing to move — the event was already terminal.
+ * wrapper's appointment lock (#1846 SM-B14). Returns the seat plans the commit
+ * stamped, or null when the CAS found nothing to move — the event was already
+ * terminal.
  */
 async function casCancelGroupEvent(
   isWebinar: boolean,
   eventId: string,
   initiatedByUserId: string,
   ledgers: Awaited<ReturnType<typeof classSeriesLedgers>> | null,
-): Promise<number> {
+): Promise<ReadonlyMap<string, EventSeatPlan> | null> {
   const audit = { actorUserId: initiatedByUserId, reason: MODERATION_REASON };
   const eventScope = isWebinar ? { webinarId: eventId } : { classId: eventId };
   const eventWrapper = await prisma.appointment.findFirst({
@@ -656,11 +681,11 @@ async function casCancelGroupEvent(
           });
         }
       } catch (err) {
-        if (err instanceof IllegalTransitionError) return 0;
+        if (err instanceof IllegalTransitionError) return null;
         throw err;
       }
       // Every seat the ban refunds is stamped owed in the cancel commit.
-      await stampWholeEventRefundsOwed(tx, {
+      const plans = await stampWholeEventRefundsOwed(tx, {
         kind: isWebinar ? "webinar" : "class",
         eventId,
         reason: GROUP_EVENT_REFUND_REASON,
@@ -672,9 +697,15 @@ async function casCancelGroupEvent(
         new Date(),
         audit,
       );
-      return 1;
+      return plans;
     });
-  return eventWrapper ? withAppointmentLock(eventWrapper.id, cancel) : cancel();
+  // Event key first (event → appointment), so no seat checkout commits a HELD
+  // seat under the cancel's participant sweep.
+  return withEventCheckoutLock(
+    { appointmentType: isWebinar ? "WEBINAR" : "CLASS", eventId },
+    () =>
+      eventWrapper ? withAppointmentLock(eventWrapper.id, cancel) : cancel(),
+  );
 }
 
 /**
@@ -772,13 +803,13 @@ async function cancelGroupEvent(
     ? null
     : await readClassSeriesLedgers(eventId, ctx);
 
-  const moved = await casCancelGroupEvent(
+  const plans = await casCancelGroupEvent(
     isWebinar,
     eventId,
     ctx.initiatedByUserId,
     seriesLedgers,
   );
-  if (moved === 0) return;
+  if (!plans) return;
 
   ctx.summary.engagementsCancelled += 1;
 
@@ -797,7 +828,7 @@ async function cancelGroupEvent(
     eventId,
     GROUP_EVENT_REFUND_REASON,
     ctx.initiatedByUserId,
-    { ledgers: seriesLedgers ?? undefined },
+    { ledgers: seriesLedgers ?? undefined, plans },
   );
   ctx.summary.refundsIssued += eventRefund.refundsIssued;
   ctx.summary.refundedPaise += eventRefund.refundedPaise;
@@ -915,12 +946,14 @@ async function removeAttendee(
         select: { id: true },
       });
       const owed = paid ? moderationRefundOwed(eventWrapper.id, paid.id) : null;
-      if (owed) await stampRefundOwed(tx, owed);
-      return { owed };
+      const held = owed ? await stampOwedOrHeld(tx, owed) : null;
+      // First writer wins: the owed refund already on the payment is the one driven.
+      return { owed: held ? null : owed, held };
     }),
   );
   if (!removal) return;
   ctx.summary.attendeeRemovals += 1;
+  if (removal.held) ctx.summary.refundsAlreadyOwed.push(removal.held);
   if (removal.owed) {
     await issueFullRefund(removal.owed, ctx.initiatedByUserId, ctx.summary);
   }

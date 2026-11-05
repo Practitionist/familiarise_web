@@ -2,9 +2,11 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 
 import { measureEventLoopStall, probeWithStallRetry } from "@/lib/health/probe";
-import { getMaintenanceState } from "@/lib/maintenance";
+import { getMaintenanceState, type MaintenanceState } from "@/lib/maintenance";
+import { MaintenancePhase } from "@prisma/client";
 import { getStreamStatus } from "@/lib/stream/health";
 import prisma from "@/lib/prisma";
+import { TICK_CLAIM_JOB } from "@/lib/cron/schedule";
 import redis, { isMockRedis, isRedisCircuitOpen } from "@/lib/redis";
 
 type BetterStackHealth = {
@@ -123,7 +125,13 @@ async function readLatestCompletedCronExecutionAt(): Promise<string | null> {
       prisma as unknown as {
         systemJobExecution?: {
           findFirst?: (args: {
-            where: { status: "COMPLETED" };
+            where: {
+              status: "COMPLETED";
+              OR: [
+                { jobName: { not: string } },
+                { result: { path: string[]; gt: number } },
+              ];
+            };
             orderBy: { startedAt: "desc" };
             select: { startedAt: true };
           }) => Promise<{ startedAt: Date | string } | null>;
@@ -131,8 +139,15 @@ async function readLatestCompletedCronExecutionAt(): Promise<string | null> {
       }
     ).systemJobExecution;
     if (typeof delegate?.findFirst !== "function") return null;
+    // A bare slot claim proves only that the ticker fired; one that skipped idle jobs proves their probes ran.
     const latest = await delegate.findFirst({
-      where: { status: "COMPLETED" },
+      where: {
+        status: "COMPLETED",
+        OR: [
+          { jobName: { not: TICK_CLAIM_JOB } },
+          { result: { path: ["idleCount"], gt: 0 } },
+        ],
+      },
       orderBy: { startedAt: "desc" },
       select: { startedAt: true },
     });
@@ -212,6 +227,25 @@ const DB_PROBE_BUDGET_MS = 5_000;
 // 0–2 ms; #1124's stall is 24 000–39 000 ms; nothing lives in between.
 const STALL_REPORT_THRESHOLD_MS = 1_000;
 
+// A failing maintenance read (schema fault) must not 500 the probe: report OFF and degrade.
+async function readMaintenanceState(): Promise<{
+  state: Pick<MaintenanceState, "phase" | "reason" | "estimatedEnd">;
+  ok: boolean;
+}> {
+  try {
+    return { state: await getMaintenanceState(), ok: true };
+  } catch (err) {
+    Sentry.logger.warn("Maintenance state probe failed", {
+      tags: { subsystem: "api" },
+      extra: { message: err instanceof Error ? err.message : String(err) },
+    });
+    return {
+      state: { phase: MaintenancePhase.OFF, reason: null, estimatedEnd: null },
+      ok: false,
+    };
+  }
+}
+
 async function probeDatabase(): Promise<{
   database: "connected" | "unreachable";
   latencyMs: number;
@@ -264,8 +298,8 @@ export async function GET(request: Request) {
     retried,
   } = await probeDatabase();
 
-  const [maintenanceState, stream, betterstack, heartbeat] = await Promise.all([
-    getMaintenanceState(),
+  const [maintenance, stream, betterstack, heartbeat] = await Promise.all([
+    readMaintenanceState(),
     // #473 — the last unmet acceptance criterion on that issue. The breaker
     // existed but nothing surfaced its state, so a Stream outage was invisible
     // until users reported it.
@@ -286,7 +320,9 @@ export async function GET(request: Request) {
   // job and disables every rate limiter, so it degrades the overall status
   // too, not just the database.
   const status =
-    database === "unreachable" || redisStatus.status === "degraded"
+    database === "unreachable" ||
+    redisStatus.status === "degraded" ||
+    !maintenance.ok
       ? "degraded"
       : "healthy";
 
@@ -308,9 +344,9 @@ export async function GET(request: Request) {
         databaseProbeRetried: retried,
       },
       maintenance: {
-        phase: maintenanceState.phase,
-        reason: maintenanceState.reason,
-        estimatedEnd: maintenanceState.estimatedEnd,
+        phase: maintenance.state.phase,
+        reason: maintenance.state.reason,
+        estimatedEnd: maintenance.state.estimatedEnd,
       },
       stream,
       betterstack,

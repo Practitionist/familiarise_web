@@ -4,9 +4,8 @@
 
 /**
  * The ticker's per-target request shape, cadence, calendar windows and fleet
- * gate. Jest has no transform for `.mts`, so the function file is transpiled
- * here and its exports called directly, rather than pinned by grepping source
- * text.
+ * gate. Schedule helpers are imported from the shared catalog. Jest has no
+ * transform for `.mts`, so only the platform adapter is transpiled here.
  */
 
 import fs from "node:fs";
@@ -15,24 +14,27 @@ import vm from "node:vm";
 import ts from "typescript";
 
 import {
+  dueTargets,
+  targetRequest,
+  windowStartFor,
+  isFirstDueTickOfHour,
+  MAX_TARGETS_PER_TICK,
+  type Target,
+} from "@/lib/cron/schedule";
+
+import {
   applyErrorBudget,
   resetSentryBudgetState,
 } from "../../sentry.shared.config";
 
 type Ticker = Pick<
   typeof import("../../netlify/functions/cron-tick.mjs"),
-  | "targetRequest"
-  | "dueTargets"
   | "statusFor"
   | "reportableToSentry"
-  | "isFirstDueTickOfHour"
   | "bucketFor"
   | "buildFailedTargetEvent"
-  | "windowStartFor"
   | "otherActivePlatform"
-  | "MAX_TARGETS_PER_TICK"
 >;
-type Target = ReturnType<Ticker["dueTargets"]>[number];
 
 function loadTicker(): Ticker {
   const file = path.join(
@@ -63,7 +65,6 @@ function loadTicker(): Ticker {
 }
 
 describe("cron-tick targetRequest", () => {
-  const { targetRequest } = loadTicker();
   const base = "https://site.test";
 
   it("leaves release-earnings on the fifteen-second default and gives abandoned-payments 20 s", () => {
@@ -184,7 +185,6 @@ describe("cron-tick targetRequest", () => {
 // #1926 — phase-stagger 15-minute targets across offsets 0, 5, and 10 so every
 // 5-minute tick fires 6–7 targets instead of 19 simultaneous targets at :00/:15/:30/:45.
 describe("cron-tick dueTargets cadence", () => {
-  const { dueTargets } = loadTicker();
   const at = (minute: number) => new Date(Date.UTC(2026, 8, 17, 10, minute));
 
   it("staggers fifteen-minute sweeps across offsets 0, 5, and 10 so each fires once per 15 minutes", () => {
@@ -197,11 +197,11 @@ describe("cron-tick dueTargets cadence", () => {
       "sweep-stuck-webhook-events",
       "sweep-orphaned-topup-captures",
       "dispatch-outbound-webhooks",
-      "retry-failed-emails",
       "sync-payment-earnings",
       "alert-orphaned-payments",
     ];
     const offset5Targets = [
+      "retry-failed-emails",
       "release-earnings",
       "reconcile-refunds",
       "abandoned-payments",
@@ -235,9 +235,33 @@ describe("cron-tick dueTargets cadence", () => {
     }
   });
 
-  it("never fires more than MAX_TARGETS_PER_TICK on any tick of 400 days, windows included", () => {
-    const { MAX_TARGETS_PER_TICK } = loadTicker();
-    expect(MAX_TARGETS_PER_TICK).toBe(10);
+  it("runs confirmed maintenance remediation every fifteen minutes at offset zero", () => {
+    for (const minute of [0, 15, 30, 45])
+      expect(dueTargets(at(minute))).toContain(
+        "maintenance-booking-remediation",
+      );
+    for (const minute of [5, 10, 20, 25, 35, 40, 50, 55])
+      expect(dueTargets(at(minute))).not.toContain(
+        "maintenance-booking-remediation",
+      );
+  });
+
+  it("gives invoice capture recovery six spare slots a day without changing other cadences", () => {
+    const name = "reconcile-org-invoice-payments";
+    const slots = [];
+    for (let minute = 0; minute < 24 * 60; minute += 5) {
+      const time = new Date(Date.UTC(2026, 10, 1, 0, minute));
+      if (dueTargets(time).includes(name)) slots.push(minute);
+    }
+    expect(slots).toEqual([235, 475, 715, 955, 1195, 1435]);
+    expect(targetRequest("https://site.test", name)).toEqual({
+      url: "https://site.test/api/cleanup/reconcile-org-invoice-payments?limit=5",
+      timeoutMs: 24_000,
+    });
+  });
+
+  it("keeps a free slot under MAX_TARGETS_PER_TICK on every tick of 400 days, windows included", () => {
+    expect(MAX_TARGETS_PER_TICK).toBe(12);
     // 400 days from 2026-11-01 cover every month start, every weekday and every quarter start.
     const start = Date.UTC(2026, 10, 1);
     let min = Infinity;
@@ -248,7 +272,7 @@ describe("cron-tick dueTargets cadence", () => {
       max = Math.max(max, n);
     }
     expect(min).toBeGreaterThanOrEqual(5);
-    expect(max).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK);
+    expect(max).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK - 1);
   });
 
   it("fires the orphaned-payments healer only at :10/:40", () => {
@@ -283,7 +307,30 @@ describe("cron-tick dueTargets cadence", () => {
     expect(firing("detect-consultant-no-shows")).toEqual([20, 50]);
   });
 
-  it("fires the Sentry ingest canary every 6 hours at :50, not every tick", () => {
+  it("fires the Stream control-plane drift check once a day at 01:15 UTC, without a limit", () => {
+    const name = "stream-control-plane-drift";
+    const firing = Array.from({ length: 24 * 12 }, (_, i) => i * 5).filter(
+      (minuteOfDay) =>
+        dueTargets(
+          new Date(
+            Date.UTC(
+              2026,
+              8,
+              17,
+              Math.floor(minuteOfDay / 60),
+              minuteOfDay % 60,
+            ),
+          ),
+        ).includes(name),
+    );
+
+    expect(firing).toEqual([75]);
+    expect(targetRequest("https://site.test", name).url).toMatch(
+      /\/api\/cleanup\/stream-control-plane-drift$/,
+    );
+  });
+
+  it("fires the Sentry ingest canary once a day at 00:50 UTC", () => {
     const name = "sentry-ingest-canary";
     const ticks = Array.from({ length: 24 * 12 }, (_, i) => i * 5).filter(
       (minuteOfDay) =>
@@ -300,7 +347,7 @@ describe("cron-tick dueTargets cadence", () => {
         ).includes(name),
     );
 
-    expect(ticks).toEqual([50, 410, 770, 1130]);
+    expect(ticks).toEqual([50]);
   });
   it("never reports the Sentry ingest canary's failure TO Sentry", () => {
     /**
@@ -380,7 +427,6 @@ describe("cron-tick bucketFor", () => {
 });
 
 describe("cron-tick calendar windows", () => {
-  const { dueTargets, windowStartFor, targetRequest } = loadTicker();
   const utc = (d: number, h: number, m: number) =>
     new Date(Date.UTC(2026, 10, d, h, m));
 
@@ -471,10 +517,11 @@ describe("cron-tick calendar windows", () => {
     expect(ledgers.length).toBeGreaterThan(12);
     expect(ledgers.every((t) => t.getUTCMinutes() === 55)).toBe(true);
     expect(ledgers.some((t) => t.getUTCHours() === 23)).toBe(true);
-    expect(dueTargets(utc(4, 6, 55))).toContain(
-      "reconcile-gateway-settlements",
-    );
-    expect(dueTargets(utc(4, 6, 55))).not.toContain("reconcile-ledgers");
+    // A busy settlement tick still keeps the ledger slice.
+    const busy = dueTargets(utc(4, 6, 55));
+    expect(busy).toContain("reconcile-gateway-settlements");
+    expect(busy).toContain("reconcile-ledgers");
+    expect(busy.length).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK);
   });
 
   it("runs the TDS draft only on the 5th of January, April, July and October", () => {
@@ -526,6 +573,13 @@ describe("cron-tick failed-target reporting", () => {
       status: 0,
       outcome: "network",
     });
+    expect(
+      buildFailedTargetEvent({
+        name: "release-earnings",
+        status: 500,
+        errorBody: "Internal Server Error - Request ID: abc",
+      }).tags,
+    ).toMatchObject({ target: "release-earnings", class: "platform" });
   });
 
   it("the shared repeat filter throttles per target, not across targets", () => {
@@ -541,7 +595,6 @@ describe("cron-tick failed-target reporting", () => {
 });
 
 describe("cron-tick drain targets and failure reporting", () => {
-  const { dueTargets, isFirstDueTickOfHour } = loadTicker();
   const at = (m: number) => new Date(Date.UTC(2026, 9, 4, 12, m, 0));
 
   it("runs process-data-exports every 10 minutes and retry-moderation-enforcement every 30", () => {

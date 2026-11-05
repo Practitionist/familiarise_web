@@ -4,78 +4,32 @@
 import { recordParticipants } from "@/lib/booking/participants";
 import {
   appendCreationHistory,
-  transitionTrial,
+  LIVE_SUBSCRIPTION_STATUSES,
 } from "@/lib/booking/transitions";
+import { convertCompletedTrial } from "@/lib/trials/conversion";
 import type { Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import {
   firstCycleWindow,
-  sessionsTotalOf,
+  purchaseTermsOf,
+  soldTermsOf,
   subscriptionEntitlement,
+  subscriptionPlanEnd,
 } from "@/lib/booking/entitlement";
-import {
-  AppointmentsType,
-  Prisma,
-  AppointmentStatus,
-  TrialStatus,
-} from "@prisma/client";
+import { AppointmentsType, Prisma, AppointmentStatus } from "@prisma/client";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import type { SubscriptionCheckoutResult } from "@/lib/payments/checkout/schema";
-import { resolvePriorSubscriptionForRenewal } from "@/lib/payments/checkout/renewal";
-
-/**
- * #1766 — the statuses under which a subscription still holds its
- * entitlement. SCHEDULED is legal in REQUEST_ALLOWED_FROM though no writer
- * reaches it yet; listing it keeps the guard right if one appears.
- */
-export const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
-  AppointmentStatus.PENDING,
-  AppointmentStatus.APPROVED,
-  AppointmentStatus.APPROVED_PENDING_PAYMENT,
-  AppointmentStatus.SCHEDULED,
-];
-
-export async function linkCompletedTrialToSubscription(
-  tx: Tx,
-  consulteeProfileId: string,
-  consultantProfileId: string,
-  subscriptionId: string,
-): Promise<void> {
-  const completedTrial = await tx.trial.findFirst({
-    where: {
-      consulteeProfileId,
-      consultantProfileId,
-      status: TrialStatus.COMPLETED,
-      convertedToSubscriptionId: null,
-    },
-  });
-
-  if (!completedTrial) return;
-
-  await transitionTrial(tx, {
-    where: { id: completedTrial.id },
-    to: TrialStatus.CONVERTED,
-    data: { convertedToSubscriptionId: subscriptionId },
-  });
-
-  console.log(
-    JSON.stringify({
-      event: "trial_converted",
-      trialId: completedTrial.id,
-      subscriptionId,
-      consulteeProfileId,
-      consultantProfileId,
-      timestamp: new Date().toISOString(),
-    }),
-  );
-}
+import {
+  resolvePlanStart,
+  resolvePriorSubscriptionForRenewal,
+} from "@/lib/payments/checkout/renewal";
 
 export async function handleSubscriptionCheckout(
   tx: Tx,
   data: CheckoutInput,
   consulteeProfileId: string,
-  _skipPayment: boolean,
+  skipPayment: boolean,
   /** Resolved org context — see handleConsultationCheckout for rationale. */
   organizationId: string | null,
   /** #1499 — see handleConsultationCheckout. */
@@ -106,37 +60,33 @@ export async function handleSubscriptionCheckout(
   const isSchedulingPeriodRequest = Boolean(
     data.schedulingPeriodStartsAt || data.renewsSubscriptionId,
   );
-  // #1766 — window = first cycle; a client end is clamped/ignored, never
-  // refused. Start from the client (default now), end derived server-side.
-  // #1743 — when renewing a prior subscription, anchor the new cycle start to
-  // max(prior.schedulingPeriodEndsAt, requestedStart, now) so the renewal
-  // starts seamlessly when the prior cycle ends.
+  // The persisted window is the first cycle; a client end is ignored. A
+  // renewal starts no earlier than the prior plan's end, and the plan end is
+  // fixed here once, from the start.
   const schedulingTimezone = resolveSchedulingTimezone(
     plan.consultantProfile?.user?.timezone,
   );
-  const now = new Date();
-  const requestedStart = data.schedulingPeriodStartsAt
-    ? new Date(data.schedulingPeriodStartsAt)
-    : now;
-  const effectiveStart = priorSubscription
-    ? new Date(
-        Math.max(
-          priorSubscription.schedulingPeriodEndsAt.getTime(),
-          requestedStart.getTime(),
-          now.getTime(),
-        ),
-      )
-    : requestedStart;
+  const priorPlanEnd = priorSubscription
+    ? subscriptionPlanEnd(priorSubscription)
+    : null;
   const { start: startDate, end: endDate } =
     precomputedSchedulingPeriod &&
-    (!priorSubscription ||
-      precomputedSchedulingPeriod.startsAt >=
-        priorSubscription.schedulingPeriodEndsAt)
+    (!priorPlanEnd || precomputedSchedulingPeriod.startsAt >= priorPlanEnd)
       ? {
           start: precomputedSchedulingPeriod.startsAt,
           end: precomputedSchedulingPeriod.endsAt,
         }
-      : firstCycleWindow(plan, effectiveStart, schedulingTimezone);
+      : firstCycleWindow(
+          plan,
+          resolvePlanStart(
+            data.schedulingPeriodStartsAt,
+            priorPlanEnd,
+            new Date(),
+          ),
+          schedulingTimezone,
+        );
+  // The plan's terms are frozen here once; plan edits apply to new buyers only.
+  const terms = purchaseTermsOf(plan, startDate, schedulingTimezone);
 
   // #1766 — the double-buy guard follows the entitlement, not the window: a
   // live row with sessions left blocks; a spent one is a renewal-as-repurchase.
@@ -151,8 +101,11 @@ export async function handleSubscriptionCheckout(
     },
     select: {
       sessionsTotal: true,
+      sessionsPerWeek: true,
+      sessionsRefunded: true,
       schedulingPeriodStartsAt: true,
       schedulingTimezone: true,
+      planEndsAt: true,
       subscriptionPlan: {
         select: {
           totalSessions: true,
@@ -180,12 +133,11 @@ export async function handleSubscriptionCheckout(
       Math.max(
         max,
         subscriptionEntitlement({
-          sessionsTotal: sessionsTotalOf(row),
-          sessionsPerWeek: row.subscriptionPlan.sessionsPerWeek,
-          durationInMonths: row.subscriptionPlan.durationInMonths,
+          ...soldTermsOf(row),
           occurrences: row.appointment?.occurrences ?? [],
           schedulingPeriodStartsAt: row.schedulingPeriodStartsAt,
           schedulingTimezone: row.schedulingTimezone,
+          planEndsAt: row.planEndsAt,
         }).remaining,
       ),
     0,
@@ -213,8 +165,8 @@ export async function handleSubscriptionCheckout(
         schedulingPeriodEndsAt: endDate,
         // #1076 — caps bucket on the consultant's days, not the column default.
         schedulingTimezone,
-        // #1766 — the entitlement is frozen at purchase; plan edits never move it.
-        sessionsTotal: plan.totalSessions,
+        // #1766 — the entitlement, cadence and length are frozen at purchase.
+        ...terms,
         ...(priorSubscription
           ? { renewedFromSubscriptionId: priorSubscription.id }
           : {}),
@@ -233,13 +185,8 @@ export async function handleSubscriptionCheckout(
     throw createErr;
   }
 
-  // Link any completed trial to this subscription (trial conversion tracking)
-  await linkCompletedTrialToSubscription(
-    tx,
-    consulteeProfileId,
-    plan.consultantProfileId,
-    subscription.id,
-  );
+  // A no-gateway checkout is paid now; a card checkout converts at capture.
+  if (skipPayment) await convertCompletedTrial(tx, subscription.id);
 
   // FIX Issue #2: Create placeholder appointment for payment linkage
   // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
@@ -269,7 +216,7 @@ export async function handleSubscriptionCheckout(
       tx,
       appointment.id,
       [{ userId: consulteeUser.userId, role: "CONSULTEE" }],
-      { organizationId, status: _skipPayment ? "CONFIRMED" : "HELD" },
+      { organizationId, status: skipPayment ? "CONFIRMED" : "HELD" },
     );
   }
   // #1333 — see handleConsultationCheckout. Placed after the buyer lookup so

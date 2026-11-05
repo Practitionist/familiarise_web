@@ -18,26 +18,9 @@
  */
 
 import "./setup";
+import { emptySearchDb } from "../fixtures/allocator-search";
 
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
-    appointment: { findMany: jest.fn() },
-    rescheduleRequest: { findFirst: jest.fn() },
-  },
-  ALLOCATION_TX_MAX_WAIT_MS: 8000,
-  ALLOCATION_TX_TIMEOUT_MS: 30000,
-}));
-
-// The allocator imports appointmentlock, which pulls @upstash/redis (ESM) in.
-jest.mock("../../utils/appointmentlock", () => ({
-  lockAutoAllocate: jest.fn(),
-  unlockAutoAllocate: jest.fn(),
-  lockConsulteeBooking: jest.fn(),
-  unlockConsulteeBooking: jest.fn(),
-}));
-
-import prisma, { type PrismaLike, type Tx } from "../../lib/prisma";
+import prisma, { type Tx } from "../../lib/prisma";
 import { findAvailableSlots as searchSlots } from "../../lib/booking/allocation/search/find-available-slots";
 import {
   findAllocationPreference,
@@ -77,7 +60,7 @@ const findAvailableSlots = (
   preference?: AllocationPreference,
 ): Promise<Date[]> =>
   searchSlots(
-    emptyDb() as unknown as PrismaLike,
+    emptySearchDb(),
     consultant,
     totalSlotsNeeded,
     slotsPerCall,
@@ -107,11 +90,6 @@ function weeklyConsultant(
     availabilityWindowsCustom: [],
   };
 }
-
-/** Nobody is booked; every candidate the availability allows is placeable. */
-const emptyDb = () => ({
-  appointment: { findMany: jest.fn().mockResolvedValue([]) },
-});
 
 const consultationConfig: EventConfig = {
   durationInHours: 1,
@@ -242,7 +220,7 @@ describe("an unsatisfiable preference still allocates", () => {
         { durationInHours: 5, schedulingTimezone: IST },
         { preferredTimeOfDay: "MORNING" },
       ),
-    ).rejects.toThrow(/No 10 consecutive slots available/);
+    ).rejects.toThrow(/No free time in the coming weeks/);
   });
 });
 
@@ -440,11 +418,13 @@ describe("a partly satisfiable day preference tops itself up", () => {
       ...weekdayRuns(UTC_MONDAY, 4), // weekdays exist throughout
     ]);
 
+    // A class: its calendar-week cap is what the two sweeps must both honour
+    // (a subscription's weekly limit is its rolling cycle window instead).
     const slots = await findAvailableSlots(
       consultant,
       4,
       1,
-      "subscription",
+      "class",
       recurringConfig(5),
       { preferredDays: "WEEKENDS" },
     );

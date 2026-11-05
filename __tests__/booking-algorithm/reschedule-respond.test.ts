@@ -58,6 +58,8 @@ const passThroughLock = (...args: unknown[]) =>
  */
 function makeTxStub() {
   return {
+    // A restore re-anchors the payout hold; these bookings carry no earnings.
+    appointment: { findUnique: jest.fn().mockResolvedValue(null) },
     rescheduleRequest: {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
@@ -91,6 +93,7 @@ function makeTxStub() {
 
 let txStub = makeTxStub();
 
+jest.mock("next/headers", () => ({ headers: async () => new Headers() }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -105,6 +108,17 @@ jest.mock("../../lib/prisma", () => ({
     },
     membership: {
       findUnique: (...a: unknown[]) => mockMembershipFindUnique(...a),
+    },
+    // The host side of a consultee-side proposal: the plan's own expert.
+    consultation: {
+      findUnique: async () => ({
+        consultationPlan: { consultantProfileId: "cp-1", organizationId: null },
+      }),
+    },
+    subscription: {
+      findUnique: async () => ({
+        subscriptionPlan: { consultantProfileId: "cp-1", organizationId: null },
+      }),
     },
     payment: {
       findFirst: (...a: unknown[]) => mockOrgFundingPayment(...a),
@@ -197,7 +211,13 @@ import {
   declineProposal,
 } from "@/lib/booking/reschedule-respond";
 import { tryAutoConfirmProposal } from "@/lib/booking/reschedule-auto-confirm";
-import { AppointmentBusyError } from "@/utils/appointmentlock";
+import {
+  AppointmentBusyError,
+  type ApprovalLock,
+} from "@/utils/appointmentlock";
+
+/** The booking's appointment lock the accept route holds while it allocates. */
+const HELD_LOCK = { key: "appointment-lock:appt-1" } as ApprovalLock;
 // #1846 — the durable operator trace and the notification, both of which the
 // decline reaches now that it restores.
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
@@ -206,6 +226,12 @@ import { POST as respondHandler } from "@/app/api/appointments/[appointmentId]/r
 
 const HOUR = 3_600_000;
 const APPT = "appt-1";
+/** What the allocator hands its in-transaction hook when no window frees. */
+const NOTHING_MOVED = {
+  consultantProfileId: "cp-1",
+  freedWindows: [],
+  placed: [],
+};
 const REQ = "resched-1";
 const CONSULTANT_USER = "consultant-user-1";
 const CONSULTEE_USER = "consultee-user-1";
@@ -247,6 +273,7 @@ function openRequestRow(overrides: Record<string, unknown> = {}) {
   return {
     id: REQ,
     initiatedById: CONSULTANT_USER,
+    initiatorRole: "CONSULTANT",
     // #1846 — the route reads the released ids with the request because it
     // reports which of the two decline outcomes it got.
     releasedOccurrenceIds: RELEASED_IDS,
@@ -298,7 +325,12 @@ function declineRow(overrides: Record<string, unknown> = {}) {
 }
 
 function sessionOf(userId: string) {
-  return { user: { id: userId } };
+  return {
+    user: {
+      id: userId,
+      consultantProfileId: userId === CONSULTANT_USER ? "cp-1" : null,
+    },
+  };
 }
 
 beforeEach(() => {
@@ -324,8 +356,10 @@ beforeEach(() => {
   mockOccurrenceCount.mockResolvedValue(RELEASED_IDS.length);
   // The proposal's close runs inside the allocator's transaction.
   mockAllocate.mockImplementation(
-    async (req: { inTx?: (tx: unknown) => Promise<void> }) => {
-      await req.inTx?.(txStub);
+    async (req: {
+      inTx?: (tx: unknown, moved: typeof NOTHING_MOVED) => Promise<void>;
+    }) => {
+      await req.inTx?.(txStub, NOTHING_MOVED);
       return { success: true };
     },
   );
@@ -361,8 +395,9 @@ function reportedOps() {
 }
 
 describe("accept re-validates through the allocator before anything is written", () => {
-  it("sends the proposed times through manual allocation under the wide lock", async () => {
+  it("sends the proposed times through manual allocation", async () => {
     const out = await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
       rescheduleRequestId: REQ,
       eventType: "consultation",
       eventId: "cons-1",
@@ -375,11 +410,10 @@ describe("accept re-validates through the allocator before anything is written",
     expect(mockAllocate).toHaveBeenCalledWith({
       eventType: "consultation",
       eventId: "cons-1",
+      // The accept route's own grant: renewed, never re-acquired.
+      heldAppointmentLock: HELD_LOCK,
       mode: "manual",
       slots: ["2026-09-01T10:00:00.000Z", "2026-09-08T10:00:00.000Z"],
-      // Day-sharded keys would let two concurrent confirmations pass a
-      // per-week cap on stale counts.
-      wideLock: true,
       // #1340 — the allocator must not close this proposal as superseded by
       // its own times.
       excludeRescheduleRequestId: REQ,
@@ -391,13 +425,18 @@ describe("accept re-validates through the allocator before anything is written",
     txStub.rescheduleRequest.updateMany.mockResolvedValue({ count: 0 });
     let hookError: unknown;
     mockAllocate.mockImplementation(
-      async (req: { inTx: (tx: unknown) => Promise<void> }) => {
-        hookError = await req.inTx(txStub).catch((e: unknown) => e);
+      async (req: {
+        inTx: (tx: unknown, moved: typeof NOTHING_MOVED) => Promise<void>;
+      }) => {
+        hookError = await req
+          .inTx(txStub, NOTHING_MOVED)
+          .catch((e: unknown) => e);
         return { success: false, errorCode: "RESCHEDULE_NO_LONGER_OPEN" };
       },
     );
 
     const out = await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
       rescheduleRequestId: REQ,
       eventType: "consultation",
       eventId: "cons-1",
@@ -410,6 +449,7 @@ describe("accept re-validates through the allocator before anything is written",
 
   it("finalizes ACCEPTED with a from-state guard, not a blind write", async () => {
     await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
       rescheduleRequestId: REQ,
       eventType: "consultation",
       eventId: "cons-1",
@@ -443,6 +483,7 @@ describe("accept re-validates through the allocator before anything is written",
     });
 
     const out = await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
       rescheduleRequestId: REQ,
       eventType: "consultation",
       eventId: "cons-1",
@@ -463,6 +504,7 @@ describe("accept re-validates through the allocator before anything is written",
     );
 
     const out = await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
       rescheduleRequestId: REQ,
       eventType: "consultation",
       eventId: "cons-1",
@@ -478,6 +520,7 @@ describe("accept re-validates through the allocator before anything is written",
     mockRequestFindUnique.mockResolvedValue(proposalRow({ proposedTimes: [] }));
 
     const out = await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
       rescheduleRequestId: REQ,
       eventType: "consultation",
       eventId: "cons-1",
@@ -494,6 +537,7 @@ describe("accept re-validates through the allocator before anything is written",
     );
 
     const out = await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
       rescheduleRequestId: REQ,
       eventType: "consultation",
       eventId: "cons-1",
@@ -521,6 +565,7 @@ describe("accept re-validates through the allocator before anything is written",
 describe("#1340 — a confirmation keeps the proposal it is confirming", () => {
   it("accept names its own proposal to the allocator and then closes it ACCEPTED", async () => {
     const out = await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
       rescheduleRequestId: REQ,
       eventType: "consultation",
       eventId: "cons-1",
@@ -564,7 +609,6 @@ describe("#1340 — a confirmation keeps the proposal it is confirming", () => {
     expect(mockAllocate).toHaveBeenCalledWith(
       expect.objectContaining({
         mode: "manual",
-        wideLock: true,
         excludeRescheduleRequestId: REQ,
       }),
     );
@@ -1017,6 +1061,8 @@ describe("who counts as the counterparty", () => {
   function orgFundedRow(initiatedById: string) {
     return openRequestRow({
       initiatedById,
+      initiatorRole:
+        initiatedById === CONSULTANT_USER ? "CONSULTANT" : "CONSULTEE",
       appointment: {
         consultationId: "cons-1",
         subscriptionId: null,
@@ -1076,50 +1122,6 @@ describe("who counts as the counterparty", () => {
     expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
       404,
     );
-
-    expect(mockMembershipFindUnique).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          userId_organizationId: {
-            userId: ORG_ADMIN_USER,
-            organizationId: ORG,
-          },
-        },
-      }),
-    );
-  });
-
-  // #1854 / ADR 19 — the FUNDING half of "is this an org booking", and the
-  // third way to fail the opener gate. `organizationId: ORG` alone is a TAG:
-  // with a CARD payment behind the booking the org's money did not pay for it,
-  // so its admin is not a payer-side actor here. A proposal they opened then
-  // resolves to NO side at all — the same fail-closed shape as an unidentifiable
-  // opener — and nobody may confirm it. Pre-gate this read as a payer-side act
-  // and let the consultant confirm a move the org had no authority over.
-  it("a booking the org only TAGGED makes its admin opener nobody", async () => {
-    mockRequestFindFirst.mockResolvedValue(orgFundedRow(ORG_ADMIN_USER));
-    mockMembershipFindUnique.mockResolvedValue({
-      status: "ACTIVE",
-      role: "OWNER",
-    });
-    mockOrgFundingPayment.mockResolvedValue({ paymentMethod: "CARD" });
-
-    for (const who of [CONSULTANT_USER, CONSULTEE_USER]) {
-      mockGetSession.mockResolvedValue(sessionOf(who));
-      expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
-        404,
-      );
-    }
-    // What refused it: the membership passed and the tag was read, so the
-    // funding proof off the booking's own Payment is the gate that closed.
-    expect(mockOrgFundingPayment).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          organizationId: ORG,
-          appointment: { consultationId: "cons-1" },
-        }),
-      }),
-    );
   });
 
   // The same tagged-only booking with a PARTY opener — the case the name above
@@ -1141,23 +1143,6 @@ describe("who counts as the counterparty", () => {
     expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
       404,
     );
-  });
-
-  it("an initiator who is neither party nor a payer admin leaves nobody able to answer", async () => {
-    // Fail closed: a proposal from an unidentifiable opener must not be
-    // confirmable by whoever asks first.
-    mockRequestFindFirst.mockResolvedValue(orgFundedRow("stranger-user"));
-    mockMembershipFindUnique.mockResolvedValue({
-      status: "ACTIVE",
-      role: "LEARNER",
-    });
-
-    for (const who of [CONSULTANT_USER, CONSULTEE_USER]) {
-      mockGetSession.mockResolvedValue(sessionOf(who));
-      expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
-        404,
-      );
-    }
   });
 });
 

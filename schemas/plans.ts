@@ -6,6 +6,7 @@ import {
   isProfanityFree,
 } from "@/utils/contentValidation";
 import { experienceValidation } from "./shared";
+import { MAX_GROUP_SESSION_PARTICIPANTS } from "@/lib/events/capacity";
 
 // Separate refine functions for different validation types
 const profanityFreeRefinement = (value: string) => {
@@ -330,6 +331,14 @@ export const SubscriptionPlanSchema = z.object({
     .number()
     .min(1, "Duration must be at least 1 month")
     .max(24, "Duration cannot exceed 24 months"),
+  // A weeks plan's length; null keeps a months plan. Months are derived from it.
+  durationInWeeks: z
+    .number()
+    .int("Weeks must be a whole number")
+    .min(1, "A plan runs at least 1 week")
+    .max(52, "A plan runs at most 52 weeks")
+    .nullable()
+    .optional(),
   price: priceSchema,
   priceCurrency: z.nativeEnum(Currency).default(Currency.INR),
   trialEnabled: z.boolean().optional(),
@@ -376,6 +385,15 @@ export const SubscriptionPlanSchema = z.object({
   ...planPositioningShape,
 });
 
+export const maxParticipantsSchema = z
+  .number()
+  .int("Participants must be a whole number")
+  .min(1, "At least one participant is required")
+  .max(
+    MAX_GROUP_SESSION_PARTICIPANTS,
+    `Cannot exceed ${MAX_GROUP_SESSION_PARTICIPANTS} participants`,
+  );
+
 // Base schema for common fields
 const BaseEventPlanSchema = z.object({
   // Kept through the editor's resolver so an edit PATCHes instead of POSTing.
@@ -384,10 +402,7 @@ const BaseEventPlanSchema = z.object({
   description: requiredDescriptionSchema,
   price: priceSchema,
   priceCurrency: z.nativeEnum(Currency).default(Currency.INR),
-  maxParticipants: z
-    .number()
-    .min(1, "At least one participant is required")
-    .max(10000, "Cannot exceed 10,000 participants"),
+  maxParticipants: maxParticipantsSchema,
   language: z
     .string()
     .min(1, "Language is required")

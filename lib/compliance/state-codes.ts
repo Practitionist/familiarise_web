@@ -3,15 +3,12 @@
  * GST place-of-supply derivation.
  *
  * Two representations reach us for the same state and they never compare
- * equal: the seller side is env-sourced alpha (`SUPPLIER_STATE_CODE`, e.g.
- * "KA") while the buyer side is written numeric, because the settings form
- * strips non-digits from `OrganizationTaxInfo.gstStateCode` (e.g. "29").
- * Normalise both through `numericStateCode` before any comparison — see #1132.
+ * equal: alpha ("HR") and numeric ("06"). Normalise both through
+ * `numericStateCode` before any comparison.
  */
 
-// 2-digit numeric GST state codes keyed by the alpha codes this codebase
-// stores in gstStateCode / SUPPLIER_STATE_CODE. The GSTIN prefix is
-// authoritative; this only covers the env-sourced seller fallback.
+// 2-digit numeric GST state codes keyed by alpha code. The GSTIN prefix is
+// authoritative; this only covers a stored alpha state.
 export const STATE_ALPHA_TO_NUMERIC: Record<string, string> = {
   JK: "01",
   HP: "02",

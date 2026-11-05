@@ -34,6 +34,14 @@ export interface DocumentDates {
   keptUntil: Date | null;
 }
 
+/** True once a booking's documents are past retention and must not render. */
+export function isPastRetention(
+  keptUntil: Date | null,
+  now: Date = new Date(),
+): boolean {
+  return keptUntil !== null && keptUntil.getTime() <= now.getTime();
+}
+
 const addDays = (date: Date, days: number) =>
   new Date(date.getTime() + days * DAY_MS);
 

@@ -33,6 +33,8 @@ jest.mock("@sentry/nextjs", () => ({
   captureException: (...a: unknown[]) => captureException(...a),
   captureMessage: (...a: unknown[]) => captureMessage(...a),
 }));
+// reportSentryError and the shared loggers capture through @sentry/core; share the one mock.
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
 const withSerializableRetry = jest.fn(async (fn: () => unknown) => fn());
 jest.mock("../../lib/db/serializable-retry", () => ({
@@ -78,12 +80,25 @@ const postUnappliedReceipt = jest.fn();
 jest.mock("../../lib/payments/ledger/unapplied-receipts", () => ({
   postUnappliedReceipt: (...a: unknown[]) => postUnappliedReceipt(...a),
 }));
+// The room gate's reads, for the rejected-capture admission case below.
+const meetingFindUnique = jest.fn();
+const userFindUnique = jest.fn();
+const seatFindFirst = jest.fn();
+const consentFindFirst = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $transaction: async (fn: (tx: unknown) => unknown) => fn(txStub),
     payment: {
       update: (...a: unknown[]) => prismaPaymentUpdate(...(a as [never])),
+    },
+    meeting: { findUnique: (...a: unknown[]) => meetingFindUnique(...a) },
+    user: { findUnique: (...a: unknown[]) => userFindUnique(...a) },
+    appointmentParticipant: {
+      findFirst: (...a: unknown[]) => seatFindFirst(...a),
+    },
+    consentArtifact: {
+      findFirst: (...a: unknown[]) => consentFindFirst(...a),
     },
   },
 }));
@@ -146,6 +161,8 @@ import {
   handlePaymentFailure,
   handlePaymentSuccess,
 } from "../../lib/payments/webhooks/handlers";
+import { resolveMeetingAccess } from "../../lib/meetings/access";
+import { matchesWhere, type Row, type Where } from "../fixtures/mem-db";
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -434,5 +451,97 @@ describe("#1582 B-P1-02 — in-tx system events ride the transaction client", ()
     // The prisma mock records the client: it is the tx stub, not the global.
     expect(params.db).toBe(txStub);
     expect(params.err?.message).toBe("CAPTURE_AFTER_TERMINAL_PAYMENT");
+  });
+});
+
+describe("a capture rejected for its amount opens no group room", () => {
+  it.each([
+    ["the auto-refund throws", false],
+    ["the auto-refund settles", true],
+  ])("denies the held webinar seat when %s", async (_label, refunded) => {
+    const payment: Row = {
+      id: "pay1",
+      paymentIntent: "order1",
+      amount: 10000,
+      paymentStatus: "PENDING",
+      userId: "u1",
+      currency: "INR",
+      appointmentId: "appt1",
+      description: null,
+      refundOwedKey: null,
+      refunds: [],
+      user: { email: "buyer@example.com", name: "Buyer", consulteeProfile: {} },
+    };
+    paymentFindUnique.mockResolvedValue(payment);
+    // Both writers land on the one row the seat links to, as Postgres would.
+    paymentUpdateMany.mockImplementation(async ({ data }) => {
+      Object.assign(payment, data);
+      return { count: 1 };
+    });
+    prismaPaymentUpdate.mockImplementation(async ({ data }) => {
+      Object.assign(payment, data);
+      return {};
+    });
+    if (refunded) refundPayment.mockResolvedValue({ status: "SUCCEEDED" });
+    else refundPayment.mockRejectedValue(new Error("gateway unavailable"));
+
+    const outcome = await handlePaymentSuccess(
+      "order1",
+      { appointmentType: "WEBINAR" },
+      9999,
+    );
+    expect(outcome).toBe("amount_mismatch");
+    expect(payment.paymentStatus).toBe("SUCCEEDED");
+    expect(payment.description).toMatch(
+      refunded ? /^Auto-refunded:/ : /^Auto-refund pending:/,
+    );
+    expect(appointmentFindUnique).not.toHaveBeenCalled();
+
+    const now = Date.now();
+    meetingFindUnique.mockResolvedValue({
+      id: "meeting1",
+      streamCallId: "slot-review",
+      endedAt: null,
+      endedReason: null,
+      extendedSeconds: 0,
+      occurrence: {
+        id: "occ1",
+        startsAt: new Date(now - 300_000),
+        endsAt: new Date(now + 1_500_000),
+        isTentative: false,
+        completionStatus: "SCHEDULED",
+        deletedAt: null,
+        appointmentId: "appt1",
+        appointment: {
+          id: "appt1",
+          deletedAt: null,
+          consultation: null,
+          subscription: null,
+          class: null,
+          trial: null,
+          webinar: {
+            status: "IN_PROGRESS",
+            webinarPlan: { id: "wp1", consultantProfileId: "host1" },
+          },
+        },
+      },
+    });
+    userFindUnique.mockResolvedValue({ consultantProfileId: null });
+    consentFindFirst.mockResolvedValue({ id: "consent1" });
+    const seat: Row = {
+      id: "held-seat1",
+      appointmentId: "appt1",
+      userId: "u1",
+      status: "HELD",
+      paymentId: "pay1",
+      payment,
+    };
+    seatFindFirst.mockImplementation(async ({ where }: { where: Where }) =>
+      matchesWhere(seat, where) ? { id: seat.id } : null,
+    );
+
+    const access = await resolveMeetingAccess("slot-review", "u1");
+    expect(seatFindFirst).toHaveBeenCalledTimes(1);
+    expect(access.hasAccess).toBe(false);
   });
 });

@@ -160,8 +160,8 @@ Each section also lists:
 ### A.3 Documents-for-review — ✅ Wired
 
 - **Schema:** Inherited via `AppointmentDocument.appointmentId → Appointment.organizationId`. No direct FK on the document row.
-- **Code paths:** [`lib/api/scope/list-documents.ts`](../../../lib/api/scope/list-documents.ts); [`app/dashboard/organization/[orgId]/documents/page.tsx`](../../../app/dashboard/organization/[orgId]/documents/page.tsx).
-- **Org dashboard surface:** `/documents`
+- **Code paths:** [`lib/api/scope/list-documents.ts`](../../../lib/api/scope/list-documents.ts); [`app/dashboard/organization/[orgId]/library/page.tsx`](../../../app/dashboard/organization/[orgId]/library/page.tsx).
+- **Org dashboard surface:** `/library?tab=documents`
 - **Why:** Documents are 1:1 (or 1:N) with appointments. Inheritance avoids drift between document and parent-appointment tenancy. Bulk-review queries must filter on `Appointment.organizationId`, never application-side.
 - **Future work:** none open.
 
@@ -221,7 +221,7 @@ Each section also lists:
 - **Schema:** `BillingSubscription` (linked 1:1 to `Contract`). `BillingSubscription.renewalReminderSentAt` (once-per-cycle gate for renewal-upcoming notification, C.5). Dunning state on `OrganizationInvoice` (`markedOverdueAt`, `dunningReminderCount`, `lastDunningReminderAt`, `dunningSuspendedAt`).
 - **Code paths:**
   - Invoicing: [`jobs/billing/generate-subscription-invoices.ts`](../../../jobs/billing/generate-subscription-invoices.ts) — `sendRenewalReminders()` then cycle-advance + invoice transaction (invoice-paid postings land via `postLedgerTxn` when the payment confirms).
-  - **Dunning** (#779 §A/§D, #812): [`jobs/billing/dunning.ts`](../../../jobs/billing/dunning.ts) — Stage 1 flips past-due ISSUED invoices to OVERDUE; Stage 2 sends escalation reminders on a 7-day cadence, capped at 3 (`MAX_REMINDERS = 3`); Stage 3 (`ENABLE_DUNNING_SUSPEND`-gated) stamps `dunningSuspendedAt` 7 days past the last reminder, claim + audit in one Serializable transaction. DEACTIVATED orgs are skipped.
+  - **Dunning** (#779 §A/§D, #812): [`jobs/billing/dunning.ts`](../../../jobs/billing/dunning.ts) — Stage 1 flips past-due ISSUED invoices to OVERDUE; Stage 2 sends escalation reminders on a 7-day cadence, capped at 3 (`MAX_REMINDERS = 3`); Stage 3 (`ENABLE_DUNNING_SUSPEND`-gated) stamps `dunningSuspendedAt` 7 days past the last reminder, claim + audit in one Serializable transaction. DEACTIVATED orgs are skipped. In every stage the winning claim transaction also stages the visibility roster's bell (`NotificationOutbox`, dedupe key `orgInvoice:<id>:overdue:<stage>`) and email (`FailedEmail`); the job attempts both after commit, and `drain-notification-outbox` and `retry-failed-emails` deliver what that attempt did not. A roster, read or render failure rolls the claim back, so the invoice is re-selected on the next run and the failure counts in the run's `failed` total (HTTP 207).
 - **Org dashboard surface:** `/billing` (Annual License panel)
 - **Why:** A daily cron handles renewal-upcoming notification (7 days before `nextInvoiceDate`), renewal-day invoice creation, and OVERDUE dunning. Same idempotency pattern (conditional `updateMany` claim) throughout so no row is double-charged or double-reminded.
 - 🟡 **Config-gated off by default:** the **booking-suspend cascade** (Stage 3) only runs when `ENABLE_DUNNING_SUSPEND` is set (#812); with the flag unset, dunning stays notify-only and `dunningSuspendedAt` is never written.
@@ -364,7 +364,7 @@ See A.4. Recording retention runs daily in [`lib/stream/recording-retention.ts`]
   - Consent: `POST/GET/DELETE /api/organizations/[orgId]/consent` → [`lib/compliance/dpdp.ts`](../../../lib/compliance/dpdp.ts) `buildConsentArtifact` / `withdrawConsent`. Withdrawal stamps `withdrawnAt` (irreversible; re-grant = fresh artifact). `consent-retention-sweeper` purges past `auditRetainedUntil`.
   - Erasure (§12): `ErasureRequest` queue (`/api/users/me/erasure-requests` → `/api/admin/erasure-requests/[id]/process`) → [`lib/compliance/erasure/scrub-user.ts`](../../../lib/compliance/erasure/scrub-user.ts) tombstone scrub; read-side [`lib/enterprise/audit-sanitize.ts`](../../../lib/enterprise/audit-sanitize.ts).
   - Access (§11): [`scripts/cleanup/process-data-exports.ts`](../../../scripts/cleanup/process-data-exports.ts) — 7-day signed-URL JSON bundle (`OrgDataExportJob`), Novu notify to OWNERs.
-  - Breach: [`jobs/compliance/databreach-deadline-alerts.ts`](../../../jobs/compliance/databreach-deadline-alerts.ts) — tracks the 72-hour Board detailed-report clock off `DataBreach` rows.
+  - Breach: [`lib/compliance/databreach-deadline-alerts.ts`](../../../lib/compliance/databreach-deadline-alerts.ts) — tracks the 72-hour Board detailed-report clock off `DataBreach` rows.
 - **Why:** The export bundle is JSON-only (compliance reviewers prefer JSON; `jq -r '@csv'` produces CSV locally), and erasure pseudonymizes the actor while retaining the immutable money journal under the §8(7) legal-retention exception. See [compliance-dpdp-gst-tds-msme](01-compliance-dpdp-gst-tds-msme.md), [deletion-policy](02-deletion-policy.md), [data-export](03-data-export.md). Authoritative: [docs/compliance/02-dpdp-and-privacy.md](../../compliance/02-dpdp-and-privacy.md).
 - **Future work:** Two-stage breach intimation; retention dashboard UI (`#701`).
 
@@ -372,7 +372,7 @@ See A.4. Recording retention runs daily in [`lib/stream/recording-retention.ts`]
 
 - **Schema:** `OrganizationInvoice.{irn, ackNumber, signedQrPayload, irpStatus, irpRetryCount, irpLastError, irpLastAttemptAt}`.
 - **Code paths:** [`jobs/compliance/irp-uploader.ts`](../../../jobs/compliance/irp-uploader.ts) → [`lib/compliance/irp.ts:generateIrn`](../../../lib/compliance/irp.ts) + payload mapper [`lib/compliance/irp-payload.ts:buildIrpPayload`](../../../lib/compliance/irp-payload.ts), ClearTax GSP connector with retry telemetry.
-- **Why:** Body is live but gated behind `ENABLE_IRP_UPLOADER` + ClearTax creds (`CLEARTAX_API_KEY`/`CLEARTAX_GSP_TOKEN`/`CLEARTAX_GSTIN`). With creds absent `generateIrn` returns `{ status: "FAILED", reason: "STUB" }` and the cron records a normal retry — never crashes on missing credentials.
+- **Why:** Body is live but gated on `PLATFORM_GSTIN` (the supplier GSTIN) plus the ClearTax creds (`CLEARTAX_API_KEY`/`CLEARTAX_GSP_TOKEN`); there is no `ENABLE_IRP_UPLOADER` flag. With any of them absent the run touches no invoice and returns `skipped: "<NAME> not configured"` — it never crashes on missing credentials.
 - **Future work:** Production approval + sandbox proof; accountant/legal sign-off on IRN format (PR-2).
 
 ### F.6 HRIS provisioning — ⏸ Parked (no schema yet)

@@ -11,6 +11,11 @@
  * nulls the consultee text inside its transaction.
  */
 
+// Digital product erasure has its own suite; these scrubs own no products.
+jest.mock("../../lib/digital-products/erasure", () => ({
+  scrubDigitalProductsTx: jest.fn(async () => []),
+  purgeErasedCreatorFiles: jest.fn(async () => []),
+}));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 // Session-document erasure has its own suite; this one pins the money gate.
 jest.mock("../../lib/documents/document-erasure", () => ({

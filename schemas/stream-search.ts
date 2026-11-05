@@ -52,6 +52,17 @@ export const AppointmentSearchResultSchema = z.object({
   /** Funding context, part of the DM key. Null/absent = personal. */
   organizationId: z.string().nullable().optional(),
   channelId: z.string(),
+  /**
+   * ISO start of the session this row points at: the one a date query matched,
+   * otherwise the next upcoming one. Absent when the booking has none left.
+   */
+  startsAt: z.string().optional(),
+  /**
+   * The counterparty's email, present ONLY when the query matched it and not
+   * their name, so the row shows why it matched. Consultee emails go to their
+   * consultant only — a consultee never matches or sees a consultant's.
+   */
+  counterpartyEmail: z.string().optional(),
 });
 
 export const ConsulteeSearchResultSchema = z.object({

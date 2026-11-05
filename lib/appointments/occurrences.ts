@@ -6,6 +6,7 @@
 import type { PrismaLike } from "@/lib/prisma";
 import type { OccurrenceCompletionStatus, Prisma } from "@prisma/client";
 import { recomputeEarningsHold } from "@/lib/payments/payouts/earnings-hold";
+import { endReasonPolicy } from "@/lib/meetings/end-reasons";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import {
   ScheduleLockedError,
@@ -21,6 +22,7 @@ import {
   type OccurrenceLike,
   type OccurrenceVM,
 } from "./view-model";
+import { normalizeOccurrences, type AnomalySink } from "./normalize";
 
 /** The engine's unit of arithmetic: every interval and duration is a multiple. */
 export const SCHEDULING_INTERVAL_MS = 30 * 60 * 1000;
@@ -168,15 +170,31 @@ export async function replaceOccurrence(
   });
 
   if (live.length === 0) {
-    const replaced = existing
-      .filter((row) => row.completionStatus === "RESCHEDULED")
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0];
+    // A released (RESCHEDULED) session is replaced: the new row takes its
+    // ordinal and counts as a move, and the released rows stop holding time.
+    const released = existing.filter(
+      (row) => row.completionStatus === "RESCHEDULED" && !row.deletedAt,
+    );
+    const replaced = [...released].sort(
+      (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
+    )[0];
+    if (released.length > 0) {
+      await transitionOccurrenceCompletion(tx, {
+        reason: "replaced by a new time",
+        where: { id: { in: released.map((row) => row.id) } },
+        to: "CANCELLED",
+        data: { deletedAt: new Date() },
+        fromIn: ["RESCHEDULED"],
+        allowZero: true,
+      });
+    }
     const created = await tx.appointmentOccurrence.create({
       data: {
         appointmentId: args.appointmentId,
         ...target,
         ordinal:
           replaced?.ordinal ?? (await nextOrdinal(tx, args.appointmentId)),
+        ...(replaced ? { movedAt: new Date() } : {}),
       },
     });
     await recomputeEarningsHold(tx, args.appointmentId);
@@ -275,14 +293,6 @@ export function allowsManageTimings(
   return occurrences.every((row) => Boolean(row.isTentative));
 }
 
-export function allowsUnschedule(
-  kind: AppointmentKind,
-  occurrences: Array<{ isTentative?: boolean | null }>,
-): boolean {
-  if (kind !== "WEBINAR" && kind !== "CLASS") return false;
-  return occurrences.some((row) => !row.isTentative);
-}
-
 export function upcomingOccurrences<
   T extends {
     startsAt: Date | string;
@@ -313,9 +323,7 @@ function occurrenceTimes(occurrence: JoinableOccurrence): {
   };
 }
 
-/** Terminal reasons that permanently close a room without allowing rejoin. */
-const DELIBERATE_END_REASONS = new Set(["call_ended", "maintenance"]);
-
+/** True when a person or ops closed the room on purpose (`END_REASON_POLICY.deliberate`). */
 export function isDeliberateEnd(
   session?: {
     endedAt: Date | string | null;
@@ -323,9 +331,7 @@ export function isDeliberateEnd(
   } | null,
 ): boolean {
   if (!session?.endedAt) return false;
-  return session.endedReason
-    ? DELIBERATE_END_REASONS.has(session.endedReason)
-    : true;
+  return endReasonPolicy(session.endedReason).deliberate;
 }
 
 /** Join state of one occurrence over [startsAt - joinWindowMs, endsAt + rejoinGraceMs). */
@@ -513,12 +519,13 @@ export interface OccurrenceSourceAppointment {
   occurrences?: OccurrenceLike[] | null;
 }
 
-/** One OccurrenceVM per stored row, chronological — the timeline's input. */
+/** One OccurrenceVM per drawable stored row (`normalizeOccurrences`), chronological. */
 export function occurrencesOfAppointment(
   appointment: OccurrenceSourceAppointment | null | undefined,
+  sink?: AnomalySink,
 ): OccurrenceVM[] {
   return sortOccurrences(
-    (appointment?.occurrences ?? []).map((row) =>
+    normalizeOccurrences(appointment?.occurrences, sink).map((row) =>
       toOccurrenceVM({ ...row, appointmentId: appointment?.id ?? null }),
     ),
   );

@@ -6,14 +6,12 @@ import { Ratelimit } from "@upstash/ratelimit";
 import redis from "@/lib/redis-edge";
 import { NextResponse } from "next/server";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
-import { clientIpFrom } from "@/lib/request-ip";
+import { stampedClientIp } from "@/lib/request-ip";
 
 type RatelimitRedis = ConstructorParameters<typeof Ratelimit>[0]["redis"];
 
-const LIMITER_TIMEOUT_MS = (() => {
-  const v = Number(process.env.LIMITER_TIMEOUT_MS);
-  return Number.isFinite(v) && v > 0 ? v : 500;
-})();
+// Fail-open budget for one limiter round trip.
+const LIMITER_TIMEOUT_MS = 500;
 
 export function makeLimiter(
   requests: number,
@@ -66,6 +64,16 @@ export const reviewWriteLimiter = makeLimiter(20, "1 h", "rl:review-write");
 export const streamJoinLimiter = makeLimiter(20, "1 m", "rl:stream-join");
 /** 60 per minute — authenticated Stream reads/writes */
 export const streamApiLimiter = makeLimiter(60, "1 m", "rl:stream-api");
+/** 10 per minute per user — meeting room controls: end, extend, reopen, live */
+export const meetingControlLimiter = makeLimiter(
+  10,
+  "1 m",
+  "rl:meeting-control",
+);
+/** 60 per minute per user — stage grant/revoke, one request per attendee a host clears from the queue */
+export const meetingStageLimiter = makeLimiter(60, "1 m", "rl:meeting-stage");
+/** 30 per minute per user — in-call Q&A and stage chat writes */
+export const meetingQaLimiter = makeLimiter(30, "1 m", "rl:meeting-qa");
 /** 3 per 5 minutes per user — POST /api/stream/recordings/sync */
 export const streamRecordingSyncLimiter = makeLimiter(
   3,
@@ -196,12 +204,6 @@ export const inviteAcceptIpLimiter = makeLimiter(
 export const inviteAcceptLimiter = inviteAcceptIpLimiter;
 /** 10 per minute per IP — GET /api/referrals/code/check/[code] */
 export const referralCheckLimiter = makeLimiter(10, "1 m", "rl:referral-check");
-/** 2 per hour per recipient — the "someone tried to sign up" notice */
-export const existingAccountNoticeLimiter = makeLimiter(
-  2,
-  "1 h",
-  "rl:existing-account-notice",
-);
 /** 20 per hour per admin — POST /api/admin/team/members and setup-link */
 export const staffCreateLimiter = makeLimiter(
   20,
@@ -211,6 +213,23 @@ export const staffCreateLimiter = makeLimiter(
 
 /** 5 per 15 minutes per user — POST /api/user/reauthenticate (password and TOTP guesses) */
 export const reauthLimiter = makeLimiter(5, "15 m", "rl:reauth");
+
+/** 60 per minute per creator — upload URL plus commit for a full 20-file product, with retry headroom */
+export const digitalProductUploadLimiter = makeLimiter(
+  60,
+  "1 m",
+  "rl:digital-product-upload",
+);
+/**
+ * ~30 per 10 minutes per user — digital product file downloads. Upstash's
+ * sliding window floors the previous bucket's weighted count, so a burst
+ * straddling a bucket boundary can admit one or two more.
+ */
+export const digitalProductDownloadLimiter = makeLimiter(
+  30,
+  "10 m",
+  "rl:digital-product-download",
+);
 
 /**
  * Seconds until the sliding window admits the caller again, floored at 1.
@@ -263,11 +282,11 @@ export async function applyRateLimit(
   }
 }
 
-/** The client IP from the header this runtime's edge sets (`lib/request-ip.ts`). */
+/** For route handlers: the client IP middleware stamped on the request. */
 export function getClientIp(req: {
   headers: { get(name: string): string | null };
 }): string {
-  return clientIpFrom(req.headers);
+  return stampedClientIp(req.headers);
 }
 
 /**

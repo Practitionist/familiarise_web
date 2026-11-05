@@ -28,31 +28,30 @@ import {
 
 export const FEATURES = [
   {
-    icon: Video,
-    title: "1-on-1 Sessions",
+    icon: GraduationCap,
+    title: "Live Classes",
     description:
-      "Personal video consultations with industry experts tailored to your specific needs and goals.",
+      "Structured classes taught live by professionals across scheduled sessions, with course materials.",
     gradient: "from-zinc-700 to-zinc-900",
+  },
+  {
+    icon: Users,
+    title: "Live Webinars",
+    description: "Interactive group sessions on a single topic, with Q&A.",
+    gradient: "from-neutral-600 to-neutral-800",
+  },
+  {
+    icon: Video,
+    title: "Tutoring & 1-on-1 Sessions",
+    description:
+      "Personal video sessions with a verified expert, tailored to your subject and goals.",
+    gradient: "from-stone-600 to-stone-800",
   },
   {
     icon: Calendar,
     title: "Subscriptions",
     description:
-      "Ongoing mentorship programs with regular check-ins and continuous support for your growth.",
-    gradient: "from-neutral-600 to-neutral-800",
-  },
-  {
-    icon: GraduationCap,
-    title: "Expert Classes",
-    description:
-      "Structured learning programs led by professionals with hands-on projects and certifications.",
-    gradient: "from-stone-600 to-stone-800",
-  },
-  {
-    icon: Users,
-    title: "Live Webinars",
-    description:
-      "Interactive group sessions on trending topics with Q&A and networking opportunities.",
+      "Ongoing programs with regular live sessions over a set period.",
     gradient: "from-gray-600 to-gray-800",
   },
 ];
@@ -101,27 +100,27 @@ export const CATEGORIES = [
 
 export const BENEFITS = [
   {
-    title: "Accelerate Your Growth",
+    title: "Learn Live",
     description:
-      "Gain years of industry insights in hours through personalized 1-on-1 sessions with vetted experts.",
+      "Join live classes, webinars and one-on-one sessions where you can ask questions and get answers in real time.",
     icon: Zap,
   },
   {
-    title: "Build Your Network",
+    title: "Verified Experts",
     description:
-      "Connect with industry leaders and like-minded professionals in our exclusive community events.",
-    icon: Users,
+      "Every listed expert is document-verified by our staff, and ratings come only from learners who attended.",
+    icon: BadgeCheck,
   },
   {
-    title: "Learn From The Best",
+    title: "Learn From Practitioners",
     description:
-      "Access cutting-edge knowledge from top professionals across tech, business, design, and more.",
+      "Study with working professionals across technology, business, design, and more.",
     icon: GraduationCap,
   },
   {
     title: "Flexible Learning",
     description:
-      "Choose your schedule, pace, and learning format. From quick consultations to comprehensive courses.",
+      "Choose your schedule, pace, and learning format. From a single session to a full course.",
     icon: Calendar,
   },
 ];
@@ -137,49 +136,19 @@ export const HOW_IT_WORKS = [
     step: 2,
     title: "Book a Session",
     description:
-      "Choose your preferred time slot and session type that fits your schedule.",
+      "Choose a class, webinar or session type, then pick a time slot that fits your schedule.",
   },
   {
     step: 3,
     title: "Connect & Learn",
     description:
-      "Join your session via our platform and start your transformation journey.",
+      "Join your session on our platform over built-in video, with chat and course materials alongside.",
   },
   {
     step: 4,
     title: "Grow Together",
     description:
-      "Continue learning with follow-ups, resources, and our supportive community.",
-  },
-];
-
-export const SUCCESS_STORIES = [
-  {
-    name: "Sarah Chen",
-    role: "Software Engineer → Tech Lead",
-    company: "Google",
-    image: "/placeholder-user.jpg",
-    story:
-      "After 3 months of mentorship, I successfully transitioned from an individual contributor to leading a team of 8 engineers.",
-    metric: "50% salary increase",
-  },
-  {
-    name: "Marcus Johnson",
-    role: "Student → Product Manager",
-    company: "Stripe",
-    image: "/placeholder-user.jpg",
-    story:
-      "My mentor helped me break into product management with zero experience. The mock interviews were game-changing.",
-    metric: "Landed dream job",
-  },
-  {
-    name: "Elena Rodriguez",
-    role: "Designer → Design Director",
-    company: "Airbnb",
-    image: "/placeholder-user.jpg",
-    story:
-      "The strategic guidance I received helped me build a portfolio that stood out and accelerated my career.",
-    metric: "3 promotions in 2 years",
+      "Keep learning with session follow-ups, course materials and your next booking.",
   },
 ];
 
@@ -200,7 +169,7 @@ export const PLATFORM_FEATURES = [
     icon: Lock,
     title: "Secure Payments",
     description:
-      "Protected transactions with Stripe & Razorpay. Refunds and dispute handling built-in.",
+      "Payments are processed by Razorpay. Refunds and dispute handling are built in.",
   },
   {
     icon: LayoutDashboard,
@@ -230,13 +199,13 @@ export const PLATFORM_FEATURES = [
     icon: MessageSquare,
     title: "In-app Messaging",
     description:
-      "Direct communication with experts. Create support tickets and track issue resolution.",
+      "Direct communication with experts. Open support cases and track issue resolution.",
   },
   {
     icon: HeadphonesIcon,
     title: "Support System",
     description:
-      "Priority-based ticket system with issue tracking for sessions, payments, and more.",
+      "Priority-based support cases with issue tracking for sessions, payments, and more.",
   },
   {
     icon: FileCheck,
@@ -262,52 +231,23 @@ export const TRUST_BADGES = [
   {
     icon: Shield,
     label: "Verified Experts",
-    description: "All mentors are background-checked",
+    description: "Every listed expert is document-verified by our staff",
   },
   {
     icon: Lock,
-    label: "Secure Platform",
-    description: "Bank-level encryption for all data",
+    label: "Secure Payments",
+    description: "Processed by Razorpay; we do not store card details",
   },
   {
     icon: Clock,
-    label: "Money-back Guarantee",
-    description: "Full refund if not satisfied",
+    label: "Clear Refund Policy",
+    description:
+      "Cancellation and refund terms are published and shown at booking",
   },
   {
     icon: Award,
     label: "Quality Assured",
-    // #1485 — was "4.9★ average session rating", a number with nothing behind
-    // it. What replaces it is a property of the review system itself, so it
-    // stays true at every scale.
     description: "Ratings come only from verified session participants",
-  },
-];
-
-export const UPCOMING_EVENTS = [
-  {
-    title: "Breaking into Tech Leadership",
-    host: "David Park",
-    date: "Dec 20, 2025",
-    time: "6:00 PM EST",
-    attendees: 156,
-    type: "Webinar",
-  },
-  {
-    title: "Portfolio Review Workshop",
-    host: "Lisa Wang",
-    date: "Dec 22, 2025",
-    time: "2:00 PM EST",
-    attendees: 89,
-    type: "Workshop",
-  },
-  {
-    title: "Startup Fundraising 101",
-    host: "Alex Rivera",
-    date: "Dec 28, 2025",
-    time: "11:00 AM EST",
-    attendees: 234,
-    type: "Class",
   },
 ];
 
@@ -315,25 +255,19 @@ export const FAQ_ITEMS = [
   {
     question: "How do I find the right expert for my needs?",
     answer:
-      "Our platform features detailed expert profiles with specializations, reviews, and ratings. You can filter by domain, experience level, availability, and price range. We also offer a matching service for personalized recommendations.",
+      "Our platform features detailed expert profiles with specializations, reviews, and ratings. You can filter by domain, experience level, availability, and price range.",
   },
   {
     question: "What types of sessions are available?",
     answer:
-      "We offer four main formats: 1-on-1 video consultations for personalized guidance, subscription plans for ongoing mentorship, structured classes for in-depth learning, and live webinars for group learning and networking.",
+      "We offer four main formats: live classes for structured, in-depth learning, live webinars for group learning, tutoring and 1-on-1 video sessions for personalized guidance, and subscription plans for ongoing sessions with the same expert.",
   },
   {
     question: "How does the payment and refund process work?",
-    // #1569 B3: "you can request a full refund" overstated an undefined
-    // "guarantee period" and implied a manual request everywhere; a session
-    // that doesn't happen because the host is absent is voided and
-    // remedied automatically (D1, D4), and cancellation refunds follow the
-    // terms shown on the booking. CodeRabbit caught the first draft for not
-    // distinguishing the immediate-refund and make-up-first remedies, and
-    // the #1833 review round caught "doesn't join" reading as a total
-    // no-show rather than including a host absent long enough who joins late.
+    // A missed consultation is refunded automatically; a missed class or
+    // webinar gets a free make-up first.
     answer:
-      "We use secure payment processing. Payment is held in escrow until your session is completed. Cancellation refunds follow the terms shown on your booking. If your expert isn't there for enough of a consultation, it's voided and refunded automatically — no request needed. Missed classes and webinars are offered a free make-up first, with an automatic refund if it goes unused.",
+      "Payments are processed securely by Razorpay in INR, and GST is shown at checkout before you pay. The expert is paid only after your session has been delivered. Cancellation refunds follow the terms shown on your booking and our Cancellation & Refund Policy. If your expert isn't there for enough of a consultation, it's voided and refunded automatically — no request needed. Missed classes and webinars are offered a free make-up first, with an automatic refund if it goes unused.",
   },
   {
     question: "Can I become an expert on the platform?",
@@ -343,19 +277,8 @@ export const FAQ_ITEMS = [
   {
     question: "What if I need to reschedule a session?",
     answer:
-      "You can reschedule up to 24 hours before your session at no extra cost. Both you and your expert receive notifications, and you can pick a new time that works for both parties.",
+      "You can request one free reschedule if you do it more than 24 hours before your session. Both you and your expert receive notifications, and you can pick a new time that works for both parties.",
   },
-];
-
-export const COMPANY_LOGOS = [
-  "Google",
-  "Microsoft",
-  "Amazon",
-  "Meta",
-  "Apple",
-  "Netflix",
-  "Stripe",
-  "Airbnb",
 ];
 
 export const ENTERPRISE_FEATURES = [

@@ -15,8 +15,8 @@ export const POST = withOpsAction(
       kind: "AppointmentOccurrence",
       id: body.occurrenceId,
     }),
-    run: async ({ params, body, actor }) => {
-      const hosted = await hostedForClass(params.classId, actor.userId);
+    run: async ({ params, body }) => {
+      const hosted = await hostedForClass(params.classId);
       const result = await cancelClassSession(hosted, body.occurrenceId);
       return {
         target: { kind: "AppointmentOccurrence", id: body.occurrenceId },

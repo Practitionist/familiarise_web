@@ -1,10 +1,16 @@
 "use client";
 
+import { earliestWeekSessions } from "@/lib/booking/release-weeks";
+import { MobileAutoSchedule } from "./MobileAutoSchedule";
+import { rescheduleWindow } from "@/lib/booking/entitlement";
+import { leadMsFor } from "@/lib/booking/lead-time";
 import React from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DesktopOnlyNotice } from "@/components/scheduling/DesktopOnlyNotice";
+import { MobileDayListPicker } from "@/components/scheduling/MobileDayListPicker";
 import { SafeUnifiedCalendar } from "@/components/scheduling/SafeUnifiedCalendar";
+import { CalendarGridSkeleton } from "@/components/scheduling/CalendarSkeletons";
 import {
   groupReleasableSessions,
   SessionReleasePicker,
@@ -27,23 +33,25 @@ import {
   resolveFocusTarget,
   type TimePickerFocus,
 } from "@/lib/scheduling/time-picker-focus";
+import { useDisplayZone } from "@/lib/time/use-display-zone";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { ZoneSwitch } from "@/components/scheduling/ZoneSwitch";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
+import { maxSessionsPerDayFor } from "@/utils/scheduling-engine/sessionCaps";
 import { cn } from "@/utils/tailwind";
 
 /**
  * The one surface for choosing times, shared by allocation, both reschedule
- * roles and a consultant's own event timings.
+ * roles, incident rebooking and a consultant's own event timings. Differences
+ * live in the policy object (`time-picker-policy.ts`), not in branches here.
  *
- * It takes a policy object rather than a prop per difference. The four callers
- * disagree about lead time, whether anything is being released and who owns
- * the submit; all of that is data in `time-picker-policy.ts`, so nothing here
- * branches on which caller it is.
+ * Picking one or a few times works on any screen: below `md` the heat map is
+ * replaced by a day list fed by the same endpoint, and the release step and
+ * the footer ("Any time works", submit) are always reachable. Only allocation
+ * and manage-timings keep the week grid desktop-only.
  */
 
-/**
- * "No preference" needs a real value because Radix treats the empty string as
- * "clear the selection" and refuses it as an item value.
- */
+/** Radix treats "" as "clear", so "no preference" needs a real value. */
 const NO_PREFERENCE = "ANY";
 
 const TIME_OF_DAY_OPTIONS = [
@@ -59,30 +67,79 @@ const DAYS_OPTIONS = [
   { value: "WEEKENDS", label: "Weekends" },
 ] as const;
 
-/** Un-nests the submit button's title so every disabled state names its fix. */
+type TimeOfDay = NonNullable<SlotPreference["preferredTimeOfDay"]>;
+type PreferredDays = NonNullable<SlotPreference["preferredDays"]>;
+
+function isTimeOfDay(value: string): value is TimeOfDay {
+  return value === "MORNING" || value === "AFTERNOON" || value === "EVENING";
+}
+
+function isPreferredDays(value: string): value is PreferredDays {
+  return value === "WEEKDAYS" || value === "WEEKENDS";
+}
+
+const ATOM_MS = 30 * 60 * 1000;
+
+/** Whole-session picks as the half-hour list the reschedule API expects. */
+function atomsOf(
+  picks: readonly { startsAt: string; endsAt: string }[],
+): { startsAt: string; endsAt: string }[] {
+  return picks.flatMap((pick) => {
+    const atoms: { startsAt: string; endsAt: string }[] = [];
+    const endMs = new Date(pick.endsAt).getTime();
+    for (
+      let at = new Date(pick.startsAt).getTime();
+      at < endMs;
+      at += ATOM_MS
+    ) {
+      atoms.push({
+        startsAt: new Date(at).toISOString(),
+        endsAt: new Date(at + ATOM_MS).toISOString(),
+      });
+    }
+    return atoms;
+  });
+}
+
+/**
+ * Which picker a select-mode surface shows, decided once on mount: switching
+ * mid-task would throw away the picks the other picker holds.
+ */
+function useWideViewport(): boolean | null {
+  const [wide, setWide] = React.useState<boolean | null>(null);
+  React.useEffect(() => {
+    setWide(window.matchMedia("(min-width: 768px)").matches);
+  }, []);
+  return wide;
+}
+
+/** Every disabled state names its fix. */
 function submitButtonTitle(state: {
   isSubmitting: boolean;
+  blocked: boolean;
   selectionIncomplete: boolean;
-  proposedCount: number;
-  requiredProposedSlots: number;
+  pickedTimes: number;
+  neededTimes: number;
   allowReleaseWithoutTime: boolean;
 }): string {
   if (state.isSubmitting) {
     return "Submitting — wait for the current attempt to finish.";
   }
+  if (state.blocked) {
+    return "This booking's own sessions didn't load. Try again before submitting.";
+  }
   if (state.selectionIncomplete) {
-    // Name "Any time works" only where the policy actually offers it.
     return state.allowReleaseWithoutTime
-      ? "Select a time for every session, or choose Any time works."
-      : "Select a time for every session.";
+      ? "Choose which sessions are moving, or choose Any time works."
+      : "Choose which sessions are moving.";
   }
-  if (state.proposedCount === 0) {
-    return "Pick at least one replacement time first.";
+  if (state.pickedTimes === 0) {
+    return "Pick at least one new time first.";
   }
-  if (state.proposedCount !== state.requiredProposedSlots) {
-    return "Select a complete replacement time for every session being moved.";
+  if (state.pickedTimes !== state.neededTimes) {
+    return `Pick one new time for each session you're moving (${state.pickedTimes} of ${state.neededTimes}).`;
   }
-  return "Submit the selected times.";
+  return "Submit the picked times.";
 }
 
 export interface TimePickerProps {
@@ -93,25 +150,14 @@ export interface TimePickerProps {
   /** Back out. Also wired to the allocate grid's own Cancel button. */
   onCancel?: () => void;
   className?: string;
-  /**
-   * Where the status legend renders. "top" (default) keeps it above the grid
-   * (#1064: a key below the fold explains nothing); "bottom" puts it between
-   * the grid and the action footer, which stays on screen — used by the
-   * allocate page to reclaim top space for the heatmap itself.
-   */
+  /** "top" keeps the legend above the grid; "bottom" puts it above the footer. */
   legendPosition?: "top" | "bottom";
-  /**
-   * A caller-pinned instant that outranks the resolved focus — the confirm
-   * dialog's hand-off lands the grid on the consultee's requested slot so the
-   * conflicting cell is in view (#1703 F2/F5).
-   */
+  /** A caller-pinned instant that outranks the resolved focus. */
   focusAt?: Date;
-  /**
-   * The viewer's zone from the RSC page (`getViewerZone`), so the grid is
-   * drawn in the same zone the rest of the page renders (#1703 QA-1). When
-   * absent the session hook supplies it; the browser zone is the last resort.
-   */
+  /** The viewer's zone from the page; the session hook supplies it otherwise. */
   viewerZone?: string | null;
+  /** The request changed under this tab: reload the subject in place. */
+  onRequestRefresh?: () => void;
 }
 
 export function TimePicker({
@@ -123,18 +169,33 @@ export function TimePicker({
   legendPosition = "top",
   focusAt,
   viewerZone,
+  onRequestRefresh,
 }: Readonly<TimePickerProps>) {
   const sessionViewer = useViewerZone();
   const gridViewerZone =
     viewerZone ?? (sessionViewer.own ? sessionViewer.zone : null);
+  // One zone for the grid, the day list and the release list on this page.
+  const display = useDisplayZone(gridViewerZone);
+  const listZone = display.zone;
   const sessions = React.useMemo(
     () => groupReleasableSessions(subject.slots ?? []),
     [subject.slots],
   );
+  // On a fresh request the subject's own holds are the times the client asked for.
+  const requestedSlots = React.useMemo(
+    () =>
+      policy.kind === "ALLOCATE"
+        ? (subject.slots ?? []).filter(
+            (slot) =>
+              slot.isTentative &&
+              !slot.deletedAt &&
+              !isReleasedForReschedule(slot),
+          )
+        : undefined,
+    [policy.kind, subject.slots],
+  );
 
-  // "First open" is this mount, and the target is pinned to it. Re-resolving
-  // against a moving `now` would let the grid drift under a consultant who
-  // left the tab open (#1073).
+  // Pinned to this mount so the grid does not drift under an open tab.
   const [openedAt] = React.useState(() => new Date());
   const focus = React.useMemo<TimePickerFocus>(
     () =>
@@ -144,22 +205,46 @@ export function TimePicker({
     [focusAt, subject, openedAt],
   );
 
-  const [releaseMode, setReleaseMode] = React.useState<ReleaseMode>("entire");
-  const [selectedSlotIds, setSelectedSlotIds] = React.useState<string[]>([]);
+  // A subscription whose sessions span two plan weeks starts with the next
+  // week's sessions picked: a release moves one week at a time.
+  const [initialRelease] = React.useState(() => {
+    const plan = subject.rescheduleEntitlement;
+    const upcoming = sessions.filter((s) => s.startTime.getTime() > Date.now());
+    const firstWeek = plan ? earliestWeekSessions(plan, upcoming) : upcoming;
+    return firstWeek.length < upcoming.length
+      ? {
+          mode: (firstWeek.length === 1
+            ? "individual"
+            : "multiple") as ReleaseMode,
+          slotIds: firstWeek.flatMap((s) => s.slots.map((slot) => slot.id)),
+        }
+      : { mode: "entire" as ReleaseMode, slotIds: [] as string[] };
+  });
+  const [releaseMode, setReleaseMode] = React.useState<ReleaseMode>(
+    initialRelease.mode,
+  );
+  const [selectedSlotIds, setSelectedSlotIds] = React.useState<string[]>(
+    initialRelease.slotIds,
+  );
   const [proposedSlots, setProposedSlots] = React.useState<
+    { startsAt: string; endsAt: string }[]
+  >([]);
+  const [mobilePicks, setMobilePicks] = React.useState<
     { startsAt: string; endsAt: string }[]
   >([]);
   const [timeOfDay, setTimeOfDay] = React.useState<string>(NO_PREFERENCE);
   const [days, setDays] = React.useState<string>(NO_PREFERENCE);
+  const [blocked, setBlocked] = React.useState(false);
+
+  const isSelectMode = policy.calendarMode === "select";
+  const wide = useWideViewport();
+  const useDayList = isSelectMode && wide === false;
 
   /** A one-session booking has nothing to choose between. */
   const showReleaseStep = policy.showReleasedSlots && sessions.length > 1;
   const picksSpecificSessions = showReleaseStep && releaseMode !== "entire";
-
-  /** A picking mode is active but nothing is ticked — there is no request yet. */
   const selectionIncomplete =
     picksSpecificSessions && selectedSlotIds.length === 0;
-
   const releasedOccurrenceIds = picksSpecificSessions
     ? selectedSlotIds
     : /* Every session; the API reads an absent list as "all of them". */
@@ -178,64 +263,207 @@ export function TimePicker({
     ? Math.max(selectedSessionCount, 1)
     : Math.max(sessions.length, 1);
 
-  /**
-   * The stated preference, or undefined when nothing was chosen. Only travels
-   * on the no-times submit: picking a concrete time already says everything a
-   * preference could.
-   */
-  /**
-   * Group events never reach the server's proposal path, so a preference stated
-   * on one would be dropped without a word. Gate the control on the same rule.
-   */
+  /** Group events never reach the proposal path, so they state no preference. */
   const canStatePreference =
     policy.allowReleaseWithoutTime && acceptsSlotPreference(subject.eventType);
 
   const preference = (): SlotPreference | undefined => {
     if (!canStatePreference) return undefined;
-
     const stated: SlotPreference = {
-      ...(timeOfDay !== NO_PREFERENCE && {
-        preferredTimeOfDay: timeOfDay as SlotPreference["preferredTimeOfDay"],
-      }),
-      ...(days !== NO_PREFERENCE && {
-        preferredDays: days as SlotPreference["preferredDays"],
-      }),
+      ...(isTimeOfDay(timeOfDay) && { preferredTimeOfDay: timeOfDay }),
+      ...(isPreferredDays(days) && { preferredDays: days }),
     };
     return Object.keys(stated).length > 0 ? stated : undefined;
   };
 
-  const submit = (withTimes: boolean) => {
-    const named = withTimes && proposedSlots.length > 0;
-    void policy.onSubmit({
-      slotIds: releasedOccurrenceIds,
-      proposedSlots: named ? proposedSlots : undefined,
-      preference: named ? undefined : preference(),
-    });
-  };
-
-  const isSelectMode = policy.calendarMode === "select";
   const slotsPerSession = Math.ceil(
     (subject.sessionDurationInHours || subject.durationInHours || 1) / 0.5,
   );
+  const picked = useDayList ? atomsOf(mobilePicks) : proposedSlots;
   const requiredProposedSlots = sessionsBeingMoved * slotsPerSession;
-  const movingSessionStarts = React.useMemo(() => {
-    if (!isSelectMode) return undefined;
-    if (picksSpecificSessions) {
-      return sessions
-        .filter((session) =>
+  const pickedTimes = Math.floor(picked.length / slotsPerSession);
+
+  const submit = (withTimes: boolean) => {
+    const named = withTimes && picked.length > 0;
+    void policy.onSubmit({
+      slotIds: releasedOccurrenceIds,
+      proposedSlots: named ? picked : undefined,
+      preference: named ? undefined : preference(),
+      displayZone: listZone,
+    });
+  };
+
+  /** The occurrences this submit would release, for the plan-limit overlay. */
+  const releasingIds = React.useMemo(() => {
+    if (!isSelectMode || !policy.showReleasedSlots) return undefined;
+    const moving = picksSpecificSessions
+      ? sessions.filter((session) =>
           session.slots.every((slot) => selectedSlotIds.includes(slot.id)),
         )
-        .map((session) => session.startTime);
+      : sessions;
+    return moving.flatMap((session) => session.slots.map((slot) => slot.id));
+  }, [
+    isSelectMode,
+    policy.showReleasedSlots,
+    picksSpecificSessions,
+    sessions,
+    selectedSlotIds,
+  ]);
+  const isRecurring =
+    subject.eventType === "subscription" || subject.eventType === "class";
+  const dayCap = React.useMemo(
+    () =>
+      isRecurring
+        ? {
+            perDay: maxSessionsPerDayFor(
+              subject.eventType === "class" ? "class" : "subscription",
+            ),
+            zone: subject.schedulingTimezone ?? listZone,
+          }
+        : undefined,
+    [isRecurring, subject.eventType, subject.schedulingTimezone, listZone],
+  );
+
+  // A subscription move may only target the plan week the server would place
+  // into once these sessions are released; outside it the pick is dropped.
+  const allowed = React.useMemo((): { start?: Date; end?: Date } => {
+    const input = subject.rescheduleEntitlement;
+    if (!input || !releasingIds) {
+      return { start: subject.allowedStart, end: subject.allowedEnd };
     }
-    return sessions.map((session) => session.startTime);
-  }, [isSelectMode, picksSpecificSessions, sessions, selectedSlotIds]);
+    return rescheduleWindow(input, releasingIds);
+  }, [subject, releasingIds]);
   const showConsultantLegend =
     policy.kind === "RESCHEDULE_CONSULTANT" ||
     policy.kind === "MANAGE_TIMINGS" ||
     policy.kind === "ALLOCATE";
 
+  const handleSlotsSelected = React.useCallback(
+    (slots: { startTime: Date; endTime: Date }[]) =>
+      setProposedSlots(
+        slots.map((slot) => ({
+          startsAt: slot.startTime.toISOString(),
+          endsAt: slot.endTime.toISOString(),
+        })),
+      ),
+    [],
+  );
+  const handleAllocationComplete = React.useCallback(
+    () => void policy.onSubmit({}),
+    [policy],
+  );
+
+  const grid = (
+    <SafeUnifiedCalendar
+      className="min-h-0 flex-1"
+      legendPosition={legendPosition}
+      consultantId={subject.consultantProfileId}
+      eventType={subject.eventType}
+      eventId={subject.eventId}
+      consulteeUserId={subject.counterpartUserId}
+      mode={policy.calendarMode}
+      showConsultantLegend={showConsultantLegend}
+      sessionDurationInHours={subject.sessionDurationInHours}
+      durationInHours={subject.durationInHours}
+      sessionsPerWeek={subject.sessionsPerWeek}
+      durationInMonths={subject.durationInMonths}
+      totalSessions={isSelectMode ? sessionsBeingMoved : subject.totalSessions}
+      schedulingTimezone={subject.schedulingTimezone}
+      allowedStart={allowed.start}
+      allowedEnd={allowed.end}
+      // A starting position only; re-aiming while someone reads is worse.
+      focus={focus}
+      viewerZone={listZone}
+      showZoneSwitch={false}
+      requestedSlots={requestedSlots}
+      releasingOccurrenceIds={releasingIds}
+      lead={policy.lead}
+      // Fresh allocations only: a partial reschedule keeps confirmed slots.
+      initialAllocation={
+        policy.appliesInitialAllocationGuard
+          ? !subject.hasReleasedSlots
+          : undefined
+      }
+      // On a reschedule, pin the tentative count so a stale tab refuses.
+      expectedTentativeSlotCount={
+        subject.hasReleasedSlots
+          ? (subject.slots?.filter((s) => s.isTentative).length ?? 0)
+          : undefined
+      }
+      showAllocationButtons={!isSelectMode}
+      onSlotsSelected={handleSlotsSelected}
+      onAllocationComplete={handleAllocationComplete}
+      onAllocationConflict={policy.onConflict}
+      onRequestRefresh={onRequestRefresh}
+      onBlockingIssueChange={setBlocked}
+      onClose={onCancel}
+    />
+  );
+
+  const picker = (() => {
+    // The device zone is read on mount, in the same commit as the viewport.
+    if (wide === null) {
+      return <CalendarGridSkeleton className="min-h-0 flex-1" />;
+    }
+    if (!isSelectMode) {
+      return (
+        <DesktopOnlyNotice
+          className="min-h-0 flex-1 gap-4"
+          mobileAction={
+            policy.kind === "ALLOCATE" &&
+            subject.eventId &&
+            (subject.eventType === "subscription" ||
+              subject.eventType === "consultation") ? (
+              <MobileAutoSchedule
+                eventType={subject.eventType}
+                eventId={subject.eventId}
+                initialAllocation={!subject.hasReleasedSlots}
+                topUp={
+                  subject.eventType === "subscription" &&
+                  !subject.hasReleasedSlots &&
+                  (subject.slots ?? []).some((slot) => !slot.isTentative)
+                }
+                onDone={handleAllocationComplete}
+              />
+            ) : undefined
+          }
+        >
+          {grid}
+        </DesktopOnlyNotice>
+      );
+    }
+    if (useDayList) {
+      return (
+        <MobileDayListPicker
+          className="min-h-0 flex-1"
+          consultantId={subject.consultantProfileId}
+          consulteeUserId={subject.counterpartUserId}
+          subscriptionId={
+            subject.eventType === "subscription" ? subject.eventId : undefined
+          }
+          releasingIds={releasingIds}
+          dayCap={dayCap}
+          zone={listZone}
+          sessionMinutes={slotsPerSession * 30}
+          timesNeeded={sessionsBeingMoved}
+          allowedStart={allowed.start}
+          allowedEnd={allowed.end}
+          minLeadHours={
+            leadMsFor(policy.lead.purpose, {
+              settled: policy.lead.unpaid !== true,
+            }) / 3_600_000
+          }
+          focusAt={focus.precision === "session" ? focus.at : undefined}
+          value={mobilePicks}
+          onChange={setMobilePicks}
+        />
+      );
+    }
+    return grid;
+  })();
+
   return (
-    <DesktopOnlyNotice className={cn("min-h-0 gap-4", className)}>
+    <div className={cn("flex min-h-0 flex-col gap-4", className)}>
       {policy.minLeadHours > 0 && (
         <div className="shrink-0 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/40 dark:bg-amber-900/20">
           <p className="text-xs text-amber-800 dark:text-amber-300">
@@ -255,6 +483,7 @@ export function TimePicker({
             onModeChange={setReleaseMode}
             selectedSlotIds={selectedSlotIds}
             onSelectionChange={setSelectedSlotIds}
+            zone={listZone}
           />
         </div>
       )}
@@ -267,77 +496,29 @@ export function TimePicker({
               : `Pick ${sessionsBeingMoved} times. `}
           </span>
         )}
-        {/* The allocate page carries no separate heading (the breadcrumb
-            names the booking), so the hint also says who the task is for. */}
+        {/* The allocate page has no separate heading, so the hint names the client. */}
         {policy.kind === "ALLOCATE" && subject.consulteeName
           ? `Choose the times for ${subject.consulteeName}'s booking. Green is free for both of you; anything else is already taken.`
           : policy.pickerHint}
       </p>
 
-      <SafeUnifiedCalendar
-        className="min-h-0 flex-1"
-        legendPosition={legendPosition}
-        consultantId={subject.consultantProfileId}
-        eventType={subject.eventType}
-        eventId={subject.eventId}
-        consulteeUserId={subject.counterpartUserId}
-        mode={policy.calendarMode}
-        // Consultant surfaces (allocate / manage timings / propose) paint
-        // Selected / Being moved / This booking. Consultee reschedule stays
-        // on the buyer legend even when eventId is set for status-grid paint.
-        showConsultantLegend={showConsultantLegend}
-        sessionDurationInHours={subject.sessionDurationInHours}
-        durationInHours={subject.durationInHours}
-        sessionsPerWeek={subject.sessionsPerWeek}
-        durationInMonths={subject.durationInMonths}
-        totalSessions={
-          isSelectMode ? sessionsBeingMoved : subject.totalSessions
-        }
-        movingSessionStarts={movingSessionStarts}
-        schedulingTimezone={subject.schedulingTimezone}
-        allowedStart={subject.allowedStart}
-        allowedEnd={subject.allowedEnd}
-        // Deliberately NOT keyed to the release selection: focus is a
-        // starting position, and re-aiming the grid while someone is reading
-        // it is worse than the empty night rows it replaces (#1073).
-        focus={focus}
-        viewerZone={gridViewerZone}
-        // Fresh allocations only: a partial reschedule legitimately keeps
-        // confirmed slots and must not trip the guard.
-        initialAllocation={
-          policy.appliesInitialAllocationGuard
-            ? !subject.hasReleasedSlots
-            : undefined
-        }
-        // #1012 — when this is a reschedule (released/tentative slots), pin
-        // the tentative count so a stale tab 409s instead of replacing.
-        expectedTentativeSlotCount={
-          subject.hasReleasedSlots
-            ? (subject.slots?.filter((s) => s.isTentative).length ?? 0)
-            : undefined
-        }
-        showAllocationButtons={!isSelectMode}
-        onSlotsSelected={(slots) =>
-          setProposedSlots(
-            slots.map((slot) => ({
-              startsAt: slot.startTime.toISOString(),
-              endsAt: slot.endTime.toISOString(),
-            })),
-          )
-        }
-        onAllocationComplete={() => void policy.onSubmit({})}
-        onAllocationConflict={policy.onConflict}
-        onClose={onCancel}
-      />
+      {wide !== null && (
+        <ZoneSwitch
+          className="shrink-0"
+          zone={display.zone}
+          usingDeviceZone={display.usingDeviceZone}
+          canSwitch={display.canSwitch}
+          onToggle={display.toggle}
+        />
+      )}
+
+      {picker}
 
       {/* Only "select" needs a footer — the allocate grid renders its own. */}
       {isSelectMode && (
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-          {/* Sits with "Any time works" because it only applies to that button:
-              it is how you say "any time, but ideally these" instead of naming
-              one. The allocator ranks candidates by it and never rules any out,
-              so an impossible pairing still gets the booking placed (#1065). */}
-          {canStatePreference && proposedSlots.length === 0 && (
+          {/* "Any time, but ideally these": ranks candidates, never rules any out. */}
+          {canStatePreference && picked.length === 0 && (
             <div className="mr-auto flex flex-wrap items-center gap-2">
               <span className="text-sm text-muted-foreground">Ideally</span>
               <Select value={timeOfDay} onValueChange={setTimeOfDay}>
@@ -373,10 +554,10 @@ export function TimePicker({
             </div>
           )}
 
-          {proposedSlots.length > 0 && (
+          {picked.length > 0 && (
             <p className="mr-auto text-sm text-muted-foreground">
-              {proposedSlots.length} slot
-              {proposedSlots.length === 1 ? "" : "s"} selected.
+              {pickedTimes} of {sessionsBeingMoved}{" "}
+              {sessionsBeingMoved === 1 ? "time" : "times"} picked.
             </p>
           )}
 
@@ -390,10 +571,8 @@ export function TimePicker({
             </Button>
           )}
 
-          {/* Naming a time is an OPTION, never a requirement. Releasing without
-              one hands the counterparty a request to place, which is how every
-              reschedule worked before proposals existed — so this stays on
-              every reschedule surface and at every session count. */}
+          {/* Naming a time is an option, never a requirement: releasing without
+              one hands the counterparty a request to place. */}
           {policy.allowReleaseWithoutTime && (
             <Button
               variant="outline"
@@ -408,14 +587,16 @@ export function TimePicker({
             onClick={() => submit(true)}
             disabled={
               isSubmitting ||
+              blocked ||
               selectionIncomplete ||
-              proposedSlots.length !== requiredProposedSlots
+              picked.length !== requiredProposedSlots
             }
             title={submitButtonTitle({
               isSubmitting,
+              blocked,
               selectionIncomplete,
-              proposedCount: proposedSlots.length,
-              requiredProposedSlots,
+              pickedTimes,
+              neededTimes: sessionsBeingMoved,
               allowReleaseWithoutTime: policy.allowReleaseWithoutTime,
             })}
           >
@@ -430,6 +611,6 @@ export function TimePicker({
           </Button>
         </div>
       )}
-    </DesktopOnlyNotice>
+    </div>
   );
 }

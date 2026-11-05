@@ -1,7 +1,7 @@
 // The read-only availability search. It takes the base client, so it runs
 // outside the write transaction, under the caller's locks.
 
-import { liveParticipant } from "@/lib/booking/participants";
+import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import type { PrismaLike } from "@/lib/prisma";
 import { Prisma, ScheduleType } from "@prisma/client";
 import { addMonths } from "date-fns";
@@ -26,12 +26,16 @@ import {
   buildConsultantOccupancyWhere,
   buildOccupiedAppointmentFilter,
   OCCUPYING_OCCURRENCE_WHERE,
+  timeHoldingParticipant,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import {
   MAX_CLASS_SESSIONS_PER_DAY,
   MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
 } from "@/utils/scheduling-engine/sessionCaps";
-import { createSearchBudget } from "@/utils/scheduling-engine/availability-search";
+import {
+  createSearchBudget,
+  type SearchBudget,
+} from "@/utils/scheduling-engine/availability-search";
 import {
   partitionWeeklyRows,
   weeklyRowIntervalsInRange,
@@ -40,15 +44,17 @@ import { reportIncompleteWeeklyRows } from "@/lib/scheduling/incomplete-weekly-r
 import {
   AllocationValidationError,
   SlotShortageError,
+  SearchTimeoutError,
 } from "@/utils/scheduling-engine/errors";
 import {
-  matchCustomSlotToDay,
+  customSpansInStartOrder,
   sortWeeklyByNextOccurrence,
 } from "@/lib/booking/allocation/search/recurrence";
 import {
   DAY_MS,
   ALLOCATOR_SEARCH_TIME_BUDGET_MS,
   type AllocationWalkContext,
+  type RowSpan,
 } from "@/lib/booking/allocation/search/constants";
 import {
   projectableWeeklyRows,
@@ -74,6 +80,20 @@ import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
  * sees SLOT_SHORTAGE with a real placeable count — or, with `allowPartial`,
  * the sessions that did fit.
  */
+/**
+ * The scheduling-zone calendar days either side of `start`'s day, as day
+ * keys. Calendar arithmetic on the key, so a daylight-saving change (a 23 or
+ * 25 hour day) never skips or repeats a neighbour.
+ */
+export function adjacentDayKeys(start: Date, timeZone?: string): string[] {
+  const dayMs = Date.parse(
+    `${ScheduleCalculationService.dayKey(start, timeZone)}T00:00:00Z`,
+  );
+  return [dayMs - DAY_MS, dayMs + DAY_MS].map((ms) =>
+    new Date(ms).toISOString().slice(0, 10),
+  );
+}
+
 export async function findAvailableSlots(
   // #908 — accepts the base client so slot discovery can run OUTSIDE the write
   // transaction (under the locks). Reads only — no writes happen here.
@@ -104,6 +124,14 @@ export async function findAvailableSlots(
   // #1554 — the tentative occurrences a reschedule replaces: left out of
   // bookedSlots and of the weekly/daily seeds while their wrapper stays.
   excludeOccurrenceIds: string[] = [],
+  // 30-minute interval starts (ISO) another writer holds right now; a re-search
+  // after a refused slot batch treats them as booked.
+  heldSlotStarts: readonly string[] = [],
+  // A caller that searches more than once passes one budget for all of them;
+  // otherwise this search opens its own once the reads are done.
+  sharedBudget?: SearchBudget,
+  // No candidate starts sooner than this from now (`leadMsFor`).
+  leadTimeMs: number = MINIMUM_BOOKING_LEAD_TIME_MS,
 ): Promise<Date[]> {
   const walk: AllocationWalkContext = {
     eventType,
@@ -130,7 +158,11 @@ export async function findAvailableSlots(
   // Shared with the availability grid so the two cannot disagree about who
   // is busy — see buildConsultantOccupancyWhere.
   const appointmentFilter: Prisma.AppointmentWhereInput[] = [
-    buildConsultantOccupancyWhere(consultantProfileId, consultant.userId),
+    buildConsultantOccupancyWhere(
+      consultantProfileId,
+      consultant.userId,
+      occupancyClock,
+    ),
     // Bounded read — see occupancyClock above.
     {
       occurrences: {
@@ -209,7 +241,11 @@ export async function findAvailableSlots(
       where: {
         AND: [
           { OR: buildOccupiedAppointmentFilter() },
-          { participants: { some: liveParticipant(consulteeUserId) } },
+          {
+            participants: {
+              some: timeHoldingParticipant(occupancyClock, consulteeUserId),
+            },
+          },
           {
             occurrences: {
               some: {
@@ -257,6 +293,7 @@ export async function findAvailableSlots(
       )
       .forEach((iso) => bookedSlots.add(iso));
   }
+  for (const iso of heldSlotStarts) bookedSlots.add(iso);
 
   // Validate availability exists
   const projectableWeekly = projectableWeeklyRows(consultant);
@@ -273,13 +310,16 @@ export async function findAvailableSlots(
     );
   }
 
-  const now = occupancyClock;
+  // The earliest a placed session may start: occupancy is read from the real
+  // clock above, candidates start no sooner than the lead time after it.
+  const now = new Date(occupancyClock.getTime() + leadTimeMs);
   const selectedSlots: Date[] = [];
   // Opened once the reads are done, so the ceiling bounds the SEARCH (the only
   // O(window) work in this request) and not the queries that feed it. A
   // truncated search answers through the same shortage tail below, so
   // `allowPartial` keeps working exactly as it does for a full calendar.
-  const searchBudget = createSearchBudget(ALLOCATOR_SEARCH_TIME_BUDGET_MS);
+  const searchBudget =
+    sharedBudget ?? createSearchBudget(ALLOCATOR_SEARCH_TIME_BUDGET_MS);
 
   // Sort weekly slots by next calendar occurrence (not raw clock time)
   // so auto-allocation picks the chronologically earliest slot first.
@@ -287,13 +327,6 @@ export async function findAvailableSlots(
   const sortedWeekly =
     consultant.scheduleType === ScheduleType.WEEKLY
       ? sortWeeklyByNextOccurrence(projectableWeekly, now)
-      : [];
-  const sortedCustom =
-    consultant.scheduleType === ScheduleType.CUSTOM
-      ? [...consultant.availabilityWindowsCustom].sort(
-          (a, b) =>
-            new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
-        )
       : [];
 
   // #1065 — the preference's ceiling. Zero when nothing was asked for, which
@@ -310,20 +343,20 @@ export async function findAvailableSlots(
       bookedSlots,
       now,
       sortedWeekly,
-      sortedCustom,
+      consultant.availabilityWindowsCustom,
       config.schedulingTimezone,
       preference,
       walk,
       searchBudget,
     );
     if (singleSession) return singleSession;
+    // A walk the budget cut short never saw the whole calendar: not a shortage.
+    if (searchBudget.exhausted()) throw searchTimeout(searchBudget, walk);
 
     // One session, so nothing is placeable short of the whole thing —
     // placeableSessions 0 tells the client not to offer a partial schedule.
-    // A budget-truncated walk lands here too: it found nothing, and the
-    // shortage is the same answer a full calendar gets.
     throw new SlotShortageError(
-      `No ${slotsPerCall} consecutive slots available for ${eventType}`,
+      `No free time in the coming weeks fits this ${eventType}. Open up more availability or pick a time yourself.`,
       0,
       1,
     );
@@ -398,20 +431,23 @@ export async function findAvailableSlots(
       ? MAX_CLASS_SESSIONS_PER_DAY
       : MAX_SUBSCRIPTION_SESSIONS_PER_DAY;
 
-  // Weekly occurrences over the whole period, projected once and filed by the
-  // UTC day they start on, in `sortedWeekly` order.
-  const weeklyStartsByUtcDay = new Map<
-    number,
-    { start: Date; endMs: number }[]
-  >();
+  // Availability over the whole period, projected once and filed by the UTC day
+  // each span starts on: weekly occurrences in `sortedWeekly` order, custom rows
+  // as one slice per scheduling-zone day in start order.
+  const periodStart = new Date(
+    Date.UTC(
+      startDate.getUTCFullYear(),
+      startDate.getUTCMonth(),
+      startDate.getUTCDate(),
+    ),
+  );
+  const rowSpansByUtcDay = new Map<number, RowSpan[]>();
+  const fileSpan = (dayMs: number, span: RowSpan) => {
+    const spans = rowSpansByUtcDay.get(dayMs) ?? [];
+    spans.push(span);
+    rowSpansByUtcDay.set(dayMs, spans);
+  };
   if (consultant.scheduleType === ScheduleType.WEEKLY) {
-    const periodStart = new Date(
-      Date.UTC(
-        startDate.getUTCFullYear(),
-        startDate.getUTCMonth(),
-        startDate.getUTCDate(),
-      ),
-    );
     const periodEnd = new Date(endDate.getTime() + DAY_MS);
     for (const slot of sortedWeekly) {
       for (const occurrence of weeklyRowIntervalsInRange(
@@ -419,37 +455,37 @@ export async function findAvailableSlots(
         periodStart,
         periodEnd,
       )) {
-        const dayMs = Math.floor(occurrence.start.getTime() / DAY_MS) * DAY_MS;
-        const starts = weeklyStartsByUtcDay.get(dayMs) ?? [];
-        starts.push({
+        fileSpan(Math.floor(occurrence.start.getTime() / DAY_MS) * DAY_MS, {
           start: occurrence.start,
           endMs: occurrence.end.getTime(),
         });
-        weeklyStartsByUtcDay.set(dayMs, starts);
       }
+    }
+  } else {
+    // A custom row is an absolute range that may span days: clipped to the
+    // period, it is walked as one slice per scheduling-zone day, so every day
+    // it covers is a candidate, including the tail of a row begun earlier.
+    for (const span of customSpansInStartOrder(
+      consultant.availabilityWindowsCustom,
+      config.schedulingTimezone,
+      { startMs: startDate.getTime(), endMs: endDate.getTime() },
+    )) {
+      fileSpan(Math.floor(span.start.getTime() / DAY_MS) * DAY_MS, span);
     }
   }
 
   /**
-   * Availability rows that start on this UTC day, as {start, endMs} pairs.
-   * #1194 — the end lets candidateStartsInRow bound its walk to the row's
-   * own time range instead of a blind 48-step cap that adjacent rows can
-   * trick into walking past.
+   * Availability spans that start on this UTC day. The end lets
+   * candidateStartsInRow bound its walk to the span's own time range.
    */
-  const rowStartsForDay = (
-    currentDay: Date,
-  ): { start: Date; endMs: number }[] =>
-    consultant.scheduleType === ScheduleType.WEEKLY
-      ? (weeklyStartsByUtcDay.get(currentDay.getTime()) ?? [])
-      : sortedCustom
-          .map((slot) => {
-            const start = matchCustomSlotToDay(slot.startsAt, currentDay);
-            if (!start) return null;
-            return { start, endMs: new Date(slot.endsAt).getTime() };
-          })
-          .filter((r): r is { start: Date; endMs: number } => r !== null);
+  const rowStartsForDay = (currentDay: Date): RowSpan[] =>
+    rowSpansByUtcDay.get(currentDay.getTime()) ?? [];
 
-  /** Whether the per-day and per-week caps still have room for a call starting here. */
+  /**
+   * Whether the per-day cap, and for a class the calendar-week cap, still
+   * have room for a call starting here. A subscription's weekly limit is its
+   * rolling cycle, already applied as the window and `totalSlotsNeeded`.
+   */
   const hasRoomOn = (candidateStart: Date): boolean =>
     (placedPerDay.get(
       ScheduleCalculationService.dayKey(
@@ -457,12 +493,13 @@ export async function findAvailableSlots(
         config.schedulingTimezone,
       ),
     ) ?? 0) < maxPerDay &&
-    (sessionsPlacedPerWeek.get(
-      ScheduleCalculationService.weekKey(
-        candidateStart,
-        config.schedulingTimezone,
-      ),
-    ) ?? 0) < sessionsPerWeek;
+    (eventType !== "class" ||
+      (sessionsPlacedPerWeek.get(
+        ScheduleCalculationService.weekKey(
+          candidateStart,
+          config.schedulingTimezone,
+        ),
+      ) ?? 0) < sessionsPerWeek);
 
   /**
    * Place at most `maxPerDay` calls on this day, honouring the
@@ -477,7 +514,23 @@ export async function findAvailableSlots(
    * before. Passing over a day in the first sweep never loses it, because the
    * second sweep walks the same window with the same cap counters.
    */
-  const tryPlaceOnDay = (currentDay: Date, perfectOnly: boolean): boolean => {
+  /**
+   * A subscription's sessions spread across its week: no session the day
+   * before or after another one (placed now or already held).
+   */
+  const isSpacedFrom = (candidateStart: Date): boolean =>
+    adjacentDayKeys(candidateStart, config.schedulingTimezone).every(
+      (key) => !placedPerDay.has(key),
+    );
+
+  const tryPlaceOnDay = (
+    currentDay: Date,
+    perfectOnly: boolean,
+    spaced: boolean,
+  ): boolean => {
+    const roomy = spaced
+      ? (start: Date) => hasRoomOn(start) && isSpacedFrom(start)
+      : hasRoomOn;
     let best: { block: Date[]; score: number } | null = null;
 
     for (const { start: rowStart, endMs: rowEndMs } of rowStartsForDay(
@@ -517,13 +570,13 @@ export async function findAvailableSlots(
           schedulingTimezone: config.schedulingTimezone,
           hasRoomOn: perfectOnly
             ? (start) =>
-                hasRoomOn(start) &&
+                roomy(start) &&
                 matchesPreferredDays(
                   start,
                   preference,
                   config.schedulingTimezone,
                 )
-            : hasRoomOn,
+            : roomy,
         },
         rowEndMs,
         preference,
@@ -584,13 +637,10 @@ export async function findAvailableSlots(
    * totalSlotsNeeded).
    *
    * The budget stops the DAY walk, which is the coarsest unit that still
-   * bounds the overrun: one day is one pass over that day's rows. It leaves
-   * the search through the ordinary shortage tail below rather than a new
-   * error, so a truncated walk is answered as "no more room" and still
-   * honours `allowPartial` — the partial answer is what the consultant
-   * actually gets, and a 504 would have given them nothing.
+   * bounds the overrun: one day is one pass over that day's rows. A walk it
+   * truncates before every session is placed answers SEARCH_TIMEOUT below.
    */
-  const sweepPeriod = (perfectOnly: boolean): void => {
+  const sweepPeriod = (perfectOnly: boolean, spaced = false): void => {
     const cursor = new Date(
       Date.UTC(
         startDate.getUTCFullYear(),
@@ -610,7 +660,7 @@ export async function findAvailableSlots(
       }
       while (
         selectedSlots.length < totalSlotsNeeded &&
-        tryPlaceOnDay(new Date(cursor), perfectOnly)
+        tryPlaceOnDay(new Date(cursor), perfectOnly, spaced)
       ) {
         // Placed; re-attempt the same day under the updated counters.
       }
@@ -619,13 +669,23 @@ export async function findAvailableSlots(
 
   // Skipped entirely when nothing was asked for, so the single sweep below is
   // the only one that runs and today's placements are reproduced exactly.
-  if (maxScore > 0) sweepPeriod(true);
+  if (maxScore > 0) {
+    if (eventType === "subscription") sweepPeriod(true, true);
+    sweepPeriod(true);
+  }
+  // A subscription first tries to keep a free day between sessions, so a
+  // week of 3 lands Mon/Wed/Fri rather than Mon/Tue/Wed; like the preference
+  // pass, it never costs a placement, because the sweep below reconsiders.
+  if (eventType === "subscription") sweepPeriod(false, true);
   // MUST stay unconditional and MUST stay over the whole window. This is the
   // only thing making the preferred-only sweep above a preference rather than
   // a filter: everything it declined is reconsidered here.
   sweepPeriod(false);
 
   if (selectedSlots.length < totalSlotsNeeded) {
+    // A truncated sweep never saw the whole window, so neither a shortage nor a
+    // partial plan is the truth: the consultant retries or picks by hand.
+    if (searchBudget.exhausted()) throw searchTimeout(searchBudget, walk);
     // PR 2c resilience (audit gap #6) — a consultant staring at "Could only
     // find 0 of 12" deserves to know WHY: the scheduling period is over
     // (add availability or extend the period), vs everything is booked
@@ -633,10 +693,13 @@ export async function findAvailableSlots(
     // runs first because it's the most actionable answer.
     if (config.schedulingPeriodEndsAt && config.schedulingPeriodEndsAt < now) {
       throw new AllocationValidationError(
-        `The scheduling period ended on ${config.schedulingPeriodEndsAt.toLocaleDateString()}. ` +
-          `Found ${selectedSlots.length} of ${totalSlotsNeeded} required slots. ` +
-          `Extend the period on the plan to allocate more sessions.`,
+        "This plan's scheduling period has ended. Extend the period on the plan to place more sessions.",
         "PERIOD_ENDED",
+        {
+          schedulingPeriodEndsAt: config.schedulingPeriodEndsAt.toISOString(),
+          placedAtoms: selectedSlots.length,
+          requiredAtoms: totalSlotsNeeded,
+        },
       );
     }
     // #1206 — whole SESSIONS, which is the unit the consultant reasons in
@@ -655,11 +718,24 @@ export async function findAvailableSlots(
     }
 
     throw new SlotShortageError(
-      `Could only find ${selectedSlots.length} of ${totalSlotsNeeded} required slots`,
+      `Only ${placeableSessions} of ${requiredSessions} sessions fit in the free times. Open up more availability, or schedule the ones that fit now.`,
       placeableSessions,
       requiredSessions,
     );
   }
 
   return selectedSlots.sort((a, b) => a.getTime() - b.getTime());
+}
+
+/** The typed answer for a walk the time budget truncated before it finished. */
+function searchTimeout(
+  budget: SearchBudget,
+  walk: AllocationWalkContext | undefined,
+): SearchTimeoutError {
+  return new SearchTimeoutError({
+    budgetMs: budget.limitMs,
+    spentMs: budget.spentMs(),
+    eventType: walk?.eventType ?? null,
+    eventId: walk?.eventId ?? null,
+  });
 }

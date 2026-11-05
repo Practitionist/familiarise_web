@@ -60,6 +60,14 @@ export const ADMIN_REFUND_SELECT = {
   paymentGateway: true,
 } as const;
 
+/** Download evidence an operator weighs before refunding a digital product sale. */
+export const ADMIN_DIGITAL_PRODUCT_PURCHASE_SELECT = {
+  status: true,
+  firstDownloadedAt: true,
+  product: { select: { title: true } },
+  _count: { select: { downloads: true } },
+} as const;
+
 /** Operator dispute view. `internalNotes` and `evidence` stay out. */
 export const ADMIN_DISPUTE_SELECT = {
   id: true,

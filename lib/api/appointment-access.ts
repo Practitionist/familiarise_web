@@ -24,6 +24,7 @@ import {
 } from "@/lib/data/appointment-detail";
 import { supportError } from "@/lib/api/support-http";
 import { seatOrganizationId } from "@/lib/booking/participants";
+import { orgOwnedAppointmentWhere } from "@/lib/api/scope/list-appointments";
 
 /** Coded authz failure — map through `appointmentAuthzError`. */
 export type CodedAuthz = {
@@ -125,7 +126,18 @@ export async function authorizeAppointment(
         },
         select: { role: true },
       });
-      if (membership && hasOrgPermission(membership.role, "operations.read")) {
+      // The org must own the booking on the same grounds its lists use
+      // (readable org, and unpaid, org-funded or on its plan), not the tag alone.
+      if (
+        membership &&
+        hasOrgPermission(membership.role, "operations.read") &&
+        (await prisma.appointment.count({
+          where: {
+            id: appointmentId,
+            ...orgOwnedAppointmentWhere(hostOrganizationId),
+          },
+        })) > 0
+      ) {
         return {
           userId: session.user.id,
           isOrgParty: true,

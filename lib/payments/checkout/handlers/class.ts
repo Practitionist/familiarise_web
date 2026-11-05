@@ -1,9 +1,7 @@
 // Seats a learner on the class wrapper, priced for the sessions left.
 
-import {
-  liveParticipant,
-  recordParticipants,
-} from "@/lib/booking/participants";
+import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
+import { recordParticipants } from "@/lib/booking/participants";
 import type { Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import { isUserEnrolled } from "@/lib/payments/utils/participants";
@@ -73,7 +71,7 @@ export async function handleClassCheckout(
             orderBy: { startsAt: "asc" },
           },
           participants: {
-            where: { ...liveParticipant(), role: "CONSULTEE" },
+            where: seatHoldingParticipant(new Date()),
             select: { userId: true },
           },
         },

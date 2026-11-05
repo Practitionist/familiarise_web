@@ -62,6 +62,10 @@ The transactional outbox pattern, as defined at microservices.io, exists to avoi
 
 Every option with a "Yes" in the third column requires the always-on process that ledger group 1 shows the current host cannot supply, which is why ADR 14 rejected a broker. Of the "No" options, Async Workloads and QStash are the two that fit the existing CRON_SECRET routes without new infrastructure; #1010 should be decided between them.
 
+## Measured hosted job runtimes, 2026-10-31
+
+These are evidence for the decided scale path, not a recommendation. The platform facts are in `job-runtime-options.md` in this folder, the library facts in `.claude/skills/maintenance/references/job-runtime-options.md`, and the depth in `docs/maintenance/14-background-job-runtime-options.md`.
+
 ## Background Functions against the five-minute ticker
 
 Netlify support confirmed on 2026-09-16 that Background Functions do not execute on Deploy Previews or branch deploys — the 202 is returned and execution is suppressed — and logged the missing documentation as a gap; the `cron-tick ?resume=1` backstop (#1636) therefore stays. From Netlify's Background Functions page (last updated 2026-06-03): fifteen-minute limit; an immediate 202 with the return value discarded; on error one retry after one minute and a second two minutes later. A scheduled function may hand long work to a background function, but the older `context.client.invokeBackgroundFunction` is absent from the current context reference and should be treated as legacy. Under Next.js runtime v5 a route cannot be declared background — the in-route `experimental-background` config belongs to runtime v4 — so `background: true` applies only to a standalone file under `netlify/functions/`, which is the pattern `cron-tick.mts` already uses. A background driver that loops bounded calls to an HTTP twin is therefore the platform-native way to run a job past the request ceiling without a queue.
@@ -73,6 +77,8 @@ On 2026-09-15, four twelve-request bursts against deploy preview 1656 (commit `a
 With `experimental: { preloadEntriesOnStart: false, appDocumentPreloading: false }` and `"@novu/api"` in `serverExternalPackages` (PR #1972, deploy `6ac1179a30acd900087d7e4a`), a 12-request concurrent cold burst against `/api/perf/probe-bare` on `deploy-preview-1972` in `ap-southeast-1` (`sin`) spawned 8 brand-new cold Lambda instances and completed **12/12 `200 OK` in `0.97–1.90 s`** (`maxGapMs: 0–25 ms`). This resolved Ledger Group 3 (`#1124`) on Netlify without requiring a platform migration (ADR 32).
 
 ## A reading of the evidence, updated 2026-10-11 (ADR 36 & Issues #2095–#2097)
+
+> **Superseded on 2026-10-31.** The decided path is a Vercel Pro `bom1` trial for the web tier with Vercel Cron, Netlify as hot standby; the container ranking below was rejected on cost. See `docs/decisions/2026-10-31-ticker-scale-path-and-queue.md`.
 
 The monolith, Next.js, and the no-broker posture remain supported by every measurement. Post-PR `#1972` (`preloadEntriesOnStart: false` & `appDocumentPreloading: false`), Netlify Pro (`sin`, `$20/mo` unlimited seats) serves 12-way cold bursts in **`0.97–1.90 s`** (`33 MB` V8 heap), making it stable today and ideal as our permanent **Hot-Standby / `< 90s` Emergency Failback Host** (`docs/deployment/emergency-failback-runbook.md`).
 

@@ -8,7 +8,7 @@ export default async function SupportPage({
     <>
       <PageHeader
         headingLevel={2}
-        title="Support requests"
+        title="Support cases"
         description="Your personal account and workspace requests. Organization-owned cases stay in the selected organization."
       />
       <SupportHub

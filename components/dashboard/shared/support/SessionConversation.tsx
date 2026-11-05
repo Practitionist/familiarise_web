@@ -341,7 +341,7 @@ function SessionComposer({
           href={requestsHref}
           className="font-medium text-foreground underline underline-offset-4"
         >
-          Start a new request
+          Start a new support case
         </Link>{" "}
         if you still need help.
       </p>
@@ -488,6 +488,7 @@ export function SessionConversation({
                 perspective="user"
                 author={m.sender}
                 body={m.body}
+                actorKind={m.actorKind}
                 at={m.pending ? undefined : m.createdAt}
                 pending={m.pending}
               />

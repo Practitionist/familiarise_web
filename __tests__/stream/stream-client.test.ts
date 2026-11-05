@@ -72,6 +72,7 @@ jest.mock("../../lib/redis", () => ({
 // #899 — spy on Sentry so we can assert expected "channel not found" misses are
 // NOT reported while genuine Stream errors are.
 const mockCaptureException = jest.fn();
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
   captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
@@ -211,6 +212,7 @@ describe("Stream Client Module", () => {
       expect(mockStreamClientConstructor).toHaveBeenCalledWith(
         mockApiKey,
         mockApiSecret,
+        { timeout: 15_000 },
       );
     });
   });

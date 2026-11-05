@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
-import { AppointmentStatus, PaymentStatus } from "@prisma/client";
+import { AppointmentStatus, PaymentStatus, type Prisma } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import { forbiddenResponse } from "@/lib/auth-helpers";
+import { BookingRuleError } from "./booking-rule-error";
+import { BEING_MOVED } from "@/lib/data/needs-you";
 import {
   stageNoticesForAppointmentHolds,
   type StagedBackupInterestNotices,
@@ -185,6 +187,64 @@ export function validateDetailRequestStatusPatch(
 }
 
 /**
+ * The status PATCH answers requests only. A booking being moved (an open
+ * reschedule, or released sessions not yet re-placed) is answered through
+ * respond / withdraw, re-placed through the allocator, or ended through
+ * Cancel — never declined or approved here. A friendly 409 before the write;
+ * the write itself also carries `NOT_BEING_MOVED` in its CAS WHERE.
+ */
+export async function assertNotBeingMoved(
+  tx: Tx,
+  where: { consultationId: string } | { subscriptionId: string },
+  intent: "decline" | "approve",
+): Promise<void> {
+  const held = await tx.appointment.findFirst({
+    where: { ...where, deletedAt: null },
+    select: {
+      rescheduleRequests: {
+        where: { status: "PENDING_REVIEW" },
+        select: { id: true },
+        take: 1,
+      },
+      occurrences: {
+        where: {
+          isTentative: true,
+          completionStatus: "RESCHEDULED",
+          deletedAt: null,
+        },
+        select: { id: true },
+        take: 1,
+      },
+    },
+  });
+  if (!held) return;
+  if (held.rescheduleRequests.length > 0) {
+    throw new BookingRuleError(
+      "USE_RESCHEDULE_RESPOND",
+      intent === "decline"
+        ? "This booking is being moved, not requested. Keep the original time or answer the new one instead."
+        : "This booking is being moved. Accept the new time from the request instead.",
+    );
+  }
+  if (held.occurrences.length > 0) {
+    throw intent === "decline"
+      ? new BookingRuleError(
+          "USE_CANCEL_ENDPOINT",
+          "This booking was already confirmed. Place a new time, or cancel it to refund the client.",
+        )
+      : new BookingRuleError(
+          "PLACE_RELEASED_SESSIONS",
+          "Some sessions were released and need a new time. Place them from the booking instead.",
+        );
+  }
+}
+
+/** The status-PATCH CAS clause: never write a booking that is being moved. */
+export const NOT_BEING_MOVED = {
+  NOT: { appointment: BEING_MOVED },
+} satisfies Prisma.ConsultationWhereInput & Prisma.SubscriptionWhereInput;
+
+/**
  * Release any tentative appointment occurrences, participant seats, open
  * reschedule proposals, and pending payment rows held by a declined request.
  */
@@ -217,54 +277,4 @@ export async function releaseDeclinedRequestHold(
     data: { paymentStatus: PaymentStatus.EXPIRED },
   });
   return holdNotices ?? { bells: [], emails: [] };
-}
-
-/** What the two PUT routes read off the plan a `planId` names. */
-export interface PlanOwnership {
-  consultantProfileId: string;
-  organizationId: string | null;
-}
-
-/**
- * 403 PLAN_NOT_OWNED unless the plan a PUT names belongs to the request's
- * own consultant, then 403 PLAN_ORG_MISMATCH unless it also sits in the
- * booking's funding org (`bookingOrgId`, plan first then appointment; null
- * is personal, so personal only swaps for personal). `readPlanOwner` is the
- * model-specific lookup.
- */
-export async function refusePlanNotOwned(
-  planId: string | undefined,
-  request: {
-    consultantProfileId: string | null | undefined;
-    /** `bookingOrgId(existing)` — the org that funds this booking. */
-    organizationId: string | null;
-  },
-  readPlanOwner: () => Promise<PlanOwnership | null>,
-): Promise<NextResponse | null> {
-  if (!planId) return null;
-  const targetPlan = await readPlanOwner();
-  if (
-    !targetPlan ||
-    targetPlan.consultantProfileId !== request.consultantProfileId
-  ) {
-    return NextResponse.json(
-      {
-        error: "The plan belongs to a different consultant",
-        code: "PLAN_NOT_OWNED",
-      },
-      { status: 403 },
-    );
-  }
-  // A plan swap that changes the funding org would re-rail the booking's
-  // money (#1717 triage #14); the org is fixed at request time.
-  if (targetPlan.organizationId !== request.organizationId) {
-    return NextResponse.json(
-      {
-        error: "The plan belongs to a different organisation than this booking",
-        code: "PLAN_ORG_MISMATCH",
-      },
-      { status: 403 },
-    );
-  }
-  return null;
 }

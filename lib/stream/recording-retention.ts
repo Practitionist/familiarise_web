@@ -12,14 +12,26 @@ import {
   RecordingStorageType,
 } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { z } from "zod";
+import {
+  createRunFailureReporter,
+  type RunFailureReporter,
+} from "@/lib/observability/run-failures";
+const retentionProgressSchema = z.object({
+  due: z.string().nullable(),
+  lapsed: z.string().nullable(),
+  copies: z.string().nullable(),
+});
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { readJobCheckpoint, withCronLock } from "@/lib/cron/with-cron-lock";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { streamLogger } from "@/lib/stream-logger";
 import { deleteRecordingAssets } from "@/lib/stream/recording-storage";
 import { RecordingService } from "@/lib/stream/recording-service";
+import { mapBounded } from "@/lib/stream/batch";
 import { streamCopyExpiresAt } from "@/lib/stream/recording-utils";
 import { RECORDING_RETENTION_SCHEDULE } from "@/lib/stream/recording-retention-schedule";
+import { subscriptionPlanEnd } from "@/lib/booking/entitlement";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STREAM_REFRESH_WINDOW_DAYS = 15;
@@ -29,9 +41,12 @@ const SUBSCRIPTION_RETENTION_DAYS =
 const GROUP_RETENTION_DAYS = RECORDING_RETENTION_SCHEDULE.groupDays;
 /** Floor of the owner-set org cap; bounds which rows are worth scanning. */
 export const MIN_ORG_RETENTION_DAYS = 7;
-const DEFAULT_EXPIRE_LIMIT = 200;
-const SCAN_PAGE_SIZE = 200;
-const MAX_SCANNED_PER_RUN = 5_000;
+const DEFAULT_EXPIRE_LIMIT = 10;
+const SCAN_PAGE_SIZE = 25;
+const MAX_SCANNED_PER_RUN = 25;
+/** Stream's copy outlives the size-verified R2 copy by a day, the window in which a bad copy can still be re-pulled. */
+const STREAM_COPY_DELETE_DELAY_MS = DAY_MS;
+const STREAM_COPY_DELETE_LIMIT = 50;
 const LIVE_PURCHASE_STATUSES: RecordingPurchaseStatus[] = [
   RecordingPurchaseStatus.PENDING,
   RecordingPurchaseStatus.SUCCEEDED,
@@ -100,7 +115,10 @@ export function recordingRetentionDeadline(input: RetentionInput): Date | null {
 
 const subscriptionEndSelect = {
   id: true,
-  schedulingPeriodEndsAt: true,
+  planEndsAt: true,
+  schedulingPeriodStartsAt: true,
+  schedulingTimezone: true,
+  subscriptionPlan: { select: { durationInMonths: true } },
   cancelledAt: true,
 } satisfies Prisma.SubscriptionSelect;
 
@@ -108,23 +126,30 @@ type SubscriptionEnd = Prisma.SubscriptionGetPayload<{
   select: typeof subscriptionEndSelect;
 }>;
 
-const endOf = (sub: SubscriptionEnd): Date =>
-  sub.cancelledAt && sub.cancelledAt < sub.schedulingPeriodEndsAt
+const endOf = (sub: SubscriptionEnd): Date => {
+  const planEnd = subscriptionPlanEnd(sub);
+  return sub.cancelledAt && sub.cancelledAt < planEnd
     ? sub.cancelledAt
-    : sub.schedulingPeriodEndsAt;
+    : planEnd;
+};
 
 /** A renewal continues the subscription, so its end is the last renewal's end. */
-async function subscriptionChainEnd(start: SubscriptionEnd): Promise<Date> {
+async function subscriptionChainEnd(
+  start: SubscriptionEnd,
+  deadline = Infinity,
+): Promise<Date> {
   let current = start;
   for (let hop = 0; hop < 60; hop++) {
+    if (Date.now() >= deadline)
+      throw new Error("Retention resolution time budget exhausted");
     const next = await prisma.subscription.findUnique({
       where: { renewedFromSubscriptionId: current.id },
       select: subscriptionEndSelect,
     });
-    if (!next) break;
+    if (!next) return endOf(current);
     current = next;
   }
-  return endOf(current);
+  throw new Error("Retention renewal chain exceeded its safe resolution bound");
 }
 
 /** Occurrences that still run; a class's last one sets its retention clock. */
@@ -175,10 +200,11 @@ type Candidate = Prisma.RecordingGetPayload<{
 function cachedChainEnd(
   start: SubscriptionEnd,
   cache: Map<string, Promise<Date>>,
+  deadline = Infinity,
 ): Promise<Date> {
   const hit = cache.get(start.id);
   if (hit) return hit;
-  const end = subscriptionChainEnd(start);
+  const end = subscriptionChainEnd(start, deadline);
   cache.set(start.id, end);
   return end;
 }
@@ -186,6 +212,7 @@ function cachedChainEnd(
 async function resolveSession(
   candidate: Candidate,
   chainEnds = new Map<string, Promise<Date>>(),
+  deadline = Infinity,
 ): Promise<RetentionSession | null> {
   const occurrence = candidate.meeting.occurrence;
   const appointment = occurrence.appointment;
@@ -203,6 +230,7 @@ async function resolveSession(
       subscriptionEndsAt: await cachedChainEnd(
         appointment.subscription,
         chainEnds,
+        deadline,
       ),
     };
   }
@@ -269,40 +297,44 @@ interface ExpireRecordingsResult {
   lapsed: number;
   expired: number;
   cleaned: number;
+  streamCopiesDeleted: number;
   failed: number;
   errors: string[];
+  checkpoint: string | null;
 }
 
-/** Refresh a single lapsed READY recording URL from Stream if still retained upstream. */
+type RescueOutcome =
+  | { kind: "refreshed" | "absent" | "unresolved" }
+  | { kind: "failed"; error: string };
+
+/** Refresh a lapsed READY row's URL, or report whether Stream confirmed the copy gone. */
 async function rescueLapsedStreamRecording(
-  row: {
-    id: string;
-    streamCallId: string | null;
-    streamRecordingId: string | null;
-  },
+  row: { id: string; streamCallId: string; streamRecordingId: string | null },
   now: Date,
-): Promise<void> {
-  if (!row.streamCallId) return;
-  const streamRecordings = await RecordingService.getCallRecordingsFromStream(
+): Promise<RescueOutcome> {
+  const listing = await RecordingService.getCallRecordingsFromStream(
     row.streamCallId,
   );
-  if (!streamRecordings) return;
-
-  // Match strictly by filename when streamRecordingId is set; single-result fallback applies only when unset.
-  let match = undefined;
-  if (row.streamRecordingId) {
-    match = streamRecordings.find((r) => r.filename === row.streamRecordingId);
-  } else if (streamRecordings.length === 1) {
-    match = streamRecordings[0];
+  if (listing.status === "unavailable") {
+    return { kind: "failed", error: listing.error };
   }
+  if (listing.status === "call-not-found") return { kind: "absent" };
 
-  if (!match?.url) return;
+  const { recordings } = listing;
+  // Match by filename when known; without one, only a sole segment is ours.
+  const match = row.streamRecordingId
+    ? recordings.find((r) => r.filename === row.streamRecordingId)
+    : recordings.length === 1
+      ? recordings[0]
+      : undefined;
+  if (!match) {
+    return row.streamRecordingId || recordings.length === 0
+      ? { kind: "absent" }
+      : { kind: "unresolved" };
+  }
+  if (!match.url) return { kind: "unresolved" };
 
-  const endDate = new Date(match.end_time);
-  const computedExpiry = streamCopyExpiresAt(endDate);
-  const refreshedExpiry =
-    computedExpiry > now ? computedExpiry : addDays(now, 1);
-
+  const computedExpiry = streamCopyExpiresAt(new Date(match.end_time));
   await prisma.recording.updateMany({
     where: {
       id: row.id,
@@ -311,44 +343,75 @@ async function rescueLapsedStreamRecording(
     },
     data: {
       recordingUrl: match.url,
-      streamUrlExpiresAt: refreshedExpiry,
+      streamUrlExpiresAt:
+        computedExpiry > now ? computedExpiry : addDays(now, 1),
     },
   });
+  return { kind: "refreshed" };
 }
 
 /**
- * READY rows whose Stream copy lapsed before R2 transfer completed.
- * Bounded batches query Stream within the 15-day window to refresh live URLs before marking EXPIRED.
+ * READY rows whose Stream URL lapsed before the R2 copy finished. Inside the
+ * refresh window a row expires only when Stream confirms the copy is gone; a
+ * failed read leaves it READY for the next run. Older rows are past Stream's
+ * 14-day retention, and a row with no call id has nothing to ask.
  */
-async function expireLapsedCopies(now: Date): Promise<number> {
+type RetentionProgress = {
+  due: string | null;
+  lapsed: string | null;
+  copies: string | null;
+};
+
+async function expireLapsedCopies(
+  now: Date,
+  result: ExpireRecordingsResult,
+  failedIds: string[],
+  limit: number,
+  progress: RetentionProgress,
+): Promise<void> {
   const refreshCutoff = addDays(now, -STREAM_REFRESH_WINDOW_DAYS);
-
-  const recentLapsed = await prisma.recording.findMany({
-    where: {
-      status: RecordingStatus.READY,
-      storageType: RecordingStorageType.STREAM_S3,
-      streamUrlExpiresAt: { lt: now },
-      recordedAt: { gte: refreshCutoff },
-      streamCallId: { not: null },
-    },
-    take: SCAN_PAGE_SIZE,
-    select: {
-      id: true,
-      streamCallId: true,
-      streamRecordingId: true,
-    },
+  const lapsedWhere = {
+    status: RecordingStatus.READY,
+    storageType: RecordingStorageType.STREAM_S3,
+    streamUrlExpiresAt: { lt: now },
+  } satisfies Prisma.RecordingWhereInput;
+  const readPage = (after: string | null) =>
+    prisma.recording.findMany({
+      where: { ...lapsedWhere, ...(after ? { id: { gt: after } } : {}) },
+      orderBy: { id: "asc" },
+      take: limit,
+      select: {
+        id: true,
+        recordedAt: true,
+        streamCallId: true,
+        streamRecordingId: true,
+      },
+    });
+  let rows = await readPage(progress.lapsed);
+  if (!rows.length && progress.lapsed) rows = await readPage(null);
+  const outcomes = await mapBounded(rows, async (row) => {
+    try {
+      return row.recordedAt >= refreshCutoff && row.streamCallId
+        ? await rescueLapsedStreamRecording(
+            { ...row, streamCallId: row.streamCallId },
+            now,
+          )
+        : ({ kind: "absent" } as const);
+    } catch (error) {
+      return { kind: "failed", error: errorText(error) } as const;
+    }
   });
-
-  await Promise.all(
-    recentLapsed.map((row) => rescueLapsedStreamRecording(row, now)),
-  );
-
+  const absentIds: string[] = [];
+  outcomes.forEach((outcome, i) => {
+    if (outcome.kind === "absent") absentIds.push(rows[i].id);
+    if (outcome.kind === "failed") {
+      result.failed++;
+      failedIds.push(rows[i].id);
+      result.errors.push(`lapsed recording=${rows[i].id}: ${outcome.error}`);
+    }
+  });
   const lapsed = await prisma.recording.updateMany({
-    where: {
-      status: RecordingStatus.READY,
-      storageType: RecordingStorageType.STREAM_S3,
-      streamUrlExpiresAt: { lt: now },
-    },
+    where: { ...lapsedWhere, id: { in: absentIds } },
     data: {
       status: RecordingStatus.EXPIRED,
       recordingUrl: "",
@@ -356,8 +419,12 @@ async function expireLapsedCopies(now: Date): Promise<number> {
       removalReason: "COPY_LAPSED",
     },
   });
-  return lapsed.count;
+  result.lapsed = lapsed.count;
+  progress.lapsed = rows.at(-1)?.id ?? null;
 }
+
+const errorText = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
 
 /**
  * Rows that can be due by age alone: the platform schedule (365 days for
@@ -416,12 +483,16 @@ async function dueScanWhere(now: Date): Promise<Prisma.RecordingWhereInput> {
   };
 }
 
-async function isDue(candidate: Candidate, now: Date): Promise<boolean> {
+async function isDue(
+  candidate: Candidate,
+  now: Date,
+  resolutionDeadline: number,
+): Promise<boolean> {
   // Published and purchased rows are already excluded by retainableWhere.
   const deadline = recordingRetentionDeadline({
     now,
     recordedAt: candidate.recordedAt,
-    session: await resolveSession(candidate),
+    session: await resolveSession(candidate, undefined, resolutionDeadline),
     published: false,
     hasLivePurchase: false,
     orgRetentionDays: candidate.organizationId
@@ -431,51 +502,54 @@ async function isDue(candidate: Candidate, now: Date): Promise<boolean> {
   return deadline !== null && deadline <= now;
 }
 
-/** Append the page's due rows to `due` until it holds `limit`. */
-async function collectDue(
-  page: Candidate[],
-  now: Date,
-  limit: number,
-  due: Candidate[],
-): Promise<void> {
-  for (const candidate of page) {
-    if (due.length >= limit) return;
-    if (await isDue(candidate, now)) due.push(candidate);
-  }
-}
-
-/** Oldest first, so rows that are due sort ahead of the not-yet-due ones the scan cap would otherwise spend itself on. */
+/** A persistent ID bound rotates past active subscriptions and failed rows. */
 async function findDueRecordings(
   now: Date,
   limit: number,
   result: ExpireRecordingsResult,
+  progress: RetentionProgress,
+  failedIds: string[],
 ): Promise<Candidate[]> {
   const due: Candidate[] = [];
   const where = await dueScanWhere(now);
-  let cursor: string | undefined;
-  while (due.length < limit && result.scanned < MAX_SCANNED_PER_RUN) {
-    const page = await prisma.recording.findMany({
-      where,
+  const readPage = (after: string | null) =>
+    prisma.recording.findMany({
+      where: { ...where, ...(after ? { id: { gt: after } } : {}) },
       select: candidateSelect,
-      orderBy: [{ recordedAt: "asc" }, { id: "asc" }],
+      orderBy: { id: "asc" },
       take: SCAN_PAGE_SIZE,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
-    result.scanned += page.length;
-    await collectDue(page, now, limit, due);
-    if (page.length < SCAN_PAGE_SIZE) break;
-    cursor = page[page.length - 1].id;
+  let page = await readPage(progress.due);
+  if (!page.length && progress.due) page = await readPage(null);
+  const deadline = Date.now() + 5 * 60 * 1000;
+  for (const candidate of page) {
+    if (due.length >= limit || Date.now() >= deadline) break;
+    result.scanned++;
+    try {
+      if (await isDue(candidate, now, deadline)) due.push(candidate);
+    } catch (error) {
+      result.failed++;
+      failedIds.push(candidate.id);
+      result.errors.push(
+        `retention recording=${candidate.id}: ${errorText(error)}`,
+      );
+    }
+    progress.due = candidate.id;
   }
+  if (!page.length) progress.due = null;
   return due;
 }
 
-/** A run that spends its whole scan budget may be leaving due rows unreached, so say so once. */
+/** A run that finds due rows but spends its whole scan budget may be leaving more unreached, so say so once. */
 function reportScanSaturation(
   scanned: number,
   dueCount: number,
   limit: number,
 ): void {
-  if (scanned < MAX_SCANNED_PER_RUN || dueCount >= limit) return;
+  // A full page with nothing due is the cursor rotating through retained rows, not a backlog.
+  if (scanned < MAX_SCANNED_PER_RUN || dueCount === 0 || dueCount >= limit) {
+    return;
+  }
   reportSentryMessage(
     `expire-recordings hit its ${MAX_SCANNED_PER_RUN}-row scan cap; due rows past it wait`,
     {
@@ -535,17 +609,20 @@ async function expireGroup(
  * copy is deleted too; its id stays when that call cannot be confirmed so the
  * daily sweep retries it. On R2 failure the pointers stay for the same reason.
  */
-export async function purgeExpiredRecordingAssets(row: {
-  id: string;
-  storagePath: string | null;
-  streamCallId: string | null;
-  streamRecordingId: string | null;
-}): Promise<{ success: boolean; error?: string }> {
+export async function purgeExpiredRecordingAssets(
+  row: {
+    id: string;
+    storagePath: string | null;
+    streamCallId: string | null;
+    streamRecordingId: string | null;
+  },
+  failures?: RunFailureReporter,
+): Promise<{ success: boolean; error?: string }> {
   // Dynamic import breaks the retention -> service -> decline -> retention cycle.
   const { deleteStreamRecordingCopy } =
     await import("@/lib/stream/recording-stream-delete");
   const streamCopy = await deleteStreamRecordingCopy(row);
-  const deleted = await deleteRecordingAssets(row);
+  const deleted = await deleteRecordingAssets(row, failures);
   if (!deleted.success) return deleted;
   try {
     await prisma.recording.updateMany({
@@ -581,6 +658,7 @@ async function cleanExpiredAssets(
   limit: number,
   result: ExpireRecordingsResult,
   failedIds: string[],
+  failures: RunFailureReporter,
 ): Promise<void> {
   const rows = await prisma.recording.findMany({
     where: {
@@ -602,7 +680,7 @@ async function cleanExpiredAssets(
     take: limit,
   });
   for (const row of rows) {
-    const deleted = await purgeExpiredRecordingAssets(row);
+    const deleted = await purgeExpiredRecordingAssets(row, failures);
     if (!deleted.success) {
       result.failed++;
       failedIds.push(row.id);
@@ -618,6 +696,80 @@ async function cleanExpiredAssets(
   }
 }
 
+/**
+ * Delete Stream's copy of rows whose R2 copy was size-verified (`transferredAt`)
+ * at least a day ago. Clearing `recordingUrl` marks it done; rows transferred
+ * before the refresh window are past Stream's own 14-day retention.
+ */
+async function deleteTransferredStreamCopies(
+  now: Date,
+  result: ExpireRecordingsResult,
+  failedIds: string[],
+  limit: number,
+  progress: RetentionProgress,
+): Promise<void> {
+  const readPage = (after: string | null) =>
+    prisma.recording.findMany({
+      where: {
+        ...(after ? { id: { gt: after } } : {}),
+        status: RecordingStatus.AVAILABLE,
+        storageType: RecordingStorageType.PLATFORM,
+        storagePath: { not: null },
+        transferredAt: {
+          lte: new Date(now.getTime() - STREAM_COPY_DELETE_DELAY_MS),
+          gt: addDays(now, -STREAM_REFRESH_WINDOW_DAYS),
+        },
+        streamCallId: { not: null },
+        streamRecordingId: { not: null },
+        recordingUrl: { not: "" },
+      },
+      orderBy: { id: "asc" },
+      take: Math.min(limit, STREAM_COPY_DELETE_LIMIT),
+      select: {
+        id: true,
+        streamCallId: true,
+        streamRecordingId: true,
+        recordingUrl: true,
+      },
+    });
+  let rows = await readPage(progress.copies);
+  if (!rows.length && progress.copies) rows = await readPage(null);
+  progress.copies = rows.at(-1)?.id ?? null;
+  if (rows.length === 0) return;
+  // Dynamic import breaks the retention -> service -> decline -> retention cycle.
+  const { deleteStreamRecordingCopy } =
+    await import("@/lib/stream/recording-stream-delete");
+  const outcomes = await mapBounded(
+    rows,
+    async (row): Promise<{ marked: number } | { error: string }> => {
+      const deleted = await deleteStreamRecordingCopy(row);
+      if (!deleted.success) return { error: deleted.error ?? "not deleted" };
+      try {
+        const marked = await prisma.recording.updateMany({
+          where: {
+            id: row.id,
+            status: RecordingStatus.AVAILABLE,
+            recordingUrl: row.recordingUrl,
+          },
+          data: { recordingUrl: "" },
+        });
+        return { marked: marked.count };
+      } catch (error) {
+        return { error: errorText(error) };
+      }
+    },
+  );
+  outcomes.forEach((outcome, i) => {
+    if ("marked" in outcome) {
+      result.streamCopiesDeleted += outcome.marked;
+      return;
+    }
+    result.failed++;
+    failedIds.push(rows[i].id);
+    result.errors.push(`stream copy recording=${rows[i].id}: ${outcome.error}`);
+  });
+}
+
 async function expireRecordingsUnlocked(
   limit: number,
 ): Promise<ExpireRecordingsResult> {
@@ -628,14 +780,20 @@ async function expireRecordingsUnlocked(
     lapsed: 0,
     expired: 0,
     cleaned: 0,
+    streamCopiesDeleted: 0,
     failed: 0,
     errors: [],
+    checkpoint: null,
   };
+  const saved = await readJobCheckpoint("expire-recordings");
+  const progress = saved
+    ? retentionProgressSchema.parse(JSON.parse(saved))
+    : { due: null, lapsed: null, copies: null };
   const failedIds: string[] = [];
 
-  result.lapsed = await expireLapsedCopies(now);
+  await expireLapsedCopies(now, result, failedIds, limit, progress);
 
-  const due = await findDueRecordings(now, limit, result);
+  const due = await findDueRecordings(now, limit, result, progress, failedIds);
   reportScanSaturation(result.scanned, due.length, limit);
   const groups = new Map<string | null, string[]>();
   for (const candidate of due) {
@@ -655,7 +813,12 @@ async function expireRecordingsUnlocked(
     }
   }
 
-  await cleanExpiredAssets(limit, result, failedIds);
+  // Vendor failures from the asset purge report once per op for the run.
+  const vendorFailures = createRunFailureReporter("stream");
+  await cleanExpiredAssets(limit, result, failedIds, vendorFailures);
+  vendorFailures.flush();
+  await deleteTransferredStreamCopies(now, result, failedIds, limit, progress);
+  result.checkpoint = JSON.stringify(progress);
 
   if (failedIds.length > 0) {
     result.success = false;
@@ -678,16 +841,19 @@ async function expireRecordingsUnlocked(
     lapsed: result.lapsed,
     expired: result.expired,
     cleaned: result.cleaned,
+    streamCopiesDeleted: result.streamCopiesDeleted,
     failed: result.failed,
   });
   return result;
 }
 
-/** Daily: expire lapsed copies and recordings past retention, then delete their assets. */
+/** Daily: expire lapsed copies and recordings past retention, delete their assets, then Stream's copies of transferred rows. */
 export async function expireRecordings(
   opts: { limit?: number } = {},
 ): Promise<ExpireRecordingsResult> {
-  return withCronLock("expire-recordings", { failMode: "open" }, () =>
-    expireRecordingsUnlocked(opts.limit ?? DEFAULT_EXPIRE_LIMIT),
+  return withCronLock("expire-recordings", { failMode: "closed" }, () =>
+    expireRecordingsUnlocked(
+      Math.min(25, Math.max(1, opts.limit ?? DEFAULT_EXPIRE_LIMIT)),
+    ),
   );
 }

@@ -8,6 +8,7 @@
  */
 
 const captureException = jest.fn();
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
   captureException: (...a: unknown[]) => captureException(...a),
 }));
@@ -95,7 +96,7 @@ describe("respondToLedgerDrift", () => {
 });
 
 describe("reportWalletDriftFreeze", () => {
-  it("pages fatal once for all wallet pages under the logical report identity", async () => {
+  it("pages fatal once, keyed by the drifting billing accounts so a new report does not re-page", async () => {
     await reportWalletDriftFreeze(
       "rep_1",
       [walletDrift, seatDrift],
@@ -112,8 +113,8 @@ describe("reportWalletDriftFreeze", () => {
     expect(createFreezeEvent).not.toHaveBeenCalled();
     expect(reportStandingFinding).toHaveBeenCalledWith(
       expect.objectContaining({
-        key: "reconcile-ledgers:wallet-drift:rep_1",
-        ids: ["rep_1"],
+        key: "reconcile-ledgers:wallet-drift",
+        ids: ["ba_1"],
       }),
       expect.any(Function),
     );

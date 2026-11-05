@@ -23,9 +23,47 @@ import {
   assertValidUpdateUserPermissions,
 } from "@/lib/stream/video-contracts";
 import { reportSentryError } from "@/lib/observability/report";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 /** The only capabilities Stream's UpdateUserPermissions accepts; any other name fails the whole request. */
 const PUBLISH_PERMISSIONS = STREAM_PUBLISH_PERMISSIONS;
+
+/** A refusal repeating inside this window followed the client's self-heal provisioning, so the room is not coming. */
+const ROOM_HEAL_WINDOW_MS = 120_000;
+const lastRoomRefusalAt = new Map<string, number>();
+
+/** First refusal of a meeting is the room awaiting the client's self-heal; a repeat inside the window is not. */
+function isRepeatRoomRefusal(meetingId: string): boolean {
+  const now = Date.now();
+  for (const [id, at] of lastRoomRefusalAt) {
+    if (now - at > ROOM_HEAL_WINDOW_MS) lastRoomRefusalAt.delete(id);
+  }
+  const repeat = lastRoomRefusalAt.has(meetingId);
+  lastRoomRefusalAt.set(meetingId, now);
+  return repeat;
+}
+
+/**
+ * True only when Stream reports the user already holds `role`; any read failure answers false
+ * so the membership write still runs.
+ */
+async function holdsCallRole(
+  call: ReturnType<ReturnType<typeof getStreamVideoClient>["video"]["call"]>,
+  userId: string,
+  role: string,
+): Promise<boolean> {
+  try {
+    const { members } = await call.queryMembers({
+      filter_conditions: { user_id: userId },
+      limit: 1,
+    });
+    return members.some(
+      (member) => member.user_id === userId && member.role === role,
+    );
+  } catch {
+    return false;
+  }
+}
 
 /**
  * POST /api/meetings/[meetingId]/join
@@ -47,9 +85,16 @@ export async function POST(
     const role = access.coPresenter ? CO_PRESENTER_CALL_ROLE : CALL_MEMBER_ROLE;
     const resolvedCallId = toCallId(access.streamCallId ?? meetingId);
 
-    const admitted = await withStreamCircuitBreaker(async () => {
-      await upsertUsersToStream([userId]);
+    const appointmentType =
+      access.appointment?.appointmentType ??
+      (access.appointment?.webinar
+        ? "WEBINAR"
+        : access.appointment?.class
+          ? "CLASS"
+          : null);
 
+    await upsertUsersToStream([userId]);
+    const admitted = await withStreamCircuitBreaker(async () => {
       const call = getStreamVideoClient().video.call(
         STREAM_CALL_TYPE,
         resolvedCallId,
@@ -62,21 +107,27 @@ export async function POST(
         assertValidUpdateCallMembers(memberPayload);
         return call.updateCallMembers(memberPayload);
       };
+      // A 1-to-Many membership write is broadcast to the whole room, so a rejoin with the right role skips it.
+      const alreadyMember = isOneToManyAppointmentType(appointmentType)
+        ? await holdsCallRole(call, userId, role)
+        : false;
       try {
-        await addMember(role).catch(async (error: unknown) => {
-          // An app missing the custom role still admits the presenter as a plain member.
-          if (
-            role !== CO_PRESENTER_CALL_ROLE ||
-            streamHttpStatus(error) !== 400
-          )
-            throw error;
-          reportSentryError(error, {
-            subsystem: "stream",
-            op: "meetings.join.coPresenterRole",
-            extra: { meetingId: resolvedCallId },
+        if (!alreadyMember) {
+          await addMember(role).catch(async (error: unknown) => {
+            // An app missing the custom role still admits the presenter as a plain member.
+            if (
+              role !== CO_PRESENTER_CALL_ROLE ||
+              streamHttpStatus(error) !== 400
+            )
+              throw error;
+            reportSentryError(error, {
+              subsystem: "stream",
+              op: "meetings.join.coPresenterRole",
+              extra: { meetingId: resolvedCallId },
+            });
+            await addMember(CALL_MEMBER_ROLE);
           });
-          await addMember(CALL_MEMBER_ROLE);
-        });
+        }
       } catch (error) {
         // Only Stream's not-found (HTTP 404 with code 16) on the membership write proves the call is missing.
         if (streamHttpStatus(error) === 404 && streamErrorCode(error) === 16)
@@ -84,13 +135,6 @@ export async function POST(
         throw error;
       }
 
-      const appointmentType =
-        access.appointment?.appointmentType ??
-        (access.appointment?.webinar
-          ? "WEBINAR"
-          : access.appointment?.class
-            ? "CLASS"
-            : null);
       const isOneToMany = isOneToManyAppointmentType(appointmentType);
 
       if (isOneToMany && access.role === "host") {
@@ -112,11 +156,17 @@ export async function POST(
     });
 
     if (!admitted) {
-      reportSentryError(new Error("ROOM_NOT_PROVISIONED"), {
-        subsystem: "stream",
-        op: "meetings.join",
-        extra: { meetingId },
-      });
+      if (isRepeatRoomRefusal(meetingId)) {
+        captureThrottled(
+          `meetings.join.roomNotProvisioned:${meetingId}`,
+          new Error("ROOM_NOT_PROVISIONED"),
+          { subsystem: "stream", op: "meetings.join", extra: { meetingId } },
+        );
+      } else {
+        streamLogger.warn("Meeting room not provisioned; awaiting self-heal", {
+          meetingId,
+        });
+      }
       return NextResponse.json(
         {
           error:
@@ -152,14 +202,29 @@ export async function POST(
       );
     }
 
-    reportSentryError(error, {
-      subsystem: "stream",
-      op: "meetings.join",
-    });
-    streamLogger.error("Failed to admit to meeting", error);
+    // A Stream 5xx or rate limit is the provider's outage; the client retries it.
+    const upstream = streamHttpStatus(error);
+    const providerOutage =
+      upstream !== null && (upstream >= 500 || upstream === 429);
+
+    // The client retries an outage, so only a non-outage fault reaches Sentry.
+    if (providerOutage) {
+      streamLogger.warn("Meeting join hit a Stream outage", {
+        meetingId: meetingIdForLog,
+        upstream,
+      });
+    } else {
+      reportSentryError(error, {
+        subsystem: "stream",
+        op: "meetings.join",
+      });
+      streamLogger.error("Failed to admit to meeting", error);
+    }
     return NextResponse.json(
-      { error: "Could not join this meeting. Please try again." },
-      { status: 500 },
+      providerOutage
+        ? { error: "Video is temporarily unavailable. Please try again." }
+        : { error: "Could not join this meeting. Please try again." },
+      { status: providerOutage ? 503 : 500 },
     );
   }
 }

@@ -21,7 +21,7 @@ export function StillStuckCard({
     >
       <p className="font-semibold">Still stuck?</p>
       <p className="mt-1 text-sm text-muted-foreground">
-        {signedIn ? "Open a support request" : "Contact us"} — we acknowledge{" "}
+        {signedIn ? "Open a support case" : "Contact us"} — we acknowledge{" "}
         {ACK_PROMISE_COPY}.
       </p>
     </Link>

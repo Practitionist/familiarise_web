@@ -1,3 +1,4 @@
+import { PlanBreadcrumb } from "@/components/explore/PublicBreadcrumb";
 import { notFound } from "next/navigation";
 import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getSession } from "@/lib/auth-server";
@@ -42,5 +43,10 @@ export default async function ClassDetailsPage({
     imageUrl: generateProgramImageUrl(classPlan.imageUrl),
   };
 
-  return <ClassDetails plan={planWithDefaults} />;
+  return (
+    <>
+      <PlanBreadcrumb plan={classPlan} />
+      <ClassDetails plan={planWithDefaults} />
+    </>
+  );
 }

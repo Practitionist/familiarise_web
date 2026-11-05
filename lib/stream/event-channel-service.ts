@@ -1,11 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
-import type { ChannelFilters, StreamChat } from "stream-chat";
+import type { StreamChat } from "stream-chat";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import {
   getStreamChatClient,
-  getStreamVideoClient,
   isExpectedStreamError,
   withStreamCircuitBreaker,
   StreamUnavailableError,
@@ -25,13 +24,12 @@ import { bookingOrgId, isChannelAlreadyExistsError } from "@/lib/stream-utils";
 import {
   addRemainingMembers,
   createMemberChunk,
-  queryChannelsPaged,
+  forEachChunk,
 } from "@/lib/stream/batch";
 import {
   DEFAULT_RETENTION_DAYS,
   isPastRetention,
 } from "@/lib/stream/channel-lifecycle";
-import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { OPENABLE_EVENT_STATUSES } from "@/lib/stream/dm-eligibility-statuses";
 import { ConsentRequiredError } from "@/lib/compliance/dpdp";
 import { isUpsertRefusal } from "@/lib/stream/connect-failure";
@@ -195,6 +193,9 @@ async function tryAddToExistingChannel(
   }
 }
 
+/** Why a join did not land: Stream refused the account, or the user is still not a member. */
+export type EventChannelJoinFailure = "account_refused" | "member_not_added";
+
 export async function addUserToEventChannel(
   eventType: EventType,
   eventId: string,
@@ -203,6 +204,7 @@ export async function addUserToEventChannel(
   success: boolean;
   channelId: string;
   created?: boolean;
+  reason?: EventChannelJoinFailure;
 }> {
   eventTypeSchema.parse(eventType);
   eventIdSchema.parse(eventId);
@@ -220,7 +222,7 @@ export async function addUserToEventChannel(
   const client = getStreamChatClient();
 
   if (!(await syncUserOrSkipOnConsent(userId, channelId))) {
-    return { success: false, channelId };
+    return { success: false, channelId, reason: "account_refused" };
   }
 
   const collaboratorChannelRole = await resolveEventCollaboratorChannelRole(
@@ -299,7 +301,7 @@ export async function addUserToEventChannel(
         await channel.addMembers(memberSpec);
       } catch (adoptError) {
         adoptRetryFailed = true;
-        streamLogger.warn("Post-adoption addMembers retry failed (non-fatal)", {
+        streamLogger.warn("Post-adoption addMembers retry failed", {
           channelId,
           userId,
           error: adoptError,
@@ -333,9 +335,10 @@ export async function addUserToEventChannel(
     }
 
     markChannelExists(channelType, channelId);
-    if (!adoptRetryFailed) {
-      markMembership(channelId, userId, true);
+    if (adoptRetryFailed) {
+      return { success: false, channelId, reason: "member_not_added" };
     }
+    markMembership(channelId, userId, true);
 
     streamLogger.info("Created channel and added user", {
       channelId,
@@ -363,41 +366,48 @@ export async function removeUserFromEventChannel(
   eventId: string,
   userId: string,
 ): Promise<{ success: boolean }> {
+  userIdSchema.parse(userId);
+  const { failedUserIds } = await removeUsersFromEventChannel(
+    eventType,
+    eventId,
+    [userId],
+  );
+  return { success: failedUserIds.length === 0 };
+}
+
+/** Removes the users 100 at a time; a missing channel counts as removed. */
+export async function removeUsersFromEventChannel(
+  eventType: EventType,
+  eventId: string,
+  userIds: string[],
+): Promise<{ failedUserIds: string[] }> {
   eventTypeSchema.parse(eventType);
   eventIdSchema.parse(eventId);
-  userIdSchema.parse(userId);
 
   const channelId = getChannelId(eventType, eventId);
   const channelType = getChannelType(eventType);
-  const client = getStreamChatClient();
+  const failedUserIds: string[] = [];
+  if (userIds.length === 0) return { failedUserIds };
 
-  try {
-    const channel = client.channel(channelType, channelId);
-    await channel.removeMembers([userId]);
-    markMembership(channelId, userId, false);
-    streamLogger.info("Removed user from event channel", {
-      channelId,
-      userId,
-    });
-    return { success: true };
-  } catch (error) {
-    markMembership(channelId, userId, false);
-    if (isExpectedStreamError(error)) {
-      streamLogger.debug("No event channel to remove the user from", {
-        eventType,
-        eventId,
-        userId,
-      });
-      return { success: true };
+  await forEachChunk(userIds, async (batch) => {
+    try {
+      await getStreamChatClient()
+        .channel(channelType, channelId)
+        .removeMembers(batch);
+    } catch (error) {
+      if (!isExpectedStreamError(error)) {
+        failedUserIds.push(...batch);
+        streamLogger.warn("Failed to remove users from event channel", {
+          channelId,
+          count: batch.length,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    } finally {
+      for (const id of batch) markMembership(channelId, id, false);
     }
-    streamLogger.warn("Failed to remove user from event channel", {
-      eventType,
-      eventId,
-      userId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return { success: false };
-  }
+  });
+  return { failedUserIds };
 }
 
 const groupEventPlanInclude = {
@@ -589,187 +599,106 @@ export async function isEventParticipant(
   eventId: string,
   userId: string,
 ): Promise<boolean> {
-  const collaboratorFilter = {
-    collaborators: {
-      some: {
-        consultantProfile: { userId, deletedAt: null },
-        status: "ACCEPTED" as const,
+  const admitted = await eventParticipantsAmong(eventType, eventId, [userId]);
+  return admitted?.has(userId) ?? false;
+}
+
+const retentionOrgSelect = {
+  select: { chatRetentionDays: true, streamRecordingRetentionDays: true },
+};
+
+/**
+ * The subset of `userIds` with access to an openable, in-retention event's
+ * channel: the host (profile not deleted), an ACCEPTED collaborator, or a live
+ * seat on a live appointment. `isEventParticipant` is this for one user.
+ * Null means the event is missing, not openable or past retention: closed to everyone.
+ */
+export async function eventParticipantsAmong(
+  eventType: "webinar" | "class",
+  eventId: string,
+  userIds: string[],
+): Promise<Set<string> | null> {
+  const ids = Array.from(new Set(userIds));
+  const admitted = new Set<string>();
+  if (ids.length === 0) return admitted;
+
+  const planSelect = {
+    select: {
+      organization: retentionOrgSelect,
+      consultantProfile: { select: { userId: true, deletedAt: true } },
+      collaborators: {
+        where: {
+          status: "ACCEPTED" as const,
+          consultantProfile: { userId: { in: ids }, deletedAt: null },
+        },
+        select: { consultantProfile: { select: { userId: true } } },
       },
     },
-  };
-  const appointmentFilter = {
-    deletedAt: null,
-    occurrences: { some: { deletedAt: null } },
-    participants: { some: liveParticipant(userId) },
   };
   const appointmentSelect = {
-    organization: {
-      select: {
-        chatRetentionDays: true,
-        streamRecordingRetentionDays: true,
-      },
-    },
-    occurrences: {
-      orderBy: { endsAt: "desc" as const },
-      take: 1,
-      select: { endsAt: true },
-    },
-  };
-  const planOrgSelect = {
-    organization: {
-      select: {
-        chatRetentionDays: true,
-        streamRecordingRetentionDays: true,
-      },
-    },
-  };
-
-  if (eventType === "webinar") {
-    const hit = await prisma.webinar.findFirst({
-      where: {
-        id: eventId,
-        status: { in: [...OPENABLE_EVENT_STATUSES] },
-        OR: [
-          { appointment: appointmentFilter },
-          { webinarPlan: { consultantProfile: { userId } } },
-          { webinarPlan: collaboratorFilter },
-        ],
-      },
-      select: {
-        id: true,
-        webinarPlan: { select: planOrgSelect },
-        appointment: { select: appointmentSelect },
-      },
-    });
-    if (!hit) return false;
-    return !isPastRetention(
-      hit.appointment?.occurrences[0]?.endsAt ?? null,
-      resolveEventRetentionDays(
-        hit.webinarPlan?.organization,
-        hit.appointment?.organization,
-      ),
-    );
-  }
-
-  const hit = await prisma.class.findFirst({
-    where: {
-      id: eventId,
-      status: { in: [...OPENABLE_EVENT_STATUSES] },
-      OR: [
-        { appointment: appointmentFilter },
-        { classPlan: { consultantProfile: { userId } } },
-        { classPlan: collaboratorFilter },
-      ],
-    },
     select: {
-      id: true,
-      schedulingPeriodEndsAt: true,
-      classPlan: { select: planOrgSelect },
-      appointment: { select: appointmentSelect },
+      deletedAt: true,
+      organization: retentionOrgSelect,
+      occurrences: {
+        orderBy: { endsAt: "desc" as const },
+        take: 1,
+        select: { endsAt: true },
+      },
+      _count: {
+        select: { occurrences: { where: { deletedAt: null } } },
+      },
+      participants: {
+        where: { ...liveParticipant(), userId: { in: ids } },
+        select: { userId: true },
+      },
     },
-  });
-  if (!hit) return false;
-  return !isPastRetention(
-    hit.appointment?.occurrences[0]?.endsAt ??
-      hit.schedulingPeriodEndsAt ??
-      null,
-    resolveEventRetentionDays(
-      hit.classPlan?.organization,
-      hit.appointment?.organization,
-    ),
-  );
-}
+  };
+  const where = { id: eventId, status: { in: [...OPENABLE_EVENT_STATUSES] } };
 
-export async function queryOrgTaggedChannels(
-  chat: StreamChat,
-  organizationId: string,
-  extraFilter?: Record<string, unknown>,
-) {
-  const filter = {
-    ...extraFilter,
-    organization_id: { $eq: organizationId },
-  } as unknown as ChannelFilters;
-  return queryChannelsPaged((opts) =>
-    chat.queryChannels(filter, [{ last_message_at: -1 }], opts),
-  );
-}
+  const hit =
+    eventType === "webinar"
+      ? await prisma.webinar.findFirst({
+          where,
+          select: { webinarPlan: planSelect, appointment: appointmentSelect },
+        })
+      : await prisma.class.findFirst({
+          where,
+          select: {
+            schedulingPeriodEndsAt: true,
+            classPlan: planSelect,
+            appointment: appointmentSelect,
+          },
+        });
+  if (!hit) return null;
 
-async function endSingleStreamVideoCall(
-  video: ReturnType<typeof getStreamVideoClient>["video"],
-  call: { id: string; streamCallId: string },
-  options: {
-    now: Date;
-    endedReason: string | null;
-    errorPrefix: string;
-    useCircuitBreaker?: boolean;
-  },
-  errors: string[],
-): Promise<boolean> {
-  let counted = false;
-  let ended = false;
-  try {
-    const endCall = () =>
-      video.call(STREAM_CALL_TYPE, toCallId(call.streamCallId)).end();
-    await (options.useCircuitBreaker
-      ? withStreamCircuitBreaker(endCall)
-      : endCall());
-    ended = true;
-    counted = true;
-  } catch (err) {
-    if (isExpectedStreamError(err)) {
-      ended = true;
-    } else {
-      errors.push(
-        `${options.errorPrefix} call ${call.streamCallId}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
-  if (ended && prisma.meeting?.updateMany) {
-    try {
-      await prisma.meeting.updateMany({
-        where: { id: call.id, endedAt: null },
-        data: { endedAt: options.now, endedReason: options.endedReason },
-      });
-    } catch (dbErr) {
-      errors.push(
-        `${options.errorPrefix} meeting update ${call.id}: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`,
-      );
-    }
-  }
-  return counted;
-}
-
-export async function endActiveStreamVideoCalls(
-  calls: { id: string; streamCallId: string }[],
-  options: {
-    now: Date;
-    endedReason: string | null;
-    errorPrefix: string;
-    useCircuitBreaker?: boolean;
-  },
-): Promise<{ callsEnded: number; errors: string[] }> {
-  let callsEnded = 0;
-  const errors: string[] = [];
-  if (calls.length === 0) return { callsEnded, errors };
-
-  try {
-    const video = getStreamVideoClient().video;
-    for (const call of calls) {
-      const counted = await endSingleStreamVideoCall(
-        video,
-        call,
-        options,
-        errors,
-      );
-      if (counted) callsEnded++;
-    }
-  } catch (err) {
-    errors.push(
-      `${options.errorPrefix} video client: ${err instanceof Error ? err.message : String(err)}`,
-    );
+  const plan = "webinarPlan" in hit ? hit.webinarPlan : hit.classPlan;
+  const appointment = hit.appointment;
+  const fallbackEndsAt =
+    "schedulingPeriodEndsAt" in hit ? hit.schedulingPeriodEndsAt : null;
+  if (
+    isPastRetention(
+      appointment?.occurrences[0]?.endsAt ?? fallbackEndsAt ?? null,
+      resolveEventRetentionDays(plan?.organization, appointment?.organization),
+    )
+  ) {
+    return null;
   }
 
-  return { callsEnded, errors };
+  const host = plan?.consultantProfile;
+  if (host && !host.deletedAt && ids.includes(host.userId)) {
+    admitted.add(host.userId);
+  }
+  for (const c of plan?.collaborators ?? []) {
+    admitted.add(c.consultantProfile.userId);
+  }
+  if (
+    appointment &&
+    appointment.deletedAt === null &&
+    appointment._count.occurrences > 0
+  ) {
+    for (const p of appointment.participants) admitted.add(p.userId);
+  }
+  return admitted;
 }
 
 export function resolveStreamScopeFilter(searchParams: URLSearchParams): {

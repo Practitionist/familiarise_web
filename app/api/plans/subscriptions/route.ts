@@ -9,7 +9,7 @@ import {
   planContentInclude,
 } from "@/lib/api/plans/content";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
-import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
+import { subscriptionPlanTotals } from "@/lib/booking/entitlement";
 import {
   oneOnOnePlanListCacheControl,
   oneOnOnePlanListWhere,
@@ -153,21 +153,16 @@ export async function POST(request: NextRequest) {
     // Find or create topics by name
     const topicIds = await findOrCreateTopics(validatedData.topics ?? []);
 
-    // Compute derived metrics
+    // Sessions = weeks × sessions a week; a weeks plan derives its months.
     const sessionDurationInHours = validatedData.sessionDurationInHours ?? 1.0;
-    // Use accurate week counting instead of fixed * 4 approximation
-    const metricStartDate = new Date();
-    metricStartDate.setHours(0, 0, 0, 0);
-    const metricEndDate = new Date(metricStartDate);
-    metricEndDate.setMonth(
-      metricEndDate.getMonth() + validatedData.durationInMonths,
-    );
-    const estimatedWeeks = ScheduleCalculationService.countWeeks(
-      metricStartDate,
-      metricEndDate,
-    );
-    const totalSessions = (validatedData.sessionsPerWeek || 1) * estimatedWeeks;
-    const totalHours = totalSessions * sessionDurationInHours;
+    const durationInWeeks = validatedData.durationInWeeks ?? null;
+    const { durationInMonths, totalSessions, totalHours } =
+      subscriptionPlanTotals({
+        sessionsPerWeek: validatedData.sessionsPerWeek || 1,
+        durationInMonths: validatedData.durationInMonths,
+        durationInWeeks,
+        sessionDurationInHours,
+      });
 
     // Trial fields — Zod-validated; free by default until paid-trial
     // checkout is wired (the wiring PR flips the default to ₹100).
@@ -203,7 +198,8 @@ export async function POST(request: NextRequest) {
       data: {
         title: validatedData.title,
         description: validatedData.description,
-        durationInMonths: validatedData.durationInMonths,
+        durationInMonths,
+        durationInWeeks,
         price: Math.round(validatedData.price),
         priceCurrency: validatedData.priceCurrency,
         sessionsPerWeek: validatedData.sessionsPerWeek,

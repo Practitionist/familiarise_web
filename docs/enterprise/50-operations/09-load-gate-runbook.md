@@ -21,6 +21,8 @@ The harness is built and has not been executed. Every number in the result
 table below is blank on purpose, and the first person to dispatch the workflow
 fills them in.
 
+The site-wide staged read-traffic test (100, 300 and 1,000 virtual users) is a different exercise, planned in [the load test plan](11-load-test-plan.md). It runs only after the database split.
+
 ## The warning that comes before everything else
 
 **One Supabase project serves both the development and the production
@@ -89,9 +91,9 @@ const isMockPayment =
 
 A Netlify deploy preview is a production build, so on a preview the flag is
 silently ignored. No error is raised; the checkout simply proceeds as a real
-gateway order. `ENABLE_MOCK_PAYMENTS` does not rescue this, because the
-route-level gate has already zeroed the flag before the operation that consults
-that variable is reached.
+gateway order. No environment variable can switch mock payments on
+outside `next dev`: `shouldEnableMockPayments` in
+`lib/payments/operations/mock.ts` also checks `NODE_ENV` is `development`.
 
 The two targets therefore measure different things, and the runbook records
 both because both are legitimate.

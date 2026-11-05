@@ -5,10 +5,12 @@
  * finishes any send a killed run left PENDING.
  */
 
+import { SUPPORT_EMAIL } from "@/lib/company";
 import type { IncidentRemedyKind, Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
-import { EMAIL_BUDGET_MS, OPS_EMAIL, SENDERS } from "@/lib/email/config";
+import { subscriptionPlanEnd } from "@/lib/booking/entitlement";
+import { EMAIL_BUDGET_MS, SENDERS } from "@/lib/email/config";
 import { attempt, stage, type RenderedEmail } from "@/lib/email/deliver";
 import { attemptStaged } from "@/lib/email/send-to-recipients";
 import {
@@ -55,8 +57,12 @@ const DIGEST_SELECT = {
           subscription: {
             select: {
               status: true,
-              schedulingPeriodEndsAt: true,
-              subscriptionPlan: TITLE,
+              planEndsAt: true,
+              schedulingPeriodStartsAt: true,
+              schedulingTimezone: true,
+              subscriptionPlan: {
+                select: { title: true, durationInMonths: true },
+              },
             },
           },
           trial: {
@@ -77,6 +83,7 @@ type DigestRow = Prisma.IncidentRemedyGetPayload<{
 function digestItem(row: DigestRow): IncidentDigestItem {
   const appt = row.occurrence.appointment;
   const sub = appt.subscription;
+  const planEnd = sub ? subscriptionPlanEnd(sub) : null;
   return {
     kind: row.kind,
     appointmentId: row.occurrence.appointmentId,
@@ -103,9 +110,10 @@ function digestItem(row: DigestRow): IncidentDigestItem {
     dueAt: row.dueAt,
     planEndsAt:
       sub &&
+      planEnd &&
       ["APPROVED", "SCHEDULED"].includes(sub.status) &&
-      sub.schedulingPeriodEndsAt > new Date()
-        ? sub.schedulingPeriodEndsAt
+      planEnd > new Date()
+        ? planEnd
         : null,
   };
 }
@@ -231,7 +239,7 @@ export async function stageAndSendIncidentReport(
     const message: RenderedEmail = {
       from: SENDERS.ops,
       to: canaryAlertRecipient(),
-      replyTo: OPS_EMAIL,
+      replyTo: SUPPORT_EMAIL,
       subject: report.subject,
       text: report.text,
       html: report.text

@@ -15,6 +15,7 @@ jest.mock("@sentry/nextjs", () => ({
 
 jest.mock("../../lib/maintenance-cron", () => ({
   assertNotInMaintenance: jest.fn(),
+  MaintenanceUnavailableError: class MaintenanceUnavailableError extends Error {},
   MaintenanceActiveError: class MaintenanceActiveError extends Error {},
 }));
 

@@ -4,7 +4,7 @@ type: how-to
 band: 70-operations
 audience: sde3
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-04
 ---
 
 # Money runbooks
@@ -84,11 +84,11 @@ FROM "Refund" r
 WHERE r.status = 'PENDING' AND r."createdAt" < now() - interval '1 hour'
 ORDER BY r."createdAt" LIMIT 25;
 
-SELECT id, "refundOwedKey", "refundOwedAttempts"
+SELECT id, "refundOwedKey", "refundOwedAttempts", "refundOwedNextAt"
 FROM "Payment" WHERE "refundOwedKey" IS NOT NULL;
 ```
 
-**Fix.** A refund is two-phase: reserve the amount, call the gateway, finalise. A crash between the gateway call and the database write leaves a `PENDING` row. `reconcile-refunds` asks the gateway about every `PENDING` refund older than one hour and settles it, and re-drives the earnings cascade for refunds that finished at the gateway but whose cascade did not commit (after 10 minutes, at most 3 attempts). A refund the booking door owed but could not send is a marker on the payment (`refundOwedKey`), driven by `retry-auto-refunds` until `MAX_REFUND_OWED_ATTEMPTS` (3) failures, after which an operator is paged once and the marker reads `Auto-refund stuck:`. For a stuck marker, send the refund from the Refunds section ("Issue refund"); the console door, `refundBookingPayment`, is the same front door the jobs use, so its idempotency key prevents a double refund. **Do not** edit a `Refund` row by hand. **Verify:** `Refund.status = 'SUCCEEDED'`, the credit note exists, and the payment's `refundOwedKey` is cleared.
+**Fix.** A refund is two-phase: reserve the amount, call the gateway, finalise. A crash between the gateway call and the database write leaves a `PENDING` row. `reconcile-refunds` asks the gateway about every `PENDING` refund older than one hour and settles it, and re-drives the earnings cascade for refunds that finished at the gateway but whose cascade did not commit (after 10 minutes, at most 3 attempts). A refund the booking door owed but could not send is a marker on the payment (`refundOwedKey`), driven by `retry-auto-refunds` until `MAX_REFUND_OWED_ATTEMPTS` (3) failures, after which an operator is paged once and the marker reads `Auto-refund stuck:`. The sweep backs off between failures: after the first it waits 1 hour (`refundOwedNextAt`), after the second 4 hours, so the page comes about 5 hours after the door committed. A marker with `refundOwedNextAt` in the future is still being retried; leave it unless the buyer needs the money now. A marker still open after 6 hours also appears once a day as a `WARN` system event. A Razorpay 404 (`GATEWAY_NOT_FOUND`, a payment these keys do not know) spends the whole budget on its first attempt, because no retry can succeed. "Issue refund" would hit the same 404, so do not use it for this case: first confirm the stored `gatewayPaymentId` and which Razorpay account (test or live keys) captured the payment, because the refund has to be made in that account. For any other owed refund, stuck or still retrying, send the refund from the Refunds section ("Issue refund"). The operator refund settles the owed refund in the same transaction. If it covers the owed amount, the marker is cleared and the dialog says "The owed ₹Y is fully settled." If it is smaller, the owed amount drops by what you sent and the marker keeps retrying for the rest: "Settled ₹X of the owed ₹Y; ₹Z still owed and retrying." The Refund row records the outcome under `metadata.settledOwed`. If your refund later fails, the owed amount it settled goes back on the payment automatically, in the same transaction, and the sweep retries it. A credit-funded booking's owed restoration is whole, so a partial "Return credits" is refused while it is owed. If the owed refund is already at the gateway, the door answers `OWED_REFUND_IN_FLIGHT`; wait for it to settle, then check what is still owed. **Do not** edit a `Refund` row by hand. **Verify:** `Refund.status = 'SUCCEEDED'`, the credit note exists, and the payment's `refundOwedKey` is cleared.
 
 ## 4. A payout was not paid
 
@@ -136,6 +136,48 @@ ORDER BY h."placedAt" DESC LIMIT 25;
 - `SUPPORT_CASE`: released by the support case that placed it, through the case doors, which need a fresh step-up, the maintenance gate and an ops-log row.
 - `OPERATOR` and `MODERATION`: released from the Earnings section ("Release"). The door refuses while the payment has an open refund or dispute, and a hold on an earning that is not `PENDING`, `PENDING_TRUST` or `READY` is refused.
 
+A `PENDING` earning past its hold-until time whose payment still owes a refund is held by the owed marker, not by an `EarningsHold` row. Find it with:
+
+```sql
+SELECT 'consultant' AS arm, e.id, e."consultantSharePaise" AS "sharePaise",
+       e."holdUntil", p.id AS payment, p."refundOwedKey",
+       p."refundOwedAttempts", p."refundOwedAt"
+FROM "ConsultantEarnings" e
+JOIN "Payment" p ON p.id = e."paymentId"
+WHERE e.status = 'PENDING' AND e."holdUntil" <= now()
+  AND p."refundOwedKey" IS NOT NULL
+UNION ALL
+SELECT 'organisation', o.id, o."orgSharePaise", o."holdUntil", p.id,
+       p."refundOwedKey", p."refundOwedAttempts", p."refundOwedAt"
+FROM "OrganizationEarnings" o
+JOIN "Payment" p ON p.id = o."paymentId"
+WHERE o.status = 'PENDING' AND o."holdUntil" <= now()
+  AND p."refundOwedKey" IS NOT NULL
+ORDER BY "refundOwedAt" LIMIT 25;
+```
+
+It releases on the next run after the marker clears. A marker still retrying (`refundOwedAttempts` under 3) is re-driven by `retry-auto-refunds` and clears when its refund goes out. Every confirmed failure counts toward the 3, including an ambiguous gateway answer that reconcile later fails, so a refund that never goes out reaches the ops queue. A spent marker is in the ops queue ("Refunds the bookings owe"); refund it by hand through an ops refund door, which settles the marker. Never clear `refundOwedKey` by SQL to release earnings: the buyer is still owed the money.
+
+**A spent marker whose refund already went out.** Before the fix of 2026-11-04, a refund that settled after its drive's attempts were spent (an ambiguous gateway answer that reconcile later settled) never cleared its marker, so its earnings stay held although the buyer has the money. Find them:
+
+```sql
+SELECT p.id AS payment, p."refundOwedKey", p."refundOwedAttempts",
+       r.id AS refund, r."refundId", r."amountPaise", r."createdAt"
+FROM "Payment" p
+JOIN "Refund" r ON r."dedupeKey" = p."refundOwedKey" AND r.status = 'SUCCEEDED'
+WHERE p."deletedAt" IS NULL
+ORDER BY r."createdAt";
+```
+
+For each row:
+
+1. Confirm the refund in the gateway dashboard by its reference (`refundId`).
+2. Open the payment, choose **Issue refund**, and submit. The door refuses with "… already went back to the buyer on … (refund …), so nothing is owed on this payment" and clears the marker in the same step; no money moves.
+3. Submit again only if more is owed on top of that refund.
+4. **Verify:** the query no longer lists the payment, and its earnings are `READY` after the next `release-earnings` run.
+
+Never clear `refundOwedKey` by SQL.
+
 A `PENDING` earning that is simply young is not held: `release-earnings` moves it to `READY` after its hold-until time (24 hours for a consultation, 48 for a webinar, 168 for a subscription, 24 for a class, plus 7 days for a new expert). **Verify:** the earning is `READY` and appears in the next payout batch.
 
 ## 6. A member overage is stuck pending
@@ -176,26 +218,28 @@ When the call platform or the app fails for everyone, an admin declares the wind
 
 ## 10. A finance alert did not arrive
 
-The MSME digest, the dispute-deadline alerts and the SLA alerts are emails sent through the single delivery function, so a missing email is first a configuration or a bounce question. For the MSME digest (`msme-payment-alerts`, one slot a day at 03:45 UTC) check the provider for bounces and run the job. It notifies every admin user (a bell notification and an email) and also emails `MSME_ALERT_EMAIL` when that address is set and is not already an admin. The digest lists organisation payouts within 5 days (`ALERT_WINDOW_DAYS`) of their Section 43B(h) deadline that are not yet `COMPLETED`; the window is a code constant, not an environment setting. The dispute-deadline and SLA alert emails dedupe on the staged `FailedEmail` row, so a re-run of `support-sla-sweep` does not send twice.
+The MSME digest, the dispute-deadline alerts and the SLA alerts are emails sent through the single delivery function, so a missing email is first a configuration or a bounce question. For the MSME digest (`msme-payment-alerts`, one slot a day at 03:45 UTC) check the provider for bounces and run the job. It notifies every admin user (a bell notification and an email) and also emails `COMPLIANCE_ALERT_EMAIL` (a constant in `lib/company.ts`) when that address is not already an admin. The digest lists organisation payouts within 5 days (`ALERT_WINDOW_DAYS`) of their Section 43B(h) deadline that are not yet `COMPLETED`; the window is a code constant, not an environment setting. The dispute-deadline and SLA alert emails dedupe on the staged `FailedEmail` row, so a re-run of `support-sla-sweep` does not send twice.
 
 ## Alerts that lead to a runbook
 
-An alert names a condition; this table names the runbook. Page for the first group, post to chat for the second. The thresholds are starting points to tune after a month of traffic.
+An alert names a condition; this table names the runbook. Page for the first group, post to chat for the second; a `console` row pages nobody and is read on the operations console. The thresholds are starting points to tune after a month of traffic.
 
-| Alert                              | Condition                                                                                                                                             | Severity | Runbook                                                   |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | --------------------------------------------------------- |
-| Webhook events stuck               | Sentry warning "sweep-stuck-webhook-events: N webhook event(s) still unprocessed", or `WebhookEvent` rows with `processed = false` older than an hour | page     | [Webhook recovery](04-webhook-recovery.md)                |
-| Ledger audit failing               | `reconcile-ledgers` answers 207, or a `LedgerReconciliationReport` has `ok = false`                                                                   | page     | [Ledger drift runbook](06-ledger-drift-runbook.md)        |
-| Wallet drift                       | A `WALLET_BALANCE_DRIFT` finding, which also freezes the wallet's spend                                                                               | page     | [Ledger drift runbook](06-ledger-drift-runbook.md)        |
-| Webhook signature failing          | The Razorpay webhook answers 400 `Invalid signature` repeatedly, or a `WEBHOOK` `WARN` `SystemEvent` says the previous secret is still in use         | page     | [Go-live checklist](07-go-live-checklist.md), section 1.4 |
-| Payout or reconcile crash          | A `PAYOUT` or `RECONCILE` `SystemEvent` with `severity = ERROR`, or a `failed` target for `process-payouts` in the tick's log line                    | page     | Runbook 4 and [scheduled jobs](01-scheduled-jobs.md)      |
-| Invoice generation stalled         | No invoice created for two days while `BillingSubscription` rows with `nextInvoiceDate` in the past exist                                             | page     | Runbook 7                                                 |
-| Cycle engine stalled               | `ProgramAssignment` with `status = ACTIVE`, `rolledAt` empty and `periodEnd` more than 24 hours ago                                                   | page     | Runbook 8                                                 |
-| Contract renewal stalled           | `Contract` with `autoRenew`, `status = ACTIVE`, `autoRenewedAt` empty and `effectiveTo` more than an hour ago                                         | page     | Runbook 8                                                 |
-| Overage ceiling wedged             | `OverageEvent` `CHARGE_MEMBER` still `PENDING` more than 14 days                                                                                      | chat     | Runbook 6                                                 |
-| Dunning not escalating             | `OVERDUE` invoices with `dunningReminderCount < 3` and no `markedOverdueAt` or reminder movement for 48 hours                                         | chat     | Runbook 7                                                 |
-| Wallet floor breached              | A `WALLET` account with `walletBalance < minBalancePaise`; the job only notifies                                                                      | chat     | [Wallet and top-ups](../50-b2b/02-wallet-and-top-ups.md)  |
-| MSME or finance alert not arriving | No MSME digest for 48 hours while payouts approach their deadline                                                                                     | chat     | Runbook 10                                                |
+| Alert                              | Condition                                                                                                                                                                   | Severity | Runbook                                                   |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | --------------------------------------------------------- |
+| Webhook events stuck               | `SystemEvent` finding "sweep-stuck-webhook-events: N webhook event(s) still unprocessed" on the console, or `WebhookEvent` rows with `processed = false` older than an hour | console  | [Webhook recovery](04-webhook-recovery.md)                |
+| Re-driven webhook still failing    | Sentry error "sweep-stuck-webhook-events: N re-driven webhook event(s) still failing"                                                                                       | page     | [Webhook recovery](04-webhook-recovery.md)                |
+| Dispute deadline near or past      | Sentry warning "N dispute(s) due within 12 h or past due with no response", once per dispute, beside the admin bell and `dispute-deadline-alert` email                      | page     | [Chargebacks](../30-refunds-disputes/02-chargebacks.md)   |
+| Ledger audit failing               | `reconcile-ledgers` answers 207, or a `LedgerReconciliationReport` has `ok = false`                                                                                         | page     | [Ledger drift runbook](06-ledger-drift-runbook.md)        |
+| Wallet drift                       | A `WALLET_BALANCE_DRIFT` finding, which also freezes the wallet's spend                                                                                                     | page     | [Ledger drift runbook](06-ledger-drift-runbook.md)        |
+| Webhook signature failing          | The Razorpay webhook answers 400 `Invalid signature` repeatedly, or a `WEBHOOK` `WARN` `SystemEvent` says the previous secret is still in use                               | page     | [Go-live checklist](07-go-live-checklist.md), section 1.4 |
+| Payout or reconcile crash          | A `PAYOUT` or `RECONCILE` `SystemEvent` with `severity = ERROR`, or a `failed` target for `process-payouts` in the tick's log line                                          | page     | Runbook 4 and [scheduled jobs](01-scheduled-jobs.md)      |
+| Invoice generation stalled         | No invoice created for two days while `BillingSubscription` rows with `nextInvoiceDate` in the past exist                                                                   | page     | Runbook 7                                                 |
+| Cycle engine stalled               | `ProgramAssignment` with `status = ACTIVE`, `rolledAt` empty and `periodEnd` more than 24 hours ago                                                                         | page     | Runbook 8                                                 |
+| Contract renewal stalled           | `Contract` with `autoRenew`, `status = ACTIVE`, `autoRenewedAt` empty and `effectiveTo` more than an hour ago                                                               | page     | Runbook 8                                                 |
+| Overage ceiling wedged             | `OverageEvent` `CHARGE_MEMBER` still `PENDING` more than 14 days                                                                                                            | chat     | Runbook 6                                                 |
+| Dunning not escalating             | `OVERDUE` invoices with `dunningReminderCount < 3` and no `markedOverdueAt` or reminder movement for 48 hours                                                               | chat     | Runbook 7                                                 |
+| Wallet floor breached              | A `WALLET` account with `walletBalance < minBalancePaise`; the job only notifies                                                                                            | chat     | [Wallet and top-ups](../50-b2b/02-wallet-and-top-ups.md)  |
+| MSME or finance alert not arriving | No MSME digest for 48 hours while payouts approach their deadline                                                                                                           | chat     | Runbook 10                                                |
 
 ## Where in code
 
@@ -225,3 +269,4 @@ An alert names a condition; this table names the runbook. Page for the first gro
 5. **"`ENABLE_LIVE_PAYOUTS` off freezes payouts at `PROCESSING`."** Rows stay `APPROVED`.
 6. **"Dunning has two stages and never suspends."** Stage 3 (stamp `dunningSuspendedAt`, refuse new sponsored bookings) runs when `ENABLE_DUNNING_SUSPEND` is `"true"`. The header comment of `jobs/billing/dunning.ts` still describes two stages and is a pending code-comment fix.
 7. **A wallet floor that auto-charges.** `wallet-low-balance` is notify-only; it creates no `WalletTopUp` and charges no mandate.
+8. **A hand refund that touched only spent markers.** "Issue refund" used to settle only a marker that had used all its attempts, and only when the hand refunds since the stamp covered it. Every operator refund now settles the owed refund as far as its amount goes.

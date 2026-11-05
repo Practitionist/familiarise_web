@@ -1,0 +1,210 @@
+/** @jest-environment node */
+const findSlots = jest.fn();
+const findOverlap = jest.fn();
+const transaction = jest.fn();
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  ALLOCATION_TX_MAX_WAIT_MS: 8_000,
+  ALLOCATION_TX_TIMEOUT_MS: 30_000,
+  default: {
+    appointmentOccurrence: {
+      findMany: () => {
+        throw new Error("Booking graph must use the transaction client");
+      },
+    },
+    $transaction: (...args: unknown[]) => transaction(...args),
+  },
+}));
+jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
+jest.mock("../../lib/novu/service", () => ({
+  notifyAppointmentCancelled: jest.fn(),
+}));
+jest.mock("../../lib/email/senders/booking", () => ({
+  stageAppointmentCancelledEmail: jest.fn(),
+}));
+jest.mock("../../lib/novu/workflows", () => ({ notificationScope: jest.fn() }));
+jest.mock("../../lib/novu/resolve-href", () => ({
+  notificationHref: jest.fn(),
+}));
+jest.mock("../../lib/payments/operations/refund-owed", () => ({
+  // The freeze owns every marker it stamps here.
+  stampRefundsOwed: jest.fn(
+    async (_tx: unknown, markers: unknown[]) => markers.length,
+  ),
+}));
+jest.mock("../../lib/booking/transitions", () => ({
+  SLOT_RESCHEDULABLE_FROM: ["SCHEDULED"],
+  transitionConsultationRequest: jest.fn(),
+  transitionOccurrenceCompletion: jest.fn(),
+}));
+jest.mock("../../lib/booking/reschedule-decline", () => ({
+  declineOpenReschedules: jest.fn(),
+}));
+jest.mock("../../lib/enterprise/transitions", () => ({
+  IllegalTransitionError: class extends Error {},
+}));
+jest.mock("../../lib/trials/cancellation", () => ({
+  softCancelTrialAppointmentInTx: jest.fn(),
+}));
+import { stampRefundsOwed } from "../../lib/payments/operations/refund-owed";
+import { notifyAppointmentCancelled } from "../../lib/novu/service";
+import { freezeAppointments } from "../../actions/maintenance/freeze-appointments";
+import { assertMaintenanceRemediationCapacity } from "../../lib/maintenance-remediation-capacity";
+beforeEach(() => {
+  jest.clearAllMocks();
+  findOverlap.mockResolvedValue({ id: "overlap" });
+  transaction.mockImplementation((run: (tx: unknown) => Promise<unknown>) =>
+    run({
+      appointmentOccurrence: {
+        findFirst: (...args: unknown[]) => findOverlap(...args),
+        findMany: (...args: unknown[]) => findSlots(...args),
+      },
+    }),
+  );
+});
+it("reads and rejects oversized worker input inside its serializable transaction before cancellation", async () => {
+  findSlots.mockResolvedValue([
+    {
+      appointment: {
+        id: "large",
+        participants: Array.from({ length: 9 }, (_, i) => ({
+          userId: String(i),
+        })),
+        payment: [],
+      },
+    },
+  ]);
+  await expect(
+    freezeAppointments(new Date(), new Date(), "large"),
+  ).rejects.toThrow("exceeds automatic maintenance remediation capacity");
+  expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
+    isolationLevel: "Serializable",
+    maxWait: 8_000,
+    timeout: 30_000,
+  });
+  expect(findSlots).toHaveBeenCalledWith(
+    expect.objectContaining({
+      where: expect.objectContaining({ appointmentId: "large" }),
+      take: 13,
+    }),
+  );
+});
+it("rejects current database counts instead of loading and truncating a large roster", async () => {
+  const findMany = jest.fn().mockResolvedValue([
+    {
+      id: "large",
+      _count: { participants: 9000, occurrences: 1, payment: 1 },
+    },
+  ]);
+  await expect(
+    assertMaintenanceRemediationCapacity({ appointment: { findMany } }, [
+      "large",
+    ]),
+  ).rejects.toThrow("exceeds automatic maintenance remediation capacity");
+  expect(findMany).toHaveBeenCalledWith(
+    expect.objectContaining({
+      select: expect.objectContaining({ _count: expect.anything() }),
+    }),
+  );
+});
+
+it("stages a payment present in the cancellation snapshot through the same transaction", async () => {
+  findSlots.mockResolvedValue([
+    {
+      id: "slot",
+      startsAt: new Date("2026-10-23T01:00Z"),
+      appointment: {
+        id: "booking",
+        organizationId: null,
+        participants: [],
+        payment: [
+          {
+            id: "paid-after-preview",
+            paymentStatus: "SUCCEEDED",
+            deletedAt: null,
+          },
+        ],
+        consultation: {
+          id: "consultation",
+          consultationPlan: {
+            title: "Consultation",
+            consultantProfile: { user: { id: "host", name: "Host" } },
+          },
+          requestedBy: { user: { id: "client", name: "Client" } },
+        },
+      },
+    },
+  ]);
+  const result = await freezeAppointments(
+    new Date("2026-10-23T01:00Z"),
+    new Date("2026-10-23T02:00Z"),
+    "booking",
+  );
+  expect(result).toMatchObject({ cancelled: 1, refundsQueued: 1 });
+  expect(stampRefundsOwed).toHaveBeenCalledWith(
+    expect.objectContaining({ appointmentOccurrence: expect.anything() }),
+    [
+      expect.objectContaining({
+        paymentId: "paid-after-preview",
+        key: "freeze:booking:paid-after-preview",
+      }),
+    ],
+  );
+  expect(notifyAppointmentCancelled).toHaveBeenCalledWith(
+    ["client", "host"],
+    expect.anything(),
+    expect.objectContaining({
+      tx: expect.objectContaining({ appointmentOccurrence: expect.anything() }),
+      deferAttempt: true,
+    }),
+  );
+});
+
+it("skips a confirmed booking rescheduled outside the maintenance interval before execution", async () => {
+  const startsAt = new Date("2026-10-23T01:00Z");
+  const endsAt = new Date("2026-10-23T02:00Z");
+  findOverlap.mockResolvedValue(null);
+  findSlots.mockResolvedValue([
+    {
+      id: "moved-slot",
+      startsAt: new Date("2026-10-23T03:00Z"),
+      appointment: {
+        id: "rescheduled",
+        organizationId: null,
+        participants: [],
+        payment: [
+          { id: "moved-payment", paymentStatus: "SUCCEEDED", deletedAt: null },
+        ],
+        consultation: {
+          id: "moved-consultation",
+          consultationPlan: {
+            title: "Consultation",
+            consultantProfile: { user: { id: "host", name: "Host" } },
+          },
+          requestedBy: { user: { id: "client", name: "Client" } },
+        },
+      },
+    },
+  ]);
+  const result = await freezeAppointments(startsAt, endsAt, "rescheduled");
+  expect(result).toMatchObject({
+    cancelled: 0,
+    skippedAlreadyTerminal: 1,
+    refundsQueued: 0,
+  });
+  expect(findOverlap).toHaveBeenCalledWith({
+    where: {
+      appointmentId: "rescheduled",
+      appointment: { deletedAt: null },
+      isTentative: false,
+      deletedAt: null,
+      completionStatus: { in: ["SCHEDULED"] },
+      startsAt: { lt: endsAt },
+      endsAt: { gt: startsAt },
+    },
+    select: { id: true },
+  });
+  expect(findSlots).not.toHaveBeenCalled();
+  expect(stampRefundsOwed).not.toHaveBeenCalled();
+  expect(notifyAppointmentCancelled).not.toHaveBeenCalled();
+});

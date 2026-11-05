@@ -6,6 +6,7 @@ import type {
   TReviewTrackPresence,
 } from "@/types/review";
 import Review from "./Review";
+import { PROFILE_SECTION_SCROLL_MARGIN } from "./ProfileAnchorTabs";
 
 interface ReviewsSectionProps {
   reviews: TPublicConsultantReview[];
@@ -77,7 +78,7 @@ export function ReviewsSection({
   return (
     <div
       id="reviews"
-      className="bg-card rounded-2xl border border-border p-6 md:p-8"
+      className={`${PROFILE_SECTION_SCROLL_MARGIN} bg-card rounded-2xl border border-border p-6 md:p-8`}
     >
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">

@@ -138,6 +138,7 @@ describe("#812 invariant — refund credit note fully reverses proportional GST"
           }),
       },
       organizationInvoice: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findUnique: jest.fn().mockResolvedValue({
           id: "inv",
           status: "ISSUED",
@@ -150,13 +151,11 @@ describe("#812 invariant — refund credit note fully reverses proportional GST"
         }),
       },
       organization: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValue({
-            id: "org",
-            slug: "acme",
-            invoiceNumberPrefix: "ACM",
-          }),
+        findUnique: jest.fn().mockResolvedValue({
+          id: "org",
+          slug: "acme",
+          invoiceNumberPrefix: "ACM",
+        }),
       },
       orgCreditNoteCounter: {
         upsert: jest.fn().mockResolvedValue({ nextSeq: 2 }),

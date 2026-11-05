@@ -21,15 +21,24 @@ import "./setup";
 // #908 — read/validate now run on the BASE client outside the write txn, so the
 // base mock carries appointment.findMany too. beforeEach points these read fns
 // at the same mockTx instances so existing per-test wiring still drives them.
+// The in-transaction availability re-read has its own suite; these isolate the allocator.
+jest.mock("../../lib/booking/allocation/coverage", () => ({
+  assertSlotsStillPublished: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    // The allocator counts what the event already holds to record how it was scheduled.
+    appointmentOccurrence: { count: jest.fn().mockResolvedValue(0) },
+    // The allocator's slot batch reads co-host seats and an expert consultee's own profile.
+    consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
+    collaborator: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn(),
     consultation: { findUnique: jest.fn() },
     subscription: { findUnique: jest.fn() },
     webinar: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
-    appointment: { findMany: jest.fn() },
+    appointment: { findMany: jest.fn(), findFirst: jest.fn() },
     // #1065 — a reschedule reads the initiator's stated placement preference
     // before searching. Unstubbed it resolves undefined, which is the "no
     // preference" case every test here means.
@@ -41,6 +50,10 @@ jest.mock("../../lib/prisma", () => ({
 
 // Mock appointmentlock to avoid @upstash/redis ESM import issues in Jest
 jest.mock("../../utils/appointmentlock", () => ({
+  // allocate() takes an existing booking's appointment lock first.
+  withAppointmentLock: (_id: string, fn: (lock: unknown) => unknown) =>
+    fn({ key: "appointment-lock" }),
+  renewAppointmentLock: async () => true,
   lockAutoAllocate: jest
     .fn()
     .mockResolvedValue({ key: "mock-key", value: "mock-value" }),
@@ -50,6 +63,9 @@ jest.mock("../../utils/appointmentlock", () => ({
     .fn()
     .mockResolvedValue({ key: "mock-consultee-key", value: "mock-value" }),
   unlockConsulteeBooking: jest.fn().mockResolvedValue(undefined),
+  tryLockSlotBatch: jest.fn().mockResolvedValue({ ok: true, grant: [] }),
+  extendSlotInterval: jest.fn().mockResolvedValue(true),
+  unlockSlotInterval: jest.fn().mockResolvedValue(undefined),
 }));
 
 // Mock ScheduleValidationService to isolate unit under test.
@@ -208,6 +224,7 @@ function makeSubscriptionEvent(overrides: any = {}) {
   return {
     id: "sub-1",
     sessionsTotal: null,
+    sessionsRefunded: 0,
     subscriptionPlan: {
       consultantProfileId: "consultant-profile-1",
       durationInMonths: 1,
@@ -446,8 +463,8 @@ describe("Manual allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Duplicate slots detected");
-    expect(result.error).toContain("2 slots provided but only 1 are unique");
+    expect(result.error).toContain("picked twice");
+    expect(result.error).toContain("picked twice");
   });
 
   it("should reject slot count not divisible by slotsPerCall", async () => {
@@ -466,8 +483,8 @@ describe("Manual allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Invalid slot count");
-    expect(result.error).toContain("multiples of 2 slots");
+    expect(result.error).toContain("Pick whole sessions");
+    expect(result.error).toContain("Pick whole sessions");
   });
 
   it("should reject when validation fails", async () => {
@@ -486,8 +503,8 @@ describe("Manual allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Validation failed");
-    expect(result.error).toContain("Slots conflict");
+    expect(result.errorCode).toBe("VALIDATION_ERROR");
+    expect(result.error).not.toContain("Slots conflict");
   });
 
   it("should create appointment on successful validation", async () => {
@@ -801,8 +818,7 @@ describe("Requested slot allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("No appointments found");
-    expect(result.error).toContain("resubmit their request");
+    expect(result.error).toContain("no requested times left");
   });
 
   it("should refuse to reuse requested times once a slot is awaiting reschedule", async () => {
@@ -839,8 +855,7 @@ describe("Requested slot allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Cannot reuse requested times");
-    expect(result.error).toContain("2 slot(s) are awaiting reschedule");
+    expect(result.error).toContain("being moved");
     // The status write must not have happened.
     expect(mockTx.appointmentOccurrence.updateMany).not.toHaveBeenCalled();
   });
@@ -877,9 +892,7 @@ describe("Requested slot allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Appointment mismatch");
-    expect(result.error).toContain("cover 1 half-hour atoms");
-    expect(result.error).toContain("2 were requested");
+    expect(result.error).toContain("changed since this page loaded");
   });
 
   // #1319 — the gate counts COVERED atoms, not rows. A legacy 60-minute row
@@ -971,7 +984,7 @@ describe("Requested slot allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Validation failed");
+    expect(result.errorCode).toBe("VALIDATION_ERROR");
   });
 
   it("should clear isTentative flag on all appointment slots", async () => {
@@ -1036,8 +1049,28 @@ describe("Requested slot allocation", () => {
         },
       }),
     );
-    // s2 was tombstoned after validation: ids still match, but it is no
-    // longer flippable — approval must fail, not half-clear the hold.
+    // s2 was tombstoned after validation: the in-tx re-read no longer holds
+    // the validated set — approval must fail, not half-clear the hold.
+    const validatedRows = [
+      {
+        id: "apt-1",
+        occurrences: [
+          {
+            id: "s1",
+            isTentative: true,
+            deletedAt: null,
+            completionStatus: "SCHEDULED",
+          },
+          {
+            id: "s2",
+            isTentative: true,
+            deletedAt: null,
+            completionStatus: "SCHEDULED",
+          },
+        ],
+      },
+    ];
+    mockTx.appointment.findMany.mockResolvedValueOnce(validatedRows);
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "apt-1",
@@ -1371,7 +1404,7 @@ describe("Auto allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("consecutive slots available");
+    expect(result.errorCode).toBe("SLOT_SHORTAGE");
   });
 
   // ── RV-2: allocator agrees with validator on expired pending-payment holds ──
@@ -1481,7 +1514,7 @@ describe("Auto allocation", () => {
 
     // A live hold blocks every Monday → no slot free → allocation fails.
     expect(result.success).toBe(false);
-    expect(result.error).toContain("consecutive slots available");
+    expect(result.errorCode).toBe("SLOT_SHORTAGE");
   });
 
   // ── Per-day cap parity (#1189 B-P2 adjacent): auto-allocate may stack up to
@@ -1576,7 +1609,7 @@ describe("Auto allocation", () => {
     // window → auto must refuse rather than stack same-day sessions the
     // validator would reject.
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Could only find 2 of 6");
+    expect(result.error).toContain("Only 1 of 3 sessions fit");
   });
 
   // ── Bounded occupancy reads (#908 family): selection only needs FUTURE
@@ -1635,7 +1668,7 @@ describe("Auto allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Validation failed");
+    expect(result.errorCode).toBe("VALIDATION_ERROR");
     // Should not create appointments when validation fails
     expect(mockTx.appointment.create).not.toHaveBeenCalled();
   });
@@ -1664,13 +1697,15 @@ describe("Auto allocation", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rolls a lapsed stored period forward to now instead of refusing (#1766)", async () => {
+  it("rolls a lapsed first-cycle end forward to now while the plan runs (#1766)", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
-        // The buyer's original ask is in the past; the cycle window is derived
-        // from max(stored start, last held session, now), so this still places.
-        schedulingPeriodStartsAt: new Date("2024-01-06T00:00:00Z"),
-        schedulingPeriodEndsAt: new Date("2024-02-02T23:59:59Z"),
+        // The first cycle ended long ago, but the plan end (moved by returns
+        // or an incident) is still ahead, so the cycle rolls to now.
+        // A Wednesday: 52 plan weeks on, the plan week starts at "now".
+        schedulingPeriodStartsAt: new Date("2024-01-03T00:00:00Z"),
+        schedulingPeriodEndsAt: new Date("2024-01-10T00:00:00Z"),
+        planEndsAt: new Date("2025-03-01T00:00:00Z"),
       }),
     );
 
@@ -1823,6 +1858,7 @@ describe("fetchEventData - config extraction", () => {
         consulteeUserId: "consultee-1",
         excludeOccurrenceIds: [],
         consultantProfileId: "consultant-profile-1",
+        leadTimeMs: 15 * 60_000,
       },
     );
   });
@@ -1852,6 +1888,7 @@ describe("fetchEventData - config extraction", () => {
         consulteeUserId: undefined,
         excludeOccurrenceIds: [],
         consultantProfileId: "consultant-profile-1",
+        leadTimeMs: 15 * 60_000,
       },
     );
   });
@@ -1910,6 +1947,7 @@ describe("fetchEventData - config extraction", () => {
         consulteeUserId: undefined,
         excludeOccurrenceIds: [],
         consultantProfileId: "consultant-profile-1",
+        leadTimeMs: 15 * 60_000,
       },
     );
   });
@@ -1944,8 +1982,9 @@ describe("updateEventStatus", () => {
   it("never rewrites the stored period from a slot (#1766: the window is derived)", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
-        schedulingPeriodStartsAt: null,
-        schedulingPeriodEndsAt: null,
+        schedulingPeriodStartsAt: new Date("2024-12-30T00:00:00Z"),
+        schedulingPeriodEndsAt: new Date("2025-01-06T00:00:00Z"),
+        planEndsAt: new Date("2025-03-01T00:00:00Z"),
       }),
     );
 
@@ -2386,7 +2425,12 @@ describe("deleteExistingAppointments", () => {
     expect(mockTx.appointment.create).not.toHaveBeenCalled();
     // Its sessionless slots were stripped so they no longer block availability.
     expect(mockTx.appointmentOccurrence.deleteMany).toHaveBeenCalledWith({
-      where: { appointmentId: "old-2", meeting: { is: null } },
+      where: {
+        appointmentId: "old-2",
+        meeting: { is: null },
+        deletedAt: null,
+        completionStatus: { not: "CANCELLED" },
+      },
     });
   });
 
@@ -2675,6 +2719,8 @@ describe("deleteExistingAppointments", () => {
       where: {
         appointmentId: "placeholder-apt",
         meeting: { is: null },
+        deletedAt: null,
+        completionStatus: { not: "CANCELLED" },
       },
     });
     // 1:N event → a fresh appointment row is created (no REUSE).
@@ -2775,6 +2821,8 @@ describe("deleteExistingAppointments", () => {
       where: {
         appointmentId: "paid-consult-apt",
         meeting: { is: null },
+        deletedAt: null,
+        completionStatus: { not: "CANCELLED" },
       },
     });
     expect(mockTx.appointment.delete).not.toHaveBeenCalledWith({
@@ -2996,7 +3044,7 @@ describe("partial reschedule slot count", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("requires exactly 2 slots");
+    expect(result.error).toContain("exactly 2 sessions");
     expect(result.error).not.toContain("exactly 10");
   });
 
@@ -3228,22 +3276,13 @@ describe("Manual allocation - distributed lock", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    // Lock should have been acquired with the consultant profile ID,
-    // day-sharded (#860) by the earliest target slot's day.
-    expect(lockAutoAllocate).toHaveBeenCalledWith(
-      "consultant-profile-1",
-      "2025-01-06",
-    );
+    // One consultant-wide key for every mode; the slot batch serialises times.
+    expect(lockAutoAllocate).toHaveBeenCalledWith("consultant-profile-1");
     // Lock should have been released in finally block
     expect(unlockAutoAllocate).toHaveBeenCalled();
   });
 
-  /**
-   * #1319 — the day shard is narrower than the weekly cap it has to hold. Two
-   * manual allocations on different days of one week took different keys and
-   * each cleared sessionsPerWeek on a stale count; #440's GiST constraint sees
-   * overlap, never a count. Every weekly-capped type takes the wide key.
-   */
+  /** A weekly cap is a count the slot batch cannot see, so the key is consultant-wide. */
   it("takes the consultant-wide lock when a weekly cap applies", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(makeSubscriptionEvent());
 
@@ -3254,10 +3293,7 @@ describe("Manual allocation - distributed lock", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    expect(mockLockAutoAllocate).toHaveBeenCalledWith(
-      "consultant-profile-1",
-      undefined,
-    );
+    expect(mockLockAutoAllocate).toHaveBeenCalledWith("consultant-profile-1");
   });
 
   it("should release lock even when transaction fails", async () => {
@@ -3286,9 +3322,9 @@ describe("Manual allocation - distributed lock", () => {
   it("should return 409 when lock acquisition fails", async () => {
     const { lockAutoAllocate } = require("../../utils/appointmentlock");
 
-    // Simulate lock contention
+    // Simulate lock contention: the typed refusal's stable code.
     lockAutoAllocate.mockRejectedValueOnce(
-      new Error("Lock acquisition failed: resource is locked"),
+      Object.assign(new Error("busy"), { code: "AUTO_ALLOCATE_BUSY" }),
     );
 
     const result = await allocate({
@@ -3324,7 +3360,7 @@ describe("Manual allocation - distributed lock", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    expect(lockConsulteeBooking).toHaveBeenCalledWith("consultee-9");
+    expect(lockConsulteeBooking.mock.calls[0][0]).toBe("consultee-9");
     expect(unlockConsulteeBooking).toHaveBeenCalled();
   });
 
@@ -3404,7 +3440,7 @@ describe("Auto allocation - timezone day shift", () => {
 // ── Allocation-resilience: cause-specific error codes ────────────────────────
 
 describe("allocation resilience — error codes", () => {
-  it("a lapsed stored period is not PERIOD_ENDED for a subscription: the cycle window rolls to now (#1766)", async () => {
+  it("a lapsed first-cycle end is not PERIOD_ENDED while the plan runs (#1766)", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
         subscriptionPlan: subscriptionPlanOf(1, {
@@ -3414,9 +3450,11 @@ describe("allocation resilience — error codes", () => {
             ],
           }),
         }),
-        // Period ended before "now" (2025-01-01)
-        schedulingPeriodStartsAt: new Date("2024-01-01T00:00:00Z"),
-        schedulingPeriodEndsAt: new Date("2024-02-01T00:00:00Z"),
+        // The first cycle ended before "now" (2025-01-01); the plan has not.
+        // A Wednesday start, so the plan week holding "now" holds a Monday.
+        schedulingPeriodStartsAt: new Date("2024-01-03T00:00:00Z"),
+        schedulingPeriodEndsAt: new Date("2024-01-10T00:00:00Z"),
+        planEndsAt: new Date("2025-03-01T00:00:00Z"),
         appointment: null,
       }),
     );
@@ -3430,6 +3468,26 @@ describe("allocation resilience — error codes", () => {
 
     expect(result.success).toBe(true);
     expect(result.errorCode).toBeUndefined();
+  });
+
+  it("an ended plan is PERIOD_ENDED: nothing is placed past the plan end", async () => {
+    mockTx.subscription.findUnique.mockResolvedValue(
+      makeSubscriptionEvent({
+        schedulingPeriodStartsAt: new Date("2024-01-01T00:00:00Z"),
+        schedulingPeriodEndsAt: new Date("2024-01-08T00:00:00Z"),
+        appointment: null,
+      }),
+    );
+    mockTx.appointment.findMany.mockResolvedValue([]);
+
+    const result = await allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "auto",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe("PERIOD_ENDED");
   });
 
   it("SLOT_SHORTAGE when period is future but availability falls short", async () => {
@@ -3462,7 +3520,7 @@ describe("allocation resilience — error codes", () => {
 
     expect(result.success).toBe(false);
     expect(result.errorCode).toBe("SLOT_SHORTAGE");
-    expect(result.error).toContain("Could only find");
+    expect(result.errorCode).toBe("SLOT_SHORTAGE");
   });
 });
 

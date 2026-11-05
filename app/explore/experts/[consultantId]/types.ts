@@ -23,4 +23,8 @@ export interface PickerInterval {
   startsAt?: string;
   endsAt?: string;
   type?: "WEEKLY" | "CUSTOM";
+  /** Starts inside the minimum booking lead time. */
+  tooSoon?: boolean;
+  /** The viewer's plan limit is used up here. */
+  limitReached?: boolean;
 }

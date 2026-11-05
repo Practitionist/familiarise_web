@@ -21,6 +21,7 @@ import type { PaymentGateway, PayoutStatus } from "@prisma/client";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import { assertPayoutBalance } from "./balance-preflight";
 import { PAYOUT_CONSTANTS } from "./constants";
+import { isMakerCheckerDisbursementBlocked } from "./maker-checker";
 import {
   payoutAccountChangedAt,
   payoutAccountHold,
@@ -1055,24 +1056,46 @@ async function markPayoutFailedFromSubmission(
   });
 }
 
+/** Either approver who also triggered this run may not disburse, as on the consultant rail. */
+function isOrgDisbursementBlocked(
+  p: { id: string; approvedBy: string | null; orgApprovedBy: string | null },
+  triggeredByUserId: string | undefined,
+): Promise<boolean> {
+  const approver =
+    p.approvedBy === triggeredByUserId ? p.approvedBy : p.orgApprovedBy;
+  return isMakerCheckerDisbursementBlocked(p.id, approver, triggeredByUserId);
+}
+
 export interface OrgProcessingResult {
   scanned: number;
   advanced: number;
   errors: string[];
 }
 
+/** Org payouts the processing pass may claim; a platform hold parks the row. */
+function pendingOrgPayoutWhere(): Prisma.OrganizationPayoutWhereInput {
+  return {
+    status: { in: PAYOUT_ALLOWED_FROM.PROCESSING },
+    platformHeldAt: null,
+  };
+}
+
+/** PROCESSING org payouts untouched long enough for the gateway re-drive. */
+function staleProcessingOrgPayoutWhere(
+  staleBefore: Date,
+): Prisma.OrganizationPayoutWhereInput {
+  return { status: "PROCESSING", updatedAt: { lt: staleBefore } };
+}
+
 /** `limit` caps the claims plus failures per pass; an unclaimable row does not count. */
 export async function processPendingOrgPayouts(
-  opts: { limit?: number } = {},
+  opts: { limit?: number; triggeredByUserId?: string } = {},
 ): Promise<OrgProcessingResult> {
   const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
 
   const pending = await prisma.organizationPayout.findMany({
-    where: {
-      status: { in: PAYOUT_ALLOWED_FROM.PROCESSING },
-      platformHeldAt: null,
-    },
-    select: { id: true },
+    where: pendingOrgPayoutWhere(),
+    select: { id: true, approvedBy: true, orgApprovedBy: true },
     orderBy: { createdAt: "asc" },
   });
   result.scanned = pending.length;
@@ -1084,6 +1107,7 @@ export async function processPendingOrgPayouts(
     ) {
       break;
     }
+    if (await isOrgDisbursementBlocked(p, opts.triggeredByUserId)) continue;
     try {
       const out = await processOrgPayout(p.id);
       if (out.claimed) {
@@ -1096,7 +1120,10 @@ export async function processPendingOrgPayouts(
     }
   }
 
-  const redrive = await redriveStaleProcessingOrgPayouts(opts.limit);
+  const redrive = await redriveStaleProcessingOrgPayouts(
+    opts.limit,
+    opts.triggeredByUserId,
+  );
   result.scanned += redrive.scanned;
   result.advanced += redrive.advanced;
   result.errors.push(...redrive.errors);
@@ -1107,8 +1134,14 @@ export async function processPendingOrgPayouts(
 const ORG_PROCESSING_REDRIVE_AFTER_MS = 60 * 60 * 1000;
 
 async function redriveSingleOrgPayoutRow(
-  p: { id: string; gatewayPayoutId: string | null },
+  p: {
+    id: string;
+    gatewayPayoutId: string | null;
+    approvedBy: string | null;
+    orgApprovedBy: string | null;
+  },
   result: OrgProcessingResult,
+  triggeredByUserId: string | undefined,
 ): Promise<void> {
   const { findRazorpayPayoutByReference } =
     await import("./payout-gateway-lookup");
@@ -1125,6 +1158,8 @@ async function redriveSingleOrgPayoutRow(
         data: { gatewayPayoutId },
       });
     } else if (lookup.kind === "none") {
+      // Submitting here is a fresh disbursement, so the approver who triggered this run may not do it.
+      if (await isOrgDisbursementBlocked(p, triggeredByUserId)) return;
       await submitOrgPayoutToGateway(p.id);
       result.advanced++;
       return;
@@ -1195,12 +1230,19 @@ export async function applyOrgGatewayStatus(
 
 async function redriveStaleProcessingOrgPayouts(
   limit = 100,
+  triggeredByUserId?: string,
 ): Promise<OrgProcessingResult> {
   const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
   const staleBefore = new Date(Date.now() - ORG_PROCESSING_REDRIVE_AFTER_MS);
   const stale = await prisma.organizationPayout.findMany({
-    where: { status: "PROCESSING", updatedAt: { lt: staleBefore } },
-    select: { id: true, gatewayPayoutId: true, paymentGateway: true },
+    where: staleProcessingOrgPayoutWhere(staleBefore),
+    select: {
+      id: true,
+      gatewayPayoutId: true,
+      paymentGateway: true,
+      approvedBy: true,
+      orgApprovedBy: true,
+    },
     orderBy: { updatedAt: "asc" },
     take: limit,
   });
@@ -1209,7 +1251,7 @@ async function redriveStaleProcessingOrgPayouts(
   await Promise.all(
     stale.map(async (p) => {
       try {
-        await redriveSingleOrgPayoutRow(p, result);
+        await redriveSingleOrgPayoutRow(p, result, triggeredByUserId);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (
@@ -2200,6 +2242,8 @@ export async function createOrgPayoutBatches(opts?: {
   periodEnd?: Date;
   /** Caps the payouts created plus failures; already-batched and refused orgs do not count. */
   limit?: number;
+  /** The admin who started a manual run; scheduled runs leave it unset and mint as SYSTEM_CRON. */
+  createdBy?: string;
 }): Promise<OrgBatchResult> {
   const { createHash } = await import("crypto");
   const { getActiveOrgMaintenanceWindow } = await import("@/lib/maintenance");
@@ -2259,6 +2303,7 @@ export async function createOrgPayoutBatches(opts?: {
       const out = await createOrgPayoutBatch(orgId, periodStart, periodEnd, {
         idempotencyKey,
         notes: `Weekly cron batch ${periodStart.toISOString()} → ${periodEnd.toISOString()}`,
+        createdBy: opts?.createdBy,
       });
       if (out.alreadyExisted) {
         result.payoutsAlreadyExisted++;

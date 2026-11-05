@@ -3,6 +3,7 @@
  * new request, unscheduled nudge, trial scheduled, and window opened.
  */
 
+import UnplacedWeeksEmail from "@/emails/booking/UnplacedWeeksEmail";
 import * as React from "react";
 import { Button, Section, Text } from "react-email";
 import type { Tx } from "@/lib/prisma";
@@ -48,8 +49,10 @@ import {
   money,
   prepareSpecEmails,
   stageSpecGuarded,
+  stageSpecOncePerRecipient,
   whenText,
   type PreparedRecipientEmails,
+  type RecipientClaim,
   type RecipientEmailSpec,
 } from "./shared";
 
@@ -191,6 +194,10 @@ export interface AppointmentRescheduledEmailArgs {
   newStartsAt?: Date | null;
   proposedBy?: string;
   respondBy?: Date | null;
+  /** MOVED by a host: the free full-refund leave ends then. */
+  leaveBy?: Date | null;
+  /** MOVED: these recipients already hold another session at the new time. */
+  clash?: boolean;
   dashboardUrl: string;
 }
 
@@ -230,6 +237,11 @@ function buildRescheduledEmail(args: AppointmentRescheduledEmailArgs): {
             args.outcome === "PROPOSED" && args.respondBy
               ? whenText(args.respondBy, r.zone)
               : undefined,
+          leaveByText:
+            args.outcome === "MOVED" && args.leaveBy
+              ? whenText(args.leaveBy, r.zone)
+              : undefined,
+          clash: args.outcome === "MOVED" && args.clash === true,
           dashboardUrl: absolute(args.dashboardUrl),
           unsubscribeUrl: r.unsubscribeUrl,
         }),
@@ -486,6 +498,54 @@ export const sendUnscheduledSubscriptionNudgeEmail =
     },
   }));
 
+export interface UnplacedWeekNudgeEmailArgs {
+  consultantProfileId: string;
+  consultantUserId: string;
+  /** The consultant's local day: one reminder per consultant per day. */
+  localDay: string;
+  weeks: {
+    consulteeName: string;
+    planTitle: string;
+    number: number;
+    count: number;
+    sessions: number;
+    range: string;
+    url: string;
+  }[];
+}
+
+export const SUBSCRIPTION_WEEK_NUDGE_EMAIL_TYPE = "SUBSCRIPTION_WEEK_NUDGE";
+
+export function unplacedWeekNudgeEntityRef(
+  consultantProfileId: string,
+  localDay: string,
+): string {
+  return `consultant:${consultantProfileId}:weeks:${localDay}`;
+}
+
+export const sendUnplacedWeekNudgeEmail =
+  defineBudgetedEmailSender<UnplacedWeekNudgeEmailArgs>((args) => ({
+    userIds: [args.consultantUserId],
+    spec: {
+      emailType: SUBSCRIPTION_WEEK_NUDGE_EMAIL_TYPE,
+      category: "appointments",
+      entityRef: unplacedWeekNudgeEntityRef(
+        args.consultantProfileId,
+        args.localDay,
+      ),
+      subject: () =>
+        args.weeks.length === 1
+          ? `${args.weeks[0].consulteeName}'s week ${args.weeks[0].number} needs session times`
+          : `${args.weeks.length} plans need session times this week`,
+      render: (r) =>
+        React.createElement(UnplacedWeeksEmail, {
+          consultantName: greet(r),
+          weeks: args.weeks.map((w) => ({ ...w, url: absolute(w.url) })),
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  }));
+
 // ── Trial scheduled ─────────────────────────────────────────────────────────
 
 export interface TrialScheduledEmailArgs {
@@ -540,8 +600,13 @@ function buildTrialScheduledEmail(args: TrialScheduledEmailArgs): {
   };
 }
 
-export const stageTrialScheduledEmail =
-  defineLifecycleStager<TrialScheduledEmailArgs>(buildTrialScheduledEmail);
+/** Renders the scheduled notice outside any transaction; stage it with `stagePreparedEmails`. */
+export function prepareTrialScheduledEmail(
+  args: TrialScheduledEmailArgs,
+): Promise<PreparedRecipientEmails> {
+  const { userIds, spec } = buildTrialScheduledEmail(args);
+  return prepareSpecEmails(spec, userIds);
+}
 
 // ── Window opened ───────────────────────────────────────────────────────────
 
@@ -802,7 +867,6 @@ export interface SubscriptionLifecycleEmailArgs {
   >;
   planTitle: string;
   consultantName?: string;
-  cycleOrdinal?: number;
   nextBatch?: number;
   remainingSessions?: number;
   dashboardUrl: string;
@@ -832,7 +896,6 @@ function buildSubscriptionLifecycleEmail(
           recipientName: greet(r),
           planTitle: args.planTitle,
           consultantName: args.consultantName,
-          cycleOrdinal: args.cycleOrdinal,
           nextBatch: args.nextBatch,
           remainingSessions: args.remainingSessions,
           dashboardUrl: absolute(args.dashboardUrl),
@@ -901,3 +964,12 @@ export const stageDocumentAndRecordingEmail =
   defineLifecycleStager<DocumentAndRecordingEmailArgs>(
     buildDocumentAndRecordingEmail,
   );
+
+/** Stages the notice at most once per recipient under `claim`. */
+export function stageDocumentAndRecordingEmailOnce(
+  args: DocumentAndRecordingEmailArgs,
+  claim: RecipientClaim,
+): Promise<StagedRecipientEmail[]> {
+  const { userIds, spec } = buildDocumentAndRecordingEmail(args);
+  return stageSpecOncePerRecipient(spec, userIds, claim);
+}

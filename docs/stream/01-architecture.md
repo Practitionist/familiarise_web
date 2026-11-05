@@ -35,7 +35,7 @@ The real-time collaboration platform integrates six core subsystems across synch
    - PostgreSQL (`PG_POOL_MAX=1`) stores authoritative appointment schedules (`AppointmentOccurrence`), room metadata (`Meeting`), device stay intervals (`MeetingPresence`), user attendance ledgers (`MeetingAttendance`), recording lifecycles (`Recording`), webhook deduplication receipts (`WebhookEvent`), and DPDP revocation queues (`StreamRevocationRetry`).
    - Upstash Redis (`lib/redis.ts`) stores ephemeral session Q&A question payloads (`stage-qa:<callId>:<questionId>`, 6-hour TTL) and rate-limit sliding windows.
 6. **Cloudflare R2 Durable Storage & Background Cron Fleet**:
-   - Scheduled GitHub Actions / Netlify background sweeps (`transfer-recordings`, `expire-recordings`, `reconcile-orphaned-sessions`, `reconcile-orphaned-recordings`, `expire-event-channels`, `stream-sync`, `wind-down-deactivated-orgs`) reconcile vendor state against PostgreSQL under `withCronLock`.
+   - Scheduled sweeps. Stream recovery and lifecycle jobs run through the active Netlify ticker. Session recovery runs every 30 minutes; recording transfer queues a background worker every 15 minutes; the five daily lifecycle jobs queue bounded background slices in staggered daily UTC windows. Their Actions steps are removed. PostgreSQL leases and row ownership fences protect execution; deployment and completed-work evidence remain separate. See the [scheduling map](../start-here/06-chat-and-video-system-hld.md#10-scheduling-truth) and [background sync architecture](./09-background-sync.md).
 
 ```mermaid
 flowchart TB
@@ -91,12 +91,12 @@ flowchart TB
 
 All sessions execute on Stream Video's built-in `default` call type (`STREAM_CALL_TYPE = "default"`), hardened idempotently by `scripts/stream/ensure.ts` (`ensure-call-type-grants.ts`, `ensure-app-settings.ts`, `harden-unused-call-types.ts`):
 
-| Role Name                 | Assigned To                                                                       | Key Permissions Granted                                                                                                                                      | Strictly Stripped / Denied                                                               |
-| ------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| **`user` / `guest`**      | Unassociated users with a valid app JWT                                           | None on calls (`guest_user_creation_disabled: true`)                                                                                                         | `join-call`, `join-ended-call`, `end-call`, all 18 billable permissions                  |
-| **`call_member`**         | Every admitted learner / attendee (`POST /api/meetings/[id]/join`) + plan owner   | `join-call`, `join-ended-call`, `read-call`, `create-call-reaction`, plus `-owner` variants (`mute-users-owner`, `pin-call-track-owner`)                     | `end-call`, global `mute-users`, global `update-call-permissions`, recording start/stop  |
-| **`co_presenter`**        | `ACCEPTED` presenter collaborators (`CO_HOST` / `CO_INSTRUCTOR` on webinar/class) | `join-call`, `join-ended-call`, `join-backstage`, `send-audio`, `send-video`, `screenshare`, `mute-users`, `pin-call-track`, `send-event`, `list-recordings` | `end-call`, `update-call-permissions`, `update-call-member`, recording capture mutations |
-| **Server SDK (`secret`)** | Next.js API routes (`end`, `reopen`, `extend`, `live`, `qa`, `recordings/start`)  | Full administrative control-plane authority after `guardMeetingRoute` / `resolveMeetingAccess` passes                                                        | Never exposed to browsers (`STREAM_API_SECRET` server-only)                              |
+| Role Name                 | Assigned To                                                                       | Key Permissions Granted                                                                                                                   | Strictly Stripped / Denied                                                                                  |
+| ------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| **`user` / `guest`**      | Unassociated users with a valid app JWT                                           | None on calls (`guest_user_creation_disabled: true`)                                                                                      | `join-call`, `join-ended-call`, `end-call`, all 18 billable permissions                                     |
+| **`call_member`**         | Every admitted learner / attendee (`POST /api/meetings/[id]/join`) + plan owner   | `join-call`, `read-call`, `create-call-reaction`, plus `-owner` variants (`mute-users-owner`, `pin-call-track-owner`)                     | `join-ended-call`, `end-call`, global `mute-users`, global `update-call-permissions`, recording start/stop  |
+| **`co_presenter`**        | `ACCEPTED` presenter collaborators (`CO_HOST` / `CO_INSTRUCTOR` on webinar/class) | `join-call`, `join-backstage`, `send-audio`, `send-video`, `screenshare`, `mute-users`, `pin-call-track`, `send-event`, `list-recordings` | `join-ended-call`, `end-call`, `update-call-permissions`, `update-call-member`, recording capture mutations |
+| **Server SDK (`secret`)** | Next.js API routes (`end`, `reopen`, `extend`, `live`, `qa`, `recordings/start`)  | Full administrative control-plane authority after `guardMeetingRoute` / `resolveMeetingAccess` passes                                     | Never exposed to browsers (`STREAM_API_SECRET` server-only)                                                 |
 
 - **Chat Channel Topology**:
   - `dm-<a>-<b>` (`dmh-<sha256>` when exceeding 64 bytes): Canonical 1:1 personal thread between a consultant and consultee across consultations, subscriptions, webinars, and classes.
@@ -140,6 +140,8 @@ erDiagram
         int scheduledMaxDurationS
         datetime endedAt
         string endedReason
+        int extendedSeconds
+        int extensionsUsed
         boolean isRecording
         datetime recordingStartedAt
         string recordingStartedBy
@@ -151,8 +153,10 @@ erDiagram
         string appointmentOccurrenceId FK
         string userId FK
         string userSessionId
+        string streamCallId
         datetime joinedAt
         datetime leftAt
+        boolean closedByEnd
     }
 
     MeetingAttendance {
@@ -181,14 +185,14 @@ erDiagram
 
 ### Core Schema Tables, Unique Indices & Invariants
 
-| Model                       | Key Unique Constraints & Indices                                                  | Critical Runtime Invariants                                                                                                                                             |
-| --------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`Meeting`**               | `streamCallId @unique`, `appointmentOccurrenceId @unique`                         | Stores bare `streamCallId` (`occurrence-<uuid>` or `occurrence-<uuid>-r<base36>`), never prefixed with `default:`. `endedAt` advances monotonically via CAS.            |
-| **`AppointmentOccurrence`** | Indexed on `(appointmentId, startsAt)`, `(consultantProfileId, startsAt, endsAt)` | `endsAt` reflects both scheduled slot end and any persisted `+15m` host extension. Excluded when `deletedAt != null` or `completionStatus in [CANCELLED, RESCHEDULED]`. |
-| **`MeetingPresence`**       | `@@unique([meetingId, userSessionId])`, indexed on `appointmentOccurrenceId`      | Keyed by `user_session_id                                                                                                                                               |     | "${sessionId}:${userId}"` so duplicate webhook deliveries (`skipDuplicates: true`) never inflate session counts or move `leftAt` back. |
-| **`MeetingAttendance`**     | `@@unique([meetingId, userId])`, indexed on `appointmentOccurrenceId`             | `firstJoinedAt` is write-once immutable; `joinCount` increments only when a genuinely new `MeetingPresence` session interval is inserted (`newSessions > 0`).           |
-| **`Recording`**             | Indexed on `(meetingId, streamRecordingId)`, `(status, streamUrlExpiresAt)`       | `READY` rows live on `STREAM_S3` (`streamUrlExpiresAt = end + 14d`) until `transfer-recordings` copies MP4 to R2 (`status = AVAILABLE`, `storageType = PLATFORM`).      |
-| **`WebhookEvent`**          | `payloadHash @unique` (`sha256(rawBody)`)                                         | Written prior to dispatch; stale `PROCESSING` claims older than 5 minutes (`STALE_PROCESSING_MS = 300_000`) are safely reclaimed on retry.                              |
+| Model                       | Key Unique Constraints & Indices                                                  | Critical Runtime Invariants                                                                                                                                                                                                                                        |
+| --------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **`Meeting`**               | `streamCallId @unique`, `appointmentOccurrenceId @unique`                         | Stores bare `streamCallId` (`occurrence-<uuid>` or `occurrence-<uuid>-r<base36>`), never prefixed with `default:`. `endedAt` advances monotonically via CAS.                                                                                                       |
+| **`AppointmentOccurrence`** | Indexed on `(appointmentId, startsAt)`, `(consultantProfileId, startsAt, endsAt)` | `endsAt` is the immutable booked end; the host extension lives in `Meeting.extendedSeconds`, and the room end is `endsAt + extendedSeconds`. Excluded when `deletedAt != null` or `completionStatus in [CANCELLED, RESCHEDULED]`.                                  |
+| **`MeetingPresence`**       | `@@unique([meetingId, userSessionId])`, indexed on `appointmentOccurrenceId`      | Keyed by Stream's `user_session_id` (or `sessionId:userId` when absent), so duplicate deliveries never inflate session counts. `streamCallId` names the room segment; `closedByEnd` marks an end stamp's assumed `leftAt`, which a reported leave always replaces. |
+| **`MeetingAttendance`**     | `@@unique([meetingId, userId])`, indexed on `appointmentOccurrenceId`             | `firstJoinedAt` is write-once immutable; `joinCount` increments only when a genuinely new `MeetingPresence` session interval is inserted (`newSessions > 0`).                                                                                                      |
+| **`Recording`**             | Indexed on `(meetingId, streamRecordingId)`, `(status, streamUrlExpiresAt)`       | `READY` rows live on `STREAM_S3` (`streamUrlExpiresAt = end + 14d`) until `transfer-recordings` copies MP4 to R2 (`status = AVAILABLE`, `storageType = PLATFORM`).                                                                                                 |
+| **`WebhookEvent`**          | `payloadHash @unique` (`sha256(rawBody)`)                                         | Written prior to dispatch; stale `PROCESSING` claims older than 5 minutes (`STALE_PROCESSING_MS = 300_000`) are safely reclaimed on retry.                                                                                                                         |
 
 ---
 
@@ -216,9 +220,9 @@ Serverless invocations run with a strict 1-connection pool (`PG_POOL_MAX=1`). Ev
    - Inside `prisma.$transaction(async (tx) => ...)`, every read or write passes `tx`, never the global `prisma` client.
 2. **Optimistic Compare-and-Set (`updateMany`) on Every Lifecycle Edge**:
    - **Room Termination (`stampEnd`)**: `tx.meeting.updateMany({ where: { id: meeting.id, endedAt: meeting.endedAt }, data: { endedAt, endedReason, isRecording: false } })`. If `count === 0`, a racing webhook or route already transitioned `endedAt` and the caller aborts cleanly.
-   - **Room Reopen (`POST /api/meetings/[id]/reopen`)**: `prisma.meeting.updateMany({ where: { id: meeting.id, endedAt: { not: null } }, data: { streamCallId: nextCallId, endedAt: null, endedReason: null, isRecording: false } })`. Two concurrent clicks never double-rotate `streamCallId`.
-   - **Duration Extension (`POST /api/meetings/[id]/extend`)**: `prisma.appointmentOccurrence.updateMany({ where: { id: occurrence.id, endsAt: slotEndsAt }, data: { endsAt: extendedEndsAt } })`.
-   - **Recording Transfer (`transfer-recordings`)**: Claims work via `updateMany({ where: { id, status: "READY" }, data: { status: "TRANSFERRING" } })` and finalizes via `where: { id, status: "TRANSFERRING" }`.
+   - **Room Reopen (`POST /api/meetings/[id]/reopen`)**: the fresh Stream call is created first; then `prisma.meeting.updateMany({ where: { id: meeting.id, streamCallId: meeting.streamCallId, endedAt: meeting.endedAt }, data: { streamCallId: nextCallId, endedAt: null, endedReason: null, isRecording: false } })`. Two concurrent clicks never double-rotate `streamCallId`, and a lost CAS leaves the new call unused.
+   - **Duration Extension (`POST /api/meetings/[id]/extend`)**: `prisma.meeting.updateMany({ where: { id, endedAt: null, extensionsUsed: { equals: <read>, lt: MAX_MEETING_EXTENSIONS }, occurrence: { completionStatus: "SCHEDULED", outcome: null, deletedAt: null } }, data: { extendedSeconds: { increment: 900 }, extensionsUsed: { increment: 1 } } })`. The booked `AppointmentOccurrence.endsAt` is never written; Stream is mirrored afterwards from Postgres values.
+   - **Recording Transfer (`transfer-recordings`)**: Claims READY work with an atomic attempt increment and finalizes only with the exact TRANSFERRING attempt and claim timestamp. A stale reclaim preserves the consumed attempt, so the next claim uses a distinct R2 object key.
 
 ---
 
@@ -226,15 +230,27 @@ Serverless invocations run with a strict 1-connection pool (`PG_POOL_MAX=1`). Ev
 
 All periodic background jobs acquire an exclusive PostgreSQL lease via `withCronLock` (`SystemJobExecution` table) rather than Redis locks:
 
-| Background Job                      | Schedule / Trigger        | Responsibility & Invariant                                                                                                                      |
-| ----------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`reconcile-orphaned-sessions`**   | Intra-day cleanup sweep   | Closes open `MeetingPresence` intervals (`leftAt = endedAt`) and reconciles `Meeting` rows whose webhook delivery dropped.                      |
-| **`transfer-recordings`**           | Every 6 hours (`:33` UTC) | Reclaims `TRANSFERRING` claims older than 15m, copies `READY` recordings from Stream CDN to Cloudflare R2 (10 MB parts), and marks `AVAILABLE`. |
-| **`reconcile-orphaned-recordings`** | Daily (`05:00` UTC)       | Polls Stream `listRecordings` for recent sessions (2h–14d) to back-fill any missed `call.recording_ready` webhooks.                             |
-| **`expire-recordings`**             | Daily (`03:00` UTC)       | Enforces retention rules (1:1/sub +90d, webinar/class +365d, org override), deleting R2 objects while sparing purchased/listed replays.         |
-| **`expire-event-channels`**         | Daily batch sweep         | Freezes event channels 7 days post-end and deletes dormant channels 90 days post-end in 100-item chunks (`RATE_LIMIT_DELAY_MS = 10_000`).       |
-| **`stream-sync`**                   | Daily (`03:30` UTC)       | Reaps orphaned/soft-deleted Stream principals past the 30-day grace window and validates channel rosters.                                       |
-| **`wind-down-deactivated-orgs`**    | Event + periodic sweep    | Ends open Stream video calls and freezes channels tagged with `custom.organization_id` when an enterprise tenant is deactivated.                |
+Every job below has a `lib/cron/cleanup-registry.ts` entry. Cleanup and staff
+recovery dispatch the same background adapters used by the ticker. HTTP 202 means
+admission only. The shared catalog owns the following UTC schedule; the adapters
+have no independent schedules and currently require Netlify as active cron host.
+
+| Job                             | Cadence             | Responsibility                                                                                                  |
+| ------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `reconcile-orphaned-sessions`   | :10/:40 every hour  | Rotate across at most five overdue rooms; CAS the end and close presence in the same transaction.               |
+| `transfer-recordings`           | :00/:15/:30/:45     | One attempt-fenced copy under a fail-closed 15-minute lease and 12-minute copy deadline.                        |
+| `reconcile-orphaned-recordings` | 00:25, 01:25, 02:25 | Up to 25 recent recorded sessions per slice, including partial delivery; persist ID progress.                   |
+| `expire-recordings`             | 00:05, 01:05, 02:05 | Bounded lapsed-source recovery, retention, asset cleanup and transferred-source deletion with separate cursors. |
+| `expire-event-channels`         | 08:55, 09:55, 10:55 | Event/DM freeze and retention deletion requests, with confirmed absence separated from provider failure.        |
+| `stream-sync`                   | 08:50, 09:50, 10:50 | Up to five principal pages; request soft deletion for absent users and hard deletion for erased users.          |
+| `wind-down-deactivated-orgs`    | 03:55, 04:55, 05:55 | End tenant calls, freeze channels, unpublish and claim recordings before deletion; withhold incomplete markers. |
+
+All these cores use fail-closed PostgreSQL leases. Completion health requires
+successful owned executions, with 60-minute transfer, 90-minute session and
+28.5-hour daily budgets derived from the schedule. See [background sync](./09-background-sync.md) for capacity,
+replay and cross-job limits. The recording alarm excludes expired sources and
+conditionally throttles each recording to once per six hours without changing its
+retry timestamp.
 
 ---
 
@@ -264,5 +280,5 @@ To prevent pulling Stream's heavy WebRTC and Chat bundles into initial server-re
 - **NextAuth Session Hooks (`getServerSession`, `authOptions`)**: Replaced across all client and server boundaries by Better Auth (`auth.api.getSession` on the server and `useSession` from `@/lib/auth-client` on the client).
 - **Synchronous `StreamProvider` Blocking Dashboard SSR**: Superseded by `providers/StreamProvider.tsx` (SDK-free shell) + `next/dynamic(..., { ssr: false })` `StreamProviderImpl` publishing into `lib/stream/connection-store.ts`.
 - **Browser-Initiated `call.getOrCreate()` and Direct `call.endCall()`**: Superseded by server-authoritative `provisionAppointmentMeeting`, `POST /api/meetings/[meetingId]/join`, `POST /api/meetings/[meetingId]/end`, and `POST /api/meetings/[meetingId]/reopen`.
-- **Legacy Per-Booking Chat Channels (`consultation-*`, `subscription-*`)**: Superseded by canonical human-pair threads (`dm-` / `dmo-`) with idempotent contextual receipt cards (`booking-ctx-`).
+- **Legacy Per-Booking Chat Channels (`consultation-*`, `subscription-*`)**: Superseded by canonical human-pair threads (`dm-` / `dmo-`) with a server-verified booking tag on the message that refers to a booking.
 - **Supabase Storage Fallback for Full Recordings**: Superseded by streaming SigV4 multipart transfers directly into Cloudflare R2 (`lib/storage/r2-client.ts`), keeping Supabase solely for public 60-second marketplace preview clips and thumbnails.

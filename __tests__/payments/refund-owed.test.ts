@@ -16,6 +16,7 @@ type Row = {
   refundOwedReason: string | null;
   refundOwedAt: Date | null;
   refundOwedAttempts: number;
+  refundOwedNextAt: Date | null;
   disputed: boolean;
 };
 type RefundRow = {
@@ -26,6 +27,7 @@ type RefundRow = {
   status: "SUCCEEDED" | "PENDING" | "FAILED";
   failedNotifiedAt?: Date | null;
   createdAt?: Date;
+  refundId?: string | null;
 };
 
 const mockRows = new Map<string, Row>();
@@ -34,7 +36,11 @@ const mockRefundBookingPayment = jest.fn();
 const mockRecordSystemError = jest.fn(async () => undefined);
 const mockRecordSystemEvent = jest.fn(async () => undefined);
 
-const longAgo = () => new Date(Date.now() - 3 * 60 * 60_000);
+const longAgo = () => new Date(Date.now() - 7 * 60 * 60_000);
+/** The marker's backoff ran out. */
+const elapse = (id: string) => {
+  mockRows.get(id)!.refundOwedNextAt = new Date(Date.now() - 1);
+};
 
 function seat(id: string, amount: number, paymentIntent = `order_${id}`): Row {
   const row: Row = {
@@ -46,6 +52,7 @@ function seat(id: string, amount: number, paymentIntent = `order_${id}`): Row {
     refundOwedReason: null,
     refundOwedAt: null,
     refundOwedAttempts: 0,
+    refundOwedNextAt: null,
     disputed: false,
   };
   mockRows.set(id, row);
@@ -56,6 +63,8 @@ type Where = Record<string, unknown> & {
   id?: string | { in: string[] };
   refundOwedKey?: string | null | { not: null };
   refundOwedAttempts?: number | { lt: number };
+  OR?: { refundOwedNextAt: null | { lte: Date } }[];
+  refundOwedAt?: { lt: Date };
   disputes?: unknown;
   refunds?: unknown;
   description?: unknown;
@@ -87,6 +96,18 @@ function matches(row: Row, where: Where): boolean {
     row.refundOwedAttempts >= attempts.lt
   )
     return false;
+  // The sweep's backoff claim: no next-drive time, or one already passed.
+  const due = (c: { refundOwedNextAt: null | { lte: Date } }) =>
+    c.refundOwedNextAt === null
+      ? row.refundOwedNextAt === null
+      : row.refundOwedNextAt !== null &&
+        row.refundOwedNextAt <= c.refundOwedNextAt.lte;
+  if (where.OR && !where.OR.some(due)) return false;
+  if (
+    where.refundOwedAt &&
+    !(row.refundOwedAt && row.refundOwedAt < where.refundOwedAt.lt)
+  )
+    return false;
   if (where.disputes && row.disputed) return false;
   // The owed cohort leaves a payment with a PENDING refund to reconcile.
   if (
@@ -107,6 +128,11 @@ const view = (row: Row) => ({
 
 const mockDb = {
   payment: {
+    // A snapshot, as Prisma returns: a later write does not change what was read.
+    findUnique: jest.fn(async ({ where }: { where: { id: string } }) => {
+      const row = mockRows.get(where.id);
+      return row ? { ...row } : null;
+    }),
     findMany: jest.fn(
       async ({ where, take }: { where: Where; take?: number }) =>
         [...mockRows.values()]
@@ -151,6 +177,12 @@ const mockDb = {
             }))
         : [],
     ),
+    findUnique: jest.fn(
+      async ({ where }: { where: { dedupeKey?: string; id?: string } }) =>
+        mockRefunds.find((x) =>
+          where.id ? x.id === where.id : x.dedupeKey === where.dedupeKey,
+        ) ?? null,
+    ),
     updateMany: jest.fn(async ({ where }: { where: { id: string } }) => {
       const r = mockRefunds.find((x) => x.id === where.id);
       if (r) r.failedNotifiedAt = new Date();
@@ -168,6 +200,12 @@ const mockDb = {
   },
   organizationEarnings: { updateMany: jest.fn(async () => ({ count: 0 })) },
   referralCreditUsage: { findMany: jest.fn(async () => []) },
+  // Every seated payment still holds a live seat.
+  appointmentParticipant: {
+    findMany: jest.fn(async () =>
+      [...mockRows.values()].map((r) => ({ userId: "u", paymentId: r.id })),
+    ),
+  },
   systemEvent: { findFirst: jest.fn(async () => null) },
   // The batched stamp: one statement whose values are [ids, keys, owed, reasons].
   $executeRaw: jest.fn(async (sql: { values: unknown[] }) => {
@@ -216,7 +254,15 @@ jest.mock("../../lib/payments/operations/refund", () => {
   }
   return {
     RefundValidationError,
-    RefundGatewayError: class extends Error {},
+    RefundGatewayError: class extends Error {
+      constructor(
+        message: string,
+        readonly gatewayCode?: string,
+        readonly refundRowId?: string,
+      ) {
+        super(message);
+      }
+    },
     findDedupedRefund: async (key: string) => {
       const r = mockRefunds.find(
         (x) => x.dedupeKey === key && x.status !== "FAILED",
@@ -265,19 +311,35 @@ jest.mock("../../lib/payments/webhooks/handlers", () => ({
 }));
 
 import { refundWholeEventPayments } from "../../lib/payments/operations/event-refunds";
-import { driveRefundOwed } from "../../lib/payments/operations/refund-owed";
+import {
+  driveRefundOwed,
+  failRefund,
+  refuseIfOwedAlreadySent,
+  settleOwedByHand,
+} from "../../lib/payments/operations/refund-owed";
 import { retryAutoRefunds } from "../../scripts/payments/retry-auto-refunds";
 import { notifyFailedRefunds } from "../../scripts/refunds/reconcile-pending-refunds";
 
-/** The front door: one Refund per key, the credits rail refusing an amount. */
+/** The front door: one Refund per key, and a drive only while its marker holds. */
 function settles() {
   mockRefundBookingPayment.mockImplementation(
     async (input: {
       paymentId: string;
       amountPaise?: number;
       dedupeKey: string;
+      owedMarker?: { key: string; amountPaise: number | null };
     }) => {
       const row = mockRows.get(input.paymentId)!;
+      const held = input.owedMarker;
+      if (held) {
+        const { RefundValidationError } = jest.requireMock<{
+          RefundValidationError: new (message: string, code: string) => Error;
+        }>("../../lib/payments/operations/refund");
+        if (row.refundOwedKey !== held.key)
+          throw new RefundValidationError("gone", "OWED_MARKER_SETTLED");
+        if (row.refundOwedPaise !== held.amountPaise)
+          throw new RefundValidationError("changed", "OWED_MARKER_CHANGED");
+      }
       const amountPaise = input.amountPaise ?? row.amount;
       const refund = {
         id: `rf_${mockRefunds.length + 1}`,
@@ -358,6 +420,200 @@ describe("driveRefundOwed", () => {
     expect(mockRows.get("p1")!.refundOwedKey).toBe("cancel:appt:p1");
     expect(mockRows.get("p1")!.refundOwedAttempts).toBe(3);
     expect(mockRecordSystemError).toHaveBeenCalledTimes(1);
+  });
+
+  it("spends no attempt on an ambiguous gateway error whose refund is still PENDING", async () => {
+    seat("p1", 10_000);
+    const owed = marker("p1", 5_000);
+    mockRows.get("p1")!.refundOwedAttempts = 2;
+    const { RefundGatewayError } = jest.requireMock<{
+      RefundGatewayError: new (
+        message: string,
+        gatewayCode?: string,
+        refundRowId?: string,
+      ) => Error;
+    }>("../../lib/payments/operations/refund");
+    mockRefundBookingPayment.mockImplementationOnce(
+      async (input: { paymentId: string; dedupeKey: string }) => {
+        mockRefunds.push({
+          id: "rf_ambiguous",
+          paymentId: input.paymentId,
+          dedupeKey: input.dedupeKey,
+          amountPaise: 5_000,
+          status: "PENDING",
+        });
+        throw new RefundGatewayError("timeout", undefined, "rf_ambiguous");
+      },
+    );
+
+    const outcome = await driveRefundOwed({ ...owed, attempts: 2 });
+    expect(outcome).toEqual({
+      kind: "refunded",
+      refund: {
+        refundId: "rf_ambiguous",
+        amountRefundedPaise: 5_000,
+        status: "PENDING",
+      },
+    });
+    expect(mockRows.get("p1")).toMatchObject({
+      refundOwedKey: "cancel:appt:p1",
+      refundOwedAttempts: 2,
+    });
+    expect(mockRecordSystemError).not.toHaveBeenCalled();
+  });
+});
+
+describe("a drive whose own refund is still PENDING", () => {
+  it("spends no attempt when the settle fails after the gateway took the refund", async () => {
+    seat("p1", 10_000);
+    const owed = marker("p1", 5_000);
+    mockRows.get("p1")!.refundOwedAttempts = 2;
+    mockRefundBookingPayment.mockImplementationOnce(
+      async (input: { paymentId: string; dedupeKey: string }) => {
+        // The gateway accepted it; the settling transaction then failed.
+        mockRefunds.push({
+          id: "rf_taken",
+          paymentId: input.paymentId,
+          dedupeKey: input.dedupeKey,
+          amountPaise: 5_000,
+          status: "PENDING",
+        });
+        throw new Error("cascade transaction failed");
+      },
+    );
+
+    expect(await driveRefundOwed({ ...owed, attempts: 2 })).toMatchObject({
+      kind: "refunded",
+      refund: { refundId: "rf_taken", status: "PENDING" },
+    });
+    expect(mockRows.get("p1")!.refundOwedAttempts).toBe(2);
+    expect(mockRecordSystemError).not.toHaveBeenCalled();
+  });
+});
+
+describe("a drive's own refund confirmed FAILED", () => {
+  /** The front door reserves under the key; `failNow` fails it in-flight, as a refusal does. */
+  function reservesThenThrows(failNow: boolean) {
+    const { RefundGatewayError } = jest.requireMock<{
+      RefundGatewayError: new (message: string, gatewayCode?: string) => Error;
+    }>("../../lib/payments/operations/refund");
+    mockRefundBookingPayment.mockImplementationOnce(
+      async (input: { paymentId: string; dedupeKey: string }) => {
+        const row: RefundRow = {
+          id: `rf_${mockRefunds.length + 1}`,
+          paymentId: input.paymentId,
+          dedupeKey: input.dedupeKey,
+          amountPaise: 5_000,
+          status: "PENDING",
+        };
+        mockRefunds.push(row);
+        if (failNow) await failRow(row);
+        throw new RefundGatewayError("gateway refund failed");
+      },
+    );
+  }
+  /** The failing transaction, as reconcile or the front door runs it. */
+  const failRow = (row: RefundRow) =>
+    failRefund(row.id, async () => {
+      row.status = "FAILED";
+      return { count: 1 };
+    });
+  /** The key frees once its refund failed, as the front door's replay check does. */
+  const freeKey = () =>
+    mockRefunds.forEach((r) => {
+      if (r.status === "FAILED") r.dedupeKey = null;
+    });
+
+  it("counts a refusal once, in the transaction that failed it, not again in the drive", async () => {
+    seat("p1", 10_000);
+    const owed = marker("p1", 5_000);
+    reservesThenThrows(true);
+
+    expect((await driveRefundOwed({ ...owed, attempts: 0 })).kind).toBe(
+      "failed",
+    );
+    expect(mockRows.get("p1")!.refundOwedAttempts).toBe(1);
+  });
+
+  it("an ambiguous answer reconcile later fails counts, so three cycles page once", async () => {
+    seat("p1", 10_000);
+    const owed = marker("p1", 5_000);
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      reservesThenThrows(false);
+      const attempts = mockRows.get("p1")!.refundOwedAttempts;
+      expect((await driveRefundOwed({ ...owed, attempts })).kind).toBe(
+        "refunded",
+      );
+      await failRow(mockRefunds[mockRefunds.length - 1]);
+      freeKey();
+    }
+    expect(mockRows.get("p1")).toMatchObject({
+      refundOwedKey: "cancel:appt:p1",
+      refundOwedAttempts: 3,
+      refundOwedNextAt: null,
+    });
+    expect(mockRecordSystemError).toHaveBeenCalledTimes(1);
+    expect((await retryAutoRefunds()).owed.scanned).toBe(0);
+    // Each failed attempt of a refund still owed is claimed silently: no notice per cycle.
+    expect((await notifyFailedRefunds()).notified).toBe(0);
+    expect(mockSendRefundFailedEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("a hand refund once the owed refund already went out", () => {
+  function ownRefundSucceeded() {
+    seat("p1", 10_000);
+    marker("p1", 5_000);
+    Object.assign(mockRows.get("p1")!, { refundOwedAttempts: 3 });
+    mockRefunds.push({
+      id: "rf_own",
+      paymentId: "p1",
+      dedupeKey: "cancel:appt:p1",
+      amountPaise: 5_000,
+      status: "SUCCEEDED",
+      createdAt: new Date("2026-11-02T06:30:00.000Z"),
+      refundId: "rfnd_gw_123",
+    });
+  }
+  /** The refusal names what went out, when, and its reference, and warns before a second payment. */
+  const ALREADY_SENT_COPY =
+    "₹50.00 already went back to the buyer on 2 Nov 2026 (refund rfnd_gw_123), so nothing is owed on this payment. Only submit again if you mean to refund more on top of this.";
+
+  it("is refused inside the refund transaction, so nothing is paid twice", async () => {
+    ownRefundSucceeded();
+    await expect(
+      settleOwedByHand(mockDb as never, "p1", { kind: "whole" }),
+    ).rejects.toMatchObject({
+      code: "OWED_REFUND_ALREADY_SENT",
+      message: ALREADY_SENT_COPY,
+    });
+  });
+
+  it("is refused before the transaction, and the stale marker is cleared", async () => {
+    ownRefundSucceeded();
+    await expect(
+      refuseIfOwedAlreadySent("p1", mockRows.get("p1")!.refundOwedKey),
+    ).rejects.toMatchObject({
+      code: "OWED_REFUND_ALREADY_SENT",
+      message: ALREADY_SENT_COPY,
+    });
+    expect(mockRows.get("p1")).toMatchObject({
+      refundOwedKey: null,
+      refundOwedAttempts: 0,
+    });
+    // The next attempt is an ordinary refund.
+    await expect(
+      refuseIfOwedAlreadySent("p1", mockRows.get("p1")!.refundOwedKey),
+    ).resolves.toBeUndefined();
+  });
+
+  it("lets a hand refund through while the owed refund has not gone out", async () => {
+    seat("p1", 10_000);
+    marker("p1", 5_000);
+    await expect(
+      refuseIfOwedAlreadySent("p1", mockRows.get("p1")!.refundOwedKey),
+    ).resolves.toBeUndefined();
+    expect(mockRows.get("p1")!.refundOwedKey).toBe("cancel:appt:p1");
   });
 });
 
@@ -452,6 +708,52 @@ function failsOnce(status: "FAILED" | "PENDING") {
   );
 }
 
+/** Each drive writes one FAILED refund row, as the front door does on a definitive refusal. */
+function gatewayFails(gatewayCode: string | undefined) {
+  const { RefundGatewayError } = jest.requireMock<{
+    RefundGatewayError: new (message: string, gatewayCode?: string) => Error;
+  }>("../../lib/payments/operations/refund");
+  mockRefundBookingPayment.mockImplementation(
+    async (input: { paymentId: string; dedupeKey: string }) => {
+      mockRefunds.push({
+        id: `rf_${mockRefunds.length + 1}`,
+        paymentId: input.paymentId,
+        dedupeKey: input.dedupeKey,
+        amountPaise: 5_000,
+        status: "FAILED",
+      });
+      throw new RefundGatewayError("gateway refund failed", gatewayCode);
+    },
+  );
+}
+
+describe("a gateway that does not know the payment", () => {
+  it("retires a 404 on its first attempt with one FAILED refund and one page", async () => {
+    seat("p1", 10_000);
+    marker("p1", 5_000);
+    gatewayFails("GATEWAY_NOT_FOUND");
+
+    const first = await retryAutoRefunds();
+    expect(first.owed.stuck).toEqual(["p1"]);
+    expect((await retryAutoRefunds()).owed.scanned).toBe(0);
+    expect(mockRows.get("p1")!.refundOwedAttempts).toBe(3);
+    expect(mockRefunds.filter((r) => r.status === "FAILED")).toHaveLength(1);
+    expect(mockRecordSystemError).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps retrying a 5xx until the attempt budget is spent", async () => {
+    seat("p1", 10_000);
+    marker("p1", 5_000);
+    gatewayFails("SERVER_ERROR");
+
+    expect((await retryAutoRefunds()).owed.stuck).toEqual([]);
+    expect(mockRows.get("p1")!.refundOwedAttempts).toBe(1);
+    elapse("p1");
+    expect((await retryAutoRefunds()).owed.scanned).toBe(1);
+    expect(mockRecordSystemError).not.toHaveBeenCalled();
+  });
+});
+
 describe("a failed gateway attempt", () => {
   it("re-drives a definitive refusal on the next sweep and clears on success", async () => {
     seat("p1", 10_000);
@@ -460,6 +762,7 @@ describe("a failed gateway attempt", () => {
 
     expect((await retryAutoRefunds()).owed.failed).toBe(1);
     expect(mockRows.get("p1")!.refundOwedKey).toBe("cancel:appt:p1");
+    elapse("p1");
     expect((await retryAutoRefunds()).owed.refunded).toBe(1);
     expect(mockRows.get("p1")!.refundOwedKey).toBeNull();
     const moved = mockRefunds.filter((r) => r.status === "SUCCEEDED");
@@ -472,6 +775,7 @@ describe("a failed gateway attempt", () => {
     failsOnce("PENDING");
 
     await retryAutoRefunds();
+    elapse("p1");
     expect((await retryAutoRefunds()).owed.scanned).toBe(0);
     expect(mockRefundBookingPayment).toHaveBeenCalledTimes(1);
   });
@@ -510,6 +814,138 @@ describe("a failed gateway attempt", () => {
   });
 });
 
+describe("owed-refund backoff", () => {
+  const HOUR = 60 * 60_000;
+  const waitOf = (id: string, from: number) =>
+    mockRows.get(id)!.refundOwedNextAt!.getTime() - from;
+
+  it("waits 1 h, then 4 h, between failed drives and pages once at the cap", async () => {
+    seat("p1", 10_000);
+    marker("p1", 5_000);
+    gatewayFails("SERVER_ERROR");
+
+    let at = Date.now();
+    await retryAutoRefunds();
+    expect(mockRows.get("p1")!.refundOwedAttempts).toBe(1);
+    expect(waitOf("p1", at)).toBeGreaterThanOrEqual(HOUR);
+    expect(waitOf("p1", at)).toBeLessThan(HOUR + 60_000);
+    // Inside the backoff the sweep does not claim the marker.
+    expect((await retryAutoRefunds()).owed.scanned).toBe(0);
+    expect(mockRefundBookingPayment).toHaveBeenCalledTimes(1);
+
+    elapse("p1");
+    at = Date.now();
+    await retryAutoRefunds();
+    expect(mockRows.get("p1")!.refundOwedAttempts).toBe(2);
+    expect(waitOf("p1", at)).toBeGreaterThanOrEqual(4 * HOUR);
+    expect(waitOf("p1", at)).toBeLessThan(4 * HOUR + 60_000);
+    expect(mockRecordSystemError).not.toHaveBeenCalled();
+
+    elapse("p1");
+    expect((await retryAutoRefunds()).owed.stuck).toEqual(["p1"]);
+    expect(mockRows.get("p1")).toMatchObject({
+      refundOwedKey: "cancel:appt:p1",
+      refundOwedAttempts: 3,
+      refundOwedNextAt: null,
+    });
+    expect(mockRecordSystemError).toHaveBeenCalledTimes(1);
+    expect((await retryAutoRefunds()).owed.scanned).toBe(0);
+  });
+
+  it("writes nothing for a drive that read a stale attempt count", async () => {
+    seat("p1", 10_000);
+    const owed = marker("p1", 5_000);
+    const nextAt = new Date(Date.now() + HOUR);
+    Object.assign(mockRows.get("p1")!, {
+      refundOwedAttempts: 2,
+      refundOwedNextAt: nextAt,
+    });
+    gatewayFails("SERVER_ERROR");
+
+    const outcome = await driveRefundOwed({ ...owed, attempts: 1 });
+    expect(outcome.kind).toBe("failed");
+    expect(mockRows.get("p1")).toMatchObject({
+      refundOwedAttempts: 2,
+      refundOwedNextAt: nextAt,
+    });
+    expect(mockRecordSystemError).not.toHaveBeenCalled();
+  });
+
+  it("clears the next-drive time with the marker", async () => {
+    seat("p1", 10_000);
+    marker("p1", 5_000);
+    mockRows.get("p1")!.refundOwedNextAt = new Date(Date.now() - 1);
+
+    expect((await retryAutoRefunds()).owed.refunded).toBe(1);
+    expect(mockRows.get("p1")).toMatchObject({
+      refundOwedKey: null,
+      refundOwedNextAt: null,
+    });
+  });
+});
+
+describe("a hand refund during the backoff", () => {
+  /** The marker side of the operator's refund transaction, as the front door runs it. */
+  const handRefund = (id: string, handPaise: number) =>
+    settleOwedByHand(mockDb as never, id, {
+      kind: "amount",
+      handPaise,
+      refundableBeforePaise: 10_000,
+    });
+
+  /** One failed sweep drive: attempt 1, next drive an hour out. */
+  async function failedOnce() {
+    seat("p1", 10_000);
+    const owed = marker("p1", 5_000);
+    mockRefundBookingPayment.mockRejectedValueOnce(new Error("gateway 503"));
+    await retryAutoRefunds();
+    return owed;
+  }
+
+  it("clears a fully covered marker in its own transaction, and the sweep then does nothing", async () => {
+    await failedOnce();
+    expect((await handRefund("p1", 5_000))?.stillOwedPaise).toBe(0);
+    expect(mockRows.get("p1")).toMatchObject({
+      refundOwedKey: null,
+      refundOwedAttempts: 0,
+      refundOwedNextAt: null,
+    });
+    elapse("p1");
+    expect((await retryAutoRefunds()).owed.scanned).toBe(0);
+    expect(mockRefunds).toHaveLength(0);
+  });
+
+  it("reduces a partly covered marker, and the sweep later pays only the remainder", async () => {
+    await failedOnce();
+    const backoff = mockRows.get("p1")!.refundOwedNextAt;
+    expect((await handRefund("p1", 2_000))?.note).toBe(
+      "Settled ₹20.00 of the owed ₹50.00; ₹30.00 still owed and retrying.",
+    );
+    expect(mockRows.get("p1")).toMatchObject({
+      refundOwedKey: "cancel:appt:p1",
+      refundOwedPaise: 3_000,
+      refundOwedAttempts: 1,
+      refundOwedNextAt: backoff,
+    });
+    expect((await retryAutoRefunds()).owed.scanned).toBe(0);
+    elapse("p1");
+    expect((await retryAutoRefunds()).owed.refunded).toBe(1);
+    expect(mockRefunds.map((r) => r.amountPaise)).toEqual([3_000]);
+    expect(mockRows.get("p1")!.refundOwedKey).toBeNull();
+  });
+
+  it("stops the door's own drive once a hand refund changed its marker", async () => {
+    seat("p1", 10_000);
+    // The marker as the cancel door stamped it and is about to drive it.
+    const owed = marker("p1", 5_000);
+    await handRefund("p1", 2_000);
+    expect((await driveRefundOwed(owed)).kind).toBe("blocked");
+    await handRefund("p1", 3_000);
+    expect((await driveRefundOwed(owed)).kind).toBe("settled");
+    expect(mockRefunds).toHaveLength(0);
+  });
+});
+
 describe("retry-auto-refunds: the owed cohort", () => {
   it("starts a settled trial refund's earnings hold", async () => {
     seat("t1", 0, "free_abc");
@@ -531,13 +967,17 @@ describe("retry-auto-refunds: the owed cohort", () => {
     );
   });
 
-  it("surfaces markers older than two hours once, reading the persisted amount", async () => {
+  it("surfaces markers older than six hours once, reading the persisted amount", async () => {
     seat("p1", 10_000);
     marker("p1", 4_000);
+    // Three hours old: still inside the backoff, so not yet surfaced.
+    seat("p2", 10_000);
+    marker("p2", 4_000);
+    mockRows.get("p2")!.refundOwedAt = new Date(Date.now() - 3 * 60 * 60_000);
     mockRefundBookingPayment.mockRejectedValue(new Error("gateway 503"));
 
     const result = await retryAutoRefunds();
-    expect(result.owed.failed).toBe(1);
+    expect(result.owed.failed).toBe(2);
     expect(result.owed.aged).toBe(1);
     expect(mockRecordSystemEvent).toHaveBeenCalledWith(
       expect.objectContaining({

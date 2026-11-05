@@ -5,8 +5,8 @@
 /**
  * #1280 — the set operations added to `MockRedis` for the frozen-channel ledger.
  *
- * They matter because `USE_MOCK_REDIS=true` is how local dev and parts of CI
- * run: a ledger that silently misbehaves against the mock would make the
+ * They matter because `NODE_ENV=test` is how every jest suite and the race
+ * harness run: a ledger that silently misbehaves against the mock would make the
  * maintenance drain look correct everywhere except production, which is the
  * worst place to find out. Stream grants `use-frozen-channel` to no role, so
  * the failure mode on the other side is a channel nobody — user or admin — can

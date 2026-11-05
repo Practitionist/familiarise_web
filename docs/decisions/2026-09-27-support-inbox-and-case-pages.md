@@ -4,6 +4,8 @@
 - **Date**: 2026-09-27
 - **Part of**: #1527, PR #1842
 
+> Superseded in part: the redirect map and its catch-all page were deleted on 2026-11-03 (see [the decision](2026-11-03-dashboard-ia-drop-legacy-redirects.md)); the retired URLs now answer 404.
+
 ## Context
 
 The back office ran two separate list pages for the same underlying work: a Tickets page for platform-level `SupportTicket` rows and a Conversations page for per-appointment `AppointmentSupportThread` rows. A thread that escalated into a ticket then showed up on both pages, so the same problem could be worked twice, and staff had no single view of "everything that needs a reply." On the user side, every support conversation opened in `SupportThreadSheet`, a drawer stacked on top of whatever page the user was already on; a drawer cannot be linked, bookmarked, or reopened from a notification without re-deriving its trigger, and a support conversation is exactly the kind of thing a user wants to return to later.
@@ -49,5 +51,5 @@ This round covers text-based tickets and conversations only. Escalating a case i
 - PR #1842 — the implementation, landed across `dec787d1e`, `2be8c69fd`, `54cbabb31` and `f4b5d9117`.
 - `lib/support/case-key.ts` — the `t_`/`s_`/`b_` case-key format.
 - `lib/backoffice/legacy-routes.ts` — the redirect mapping for the retired Tickets and Conversations URLs.
-- [docs/support/01-architecture.md](../support/01-architecture.md) — the underlying two-scope, one-engine support architecture this ADR builds a workspace on top of.
+- [docs/support/README.md](../support/README.md) — the underlying two-scope, one-engine support architecture this ADR builds a workspace on top of.
 - [Engineering log: the dashboard overhaul](../dashboard/engineering-log-2026-09-27-dashboard-overhaul.md) — Round 5.

@@ -10,12 +10,24 @@
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("../../lib/email", () => ({}));
 jest.mock("../../lib/novu/subscriber", () => ({ syncSubscriber: jest.fn() }));
-jest.mock("../../lib/rate-limit", () => ({
-  existingAccountNoticeLimiter: { limit: jest.fn() },
-}));
+jest.mock("@sentry/nextjs", () => {
+  const actual = jest.requireActual("@sentry/nextjs");
+  return {
+    ...actual,
+    captureMessage: jest.fn(),
+    captureException: jest.fn(),
+    logger: { ...actual.logger, warn: jest.fn() },
+  };
+});
 
+import * as Sentry from "@sentry/nextjs";
 import type { BetterAuthOptions } from "better-auth";
 import { auth } from "../../lib/auth";
+import {
+  CAPTCHA_PROTECTED_PATHS,
+  turnstileCaptcha,
+  turnstileHostnames,
+} from "../../lib/auth/captcha";
 
 const options: BetterAuthOptions = auth.options;
 
@@ -91,6 +103,7 @@ describe("lib/auth.ts config pin", () => {
       "breached-password-check",
       "core-auth-policy",
       "account-lifecycle",
+      "account-sign-in-throttle",
     ]) {
       expect(plugin(id)).toBeDefined();
     }
@@ -101,5 +114,66 @@ describe("lib/auth.ts config pin", () => {
       if (typeof config === "function") throw new Error("lazy provider config");
       expect(config?.clientId).toBeTruthy();
     }
+  });
+
+  it("puts Turnstile on the mail-sending endpoints only, and only with both keys", () => {
+    expect(CAPTCHA_PROTECTED_PATHS).toEqual([
+      "/sign-up/email",
+      "/request-password-reset",
+      "/email-otp/send-verification-otp",
+    ]);
+    const [captcha] = turnstileCaptcha({
+      secretKey: "1x0000000000000000000000000000000AA",
+      siteKey: "1x00000000000000000000AA",
+    });
+    expect(captcha?.options).toMatchObject({
+      provider: "cloudflare-turnstile",
+      endpoints: CAPTCHA_PROTECTED_PATHS,
+    });
+    expect(
+      turnstileCaptcha({
+        secretKey: "1x0000000000000000000000000000000AA",
+        siteKey: undefined,
+      }),
+    ).toEqual([]);
+    expect(
+      turnstileHostnames({
+        sentryEnvironment: "production",
+        authUrl: "https://familiarisenow.com",
+      }),
+    ).toEqual(["familiarisenow.com"]);
+    expect(
+      turnstileHostnames({
+        sentryEnvironment: "preview",
+        authUrl: "https://familiarisenow.com",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("boots a production runtime without keys with a log line, never a Sentry issue", () => {
+    const nodeEnv = process.env.NODE_ENV;
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    Object.defineProperty(process.env, "NODE_ENV", {
+      value: "production",
+      configurable: true,
+      writable: true,
+    });
+    try {
+      expect(
+        turnstileCaptcha({ secretKey: undefined, siteKey: undefined }),
+      ).toEqual([]);
+    } finally {
+      Object.defineProperty(process.env, "NODE_ENV", {
+        value: nodeEnv,
+        configurable: true,
+        writable: true,
+      });
+      error.mockRestore();
+    }
+    expect(Sentry.logger.warn).toHaveBeenCalledWith("AUTH_CAPTCHA_DISABLED", {
+      missing: "TURNSTILE_SECRET_KEY,NEXT_PUBLIC_TURNSTILE_SITE_KEY",
+    });
+    expect(Sentry.captureMessage).not.toHaveBeenCalled();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 });

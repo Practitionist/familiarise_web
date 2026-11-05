@@ -23,7 +23,7 @@ export class StreamEnvironmentError extends Error {
 
 /**
  * Netlify decides by `CONTEXT`, Vercel by `VERCEL_ENV`; any other runtime
- * (container host, GitHub Actions cron twin) is production only when
+ * (a container host, a laptop) is production only when
  * `NEXT_PUBLIC_SENTRY_ENVIRONMENT` is "production", the marker Novu key
  * selection already trusts. A Netlify runtime without `CONTEXT` uses that marker too.
  */

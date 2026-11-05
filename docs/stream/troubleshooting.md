@@ -218,7 +218,7 @@ The daily sync job hard-deletes users from Stream who don't exist in Prisma. Thi
 #### Location
 
 **File:** `jobs/stream-sync.ts`
-**Scheduled:** Daily at 03:30 UTC (09:00 AM IST)
+**Scheduled:** the `stream-sync` ticker target (hourly at :50 in the 08:00 UTC window, through the Stream lifecycle background worker)
 
 #### Current Behavior
 
@@ -1341,7 +1341,7 @@ if (error && error.includes("Maximum retry")) {
 
 ### Stream Debug API
 
-Use the built-in debug endpoint to inspect user channels and data.
+Use the built-in debug endpoint to inspect user channels and data. It works only under `next dev` and needs a staff or admin session.
 
 ```bash
 # Get user debug info
@@ -1749,5 +1749,5 @@ If you're still experiencing issues:
 
 ## Deprecated & Superseded Approaches
 
-- **Diagnosing Live Calls or Channels from Local Seed State Alone**: Superseded by read-only Stream MCP verification (`mcp__stream-io__video_query_calls`, `mcp__stream-io__video_get_call_type`, `mcp__stream-io__chat_query_channels`).
+- **Diagnosing Live Calls or Channels from Local Seed State Alone**: Superseded by read-only Stream MCP verification (`mcp__streamio__video_query_calls`, `mcp__streamio__video_get_call_type`, `mcp__streamio__chat_query_channels`).
 - **Manual Stream Dashboard Permission Clicking**: Superseded by idempotent declarative enforcement (`npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed`).

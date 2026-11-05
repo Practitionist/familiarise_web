@@ -1,3 +1,4 @@
+import { COMPANY_INFO } from "@/lib/company";
 import {
   STATUTORY_ACK_HOURS,
   STATUTORY_RESOLUTION_DAYS,
@@ -5,40 +6,19 @@ import {
 
 export const ACK_PROMISE_COPY = `within ${STATUTORY_ACK_HOURS} hours` as const;
 
-export const SUPPORT_CONTACT_EMAIL = "support@familiarisenow.com" as const;
-export const PRIVACY_CONTACT_EMAIL = "privacy@familiarisenow.com" as const;
-export const DPDP_CONTACT_EMAIL = "dpdp@familiarisenow.com" as const;
-
-export function resolveLiveMailbox(): string {
-  return (
-    process.env.CONTACT_INBOX_ADDRESS?.trim() || "support@practitionist.com"
-  );
-}
-
-export const COMPANY_INFO = {
-  name: "Practitionist (OPC) Private Limited",
-  email: resolveLiveMailbox(),
-  supportEmail: resolveLiveMailbox(),
-  phone: process.env.NEXT_PUBLIC_SUPPORT_PHONE?.trim() || "",
-  jurisdiction:
-    process.env.NEXT_PUBLIC_COMPANY_JURISDICTION?.trim() || "Haryana, India",
-} as const;
-
 export const GRIEVANCE_OFFICER = {
-  name:
-    process.env.NEXT_PUBLIC_GRIEVANCE_OFFICER_NAME?.trim() ||
-    "Grievance Redressal Officer — Practitionist (OPC) Private Limited",
+  name: COMPANY_INFO.grievanceOfficerName,
   designation: "Grievance & Nodal Compliance Officer",
-  email: resolveLiveMailbox(),
-  phone: process.env.NEXT_PUBLIC_SUPPORT_PHONE?.trim() || "",
+  email: COMPANY_INFO.email,
+  phone: COMPANY_INFO.phone,
   ackPromise: ACK_PROMISE_COPY,
   resolutionPromise: `within ${STATUTORY_RESOLUTION_DAYS} days`,
 } as const;
 
 export const POLICY_DATES = {
   privacyLastUpdated: "October 22, 2026",
-  termsLastUpdated: "October 21, 2026",
-  refundLastUpdated: "October 21, 2026",
+  termsLastUpdated: "October 28, 2026",
+  refundLastUpdated: "October 28, 2026",
   grievanceLastUpdated: "October 21, 2026",
   reviewsPolicyLastUpdated: "October 2026",
 } as const;
@@ -84,16 +64,17 @@ export const PAGE_META = {
   about: {
     title: "About Familiarise",
     description:
-      "Connecting expert consultants with learners worldwide through live, interactive educational experiences",
+      "Familiarise is an online learning platform for live classes, webinars, tutoring and one-on-one sessions with verified experts.",
   },
   contact: {
     title: "Contact Us",
     description:
-      "We're here to help! Reach out to us with any questions, concerns, or feedback.",
+      "Questions about a class, a booking, a payment or a refund? Reach the team behind Familiarise.",
   },
   pricing: {
     title: "Pricing",
-    description: "Transparent, consultant-driven pricing with no hidden fees",
+    description:
+      "Experts set their prices in INR. You see the full amount, including GST, before you pay.",
   },
   privacy: {
     title: "Privacy Policy",
@@ -119,29 +100,29 @@ export const PAGE_META = {
 // About Page Data
 export const ABOUT_DATA = {
   mission:
-    "To democratize access to quality education by connecting learners with expert consultants and educators from around the world. We strive to make personalized learning accessible, affordable, and effective for everyone.",
+    "To make quality education easier to reach by connecting learners with verified experts and educators through live, interactive sessions. We aim to keep learning personal, affordable and effective.",
   vision:
-    "To become the world's leading platform for live, interactive learning experiences where knowledge flows freely between experts and learners, fostering a global community of continuous growth and development.",
+    "A trusted place for live learning, where experts teach and learners grow through classes, webinars, tutoring and one-on-one sessions.",
   offerings: [
     {
       title: "Live Classes",
       description:
-        "Interactive group learning sessions with scheduled appointments and real-time engagement",
+        "Group classes taught live by an instructor, with scheduled sessions and real-time interaction",
     },
     {
       title: "Webinars",
       description:
-        "Large-scale educational events and workshops on diverse topics",
+        "Live educational events and workshops on a single topic, with Q&A",
     },
     {
-      title: "1-on-1 Consultations",
+      title: "Tutoring & 1-on-1 Sessions",
       description:
-        "Personalized expert guidance sessions tailored to your specific needs",
+        "Personal sessions with an expert on a subject or skill, tailored to your goals",
     },
     {
       title: "Subscriptions",
       description:
-        "Ongoing learning programs with recurring sessions and continuous support",
+        "Recurring programs with regular live sessions over a set period",
     },
   ],
   howItWorks: [
@@ -149,29 +130,31 @@ export const ABOUT_DATA = {
       step: 1,
       title: "Discover Experts",
       description:
-        "Browse our curated list of verified consultants and educators across various domains",
+        "Browse verified experts and educators by subject, and compare their classes, webinars and session plans",
     },
     {
       step: 2,
       title: "Book & Pay Securely",
       description:
-        "Choose your session, schedule your appointment, and make secure payments through our integrated payment system",
+        "Choose a class, webinar or session, pick a time, and pay in INR through Razorpay. GST is shown at checkout before you pay",
     },
     {
       step: 3,
       title: "Learn & Grow",
       description:
-        "Join live sessions via integrated video conferencing, interact in real-time, and access course materials",
+        "Join live over built-in video, with in-session chat and course materials in one place",
     },
   ],
   benefits: [
     {
       title: "Verified Experts",
-      description: "All consultants are verified and reviewed by students",
+      description:
+        "Every listed expert is verified, and ratings come only from learners who attended",
     },
     {
       title: "Secure Payments",
-      description: "Industry-standard payment processing with Razorpay",
+      description:
+        "Payments are processed by Razorpay; card details are not stored on our servers",
     },
     {
       title: "Flexible Scheduling",
@@ -180,15 +163,16 @@ export const ABOUT_DATA = {
     },
     {
       title: "Integrated Platform",
-      description: "Video conferencing, chat, and materials all in one place",
+      description:
+        "Video sessions, in-session chat and course materials in one place",
     },
     {
       title: "Transparent Pricing",
-      description: "Clear pricing with no hidden fees",
+      description: "Prices in INR, with GST shown before you pay",
     },
     {
-      title: "24/7 Support",
-      description: "Dedicated customer support to help you anytime",
+      title: "Responsive Support",
+      description: `Every inquiry is acknowledged ${ACK_PROMISE_COPY}`,
     },
   ],
 } as const;
@@ -196,18 +180,17 @@ export const ABOUT_DATA = {
 // Pricing Page Data
 export const PRICING_DATA = {
   howItWorks: [
-    "Consultants set their own rates based on their expertise and market demand",
-    "You see the exact price before booking any session",
-    "No hidden fees - the displayed price is what you pay",
-    "Platform commission is already included in the price",
+    "Experts set their own prices in Indian rupees (INR) for each class, webinar, session and plan.",
+    "You see the exact list price on the expert's profile and on the booking page before you book.",
+    "GST at 18% is added at checkout for buyers in India, and the full total is shown before you pay.",
+    "Familiarise's platform fee is taken from the expert's earnings; it is never added on top of what you pay.",
   ],
   commissionBenefits: [
-    "Maintain secure payment processing infrastructure",
-    "Provide integrated video conferencing and communication tools",
-    "Host and deliver course materials and content",
-    "Ensure platform security and data protection",
-    "Offer 24/7 customer support",
-    "Continuously improve the user experience",
+    "Run secure payment processing",
+    "Provide built-in video sessions, in-session chat and course materials",
+    "Keep the platform secure and protect personal data",
+    "Handle customer support, refunds and dispute resolution",
+    "Keep improving the learning experience",
   ],
   paymentMethods: [
     "Credit Cards",
@@ -220,32 +203,32 @@ export const PRICING_DATA = {
     {
       question: "How do I know the price before booking?",
       answer:
-        "The price for each service is clearly displayed on the consultant's profile and on the booking page. You will see the exact amount you need to pay before confirming your booking.",
+        "The list price of each class, webinar, session or plan is shown on the expert's profile and on the booking page. At checkout we add GST where it applies and show the total before you confirm.",
     },
     {
       question: "Are there any additional fees?",
       answer:
-        "No, there are no hidden fees. The price displayed is the final amount you will pay. The platform commission is already included in the displayed price.",
+        "Familiarise adds no booking fee. The only addition to the list price is GST (18% for buyers in India), shown at checkout before you pay. Your bank or card issuer may apply its own charges, which we do not control.",
     },
     {
       question: "Can I get a refund if I cancel?",
       answer:
-        "Yes, refunds are available based on our cancellation policy. The refund eligibility depends on when you cancel and the type of service.",
+        "Yes. Refund eligibility depends on when you cancel and on the type of service, and approved refunds go back to your original payment method.",
     },
     {
-      question: "Why do prices vary between consultants?",
+      question: "Why do prices vary between experts?",
       answer:
-        "Consultants set their own prices based on their expertise, experience, qualifications, and market demand. This allows you to choose consultants that fit your budget while ensuring consultants are fairly compensated for their knowledge and time.",
+        "Experts set their own prices based on their expertise, experience, qualifications, and demand. This lets you choose an expert who fits your budget while experts are fairly paid for their knowledge and time.",
     },
     {
       question: "Do you offer discounts or promotional pricing?",
       answer:
-        "Individual consultants may offer promotional pricing or discounts for their services. These will be clearly displayed on their profiles and during the booking process. We also occasionally run platform-wide promotions - subscribe to our newsletter to stay updated.",
+        "Individual experts may offer promotional pricing or discounts. These are shown on their profiles and during booking. We also occasionally run platform-wide promotions; subscribe to our newsletter to hear about them.",
     },
     {
-      question: "How are consultants paid?",
+      question: "How are experts paid?",
       answer:
-        "Consultants receive their earnings after the session is completed successfully. The platform commission is automatically deducted, and the remaining amount is transferred to the consultant's registered bank account according to the settlement schedule.",
+        "Experts are paid after the session has been delivered and a short hold period has passed. The platform fee is deducted and the rest is transferred to the expert's registered bank account.",
     },
   ],
 } as const;

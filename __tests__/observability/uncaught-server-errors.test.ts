@@ -3,12 +3,8 @@
  *
  * An uncaught server error must reach the transport.
  *
- * Observed on a deploy preview: a server-rendered page threw Prisma P2022, the
- * Netlify function log had it, Sentry had no event. Two silent losses sat in
- * front of it: preview environments sampled every error at 10% before
- * `beforeSend` could look at the mechanism, and `onRequestError` handed its
- * flush to a `waitUntil` that exists only on Vercel and Cloudflare, so a
- * Netlify function could freeze with the envelope still in flight.
+ * `onRequestError` must keep a Netlify function alive until its envelope is
+ * out, and a preview deploy sends no error event to the shared project.
  *
  * This drives the REAL SDK, `initSentry()` and the real `onRequestError`, with
  * the SDK's real transport buffer over a slow fake HTTP layer, so `flush` has
@@ -25,12 +21,7 @@ jest.mock("next/server", () => ({
 }));
 
 import { onRequestError } from "../../instrumentation";
-import {
-  initSentry,
-  isThinnedOnPreview,
-  isUncaughtNextServerError,
-  resetSentryBudgetState,
-} from "../../sentry.shared.config";
+import { initSentry, resetSentryBudgetState } from "../../sentry.shared.config";
 
 const SYNTHETIC_DSN =
   "https://0123456789abcdef0123456789abcdef@o0123456789abcdef.ingest.us.sentry.io/0123456789abcdef";
@@ -39,11 +30,11 @@ type TransportOptions = Parameters<typeof Sentry.createTransport>[0];
 
 const delivered: Sentry.Event[] = [];
 
-// `Sentry.init` is a no-op once a client is bound, so the SDK starts once, on a
-// preview, and `beforeSend` reads the environment per event.
+// `Sentry.init` is a no-op once a client is bound, so the SDK starts once and
+// `beforeSend` reads the environment per event.
 function startSdk(): void {
   process.env.NEXT_PUBLIC_SENTRY_DSN = SYNTHETIC_DSN;
-  process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "preview";
+  process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
   initSentry({
     defaultIntegrations: false,
     sendClientReports: false,
@@ -88,7 +79,7 @@ beforeAll(startSdk);
 beforeEach(() => {
   delivered.length = 0;
   resetSentryBudgetState();
-  process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "preview";
+  process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
   jest.spyOn(console, "warn").mockImplementation(() => {});
 });
 
@@ -105,74 +96,18 @@ afterAll(async () => {
   delete process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT;
 });
 
-describe("preview thinning spares uncaught server errors", () => {
-  it("delivers an uncaught render error on a preview even on the worst sampling roll", async () => {
-    jest.spyOn(Math, "random").mockReturnValue(0.99);
-
+describe("previews send no error events", () => {
+  it("drops even an uncaught render error on a preview, and keeps it in production", async () => {
+    process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "preview";
     await onRequestError(p2022(), request, renderContext);
-
-    expect(delivered).toHaveLength(1);
-    const mechanism = delivered[0]?.exception?.values?.[0]?.mechanism;
-    expect(mechanism).toMatchObject({
-      handled: false,
-      type: "auto.function.nextjs.on_request_error",
-    });
-    expect(delivered[0]?.environment).toBe("preview");
-  });
-
-  it("still thins ordinary preview errors to a tenth", async () => {
-    const roll = jest.spyOn(Math, "random").mockReturnValue(0.99);
-
     Sentry.captureException(new Error("handled preview failure"));
     await Sentry.flush(2_000);
     expect(delivered).toHaveLength(0);
 
-    roll.mockReturnValue(0.05);
-    Sentry.captureException(new Error("another handled preview failure"));
-    await Sentry.flush(2_000);
-    expect(delivered).toHaveLength(1);
-  });
-
-  it("does not thin outside previews", async () => {
     process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
-    jest.spyOn(Math, "random").mockReturnValue(0.99);
-
     Sentry.captureException(new Error("handled production failure"));
     await Sentry.flush(2_000);
-
     expect(delivered).toHaveLength(1);
-  });
-
-  it("recognises only Next's unhandled server mechanisms as uncaught", () => {
-    const withMechanism = (type: string, handled: boolean): Sentry.Event => ({
-      exception: { values: [{ mechanism: { type, handled } }] },
-    });
-    expect(
-      isUncaughtNextServerError(
-        withMechanism("auto.function.nextjs.server_component", false),
-      ),
-    ).toBe(true);
-    expect(
-      isUncaughtNextServerError(
-        withMechanism("auto.function.nextjs.route_handler", false),
-      ),
-    ).toBe(true);
-    expect(isUncaughtNextServerError(withMechanism("generic", true))).toBe(
-      false,
-    );
-    expect(
-      isUncaughtNextServerError(
-        withMechanism("auto.browser.global_handlers.onerror", false),
-      ),
-    ).toBe(false);
-
-    expect(isThinnedOnPreview(withMechanism("generic", true), 0.5)).toBe(true);
-    expect(
-      isThinnedOnPreview(
-        withMechanism("auto.function.nextjs.server_action", false),
-        0.5,
-      ),
-    ).toBe(false);
   });
 });
 

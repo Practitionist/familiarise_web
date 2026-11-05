@@ -4,6 +4,10 @@
 > Single source of truth for prerequisites, glossary, schema reference,
 > seed cohort, mock-data strategy, and immutable invariants. If a case
 > file disagrees with this, this file wins.
+>
+> **Supabase MCP is read-only.** `mcp__supabase__execute_sql` is for SELECTs
+> and assertions only. Direct INSERT/UPDATE/DELETE and DDL are operator-run:
+> prepare the SQL, record it in the report, and wait for an operator.
 
 For MCP-command idioms (Supabase queries, Chrome DevTools navigation,
 cross-tool assertions), see [`mcp-recipes.md`](./mcp-recipes.md).
@@ -79,11 +83,13 @@ Tour-owner login (operator dashboard, OWNER of Wipro):
 Use the seed cohort. No setup, no cleanup.
 
 ### State-mutating / destructive cases
-Spawn fresh orgs via Supabase MCP. Use the prefix `test-2026-{YYYYMMDD}-{slug}`
-so cleanup is one line.
+The Supabase MCP is read-only, so fixture writes cannot run through it. Prepare
+the SQL below and hand it to an operator to run in the Supabase SQL editor (or an
+approved psql session); the QA agent must not run it. Use the prefix
+`test-2026-{YYYYMMDD}-{slug}` so cleanup is one line.
 
 ```sql
--- via mcp__supabase__execute_sql, project_id='pzmbxqdgibfkhjwzeprf'
+-- operator-run in the Supabase SQL editor; project pzmbxqdgibfkhjwzeprf
 WITH new_org AS (
   INSERT INTO "organizations"
     (id, slug, name, status, "canSponsor", "canHost", "rootId", "createdAt", "updatedAt")
@@ -130,7 +136,7 @@ gate.
 | **TDS withholding** | `createOrgPayoutBatch` deducts TDS from gross; persists `tdsSectionApplied` / `tdsAmountPaise` / `dtaaRateApplied` on `OrganizationPayout`. Section 194-O default (1%); PAN missing/malformed → 206AA 20%. | `lib/payments/payouts/org-payout-service.ts`; `lib/compliance/tds.ts:computeTdsForPayout` |
 | **MSME 43B(h)** | `mustPayByDate` derived from `Organization.msmeStatus` + `msmeWrittenAgreementOnFile`. MICRO+agreement → 45d, MICRO/SMALL no agreement → 15d, MEDIUM/NONE → `contract.paymentTermsDays`. | `lib/compliance/msme.ts:computeMsmePaymentDeadline` |
 | **DPDP signup consent** | Email verification (`afterEmailVerification` → `welcomeVerifiedUser`; `user.create.after` for a verified social sign-up) stamps `ConsentArtifact` for `PRIMARY_PROCESSING` + `STREAM_DATA_PROCESSING` (SHA-256 hash, 7y retention). `upsertUserToStream` / `upsertUsersToStream` fail-close on missing/withdrawn `STREAM_DATA_PROCESSING`. | `lib/auth.ts`, `lib/auth/account-lifecycle.ts`; `actions/stream/chat/user.action.ts` |
-| **GST place-of-supply env** | `SUPPLIER_STATE_CODE` env (default `"KA"`) drives intra-state CGST+SGST vs inter-state IGST. No hardcoded `"KA"` in invoice generation. | `jobs/billing/generate-subscription-invoices.ts`; `app/api/organizations/[orgId]/billing-account/invoices/route.ts` |
+| **GST place-of-supply** | The supplier state is the first two digits of `PLATFORM_GSTIN` (fallback: the registered office in `lib/company.ts`, Haryana `06`) and drives intra-state CGST+SGST vs inter-state IGST. A GSTIN from another state fails closed. | `lib/payments/billing/consumer-invoice.ts` (`supplierStateCode`); `jobs/billing/generate-subscription-invoices.ts` |
 | **Per-org invoice numbering** | Format `<PREFIX>-<FY>-<SEQ>` (CGST Rule 46). PREFIX = `Organization.invoiceNumberPrefix` or uppercased slug. `@@unique([organizationId, invoiceNumber])`. FY = Indian (April–March). Atomic counter at `OrgInvoiceCounter`. | `lib/payments/billing/invoice-numbering.ts` |
 | **Payout idempotency** | `scripts/payouts/process-payouts.ts:69` uses `payout_${payoutId}` (no `Date.now()`). `OrganizationPayout.idempotencyKey @unique`. Re-runs return `alreadyExisted: true`. | `scripts/payouts/process-payouts.ts:69`; `lib/payments/payouts/org-payout-service.ts:createOrgPayoutBatch` |
 | **Recording orgId** | `Recording.organizationId` is populated at write time from the parent appointment. Null FK only for personal (non-org) plans. | `lib/stream/recording-handlers.ts` |

@@ -1,31 +1,40 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 
-import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import {
   bookingAppointmentFilter,
+  readCancelWindowState,
   resolveBookingRefundContext,
 } from "@/lib/booking/cancellation-scope";
-import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
+import { resolveCancelActor } from "@/lib/booking/cancel-actor";
+import { cancelWindowRefusal } from "@/lib/booking/session-window";
+import { isRefusal } from "@/lib/errors/refusal";
 import {
   isSuspendedInFundingOrg,
   membershipSuspendedResponse,
 } from "@/lib/enterprise/suspended-member-sessions";
 import { quoteSeatLeave } from "@/lib/booking/seat-leave";
-import { seriesCancelRefundPaise } from "@/lib/booking/class-series";
-import { classSeriesLedgers } from "@/lib/payments/operations/event-refunds";
+import {
+  classSeriesLedgers,
+  quoteWholeEventRefunds,
+} from "@/lib/payments/operations/event-refunds";
 import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
-import {
-  REFUNDABLE_BALANCE_SELECT,
-  refundableBalancePaise,
-} from "@/lib/payments/refundable-balance";
+import { creditStillUsedPaise } from "@/lib/payments/operations/credit-plan-return";
 import prisma from "@/lib/prisma";
 
-/** Every Appointment field the quote reads. */
 // A money read: never cached (repo rule for edited money GETs).
 const NO_STORE = { headers: { "Cache-Control": "no-store" } };
 
+/** The plan fields `resolveCancelActor` reads. */
+const CANCEL_ACTOR_PLAN_SELECT = {
+  consultantProfileId: true,
+  organizationId: true,
+  consultantProfile: { select: { user: { select: { id: true } } } },
+} as const;
+
+/** Every Appointment field the quote reads. */
 async function loadPreviewAppointment(appointmentId: string) {
   return prisma.appointment.findUnique({
     where: { id: appointmentId },
@@ -40,47 +49,21 @@ async function loadPreviewAppointment(appointmentId: string) {
       consultation: {
         select: {
           requestedById: true,
-          requestedBy: { select: { userId: true } },
-          consultationPlan: {
-            select: {
-              consultantProfileId: true,
-              consultantProfile: { select: { userId: true } },
-            },
-          },
+          requestedBy: { select: { user: { select: { id: true } } } },
+          consultationPlan: { select: CANCEL_ACTOR_PLAN_SELECT },
         },
       },
       subscription: {
         select: {
           requestedById: true,
-          requestedBy: { select: { userId: true } },
-          subscriptionPlan: {
-            select: {
-              consultantProfileId: true,
-              consultantProfile: { select: { userId: true } },
-            },
-          },
+          requestedBy: { select: { user: { select: { id: true } } } },
+          subscriptionPlan: { select: CANCEL_ACTOR_PLAN_SELECT },
         },
       },
       webinar: {
-        select: {
-          webinarPlan: {
-            select: {
-              consultantProfileId: true,
-              consultantProfile: { select: { userId: true } },
-            },
-          },
-        },
+        select: { webinarPlan: { select: CANCEL_ACTOR_PLAN_SELECT } },
       },
-      class: {
-        select: {
-          classPlan: {
-            select: {
-              consultantProfileId: true,
-              consultantProfile: { select: { userId: true } },
-            },
-          },
-        },
-      },
+      class: { select: { classPlan: { select: CANCEL_ACTOR_PLAN_SELECT } } },
     },
   });
 }
@@ -89,141 +72,27 @@ type PreviewAppointment = NonNullable<
   Awaited<ReturnType<typeof loadPreviewAppointment>>
 >;
 
-type ActorRoles = {
-  isParticipant: boolean;
-  consultantUserId: string | null;
-  consulteeUserId: string | null;
-};
-
-/**
- * Who the viewer is on this booking, mirroring the POST route's derivation
- * branch for branch. Note what the group-event branches do NOT say: an attendee
- * is not a participant of a class or webinar here, because the POST route does
- * not treat them as one either. Attendees leave through the roster route, which
- * refunds one seat under the notice tiers; this route quotes the organiser's
- * act, which cancels the whole event.
- */
-function deriveActorRoles(
-  appointment: PreviewAppointment,
-  actor: {
-    consultantProfileId?: string | null;
-    consulteeProfileId?: string | null;
-  },
-): ActorRoles {
-  const actorConsultantProfileId = actor.consultantProfileId;
-  const actorConsulteeProfileId = actor.consulteeProfileId;
-
-  if (appointment.consultation) {
-    const plan = appointment.consultation.consultationPlan;
-    return {
-      consultantUserId: plan?.consultantProfile?.userId ?? null,
-      consulteeUserId: appointment.consultation.requestedBy?.userId ?? null,
-      isParticipant:
-        (!!actorConsultantProfileId &&
-          actorConsultantProfileId === plan?.consultantProfileId) ||
-        (!!actorConsulteeProfileId &&
-          actorConsulteeProfileId === appointment.consultation.requestedById),
-    };
-  }
-  if (appointment.subscription) {
-    const plan = appointment.subscription.subscriptionPlan;
-    return {
-      consultantUserId: plan?.consultantProfile?.userId ?? null,
-      consulteeUserId: appointment.subscription.requestedBy?.userId ?? null,
-      isParticipant:
-        (!!actorConsultantProfileId &&
-          actorConsultantProfileId === plan?.consultantProfileId) ||
-        (!!actorConsulteeProfileId &&
-          actorConsulteeProfileId === appointment.subscription.requestedById),
-    };
-  }
-  if (appointment.webinar) {
-    const plan = appointment.webinar.webinarPlan;
-    return {
-      consultantUserId: plan?.consultantProfile?.userId ?? null,
-      consulteeUserId: null,
-      isParticipant:
-        !!actorConsultantProfileId &&
-        actorConsultantProfileId === plan?.consultantProfileId,
-    };
-  }
-  if (appointment.class) {
-    const plan = appointment.class.classPlan;
-    return {
-      consultantUserId: plan?.consultantProfile?.userId ?? null,
-      consulteeUserId: null,
-      isParticipant:
-        !!actorConsultantProfileId &&
-        actorConsultantProfileId === plan?.consultantProfileId,
-    };
-  }
-  return {
-    isParticipant: false,
-    consultantUserId: null,
-    consulteeUserId: null,
-  };
-}
-
 /**
  * What cancelling a class or webinar actually pays back.
  *
  * The POST route does not tier a group event at all: it hands the whole event
- * to `refundWholeEventPayments`, which refunds EVERY attendee's seat in full,
- * whoever pressed cancel. Quoting that act against the viewer's own payment was
- * the defect — an organiser owns no seat, so the preview found no payment and
- * told them "no refund at this notice" while the click was about to return
- * every attendee's money.
- *
- * The payment set is `refundWholeEventPayments`' own, filter for filter:
- * SUCCEEDED, live (`deletedAt: null`) seats with no amount floor — free_
- * (credit-funded) seats refund too, via credit restoration (#1161), and
- * retired rows stay out (#781 §B). A quote that reads a different set than
- * the charge is just a second opinion. Each seat is worth its refundable
- * balance rather than its gross, because that is what a full refund of an
- * already partly-refunded seat returns.
+ * to `refundWholeEventPayments`, whoever pressed cancel. The quote reads that
+ * door's own seat plan, so it can never be a second opinion: each live paid
+ * seat is owed what it was not delivered, clamped to its refundable balance,
+ * and a seat already released is owed nothing.
  */
 async function quoteWholeEventRefund(
   kind: "class" | "webinar",
   eventId: string,
 ) {
-  const seats = await prisma.payment.findMany({
-    where: {
-      appointment:
-        kind === "webinar" ? { webinarId: eventId } : { classId: eventId },
-      paymentStatus: "SUCCEEDED",
-      deletedAt: null,
-    },
-    select: {
-      id: true,
-      amount: true,
-      currency: true,
-      ...REFUNDABLE_BALANCE_SELECT,
-    },
-  });
   // #1780 D-5 — a class series pays back only what each seat was not delivered.
   const ledgers = kind === "class" ? await classSeriesLedgers(eventId) : null;
-  const owed = (seat: (typeof seats)[number]) => {
-    const balance = refundableBalancePaise(Number(seat.amount), seat);
-    const ledger = ledgers?.get(seat.id);
-    return ledger
-      ? Math.max(
-          0,
-          Math.min(
-            balance,
-            Number(seriesCancelRefundPaise(ledger, seat.amount)) -
-              (ledger.occRefundedPaise ?? 0),
-          ),
-        )
-      : balance;
-  };
-
+  const quote = await quoteWholeEventRefunds(kind, eventId, ledgers);
   return {
-    estimatedRefundPaise: seats.reduce((total, seat) => total + owed(seat), 0),
+    estimatedRefundPaise: quote.owedPaise,
     /** Paid seats — the attendees who are owed something, not the roster. */
-    attendeeCount: seats.length,
-    // Settlement is INR-only by design, so the seats of one event share a
-    // currency and the sum above is denominated in it.
-    currency: seats[0]?.currency ?? "INR",
+    attendeeCount: quote.seats,
+    currency: quote.currency,
   };
 }
 
@@ -238,12 +107,7 @@ async function quoteWholeEventRefund(
  */
 async function quoteIndividualBooking(
   appointment: PreviewAppointment,
-  actor: {
-    id: string;
-    consultantProfileId?: string | null;
-  },
-  roles: ActorRoles,
-  isPrivilegedUser: boolean,
+  isConsultantInitiated: boolean,
 ) {
   const bookingRef = {
     appointmentId: appointment.id,
@@ -253,6 +117,12 @@ async function quoteIndividualBooking(
     webinarId: appointment.webinarId,
   };
   const ctx = await resolveBookingRefundContext(bookingRef);
+  const windowRefusal = cancelWindowRefusal(
+    ctx.windowState,
+    { appointmentId: appointment.id },
+    isConsultantInitiated ? "host" : "buyer",
+  );
+  if (windowRefusal) throw windowRefusal;
 
   // The context deliberately ignores zero-amount payments, so a booking paid
   // entirely in referral credits reads as unpaid there. Its `free_` intent is
@@ -264,12 +134,8 @@ async function quoteIndividualBooking(
       deletedAt: null,
     },
     orderBy: { createdAt: "asc" },
-    select: { currency: true, paymentIntent: true },
+    select: { id: true, currency: true, paymentIntent: true },
   });
-
-  const isConsultantInitiated =
-    (!!actor.consultantProfileId && roles.consultantUserId === actor.id) ||
-    (isPrivilegedUser && actor.id !== roles.consulteeUserId);
 
   // #1319 — the notice tier, the proration and the clamp are the POST route's
   // own code now, not a restatement of it. An unpaid booking quotes off zeros,
@@ -280,8 +146,10 @@ async function quoteIndividualBooking(
     slotsTotal: ctx.slotsTotal,
     sessionsRemaining: ctx.sessionsRemaining,
     sessionsTotal: ctx.sessionsTotal,
+    sessionsRefunded: ctx.sessionsRefunded,
     sessionsCompleted: ctx.sessionsCompleted,
     scheduledStarts: ctx.scheduledStarts,
+    alreadyRefundedPaise: ctx.alreadyRefundedPaise,
     isSubscription: !!appointment.subscriptionId,
     isConsultantInitiated,
     // #1500 — a booking funded entirely by referral credit. The rail alone is not
@@ -302,6 +170,12 @@ async function quoteIndividualBooking(
     // a ₹0 refund next to a 100% tier, which is what a credit-funded quote looks
     // like when only the money fields are read.
     creditRestoresInFull: quote.creditRestoresInFull,
+    // A credit-funded plan with sessions held: the rest is returned by hand,
+    // unless no referral credit is still consumed (a 100% discount).
+    creditReturnNeedsReview:
+      quote.creditReturnNeedsReview &&
+      !!bookingPayment &&
+      (await creditStillUsedPaise(prisma, bookingPayment.id)) > 0,
     currency: bookingPayment?.currency ?? "INR",
     hoursUntilNextSession: ctx.hoursUntilNextSession,
     // Only true when proration actually moves the number — an untouched
@@ -322,6 +196,9 @@ async function quoteIndividualBooking(
         : null,
     wholeEvent: false,
     attendeeCount: null,
+    // The click echoes this back, so a capture landing after an unpaid quote
+    // re-quotes instead of cancelling a paid booking at the policy tier.
+    expectedPaid: ctx.paidPayment !== null,
   };
 }
 
@@ -406,20 +283,10 @@ export async function GET(
       );
     }
 
-    // Authorization mirrors the POST route exactly. A preview that answers
-    // where the cancel would 403 is a quote for an action the viewer cannot
-    // take — worse than no quote. Trials are absent from both for the same
-    // reason: the POST route has no trial branch, so they fall through to the
-    // privileged/org-admin checks here too.
-    const roles = deriveActorRoles(appointment, session.user);
-
-    const isPrivilegedUser = isPrivileged(session.user.role);
-    const isOrgAdminActor =
-      !roles.isParticipant &&
-      !isPrivilegedUser &&
-      (await isOrgAdminOfAppointment(session.user.id, appointment, "cancel"));
-
-    if (!roles.isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
+    // One actor derivation with the POST, so the preview neither refuses a
+    // viewer the cancel admits nor quotes a tier the cancel would not charge.
+    const actor = await resolveCancelActor(appointment, session.user);
+    if (!actor.authorized) {
       return NextResponse.json(
         { error: "You are not authorized to cancel this appointment" },
         { status: 403 },
@@ -429,8 +296,8 @@ export async function GET(
     // #1527 decision 6 — same refusal as the POST: no quote for a cancel a
     // suspended learner can't make.
     if (
-      roles.consulteeUserId === session.user.id &&
-      !isPrivilegedUser &&
+      actor.isLearner &&
+      !actor.isPrivilegedUser &&
       (await isSuspendedInFundingOrg(
         session.user.id,
         appointment.organizationId,
@@ -443,6 +310,12 @@ export async function GET(
     // the POST route refunds the entire roster in full. Quote that instead.
     const groupEvent = groupEventOf(appointment);
     if (groupEvent) {
+      const windowRefusal = cancelWindowRefusal(
+        await readCancelWindowState(prisma, appointment.id),
+        { appointmentId: appointment.id },
+        actor.isConsultantInitiated ? "host" : "buyer",
+      );
+      if (windowRefusal) throw windowRefusal;
       return NextResponse.json(
         await wholeEventPreview(groupEvent.kind, groupEvent.id),
         NO_STORE,
@@ -450,15 +323,16 @@ export async function GET(
     }
 
     return NextResponse.json(
-      await quoteIndividualBooking(
-        appointment,
-        session.user,
-        roles,
-        isPrivilegedUser,
-      ),
+      await quoteIndividualBooking(appointment, actor.isConsultantInitiated),
       NO_STORE,
     );
   } catch (error) {
+    if (isRefusal(error)) {
+      return NextResponse.json(
+        { error: error.userMessage, code: error.code },
+        { status: error.httpStatus, ...NO_STORE },
+      );
+    }
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "bookings" } },

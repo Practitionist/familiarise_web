@@ -17,10 +17,6 @@ export const ENABLE_TDS_194O_GROSS =
 export const ENABLE_TDS_ADMIN_VIEW =
   process.env.ENABLE_TDS_ADMIN_VIEW === "true";
 
-/** Better Stack Telemetry sink for operational events (#776 §K). */
-export const ENABLE_BETTERSTACK_TELEMETRY =
-  process.env.ENABLE_BETTERSTACK_TELEMETRY === "true";
-
 /** Dunning stage-3 booking-suspend cascade (#812). */
 export const ENABLE_DUNNING_SUSPEND =
   process.env.ENABLE_DUNNING_SUSPEND === "true";

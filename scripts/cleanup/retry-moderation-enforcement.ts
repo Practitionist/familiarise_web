@@ -27,8 +27,9 @@
 import type {
   ModerationActionType,
   ModerationReportType,
+  Prisma,
 } from "@prisma/client";
-import prisma from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -55,6 +56,8 @@ export interface ModerationRetryResult {
   collaboratorRecovered: number;
   /** #1593 — erasure requests whose owed Stream revocations were re-driven. */
   erasureRevocationsRecovered: number;
+  /** Queued cancellation, collaborator and org-removal revocations that landed. */
+  accessRevocationsRecovered: number;
   errors: string[];
 }
 
@@ -80,6 +83,63 @@ const RETRYABLE_ACTIONS: ModerationActionType[] = [
   "CONTENT_REMOVED",
   "USER_REINSTATED",
 ];
+
+// `stream: "failed"` and `collaboratorRevocation: "failed"` are the queue; a
+// capped row is marked "gave_up" and so falls out of this selector by construction.
+const FAILED_ENFORCEMENT_WHERE: Prisma.ModerationActionWhereInput = {
+  actionType: { in: RETRYABLE_ACTIONS },
+  OR: [
+    { sideEffects: { path: ["stream"], equals: "failed" } },
+    {
+      sideEffects: { path: ["collaboratorRevocation"], equals: "failed" },
+    },
+  ],
+};
+
+/** Owed revocations due now; a row past the attempt budget already wrote its give-up. */
+function streamRevocationDueWhere(
+  now: Date,
+): Prisma.StreamRevocationRetryWhereInput {
+  return {
+    status: { in: ["PENDING", "FAILED"] },
+    attempts: { lt: MAX_ATTEMPTS },
+    OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
+  };
+}
+
+function vendorErasureDueWhere(now: Date): Prisma.VendorErasureRetryWhereInput {
+  return {
+    status: { in: ["PENDING", "FAILED"] },
+    attempts: { lt: MAX_ATTEMPTS },
+    OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
+  };
+}
+
+/** Ticker idle probe: a failed enforcement, an owed revocation or a vendor erasure due now. */
+export async function hasModerationRetryWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const action = await db.moderationAction.findFirst({
+    where: FAILED_ENFORCEMENT_WHERE,
+    select: { id: true },
+  });
+  if (action) return true;
+  if (outOfTime()) return true;
+  const revocation = await db.streamRevocationRetry.findFirst({
+    where: streamRevocationDueWhere(now),
+    select: { id: true },
+  });
+  if (revocation) return true;
+  if (outOfTime()) return true;
+  const erasure = await db.vendorErasureRetry.findFirst({
+    where: vendorErasureDueWhere(now),
+    select: { id: true },
+  });
+  return erasure !== null;
+}
 
 type ActionRow = {
   id: string;
@@ -177,20 +237,8 @@ async function retryModerationEnforcementUnlocked(
   const limit = opts.limit ?? 100;
   const giveUpOlderThan = new Date(Date.now() - giveUpAfterHours * 3_600_000);
 
-  // `stream: "failed"` (and, since #1580, `collaboratorRevocation: "failed"`)
-  // is the queue. The terminal marker is a different value ("gave_up"), so a
-  // capped row falls out of this selector by construction rather than by a
-  // negated JSON filter that a null path would defeat.
   const rows = (await prisma.moderationAction.findMany({
-    where: {
-      actionType: { in: RETRYABLE_ACTIONS },
-      OR: [
-        { sideEffects: { path: ["stream"], equals: "failed" } },
-        {
-          sideEffects: { path: ["collaboratorRevocation"], equals: "failed" },
-        },
-      ],
-    },
+    where: FAILED_ENFORCEMENT_WHERE,
     select: {
       id: true,
       actionType: true,
@@ -220,6 +268,7 @@ async function retryModerationEnforcementUnlocked(
     skipped: 0,
     collaboratorRecovered: 0,
     erasureRevocationsRecovered: 0,
+    accessRevocationsRecovered: 0,
     errors: [],
   };
 
@@ -250,7 +299,7 @@ async function retryModerationEnforcementUnlocked(
 
 async function executeErasureRevocationRow(
   row: {
-    planType: string;
+    planType: string | null;
     planId: string;
     erasureRequest: { userId: string };
   },
@@ -273,6 +322,7 @@ async function executeErasureRevocationRow(
       return errMsg(error_);
     }
   }
+  if (!row.planType) return "Erasure retry has no plan type";
   const planType = row.planType === "WEBINAR" ? "webinar" : "class";
   try {
     const { success } = await deps.revokeCollaboratorAccess(
@@ -300,9 +350,11 @@ async function recordErasureOutboxOutcome(params: {
   now: Date;
   result: ModerationRetryResult;
   settledRequestIds: Set<string>;
+  recovered?: "erasureRevocationsRecovered" | "accessRevocationsRecovered";
 }): Promise<void> {
   const { delegate, row, error, errorLabel, now, result, settledRequestIds } =
     params;
+  const recovered = params.recovered ?? "erasureRevocationsRecovered";
   const attempts = row.attempts + 1;
   const gaveUp = Boolean(error) && attempts >= MAX_ATTEMPTS;
   await delegate.update({
@@ -330,7 +382,7 @@ async function recordErasureOutboxOutcome(params: {
     }
     result.errors.push(`${errorLabel} ${row.id}: ${error}`);
   } else {
-    result.erasureRevocationsRecovered++;
+    result[recovered]++;
     if (row.erasureRequestId) {
       settledRequestIds.add(row.erasureRequestId);
     }
@@ -347,16 +399,17 @@ async function drainErasureRevocations(
   // #1593 — the outbox `scrubUser` writes inside its own transaction; a row
   // is owed until SUCCEEDED, and FAILED rows wait out their backoff slot.
   const rows = await prisma.streamRevocationRetry.findMany({
-    where: {
-      status: { in: ["PENDING", "FAILED"] },
-      OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
-    },
+    where: streamRevocationDueWhere(now),
     select: {
       id: true,
+      kind: true,
       erasureRequestId: true,
+      userId: true,
+      counterpartUserId: true,
       planType: true,
       planId: true,
       attempts: true,
+      createdAt: true,
       erasureRequest: { select: { userId: true } },
     },
     orderBy: { createdAt: "asc" },
@@ -368,20 +421,44 @@ async function drainErasureRevocations(
     await import("@/lib/compliance/erasure/scrub-user");
   const { revokeCollaboratorAccess } =
     await import("@/lib/collaborators/service");
+  const { redriveAccessRevocation } =
+    await import("@/lib/stream/access-revocation");
   for (const row of rows) {
-    const error = await executeErasureRevocationRow(row, {
-      principalPrefix: STREAM_PRINCIPAL_PLAN_ID_PREFIX,
-      eraseStreamPrincipalFootprint,
-      revokeCollaboratorAccess,
-    });
+    const { kind } = row;
+    let error: string | null;
+    if (kind === "ERASURE_REVOKE") {
+      error = row.erasureRequest
+        ? await executeErasureRevocationRow(
+            { ...row, erasureRequest: row.erasureRequest },
+            {
+              principalPrefix: STREAM_PRINCIPAL_PLAN_ID_PREFIX,
+              eraseStreamPrincipalFootprint,
+              revokeCollaboratorAccess,
+            },
+          )
+        : "Erasure retry has no erasure request";
+    } else if (row.userId) {
+      error = await redriveAccessRevocation({
+        ...row,
+        kind,
+        userId: row.userId,
+      }).catch((error_: unknown) => errMsg(error_));
+    } else {
+      error = `${kind} retry has no user`;
+    }
     await recordErasureOutboxOutcome({
       delegate: prisma.streamRevocationRetry,
       row,
       error,
-      errorLabel: "erasure-revoke",
+      errorLabel:
+        kind === "ERASURE_REVOKE" ? "erasure-revoke" : "access-revoke",
       now,
       result,
       settledRequestIds,
+      recovered:
+        kind === "ERASURE_REVOKE"
+          ? "erasureRevocationsRecovered"
+          : "accessRevocationsRecovered",
     });
   }
 }
@@ -402,11 +479,7 @@ async function drainVendorErasureRetries(
   if (!prisma.vendorErasureRetry?.findMany) return;
   const now = new Date();
   const rows = await prisma.vendorErasureRetry.findMany({
-    where: {
-      status: { in: ["PENDING", "FAILED"] },
-      attempts: { lt: MAX_ATTEMPTS },
-      OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
-    },
+    where: vendorErasureDueWhere(now),
     select: {
       id: true,
       erasureRequestId: true,

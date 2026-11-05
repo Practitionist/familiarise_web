@@ -30,7 +30,7 @@ function journalDb() {
         },
       ),
     },
-    ledgerAccount: { upsert: jest.fn().mockResolvedValue({}) },
+    ledgerAccount: { createMany: jest.fn().mockResolvedValue({ count: 0 }) },
     ledgerEntry: {
       groupBy: jest.fn(async ({ where }: { where: { accountId: string } }) =>
         ["DEBIT", "CREDIT"].map((direction) => ({

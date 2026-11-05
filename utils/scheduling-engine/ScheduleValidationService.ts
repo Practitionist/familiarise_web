@@ -7,7 +7,7 @@
 
 import { reportSentryError } from "@/lib/observability/report";
 import prisma, { type PrismaLike } from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import {
   isDeadOccurrence,
   SCHEDULING_INTERVAL_MS,
@@ -41,6 +41,7 @@ import {
   buildCohostCommitmentFilter,
   buildOccupiedAppointmentFilter,
   OCCUPYING_OCCURRENCE_WHERE,
+  timeHoldingParticipant,
 } from "./occupancyPolicy";
 import {
   MAX_CLASS_SESSIONS_PER_DAY,
@@ -130,50 +131,32 @@ export function isOccupiedByLiveAppointment(
 }
 
 /**
- * Service for validating slot allocations
- */
-/**
- * The structured twin of a `[CONFLICT]` string: which booking and whose, so
- * the validate routes never parse prose. Slot is seconds-precision ISO, the
- * shape those routes already report.
+ * The structured twin of a `[CONFLICT]` string: which booking, and whether it
+ * sits on the consultant's own calendar (otherwise the consultee is the busy
+ * party). Never whose booking it is: a conflict names a time, not a person.
+ * Slot is seconds-precision ISO, the shape the validate routes report.
  */
 function conflictDetailOf(
   slot: Date,
   appointment: {
     id: string;
-    consultation: {
-      requestedBy: { user: { id: string; name: string | null } | null } | null;
-    } | null;
-    subscription: {
-      requestedBy: { user: { id: string; name: string | null } | null } | null;
-    } | null;
-    webinar: { webinarPlan: { title: string } | null } | null;
-    class: { classPlan: { title: string } | null } | null;
+    consultation: unknown;
+    subscription: unknown;
+    webinar: unknown;
+    class: unknown;
   },
+  onConsultantCalendar: boolean,
 ): ConflictDetail {
-  const requester =
-    appointment.consultation?.requestedBy?.user ??
-    appointment.subscription?.requestedBy?.user ??
-    null;
   let type: ConflictDetail["type"] = "Booking";
-  let title: string | null = null;
   if (appointment.consultation) type = "Consultation";
   else if (appointment.subscription) type = "Subscription";
-  else if (appointment.webinar) {
-    type = "Webinar";
-    title = appointment.webinar.webinarPlan?.title ?? null;
-  } else if (appointment.class) {
-    type = "Class";
-    title = appointment.class.classPlan?.title ?? null;
-  }
+  else if (appointment.webinar) type = "Webinar";
+  else if (appointment.class) type = "Class";
   return {
     slot: slot.toISOString().slice(0, 19),
     appointmentId: appointment.id,
     type,
-    otherParty: requester
-      ? { userId: requester.id, name: requester.name }
-      : null,
-    title,
+    onConsultantCalendar,
   };
 }
 
@@ -287,12 +270,44 @@ export class ScheduleValidationService {
        * (mirrors assertCollaboratorsFree's ownAppointmentIds).
        */
       ownAppointmentIds?: string[];
+      /** How far ahead every slot must start (`leadMsFor`); 15 min by default. */
+      leadTimeMs?: number;
     },
   ): Promise<ValidationResult> {
     // Universal validations (apply to all event types)
-    const futureCheck = this.validateSlotsInFuture(slots);
-    if (!futureCheck.isValid) return futureCheck;
+    const futureCheck = this.validateSlotsInFuture(
+      slots,
+      options?.leadTimeMs ?? MINIMUM_BOOKING_LEAD_TIME_MS,
+    );
+    // Too soon never hides a conflict or an availability gap: the rest runs
+    // regardless and both sets of findings come back.
+    const rest = await this.validateBeyondLeadTime(
+      eventType,
+      eventId,
+      slots,
+      consultant,
+      config,
+      excludeAppointmentIds,
+      options,
+    );
+    if (futureCheck.isValid) return rest;
+    return {
+      ...rest,
+      isValid: false,
+      errors: [...futureCheck.errors, ...rest.errors],
+    };
+  }
 
+  /** Every check of `validate` but the lead time. */
+  private async validateBeyondLeadTime(
+    eventType: EventType,
+    eventId: string,
+    slots: Date[],
+    consultant: ConsultantAllocationData,
+    config: EventConfig,
+    excludeAppointmentIds: string[] | undefined,
+    options: Parameters<ScheduleValidationService["validate"]>[6],
+  ): Promise<ValidationResult> {
     if (!options?.overrideAvailabilityWindow) {
       const scheduleCheck = this.validateMatchesSchedule(slots, consultant);
       if (!scheduleCheck.isValid) return scheduleCheck;
@@ -661,43 +676,24 @@ export class ScheduleValidationService {
   }
 
   /**
-   * UNIVERSAL VALIDATOR: Ensure all slots are in the future
-   *
-   * FIX: Added 5-second buffer to prevent race conditions
-   *
-   * RACE CONDITION SCENARIO (before fix):
-   * 1. Auto-allocation finds slot at 10:00:00.000
-   * 2. By the time validation runs, it's 10:00:00.001
-   * 3. Slot rejected as "in the past"
-   * 4. Auto-allocation fails despite valid slot
-   *
-   * BUFFER RATIONALE:
-   * - 5 seconds accounts for processing time between operations
-   * - Prevents rejecting slots that become "now" during transaction
-   * - Still prevents genuine past slot attempts (minutes/hours old)
+   * UNIVERSAL VALIDATOR: every slot starts at least `leadTimeMs` from now (15
+   * minutes for a settled booking, 2 hours while the client still has to pay;
+   * see `leadMsFor`). One cutoff for the whole batch.
    */
-  private validateSlotsInFuture(slots: Date[]): ValidationResult {
-    const now = new Date();
-    // Fixed cutoff computed once — safe even for large slot arrays because
-    // the cutoff does not advance as the loop runs.
-    const BUFFER_MS = 5000; // 5-second processing time buffer
-    const cutoff = new Date(now.getTime() + BUFFER_MS);
-    const errors: string[] = [];
-
-    for (const slot of slots) {
-      if (slot < cutoff) {
-        const secondsUntilSlot = (slot.getTime() - now.getTime()) / 1000;
-        errors.push(
-          `[VALIDATION] Cannot allocate slots in the past or too soon: ${slot.toLocaleString()} ` +
-            `(${secondsUntilSlot >= 0 ? `only ${secondsUntilSlot.toFixed(1)}s` : `${Math.abs(secondsUntilSlot).toFixed(1)}s ago`}). ` +
-            `Slots must be at least 5 seconds in the future to allow for processing time.`,
-        );
-      }
-    }
-
+  private validateSlotsInFuture(
+    slots: Date[],
+    leadTimeMs: number,
+  ): ValidationResult {
+    const cutoff = Date.now() + leadTimeMs;
+    const tooSoon = slots.filter((slot) => slot.getTime() <= cutoff);
     return {
-      isValid: errors.length === 0,
-      errors,
+      isValid: tooSoon.length === 0,
+      errors:
+        tooSoon.length === 0
+          ? []
+          : [
+              `[TOO_SOON] ${tooSoon.length} time(s) start within ${Math.round(leadTimeMs / 60_000)} min: ${tooSoon.map((slot) => slot.toISOString()).join(", ")}`,
+            ],
       warnings: [],
     };
   }
@@ -739,6 +735,8 @@ export class ScheduleValidationService {
         ? [{ id: { notIn: excludeOccurrenceIds } }]
         : [];
     const errors: string[] = [];
+    // One clock for every liveness read below.
+    const now = new Date();
 
     if (slots.length === 0) {
       return { isValid: true, errors: [], warnings: [] };
@@ -794,7 +792,7 @@ export class ScheduleValidationService {
                   participants: {
                     some: {
                       userId: { in: participantIds },
-                      ...liveParticipant(),
+                      ...timeHoldingParticipant(now),
                     },
                   },
                 },
@@ -848,37 +846,28 @@ export class ScheduleValidationService {
                 ...occurrenceExclusion,
               ],
             },
-            select: { startsAt: true, endsAt: true },
-          },
-          // Only what the occupancy rule and the conflict message read.
-          consultation: {
             select: {
-              status: true,
-              bookingSource: true,
-              requestedBy: {
-                select: { user: { select: { id: true, name: true } } },
-              },
+              startsAt: true,
+              endsAt: true,
+              consultantProfileId: true,
             },
           },
-          subscription: {
-            select: {
-              status: true,
-              bookingSource: true,
-              requestedBy: {
-                select: { user: { select: { id: true, name: true } } },
-              },
-            },
-          },
+          // Only what the occupancy rule and the conflict detail read.
+          consultation: { select: { status: true, bookingSource: true } },
+          subscription: { select: { status: true, bookingSource: true } },
           payment: { select: { expiresAt: true, paymentStatus: true } },
-          // #1721 QA — a group event names itself by plan title, so the
-          // consultant's own conflict view is never a nameless "Booking".
-          webinar: { select: { webinarPlan: { select: { title: true } } } },
-          class: { select: { classPlan: { select: { title: true } } } },
+          webinar: { select: { id: true } },
+          class: { select: { id: true } },
+          // Whether the booking is on the consultant's own calendar.
+          participants: {
+            where: timeHoldingParticipant(now, consultantUserId),
+            select: { userId: true },
+            take: 1,
+          },
         },
       });
 
     // Step 3: Match conflicts back to specific proposed slots in JS
-    const now = new Date();
     const conflicts: ConflictDetail[] = [];
     for (const slot of slots) {
       const slotEnd = new Date(slot.getTime() + SCHEDULING_INTERVAL_MS);
@@ -898,16 +887,19 @@ export class ScheduleValidationService {
           continue;
         }
 
-        // Slot is genuinely booked - add error
-        // FIX: Use ISO string so the validate route regex can extract it for structured conflict reporting
-        let conflictDetails = `${slot.toISOString()}`;
-        if (existingAppointment.consultation) {
-          conflictDetails += ` (conflicts with consultation for ${existingAppointment.consultation.requestedBy?.user?.name || "unknown"})`;
-        } else if (existingAppointment.subscription) {
-          conflictDetails += ` (conflicts with subscription for ${existingAppointment.subscription.requestedBy?.user?.name || "unknown"})`;
-        }
-        errors.push(`[CONFLICT] Slot already booked: ${conflictDetails}`);
-        conflicts.push(conflictDetailOf(slot, existingAppointment));
+        // Time only, never whose booking: the other booking may be the
+        // consultee's own with another expert. The ISO start is what the
+        // validate routes extract; `conflicts` carries the structured detail.
+        errors.push(`[CONFLICT] Slot already booked: ${slot.toISOString()}`);
+        const onConsultantCalendar =
+          existingAppointment.participants.length > 0 ||
+          (consultantProfileId !== undefined &&
+            existingAppointment.occurrences.some(
+              (o) => o.consultantProfileId === consultantProfileId,
+            ));
+        conflicts.push(
+          conflictDetailOf(slot, existingAppointment, onConsultantCalendar),
+        );
       }
     }
 
@@ -1285,11 +1277,11 @@ export class ScheduleValidationService {
       this.prismaClient as PrismaLike,
     );
 
-    // #1554 — one wrapper, N occurrences: the weekly and daily counts are
+    // #1554 — one wrapper, N occurrences: the cycle and daily counts are
     // over the wrapper's live rows. The tentative rows still exist in the DB
     // during a re-allocation after a reschedule and would otherwise count as
-    // "existing calls", causing a false weekly-limit violation when the
-    // consultant proposes the same number of new slots (1 per week).
+    // "existing calls", causing a false cycle-cap violation when the
+    // consultant proposes the same number of new slots.
     const subscriptionOccurrences =
       await this.prismaClient.appointmentOccurrence.findMany({
         where: { appointment: { subscriptionId }, deletedAt: null },
@@ -1315,8 +1307,8 @@ export class ScheduleValidationService {
     );
 
     // #898 follow-up — server-side per-DAY cap (subscription ≤1/day). The
-    // SubscriptionValidationService enforces the weekly limit; the per-day cap
-    // previously lived only in allocation selection + the client guard.
+    // SubscriptionValidationService enforces the rolling cycle cap; the per-day
+    // cap previously lived only in allocation selection + the client guard.
     // Constant shared with the allocator (utils/scheduling-engine/sessionCaps.ts)
     // so selection and validation can never disagree.
     const perDayErrors = this.validatePerDaySessionCap(

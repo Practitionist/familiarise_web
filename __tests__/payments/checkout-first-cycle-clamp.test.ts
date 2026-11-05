@@ -89,11 +89,23 @@ import { checkoutSchema, type CheckoutInput } from "../../schemas/checkout";
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
 const START = new Date("2026-03-02T09:00:00.000Z");
+// The buyer is on the page the day before their chosen start.
+beforeEach(() => {
+  jest.useFakeTimers({
+    advanceTimers: true,
+    now: new Date("2026-03-01T12:00:00.000Z"),
+  });
+});
+afterEach(() => {
+  jest.useRealTimers();
+});
 
 /** A live subscription of this plan the buyer already holds (#1766). */
 function heldRow(completed: number) {
   return {
     sessionsTotal: 24,
+    sessionsPerWeek: null,
+    sessionsRefunded: 0,
     schedulingPeriodStartsAt: new Date("2026-02-02T00:00:00.000Z"),
     schedulingTimezone: "Asia/Kolkata",
     subscriptionPlan: {
@@ -120,7 +132,9 @@ function makeTx(liveRows: ReturnType<typeof heldRow>[] = []) {
         id: "plan-1",
         price: 240_000,
         durationInMonths: 3,
+        durationInWeeks: null,
         sessionsPerWeek: 2,
+        sessionDurationInHours: 1,
         totalSessions: 24,
         consultantProfileId: "cp-1",
         consultantProfile: { user: { timezone: "Asia/Kolkata" } },
@@ -164,11 +178,16 @@ it("persists end = start + 7 zone-days and sessionsTotal = 24 despite a 90-day c
 
   const { data } = (tx.subscription.create as jest.Mock).mock.calls[0][0];
   expect(data.schedulingPeriodStartsAt).toEqual(START);
-  // 02 Mar IST is day one; the seventh day ends 08 Mar 23:59:59.999 IST.
+  // 02 Mar IST is day one; the window ends (exclusive) at 09 Mar 00:00 IST.
   expect(data.schedulingPeriodEndsAt.toISOString()).toBe(
-    "2026-03-08T18:29:59.999Z",
+    "2026-03-08T18:30:00.000Z",
   );
+  // The plan end is written once, here: start + 3 months on the IST clock.
+  expect(data.planEndsAt.toISOString()).toBe("2026-06-02T09:00:00.000Z");
   expect(data.sessionsTotal).toBe(24);
+  // The cadence and length are frozen with it; plan edits never move them.
+  expect(data.sessionsPerWeek).toBe(2);
+  expect(data.sessionMinutes).toBe(60);
   expect(data.schedulingTimezone).toBe("Asia/Kolkata");
   // The buyer holds a seat on the placeholder from the moment of purchase.
   const seated = (tx.appointmentParticipant.createMany as jest.Mock).mock
@@ -183,7 +202,7 @@ it("persists end = start + 7 zone-days and sessionsTotal = 24 despite a 90-day c
   ]);
 });
 
-it("converts the pair's completed trial through the CAS helper, never a bare update", async () => {
+function trialTx() {
   const tx = makeTx();
   const trial = {
     findFirst: jest.fn().mockResolvedValue({ id: "trial-1" }),
@@ -195,8 +214,17 @@ it("converts the pair's completed trial through the CAS helper, never a bare upd
     update: jest.fn(),
   };
   Object.assign(tx, { trial });
+  Object.assign(tx.subscription, {
+    findUnique: jest.fn().mockResolvedValue({
+      requestedById: "consultee-profile-1",
+      subscriptionPlan: { consultantProfileId: "cp-1" },
+    }),
+  });
+  return { tx, trial };
+}
 
-  await handleSubscriptionCheckout(
+const checkout = (tx: ReturnType<typeof makeTx>, skipPayment: boolean) =>
+  handleSubscriptionCheckout(
     tx,
     {
       appointmentType: "SUBSCRIPTION",
@@ -204,11 +232,21 @@ it("converts the pair's completed trial through the CAS helper, never a bare upd
       schedulingPeriodStartsAt: START.toISOString(),
     } as unknown as CheckoutInput,
     "consultee-profile-1",
-    false,
+    skipPayment,
     null,
     "policy-1",
   );
 
+it("a card checkout leaves the completed trial alone: it converts at capture", async () => {
+  const { tx, trial } = trialTx();
+  await checkout(tx, false);
+  expect(trial.updateMany).not.toHaveBeenCalled();
+  expect(trial.update).not.toHaveBeenCalled();
+});
+
+it("a checkout paid on the spot converts the pair's trial through the CAS helper", async () => {
+  const { tx, trial } = trialTx();
+  await checkout(tx, true);
   expect(trial.update).not.toHaveBeenCalled();
   expect(trial.updateMany).toHaveBeenCalledWith({
     where: { id: "trial-1", status: { in: ["COMPLETED"] } },

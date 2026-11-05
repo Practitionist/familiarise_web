@@ -401,6 +401,64 @@ describe("lib/storage/r2-client", () => {
       expect(abortSignal?.aborted).toBe(false);
     });
 
+    it("stops a stalled source read even when underlying cancellation never settles", async () => {
+      const controller = new AbortController();
+      const canceled = jest.fn(() => new Promise<void>(() => undefined));
+      const stream = new ReadableStream<Uint8Array>({ cancel: canceled });
+      const fetchMock = r2FetchMock();
+      global.fetch = fetchMock as unknown as typeof fetch;
+      const upload = streamMultipartToR2({
+        key: "stalled.mp4",
+        stream,
+        signal: controller.signal,
+      });
+      const outcome = upload.then(
+        () => ({ error: null }),
+        (error: unknown) => ({ error }),
+      );
+      controller.abort(new Error("deadline"));
+      await expect(outcome).resolves.toEqual({
+        error: controller.signal.reason,
+      });
+      expect(canceled).toHaveBeenCalledWith(controller.signal.reason);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("aborts an open multipart upload when its source stalls, without completing it", async () => {
+      const controller = new AbortController();
+      const fetchMock = r2FetchMock();
+      global.fetch = fetchMock as unknown as typeof fetch;
+      const stream = new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new Uint8Array(9));
+        },
+      });
+      const upload = streamMultipartToR2({
+        key: "stalled-parts.mp4",
+        stream,
+        partSize: 4,
+        signal: controller.signal,
+      });
+      const outcome = upload.then(
+        () => ({ error: null }),
+        (error: unknown) => ({ error }),
+      );
+      await new Promise(setImmediate);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      controller.abort(new Error("deadline"));
+      await expect(outcome).resolves.toEqual({
+        error: controller.signal.reason,
+      });
+      expect(
+        fetchMock.mock.calls.some(([, init]) => init.method === "DELETE"),
+      ).toBe(true);
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) => init.method === "POST" && !url.includes("uploads"),
+        ),
+      ).toBe(false);
+    });
+
     it("XML-escapes part ETags in CompleteMultipartUpload", async () => {
       const fetchMock = r2FetchMock();
       global.fetch = fetchMock as unknown as typeof fetch;

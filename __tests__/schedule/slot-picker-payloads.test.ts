@@ -11,7 +11,7 @@
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    consultation: { findUnique: jest.fn() },
+    consultation: { findUnique: jest.fn(), count: jest.fn(async () => 0) },
     subscription: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
     webinar: { findUnique: jest.fn() },
@@ -299,6 +299,7 @@ describe("readAllocationRequest subscription entitlement", () => {
       schedulingPeriodEndsAt: new Date("2026-02-08T23:59:59.999Z"),
       schedulingTimezone: "UTC",
       sessionsTotal: 12,
+      sessionsRefunded: 0,
       requestedBy: { userId: "user-1", user: { name: "Buyer" } },
       subscriptionPlan: {
         title: "Intensive",
@@ -328,6 +329,7 @@ describe("readAllocationRequest subscription entitlement", () => {
     expect(request?.entitlement?.cycle.nextBatch).toBe(4);
     // The stored first-cycle period has lapsed: the window rolls to now.
     expect(request?.allowedStart).toEqual(NOW);
-    expect(request?.allowedEnd?.toISOString()).toBe("2026-03-08T23:59:59.999Z");
+    // Half-open: the window ends at the midnight after the seventh day.
+    expect(request?.allowedEnd?.toISOString()).toBe("2026-03-09T00:00:00.000Z");
   });
 });

@@ -108,3 +108,17 @@ obvious from the compliance side alone. `/finance` and `/enterprise` own it.
   never downgrade it to a database-only delete.
 
 For how the breach and MSME alert emails are routed and guarded, see [docs/email/README.md](../../../docs/email/README.md).
+
+## Breach deadline staging
+
+Preserve the boundary between recipient transactions and digest completion when
+refactoring `lib/compliance/databreach-deadline-alerts.ts`. Stage recipients
+sequentially with budget checks; keep email and notification obligations on the
+supplied transaction client. Aggregate errors before deciding completion, including
+an invalid officer configuration that must still allow eligible admins to stage.
+
+Retention and deadline workers preserve the original caller `startedAt` across maintenance checks, lease admission and batch slices. Check the budget after awaited selection/officer/chat work before admitting another write; timeouts leave continuation visible. Keep the existing consent-delete gate and stored retention deadlines. [Worker contracts and verification](../../../docs/maintenance/compliance-retention-workers.md) also document the ticker owner and operator recovery.
+
+## Retention windows
+
+Every log-like and audit table has a window, a legal driver and a named prune job. Read [the retention table](references/retention-windows.md) before adding or changing any of them; the same table is in `docs/compliance/02-dpdp-and-privacy.md`.

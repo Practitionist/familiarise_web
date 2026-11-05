@@ -289,7 +289,7 @@ export function validateCustomWindow(
     };
   }
   // A custom row has the same defect as a weekly one and for the same reason:
-  // `matchCustomSlotToDay` hands the allocator the row's raw `startsAt`, so an
+  // the allocator walks the row from its own `startsAt` (per day slice), so an
   // off-grid row mints off-grid candidate starts that checkout refuses.
   return gridRefusal(
     !isOnSchedulingGrid(startMs) || !isOnSchedulingGrid(endMs),

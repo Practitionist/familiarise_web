@@ -18,10 +18,11 @@ The organisation is on the Developer (free) plan (`docs/observability/sentry/06-
 ## 3. Exposure in this repo
 
 - `applyErrorBudget` in `sentry.shared.config.ts` is the `beforeSend` stage: it drops `expected` info events, assigns fingerprint families, throttles each key to one event per `INFRA_THROTTLE_MS` (one hour), and lets at most `BUDGET_BREAKER_MAX` (10) non-fatal events an hour through per process. Fatal events skip the breaker. It is per process only.
-- `resolveDefaultTracesSampleRate()` caps `tracesSampleRate` at 0.1 in production and preview (0.2 local), overridable by `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE`; `/api/cleanup/` traces sample at 0.02. Never set `1.0` in production or preview.
+- `resolveDefaultTracesSampleRate()` caps `tracesSampleRate` at 0.1 in production and preview (0.2 elsewhere), fixed in code with no env override; `/api/cleanup/` traces sample at 0.02. Never set `1.0` in production or preview.
 - Session replay is not configured anywhere (no replay integration or sample rates in `sentry.shared.config.ts` or `instrumentation-client.ts`), so it stays at the SDK default of off. Do not add replay without a budget.
 - `instrumentation-client.ts` loads `@sentry/nextjs` lazily and skips synthetic traffic when `navigator.webdriver` is true or the user agent matches `HeadlessChrome|Lighthouse|PTST`.
-- The ingest canary (`lib/observability/ingest-canary.ts`, target `sentry-ingest-canary` in `netlify/functions/cron-tick.mts`) runs every 6 hours (360 minutes), 120 stored events a month, because five-minute cadence would be 8,640 a month, 173 percent of the allowance. Its alert goes by email through Resend, never through Sentry.
+- The ingest canary (`lib/observability/ingest-canary.ts`, target `sentry-ingest-canary`) runs once a day and costs no error quota: it reads `stats_v2` with `SENTRY_STATS_TOKEN` instead of sending an event (the old six-hourly probe event cost about 120 stored errors a month). Its alert goes by email through Resend and as an error-level Better Stack line, never through Sentry.
+- Sentry is escalations only (`docs/decisions/2026-10-31-sentry-escalations-only.md`): one-off ticker failures, config skips, non-money business findings and every preview event stay out of it; money findings (wallet and ledger drift, the dispute deadline, refund reconcile) page once per new id set; Spike Protection is on.
 - `lib/observability/quota-alert.ts` emails once per period at 70 percent of the error quota, reading `stats_v2`.
 - Open exposure (issue #2145): database-unreachable (`P1001`) and connection-timeout failures have no budget family, so each failing request is limited only by the 10-an-hour breaker.
 

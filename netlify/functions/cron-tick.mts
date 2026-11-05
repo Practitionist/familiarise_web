@@ -1,555 +1,75 @@
 /**
  * Netlify scheduled ticker — ADR 27 (docs/enterprise/70-design-decisions/27-state-as-outbox-and-scheduled-ticker.md).
  *
- * Every five minutes this POSTs the `/api/cleanup/*` routes listed in
+ * Every five minutes this POSTs the cleanup routes and background destinations in
  * {@link TARGETS}: the money sweeps, the Novu and email outbox relays, the
  * booking sweeps, the session-outcome jobs, the drains, hourly payout
  * processing, the dispute and payout reconcilers, and the money batch jobs,
  * the daily ledger reconcile, the GST register and the quarterly TDS draft
- * inside their calendar windows ({@link TARGET_WINDOWS}). GitHub Actions runs
- * only non-money batch jobs and is NOT a backstop for a ticker target: a
- * target missing here runs nowhere unless a workflow names it.
- * A tick first reads the fleet switch `ops:active_cron_platform` and skips every
- * target unless this host is the active one ({@link otherActivePlatform}).
+ * inside their calendar windows ({@link TARGET_WINDOWS}), and the housekeeping,
+ * compliance and retention jobs. No workflow schedules a registry job, so a
+ * target missing here runs nowhere.
+ * Only the production deploy dispatches. A tick reads the fleet switch
+ * `ops:active_cron_platform` and skips every target unless this host is the
+ * active one ({@link otherActivePlatform}), then claims its five-minute slot
+ * in Postgres so a second dispatch of the same slot stands down.
  * It never writes money state itself: every target is `CRON_SECRET`-gated and
  * wraps its core in `withCronLock`, so overlapping runs answer 409 from the
  * loser — expected, not an error.
  *
- * Deliberately light: no `@netlify/functions` import, only `zod`,
- * `process.env` and the global `fetch`/`AbortController` the Netlify
- * Functions runtime already provides. `@sentry/node` and the shared error
+ * Deliberately light: no `@netlify/functions` import, only `zod`, the
+ * Sentry-free Better Stack emitter, `process.env` and the global
+ * `fetch`/`AbortController` the Netlify Functions runtime already provides. `@sentry/node` and the shared error
  * budget are imported lazily, only for the missing-secret fatal and for
  * {@link alertFailedTargets}.
  *
  * The tick always answers 200; see {@link statusFor} for why.
  */
 
+import { createHash } from "node:crypto";
 import { z } from "zod";
+import {
+  capToTick,
+  scheduledTargets,
+  scheduleFor,
+  targetRequest,
+  isFirstDueTickOfHour,
+  TARGET_WINDOWS,
+  TARGET_BACKGROUND_FUNCTIONS,
+  type Target,
+} from "../../lib/cron/schedule";
+import {
+  isPlatformErrorBody,
+  isRepeatedFailure,
+  lastRunFailed,
+  streakReportSchema,
+  type StreakReport,
+} from "../../lib/cron/failure-streak";
 import { jobOutcomeSchema, type JobOutcome } from "../../lib/cron/job-outcome";
+import { offProductionDeploy } from "../../lib/cron/deploy-context";
+import {
+  emitTelemetryLog,
+  pendingAgesSchema,
+  type PendingAges,
+} from "../../lib/observability/betterstack-telemetry";
 
 export const config = { schedule: "*/5 * * * *" };
 
-/** Relative to `/api/cleanup/`. Order is cosmetic — every request fires in parallel. */
-const TARGETS = [
-  "sweep-stuck-webhook-events",
-  "reconcile-refunds",
-  "abandoned-payments",
-  "reconcile-payment-status",
-  "reconcile-orphaned-confirmations",
-  "sweep-orphaned-topup-captures",
-  "dispatch-outbound-webhooks",
-  "sync-payment-earnings",
-  "release-earnings",
-  // Email outbox relay; every 15 minutes at offset :00 (see TARGET_EVERY_MINUTES).
-  "retry-failed-emails",
-  // Novu outbox relay; every 10 minutes at offset :05 (see TARGET_EVERY_MINUTES).
-  "drain-notification-outbox",
-  // #1583 E-P0-04 / #1589 P-P0-01, N-P1-03 / #1591 J1-P1-05 / #1599 C-P1-06 —
-  // the booking sweeps whose hourly Actions twin let a lapsed pay-link, a
-  // stale proposal, a missed reminder or a dead hold sit for ~100 minutes.
-  // Every 15 minutes, see TARGET_EVERY_MINUTES; all five now READ `limit`
-  // (#1583 P1) and carry an entry below.
-  "expire-unpaid-trials",
-  "reschedule-proposals",
-  "appointment-reminders",
-  "tentative-occurrences",
-  "expire-stale-requests",
-  // Both gate money: auto-complete releases the earnings hold one hour after a
-  // session ends, and the no-show detector issues a 100% refund. No workflow
-  // runs either; this ticker is their only scheduler.
-  "auto-complete-appointments",
-  "detect-consultant-no-shows",
-  // #1780 row 4 — refunds a cancelled class session nobody made up in 14 days.
-  "settle-cancelled-sessions",
-  // Voids a declared platform incident's sessions and applies each learner's remedy.
-  "settle-platform-incidents",
-  // #1846 N2 — re-drives the auto-refunds the capture webhook tried once.
-  "retry-auto-refunds",
-  // #1859 M-P0-14 — SUCCEEDED with no appointment: the stranded-money cohort.
-  // Read-only alert; the healer rides `reconcile-orphaned-payments`.
-  "alert-orphaned-payments",
-  // Heals the stranded cohort: links late appointments, refunds the rest.
-  "reconcile-orphaned-payments",
-  // The Sentry ingest canary. Sentry answers 200 for sessions and transactions
-  // while discarding error events once the error allowance is spent, so nothing
-  // else in the system notices. It runs every 6 hours, not every tick: each run
-  // posts a real stored event, so cadence is a line item on the 5,000/month
-  // allowance (6 h = 120/month). See TARGET_EVERY_MINUTES and 06-ingest-canary.md.
-  "sentry-ingest-canary",
-  // Payout reconcilers: bounded, rotating on lastReconciledAt; alternate hours at :40.
-  "handle-stuck-payouts",
-  "reconcile-payout-status",
-  // Drains OrgDataExportJob (DPDP data export); every 10 minutes.
-  "process-data-exports",
-  // Drains StreamRevocationRetry and the VendorErasureRetry outbox (DPDP erasure); every 30 minutes.
-  "retry-moderation-enforcement",
-  // Vests or voids QUALIFYING referrals once the session is delivered and its refund window has passed.
-  "vest-referral-credits",
-  // Support SLA warn/breach outbox alerts, 28-day RESOLVED auto-close, and T-72h/T-24h dispute alerts.
-  "support-sla-sweep",
-  // Retention tombstones and the grace-window purge; hourly, bounded by `limit`.
-  "purge-deleted-documents",
-  // Disburses APPROVED consultant and org payouts hourly; still gated on ENABLE_LIVE_PAYOUTS.
-  "process-payouts",
-  // Polls Razorpay for open disputes whose webhook was missed; hourly at :00.
-  "reconcile-disputes",
-  // Money batch jobs: each fires only inside its TARGET_WINDOWS entry.
-  "create-payout-batch",
-  "settle-invoice-accruals",
-  "expire-referral-credits",
-  "gst-outward-register-export",
-  "generate-subscription-invoices",
-  "abandoned-org-top-ups",
-  "advance-program-cycles",
-  "auto-renew-contracts",
-  "irp-uploader",
-  "sweep-abandoned-overage-charges",
-  "expire-contracts",
-  "msme-payment-alerts",
-  "timeout-member-overages",
-  "dunning",
-  "wallet-low-balance",
-  "reconcile-gateway-settlements",
-  "reconcile-ledgers",
-  "tds-return-draft",
-] as const;
-
-type Target = (typeof TARGETS)[number];
-
-/** The batch size a target gets when it is not listed in {@link TARGET_LIMITS}. */
-const DEFAULT_LIMIT = 50;
-
-/**
- * #1459 — per-target overrides for the batch size. Fifty rows is only the right
- * bite for a sweep whose per-row cost is a database write; `abandoned-payments`
- * also makes a gateway round trip per payment, and at fifty it could not finish
- * inside {@link PER_TARGET_TIMEOUT_MS} on any tick.
- */
-const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
-  "abandoned-payments": 10,
-  "dispatch-outbound-webhooks": 15,
-  // #1654 — paced at 8 sends/s plus a provider round trip each, twenty rows
-  // fits its timeout.
-  "retry-failed-emails": 20,
-  // #1654 — one Novu round trip per row under a 5 s client timeout; twenty
-  // rows stays inside the target timeout even when Novu is slow.
-  "drain-notification-outbox": 20,
-  // #1708 — one Stream round trip per unchanneled row; ten fits the 20 s budget.
-  "reconcile-orphaned-confirmations": 10,
-  // One Serializable transaction per referral; ten fit the 20 s budget.
-  "vest-referral-credits": 10,
-  // #1780 — a gateway refund per seat; ten sessions fit the 20 s budget.
-  "settle-cancelled-sessions": 10,
-  // A gateway refund per remedy row, same bite as the session sweep.
-  "settle-platform-incidents": 10,
-  // #1846 N2 — a gateway refund per payment, same bite as the session sweep.
-  "retry-auto-refunds": 10,
-  // #1583 P1 — the five booking sweeps used to be appended `?limit=50` here and
-  // ignored it, because their `run` callbacks took no request: every tick ran
-  // the full Actions-sized cohort inside a 6 s or 20 s abort. They now read it,
-  // and the bite is stated here so the ticker's own budget is a number in this
-  // file rather than an accident of what a route happens to parse.
-  //
-  // Every one of the five is oldest-first (soonest-first for reminders) with a
-  // per-run cap, no persisted cursor, and a write that removes the row from its
-  // cohort — so a bite this size drains a backlog over successive ticks instead
-  // of dropping the tail. `expire-stale-requests` is per-ARM, across seven arms.
-  "appointment-reminders": 25,
-  "expire-stale-requests": 20,
-  "reschedule-proposals": 25,
-  "tentative-occurrences": 200,
-  "expire-unpaid-trials": 25,
-  // One Stream call report per row, so these are bite sizes: each run loops
-  // bites until SWEEP_START_DEADLINE_MS (16 s) after its request began, which
-  // drains a backlog in one run and leaves in-flight rows inside the 24 s abort.
-  "auto-complete-appointments": 25,
-  "detect-consultant-no-shows": 10,
-  // #1859 M-P0-14 — read-only scan, but one Sentry page per orphan row group;
-  // same bite as the money sweeps so it fits the 20 s budget.
-  "alert-orphaned-payments": 10,
-  // Healer makes one gateway round trip per orphan; same bite fits 20 s.
-  "reconcile-orphaned-payments": 10,
-  // Gateway polls per PENDING row plus a Serializable cascade per stranded row.
-  "reconcile-refunds": 10,
-  "support-sla-sweep": 20,
-  // One object delete per row; 100 rows stays inside the 20 s target and runs hourly.
-  "purge-deleted-documents": 100,
-  // Units per rail: a gateway call per disbursement, a transaction per minted payout.
-  "process-payouts": 5,
-  // Per payout model: up to two RazorpayX calls each.
-  "handle-stuck-payouts": 5,
-  // Per cohort, three cohorts: one RazorpayX GET each.
-  "reconcile-payout-status": 8,
-  "create-payout-batch": 10,
-  "settle-invoice-accruals": 10,
-  "expire-referral-credits": 50,
-  // Invoice-healer mints per slice; the register upload and stamp run every slice.
-  "gst-outward-register-export": 25,
-  "generate-subscription-invoices": 10,
-  "abandoned-org-top-ups": 200,
-  "advance-program-cycles": 25,
-  "auto-renew-contracts": 10,
-  "irp-uploader": 10,
-  "sweep-abandoned-overage-charges": 25,
-  "expire-contracts": 10,
-  // One bounded digest email; the route takes no limit.
-  "msme-payment-alerts": null,
-  "timeout-member-overages": 25,
-  dunning: 25,
-  "wallet-low-balance": 25,
-  // One recon page per slice; the route takes no limit.
-  "reconcile-gateway-settlements": null,
-  // One to two gateway round trips per dispute; ten fit the 20 s budget.
-  "reconcile-disputes": 10,
-  // Set-based SQL audit of the whole ledger; the route takes no limit.
-  "reconcile-ledgers": null,
-  // One read of the closed quarter and one upload; the route takes no limit.
-  "tds-return-draft": null,
-};
-
-/**
- * Targets that run on a multiple of the five-minute tick. A missing entry means
- * every tick. The check is on the minute of the UTC day, so an interval must
- * divide 1,440 and a late tick (Netlify fires within the minute) still counts
- * as its slot.
- */
-const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
-  "sweep-stuck-webhook-events": 15,
-  "sweep-orphaned-topup-captures": 15,
-  "dispatch-outbound-webhooks": 15,
-  "drain-notification-outbox": 10,
-  "retry-failed-emails": 15,
-  "sentry-ingest-canary": 360,
-  "sync-payment-earnings": 15,
-  "release-earnings": 15,
-  "reconcile-refunds": 15,
-  "abandoned-payments": 15,
-  "reconcile-payment-status": 15,
-  "reconcile-orphaned-confirmations": 15,
-  "expire-unpaid-trials": 15,
-  "reschedule-proposals": 15,
-  "appointment-reminders": 15,
-  "tentative-occurrences": 15,
-  "expire-stale-requests": 15,
-  "settle-cancelled-sessions": 30,
-  // Hourly at :30, the one slot with room under the 8-target cap every hour; the refunds wait 48 h anyway.
-  "settle-platform-incidents": 60,
-  "retry-auto-refunds": 15,
-  // #1775 — 30 minutes, not 15. Both jobs are latency-relevant but not
-  // minute-relevant: auto-complete's own buffer is one hour after a session
-  // ends, so a 30-minute detection latency is well inside the window it has to
-  // beat, and the no-show detector's grace window is measured in tens of
-  // minutes. A 15-minute slot would double the Stream call-report volume for
-  // both to buy detection latency neither deadline is sensitive to, and
-  // #1792's Upstash budget is the direct line item.
-  "auto-complete-appointments": 30,
-  "detect-consultant-no-shows": 30,
-  "alert-orphaned-payments": 15,
-  "reconcile-orphaned-payments": 30,
-  "process-data-exports": 10,
-  "retry-moderation-enforcement": 30,
-  // 30, not 15: only the :05/:35 ticks have room under the tick cap, and a vest waits hours anyway.
-  "vest-referral-credits": 30,
-  "support-sla-sweep": 30,
-  "purge-deleted-documents": 60,
-  "process-payouts": 60,
-  "handle-stuck-payouts": 120,
-  "reconcile-payout-status": 120,
-  "create-payout-batch": 15,
-  "settle-invoice-accruals": 60,
-  "expire-referral-credits": 60,
-  "gst-outward-register-export": 60,
-  "generate-subscription-invoices": 60,
-  "abandoned-org-top-ups": 60,
-  "advance-program-cycles": 60,
-  "auto-renew-contracts": 60,
-  "irp-uploader": 60,
-  "sweep-abandoned-overage-charges": 60,
-  "expire-contracts": 60,
-  "msme-payment-alerts": 60,
-  "timeout-member-overages": 60,
-  dunning: 60,
-  "wallet-low-balance": 60,
-  "reconcile-gateway-settlements": 60,
-  "reconcile-disputes": 60,
-  "reconcile-ledgers": 60,
-  "tds-return-draft": 60,
-};
-
-/**
- * Deterministic phase offsets (in minutes, modulo each target's interval).
- * Interval targets already fill every tick to 8 or 9, so each addition is
- * placed on a minute whose worst-case tick (month start, Monday, quarter start)
- * still has room; the cadence test pins {@link MAX_TARGETS_PER_TICK}.
- */
-export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
-  // Phase 0 (:00, :15, :30, :45) — 6 targets; process-payouts and reconcile-disputes also fire at :00 every hour
-  "sweep-stuck-webhook-events": 0,
-  "sweep-orphaned-topup-captures": 0,
-  "dispatch-outbound-webhooks": 0,
-  "retry-failed-emails": 0,
-  "sync-payment-earnings": 0,
-  // #1859 M-P0-14 — read-only orphan scan rides phase 0 so no tick exceeds 8.
-  "alert-orphaned-payments": 0,
-  // The canary sits at :50 (00:50, 06:50, 12:50, 18:50 UTC) so :00 stays free for the hourly dispute poll.
-  "sentry-ingest-canary": 50,
-  // Phase 5 (:05, :20, :35, :50) — 6 targets + drain-notification-outbox (:05, :15, :25, :35, :45, :55)
-  "release-earnings": 5,
-  "reconcile-refunds": 5,
-  "abandoned-payments": 5,
-  "reconcile-payment-status": 5,
-  "reconcile-orphaned-confirmations": 5,
-  "expire-unpaid-trials": 5,
-  "drain-notification-outbox": 5,
-  // Phase 10 (:10, :25, :40, :55) — 5 targets + paired 30m sweeps at :10/:40 and :25/:55 (8 each)
-  "reschedule-proposals": 10,
-  "appointment-reminders": 10,
-  "tentative-occurrences": 10,
-  "expire-stale-requests": 10,
-  "settle-cancelled-sessions": 25,
-  "settle-platform-incidents": 30,
-  "retry-auto-refunds": 10,
-  // Thirty-minute session-outcome jobs and orphan healer on staggered slots
-  "auto-complete-appointments": 15,
-  "detect-consultant-no-shows": 20,
-  "reconcile-orphaned-payments": 10,
-  "process-data-exports": 0,
-  "retry-moderation-enforcement": 25,
-  "vest-referral-credits": 5,
-  "support-sla-sweep": 10,
-  "purge-deleted-documents": 35,
-  "process-payouts": 0,
-  "reconcile-disputes": 0,
-  "create-payout-batch": 5,
-  // Daily 03:00 window, in the order the Actions fleet ran them.
-  "generate-subscription-invoices": 5,
-  "abandoned-org-top-ups": 10,
-  "advance-program-cycles": 15,
-  "auto-renew-contracts": 20,
-  "irp-uploader": 25,
-  "sweep-abandoned-overage-charges": 30,
-  "expire-contracts": 35,
-  "msme-payment-alerts": 45,
-  // Monthly windows on the 1st, on minutes the daily window leaves free.
-  "settle-invoice-accruals": 45,
-  "expire-referral-credits": 50,
-  // Monthly window on the 2nd, after the 1st's rollups.
-  "gst-outward-register-export": 45,
-  // :40 is held by no window, so the two payout reconcilers alternate on it every hour.
-  "handle-stuck-payouts": 40,
-  "reconcile-payout-status": 100,
-  // Daily 23:30 window.
-  "timeout-member-overages": 35,
-  dunning: 10,
-  "wallet-low-balance": 45,
-  // Daily 06:30 window, on the one minute no other window uses.
-  "reconcile-gateway-settlements": 55,
-  // Ledger slices use spare :55 capacity; statutory exports and gateway settlement keep priority.
-  "reconcile-ledgers": 55,
-  "tds-return-draft": 55,
-};
-
-/** The most targets one tick may fire; pinned by the cadence test. */
-export const MAX_TARGETS_PER_TICK = 10;
-
-/**
- * A UTC calendar window. Inside it the target fires on its every/offset slots;
- * outside it never. `weekdayUtc` (0 = Sunday), `dayOfMonthUtc` and `monthsUtc`
- * (1 = January) are checked against the window's start, so a window may run
- * past midnight.
- */
-interface CalendarWindow {
-  startMinuteUtc: number;
-  windowMinutes: number;
-  weekdayUtc?: number;
-  dayOfMonthUtc?: number;
-  monthsUtc?: readonly number[];
-}
-
-// Runs to 20:00 so seventeen hourly slices drain the day's cohort before the Monday payout window opens.
-const DAILY_0300: CalendarWindow = { startMinuteUtc: 180, windowMinutes: 1020 };
-const DAILY_2330: CalendarWindow = { startMinuteUtc: 1410, windowMinutes: 180 };
-
-/** Every windowed target re-runs on its slots until the window closes; each run is a bounded, claim-based slice. */
-const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
-  "create-payout-batch": {
-    weekdayUtc: 1,
-    startMinuteUtc: 1200,
-    windowMinutes: 180,
-  },
-  "settle-invoice-accruals": {
-    dayOfMonthUtc: 1,
-    startMinuteUtc: 240,
-    windowMinutes: 960,
-  },
-  "expire-referral-credits": {
-    dayOfMonthUtc: 1,
-    startMinuteUtc: 190,
-    windowMinutes: 180,
-  },
-  // Nineteen hourly slices (04:45-22:45); each re-uploads the same period CSV, so a repeat is harmless.
-  "gst-outward-register-export": {
-    dayOfMonthUtc: 2,
-    startMinuteUtc: 240,
-    windowMinutes: 1140,
-  },
-  "generate-subscription-invoices": DAILY_0300,
-  "abandoned-org-top-ups": DAILY_0300,
-  "advance-program-cycles": DAILY_0300,
-  "auto-renew-contracts": DAILY_0300,
-  "irp-uploader": DAILY_0300,
-  "sweep-abandoned-overage-charges": DAILY_0300,
-  "expire-contracts": DAILY_0300,
-  // One slot: the digest email is not idempotent, so it must not repeat.
-  "msme-payment-alerts": { startMinuteUtc: 180, windowMinutes: 60 },
-  "timeout-member-overages": DAILY_2330,
-  dunning: DAILY_2330,
-  "wallet-low-balance": DAILY_2330,
-  // After Razorpay's T+1/T+2 settlements land; six hourly slices of one recon page each.
-  "reconcile-gateway-settlements": { startMinuteUtc: 390, windowMinutes: 360 },
-  // The 5th of Jan/Apr/Jul/Oct, two slots (01:55, 02:55); the export overwrites one private CSV, so a repeat is harmless.
-  "tds-return-draft": {
-    dayOfMonthUtc: 5,
-    monthsUtc: [1, 4, 7, 10],
-    startMinuteUtc: 60,
-    windowMinutes: 120,
-  },
-};
-
-/**
- * The start of the window `now` falls in, or null when the target is windowed
- * and `now` is outside it. Exported so a test can pin the calendar gate.
- */
-export function windowStartFor(name: Target, now: Date): Date | null {
-  const w = TARGET_WINDOWS[name];
-  if (!w) return null;
-  const minuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
-  const sinceStart = (((minuteOfDay - w.startMinuteUtc) % 1440) + 1440) % 1440;
-  if (sinceStart >= w.windowMinutes) return null;
-  const start = new Date(
-    Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-      0,
-      minuteOfDay - sinceStart,
-    ),
-  );
-  if (w.weekdayUtc !== undefined && start.getUTCDay() !== w.weekdayUtc) {
-    return null;
-  }
-  if (w.dayOfMonthUtc !== undefined && start.getUTCDate() !== w.dayOfMonthUtc) {
-    return null;
-  }
-  if (w.monthsUtc && !w.monthsUtc.includes(start.getUTCMonth() + 1)) {
-    return null;
-  }
-  return start;
-}
-
-/** The targets due on this tick; exported so a test can pin the cadence. */
-export function dueTargets(now: Date): Target[] {
-  const minuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
-  const due = TARGETS.filter((name) => {
-    if (name in TARGET_WINDOWS && windowStartFor(name, now) === null) {
-      return false;
-    }
-    const every = TARGET_EVERY_MINUTES[name];
-    if (every === undefined) return true;
-    const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
-    return (((minuteOfDay - offset) % every) + every) % every < 5;
-  });
-  // The ledger report persists its cursor, so it yields whenever the tick is at
-  // the cap; statutory and settlement jobs keep their slots, and the ledger
-  // runs on the ticks that have spare capacity.
-  return due.length >= MAX_TARGETS_PER_TICK
-    ? due.filter((name) => name !== "reconcile-ledgers")
-    : due;
-}
-
-/** Extra query a target needs beyond `limit`. */
-const TARGET_QUERIES: Partial<Record<Target, string>> = {};
-
-/** Well under the 26 s Next function ceiling and the 30 s scheduled-function cap. */
-const PER_TARGET_TIMEOUT_MS = 15_000;
-
-/** 20 s still sits under the 30 s scheduled cap for gateway/outbox round-trip sweeps. */
-const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
-  "abandoned-payments": 20_000,
-  "retry-failed-emails": 20_000,
-  "drain-notification-outbox": 20_000,
-  "reconcile-orphaned-confirmations": 20_000,
-  "appointment-reminders": 20_000,
-  "expire-stale-requests": 20_000,
-  // Per row: an appointment lock, a transaction, a slot restore and a notice.
-  "reschedule-proposals": 20_000,
-  "settle-cancelled-sessions": 20_000,
-  "settle-platform-incidents": 20_000,
-  "retry-auto-refunds": 20_000,
-  "vest-referral-credits": 20_000,
-  "reconcile-refunds": 20_000,
-  // Cold boot (~5 s) runs before the job's 16 s drain clock starts, so these need headroom above it while staying under Netlify's ~26 s edge cut.
-  "auto-complete-appointments": 24_000,
-  "detect-consultant-no-shows": 24_000,
-  "alert-orphaned-payments": 20_000,
-  "reconcile-orphaned-payments": 20_000,
-  "process-data-exports": 20_000,
-  // One storage delete per row, up to 100 rows, so it needs more than the default.
-  "purge-deleted-documents": 20_000,
-  "retry-moderation-enforcement": 20_000,
-  "process-payouts": 24_000,
-  "handle-stuck-payouts": 24_000,
-  "reconcile-payout-status": 24_000,
-  "gst-outward-register-export": 24_000,
-  "create-payout-batch": 20_000,
-  "settle-invoice-accruals": 20_000,
-  "expire-referral-credits": 20_000,
-  "generate-subscription-invoices": 20_000,
-  "advance-program-cycles": 20_000,
-  "auto-renew-contracts": 20_000,
-  "irp-uploader": 20_000,
-  "sweep-abandoned-overage-charges": 20_000,
-  "expire-contracts": 20_000,
-  "msme-payment-alerts": 20_000,
-  "timeout-member-overages": 20_000,
-  dunning: 20_000,
-  "wallet-low-balance": 20_000,
-  "reconcile-gateway-settlements": 20_000,
-  "reconcile-disputes": 20_000,
-  "reconcile-ledgers": 20_000,
-  "tds-return-draft": 20_000,
-};
-
-/**
- * The request one target gets; exported so a test can pin it without a Netlify
- * runtime. A windowed target also carries its window start, from `now`.
- */
-export function targetRequest(
-  baseUrl: string,
-  name: Target,
-  now?: Date,
-): { url: string; timeoutMs: number } {
-  const limit = name in TARGET_LIMITS ? TARGET_LIMITS[name] : DEFAULT_LIMIT;
-  const windowStart = now ? windowStartFor(name, now) : null;
-  const query = [
-    limit === null || limit === undefined ? null : `limit=${limit}`,
-    windowStart ? `windowStart=${windowStart.toISOString()}` : null,
-    TARGET_QUERIES[name] ?? null,
-  ]
-    .filter((q): q is string => q !== null)
-    .join("&");
-  return {
-    url: `${baseUrl}/api/cleanup/${name}${query ? `?${query}` : ""}`,
-    timeoutMs: TARGET_TIMEOUTS_MS[name] ?? PER_TARGET_TIMEOUT_MS,
-  };
-}
-
 interface TickBody {
   event: "cron-tick";
+  /** Sent to every target as `x-tick-id`, so each run row names the tick that dispatched it. */
+  tickId: string;
   ok: string[];
+  accepted: string[];
   lockHeld: string[];
+  /** Failed targets whose fail-closed lease the database could not grant; they write no run row. */
+  lockUnavailable: string[];
   failed: { name: string; status: number }[];
+  /** Due targets whose idle probe found no work; recorded on the claim row, never dispatched. */
+  skippedIdle: string[];
   durationMs: number;
+  /** Queue gauges from the slot claim; absent when the claim could not read them. */
+  oldestPendingAgeS?: PendingAges;
 }
 
 /**
@@ -585,25 +105,29 @@ async function readResponseText(res: Response): Promise<string> {
   return typeof res.text === "function" ? await res.text().catch(() => "") : "";
 }
 
-async function parse503Response(
-  res: Response,
-): Promise<{ maintenance: boolean; errorBody?: string }> {
+async function parse503Response(res: Response): Promise<{
+  maintenance: boolean;
+  lockUnavailable: boolean;
+  errorBody?: string;
+}> {
   const rawText = await readResponseText(res);
-  let body: { phase?: unknown } | null = null;
+  let body: { phase?: unknown; code?: unknown } | null = null;
   if (rawText) {
     try {
-      body = JSON.parse(rawText) as { phase?: unknown };
+      body = JSON.parse(rawText) as { phase?: unknown; code?: unknown };
     } catch {
       body = null;
     }
   } else if (typeof res.json === "function") {
     body = (await res.json().catch(() => null)) as {
       phase?: unknown;
+      code?: unknown;
     } | null;
   }
   const maintenance = typeof body?.phase === "string";
   return {
     maintenance,
+    lockUnavailable: body?.code === "CRON_LOCK_UNAVAILABLE",
     ...(!maintenance && rawText ? { errorBody: rawText.slice(0, 500) } : {}),
   };
 }
@@ -614,12 +138,16 @@ async function hitTarget(
   name: Target,
   now: Date,
   deadline: number,
+  tickId: string,
 ): Promise<{
   name: string;
   status: number;
   maintenance?: boolean;
+  lockUnavailable?: boolean;
   errorBody?: string;
   outcome?: JobOutcome;
+  /** The tick's own abort fired; the target may still be running. */
+  aborted?: boolean;
 }> {
   const { url, timeoutMs } = targetRequest(baseUrl, name, now);
   const controller = new AbortController();
@@ -633,6 +161,7 @@ async function hitTarget(
       headers: {
         Authorization: `Bearer ${secret}`,
         "sentry-propagate-traces": "false",
+        "x-tick-id": tickId,
       },
       signal: controller.signal,
     });
@@ -643,16 +172,21 @@ async function hitTarget(
     // Only the twin's own maintenance refusal carries `phase`; a platform or
     // dependency 503 does not, and must stay visible as a failure (#1598 P1-W03).
     let maintenance = false;
+    let lockUnavailable = false;
     let errorBody: string | undefined;
     if (res.status === 503) {
       const parsed = await parse503Response(res);
       maintenance = parsed.maintenance;
+      lockUnavailable = parsed.lockUnavailable;
       errorBody = parsed.errorBody;
-    } else if (bucketFor(res.status, false) === "failed") {
+    } else if (bucketFor(res.status, false, name, outcome) === "failed") {
       const rawText = await readResponseText(res);
       if (rawText) errorBody = rawText.slice(0, 500);
     }
-    if (bucketFor(res.status, maintenance) === "failed" && errorBody) {
+    if (
+      bucketFor(res.status, maintenance, name, outcome) === "failed" &&
+      errorBody
+    ) {
       console.error(
         JSON.stringify({
           event: "cron-tick-target-failed",
@@ -667,13 +201,55 @@ async function hitTarget(
       status: res.status,
       outcome,
       maintenance,
+      lockUnavailable,
       ...(errorBody ? { errorBody } : {}),
     };
   } catch {
-    return { name, status: 0, maintenance: false };
+    return {
+      name,
+      status: 0,
+      maintenance: false,
+      aborted: controller.signal.aborted,
+    };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** A retry needs at least this much of the tick's target budget left. */
+const RETRY_MIN_REMAINING_MS = 5_000;
+
+/**
+ * A request that never reached the app (a connection failure, not our abort,
+ * or Netlify's own 500 page) is retried once while the tick has time left.
+ */
+export function isRetryable(result: {
+  status: number;
+  aborted?: boolean;
+  errorBody?: string;
+}): boolean {
+  if (result.status === 0) return result.aborted !== true;
+  return result.status === 500 && isPlatformErrorBody(result.errorBody);
+}
+
+async function hitTargetOnceMore(
+  ...args: Parameters<typeof hitTarget>
+): ReturnType<typeof hitTarget> {
+  const first = await hitTarget(...args);
+  const deadline = args[4];
+  if (!isRetryable(first) || deadline - Date.now() < RETRY_MIN_REMAINING_MS) {
+    return first;
+  }
+  console.log(
+    JSON.stringify({
+      event: "cron-tick-target-retry",
+      target: first.name,
+      status: first.status,
+    }),
+  );
+  const retried = await hitTarget(...args);
+  // A 409 here is likely the lease the crashed first call took; keep its failure.
+  return retried.status === 409 ? first : retried;
 }
 
 /** Targets whose 207 means some rows failed; every other target's 207 is a successful run that flagged rows. */
@@ -697,9 +273,13 @@ export function bucketFor(
   maintenance = false,
   name = "",
   outcome?: JobOutcome,
-): "ok" | "held" | "failed" {
+): "ok" | "accepted" | "held" | "failed" {
   if (outcome === "failure" || outcome === "partial_failure") return "failed";
   if (outcome === "held") return "held";
+  const backgroundTarget = Object.entries(TARGET_BACKGROUND_FUNCTIONS).some(
+    ([target]) => target === name,
+  );
+  if (backgroundTarget) return status === 202 ? "accepted" : "failed";
   if (outcome === "success" && status === 200) return "ok";
   if (status === 200) return "ok";
   if (status === 207) {
@@ -710,23 +290,17 @@ export function bucketFor(
 }
 
 /**
- * #1868 — which failed targets are reported to Sentry itself.
- *
- * The Sentry ingest canary is excluded. An unhealthy canary answers 503 with
- * no `phase`, so `bucketFor` files it under `failed`, and `alertFailedTargets`
- * reports to Sentry — the very system whose outage the canary just detected.
- * During a quota outage that is one event per tick that can never arrive; after
- * recovery, one more per tick spent from the allowance being protected. A
- * monitor that reports its own failure through the failing system is not a
- * monitor.
- *
- * The canary is still counted as failed: it stays in the HTTP status and the
- * response body, so a 503 remains visible in the tick's output and the job
- * history. Only the Sentry report is suppressed, and the email alert — which
- * fails open, so this same outage cannot silence it — carries the signal.
+ * Which failed targets are reported to Sentry itself. The ingest canary is
+ * excluded: its unhealthy verdict is a 207 finding, and a crashed canary is
+ * caught by the freshness probe, never by the system whose ingest it checks.
  */
 export function reportableToSentry(name: string): boolean {
   return name !== "sentry-ingest-canary";
+}
+
+/** The ticker shares the app's single public DSN. */
+function tickerSentryDsn(): string | undefined {
+  return process.env.NEXT_PUBLIC_SENTRY_DSN;
 }
 
 /** A missing secret is a silent fleet outage; page Sentry, not just the log. */
@@ -737,7 +311,7 @@ async function alertMissingSecret(error: string): Promise<void> {
     const { scrubSentryEvent } =
       await import("../../lib/observability/sentry-scrubber");
     Sentry.init({
-      dsn: process.env.SENTRY_DSN,
+      dsn: tickerSentryDsn(),
       tracesSampleRate: 0,
       tracePropagationTargets: [],
       registerEsmLoaderHooks: false,
@@ -753,10 +327,7 @@ async function alertMissingSecret(error: string): Promise<void> {
   }
 }
 
-/**
- * The Sentry event for one failing target. The target name is in the message
- * and fingerprint so the shared repeat filter and Sentry grouping are per target.
- */
+/** The Sentry event for a target that keeps failing: one error issue per target. */
 export function buildFailedTargetEvent(failed: {
   name: string;
   status: number;
@@ -766,7 +337,12 @@ export function buildFailedTargetEvent(failed: {
     message: `cron-tick: target ${failed.name} failed`,
     level: "error" as const,
     fingerprint: ["cron-tick", failed.name],
-    tags: { subsystem: "cron", op: "cron-tick", target: failed.name },
+    tags: {
+      subsystem: "cron",
+      op: "cron-tick",
+      target: failed.name,
+      ...(isPlatformErrorBody(failed.errorBody) ? { class: "platform" } : {}),
+    },
     contexts: {
       tick: {
         target: failed.name,
@@ -779,39 +355,73 @@ export function buildFailedTargetEvent(failed: {
   };
 }
 
-const EVERY_BY_NAME: Partial<Record<string, number>> = TARGET_EVERY_MINUTES;
-const OFFSET_BY_NAME: Partial<Record<string, number>> = TARGET_OFFSET_MINUTES;
-
-/** A failing target reports at most once an hour: on its own first due tick of that hour. */
-export function isFirstDueTickOfHour(name: string, now: Date): boolean {
-  const every = EVERY_BY_NAME[name];
-  const first =
-    every === undefined
-      ? 0
-      : ((((OFFSET_BY_NAME[name] ?? 0) % every) + every) % every) % 60;
-  const sinceFirst = now.getUTCMinutes() - first;
-  return sinceFirst >= 0 && sinceFirst < 5;
+/** Bounded read of each failing target's last COMPLETED run; null means history unknown. */
+async function fetchStreaks(
+  baseUrl: string,
+  secret: string,
+  names: string[],
+): Promise<StreakReport | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2_000);
+  try {
+    const res = await fetch(
+      `${baseUrl}/api/health/jobs/streaks?targets=${names.map(encodeURIComponent).join(",")}`,
+      {
+        headers: { Authorization: `Bearer ${secret}` },
+        signal: controller.signal,
+      },
+    );
+    if (!res.ok) return null;
+    const parsed = streakReportSchema.safeParse(await res.json());
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-/**
- * Report each failing target to Sentry, once an hour per target. `statusFor`
- * answers 200 regardless, so without this a broken sweep only shows in the log;
- * a total outage is bounded by the shared 10/hour breaker.
- */
+/** Judges each failing target on its first due tick of the hour; only repeats page Sentry. */
 async function alertFailedTargets(
   failed: { name: string; status: number; errorBody?: string }[],
   tickStart: Date,
+  history: { baseUrl: string; secret: string },
 ): Promise<void> {
   // Judge against the tick's start: targets can run 20 s past a minute boundary.
   const due = failed.filter((f) => isFirstDueTickOfHour(f.name, tickStart));
   if (due.length === 0) return;
+  const streaks = await fetchStreaks(
+    history.baseUrl,
+    history.secret,
+    due.map((f) => f.name),
+  );
+  // A one-off stays in the logs; only a repeat (isRepeatedFailure) reaches Sentry.
+  const repeated = due.filter((f) =>
+    isRepeatedFailure(
+      scheduleFor(f.name)?.everyMinutes ?? 5,
+      streaks?.[f.name],
+      tickStart,
+    ),
+  );
+  for (const f of due) {
+    if (repeated.includes(f)) continue;
+    console.warn(
+      JSON.stringify({
+        event: "cron-tick.target-failed-once",
+        target: f.name,
+        status: f.status,
+        ...(isPlatformErrorBody(f.errorBody) ? { class: "platform" } : {}),
+      }),
+    );
+  }
+  if (repeated.length === 0) return;
   try {
     const Sentry = await import("@sentry/node");
     const { applyErrorBudget } = await import("../../sentry.shared.config");
     const { scrubSentryEvent } =
       await import("../../lib/observability/sentry-scrubber");
     Sentry.init({
-      dsn: process.env.SENTRY_DSN,
+      dsn: tickerSentryDsn(),
       tracesSampleRate: 0,
       tracePropagationTargets: [],
       registerEsmLoaderHooks: false,
@@ -830,7 +440,7 @@ async function alertFailedTargets(
         stackFrameVariables: false,
       },
     });
-    for (const f of due) {
+    for (const f of repeated) {
       const event = buildFailedTargetEvent(f);
       Sentry.captureMessage(event.message, event);
     }
@@ -848,7 +458,7 @@ async function alertFailedTargets(
  * Sentry's HTTP check-in (https://docs.sentry.io/product/crons/getting-started/http/)
  * is a plain POST, so no `@sentry/node` import is needed on the happy path.
  *
- * The endpoint is built by parsing SENTRY_DSN as Sentry's own DSN shape
+ * The endpoint is built by parsing NEXT_PUBLIC_SENTRY_DSN as Sentry's own DSN shape
  * (`https://<publicKey>@<host>/<projectId>`) into
  * `https://<host>/api/<projectId>/cron/<monitorSlug>/<publicKey>/`, which is
  * exactly the template that doc page gives. A POST body carrying
@@ -860,7 +470,7 @@ const CRON_MONITOR_SLUG = "cron-tick";
 const CRON_CHECKIN_TIMEOUT_MS = 2_000;
 
 function cronCheckInUrl(): string | null {
-  const dsn = process.env.SENTRY_DSN;
+  const dsn = tickerSentryDsn();
   if (!dsn) return null;
   try {
     const parsed = new URL(dsn);
@@ -968,8 +578,123 @@ export async function otherActivePlatform(
   }
 }
 
-export default async function cronTick(_req: Request): Promise<Response> {
+const SLOT_MS = 5 * 60_000;
+
+/** The tick's id: a custom (version 8) UUID hashed from the five-minute slot, so a second dispatch carries the same id. */
+export function tickIdForSlot(slot: Date): string {
+  const hex = createHash("sha256")
+    .update(`cron-tick:${slot.toISOString()}`)
+    .digest("hex");
+  const variant = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+/** Covers a cold start plus the app's idle probes and queue gauges (2.75 s worst case), its commit and the claim insert. */
+const TICK_CLAIM_TIMEOUT_MS = 5_000;
+const tickClaimReply = z.object({
+  claimed: z.boolean(),
+  idle: z.array(z.string()).optional(),
+  pendingAges: pendingAgesSchema.optional(),
+});
+
+/**
+ * Claims the slot in Postgres through the app, which also names the scheduled
+ * targets its probes found idle and the queue gauges. `claimed` is false only
+ * when another dispatch holds the slot; an unreachable or unreadable reply runs
+ * every target and carries no gauges.
+ */
+export async function claimTickSlot(
+  baseUrl: string,
+  secret: string,
+  tickId: string,
+  slot: Date,
+  scheduled: readonly Target[],
+  fetchImpl: typeof fetch = fetch,
+): Promise<{
+  claimed: boolean;
+  idle: ReadonlySet<string>;
+  pendingAges?: PendingAges;
+}> {
+  const runAll = { claimed: true, idle: new Set<string>() };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TICK_CLAIM_TIMEOUT_MS);
+  try {
+    const query = `tickId=${encodeURIComponent(tickId)}&slot=${encodeURIComponent(slot.toISOString())}&due=${scheduled.map(encodeURIComponent).join(",")}`;
+    const res = await fetchImpl(`${baseUrl}/api/health/jobs/tick?${query}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${secret}` },
+      signal: controller.signal,
+    });
+    if (!res.ok) return runAll;
+    const parsed = tickClaimReply.safeParse(await res.json());
+    if (!parsed.success) return runAll;
+    return {
+      claimed: parsed.data.claimed,
+      idle: new Set(
+        (parsed.data.idle ?? []).filter((name) =>
+          scheduled.some((target) => target === name),
+        ),
+      ),
+      ...(parsed.data.pendingAges
+        ? { pendingAges: parsed.data.pendingAges }
+        : {}),
+    };
+  } catch {
+    return runAll;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Accepted background targets whose newest finished run failed: a 202 only
+ * admits the run, so the previous run's outcome stands in for the target's.
+ */
+async function failedBackgroundTargets(
+  accepted: string[],
+  history: { baseUrl: string; secret: string },
+): Promise<string[]> {
+  if (accepted.length === 0) return [];
+  const streaks = await fetchStreaks(history.baseUrl, history.secret, accepted);
+  return accepted.filter((name) => lastRunFailed(streaks?.[name]));
+}
+
+/** One Better Stack heartbeat per completed tick; unset skips it, a failure never fails the tick. */
+async function pingHeartbeat(): Promise<void> {
+  const url = process.env.BETTERSTACK_HEARTBEAT_URL;
+  if (!url) return;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2_000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      console.error(
+        JSON.stringify({ event: "heartbeat-rejected", status: res.status }),
+      );
+    }
+  } catch {
+    console.error(JSON.stringify({ event: "heartbeat-unavailable" }));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export default async function cronTick(
+  _req: Request,
+  context?: unknown,
+): Promise<Response> {
   const started = Date.now();
+  // Netlify's "Run now" also fires previews and branch deploys; only production dispatches.
+  const deployContext = offProductionDeploy(context);
+  if (deployContext) {
+    console.log(
+      JSON.stringify({ event: "cron-tick", skipped: true, deployContext }),
+    );
+    return jsonResponse({ skipped: true, deployContext }, 200);
+  }
+  const tickDate = new Date(Math.round(started / 60_000) * 60_000);
+  const slot = new Date(Math.floor(tickDate.getTime() / SLOT_MS) * SLOT_MS);
+  const tickId = tickIdForSlot(slot);
   const otherPlatform = await otherActivePlatform();
   if (otherPlatform !== null) {
     console.log(
@@ -983,30 +708,62 @@ export default async function cronTick(_req: Request): Promise<Response> {
     const error =
       "CRON_SECRET is not set — the ticker cannot authenticate to /api/cleanup/*";
     console.error(JSON.stringify({ event: "cron-tick", error }));
-    await alertMissingSecret(error);
+    await Promise.all([
+      alertMissingSecret(error),
+      emitTickSummary(
+        {
+          event: "cron-tick",
+          tickId,
+          ok: [],
+          accepted: [],
+          lockHeld: [],
+          lockUnavailable: [],
+          failed: [],
+          skippedIdle: [],
+          durationMs: Date.now() - started,
+        },
+        error,
+      ),
+    ]);
     // #1686 — a 5xx would only be re-invoked three times against the same
     // missing secret; the log line and the Sentry message are the signal.
     return jsonResponse({ error }, 200);
   }
 
   // Netlify sets URL to the site's primary deploy URL; CRON_TICK_BASE_URL is
-  // the override for local runs (`netlify dev`) and any deploy where URL
-  // resolves somewhere other than this app.
+  // the override for a host where URL resolves somewhere other than this app.
   // S8786 — a quantified trailing-slash regex risks catastrophic
   // backtracking; strip one slash at a time instead.
   let baseUrl = process.env.CRON_TICK_BASE_URL || process.env.URL || "";
   while (baseUrl.endsWith("/")) baseUrl = baseUrl.slice(0, -1);
-  const tickDate = new Date(Math.round(started / 60_000) * 60_000);
-  const targets = dueTargets(tickDate);
+  const scheduled = scheduledTargets(tickDate);
+  const claim = await claimTickSlot(baseUrl, secret, tickId, slot, scheduled);
+  if (!claim.claimed) {
+    console.log(
+      JSON.stringify({ event: "cron-tick", duplicate: true, tickId }),
+    );
+    return jsonResponse({ duplicate: true, tickId }, 200);
+  }
+  const skippedIdle = scheduled.filter((name) => claim.idle.has(name));
+  const targets = capToTick(scheduled.filter((name) => !claim.idle.has(name)));
 
   const settled = await Promise.allSettled(
     targets.map((name) =>
-      hitTarget(baseUrl, secret, name, tickDate, started + 24_000),
+      hitTargetOnceMore(
+        baseUrl,
+        secret,
+        name,
+        tickDate,
+        started + 24_000,
+        tickId,
+      ),
     ),
   );
 
   const ok: string[] = [];
+  const accepted: string[] = [];
   const lockHeld: string[] = [];
+  const lockUnavailable: string[] = [];
   const failed: { name: string; status: number }[] = [];
   const failedForAlert: { name: string; status: number; errorBody?: string }[] =
     [];
@@ -1024,8 +781,11 @@ export default async function cronTick(_req: Request): Promise<Response> {
       result.status === "fulfilled" ? result.value.outcome : undefined;
     const bucket = bucketFor(status, maintenance, name, outcome);
     if (bucket === "ok") ok.push(name);
+    else if (bucket === "accepted") accepted.push(name);
     else if (bucket === "held") lockHeld.push(name);
     else {
+      if (result.status === "fulfilled" && result.value.lockUnavailable)
+        lockUnavailable.push(name);
       failed.push({ name, status });
       failedForAlert.push({
         name,
@@ -1035,22 +795,43 @@ export default async function cronTick(_req: Request): Promise<Response> {
     }
   });
 
+  for (const name of await failedBackgroundTargets(accepted, {
+    baseUrl,
+    secret,
+  })) {
+    accepted.splice(accepted.indexOf(name), 1);
+    failed.push({ name, status: 202 });
+    failedForAlert.push({
+      name,
+      status: 202,
+      errorBody: "last background run failed",
+    });
+  }
+
   const durationMs = Date.now() - started;
   const body: TickBody = {
     event: "cron-tick",
+    tickId,
     ok,
+    accepted,
     lockHeld,
+    lockUnavailable,
     failed,
+    skippedIdle,
     durationMs,
+    ...(claim.pendingAges ? { oldestPendingAgeS: claim.pendingAges } : {}),
   };
   console.log(JSON.stringify(body));
   // Check-in and alert waiting share the remaining ticker budget; aborts do not cancel target work.
   await Promise.all([
     sendCheckIn(failed.length > 0 ? "error" : "ok", durationMs),
+    emitTickSummary(body),
+    pingHeartbeat(),
     boundedAlert(
       failedForAlert.filter((f) => reportableToSentry(f.name)),
       tickDate,
       started + 27_000,
+      { baseUrl, secret },
     ),
   ]);
 
@@ -1058,15 +839,41 @@ export default async function cronTick(_req: Request): Promise<Response> {
   return jsonResponse(body, statusFor(failed));
 }
 
+/** One Better Stack summary per tick, the event the freshness alert keys on; never throws. */
+async function emitTickSummary(body: TickBody, error?: string): Promise<void> {
+  await emitTelemetryLog(
+    {
+      level: error || body.failed.length > 0 ? "error" : "info",
+      message: "cron-tick summary",
+      category: "CRON",
+      tickId: body.tickId,
+      durationMs: body.durationMs,
+      okCount: body.ok.length,
+      acceptedCount: body.accepted.length,
+      lockHeld: body.lockHeld,
+      lockUnavailableCount: body.lockUnavailable.length,
+      lockUnavailable: body.lockUnavailable,
+      failed: body.failed,
+      skippedIdleCount: body.skippedIdle.length,
+      ...(body.oldestPendingAgeS
+        ? { oldestPendingAgeS: body.oldestPendingAgeS }
+        : {}),
+      ...(error ? { error } : {}),
+    },
+    fetch,
+  );
+}
+
 async function boundedAlert(
   failed: Parameters<typeof alertFailedTargets>[0],
   tickDate: Date,
   deadline: number,
+  history: { baseUrl: string; secret: string },
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
-      alertFailedTargets(failed, tickDate),
+      alertFailedTargets(failed, tickDate, history),
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, Math.max(1, deadline - Date.now()));
       }),

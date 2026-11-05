@@ -45,6 +45,9 @@ import {
   resolveSponsorPricingHint,
 } from "./sponsor-pricing-hint";
 import { useSession } from "@/lib/auth-client";
+import { activeClientsNotice } from "@/lib/booking/entitlement";
+import { activeClientsOf, withPricingNotice } from "./sold-terms-notice";
+import { sellHomeHref } from "@/lib/dashboard/sell-pages";
 
 interface OfferingEditorContainerProps {
   type: OfferingType;
@@ -55,7 +58,7 @@ interface OfferingEditorContainerProps {
   duplicateOf?: unknown;
   /** Extra bespoke sections, keyed by the manifest's `slot`. */
   extraSlots?: Record<string, React.ReactNode>;
-  /** Where to go once saved. Defaults to the Offerings list. */
+  /** Where to go once saved. Defaults to the Sell page listing this type. */
   returnHref?: string;
   /**
    * Overrides the adapter's save. The org catalog posts to its own endpoint
@@ -164,9 +167,16 @@ export function OfferingEditorContainer({
     !existingPlan && sponsorPricingHint
       ? applySponsorPricingHintToManifest(manifest, sponsorPricingHint)
       : manifest;
-  const effectiveManifest = onSave
-    ? withoutTrial(hintedManifest)
+  const soldTermsNotice =
+    type === "subscription"
+      ? activeClientsNotice(activeClientsOf(initialEvent))
+      : null;
+  const noticedManifest = soldTermsNotice
+    ? withPricingNotice(hintedManifest, soldTermsNotice)
     : hintedManifest;
+  const effectiveManifest = onSave
+    ? withoutTrial(noticedManifest)
+    : noticedManifest;
 
   const form = useForm({
     resolver: zodResolver(adapter.schema),
@@ -316,9 +326,7 @@ export function OfferingEditorContainer({
         }),
       );
 
-      router.push(
-        returnHref ?? `/dashboard/consultant/${consultantId}/offerings`,
-      );
+      router.push(returnHref ?? sellHomeHref(consultantId, type));
       router.refresh();
     } catch (error) {
       Sentry.captureException(

@@ -15,6 +15,7 @@ import type {
   InboxType,
 } from "@/lib/dashboard/requests-inbox-state";
 import { toneBadge } from "@/lib/dashboard/money-state";
+import { formatDateTimeLabel, type DisplayOpts } from "@/lib/time/display";
 
 export const TYPE_LABEL: Record<InboxType, string> = {
   consultation: "Consultations",
@@ -50,13 +51,13 @@ export const BUCKET_LABEL: Record<
 > = {
   "answer-today": {
     title: "Answer today",
-    hint: "Under a day left on the hold, or already past it.",
+    hint: "Under a day left to reply or schedule, or already past it.",
   },
   "this-week": { title: "This week", hint: "Under seven days left." },
-  later: { title: "Later", hint: "More than a week left on the hold." },
+  later: { title: "Later", hint: "More than a week left to reply." },
   "waiting-on-them": {
-    title: "Waiting on them",
-    hint: "The next step is the other side's — a payment or a new cycle.",
+    title: "Waiting on the client",
+    hint: "They need to pay, answer your new time, or finish checkout.",
   },
 };
 
@@ -83,15 +84,58 @@ export function nextCycleLine(entitlement: SubscriptionEntitlement): string {
   return `Schedule the next ${entitlement.cycle.nextBatch} · ${entitlement.held} of ${entitlement.total} booked`;
 }
 
+/** A ranked sort pages a bounded window; say so when rows sit outside it. */
+const RANKED_WINDOW_KIND: Record<InboxSort, string> = {
+  new: "newest",
+  old: "oldest",
+  priority: "most urgent",
+  deadline: "most urgent",
+  money: "most urgent",
+};
+
+export const RANKED_WINDOW_NOTE = (
+  shown: number,
+  total: number,
+  sort: InboxSort,
+) =>
+  `Showing the ${shown} ${RANKED_WINDOW_KIND[sort]} of ${total} — pick a filter to see the rest`;
+
+/** A direct checkout the buyer is paying for right now: never answerable. */
+export const CHECKOUT_HOLD_BADGE = toneBadge("info", "Checkout in progress");
+export const CHECKOUT_HOLD_LINE =
+  "The learner is paying now — nothing to do. The time stays held until then.";
+
+/** A request whose asked-for time is too close or gone. */
+export const REQUESTED_TIME_PASSED =
+  "Requested time has passed — propose new times";
+
 /** One verb per toast. */
 export const TOAST = {
   approved: "Approved",
-  approvedAwaitingPayment: "Approved — the learner has 24 h to pay",
+  approvedAwaitingPayment: "Approved — waiting for the learner to pay",
   declined: "Declined",
   reminderSent: "Reminder sent",
   approvalWithdrawn: "Approval withdrawn",
+  keptOriginal: "Kept the original time",
+  proposalWithdrawn: "Request withdrawn",
+  originalTimeTaken: "That time was taken meanwhile — pick a new one",
   changedElsewhere: "This request changed elsewhere — refreshed",
 } as const;
+
+/**
+ * The toast after answering a reschedule from the inbox. "Keep the original
+ * time" whose time was taken meanwhile comes back RELEASED: the session now
+ * needs a new time, so it never claims the original was kept.
+ */
+export function proposalAnswerToast(
+  answer: "keep-original" | "withdraw-proposal",
+  outcome: string | undefined,
+): string {
+  if (outcome === "RELEASED") return TOAST.originalTimeTaken;
+  return answer === "keep-original"
+    ? TOAST.keptOriginal
+    : TOAST.proposalWithdrawn;
+}
 
 /** Server codes → sentences; the code itself never renders. */
 const CODE_SENTENCE: Record<string, string> = {
@@ -149,14 +193,19 @@ export function errorSentence(
 }
 
 /**
- * The approve toast follows the allocate response's `awaitingPayment` flag
- * (PR-B #1782): a pay order was minted, so the row moves to "Awaiting
- * payment" rather than leaving the inbox. Absent → today's plain "Approved".
+ * The approve toast follows the allocate response's `awaitingPayment` flag: a
+ * pay order was minted, so the row moves to "Awaiting payment" rather than
+ * leaving the inbox, and the toast names the pay window's real end when the
+ * response carries it. Absent → the plain "Approved".
  */
-export function approvedToast(result: { awaitingPayment?: boolean }): string {
-  return result.awaitingPayment === true
-    ? TOAST.approvedAwaitingPayment
-    : TOAST.approved;
+export function approvedToast(
+  result: { awaitingPayment?: boolean; payExpiresAt?: Date | null },
+  opts: DisplayOpts = {},
+): string {
+  if (result.awaitingPayment !== true) return TOAST.approved;
+  return result.payExpiresAt
+    ? `Approved — the learner has until ${formatDateTimeLabel(result.payExpiresAt, opts)} to pay`
+    : TOAST.approvedAwaitingPayment;
 }
 
 /** "Remind sent · next in 3 h" from the route's `nextAllowedAt`. */
