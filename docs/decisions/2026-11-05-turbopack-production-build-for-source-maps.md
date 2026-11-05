@@ -42,7 +42,8 @@ The owner kept the host move as a later option, not as the fix.
 - `@sentry/nextjs` (10.76.0) supports Turbopack. It uploads after compilation through its `runAfterProductionCompile` hook, and the webpack-only `webpack.treeshake.removeDebugLogging` option has no effect under Turbopack. The Sentry SDK's debug logging is therefore no longer tree-shaken from the bundle, which is a small size cost.
 - Turbopack in Next 15.5 emits AVIF images without optimisation. The build warns about two such images.
 - Turbopack does not read custom `webpack()` configuration. This app has none, but a future change that needs one must add the Turbopack equivalent instead.
-- The runtime behaviour of the Turbopack build was smoke-tested on the #2599 deploy preview before this change. The QA report is on PR #2599.
+- The runtime behaviour of the Turbopack build was smoke-tested on the #2599 deploy preview: public pages, sign-in, client-side dashboard navigation, `/api/health`, security and CSP headers, Stream chat, and the Sentry client all matched production.
+- **PDF rendering was proven under Turbopack.** `lib/pdf/react-runtime/node-require.ts` used webpack's `__non_webpack_require__`, which Turbopack does not define. It now falls back to Node's `createRequire` anchored at the app root, instead of `module.require`. A temporary route on the #2599 preview rendered a real PDF through the same JSX runtime the invoices use (1,538 bytes, a valid `%PDF` header). React resolved to `/var/task/node_modules/react` (18.3.1), the same tree as `@react-pdf/renderer`, so the two-React clash (React error #31) does not occur. The route was removed before merge. The statutory invoices themselves still render only once `PLATFORM_GSTIN` is set.
 
 ## Deprecated & Superseded Approaches
 
