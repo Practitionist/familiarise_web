@@ -340,7 +340,8 @@ export async function seriesLedgerAfterMiss(
   landed: LandedMiss,
   now: Date,
 ): Promise<{ ledger: SeriesLedger; heldBefore: boolean }> {
-  await db.$executeRaw`SELECT 1 FROM "Appointment" WHERE id = ${appointmentId} FOR UPDATE`;
+  // NO KEY UPDATE: serialises misses, yet stays compatible with the KEY SHARE a history row's FK takes.
+  await db.$executeRaw`SELECT 1 FROM "Appointment" WHERE id = ${appointmentId} FOR NO KEY UPDATE`;
   const { N, occurrences } = await readSeries(db, appointmentId);
   const before = occurrences.map((o) => {
     if (o.id !== landed.occurrenceId) return o;

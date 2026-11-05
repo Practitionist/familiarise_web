@@ -246,7 +246,9 @@ it("takes the class wrapper's row lock before reading the miss ledger", async ()
   transition.mockResolvedValue(1);
   await cancelClassSession(hosted, "occ-3");
   const [sql] = db.rowLock.mock.calls[0] as [TemplateStringsArray];
-  expect(sql.join("?")).toMatch(/FROM "Appointment" WHERE id = \? FOR UPDATE/);
+  expect(sql.join("?")).toMatch(
+    /FROM "Appointment" WHERE id = \? FOR NO KEY UPDATE/,
+  );
 });
 
 const relabel = (occurrenceId: string) =>
