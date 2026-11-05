@@ -23,6 +23,7 @@ it("pins the stored tokens: changing one silently changes every plan's mode", ()
     weekByHand: "schedule:week-by-hand",
     topUp: "schedule:top-up",
     reschedule: "schedule:reschedule",
+    regular: "schedule:regular",
   });
   expect(PLAN_CHOICES).toEqual(["schedule:auto", "schedule:by-hand"]);
   for (const token of Object.values(SCHEDULE_REASON)) {

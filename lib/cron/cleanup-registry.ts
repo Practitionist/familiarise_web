@@ -1735,15 +1735,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     },
     idle: {
       hasWork: async (db, now, outOfTime) => {
-        if (outOfTime()) return true;
-        const { rollablePlansWhere } =
+        const { hasRollForwardWork } =
           await import("@/lib/booking/regular-time/roll-forward");
-        return (
-          (await db.subscription.findFirst({
-            where: rollablePlansWhere(now),
-            select: { id: true },
-          })) !== null
-        );
+        return hasRollForwardWork(db, now, outOfTime);
       },
     },
     build: () =>

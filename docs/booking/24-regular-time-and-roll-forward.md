@@ -73,7 +73,7 @@ Plus `HOURS_CHANGED` for any placed future session now outside the host's hours,
 
 - One implementation: `rollForwardRegularTime` (`lib/booking/regular-time/roll-forward.ts`), registered in `lib/cron/cleanup-registry.ts`, run by the ticker hourly at :50 except 03:50 UTC (`TARGET_WINDOWS`), bite 25.
 - `withCronLock("roll-forward-regular-time", { failMode: "closed" })`, `startDeadline`, Sentry once per run (`createRunFailureReporter`).
-- Selection (`rollablePlansWhere`): APPROVED or SCHEDULED, not deleted, `rollPausedAt` null, plan not ended, a live Regular time, no tentative row (a reschedule in flight waits). Ordered by `lastRolledAt NULLS FIRST, id`.
+- Selection (`rollablePlanWhere`): APPROVED or SCHEDULED, not deleted, `rollPausedAt` null, plan not ended, a live Regular time, no tentative row (a reschedule in flight waits). Ordered by `lastRolledAt NULLS FIRST, id`.
 - Per plan: project the horizon, skip slots that overlap an own session, skip slots with a reason, cap each week at its room, place each slot with its own `allocate` call (manual, `topUp`, `allowPartial`, `byRegularTime` → history `schedule:regular`), then CAS `lastRolledAt`.
 - Conflicts after placement feed one consultant bell per local day (`nudgeRegularTimeConflicts`, `dedupeKey roll-conflicts:<consultant>:<localDay>`, 08:00–21:00 local, outside quiet hours). Regular-time plans are off the Phase 0 ladder (`nudgeablePlans` excludes them).
 - Summary: `plansScanned`, `sessionsPlaced`, `conflicts`, `errors`, `hasMore`; needs attention when `errors > 0`.

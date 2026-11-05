@@ -52,7 +52,7 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { nudgeRegularTimeConflicts } from "@/lib/booking/week-nudge";
 import {
   rollForwardRegularTime,
-  rollablePlansWhere,
+  rollablePlanWhere,
 } from "@/lib/booking/regular-time/roll-forward";
 
 const HOUR = 3_600_000;
@@ -235,7 +235,7 @@ describe("rollForwardRegularTime", () => {
   });
 
   it("T19: paused, ended and Regular-time-less plans are never read", () => {
-    expect(rollablePlansWhere(NOW)).toMatchObject({
+    expect(rollablePlanWhere(NOW)).toMatchObject({
       status: { in: ["APPROVED", "SCHEDULED"] },
       rollPausedAt: null,
       OR: [{ planEndsAt: null }, { planEndsAt: { gt: NOW } }],

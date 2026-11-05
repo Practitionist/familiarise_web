@@ -7,7 +7,7 @@
  */
 import { formatInTimeZone } from "date-fns-tz";
 import type { Prisma } from "@prisma/client";
-import prisma from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { startDeadline } from "@/lib/cron/run-deadline";
 import { createRunFailureReporter } from "@/lib/observability/run-failures";
@@ -40,7 +40,7 @@ export interface RollForwardResult {
 }
 
 /** Live plans the roll-forward fills: running, not paused, with a live Regular time, nothing moving. */
-export function rollablePlansWhere(now: Date): Prisma.SubscriptionWhereInput {
+export function rollablePlanWhere(now: Date): Prisma.SubscriptionWhereInput {
   return {
     status: { in: LIVE_PLAN_STATUSES },
     deletedAt: null,
@@ -52,6 +52,20 @@ export function rollablePlansWhere(now: Date): Prisma.SubscriptionWhereInput {
       occurrences: { none: { isTentative: true, deletedAt: null } },
     },
   };
+}
+
+/** The ticker's idle probe: the claim query's own predicate, admitted by the deadline. */
+export async function hasRollForwardWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const row = await db.subscription.findFirst({
+    where: rollablePlanWhere(now),
+    select: { id: true },
+  });
+  return row !== null;
 }
 
 export async function rollForwardRegularTime(
@@ -82,7 +96,7 @@ async function rollForwardUnlocked(
     Math.min(options.limit ?? ROLL_FORWARD_BATCH, ROLL_FORWARD_BATCH),
   );
   const rows = await prisma.subscription.findMany({
-    where: rollablePlansWhere(now),
+    where: rollablePlanWhere(now),
     orderBy: [{ lastRolledAt: { sort: "asc", nulls: "first" } }, { id: "asc" }],
     take: limit + 1,
     select: { id: true, lastRolledAt: true },
