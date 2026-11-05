@@ -836,9 +836,11 @@ async function stepEarningsLedger(ctx: StepCtx): Promise<void> {
 async function stepUnjournaledEarnings(ctx: StepCtx): Promise<void> {
   // Earnings first: a row and its booking journal commit in one transaction, so
   // any earnings row read here has its journal visible to the read below.
+  // A ₹0 booking moves no money and has no journal; any gross or charge needs one.
   const earningsPaymentRows = await ctx.db.consultantEarnings.groupBy({
     by: ["paymentId"],
     where: {
+      OR: [{ grossAmount: { gt: 0 } }, { payment: { amount: { gt: 0 } } }],
       ...(ctx.cursor ? { paymentId: { gt: ctx.cursor } } : {}),
       ...(ctx.opts.organizationId
         ? { payment: { organizationId: ctx.opts.organizationId } }
