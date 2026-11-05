@@ -256,12 +256,12 @@ instance from reporting the database `unreachable` (#1557).
 ### Step 11: Test via direct API call
 
 ```bash
-curl -s "https://uptime.betterstack.com/api/v2/monitors" \
-  -H "Authorization: Bearer <your-token>" | \
-  python3 -m json.tool | grep -A3 '"url"'
+curl -sS "https://uptime.betterstack.com/api/v2/monitors" \
+  -H "Authorization: Bearer $BETTERSTACK_API_KEY" \
+  | jq '[.data[] | {id, name: .attributes.pronounceable_name, url: .attributes.url, status: .attributes.status, paused: .attributes.paused}]'
 ```
 
-Should return both monitors with their status.
+Should return both monitors with their status. Keep the `jq` filter: the raw response includes each monitor's `request_headers`, which hold the bearer `CRON_SECRET`.
 
 ### Step 12: Test incident lifecycle (optional but recommended)
 
@@ -458,7 +458,7 @@ A second company watches `/api/health/jobs`, so a Better Stack outage cannot hid
 3. **Headers:** `Authorization: Bearer <CRON_SECRET>`, using the production value. Never put the secret in the URL. Sentry stores header values unmasked and visible to anyone who can edit the monitor, so keep monitor edit rights to the owner.
 4. **Interval:** 5 minutes. **Timeout:** 30 seconds (the maximum), for the cold-start stall. Keep the default failure tolerance of three consecutive failures and recovery tolerance of one success.
 5. **Alert:** route the uptime issue to the owner's alert email.
-6. Verify: the monitor shows its first successful check. If it fails, read the body: a `reasons` list or an `overdue` job explains the 503.
+6. Verify: the monitor shows its first successful check. If it fails, read the body: `error` first (`JOB_ENVIRONMENT_UNCONFIGURED` and `JOB_HISTORY_UNAVAILABLE` carry nothing else), otherwise the `reasons` list and any `overdue` job explain the 503.
 
 ## Daily ops digest and its heartbeat
 
@@ -494,8 +494,11 @@ The decision record is [2026-11-05-detector-rollout-and-redundancy.md](../decisi
 Heartbeat 521597 was created paused on 2026-10-30 and sat paused until 2026-11-03. For about four days a dead ticker would have alerted nobody, although the monitor existed and the environment variable was set. After creating or changing any monitor, read it back from the vendor and require `paused: false` and status `up`. For a heartbeat, also confirm a ping has arrived:
 
 ```bash
-curl -sS -H "Authorization: Bearer $BETTERSTACK_API_KEY" https://uptime.betterstack.com/api/v2/heartbeats
+curl -sS -H "Authorization: Bearer $BETTERSTACK_API_KEY" https://uptime.betterstack.com/api/v2/heartbeats \
+  | jq '[.data[] | {id, name: .attributes.name, status: .attributes.status, paused: .attributes.paused}]'
 ```
+
+The filter drops each heartbeat's `url`, which is its ping secret.
 
 The `paused` flag is settable at creation and by PATCH, so a monitor that must start paused needs an explicit unpause step in the same runbook.
 

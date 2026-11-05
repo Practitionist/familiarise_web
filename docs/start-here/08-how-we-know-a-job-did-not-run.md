@@ -141,7 +141,7 @@ Everything here is read-only except step 6, which runs one job. Never paste the 
 
    Use the run-row name (`tds-26q-draft-export`), not the registry key. `jobNameFor` in `lib/cron/schedule.ts` maps one to the other.
 
-2. **The probe.** Expect HTTP 200 and `"healthy":true`. On 503 read `reasons`, then the `overdue` list.
+2. **The probe.** Expect HTTP 200 and `"healthy":true`. On 503 read `error` first: `JOB_ENVIRONMENT_UNCONFIGURED` and `JOB_HISTORY_UNAVAILABLE` answer with no `reasons` or `overdue`. Otherwise read `reasons`, then the `overdue` list.
 
    ```bash
    curl -sS -o /dev/null -w "%{http_code}\n" \
@@ -151,20 +151,23 @@ Everything here is read-only except step 6, which runs one job. Never paste the 
 
    Drop `-o /dev/null` to see the body.
 
-3. **Better Stack monitors and heartbeats.** Using `BETTERSTACK_API_KEY`, list both and check that `paused` is false and the status is `up`.
+3. **Better Stack monitors and heartbeats.** Using `BETTERSTACK_API_KEY`, list both and check that `paused` is false and the status is `up`. Always filter the output: a monitor's `request_headers` holds the bearer `CRON_SECRET`, and a heartbeat's `url` is its ping secret.
 
    ```bash
-   curl -sS -H "Authorization: Bearer $BETTERSTACK_API_KEY" https://uptime.betterstack.com/api/v2/monitors
-   curl -sS -H "Authorization: Bearer $BETTERSTACK_API_KEY" https://uptime.betterstack.com/api/v2/heartbeats
+   curl -sS -H "Authorization: Bearer $BETTERSTACK_API_KEY" https://uptime.betterstack.com/api/v2/monitors \
+     | jq '[.data[] | {id, name: .attributes.pronounceable_name, url: .attributes.url, status: .attributes.status, paused: .attributes.paused}]'
+   curl -sS -H "Authorization: Bearer $BETTERSTACK_API_KEY" https://uptime.betterstack.com/api/v2/heartbeats \
+     | jq '[.data[] | {id, name: .attributes.name, status: .attributes.status, paused: .attributes.paused}]'
    ```
 
 4. **The Sentry uptime detector.** A read with the Sentry CLI; substitute your organisation slug.
 
    ```bash
-   sentry api /organizations/<org>/detectors/7689936/
+   sentry api /organizations/<org>/detectors/7689936/ \
+     | jq '{id, name, enabled, url: .dataSources[0].queryObj.url, intervalSeconds: .dataSources[0].queryObj.intervalSeconds, timeoutMs: .dataSources[0].queryObj.timeoutMs}'
    ```
 
-   Sentry returns the stored header, so treat the output as secret and do not paste it anywhere.
+   The unfiltered response includes the stored bearer header, so never print it without the `jq` filter.
 
 5. **The Sentry cron monitor.** Open the Monitors page in Sentry and confirm `cron-tick` is healthy, or read it through the Sentry CLI or MCP.
 

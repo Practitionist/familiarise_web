@@ -130,3 +130,7 @@ Rules that follow: never paste the value into a document, a ticket, a chat or a 
 - **A paused-on-creation monitor left paused.** Creating a monitor paused is legitimate for a monitor that would fire before its data source exists (the digest heartbeat), but the unpause is part of the step, not a later chore.
 - **Recovering the old `CRON_SECRET`.** It cannot be read from any surface. Rotate instead.
 - **Reading the digest heartbeat and release-lag steps of the 2026-11-02 record as pending.** The heartbeat is created and unpaused; the release-lag token is deliberately deferred.
+- **The Upstash usage alarm in `cron-heartbeat.yml`.** The 2026-11-02 record moved it into the digest; R8 leaves its settings unset, so the digest shows "Upstash usage unknown". Do not restore the Actions alarm.
+- **The `CRON_SECRET` GitHub Actions secret.** No workflow reads it. Delete it rather than updating it.
+- **The runbook's 30-second Sentry uptime timeout.** It was the dashboard's documented maximum; the repointed monitor uses 60 s for the cold-start stall.
+- **Running a never-run windowed job by waiting for its slot.** A weekly or quarterly window would hold the probe red for days or months; run it once by hand (R4).
