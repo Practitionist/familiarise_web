@@ -6,7 +6,7 @@ import prisma, {
   type PrismaLike,
 } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { deriveTransactionId, type StagedTrigger } from "@/lib/novu/outbox";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
@@ -458,11 +458,22 @@ async function processSingleSlaNotice(
 
       const txResult = await prisma.$transaction(
         async (tx) => {
-          const existing = await tx.notificationOutbox.findUnique({
-            where: { transactionId },
+          const existing = await tx.notificationOutbox.findFirst({
+            where: {
+              transactionId: {
+                in: recipients.map((recipient) =>
+                  deriveTransactionId(
+                    NOVU_WORKFLOWS.SUPPORT_TICKET_ACTIVITY,
+                    [recipient],
+                    payload,
+                    dedupeKey,
+                  ),
+                ),
+              },
+            },
             select: { id: true },
           });
-          const rowOutbox = await stageBell(tx, {
+          const rowOutbox = await stageBells(tx, {
             workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_ACTIVITY,
             recipients,
             payload,
@@ -479,9 +490,7 @@ async function processSingleSlaNotice(
       newlyStaged = txResult.newlyStaged;
       if (newlyStaged) {
         countedStaged = 1;
-        if (txResult.rowOutbox) {
-          stagedBells.push(txResult.rowOutbox);
-        }
+        stagedBells.push(...txResult.rowOutbox);
       }
     }
 
@@ -832,7 +841,7 @@ async function stageDisputeDeadlineAlert(
             select: { id: true },
           })) ??
           (await alertEmailStaged(tx, dedupeKey, DISPUTE_ALERT_EMAIL_TYPES));
-        const rowOutbox = await stageBell(tx, {
+        const rowOutbox = await stageBells(tx, {
           workflowId: NOVU_WORKFLOWS.DISPUTE_UPDATED,
           recipients,
           payload,
@@ -848,9 +857,7 @@ async function stageDisputeDeadlineAlert(
     );
 
     if (!txResult.newlyStaged) return 0;
-    if (txResult.rowOutbox) {
-      stagedBells.push(txResult.rowOutbox);
-    }
+    stagedBells.push(...txResult.rowOutbox);
 
     const settled = await Promise.allSettled(
       admins
@@ -923,7 +930,7 @@ async function processDisputeDeadlineAlerts(
     const dedupeKey = `dispute-due:${d.id}:${window}`;
     return [{ d, dueBy: d.dueBy, window, dedupeKey }];
   });
-  // Matched on entityRef, not transactionId: stageBell derives the id from the policy-filtered admins.
+  // Matched on entityRef, not transactionId: stageBells derives the id from the policy-filtered admins.
   const alreadyStaged = new Set(
     (
       (await prisma.notificationOutbox.findMany({
@@ -1191,7 +1198,7 @@ export async function runSupportSlaSweep(opts?: {
       const level = moderationNoticeLevel(report.resolutionDueAt, now);
       try {
         await prisma.$transaction(async (tx) => {
-          const notice = await stageBell(tx, {
+          const notice = await stageBells(tx, {
             workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
             recipients: report.assignedToId
               ? [report.assignedToId]
@@ -1209,7 +1216,7 @@ export async function runSupportSlaSweep(opts?: {
               dashboardUrl: "/dashboard",
             },
           });
-          if (notice) stagedBells.push(notice);
+          stagedBells.push(...notice);
         });
       } catch (error) {
         errors.push(
@@ -1239,7 +1246,7 @@ export async function runSupportSlaSweep(opts?: {
     for (const evidence of overdueEvidence) {
       try {
         await prisma.$transaction(async (tx) => {
-          const staged = await stageBell(tx, {
+          const staged = await stageBells(tx, {
             workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
             recipients: [evidence.requestedById],
             dedupeKey: `evidence-overdue:${evidence.id}`,
@@ -1252,7 +1259,7 @@ export async function runSupportSlaSweep(opts?: {
               dashboardUrl: `/dashboard/support/c_${evidence.caseId}`,
             },
           });
-          if (staged) stagedBells.push(staged);
+          stagedBells.push(...staged);
         });
       } catch (error) {
         errors.push(

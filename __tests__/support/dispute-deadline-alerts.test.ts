@@ -1,5 +1,5 @@
 /** @jest-environment node */
-const mockStageBell = jest.fn<Promise<null>, unknown[]>(async () => null);
+const mockStageBell = jest.fn<Promise<unknown[]>, unknown[]>(async () => []);
 const mockReportSentryMessage = jest.fn<void, unknown[]>();
 const mockReportStandingFinding = jest.fn(
   async (_args: unknown, report?: () => void) => {
@@ -13,7 +13,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   ),
 }));
 jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: (...args: unknown[]) => mockStageBell(...args),
+  stageBells: (...args: unknown[]) => mockStageBell(...args),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: jest.fn(async () => undefined),
@@ -254,7 +254,7 @@ describe("alert emails with every bell off", () => {
         return { success: true };
       },
     );
-    // stageBell stays null: no outbox row exists, only the staged email rows.
+    // stageBells stays null: no outbox row exists, only the staged email rows.
     const staged = (w: {
       entityRef?: string | { in: string[] };
       emailType: { in: string[] };

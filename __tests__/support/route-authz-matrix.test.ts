@@ -88,7 +88,7 @@ jest.mock("../../lib/novu", () => ({
 }));
 jest.mock("../../lib/novu/stage-bell", () => ({
   __esModule: true,
-  stageBell: jest.fn(async () => null),
+  stageBells: jest.fn(async () => []),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   __esModule: true,

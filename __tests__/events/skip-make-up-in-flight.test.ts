@@ -23,7 +23,9 @@ jest.mock("../../lib/enterprise/system-events", () => {
     recordSystemErrorSafe: recordSystemError,
   };
 });
-jest.mock("../../lib/novu/stage-bell", () => ({ stageBell: jest.fn() }));
+jest.mock("../../lib/novu/stage-bell", () => ({
+  stageBells: jest.fn(async () => []),
+}));
 jest.mock("../../lib/payments/payouts/earnings-hold", () => ({
   recomputeEarningsHold: jest.fn(),
 }));

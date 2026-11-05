@@ -16,7 +16,7 @@ import {
 import { stageNewBookingRequestEmail } from "@/lib/email/senders/booking";
 import { deriveTransactionId } from "@/lib/novu/outbox";
 import { scopedHref } from "@/lib/novu/resolve-href";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
@@ -155,7 +155,7 @@ export async function PATCH(
                 select: { id: true },
               })
             : null;
-          const bell = await stageBell(tx, {
+          const bell = await stageBells(tx, {
             workflowId: NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
             recipients: [consultantUserId],
             payload,
@@ -192,7 +192,7 @@ export async function PATCH(
           : [];
       await flushNotificationsAfter(
         {
-          bells: [updated.bell],
+          bells: updated.bell ?? [],
           emails: [
             {
               rows: emailRows,
@@ -256,7 +256,7 @@ export async function PATCH(
                 select: { id: true },
               })
             : null;
-          const bell = await stageBell(tx, {
+          const bell = await stageBells(tx, {
             workflowId: NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
             recipients: [consultantUserId],
             payload,
@@ -293,7 +293,7 @@ export async function PATCH(
           : [];
       await flushNotificationsAfter(
         {
-          bells: [updated.bell],
+          bells: updated.bell ?? [],
           emails: [
             {
               rows: emailRows,

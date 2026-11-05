@@ -21,7 +21,7 @@ import {
   resolveRecipientTimezones,
 } from "@/lib/novu/humanize";
 import type { StagedTrigger } from "@/lib/novu/outbox";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { personalHref } from "@/lib/novu/resolve-href";
 import {
   getCallParticipantSessionsFromStream,
@@ -613,13 +613,13 @@ async function buildSeatNoShowBell(
     zone?: string;
     hasRecording: boolean;
   },
-): Promise<StagedTrigger | null> {
+): Promise<StagedTrigger[]> {
   const { slot, seat, shape, planTitle, zone, hasRecording } = args;
   const profileId = seat.user.consulteeProfileId;
   const recordingUrl = profileId
     ? personalHref("consultee", profileId, "recordings")
     : `${getAppUrl()}/dashboard`;
-  return stageBell(tx, {
+  return stageBells(tx, {
     workflowId:
       shape === "group"
         ? NOVU_WORKFLOWS.SESSION_MISSED_RECORDING
@@ -699,7 +699,7 @@ async function stageNoShowBells(
       zone: zones.get(seat.userId),
       hasRecording: Boolean(recording),
     });
-    if (bell) bells.push(bell);
+    bells.push(...bell);
   }
   const absentUserIds = absent.map((seat) => seat.userId);
   const emailArgs =

@@ -9,34 +9,41 @@ export type StageBellTx = Pick<Tx, "notificationOutbox" | "user">;
  * Stage an in-app bell inside the caller's transaction after enforcing
  * recipient workspace routing, channel/category preferences, and quiet hours.
  */
-export async function stageBell(
+export async function stageBells(
   tx: StageBellTx,
   args: {
     workflowId: NovuWorkflowId;
     recipients: string[];
     payload: NovuPayload;
-    dedupeKey: string;
+    dedupeKey?: string;
     entityRef?: string;
     deferrable?: boolean;
     notBefore?: Date;
   },
-): Promise<StagedTrigger | null> {
-  if (args.recipients.length === 0) return null;
+): Promise<StagedTrigger[]> {
+  if (args.recipients.length === 0) return [];
   const policy = await resolveRecipientBellPolicy(
     args.workflowId,
     args.recipients,
     { tx, deferrable: args.deferrable },
   );
-  if (policy.allowedRecipients.length === 0) return null;
-  const notBefore =
-    args.notBefore && policy.notBefore
-      ? new Date(Math.max(args.notBefore.getTime(), policy.notBefore.getTime()))
-      : (args.notBefore ?? policy.notBefore);
-  return stageTrigger({
-    tx,
-    ...args,
-    recipients: policy.allowedRecipients,
-    ...(notBefore ? { notBefore } : {}),
-    kind: policy.allowedRecipients.length > 1 ? "MULTI" : "SINGLE",
-  });
+  const rows: StagedTrigger[] = [];
+  for (const delivery of policy.deliveries) {
+    const notBefore =
+      args.notBefore && delivery.notBefore
+        ? new Date(
+            Math.max(args.notBefore.getTime(), delivery.notBefore.getTime()),
+          )
+        : (args.notBefore ?? delivery.notBefore);
+    const row = await stageTrigger({
+      ...args,
+      tx,
+      recipients: [delivery.recipient],
+      ...(notBefore ? { notBefore } : {}),
+      kind: "SINGLE",
+    });
+    if (!row) throw new Error("Unable to stage a recipient notification");
+    rows.push(row);
+  }
+  return rows;
 }

@@ -11,9 +11,11 @@ jest.mock("../../lib/stream/support-boundary", () => ({
 }));
 jest.mock("../../lib/novu/stage-bell", () => ({
   __esModule: true,
-  stageBell: jest.fn(async (_tx: unknown, args: { dedupeKey: string }) => ({
-    id: `bell:${args.dedupeKey}`,
-  })),
+  stageBells: jest.fn(async (_tx: unknown, args: { dedupeKey: string }) => [
+    {
+      id: `bell:${args.dedupeKey}`,
+    },
+  ]),
 }));
 
 type Row = Record<string, unknown>;
@@ -69,7 +71,7 @@ import {
   joinIntervention,
   leaveIntervention,
 } from "../../lib/stream/support-intervention";
-import { stageBell } from "../../lib/novu/stage-bell";
+import { stageBells } from "../../lib/novu/stage-bell";
 import { syncSupportBoundary } from "../../lib/stream/support-boundary";
 import { sweepSupportChatAccess } from "../../lib/support/chat-sweep";
 
@@ -172,7 +174,7 @@ it("sends the post-decision notice once per batch of ended grants through the ou
     data: { reviewNoticeAt: NOW },
   });
   // The requester gets the case link; the other party only the help article.
-  const calls = jest.mocked(stageBell).mock.calls.map((call) => call[1]);
+  const calls = jest.mocked(stageBells).mock.calls.map((call) => call[1]);
   expect(calls).toHaveLength(2);
   expect(calls[0]).toMatchObject({
     recipients: ["u-learner"],
@@ -197,7 +199,7 @@ it("records a withheld notice without staging any bell", async () => {
   ]);
   const { result, stagedBells } = await sweep();
   expect(result.notices).toBe(1);
-  expect(stageBell).not.toHaveBeenCalled();
+  expect(stageBells).not.toHaveBeenCalled();
   expect(stagedBells).toEqual([]);
   expect(mockTx.supportCaseEvent.create).toHaveBeenCalledWith({
     data: expect.objectContaining({

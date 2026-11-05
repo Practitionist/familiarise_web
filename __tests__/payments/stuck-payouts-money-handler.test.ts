@@ -2,6 +2,10 @@
  * @jest-environment node
  */
 
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(async () => undefined),
+}));
+
 /**
  * PM-15 (part 2 — the canonical engine records money) — pins what the stuck-
  * payout reconciler now delegates to. The old inline flip set status=COMPLETED
@@ -16,7 +20,9 @@
  */
 
 const recordTDSDeduction = jest.fn().mockResolvedValue(undefined);
-const postLedgerTxn = jest.fn().mockResolvedValue({ created: true });
+const postLedgerTxn = jest
+  .fn()
+  .mockResolvedValue({ transactionId: "journal", created: true });
 const notifyPayoutProcessed = jest.fn().mockResolvedValue(undefined);
 
 jest.mock("../../lib/payments/tax/tds-service", () => ({

@@ -21,7 +21,9 @@ jest.mock("../../lib/enterprise/system-events", () => {
     recordSystemErrorSafe: (...a: unknown[]) => recordSystemError(...a),
   };
 });
-jest.mock("../../lib/novu/stage-bell", () => ({ stageBell: jest.fn() }));
+jest.mock("../../lib/novu/stage-bell", () => ({
+  stageBells: jest.fn(async () => []),
+}));
 jest.mock("../../lib/payments/payouts/earnings-hold", () => ({
   recomputeEarningsHold: jest.fn(),
 }));
@@ -191,8 +193,8 @@ it("cancels without deletedAt, and the third miss flags the class exactly once",
 /** The learners' exit-right bells staged by the last cancel. */
 const exitBells = () =>
   (
-    jest.requireMock("../../lib/novu/stage-bell") as { stageBell: jest.Mock }
-  ).stageBell.mock.calls.filter(
+    jest.requireMock("../../lib/novu/stage-bell") as { stageBells: jest.Mock }
+  ).stageBells.mock.calls.filter(
     ([, bell]) => bell.workflowId === "class-exit-available",
   );
 

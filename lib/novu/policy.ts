@@ -68,18 +68,14 @@ function isBellAllowedForRecipient(
   return true;
 }
 
-function computeLatestQuietHoursNotBefore(
-  rows: BellUserRow[],
-  allowedRecipients: string[],
+function recipientQuietHoursNotBefore(
+  row: BellUserRow | undefined,
+  now: Date,
 ): Date | undefined {
-  const allowedSet = new Set(allowedRecipients);
-  const now = new Date();
-  let latest: Date | undefined;
-  for (const row of rows) {
-    if (typeof row.id === "string" && !allowedSet.has(row.id)) continue;
-    const pref = row.notificationPreferences;
-    if (!pref?.quietHoursEnabled) continue;
-    const notBefore = computeQuietHoursNotBefore(
+  const pref = row?.notificationPreferences;
+  if (!row || !pref?.quietHoursEnabled) return undefined;
+  return (
+    computeQuietHoursNotBefore(
       {
         quietHoursEnabled: true,
         quietHoursStart:
@@ -95,10 +91,8 @@ function computeLatestQuietHoursNotBefore(
         fallbackTimezone: row.timezone ?? null,
       },
       now,
-    );
-    if (notBefore && (!latest || notBefore > latest)) latest = notBefore;
-  }
-  return latest;
+    ) ?? undefined
+  );
 }
 
 export async function resolveRecipientBellPolicy(
@@ -108,13 +102,17 @@ export async function resolveRecipientBellPolicy(
     tx?: Pick<Tx, "user">;
     deferrable?: boolean;
   },
-): Promise<{ allowedRecipients: string[]; notBefore: Date | undefined }> {
+): Promise<{
+  allowedRecipients: string[];
+  deliveries: { recipient: string; notBefore: Date | undefined }[];
+}> {
   if (recipients.length === 0) {
-    return { allowedRecipients: recipients, notBefore: undefined };
+    return { allowedRecipients: [], deliveries: [] };
   }
+  const requested = [...new Set(recipients)];
   const db = opts?.tx ?? prisma;
   const rows = await db.user.findMany({
-    where: { id: { in: recipients } },
+    where: { id: { in: requested } },
     select: {
       id: true,
       erasedAt: true,
@@ -126,18 +124,19 @@ export async function resolveRecipientBellPolicy(
 
   const category = templateFor(workflowId)?.category ?? null;
   const byId = new Map(rows.map((row) => [row.id, row]));
-  const allowedRecipients = recipients.filter((id) =>
+  const allowedRecipients = requested.filter((id) =>
     isBellAllowedForRecipient(byId.get(id), category),
   );
-  if (
-    allowedRecipients.length === 0 ||
-    opts?.deferrable === false ||
-    URGENT_WORKFLOWS.has(workflowId)
-  ) {
-    return { allowedRecipients, notBefore: undefined };
-  }
+  const deferrable =
+    opts?.deferrable !== false && !URGENT_WORKFLOWS.has(workflowId);
+  const now = new Date();
   return {
     allowedRecipients,
-    notBefore: computeLatestQuietHoursNotBefore(rows, allowedRecipients),
+    deliveries: allowedRecipients.map((recipient) => ({
+      recipient,
+      notBefore: deferrable
+        ? recipientQuietHoursNotBefore(byId.get(recipient), now)
+        : undefined,
+    })),
   };
 }

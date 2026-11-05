@@ -2,6 +2,10 @@
  * @jest-environment node
  */
 
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(async () => undefined),
+}));
+
 /**
  * #1161 — the free_ (fully-credit-funded) cancellation rail.
  *
@@ -25,7 +29,9 @@ const mockRefundPayment = jest.fn();
 const mockApplyReversal = jest.fn();
 const mockReverseCredits = jest.fn();
 const mockReverseUtilization = jest.fn();
-const mockPostLedgerTxn = jest.fn();
+const mockPostLedgerTxn = jest
+  .fn()
+  .mockResolvedValue({ transactionId: "journal", created: true });
 const mockAssertEarningTransition = jest.fn();
 const mockRecordTdsReversal = jest.fn();
 const mockPaymentFindUnique = jest.fn();

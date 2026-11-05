@@ -440,7 +440,7 @@ describe("paid plan unallocated for 48 h (#1775 C-3)", () => {
     );
   });
 
-  it("stages one bell to both parties, however often the sweep stages it (#1775 C-6)", async () => {
+  it("stages one stable bell per party across repeated sweeps", async () => {
     const outbox = (
       prisma as unknown as {
         notificationOutbox: { rows: Map<string, { recipients: string[] }> };
@@ -452,10 +452,10 @@ describe("paid plan unallocated for 48 h (#1775 C-3)", () => {
     );
     await expireStaleRequests();
     await expireStaleRequests();
-    expect(outbox.rows.size).toBe(1);
-    expect([...outbox.rows.values()][0].recipients).toEqual([
-      "u-buyer",
-      "u-expert",
+    expect(outbox.rows.size).toBe(2);
+    expect([...outbox.rows.values()].map((row) => row.recipients)).toEqual([
+      ["u-buyer"],
+      ["u-expert"],
     ]);
   });
 

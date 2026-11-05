@@ -33,6 +33,11 @@ const SUBSCRIBER_PREFERENCE_SELECT = {
   marketingEmails: true,
 } as const;
 
+export const PENDING_SUBSCRIBER_SYNC_WHERE = {
+  novuSyncPendingAt: { not: null },
+  user: { emailVerified: true, erasedAt: null },
+} as const;
+
 const subscriberSelect = () =>
   ({
     id: true,
@@ -229,10 +234,7 @@ export async function drainSubscriberSyncs(
   const result = { scanned: 0, synced: 0, pending: 0, failures: 0 };
   if (limit <= 0) return result;
   const rows = await db.notificationPreference.findMany({
-    where: {
-      novuSyncPendingAt: { not: null },
-      user: { emailVerified: true, erasedAt: null },
-    },
+    where: PENDING_SUBSCRIBER_SYNC_WHERE,
     orderBy: { novuSyncPendingAt: "asc" },
     take: limit,
     select: { userId: true },

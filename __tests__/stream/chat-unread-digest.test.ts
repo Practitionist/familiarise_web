@@ -44,7 +44,7 @@ jest.mock("../../lib/prisma", () => {
   };
 });
 jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: (...a: unknown[]) => mockStageBell(...a),
+  stageBells: (...a: unknown[]) => mockStageBell(...a),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: (...a: unknown[]) => mockFlush(...a),
@@ -107,7 +107,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   claims.clear();
   mockFindUnique.mockResolvedValue(liveUser());
-  mockStageBell.mockResolvedValue({ id: "bell" });
+  mockStageBell.mockResolvedValue([{ id: "bell" }]);
   mockStagePrepared.mockResolvedValue([]);
   mockFindMany.mockImplementation(
     async ({ select }: { select: Record<string, unknown> }) =>

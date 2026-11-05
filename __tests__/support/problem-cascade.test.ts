@@ -1,8 +1,10 @@
 /** @jest-environment node */
 const mockStageBell = jest.fn(
-  async (_tx: unknown, args: { dedupeKey: string }) => ({
-    transactionId: args.dedupeKey,
-  }),
+  async (_tx: unknown, args: { dedupeKey: string }) => [
+    {
+      transactionId: args.dedupeKey,
+    },
+  ],
 );
 const mockStageEmail = jest.fn(async (..._args: unknown[]) => [
   { staged: { id: "email-row" }, message: { to: "c@example.test" } },
@@ -16,7 +18,7 @@ const mockHoldEvents = jest.fn(async (..._args: unknown[]) => [] as unknown[]);
 const mockOpenRecommendation = jest.fn(async (..._args: unknown[]) => null);
 const mockCsat = jest.fn(async (..._args: unknown[]) => undefined);
 jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: (tx: unknown, args: { dedupeKey: string }) =>
+  stageBells: (tx: unknown, args: { dedupeKey: string }) =>
     mockStageBell(tx, args),
 }));
 jest.mock("../../lib/email/senders/people", () => ({

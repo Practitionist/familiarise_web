@@ -8,7 +8,7 @@ import prisma, {
   ALLOCATION_TX_TIMEOUT_MS,
   type Tx,
 } from "@/lib/prisma";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 import type { StagedRecipientEmail } from "@/lib/email/send-to-recipients";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
@@ -100,7 +100,7 @@ async function stageResolvedNoticeTx(
     caseKeyOf({ kind: "case", id: inc.id }),
     inc.organizationId,
   );
-  const bell = await stageBell(tx, {
+  const bell = await stageBells(tx, {
     workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
     recipients,
     dedupeKey: entityRef,
@@ -115,7 +115,7 @@ async function stageResolvedNoticeTx(
       ...notificationScope(inc.organizationId),
     },
   });
-  if (bell) out.bells.push(bell);
+  out.bells.push(...bell);
   // One connection per transaction: stage each recipient's email in turn.
   for (const recipientId of recipients) {
     out.emails.push(

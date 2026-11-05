@@ -2,6 +2,10 @@
  * @jest-environment node
  */
 
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(async () => undefined),
+}));
+
 /**
  * Unified reversal engine dispatch (#776 §C / ARCH #4). Asserts the front door
  * routes each source kind correctly. The deep booking cascade is mocked; it's
@@ -107,7 +111,10 @@ describe("applyReversal — PAYOUT_CLAWBACK", () => {
       orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
       tDSRecord: { findFirst: jest.fn().mockResolvedValue(null) },
     };
-    mockPostLedgerTxn.mockResolvedValueOnce(undefined);
+    mockPostLedgerTxn.mockResolvedValueOnce({
+      transactionId: "journal",
+      created: true,
+    });
 
     await applyReversal(tx as never, {
       source: {
@@ -173,7 +180,10 @@ describe("applyReversal — PAYOUT_CLAWBACK", () => {
       },
       tdsAdjustment: { create: jest.fn().mockResolvedValue({}) },
     };
-    mockPostLedgerTxn.mockResolvedValueOnce(undefined);
+    mockPostLedgerTxn.mockResolvedValueOnce({
+      transactionId: "journal",
+      created: true,
+    });
 
     await applyReversal(tx as never, {
       source: {
@@ -220,10 +230,11 @@ describe("applyReversal — PAYOUT_CLAWBACK", () => {
         _tx: unknown,
         txn: { idempotencyKey: string; postings: { amountPaise: number }[] },
       ) => {
-        if (keys.has(txn.idempotencyKey)) return { created: false };
+        if (keys.has(txn.idempotencyKey))
+          return { transactionId: txn.idempotencyKey, created: false };
         keys.add(txn.idempotencyKey);
         journaledPaise += txn.postings[0].amountPaise;
-        return { created: true };
+        return { transactionId: txn.idempotencyKey, created: true };
       },
     );
     const tx = {

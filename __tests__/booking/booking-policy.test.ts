@@ -117,9 +117,9 @@ jest.mock("../../lib/rate-limit", () => ({
 jest.mock("../../utils/appointmentlock", () => ({
   withAppointmentLock: (_id: string, fn: () => unknown) => fn(),
 }));
-const stageBell = jest.fn(async () => ({ id: "bell-1" }));
+const stageBells = jest.fn(async () => [{ id: "bell-1" }]);
 jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: (...a: unknown[]) => stageBell(...(a as [])),
+  stageBells: (...a: unknown[]) => stageBells(...(a as [])),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: jest.fn(async () => undefined),
@@ -178,7 +178,7 @@ describe("returning a subscription session to the plan", () => {
       },
     });
     expect(out.sessionsReturned).toBe(1);
-    expect(stageBell).toHaveBeenCalledTimes(1);
+    expect(stageBells).toHaveBeenCalledTimes(1);
   });
 
   it("refuses inside 24 h of DB now() and accepts at exactly 24 h", async () => {
@@ -194,7 +194,7 @@ describe("returning a subscription session to the plan", () => {
     state.sessionsReturned = 1;
     state.spentCount = 0;
     await expect(run()).rejects.toMatchObject({ code: "RETURN_CAP_REACHED" });
-    expect(stageBell).not.toHaveBeenCalled();
+    expect(stageBells).not.toHaveBeenCalled();
   });
 
   it("answers 403 to anyone but the plan's consultee", async () => {

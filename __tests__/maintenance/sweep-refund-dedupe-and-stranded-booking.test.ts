@@ -117,7 +117,7 @@ jest.mock("../../lib/novu/outbox", () => ({
 
 jest.mock("../../lib/novu/stage-bell", () => ({
   __esModule: true,
-  stageBell: jest.fn(async () => undefined),
+  stageBells: jest.fn(async () => []),
 }));
 
 jest.mock("../../lib/email", () => ({

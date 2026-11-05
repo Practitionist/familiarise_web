@@ -64,8 +64,9 @@ it.each([
   ]);
   const urgent = await resolveRecipientBellPolicy(workflow, ["live"]);
   expect(urgent.allowedRecipients).toEqual(["live"]);
-  expect(urgent.notBefore).toBeUndefined();
+  expect(urgent.deliveries[0].notBefore).toBeUndefined();
   expect(
-    (await resolveRecipientBellPolicy("payment-success", ["live"])).notBefore,
+    (await resolveRecipientBellPolicy("payment-success", ["live"]))
+      .deliveries[0].notBefore,
   ).toBeInstanceOf(Date);
 });

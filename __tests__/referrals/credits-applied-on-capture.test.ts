@@ -1,7 +1,7 @@
 /** @jest-environment node */
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: jest.fn(async () => null),
+  stageBells: jest.fn(async () => []),
 }));
 jest.mock("../../lib/email/senders/money", () => ({
   stageReferralBonusEmail: jest.fn(async () => []),
@@ -12,7 +12,7 @@ import {
   stageCreditsApplied,
   stageReferralReward,
 } from "@/lib/referrals/referral-notify";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { stageReferralBonusEmail } from "@/lib/email/senders/money";
 
 const args = {
@@ -26,7 +26,7 @@ beforeEach(() => jest.clearAllMocks());
 
 it("stages both channels using the supplied transaction and immutable payment identity", async () => {
   await stageCreditsApplied(prisma, args);
-  expect(stageBell).toHaveBeenCalledWith(
+  expect(stageBells).toHaveBeenCalledWith(
     prisma,
     expect.objectContaining({
       recipients: ["u1"],
@@ -58,7 +58,7 @@ it("does nothing when no credits were spent", async () => {
     await stageCreditsApplied(prisma, { ...args, creditsUsedPaise: 0 }),
   ).toEqual({});
   expect(stageReferralBonusEmail).not.toHaveBeenCalled();
-  expect(stageBell).not.toHaveBeenCalled();
+  expect(stageBells).not.toHaveBeenCalled();
 });
 
 it("propagates staging failures so the caller can roll back the source transaction", async () => {
@@ -80,7 +80,7 @@ it.each(["BONUS_EARNED", "WELCOME_BONUS"] as const)(
       amountPaise: 3000,
       counterpartyName: "Alex",
     });
-    expect(stageBell).toHaveBeenCalledWith(
+    expect(stageBells).toHaveBeenCalledWith(
       prisma,
       expect.objectContaining({
         recipients: ["u1"],

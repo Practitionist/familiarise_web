@@ -4,20 +4,19 @@
  * Non-throwing: logs errors and returns success/failure status.
  */
 import * as Sentry from "@sentry/nextjs";
-import type { Tx } from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { getAppUrl } from "@/lib/url";
-import { getNovuClient, isNovuConfigured } from "./client";
+import { isNovuConfigured } from "./client";
 import {
   attemptTrigger,
-  deriveTransactionId,
-  reportTriggerFailure,
+  INLINE_BELL_ATTEMPT_LIMIT,
   stageTrigger,
   type NovuPayload,
   type StageTriggerArgs,
   type TriggerResult,
+  type StagedTrigger,
 } from "./outbox";
-import { resolveRecipientBellPolicy } from "./policy";
-import { toWire } from "./templates";
+import { stageBells, type StageBellTx } from "./stage-bell";
 import type { NovuWorkflowId } from "./templates/types";
 import {
   NOVU_WORKFLOWS,
@@ -121,99 +120,78 @@ function reportNotConfigured(workflowId: string): void {
   }
 }
 
+/** The relay owns the remaining rows; the request fast path starts at most five calls. */
+async function attemptPreparedRows(
+  rows: StagedTrigger[],
+): Promise<TriggerResult[]> {
+  if (rows.length === 0) return [];
+  if (!isNovuConfigured()) {
+    reportNotConfigured(rows[0].workflowId);
+    return rows.map((staged) => ({
+      success: false,
+      error: "Novu not configured",
+      staged,
+    }));
+  }
+  const attempted = await Promise.all(
+    rows
+      .slice(0, INLINE_BELL_ATTEMPT_LIMIT)
+      .map((row) => attemptTrigger(row, { suppressSentry: true })),
+  );
+  const failures = attempted.filter((result) => !result.success);
+  if (failures.length > 0) {
+    Sentry.captureException(new Error("Inline notification fan-out failed"), {
+      tags: { subsystem: "novu", op: "inline-attempt" },
+      extra: { failedRecipients: failures.length },
+    });
+  }
+  return [
+    ...attempted,
+    ...rows
+      .slice(INLINE_BELL_ATTEMPT_LIMIT)
+      .map((staged) => ({ success: true, staged })),
+  ];
+}
+
 async function stageAndAttempt(
   args: Omit<StageTriggerArgs, "tx" | "entityRef">,
   opts: TriggerOptions | undefined,
-): Promise<TriggerResult> {
-  let policy: Awaited<ReturnType<typeof resolveRecipientBellPolicy>>;
+): Promise<TriggerResult[]> {
+  const prepare = async (db: StageBellTx): Promise<StagedTrigger[]> => {
+    if (args.kind === "BROADCAST") {
+      const row = await stageTrigger({
+        ...args,
+        entityRef: opts?.entityRef,
+        tx: db,
+      });
+      if (!row) throw new Error("Unable to stage broadcast notification");
+      return [row];
+    }
+    return stageBells(db, {
+      ...args,
+      entityRef: opts?.entityRef,
+      deferrable: opts?.deferrable,
+    });
+  };
+  let rows: StagedTrigger[];
   try {
-    policy =
-      args.kind === "BROADCAST"
-        ? { allowedRecipients: args.recipients, notBefore: undefined }
-        : await resolveRecipientBellPolicy(
-            args.workflowId,
-            args.recipients,
-            opts,
-          );
+    rows = opts?.tx
+      ? await prepare(opts.tx)
+      : await prisma.$transaction(prepare, { timeout: 15_000 });
   } catch (error) {
     if (opts?.tx) throw error;
-    console.error(
-      `[Novu] ${args.workflowId} recipient policy unavailable`,
-      error,
-    );
-    return {
-      success: false,
-      error: error instanceof Error ? error : String(error),
-    };
+    console.error(`[Novu] ${args.workflowId} staging unavailable`, error);
+    if (!opts?.deferAttempt)
+      Sentry.captureException(new Error("Notification staging failed"), {
+        tags: { subsystem: "novu", op: "stage" },
+      });
+    return [
+      { success: false, error: error instanceof Error ? error : String(error) },
+    ];
   }
-  if (args.kind !== "BROADCAST" && policy.allowedRecipients.length === 0) {
-    return { success: true };
-  }
-  const effectiveArgs = { ...args, recipients: policy.allowedRecipients };
-  const notBefore = effectiveArgs.notBefore ?? policy.notBefore;
-  const staged = await stageTrigger({
-    ...effectiveArgs,
-    ...(notBefore && { notBefore }),
-    ...opts,
-  });
-  if (!isNovuConfigured()) {
-    reportNotConfigured(effectiveArgs.workflowId);
-    return { success: false, error: "Novu not configured" };
-  }
-  if (!staged) {
-    if (notBefore && notBefore.getTime() > Date.now()) {
-      return {
-        success: false,
-        error: "Stage failed; quiet-hours notice not sent",
-      };
-    }
-    return sendUnstaged(effectiveArgs);
-  }
-  if (opts?.tx || opts?.deferAttempt) return { success: true, staged };
-  return attemptTrigger(staged);
-}
-
-async function sendUnstaged(
-  args: Omit<StageTriggerArgs, "tx" | "entityRef">,
-): Promise<TriggerResult> {
-  const transactionId = deriveTransactionId(
-    args.workflowId,
-    args.kind === "BROADCAST" ? [] : args.recipients,
-    args.payload,
-    args.dedupeKey,
-  );
-  try {
-    const novu = getNovuClient();
-    const wire = toWire(args.workflowId, args.payload);
-    if (args.kind === "BROADCAST") {
-      await novu.triggerBroadcast(
-        { name: wire.workflowId, payload: wire.payload, transactionId },
-        transactionId,
-      );
-    } else {
-      await novu.trigger(
-        {
-          workflowId: wire.workflowId,
-          to: args.kind === "SINGLE" ? args.recipients[0] : args.recipients,
-          payload: wire.payload,
-          transactionId,
-        },
-        transactionId,
-      );
-    }
-    return { success: true };
-  } catch (error) {
-    if (
-      reportTriggerFailure(error, args.workflowId, args.recipients.length)
-        .accepted
-    ) {
-      return { success: true };
-    }
-    return {
-      success: false,
-      error: error instanceof Error ? error : String(error),
-    };
-  }
+  if (opts?.tx || opts?.deferAttempt)
+    return rows.map((staged) => ({ success: true, staged }));
+  return attemptPreparedRows(rows);
 }
 
 export async function triggerWorkflow<T extends NovuPayload>(
@@ -223,15 +201,19 @@ export async function triggerWorkflow<T extends NovuPayload>(
   dedupeKey?: string,
   opts?: TriggerOptions,
 ): Promise<TriggerResult> {
-  return stageAndAttempt(
-    {
-      workflowId,
-      kind: "SINGLE",
-      recipients: [subscriberId],
-      payload,
-      dedupeKey,
-    },
-    opts,
+  return (
+    (
+      await stageAndAttempt(
+        {
+          workflowId,
+          kind: "SINGLE",
+          recipients: [subscriberId],
+          payload,
+          dedupeKey,
+        },
+        opts,
+      )
+    )[0] ?? { success: true }
   );
 }
 
@@ -248,17 +230,37 @@ export async function triggerForMultiple<T extends NovuPayload>(
       await triggerWorkflow(workflowId, userIds[0], payload, dedupeKey, opts),
     ];
 
+  const recipients = [...new Set(userIds)];
   const BATCH_SIZE = 100;
   const results: TriggerResult[] = [];
-  for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
-    const batch = userIds.slice(i, i + BATCH_SIZE);
-    const result = await stageAndAttempt(
+  for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
+    const batch = recipients.slice(i, i + BATCH_SIZE);
+    const prepared = await stageAndAttempt(
       { workflowId, kind: "MULTI", recipients: batch, payload, dedupeKey },
-      opts,
+      { ...opts, deferAttempt: true },
     );
-    results.push(...batch.map(() => result));
+    results.push(...prepared);
   }
-  return results;
+  if (opts?.tx || opts?.deferAttempt) return results;
+  reportPreparationFailures(results);
+  const staged = results.flatMap((result) =>
+    result.staged ? [result.staged] : [],
+  );
+  return [
+    ...results.filter((result) => !result.staged),
+    ...(await attemptPreparedRows(staged)),
+  ];
+}
+
+function reportPreparationFailures(results: TriggerResult[]): void {
+  const failures = results.filter(
+    (result) => !result.success && !result.staged,
+  );
+  if (failures.length > 0)
+    Sentry.captureException(new Error("Notification staging failed"), {
+      tags: { subsystem: "novu", op: "stage" },
+      extra: { failedBatches: failures.length },
+    });
 }
 
 async function triggerBroadcastWorkflow<T extends NovuPayload>(
@@ -266,9 +268,13 @@ async function triggerBroadcastWorkflow<T extends NovuPayload>(
   payload: T,
   opts?: TriggerOptions,
 ): Promise<TriggerResult> {
-  return stageAndAttempt(
-    { workflowId, kind: "BROADCAST", recipients: [], payload },
-    opts,
+  return (
+    (
+      await stageAndAttempt(
+        { workflowId, kind: "BROADCAST", recipients: [], payload },
+        opts,
+      )
+    )[0] ?? { success: true }
   );
 }
 
@@ -292,11 +298,19 @@ export async function triggerForMultipleZoned(
         recipients,
         build(timezone),
         dedupeKey,
-        opts,
+        { ...opts, deferAttempt: true },
       )),
     );
   }
-  return results;
+  if (opts?.tx || opts?.deferAttempt) return results;
+  reportPreparationFailures(results);
+  const staged = results.flatMap((result) =>
+    result.staged ? [result.staged] : [],
+  );
+  return [
+    ...results.filter((result) => !result.staged),
+    ...(await attemptPreparedRows(staged)),
+  ];
 }
 
 export async function triggerWorkflowZoned(

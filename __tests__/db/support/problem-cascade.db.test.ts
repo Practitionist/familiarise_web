@@ -1,7 +1,7 @@
 /** The resolved-problem cascade racing a problem reopen, on real Postgres. */
 import type * as StageBellModule from "../../../lib/novu/stage-bell";
 import prisma from "../../../lib/prisma";
-import { stageBell } from "../../../lib/novu/stage-bell";
+import { stageBells } from "../../../lib/novu/stage-bell";
 import { patchSupportCaseLifecycle } from "../../../lib/support/case-service";
 import { cascadeResolvedProblems } from "../../../lib/support/problem-cascade";
 import { caseVersion, seedCase, seedUser } from "../seed";
@@ -11,12 +11,16 @@ jest.mock("../../../lib/novu/stage-bell", () => {
   const actual = jest.requireActual<typeof StageBellModule>(
     "../../../lib/novu/stage-bell",
   );
-  return { __esModule: true, ...actual, stageBell: jest.fn(actual.stageBell) };
+  return {
+    __esModule: true,
+    ...actual,
+    stageBells: jest.fn(actual.stageBells),
+  };
 });
 
-const { stageBell: realStageBell } = jest.requireActual<typeof StageBellModule>(
-  "../../../lib/novu/stage-bell",
-);
+const { stageBells: realStageBell } = jest.requireActual<
+  typeof StageBellModule
+>("../../../lib/novu/stage-bell");
 
 it("does not resolve an incident whose problem was reopened after the scan", async () => {
   const staff = await seedUser("STAFF");
@@ -52,7 +56,7 @@ it("does not resolve an incident whose problem was reopened after the scan", asy
   // Both incidents are in the scan; the problem is reopened inside the first incident's transaction.
   let reopened: Awaited<ReturnType<typeof patchSupportCaseLifecycle>> | null =
     null;
-  jest.mocked(stageBell).mockImplementation(async (tx, args) => {
+  jest.mocked(stageBells).mockImplementation(async (tx, args) => {
     if (!reopened && args.entityRef?.startsWith(`case-status:${first.id}:`))
       reopened = await patchSupportCaseLifecycle({
         caseId: problem.id,

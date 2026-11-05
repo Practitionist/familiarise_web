@@ -1,3 +1,4 @@
+import { stageClawbackNotice } from "@/lib/payments/payouts/clawback-notifications";
 import type { Tx } from "@/lib/prisma";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { reportSentryError } from "@/lib/observability/report";
@@ -29,8 +30,9 @@ export async function postConsultantPayoutClawback(
   },
 ): Promise<void> {
   const { consultantPayoutId, consultantProfileId, amountPaise } = input;
+  let posted: Awaited<ReturnType<typeof postLedgerTxn>>;
   try {
-    await postLedgerTxn(tx, {
+    posted = await postLedgerTxn(tx, {
       idempotencyKey: consultantClawbackKey(input.refundId, consultantPayoutId),
       kind: "PAYOUT",
       payoutId: consultantPayoutId,
@@ -66,6 +68,14 @@ export async function postConsultantPayoutClawback(
     });
     throw err;
   }
+  if (posted.created)
+    await stageClawbackNotice(tx, {
+      payee: { rail: "CONSULTANT", consultantProfileId },
+      payoutId: consultantPayoutId,
+      journalId: posted.transactionId,
+      event: "RAISED",
+      amountPaise,
+    });
 }
 
 /**

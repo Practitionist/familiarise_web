@@ -8,7 +8,9 @@
  * booker's own row.
  */
 
-jest.mock("../../lib/novu/stage-bell", () => ({ stageBell: jest.fn() }));
+jest.mock("../../lib/novu/stage-bell", () => ({
+  stageBells: jest.fn(async () => []),
+}));
 jest.mock("../../lib/email/senders/booking", () => ({
   stageWindowOpenedEmail: jest.fn(async () => []),
   whenText: (d: Date) => d.toISOString(),
@@ -142,8 +144,8 @@ it("a release notifies two waiting learners once; a booking marks only the booke
   const tx = prisma as never;
   await stageBackupInterestNotices(tx, window);
   await stageBackupInterestNotices(tx, window);
-  const { stageBell } = jest.requireMock("../../lib/novu/stage-bell");
-  expect(stageBell).toHaveBeenCalledTimes(2);
+  const { stageBells } = jest.requireMock("../../lib/novu/stage-bell");
+  expect(stageBells).toHaveBeenCalledTimes(2);
   expect(rows.map((r) => r.status)).toEqual(["NOTIFIED", "NOTIFIED"]);
 
   await markBackupInterestBooked(tx, "u-2", window);

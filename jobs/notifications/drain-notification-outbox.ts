@@ -23,7 +23,10 @@ import { runJob } from "@/lib/observability/job-sentry";
 import { DEAD_LETTER_NOTIFICATION_WHERE } from "@/lib/backoffice/queue-predicates";
 import { postOpsChat } from "@/lib/observability/ops-chat";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu/outbox";
-import { drainSubscriberSyncs } from "@/lib/novu/subscriber";
+import {
+  drainSubscriberSyncs,
+  PENDING_SUBSCRIBER_SYNC_WHERE,
+} from "@/lib/novu/subscriber";
 
 const MAX_BATCH = 50;
 export const DRAIN_CONCURRENCY = 5;
@@ -85,10 +88,7 @@ export async function hasNotificationOutboxWork(
   if (outOfTime()) return true;
   return (
     (await db.notificationPreference.findFirst({
-      where: {
-        novuSyncPendingAt: { not: null },
-        user: { emailVerified: true, erasedAt: null },
-      },
+      where: PENDING_SUBSCRIBER_SYNC_WHERE,
       select: { userId: true },
     })) !== null
   );

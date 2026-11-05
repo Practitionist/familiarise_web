@@ -144,6 +144,7 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
 
   "payout-processed": "payout",
   "payout-failed": "payout",
+  "payout-clawback": "payout",
 
   "referral-bonus-earned": "referral",
   "referee-welcome-bonus": "referral",
@@ -200,6 +201,7 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "org-payout-completed": "org-billing",
   "org-payout-failed": "org-billing",
   "org-payout-reversed": "org-billing",
+  "org-payout-clawback": "org-billing",
   "org-member-overage-timed-out": "org-billing",
   "org-program-overage-due": "org-billing",
   "org-contract-status-changed": "org-billing",

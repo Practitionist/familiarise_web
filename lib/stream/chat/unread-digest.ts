@@ -15,7 +15,7 @@ import {
 } from "@/lib/email/senders/chat";
 import { stagePreparedEmails } from "@/lib/email/send-to-recipients";
 import { DEFAULT_NOTIFICATION_TIMEZONE } from "@/lib/novu/humanize";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { DM_ORG_PREFIX } from "@/lib/stream-channel-ids";
@@ -245,7 +245,7 @@ export async function handleUnreadMessageReminder(
           expiresAt: new Date(Date.now() + CLAIM_TTL_MS),
         },
       });
-      const bell = await stageBell(tx, {
+      const bell = await stageBells(tx, {
         workflowId: NOVU_WORKFLOWS.CHAT_UNREAD_DIGEST,
         recipients: [recipientId],
         dedupeKey,
@@ -263,7 +263,7 @@ export async function handleUnreadMessageReminder(
       });
       const emails = await stagePreparedEmails(tx, prepared);
       return {
-        bells: [bell],
+        bells: bell,
         emails: [{ rows: emails, emailType: CHAT_UNREAD_DIGEST_EMAIL_TYPE }],
       };
     });

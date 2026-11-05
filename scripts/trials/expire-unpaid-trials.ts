@@ -406,7 +406,7 @@ async function refundUnansweredTrial(trial: {
     ]);
     await flushNotificationsAfter(
       {
-        bells: [refundBell],
+        bells: refundBell ?? [],
         emails: [{ rows: emailRows, emailType: "TRIAL_CANCELLED" }],
       },
       "expire-unpaid-trials.unanswered",

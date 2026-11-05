@@ -4,7 +4,7 @@ jest.mock("@sentry/nextjs", () => ({
   captureMessage: jest.fn(),
 }));
 jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: jest.fn(async () => null),
+  stageBells: jest.fn(async () => []),
 }));
 jest.mock("../../lib/email/deliver", () => ({
   stage: jest.fn(async () => null),
@@ -57,7 +57,7 @@ import {
 } from "../../lib/support/case-service";
 import { supportDeadline } from "../../lib/support/deadline-policy";
 import { slaStateOf } from "../../lib/support/sla";
-import { stageBell } from "../../lib/novu/stage-bell";
+import { stageBells } from "../../lib/novu/stage-bell";
 import { stage as stageEmail } from "../../lib/email/deliver";
 import { supportRequestHref } from "../../lib/novu/resolve-href";
 const cases = prisma.supportCase;
@@ -356,7 +356,7 @@ it("notifies accepted presenters on staff replies", async () => {
     },
     now,
   );
-  const recipients = (stageBell as jest.Mock).mock.calls[0][1].recipients;
+  const recipients = (stageBells as jest.Mock).mock.calls[0][1].recipients;
   expect(recipients).toEqual(expect.arrayContaining(["customer", "presenter"]));
 });
 
@@ -387,7 +387,7 @@ describe("case turn notification routing", () => {
       },
       now,
     );
-    const recipients = (stageBell as jest.Mock).mock.calls[0][1].recipients;
+    const recipients = (stageBells as jest.Mock).mock.calls[0][1].recipients;
     expect(recipients).toEqual(
       expect.arrayContaining(["customer", "presenter", "staff"]),
     );
@@ -416,7 +416,7 @@ describe("case turn notification routing", () => {
       },
       now,
     );
-    const bell = stageBell as jest.Mock;
+    const bell = stageBells as jest.Mock;
     expect(bell.mock.calls[0][1].recipients).toEqual(
       expect.arrayContaining(["customer", "staff"]),
     );
@@ -444,7 +444,7 @@ describe("case turn notification routing", () => {
       },
       now,
     );
-    const recipients = (stageBell as jest.Mock).mock.calls[0][1].recipients;
+    const recipients = (stageBells as jest.Mock).mock.calls[0][1].recipients;
     expect(recipients).toEqual(expect.arrayContaining(["staff", "presenter"]));
     expect(recipients).not.toContain("customer");
     expect(emailed()).toEqual(["presenter@example.com"]);
@@ -470,7 +470,7 @@ describe("case turn notification routing", () => {
       },
       now,
     );
-    const recipients = (stageBell as jest.Mock).mock.calls[0][1].recipients;
+    const recipients = (stageBells as jest.Mock).mock.calls[0][1].recipients;
     expect(recipients).toEqual(["staff"]);
     expect(emailed()).toEqual([]);
   });

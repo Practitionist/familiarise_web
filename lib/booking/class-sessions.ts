@@ -25,7 +25,7 @@ import {
   RefundValidationError,
 } from "@/lib/payments/operations/refund";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import {
   DEFAULT_NOTIFICATION_TIMEZONE,
@@ -117,13 +117,13 @@ async function stageBellsByZone(
   const zones = await resolveRecipientTimezones(userIds, tx);
   const bells: StagedTrigger[] = [];
   for (const [zone, ids] of groupRecipientsByTimezone(userIds, zones)) {
-    const bell = await stageBell(tx, {
+    const bell = await stageBells(tx, {
       workflowId,
       recipients: ids,
       payload: payload(zone),
       dedupeKey,
     });
-    if (bell) bells.push(bell);
+    bells.push(...bell);
   }
   return bells;
 }
@@ -233,7 +233,7 @@ async function onExitRightTripped(
   const dashboardUrl = goHref("client", "appointments");
   const bells: StagedTrigger[] = [];
   for (const userId of seatUserIds) {
-    const bell = await stageBell(tx, {
+    const bell = await stageBells(tx, {
       workflowId: NOVU_WORKFLOWS.CLASS_EXIT_AVAILABLE,
       recipients: [userId],
       payload: {
@@ -244,7 +244,7 @@ async function onExitRightTripped(
       },
       dedupeKey: `exit-avail:${hosted.cls.id}:${userId}`,
     });
-    if (bell) bells.push(bell);
+    bells.push(...bell);
   }
   const exitEmailArgs: ClassExitAvailableEmailArgs | null =
     seatUserIds.length > 0

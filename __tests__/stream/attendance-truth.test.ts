@@ -14,7 +14,9 @@ jest.mock("../../lib/stream/call-presence", () => ({
   getCallPresenceEvidence: (...a: unknown[]) => report(...a),
   getCallParticipantSessionsFromStream: (...a: unknown[]) => sessions(...a),
 }));
-jest.mock("../../lib/novu/stage-bell", () => ({ stageBell: jest.fn() }));
+jest.mock("../../lib/novu/stage-bell", () => ({
+  stageBells: jest.fn(async () => []),
+}));
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));

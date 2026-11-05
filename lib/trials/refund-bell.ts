@@ -1,6 +1,6 @@
 import type { Tx } from "@/lib/prisma";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { goHref } from "@/lib/dashboard/go";
 
 /** The learner hears their paid trial was refunded (#1775 C-12). */
@@ -13,7 +13,7 @@ export function stageTrialRefundedBell(
     consultantName: string | null;
   },
 ) {
-  return stageBell(tx, {
+  return stageBells(tx, {
     workflowId: NOVU_WORKFLOWS.TRIAL_REFUNDED,
     recipients: [trial.consulteeUserId],
     payload: {

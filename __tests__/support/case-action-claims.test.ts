@@ -4,7 +4,7 @@ jest.mock("@sentry/nextjs", () => ({
   captureMessage: jest.fn(),
 }));
 jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: jest.fn(async () => null),
+  stageBells: jest.fn(async () => []),
 }));
 jest.mock("../../lib/email/deliver", () => ({
   stage: jest.fn(async () => null),

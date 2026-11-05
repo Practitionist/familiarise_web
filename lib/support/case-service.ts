@@ -7,7 +7,7 @@ import {
 } from "@prisma/client";
 import { SupportIssueTypeEnum } from "@/schemas/enums";
 import { callbackPhoneSchema } from "@/lib/validation/phone";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
 import prisma, {
@@ -662,7 +662,7 @@ export async function stageSupportCaseIntakeTx(
       caseKeyOf({ kind: "case", id: created.id }),
       created.organizationId,
     );
-    await stageBell(tx, {
+    await stageBells(tx, {
       workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_CREATED,
       recipients: operators.map((operator) => operator.id),
       dedupeKey: `case-created:${created.id}:staff`,
@@ -677,7 +677,7 @@ export async function stageSupportCaseIntakeTx(
     });
     if (initialSender !== "SYSTEM") {
       const threadPartyIds = await caseThreadPartyIds(created, tx);
-      await stageBell(tx, {
+      await stageBells(tx, {
         workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
         recipients: threadPartyIds,
         dedupeKey: `case-created:${created.id}:customer`,
@@ -1083,7 +1083,7 @@ async function stageCaseTurnNotificationsTx(
   const recipients = fanout.bell.filter(
     (recipientId) => recipientId !== input.authorUserId,
   );
-  await stageBell(tx, {
+  await stageBells(tx, {
     workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
     recipients,
     dedupeKey: `case-message:${messageId}`,
@@ -1537,7 +1537,7 @@ export async function stageCaseResolutionCsatPromptTx(
     entityRef: dedupeKey,
     notBefore: new Date(resolvedAt.getTime() + TWENTY_FOUR_HOURS_MS),
   };
-  await stageBell(tx, bellArgs);
+  await stageBells(tx, bellArgs);
 }
 
 function buildLifecycleUpdateData(

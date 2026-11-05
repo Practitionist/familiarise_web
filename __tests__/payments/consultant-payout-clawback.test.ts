@@ -2,6 +2,10 @@
  * @jest-environment node
  */
 
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(async () => undefined),
+}));
+
 /**
  * The automatic consultant clawback for a lost dispute on a PAID earning
  * (`CONSULTANT_CLAWBACK` in `lib/payments/operations/reversal-engine.ts`).

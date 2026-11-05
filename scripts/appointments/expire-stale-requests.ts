@@ -48,7 +48,7 @@ import {
 import { notifyUnscheduledSubscriptionNudge } from "@/lib/novu/service";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { deriveTransactionId } from "@/lib/novu/outbox";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { notificationHref } from "@/lib/novu/resolve-href";
@@ -986,7 +986,7 @@ async function releaseStaleRescheduledSlots(
           const bells = [];
           for (const userId of [expert.id, consultee.id]) {
             bells.push(
-              await stageBell(tx, {
+              ...(await stageBells(tx, {
                 workflowId: NOVU_WORKFLOWS.APPOINTMENT_CANCELLED,
                 recipients: [userId],
                 payload: {
@@ -1003,7 +1003,7 @@ async function releaseStaleRescheduledSlots(
                   dashboardUrl,
                 },
                 dedupeKey: `stale-resched:${appointmentId}:${rows[0].id}:${userId}`,
-              }),
+              })),
             );
           }
           const emails = await stageAppointmentCancelledEmail(tx, {
@@ -1285,7 +1285,7 @@ async function stageUnallocatedRefundBell(
     row.appointment?.organizationId,
     "appointments",
   );
-  const bell = await stageBell(tx, {
+  const bell = await stageBells(tx, {
     workflowId: NOVU_WORKFLOWS.SUBSCRIPTION_UNALLOCATED_REFUNDED,
     recipients: [consulteeId, row.subscriptionPlan.consultantProfile.user.id],
     payload: {
@@ -1532,7 +1532,7 @@ async function expireOneUnallocated(
       : [];
     await flushNotificationsAfter(
       {
-        bells: [staged?.bell],
+        bells: staged.bell ?? [],
         emails: [
           {
             rows: emailRows,

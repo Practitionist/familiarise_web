@@ -38,7 +38,9 @@ jest.mock("../../app/api/appointments/[appointmentId]/cancel/route", () => ({
 jest.mock("../../utils/appointmentlock", () => ({
   withAppointmentLock: jest.fn(),
 }));
-jest.mock("../../lib/novu/stage-bell", () => ({ stageBell: jest.fn() }));
+jest.mock("../../lib/novu/stage-bell", () => ({
+  stageBells: jest.fn(async () => []),
+}));
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: jest.fn(),
 }));

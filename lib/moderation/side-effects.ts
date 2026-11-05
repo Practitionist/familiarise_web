@@ -57,7 +57,7 @@ import {
 } from "./cancel-user-engagements";
 import { formatReportReference } from "./report-reference";
 import { reportReasonLabel } from "@/lib/labels/report-reasons";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import type { StagedEmailBundleEntry } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
@@ -174,11 +174,11 @@ export function reporterIsNotifiedExpert(
 async function stageReporterDispositionBell(
   tx: Tx,
   input: ModerationSideEffectInput,
-): Promise<StagedTrigger | null> {
-  if (!input.report.reportedById) return null;
+): Promise<StagedTrigger[]> {
+  if (!input.report.reportedById) return [];
   const reference = formatReportReference(input.report.id);
   const dedupeSuffix = input.actionId ?? input.actionType;
-  return stageBell(tx, {
+  return stageBells(tx, {
     workflowId: NOVU_WORKFLOWS.MODERATION_REPORT_OUTCOME,
     recipients: [input.report.reportedById],
     payload: {
@@ -215,7 +215,7 @@ export async function applyTransactionalEffects(
     input.actionType === "REVIEW_REMOVED"
   ) {
     const contentRemovedSuffix = input.actionId ?? input.report.id;
-    const contentRemovedBell = await stageBell(tx, {
+    const contentRemovedBell = await stageBells(tx, {
       workflowId: NOVU_WORKFLOWS.CONTENT_REMOVED_NOTICE,
       recipients: [input.report.targetUserId],
       payload: {
@@ -224,7 +224,7 @@ export async function applyTransactionalEffects(
       },
       dedupeKey: `content-removed:${contentRemovedSuffix}`,
     });
-    if (contentRemovedBell) stagedBells.push(contentRemovedBell);
+    stagedBells.push(...contentRemovedBell);
     const contentRemovedRows = await stageAccountModerationEmail(tx, {
       userId: input.report.targetUserId,
       kind: "CONTENT_REMOVED",
@@ -266,7 +266,7 @@ export async function applyTransactionalEffects(
   // The expert already gets the exclusion notice; one message is enough.
   if (!reporterIsNotifiedExpert(input, result)) {
     const outcomeBell = await stageReporterDispositionBell(tx, input);
-    if (outcomeBell) stagedBells.push(outcomeBell);
+    stagedBells.push(...outcomeBell);
     if (input.report.reportedById) {
       const outcomeRows = await stageModerationReportOutcomeEmail(tx, {
         reporterUserId: input.report.reportedById,
@@ -487,7 +487,7 @@ async function excludeReviewFromAggregate(
     reportReason: report.reason,
   });
   const dashboardUrl = goHref("expert", "reviews");
-  const excludedBell = await stageBell(tx, {
+  const excludedBell = await stageBells(tx, {
     workflowId: NOVU_WORKFLOWS.REVIEW_EXCLUDED_FROM_RATING,
     recipients: [expertUserId],
     payload: {
@@ -508,7 +508,7 @@ async function excludeReviewFromAggregate(
     reviewExcludedFromAggregate: true,
     reviewRemovedConsultantProfileId: review.consultantProfileId,
     expertUserId,
-    stagedBells: excludedBell ? [excludedBell] : [],
+    stagedBells: excludedBell,
     stagedEmails: [
       { rows: excludedRows, emailType: "REVIEW_EXCLUDED_FROM_RATING" },
     ],

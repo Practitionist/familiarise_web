@@ -2,7 +2,7 @@ import type { Tx } from "@/lib/prisma";
 import { getAppUrl } from "@/lib/url";
 import { goHref } from "@/lib/dashboard/go";
 import { stageReferralBonusEmail } from "@/lib/email/senders/money";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import type { StagedNotificationBundle } from "@/lib/novu/stage-then-attempt";
 
@@ -23,7 +23,7 @@ export async function stageReferralReward(
     currency: "INR",
     dashboardUrl,
   };
-  const bell = await stageBell(tx, {
+  const bell = await stageBells(tx, {
     workflowId:
       args.kind === "BONUS_EARNED"
         ? NOVU_WORKFLOWS.REFERRAL_BONUS_EARNED
@@ -42,7 +42,7 @@ export async function stageReferralReward(
     dashboardUrl,
   });
   return {
-    bells: [bell],
+    bells: bell,
     emails: [{ list, emailType: `REFERRAL_${args.kind}` }],
   };
 }
@@ -60,7 +60,7 @@ export async function stageCreditsApplied(
 ): Promise<StagedNotificationBundle> {
   if (args.creditsUsedPaise <= 0) return {};
   const dashboardUrl = `${getAppUrl()}/dashboard`;
-  const bell = await stageBell(tx, {
+  const bell = await stageBells(tx, {
     workflowId: NOVU_WORKFLOWS.REFERRAL_CREDITS_APPLIED,
     recipients: [args.userId],
     payload: {
@@ -84,7 +84,7 @@ export async function stageCreditsApplied(
     dashboardUrl,
   });
   return {
-    bells: [bell],
+    bells: bell,
     emails: [{ list, emailType: "REFERRAL_CREDITS_APPLIED" }],
   };
 }

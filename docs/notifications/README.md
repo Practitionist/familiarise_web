@@ -25,7 +25,7 @@ Postgres `NotificationPreference` is the authority. Preference/routing/consent c
 - Optional email obeys master, email, category, and workspace routing settings. Required notices (`category: null`) bypass optional switches and workspace email routing.
 - Bells obey master, in-app, category, and workspace routing settings. Unknown recipients are excluded. Failed policy reads never authorize a send; transactional failures propagate, while the nontransactional service returns failure.
 - Routine bells honor quiet hours; security changes, actionable payment/refund/payout failures, disputes opened, and compliance deadlines bypass quiet-hours deferral. Other preference switches still apply.
-- Enabling quiet hours persists the displayed start, end and timezone. Shared-recipient rows currently use the latest applicable quiet-hours end.
+- Enabling quiet hours persists the displayed start, end and timezone. New targeted deliveries stage one stable row per unique eligible recipient, with that recipient's quiet-hours end. Another recipient's settings cannot change its identity or delivery floor.
 - Email suppression is checked at staging and again before inline delivery; the relay also checks it.
 - Recipient-aware email stores explicit user/category context in nullable `FailedEmail.deliveryPolicy`. Inline attempts and retries re-read the current account, address, category and workspace policy; required notices bypass optional switches but never recipient identity checks. Temporary read failures leave durable work pending. Older rows and direct-address mail lack this context and retain their existing policy.
 
@@ -59,6 +59,22 @@ The public announcement bar is a date-filtered site surface with browser-local d
 Invite/reactivate, accept/decline, remove/withdraw and expiry stage email/bell work with their collaborator transition. Forced departures through moderation, erasure and enterprise membership removal use the same transaction-local helper; bulk paths leave delivery to the existing relay. Expiry repeats its stale timestamp condition so a freshly resent invitation cannot be expired by an older scan. Lifecycle identities include the collaborator ID, event and current revision.
 
 Referral application stages an eligible welcome-discount explanation, vesting stages the earned reward, and confirmed checkout/capture stages credit redemption. Reward identities use the referral ID; redemption identities use the payment ID. Normal gateway checkout does not announce a redemption before capture. Staging uses the supplied transaction for policy reads and outbox writes. Failed staging propagates so its owning transaction can retry.
+
+## Clawback payee journey
+
+Both consultant clawback writers, organisation share clawbacks, next-payout recovery, failed/cancelled/reversed recovery release and originating-payout voiding stage bell and email work only when their existing journal insert is new. Journal identity distinguishes events and recipients; repeat ledger calls stage nothing. Recipient reads and both outboxes use the journal's transaction. Staging/rendering failures propagate to prevent a journal committing without its notice obligation. No provider call runs there.
+
+The recipient is the consultant profile's user or the existing active organisation finance visibility roster (owner, maintainer, manager). Existing payments/org-billing preferences and workspace routing apply. The two event IDs use existing payout and org-billing Novu families. A reserved offset is described as pending payout preparation; release means the debt remains owed, and voiding describes only the unrecovered slice. The original money arithmetic, ledger keys and payout transitions are unchanged. Old journals are not backfilled.
+
+## Recovery and replay
+
+Immediately before a targeted bell attempt, the current account, soft-erasure state, category and workspace routing are read again. A revoked single recipient cancels only its row. Older shared rows with a partially revoked audience stop with `review:audience_changed`, preserving the original payload/key and owed recipients for manual review. Entirely revoked audiences are expected cancellations. Temporary read failures retain pending work. Quiet-hours floors stay fixed after staging.
+
+Email and bell attempts stop automatic replay once the conservative 24-hour provider window has elapsed. The lower bound is row creation, or its later scheduled due floor for bells; it is not a recorded first wire attempt. Consequently an old row that never reached the provider may also require review. A stored Resend receipt is acknowledged without another send. Stable keys protect only within the provider contract, and Novu organization-level idempotency enablement still needs evidence.
+
+The failed-email recovery door requires an operator reason, writes an audit with its compare-and-set mutation, and refuses credential bodies, pre-launch holds, prior receipts, policy cancellations and expired/invalid replay timestamps. It checks current account policy and suppression in the same transaction. Manual review means inspecting provider evidence and choosing an appropriate fresh business action; there is no force-resend switch.
+
+A request/post-commit bundle starts at most five bell attempts. Remaining staged rows use the existing relay; its five-minute cadence means staging is not an immediate delivery guarantee. Nontransactional helpers open a short staging transaction and never send if persistence fails. Broadcast announcements retain their source/revision check. Per-recipient staging uses more rows and writes than the former shared audience row.
 
 ## Operational ownership
 

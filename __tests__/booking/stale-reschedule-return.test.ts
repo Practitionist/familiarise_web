@@ -90,11 +90,13 @@ jest.mock("../../lib/booking/transitions", () => ({
   transitionOccurrenceCompletion: (tx: unknown, args: never) =>
     transitionOccurrenceCompletion(tx, args),
 }));
-const stageBell = jest.fn(async (_tx: unknown, args: unknown) => ({
-  staged: args,
-}));
+const stageBells = jest.fn(async (_tx: unknown, args: unknown) => [
+  {
+    staged: args,
+  },
+]);
 jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: (tx: unknown, args: unknown) => stageBell(tx, args),
+  stageBells: (tx: unknown, args: unknown) => stageBells(tx, args),
 }));
 const stageAppointmentCancelledEmail = jest.fn(async () => []);
 jest.mock("../../lib/email/senders/booking", () => ({
@@ -160,11 +162,11 @@ it("returns a stale released session to the plan and tells both parties", async 
     reason: "STALE_RESCHEDULE_RETURNED",
   });
 
-  const recipients = stageBell.mock.calls.map(
+  const recipients = stageBells.mock.calls.map(
     ([, args]) => (args as { recipients: string[] }).recipients[0],
   );
   expect(recipients.sort()).toEqual(["u-expert", "u-learner"]);
-  expect(stageBell.mock.calls[0][1]).toMatchObject({
+  expect(stageBells.mock.calls[0][1]).toMatchObject({
     payload: expect.objectContaining({
       planTitle: "Mentoring",
       reason: expect.stringContaining("went back to the plan"),

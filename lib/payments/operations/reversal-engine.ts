@@ -1,3 +1,4 @@
+import { stageClawbackNotice } from "@/lib/payments/payouts/clawback-notifications";
 import {
   reportSentryError,
   reportSentryMessage,
@@ -338,8 +339,9 @@ export async function postPayoutClawback(
     input;
   // The counter-post is part of the reversal, not a side effect: report, then
   // rethrow so the enclosing tx rolls back — an unbalanced journal never commits (#1583 C-P1-09).
+  let posted: Awaited<ReturnType<typeof postLedgerTxn>>;
   try {
-    await postLedgerTxn(tx, {
+    posted = await postLedgerTxn(tx, {
       idempotencyKey: orgClawbackKey(refundId, payoutId, orgEarningsId),
       kind: "ORG_PAYOUT",
       payoutId,
@@ -373,6 +375,14 @@ export async function postPayoutClawback(
     });
     throw err;
   }
+  if (posted.created)
+    await stageClawbackNotice(tx, {
+      payee: { rail: "ORG", organizationId },
+      payoutId,
+      journalId: posted.transactionId,
+      event: "RAISED",
+      amountPaise,
+    });
 }
 
 /** `clawback:<driver>:<payoutId>[:<orgEarningsId>]`: one org clawback journal per reversed share. */
@@ -465,8 +475,9 @@ export async function postConsultantPayoutClawback(
 ): Promise<void> {
   const { consultantPayoutId, consultantProfileId, amountPaise } = input;
   // Rethrow so the enclosing tx rolls back: reversal and clawback stay atomic.
+  let posted: Awaited<ReturnType<typeof postLedgerTxn>>;
   try {
-    await postLedgerTxn(tx, {
+    posted = await postLedgerTxn(tx, {
       idempotencyKey: consultantClawbackKey(input.refundId, consultantPayoutId),
       // Counters a consultant `payout:<id>` txn (doc §4.4), hence PAYOUT.
       kind: "PAYOUT",
@@ -506,6 +517,14 @@ export async function postConsultantPayoutClawback(
     });
     throw err;
   }
+  if (posted.created)
+    await stageClawbackNotice(tx, {
+      payee: { rail: "CONSULTANT", consultantProfileId },
+      payoutId: consultantPayoutId,
+      journalId: posted.transactionId,
+      event: "RAISED",
+      amountPaise,
+    });
 }
 
 export {

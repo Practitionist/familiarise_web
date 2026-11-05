@@ -20,7 +20,7 @@ jest.mock("../../lib/support/chat-sweep", () => ({
   sweepSupportChatAccess: (...args: unknown[]) => mockChatSweep(...args),
 }));
 jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: jest.fn(async () => null),
+  stageBells: jest.fn(async () => []),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: (...args: unknown[]) => mockFlush(...args),

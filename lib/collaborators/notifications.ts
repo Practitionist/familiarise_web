@@ -2,7 +2,7 @@ import type { Collaborator } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import type { CollaborationLifecycleEvent } from "@/emails/collaborations/CollaborationLifecycleEmail";
 import { stageCollaboratorLifecycleEmail } from "@/lib/email/senders/collaborators";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { collaboratorRoleLabel } from "@/lib/novu/humanize";
 import { goHref } from "@/lib/dashboard/go";
@@ -87,7 +87,7 @@ export async function stageCollaboratorNotifications(
         plan?.consultantProfile?.user?.name ??
         "Plan Owner");
   const revision = `${collaborator.id}:${event}:${collaborator.updatedAt.toISOString()}`;
-  const bell = await stageBell(tx, {
+  const bell = await stageBells(tx, {
     workflowId: WORKFLOWS[event],
     recipients,
     dedupeKey: revision,
@@ -124,7 +124,7 @@ export async function stageCollaboratorNotifications(
     );
   }
   return {
-    bells: [bell],
+    bells: bell,
     emails: [
       {
         list: emailLists.flat(),

@@ -50,11 +50,13 @@ jest.mock("../../lib/cron/run-deadline", () => ({
   startDeadline: () => () => state.opened.length >= state.budget,
 }));
 jest.mock("../../lib/novu/outbox", () => ({ stageTrigger: jest.fn() }));
-const stageBell = jest.fn(async (_tx: unknown, args: unknown) => ({
-  staged: args,
-}));
+const stageBells = jest.fn(async (_tx: unknown, args: unknown) => [
+  {
+    staged: args,
+  },
+]);
 jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: (tx: unknown, args: unknown) => stageBell(tx, args),
+  stageBells: (tx: unknown, args: unknown) => stageBells(tx, args),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: async () => {},
@@ -296,7 +298,7 @@ it("at plan end, every undelivered session settles pro rata through one plan-end
     }),
   );
   // Both parties hear the plan ended, once.
-  expect(stageBell).toHaveBeenCalledWith(
+  expect(stageBells).toHaveBeenCalledWith(
     expect.anything(),
     expect.objectContaining({
       recipients: ["u-learner", "u-expert"],

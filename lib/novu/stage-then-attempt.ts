@@ -7,6 +7,7 @@ import {
 } from "@/lib/email/send-to-recipients";
 import {
   attemptTrigger,
+  INLINE_BELL_ATTEMPT_LIMIT,
   type StagedTrigger,
   type TriggerResult,
 } from "./outbox";
@@ -74,11 +75,16 @@ export function flushNotificationsAfter(
   return scheduleAfter(async () => {
     const errors: unknown[] = [];
     await Promise.all([
-      ...bells.map((row) =>
-        attemptTrigger(row).catch((err: unknown) => {
-          console.error(`Failed to deliver ${op}`, err);
-          errors.push(err);
-        }),
+      ...bells.slice(0, INLINE_BELL_ATTEMPT_LIMIT).map((row) =>
+        attemptTrigger(row, { suppressSentry: true })
+          .then((result) => {
+            if (!result.success)
+              errors.push(new Error("Notification attempt failed"));
+          })
+          .catch((err: unknown) => {
+            console.error(`Failed to deliver ${op}`, err);
+            errors.push(err);
+          }),
       ),
       ...emails.map((entry) =>
         attemptStaged(

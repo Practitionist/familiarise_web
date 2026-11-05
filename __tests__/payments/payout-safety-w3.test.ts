@@ -7,6 +7,10 @@
  * account cools off, and live RazorpayX calls leave only through the proxy.
  */
 
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(async () => undefined),
+}));
+
 type Row = Record<string, unknown>;
 
 const runTx = jest.fn();

@@ -2,12 +2,7 @@
  * @jest-environment node
  */
 
-/**
- * #691 — the ORG_* family rides the outbox. Pins: an org helper stages one
- * MULTI row for the roster and attempts it inline; with `{ tx }` the roster
- * and the row both go through the transaction, nothing is sent, and the
- * staged row comes back for the post-commit attempt.
- */
+// Org helpers stage one durable row per recipient, using the caller's transaction.
 
 const mockTrigger = jest.fn();
 const mockUpsert = jest.fn();
@@ -26,6 +21,13 @@ jest.mock("../../lib/novu/client", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    $transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        notificationOutbox: {
+          upsert: (...args: unknown[]) => mockUpsert(...args),
+        },
+        user: { findMany: (...args: unknown[]) => mockUserRead(...args) },
+      }),
     notificationOutbox: {
       upsert: (...args: unknown[]) => mockUpsert(...args),
       update: (...args: unknown[]) => mockUpdate(...args),
@@ -57,7 +59,7 @@ const payload = {
 
 function stagedRow(args: { create: Record<string, unknown> }) {
   return {
-    id: "row-1",
+    id: args.create.transactionId,
     createdAt: new Date(),
     workflowId: args.create.workflowId,
     kind: args.create.kind,
@@ -78,17 +80,20 @@ beforeEach(() => {
 });
 afterEach(() => jest.clearAllMocks());
 
-describe("org helpers ride the outbox (#691)", () => {
-  it("stages one MULTI row for the roster and attempts it inline", async () => {
+describe("org helpers ride the outbox", () => {
+  it("stages each roster recipient independently and attempts them inline", async () => {
     const staged = await notifyOrgWalletLow("org-1", payload);
 
-    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    expect(mockUpsert).toHaveBeenCalledTimes(2);
     const { create } = mockUpsert.mock.calls[0][0];
-    expect(create.kind).toBe("MULTI");
+    expect(create.kind).toBe("SINGLE");
     expect(create.workflowId).toBe(NOVU_WORKFLOWS.ORG_WALLET_LOW);
-    expect(create.recipients).toEqual(["user-b", "user-a"]);
-    expect(mockTrigger).toHaveBeenCalledTimes(1);
-    expect(mockTrigger.mock.calls[0][0].to).toEqual(["user-b", "user-a"]);
+    expect(create.recipients).toEqual(["user-b"]);
+    expect(mockTrigger).toHaveBeenCalledTimes(2);
+    expect(mockTrigger.mock.calls.map(([input]) => input.to)).toEqual([
+      "user-b",
+      "user-a",
+    ]);
     expect(staged).toEqual([]);
   });
 
@@ -108,11 +113,11 @@ describe("org helpers ride the outbox (#691)", () => {
 
     expect(txFindMany).toHaveBeenCalledTimes(1);
     expect(mockFindMany).not.toHaveBeenCalled();
-    expect(txUpsert).toHaveBeenCalledTimes(1);
+    expect(txUpsert).toHaveBeenCalledTimes(2);
     expect(txUpsert.mock.calls[0][0].create.entityRef).toBe("org:org-1");
     expect(mockUpsert).not.toHaveBeenCalled();
     expect(mockTrigger).not.toHaveBeenCalled();
-    expect(staged).toHaveLength(1);
+    expect(staged).toHaveLength(2);
     expect(staged[0].workflowId).toBe(NOVU_WORKFLOWS.ORG_WALLET_LOW);
   });
 });

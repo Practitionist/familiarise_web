@@ -66,9 +66,11 @@ jest.mock("../../lib/stream/support-boundary", () => ({
 }));
 jest.mock("../../lib/novu/stage-bell", () => ({
   __esModule: true,
-  stageBell: jest.fn(async (_tx: unknown, args: { dedupeKey: string }) => ({
-    id: args.dedupeKey,
-  })),
+  stageBells: jest.fn(async (_tx: unknown, args: { dedupeKey: string }) => [
+    {
+      id: args.dedupeKey,
+    },
+  ]),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   __esModule: true,

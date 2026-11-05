@@ -13,7 +13,7 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: jest.fn(async () => null),
+  stageBells: jest.fn(async () => []),
 }));
 jest.mock("../../lib/email/senders/collaborators", () => ({
   stageCollaboratorLifecycleEmail: jest.fn(async () => []),
@@ -21,7 +21,7 @@ jest.mock("../../lib/email/senders/collaborators", () => ({
 jest.mock("../../lib/url", () => ({ getAppUrl: () => "https://example.test" }));
 import prisma from "@/lib/prisma";
 import { stageCollaboratorNotifications } from "@/lib/collaborators/notifications";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { stageCollaboratorLifecycleEmail } from "@/lib/email/senders/collaborators";
 
 const row: Collaborator = {
@@ -70,7 +70,7 @@ it.each([
     expect(mockPlan).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "wp1" } }),
     );
-    expect(stageBell).toHaveBeenCalledWith(
+    expect(stageBells).toHaveBeenCalledWith(
       prisma,
       expect.objectContaining({
         recipients,
@@ -102,7 +102,7 @@ it("a reinvitation has a new identity and a retry of that revision keeps it", as
     updatedAt: new Date("2026-10-02"),
   });
   expect(
-    jest.mocked(stageBell).mock.calls.map(([, input]) => input.dedupeKey),
+    jest.mocked(stageBells).mock.calls.map(([, input]) => input.dedupeKey),
   ).toEqual([
     "c1:INVITED:2026-10-01T00:00:00.000Z",
     "c1:INVITED:2026-10-02T00:00:00.000Z",
@@ -126,7 +126,7 @@ it("forced departures can stage a generic name before personal data is scrubbed"
     row,
     "A collaborator",
   );
-  expect(stageBell).toHaveBeenCalledWith(
+  expect(stageBells).toHaveBeenCalledWith(
     prisma,
     expect.objectContaining({
       payload: expect.objectContaining({ collaboratorName: "A collaborator" }),
@@ -140,5 +140,5 @@ it("does not queue a notice without a surviving recipient", async () => {
   expect(await stageCollaboratorNotifications(prisma, "ACCEPTED", row)).toEqual(
     {},
   );
-  expect(stageBell).not.toHaveBeenCalled();
+  expect(stageBells).not.toHaveBeenCalled();
 });

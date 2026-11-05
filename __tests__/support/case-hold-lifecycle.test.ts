@@ -14,7 +14,7 @@ jest.mock("../../lib/backoffice/ops-action-log", () => ({
   recordOpsAction: jest.fn(async () => ({ id: "ops-1" })),
 }));
 jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: jest.fn(async () => null),
+  stageBells: jest.fn(async () => []),
 }));
 const mockScheduled: (() => unknown)[] = [];
 jest.mock("../../lib/api/after-safe", () => ({

@@ -64,6 +64,7 @@ export const NOVU_WORKFLOWS = {
   VERIFICATION_STATUS_CHANGED: "verification-status-changed",
   PAYOUT_PROCESSED: "payout-processed",
   PAYOUT_FAILED: "payout-failed",
+  PAYOUT_CLAWBACK: "payout-clawback",
 
   // Admin / System
   GENERAL_ANNOUNCEMENT: "general-announcement",
@@ -126,6 +127,7 @@ export const NOVU_WORKFLOWS = {
   ORG_PAYOUT_COMPLETED: "org-payout-completed",
   ORG_PAYOUT_FAILED: "org-payout-failed",
   ORG_PAYOUT_REVERSED: "org-payout-reversed",
+  ORG_PAYOUT_CLAWBACK: "org-payout-clawback",
   ORG_PROGRAM_EXHAUSTED: "org-program-exhausted",
   ORG_PROGRAM_CAP_NEAR: "org-program-cap-near",
   ORG_PROGRAM_OVERAGE_DUE: "org-program-overage-due",

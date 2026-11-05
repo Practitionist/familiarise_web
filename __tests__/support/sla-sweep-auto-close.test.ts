@@ -46,7 +46,7 @@ jest.mock("../../lib/payments/payouts/earnings-holds", () => ({
     mockReleaseEarnings(db, side, ids),
 }));
 jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: jest.fn(async () => null),
+  stageBells: jest.fn(async () => []),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: jest.fn(async () => undefined),

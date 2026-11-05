@@ -58,7 +58,7 @@ jest.mock("../../lib/novu/outbox", () => {
 });
 
 import { createHmac } from "node:crypto";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { computeSubscriberHash } from "@/lib/novu/subscriber";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import type { StagedTrigger } from "@/lib/novu/outbox";
@@ -85,7 +85,7 @@ afterEach(() => {
   }
 });
 
-describe("1. stageBell(tx, ...) preference gating, routing mode & quiet hours", () => {
+describe("1. stageBells(tx, ...) preference gating, routing mode & quiet hours", () => {
   it("never schedules a delayed survey earlier than its explicit receipt window", async () => {
     const tx = {
       user: {
@@ -105,7 +105,7 @@ describe("1. stageBell(tx, ...) preference gating, routing mode & quiet hours", 
       },
     };
     const notBefore = new Date(Date.now() + 24 * 3_600_000);
-    await stageBell(tx as never, {
+    await stageBells(tx as never, {
       workflowId: "support-ticket-update",
       recipients: ["recipient"],
       payload: { ticketId: "case", status: "Resolved" },
@@ -119,7 +119,7 @@ describe("1. stageBell(tx, ...) preference gating, routing mode & quiet hours", 
     );
   });
 
-  it("filters out EMAIL_ONLY, NEITHER, allNotifications:false, inAppEnabled:false, and muted categories, computes quiet-hours notBefore, and returns null when all opt out", async () => {
+  it("filters out EMAIL_ONLY, NEITHER, allNotifications:false, inAppEnabled:false, and muted categories, computes quiet-hours notBefore, and returns an empty list when all opt out", async () => {
     const txFindMany = jest.fn().mockResolvedValue([
       {
         id: "u_allowed_quiet",
@@ -180,7 +180,7 @@ describe("1. stageBell(tx, ...) preference gating, routing mode & quiet hours", 
       notificationOutbox: { upsert: txUpsert },
     } as never;
 
-    const staged = await stageBell(tx, {
+    const staged = await stageBells(tx, {
       workflowId: "payment-success",
       recipients: [
         "u_allowed_quiet",
@@ -197,13 +197,13 @@ describe("1. stageBell(tx, ...) preference gating, routing mode & quiet hours", 
 
     expect(txFindMany).toHaveBeenCalledTimes(1);
     expect(txUpsert).toHaveBeenCalledTimes(1);
-    expect(staged).not.toBeNull();
-    expect(staged?.recipients).toEqual(["u_allowed_quiet"]);
-    expect(staged?.kind).toBe("SINGLE");
-    expect(staged?.notBefore).toBeInstanceOf(Date);
-    expect((staged?.notBefore as Date).getTime()).toBeGreaterThan(Date.now());
+    expect(staged).toHaveLength(1);
+    expect(staged[0]?.recipients).toEqual(["u_allowed_quiet"]);
+    expect(staged[0]?.kind).toBe("SINGLE");
+    expect(staged[0]?.notBefore).toBeInstanceOf(Date);
+    expect(staged[0]?.notBefore?.getTime()).toBeGreaterThan(Date.now());
 
-    // When all recipients opt out, stageBell returns null without writing to NotificationOutbox
+    // When all recipients opt out, stageBells returns an empty list without writing to NotificationOutbox
     txUpsert.mockClear();
     txFindMany.mockResolvedValueOnce([
       {
@@ -220,14 +220,14 @@ describe("1. stageBell(tx, ...) preference gating, routing mode & quiet hours", 
       },
     ]);
 
-    const skipped = await stageBell(tx, {
+    const skipped = await stageBells(tx, {
       workflowId: "payment-success",
       recipients: ["u_email_only", "u_neither", "u_inapp_off"],
       payload: { paymentId: "pay-100", dashboardUrl: "/dashboard" },
       dedupeKey: "pay-100",
     });
 
-    expect(skipped).toBeNull();
+    expect(skipped).toEqual([]);
     expect(txUpsert).not.toHaveBeenCalled();
   });
 });

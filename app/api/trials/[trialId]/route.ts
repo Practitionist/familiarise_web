@@ -1209,7 +1209,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           consultantName: existingTrial.consultantProfile.user.name,
         }).catch(() => undefined);
         await flushNotificationsAfter(
-          { bells: [refundedBell] },
+          { bells: refundedBell },
           "trial.refunded",
         );
       }

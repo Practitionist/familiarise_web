@@ -6,7 +6,7 @@ const mockDrive = jest.fn<Promise<RefundOwedOutcome>, unknown[]>(async () => ({
   kind: "settled",
 }));
 const mockFlush = jest.fn<Promise<void>, unknown[]>(async () => undefined);
-const mockBell = jest.fn<Promise<void>, unknown[]>(async () => undefined);
+const mockBell = jest.fn<Promise<unknown[]>, unknown[]>(async () => []);
 const mockExpiredNotice = jest.fn<Promise<void>, unknown[]>(
   async () => undefined,
 );
@@ -329,7 +329,7 @@ jest.mock("../../lib/novu/service", () => ({
 }));
 jest.mock("../../lib/novu/outbox", () => ({ deriveTransactionId: jest.fn() }));
 jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: (...args: unknown[]) => mockBell(...args),
+  stageBells: (...args: unknown[]) => mockBell(...args),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: (...args: unknown[]) => mockFlush(...args),

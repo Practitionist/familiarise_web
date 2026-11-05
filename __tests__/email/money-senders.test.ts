@@ -164,3 +164,53 @@ it("stageOrgInvoiceOverdueEmail stages through tx and throws, without a per-reci
   expect(mockStage).not.toHaveBeenCalled();
   expect(Sentry.captureException).not.toHaveBeenCalled();
 });
+
+it("stages clawback notices through transaction policy and propagates render failures", async () => {
+  const { stageClawbackNoticeEmail } =
+    await import("@/lib/email/senders/money");
+  const { txDouble } = await import("../fixtures/tx-double");
+  const findMany = jest
+    .fn()
+    .mockResolvedValue([user("payee"), user("muted", false)]);
+  const tx = txDouble({ user: { findMany } });
+  const args = {
+    recipientUserIds: ["payee", "muted"],
+    organization: false,
+    payoutId: "payout",
+    event: "OFFSET_RELEASED",
+    amountPaise: 15000,
+    dashboardUrl: "/dashboard",
+  } as const;
+  mockStage.mockResolvedValue({
+    id: "notice",
+    createdAt: new Date(),
+    idempotencyKey: "key",
+  });
+  await expect(
+    stageClawbackNoticeEmail(tx, {
+      ...args,
+      recipientUserIds: [...args.recipientUserIds],
+    }),
+  ).resolves.toHaveLength(1);
+  expect(mockGlobalFindMany).not.toHaveBeenCalled();
+  expect(mockStage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      to: "payee@example.com",
+      subject: "Payout offset released",
+    }),
+    "PAYOUT_CLAWBACK",
+    { tx, entityRef: "payout:payout" },
+  );
+  mockStage.mockClear();
+  jest
+    .mocked(renderEmail)
+    .mockRejectedValueOnce(new Error("template unavailable"));
+  await expect(
+    stageClawbackNoticeEmail(tx, {
+      ...args,
+      recipientUserIds: [...args.recipientUserIds],
+    }),
+  ).rejects.toThrow("PAYOUT_CLAWBACK render failed");
+  expect(mockStage).not.toHaveBeenCalled();
+  expect(mockDeliver).not.toHaveBeenCalled();
+});

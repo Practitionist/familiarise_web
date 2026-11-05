@@ -2,6 +2,10 @@
  * @jest-environment node
  */
 
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(async () => undefined),
+}));
+
 /**
  * #CASC (org twin) — CAS-in-WHERE for the REFUNDED transition on
  * `OrganizationEarnings`, and proof that generalising the consultant helper did
@@ -33,7 +37,9 @@
 const mockApplyReversal = jest.fn();
 const mockReverseCredits = jest.fn();
 const mockReverseUtilization = jest.fn();
-const mockPostLedgerTxn = jest.fn();
+const mockPostLedgerTxn = jest
+  .fn()
+  .mockResolvedValue({ transactionId: "journal", created: true });
 const mockRecordTdsReversal = jest.fn();
 const mockPaymentFindUnique = jest.fn();
 const mockFindDeduped = jest.fn(async (..._a: unknown[]) => null as unknown);

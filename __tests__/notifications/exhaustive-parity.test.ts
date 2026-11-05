@@ -70,7 +70,7 @@ import {
 import { sendSecurityEventEmail } from "@/lib/auth/security-email";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 
-const mockStageBell = jest.fn<Promise<StagedTrigger>, [unknown, unknown]>();
+const mockStageBell = jest.fn<Promise<StagedTrigger[]>, [unknown, unknown]>();
 const mockNotifyAccountSecurityNotice = jest.fn();
 const mockNotifyModerationWarning = jest.fn();
 const mockNotifyAccountSuspended = jest.fn();
@@ -92,7 +92,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: (tx: unknown, input: unknown) => mockStageBell(tx, input),
+  stageBells: (tx: unknown, input: unknown) => mockStageBell(tx, input),
 }));
 
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
@@ -169,20 +169,22 @@ jest.mock("../../lib/observability/report", () => ({
 describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockStageBell.mockImplementation(async (_tx, input) => ({
-      id: "outbox-row-1",
-      kind: NotificationOutboxKind.SINGLE,
-      workflowId:
-        typeof input === "object" && input !== null && "workflowId" in input
-          ? String(input.workflowId)
-          : "unknown",
-      transactionId: "tx-1",
-      recipients: ["user-1"],
-      payload: {},
-      attempts: 0,
-      status: "PENDING",
-      notBefore: null,
-    }));
+    mockStageBell.mockImplementation(async (_tx, input) => [
+      {
+        id: "outbox-row-1",
+        kind: NotificationOutboxKind.SINGLE,
+        workflowId:
+          typeof input === "object" && input !== null && "workflowId" in input
+            ? String(input.workflowId)
+            : "unknown",
+        transactionId: "tx-1",
+        recipients: ["user-1"],
+        payload: {},
+        attempts: 0,
+        status: "PENDING",
+        notBefore: null,
+      },
+    ]);
     mockStageAccountModerationEmail.mockResolvedValue([
       { id: "fe-mod-1", emailType: "MODERATION_WARNING" },
     ]);

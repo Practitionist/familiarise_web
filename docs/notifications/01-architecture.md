@@ -38,7 +38,7 @@ graph LR
     end
 
     TX -->|"stage() / stagePreparedEmails()"| FE
-    TX -->|"stageBell(tx, ...)"| NO
+    TX -->|"stageBells(tx, ...)"| NO
     FE --> FLUSH
     NO --> FLUSH
     FE --> ERELAY
@@ -63,8 +63,8 @@ graph LR
 |                   PHASE 1: ATOMIC POSTGRES `$transaction(tx)` (`PG_POOL_MAX=1`)             |
 |                                                                                             |
 |  1. Domain State Mutation (CAS `updateMany` with expected prior status in `WHERE`)          |
-|  2. `stageBell(tx, ...)` -> `resolveRecipientBellPolicy(tx)` filters opted-out users,       |
-|     computes quiet-hours `notBefore`, and upserts `NotificationOutbox`:                     |
+|  2. `stageBells(tx, ...)` -> `resolveRecipientBellPolicy(tx)` filters opted-out users,       |
+|     computes each recipient's quiet-hours `notBefore`, and upserts one stable `SINGLE` `NotificationOutbox` row per eligible recipient:                     |
 |     - `status = 'PENDING'`, `nextRetryAt = notBefore ?? NOW() + 60s`                        |
 |     - Deterministic `transactionId = <workflowId>:<sha256[:32]>` + `NotificationScope`      |
 |  3. `stage*Email(tx, ...)` / `stagePreparedEmails(tx, ...)` writes `FailedEmail`:           |
@@ -119,10 +119,10 @@ To guarantee atomicity with domain writes while strictly respecting `PG_POOL_MAX
    - Standard low-contention interactive routes stage directly inside `tx` via `stage*Email(tx, ...)` + `flushNotificationsAfter`, while bulk loops (`assignments`, `session-outcome-sweep`) stage and render after commit so per-item transactions stay short.
 2. **Phase 1 — Atomic Outbox Staging Inside `$transaction(tx)`**:
    - **Emails**: `stage()` / `stagePreparedEmails(tx, prepared)` (`lib/email/deliver.ts`) evaluates `EMAIL_DELIVERY_MODE` and `EmailSuppression` on `tx`, writes `FailedEmail` with `status: "PENDING"` and `nextRetryAt: new Date(Date.now() + 60_000)`, and generates a row-scoped `Idempotency-Key: <EMAIL_TYPE>/failed-email/<row.id>`.
-   - **In-App Bells**: `stageBell(tx, args)` (`lib/novu/stage-bell.ts`) queries `tx.user.findMany` via `resolveRecipientBellPolicy`, filters out recipients who opted out (`EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, or muted category column), computes quiet-hours `notBefore`, and upserts `NotificationOutbox` with `status: "PENDING"` and `nextRetryAt: notBefore ?? NOW() + 60s` (`INLINE_ATTEMPT_LEASE_MS`). If every recipient opted out, `stageBell` returns `null` without writing an outbox row.
+   - **In-App Bells**: `stageBells(tx, args)` (`lib/novu/stage-bell.ts`) queries `tx.user.findMany` via `resolveRecipientBellPolicy`, filters out recipients who opted out (`EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, or muted category column), computes each recipient's quiet-hours `notBefore`, and upserts one stable `SINGLE` `NotificationOutbox` row per eligible recipient with `status: "PENDING"` and `nextRetryAt: notBefore ?? NOW() + 60s` (`INLINE_ATTEMPT_LEASE_MS`). If every recipient opted out, `stageBells` returns `[]` without writing an outbox row.
 3. **Phase 2 — Post-Commit Concurrent Dispatch via `flushNotificationsAfter`**:
    - After `$transaction` commits, `flushNotificationsAfter({ bells, emails }, op)` (`lib/novu/stage-then-attempt.ts`) schedules wire delivery through `scheduleAfter` (`lib/api/after-safe.ts`).
-   - Inside a Next.js App Router request context, `scheduleAfter` registers the batch on Next.js `after()` (`waitUntil`) so the HTTP response returns immediately while `attemptTrigger(row)` and `attemptStaged(entry.rows, entry.emailType, budgetMs)` run concurrently in `Promise.all` with individual `.catch()` error isolation.
+   - Inside a Next.js App Router request context, `scheduleAfter` registers the batch on Next.js `after()` (`waitUntil`) so the HTTP response returns immediately while at most five `attemptTrigger(row)` calls and `attemptStaged(entry.rows, entry.emailType, budgetMs)` run concurrently in `Promise.all` with individual `.catch()` error isolation.
    - Outside a Next.js request scope (CLI jobs, cron workers, unit tests), `after()` throws and `scheduleAfter` seamlessly executes and settles the batch inline before resolving.
 
 ```mermaid
@@ -137,7 +137,7 @@ sequenceDiagram
     Prep-->>Route: PreparedRecipientEmails
     Route->>DB: Begin $transaction(tx)
     Route->>DB: Domain state transitions (CAS updateMany)
-    Route->>DB: stageBell(tx, ...) -> NotificationOutbox (nextRetryAt = now + 60s)
+    Route->>DB: stageBells(tx, ...) -> NotificationOutbox (nextRetryAt = now + 60s)
     Route->>DB: stagePreparedEmails(tx, ...) -> FailedEmail (nextRetryAt = now + 60s)
     DB-->>Route: Commit { bells, emails }
     Route->>Flush: flushNotificationsAfter({ bells, emails }, op)
@@ -151,7 +151,7 @@ sequenceDiagram
 t = 0ms      [Phase 0: Outside Tx]  prepareRecipientEmails() renders React Email SSR HTML + text in memory
 t = 15ms     [Phase 1: Inside Tx]   BEGIN $transaction(tx)
 t = 20ms                            CAS domain write (e.g., Payment.updateMany WHERE status = PENDING)
-t = 28ms                            stageBell(tx) -> upsert NotificationOutbox (nextRetryAt = t + 60,000ms)
+t = 28ms                            stageBells(tx) -> upsert NotificationOutbox (nextRetryAt = t + 60,000ms)
 t = 35ms                            stagePreparedEmails(tx) -> insert FailedEmail (nextRetryAt = t + 60,000ms)
 t = 40ms                            COMMIT $transaction(tx)
 t = 41ms     [HTTP Response Sent]   scheduleAfter() registers post-response callback; caller receives 200 OK
@@ -254,7 +254,7 @@ Both `resolveRecipientBellPolicy` (for in-app bells) and `loadEmailRecipients` (
 - **Workspace Routing Mode (`OrgWorkspaceProfile.notificationRoutingMode`)**:
   - `BELL_AND_EMAIL` (default): Allows both in-app feed and email.
   - `BELL_ONLY`: Allows in-app feed; suppresses lifecycle emails.
-  - `EMAIL_ONLY`: Allows email; suppresses in-app feed (`stageBell` drops recipient).
+  - `EMAIL_ONLY`: Allows email; suppresses in-app feed (`stageBells` drops recipient).
   - `NEITHER`: Suppresses both channels.
 - **Category Columns (`NotificationPreference`)**: `appointmentReminders` (`appointments`), `paymentNotifications` (`payments`), `subscriptionAlerts` (`subscriptions`), `trialNotifications` (`trials`), `supportUpdates` (`support`), `feedbackAlerts` (`feedback`), `orgBillingAlerts` (`orgBilling`), `orgMembershipAlerts` (`orgMembership`), and `orgProgramAlerts` (`orgProgram`).
 
@@ -327,7 +327,7 @@ To protect the 5,000/month Sentry error quota:
      +---> PATH A: In-App Bell (`lib/novu/`)
      |       - Some routes staged `NotificationOutbox`; `handlePaymentSuccess` called
      |         `notify*` post-commit outside `tx` (lost on container freeze).
-     |       - `stageBell(tx)` bypassed `NotificationPreference` & `notificationRoutingMode`.
+     |       - `stageBells(tx)` bypassed `NotificationPreference` & `notificationRoutingMode`.
      |       - `<Inbox />` connected without `subscriberHash` HMAC verification.
      |
      +---> PATH B: Email (`lib/email/` -> Resend)
@@ -342,13 +342,13 @@ To protect the 5,000/month Sentry error quota:
 ```mermaid
 flowchart LR
     subgraph "Legacy Asymmetric Producer Path (Superseded)"
-        P["API Route / Webhook"] -->|"In-Tx or Floating .catch()"| B["Novu Bell Path<br/>(stageBell bypassed prefs;<br/>no subscriberHash HMAC)"]
+        P["API Route / Webhook"] -->|"In-Tx or Floating .catch()"| B["Novu Bell Path<br/>(stageBells bypassed prefs;<br/>no subscriberHash HMAC)"]
         P -->|"Inline Blocking await deliver()<br/>inside Tx / Redis Lock"| E["Resend Email Path<br/>(nextRetryAt = NOW() race;<br/>24h body-hash collision;<br/>dropped RFC 8058 retry headers)"]
     end
 ```
 
 - **Removed Accidental Operational Asymmetries**:
-  - **Post-Commit Fire-and-Forget vs. In-Tx SSR**: Replaced mixed staging with `prepareRecipientEmails` outside `tx`, atomic `stage()` + policy-aware `stageBell(tx, ...)` (`60s` inline lease) inside `tx`, and `flushNotificationsAfter` concurrent settlement.
+  - **Post-Commit Fire-and-Forget vs. In-Tx SSR**: Replaced mixed staging with `prepareRecipientEmails` outside `tx`, atomic `stage()` + policy-aware `stageBells(tx, ...)` (`60s` inline lease) inside `tx`, and `flushNotificationsAfter` concurrent settlement.
   - **24h Body-Hash Key Collisions & Stripped Retry Headers**: Replaced payload hashes with `<EMAIL_TYPE>/failed-email/<row.id>` keys, stateless `reconstructUnsubscribeHeaders(row)`, and confirmation-only `GET /api/waitlist/unsubscribe`.
   - **Fail-Open Subscriber Sync**: Replaced catch-all defaults (`masterEnabled: true`) and 404-prone PATCH calls with fail-closed DB propagation and idempotent `novu.subscribers.create(...)`.
 - **Intentionally Retained Vendor-Plane Split (Novu In-App vs. Direct Resend Email)**:

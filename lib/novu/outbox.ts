@@ -1,13 +1,4 @@
-/**
- * #1654 — the Novu trigger outbox (closes #691 NTF-1).
- *
- * A trigger is one HTTPS call, and a function that freezes before it completes
- * loses the bell with no trace. So a trigger is first written as a
- * `NotificationOutbox` row where the business change commits (inside the
- * caller's transaction when it has one), then attempted inline under the
- * client's 5 s timeout, and drained by jobs/notifications/drain-notification-outbox.ts
- * when the inline attempt did not settle it. Same shape as lib/email/deliver.ts.
- */
+// Persist alongside the business change; provider I/O runs only after commit.
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
@@ -73,6 +64,7 @@ const MAX_ATTEMPTS = 5;
  * post-commit `attemptTrigger`.
  */
 export const INLINE_ATTEMPT_LEASE_MS = 60_000;
+export const INLINE_BELL_ATTEMPT_LIMIT = 5;
 
 /**
  * #1876 §3 — ordered map of payload keys to entityRef prefixes so callers that
@@ -156,7 +148,7 @@ const STAGED_SELECT = {
  * staging the same notification twice (a replayed webhook, a re-run job)
  * returns the existing row instead of a unique violation that would roll back
  * the caller's transaction. Inside a transaction a failure propagates; outside
- * one it is reported and `null` is returned, and the caller sends directly.
+ * one it is reported and `null` is returned. Delivery requires a durable row.
  */
 export async function stageTrigger(
   args: StageTriggerArgs,

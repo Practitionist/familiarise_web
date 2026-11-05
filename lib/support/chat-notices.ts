@@ -1,7 +1,7 @@
 import type { Tx } from "@/lib/prisma";
 import { MESSAGE_REVIEW_ARTICLE_HREF } from "@/lib/compliance/purpose-codes";
 import type { StagedTrigger } from "@/lib/novu/outbox";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { getAppUrl } from "@/lib/url";
@@ -38,7 +38,7 @@ export async function stagePartyBells(
   const others = recipients.filter((id) => !correspondents.has(id));
   const staged: StagedTrigger[] = [];
   if (own.length) {
-    const bell = await stageBell(tx, {
+    const bell = await stageBells(tx, {
       workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
       recipients: own,
       dedupeKey: `${key}:case`,
@@ -55,10 +55,10 @@ export async function stagePartyBells(
         ...notificationScope(supportCase.organizationId),
       },
     });
-    if (bell) staged.push(bell);
+    staged.push(...bell);
   }
   if (others.length) {
-    const bell = await stageBell(tx, {
+    const bell = await stageBells(tx, {
       workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
       recipients: others,
       dedupeKey: `${key}:party`,
@@ -71,7 +71,7 @@ export async function stagePartyBells(
         ...notificationScope(null),
       },
     });
-    if (bell) staged.push(bell);
+    staged.push(...bell);
   }
   return staged;
 }

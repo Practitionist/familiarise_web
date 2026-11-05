@@ -9,6 +9,18 @@ import { NOVU_WORKFLOWS as W } from "../workflows";
 import type { WorkflowTemplate } from "./types";
 
 export const ORG_TEMPLATES: WorkflowTemplate[] = [
+  {
+    workflowId: W.ORG_PAYOUT_CLAWBACK,
+    name: "Organisation payout adjustment",
+    description:
+      "Active finance visibility roster, when a clawback journal changes an adjustment.",
+    category: "orgBilling",
+    inApp: {
+      subject: "Payout adjustment",
+      body: "{% if payload.eventKind == 'RAISED' %}An adjustment of {{payload.amount}} is owed back from payout {{payload.payoutId}}. This does not mean your bank account was debited.{% elsif payload.eventKind == 'OFFSET_RESERVED' %}An offset of {{payload.amount}} was reserved against payout {{payload.payoutId}}, which has not been confirmed as completed.{% elsif payload.eventKind == 'OFFSET_RELEASED' %}The {{payload.amount}} offset against payout {{payload.payoutId}} was released because that payout did not complete. The amount remains owed.{% elsif payload.eventKind == 'VOIDED' %}An unrecovered adjustment of {{payload.amount}} on payout {{payload.payoutId}} was removed after the bank reversed the originating payout.{% endif %}",
+      redirect: "dashboardUrl",
+    },
+  },
   // ── Billing ─────────────────────────────────────────────────────────────
   {
     workflowId: W.ORG_INVOICE_ISSUED,

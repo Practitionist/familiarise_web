@@ -6,7 +6,13 @@
  * recovery in the same transaction, and commercial credit notes stay out of
  * the GSTR-1 register.
  */
-const mockPostLedgerTxn = jest.fn();
+
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(async () => undefined),
+}));
+const mockPostLedgerTxn = jest
+  .fn()
+  .mockResolvedValue({ transactionId: "journal", created: true });
 jest.mock("../../lib/payments/ledger/post", () => ({
   __esModule: true,
   postLedgerTxn: (...a: unknown[]) => mockPostLedgerTxn(...a),

@@ -11,9 +11,9 @@ jest.mock("../../lib/booking/transitions", () => ({
 jest.mock("../../lib/stream/call-presence", () => ({
   getCallPresenceEvidence: jest.fn(async () => ({ unique: 2 })),
 }));
-const stageBell = jest.fn();
+const stageBells = jest.fn(async (..._args: unknown[]) => []);
 jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: (...a: unknown[]) => stageBell(...a),
+  stageBells: (...a: unknown[]) => stageBells(...a),
 }));
 const reportStandingFinding = jest.fn(
   async (_args: unknown, report?: () => void) => {
@@ -162,7 +162,7 @@ it.each([
       witness: createStreamWitnessBudget(),
     });
     // Only the absent seat, keyed like the 1:1 no-show bell.
-    expect(stageBell.mock.calls.map((c) => c[1])).toEqual(
+    expect(stageBells.mock.calls.map((c) => c[1])).toEqual(
       Array.from({ length: bells }, () =>
         expect.objectContaining({
           workflowId: "session-missed-recording",

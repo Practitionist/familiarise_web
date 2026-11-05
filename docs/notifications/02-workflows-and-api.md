@@ -69,6 +69,10 @@ Every node in the diagram above is an event id, the id the application still tri
 
 ---
 
+### Payout adjustment events
+
+`payout-clawback` (payments category) and `org-payout-clawback` (orgBilling category) carry `payoutId`, formatted `amount`, `eventKind` and `dashboardUrl`. `eventKind` is RAISED, OFFSET_RESERVED, OFFSET_RELEASED or VOIDED. They use the existing payout/org-billing families and stage only for a newly created ledger journal. See the [current delivery contract](README.md#clawback-payee-journey).
+
 ## Workflow families
 
 The Novu plan in use caps an environment at 20 workflows, and the application now has 69 events, so a Novu workflow is a family — one per audience-and-opt-out combination — rather than one per event. The event id the application triggers is unchanged; `toWire` in `lib/novu/templates/families.ts` maps it to its family and adds `payload.event`, and the family's body branches on that field with a Liquid `case`. There are 16 families, listed below with the events each one carries.

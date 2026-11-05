@@ -11,6 +11,9 @@ jest.mock("@/lib/prisma", () => ({
   },
 }));
 jest.mock("@/lib/novu/subscriber", () => ({
+  ...jest.requireActual<typeof import("@/lib/novu/subscriber")>(
+    "@/lib/novu/subscriber",
+  ),
   drainSubscriberSyncs: (...args: unknown[]) => mockSyncDrain(...args),
 }));
 jest.mock("@/lib/cron/with-cron-lock", () => ({

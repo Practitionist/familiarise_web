@@ -5,6 +5,10 @@
  * raised on it, so the org's next payout does not net that refund a second time.
  */
 
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(async () => undefined),
+}));
+
 type Entry = {
   accountId: string;
   direction: "DEBIT" | "CREDIT";

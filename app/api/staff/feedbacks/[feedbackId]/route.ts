@@ -5,7 +5,7 @@ import prisma from "lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { goHref } from "@/lib/dashboard/go";
 import { stageFeedbackUpdateEmail } from "@/lib/email/senders/people";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { PatchFeedbackSchema } from "@/schemas/moderation";
@@ -99,7 +99,7 @@ export async function PATCH(
       const statusChanged = existing.status !== nextStatus;
       const dashboardUrl = goHref("auto", "support/feedback");
       const stagedBell = statusChanged
-        ? await stageBell(tx, {
+        ? await stageBells(tx, {
             workflowId: NOVU_WORKFLOWS.PLATFORM_FEEDBACK_UPDATE,
             recipients: [existing.userId],
             payload: {
@@ -166,7 +166,7 @@ export async function PATCH(
 
     await flushNotificationsAfter(
       {
-        bells: [result.stagedBell],
+        bells: result.stagedBell ?? [],
         emails: [
           {
             rows: stagedEmails,

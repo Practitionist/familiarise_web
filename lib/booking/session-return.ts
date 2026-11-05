@@ -18,7 +18,7 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import {
   DEFAULT_NOTIFICATION_TIMEZONE,
@@ -246,7 +246,7 @@ export async function returnSessionToPlan(args: {
           if (expert) {
             const zones = await resolveRecipientTimezones([expert.id], tx);
             const zone = zones.get(expert.id) ?? DEFAULT_NOTIFICATION_TIMEZONE;
-            bell = await stageBell(tx, {
+            bell = await stageBells(tx, {
               workflowId: NOVU_WORKFLOWS.APPOINTMENT_CANCELLED,
               recipients: [expert.id],
               payload: {
@@ -286,7 +286,7 @@ export async function returnSessionToPlan(args: {
   );
   await flushNotificationsAfter(
     {
-      bells: [committed.bell],
+      bells: committed.bell ?? [],
       emails: [{ rows: committed.emails, emailType: "APPOINTMENT_CANCELLED" }],
     },
     "session-return",

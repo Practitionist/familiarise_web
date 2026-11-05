@@ -68,7 +68,7 @@ import type { StagedTrigger } from "@/lib/novu/outbox";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { startDeadline } from "@/lib/cron/run-deadline";
 import { subMonths } from "date-fns";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { goHref } from "@/lib/dashboard/go";
@@ -536,7 +536,7 @@ async function refundAndTell(
     );
     const dashboardUrl = goHref("client", "appointments");
     const [staged, emailRows] = await Promise.all([
-      stageBell(prisma, {
+      stageBells(prisma, {
         workflowId: NOVU_WORKFLOWS.CLASS_SESSION_REFUNDED,
         recipients: [payment.userId],
         payload: {
@@ -566,7 +566,7 @@ async function refundAndTell(
     ]);
     await flushNotificationsAfter(
       {
-        bells: [staged],
+        bells: staged,
         emails: [{ rows: emailRows, emailType: "APPOINTMENT_CANCELLED" }],
       },
       "settle-cancelled-sessions.refund",
@@ -1005,7 +1005,7 @@ async function settleEndedPlan(
   const appointmentId = plan.appointment?.id;
   if (!appointmentId) return false;
   return withAppointmentLock(appointmentId, async () => {
-    let committed: { markers: RefundOwedMarker[]; bell: StagedTrigger | null };
+    let committed: { markers: RefundOwedMarker[]; bell: StagedTrigger[] };
     try {
       committed = await withSerializableRetry(() =>
         prisma.$transaction(
@@ -1092,7 +1092,7 @@ async function settleEndedPlan(
       throw error;
     }
     await flushNotificationsAfter(
-      { bells: [committed.bell] },
+      { bells: committed.bell },
       "settle-cancelled-sessions.plan-end",
     );
     await driveMarkers(committed.markers, plan.id, result);
@@ -1199,14 +1199,14 @@ async function driveMarkers(
 
 /** Both parties hear that the plan ended, once per plan. */
 async function stagePlanEndedBell(
-  tx: Parameters<typeof stageBell>[0],
+  tx: Parameters<typeof stageBells>[0],
   subscriptionId: string,
   sub: Prisma.SubscriptionGetPayload<{ select: typeof PLAN_SETTLE_SELECT }>,
-): Promise<StagedTrigger | null> {
+): Promise<StagedTrigger[]> {
   const expert = sub.subscriptionPlan.consultantProfile.user;
   const learner = sub.requestedBy.user;
   const organizationId = sub.appointment?.organizationId ?? null;
-  return stageBell(tx, {
+  return stageBells(tx, {
     workflowId: NOVU_WORKFLOWS.APPOINTMENT_COMPLETED,
     recipients: [learner.id, expert.id],
     payload: {

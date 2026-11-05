@@ -20,7 +20,7 @@ import {
   executePatchLifecycleTx,
   latestCaseDecisionTx,
 } from "./case-service";
-import { stageBell } from "@/lib/novu/stage-bell";
+import { stageBells } from "@/lib/novu/stage-bell";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { caseKeyOf } from "./case-key";
@@ -202,7 +202,7 @@ export async function stageCaseNotice(
   message: string,
   key: string,
 ) {
-  await stageBell(tx, {
+  await stageBells(tx, {
     workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
     recipients,
     dedupeKey: key,
@@ -735,7 +735,7 @@ async function stageDecisionNotificationsTx(
   });
   // Stage outbox rows sequentially on this transaction's single connection.
   for (const request of affectedRequests) {
-    await stageBell(tx, {
+    await stageBells(tx, {
       workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
       recipients: [request.recipientUserId],
       dedupeKey: `decision:${decision.id}:${request.recipientUserId}`,
@@ -1072,7 +1072,7 @@ async function requestEvidenceTx(
     },
   });
   await caseEvent(tx, caseId, actor.userId, "EVIDENCE_REQUESTED", request.id);
-  await stageBell(tx, {
+  await stageBells(tx, {
     workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
     recipients: [input.recipientUserId],
     dedupeKey: `evidence-request:${request.id}`,

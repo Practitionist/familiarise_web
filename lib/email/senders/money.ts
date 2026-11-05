@@ -7,6 +7,11 @@
 
 import type { ReactElement } from "react";
 import {
+  ClawbackNoticeEmail,
+  CLAWBACK_NOTICE_COPY,
+} from "@/emails/payments/ClawbackNoticeEmail";
+import type { ClawbackNoticeEvent } from "@/lib/payments/payouts/clawback-notifications";
+import {
   OrgBillingReceiptEmail,
   type OrgBillingReceiptKind,
 } from "@/emails/orgs/OrgBillingReceiptEmail";
@@ -76,6 +81,7 @@ export const MONEY_EMAIL_TYPES = {
   REFUND_PROCESSED: "REFUND_PROCESSED",
   REFUND_FAILED: "REFUND_FAILED",
   PAYOUT_STATUS: "PAYOUT_STATUS",
+  PAYOUT_CLAWBACK: "PAYOUT_CLAWBACK",
   DISPUTE_NOTICE: "DISPUTE_NOTICE",
   ORG_BILLING_RECEIPT: "ORG_BILLING_RECEIPT",
   ORG_INVOICE_OVERDUE: "ORG_INVOICE_OVERDUE",
@@ -511,6 +517,39 @@ function buildPayoutStatusEmail(args: PayoutStatusEmailArgs): {
 
 export const stagePayoutStatusEmail =
   defineLifecycleStager<PayoutStatusEmailArgs>(buildPayoutStatusEmail);
+
+export async function stageClawbackNoticeEmail(
+  tx: StagingTx,
+  args: {
+    recipientUserIds: string[];
+    organization: boolean;
+    payoutId: string;
+    event: ClawbackNoticeEvent;
+    amountPaise: number;
+    dashboardUrl: string;
+  },
+): Promise<StagedRecipientEmail[]> {
+  return stageSpecRequired(
+    tx,
+    {
+      emailType: MONEY_EMAIL_TYPES.PAYOUT_CLAWBACK,
+      category: args.organization ? "orgBilling" : "payments",
+      from: SENDERS.finance,
+      entityRef: `payout:${args.payoutId}`,
+      subject: () => CLAWBACK_NOTICE_COPY[args.event].title,
+      render: (r) =>
+        ClawbackNoticeEmail({
+          recipientName: greet(r),
+          event: args.event,
+          amountText: money(args.amountPaise, "INR"),
+          payoutId: args.payoutId,
+          dashboardUrl: absolute(args.dashboardUrl),
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+    args.recipientUserIds,
+  );
+}
 
 // ── Dispute notice ──────────────────────────────────────────────────────────
 
