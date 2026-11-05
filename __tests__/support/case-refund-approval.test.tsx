@@ -418,6 +418,35 @@ describe("a plan payment's refund priced in sessions", () => {
     ).toBeDisabled();
   });
 
+  it("says nothing is left by count, and locks the box, when no session is removable", async () => {
+    renderPanel(
+      {
+        ...planCase,
+        planRefund: {
+          paymentId: "pay_1",
+          amountPaise: 1_560_000,
+          refundablePaise: 1_560_000,
+          sessionsTotal: 78,
+          sessionsRefunded: 18,
+          removable: 0,
+        },
+      },
+      "pay_1",
+    );
+    expect(
+      await screen.findByLabelText("Plan sessions to refund"),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Nothing is left to refund by session count on this plan.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Enter 1 to 0/)).not.toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Recommended refund in rupees"),
+    ).toBeInTheDocument();
+  });
+
   it("keeps the money-only form for a payment that is not a plan", async () => {
     renderPanel(base, "pay_1");
     expect(

@@ -89,6 +89,8 @@ function sessionsHint(
   amountPaise: number | null,
   bySessions: boolean,
 ): string {
+  if (plan.removable === 0)
+    return "Nothing is left to refund by session count on this plan.";
   if (sessions !== null && amountPaise !== null)
     return sessionRefundCopy(plan, sessions, amountPaise);
   if (bySessions)
@@ -358,6 +360,7 @@ function RecommendForm({
             min="1"
             max={plan.removable}
             step="1"
+            disabled={plan.removable === 0}
             value={sessionsText}
             onChange={(event) => setSessionsText(event.target.value)}
             placeholder={`Sessions to refund (up to ${plan.removable})`}
