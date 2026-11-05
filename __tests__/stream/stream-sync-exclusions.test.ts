@@ -177,6 +177,26 @@ describe("contact-field scrub", () => {
     expect(mockPartialUpdateUsers).not.toHaveBeenCalled();
   });
 
+  it("holds the checkpoint before a page whose scrub failed and sends none of its deletions", async () => {
+    jest.mocked(readJobCheckpoint).mockResolvedValue("before");
+    mockFindMany.mockResolvedValueOnce([]);
+    mockPartialUpdateUsers.mockRejectedValueOnce(new Error("rate limited"));
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    mockQueryUsers.mockResolvedValueOnce({
+      users: [{ id: "orphan-leaky", email: "orphan@example.com" }],
+    });
+
+    const summary = await performStreamUserSync({ batchDelayMs: 0 });
+
+    expect(summary).toMatchObject({
+      checkpoint: "before",
+      hasMore: true,
+      totalFailedScrubs: 1,
+    });
+    expect(mockQueryUsers).toHaveBeenCalledTimes(1);
+    expect(mockDeleteUsers).not.toHaveBeenCalled();
+  });
+
   it("reports a failed scrub once in the summary instead of throwing", async () => {
     prismaUsers(["leaky"]);
     mockPartialUpdateUsers.mockRejectedValueOnce(new Error("rate limited"));

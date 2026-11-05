@@ -235,6 +235,7 @@ async function performStreamUserSyncUnlocked(
         break;
       }
 
+      const pageStartCursor = lastStreamUserId;
       hasMore = currentPageUsers.length === effectivePageLimit;
       totalStreamUsersProcessed += currentPageUsers.length;
       lastStreamUserId = currentPageUsers[currentPageUsers.length - 1].id;
@@ -297,6 +298,10 @@ async function performStreamUserSyncUnlocked(
             totalFailedScrubs += scrubs.length;
             firstScrubError ??=
               error instanceof Error ? error.message : "Partial update failed";
+            // Replay this page next run: its deletions have not been sent yet.
+            lastStreamUserId = pageStartCursor;
+            hasMore = true;
+            break;
           }
         }
       }

@@ -375,7 +375,10 @@ catches any future regression that stores a contact field again. See the
 `SyncSummary` exposes processed/identified counts, accepted deletion-request
 counts, failed entries, asynchronous task IDs, `checkpoint`, `hasMore`,
 `totalContactFieldsScrubbed` and `totalFailedScrubs`. A failed scrub sets
-`success` to false and is logged once per run, not once per user.
+`success` to false and is logged once per run, not once per user. It also
+ends the run with the checkpoint held at the start of the failed page, so the
+next run replays that page; the scrub runs before the page's deletions, so a
+replay never resends a deletion request.
 Accepted requests do not prove asynchronous hard-delete completion. Dedicated
 erasure obligations retain their own retry owner. DeleteUsers requests remain
 paced at least ten seconds apart by default, including across soft/hard modes;
