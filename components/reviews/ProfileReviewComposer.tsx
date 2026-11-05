@@ -45,13 +45,19 @@ export function ProfileReviewComposer({
   consultantProfileId,
   consultantName,
 }: Readonly<{ consultantProfileId: string; consultantName: string | null }>) {
-  const queryKey = ["reviewable-for-consultant", consultantProfileId] as const;
   const { data: authSession, isPending: sessionPending } = useSession();
+  const viewerId = authSession?.user?.id ?? null;
+  // Keyed by viewer so a sign-out and sign-in on one tab never reuses another account's answer.
+  const queryKey = [
+    "reviewable-for-consultant",
+    consultantProfileId,
+    viewerId,
+  ] as const;
 
   const { data, isError, isLoading, refetch } = useQuery({
     queryKey,
     // Signed-out visitors are the common case on a public profile: never ask.
-    enabled: !!authSession?.user?.id && !sessionPending,
+    enabled: !!viewerId && !sessionPending,
     // A 401 from an expired cookie is still an answer ("nothing to offer").
     retry: false,
     queryFn: async (): Promise<ReviewableSession[]> => {

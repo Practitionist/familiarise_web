@@ -89,6 +89,14 @@ describe("seed-two-factor deterministic derivation & XChaCha20 round-trip", () =
     expect(() => requireAuthSecret()).toThrow(/BETTER_AUTH_SECRET/);
   });
 
+  it("refuses a captured CLI message in place of the secret", async () => {
+    const { requireAuthSecret } =
+      await import("@/prisma/seedFiles/seed-two-factor");
+    process.env.BETTER_AUTH_SECRET =
+      "You don't appear to be in a folder that is linked to a project";
+    expect(() => requireAuthSecret()).toThrow(/whitespace/);
+  });
+
   it("round-trips encrypted secret and backup codes with Better Auth symmetricDecrypt and verifies TOTP", async () => {
     const { symmetricDecrypt } = await import("better-auth/crypto");
     const { createOTP } = await import("@better-auth/utils/otp");

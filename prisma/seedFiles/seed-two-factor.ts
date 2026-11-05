@@ -18,6 +18,12 @@ export function requireAuthSecret(): string {
       "BETTER_AUTH_SECRET is required to pre-enrol seed operators.",
     );
   }
+  // A CLI message captured instead of the value (e.g. `netlify env:get` in an unlinked worktree) has spaces.
+  if (/\s/.test(secret)) {
+    throw new Error(
+      "BETTER_AUTH_SECRET contains whitespace, so it is not a secret; read it from a linked checkout or the main .env.",
+    );
+  }
   return secret;
 }
 
