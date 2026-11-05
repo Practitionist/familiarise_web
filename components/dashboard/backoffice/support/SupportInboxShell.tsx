@@ -107,10 +107,12 @@ export function SupportInboxShell({
   const searchSuffix = search ? `?${search}` : "";
   const [composeOpen, setComposeOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [searchReset, setSearchReset] = useState(0);
   const activeFilterCount = INBOX_FILTER_KEYS.filter(
     (key) => key !== "view" && f[key] !== null,
   ).length;
-  const clearFilters = () =>
+  const clearFilters = () => {
+    setSearchReset((reset) => reset + 1);
     list.setParams({
       q: "",
       filters: Object.fromEntries(
@@ -120,6 +122,7 @@ export function SupportInboxShell({
         ]),
       ),
     });
+  };
 
   return (
     <div
@@ -158,6 +161,7 @@ export function SupportInboxShell({
           </TabsList>
         </Tabs>
         <FilterBar
+          key={searchReset}
           search={{
             label: "Search cases",
             placeholder: "Name, email, subject or reference",
