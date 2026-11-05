@@ -3,7 +3,7 @@ title: Hosting for a burst-sensitive Next.js app
 band: 70-design-decisions
 audience: sde3
 status: accepted
-last-reviewed: 2026-10-03
+last-reviewed: 2026-11-06
 ---
 
 # ADR 32 — Hosting for a burst-sensitive Next.js app
@@ -66,6 +66,30 @@ What it shows, with its limits:
 - **Each 8-request burst also returned one Netlify platform error page** ("Error - Request ID …") on both deploys.
 
 Measure any fix with the same burst against a deploy permalink. An idle wait does not guarantee cold instances, and a published deploy also receives cron-tick traffic, so classify each sample by its own fields: a fresh instance reports a small `uptimeAtEntryMs` (a few seconds) and a new `instanceId`. Compare only those rows, and the same route on both sides.
+
+### 2026-11-06: the email stack leaves the auth graph, and the boot is CPU-bound
+
+The authenticated route graph no longer loads the email stack at boot. `lib/auth.ts`, `lib/auth/account-lifecycle.ts`, `lib/auth/security-email.ts` and `lib/novu/stage-then-attempt.ts` now load their senders with `import()` at the moment they send, and `lib/time/viewer-zone.ts` imports `date-fns/locale/en-US` instead of the whole locale index. Every send still goes through `deliver()`. esbuild counts the static graph of `/api/perf/probe-full` at 2,896 modules (14.4 MB of source), down from 3,604 modules (17.8 MB). React Email and the templates are gone from it, and `date-fns` drops from 826 files to 304.
+
+The same release added boot fields to both probes: `cpuAtEntry` (CPU time the process has used by the time the handler starts), `resourceAtEntry` (peak memory, file reads and context switches), `nodeTiming` (Node's own start-up milestones) and `nodeVersion`. The older fields are unchanged.
+
+The measurement was one 12-request burst against each of two idle, unpublished deploy permalinks, fired at the same moment (01:55 IST). Each burst sent six requests to `probe-bare` and six to `probe-full`. The "before" deploy was the `dev` branch deploy of this change's base commit (`8b6f84530`, deploy `6aecd555aa0a5a895803e378`). The "after" deploy was this change's preview (deploy `6aece157bb152c479fd9b900`). Only rows from new instances count:
+
+| Route                     | Before: cold `uptimeAtEntryMs` | After: cold `uptimeAtEntryMs` | Change in the median |
+| ------------------------- | ------------------------------ | ----------------------------- | -------------------- |
+| `probe-bare` (control)    | 2,485–2,722 ms (4 instances)   | 2,525–2,718 ms (6 instances)  | about +0.08 s, noise |
+| `probe-full` (auth graph) | 6,315–6,604 ms (6 instances)   | 6,178–6,330 ms (5 instances)  | about −0.36 s        |
+| Route graph (full − bare) | about 4.0 s                    | about 3.6 s                   | about −0.4 s         |
+
+The published production figures from 2026-11-05 (`probe-full` 6.66–6.91 s, `probe-bare` 2.48–2.65 s) agree with the "before" column. A simultaneous burst on the production permalink found no cold instance at all: all twelve requests landed on instances between 126 s and 48 min old, which cron-tick keeps alive. So production cannot serve as a cold baseline. Cutting the email stack saved about 0.4 s of the 4 s route-graph cost. That is less than the 0.5–1.0 s first estimated. Better Auth, SSO and passkey are still the bulk of the graph.
+
+**The boot is CPU-bound.** AWS gives a Lambda one vCPU at 1,769 MB, so the 1,024 MB handler gets about 0.58 vCPU. On every cold row, on both routes and both deploys that report the field, the process had used 0.58–0.62 CPU-seconds per second of uptime when the handler started. That is its whole CPU share from start to handler. A process waiting on disk or network would sit well below that line. Node's own start-up is short: the event loop starts about 0.23 s after the process. The remaining boot is CPU work in the Netlify handler, the Next server, Sentry and the route modules. Cold `probe-bare` instances peaked at 124–135 MB of memory and cold `probe-full` instances at 258–261 MB, far below 1,024 MB. Memory is therefore not the constraint, but CPU share scales with it. The runtime is Node `v22.23.4`.
+
+This verdict is different from the August 2048 MB test. That test ran while the preload stall was blocking the event loop, so it measured a different failure. More CPU is now expected to shorten the boot roughly in proportion. A 2,048 MB setting (about 1.16 vCPU) would put cold `probe-bare` near 1.3 s and cold `probe-full` near 3.1 s. That is a prediction, not a measurement. Measure it on one preview before deciding anything.
+
+The memory setting is per deploy. Netlify records memory per function on each deploy (`available_functions[].m` in `getDeploy`). It is set by `[functions."___netlify-server-handler"] memory = 2048` in the `netlify.toml` of the commit being built. In August this applied to a single deploy preview while production stayed at 1,024 MB. Netlify does not document `[functions]` as a context-aware key, so `[context.deploy-preview]` cannot scope it. The only safe scope is a throwaway branch that is never merged. The site record has no memory setting (`getSite` reports only `functions_region`). Compute bills by configured memory multiplied by duration ([Netlify functions configuration](https://docs.netlify.com/build/functions/configuration/)), so 2,048 MB would roughly double server-handler GB-hours, from about 53 to about 106 a month. That figure is extrapolated from a 35-minute sample of handler time at pre-launch traffic on 2026-11-05. The legacy Pro plan includes 1,000 GB-hours.
+
+A fresh deploy preview is not idle when it turns ready. The function log of the preview above shows server-handler invocations with Prisma start-up lines from the second the deploy turned ready, about 20 s before any probe request. A burst fired straight after a deploy therefore lands mostly on instances that are already booted. Wait at least 15 minutes after a deploy is ready before bursting it.
 
 ## Sources
 
