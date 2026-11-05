@@ -543,25 +543,6 @@ export function AnnouncementsPage({
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-linkUrl">Link URL</Label>
-                    <Input
-                      id="edit-linkUrl"
-                      name="linkUrl"
-                      type="url"
-                      defaultValue={editingAnnouncement.linkUrl || ""}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-linkText">Link Text</Label>
-                    <Input
-                      id="edit-linkText"
-                      name="linkText"
-                      defaultValue={editingAnnouncement.linkText || ""}
-                    />
-                  </div>
-                </div>
               </div>
               <DialogFooter>
                 <Button

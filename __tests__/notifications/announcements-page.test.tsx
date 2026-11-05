@@ -108,6 +108,9 @@ it("preserves link fields and converts scheduled local input back to an instant 
   expect(screen.getByLabelText("Link URL (optional)")).toHaveValue(
     announcement.linkUrl,
   );
+  fireEvent.change(screen.getByLabelText("Link URL (optional)"), {
+    target: { value: "https://example.com/updated" },
+  });
   fireEvent.change(screen.getByLabelText("Start (local time)"), {
     target: { value: "2027-01-05T15:30" },
   });
@@ -121,6 +124,12 @@ it("preserves link fields and converts scheduled local input back to an instant 
   );
   const form = screen.getByRole("button", { name: "Save" }).closest("form");
   if (!form) throw new Error("Edit form missing");
+  expect(new FormData(form).getAll("linkUrl")).toEqual([
+    "https://example.com/updated",
+  ]);
+  expect(new FormData(form).getAll("linkText")).toEqual([
+    announcement.linkText,
+  ]);
   fireEvent.submit(form);
   await waitFor(() =>
     expect(mockFetch).toHaveBeenCalledWith(
@@ -132,7 +141,7 @@ it("preserves link fields and converts scheduled local input back to an instant 
     (entry) => entry[1]?.method === "PATCH",
   );
   expect(JSON.parse(call?.[1].body)).toMatchObject({
-    linkUrl: announcement.linkUrl,
+    linkUrl: "https://example.com/updated",
     linkText: announcement.linkText,
     startDate: new Date("2027-01-05T15:30").toISOString(),
   });
