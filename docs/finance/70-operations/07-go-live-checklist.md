@@ -11,6 +11,8 @@ last-reviewed: 2026-11-02
 
 Use this page to take the money subsystem from sandbox to real money: first the collection side (Razorpay accepting real cards and UPI), then the disbursement side (RazorpayX paying real people). The two can be cut over together or separately. Each section ends with the proof that the step worked, because the failure mode at go-live is not a crash but a wrong amount or a wrong recipient on a path that was never exercised with live credentials. Items that live in the Razorpay dashboards rather than in code are marked "dashboard"; record a screenshot or a signed delivery log against the cutover issue for each.
 
+**Resume the paused job fleet first (paused 2026-11-05 to save invocations on mock data).** Delete the Upstash key `ops:active_cron_platform`, or set it to `netlify`. Confirm a new production `cron-tick` row appears. Then unpause the Better Stack tick heartbeat, digest heartbeat and probe monitor, and re-enable the Sentry `cron-tick` monitor and uptime detector. The exact commands are in [the pause decision](../../decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md#how-to-resume-go-live-or-any-time). Do this before Part 1: the digest checks in 1.2 and Part 3, and the job-freshness monitor in 2.1, all need the fleet running.
+
 ## Part 1: accepting real money (Razorpay)
 
 ### 1.1 Account (dashboard)
