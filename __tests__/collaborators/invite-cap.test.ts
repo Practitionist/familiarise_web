@@ -142,3 +142,7 @@ describe("the collaborator cap", () => {
     expect(tx.collaborator.update).not.toHaveBeenCalled();
   });
 });
+
+jest.mock("../../lib/collaborators/notifications", () => ({
+  stageCollaboratorNotifications: jest.fn(async () => ({})),
+}));

@@ -59,6 +59,7 @@ const tx = {
   consulteeProfile: { updateMany: jest.fn(async () => ({ count: 0 })) },
   trial: { updateMany: jest.fn(async () => ({ count: 0 })) },
   consultation: { updateMany: jest.fn(async () => ({ count: 0 })) },
+  appointmentParticipant: { updateMany: jest.fn(async () => ({ count: 0 })) },
   collaborator: {
     updateManyAndReturn: jest.fn(async () => [
       { collaboratorType: "WEBINAR", webinarPlanId: "wp-1", classPlanId: null },
@@ -110,7 +111,6 @@ describe("DPDP erasure flips collaborator rows", () => {
       "webinar",
       "wp-1",
       "u1",
-      { notify: false },
     );
   });
 
@@ -198,3 +198,7 @@ describe("DPDP erasure flips collaborator rows", () => {
     );
   });
 });
+
+jest.mock("../../lib/collaborators/notifications", () => ({
+  stageCollaboratorNotifications: jest.fn(async () => ({})),
+}));

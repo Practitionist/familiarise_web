@@ -1,27 +1,34 @@
 import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { marketingConsentWhere } from "@/lib/compliance/marketing-policy";
 import { normaliseEmail } from "./suppression";
 
-const NEWSLETTER_RECIPIENT_SELECT = {
-  email: true,
-  erasedAt: true,
-  notificationPreferences: {
-    select: {
-      allNotifications: true,
-      emailEnabled: true,
-      marketingEmails: true,
+const newsletterRecipientSelect = () =>
+  ({
+    email: true,
+    erasedAt: true,
+    consentArtifacts: {
+      where: marketingConsentWhere(),
+      take: 1,
+      select: { id: true },
     },
-  },
-} as const;
+    notificationPreferences: {
+      select: {
+        allNotifications: true,
+        emailEnabled: true,
+        marketingEmails: true,
+      },
+    },
+  }) as const;
 
 export interface NewsletterPreferenceReader {
   user: {
     findMany(args: {
       where: { email: { in: string[]; mode: "insensitive" } };
-      select: typeof NEWSLETTER_RECIPIENT_SELECT;
+      select: ReturnType<typeof newsletterRecipientSelect>;
     }): Promise<
       Prisma.UserGetPayload<{
-        select: typeof NEWSLETTER_RECIPIENT_SELECT;
+        select: ReturnType<typeof newsletterRecipientSelect>;
       }>[]
     >;
   };
@@ -36,7 +43,7 @@ export async function findNewsletterPreferenceBlocks(
   if (addresses.length === 0) return new Set();
   const users = await db.user.findMany({
     where: { email: { in: addresses, mode: "insensitive" } },
-    select: NEWSLETTER_RECIPIENT_SELECT,
+    select: newsletterRecipientSelect(),
   });
   return new Set(
     users.flatMap((user) => {
@@ -45,7 +52,8 @@ export async function findNewsletterPreferenceBlocks(
         (user.erasedAt ||
           !pref?.marketingEmails ||
           !pref.allNotifications ||
-          !pref.emailEnabled)
+          !pref.emailEnabled ||
+          user.consentArtifacts.length === 0)
         ? [normaliseEmail(user.email)]
         : [];
     }),

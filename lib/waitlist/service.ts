@@ -11,6 +11,7 @@ import * as Sentry from "@sentry/nextjs";
 import { createHash } from "node:crypto";
 import { Prisma, WaitlistSource, WaitlistStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { withdrawMarketingConsent } from "@/lib/compliance/marketing-consent";
 import {
   sendWaitlistConfirmEmail,
   sendWaitlistWelcomeEmail,
@@ -96,6 +97,7 @@ export async function subscribe(
     where: { email },
     create: {
       email,
+      updatedAt: now,
       name: input.name ?? null,
       status: WaitlistStatus.PENDING,
       source: input.source ?? WaitlistSource.FOOTER,
@@ -104,6 +106,7 @@ export async function subscribe(
       ...consent,
     },
     update: {
+      updatedAt: now,
       status: WaitlistStatus.PENDING,
       unsubscribedAt: null,
       confirmedAt: null,
@@ -164,15 +167,24 @@ export async function confirmSubscription(params: {
 
   const existing = await prisma.waitlist.findUnique({
     where: { email },
-    select: { status: true, name: true },
+    select: { status: true, name: true, updatedAt: true },
   });
   if (!existing) return { outcome: "INVALID" };
   if (existing.status === WaitlistStatus.SUBSCRIBED) {
     return { outcome: "ALREADY_CONFIRMED" };
   }
 
-  await prisma.waitlist.update({
-    where: { email },
+  if (
+    existing.status !== WaitlistStatus.PENDING ||
+    existing.updatedAt.getTime() !== params.issuedAt
+  )
+    return { outcome: "INVALID" };
+  const confirmed = await prisma.waitlist.updateMany({
+    where: {
+      email,
+      status: WaitlistStatus.PENDING,
+      updatedAt: new Date(params.issuedAt),
+    },
     data: {
       status: WaitlistStatus.SUBSCRIBED,
       confirmedAt: new Date(),
@@ -180,6 +192,7 @@ export async function confirmSubscription(params: {
     },
   });
 
+  if (confirmed.count !== 1) return { outcome: "INVALID" };
   await sendWaitlistWelcomeEmail({ email, name: existing.name });
 
   return { outcome: "CONFIRMED" };
@@ -200,12 +213,20 @@ export async function unsubscribe(params: {
     return { ok: false };
   }
 
-  await prisma.waitlist.updateMany({
-    where: { email, status: { not: WaitlistStatus.UNSUBSCRIBED } },
-    data: {
-      status: WaitlistStatus.UNSUBSCRIBED,
-      unsubscribedAt: new Date(),
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.waitlist.updateMany({
+      where: { email, status: { not: WaitlistStatus.UNSUBSCRIBED } },
+      data: {
+        status: WaitlistStatus.UNSUBSCRIBED,
+        unsubscribedAt: new Date(),
+      },
+    });
+
+    const account = await tx.user.findFirst({
+      where: { email: { equals: email, mode: "insensitive" }, erasedAt: null },
+      select: { id: true },
+    });
+    if (account) await withdrawMarketingConsent(tx, account.id);
   });
 
   return { ok: true };

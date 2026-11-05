@@ -94,10 +94,17 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { goHref } from "@/lib/dashboard/go";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
-import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import {
+  reverseCreditsForPayment,
+  getUserCredits,
+} from "@/lib/referrals/service";
 import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
 import { recordReferralCaptureInSavepoint } from "@/lib/referrals/capture";
-import { notifyCreditsAppliedForPaymentBestEffort } from "@/lib/referrals/referral-notify";
+import { stageCreditsApplied } from "@/lib/referrals/referral-notify";
+import {
+  flushNotificationsAfter,
+  type StagedNotificationBundle,
+} from "@/lib/novu/stage-then-attempt";
 import { isMockPaymentId } from "@/lib/payments/operations/mock";
 import {
   isFreeCreditIntent,
@@ -168,6 +175,7 @@ type PaymentSuccessTxResult =
       bookedEmails: StagedRecipientEmail[];
       stagedBells: StagedTrigger[];
       stageBellsRan: boolean;
+      referralNotifications: StagedNotificationBundle;
     };
 
 const PHASE_2_DEADLINE_MS = 5_000;
@@ -961,7 +969,37 @@ export async function handlePaymentSuccess(
                 )
               : [];
 
+          let referralNotifications: StagedNotificationBundle = {};
+          if (
+            !recovering &&
+            !isMockPaymentId(paymentIntentId) &&
+            !isFreeCreditIntent(paymentIntentId) &&
+            !isInternalFundedIntent(paymentIntentId) &&
+            !confirmResult.capturedAfterTerminal &&
+            !confirmResult.doubleBookingBlocked &&
+            !confirmResult.seatReleased &&
+            !confirmResult.sessionStarted
+          ) {
+            const usages = await tx.referralCreditUsage.findMany({
+              where: { paymentId: payment.id },
+              select: { originalAmount: true },
+            });
+            const creditsUsedPaise = usages.reduce(
+              (total, usage) => total + Number(usage.originalAmount),
+              0,
+            );
+            if (creditsUsedPaise > 0)
+              referralNotifications = await stageCreditsApplied(tx, {
+                paymentId: payment.id,
+                userId: payment.userId,
+                creditsUsedPaise,
+                remainingPaise: (await getUserCredits(payment.userId, tx))
+                  .totalAvailable,
+                appointmentType: metadata.appointmentType,
+              });
+          }
           return {
+            referralNotifications,
             outcome: "confirmed",
             paymentId: payment.id,
             appointmentId: appointment.id,
@@ -1285,23 +1323,10 @@ export async function handlePaymentSuccess(
 
   await mintConsumerInvoiceBestEffort({ paymentId });
 
-  // Checkout already belled mock, free_ and org_ payments; a recovery re-runs
-  // Phase 2 for a payment whose first confirmation already belled.
-  if (
-    !recovering &&
-    !isMockPaymentId(paymentIntentId) &&
-    !isFreeCreditIntent(paymentIntentId) &&
-    !isInternalFundedIntent(paymentIntentId)
-  ) {
-    await withPhase2Deadline(
-      notifyCreditsAppliedForPaymentBestEffort({
-        paymentId,
-        userId,
-        appointmentType: metadata.appointmentType,
-      }),
-      `credits-applied-bell ${paymentId}`,
-    );
-  }
+  await flushNotificationsAfter(
+    txResult.referralNotifications,
+    "referral.credits_applied",
+  );
 
   if (!txResult.stageBellsRan) {
     try {

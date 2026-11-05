@@ -1015,6 +1015,12 @@ model NotificationPreference {
   quietHoursEnd      String? // "08:00" format in user timezone
   quietHoursTimezone String? // e.g. "Asia/Kolkata"
 
+  // Pending subscriber mirror revision; cleared only after provider acknowledgement.
+  novuSyncToken     String?
+  novuSyncPendingAt DateTime? @db.Timestamptz
+
+  @@index([novuSyncPendingAt])
+
   @@map("notification_preferences")
 }
 

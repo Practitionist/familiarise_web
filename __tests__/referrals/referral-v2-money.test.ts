@@ -241,3 +241,7 @@ describe("redemption cap", () => {
     expect(derived.creditsApplied).toBe(15_000);
   });
 });
+
+jest.mock("../../lib/referrals/referral-notify", () => ({
+  stageReferralReward: jest.fn(async () => ({})),
+}));

@@ -75,6 +75,7 @@ describe("newsletter broadcasts and account opt-outs", () => {
       {
         email: "account@example.com",
         erasedAt: null,
+        consentArtifacts: [{ id: "grant" }],
         notificationPreferences: enabled,
       },
     ]);
@@ -93,6 +94,7 @@ describe("newsletter broadcasts and account opt-outs", () => {
       {
         email: "account@example.com",
         erasedAt: null,
+        consentArtifacts: [{ id: "grant" }],
         notificationPreferences: { ...enabled, marketingEmails: false },
       },
     ]);
@@ -117,6 +119,7 @@ describe("newsletter broadcasts and account opt-outs", () => {
             {
               email: "account@example.com",
               erasedAt: null,
+              consentArtifacts: [{ id: "grant" }],
               notificationPreferences: { ...enabled, marketingEmails: false },
             },
           ]);

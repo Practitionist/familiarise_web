@@ -59,11 +59,7 @@ jest.mock("../../lib/novu/outbox", () => {
 
 import { createHmac } from "node:crypto";
 import { stageBell } from "@/lib/novu/stage-bell";
-import {
-  buildSubscriberCustomData,
-  computeSubscriberHash,
-  updateSubscriberPreferences,
-} from "@/lib/novu/subscriber";
+import { computeSubscriberHash } from "@/lib/novu/subscriber";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 
@@ -260,49 +256,6 @@ describe("2. computeSubscriberHash(subscriberId) HMAC-SHA256 digest", () => {
 
     expect(computeSubscriberHash("user_123")).toBe(expectedProd);
     expect(expectedProd).not.toBe(expectedDev);
-  });
-});
-
-describe("3. buildSubscriberCustomData fail-closed DB read", () => {
-  it("propagates DB failures rather than silently defaulting opted-out users back to masterEnabled: true", async () => {
-    mockUserFindUnique.mockRejectedValueOnce(
-      new Error("PgBouncer connection pool exhausted"),
-    );
-
-    await expect(
-      buildSubscriberCustomData("user_opted_out", {}),
-    ).rejects.toThrow("PgBouncer connection pool exhausted");
-  });
-});
-
-describe("4. updateSubscriberPreferences idempotent upsert", () => {
-  it("calls idempotent novu.subscribers.create(...) so unsynced users never 404", async () => {
-    mockUserFindUnique.mockResolvedValueOnce({
-      orgWorkspaceProfile: { notificationRoutingMode: "BELL_ONLY" },
-      notificationPreferences: null,
-    });
-    mockSubscriberCreate.mockResolvedValueOnce({});
-
-    await updateSubscriberPreferences("unsynced_user_7", {
-      allNotifications: true,
-      inApp: true,
-      email: false,
-      appointmentReminders: false,
-    });
-
-    expect(mockSubscriberCreate).toHaveBeenCalledTimes(1);
-    expect(mockSubscriberCreate).toHaveBeenCalledWith({
-      subscriberId: "unsynced_user_7",
-      data: expect.objectContaining({
-        routingMode: "BELL_ONLY",
-        routingBell: true,
-        routingEmail: false,
-        masterEnabled: true,
-        preferInApp: true,
-        preferEmail: false,
-        categoryAppointments: false,
-      }),
-    });
   });
 });
 

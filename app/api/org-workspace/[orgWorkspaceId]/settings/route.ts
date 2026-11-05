@@ -1,3 +1,4 @@
+import { reportSentryError } from "@/lib/observability/report";
 /**
  * GET   /api/org-workspace/[orgWorkspaceId]/settings
  * PATCH /api/org-workspace/[orgWorkspaceId]/settings
@@ -33,7 +34,10 @@ import { NotificationRoutingMode } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { getWorkspaceSettings } from "@/lib/data/org-workspace";
-import { syncSubscriber } from "@/lib/novu/subscriber";
+import {
+  attemptSubscriberSync,
+  stageSubscriberSync,
+} from "@/lib/novu/subscriber";
 
 const PatchBodySchema = z
   .object({
@@ -41,9 +45,7 @@ const PatchBodySchema = z
     // distinction between "key absent" (don't touch) and "key=null"
     // (clear) is preserved via Zod's optional+nullable composition.
     defaultLandingOrganizationId: z.string().min(1).nullable().optional(),
-    notificationRoutingMode: z
-      .nativeEnum(NotificationRoutingMode)
-      .optional(),
+    notificationRoutingMode: z.nativeEnum(NotificationRoutingMode).optional(),
     // Light validation only — Intl.NumberFormat will tolerate most BCP-47
     // strings. We reject obvious garbage but don't enumerate every locale.
     locale: z
@@ -147,51 +149,46 @@ export async function PATCH(
     }
   }
 
-  const updated = await prisma.orgWorkspaceProfile.update({
-    where: { id: orgWorkspaceId },
-    data: {
-      ...(body.defaultLandingOrganizationId !== undefined && {
-        defaultLandingOrganizationId: body.defaultLandingOrganizationId,
-      }),
-      ...(body.notificationRoutingMode !== undefined && {
-        notificationRoutingMode: body.notificationRoutingMode,
-      }),
-      ...(body.locale !== undefined && { locale: body.locale }),
-      ...(body.currencyDisplayCode !== undefined && {
-        currencyDisplayCode: body.currencyDisplayCode,
-      }),
-    },
-    select: {
-      id: true,
-      defaultLandingOrganizationId: true,
-      notificationRoutingMode: true,
-      locale: true,
-      currencyDisplayCode: true,
-      updatedAt: true,
-    },
+  const updated = await prisma.$transaction(async (tx) => {
+    const profile = await tx.orgWorkspaceProfile.update({
+      where: { id: orgWorkspaceId },
+      data: {
+        ...(body.defaultLandingOrganizationId !== undefined && {
+          defaultLandingOrganizationId: body.defaultLandingOrganizationId,
+        }),
+        ...(body.notificationRoutingMode !== undefined && {
+          notificationRoutingMode: body.notificationRoutingMode,
+        }),
+        ...(body.locale !== undefined && { locale: body.locale }),
+        ...(body.currencyDisplayCode !== undefined && {
+          currencyDisplayCode: body.currencyDisplayCode,
+        }),
+      },
+      select: {
+        id: true,
+        defaultLandingOrganizationId: true,
+        notificationRoutingMode: true,
+        locale: true,
+        currencyDisplayCode: true,
+        updatedAt: true,
+      },
+    });
+
+    if (body.notificationRoutingMode !== undefined)
+      await stageSubscriberSync(auth.session.user.id, tx);
+    return profile;
   });
 
-  // Q2-routing fix — the routing mode only took effect on the next 30-minute
-  // subscriber sync. Re-sync inline (awaited) so the bell/email gate applies
-  // before the success response: a notification triggered right after the
-  // save must see the new flags. syncSubscriber never throws (it swallows +
-  // reports internally), so awaiting cannot fail the settings save — at most
-  // it adds the Novu round-trip (5s client timeout) to this PATCH.
   if (body.notificationRoutingMode !== undefined) {
-    const account = await prisma.user.findUnique({
-      where: { id: auth.session.user.id },
-      select: { email: true, name: true },
-    });
-    if (account?.email) {
-      const nameParts = (account.name || "User").split(" ");
-      await syncSubscriber({
-        userId: auth.session.user.id,
-        email: account.email,
-        firstName: nameParts[0],
-        lastName: nameParts.slice(1).join(" ") || undefined,
-        routingMode: body.notificationRoutingMode,
-      });
-    }
+    await attemptSubscriberSync(auth.session.user.id).catch(
+      (error: unknown) => {
+        reportSentryError(error, {
+          subsystem: "novu",
+          op: "workspace-routing.sync",
+          level: "warning",
+        });
+      },
+    );
   }
 
   return NextResponse.json({ profile: updated });

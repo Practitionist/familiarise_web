@@ -22,7 +22,6 @@ export {
   computeSubscriberHash,
   syncSubscriber,
   deleteSubscriber,
-  updateSubscriberPreferences,
 } from "./subscriber";
 export {
   // Appointments

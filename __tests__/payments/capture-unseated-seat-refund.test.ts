@@ -56,6 +56,7 @@ const participantCreateMany = jest.fn().mockResolvedValue({ count: 1 });
 
 const txStub = {
   $executeRaw: jest.fn(async () => 0),
+  referralCreditUsage: { findMany: jest.fn(async () => []) },
   payment: {
     findUnique: paymentFindUnique,
     update: paymentUpdate,

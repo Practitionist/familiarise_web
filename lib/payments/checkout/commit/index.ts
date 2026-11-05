@@ -1,3 +1,4 @@
+import { stageCreditsApplied } from "@/lib/referrals/referral-notify";
 // The only place checkout opens its booking transaction.
 
 import prisma from "@/lib/prisma";
@@ -255,7 +256,18 @@ export async function commitCheckout(input: CheckoutCommitInput) {
           });
         await recordSynchronousEarnings(tx, input, { payment, skipPayment });
 
+        const referralNotifications =
+          skipPayment && actualCreditsApplied > 0
+            ? await stageCreditsApplied(tx, {
+                userId,
+                paymentId: payment.id,
+                creditsUsedPaise: actualCreditsApplied,
+                remainingPaise: creditsRemainingAfter ?? 0,
+                appointmentType: validatedData.appointmentType,
+              })
+            : {};
         return {
+          referralNotifications,
           appointmentId: createdAppointment?.id,
           paymentId: payment.id,
           holdExpiresAt: payment.expiresAt,

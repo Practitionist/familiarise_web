@@ -15,6 +15,12 @@ A referral touches four moments in a payment's life, and each moment has one own
 
 The capture step runs inside its own database savepoint. A fault in referral code rolls back to the savepoint, is reported to Sentry once, and never undoes a confirmed booking. Only a serialization failure aborts the whole capture so that it retries.
 
+## Notification commit boundaries
+
+On the notification PR branch, referral application stages the welcome offer in its transaction using the current programme discount cap. The message says eligible first marketplace booking and shows an upper bound; the exact discount is determined at checkout. It does not promise a signup credit. Consumer reward email/bell work stages in the vest transaction, when the reward actually becomes available.
+
+Credit-redemption notices stage in the canonical capture transaction for gateway payments and in the checkout commit for no-gateway confirmed rails. They use the payment ID, the originally applied amount and the balance read through that transaction. A duplicate recovery does not stage another redemption. All covered producers attempt delivery after commit through the existing flush helper and relay. Rendering/outbox failures propagate to the owning transaction; vendor failures leave committed work pending. These branch changes require deployment before they describe live behavior.
+
 ## 2. Share links and the two cookies
 
 Two first-party cookies carry attribution for 30 days, which equals the default qualify window.

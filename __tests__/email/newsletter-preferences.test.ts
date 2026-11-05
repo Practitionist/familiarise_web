@@ -20,6 +20,7 @@ function reader(
         {
           email: "Reader@Example.com",
           erasedAt,
+          consentArtifacts: [{ id: "grant" }],
           notificationPreferences: preferences,
         },
       ]),
@@ -35,6 +36,36 @@ const enabled = {
 };
 
 describe("newsletter account preferences", () => {
+  it("blocks an enabled legacy account without current purpose evidence", async () => {
+    const db = reader(enabled);
+    jest.mocked(db.user.findMany).mockResolvedValue([
+      {
+        email: "reader@example.com",
+        erasedAt: null,
+        notificationPreferences: enabled,
+        consentArtifacts: [],
+      },
+    ]);
+    await expect(
+      findNewsletterPreferenceBlocks(["reader@example.com"], db),
+    ).resolves.toEqual(new Set(["reader@example.com"]));
+    expect(db.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          consentArtifacts: {
+            where: expect.objectContaining({
+              dataFiduciary: "Familiarise",
+              version: 2,
+              withdrawnAt: null,
+              auditRetainedUntil: { gt: expect.any(Date) },
+            }),
+            take: 1,
+            select: { id: true },
+          },
+        }),
+      }),
+    );
+  });
   it.each(["marketingEmails", "allNotifications", "emailEnabled"])(
     "blocks a matching account with %s off",
     async (field) => {

@@ -157,7 +157,6 @@ describe("retryModerationEnforcement", () => {
       "webinar",
       "wp-1",
       "u1",
-      { notify: false },
     );
     expect(enforce).not.toHaveBeenCalled();
     expect(update.mock.calls[0][0].data.sideEffects).toMatchObject({
@@ -302,7 +301,6 @@ describe("retryModerationEnforcement", () => {
       "class",
       "cp-9",
       "u-erased",
-      { notify: false },
     );
     expect(outboxUpdate).toHaveBeenCalledWith({
       where: { id: "retry-1" },

@@ -15,33 +15,19 @@ export async function POST() {
 
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        image: true,
-        timezone: true,
-        orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
-      },
+      select: { id: true },
     });
 
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    const nameParts = (user.name || "User").split(" ");
-    await syncSubscriber({
-      userId: user.id,
-      email: user.email,
-      firstName: nameParts[0],
-      lastName: nameParts.slice(1).join(" ") || undefined,
-      phone: user.phone || undefined,
-      avatar: user.image || undefined,
-      locale: "en",
-      routingMode:
-        user.orgWorkspaceProfile?.notificationRoutingMode ?? undefined,
-    });
+    const synced = await syncSubscriber(user.id);
+    if (!synced)
+      return NextResponse.json(
+        { error: "Notifications temporarily unavailable" },
+        { status: 503 },
+      );
 
     const subscriberHash = computeSubscriberHash(user.id);
     return NextResponse.json({

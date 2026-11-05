@@ -17,6 +17,7 @@ import { useSession } from "@/lib/auth-client";
 import { DATA_CONSENT_ANCHOR } from "@/lib/dashboard/account-href";
 import {
   ALL_PURPOSE_CODES,
+  TERMS_VERSION,
   PURPOSE_CODE_META,
   SIGNUP_PURPOSES,
   normalizePurposeCode,
@@ -89,7 +90,7 @@ export function ConsentSection() {
   const queryClient = useQueryClient();
 
   const personalConsent = useQuery<PersonalConsentResponse>({
-    queryKey: [PERSONAL_CONSENT_KEY],
+    queryKey: [PERSONAL_CONSENT_KEY, userId],
     queryFn: async () => {
       const res = await fetch("/api/user/privacy/consent");
       if (!res.ok) throw new Error("Couldn't load your platform consent");
@@ -107,7 +108,7 @@ export function ConsentSection() {
             body: JSON.stringify({
               purposeCodes: [vars.purposeCode],
               language: "en-IN",
-              version: 1,
+              version: TERMS_VERSION,
             }),
           })
         : await fetch(
@@ -122,7 +123,12 @@ export function ConsentSection() {
       }
     },
     onSuccess: async (_data, vars) => {
-      await queryClient.invalidateQueries({ queryKey: [PERSONAL_CONSENT_KEY] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [PERSONAL_CONSENT_KEY] }),
+        queryClient.invalidateQueries({
+          queryKey: ["notification-preferences", userId],
+        }),
+      ]);
       toast({ title: vars.grant ? "Consent given" : "Consent withdrawn" });
     },
     onError: (error) => {
@@ -182,7 +188,7 @@ export function ConsentSection() {
             body: JSON.stringify({
               purposeCodes: [vars.purposeCode],
               language: "en-IN",
-              version: 1,
+              version: TERMS_VERSION,
             }),
           })
         : await fetch(
@@ -288,7 +294,13 @@ export function ConsentSection() {
             })}
             {OPTIONAL_PERSONAL_PURPOSES.map((code) => {
               const meta = PURPOSE_CODE_META[code];
-              const isGranted = personalGranted.has(code);
+              const isGranted =
+                code === "MARKETING_COMMS"
+                  ? Boolean(
+                      personalConsent.data?.preferences?.marketingEmails &&
+                      personalGranted.has(code),
+                    )
+                  : personalGranted.has(code);
               const busy =
                 personalChange.isPending &&
                 personalChange.variables?.purposeCode === code;

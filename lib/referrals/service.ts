@@ -1,10 +1,10 @@
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import { goHref } from "@/lib/dashboard/go";
-import { stageReferralBonusEmail } from "@/lib/email/senders/money";
-import { notifyRefereeWelcomeBonus } from "@/lib/novu/service";
-import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
-import { getAppUrl } from "@/lib/url";
+import { stageReferralReward } from "./referral-notify";
+import {
+  flushNotificationsAfter,
+  type StagedNotificationBundle,
+} from "@/lib/novu/stage-then-attempt";
 import { Prisma as PrismaNamespace } from "@prisma/client";
 import type { ReferralCode, Referral, ReferralCredit } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -185,11 +185,11 @@ export async function applyReferralCode(
   newUserId: string,
   code: string,
 ): Promise<ReferralRow | null> {
-  let referrerUserId: string | null = null;
-  let welcomeBonusPaise = 0;
+  let notifications: StagedNotificationBundle = {};
 
-  const ref = await withSerializableRetry(() =>
-    prisma.$transaction(
+  const ref = await withSerializableRetry(() => {
+    notifications = {};
+    return prisma.$transaction(
       async (tx) => {
         const referralCode = await validateReferralCode(code, tx);
         if (!referralCode || referralCode.userId === newUserId) return null;
@@ -223,10 +223,6 @@ export async function applyReferralCode(
         });
         if (existingReferral) return null;
 
-        referrerUserId = referralCode.userId;
-        welcomeBonusPaise =
-          referralCode.refereeReward ?? DEFAULT_REFEREE_REWARD;
-
         const created = await tx.referral.create({
           data: {
             referralCodeId: referralCode.id,
@@ -241,76 +237,30 @@ export async function applyReferralCode(
           where: { id: referralCode.id },
           data: { totalReferrals: { increment: 1 } },
         });
+        if (cfg.discountBps > 0 && cfg.discountMaxPaise > 0) {
+          const referrer = await tx.user.findUnique({
+            where: { id: referralCode.userId },
+            select: { name: true },
+          });
+          notifications = await stageReferralReward(tx, {
+            kind: "WELCOME_BONUS",
+            userId: newUserId,
+            referralId: created.id,
+            counterpartyName: referrer?.name ?? "Your friend",
+            amountPaise: cfg.discountMaxPaise,
+          });
+        }
         return created;
       },
       {
         isolationLevel: "Serializable",
         timeout: 10000,
       },
-    ),
-  );
+    );
+  });
 
-  if (ref && referrerUserId && welcomeBonusPaise > 0) {
-    try {
-      const referrerUser = prisma.user?.findUnique
-        ? await prisma.user
-            .findUnique({
-              where: { id: referrerUserId },
-              select: { name: true },
-            })
-            .catch(() => null)
-        : null;
-      const referrerName = referrerUser?.name || "Your friend";
-      const dashboardUrl = `${getAppUrl()}${goHref("client", "payments")}`;
-      const [welcomeBell, welcomeEmails] = await Promise.all([
-        notifyRefereeWelcomeBonus(
-          newUserId,
-          {
-            referrerName,
-            bonusAmountPaise: welcomeBonusPaise,
-            currency: "INR",
-            dashboardUrl,
-          },
-          { deferAttempt: true },
-        ).catch((err) => {
-          console.error(
-            "[referrals] Failed to stage referee welcome bonus bell:",
-            err,
-          );
-          return null;
-        }),
-        stageReferralBonusEmail(prisma, {
-          userId: newUserId,
-          referralId: ref.id,
-          kind: "WELCOME_BONUS",
-          counterpartyName: referrerName,
-          amountPaise: welcomeBonusPaise,
-          currency: "INR",
-          dashboardUrl,
-        }).catch((err) => {
-          console.error(
-            "[referrals] Failed to stage referee welcome bonus email:",
-            err,
-          );
-          return [];
-        }),
-      ]);
-      await flushNotificationsAfter(
-        {
-          bells: [welcomeBell?.staged],
-          emails: [
-            {
-              list: welcomeEmails,
-              emailType: "REFERRAL_WELCOME_BONUS",
-            },
-          ],
-        },
-        "referral.welcome_bonus",
-      );
-    } catch {
-      // Best-effort post-commit notification staging; never blocks signup referral application.
-    }
-  }
+  if (ref)
+    await flushNotificationsAfter(notifications, "referral.welcome_discount");
 
   return ref;
 }

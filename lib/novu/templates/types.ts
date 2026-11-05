@@ -13,6 +13,7 @@
  * time and names a person only where every reader is the other party.
  */
 
+import { z } from "zod";
 import type { NOVU_WORKFLOWS } from "../workflows";
 
 export type NovuWorkflowId =
@@ -22,16 +23,18 @@ export type NovuWorkflowId =
  * The opt-out switch a workflow honours, written to `subscriber.data` by
  * `lib/novu/subscriber.ts`. `null` is a system notice with no opt-out.
  */
-export type PreferenceCategory =
-  | "appointments"
-  | "payments"
-  | "subscriptions"
-  | "trials"
-  | "support"
-  | "feedback"
-  | "orgBilling"
-  | "orgMembership"
-  | "orgProgram";
+export const preferenceCategorySchema = z.enum([
+  "appointments",
+  "payments",
+  "subscriptions",
+  "trials",
+  "support",
+  "feedback",
+  "orgBilling",
+  "orgMembership",
+  "orgProgram",
+]);
+export type PreferenceCategory = z.infer<typeof preferenceCategorySchema>;
 
 export type InAppTemplate = {
   /** Bold heading above the body. Keep it to a few words. */

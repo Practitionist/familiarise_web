@@ -314,3 +314,7 @@ describe("invite and accept gates", () => {
     });
   });
 });
+
+jest.mock("../../lib/collaborators/notifications", () => ({
+  stageCollaboratorNotifications: jest.fn(async () => ({})),
+}));

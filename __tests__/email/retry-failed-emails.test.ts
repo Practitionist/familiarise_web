@@ -576,6 +576,7 @@ describe("batch audience safety at replay", () => {
         {
           email: "B@Y",
           erasedAt: null,
+          consentArtifacts: [{ id: "grant" }],
           notificationPreferences: {
             marketingEmails: true,
             allNotifications: true,

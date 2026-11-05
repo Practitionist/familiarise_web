@@ -54,6 +54,7 @@ const subscriptionUpdateMany = jest.fn().mockResolvedValue({ count: 0 });
 const historyCreate = jest.fn().mockResolvedValue({});
 const txStub = {
   $executeRaw: jest.fn(async () => 0),
+  referralCreditUsage: { findMany: jest.fn(async () => []) },
   payment: {
     findUnique: paymentFindUnique,
     // The appointmentId link is still a plain update — only STATUS rides a CAS.

@@ -124,3 +124,7 @@ describe("updateCollaborator by row status", () => {
     );
   });
 });
+
+jest.mock("../../lib/collaborators/notifications", () => ({
+  stageCollaboratorNotifications: jest.fn(async () => ({})),
+}));

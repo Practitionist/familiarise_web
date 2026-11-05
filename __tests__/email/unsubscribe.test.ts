@@ -9,7 +9,7 @@
  */
 
 const mockUpsert = jest.fn();
-const mockUpdateSubscriberPreferences = jest.fn();
+const mockAttemptSubscriberSync = jest.fn();
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -21,8 +21,12 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../lib/novu/subscriber", () => ({
-  updateSubscriberPreferences: (...args: unknown[]) =>
-    mockUpdateSubscriberPreferences(...args),
+  attemptSubscriberSync: (...args: unknown[]) =>
+    mockAttemptSubscriberSync(...args),
+  subscriberSyncMark: () => ({
+    novuSyncToken: "revision",
+    novuSyncPendingAt: new Date("2026-11-05T00:00:00Z"),
+  }),
 }));
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
@@ -39,6 +43,7 @@ const USER = "user_abc";
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockAttemptSubscriberSync.mockResolvedValue(true);
   mockUpsert.mockResolvedValue({
     inAppEnabled: true,
     emailEnabled: false,
@@ -77,13 +82,19 @@ describe("POST /api/notifications/unsubscribe", () => {
     expect(await res.json()).toEqual({ ok: true });
     expect(mockUpsert).toHaveBeenCalledWith({
       where: { userId: USER },
-      update: { emailEnabled: false },
-      create: { userId: USER, emailEnabled: false },
+      update: {
+        emailEnabled: false,
+        novuSyncToken: "revision",
+        novuSyncPendingAt: new Date("2026-11-05T00:00:00Z"),
+      },
+      create: {
+        userId: USER,
+        emailEnabled: false,
+        novuSyncToken: "revision",
+        novuSyncPendingAt: new Date("2026-11-05T00:00:00Z"),
+      },
     });
-    expect(mockUpdateSubscriberPreferences).toHaveBeenCalledWith(
-      USER,
-      expect.objectContaining({ email: false, inApp: true }),
-    );
+    expect(mockAttemptSubscriberSync).toHaveBeenCalledWith(USER);
   });
 
   it("answers 400 to a bad token without touching the row", async () => {

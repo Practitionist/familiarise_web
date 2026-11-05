@@ -23,6 +23,7 @@ import { runJob } from "@/lib/observability/job-sentry";
 import { DEAD_LETTER_NOTIFICATION_WHERE } from "@/lib/backoffice/queue-predicates";
 import { postOpsChat } from "@/lib/observability/ops-chat";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu/outbox";
+import { drainSubscriberSyncs } from "@/lib/novu/subscriber";
 
 const MAX_BATCH = 50;
 export const DRAIN_CONCURRENCY = 5;
@@ -65,7 +66,13 @@ function outboxDueWhere(now: Date): Prisma.NotificationOutboxWhereInput {
 
 /** Ticker idle probe; a skipped tick leaves the outbox gauges at their last value. */
 export async function hasNotificationOutboxWork(
-  db: PrismaLike,
+  db: {
+    notificationOutbox: Pick<PrismaLike["notificationOutbox"], "findFirst">;
+    notificationPreference: Pick<
+      PrismaLike["notificationPreference"],
+      "findFirst"
+    >;
+  },
   now: Date,
   outOfTime: () => boolean,
 ): Promise<boolean> {
@@ -74,7 +81,17 @@ export async function hasNotificationOutboxWork(
     where: outboxDueWhere(now),
     select: { id: true },
   });
-  return row !== null;
+  if (row !== null) return true;
+  if (outOfTime()) return true;
+  return (
+    (await db.notificationPreference.findFirst({
+      where: {
+        novuSyncPendingAt: { not: null },
+        user: { emailVerified: true, erasedAt: null },
+      },
+      select: { userId: true },
+    })) !== null
+  );
 }
 
 /** Single-tick worker; `now` and the store are injectable for the unit pins. */
@@ -84,6 +101,7 @@ export async function runNotificationDrainTick(params: {
   maxBatch?: number;
   /** Injectable attempt so the drain's own logic can be pinned without Novu. */
   attempt?: typeof attemptTrigger;
+  subscriberSync?: Awaited<ReturnType<typeof drainSubscriberSyncs>>;
 }): Promise<NotificationDrainResult> {
   const runBody = async (
     span?: Sentry.Span,
@@ -104,6 +122,19 @@ export async function runNotificationDrainTick(params: {
       outcome: string;
       error?: string;
     }> = [];
+    if (
+      params.subscriberSync &&
+      (params.subscriberSync.failures > 0 || params.subscriberSync.pending > 0)
+    ) {
+      const error = `${params.subscriberSync.failures} failed and ${params.subscriberSync.pending} pending subscriber synchronization(s)`;
+      result.errors.push(error);
+      tickFailures.push({
+        id: "subscriber-preferences",
+        workflowId: "subscriber-sync",
+        outcome: "RETRY",
+        error,
+      });
+    }
 
     const dueRows = await params.prisma.notificationOutbox.findMany({
       where: outboxDueWhere(nowDate),
@@ -214,6 +245,7 @@ export async function runNotificationDrainTick(params: {
             retried: result.retried,
             deadLettered: result.deadLettered,
             failures: tickFailures.slice(0, 10),
+            subscriberSync: params.subscriberSync,
           },
         },
       );
@@ -283,9 +315,27 @@ export async function runNotificationDrainTick(params: {
 // transactionId is the backstop, not the design.
 export async function drainNotificationOutbox(opts?: {
   limit?: number;
-}): Promise<NotificationDrainResult> {
-  return withCronLock("drain-notification-outbox", { failMode: "closed" }, () =>
-    runNotificationDrainTick({ prisma, maxBatch: opts?.limit }),
+}): Promise<
+  NotificationDrainResult & {
+    subscriberSync: Awaited<ReturnType<typeof drainSubscriberSyncs>>;
+  }
+> {
+  return withCronLock(
+    "drain-notification-outbox",
+    { failMode: "closed" },
+    async () => {
+      const budget = opts?.limit ?? MAX_BATCH;
+      const subscriberSync = await drainSubscriberSyncs(
+        prisma,
+        Math.ceil(budget / 2),
+      );
+      const result = await runNotificationDrainTick({
+        prisma,
+        maxBatch: Math.max(0, budget - subscriberSync.scanned),
+        subscriberSync,
+      });
+      return { ...result, subscriberSync };
+    },
   );
 }
 

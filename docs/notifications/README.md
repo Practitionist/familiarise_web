@@ -6,12 +6,13 @@ Familiarise uses Resend for email and Novu for the in-app inbox. Novu's sixteen 
 
 Business producers prepare recipient-specific content and stage durable rows in Postgres. Where a producer owns a transaction, it passes that transaction client through policy reads and outbox writes. Network attempts run after commit through `flushNotificationsAfter`; the cleanup registry's email and bell relays finish pending work on the active platform ticker.
 
-| Channel                      | Durable state             | Attempt and recovery                                        |
-| ---------------------------- | ------------------------- | ----------------------------------------------------------- |
-| Transactional email          | `FailedEmail`             | `lib/email/deliver.ts`, then `retry-failed-emails`          |
-| Newsletter batches           | `FailedEmailBatch`        | Admin waitlist broadcast, then the same email relay         |
-| In-app inbox                 | `NotificationOutbox`      | `lib/novu/outbox.ts`, then `drain-notification-outbox`      |
-| Enterprise customer webhooks | `OutboundWebhookDelivery` | Enterprise webhook worker; separate from user notifications |
+| Channel                      | Durable state                                | Attempt and recovery                                                          |
+| ---------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------- |
+| Transactional email          | `FailedEmail`                                | `lib/email/deliver.ts`, then `retry-failed-emails`                            |
+| Newsletter batches           | `FailedEmailBatch`                           | Admin waitlist broadcast, then the same email relay                           |
+| In-app inbox                 | `NotificationOutbox`                         | `lib/novu/outbox.ts`, then `drain-notification-outbox`                        |
+| Subscriber preference mirror | Pending revision on `NotificationPreference` | Existing notification relay, current snapshot and conditional acknowledgement |
+| Enterprise customer webhooks | `OutboundWebhookDelivery`                    | Enterprise webhook worker; separate from user notifications                   |
 
 Rendering uses React Email once per recipient and derives a plain-text part. Email rows preserve rendered content; credential messages store a redacted body and are never replayed by the relay. A fresh credential must be requested if its inline send did not succeed.
 
@@ -19,7 +20,7 @@ An outbox row proves staging, and a provider response proves acceptance. Neither
 
 ## Preferences and recipient safety
 
-Postgres `NotificationPreference` is the authority. Novu subscriber data mirrors the settings for its workflow conditions; it is not the email preference source. The React Inbox requires a successful subscriber-sync response with a valid HMAC. Failed or malformed responses show an unavailable/retry bell, never an unsigned session. Vendor-side HMAC enforcement must also be enabled; the client check does not protect a publicly callable vendor endpoint by itself.
+Postgres `NotificationPreference` is the authority. Preference/routing/consent changes atomically mark a pending subscriber revision. The existing notification relay rereads current data, retries failed mirrors and conditionally clears only the acknowledged revision. Novu subscriber data mirrors the settings for its workflow conditions; it is not the email preference source. The React Inbox requires a successful subscriber-sync response with a valid HMAC. Failed or malformed responses show an unavailable/retry bell, never an unsigned session. Vendor-side HMAC enforcement must also be enabled; the client check does not protect a publicly callable vendor endpoint by itself.
 
 - Optional email obeys master, email, category, and workspace routing settings. Required notices (`category: null`) bypass optional switches and workspace email routing.
 - Bells obey master, in-app, category, and workspace routing settings. Unknown recipients are excluded. Failed policy reads never authorize a send; transactional failures propagate, while the nontransactional service returns failure.
@@ -28,10 +29,10 @@ Postgres `NotificationPreference` is the authority. Novu subscriber data mirrors
 - Email suppression is checked at staging and again before inline delivery; the relay also checks it.
 - Recipient-aware email stores explicit user/category context in nullable `FailedEmail.deliveryPolicy`. Inline attempts and retries re-read the current account, address, category and workspace policy; required notices bypass optional switches but never recipient identity checks. Temporary read failures leave durable work pending. Older rows and direct-address mail lack this context and retain their existing policy.
 
-- Newsletter sends and retries check subscription, suppression and matching account preferences. Existing accounts require marketing, master and email switches enabled; a missing preference row uses the displayed marketing-off default. Confirmed subscribers without an account remain eligible. If any staged recipient becomes ineligible, the whole batch is dead-lettered with `batch audience changed: consent, preferences or suppression`; its stored payload/key pair is never modified.
+- Newsletter sends and retries check subscription, suppression and matching account preferences. Existing accounts require marketing, master and email switches enabled plus current Familiarise marketing-purpose evidence; a missing preference row uses the displayed marketing-off default. Confirmed subscribers without an account remain eligible. If any staged recipient becomes ineligible, the whole batch is dead-lettered with `batch audience changed: consent, preferences or suppression`; its stored payload/key pair is never modified.
 - Every email passes the pre-launch delivery guard, including batch replay. No audit or test should send real messages to seeded addresses.
 
-The delivery-policy column is additive work in this PR. The human-run schema rollout must precede deployment of its reader/writer; the audit did not change the shared database.
+The delivery-policy column and two nullable subscriber-sync markers plus their pending-time index are additive work in this PR. The human-run schema rollout must precede deployment of its reader/writer; the audit did not change the shared database.
 
 ## Idempotency and recovery
 
@@ -49,9 +50,15 @@ Creating an active announcement stages a publication in its business transaction
 
 Provider-accepted and in-flight notices cannot be recalled atomically. The deletion dialog makes that limit explicit. Older queued announcement payloads without source/revision context require operator review rather than an unverified broadcast.
 
-Waitlist newsletters use confirmed waitlist subscriptions and separate newsletter sending identities. Account switches can veto delivery but cannot subscribe an address or replace double opt-in. Privacy consent artifacts, cookie preferences and newsletter membership remain separate records; the account settings route does not yet reconcile all three. Enabling marketing alone creates no newsletter audience.
+Waitlist newsletters use confirmed waitlist subscriptions and separate newsletter sending identities. Account switches can veto delivery but cannot subscribe an address or replace double opt-in. Account settings and personal privacy controls update the marketing switch and current purpose evidence in one transaction. Withdrawal also unsubscribes current matching waitlist enrollment. Granting creates no enrollment or cookie permission. Cookie preferences and confirmed newsletter membership keep their separate purposes. Old bundled consent artifacts are not migrated. Confirmation checks the current PENDING status and exact signup revision, so withdrawn or stale links cannot restore a subscription.
 
 The public announcement bar is a date-filtered site surface with browser-local dismissal by announcement ID. Closing it does not mark a bell read, unsubscribe email or hide maintenance banners. Maintenance banners follow the maintenance provider's state, independently of communication preferences. General announcement bells obey master/in-app/routing switches, but have no marketing category: do not use that operational workflow as a promotional audience.
+
+## Collaborator and referral journeys
+
+Invite/reactivate, accept/decline, remove/withdraw and expiry stage email/bell work with their collaborator transition. Forced departures through moderation, erasure and enterprise membership removal use the same transaction-local helper; bulk paths leave delivery to the existing relay. Expiry repeats its stale timestamp condition so a freshly resent invitation cannot be expired by an older scan. Lifecycle identities include the collaborator ID, event and current revision.
+
+Referral application stages an eligible welcome-discount explanation, vesting stages the earned reward, and confirmed checkout/capture stages credit redemption. Reward identities use the referral ID; redemption identities use the payment ID. Normal gateway checkout does not announce a redemption before capture. Staging uses the supplied transaction for policy reads and outbox writes. Failed staging propagates so its owning transaction can retry.
 
 ## Operational ownership
 
@@ -70,6 +77,8 @@ Active/standby scheduler selection uses the existing Upstash key, while cron mut
 - [Observability ownership](../observability/01-ownership-sentry-betterstack.md)
 - [Domains and DNS](../deployment/README.md#domains-and-dns-records)
 - [Permanent tracking issue](https://github.com/Practitionist/familiarise_web/issues/2589)
+
+Subscriber synchronization provisions verified accounts only. Unverified revisions remain pending until verification; the worker and pending-age signal exclude them while waiting. This preserves the auth lifecycle's verified-address boundary.
 
 ## Deprecated & Superseded Approaches
 

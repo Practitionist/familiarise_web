@@ -1,3 +1,4 @@
+import { marketingConsentWhere } from "@/lib/compliance/marketing-policy";
 /**
  * GET    /api/user/privacy/consent
  * POST   /api/user/privacy/consent
@@ -15,8 +16,7 @@
  *     account (`DELETE /api/user/[id]`).
  *   - Optional Purposes (`MARKETING_COMMS`, `ANALYTICS`): Granular 1-click
  *     grant/withdraw at any time without affecting core account access.
- *     Toggling `MARKETING_COMMS` also synchronises
- *     `NotificationPreference.marketingEmails` and `CookiePreference.marketing`;
+ *     Toggling `MARKETING_COMMS` synchronises marketing email consent and enrollment;
  *     toggling `ANALYTICS` synchronises `CookiePreference.analytics`.
  */
 
@@ -24,10 +24,16 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
+import { attemptSubscriberSync } from "@/lib/novu/subscriber";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { buildConsentArtifact, withdrawConsent } from "@/lib/compliance/dpdp";
 import {
+  grantMarketingConsent,
+  withdrawMarketingConsent,
+} from "@/lib/compliance/marketing-consent";
+import {
   PURPOSE_CODES,
+  TERMS_VERSION,
   SIGNUP_PURPOSES,
   normalizePurposeCode,
   type PurposeCode,
@@ -47,7 +53,7 @@ const LanguageSchema = z
 const GrantBodySchema = z.object({
   purposeCodes: z.array(z.string().min(1).max(64)).min(1).max(10),
   language: LanguageSchema,
-  version: z.coerce.number().int().min(1).default(1),
+  version: z.literal(TERMS_VERSION).default(TERMS_VERSION),
 });
 
 const WithdrawQuerySchema = z.object({
@@ -59,29 +65,36 @@ export async function GET() {
   if (auth.error) return auth.error;
   const userId = auth.session.user.id;
 
-  const [consents, notificationPref, cookiePref] = await Promise.all([
-    prisma.consentArtifact.findMany({
-      where: {
-        userId,
-        dataFiduciary: "Familiarise",
-      },
-      orderBy: { grantedAt: "desc" },
-      take: 100,
-    }),
-    prisma.notificationPreference.findUnique({
-      where: { userId },
-      select: { marketingEmails: true },
-    }),
-    prisma.cookiePreference.findUnique({
-      where: { userId },
-      select: { analytics: true, marketing: true },
-    }),
-  ]);
+  const [consents, notificationPref, cookiePref, marketingConsent] =
+    await Promise.all([
+      prisma.consentArtifact.findMany({
+        where: {
+          userId,
+          dataFiduciary: "Familiarise",
+        },
+        orderBy: { grantedAt: "desc" },
+        take: 100,
+      }),
+      prisma.notificationPreference.findUnique({
+        where: { userId },
+        select: { marketingEmails: true },
+      }),
+      prisma.cookiePreference.findUnique({
+        where: { userId },
+        select: { analytics: true, marketing: true },
+      }),
+      prisma.consentArtifact.findFirst({
+        where: { userId, ...marketingConsentWhere() },
+        select: { id: true },
+      }),
+    ]);
 
   return NextResponse.json({
     data: consents,
     preferences: {
-      marketingEmails: notificationPref?.marketingEmails ?? false,
+      marketingEmails: Boolean(
+        notificationPref?.marketingEmails && marketingConsent,
+      ),
       cookieAnalytics: cookiePref?.analytics ?? false,
       cookieMarketing: cookiePref?.marketing ?? false,
     },
@@ -117,50 +130,50 @@ export async function POST(req: NextRequest) {
   }
 
   const purposeCodes = Array.from(
-    new Set(normalized.map((n) => n.code as PurposeCode)),
+    new Set(normalized.flatMap((n) => (n.code ? [n.code] : []))),
   );
 
-  const draft = buildConsentArtifact({
-    userId,
-    dataFiduciary: "Familiarise",
-    purposeCodes,
-    language: parsed.data.language,
-    consentManager: null,
-    version: parsed.data.version,
-  });
-
   try {
-    const consent = await prisma.$transaction(async (tx) => {
-      const created = await tx.consentArtifact.create({ data: draft });
-
-      // Sync downstream preference tables so marketing mailers and cookie gates
-      // honour the DPDP consent grant immediately.
-      if (purposeCodes.includes(PURPOSE_CODES.MARKETING_COMMS)) {
-        await Promise.all([
-          tx.notificationPreference.upsert({
+    const consents = await prisma.$transaction(async (tx) => {
+      const created = [];
+      for (const purposeCode of purposeCodes) {
+        if (purposeCode === PURPOSE_CODES.MARKETING_COMMS) {
+          created.push(
+            await grantMarketingConsent(tx, userId, parsed.data.language),
+          );
+        } else {
+          created.push(
+            await tx.consentArtifact.create({
+              data: buildConsentArtifact({
+                userId,
+                dataFiduciary: "Familiarise",
+                purposeCodes: [purposeCode],
+                language: parsed.data.language,
+                consentManager: null,
+                version: parsed.data.version,
+              }),
+            }),
+          );
+        }
+        if (purposeCode === PURPOSE_CODES.ANALYTICS)
+          await tx.cookiePreference.upsert({
             where: { userId },
-            create: { userId, marketingEmails: true },
-            update: { marketingEmails: true },
-          }),
-          tx.cookiePreference.upsert({
-            where: { userId },
-            create: { userId, marketing: true },
-            update: { marketing: true },
-          }),
-        ]);
+            create: { userId, analytics: true },
+            update: { analytics: true },
+          });
       }
-      if (purposeCodes.includes(PURPOSE_CODES.ANALYTICS)) {
-        await tx.cookiePreference.upsert({
-          where: { userId },
-          create: { userId, analytics: true },
-          update: { analytics: true },
-        });
-      }
-
       return created;
     });
 
-    return NextResponse.json({ consent }, { status: 201 });
+    if (purposeCodes.includes(PURPOSE_CODES.MARKETING_COMMS)) {
+      await attemptSubscriberSync(userId).catch((error: unknown) =>
+        Sentry.captureException(error, {
+          level: "warning",
+          tags: { subsystem: "novu", op: "privacy-consent.sync" },
+        }),
+      );
+    }
+    return NextResponse.json({ consents }, { status: 201 });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -215,27 +228,29 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
-    const { withdrawnCount } = await withdrawConsent({ userId, purposeCode });
+    const { withdrawnCount } = await prisma.$transaction(async (tx) => {
+      if (purposeCode === PURPOSE_CODES.MARKETING_COMMS)
+        return withdrawMarketingConsent(tx, userId);
+      const result = await withdrawConsent(
+        { userId, purposeCode, dataFiduciary: "Familiarise" },
+        tx,
+      );
+      if (purposeCode === PURPOSE_CODES.ANALYTICS)
+        await tx.cookiePreference.updateMany({
+          where: { userId },
+          data: { analytics: false },
+        });
+      return result;
+    });
 
     if (purposeCode === PURPOSE_CODES.MARKETING_COMMS) {
-      await Promise.all([
-        prisma.notificationPreference.updateMany({
-          where: { userId },
-          data: { marketingEmails: false },
+      await attemptSubscriberSync(userId).catch((error: unknown) =>
+        Sentry.captureException(error, {
+          level: "warning",
+          tags: { subsystem: "novu", op: "privacy-consent.sync" },
         }),
-        prisma.cookiePreference.updateMany({
-          where: { userId },
-          data: { marketing: false },
-        }),
-      ]);
+      );
     }
-    if (purposeCode === PURPOSE_CODES.ANALYTICS) {
-      await prisma.cookiePreference.updateMany({
-        where: { userId },
-        data: { analytics: false },
-      });
-    }
-
     return NextResponse.json({ withdrawnCount, purposeCode });
   } catch (error) {
     Sentry.captureException(

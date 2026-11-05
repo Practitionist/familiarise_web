@@ -48,17 +48,13 @@ function reportAuthFailure(error: unknown, op: string): void {
 
 /** Novu holds the address, so only proven (verified) users get a subscriber. */
 function syncVerifiedSubscriber(user: LifecycleUser): void {
-  const nameParts = (user.name || "User").split(" ");
   void scheduleAfter(
     () =>
-      syncSubscriber({
-        userId: user.id,
-        email: user.email,
-        firstName: nameParts[0],
-        lastName: nameParts.slice(1).join(" ") || undefined,
-      }).catch((error) => {
-        reportAuthFailure(error, "novu-subscriber-sync");
-      }),
+      syncSubscriber(user.id)
+        .then(() => undefined)
+        .catch((error) => {
+          reportAuthFailure(error, "novu-subscriber-sync");
+        }),
     "auth:novu-subscriber-sync",
   );
 }

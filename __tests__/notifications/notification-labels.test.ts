@@ -28,15 +28,11 @@ import { buildSubscriberCustomData } from "@/lib/novu/subscriber";
 
 describe("failureReasonLabel", () => {
   it("maps gateway codes to sentences", () => {
-    expect(failureReasonLabel("card_declined")).toBe(
-      "your card was declined",
-    );
+    expect(failureReasonLabel("card_declined")).toBe("your card was declined");
     expect(failureReasonLabel("insufficient_funds")).toBe(
       "your account had insufficient funds",
     );
-    expect(failureReasonLabel("expired_card")).toBe(
-      "your card has expired",
-    );
+    expect(failureReasonLabel("expired_card")).toBe("your card has expired");
   });
 
   it("spaces out unknown codes and passes prose through", () => {
@@ -56,9 +52,7 @@ describe("failureReasonLabel", () => {
 
 describe("disputeReasonLabel", () => {
   it("maps gateway dispute reasons to clauses", () => {
-    expect(disputeReasonLabel("fraudulent")).toBe(
-      "a fraudulent-payment claim",
-    );
+    expect(disputeReasonLabel("fraudulent")).toBe("a fraudulent-payment claim");
     expect(disputeReasonLabel("product_not_received")).toBe(
       "goods that never arrived",
     );
@@ -129,13 +123,14 @@ describe("label lookups", () => {
 
 describe("buildSubscriberCustomData", () => {
   it("builds the full 17-key routing + preference payload so partial updates never wipe subscriber.data", async () => {
-    const data = await buildSubscriberCustomData("user_1", {
-      routingMode: "BELL_ONLY",
-      preferences: {
+    const data = await buildSubscriberCustomData({
+      consentArtifacts: [],
+      orgWorkspaceProfile: { notificationRoutingMode: "BELL_ONLY" },
+      notificationPreferences: {
         allNotifications: true,
-        inApp: true,
-        email: false,
-        push: false,
+        inAppEnabled: true,
+        emailEnabled: false,
+        pushEnabled: false,
         appointmentReminders: true,
         paymentNotifications: true,
         supportUpdates: true,
@@ -163,4 +158,3 @@ describe("buildSubscriberCustomData", () => {
     });
   });
 });
-

@@ -7,8 +7,9 @@ import { goHref } from "@/lib/dashboard/go";
 import { collaboratorRoleLabel } from "@/lib/novu/humanize";
 import {
   absolute,
-  defineBudgetedEmailSender,
   greet,
+  stageSpecRequired,
+  type StagingTx,
   type RecipientEmailSpec,
 } from "./shared";
 
@@ -66,27 +67,16 @@ function buildCollaboratorSpec(
   };
 }
 
-export const sendCollaboratorInvitedEmail =
-  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("INVITED", args),
+export async function stageCollaboratorLifecycleEmail(
+  tx: StagingTx,
+  event: CollaborationLifecycleEvent,
+  args: CollaboratorLifecycleEmailArgs,
+  revision: string,
+) {
+  const { userIds, spec } = buildCollaboratorSpec(event, args);
+  return stageSpecRequired(
+    tx,
+    { ...spec, entityRef: `${spec.entityRef}:${revision}` },
+    userIds,
   );
-export const sendCollaboratorAcceptedEmail =
-  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("ACCEPTED", args),
-  );
-export const sendCollaboratorDeclinedEmail =
-  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("DECLINED", args),
-  );
-export const sendCollaboratorRemovedEmail =
-  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("REMOVED", args),
-  );
-export const sendCollaboratorWithdrawnEmail =
-  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("WITHDRAWN", args),
-  );
-export const sendCollaboratorInviteExpiredEmail =
-  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("EXPIRED", args),
-  );
+}

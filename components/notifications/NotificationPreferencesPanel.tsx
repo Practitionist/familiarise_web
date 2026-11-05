@@ -116,7 +116,8 @@ const CATEGORY_FIELDS: ToggleField[] = [
   {
     key: "marketingEmails",
     label: "Marketing & Promotions",
-    description: "Platform updates, tips, and promotions",
+    description:
+      "Allow marketing and promotional messages about Familiarise products and offers. Newsletter subscription is separate; this does not enable marketing cookies.",
   },
 ];
 
@@ -184,11 +185,14 @@ export function NotificationPreferencesPanel() {
       if (!res.ok) throw new Error("Failed to update preferences");
       return res.json();
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       queryClient.setQueryData(
         ["notification-preferences", session?.user?.id],
         data,
       );
+      await queryClient.invalidateQueries({
+        queryKey: ["account-personal-consent"],
+      });
       toast({
         title: "Preferences updated",
         description: "Your notification preferences have been saved.",

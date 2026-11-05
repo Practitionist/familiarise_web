@@ -64,6 +64,7 @@ const row = {
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
     collaborator: {
       // Honour the ownership filter the withdraw path adds to the where.
       findFirst: jest.fn(
@@ -99,11 +100,9 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-import {
-  notifyCollaboratorRemoved,
-  notifyCollaboratorWithdrawn,
-} from "@/lib/novu/service";
+import { notifyCollaboratorRemoved } from "@/lib/novu/service";
 import prisma from "@/lib/prisma";
+import { stageCollaboratorNotifications } from "@/lib/collaborators/notifications";
 import { removeCollaborator } from "@/lib/collaborators/service";
 
 describe("collaborator self-withdraw", () => {
@@ -114,12 +113,10 @@ describe("collaborator self-withdraw", () => {
       withdrawnByProfileId: "cp-collab",
     });
     expect(result).toMatchObject({ status: "REMOVED", accessRevoked: true });
-    expect(notifyCollaboratorWithdrawn).toHaveBeenCalledWith(
-      "u-host",
-      expect.objectContaining({
-        collaboratorName: "Collab",
-        planType: "webinar",
-      }),
+    expect(stageCollaboratorNotifications).toHaveBeenCalledWith(
+      prisma,
+      "WITHDRAWN",
+      expect.objectContaining({ id: "c-1" }),
     );
     expect(notifyCollaboratorRemoved).not.toHaveBeenCalled();
     expect(prisma.appointmentParticipant.updateMany).toHaveBeenCalledWith(
@@ -156,13 +153,25 @@ describe("collaborator self-withdraw", () => {
     });
   });
 
+  it("rejects a failed transaction-local notice before Stream revocation", async () => {
+    jest
+      .mocked(stageCollaboratorNotifications)
+      .mockRejectedValueOnce(new Error("outbox down"));
+    await expect(
+      removeCollaborator("webinar", "c-1", "plan-1", {
+        withdrawnByProfileId: "cp-collab",
+      }),
+    ).rejects.toThrow("outbox down");
+    expect(mockUpdateCallMembers).not.toHaveBeenCalled();
+  });
+
   it("matches no row for a third party", async () => {
     const result = await removeCollaborator("webinar", "c-1", "plan-1", {
       withdrawnByProfileId: "cp-stranger",
     });
     expect(result).toBeNull();
     expect(prisma.collaborator.updateMany).not.toHaveBeenCalled();
-    expect(notifyCollaboratorWithdrawn).not.toHaveBeenCalled();
+    expect(stageCollaboratorNotifications).not.toHaveBeenCalled();
   });
 
   it("a lost race (row already REMOVED) writes nothing and tells nobody", async () => {
@@ -173,6 +182,10 @@ describe("collaborator self-withdraw", () => {
       withdrawnByProfileId: row.consultantProfileId,
     });
     expect(result).toBeNull();
-    expect(notifyCollaboratorWithdrawn).not.toHaveBeenCalled();
+    expect(stageCollaboratorNotifications).not.toHaveBeenCalled();
   });
 });
+
+jest.mock("../../lib/collaborators/notifications", () => ({
+  stageCollaboratorNotifications: jest.fn(async () => ({})),
+}));

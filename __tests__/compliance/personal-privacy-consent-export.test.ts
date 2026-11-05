@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
+const mockConsentFindFirst = jest.fn();
 const mockGetSession = jest.fn();
 jest.mock("../../lib/auth-server", () => ({
   getSession: (...args: unknown[]) => mockGetSession(...args),
@@ -29,6 +30,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     consentArtifact: {
+      findFirst: (...args: unknown[]) => mockConsentFindFirst(...args),
       findMany: jest.fn(),
       create: jest.fn(),
     },
@@ -118,6 +120,8 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockConsentFindFirst.mockResolvedValue(null);
+    mockPrisma.user.findUnique.mockResolvedValue(null);
     process.env.SENTRY_IDENTITY_SALT = "test-dpdp-salt-32-chars-minimum!";
     const session = {
       user: { id: "user_dpdp_1", email: "user@example.com", role: "CONSULTEE" },
@@ -161,6 +165,7 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
           auditRetainedUntil: new Date(now.getTime() + 86400_000),
         },
       ]);
+      mockConsentFindFirst.mockResolvedValueOnce({ id: "marketing-grant" });
       mockPrisma.notificationPreference.findUnique.mockResolvedValueOnce({
         marketingEmails: true,
       });
@@ -180,7 +185,7 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
       });
     });
 
-    it("records optional MARKETING_COMMS consent and syncs NotificationPreference + CookiePreference on POST", async () => {
+    it("records optional MARKETING_COMMS consent without granting cookie permission", async () => {
       mockPrisma.consentArtifact.create.mockImplementationOnce(
         async ({ data }: { data: Record<string, unknown> }) => ({
           id: "ca_mkt_1",
@@ -194,7 +199,7 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
         body: JSON.stringify({
           purposeCodes: ["MARKETING_COMMS"],
           language: "en-IN",
-          version: 1,
+          version: 2,
         }),
       });
 
@@ -210,7 +215,7 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
         }),
       );
       expect(mockPrisma.notificationPreference.upsert).toHaveBeenCalled();
-      expect(mockPrisma.cookiePreference.upsert).toHaveBeenCalled();
+      expect(mockPrisma.cookiePreference.upsert).not.toHaveBeenCalled();
     });
 
     it("blocks direct withdrawal of core platform purpose PRIMARY_PROCESSING with 400 CORE_CONSENT_REQUIRES_ACCOUNT_CLOSURE", async () => {
@@ -236,14 +241,22 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
 
       const res = await deleteConsent(req);
       expect(res.status).toBe(200);
-      expect(mockWithdrawConsent).toHaveBeenCalledWith({
-        userId: "user_dpdp_1",
-        purposeCode: "MARKETING_COMMS",
-      });
-      expect(mockPrisma.notificationPreference.updateMany).toHaveBeenCalledWith(
+      expect(mockWithdrawConsent).toHaveBeenCalledWith(
+        {
+          userId: "user_dpdp_1",
+          purposeCode: "MARKETING_COMMS",
+          dataFiduciary: "Familiarise",
+        },
+        mockPrisma,
+      );
+      expect(mockPrisma.notificationPreference.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { userId: "user_dpdp_1" },
-          data: { marketingEmails: false },
+          update: expect.objectContaining({
+            marketingEmails: false,
+            novuSyncToken: expect.any(String),
+            novuSyncPendingAt: expect.any(Date),
+          }),
         }),
       );
     });

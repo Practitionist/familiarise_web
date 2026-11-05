@@ -49,17 +49,8 @@ jest.mock("../../lib/novu/service", () => ({
   notifyCollaboratorInviteExpired: jest.fn(async () => undefined),
 }));
 
-const mockSendCollaboratorInviteExpiredEmail = jest.fn(
-  async (_args: unknown, _budget?: unknown) => undefined,
-);
-jest.mock("../../lib/email/senders/collaborators", () => ({
-  sendCollaboratorInvitedEmail: jest.fn(async () => undefined),
-  sendCollaboratorAcceptedEmail: jest.fn(async () => undefined),
-  sendCollaboratorDeclinedEmail: jest.fn(async () => undefined),
-  sendCollaboratorRemovedEmail: jest.fn(async () => undefined),
-  sendCollaboratorWithdrawnEmail: jest.fn(async () => undefined),
-  sendCollaboratorInviteExpiredEmail: (args: unknown, budget?: unknown) =>
-    mockSendCollaboratorInviteExpiredEmail(args, budget),
+jest.mock("../../lib/collaborators/notifications", () => ({
+  stageCollaboratorNotifications: jest.fn(async () => ({})),
 }));
 
 const mockMemberFindFirst = jest.fn();
@@ -67,13 +58,18 @@ const mockMemberFindFirst = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
     webinarPlan: { findUnique: jest.fn(), findMany: jest.fn() },
     classPlan: { findUnique: jest.fn(), findMany: jest.fn() },
     consultationPlan: { findMany: jest.fn() },
     subscriptionPlan: { findMany: jest.fn() },
     consultantProfile: { findFirst: jest.fn(), findUnique: jest.fn() },
     membership: { findFirst: (args: unknown) => mockMemberFindFirst(args) },
-    collaborator: { findMany: jest.fn(), updateMany: jest.fn() },
+    collaborator: {
+      findMany: jest.fn(),
+      updateMany: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
+    },
     webinar: { findMany: jest.fn() },
     class: { findMany: jest.fn() },
     consultation: { groupBy: jest.fn() },
@@ -89,6 +85,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import prisma from "@/lib/prisma";
+import { stageCollaboratorNotifications } from "@/lib/collaborators/notifications";
 import {
   getCollaboratorsForUser,
   revokeCollaboratorAccess,
@@ -162,7 +159,7 @@ describe("collaborator security, seat counting, SFU revocation, and lifecycle sw
           id: "collab-1",
           consultantProfileId: "cp-1",
           status: "ACCEPTED",
-          role: "CO_HOST",
+          role: "CO_HOST" as const,
           revenueShareBps: 2500,
           consultantProfile: { user: { name: "Co-Host", image: null } },
         },
@@ -283,8 +280,17 @@ describe("collaborator security, seat counting, SFU revocation, and lifecycle sw
     it("expires stale PENDING rows via conditional CAS updateMany and emails invitee + inviter", async () => {
       const staleCandidate = {
         id: "collab-stale-1",
-        collaboratorType: "WEBINAR",
-        role: "CO_HOST",
+        consultantProfileId: "cp-invitee",
+        webinarPlanId: "wp1",
+        classPlanId: null,
+        tier: "PRESENTER" as const,
+        status: "DECLINED" as const,
+        invitedById: "cp-host",
+        respondedAt: new Date(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        collaboratorType: "WEBINAR" as const,
+        role: "CO_HOST" as const,
         revenueShareBps: 2500,
         consultantProfile: {
           user: { id: "u-invitee", name: "Invitee Expert" },
@@ -311,27 +317,25 @@ describe("collaborator security, seat counting, SFU revocation, and lifecycle sw
         .mockResolvedValueOnce({ count: 1 })
         .mockResolvedValueOnce({ count: 0 });
 
+      jest
+        .mocked(prisma.collaborator.findUniqueOrThrow)
+        .mockResolvedValueOnce(staleCandidate);
       const summary = await expireStaleCollaboratorInvites(100);
 
       expect(summary).toEqual({ expired: 1, scanned: 2 });
       expect(prisma.collaborator.updateMany).toHaveBeenNthCalledWith(1, {
-        where: { id: "collab-stale-1", status: "PENDING" },
+        where: {
+          id: "collab-stale-1",
+          status: "PENDING",
+          updatedAt: { lt: expect.any(Date) },
+        },
         data: { status: "DECLINED", respondedAt: expect.any(Date) },
       });
-      expect(mockSendCollaboratorInviteExpiredEmail).toHaveBeenCalledTimes(2);
-      expect(mockSendCollaboratorInviteExpiredEmail).toHaveBeenCalledWith(
-        expect.objectContaining({
-          recipientUserId: "u-invitee",
-          collaboratorId: "collab-stale-1",
-        }),
-        expect.any(Number),
-      );
-      expect(mockSendCollaboratorInviteExpiredEmail).toHaveBeenCalledWith(
-        expect.objectContaining({
-          recipientUserId: "u-host",
-          collaboratorId: "collab-stale-1",
-        }),
-        expect.any(Number),
+      expect(stageCollaboratorNotifications).toHaveBeenCalledTimes(1);
+      expect(stageCollaboratorNotifications).toHaveBeenCalledWith(
+        prisma,
+        "EXPIRED",
+        staleCandidate,
       );
     });
   });

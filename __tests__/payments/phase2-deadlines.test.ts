@@ -37,6 +37,11 @@ const consultationCreate = jest.fn();
 const webhookAppointmentCreate = jest.fn();
 const webhookTx = {
   $executeRaw: jest.fn(async () => 0),
+  referralCreditUsage: {
+    findMany: jest.fn<Promise<{ originalAmount: number }[]>, []>(
+      async () => [],
+    ),
+  },
   payment: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   consultation: {
     create: consultationCreate,
@@ -120,7 +125,7 @@ jest.mock("../../lib/novu", () => ({
   notifyAppointmentBooked: (...a: unknown[]) => notifyAppointmentBooked(...a),
 }));
 jest.mock("../../lib/referrals/service", () => ({
-  __esModule: true,
+  getUserCredits: jest.fn(async () => ({ totalAvailable: 2500 })),
 }));
 
 const ensureChannelsForAppointment = jest.fn();
@@ -167,11 +172,11 @@ jest.mock("../../lib/events/capacity", () => ({
 
 const notifyCreditsApplied = jest.fn();
 jest.mock("../../lib/referrals/referral-notify", () => ({
-  notifyCreditsAppliedForPaymentBestEffort: (...args: unknown[]) =>
-    notifyCreditsApplied(...args),
+  stageCreditsApplied: (...args: unknown[]) => notifyCreditsApplied(...args),
 }));
 
 import { handlePaymentSuccess } from "../../lib/payments/webhooks/handlers";
+import { getUserCredits } from "../../lib/referrals/service";
 import { validateWebhookMetadata } from "../../schemas/webhooks/metadata";
 
 const PLAN_TITLE = "Career Strategy Deep Dive";
@@ -280,6 +285,8 @@ let warnSpy: jest.SpyInstance;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  notifyCreditsApplied.mockResolvedValue({});
+  webhookTx.referralCreditUsage.findMany.mockResolvedValue([]);
   warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
   primePhase1();
   notifyPaymentSuccess.mockResolvedValue(undefined);
@@ -366,17 +373,28 @@ describe("#1446 — Phase 2 outbound steps are bounded", () => {
 
 describe("credits-applied bell on capture", () => {
   it("bells once for the payment the capture confirmed", async () => {
+    webhookTx.referralCreditUsage.findMany.mockResolvedValueOnce([
+      { originalAmount: 3000 },
+      { originalAmount: 1500 },
+    ]);
     await handlePaymentSuccess(
       "order1",
       METADATA as unknown as Record<string, string>,
       10000,
     );
 
+    expect(webhookTx.referralCreditUsage.findMany).toHaveBeenCalledWith({
+      where: { paymentId: "pay1" },
+      select: { originalAmount: true },
+    });
+    expect(getUserCredits).toHaveBeenCalledWith(CONSULTEE_USER, webhookTx);
     expect(notifyCreditsApplied).toHaveBeenCalledTimes(1);
-    expect(notifyCreditsApplied).toHaveBeenCalledWith({
+    expect(notifyCreditsApplied).toHaveBeenCalledWith(webhookTx, {
       paymentId: "pay1",
       userId: CONSULTEE_USER,
       appointmentType: "CONSULTATION",
+      creditsUsedPaise: 4500,
+      remainingPaise: 2500,
     });
   });
 

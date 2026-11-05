@@ -362,6 +362,7 @@ export async function withdrawConsent(
   params: {
     userId: string;
     purposeCode?: PurposeCode;
+    dataFiduciary?: string;
     now?: Date;
   },
   db: Tx | typeof prisma = prisma,
@@ -369,7 +370,7 @@ export async function withdrawConsent(
   const { userId, purposeCode } = params;
   const now = params.now ?? new Date();
 
-  const where = purposeCode
+  const purposeWhere = purposeCode
     ? {
         userId,
         withdrawnAt: null,
@@ -379,6 +380,10 @@ export async function withdrawConsent(
         purposeCodes: { hasSome: purposeCodeAliases(purposeCode) },
       }
     : { userId, withdrawnAt: null };
+  const where = {
+    ...purposeWhere,
+    ...(params.dataFiduciary ? { dataFiduciary: params.dataFiduciary } : {}),
+  };
 
   const floor = addYears(now, CONSENT_AUDIT_RETENTION_YEARS);
   const existingRows = await db.consentArtifact.findMany?.({

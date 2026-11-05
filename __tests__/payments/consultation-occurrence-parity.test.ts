@@ -48,6 +48,7 @@ const webhookAppointmentCreate = jest.fn();
 const consultationCreate = jest.fn();
 const webhookTx = {
   $executeRaw: jest.fn(async () => 0),
+  referralCreditUsage: { findMany: jest.fn(async () => []) },
   // #1439 — the confirmation stamp is a CAS, so the tx writer is updateMany.
   payment: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   consultation: {

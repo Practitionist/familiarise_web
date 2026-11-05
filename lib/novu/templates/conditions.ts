@@ -33,7 +33,7 @@ export const CATEGORY_FLAG: Record<PreferenceCategory, string> = {
 const ROUTING_BELL_FLAG = "routingBell";
 /**
  * Q1 fix — the master toggle and the in-app channel toggle now gate the bell.
- * `updateSubscriberPreferences` mirrors `allNotifications` → `masterEnabled`
+ * Subscriber synchronization mirrors `allNotifications` → `masterEnabled`
  * and `inAppEnabled` → `preferInApp`; both default true so legacy subscribers
  * with no flags keep receiving (null-safe via the "false" comparison below).
  */

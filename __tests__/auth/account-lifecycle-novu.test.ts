@@ -53,14 +53,7 @@ describe("Novu subscriber sync only for verified users", () => {
       await provisionNewUser({ ...user, emailVerified: true }, path);
       await Promise.all(mockScheduled);
       expect(mockSyncSubscriber).toHaveBeenCalledTimes(1);
-      expect(mockSyncSubscriber).toHaveBeenCalledWith(
-        expect.objectContaining({
-          userId: "u1",
-          email: "asha@example.com",
-          firstName: "Asha",
-          lastName: "Rao",
-        }),
-      );
+      expect(mockSyncSubscriber).toHaveBeenCalledWith("u1");
     },
   );
 

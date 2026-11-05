@@ -606,7 +606,6 @@ async function runCollaboratorRevocations(
         planType,
         planId,
         targetUserId,
-        { notify: false },
       );
       if (!success) failed.push(`${planType}:${planId}`);
     } catch (error) {

@@ -17,7 +17,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { verifyEmailUnsubscribeToken } from "@/lib/email/unsubscribe";
-import { updateSubscriberPreferences } from "@/lib/novu/subscriber";
+import {
+  attemptSubscriberSync,
+  subscriberSyncMark,
+} from "@/lib/novu/subscriber";
 import { getAppUrl } from "@/lib/url";
 
 export const dynamic = "force-dynamic";
@@ -66,30 +69,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const updated = await prisma.notificationPreference.upsert({
+    const mark = subscriberSyncMark();
+    await prisma.notificationPreference.upsert({
       where: { userId },
-      update: { emailEnabled: false },
-      create: { userId, emailEnabled: false },
+      update: { emailEnabled: false, ...mark },
+      create: { userId, emailEnabled: false, ...mark },
     });
-    // Mirrors PUT /api/novu/preferences so Novu's copy of the flags agrees;
-    // a Novu failure must never fail the unsubscribe.
     try {
-      await updateSubscriberPreferences(userId, {
-        allNotifications: updated.allNotifications,
-        inApp: updated.inAppEnabled,
-        email: false,
-        push: updated.pushEnabled,
-        appointmentReminders: updated.appointmentReminders,
-        paymentNotifications: updated.paymentNotifications,
-        supportUpdates: updated.supportUpdates,
-        feedbackAlerts: updated.feedbackAlerts,
-        trialNotifications: updated.trialNotifications,
-        subscriptionAlerts: updated.subscriptionAlerts,
-        marketingEmails: updated.marketingEmails,
-        orgBillingAlerts: updated.orgBillingAlerts,
-        orgMembershipAlerts: updated.orgMembershipAlerts,
-        orgProgramAlerts: updated.orgProgramAlerts,
-      });
+      await attemptSubscriberSync(userId);
     } catch (novuError) {
       Sentry.captureException(
         novuError instanceof Error ? novuError : new Error(String(novuError)),

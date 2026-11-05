@@ -2,15 +2,20 @@
  * Novu Subscriber Management
  * Syncs user data to Novu as subscribers using User.id as subscriberId.
  */
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { EMAIL_CATEGORY_COLUMN } from "@/lib/email/preferences";
+import {
+  EMAIL_CATEGORY_COLUMN,
+  EMAIL_PREFERENCE_SELECT,
+} from "@/lib/email/preferences";
 import { getNovuClient, isNovuConfigured } from "./client";
 import { resolveNovuSecretKey } from "./secret-key";
+import { marketingConsentWhere } from "@/lib/compliance/marketing-policy";
 import { CATEGORY_FLAG } from "./templates/conditions";
-import type { PreferenceCategory } from "./templates/types";
+import { preferenceCategorySchema } from "./templates/types";
 
 /** Computes the HMAC-SHA256 subscriber hash for Novu Inbox authentication when a secret key is configured. */
 export function computeSubscriberHash(
@@ -21,134 +26,233 @@ export function computeSubscriberHash(
   return createHmac("sha256", key).update(subscriberId).digest("hex");
 }
 
-type RoutingMode = "BELL_AND_EMAIL" | "BELL_ONLY" | "EMAIL_ONLY" | "NEITHER";
+const SUBSCRIBER_PREFERENCE_SELECT = {
+  ...EMAIL_PREFERENCE_SELECT,
+  inAppEnabled: true,
+  pushEnabled: true,
+  marketingEmails: true,
+} as const;
 
-export interface SubscriberPreferencesInput {
-  allNotifications: boolean;
-  inApp?: boolean;
-  email?: boolean;
-  push?: boolean;
-  appointmentReminders?: boolean;
-  paymentNotifications?: boolean;
-  supportUpdates?: boolean;
-  feedbackAlerts?: boolean;
-  trialNotifications?: boolean;
-  subscriptionAlerts?: boolean;
-  marketingEmails?: boolean;
-  orgBillingAlerts?: boolean;
-  orgMembershipAlerts?: boolean;
-  orgProgramAlerts?: boolean;
+const subscriberSelect = () =>
+  ({
+    id: true,
+    email: true,
+    emailVerified: true,
+    name: true,
+    phone: true,
+    image: true,
+    erasedAt: true,
+    consentArtifacts: {
+      where: marketingConsentWhere(),
+      take: 1,
+      select: { id: true },
+    },
+    orgWorkspaceProfile: {
+      select: { notificationRoutingMode: true, locale: true },
+    },
+    notificationPreferences: {
+      select: { ...SUBSCRIBER_PREFERENCE_SELECT, novuSyncToken: true },
+    },
+  }) as const;
+
+type SubscriberSnapshot = Prisma.UserGetPayload<{
+  select: ReturnType<typeof subscriberSelect>;
+}>;
+type PreferenceFlags = Prisma.NotificationPreferenceGetPayload<{
+  select: typeof SUBSCRIBER_PREFERENCE_SELECT;
+}>;
+
+export interface SubscriberSyncStore {
+  user: {
+    findUnique(args: {
+      where: { id: string };
+      select: ReturnType<typeof subscriberSelect>;
+    }): Promise<SubscriberSnapshot | null>;
+  };
+  notificationPreference: {
+    upsert(args: {
+      where: { userId: string };
+      create: {
+        userId: string;
+        novuSyncToken: string;
+        novuSyncPendingAt: Date;
+      };
+      update: { novuSyncToken: string; novuSyncPendingAt: Date };
+      select: { userId: true };
+    }): Promise<{ userId: string }>;
+    updateMany(
+      args: Prisma.NotificationPreferenceUpdateManyArgs,
+    ): Promise<{ count: number }>;
+    findMany(args: {
+      where: {
+        novuSyncPendingAt: { not: null };
+        user: { emailVerified: true; erasedAt: null };
+      };
+      orderBy: { novuSyncPendingAt: "asc" };
+      take: number;
+      select: { userId: true };
+    }): Promise<{ userId: string }[]>;
+  };
 }
 
-interface SubscriberData {
-  userId: string;
-  email: string;
-  firstName: string;
-  lastName?: string;
-  phone?: string;
-  avatar?: string;
-  locale?: string;
-  routingMode?: RoutingMode;
-  preferences?: SubscriberPreferencesInput;
+/** A unique revision makes acknowledgement conditional on the exact saved change. */
+export function subscriberSyncMark() {
+  return { novuSyncToken: randomUUID(), novuSyncPendingAt: new Date() };
 }
 
-type PersistedUserPrefsRow = {
-  orgWorkspaceProfile?: {
-    notificationRoutingMode?: RoutingMode | null;
-  } | null;
-  notificationPreferences?: {
-    allNotifications?: boolean;
-    inAppEnabled?: boolean;
-    emailEnabled?: boolean;
-    pushEnabled?: boolean;
-    appointmentReminders?: boolean;
-    paymentNotifications?: boolean;
-    supportUpdates?: boolean;
-    feedbackAlerts?: boolean;
-    trialNotifications?: boolean;
-    subscriptionAlerts?: boolean;
-    marketingEmails?: boolean;
-    orgBillingAlerts?: boolean;
-    orgMembershipAlerts?: boolean;
-    orgProgramAlerts?: boolean;
-  } | null;
-};
-
-/**
- * Builds the complete Novu custom-data map by merging caller overrides with persisted
- * preferences. Propagates DB failures so a transient outage never un-mutes opted-out users.
- */
-export async function buildSubscriberCustomData(
+export async function stageSubscriberSync(
   userId: string,
-  overrides: {
-    routingMode?: RoutingMode;
-    preferences?: SubscriberPreferencesInput;
-  },
-): Promise<Record<string, string | boolean>> {
-  let dbRow: PersistedUserPrefsRow | null = null;
-  if (
-    overrides.routingMode === undefined ||
-    overrides.preferences === undefined
-  ) {
-    dbRow = (await prisma.user?.findUnique({
-      where: { id: userId },
-      select: {
-        orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
-        notificationPreferences: {
-          select: {
-            allNotifications: true,
-            inAppEnabled: true,
-            emailEnabled: true,
-            pushEnabled: true,
-            appointmentReminders: true,
-            paymentNotifications: true,
-            supportUpdates: true,
-            feedbackAlerts: true,
-            trialNotifications: true,
-            subscriptionAlerts: true,
-            marketingEmails: true,
-            orgBillingAlerts: true,
-            orgMembershipAlerts: true,
-            orgProgramAlerts: true,
-          },
-        },
-      },
-    })) as PersistedUserPrefsRow | null;
-  }
+  db: Pick<SubscriberSyncStore, "notificationPreference">,
+): Promise<void> {
+  const mark = subscriberSyncMark();
+  await db.notificationPreference.upsert({
+    where: { userId },
+    create: { userId, ...mark },
+    update: mark,
+    select: { userId: true },
+  });
+}
 
-  const routingMode: RoutingMode =
-    overrides.routingMode ??
-    dbRow?.orgWorkspaceProfile?.notificationRoutingMode ??
-    "BELL_AND_EMAIL";
-  const dbPrefs = dbRow?.notificationPreferences;
-  const prefs = overrides.preferences;
-
+/** Complete custom data is derived from current persisted settings, never a queued snapshot. */
+export function buildSubscriberCustomData(row: {
+  consentArtifacts: { id: string }[];
+  orgWorkspaceProfile: Pick<
+    NonNullable<SubscriberSnapshot["orgWorkspaceProfile"]>,
+    "notificationRoutingMode"
+  > | null;
+  notificationPreferences: PreferenceFlags | null;
+}): Record<string, string | boolean> {
+  const routingMode =
+    row.orgWorkspaceProfile?.notificationRoutingMode ?? "BELL_AND_EMAIL";
+  const prefs = row.notificationPreferences;
   const categoryFlags = Object.fromEntries(
-    (Object.keys(EMAIL_CATEGORY_COLUMN) as PreferenceCategory[]).map(
-      (category) => {
-        const col = EMAIL_CATEGORY_COLUMN[category];
-        return [
-          CATEGORY_FLAG[category],
-          prefs?.[col] ?? dbPrefs?.[col] ?? true,
-        ];
-      },
-    ),
+    Object.entries(EMAIL_CATEGORY_COLUMN).map(([key, column]) => [
+      CATEGORY_FLAG[preferenceCategorySchema.parse(key)],
+      prefs?.[column] ?? true,
+    ]),
   );
-
   return {
     routingMode,
     routingBell:
       routingMode === "BELL_AND_EMAIL" || routingMode === "BELL_ONLY",
     routingEmail:
       routingMode === "BELL_AND_EMAIL" || routingMode === "EMAIL_ONLY",
-    masterEnabled: prefs?.allNotifications ?? dbPrefs?.allNotifications ?? true,
-    preferInApp: prefs?.inApp ?? dbPrefs?.inAppEnabled ?? true,
-    preferEmail: prefs?.email ?? dbPrefs?.emailEnabled ?? true,
-    preferPush: prefs?.push ?? dbPrefs?.pushEnabled ?? false,
+    masterEnabled: prefs?.allNotifications ?? true,
+    preferInApp: prefs?.inAppEnabled ?? true,
+    preferEmail: prefs?.emailEnabled ?? true,
+    preferPush: prefs?.pushEnabled ?? false,
     ...categoryFlags,
-    categoryMarketing:
-      prefs?.marketingEmails ?? dbPrefs?.marketingEmails ?? false,
+    categoryMarketing: Boolean(
+      prefs?.marketingEmails && row.consentArtifacts.length > 0,
+    ),
   };
+}
+
+/** Restores an obligation if an older in-flight write finishes after a newer acknowledgement. */
+async function retainSubscriberSync(
+  userId: string,
+  db: SubscriberSyncStore,
+): Promise<void> {
+  await db.notificationPreference.updateMany({
+    where: { userId, novuSyncToken: null, user: { erasedAt: null } },
+    data: subscriberSyncMark(),
+  });
+}
+
+export async function attemptSubscriberSync(
+  userId: string,
+  db: SubscriberSyncStore = prisma,
+): Promise<boolean> {
+  if (!isNovuConfigured()) return false;
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: subscriberSelect(),
+  });
+  const token = user?.notificationPreferences?.novuSyncToken;
+  if (!user || !token) return true;
+  if (user.erasedAt) {
+    await db.notificationPreference.updateMany({
+      where: { userId, novuSyncToken: token },
+      data: { novuSyncToken: null, novuSyncPendingAt: null },
+    });
+    return true;
+  }
+  if (!user.emailVerified) return false;
+  const nameParts = (user.name || "User").split(" ");
+  try {
+    await getNovuClient().subscribers.create({
+      subscriberId: user.id,
+      firstName: nameParts[0],
+      lastName: nameParts.slice(1).join(" "),
+      email: user.email,
+      phone: user.phone || undefined,
+      avatar: user.image || undefined,
+      locale: user.orgWorkspaceProfile?.locale || "en",
+      data: buildSubscriberCustomData(user),
+    });
+    const settled = await db.notificationPreference.updateMany({
+      where: { userId, novuSyncToken: token },
+      data: { novuSyncToken: null, novuSyncPendingAt: null },
+    });
+    if (settled.count === 0) await retainSubscriberSync(userId, db);
+    return true;
+  } catch (error) {
+    // Move a failed revision behind other pending users without replacing newer work.
+    await db.notificationPreference.updateMany({
+      where: { userId, novuSyncToken: token },
+      data: { novuSyncPendingAt: new Date() },
+    });
+    await retainSubscriberSync(userId, db);
+    const original = error instanceof Error ? error : new Error(String(error));
+    const clean = new Error(original.message);
+    clean.name = original.name;
+    if (original.stack) clean.stack = original.stack;
+    throw clean;
+  }
+}
+
+/** Stages before network I/O, including first-time and profile synchronization. */
+export async function syncSubscriber(userId: string): Promise<boolean> {
+  await stageSubscriberSync(userId, prisma);
+  return attemptSubscriberSync(userId, prisma);
+}
+
+export async function drainSubscriberSyncs(
+  db: SubscriberSyncStore,
+  limit: number,
+): Promise<{
+  scanned: number;
+  synced: number;
+  pending: number;
+  failures: number;
+}> {
+  const result = { scanned: 0, synced: 0, pending: 0, failures: 0 };
+  if (limit <= 0) return result;
+  const rows = await db.notificationPreference.findMany({
+    where: {
+      novuSyncPendingAt: { not: null },
+      user: { emailVerified: true, erasedAt: null },
+    },
+    orderBy: { novuSyncPendingAt: "asc" },
+    take: limit,
+    select: { userId: true },
+  });
+  if (!isNovuConfigured())
+    return { ...result, scanned: rows.length, pending: rows.length };
+  for (let start = 0; start < rows.length; start += 5) {
+    const outcomes = await Promise.allSettled(
+      rows
+        .slice(start, start + 5)
+        .map((row) => attemptSubscriberSync(row.userId, db)),
+    );
+    for (const outcome of outcomes) {
+      result.scanned += 1;
+      if (outcome.status === "rejected") result.failures += 1;
+      else if (outcome.value) result.synced += 1;
+      else result.pending += 1;
+    }
+  }
+  return result;
 }
 
 /** Strips echoed PII from Novu errors and classifies timeouts as warnings. */
@@ -159,10 +263,7 @@ function statusCodeOf(error: unknown): number | undefined {
   return parsed.success ? parsed.data.statusCode : undefined;
 }
 
-function reportSubscriberError(
-  error: unknown,
-  op: "sync" | "update_preferences" | "delete",
-): void {
+function reportSubscriberError(error: unknown, op: "delete"): void {
   const rawError = error instanceof Error ? error : new Error(String(error));
   const cleanError = new Error(rawError.message);
   cleanError.name = rawError.name;
@@ -179,67 +280,6 @@ function reportSubscriberError(
     },
     ...(statusCode !== undefined ? { extra: { statusCode } } : {}),
   });
-}
-
-/** Upserts user profile and notification preference flags onto the Novu subscriber. */
-export async function syncSubscriber(data: SubscriberData): Promise<void> {
-  if (!isNovuConfigured()) {
-    console.warn("[Novu] Not configured, skipping subscriber sync");
-    return;
-  }
-
-  try {
-    const novu = getNovuClient();
-    const customData = await buildSubscriberCustomData(data.userId, {
-      routingMode: data.routingMode,
-      preferences: data.preferences,
-    });
-    await novu.subscribers.create({
-      subscriberId: data.userId,
-      firstName: data.firstName,
-      lastName: data.lastName || "",
-      email: data.email,
-      phone: data.phone || undefined,
-      avatar: data.avatar || undefined,
-      locale: data.locale || "en",
-      data: customData,
-    });
-    console.log(`[Novu] Subscriber synced: ${data.userId}`);
-  } catch (error) {
-    reportSubscriberError(error, "sync");
-    console.error(
-      "[Novu] Failed to sync subscriber:",
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-}
-
-/** Idempotently upserts subscriber custom preference data in Novu. */
-export async function updateSubscriberPreferences(
-  userId: string,
-  preferences: SubscriberPreferencesInput,
-  routingMode?: RoutingMode,
-): Promise<void> {
-  if (!isNovuConfigured()) return;
-
-  try {
-    const novu = getNovuClient();
-    const customData = await buildSubscriberCustomData(userId, {
-      routingMode,
-      preferences,
-    });
-    await novu.subscribers.create({
-      subscriberId: userId,
-      data: customData,
-    });
-    console.log(`[Novu] Preferences updated for subscriber: ${userId}`);
-  } catch (error) {
-    reportSubscriberError(error, "update_preferences");
-    console.error(
-      "[Novu] Failed to update subscriber preferences:",
-      error instanceof Error ? error.message : String(error),
-    );
-  }
 }
 
 /** Deletes the subscriber or throws; one that never existed counts as deleted. */

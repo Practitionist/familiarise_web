@@ -98,10 +98,16 @@ export async function readPendingAges(tx: Tx, now: Date): Promise<PendingAges> {
         now,
       )} AS "emailRetries",
       ${ageOf(
-        Prisma.sql`SELECT min(GREATEST(COALESCE("nextRetryAt", "createdAt"),
-            COALESCE("notBefore", "createdAt")))
+        Prisma.sql`SELECT min(due) FROM (
+          SELECT GREATEST(COALESCE("nextRetryAt", "createdAt"),
+            COALESCE("notBefore", "createdAt")) AS due
           FROM "NotificationOutbox"
-          WHERE status IN ('PENDING', 'RETRY')`,
+          WHERE status IN ('PENDING', 'RETRY')
+          UNION ALL
+          SELECT p."novuSyncPendingAt" FROM "notification_preferences" p
+          JOIN "users" u ON u.id = p."userId"
+          WHERE p."novuSyncPendingAt" IS NOT NULL
+            AND u."emailVerified" = true AND u."erasedAt" IS NULL) pending_notifications`,
         now,
       )} AS "notificationRetries"
   `);

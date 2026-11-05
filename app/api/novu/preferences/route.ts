@@ -1,8 +1,19 @@
+import { marketingConsentWhere } from "@/lib/compliance/marketing-policy";
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { updateSubscriberPreferences } from "@/lib/novu/subscriber";
-import { NotificationPreferenceUpdateSchema } from "@/schemas/user";
+import {
+  grantMarketingConsent,
+  withdrawMarketingConsent,
+} from "@/lib/compliance/marketing-consent";
+import {
+  attemptSubscriberSync,
+  subscriberSyncMark,
+} from "@/lib/novu/subscriber";
+import {
+  NotificationPreferenceSchema,
+  NotificationPreferenceUpdateSchema,
+} from "@/schemas/user";
 
 import { getSession } from "@/lib/auth-server";
 /**
@@ -20,34 +31,14 @@ export async function GET() {
       where: { userId: session.user.id },
     });
 
-    // Return defaults if no preferences exist yet
-    if (!preferences) {
-      return NextResponse.json({
-        allNotifications: true,
-        inAppEnabled: true,
-        emailEnabled: true,
-        pushEnabled: false,
-        mentions: false,
-        directMessages: false,
-        updates: false,
-        appointmentReminders: true,
-        paymentNotifications: true,
-        supportUpdates: true,
-        feedbackAlerts: true,
-        trialNotifications: true,
-        subscriptionAlerts: true,
-        marketingEmails: false,
-        orgBillingAlerts: true,
-        orgMembershipAlerts: true,
-        orgProgramAlerts: true,
-        quietHoursEnabled: false,
-        quietHoursStart: null,
-        quietHoursEnd: null,
-        quietHoursTimezone: null,
-      });
-    }
-
-    return NextResponse.json(preferences);
+    const response = NotificationPreferenceSchema.parse(preferences ?? {});
+    if (response.marketingEmails)
+      response.marketingEmails =
+        (await prisma.consentArtifact.findFirst({
+          where: { userId: session.user.id, ...marketingConsentWhere() },
+          select: { id: true },
+        })) !== null;
+    return NextResponse.json(response);
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -72,8 +63,8 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await req.json();
-    const result = NotificationPreferenceUpdateSchema.safeParse(body);
+    const body = await req.json().catch(() => null);
+    const result = NotificationPreferenceUpdateSchema.strict().safeParse(body);
 
     if (!result.success) {
       return NextResponse.json(
@@ -82,40 +73,36 @@ export async function PUT(req: NextRequest) {
       );
     }
 
-    const validatedData = result.data;
+    const validatedData = { ...result.data, ...subscriberSyncMark() };
 
-    const updated = await prisma.notificationPreference.upsert({
-      where: { userId: session.user.id },
-      update: validatedData,
-      create: {
-        userId: session.user.id,
-        ...validatedData,
-      },
+    const updated = await prisma.$transaction(async (tx) => {
+      if (result.data.marketingEmails === true)
+        await grantMarketingConsent(tx, session.user.id);
+      if (result.data.marketingEmails === false)
+        await withdrawMarketingConsent(tx, session.user.id);
+      const saved = await tx.notificationPreference.upsert({
+        where: { userId: session.user.id },
+        update: validatedData,
+        create: { userId: session.user.id, ...validatedData },
+      });
+      const response = NotificationPreferenceSchema.parse(saved);
+      if (response.marketingEmails)
+        response.marketingEmails =
+          (await tx.consentArtifact.findFirst({
+            where: { userId: session.user.id, ...marketingConsentWhere() },
+            select: { id: true },
+          })) !== null;
+      return response;
     });
 
-    // Sync master + channel + category preferences to Novu subscriber
-    // data (Q1: the bell skip rule reads masterEnabled + preferInApp).
-    await updateSubscriberPreferences(session.user.id, {
-      allNotifications: updated.allNotifications,
-      // Channel preferences
-      inApp: updated.inAppEnabled,
-      email: updated.emailEnabled,
-      push: updated.pushEnabled,
-      // Category preferences
-      appointmentReminders: updated.appointmentReminders,
-      paymentNotifications: updated.paymentNotifications,
-      supportUpdates: updated.supportUpdates,
-      feedbackAlerts: updated.feedbackAlerts,
-      trialNotifications: updated.trialNotifications,
-      subscriptionAlerts: updated.subscriptionAlerts,
-      marketingEmails: updated.marketingEmails,
-      // ADR 23 — org categories
-      orgBillingAlerts: updated.orgBillingAlerts,
-      orgMembershipAlerts: updated.orgMembershipAlerts,
-      orgProgramAlerts: updated.orgProgramAlerts,
+    await attemptSubscriberSync(session.user.id).catch((error: unknown) => {
+      Sentry.captureException(error, {
+        level: "warning",
+        tags: { subsystem: "notifications", op: "preferences.sync" },
+      });
     });
 
-    return NextResponse.json(updated);
+    return NextResponse.json(NotificationPreferenceSchema.parse(updated));
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

@@ -88,6 +88,7 @@ const tx = {
     findMany: jest.fn(async () => []),
     updateMany: jest.fn(async () => ({ count: 0 })),
   },
+  appointmentParticipant: { updateMany: jest.fn(async () => ({ count: 0 })) },
   collaborator: {
     // One statement flips and returns the rows, so the revocation list is
     // exactly what was flipped.
@@ -119,7 +120,6 @@ describe("a ban revokes collaborator standing", () => {
         status: { in: ["PENDING", "ACCEPTED"] },
       },
       data: { status: "REMOVED", respondedAt: expect.any(Date) },
-      select: expect.any(Object),
     });
     expect(transactional.collaborationsRemoved).toEqual([
       { planType: "webinar", planId: "wp-1" },
@@ -133,17 +133,11 @@ describe("a ban revokes collaborator standing", () => {
       "webinar",
       "wp-1",
       "u1",
-      {
-        notify: false,
-      },
     );
     expect(revokeCollaboratorAccess).toHaveBeenCalledWith(
       "class",
       "cp-9",
       "u1",
-      {
-        notify: false,
-      },
     );
     expect(summary.collaboratorRevocation).toBe("ok");
     expect(summary.errors).toBeUndefined();
@@ -177,3 +171,7 @@ describe("a ban revokes collaborator standing", () => {
     expect(summary.stream).toBe("ok");
   });
 });
+
+jest.mock("../../lib/collaborators/notifications", () => ({
+  stageCollaboratorNotifications: jest.fn(async () => ({})),
+}));

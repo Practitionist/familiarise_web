@@ -128,3 +128,7 @@ describe("calculateRevenueSplit reads through the client it is given", () => {
     expect(splits.map((s) => s.share)).toEqual([0, 0]);
   });
 });
+
+jest.mock("../../lib/collaborators/notifications", () => ({
+  stageCollaboratorNotifications: jest.fn(async () => ({})),
+}));
