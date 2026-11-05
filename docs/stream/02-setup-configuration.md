@@ -158,6 +158,7 @@ The scheduled Stream jobs run on the production deployment through the ticker, s
 
 - `isStreamConfigured()` returns `false`, so every caller takes its existing "Stream not configured" path (the token actions throw "Stream API is not configured", `mintInitialStreamTokens` returns `null`, and the rest degrade as they do when Stream is unset).
 - `getStreamChatClient()` and `getStreamVideoClient()` throw a `StreamEnvironmentError` before the SDK client is constructed.
+- The maintenance drain (`actions/maintenance/drain-sessions.ts`) builds its own `StreamClient`, so it calls `assertStreamKeyAllowedHere()` itself and refuses the production key in the same way.
 - One log line and one Sentry event (`captureThrottled`, once per minute per instance) say which rule fired.
 
 The browser gets no separate guard: tokens come from the server, which has already refused.
