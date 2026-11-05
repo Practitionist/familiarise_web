@@ -48,6 +48,24 @@ Live verification on `deploy-preview-1972` (deploy `6ac1179a30acd900087d7e4a`, r
 2. `__tests__/lib/next-config-preload.test.ts` permanently guards `experimental.preloadEntriesOnStart === false` and `experimental.appDocumentPreloading === false` in CI so the 606-route cold-start preload can never regress.
 3. All Netlify architectural constraints, experimental dead ends, and Day-1 SaaS configurations are consolidated in `docs/deployment/netlify.md` (Section 14).
 
+## 2026-11-05 measurement: webpack versus Turbopack, and a drift since 2026-10-03
+
+On 2026-11-05 production moved to Turbopack builds (`docs/decisions/2026-11-05-turbopack-production-build-for-source-maps.md`). The same day, parallel 8-request bursts on `/api/perf/probe-bare` were sent from the same machine in India to two Netlify deploy permalinks (`https://<deploy_id>--familiarise.netlify.app`), so both builds were compared on equal terms:
+
+| Build                          | Deploy                     | Cold `uptimeAtEntryMs` | Cold request, end to end | `idleProbe.maxGapMs` |
+| ------------------------------ | -------------------------- | ---------------------- | ------------------------ | -------------------- |
+| webpack (commit `424a8daec`)   | `6aeaf1b2dbfd86009ac2b8b3` | 2.9–3.7 s              | 6.4–8.1 s                | 0–30 ms              |
+| Turbopack (commit `2b354c35f`) | `6aecc0c644358da5321acdda` | 2.5–2.7 s              | 3.9–4.6 s                | 1–32 ms              |
+
+What it shows:
+
+- **Turbopack did not regress cold starts.** It boots slightly faster than webpack.
+- **The #1124 stall has not returned.** No event-loop gap reached even 50 ms, and `experimental.preloadEntriesOnStart: false` is intact. `__tests__/lib/next-config-preload.test.ts` still guards it.
+- **Both builds are slower than the 2026-10-03 verification above** (0.97–1.90 s end to end for a 12-request cold burst). Cold starts have therefore drifted by about 2 s since then, on both bundlers. `uptimeAtEntryMs` is `process.uptime()` when the route handler starts, so the added time is in the boot before the handler (Lambda init, the Netlify server handler, `NextNodeServer` and the first module graph), not in the route.
+- **Each 8-request burst also returned one Netlify platform error page** ("Error - Request ID …") on both deploys.
+
+The cause of the drift is under investigation. Measure any fix with the same burst against a deploy permalink, idle for 15 minutes between bursts so instances go cold.
+
 ## Sources
 
 `docs/deployment/netlify.md` (Section 14); `.claude/skills/deployment/netlify/platform-limits.md`; `.claude/skills/deployment/netlify/hosting-alternatives.md`; `.claude/skills/deployment/netlify/issue-ledger.md`; issue #1124; PR #1972; ADR 14; ADR 27.
