@@ -116,8 +116,16 @@ function txWith(opts: {
   heldPaise?: number | null;
   standing?: boolean;
   amount?: number;
+  /** Refunds already out on the payment (the holding one, when it is in flight). */
+  refunds?: { amountPaise: number; status: string }[];
+  heldSent?: boolean;
 }) {
   return {
+    refund: {
+      findFirst: jest.fn(async () =>
+        opts.heldSent ? { id: "rf-held" } : null,
+      ),
+    },
     payment: {
       updateMany: jest.fn(async () => ({ count: opts.heldKey ? 0 : 1 })),
       findUnique: jest.fn(async () => ({
@@ -125,7 +133,7 @@ function txWith(opts: {
         refundOwedKey: opts.heldKey,
         refundOwedPaise: opts.heldPaise === undefined ? 1_000 : opts.heldPaise,
         amount: opts.amount ?? 100_000,
-        refunds: [],
+        refunds: opts.refunds ?? [],
         disputes: [],
       })),
     },
@@ -226,6 +234,41 @@ describe("stampOwedOrHeld when another door's marker holds the payment", () => {
     await stampOwedOrHeld(txWith({ heldKey: HELD_KEY, amount: 1_000 }), MARKER);
     expect(mockRecordSystemEvent).not.toHaveBeenCalled();
     expect(mockPlaceEarningsHolds).not.toHaveBeenCalled();
+  });
+
+  it("a holding refund already in flight is not subtracted twice: the door still records and holds", async () => {
+    await stampOwedOrHeld(
+      txWith({
+        heldKey: HELD_KEY,
+        heldPaise: 70_000,
+        refunds: [{ amountPaise: 70_000, status: "PENDING" }],
+        heldSent: true,
+      }),
+      { ...MARKER, amountPaise: 20_000 },
+    );
+    expect(mockRecordSystemEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({ owedPaise: 20_000 }),
+      }),
+    );
+    expect(mockPlaceEarningsHolds).toHaveBeenCalledTimes(2);
+  });
+
+  it("a full-balance door with the holding refund in flight owes the whole remaining balance", async () => {
+    await stampOwedOrHeld(
+      txWith({
+        heldKey: HELD_KEY,
+        heldPaise: 30_000,
+        refunds: [{ amountPaise: 30_000, status: "PENDING" }],
+        heldSent: true,
+      }),
+      { ...MARKER, amountPaise: null },
+    );
+    expect(mockRecordSystemEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({ owedPaise: 70_000 }),
+      }),
+    );
   });
 
   it("a door that owns the marker records nothing and holds nothing", async () => {

@@ -84,6 +84,7 @@ const mockTxFindUnique = jest.fn();
 const tx = {
   payment: { updateMany: mockStamp, findUnique: mockTxFindUnique },
   systemEvent: { findFirst: async () => null },
+  refund: { findFirst: async () => null },
   // No unpaid earnings yet: the hand top-up hold has nothing to freeze.
   consultantEarnings: { findMany: async () => [] },
   organizationEarnings: { findMany: async () => [] },

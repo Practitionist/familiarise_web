@@ -898,16 +898,25 @@ async function holdForHandTopUp(
 async function topUpOwedPaise(
   tx: Tx,
   marker: RefundOwedMarker,
-  heldPaise: number | null,
+  held: { key: string; paise: number | null },
 ): Promise<number> {
-  if (heldPaise === null) return 0;
+  if (held.paise === null) return 0;
   const payment = await tx.payment.findUnique({
     where: { id: marker.paymentId },
     select: { amount: true, ...REFUNDABLE_BALANCE_SELECT },
   });
   if (!payment) return 0;
+  // A holding refund already sent (or in flight) is in the balance; never subtract it twice.
+  const sent = await tx.refund.findFirst({
+    where: {
+      dedupeKey: held.key,
+      status: { in: [RefundStatus.SUCCEEDED, RefundStatus.PENDING] },
+    },
+    select: { id: true },
+  });
   const left =
-    refundableBalancePaise(Number(payment.amount), payment) - heldPaise;
+    refundableBalancePaise(Number(payment.amount), payment) -
+    (sent ? 0 : held.paise);
   return Math.max(0, Math.min(marker.amountPaise ?? left, left));
 }
 
@@ -927,7 +936,10 @@ async function reportHeld(
     heldPaise,
     note: owedAlreadyHeldNote(marker.paymentId, heldKey, heldPaise),
   };
-  const owedPaise = await topUpOwedPaise(tx, marker, heldPaise);
+  const owedPaise = await topUpOwedPaise(tx, marker, {
+    key: heldKey,
+    paise: heldPaise,
+  });
   // Nothing to add on top of the holding marker: no ops row, no hold.
   if (owedPaise <= 0) return held;
   const correlationId = `${OWED_ALREADY_HELD_PREFIX}${marker.paymentId}:${marker.key}`;

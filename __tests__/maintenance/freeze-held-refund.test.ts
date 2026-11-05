@@ -42,6 +42,7 @@ function txDouble(stamped: number) {
       })),
     },
     systemEvent: { findFirst: jest.fn(async () => null) },
+    refund: { findFirst: jest.fn(async () => null) },
     consultantEarnings: { findMany: jest.fn(async () => [{ id: "ce-1" }]) },
     organizationEarnings: { findMany: jest.fn(async () => []) },
   } as unknown as Tx;

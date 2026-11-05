@@ -277,6 +277,31 @@ describe("a door whose refund another door's owed refund holds", () => {
     ).toBe(0);
   });
 
+  it("a holding refund still in flight at the gateway is not counted twice: the door records and holds", async () => {
+    const s = await seedHeldPayment("PENDING", { heldPaise: 70_000 });
+    await prisma.refund.create({
+      data: {
+        paymentId: s.paymentId,
+        amountPaise: BigInt(70_000),
+        status: "PENDING",
+        refundId: `rfnd_dbtier_${randomUUID()}`,
+        dedupeKey: s.heldKey,
+        paymentGateway: "RAZORPAY",
+      },
+    });
+    await lose(s);
+    const event = await prisma.systemEvent.findFirstOrThrow({
+      where: { correlationId: correlationOf(s) },
+      select: { context: true },
+    });
+    expect(event.context).toMatchObject({ owedPaise: 25_000 });
+    expect(
+      await prisma.earningsHold.count({
+        where: { sourceRef: correlationOf(s) },
+      }),
+    ).toBe(2);
+  });
+
   it("a hold that races rolls the door back: no earning is left HELD without an active hold", async () => {
     const s = await seedHeldPayment("PENDING");
     const place = jest.requireMock(
