@@ -28,7 +28,8 @@ The owner kept the host move as a later option, not as the fix.
 ## Decision
 
 - **Every host builds with Turbopack.** The `build` script in `package.json` runs `next build --turbopack`, which covers Netlify, any container build and any future host.
-- **Only the Netlify production context generates and uploads source maps.** `sourcemaps.disable` in `next.config.mjs` is true for `CI_LEAN_BUILD`, and for Netlify builds whose `CONTEXT` is not `production`. Previews and branch deploys have no Sentry auth token, so a map built there would never be uploaded.
+- **Netlify previews and branch deploys, and CI's lean build, skip source maps.** `sourcemaps.disable` in `next.config.mjs` is true for `CI_LEAN_BUILD`, and for Netlify builds whose `CONTEXT` is not `production`; those contexts have no Sentry auth token, so a map built there would never be uploaded. Every other build, Netlify production included, also any container or other-host build, generates maps, and uploads them only where `SENTRY_AUTH_TOKEN` is set.
+- **Bundle analysis stays on webpack.** `build:analyze` runs plain `next build`, because `@next/bundle-analyzer` reports through the webpack config hook, which Turbopack does not run.
 
 ## Consequences
 

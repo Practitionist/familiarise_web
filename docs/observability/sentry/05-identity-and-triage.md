@@ -301,10 +301,11 @@ Still open, and deliberately not in this change:
   yet"_, so the existing "our stack failed" taxonomy records nothing. This is
   the cheapest remaining win for support: the column and the enum value already
   exist and mean exactly the right thing.
-- Sentry source maps upload again from production builds since the switch to
+- Sentry source maps are configured to upload again from production builds since the switch to
   Turbopack (see the
   [Turbopack decision](../../decisions/2026-11-05-turbopack-production-build-for-source-maps.md));
-  confirm a mapped frame on the first production error after that deploy.
+  this stays unverified until the first production error after that deploy shows
+  a mapped frame.
 
 ## Sizing
 
