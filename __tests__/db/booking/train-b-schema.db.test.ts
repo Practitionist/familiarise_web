@@ -187,6 +187,10 @@ describe("sidecar constraints", () => {
         previousPlanEndsAt,
       }),
     ).rejects.toThrow(/plan_end_choice_extended/);
+    // A NULL extension length must not slip through as an unknown CHECK.
+    await expect(
+      choice({ status: "EXTENDED", decidedAt, previousPlanEndsAt }),
+    ).rejects.toThrow(/plan_end_choice_extended/);
     await expect(choice({ extraWeeksOffered: 3 })).resolves.toEqual(
       expect.objectContaining({ status: "OFFERED" }),
     );

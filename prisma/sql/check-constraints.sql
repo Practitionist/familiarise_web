@@ -1284,7 +1284,9 @@ ALTER TABLE "PlanEndChoice" DROP CONSTRAINT IF EXISTS "plan_end_choice_extended"
 -- SPLIT
 ALTER TABLE "PlanEndChoice" ADD CONSTRAINT "plan_end_choice_extended"
   CHECK ("status" NOT IN ('EXTENDED', 'EXPERT_DECLINED')
-    OR ("extraWeeksOffered" BETWEEN 1 AND 4 AND "previousPlanEndsAt" IS NOT NULL));
+    OR ("extraWeeksOffered" IS NOT NULL
+      AND "extraWeeksOffered" BETWEEN 1 AND 4
+      AND "previousPlanEndsAt" IS NOT NULL));
 -- SPLIT
 -- A declared platform incident is a real window.
 ALTER TABLE "PlatformIncident" DROP CONSTRAINT IF EXISTS "platform_incident_time_order";
