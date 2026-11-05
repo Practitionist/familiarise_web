@@ -151,7 +151,7 @@ The production branch is named `prod` (not `main` or `master`). This is intentio
 
 All env vars live in the Netlify dashboard and are injected at build time.
 They are **not committed to the repo** (`.env` is gitignored).
-The `.env.sample` file is the canonical reference for what vars are needed. It is grouped into eight sections (core runtime, vendors, compliance and encryption, ops and observability, pre-launch guards and feature flags, seed only, build only, platform-provided), and `__tests__/maintenance/env-sample-coverage.test.ts` fails when code reads a key that is missing from it.
+The `.env.sample` file is the canonical reference for what vars are needed. It is grouped by subsystem (database, authentication, payments, tax and compliance, video and chat, email and notifications, storage, observability, infrastructure and jobs, feature flags, then seed, build and platform-provided variables), and `__tests__/maintenance/env-sample-coverage.test.ts` fails when code reads a key that is missing from it.
 
 ### Critical auth variables
 
