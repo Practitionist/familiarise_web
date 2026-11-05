@@ -1774,6 +1774,17 @@ async function resolveBookingJournalCredits(
   return credits;
 }
 
+/**
+ * A ₹0 booking moves no money, so it has no journal. A paid booking always
+ * reaches `postLedgerTxn`, which refuses one that computed no lines.
+ */
+export function bookingNeedsJournal(
+  paymentAmountPaise: number,
+  postingCount: number,
+): boolean {
+  return postingCount > 0 || paymentAmountPaise !== 0;
+}
+
 async function postBookingLedgerJournal(
   tx: Tx,
   params: {
@@ -1796,8 +1807,7 @@ async function postBookingLedgerJournal(
       hasWalletSurcharge,
     });
     const postings = [...debits, ...credits];
-    // A ₹0 booking moves no money, so it has no journal.
-    if (postings.length === 0) return;
+    if (!bookingNeedsJournal(payment.amount, postings.length)) return;
     await postLedgerTxn(tx, {
       idempotencyKey: `booking:${payment.id}`,
       kind: "BOOKING",
