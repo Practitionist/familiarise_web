@@ -403,10 +403,15 @@ settles the marker through an operator refund door.
 **A door that proceeds anyway holds the money for a hand top-up.** Rejection,
 moderation of a 1:1 booking or a removed attendee, a consultant no-show, the
 maintenance freeze and the overage credit-back end the booking even when another
-door's marker holds the payment. `stampOwedOrHeld` / `heldInsteadOf` then
-records one `owed-already-held:<payment>:<key>` `SystemEvent` and places an
-`OPERATOR` `EarningsHold` keyed on it, in the door's transaction, and
-`readOwedAlreadyHeld` lists it in the Refunds tab until the hold is released.
+door's partial marker holds the payment (a full-balance one already covers
+them). `stampOwedOrHeld` / `heldInsteadOf` then records one
+`owed-already-held:<payment>:<key>` `SystemEvent` with the top-up amount and
+places an `OPERATOR` `EarningsHold` keyed on it, in the door's transaction; a
+hold race rolls the door back. `readOwedAlreadyHeld` lists it in the Refunds
+tab while the money is unpaid (refunds since the event vs the amount, and the
+balance), then until the hold is released. Operators (ADMIN or STAFF) read a
+held-marker refusal through `opsHeldMarkerMessage`: the seat payment, the
+holding key and the next step.
 
 **An operator's refund settles the owed refund by hand.** Every operator door
 passes `settlesOwedByHand` to `refundBookingPayment`: the issue and ladder

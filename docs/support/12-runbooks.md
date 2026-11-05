@@ -43,15 +43,17 @@ Also look for a refund keyed to the recommendation that is not yet linked: `SELE
 
 ## A refund held by another door's owed refund
 
-**Symptom.** The Refunds tab lists "Payment … (…): Another refund is still owed on this payment; refund the remaining ₹X by hand, then release the hold.", and the expert's earnings on that payment show HELD.
+**Symptom.** The Refunds tab lists "Payment … (…): Another refund is still owed on this payment; refund the remaining ₹X by hand, then release the hold." (or, with nothing left to freeze, without the hold clause), and the expert's earnings on that payment may show HELD. A later row "the top-up is settled; release the hold on its earnings" means only the hold is left.
 
 **Confirm.**
 
 ```sql
-SELECT e."correlationId", e.context, e."createdAt", p."refundOwedKey", p."refundOwedPaise"
+SELECT e."correlationId", e.context->>'owedPaise' AS owed_paise, e."createdAt",
+       p."refundOwedKey", p."refundOwedPaise"
 FROM system_events e
 JOIN "Payment" p ON p.id = e.context->>'paymentId'
-WHERE e."correlationId" LIKE 'owed-already-held:%'
+WHERE e.category = 'PAYMENT' AND e."correlationId" LIKE 'owed-already-held:%'
+  AND e."createdAt" >= now() - interval '180 days'
 ORDER BY e."createdAt";
 
 SELECT "consultantEarningsId", "organizationEarningsId", "releasedAt"
@@ -59,7 +61,9 @@ FROM "EarningsHold"
 WHERE reason = 'OPERATOR' AND "sourceRef" = '<correlationId>';
 ```
 
-**Impact.** A door (a rejection, a moderation cancel, a no-show, a maintenance freeze or an overage credit-back) ended the booking while another door's refund already held the payment, so its own refund of ₹X was never stamped. The buyer is short ₹X until someone refunds it, and the payment's unpaid earnings stay held. A class-wide cancel never gets here: it refuses until every seat's refund is its own.
+**Impact.** A door (a rejection, a moderation cancel, a no-show, a maintenance freeze or an overage credit-back) ended the booking while another door's partial refund already held the payment, so its own refund of ₹X was never stamped. A full-balance holding refund already covers the door, so it records nothing. The buyer is short ₹X until someone refunds it, and the payment's unpaid earnings stay held. A class-wide cancel never gets here: it refuses (next runbook).
+
+**How the row closes.** It reads money, not the hold: it is open while the refunds that landed on the payment after the event (other than the holding refund's own) cover less than ₹X and the payment still has a refundable balance. Releasing an earning's hold does not close it. Once the money is covered, the row asks for the hold release until every hold it placed is released. Events older than 180 days, or written before this rule recorded an amount, are not listed; run the triage query below once after deploy.
 
 **Fix.**
 
@@ -67,9 +71,35 @@ WHERE reason = 'OPERATOR' AND "sourceRef" = '<correlationId>';
 2. Refund ₹X through **Issue refund** on the row (the amount is preset). If the first door's marker is still on the payment (`refundOwedKey` above is not null), wait for it to clear, or refund its amount on top: a hand refund settles that marker first, so ₹X alone would only pay the older refund.
 3. Release the hold on each held earning of the payment (consultant and host organisation) through the earnings release door, with a reason.
 
-**Verify.** The row leaves the Refunds tab once every hold it placed is released (or, when the payment had nothing to hold, once another refund lands on it), and the earnings return to their prior status.
+**Verify.** The row leaves the Refunds tab, and the earnings return to their prior status.
+
+**Triage of events from before the rule (read-only, once).**
+
+```sql
+SELECT e."correlationId", e."createdAt", e.context
+FROM system_events e
+WHERE e."correlationId" LIKE 'owed-already-held:%'
+  AND (e.context->>'owedPaise' IS NULL OR e."createdAt" < now() - interval '180 days')
+ORDER BY e."createdAt";
+```
+
+For each, compare the payment's refunds with what the door owed (the event's message names the holding refund); refund any shortfall through **Issue refund**.
 
 **Prevention.** None needed: the door records and holds automatically. See [refunds](../finance/30-refunds-disputes/01-refunds.md#5-when-a-refund-does-not-finish).
+
+## A class or webinar won't cancel: a seat's refund is still owed
+
+**Symptom.** The class-wide cancel (money console, `cancel-series`), the admin whole-event refund, or the host's cancel answers 409. An operator reads "Seat payment … has a refund still owed from another action (…); settle it from Refunds → Needs human, then cancel the class again." (`REFUND_NEEDS_SUPPORT`) or "… still being retried; cancel the class again once it completes, or settle it by hand from Refunds → Issue refund." (`REFUND_IN_PROGRESS`). A host reads "This class couldn't be cancelled yet: a refund on one of its seats …". A moderation ban lists the class under `failures` with the same operator line.
+
+**Impact.** Nothing was committed: the class, its sessions, its seats and every other seat's payment are as they were, and the class stays live. A whole-event cancel must own every seat's refund marker, so it waits for the older refund rather than leaving one seat's refund owned by nobody.
+
+**Fix.**
+
+1. `REFUND_NEEDS_SUPPORT`: the older refund spent its retries or a dispute holds it. Settle it from the Refunds tab's stuck owed refund row (**Issue refund**), or resolve the dispute first.
+2. `REFUND_IN_PROGRESS`: the older refund is still retrying (up to about 5 hours). Wait for it, or refund its amount by hand through **Issue refund**, which settles the marker.
+3. Cancel the class again from the same door. For a moderation ban, re-run the ban's bulk cancel from the moderation console once the refund settles: a refused class is not retried automatically, and each step of the sweep is idempotent.
+
+**Verify.** The cancel answers 200 and every seat's refund carries the event's own key (`event-cancel:<eventId>:pay:<paymentId>`).
 
 ## Failed evidence purge
 
