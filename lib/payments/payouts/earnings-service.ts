@@ -183,7 +183,7 @@ import { allocateCycleClawback } from "./earnings-reversal";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import { applyCaseHoldsToNewEarnings } from "@/lib/support/case-holds";
 import {
-  sessionsTotalOf,
+  soldTermsOf,
   subscriptionTranches,
   type SubscriptionTranches,
 } from "@/lib/booking/entitlement";
@@ -211,6 +211,8 @@ async function resolveSubscriptionTranches(
       subscription: {
         select: {
           sessionsTotal: true,
+          sessionsPerWeek: true,
+          sessionsRefunded: true,
           subscriptionPlan: {
             select: {
               totalSessions: true,
@@ -224,10 +226,9 @@ async function resolveSubscriptionTranches(
   });
   const sub = appointment?.subscription;
   if (!sub) return null;
-  const tranches = subscriptionTranches(
-    sub.subscriptionPlan,
-    sessionsTotalOf(sub),
-  );
+  // The sessions sold at the frozen weekly cap; refunds never re-cut tranches.
+  const terms = soldTermsOf(sub);
+  const tranches = subscriptionTranches(terms, terms.sessionsTotal);
   return tranches.total > 0 ? tranches : null;
 }
 

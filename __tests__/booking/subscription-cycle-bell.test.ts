@@ -52,6 +52,7 @@ function wrapperWith(statuses: string[]) {
       id: "sub-1",
       status: "APPROVED",
       sessionsTotal: 12,
+      sessionsRefunded: 0,
       schedulingPeriodStartsAt: new Date("2026-03-02T00:00:00.000Z"),
       schedulingTimezone: "UTC",
       requestedBy: { userId: "consultee-user" },

@@ -14,6 +14,10 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
+import {
+  soldSessionMinutes,
+  soldSessionsPerWeek,
+} from "@/lib/booking/entitlement";
 import { requestListOrderBy } from "@/lib/booking/list-query";
 import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
@@ -186,6 +190,9 @@ export async function GET(request: NextRequest) {
           schedulingTimezone: true,
           // #1766 — the Requests tab sizes the first cycle off the entitlement.
           sessionsTotal: true,
+          sessionsPerWeek: true,
+          sessionMinutes: true,
+          sessionsRefunded: true,
           subscriptionPlan: {
             select: {
               id: true,
@@ -209,7 +216,16 @@ export async function GET(request: NextRequest) {
     ]);
 
     return NextResponse.json({
-      data: subscriptions,
+      // Every consumer sizes a sold plan off the plan block, so it carries the
+      // weekly cap and session length the buyer bought.
+      data: subscriptions.map((sub) => ({
+        ...sub,
+        subscriptionPlan: {
+          ...sub.subscriptionPlan,
+          sessionsPerWeek: soldSessionsPerWeek(sub),
+          sessionDurationInHours: soldSessionMinutes(sub) / 60,
+        },
+      })),
       meta: {
         total,
         page,

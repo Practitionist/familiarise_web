@@ -100,9 +100,15 @@ export type BookingRefundContext = {
    * for every other booking, which quotes off its slots.
    */
   sessionsTotal: number | null;
+  /** Sessions a support refund removed from the plan (0 for any other booking). */
+  sessionsRefunded: number;
   /** #1766 — start instants (epoch ms, ascending) of the sessions still scheduled. */
   scheduledStarts: number[];
-  /** Subscriptions: what single sessions of the payment already got back (voids, incidents). */
+  /**
+   * Subscriptions: what the payment already got back for single sessions
+   * (voids, incidents) and money-only support remedies. A session-count remedy
+   * is counted through `sessionsRefunded` instead, never both.
+   */
   alreadyRefundedPaise: number;
   /**
    * Slots of ANY status on the booking. Zero means no session was ever
@@ -193,6 +199,7 @@ export async function resolveBookingRefundContext(
       subscription: {
         select: {
           sessionsTotal: true,
+          sessionsRefunded: true,
           subscriptionPlan: { select: { totalSessions: true } },
         },
       },
@@ -297,15 +304,20 @@ export async function resolveBookingRefundContext(
   const sessionsCompleted = slots.filter(isCompletedOccurrence).length;
   const alreadyRefundedPaise =
     row?.subscription && payment
-      ? await occurrenceRefundsPaise(db, payment.id)
+      ? (await occurrenceRefundsPaise(db, payment.id)) +
+        (await moneyOnlySupportRefundsPaise(db, payment.id))
       : 0;
   const sessionsTotal = row?.subscription
     ? sessionsTotalOf(row.subscription)
     : null;
+  const sessionsRefunded = row?.subscription?.sessionsRefunded ?? 0;
+  // Sessions a support refund removed are not unscheduled entitlement.
+  const schedulable =
+    sessionsTotal === null ? null : sessionsTotal - sessionsRefunded;
   const windowState = cancelWindowState(slots, new Date(nowMs), {
     hasUnscheduledEntitlement:
-      sessionsTotal !== null &&
-      sessionsTotal - sessionsCompleted - scheduledStarts.length > 0,
+      schedulable !== null &&
+      schedulable - sessionsCompleted - scheduledStarts.length > 0,
   });
 
   return {
@@ -317,10 +329,31 @@ export async function resolveBookingRefundContext(
     slotsTotal: slots.length,
     confirmedSlotsTotal: slots.filter((s) => !s.isTentative).length,
     sessionsTotal,
+    sessionsRefunded,
     scheduledStarts,
     alreadyRefundedPaise,
     windowState,
   };
+}
+
+/**
+ * Live money-only support refunds (goodwill) on a payment: an advance against
+ * what the plan owes, so a cancel nets them as the plan end does. A
+ * session-count remedy is netted through `sessionsRefunded` instead.
+ */
+async function moneyOnlySupportRefundsPaise(
+  db: Pick<Tx, "refund">,
+  paymentId: string,
+): Promise<number> {
+  const rows = await db.refund.findMany({
+    where: {
+      paymentId,
+      status: { in: ["SUCCEEDED", "PENDING"] },
+      supportRecommendation: { is: { sessionsRemoved: null } },
+    },
+    select: { amountPaise: true },
+  });
+  return rows.reduce((sum, r) => sum + Number(r.amountPaise), 0);
 }
 
 /**

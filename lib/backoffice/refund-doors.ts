@@ -80,6 +80,7 @@ export async function ladderOverrideAmount(
     slotsTotal: ctx.slotsTotal,
     sessionsRemaining: ctx.sessionsRemaining,
     sessionsTotal: ctx.sessionsTotal,
+    sessionsRefunded: ctx.sessionsRefunded,
     sessionsCompleted: ctx.sessionsCompleted,
     scheduledStarts: ctx.scheduledStarts,
     alreadyRefundedPaise: ctx.alreadyRefundedPaise,

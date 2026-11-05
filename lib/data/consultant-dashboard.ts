@@ -288,6 +288,8 @@ const appointmentSelect = {
       planEndsAt: true,
       // #1766 — Home's session progress reads the frozen entitlement.
       sessionsTotal: true,
+      sessionsPerWeek: true,
+      sessionsRefunded: true,
       schedulingTimezone: true,
       status: true,
     },
@@ -583,6 +585,8 @@ export async function getConsultantDashboard(
             ).toISOString(),
             // #1766 — the entitlement inputs calculateSessionProgress reads.
             sessionsTotal: appointment.subscription.sessionsTotal,
+            sessionsPerWeek: appointment.subscription.sessionsPerWeek,
+            sessionsRefunded: appointment.subscription.sessionsRefunded,
             schedulingPeriodStartsAt:
               appointment.subscription.schedulingPeriodStartsAt,
             schedulingTimezone: appointment.subscription.schedulingTimezone,

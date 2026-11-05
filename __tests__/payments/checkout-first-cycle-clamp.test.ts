@@ -104,6 +104,8 @@ afterEach(() => {
 function heldRow(completed: number) {
   return {
     sessionsTotal: 24,
+    sessionsPerWeek: null,
+    sessionsRefunded: 0,
     schedulingPeriodStartsAt: new Date("2026-02-02T00:00:00.000Z"),
     schedulingTimezone: "Asia/Kolkata",
     subscriptionPlan: {
@@ -130,7 +132,9 @@ function makeTx(liveRows: ReturnType<typeof heldRow>[] = []) {
         id: "plan-1",
         price: 240_000,
         durationInMonths: 3,
+        durationInWeeks: null,
         sessionsPerWeek: 2,
+        sessionDurationInHours: 1,
         totalSessions: 24,
         consultantProfileId: "cp-1",
         consultantProfile: { user: { timezone: "Asia/Kolkata" } },
@@ -181,6 +185,9 @@ it("persists end = start + 7 zone-days and sessionsTotal = 24 despite a 90-day c
   // The plan end is written once, here: start + 3 months on the IST clock.
   expect(data.planEndsAt.toISOString()).toBe("2026-06-02T09:00:00.000Z");
   expect(data.sessionsTotal).toBe(24);
+  // The cadence and length are frozen with it; plan edits never move them.
+  expect(data.sessionsPerWeek).toBe(2);
+  expect(data.sessionMinutes).toBe(60);
   expect(data.schedulingTimezone).toBe("Asia/Kolkata");
   // The buyer holds a seat on the placeholder from the moment of purchase.
   const seated = (tx.appointmentParticipant.createMany as jest.Mock).mock

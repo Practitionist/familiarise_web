@@ -14,6 +14,10 @@ import { useToast } from "@/hooks/use-toast";
 import { CheckoutPlanSkeleton } from "@/app/checkout/CheckoutSkeletons";
 import { firstCycleWindow, lastInstantBefore } from "@/lib/booking/entitlement";
 import {
+  planDurationText,
+  planPriceLabel,
+} from "@/lib/offerings/plan-length-copy";
+import {
   CheckoutInput,
   SubscriptionSearchParams,
   checkoutResponseSchema,
@@ -635,7 +639,7 @@ export default function SubscriptionCheckoutPage({
             )}
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Duration</div>
-              <div>{planData?.data?.durationInMonths || 1} months</div>
+              <div>{planDurationText(planData?.data ?? {})}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Sessions per Week</div>
@@ -795,8 +799,8 @@ export default function SubscriptionCheckoutPage({
           <CardContent className="grid gap-4">
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
-                <div>Monthly Fee</div>
-                <div>{formatPrice(planData?.data?.price || 100)}</div>
+                <div>{planPriceLabel(planData?.data ?? {})}</div>
+                <div>{formatPrice(planData?.data?.price ?? 0)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center">

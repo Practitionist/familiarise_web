@@ -224,6 +224,7 @@ function makeSubscriptionEvent(overrides: any = {}) {
   return {
     id: "sub-1",
     sessionsTotal: null,
+    sessionsRefunded: 0,
     subscriptionPlan: {
       consultantProfileId: "consultant-profile-1",
       durationInMonths: 1,

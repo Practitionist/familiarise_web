@@ -124,6 +124,7 @@ function subscription(
     schedulingPeriodEndsAt: hoursAhead(24 * 120),
     schedulingTimezone: "Asia/Kolkata",
     sessionsTotal: 24,
+    sessionsRefunded: 0,
     planEndsAt: null,
     subscriptionPlan,
     requestedBy: learner(`ce-${id}`),

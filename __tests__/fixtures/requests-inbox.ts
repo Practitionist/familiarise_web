@@ -114,6 +114,7 @@ const subscriptionBase = {
   schedulingPeriodEndsAt: hoursAhead(24 * 60),
   schedulingTimezone: "Asia/Kolkata",
   sessionsTotal: 24,
+  sessionsRefunded: 0,
   subscriptionPlan,
   requestedBy: profile("ce-2", "Rahul Sen"),
 };

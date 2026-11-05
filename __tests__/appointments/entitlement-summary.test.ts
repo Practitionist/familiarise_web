@@ -20,6 +20,7 @@ const session = (day: number, completionStatus: string) => ({
 it("counts only never-placed sessions as not held once the plan ended", () => {
   const e = subscriptionEntitlement({
     sessionsTotal: 4,
+    sessionsRefunded: 0,
     sessionsPerWeek: 1,
     durationInMonths: 1,
     occurrences: [session(1, "COMPLETED"), session(8, "SCHEDULED")],

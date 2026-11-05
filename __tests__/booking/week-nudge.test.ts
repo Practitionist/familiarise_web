@@ -39,6 +39,7 @@ const session = (dayOffset: number, completionStatus = "SCHEDULED") => {
 
 const plan = (occurrences: ReturnType<typeof session>[]) => ({
   sessionsTotal: 72,
+  sessionsRefunded: 0,
   sessionsPerWeek: 3,
   durationInMonths: 6,
   occurrences,

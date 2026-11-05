@@ -1,4 +1,4 @@
-import { EarningsHoldReason } from "@prisma/client";
+import { EarningsHoldReason, type AppointmentStatus } from "@prisma/client";
 import { z } from "zod";
 
 import prisma, { type Tx } from "@/lib/prisma";
@@ -9,6 +9,8 @@ import {
 } from "@/lib/payments/refundable-balance";
 import { occurrenceRefundKey } from "@/lib/booking/class-sessions";
 import { SUPPORT_REFUND_SEND_GRACE_MS } from "@/lib/support/money-policy";
+import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/booking/transitions";
+import { subscriptionIsOver } from "@/lib/booking/entitlement";
 import {
   handTopUpCopy,
   MAX_REFUND_OWED_ATTEMPTS,
@@ -205,9 +207,50 @@ function toItem(e: EventRow, kind: "credit" | "held-paid-seat") {
   };
 }
 
+type UnsentPlan = {
+  id: string;
+  status: AppointmentStatus;
+  planEndsAt: Date | null;
+  schedulingPeriodStartsAt: Date;
+  schedulingTimezone: string;
+  subscriptionPlan: { durationInMonths: number };
+} | null;
+
+/**
+ * What ops must know about a session-count remedy's plan: a live plan gets the
+ * sessions back on a void, and once over its end refund waits on this one; a
+ * settled plan was paid without them, so the refund is still owed.
+ */
+function planNote(
+  sessionsRemoved: number | null,
+  plan: UnsentPlan,
+  now: Date,
+): string {
+  if (!sessionsRemoved || !plan) return "";
+  if (!LIVE_SUBSCRIPTION_STATUSES.includes(plan.status))
+    return " The plan settled without these sessions, so this refund is still owed: retry it.";
+  const back =
+    sessionsRemoved === 1
+      ? " 1 session goes back to the plan if you void this refund."
+      : ` ${sessionsRemoved} sessions go back to the plan if you void this refund.`;
+  if (!subscriptionIsOver(plan, now)) return back;
+  return `${back} The plan end is waiting for this refund: retry it or void it.`;
+}
+
+/** The plan and refund refs behind a session-count remedy, for the item's details. */
+function planRefs(
+  sessionsRemoved: number | null,
+  plan: UnsentPlan,
+  recommendationId: string,
+): string | null {
+  if (!sessionsRemoved || !plan) return null;
+  return `Plan ${plan.id} · refund ${recommendationId}`;
+}
+
 /**
  * Support remedies approved without a live refund: the refund was refused,
- * failed at the gateway, or never ran. Each needs a retry or a void on its case.
+ * failed at the gateway, or never ran. Each needs a retry or a void on its case;
+ * for a session-count remedy the note says what each does to the plan.
  */
 export async function readUnsentSupportRefunds(now = new Date()) {
   const rows = await prisma.supportFinancialRecommendation.findMany({
@@ -228,15 +271,39 @@ export async function readUnsentSupportRefunds(now = new Date()) {
       caseId: true,
       paymentId: true,
       amountPaise: true,
+      sessionsRemoved: true,
       decidedAt: true,
       createdAt: true,
       refund: { select: { status: true } },
       supportCase: { select: { referenceNumber: true } },
+      payment: {
+        select: {
+          appointment: {
+            select: {
+              subscription: {
+                select: {
+                  id: true,
+                  status: true,
+                  planEndsAt: true,
+                  schedulingPeriodStartsAt: true,
+                  schedulingTimezone: true,
+                  subscriptionPlan: { select: { durationInMonths: true } },
+                },
+              },
+            },
+          },
+        },
+      },
     },
   });
   return rows.map((row) => ({
     id: row.id,
-    message: `Support case ${row.supportCase.referenceNumber}: an approved refund of ₹${(Number(row.amountPaise) / 100).toFixed(2)} ${row.refund ? "failed" : "was never sent"}. Retry or void it on the case.`,
+    message: `Support case ${row.supportCase.referenceNumber}: an approved refund of ₹${(Number(row.amountPaise) / 100).toFixed(2)} ${row.refund ? "failed" : "was never sent"}. Retry or void it on the case.${planNote(row.sessionsRemoved, row.payment.appointment?.subscription ?? null, now)}`,
+    details: planRefs(
+      row.sessionsRemoved,
+      row.payment.appointment?.subscription ?? null,
+      row.id,
+    ),
     createdAt: row.decidedAt ?? row.createdAt,
     paymentId: row.paymentId,
     occurrenceId: null,

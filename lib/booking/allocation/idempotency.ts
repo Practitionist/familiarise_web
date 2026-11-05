@@ -344,13 +344,16 @@ export async function replayPartialCounts(
           where: { id: eventId },
           select: {
             sessionsTotal: true,
+            sessionsRefunded: true,
             subscriptionPlan: { select: { totalSessions: true } },
           },
         })
       : null;
+  // A subscription needs the sessions sold less those a support refund removed.
   const requiredSessions =
     eventType === "subscription"
-      ? subscriptionRow && sessionsTotalOf(subscriptionRow)
+      ? subscriptionRow &&
+        sessionsTotalOf(subscriptionRow) - subscriptionRow.sessionsRefunded
       : (
           await db.class.findUnique({
             where: { id: eventId },

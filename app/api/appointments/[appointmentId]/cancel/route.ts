@@ -207,6 +207,21 @@ class CaptureLandedError extends Error {
 }
 
 /**
+ * A support refund took sessions off the plan after this cancel read it; the
+ * first run re-quotes once, so the cancel never pays those sessions again.
+ */
+class PlanRefundLandedError extends Error {
+  readonly httpStatus = 409 as const;
+  readonly code = "BOOKING_CHANGED" as const;
+  constructor() {
+    super(
+      "A refund changed this plan while you were cancelling it. Check the new amount and confirm again.",
+    );
+    this.name = "PlanRefundLandedError";
+  }
+}
+
+/**
  * The refund charged is the refund the dialog showed. A click made on an
  * unpaid screen (or under a capture that landed mid-cancel) never cancels a
  * paid booking; an absent figure is an N-1 client and stays unbound.
@@ -892,6 +907,7 @@ export async function POST(
                       slotsTotal: bookingCtx.slotsTotal,
                       sessionsRemaining: bookingCtx.sessionsRemaining,
                       sessionsTotal: bookingCtx.sessionsTotal,
+                      sessionsRefunded: bookingCtx.sessionsRefunded,
                       sessionsCompleted: bookingCtx.sessionsCompleted,
                       scheduledStarts: bookingCtx.scheduledStarts,
                       alreadyRefundedPaise: bookingCtx.alreadyRefundedPaise,
@@ -963,7 +979,14 @@ export async function POST(
                   await transitionSubscriptionRequest(tx, {
                     ...auditMeta,
                     appointmentId,
-                    where: { id: appointment.subscription.id },
+                    // Pinned to the removed-session count the quote read, so a
+                    // support refund committing meanwhile makes this re-quote.
+                    where: {
+                      id: appointment.subscription.id,
+                      ...(bookingCtx
+                        ? { sessionsRefunded: bookingCtx.sessionsRefunded }
+                        : {}),
+                    },
                     to: "CANCELLED",
                     data: cancellationData,
                     fromIn: cancellableFrom,
@@ -994,6 +1017,14 @@ export async function POST(
                 // The helper's zero-row throw IS the old `moved === 0`; the client
                 // contract stays NOT_CANCELLABLE rather than ILLEGAL_TRANSITION.
                 if (!(err instanceof IllegalTransitionError)) throw err;
+              }
+              if (!moved && appointment.subscription && bookingCtx) {
+                const now = await tx.subscription.findUnique({
+                  where: { id: appointment.subscription.id },
+                  select: { sessionsRefunded: true },
+                });
+                if (now && now.sessionsRefunded !== bookingCtx.sessionsRefunded)
+                  throw new PlanRefundLandedError();
               }
               if (!moved && observedStatus) {
                 const nowStatus = await readRequestStatus(tx, appointment);
@@ -1170,11 +1201,11 @@ export async function POST(
         ),
       );
     const committed = await runCancel(false)
-      .catch((err: unknown) =>
-        err instanceof CaptureLandedError
-          ? runCancel(true)
-          : Promise.reject(err),
-      )
+      .catch((err: unknown) => {
+        if (err instanceof CaptureLandedError) return runCancel(true);
+        if (err instanceof PlanRefundLandedError) return runCancel(false);
+        throw err;
+      })
       .catch(async (err: unknown) => {
         // A retry after a 504 finds the booking already cancelled by this
         // caller (its requote differs once the first click refunded): answer

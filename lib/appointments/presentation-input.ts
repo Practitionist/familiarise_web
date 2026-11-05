@@ -7,6 +7,7 @@
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
 import {
   sessionsTotalOf,
+  soldTermsOf,
   subscriptionEntitlement,
   type SubscriptionEntitlement,
 } from "@/lib/booking/entitlement";
@@ -65,9 +66,7 @@ export function detailEntitlement(
     return null;
   }
   return subscriptionEntitlement({
-    sessionsTotal: sub.sessionsTotal ?? plan.totalSessions,
-    sessionsPerWeek: plan.sessionsPerWeek,
-    durationInMonths: plan.durationInMonths,
+    ...soldTermsOf({ ...sub, subscriptionPlan: plan }),
     occurrences: normalizeOccurrences(a.occurrences).map((o) => ({
       ...o,
       endsAt: o.endsAt ?? o.startsAt,

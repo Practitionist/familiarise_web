@@ -38,6 +38,8 @@ const NeedsHumanList = z.object({
       holdRef: z.string().nullish(),
       releasable: z.boolean().optional(),
       caseId: z.string().nullish(),
+      /** Record refs (plan, refund) kept out of the message. */
+      details: z.string().nullish(),
       /** An ended credit plan: ops may answer that no credit is owed. */
       creditPlan: z.boolean().optional(),
     }),
@@ -147,7 +149,15 @@ export function RefundDoorsPanel() {
                   key={item.id}
                   className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm"
                 >
-                  <span className="min-w-0 flex-1">{item.message}</span>
+                  <div className="min-w-0 flex-1">
+                    <span>{item.message}</span>
+                    {item.details && (
+                      <details className="text-xs text-muted-foreground">
+                        <summary>Details</summary>
+                        {item.details}
+                      </details>
+                    )}
+                  </div>
                   {item.kind === "support-recommendation" && item.caseId && (
                     <Button size="sm" variant="outline" asChild>
                       <Link

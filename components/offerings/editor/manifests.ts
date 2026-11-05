@@ -215,6 +215,15 @@ const durationMonthsField: FieldSpec = {
   span: 2,
 };
 
+/** A 1:1 plan's length: weeks for new plans, months for plans sold in months. */
+const planLengthField: FieldSpec = {
+  name: "durationInWeeks",
+  kind: "planLength",
+  label: "Plan length",
+  required: true,
+  span: 6,
+};
+
 const sessionsPerWeekField: FieldSpec = {
   name: "sessionsPerWeek",
   kind: "number",
@@ -365,9 +374,9 @@ export const SUBSCRIPTION_MANIFEST: OfferingManifest = {
       icon: IndianRupee,
       fields: [
         priceField(2),
-        durationMonthsField,
         sessionsPerWeekField,
         sessionDurationField("Hours per session, from 30 minutes to 4 hours."),
+        planLengthField,
         supportLevelField,
       ],
     },
