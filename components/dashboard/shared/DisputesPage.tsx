@@ -167,9 +167,18 @@ const DISPUTE_COLUMNS: ResponsiveColumn<Dispute>[] = [
         </p>
         <p className="text-xs text-muted-foreground/70">
           Internal:{" "}
-          <span className="font-mono" title={dispute.id}>
+          <button
+            type="button"
+            data-copyable=""
+            className="select-text font-mono hover:underline"
+            title={dispute.id}
+            onClick={(e) => {
+              e.stopPropagation();
+              void navigator.clipboard?.writeText(dispute.id);
+            }}
+          >
             {dispute.id.slice(-8).toUpperCase()}
-          </span>
+          </button>
         </p>
         {dispute.payment && (
           <p className="text-xs text-muted-foreground/70">

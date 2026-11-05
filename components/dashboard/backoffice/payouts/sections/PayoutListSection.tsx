@@ -62,7 +62,11 @@ const columns: ResponsiveColumn<Payout>[] = [
     key: "payoutId",
     header: "Payout ID",
     cell: (p) => (
-      <span className="font-mono text-xs text-muted-foreground" title={p.id}>
+      <span
+        data-copyable=""
+        className="font-mono text-xs text-muted-foreground"
+        title={p.id}
+      >
         {p.id.slice(-8).toUpperCase()}
       </span>
     ),
