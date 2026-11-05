@@ -143,8 +143,20 @@ function pick(row: Row, select?: Row): Row {
   return out;
 }
 
-/** The CRUD surface the money paths use, over a caller-owned row array. */
-export function memTable(rows: Row[], idPrefix = "row") {
+/**
+ * The CRUD surface the money paths use, over a caller-owned row array.
+ * `unique` lists opt-in compound keys that `createMany` enforces, skipping a
+ * clash under `skipDuplicates` and throwing otherwise, as Postgres would.
+ */
+export function memTable(
+  rows: Row[],
+  idPrefix = "row",
+  opts: { unique?: string[][] } = {},
+) {
+  const clashes = (d: Row) =>
+    (opts.unique ?? []).some((key) =>
+      rows.some((r) => key.every((k) => sameValue(r[k], d[k]))),
+    );
   return {
     rows,
     findMany: jest.fn(async (args: { where?: Where; select?: Row } = {}) =>
@@ -180,11 +192,19 @@ export function memTable(rows: Row[], idPrefix = "row") {
       rows.push(row);
       return { ...row };
     }),
-    createMany: jest.fn(async (args: { data: Row[] }) => {
-      for (const d of args.data) {
-        rows.push({ id: `${idPrefix}-${rows.length + 1}`, ...d });
-      }
-      return { count: args.data.length };
-    }),
+    createMany: jest.fn(
+      async (args: { data: Row[]; skipDuplicates?: boolean }) => {
+        let count = 0;
+        for (const d of args.data) {
+          if (clashes(d)) {
+            if (args.skipDuplicates) continue;
+            throw new Error("Unique constraint failed");
+          }
+          rows.push({ id: `${idPrefix}-${rows.length + 1}`, ...d });
+          count++;
+        }
+        return { count };
+      },
+    ),
   };
 }
