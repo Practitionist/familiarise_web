@@ -151,7 +151,7 @@ it("T16: a slot another buyer already holds is skipped as TAKEN; the others land
     host,
     await seedConsultee(),
     { startsAt: taken, endsAt: new Date(taken.getTime() + HOUR_MS) },
-    { isTentative: false },
+    { status: "SCHEDULED", isTentative: false },
   );
   const weeks = await horizonWeeks(subscriptionId);
   const out = await placeRegularWeeks(await readPlan(subscriptionId), weeks, {
@@ -186,7 +186,7 @@ it("T24: the exclusion constraint refuses a cross-event overlap with a roll-forw
       startsAt: new Date(placed.startsAt.getTime() + 20 * DAY_MS),
       endsAt: new Date(placed.startsAt.getTime() + 20 * DAY_MS + HOUR_MS),
     },
-    { isTentative: false },
+    { status: "SCHEDULED", isTentative: false },
   );
   await expect(
     prisma.appointmentOccurrence.create({
