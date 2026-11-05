@@ -95,6 +95,8 @@ export async function recordReferralCapture(
   if (
     payment.attributionSource === "CONSUMER_REFERRAL" &&
     payment.attributionReferralId &&
+    // A ₹0 sale never earns a reward, even when the minimum order is zero.
+    cashPaise > 0 &&
     cashPaise >= cfg.minOrderPaise
   ) {
     const referral = await tx.referral.findUnique({

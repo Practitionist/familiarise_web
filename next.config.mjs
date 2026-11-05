@@ -594,9 +594,11 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // CI/dev keeps it for stack-trace quality, Netlify skips it for survival.
   // Skip generating hidden-source-map buffers on non-production Netlify previews to stay under the 8 GB container RSS cap.
   sourcemaps: {
-    // Netlify's 8 GB builder can no longer fit source-map generation for this
-    // bundle (V8 OOM past the 6144 MB heap), so no Netlify build emits them.
-    disable: CI_LEAN_BUILD || process.env.NETLIFY === "true",
+    // Production builds with Turbopack, whose maps fit the 8 GB Netlify builder (webpack's did not).
+    // Previews, branch deploys and CI's lean build skip them: they are never uploaded there.
+    disable:
+      CI_LEAN_BUILD ||
+      (process.env.NETLIFY === "true" && process.env.CONTEXT !== "production"),
   },
   widenClientFileUpload: process.env.NETLIFY !== "true" && !CI_LEAN_BUILD,
   // A CI PR build is never deployed, so it must not create or finalize a

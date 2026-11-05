@@ -3,8 +3,8 @@
   "version": "0.2.0",
   "private": true,
   "scripts": {
-    "build": "npm run cron:coverage && npm run db:generate && next build",
-    "build:analyze": "ANALYZE=true npm run build",
+    "build": "npm run cron:coverage && npm run db:generate && next build --turbopack",
+    "build:analyze": "npm run db:generate && ANALYZE=true next build",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev --name init",
     "db:pull": "prisma db pull",
