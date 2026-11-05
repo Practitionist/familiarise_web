@@ -59,6 +59,10 @@ Because every run writes a row, `/api/health/jobs` judges the canary like any ot
 
 `SENTRY_STATS_TOKEN` is **an Internal Integration token (Organization: Read)**, which grants the `org:read` scope the endpoint needs (it accepts `org:read`, `org:write` or `org:admin`). An organization auth token does not work, because it only carries `org:ci`. It is a runtime key for the production Netlify context. It is not `SENTRY_AUTH_TOKEN`, the build-time token that uploads source maps. `SENTRY_API_URL` defaults to `https://us.sentry.io` and `SENTRY_ORG` to `practitionist`.
 
+To create it by hand (Sentry's 2026 interface), open Settings, then Developer Settings, then **Custom Integrations**, and choose **Create New Integration**, then **Internal Integration** (the "Get started" button under "Start from scratch"; ignore the Public Integration and the "Trigger a Claude routine" template). Name it `familiarise-ingest-canary`, set only **Organization** to **Read**, leave every other permission on No Access and every webhook box unchecked, save, then use **New Token** and copy it at once, because Sentry shows it in full only once. Store it as a Netlify production secret with `netlify env:set SENTRY_STATS_TOKEN <token> --context production --secret`; it applies from the next production deploy. The Sentry CLI login cannot create the integration (the API answers "You do not have permission to perform this action"), so this step is a dashboard step.
+
+Prove the token without waiting for the daily run: call the canary's own endpoint, `GET /api/0/organizations/practitionist/stats_v2/?field=sum(quantity)&groupBy=outcome&category=error&interval=1d&statsPeriod=1d`, with the token as a bearer. It must answer 200 with outcome counts. A call that needs more than `org:read`, such as listing issues, must answer 403; that confirms the token cannot read or change anything else. If a token ever appears in a chat, log or screenshot, create a new one under the same integration and delete the old one.
+
 ## Running it by hand
 
 ```bash
