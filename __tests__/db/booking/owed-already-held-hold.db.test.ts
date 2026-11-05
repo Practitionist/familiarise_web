@@ -129,6 +129,15 @@ async function handRefund(
   });
 }
 
+/** The holding marker's own refund goes out and clears it, as a successful drive does. */
+async function settleHolding(s: { paymentId: string; heldKey: string }) {
+  await handRefund(s.paymentId, 1_000, s.heldKey);
+  await prisma.payment.update({
+    where: { id: s.paymentId },
+    data: { refundOwedKey: null, refundOwedPaise: null },
+  });
+}
+
 const losingMarker = (s: Seeded): RefundOwedMarker => ({
   paymentId: s.paymentId,
   amountPaise: 25_000,
@@ -190,8 +199,9 @@ describe("a door whose refund another door's owed refund holds", () => {
     expect(await listed(s)).toEqual([
       expect.objectContaining({
         kind: "owed-already-held",
-        amountPaise: 25_000,
-        message: `Payment ${s.paymentId} (${s.heldKey}): Another refund is still owed on this payment; refund the remaining ₹250.00 by hand, then release the hold.`,
+        // The ₹250 top-up plus the ₹10 older refund a hand refund settles first.
+        amountPaise: 26_000,
+        message: `Payment ${s.paymentId} (${s.heldKey}): Another refund is still owed on this payment; refund the remaining ₹250.00 by hand, then release the hold. The older refund of ₹10.00 is still owed and a hand refund settles it first, so refund ₹260.00 in total.`,
       }),
     ]);
 
@@ -205,15 +215,17 @@ describe("a door whose refund another door's owed refund holds", () => {
       ),
     );
     expect(await listed(s)).toEqual([
-      expect.objectContaining({ amountPaise: 25_000 }),
+      expect.objectContaining({ amountPaise: 26_000 }),
     ]);
 
-    // The hand top-up settles the money; the row then asks for the hold release.
+    // The older refund goes out and clears its marker, then the hand top-up
+    // settles the money; the row then asks for the hold release.
+    await settleHolding(s);
     await handRefund(s.paymentId, 25_000);
     expect(await listed(s)).toEqual([
       expect.objectContaining({
         amountPaise: null,
-        message: `Payment ${s.paymentId} (${s.heldKey}): the top-up is settled; release the hold on its earnings.`,
+        message: `Payment ${s.paymentId} (${s.heldKey}): the top-up is settled; release the hold on its earnings from the Earnings tab.`,
       }),
     ]);
     await prisma.$transaction((tx) =>
@@ -237,15 +249,50 @@ describe("a door whose refund another door's owed refund holds", () => {
     ).toBe(0);
     expect(await listed(s)).toEqual([
       expect.objectContaining({
-        message: `Payment ${s.paymentId} (${s.heldKey}): Another refund is still owed on this payment; refund the remaining ₹250.00 by hand.`,
+        message: `Payment ${s.paymentId} (${s.heldKey}): Another refund is still owed on this payment; refund the remaining ₹250.00 by hand. The older refund of ₹10.00 is still owed and a hand refund settles it first, so refund ₹260.00 in total.`,
       }),
     ]);
 
     // The first door's own refund does not answer it; a hand refund does.
-    await handRefund(s.paymentId, 1_000, s.heldKey);
+    await settleHolding(s);
     expect(await listed(s)).toHaveLength(1);
     await handRefund(s.paymentId, 25_000);
     expect(await listed(s)).toEqual([]);
+  });
+
+  it("a hand refund that settles the still-stamped holding refund first leaves the row open", async () => {
+    const s = await seedHeldPayment("PAID", { heldPaise: 30_000 });
+    await prisma.$transaction((tx) =>
+      stampOwedOrHeld(tx, { ...losingMarker(s), amountPaise: 20_000 }),
+    );
+    // The operator's ₹200 hand refund settles ₹200 of the stuck ₹300 marker, as settleOwedByHand does.
+    await prisma.refund.create({
+      data: {
+        paymentId: s.paymentId,
+        amountPaise: BigInt(20_000),
+        status: "SUCCEEDED",
+        refundId: `rfnd_dbtier_${randomUUID()}`,
+        dedupeKey: `ops:${randomUUID()}`,
+        paymentGateway: "RAZORPAY",
+        metadata: {
+          settledOwed: {
+            key: s.heldKey,
+            reason: "an earlier refund",
+            owedPaise: 30_000,
+            settledPaise: 20_000,
+            stillOwedPaise: 10_000,
+            note: "Settled ₹200.00 of the owed ₹300.00",
+          },
+        },
+      },
+    });
+    await prisma.payment.update({
+      where: { id: s.paymentId },
+      data: { refundOwedPaise: BigInt(10_000) },
+    });
+    expect(await listed(s)).toEqual([
+      expect.objectContaining({ amountPaise: 30_000 }),
+    ]);
   });
 
   it("closes once the payment has nothing left to refund", async () => {

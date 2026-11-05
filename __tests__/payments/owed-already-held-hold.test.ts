@@ -45,12 +45,15 @@ type Refund = {
   createdAt: Date;
   amountPaise: number;
   status: string;
+  metadata?: unknown;
 };
 const store = {
   events: [] as Event[],
   holds: [] as { sourceRef: string; releasedAt: Date | null }[],
   refunds: [] as Refund[],
   amount: 100_000,
+  /** The holding marker as it stands on the payment now (null once cleared). */
+  marker: null as { key: string; paise: number } | null,
 };
 const mockEventRead = jest.fn();
 jest.mock("../../lib/prisma", () => ({
@@ -80,6 +83,8 @@ jest.mock("../../lib/prisma", () => ({
               {
                 id: "pay-1",
                 amount: store.amount,
+                refundOwedKey: store.marker?.key ?? null,
+                refundOwedPaise: store.marker?.paise ?? null,
                 refunds: store.refunds,
                 disputes: [],
               },
@@ -151,6 +156,7 @@ beforeEach(() => {
   store.holds = [];
   store.refunds = [];
   store.amount = 100_000;
+  store.marker = null;
 });
 
 describe("stampOwedOrHeld when another door's marker holds the payment", () => {
@@ -361,10 +367,41 @@ describe("the needs-human list of held top-ups", () => {
     expect(await read()).toEqual([
       expect.objectContaining({
         amountPaise: null,
-        message: `Payment pay-1 (${HELD_KEY}): the top-up is settled; release the hold on its earnings.`,
+        message: `Payment pay-1 (${HELD_KEY}): the top-up is settled; release the hold on its earnings from the Earnings tab.`,
       }),
     ]);
     store.holds = [];
+    expect(await read()).toEqual([]);
+  });
+
+  it("a hand refund that first settled the still-stamped holding refund pays nothing toward the top-up", async () => {
+    // ₹1,000 paid; the holding ₹300 is stuck; the top-up is ₹200. A ₹200 hand refund settles ₹200 of the ₹300.
+    store.events = [event(at, 20_000)];
+    store.holds = [{ sourceRef: CORRELATION, releasedAt: null }];
+    store.marker = { key: HELD_KEY, paise: 10_000 };
+    store.refunds = [
+      {
+        ...refund("ops:hand", 20_000),
+        metadata: { settledOwed: { key: HELD_KEY, settledPaise: 20_000 } },
+      },
+    ];
+    expect(await read()).toEqual([
+      expect.objectContaining({
+        // The top-up, plus the ₹100 older refund the next hand refund settles first.
+        amountPaise: 30_000,
+        message: `Payment pay-1 (${HELD_KEY}): Another refund is still owed on this payment; refund the remaining ₹200.00 by hand, then release the hold. The older refund of ₹100.00 is still owed and a hand refund settles it first, so refund ₹300.00 in total.`,
+      }),
+    ]);
+  });
+
+  it("only the part of a hand refund beyond what it settled counts toward the top-up", async () => {
+    store.events = [event(at, 20_000)];
+    store.refunds = [
+      {
+        ...refund("ops:hand", 30_000),
+        metadata: { settledOwed: { key: HELD_KEY, settledPaise: 10_000 } },
+      },
+    ];
     expect(await read()).toEqual([]);
   });
 

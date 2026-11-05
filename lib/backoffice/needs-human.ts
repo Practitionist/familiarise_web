@@ -253,6 +253,29 @@ const owedHeldContextSchema = z.object({
   owedPaise: z.number().positive(),
 });
 
+/** The part of a hand refund that settled an owed marker first (`settleOwedByHand`). */
+const settledOwedMetaSchema = z.object({
+  settledOwed: z.object({ key: z.string(), settledPaise: z.number() }),
+});
+
+/** What a refund paid toward a top-up: none of the holding refund, and none of a hand refund's share that settled it. */
+function topUpPaidBy(
+  refund: {
+    dedupeKey: string | null;
+    amountPaise: number | bigint;
+    metadata: unknown;
+  },
+  heldKey: string,
+): number {
+  if (refund.dedupeKey === heldKey) return 0;
+  const meta = settledOwedMetaSchema.safeParse(refund.metadata);
+  const settledHeld =
+    meta.success && meta.data.settledOwed.key === heldKey
+      ? meta.data.settledOwed.settledPaise
+      : 0;
+  return Math.max(0, Number(refund.amountPaise) - settledHeld);
+}
+
 /** Held top-ups older than this leave the list; the runbook's triage query finds them. */
 export const OWED_HELD_WINDOW_DAYS = 180;
 const OWED_HELD_READ_LIMIT = 500;
@@ -291,11 +314,15 @@ export async function readOwedAlreadyHeld(now = new Date()) {
   const paymentIds = [...new Set([...first.values()].map((r) => r.paymentId))];
   const payments = await prisma.payment.findMany({
     where: { id: { in: paymentIds } },
-    select: { id: true, amount: true, ...REFUNDABLE_BALANCE_SELECT },
+    select: {
+      id: true,
+      amount: true,
+      refundOwedKey: true,
+      refundOwedPaise: true,
+      ...REFUNDABLE_BALANCE_SELECT,
+    },
   });
-  const balance = new Map(
-    payments.map((p) => [p.id, refundableBalancePaise(Number(p.amount), p)]),
-  );
+  const byPayment = new Map(payments.map((p) => [p.id, p]));
   const refunds = await prisma.refund.findMany({
     where: {
       paymentId: { in: paymentIds },
@@ -306,6 +333,7 @@ export async function readOwedAlreadyHeld(now = new Date()) {
       dedupeKey: true,
       createdAt: true,
       amountPaise: true,
+      metadata: true,
     },
   });
   const activeHolds = await prisma.earningsHold.findMany({
@@ -320,31 +348,37 @@ export async function readOwedAlreadyHeld(now = new Date()) {
   return [...first.entries()].flatMap(([ref, row]) => {
     const toppedUp = refunds
       .filter(
-        (r) =>
-          r.paymentId === row.paymentId &&
-          r.createdAt > row.e.createdAt &&
-          r.dedupeKey !== row.heldKey,
+        (r) => r.paymentId === row.paymentId && r.createdAt > row.e.createdAt,
       )
-      .reduce((sum, r) => sum + Number(r.amountPaise), 0);
+      .reduce((sum, r) => sum + topUpPaidBy(r, row.heldKey), 0);
+    const payment = byPayment.get(row.paymentId);
     const owed = Math.min(
       row.owedPaise - toppedUp,
-      balance.get(row.paymentId) ?? 0,
+      payment ? refundableBalancePaise(Number(payment.amount), payment) : 0,
     );
     const holding = held.has(ref);
     if (owed <= 0 && !holding) return [];
+    // A hand refund settles the still-stamped older refund first, so the door preset covers both.
+    const older =
+      payment?.refundOwedKey === row.heldKey && payment.refundOwedPaise !== null
+        ? Number(payment.refundOwedPaise)
+        : 0;
+    const head = `Payment ${row.paymentId} (${row.heldKey}):`;
     return [
       {
         id: `owed-held:${ref}`,
         message:
-          owed > 0
-            ? `Payment ${row.paymentId} (${row.heldKey}): ${handTopUpCopy(owed, holding)}`
-            : `Payment ${row.paymentId} (${row.heldKey}): the top-up is settled; release the hold on its earnings.`,
+          owed <= 0
+            ? `${head} the top-up is settled; release the hold on its earnings from the Earnings tab.`
+            : older > 0
+              ? `${head} ${handTopUpCopy(owed, holding)} The older refund of ₹${(older / 100).toFixed(2)} is still owed and a hand refund settles it first, so refund ₹${((owed + older) / 100).toFixed(2)} in total.`
+              : `${head} ${handTopUpCopy(owed, holding)}`,
         createdAt: row.e.createdAt,
         paymentId: row.paymentId,
         occurrenceId: null,
         unitPaise: null,
-        /** What is still owed; null once only the hold release is left. */
-        amountPaise: owed > 0 ? owed : null,
+        /** The Issue-refund preset: the top-up, plus an older refund a hand refund settles first; null once only the hold release is left. */
+        amountPaise: owed > 0 ? owed + older : null,
         kind: "owed-already-held" as const,
         caseId: null,
         creditPlan: false,
