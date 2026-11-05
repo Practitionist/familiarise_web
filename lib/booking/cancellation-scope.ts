@@ -337,8 +337,9 @@ export async function resolveBookingRefundContext(
 }
 
 /**
- * Live support refunds on a payment that took money without taking sessions
- * off the plan; a session-count remedy is netted through `sessionsRefunded`.
+ * Live money-only support refunds (goodwill) on a payment: an advance against
+ * what the plan owes, so a cancel nets them as the plan end does. A
+ * session-count remedy is netted through `sessionsRefunded` instead.
  */
 async function moneyOnlySupportRefundsPaise(
   db: Pick<Tx, "refund">,
