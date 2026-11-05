@@ -32,7 +32,7 @@ A ten-session class is half delivered. Learner Asha opens checkout at 10:00, whi
 ## Consequences
 
 - No runtime code changes. The comments in `release-tentative.ts` now state the `Restrict` foreign key and the in-WHERE payment guard instead of a cascade.
-- Any future change to one of the five facts above, for example a second wrapper per class, a delete without the payment guard, or a re-seat that writes status onto an existing row, fails the regression test.
+- The regression test covers a re-plan that starts from a class wrapper already carrying its Payment. It fails if the re-plan drops the payment guard from a wrapper delete, stops reusing the wrapper, or writes a status onto an existing seat row. It does not run checkout, so a change to how checkout links the Payment to the wrapper, the `Appointment.classId` unique, or the `Restrict` foreign key itself would not fail it.
 - A no-gateway rail never produces a `HELD` class seat: `handleClassCheckout` seats the learner as `CONFIRMED` when the checkout skips the gateway.
 
 ## Deprecated & Superseded Approaches
