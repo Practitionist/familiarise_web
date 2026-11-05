@@ -40,7 +40,7 @@ jest.mock("@/utils/appointmentlock", () => ({
 import { allocate } from "@/lib/booking/allocation";
 import { isHostOrgOperatorOf } from "@/lib/booking/cancel-actor";
 import { stageBell } from "@/lib/novu/stage-bell";
-import { setRegularTime } from "@/lib/booking/regular-time/service";
+import { clientView, setRegularTime } from "@/lib/booking/regular-time/service";
 import { scheduleReason } from "@/lib/booking/allocation/schedule-choice";
 
 const HOUR = 3_600_000;
@@ -182,7 +182,7 @@ describe("setRegularTime", () => {
         MWF_1800,
         NOW,
       ),
-    ).toMatchObject({ ok: false, status: 403 });
+    ).toMatchObject({ ok: false, status: 404, code: "NOT_FOUND" });
 
     (isHostOrgOperatorOf as jest.Mock).mockResolvedValue(true);
     expect(
@@ -307,4 +307,30 @@ describe("setRegularTime", () => {
     expect(offGrid.ok ? "" : offGrid.error).toContain("08:45 or 09:15");
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });
+});
+
+it("m5: the client's read carries their own sessions and the regular time, never conflicts", () => {
+  const view = clientView({
+    perWeek: 3,
+    slots: MWF_1800,
+    label: "Mon, Wed, Fri at 18:00",
+    timeZone: "Asia/Kolkata",
+    weekCount: 26,
+    paused: false,
+    weeks: [
+      {
+        weekIndex: 0,
+        capacity: 3,
+        held: 1,
+        startsAt: START,
+        endsAt: new Date(START.getTime() + 7 * DAY),
+        placed: [{ id: "o-1", startsAt: NOW, endsAt: NOW }],
+        conflicts: [{ reason: "TAKEN", startsAt: NOW, endsAt: NOW }],
+        shortBy: 2,
+      },
+    ],
+  });
+  expect(JSON.stringify(view)).not.toMatch(/TAKEN|conflicts|o-1|perWeek/);
+  expect(view.weeks[0].placed).toHaveLength(1);
+  expect(view.label).toBe("Mon, Wed, Fri at 18:00");
 });

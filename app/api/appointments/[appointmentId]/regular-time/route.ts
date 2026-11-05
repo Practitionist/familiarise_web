@@ -10,6 +10,7 @@ import {
   REGULAR_TIME_PLAN_SELECT,
   readRegularTimeView,
   setRegularTime,
+  clientView,
 } from "@/lib/booking/regular-time/service";
 
 const RegularTimeBody = z.object({
@@ -63,16 +64,20 @@ export async function GET(
       select: REGULAR_TIME_PLAN_SELECT,
     });
     if (!plan) return notFound();
-    const mayRead =
-      plan.requestedBy.user.id === session.user.id ||
+    const isHostSide =
       session.user.consultantProfileId ===
         plan.subscriptionPlan.consultantProfileId ||
       (await isHostOrgOperatorOf(
         session.user.id,
         plan.subscriptionPlan.organizationId,
       ));
-    if (!mayRead) return notFound();
-    return NextResponse.json(await readRegularTimeView(plan));
+    const isClient = plan.requestedBy.user.id === session.user.id;
+    if (!isHostSide && !isClient) return notFound();
+    const view = await readRegularTimeView(plan);
+    if (isHostSide) return NextResponse.json(view);
+    // The client reads their regular time and their own sessions, never the
+    // host's other bookings or the expert-facing conflict list.
+    return NextResponse.json(clientView(view));
   } catch (error) {
     return apiError({
       tag: "regular-time.get",

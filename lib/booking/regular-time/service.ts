@@ -256,6 +256,22 @@ export async function readRegularTimeView(
   return { ...base, weeks };
 }
 
+/** The client's read: the regular time and their own placed sessions. */
+export function clientView(view: RegularTimeView) {
+  return {
+    slots: view.slots,
+    label: view.label,
+    timeZone: view.timeZone,
+    weekCount: view.weekCount,
+    weeks: view.weeks.map((w) => ({
+      weekIndex: w.weekIndex,
+      startsAt: w.startsAt,
+      endsAt: w.endsAt,
+      placed: w.placed.map((p) => ({ startsAt: p.startsAt, endsAt: p.endsAt })),
+    })),
+  };
+}
+
 export interface PlaceResult {
   placed: number;
   skipped: number;
@@ -390,11 +406,14 @@ export async function setRegularTime(
         plan.subscriptionPlan.organizationId,
       )));
   if (!allowed) {
-    return refuse(
-      403,
-      "NOT_ALLOWED",
-      "Only the expert or their organisation can set the regular time.",
-    );
+    // Only the client may learn the plan exists; anyone else sees a 404.
+    return actor.userId === consulteeId
+      ? refuse(
+          403,
+          "NOT_ALLOWED",
+          "Only the expert or their organisation can set the regular time.",
+        )
+      : refuse(404, "NOT_FOUND", "This plan was not found.");
   }
   if (
     !LIVE_PLAN_STATUSES.includes(plan.status) ||
