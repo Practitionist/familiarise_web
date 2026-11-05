@@ -1,5 +1,6 @@
 "use client";
 
+import { RegularTimeSummary } from "@/components/scheduling/RegularTimeSummary";
 import { useEffect, useState } from "react";
 import { schedulableSessionsOf } from "@/lib/booking/entitlement";
 import Link from "next/link";
@@ -458,6 +459,7 @@ export default function DetailPageClient({
                 zone={viewerZone}
                 appointmentId={appointmentId}
               />
+              <RegularTimeSummary appointmentId={appointmentId} />
             </>
           );
         }}

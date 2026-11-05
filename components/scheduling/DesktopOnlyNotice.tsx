@@ -55,12 +55,16 @@ export function DesktopOnlyNotice({
     <>
       <div className="lg:hidden flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border px-6 py-16 text-center">
         <Monitor className="h-8 w-8 text-muted-foreground" aria-hidden />
+        {/* With a phone action, only picking exact times needs a computer. */}
         <p className="text-sm font-medium text-foreground">
-          Please access this on desktop for now
+          {mobileAction
+            ? "Picking exact times needs a computer"
+            : "Please access this on desktop for now"}
         </p>
         <p className="max-w-xs text-xs text-muted-foreground">
-          Choosing times needs a wider screen than this one. Everything else in
-          your dashboard works here.
+          {mobileAction
+            ? "You can auto-schedule from here. To choose each time yourself, open this page on a wider screen."
+            : "Choosing times needs a wider screen than this one. Everything else in your dashboard works here."}
         </p>
         {mobileAction}
       </div>

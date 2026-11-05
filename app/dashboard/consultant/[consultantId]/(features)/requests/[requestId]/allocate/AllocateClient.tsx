@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { RegularTimeCard } from "@/components/scheduling/RegularTimeCard";
 import { TimePicker } from "@/components/scheduling/TimePicker";
 import {
   allocatePolicy,
@@ -33,6 +35,8 @@ export function AllocateClient({
   viewerZone: string | null;
 }>) {
   const router = useRouter();
+  // A conflict's "Pick another time" opens the grid on that plan week.
+  const [focusWeek, setFocusWeek] = useState<Date | null>(null);
   // Replaces the generic "allocate" crumb with the booking's own name (#1064).
   useSetBreadcrumbLabel(title);
 
@@ -52,12 +56,13 @@ export function AllocateClient({
     { settled },
   );
 
-  return (
+  const picker = (
     <TimePicker
+      key={focusWeek?.toISOString()}
       className="min-h-0 flex-1"
       policy={policy}
       subject={subject}
-      focusAt={pinnedAt ?? undefined}
+      focusAt={focusWeek ?? pinnedAt ?? undefined}
       viewerZone={viewerZone}
       onCancel={goBack}
       // Only the request's tentative count moved: reload it and stay here.
@@ -66,5 +71,17 @@ export function AllocateClient({
       // footer is always on screen, and the top space goes to the heatmap.
       legendPosition="bottom"
     />
+  );
+  // A live 1:1 plan gets its Regular time above the grid.
+  if (subject.eventType !== "subscription" || !subject.eventId) return picker;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <RegularTimeCard
+        subscriptionId={subject.eventId}
+        onPickWeek={setFocusWeek}
+        onChanged={router.refresh}
+      />
+      {picker}
+    </div>
   );
 }
