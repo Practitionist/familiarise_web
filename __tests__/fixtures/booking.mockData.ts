@@ -137,13 +137,20 @@ export function makeSubscriptionPlan(overrides: Record<string, any> = {}) {
   };
 }
 
+/** The purchase-frozen Subscription columns a row sold before the freeze carries. */
+export const SOLD_TERMS_DEFAULTS = {
+  sessionsPerWeek: null,
+  sessionMinutes: null,
+  sessionsRefunded: 0,
+};
+
 export function makeSubscription(overrides: Record<string, any> = {}) {
   return {
     id: "sub-1",
     schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00.000Z"), // Monday
     schedulingPeriodEndsAt: new Date("2025-02-02T23:59:59.000Z"), // Sunday
     subscriptionPlan: makeSubscriptionPlan(),
-    sessionsRefunded: 0,
+    ...SOLD_TERMS_DEFAULTS,
     requestedBy: {
       user: { name: "Test User", id: "user-1" },
     },
