@@ -1753,6 +1753,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           plansScanned: r.scanned,
           sessionsPlaced: r.placed,
           conflicts: r.conflicts,
+          consultantMisses: r.misses,
           errors: r.errors,
           hasMore: r.hasMore,
         }),

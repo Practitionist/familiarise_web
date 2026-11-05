@@ -21,6 +21,7 @@ import {
   REGULAR_TIME_PLAN_SELECT,
   placeRegularWeeks,
   readRegularTimeView,
+  strikeUnresolvedHoursChanged,
 } from "@/lib/booking/regular-time/service";
 import {
   nudgeRegularTimeConflicts,
@@ -35,6 +36,8 @@ export interface RollForwardResult {
   scanned: number;
   placed: number;
   conflicts: number;
+  /** Sessions struck as the consultant's miss (HOURS_CHANGED unresolved at start). */
+  misses: number;
   errors: number;
   hasMore: boolean;
 }
@@ -106,6 +109,7 @@ async function rollForwardUnlocked(
     scanned: 0,
     placed: 0,
     conflicts: 0,
+    misses: 0,
     errors: 0,
     hasMore: rows.length > limit,
   };
@@ -152,6 +156,7 @@ async function rollForwardUnlocked(
         select: REGULAR_TIME_PLAN_SELECT,
       });
       if (!fresh) continue;
+      result.misses += await strikeUnresolvedHoursChanged(fresh, now);
       const view = await readRegularTimeView(fresh, now);
       const toFix = conflictCount(view.weeks);
       result.conflicts += toFix;

@@ -31,6 +31,10 @@ import {
 } from "@/lib/booking/regular-time/conflicts";
 import { hostHoursPredicate } from "@/lib/booking/regular-time/availability";
 import { leadMsFor } from "@/lib/booking/lead-time";
+import {
+  hasStrikeForSession,
+  recordExpertStrike,
+} from "@/lib/booking/expert-reliability";
 import { isHostOrgOperatorOf } from "@/lib/booking/cancel-actor";
 import { intervalStartsOf } from "@/lib/appointments/occurrences";
 import { fetchEventData } from "@/lib/booking/allocation/event-data";
@@ -253,6 +257,43 @@ export async function readRegularTimeView(
     leadMs: leadMsFor("allocate"),
   });
   return { ...base, weeks };
+}
+
+/**
+ * A placed session the host's hours no longer cover, still unmoved once its
+ * start passes, is the consultant's miss: one strike per session (any earlier
+ * strike on it, a no-show say, wins). Judged only while the session runs, when
+ * the availability rows that would cover it are still readable.
+ */
+export async function strikeUnresolvedHoursChanged(
+  plan: RegularTimePlan,
+  now: Date,
+  db: PrismaLike = prisma,
+): Promise<number> {
+  const running = ownSessions(plan).filter(
+    (o) => o.startsAt <= now && now < o.endsAt,
+  );
+  if (running.length === 0 || !plan.appointment) return 0;
+  const eventData = await fetchEventData(db, "subscription", plan.id).catch(
+    () => null,
+  );
+  if (!eventData) return 0;
+  const isAvailable = hostHoursPredicate(eventData.consultant);
+  const consultantProfileId = plan.subscriptionPlan.consultantProfileId;
+  let struck = 0;
+  for (const session of running) {
+    if (isAvailable(session.startsAt, session.endsAt)) continue;
+    if (await hasStrikeForSession(db, consultantProfileId, session.id))
+      continue;
+    await recordExpertStrike(db, {
+      consultantProfileId,
+      cause: "HOURS_CHANGED",
+      appointmentId: plan.appointment.id,
+      occurrenceIds: [session.id],
+    });
+    struck += 1;
+  }
+  return struck;
 }
 
 export interface PlaceResult {

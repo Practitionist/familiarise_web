@@ -28,7 +28,12 @@ import {
   REGULAR_TIME_PLAN_SELECT,
   placeRegularWeeks,
   readRegularTimeView,
+  strikeUnresolvedHoursChanged,
 } from "../../../lib/booking/regular-time/service";
+import {
+  countExpertStrikes,
+  hasStrikeForSession,
+} from "../../../lib/booking/expert-reliability";
 import {
   subscriptionEntitlement,
   soldTermsOf,
@@ -197,4 +202,66 @@ it("T24: the exclusion constraint refuses a cross-event overlap with a roll-forw
     }),
   ).rejects.toThrow();
   expect(await overlappingOccupyingPairs(host.consultantProfileId)).toBe(0);
+}, 120_000);
+
+it("D13: a session running outside the host's hours, never moved, is one consultant strike", async () => {
+  const { host, subscriptionId, appointmentId } = await regularPlan();
+  const HALF = 30 * 60_000;
+  const startsAt = new Date(Math.floor(Date.now() / HALF) * HALF);
+  const session = await prisma.appointmentOccurrence.create({
+    data: {
+      appointmentId,
+      ordinal: 1,
+      startsAt,
+      endsAt: new Date(startsAt.getTime() + HOUR_MS),
+      isTentative: false,
+      consultantProfileId: host.consultantProfileId,
+      completionStatus: "SCHEDULED",
+    },
+  });
+  const now = new Date();
+  // Today has no published hours: the running session is outside them.
+  expect(
+    await strikeUnresolvedHoursChanged(await readPlan(subscriptionId), now),
+  ).toBe(1);
+  // A later run, or an earlier strike on the session, never strikes twice.
+  expect(
+    await strikeUnresolvedHoursChanged(await readPlan(subscriptionId), now),
+  ).toBe(0);
+  expect(
+    await countExpertStrikes(
+      host.consultantProfileId,
+      new Date(now.getTime() - DAY_MS),
+    ),
+  ).toBe(1);
+  expect(
+    await hasStrikeForSession(prisma, host.consultantProfileId, session.id),
+  ).toBe(true);
+
+  // Covered by the host's hours: no strike.
+  const covered = await regularPlan();
+  await prisma.availabilityWindowCustom.create({
+    data: {
+      consultantProfileId: covered.host.consultantProfileId,
+      startsAt: new Date(startsAt.getTime() - 2 * HOUR_MS),
+      endsAt: new Date(startsAt.getTime() + 3 * HOUR_MS),
+    },
+  });
+  await prisma.appointmentOccurrence.create({
+    data: {
+      appointmentId: covered.appointmentId,
+      ordinal: 1,
+      startsAt,
+      endsAt: new Date(startsAt.getTime() + HOUR_MS),
+      isTentative: false,
+      consultantProfileId: covered.host.consultantProfileId,
+      completionStatus: "SCHEDULED",
+    },
+  });
+  expect(
+    await strikeUnresolvedHoursChanged(
+      await readPlan(covered.subscriptionId),
+      now,
+    ),
+  ).toBe(0);
 }, 120_000);

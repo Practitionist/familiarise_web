@@ -76,7 +76,9 @@ Plus `HOURS_CHANGED` for any placed future session now outside the host's hours,
 - Selection (`rollablePlanWhere`): APPROVED or SCHEDULED, not deleted, `rollPausedAt` null, plan not ended, a live Regular time, no tentative row (a reschedule in flight waits). Ordered by `lastRolledAt NULLS FIRST, id`.
 - Per plan: project the horizon, skip slots that overlap an own session, skip slots with a reason, cap each week at its room, place each slot with its own `allocate` call (manual, `topUp`, `allowPartial`, `byRegularTime` → history `schedule:regular`), then CAS `lastRolledAt`.
 - Conflicts after placement feed one consultant bell per local day (`nudgeRegularTimeConflicts`, `dedupeKey roll-conflicts:<consultant>:<localDay>`, 08:00–21:00 local, outside quiet hours). Regular-time plans are off the Phase 0 ladder (`nudgeablePlans` excludes them).
-- Summary: `plansScanned`, `sessionsPlaced`, `conflicts`, `errors`, `hasMore`; needs attention when `errors > 0`.
+- Consultant miss (D13): a placed session the host's hours no longer cover that is still unmoved while it runs gets one `HOURS_CHANGED` expert strike (`strikeUnresolvedHoursChanged`, feeding the 2-in-90 reliability count; skipped if any strike already names the session). It is judged only while the session runs, when the availability rows that would cover it are still readable, so a plan the rotation does not reach during the session is not struck (a false negative, never a false strike).
+- Budget per run: at most 25 plans, and no new plan starts after 16 s (`startDeadline`); fair rotation by `lastRolledAt` reaches the rest on later hours.
+- Summary: `plansScanned`, `sessionsPlaced`, `conflicts`, `consultantMisses`, `errors`, `hasMore`; needs attention when `errors > 0`.
 
 ## 7. Failure modes
 
