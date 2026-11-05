@@ -152,19 +152,25 @@ export function RefundDoorsPanel() {
                       </Link>
                     </Button>
                   )}
-                  {item.kind !== "support-recommendation" && item.paymentId && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setOpen(doorFor(item))}
-                    >
-                      {item.kind === "held-paid-seat" ||
-                      item.kind === "stuck-owed-refund" ||
-                      item.kind === "owed-already-held"
-                        ? "Issue refund"
-                        : "Return credits"}
-                    </Button>
-                  )}
+                  {item.kind !== "support-recommendation" &&
+                    item.paymentId &&
+                    // A settled top-up only waits for its hold release, on the earning.
+                    !(
+                      item.kind === "owed-already-held" &&
+                      typeof item.amountPaise !== "number"
+                    ) && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setOpen(doorFor(item))}
+                      >
+                        {item.kind === "held-paid-seat" ||
+                        item.kind === "stuck-owed-refund" ||
+                        item.kind === "owed-already-held"
+                          ? "Issue refund"
+                          : "Return credits"}
+                      </Button>
+                    )}
                   {item.creditPlan && item.paymentId && (
                     <Button
                       size="sm"

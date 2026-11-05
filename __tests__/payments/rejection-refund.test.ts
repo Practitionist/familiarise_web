@@ -200,11 +200,18 @@ describe("refundRejectedRequest", () => {
 
   it("adds nothing to another door's owed refund, and says so", async () => {
     mockStamp.mockResolvedValueOnce({ count: 0 });
-    mockTxFindUnique.mockResolvedValueOnce({
+    const heldRow = {
       id: "pay-1",
       refundOwedKey: "cancel:appt-1:pay-1",
       refundOwedPaise: 40_000,
-    });
+      amount: 100_000,
+      refunds: [],
+      disputes: [],
+    };
+    // The holding marker, then the balance the top-up is capped at.
+    mockTxFindUnique
+      .mockResolvedValueOnce(heldRow)
+      .mockResolvedValueOnce(heldRow);
     const result = await rejectAndRefund({
       kind: "consultation",
       requestId: "cons-1",
@@ -224,6 +231,8 @@ describe("refundRejectedRequest", () => {
         severity: "WARN",
         correlationId: "owed-already-held:pay-1:rejection:cons-1:pay-1",
         strict: true,
+        // What the holding ₹400 leaves of the ₹1,000 balance.
+        context: expect.objectContaining({ owedPaise: 60_000 }),
       }),
     );
   });

@@ -2,6 +2,10 @@ import { EarningsHoldReason } from "@prisma/client";
 import { z } from "zod";
 
 import prisma from "@/lib/prisma";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
 import { occurrenceRefundKey } from "@/lib/booking/class-sessions";
 import { SUPPORT_REFUND_SEND_GRACE_MS } from "@/lib/support/money-policy";
 import {
@@ -242,73 +246,105 @@ export async function readUnsentSupportRefunds(now = new Date()) {
   }));
 }
 
-/** What a door that lost the owed-marker stamp recorded about the refund it could not add. */
+/** What a door that lost the owed-marker stamp recorded: the top-up it could not add. */
 const owedHeldContextSchema = z.object({
   paymentId: z.string(),
   heldKey: z.string(),
-  owedPaise: z.number().nullable().optional(),
+  owedPaise: z.number().positive(),
 });
+
+/** Held top-ups older than this leave the list; the runbook's triage query finds them. */
+export const OWED_HELD_WINDOW_DAYS = 180;
+const OWED_HELD_READ_LIMIT = 500;
 
 /**
  * Doors whose refund another door's owed refund already held (first writer
- * wins): the buyer is still owed that amount. Listed while the OPERATOR hold
- * the door placed is active; with nothing to hold, until another refund lands
- * on the payment after the event (the hold-free hand top-up).
+ * wins). Open while money is still owed: refunds landed on the payment since
+ * the event, other than the holding marker's own, cover less than the top-up,
+ * and the payment still has a refundable balance. Once paid, the row asks for
+ * the door's OPERATOR hold to be released, until it is.
  */
-export async function readOwedAlreadyHeld() {
+export async function readOwedAlreadyHeld(now = new Date()) {
   const events = await prisma.systemEvent.findMany({
-    where: { correlationId: { startsWith: OWED_ALREADY_HELD_PREFIX } },
-    orderBy: { createdAt: "asc" },
+    where: {
+      category: "PAYMENT",
+      createdAt: {
+        gte: new Date(now.getTime() - OWED_HELD_WINDOW_DAYS * 86_400_000),
+      },
+      correlationId: { startsWith: OWED_ALREADY_HELD_PREFIX },
+    },
+    orderBy: { createdAt: "desc" },
+    take: OWED_HELD_READ_LIMIT,
     select: EVENT_SELECT,
   });
-  const first = new Map<string, EventRow>();
-  for (const e of events) {
-    if (e.correlationId && !first.has(e.correlationId)) {
-      first.set(e.correlationId, e);
-    }
+  const first = new Map<
+    string,
+    { e: EventRow; paymentId: string; heldKey: string; owedPaise: number }
+  >();
+  for (const e of [...events].reverse()) {
+    const ctx = owedHeldContextSchema.safeParse(e.context);
+    if (!e.correlationId || !ctx.success || first.has(e.correlationId))
+      continue;
+    first.set(e.correlationId, { e, ...ctx.data });
   }
   if (first.size === 0) return [];
-  const holds = await prisma.earningsHold.findMany({
+  const paymentIds = [...new Set([...first.values()].map((r) => r.paymentId))];
+  const payments = await prisma.payment.findMany({
+    where: { id: { in: paymentIds } },
+    select: { id: true, amount: true, ...REFUNDABLE_BALANCE_SELECT },
+  });
+  const balance = new Map(
+    payments.map((p) => [p.id, refundableBalancePaise(Number(p.amount), p)]),
+  );
+  const refunds = await prisma.refund.findMany({
+    where: {
+      paymentId: { in: paymentIds },
+      status: { in: ["SUCCEEDED", "PENDING"] },
+    },
+    select: {
+      paymentId: true,
+      dedupeKey: true,
+      createdAt: true,
+      amountPaise: true,
+    },
+  });
+  const activeHolds = await prisma.earningsHold.findMany({
     where: {
       reason: EarningsHoldReason.OPERATOR,
       sourceRef: { in: [...first.keys()] },
+      releasedAt: null,
     },
-    select: { sourceRef: true, releasedAt: true },
+    select: { sourceRef: true },
   });
-  const parsed = [...first.entries()].flatMap(([ref, e]) => {
-    const ctx = owedHeldContextSchema.safeParse(e.context);
-    return ctx.success ? [{ ref, e, ctx: ctx.data }] : [];
-  });
-  const refunds = await prisma.refund.findMany({
-    where: {
-      paymentId: { in: [...new Set(parsed.map((p) => p.ctx.paymentId))] },
-      status: { in: ["SUCCEEDED", "PENDING"] },
-    },
-    select: { paymentId: true, dedupeKey: true, createdAt: true },
-  });
-  return parsed.flatMap(({ ref, e, ctx }) => {
-    const own = holds.filter((h) => h.sourceRef === ref);
-    const held = own.length > 0;
-    const open = held
-      ? own.some((h) => h.releasedAt === null)
-      : !refunds.some(
-          (r) =>
-            r.paymentId === ctx.paymentId &&
-            r.createdAt > e.createdAt &&
-            r.dedupeKey !== ctx.heldKey,
-        );
-    if (!open) return [];
-    const owedPaise = ctx.owedPaise ?? null;
+  const held = new Set(activeHolds.map((h) => h.sourceRef));
+  return [...first.entries()].flatMap(([ref, row]) => {
+    const toppedUp = refunds
+      .filter(
+        (r) =>
+          r.paymentId === row.paymentId &&
+          r.createdAt > row.e.createdAt &&
+          r.dedupeKey !== row.heldKey,
+      )
+      .reduce((sum, r) => sum + Number(r.amountPaise), 0);
+    const owed = Math.min(
+      row.owedPaise - toppedUp,
+      balance.get(row.paymentId) ?? 0,
+    );
+    const holding = held.has(ref);
+    if (owed <= 0 && !holding) return [];
     return [
       {
         id: `owed-held:${ref}`,
-        message: `Payment ${ctx.paymentId} (${ctx.heldKey}): ${handTopUpCopy(owedPaise, held)}`,
-        createdAt: e.createdAt,
-        paymentId: ctx.paymentId,
+        message:
+          owed > 0
+            ? `Payment ${row.paymentId} (${row.heldKey}): ${handTopUpCopy(owed, holding)}`
+            : `Payment ${row.paymentId} (${row.heldKey}): the top-up is settled; release the hold on its earnings.`,
+        createdAt: row.e.createdAt,
+        paymentId: row.paymentId,
         occurrenceId: null,
         unitPaise: null,
-        /** The amount the losing door owed; null is the remaining balance. */
-        amountPaise: owedPaise,
+        /** What is still owed; null once only the hold release is left. */
+        amountPaise: owed > 0 ? owed : null,
         kind: "owed-already-held" as const,
         caseId: null,
         creditPlan: false,

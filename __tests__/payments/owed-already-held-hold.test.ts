@@ -4,10 +4,11 @@
 
 /**
  * First writer wins on the owed-refund marker, and the losing door's amount is
- * never left untracked: in the door's own transaction it records one
+ * never left untracked. In the door's own transaction it records one
  * needs-human event and holds the payment's unpaid earnings (OPERATOR, keyed
- * on that event). The needs-human list names the payment and the amount to
- * refund by hand until the hold is released.
+ * on that event); a race on the hold rolls the door back. The needs-human row
+ * stays open while money is still owed, read from the payment's refunds and
+ * balance, never from the hold, then asks for the hold to be released.
  */
 
 const mockRecordSystemEvent = jest.fn(async () => undefined);
@@ -38,26 +39,54 @@ type Event = {
   createdAt: Date;
   correlationId: string;
 };
+type Refund = {
+  paymentId: string;
+  dedupeKey: string;
+  createdAt: Date;
+  amountPaise: number;
+  status: string;
+};
 const store = {
   events: [] as Event[],
   holds: [] as { sourceRef: string; releasedAt: Date | null }[],
-  refunds: [] as { paymentId: string; dedupeKey: string; createdAt: Date }[],
+  refunds: [] as Refund[],
+  amount: 100_000,
 };
+const mockEventRead = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     systemEvent: {
       findMany: async (args: {
         where: { correlationId?: { startsWith?: string } };
-      }) =>
-        args.where.correlationId?.startsWith === "owed-already-held:"
-          ? store.events
+      }) => {
+        mockEventRead(args);
+        // Newest first, as the reader asks.
+        return args.where.correlationId?.startsWith === "owed-already-held:"
+          ? [...store.events].sort(
+              (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+            )
+          : [];
+      },
+    },
+    earningsHold: {
+      findMany: async () => store.holds.filter((h) => h.releasedAt === null),
+    },
+    refund: { findMany: async () => store.refunds },
+    payment: {
+      findMany: async (args: { where: { id?: unknown } }) =>
+        args.where.id
+          ? [
+              {
+                id: "pay-1",
+                amount: store.amount,
+                refunds: store.refunds,
+                disputes: [],
+              },
+            ]
           : [],
     },
-    earningsHold: { findMany: async () => store.holds },
-    refund: { findMany: async () => store.refunds },
     referralCreditUsage: { findMany: async () => [] },
-    payment: { findMany: async () => [] },
     supportFinancialRecommendation: { findMany: async () => [] },
   },
 }));
@@ -73,6 +102,7 @@ import {
 } from "@/lib/backoffice/needs-human";
 import type { Tx } from "@/lib/prisma";
 
+const HELD_KEY = "occ:occ-1:pay:pay-1";
 const MARKER: RefundOwedMarker = {
   paymentId: "pay-1",
   amountPaise: 25_000,
@@ -81,14 +111,22 @@ const MARKER: RefundOwedMarker = {
 };
 const CORRELATION = "owed-already-held:pay-1:consultant-no-show:pay-1";
 
-function txWith(opts: { heldKey: string | null; standing?: boolean }) {
+function txWith(opts: {
+  heldKey: string | null;
+  heldPaise?: number | null;
+  standing?: boolean;
+  amount?: number;
+}) {
   return {
     payment: {
       updateMany: jest.fn(async () => ({ count: opts.heldKey ? 0 : 1 })),
       findUnique: jest.fn(async () => ({
         id: "pay-1",
         refundOwedKey: opts.heldKey,
-        refundOwedPaise: 1_000,
+        refundOwedPaise: opts.heldPaise === undefined ? 1_000 : opts.heldPaise,
+        amount: opts.amount ?? 100_000,
+        refunds: [],
+        disputes: [],
       })),
     },
     systemEvent: {
@@ -104,18 +142,13 @@ beforeEach(() => {
   store.events = [];
   store.holds = [];
   store.refunds = [];
+  store.amount = 100_000;
 });
 
 describe("stampOwedOrHeld when another door's marker holds the payment", () => {
   it("records one strict event and holds the consultant and organisation earnings under OPERATOR, keyed on it", async () => {
-    const held = await stampOwedOrHeld(
-      txWith({ heldKey: "occ:occ-1:pay:pay-1" }),
-      MARKER,
-    );
-    expect(held).toMatchObject({
-      heldKey: "occ:occ-1:pay:pay-1",
-      heldPaise: 1_000,
-    });
+    const held = await stampOwedOrHeld(txWith({ heldKey: HELD_KEY }), MARKER);
+    expect(held).toMatchObject({ heldKey: HELD_KEY, heldPaise: 1_000 });
     expect(mockRecordSystemEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         correlationId: CORRELATION,
@@ -144,20 +177,55 @@ describe("stampOwedOrHeld when another door's marker holds the payment", () => {
 
   it("a replay writes no second event; the keyed hold is placed idempotently", async () => {
     await stampOwedOrHeld(
-      txWith({ heldKey: "occ:occ-1:pay:pay-1", standing: true }),
+      txWith({ heldKey: HELD_KEY, standing: true }),
       MARKER,
     );
     expect(mockRecordSystemEvent).not.toHaveBeenCalled();
     expect(mockPlaceEarningsHolds).toHaveBeenCalledTimes(2);
   });
 
-  it("an earning that keeps moving is left unheld rather than failing the door", async () => {
+  it("an earning that keeps moving rolls the door back rather than leaving it held without a hold", async () => {
     mockPlaceEarningsHolds.mockRejectedValueOnce(
       new EarningsHoldRaceError("consultant", ["ce-1"]),
     );
     await expect(
-      stampOwedOrHeld(txWith({ heldKey: "occ:occ-1:pay:pay-1" }), MARKER),
-    ).resolves.toMatchObject({ heldKey: "occ:occ-1:pay:pay-1" });
+      stampOwedOrHeld(txWith({ heldKey: HELD_KEY }), MARKER),
+    ).rejects.toBeInstanceOf(EarningsHoldRaceError);
+  });
+
+  it("a full-balance holding marker already covers the door: no event, no hold", async () => {
+    const held = await stampOwedOrHeld(
+      txWith({ heldKey: HELD_KEY, heldPaise: null }),
+      MARKER,
+    );
+    expect(held).toMatchObject({ heldKey: HELD_KEY, heldPaise: null });
+    expect(mockRecordSystemEvent).not.toHaveBeenCalled();
+    expect(mockPlaceEarningsHolds).not.toHaveBeenCalled();
+  });
+
+  it("a full-balance losing door owes what the holding marker leaves", async () => {
+    await stampOwedOrHeld(txWith({ heldKey: HELD_KEY }), {
+      ...MARKER,
+      amountPaise: null,
+    });
+    expect(mockRecordSystemEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({ owedPaise: 99_000 }),
+      }),
+    );
+  });
+
+  it("the top-up is capped at the balance the holding marker leaves; nothing left records nothing", async () => {
+    await stampOwedOrHeld(txWith({ heldKey: HELD_KEY, amount: 1_500 }), MARKER);
+    expect(mockRecordSystemEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({ owedPaise: 500 }),
+      }),
+    );
+    jest.clearAllMocks();
+    await stampOwedOrHeld(txWith({ heldKey: HELD_KEY, amount: 1_000 }), MARKER);
+    expect(mockRecordSystemEvent).not.toHaveBeenCalled();
+    expect(mockPlaceEarningsHolds).not.toHaveBeenCalled();
   });
 
   it("a door that owns the marker records nothing and holds nothing", async () => {
@@ -169,6 +237,7 @@ describe("stampOwedOrHeld when another door's marker holds the payment", () => {
 
 describe("the needs-human list of held top-ups", () => {
   const at = new Date("2026-11-04T10:00:00Z");
+  const later = (ms: number) => new Date(at.getTime() + ms);
   const event = (
     createdAt: Date,
     owedPaise: number | null = 25_000,
@@ -178,27 +247,31 @@ describe("the needs-human list of held top-ups", () => {
     context: {
       paymentId: "pay-1",
       key: MARKER.key,
-      heldKey: "occ:occ-1:pay:pay-1",
+      heldKey: HELD_KEY,
       owedPaise,
     },
     createdAt,
     correlationId: CORRELATION,
   });
+  const refund = (dedupeKey: string, amountPaise: number, ms = 1): Refund => ({
+    paymentId: "pay-1",
+    dedupeKey,
+    createdAt: later(ms),
+    amountPaise,
+    status: "SUCCEEDED",
+  });
+  const read = () => readOwedAlreadyHeld(later(86_400_000));
 
-  it("lists one row per door event while its hold is active, with the amount for the refund door", async () => {
-    store.events = [event(at), event(new Date(at.getTime() + 60_000))];
-    store.holds = [
-      { sourceRef: CORRELATION, releasedAt: null },
-      { sourceRef: CORRELATION, releasedAt: at },
-    ];
-    expect(await readOwedAlreadyHeld()).toEqual([
+  it("lists one row per door event while money is owed, with the amount for the refund door", async () => {
+    store.events = [event(at), event(later(60_000))];
+    store.holds = [{ sourceRef: CORRELATION, releasedAt: null }];
+    expect(await read()).toEqual([
       expect.objectContaining({
         kind: "owed-already-held",
         paymentId: "pay-1",
         amountPaise: 25_000,
         createdAt: at,
-        message:
-          "Payment pay-1 (occ:occ-1:pay:pay-1): Another refund is still owed on this payment; refund the remaining ₹250.00 by hand, then release the hold.",
+        message: `Payment pay-1 (${HELD_KEY}): Another refund is still owed on this payment; refund the remaining ₹250.00 by hand, then release the hold.`,
       }),
     ]);
     expect((await readRefundNeedsHuman()).map((i) => i.kind)).toContain(
@@ -206,33 +279,60 @@ describe("the needs-human list of held top-ups", () => {
     );
   });
 
-  it("drops the row once every hold it placed is released", async () => {
-    store.events = [event(at)];
-    store.holds = [{ sourceRef: CORRELATION, releasedAt: at }];
-    expect(await readOwedAlreadyHeld()).toEqual([]);
+  it("reads a bounded, index-friendly window of events", async () => {
+    await read();
+    expect(mockEventRead).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          category: "PAYMENT",
+          createdAt: { gte: expect.any(Date) },
+        }),
+        take: 500,
+      }),
+    );
   });
 
-  it("with no hold placed, lists it until a refund other than the holding marker's lands after it", async () => {
-    store.events = [event(at, null)];
-    store.refunds = [
-      {
-        paymentId: "pay-1",
-        dedupeKey: "occ:occ-1:pay:pay-1",
-        createdAt: new Date(at.getTime() + 1),
-      },
-    ];
-    expect(await readOwedAlreadyHeld()).toEqual([
+  it("an unrelated release of the hold does not close it while money is owed", async () => {
+    store.events = [event(at)];
+    store.holds = [{ sourceRef: CORRELATION, releasedAt: at }];
+    expect(await read()).toEqual([
       expect.objectContaining({
-        amountPaise: null,
-        message:
-          "Payment pay-1 (occ:occ-1:pay:pay-1): Another refund is still owed on this payment; refund the remaining balance by hand.",
+        amountPaise: 25_000,
+        message: `Payment pay-1 (${HELD_KEY}): Another refund is still owed on this payment; refund the remaining ₹250.00 by hand.`,
       }),
     ]);
-    store.refunds.push({
-      paymentId: "pay-1",
-      dedupeKey: "ops:hand",
-      createdAt: new Date(at.getTime() + 2),
-    });
-    expect(await readOwedAlreadyHeld()).toEqual([]);
+  });
+
+  it("the holding marker's own refund does not count; a partial hand refund lowers what is left", async () => {
+    store.events = [event(at)];
+    store.refunds = [refund(HELD_KEY, 1_000), refund("ops:part", 10_000, 2)];
+    expect(await read()).toEqual([
+      expect.objectContaining({ amountPaise: 15_000 }),
+    ]);
+  });
+
+  it("once topped up it asks for the hold release, and leaves when the hold is gone", async () => {
+    store.events = [event(at)];
+    store.refunds = [refund("ops:hand", 25_000)];
+    store.holds = [{ sourceRef: CORRELATION, releasedAt: null }];
+    expect(await read()).toEqual([
+      expect.objectContaining({
+        amountPaise: null,
+        message: `Payment pay-1 (${HELD_KEY}): the top-up is settled; release the hold on its earnings.`,
+      }),
+    ]);
+    store.holds = [];
+    expect(await read()).toEqual([]);
+  });
+
+  it("closes when the payment has nothing left to refund", async () => {
+    store.events = [event(at)];
+    store.amount = 0;
+    expect(await read()).toEqual([]);
+  });
+
+  it("skips an old event that recorded no amount", async () => {
+    store.events = [event(at, null)];
+    expect(await read()).toEqual([]);
   });
 });

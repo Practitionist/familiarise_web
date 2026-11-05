@@ -24,7 +24,6 @@ import {
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
 import {
-  EarningsHoldRaceError,
   HOLDABLE_EARNING_STATUSES,
   placeEarningsHolds,
 } from "@/lib/payments/payouts/earnings-holds";
@@ -813,11 +812,8 @@ async function heldBy(
 }
 
 /** The ops instruction for a door's refund another door's owed refund held: what to pay by hand. */
-export function handTopUpCopy(owedPaise: number | null, held: boolean): string {
-  const remaining =
-    owedPaise === null
-      ? "the remaining balance"
-      : `the remaining ${rupees(owedPaise)}`;
+export function handTopUpCopy(owedPaise: number, held: boolean): string {
+  const remaining = `the remaining ${rupees(owedPaise)}`;
   return held
     ? `Another refund is still owed on this payment; refund ${remaining} by hand, then release the hold.`
     : `Another refund is still owed on this payment; refund ${remaining} by hand.`;
@@ -832,12 +828,14 @@ const TOP_UP_HOLDABLE: EarningStatus[] = [
 /**
  * Freezes the payment's unpaid earnings under an OPERATOR hold keyed on the
  * door's event, so they wait for the hand top-up; a replay finds its own hold.
+ * A row that keeps moving throws and rolls the door back: no earning is ever
+ * left HELD without an active hold.
  */
 async function holdForHandTopUp(
   tx: Tx,
   paymentId: string,
   sourceRef: string,
-  owedPaise: number | null,
+  owedPaise: number,
 ): Promise<void> {
   const where = { paymentId, status: { in: TOP_UP_HOLDABLE } };
   const consultant = await tx.consultantEarnings.findMany({
@@ -853,23 +851,39 @@ async function holdForHandTopUp(
     sourceRef,
     note: handTopUpCopy(owedPaise, true),
   };
-  try {
-    await placeEarningsHolds(
-      tx,
-      "consultant",
-      consultant.map((r) => r.id),
-      hold,
-    );
-    await placeEarningsHolds(
-      tx,
-      "org",
-      org.map((r) => r.id),
-      hold,
-    );
-  } catch (err) {
-    // A row that kept moving stays unheld; the needs-human list still names the payment.
-    if (!(err instanceof EarningsHoldRaceError)) throw err;
-  }
+  await placeEarningsHolds(
+    tx,
+    "consultant",
+    consultant.map((r) => r.id),
+    hold,
+  );
+  await placeEarningsHolds(
+    tx,
+    "org",
+    org.map((r) => r.id),
+    hold,
+  );
+}
+
+/**
+ * What the losing door still adds on top of the holding marker: its own amount
+ * (a full-balance door: everything left), capped at the balance the holding
+ * marker leaves. Zero when a full-balance marker already covers it.
+ */
+async function topUpOwedPaise(
+  tx: Tx,
+  marker: RefundOwedMarker,
+  heldPaise: number | null,
+): Promise<number> {
+  if (heldPaise === null) return 0;
+  const payment = await tx.payment.findUnique({
+    where: { id: marker.paymentId },
+    select: { amount: true, ...REFUNDABLE_BALANCE_SELECT },
+  });
+  if (!payment) return 0;
+  const left =
+    refundableBalancePaise(Number(payment.amount), payment) - heldPaise;
+  return Math.max(0, Math.min(marker.amountPaise ?? left, left));
 }
 
 async function reportHeld(
@@ -888,6 +902,9 @@ async function reportHeld(
     heldPaise,
     note: owedAlreadyHeldNote(marker.paymentId, heldKey, heldPaise),
   };
+  const owedPaise = await topUpOwedPaise(tx, marker, heldPaise);
+  // Nothing to add on top of the holding marker: no ops row, no hold.
+  if (owedPaise <= 0) return held;
   const correlationId = `${OWED_ALREADY_HELD_PREFIX}${marker.paymentId}:${marker.key}`;
   // The event is the needs-human row: written once per payment and door key, with the door's commit.
   const standing = await tx.systemEvent.findFirst({
@@ -899,22 +916,13 @@ async function reportHeld(
       category: "PAYMENT",
       severity: "WARN",
       message: held.note,
-      context: {
-        ...held,
-        reason: marker.reason,
-        owedPaise: marker.amountPaise,
-      },
+      context: { ...held, reason: marker.reason, owedPaise },
       correlationId,
       db: tx,
       strict: true,
     });
   }
-  await holdForHandTopUp(
-    tx,
-    marker.paymentId,
-    correlationId,
-    marker.amountPaise,
-  );
+  await holdForHandTopUp(tx, marker.paymentId, correlationId, owedPaise);
   return held;
 }
 
