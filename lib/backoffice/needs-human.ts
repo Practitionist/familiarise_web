@@ -320,6 +320,18 @@ function stillOwedFifo(
   return still;
 }
 
+const inr = (paise: number) => `₹${(paise / 100).toFixed(2)}`;
+
+/** The row's instruction: settled (release the hold), the top-up, or the top-up behind a still-owed older refund. */
+function topUpRowCopy(owed: number, older: number, holding: boolean): string {
+  if (owed <= 0) {
+    return "the top-up is settled; release the hold on its earnings from the Earnings tab.";
+  }
+  const topUp = handTopUpCopy(owed, holding);
+  if (older <= 0) return topUp;
+  return `${topUp} The older refund of ${inr(older)} is still owed and a hand refund settles it first, so refund ${inr(owed + older)} in total.`;
+}
+
 /** Held top-ups older than this leave the list unless their hold is still active; the runbook's triage query finds the rest. */
 export const OWED_HELD_WINDOW_DAYS = 180;
 const OWED_HELD_READ_LIMIT = 500;
@@ -459,16 +471,10 @@ export async function readOwedAlreadyHeld(
       payment?.refundOwedKey === row.heldKey && payment.refundOwedPaise !== null
         ? Number(payment.refundOwedPaise)
         : 0;
-    const head = `Payment ${row.paymentId} (${row.heldKey}):`;
     return [
       {
         id: `owed-held:${ref}`,
-        message:
-          owed <= 0
-            ? `${head} the top-up is settled; release the hold on its earnings from the Earnings tab.`
-            : older > 0
-              ? `${head} ${handTopUpCopy(owed, holding)} The older refund of ₹${(older / 100).toFixed(2)} is still owed and a hand refund settles it first, so refund ₹${((owed + older) / 100).toFixed(2)} in total.`
-              : `${head} ${handTopUpCopy(owed, holding)}`,
+        message: `Payment ${row.paymentId} (${row.heldKey}): ${topUpRowCopy(owed, older, holding)}`,
         createdAt: row.e.createdAt,
         paymentId: row.paymentId,
         occurrenceId: null,

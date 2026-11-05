@@ -740,9 +740,8 @@ export function opsHeldMarkerMessage(
     event || subject === "seat"
       ? `Seat payment ${paymentId}`
       : `Payment ${paymentId}`;
-  const next =
-    retry ??
-    `cancel ${event ? `the ${String(subject)}` : "this booking"} again`;
+  const target = event ? "the " + String(subject) : "this booking";
+  const next = retry ?? `cancel ${target} again`;
   return refusal.code === REFUND_NEEDS_SUPPORT
     ? `${payment} has a refund still owed from another action${from}; settle it from Refunds → Needs human, then ${next}.`
     : `${payment} has a refund from another action${from} still being sent; wait for it to finish, then ${next}. If it fails, settle it by hand from Refunds → Needs human.`;
