@@ -679,9 +679,11 @@ describe("refund execution correctness", () => {
   });
 
   it("refuses to void a session-count remedy once its plan settled without it", async () => {
-    jest
-      .mocked(restorePlanSessions)
-      .mockResolvedValueOnce({ ok: false, reason: "PLAN_SETTLED", removable: 0 });
+    jest.mocked(restorePlanSessions).mockResolvedValueOnce({
+      ok: false,
+      reason: "PLAN_SETTLED",
+      removable: 0,
+    });
     mockStore.recommendations = [
       recommendation({
         decidedAt: new Date(Date.now() - 3_600_000),

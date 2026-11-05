@@ -153,8 +153,7 @@ export async function restorePlanSessions(
 ): Promise<PlanSessionsChange> {
   const basis = await planRefundBasis(tx, paymentId);
   if (!basis) return { ok: false, reason: "NOT_A_PLAN", removable: 0 };
-  if (!basis.live)
-    return { ok: false, reason: "PLAN_SETTLED", removable: 0 };
+  if (!basis.live) return { ok: false, reason: "PLAN_SETTLED", removable: 0 };
   if (basis.sessionsRefunded < sessions)
     return { ok: false, reason: "NOT_REMOVED", removable: basis.removable };
   const next = basis.sessionsRefunded - sessions;

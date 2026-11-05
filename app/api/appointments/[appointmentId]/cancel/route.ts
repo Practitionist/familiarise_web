@@ -1019,10 +1019,7 @@ export async function POST(
                   where: { id: appointment.subscription.id },
                   select: { sessionsRefunded: true },
                 });
-                if (
-                  now &&
-                  now.sessionsRefunded !== bookingCtx.sessionsRefunded
-                )
+                if (now && now.sessionsRefunded !== bookingCtx.sessionsRefunded)
                   throw new PlanRefundLandedError();
               }
               if (!moved && observedStatus) {

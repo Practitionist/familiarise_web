@@ -189,7 +189,6 @@ const voidAs = async (caseId: string, recommendationId: string) =>
     reason: "Gateway refused; refunding by bank transfer",
   });
 
-
 /** The support door's sends for a recommendation, in order. */
 const supportCalls = (recommendationId: string) =>
   refundDoor.refundBookingPayment.mock.calls
@@ -355,8 +354,8 @@ describe("cancel vs a session-count remedy", () => {
     );
     await retryAsDecider(plan.caseId, recommendationId, PRICE);
     // 25,000 cancel + 25,000 support = the 2 undelivered sessions' worth.
-    expect(
-      quote.refundPaise + (supportCalls(recommendationId)[1] ?? 0),
-    ).toBe(PRICE / 2);
+    expect(quote.refundPaise + (supportCalls(recommendationId)[1] ?? 0)).toBe(
+      PRICE / 2,
+    );
   });
 });
