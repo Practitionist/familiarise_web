@@ -57,11 +57,11 @@ On 2026-11-05 production moved to Turbopack builds (`docs/decisions/2026-11-05-t
 | webpack (commit `424a8daec`)   | `6aeaf1b2dbfd86009ac2b8b3` | 2.9–3.7 s              | 6.4–8.1 s                | 0–30 ms              |
 | Turbopack (commit `2b354c35f`) | `6aecc0c644358da5321acdda` | 2.5–2.7 s              | 3.9–4.6 s                | 1–32 ms              |
 
-What it shows:
+What it shows, with its limits:
 
-- **Turbopack did not regress cold starts.** It boots slightly faster than webpack.
-- **The #1124 stall has not returned.** No event-loop gap reached even 50 ms, and `experimental.preloadEntriesOnStart: false` is intact. `__tests__/lib/next-config-preload.test.ts` still guards it.
-- **Both builds are slower than the 2026-10-03 verification above** (0.97–1.90 s end to end for a 12-request cold burst). Cold starts have therefore drifted by about 2 s since then, on both bundlers. `uptimeAtEntryMs` is `process.uptime()` when the route handler starts, so the added time is in the boot before the handler (Lambda init, the Netlify server handler, `NextNodeServer` and the first module graph), not in the route.
+- **This is an observation from two deploys, not a controlled bundler test.** The two commits differ by the Turbopack switch and nine other merged PRs (booking, payments, support and docs). The Turbopack deploy booted no slower than the webpack one, which is evidence against a Turbopack cold-start regression, but it does not isolate the bundler.
+- **The #1124 stall has not returned.** No event-loop gap reached even 50 ms on either deploy, and `experimental.preloadEntriesOnStart: false` is intact. `__tests__/lib/next-config-preload.test.ts` still guards it.
+- **End-to-end cold requests are slower than in the 2026-10-03 verification above:** 3.9–8.1 s now, against 0.97–1.90 s then, so 2 to 6 s slower depending on the deploy. October recorded only end-to-end time, not `uptimeAtEntryMs`, so how much of the added time is boot and how much is network or the platform is not established. `uptimeAtEntryMs` (`process.uptime()` when the route handler starts) points at the boot before the handler, which is now 2.5 to 3.7 s.
 - **Each 8-request burst also returned one Netlify platform error page** ("Error - Request ID …") on both deploys.
 
 The cause of the drift is under investigation. Measure any fix with the same burst against a deploy permalink, idle for 15 minutes between bursts so instances go cold.
