@@ -56,9 +56,8 @@ const SKIP_BUILD_CHECKS =
 
 // Sentry source maps are built for production deploys only; previews, branch
 // deploys and CI's lean build skip them.
-const SENTRY_SOURCE_MAPS =
-  !CI_LEAN_BUILD &&
-  !(process.env.NETLIFY === "true" && process.env.CONTEXT !== "production");
+// TEMPORARY: production-style maps on this deploy preview; revert before merge.
+const SENTRY_SOURCE_MAPS = !CI_LEAN_BUILD;
 
 /**
  * CSP violations go straight to Sentry's security-report endpoint, derived
