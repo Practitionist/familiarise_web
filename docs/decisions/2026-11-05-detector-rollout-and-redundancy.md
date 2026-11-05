@@ -118,7 +118,7 @@ Rules that follow: never paste the value into a document, a ticket, a chat or a 
   - `PLATFORM_GSTIN` is unset, so three jobs skip. At launch set it before the Razorpay live keys, or the probe pages `STANDING_CONFIG_SKIP`.
   - Better Stack Telemetry SQL alerts are created muted, and the digest cannot read their mute state.
   - The responder seat and phone paging arrive at launch. Until then the monitors alert by e-mail only.
-  - Secret rotations before launch for other credentials are tracked elsewhere.
+  - Secret rotations before launch for other credentials, including the three-place `CRON_SECRET` change, are in the [secret rotation runbook](../maintenance/19-secret-rotation-runbook.md).
 - **A windowed job's first-ever slot can hold the probe red.** A weekly or quarterly job that has never run under a production-tagged row makes `/api/health/jobs` answer 503 until it runs. The runbook is to run it once by hand (R4), then confirm the probe answers 200.
 - **Netlify environment changes apply at the next deploy.** A rotated `CRON_SECRET` is not in force until a deploy completes; update the monitors' headers after that, not before.
 - **Two vendors store the header.** A leak from either vendor's monitor settings means rotating `CRON_SECRET` and updating three places: the Netlify production value, the Better Stack monitor and the Sentry uptime monitor.
