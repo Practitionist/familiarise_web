@@ -284,3 +284,5 @@ try {
 2. **Treating the exclusion as covering only consultations and subscriptions.** It covers the host side of all five offering types, and nothing else.
 3. **A separate `trial-slot-booking:` lock namespace.** It contended with nothing; trials take the same `slot-booking:` atoms as every other direct writer.
 4. **Releasing a lock with a bare `DEL`.** Release is a value-checked Lua script so one client can never free another's lock.
+
+> **Regular time (1:1 plans).** A plan with a live Regular time opens a 4-week horizon and is filled by the hourly `roll-forward-regular-time` job; see [24. Regular time and the 4-week roll-forward](24-regular-time-and-roll-forward.md).

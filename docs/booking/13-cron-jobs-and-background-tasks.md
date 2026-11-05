@@ -382,3 +382,5 @@ Each job adds additional fields specific to its operation (e.g., `webinarsComple
 2. **A separate `auto-complete-trials` endpoint.** Trials are completed by `auto-complete-appointments`.
 3. **`cleanup-stale-pending-consultations` and `cleanup-invalid-appointments`.** Retired; `expire-stale-requests` and the front-door checks replace them.
 4. **A start-minute pool budget in the workflow hygiene guard.** The guard once summed `# cron-runtime-minutes:` annotations per shared start-minute against a ten-minute budget. That check no longer exists; the guard now checks only declared secrets.
+
+> **Regular time (1:1 plans).** A plan with a live Regular time opens a 4-week horizon and is filled by the hourly `roll-forward-regular-time` job; see [24. Regular time and the 4-week roll-forward](24-regular-time-and-roll-forward.md).

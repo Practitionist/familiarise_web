@@ -534,3 +534,5 @@ The shared catalog in `lib/cron/schedule.ts` owns runtime ticker cadences. Recor
 | Earnings lifecycle                       | `docs/finance/40-payouts/02-earnings-lifecycle.md`  |
 | Collaborator revenue sharing             | `docs/collaborators/03-revenue-sharing.md`          |
 | Cron jobs overview                       | `docs/booking/13-cron-jobs-and-background-tasks.md` |
+
+> **Regular time (1:1 plans).** A plan with a live Regular time opens a 4-week horizon and is filled by the hourly `roll-forward-regular-time` job; see [24. Regular time and the 4-week roll-forward](24-regular-time-and-roll-forward.md).
