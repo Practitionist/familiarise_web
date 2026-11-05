@@ -37,7 +37,10 @@ import {
   DEFAULT_SEED_PASSWORD,
   requireSeedOperatorPassword,
 } from "./config";
-import { buildSeedOperatorTwoFactorRow } from "./seed-two-factor";
+import {
+  seedOperatorEnrolmentUpdate,
+  isSeedTotpOperatorEmail,
+} from "./seed-two-factor";
 import {
   QA_OPERATOR_DOMAIN,
   isQaOperatorEmail,
@@ -563,6 +566,7 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
     );
   }
 
+  const operatorEmails: string[] = [];
   for (let i = 0; i < NUM_USERS; i++) {
     // Determine user role based on index. Overrunning the per-role budget
     // throws rather than falling through to a privileged role.
@@ -602,6 +606,9 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
         userRole === "ADMIN" || userRole === "STAFF"
           ? `qa-${userRole.toLowerCase()}-${roleOrdinal}@${QA_OPERATOR_DOMAIN}`
           : generatedEmail;
+      if (userRole === "ADMIN" || userRole === "STAFF") {
+        operatorEmails.push(email);
+      }
       const country = generateCountry();
       const city = generateCity(country);
       const gender = faker.helpers.arrayElement(GENDERS);
@@ -773,18 +780,15 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
     }
   }
 
-  // QA operators stay unenrolled: off production they sign in without TOTP.
-  const operators = users.filter(
-    (u) =>
-      (u.role === "STAFF" || u.role === "ADMIN") && !isQaOperatorEmail(u.email),
-  );
-  await Promise.all(
-    operators.map(async (operator) =>
-      prisma.twoFactor.create({
-        data: await buildSeedOperatorTwoFactorRow(operator.id, operator.email),
-      }),
-    ),
-  );
+  // Every TOTP operator, new or left by an earlier seed, gets the seed-derived
+  // secret; the exempt QA operators stay unenrolled.
+  const operators = await prisma.user.findMany({
+    where: { email: { in: operatorEmails.filter(isSeedTotpOperatorEmail) } },
+    select: { id: true, email: true },
+  });
+  for (const operator of operators) {
+    await prisma.user.update(await seedOperatorEnrolmentUpdate(operator));
+  }
 
   console.log(`Created ${users.length} users successfully.`);
   return users;

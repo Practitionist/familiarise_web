@@ -2,7 +2,6 @@
 
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { mapRoleToStream } from "@/lib/user";
 import {
   getStreamChatClient,
   withStreamCircuitBreaker,
@@ -10,6 +9,7 @@ import {
   isExpectedStreamError,
 } from "@/lib/stream-client";
 import { forEachChunk } from "@/lib/stream/batch";
+import { toStreamUser } from "@/lib/stream/user-payload";
 import { streamLogger } from "@/lib/stream-logger";
 import { markUserSynced, isUserSynced } from "@/lib/stream-cache";
 import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
@@ -135,7 +135,6 @@ export const upsertUserToStream = async (
       select: {
         id: true,
         name: true,
-        email: true,
         image: true,
         role: true,
       },
@@ -170,26 +169,19 @@ export const upsertUserToStream = async (
     }
 
     const client = getStreamChatClient();
-    const streamRole = mapRoleToStream(user.role);
+    const streamUser = toStreamUser(user);
 
     streamLogger.debug("Upserting user to Stream", {
       userId: user.id,
-      role: streamRole,
+      role: streamUser.role,
     });
 
     // Upsert the user to Stream Chat
     // #473 — fast-fail under a Stream outage instead of blocking the dashboard
     // on the 30s timeout. Breaker-open rethrows StreamUnavailableError, which
     // the caller's existing catch logs and surfaces gracefully.
-    const streamUser = await withStreamCircuitBreaker(
-      () =>
-        client.upsertUser({
-          id: user.id,
-          name: user.name ?? user.id,
-          email: user.email,
-          image: user.image ?? undefined,
-          role: streamRole,
-        }),
+    const upserted = await withStreamCircuitBreaker(
+      () => client.upsertUser(streamUser),
       () => {
         throw new StreamUnavailableError();
       },
@@ -198,7 +190,7 @@ export const upsertUserToStream = async (
     // Mark as synced in cache
     markUserSynced(user.id);
 
-    return stripStreamUserEmails(streamUser, actor);
+    return stripStreamUserEmails(upserted, actor);
   } catch (error) {
     // A consent gate is a deliberate refusal (already warn-logged above), not
     // an infra failure — rethrow without an error-level log so it doesn't
@@ -265,7 +257,6 @@ export const upsertUsersToStream = async (
       select: {
         id: true,
         name: true,
-        email: true,
         image: true,
         role: true,
       },
@@ -320,18 +311,7 @@ export const upsertUsersToStream = async (
 
     const client = getStreamChatClient();
 
-    // Prepare users for batch upsert
-    // Note: Using type assertion for custom user data (stream-chat v9)
-    const streamUsers = consenters.map((user) => {
-      const streamRole = mapRoleToStream(user.role);
-      return {
-        id: user.id,
-        name: user.name ?? user.id,
-        email: user.email,
-        image: user.image ?? undefined,
-        role: streamRole,
-      };
-    });
+    const streamUsers = consenters.map(toStreamUser);
 
     streamLogger.debug("Batch upserting users to Stream", {
       count: streamUsers.length,
@@ -348,8 +328,7 @@ export const upsertUsersToStream = async (
     let result: Awaited<ReturnType<typeof client.upsertUsers>> | undefined;
     await forEachChunk(streamUsers, async (batch) => {
       result = await withStreamCircuitBreaker(
-        () =>
-          client.upsertUsers(batch as Parameters<typeof client.upsertUsers>[0]),
+        () => client.upsertUsers(batch),
         () => {
           throw new StreamUnavailableError();
         },

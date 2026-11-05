@@ -17,8 +17,7 @@ declare module "stream-chat" {
    * Note: Stream Chat roles are strings (e.g., "admin", "user"), not Prisma enum values.
    */
   interface CustomUserData {
-    // Stream Chat role (not Prisma role)
-    // Email is also custom data we pass
+    // Never sent (see lib/stream/user-payload.ts); typed only so stream-sync can unset older copies.
     email?: string | null;
   }
 
@@ -59,61 +58,7 @@ declare module "stream-chat" {
     booking_appointment_id?: string;
     custom?: { booking_appointment_id?: string };
   }
-
-  /**
-   * Custom attachment data extension for Stream Chat attachments.
-   */
-  interface CustomAttachmentData {
-    // Add custom attachment fields here if needed
-  }
-
-  /**
-   * Custom reaction data extension for Stream Chat reactions.
-   */
-  interface CustomReactionData {
-    // Add custom reaction fields here if needed
-  }
-
-  /**
-   * Custom event data extension for Stream Chat events.
-   */
-  interface CustomEventData {
-    // Add custom event fields here if needed
-  }
-
-  /**
-   * Custom command data extension for Stream Chat commands.
-   */
-  interface CustomCommandData {
-    // Add custom command fields here if needed
-  }
-
-  /**
-   * Custom poll option data extension.
-   */
-  interface CustomPollOptionData {
-    // Add custom poll option fields here if needed
-  }
-
-  /**
-   * Custom poll data extension.
-   */
-  interface CustomPollData {
-    // Add custom poll fields here if needed
-  }
 }
-
-/**
- * Application-level type for Stream Chat users.
- * Used throughout the app for type-safe user handling.
- */
-export type StreamChatUser = {
-  id: string;
-  name?: string;
-  image?: string;
-  email?: string | null;
-  role?: string; // Stream Chat role string (e.g., "admin", "user")
-};
 
 /**
  * Channel type identifiers used in the application.
