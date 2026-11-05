@@ -24,9 +24,11 @@ import {
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
 import {
+  EarningsHoldRaceError,
   HOLDABLE_EARNING_STATUSES,
   placeEarningsHolds,
 } from "@/lib/payments/payouts/earnings-holds";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { refundBookingPayment } from "./booking-refund";
 import {
   findDedupedRefund,
@@ -853,8 +855,8 @@ const TOP_UP_HOLDABLE: EarningStatus[] = [
 /**
  * Freezes the payment's unpaid earnings under an OPERATOR hold keyed on the
  * door's event, so they wait for the hand top-up; a replay finds its own hold.
- * A row that keeps moving throws and rolls the door back: no earning is ever
- * left HELD without an active hold.
+ * A row that keeps moving refuses with a retryable 409 and rolls the door back:
+ * no earning is ever left HELD without an active hold.
  */
 async function holdForHandTopUp(
   tx: Tx,
@@ -876,18 +878,28 @@ async function holdForHandTopUp(
     sourceRef,
     note: handTopUpCopy(owedPaise, true),
   };
-  await placeEarningsHolds(
-    tx,
-    "consultant",
-    consultant.map((r) => r.id),
-    hold,
-  );
-  await placeEarningsHolds(
-    tx,
-    "org",
-    org.map((r) => r.id),
-    hold,
-  );
+  try {
+    await placeEarningsHolds(
+      tx,
+      "consultant",
+      consultant.map((r) => r.id),
+      hold,
+    );
+    await placeEarningsHolds(
+      tx,
+      "org",
+      org.map((r) => r.id),
+      hold,
+    );
+  } catch (err) {
+    if (err instanceof EarningsHoldRaceError) {
+      throw new BookingRuleError(
+        "PAYMENT_BUSY",
+        "Another update is in progress on this payment — try again.",
+      );
+    }
+    throw err;
+  }
 }
 
 /**

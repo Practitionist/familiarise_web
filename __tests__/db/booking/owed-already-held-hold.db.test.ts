@@ -366,7 +366,10 @@ describe("a door whose refund another door's owed refund holds", () => {
         },
       );
 
-    await expect(lose(s)).rejects.toBeInstanceOf(actual.EarningsHoldRaceError);
+    await expect(lose(s)).rejects.toMatchObject({
+      code: "PAYMENT_BUSY",
+      httpStatus: 409,
+    });
 
     const consultant = await prisma.consultantEarnings.findUniqueOrThrow({
       where: { id: s.consultantEarningId },

@@ -209,13 +209,18 @@ describe("stampOwedOrHeld when another door's marker holds the payment", () => {
     expect(mockPlaceEarningsHolds).toHaveBeenCalledTimes(2);
   });
 
-  it("an earning that keeps moving rolls the door back rather than leaving it held without a hold", async () => {
+  it("an earning that keeps moving rolls the door back with a plain retryable 409", async () => {
     mockPlaceEarningsHolds.mockRejectedValueOnce(
       new EarningsHoldRaceError("consultant", ["ce-1"]),
     );
     await expect(
       stampOwedOrHeld(txWith({ heldKey: HELD_KEY }), MARKER),
-    ).rejects.toBeInstanceOf(EarningsHoldRaceError);
+    ).rejects.toMatchObject({
+      name: "BookingRuleError",
+      code: "PAYMENT_BUSY",
+      httpStatus: 409,
+      message: "Another update is in progress on this payment — try again.",
+    });
   });
 
   it("a full-balance holding marker already covers the door: no event, no hold", async () => {
