@@ -453,7 +453,7 @@ const FREEZE_STEPS = [
  */
 function refundsOwed(
   appointmentId: string,
-  payments: PendingRefundPayment[],
+  payments: FreezePayment[],
 ): RefundOwedMarker[] {
   return payments
     .filter((p) => p.paymentStatus === "SUCCEEDED" && p.deletedAt === null)
@@ -463,6 +463,27 @@ function refundsOwed(
       key: `freeze:${appointmentId}:${p.id}`,
       reason: "Scheduled platform maintenance",
     }));
+}
+
+type FreezePayment = Pick<
+  PendingRefundPayment,
+  "id" | "paymentStatus" | "deletedAt"
+>;
+
+/**
+ * Every refund the freeze owes commits with it, in one statement; a payment
+ * another door's refund already holds is recorded and held for a hand top-up,
+ * and only the markers the freeze owns are queued.
+ */
+export async function stampFreezeRefunds(
+  tx: Tx,
+  appointmentId: string,
+  payments: FreezePayment[],
+): Promise<RefundOwedMarker[]> {
+  const owed = refundsOwed(appointmentId, payments);
+  if ((await stampRefundsOwed(tx, owed)) === owed.length) return owed;
+  const held = new Set((await heldInsteadOf(tx, owed)).map((h) => h.paymentId));
+  return owed.filter((m) => !held.has(m.paymentId));
 }
 
 /**
@@ -503,14 +524,13 @@ async function freezeOneAppointment(tx: Tx, ctx: FreezeContext) {
       payments: ctx.appointment.payment.length,
       recipients: new Set(notice.userIds).size,
     });
-  // Every refund the freeze owes commits with it, in one statement; a payment
-  // another door's refund already holds is recorded and held for a hand top-up.
-  const owed = refundsOwed(ctx.appointment.id, ctx.appointment.payment);
-  const held =
-    (await stampRefundsOwed(tx, owed)) < owed.length
-      ? new Set((await heldInsteadOf(tx, owed)).map((h) => h.paymentId))
-      : new Set<string>();
-  effects.refunds.push(...owed.filter((m) => !held.has(m.paymentId)));
+  effects.refunds.push(
+    ...(await stampFreezeRefunds(
+      tx,
+      ctx.appointment.id,
+      ctx.appointment.payment,
+    )),
+  );
 
   await closeFrozenSlots(tx, ctx);
   for (const trialId of effects.trialsToTombstone)

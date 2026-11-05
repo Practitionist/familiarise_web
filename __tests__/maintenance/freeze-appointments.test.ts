@@ -60,9 +60,7 @@ describe("freeze-appointments doctrine (#1162)", () => {
   });
 
   it("stamps each refund owed in the freeze commit for the canonical retry worker", () => {
-    expect(freezeSource).toContain(
-      "(await stampRefundsOwed(tx, owed)) < owed.length",
-    );
+    expect(freezeSource).toContain("await stampRefundsOwed(tx, owed)");
     // A payment another door's refund already holds is recorded and held for a hand top-up.
     expect(freezeSource).toContain("await heldInsteadOf(tx, owed)");
     expect(freezeSource).not.toContain("driveRefundOwed");

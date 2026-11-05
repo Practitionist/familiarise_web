@@ -64,10 +64,29 @@ describe("exitRightFor", () => {
     expect(exitRightFor({ hostMissAts: ats, misses: 3, N: 100 })).toBe(false);
   });
 
-  it("any window counts, not only the last 30 days, so a held right stays held", () => {
+  it("any window counts, not only the last 30 days, so the right does not lapse with time", () => {
     // A tight cluster early in the class, then a long quiet stretch.
     const ats = spread([0, 5, 10, 90, 180]);
     expect(exitRightFor({ hostMissAts: ats, misses: 5, N: 100 })).toBe(true);
+  });
+
+  it("the window is strict: a 30-day spread less a millisecond trips, exactly 30 days does not", () => {
+    const at = (ms: number) => new Date(day(0).getTime() + ms);
+    const window = 30 * 86_400_000;
+    expect(
+      exitRightFor({
+        hostMissAts: [at(0), at(window / 2), at(window - 1)],
+        misses: 3,
+        N: 100,
+      }),
+    ).toBe(true);
+    expect(
+      exitRightFor({
+        hostMissAts: [at(0), at(window / 2), at(window)],
+        misses: 3,
+        N: 100,
+      }),
+    ).toBe(false);
   });
 
   it("order does not matter", () => {
