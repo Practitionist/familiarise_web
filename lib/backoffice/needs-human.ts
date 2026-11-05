@@ -460,36 +460,39 @@ function topUpItem(s: TopUpStatus) {
 /** Held top-ups older than this leave the list unless their hold is still active; the runbook's triage query finds the rest. */
 export const OWED_HELD_WINDOW_DAYS = 180;
 const OWED_HELD_READ_LIMIT = 500;
+/** Events read per page, and the most one read scans before saying more are waiting. */
+const OWED_HELD_PAGE = 500;
+const OWED_HELD_SCAN_CAP = 5_000;
+
 /**
  * Doors whose refund another door's owed refund already held (first writer
  * wins). Open while money is still owed: refunds landed on the payment since
  * the event (oldest top-up first; never a holding refund, nor a hand refund's
  * share that settled one) cover less than the top-up, and the payment still has
  * a refundable balance. Any later refund on the payment counts, whatever its
- * reason. Once paid, the row asks for its own hold to be released.
+ * reason. Once paid, the row asks for its own hold to be released. Settled
+ * events are skipped before the display bound, so a reload always reaches the
+ * next open one.
  */
 export async function readOwedAlreadyHeld(
   now = new Date(),
   limit = OWED_HELD_READ_LIMIT,
 ) {
-  // Oldest first inside the window, so an open row is never crowded out silently.
-  const where = {
-    category: "PAYMENT",
-    createdAt: {
-      gte: new Date(now.getTime() - OWED_HELD_WINDOW_DAYS * 86_400_000),
-    },
-    correlationId: { startsWith: OWED_ALREADY_HELD_PREFIX },
+  const rows: ReturnType<typeof topUpItem>[] = [];
+  const seen = new Set<string>();
+  const collect = async (events: EventRow[]) => {
+    const paymentIds = events.flatMap((e) => {
+      const ctx = owedHeldContextSchema.safeParse(e.context);
+      return ctx.success ? [ctx.data.paymentId] : [];
+    });
+    const statuses = await topUpStatuses(prisma, paymentIds);
+    for (const e of events) {
+      const status = e.correlationId ? statuses.get(e.correlationId) : null;
+      if (!status || seen.has(status.ref)) continue;
+      seen.add(status.ref);
+      if (status.owed > 0 || status.holding) rows.push(topUpItem(status));
+    }
   };
-  const recent = await prisma.systemEvent.findMany({
-    where,
-    orderBy: { createdAt: "asc" },
-    take: limit,
-    select: EVENT_SELECT,
-  });
-  const total =
-    recent.length < limit
-      ? recent.length
-      : await prisma.systemEvent.count({ where });
   // A top-up whose hold is still active stays listed however old.
   const holdRefs = await prisma.earningsHold.findMany({
     where: {
@@ -500,35 +503,50 @@ export async function readOwedAlreadyHeld(
     distinct: ["sourceRef"],
     select: { sourceRef: true },
   });
-  const heldEvents =
-    holdRefs.length === 0
-      ? []
-      : await prisma.systemEvent.findMany({
-          where: { correlationId: { in: holdRefs.map((h) => h.sourceRef) } },
-          orderBy: { createdAt: "asc" },
-          select: EVENT_SELECT,
-        });
-  const events = [...heldEvents, ...recent];
-  const statuses = await topUpStatuses(
-    prisma,
-    events.flatMap((e) => {
-      const ctx = owedHeldContextSchema.safeParse(e.context);
-      return ctx.success ? [ctx.data.paymentId] : [];
-    }),
-  );
-  const rows = [...statuses.values()]
-    .filter(
-      (s) =>
-        events.some((e) => e.correlationId === s.ref) &&
-        (s.owed > 0 || s.holding),
-    )
-    .map(topUpItem);
-  if (total <= recent.length) return rows;
+  if (holdRefs.length > 0) {
+    await collect(
+      await prisma.systemEvent.findMany({
+        where: { correlationId: { in: holdRefs.map((h) => h.sourceRef) } },
+        orderBy: { createdAt: "asc" },
+        select: EVENT_SELECT,
+      }),
+    );
+  }
+  // The window, oldest first, page by page until enough open rows are found.
+  const window = {
+    category: "PAYMENT",
+    createdAt: {
+      gte: new Date(now.getTime() - OWED_HELD_WINDOW_DAYS * 86_400_000),
+    },
+    correlationId: { startsWith: OWED_ALREADY_HELD_PREFIX },
+  };
+  let cursor: string | null = null;
+  let scanned = 0;
+  let exhausted = false;
+  while (rows.length <= limit && scanned < OWED_HELD_SCAN_CAP) {
+    const page: EventRow[] = await prisma.systemEvent.findMany({
+      where: window,
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: OWED_HELD_PAGE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      select: EVENT_SELECT,
+    });
+    scanned += page.length;
+    await collect(page);
+    if (page.length < OWED_HELD_PAGE) {
+      exhausted = true;
+      break;
+    }
+    cursor = page[page.length - 1].id;
+  }
+  const shown = rows.slice(0, limit);
+  if (exhausted && rows.length <= limit) return shown;
   return [
-    ...rows,
+    ...shown,
     {
       id: "owed-held:more",
-      message: `${total - recent.length} more held top-up events are not listed yet (oldest first). Settle the rows above, then reload.`,
+      message:
+        "More held top-ups are waiting beyond these. Settle the rows above, then reload.",
       createdAt: now,
       paymentId: null,
       occurrenceId: null,

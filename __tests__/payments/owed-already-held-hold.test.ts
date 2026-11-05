@@ -101,8 +101,6 @@ jest.mock("../../lib/prisma", () => ({
         if (args.where.createdAt) mockEventRead(args);
         return queryEvents(args);
       },
-      count: async (args: EventQuery) =>
-        queryEvents({ ...args, take: undefined }).length,
     },
     earningsHold: {
       findMany: async (args: {
@@ -491,7 +489,22 @@ describe("the needs-human list of held top-ups", () => {
         id: "owed-held:more",
         paymentId: null,
         message:
-          "1 more held top-up events are not listed yet (oldest first). Settle the rows above, then reload.",
+          "More held top-ups are waiting beyond these. Settle the rows above, then reload.",
+      }),
+    ]);
+  });
+
+  it("settled events never use up the bound: paying the first shows the next", async () => {
+    const second = "owed-already-held:pay-1:overage-credit:pay-1";
+    store.events = [
+      event(at, 20_000),
+      { ...event(later(60_000), 20_000), id: "evt-2", correlationId: second },
+    ];
+    store.refunds = [refund("ops:hand", 20_000, 120_000)];
+    expect(await readOwedAlreadyHeld(later(86_400_000), 1)).toEqual([
+      expect.objectContaining({
+        id: `owed-held:${second}`,
+        amountPaise: 20_000,
       }),
     ]);
   });
