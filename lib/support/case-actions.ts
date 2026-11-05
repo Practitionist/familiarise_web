@@ -49,6 +49,7 @@ import {
 import { STAFF_REFUND_PER_PAYMENT_PAISE } from "./staff-refund-limits";
 import { deliveringPartiesByAppointment } from "./evidence-parties";
 import {
+  planIsSettled,
   planRefundBasis,
   removePlanSessions,
   restorePlanSessions,
@@ -1405,9 +1406,20 @@ async function claimRefundRetry(
     paymentId: string;
     amountPaise: number | bigint;
     proposedById: string;
+    sessionsRemoved: number | null;
   },
   input: ActionInput<"REVIEW_REFUND">,
 ) {
+  // The plan's settlement already paid every unused session; resending this
+  // remedy's share would pay its sessions twice.
+  if (
+    recommendation.sessionsRemoved &&
+    (await planIsSettled(tx, recommendation.paymentId))
+  )
+    throw new CaseActionError(
+      "PLAN_SETTLED",
+      "This plan has settled, so its unused sessions were already refunded. Void this refund instead of retrying it.",
+    );
   await assertRefundExecutable(
     tx,
     caseId,

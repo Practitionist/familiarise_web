@@ -23,6 +23,7 @@ jest.mock("../../lib/booking/plan-refund", () => ({
   ...jest.requireActual("../../lib/booking/plan-refund"),
   removePlanSessions: jest.fn(async () => ({ ok: true, sessionsRefunded: 9 })),
   restorePlanSessions: jest.fn(async () => ({ ok: true, sessionsRefunded: 0 })),
+  planIsSettled: jest.fn(async () => false),
 }));
 jest.mock("../../lib/support/case-service", () => ({
   executePatchLifecycleTx: jest.fn(),
@@ -144,6 +145,7 @@ import {
 } from "../../lib/support/case-service";
 import { requiresSecondApprover } from "../../lib/backoffice/ops-proposals";
 import {
+  planIsSettled,
   removePlanSessions,
   restorePlanSessions,
 } from "../../lib/booking/plan-refund";
@@ -657,6 +659,35 @@ describe("refund execution correctness", () => {
     ];
     await performCaseAction("case-1", admin, review(true));
     expect(removePlanSessions).not.toHaveBeenCalled();
+  });
+
+  it("refuses to retry a session-count remedy once its plan has settled", async () => {
+    jest.mocked(planIsSettled).mockResolvedValueOnce(true);
+    mockStore.recommendations = [
+      recommendation({
+        decidedAt: new Date(Date.now() - 3_600_000),
+        decidedById: admin.userId,
+        approved: true,
+        sessionsRemoved: 9,
+        refundId: "refund-0",
+        refund: { id: "refund-0", status: "FAILED" },
+      }),
+    ];
+    await expect(
+      performCaseAction("case-1", admin, review(true)),
+    ).rejects.toMatchObject({ code: "PLAN_SETTLED" });
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("refuses an approval when the plan closed after the recommendation", async () => {
+    jest
+      .mocked(removePlanSessions)
+      .mockResolvedValueOnce({ ok: false, reason: "PLAN_CLOSED", removable: 0 });
+    mockStore.recommendations = [recommendation({ sessionsRemoved: 9 })];
+    await expect(
+      performCaseAction("case-1", admin, review(true)),
+    ).rejects.toMatchObject({ code: "INVALID_SESSIONS" });
+    expect(refundBookingPayment).not.toHaveBeenCalled();
   });
 
   it("keeps a void and a retry of the same failed refund mutually exclusive", async () => {

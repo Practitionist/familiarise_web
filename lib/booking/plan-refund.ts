@@ -168,3 +168,12 @@ export async function restorePlanSessions(
     return { ok: false, reason: "RACED", removable: basis.removable };
   return { ok: true, sessionsRefunded: next };
 }
+
+/** Whether the plan behind `paymentId` has completed or been cancelled. */
+export async function planIsSettled(
+  tx: Pick<Tx, "payment">,
+  paymentId: string,
+): Promise<boolean> {
+  const basis = await planRefundBasis(tx, paymentId);
+  return basis !== null && !basis.live;
+}
