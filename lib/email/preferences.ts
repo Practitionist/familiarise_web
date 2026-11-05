@@ -67,6 +67,10 @@ type UserRow = {
   email: string | null;
   name: string | null;
   timezone: string | null;
+  orgWorkspaceProfile?: {
+    notificationRoutingMode:
+      "BELL_AND_EMAIL" | "BELL_ONLY" | "EMAIL_ONLY" | "NEITHER";
+  } | null;
   notificationPreferences: PreferenceRow | null;
 };
 
@@ -89,10 +93,13 @@ const PREFERENCE_SELECT = {
 // A required notice (null category) ignores the switches; otherwise a missing
 // row means defaults, and every default is on.
 function isAllowed(
-  pref: PreferenceRow | null,
+  user: UserRow,
   category: PreferenceCategory | null,
 ): boolean {
   if (category === null) return true;
+  const routing = user.orgWorkspaceProfile?.notificationRoutingMode;
+  if (routing === "BELL_ONLY" || routing === "NEITHER") return false;
+  const pref = user.notificationPreferences;
   if (!pref) return true;
   return (
     pref.allNotifications &&
@@ -110,6 +117,7 @@ async function fetchUsers(ids: string[], db: UserReader): Promise<UserRow[]> {
       email: true,
       name: true,
       timezone: true,
+      orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
       notificationPreferences: { select: PREFERENCE_SELECT },
     },
   });
@@ -142,7 +150,7 @@ export async function loadEmailRecipients(
           userTimezone: user.timezone,
           fallbackZone: DEFAULT_NOTIFICATION_TIMEZONE,
         }),
-        allowed: isAllowed(user.notificationPreferences, category),
+        allowed: isAllowed(user, category),
         unsubscribeUrl: signable ? buildEmailUnsubscribeUrl(user.id) : null,
       },
     ];
@@ -157,5 +165,5 @@ export async function isEmailAllowed(
 ): Promise<boolean> {
   const [user] = await fetchUsers([userId], db);
   if (!user) return false;
-  return isAllowed(user.notificationPreferences, category);
+  return isAllowed(user, category);
 }

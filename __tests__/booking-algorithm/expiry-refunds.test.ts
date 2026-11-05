@@ -33,6 +33,12 @@ jest.mock("../../lib/prisma", () => {
   } = jest.requireActual("../fixtures/booking-expiry-test-doubles");
   const db: Record<string, unknown> = {
     ...bookingExpiryPrismaModels(),
+    user: {
+      findMany: jest.fn(
+        async ({ where }: { where: { id: { in: string[] } } }) =>
+          where.id.in.map((id) => ({ id })),
+      ),
+    },
     payment: {
       findMany: paymentRows,
       updateMany: jest.fn(async () => ({ count: 1 })),

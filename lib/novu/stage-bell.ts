@@ -3,8 +3,7 @@ import { stageTrigger, type NovuPayload, type StagedTrigger } from "./outbox";
 import { resolveRecipientBellPolicy } from "./policy";
 import type { NovuWorkflowId } from "./templates/types";
 
-export type StageBellTx = Pick<Tx, "notificationOutbox"> &
-  Partial<Pick<Tx, "user">>;
+export type StageBellTx = Pick<Tx, "notificationOutbox" | "user">;
 
 /**
  * Stage an in-app bell inside the caller's transaction after enforcing

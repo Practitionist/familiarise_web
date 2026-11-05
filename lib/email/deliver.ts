@@ -312,6 +312,20 @@ export async function attempt(
   // "could not be resolved" error can still be recognised as our own abort.
   const signal = AbortSignal.timeout(opts.budgetMs);
   try {
+    const suppression = await findSuppression(payload.to, prisma);
+    if (suppression) {
+      if (staged) {
+        await settleRow(staged, emailType, {
+          status: "DEAD_LETTER",
+          lastError: `suppressed:${suppression.reason}`,
+        });
+      }
+      return {
+        success: false,
+        error: new EmailSuppressedError(suppression.reason),
+        staged: staged !== null,
+      };
+    }
     const client = getResendClient();
     if (!client) throw new EmailNotConfiguredError();
 

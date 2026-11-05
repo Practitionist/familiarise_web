@@ -129,6 +129,17 @@ function createStatefulOutboxStore(initial: {
   const batches = [...(initial.batches ?? [])];
 
   const store: FailedEmailStore = {
+    waitlist: {
+      findMany: jest.fn(async (args) => {
+        const emails = args.where?.email;
+        return typeof emails === "object" &&
+          emails &&
+          "in" in emails &&
+          Array.isArray(emails.in)
+          ? emails.in.map((email) => ({ email }))
+          : [];
+      }),
+    },
     failedEmail: {
       findMany: jest.fn(async (args: Prisma.FailedEmailFindManyArgs) => {
         const whereJson = JSON.stringify(args.where);

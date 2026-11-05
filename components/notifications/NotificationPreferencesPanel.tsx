@@ -417,15 +417,14 @@ export function NotificationPreferencesPanel() {
               <Switch
                 checked={prefs.quietHoursEnabled}
                 onCheckedChange={(checked) =>
-                  // Persist the effective timezone alongside the enable so
-                  // the displayed schedule and the enforced one cannot
-                  // diverge when nothing was stored yet.
-                  checked && !prefs.quietHoursTimezone
+                  checked
                     ? mutation.mutate({
                         quietHoursEnabled: true,
-                        quietHoursTimezone: browserTimezone,
+                        quietHoursStart: prefs.quietHoursStart ?? "22:00",
+                        quietHoursEnd: prefs.quietHoursEnd ?? "08:00",
+                        quietHoursTimezone: effectiveTimezone,
                       })
-                    : handleToggle("quietHoursEnabled", checked)
+                    : handleToggle("quietHoursEnabled", false)
                 }
               />
             </div>

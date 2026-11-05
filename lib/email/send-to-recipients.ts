@@ -55,15 +55,28 @@ export interface PreparedRecipientEmails {
 
 type Outcome =
   | { kind: "skipped" }
-  | { kind: "failed" }
+  | { kind: "failed"; error: unknown }
   | { kind: "message"; message: RenderedEmail };
+
+function reportRenderFailures(
+  error: unknown,
+  emailType: string,
+  failed: number,
+): void {
+  Sentry.captureException(
+    error instanceof Error ? error : new Error(String(error)),
+    {
+      tags: { subsystem: "email", emailType },
+      extra: { failedRecipients: failed },
+    },
+  );
+}
 
 type PrepareArgs = Omit<SendToRecipientsArgs, "budgetMs">;
 
 async function prepare(
   recipient: EmailRecipient,
   args: PrepareArgs,
-  reportToSentry: boolean,
 ): Promise<Outcome> {
   if (!recipient.allowed) {
     return { kind: "skipped" };
@@ -85,16 +98,8 @@ async function prepare(
       },
     };
   } catch (renderError) {
-    if (reportToSentry) {
-      Sentry.captureException(
-        renderError instanceof Error
-          ? renderError
-          : new Error(String(renderError)),
-        { tags: { subsystem: "email", emailType: args.emailType } },
-      );
-    }
     console.error(`[email] ${args.emailType} render failed:`, renderError);
-    return { kind: "failed" };
+    return { kind: "failed", error: renderError };
   }
 }
 
@@ -109,15 +114,20 @@ export async function prepareRecipientEmails(
   const messages: RenderedEmail[] = [];
   let skipped = 0;
   let failed = 0;
+  let firstError: unknown;
   for (const recipient of args.recipients) {
-    const outcome = await prepare(recipient, args, reportToSentry);
+    const outcome = await prepare(recipient, args);
     if (outcome.kind === "skipped") {
       skipped += 1;
     } else if (outcome.kind === "failed") {
       failed += 1;
+      firstError ??= outcome.error;
     } else {
       messages.push(outcome.message);
     }
+  }
+  if (failed > 0 && reportToSentry) {
+    reportRenderFailures(firstError, args.emailType, failed);
   }
   if (skipped > 0) {
     console.info(
@@ -154,13 +164,11 @@ export async function sendToRecipients(
 ): Promise<SendToRecipientsResult> {
   const result: SendToRecipientsResult = { sent: 0, skipped: 0, failed: 0 };
   const stagedEmails: StagedRecipientEmail[] = [];
-  for (const recipient of args.recipients) {
-    const outcome = await prepare(recipient, args, true);
-    if (outcome.kind !== "message") {
-      result[outcome.kind] += 1;
-      continue;
-    }
-    const delivered = await deliver(outcome.message, args.emailType, {
+  const prepared = await prepareRecipientEmails(args);
+  result.skipped = prepared.skipped;
+  result.failed = prepared.failed;
+  for (const message of prepared.messages) {
+    const delivered = await deliver(message, args.emailType, {
       entityRef: args.entityRef,
       budgetMs: args.budgetMs,
       ...(args.deferAttempt ? { deferAttempt: true } : {}),
@@ -168,16 +176,11 @@ export async function sendToRecipients(
     if (args.deferAttempt && (delivered.stagedRow ?? delivered.stagedEmail)) {
       stagedEmails.push({
         staged: delivered.stagedRow ?? delivered.stagedEmail ?? null,
-        message: outcome.message,
+        message,
       });
     }
     if (delivered.success || delivered.staged) result.sent += 1;
     else result.failed += 1;
-  }
-  if (result.skipped > 0) {
-    console.info(
-      `[email] skipped ${args.emailType} for ${result.skipped} recipient(s): preference`,
-    );
   }
   return args.deferAttempt ? { ...result, stagedEmails } : result;
 }

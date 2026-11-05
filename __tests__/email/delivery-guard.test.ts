@@ -132,6 +132,17 @@ describe("pre-launch delivery guard", () => {
       status: "PENDING",
     } as FailedEmail;
     const store: FailedEmailStore = {
+      waitlist: {
+        findMany: jest.fn(async (args) => {
+          const emails = args.where?.email;
+          return typeof emails === "object" &&
+            emails &&
+            "in" in emails &&
+            Array.isArray(emails.in)
+            ? emails.in.map((email) => ({ email }))
+            : [];
+        }),
+      },
       failedEmail: {
         findMany: jest.fn().mockResolvedValue([row]),
         update: jest.fn(async (args: Prisma.FailedEmailUpdateArgs) => {

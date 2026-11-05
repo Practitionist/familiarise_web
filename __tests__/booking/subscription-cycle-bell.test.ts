@@ -110,7 +110,10 @@ function makeTx(statuses: string[]) {
       },
       notificationOutbox: { upsert },
       membership: { findMany: jest.fn().mockResolvedValue([]) },
-      user: { findUnique: jest.fn().mockResolvedValue(null) },
+      user: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([{ id: "consultee-user" }]),
+      },
     },
     rows,
     upsert,

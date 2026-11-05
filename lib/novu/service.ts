@@ -126,14 +126,27 @@ async function stageAndAttempt(
   args: Omit<StageTriggerArgs, "tx" | "entityRef">,
   opts: TriggerOptions | undefined,
 ): Promise<TriggerResult> {
-  const policy =
-    args.kind === "BROADCAST"
-      ? { allowedRecipients: args.recipients, notBefore: undefined }
-      : await resolveRecipientBellPolicy(
-          args.workflowId,
-          args.recipients,
-          opts,
-        );
+  let policy: Awaited<ReturnType<typeof resolveRecipientBellPolicy>>;
+  try {
+    policy =
+      args.kind === "BROADCAST"
+        ? { allowedRecipients: args.recipients, notBefore: undefined }
+        : await resolveRecipientBellPolicy(
+            args.workflowId,
+            args.recipients,
+            opts,
+          );
+  } catch (error) {
+    if (opts?.tx) throw error;
+    console.error(
+      `[Novu] ${args.workflowId} recipient policy unavailable`,
+      error,
+    );
+    return {
+      success: false,
+      error: error instanceof Error ? error : String(error),
+    };
+  }
   if (args.kind !== "BROADCAST" && policy.allowedRecipients.length === 0) {
     return { success: true };
   }
@@ -788,7 +801,7 @@ export const notifyPayoutProcessed = defineSingleNotifier(
 );
 export const notifyPayoutFailed = defineSingleNotifier(
   W.PAYOUT_FAILED,
-  ({ payoutId: _id, ...rest }: PayoutInput) => payoutWire(rest),
+  payoutWire,
   { deferrable: false },
 );
 export const notifyOrgExpertRemoved =

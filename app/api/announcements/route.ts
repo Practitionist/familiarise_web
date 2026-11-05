@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import type { UserRole } from "@prisma/client";
 import { notifyGeneralAnnouncement } from "@/lib/novu";
-import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { CreateAnnouncementSchema } from "@/schemas/announcements";
 import { ANNOUNCEMENTS_TAG } from "@/lib/cache-tags";
 import { isTransientDbError, reportTransient } from "@/lib/data/fail-open";
@@ -139,37 +139,50 @@ export async function POST(request: NextRequest) {
     }
     const validatedData = result.data;
 
-    const announcement = await prisma.announcement.create({
-      data: {
-        title: validatedData.title,
-        content: validatedData.content,
-        isActive: validatedData.isActive,
-        startDate: validatedData.startDate
-          ? new Date(validatedData.startDate)
-          : null,
-        endDate: validatedData.endDate ? new Date(validatedData.endDate) : null,
-        backgroundColor: validatedData.backgroundColor,
-        textColor: validatedData.textColor,
-        linkUrl: validatedData.linkUrl,
-        linkText: validatedData.linkText,
-        createdBy: session.user.id,
-      },
-    });
-
-    // Invalidate the cached banner read so the new announcement shows immediately.
-    revalidateTag(ANNOUNCEMENTS_TAG);
-
-    await stageNowAttemptAfter("announcements.create", () =>
-      notifyGeneralAnnouncement(
-        {
-          title: announcement.title,
-          content: announcement.content,
-          linkUrl: announcement.linkUrl || undefined,
-          linkText: announcement.linkText || undefined,
+    const { announcement, staged } = await prisma.$transaction(async (tx) => {
+      const announcement = await tx.announcement.create({
+        data: {
+          title: validatedData.title,
+          content: validatedData.content,
+          isActive: validatedData.isActive,
+          startDate: validatedData.startDate
+            ? new Date(validatedData.startDate)
+            : null,
+          endDate: validatedData.endDate
+            ? new Date(validatedData.endDate)
+            : null,
+          backgroundColor: validatedData.backgroundColor,
+          textColor: validatedData.textColor,
+          linkUrl: validatedData.linkUrl,
+          linkText: validatedData.linkText,
+          createdBy: session.user.id,
         },
-        { deferAttempt: true },
-      ),
-    );
+      });
+
+      const now = new Date();
+      const isLive =
+        announcement.isActive &&
+        (!announcement.startDate || announcement.startDate <= now) &&
+        (!announcement.endDate || announcement.endDate >= now);
+      const result = isLive
+        ? await notifyGeneralAnnouncement(
+            {
+              title: announcement.title,
+              content: announcement.content,
+              linkUrl: announcement.linkUrl || undefined,
+              linkText: announcement.linkText || undefined,
+            },
+            {
+              tx,
+              deferAttempt: true,
+              dedupeKey: `announcement:${announcement.id}`,
+            },
+          )
+        : undefined;
+      return { announcement, staged: result?.staged };
+    });
+    revalidateTag(ANNOUNCEMENTS_TAG);
+    await flushNotificationsAfter({ bells: [staged] }, "announcements.create");
 
     return NextResponse.json({
       success: true,

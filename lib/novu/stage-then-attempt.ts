@@ -58,9 +58,13 @@ export function flushNotificationsAfter(
   bundle: StagedNotificationBundle,
   op = "flushNotificationsAfter",
 ): Promise<void> {
-  const bells = (bundle.bells ?? []).filter((row): row is StagedTrigger =>
-    Boolean(row),
-  );
+  const bells = [
+    ...new Map(
+      (bundle.bells ?? [])
+        .filter((row): row is StagedTrigger => Boolean(row))
+        .map((row) => [row.id, row]),
+    ).values(),
+  ];
   const emails = (bundle.emails ?? []).filter(
     (entry) => entryRows(entry).length > 0,
   );

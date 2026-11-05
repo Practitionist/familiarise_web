@@ -89,8 +89,12 @@ export async function readPendingAges(tx: Tx, now: Date): Promise<PendingAges> {
         now,
       )} AS "webhookEvents",
       ${ageOf(
-        Prisma.sql`SELECT min(COALESCE("nextRetryAt", "createdAt")) FROM "FailedEmail"
-          WHERE status IN ('PENDING', 'RETRY')`,
+        Prisma.sql`SELECT min(due) FROM (
+          SELECT COALESCE("nextRetryAt", "createdAt") AS due FROM "FailedEmail"
+            WHERE status IN ('PENDING', 'RETRY')
+          UNION ALL
+          SELECT COALESCE("nextRetryAt", "createdAt") FROM "FailedEmailBatch"
+            WHERE status IN ('PENDING', 'RETRY')) e`,
         now,
       )} AS "emailRetries",
       ${ageOf(

@@ -351,7 +351,7 @@ describe("5. flushNotificationsAfter concurrent bundle dispatch & inline fallbac
 
     const flushPromise = flushNotificationsAfter(
       {
-        bells: [bellOk, bellFail, null],
+        bells: [bellOk, bellFail, null, bellOk, bellFail],
         emails: [
           {
             rows: [

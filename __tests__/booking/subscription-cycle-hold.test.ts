@@ -97,7 +97,10 @@ function makeTx(statuses: string[], firstPaidAt = new Date("2020-01-01")) {
       }),
     },
     membership: { findMany: jest.fn().mockResolvedValue([]) },
-    user: { findUnique: jest.fn().mockResolvedValue(null) },
+    user: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([{ id: "consultee-user" }]),
+    },
   };
   return { tx, updateMany };
 }

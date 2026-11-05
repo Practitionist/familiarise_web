@@ -19,7 +19,9 @@ const mockConsultantReview = {
 };
 const mockUser = {
   findUnique: jest.fn().mockResolvedValue({ id: "user-1" }),
-  findMany: jest.fn().mockResolvedValue([]),
+  findMany: jest.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
+    where.id.in.map((id) => ({ id })),
+  ),
 };
 const mockMember = {
   findFirst: jest.fn(),

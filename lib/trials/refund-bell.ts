@@ -5,7 +5,7 @@ import { goHref } from "@/lib/dashboard/go";
 
 /** The learner hears their paid trial was refunded (#1775 C-12). */
 export function stageTrialRefundedBell(
-  tx: Pick<Tx, "notificationOutbox">,
+  tx: Pick<Tx, "notificationOutbox" | "user">,
   trial: {
     id: string;
     consulteeUserId: string;

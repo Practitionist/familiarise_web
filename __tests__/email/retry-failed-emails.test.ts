@@ -96,6 +96,17 @@ function makePrismaStub(
   const updates: Prisma.FailedEmailUpdateArgs[] = [];
   const batchUpdates: Prisma.FailedEmailBatchUpdateArgs[] = [];
   const prisma: FailedEmailStore = {
+    waitlist: {
+      findMany: jest.fn(async (args) => {
+        const emails = args.where?.email;
+        return typeof emails === "object" &&
+          emails &&
+          "in" in emails &&
+          Array.isArray(emails.in)
+          ? emails.in.map((email) => ({ email }))
+          : [];
+      }),
+    },
     failedEmail: {
       findMany: jest.fn().mockResolvedValue([initialRow]),
       update: jest
@@ -335,6 +346,17 @@ describe("runEmailRetryTick — pacing (#1654)", () => {
     jest.useFakeTimers();
     const rows = [makeRow({ id: "fe-a" }), makeRow({ id: "fe-b" })];
     const prisma: FailedEmailStore = {
+      waitlist: {
+        findMany: jest.fn(async (args) => {
+          const emails = args.where?.email;
+          return typeof emails === "object" &&
+            emails &&
+            "in" in emails &&
+            Array.isArray(emails.in)
+            ? emails.in.map((email) => ({ email }))
+            : [];
+        }),
+      },
       failedEmail: {
         findMany: jest.fn().mockResolvedValue(rows),
         update: jest
@@ -531,5 +553,54 @@ describe("runEmailRetryTick — no sender", () => {
     expect(result.scanned).toBe(0);
     expect(result.errors[0]).toContain("RESEND_API_KEY not configured");
     expect(stub.prisma.failedEmail.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("batch audience safety at replay", () => {
+  it.each(["unsubscribed", "suppressed"])(
+    "never replays a batch after a recipient is %s",
+    async (reason) => {
+      const { prisma, batchUpdates } = makePrismaStub(makeRow(), {
+        batches: [makeBatchRow()],
+      });
+      if (reason === "unsubscribed")
+        jest.mocked(prisma.waitlist.findMany).mockResolvedValue([]);
+      else
+        jest
+          .mocked(prisma.emailSuppression.findMany)
+          .mockResolvedValue([{ email: "b@y", reason: "COMPLAINT" }]);
+      const sender = mockResend(async () => ({
+        data: { id: "sent" },
+        error: null,
+        headers: null,
+      }));
+      const result = await runEmailRetryTick({
+        prisma,
+        resend: sender,
+        now: () => FROZEN_NOW_MS,
+      });
+      expect(sender.batch.send).not.toHaveBeenCalled();
+      expect(result.batchesDeadLettered).toBe(1);
+      expect(batchUpdates[0].data.lastError).toBe(
+        "batch audience changed: consent or suppression",
+      );
+    },
+  );
+  it("rejects malformed persisted batches before calling the vendor", async () => {
+    const { prisma } = makePrismaStub(makeRow(), {
+      batches: [makeBatchRow({ payload: { to: "invalid" } })],
+    });
+    const sender = mockResend(async () => ({
+      data: { id: "sent" },
+      error: null,
+      headers: null,
+    }));
+    const result = await runEmailRetryTick({
+      prisma,
+      resend: sender,
+      now: () => FROZEN_NOW_MS,
+    });
+    expect(sender.batch.send).not.toHaveBeenCalled();
+    expect(result.batchesDeadLettered).toBe(1);
   });
 });

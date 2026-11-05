@@ -97,3 +97,27 @@ describe("loadEmailRecipients", () => {
     expect(mockFindMany.mock.calls[0][0].where.id.in).toEqual(["user_1"]);
   });
 });
+
+it.each(["BELL_ONLY", "NEITHER"])(
+  "honours workspace %s for optional email but preserves required notices",
+  async (notificationRoutingMode) => {
+    mockFindMany.mockResolvedValue([
+      { ...user(null), orgWorkspaceProfile: { notificationRoutingMode } },
+    ]);
+    expect(
+      (await loadEmailRecipients(["user_1"], "appointments"))[0].allowed,
+    ).toBe(false);
+    expect((await loadEmailRecipients(["user_1"], null))[0].allowed).toBe(true);
+  },
+);
+it.each(["EMAIL_ONLY", "BELL_AND_EMAIL"])(
+  "allows email for workspace %s",
+  async (notificationRoutingMode) => {
+    mockFindMany.mockResolvedValue([
+      { ...user(null), orgWorkspaceProfile: { notificationRoutingMode } },
+    ]);
+    expect(
+      (await loadEmailRecipients(["user_1"], "appointments"))[0].allowed,
+    ).toBe(true);
+  },
+);

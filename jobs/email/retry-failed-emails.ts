@@ -41,6 +41,7 @@
  * never throws into the cron wrapper.
  */
 
+import { z } from "zod";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import type {
   EmailSuppression,
@@ -50,7 +51,6 @@ import type {
 } from "@prisma/client";
 import {
   Resend,
-  type CreateBatchOptions,
   type CreateBatchRequestOptions,
   type CreateEmailRequestOptions,
 } from "resend";
@@ -134,6 +134,12 @@ export interface EmailRetryRunResult {
 }
 
 export interface FailedEmailStore {
+  waitlist: {
+    findMany(args: {
+      where: { email: { in: string[] }; status: "SUBSCRIBED" };
+      select: { email: true };
+    }): Promise<{ email: string }[]>;
+  };
   failedEmail: {
     findMany(args: Prisma.FailedEmailFindManyArgs): Promise<FailedEmail[]>;
     update(args: Prisma.FailedEmailUpdateArgs): Promise<FailedEmail>;
@@ -411,6 +417,22 @@ export async function runEmailRetryTick(params: {
   return runBody(undefined);
 }
 
+const batchMessagesSchema = z
+  .array(
+    z
+      .object({
+        from: z.string().min(1),
+        to: z.string().min(1),
+        subject: z.string(),
+        html: z.string(),
+        text: z.string().optional(),
+        headers: z.record(z.string()).optional(),
+      })
+      .strict(),
+  )
+  .min(1)
+  .max(100);
+
 async function drainBatches(ctx: {
   prisma: FailedEmailStore;
   sender: RelaySender;
@@ -428,14 +450,17 @@ async function drainBatches(ctx: {
   for (const [index, row] of dueBatches.entries()) {
     result.batchesScanned += 1;
 
-    const messages: Prisma.JsonValue[] = Array.isArray(row.payload)
-      ? row.payload
-      : [];
-    const heldDomain = heldRecipientDomain(
-      messages.flatMap((m) =>
-        m && typeof m === "object" && !Array.isArray(m) ? recipientsOf(m) : [],
-      ),
-    );
+    const parsed = batchMessagesSchema.safeParse(row.payload);
+    if (!parsed.success) {
+      await prisma.failedEmailBatch.update({
+        where: { id: row.id },
+        data: { status: "DEAD_LETTER", lastError: "invalid batch payload" },
+      });
+      result.batchesDeadLettered += 1;
+      continue;
+    }
+    const messages = parsed.data;
+    const heldDomain = heldRecipientDomain(messages.flatMap(recipientsOf));
     if (heldDomain) {
       logHeld(row.emailType, heldDomain);
       await prisma.failedEmailBatch.update({
@@ -446,17 +471,42 @@ async function drainBatches(ctx: {
       continue;
     }
 
+    const addresses = [...new Set(messages.map((m) => normaliseEmail(m.to)))];
+    const suppressed = await findSuppressed(addresses, prisma);
+    const subscribers =
+      row.emailType === "WAITLIST_BROADCAST"
+        ? await prisma.waitlist.findMany({
+            where: { email: { in: addresses }, status: "SUBSCRIBED" },
+            select: { email: true },
+          })
+        : [];
+    const subscribed = new Set(subscribers.map((s) => normaliseEmail(s.email)));
+    const audienceChanged = addresses.some(
+      (email) =>
+        suppressed.has(email) ||
+        (row.emailType === "WAITLIST_BROADCAST" && !subscribed.has(email)),
+    );
+    if (audienceChanged) {
+      // Keep the original payload/key paired: a filtered retry can conflict with an accepted request.
+      await prisma.failedEmailBatch.update({
+        where: { id: row.id },
+        data: {
+          status: "DEAD_LETTER",
+          lastError: "batch audience changed: consent or suppression",
+        },
+      });
+      result.batchesDeadLettered += 1;
+      continue;
+    }
+
     if (index > 0) await sleep(SEND_GAP_MS);
 
     let sendError: string | undefined;
     try {
-      const response = await sender.batch.send(
-        row.payload as CreateBatchOptions,
-        {
-          idempotencyKey: row.idempotencyKey || `failed-email-batch:${row.id}`,
-          signal: AbortSignal.timeout(EMAIL_BUDGET_MS.JOB),
-        } as CreateBatchRequestOptions,
-      );
+      const response = await sender.batch.send(messages, {
+        idempotencyKey: row.idempotencyKey || `failed-email-batch:${row.id}`,
+        signal: AbortSignal.timeout(EMAIL_BUDGET_MS.JOB),
+      } as CreateBatchRequestOptions);
       if (response.error) sendError = resendErrorText(response.error);
     } catch (err) {
       sendError = err instanceof Error ? err.message : String(err);

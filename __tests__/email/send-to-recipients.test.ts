@@ -24,7 +24,12 @@ jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 import * as React from "react";
 import type { EmailRecipient } from "@/lib/email/preferences";
-import { sendToRecipients } from "@/lib/email/send-to-recipients";
+import { renderEmail } from "@/lib/email/render";
+import * as Sentry from "@sentry/nextjs";
+import {
+  sendToRecipients,
+  prepareRecipientEmails,
+} from "@/lib/email/send-to-recipients";
 
 const allowed: EmailRecipient = {
   userId: "user_1",
@@ -68,5 +73,28 @@ it("delivers to allowed recipients with one-click headers and skips the rest", a
     }),
     "TEST_EMAIL",
     { entityRef: "test:1", budgetMs: 1000 },
+  );
+});
+
+it("reports render failures once for the whole fanout", async () => {
+  jest.clearAllMocks();
+  jest.mocked(renderEmail).mockRejectedValue(new Error("broken template"));
+  const result = await prepareRecipientEmails({
+    recipients: [
+      allowed,
+      { ...allowed, userId: "user_3", email: "three@example.com" },
+    ],
+    emailType: "TEST_EMAIL",
+    from: "a@example.com",
+    subject: () => "Hi",
+    render: () => React.createElement("p"),
+    entityRef: "test:render",
+  });
+  expect(result.failed).toBe(2);
+  expect(result.messages).toEqual([]);
+  expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+  expect(Sentry.captureException).toHaveBeenCalledWith(
+    expect.any(Error),
+    expect.objectContaining({ extra: { failedRecipients: 2 } }),
   );
 });

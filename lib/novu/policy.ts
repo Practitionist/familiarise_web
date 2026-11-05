@@ -2,7 +2,21 @@ import prisma, { type Tx } from "@/lib/prisma";
 import { EMAIL_CATEGORY_COLUMN } from "@/lib/email/preferences";
 import { computeQuietHoursNotBefore } from "./quiet-hours";
 import { templateFor } from "./templates";
+import { NOVU_WORKFLOWS } from "./workflows";
 import type { NovuWorkflowId, PreferenceCategory } from "./templates/types";
+
+// Security changes and actionable financial failures must reach the inbox promptly.
+const URGENT_WORKFLOWS: ReadonlySet<NovuWorkflowId> = new Set([
+  NOVU_WORKFLOWS.ACCOUNT_SECURITY_NOTICE,
+  NOVU_WORKFLOWS.ACCOUNT_SUSPENDED,
+  NOVU_WORKFLOWS.ACCOUNT_BANNED,
+  NOVU_WORKFLOWS.PAYMENT_FAILED,
+  NOVU_WORKFLOWS.REFUND_FAILED,
+  NOVU_WORKFLOWS.PAYOUT_FAILED,
+  NOVU_WORKFLOWS.ORG_PAYOUT_FAILED,
+  NOVU_WORKFLOWS.DISPUTE_CREATED,
+  NOVU_WORKFLOWS.COMPLIANCE_DEADLINE_ALERT,
+]);
 
 const BELL_PREFERENCE_SELECT = {
   allNotifications: true,
@@ -38,7 +52,7 @@ function isBellAllowedForRecipient(
   row: BellUserRow | undefined,
   category: PreferenceCategory | null,
 ): boolean {
-  if (!row) return true;
+  if (!row) return false;
   const routingMode = row.orgWorkspaceProfile?.notificationRoutingMode;
   if (routingMode === "EMAIL_ONLY" || routingMode === "NEITHER") {
     return false;
@@ -90,48 +104,38 @@ export async function resolveRecipientBellPolicy(
   workflowId: NovuWorkflowId,
   recipients: string[],
   opts?: {
-    tx?: Partial<Pick<Tx, "user">>;
+    tx?: Pick<Tx, "user">;
     deferrable?: boolean;
   },
 ): Promise<{ allowedRecipients: string[]; notBefore: Date | undefined }> {
   if (recipients.length === 0) {
     return { allowedRecipients: recipients, notBefore: undefined };
   }
-  try {
-    const findMany = opts?.tx ? opts.tx.user?.findMany : prisma.user?.findMany;
-    if (typeof findMany !== "function") {
-      return { allowedRecipients: recipients, notBefore: undefined };
-    }
-    const rows = (await findMany({
-      where: { id: { in: recipients } },
-      select: {
-        id: true,
-        timezone: true,
-        orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
-        notificationPreferences: { select: BELL_PREFERENCE_SELECT },
-      },
-    })) as BellUserRow[];
+  const db = opts?.tx ?? prisma;
+  const rows = await db.user.findMany({
+    where: { id: { in: recipients } },
+    select: {
+      id: true,
+      timezone: true,
+      orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
+      notificationPreferences: { select: BELL_PREFERENCE_SELECT },
+    },
+  });
 
-    const category = templateFor(workflowId)?.category ?? null;
-    const byId = new Map(
-      rows
-        .filter(
-          (r): r is BellUserRow & { id: string } => typeof r.id === "string",
-        )
-        .map((r) => [r.id, r]),
-    );
-    const allowedRecipients = recipients.filter((id) =>
-      isBellAllowedForRecipient(byId.get(id), category),
-    );
-    if (allowedRecipients.length === 0 || opts?.deferrable === false) {
-      return { allowedRecipients, notBefore: undefined };
-    }
-    return {
-      allowedRecipients,
-      notBefore: computeLatestQuietHoursNotBefore(rows, allowedRecipients),
-    };
-  } catch (err) {
-    if (opts?.tx) throw err;
-    return { allowedRecipients: recipients, notBefore: undefined };
+  const category = templateFor(workflowId)?.category ?? null;
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const allowedRecipients = recipients.filter((id) =>
+    isBellAllowedForRecipient(byId.get(id), category),
+  );
+  if (
+    allowedRecipients.length === 0 ||
+    opts?.deferrable === false ||
+    URGENT_WORKFLOWS.has(workflowId)
+  ) {
+    return { allowedRecipients, notBefore: undefined };
   }
+  return {
+    allowedRecipients,
+    notBefore: computeLatestQuietHoursNotBefore(rows, allowedRecipients),
+  };
 }

@@ -13,6 +13,7 @@ const mockTrigger = jest.fn();
 const mockUpsert = jest.fn();
 const mockUpdate = jest.fn();
 const mockFindMany = jest.fn();
+const mockUserRead = jest.fn();
 
 jest.mock("../../lib/novu/client", () => ({
   isNovuConfigured: () => true,
@@ -29,6 +30,7 @@ jest.mock("../../lib/prisma", () => ({
       upsert: (...args: unknown[]) => mockUpsert(...args),
       update: (...args: unknown[]) => mockUpdate(...args),
     },
+    user: { findMany: (...args: unknown[]) => mockUserRead(...args) },
     membership: {
       findMany: (...args: unknown[]) => mockFindMany(...args),
     },
@@ -41,6 +43,7 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
+import { notifyPayoutFailed } from "@/lib/novu/service";
 import { notifyOrgWalletLow } from "@/lib/novu/org-workflows";
 
 const roster = [{ userId: "user-b" }, { userId: "user-a" }];
@@ -67,6 +70,7 @@ function stagedRow(args: { create: Record<string, unknown> }) {
 
 beforeEach(() => {
   mockFindMany.mockResolvedValue(roster);
+  mockUserRead.mockResolvedValue([{ id: "user-b" }, { id: "user-a" }]);
   mockUpsert.mockImplementation(async (args) => stagedRow(args));
   mockUpdate.mockResolvedValue({});
   mockTrigger.mockResolvedValue({});
@@ -92,6 +96,7 @@ describe("org helpers ride the outbox (#691)", () => {
     const txFindMany = jest.fn().mockResolvedValue(roster);
     const tx = {
       notificationOutbox: { upsert: txUpsert },
+      user: { findMany: (...args: unknown[]) => mockUserRead(...args) },
       membership: { findMany: txFindMany },
     };
 
@@ -109,4 +114,41 @@ describe("org helpers ride the outbox (#691)", () => {
     expect(staged).toHaveLength(1);
     expect(staged[0].workflowId).toBe(NOVU_WORKFLOWS.ORG_WALLET_LOW);
   });
+});
+
+it("keeps distinct failed payouts distinct even when amounts and reasons match", async () => {
+  const details = {
+    amount: 10000,
+    currency: "INR",
+    reason: "bank rejected",
+    dashboardUrl: "/dashboard/earnings",
+  };
+  await notifyPayoutFailed(
+    "user-a",
+    { ...details, payoutId: "payout-one" },
+    { deferAttempt: true },
+  );
+  await notifyPayoutFailed(
+    "user-a",
+    { ...details, payoutId: "payout-two" },
+    { deferAttempt: true },
+  );
+  const first = mockUpsert.mock.calls[0][0].create;
+  const second = mockUpsert.mock.calls[1][0].create;
+  expect(first.transactionId).not.toBe(second.transactionId);
+  expect(first.entityRef).toBe("payout:payout-one");
+  expect(second.entityRef).toBe("payout:payout-two");
+});
+
+it("returns failure without sending when a nontransactional policy read fails", async () => {
+  mockUserRead.mockRejectedValueOnce(new Error("pool unavailable"));
+  const result = await notifyPayoutFailed("user-a", {
+    amount: 10000,
+    currency: "INR",
+    payoutId: "payout-one",
+    dashboardUrl: "/dashboard/earnings",
+  });
+  expect(result.success).toBe(false);
+  expect(mockUpsert).not.toHaveBeenCalled();
+  expect(mockTrigger).not.toHaveBeenCalled();
 });

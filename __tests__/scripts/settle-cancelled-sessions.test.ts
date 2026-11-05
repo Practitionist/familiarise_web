@@ -49,6 +49,10 @@ const stamp = jest.fn(async () => ({ count: 1 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    user: {
+      findMany: async ({ where }: { where: { id: { in: string[] } } }) =>
+        where.id.in.map((id) => ({ id })),
+    },
     appointmentOccurrence: {
       findMany: async () => state.due,
       findFirst: async () => state.madeUp,

@@ -315,3 +315,18 @@ describe("per-recipient daily cap", () => {
     expect((await deliver(reset, "STAFF_INVITE")).success).toBe(true);
   });
 });
+
+it("rechecks suppression after staging and before the deferred attempt", async () => {
+  process.env.RESEND_API_KEY = "re_test";
+  mockCreate.mockResolvedValue({ id: "fe-later-suppressed" });
+  const staged = await stage(message, "WELCOME");
+  mockFindSuppression.mockResolvedValue({ reason: "COMPLAINT" });
+  const result = await attempt(staged, message, "WELCOME", { budgetMs: 1000 });
+  expect(result.success).toBe(false);
+  expect(mockSend).not.toHaveBeenCalled();
+  expect(mockUpdate).toHaveBeenCalledWith(
+    expect.objectContaining({
+      data: { status: "DEAD_LETTER", lastError: "suppressed:COMPLAINT" },
+    }),
+  );
+});
