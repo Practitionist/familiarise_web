@@ -5,8 +5,8 @@
  * cannot freeze with the event still queued. Off Netlify nothing is added.
  */
 
-const captureException = jest.fn(() => "evt");
-const captureMessage = jest.fn(() => "evt");
+const captureException = jest.fn((..._args: unknown[]) => "evt");
+const captureMessage = jest.fn((..._args: unknown[]) => "evt");
 jest.mock("@sentry/core", () => ({
   captureException: (...args: unknown[]) => captureException(...args),
   captureMessage: (...args: unknown[]) => captureMessage(...args),
