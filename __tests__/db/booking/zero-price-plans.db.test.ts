@@ -3,6 +3,7 @@
  * booking is confirmed at birth, and because no money moves there is no
  * booking journal, no tax invoice and no reconciler finding.
  */
+import "./harness-cancel-route";
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import prisma from "../../../lib/prisma";
@@ -13,6 +14,7 @@ import {
   seedBuyer,
 } from "./harness-host";
 import { seedClassUnderWay } from "./harness-class-series";
+import { sessionUser } from "./harness-session";
 
 jest.mock("../../../lib/payments/index", () => ({
   __esModule: true,
@@ -25,23 +27,6 @@ jest.mock("../../../lib/payments/index", () => ({
 jest.mock("../../../lib/compliance/dpdp", () => ({
   __esModule: true,
   checkConsent: jest.fn(async () => true),
-}));
-jest.mock("../../../lib/novu", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
-const sessionUser = { current: null as null | Record<string, unknown> };
-jest.mock("../../../lib/auth-helpers", () => ({
-  ...jest.requireActual("../../../lib/auth-helpers"),
-  requireApiAuth: async () => ({ session: { user: sessionUser.current } }),
-  isPrivileged: () => false,
-}));
-jest.mock("../../../lib/rate-limit", () => ({
-  ...jest.requireActual("../../../lib/rate-limit"),
-  applyRateLimit: async () => null,
 }));
 jest.mock("../../../lib/cron/with-cron-lock", () => ({
   ...jest.requireActual("../../../lib/cron/with-cron-lock"),
@@ -73,6 +58,30 @@ afterAll(() => {
   else process.env.PLATFORM_GSTIN = OLD_GSTIN;
 });
 beforeEach(() => jest.clearAllMocks());
+
+/** A ₹0 subscription plan of the host's. */
+const seedFreeSubscriptionPlan = (consultantProfileId: string, title: string) =>
+  prisma.subscriptionPlan.create({
+    data: {
+      title,
+      price: BigInt(0),
+      consultantProfileId,
+      sessionsPerWeek: 1,
+      durationInMonths: 1,
+      sessionDurationInHours: 1,
+      totalSessions: 4,
+    },
+  });
+
+/** A subscription checkout body starting the plan's window `days` out. */
+const subscriptionCheckout = (planId: string, days: number) => ({
+  appointmentType: "SUBSCRIPTION" as const,
+  planId,
+  schedulingPeriodStartsAt: futureAt(days, 0).toISOString(),
+  paymentGateway: "RAZORPAY" as const,
+  clientIdempotencyKey: `free-sub-${randomUUID()}`,
+  consumerStateCode: "29",
+});
 
 /** Conversion is about the expert relationship, so a ₹0 plan after a trial still converts it. */
 const TRIAL_AFTER_FREE_PURCHASE = (subscriptionId: string | null) => ({
@@ -111,13 +120,10 @@ async function expectFreeSettledPayment(userId: string) {
 it("a ₹0 subscription is bought end to end through the checkout route", async () => {
   const host = await seedHost();
   await publishEveryHour(host);
-  const plan = await prisma.subscriptionPlan.create({
-    data: {
-      title: "Free subscription",
-      price: BigInt(0),
-      consultantProfileId: host.consultantProfileId,
-    },
-  });
+  const plan = await seedFreeSubscriptionPlan(
+    host.consultantProfileId,
+    "Free subscription",
+  );
   const buyer = await seedBuyer();
   sessionUser.current = {
     id: buyer.userId,
@@ -130,14 +136,7 @@ it("a ₹0 subscription is bought end to end through the checkout route", async 
   const res = await checkout(
     new NextRequest("http://localhost/api/checkout", {
       method: "POST",
-      body: JSON.stringify({
-        appointmentType: "SUBSCRIPTION",
-        planId: plan.id,
-        schedulingPeriodStartsAt: futureAt(1, 0).toISOString(),
-        paymentGateway: "RAZORPAY",
-        clientIdempotencyKey: `free-sub-${randomUUID()}`,
-        consumerStateCode: "29",
-      }),
+      body: JSON.stringify(subscriptionCheckout(plan.id, 1)),
       headers: { "Content-Type": "application/json" },
     }),
   );
@@ -229,17 +228,10 @@ it("a completed trial bought at ₹0 is confirmed without a fault", async () => 
   const host = await seedHost();
   await publishEveryHour(host);
   const buyer = await seedBuyer();
-  const plan = await prisma.subscriptionPlan.create({
-    data: {
-      title: "Free plan after a trial",
-      price: BigInt(0),
-      consultantProfileId: host.consultantProfileId,
-      sessionsPerWeek: 1,
-      durationInMonths: 1,
-      sessionDurationInHours: 1,
-      totalSessions: 4,
-    },
-  });
+  const plan = await seedFreeSubscriptionPlan(
+    host.consultantProfileId,
+    "Free plan after a trial",
+  );
   const trial = await prisma.trial.create({
     data: {
       consulteeProfileId: buyer.consulteeProfileId,
@@ -250,17 +242,7 @@ it("a completed trial bought at ₹0 is confirmed without a fault", async () => 
     },
   });
 
-  await handleCheckout(
-    {
-      appointmentType: "SUBSCRIPTION",
-      planId: plan.id,
-      schedulingPeriodStartsAt: futureAt(2, 0).toISOString(),
-      paymentGateway: "RAZORPAY",
-      clientIdempotencyKey: `free-trial-${randomUUID()}`,
-      consumerStateCode: "29",
-    },
-    buyer.userId,
-  );
+  await handleCheckout(subscriptionCheckout(plan.id, 2), buyer.userId);
 
   const payment = await expectFreeSettledPayment(buyer.userId);
   const { subscriptionId } = await prisma.appointment.findUniqueOrThrow({
