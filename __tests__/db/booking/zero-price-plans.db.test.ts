@@ -63,6 +63,15 @@ import { runReconcileLedgers } from "../../../scripts/reconcile/reconcile-ledger
 
 const reported = jest.mocked(reportSentryError);
 
+const OLD_GSTIN = process.env.PLATFORM_GSTIN;
+// A configured supplier, so "no invoice" means the ₹0 guard and not a missing GSTIN.
+beforeAll(() => {
+  process.env.PLATFORM_GSTIN = "06AAFCF1234Q1ZN";
+});
+afterAll(() => {
+  if (OLD_GSTIN === undefined) delete process.env.PLATFORM_GSTIN;
+  else process.env.PLATFORM_GSTIN = OLD_GSTIN;
+});
 beforeEach(() => jest.clearAllMocks());
 
 /** The buyer's one payment, after asserting it settled at ₹0 with nothing journalled or invoiced. */
@@ -165,7 +174,12 @@ it("a ₹0 consultation books on the no-gateway rail", async () => {
     buyer.userId,
   );
 
-  await expectFreeSettledPayment(buyer.userId);
+  const payment = await expectFreeSettledPayment(buyer.userId);
+  const appointment = await prisma.appointment.findUniqueOrThrow({
+    where: { id: payment.appointmentId! },
+    select: { consultation: { select: { consultationPlanId: true } } },
+  });
+  expect(appointment.consultation?.consultationPlanId).toBe(plan.id);
 });
 
 it("a ₹0 class seat is bought on the no-gateway rail", async () => {
@@ -197,5 +211,10 @@ it("a ₹0 class seat is bought on the no-gateway rail", async () => {
     buyer.userId,
   );
 
-  await expectFreeSettledPayment(buyer.userId);
+  const payment = await expectFreeSettledPayment(buyer.userId);
+  expect(payment.appointmentId).toBe(cls.appointmentId);
+  const seat = await prisma.appointmentParticipant.findFirstOrThrow({
+    where: { appointmentId: cls.appointmentId, userId: buyer.userId },
+  });
+  expect(seat.paymentId).toBe(payment.id);
 });
