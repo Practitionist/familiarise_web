@@ -1,6 +1,6 @@
 # Infrastructure jobs and maintenance
 
-Start with the [infrastructure architecture and operating model](../start-here/10-infra-and-maintenance-sre-orientation.md). It explains scheduler ownership, durable obligations, leases, cross-job races, bounded progress, reconciliation, operational health, maintenance recovery and portability. This directory supplies the inventory and detailed runbooks. GitHub review comments record decisions and evidence; they are not the architecture manual.
+Start with the [infrastructure architecture and operating model](../start-here/09-infra-and-maintenance-sre-orientation.md). It explains scheduler ownership, durable obligations, leases, cross-job races, bounded progress, reconciliation, operational health, maintenance recovery and portability. This directory supplies the inventory and detailed runbooks. GitHub review comments record decisions and evidence; they are not the architecture manual.
 
 ## Runtime model
 

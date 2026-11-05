@@ -84,7 +84,7 @@ Crypto. Follow the active maintenance implementation and recovery instructions;
 never infer that a cached phase quiesces work already in flight. See the linked
 references for transaction-client, deployed-runtime and environment constraints.
 
-The infrastructure orientation at `docs/start-here/10-infra-and-maintenance-sre-orientation.md` is the onboarding and portability guide. Keep its guarantees, failure limits and pending-versus-active scheduler ownership synchronized with source; the generated inventory owns counts, and GitHub comments alone are not architecture documentation. Keep the Stream-owned worker runbooks linked for active-host, execution-envelope and deployment verification constraints.
+The infrastructure orientation at `docs/start-here/09-infra-and-maintenance-sre-orientation.md` is the onboarding and portability guide. Keep its guarantees, failure limits and pending-versus-active scheduler ownership synchronized with source; the generated inventory owns counts, and GitHub comments alone are not architecture documentation. Keep the Stream-owned worker runbooks linked for active-host, execution-envelope and deployment verification constraints.
 
 PATCH updates require a validated non-empty reason, including ETA-only changes; use that value for incident and audit text. Maintenance retries preserve the active window's configuration and repeat OFFLINE setup until its completion stamp exists. Recovery checks database, Redis and chat before incident resolution and phase change. Preserve sequential session and channel-batch admission checks, paced vendor batches, transaction-client writes and ordered sidecar statements; a loop await is required when the next step depends on its predecessor or remaining budget.
 

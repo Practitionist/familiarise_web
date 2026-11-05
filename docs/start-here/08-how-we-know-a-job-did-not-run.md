@@ -9,7 +9,7 @@ last-reviewed: 2026-11-05
 
 # How we know a job did not run
 
-This page is for an engineer who has never seen the system. It explains how the platform notices that scheduled work stopped, which tool watches which question, which decisions were taken and which alternatives lost. It states what the monitors looked like on 2026-11-05 as dated evidence, and it ends with the exact read-only steps to re-check all of it yourself. The canonical decision record, with the full alternatives tables, is [2026-11-05-detector-rollout-and-redundancy.md](../decisions/2026-11-05-detector-rollout-and-redundancy.md). The runbooks are in the [Better Stack setup guide](../maintenance/00-betterstack-setup.md). The wider design is in [Observability system design](../observability/00-system-design.md) and [Infrastructure and maintenance orientation](./10-infra-and-maintenance-sre-orientation.md).
+This page is for an engineer who has never seen the system. It explains how the platform notices that scheduled work stopped, which tool watches which question, which decisions were taken and which alternatives lost. It states what the monitors looked like on 2026-11-05 as dated evidence, and it ends with the exact read-only steps to re-check all of it yourself. The canonical decision record, with the full alternatives tables, is [2026-11-05-detector-rollout-and-redundancy.md](../decisions/2026-11-05-detector-rollout-and-redundancy.md). The runbooks are in the [Better Stack setup guide](../maintenance/00-betterstack-setup.md). The wider design is in [Observability system design](../observability/00-system-design.md) and [Infrastructure and maintenance orientation](./09-infra-and-maintenance-sre-orientation.md).
 
 ## 1. The incident in two paragraphs
 
