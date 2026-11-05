@@ -6,122 +6,70 @@
  * A failed support refund that removed plan sessions tells ops that a void
  * gives those sessions back; a money-only remedy says nothing about the plan.
  */
+type Plan = {
+  id: string;
+  status: string;
+  planEndsAt: string;
+  startsAt: string;
+};
+
+const LIVE_PLAN: Plan = {
+  id: "sub-1",
+  status: "APPROVED",
+  planEndsAt: "2026-12-01",
+  startsAt: "2026-06-01",
+};
+
+/** An approved support refund that failed (or never went out) on a plan payment. */
+const unsent = (
+  id: string,
+  n: number,
+  amountPaise: number,
+  sessionsRemoved: number | null,
+  refundStatus: string | null,
+  plan: Plan = LIVE_PLAN,
+) => ({
+  id,
+  caseId: `case-${n}`,
+  paymentId: `pay-${n}`,
+  amountPaise,
+  sessionsRemoved,
+  decidedAt: new Date("2026-11-01T10:00:00Z"),
+  createdAt: new Date("2026-11-01T09:00:00Z"),
+  refund: refundStatus ? { status: refundStatus } : null,
+  supportCase: {
+    referenceNumber: `FAM-2026-${String(n + 8).padStart(6, "0")}`,
+  },
+  payment: {
+    appointment: {
+      subscription: {
+        id: plan.id,
+        status: plan.status,
+        planEndsAt: new Date(`${plan.planEndsAt}T00:00:00Z`),
+        schedulingPeriodStartsAt: new Date(`${plan.startsAt}T00:00:00Z`),
+        schedulingTimezone: "UTC",
+        subscriptionPlan: { durationInMonths: 6 },
+      },
+    },
+  },
+});
+
 const rows = [
-  {
-    id: "rec-plan",
-    caseId: "case-1",
-    paymentId: "pay-1",
-    amountPaise: 180_000,
-    sessionsRemoved: 9,
-    decidedAt: new Date("2026-11-01T10:00:00Z"),
-    createdAt: new Date("2026-11-01T09:00:00Z"),
-    refund: { status: "FAILED" },
-    supportCase: { referenceNumber: "FAM-2026-000009" },
-    payment: {
-      appointment: {
-        subscription: {
-          id: "sub-1",
-          status: "APPROVED",
-          planEndsAt: new Date("2026-12-01T00:00:00Z"),
-          schedulingPeriodStartsAt: new Date("2026-06-01T00:00:00Z"),
-          schedulingTimezone: "UTC",
-          subscriptionPlan: { durationInMonths: 6 },
-        },
-      },
-    },
-  },
-  {
-    id: "rec-one",
-    caseId: "case-2",
-    paymentId: "pay-2",
-    amountPaise: 20_000,
-    sessionsRemoved: 1,
-    decidedAt: new Date("2026-11-01T10:00:00Z"),
-    createdAt: new Date("2026-11-01T09:00:00Z"),
-    refund: null,
-    supportCase: { referenceNumber: "FAM-2026-000010" },
-    payment: {
-      appointment: {
-        subscription: {
-          id: "sub-1",
-          status: "APPROVED",
-          planEndsAt: new Date("2026-12-01T00:00:00Z"),
-          schedulingPeriodStartsAt: new Date("2026-06-01T00:00:00Z"),
-          schedulingTimezone: "UTC",
-          subscriptionPlan: { durationInMonths: 6 },
-        },
-      },
-    },
-  },
-  {
-    id: "rec-money",
-    caseId: "case-3",
-    paymentId: "pay-3",
-    amountPaise: 50_000,
-    sessionsRemoved: null,
-    decidedAt: new Date("2026-11-01T10:00:00Z"),
-    createdAt: new Date("2026-11-01T09:00:00Z"),
-    refund: { status: "FAILED" },
-    supportCase: { referenceNumber: "FAM-2026-000011" },
-    payment: {
-      appointment: {
-        subscription: {
-          id: "sub-1",
-          status: "APPROVED",
-          planEndsAt: new Date("2026-12-01T00:00:00Z"),
-          schedulingPeriodStartsAt: new Date("2026-06-01T00:00:00Z"),
-          schedulingTimezone: "UTC",
-          subscriptionPlan: { durationInMonths: 6 },
-        },
-      },
-    },
-  },
-  {
-    id: "rec-waiting",
-    caseId: "case-5",
-    paymentId: "pay-5",
-    amountPaise: 180_000,
-    sessionsRemoved: 9,
-    decidedAt: new Date("2026-11-01T10:00:00Z"),
-    createdAt: new Date("2026-11-01T09:00:00Z"),
-    refund: { status: "FAILED" },
-    supportCase: { referenceNumber: "FAM-2026-000013" },
-    payment: {
-      appointment: {
-        subscription: {
-          id: "sub-5",
-          status: "APPROVED",
-          planEndsAt: new Date("2026-11-01T00:00:00Z"),
-          schedulingPeriodStartsAt: new Date("2026-05-01T00:00:00Z"),
-          schedulingTimezone: "UTC",
-          subscriptionPlan: { durationInMonths: 6 },
-        },
-      },
-    },
-  },
-  {
-    id: "rec-settled",
-    caseId: "case-4",
-    paymentId: "pay-4",
-    amountPaise: 180_000,
-    sessionsRemoved: 9,
-    decidedAt: new Date("2026-11-01T10:00:00Z"),
-    createdAt: new Date("2026-11-01T09:00:00Z"),
-    refund: { status: "FAILED" },
-    supportCase: { referenceNumber: "FAM-2026-000012" },
-    payment: {
-      appointment: {
-        subscription: {
-          id: "sub-4",
-          status: "COMPLETED",
-          planEndsAt: new Date("2026-10-01T00:00:00Z"),
-          schedulingPeriodStartsAt: new Date("2026-04-01T00:00:00Z"),
-          schedulingTimezone: "UTC",
-          subscriptionPlan: { durationInMonths: 6 },
-        },
-      },
-    },
-  },
+  unsent("rec-plan", 1, 180_000, 9, "FAILED"),
+  unsent("rec-one", 2, 20_000, 1, null),
+  unsent("rec-money", 3, 50_000, null, "FAILED"),
+  unsent("rec-waiting", 5, 180_000, 9, "FAILED", {
+    id: "sub-5",
+    status: "APPROVED",
+    planEndsAt: "2026-11-01",
+    startsAt: "2026-05-01",
+  }),
+  unsent("rec-settled", 4, 180_000, 9, "FAILED", {
+    id: "sub-4",
+    status: "COMPLETED",
+    planEndsAt: "2026-10-01",
+    startsAt: "2026-04-01",
+  }),
 ];
 
 jest.mock("../../lib/prisma", () => ({
