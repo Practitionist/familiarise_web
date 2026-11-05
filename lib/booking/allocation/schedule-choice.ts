@@ -17,6 +17,8 @@ export const SCHEDULE_REASON = {
   topUp: "schedule:top-up",
   /** Released sessions re-placed, or a reschedule's times confirmed. */
   reschedule: "schedule:reschedule",
+  /** The Regular time placed a session at its exact time: not a plan-level choice. */
+  regular: "schedule:regular",
 } as const;
 
 export type ScheduleReason =
@@ -41,6 +43,7 @@ export const SCHEDULE_REASON_COPY: Record<ScheduleReason, string> = {
   "schedule:week-by-hand": "This week scheduled by hand",
   "schedule:top-up": "Open week scheduled automatically",
   "schedule:reschedule": "New times confirmed",
+  "schedule:regular": "Placed at the regular time",
 };
 
 /** The plan-level choices, never a week's, the sweep's or a reschedule's. */
@@ -75,9 +78,11 @@ export function scheduleReason(args: {
   /** Released sessions awaiting a new time before this run. */
   releasedBefore: number;
   bySweep?: boolean;
+  byRegularTime?: boolean;
   byConsultant?: boolean;
   confirmsReschedule?: boolean;
 }): ScheduleReason {
+  if (args.byRegularTime) return SCHEDULE_REASON.regular;
   if (args.bySweep) return SCHEDULE_REASON.topUp;
   if (args.confirmsReschedule || args.releasedBefore > 0) {
     return SCHEDULE_REASON.reschedule;

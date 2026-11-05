@@ -65,7 +65,8 @@ function planOf(appointment: CancelActorAppointment): CancelActorPlan {
   );
 }
 
-async function isHostOrgOperatorOf(
+/** An active operator (catalog.manage) of the plan's live host org. */
+export async function isHostOrgOperatorOf(
   userId: string,
   hostOrganizationId: string | null,
 ): Promise<boolean> {

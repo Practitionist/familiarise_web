@@ -359,11 +359,13 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.SUBSCRIPTION_STARTED,
     name: "Subscription started",
-    description: "The consultee, once the subscription is approved and paid.",
+    description:
+      "The consultee, once the subscription is approved and paid, and when the expert sets its regular time.",
     category: "subscriptions",
     inApp: {
-      subject: "Subscription active",
-      body: "Your subscription to {{payload.planTitle}} with {{payload.consultantName}} is now active.",
+      subject:
+        "{% if payload.regularTime %}Your regular time{% else %}Subscription active{% endif %}",
+      body: "{% if payload.regularTime %}Your regular time for {{payload.planTitle}} with {{payload.consultantName}}: {{payload.regularTime}}. Sessions are booked at this time each week.{% else %}Your subscription to {{payload.planTitle}} with {{payload.consultantName}} is now active.{% endif %}",
       redirect: "dashboardUrl",
     },
   },

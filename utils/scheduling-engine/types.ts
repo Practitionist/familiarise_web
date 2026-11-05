@@ -148,6 +148,8 @@ export interface AllocationRequest {
   heldAppointmentLock?: ApprovalLock;
   /** The hourly top-up placing a plan's open week as the system, not a person. */
   bySweep?: boolean;
+  /** A Regular-time placement (set or roll-forward) at the projected exact time. */
+  byRegularTime?: boolean;
   /**
    * The plan's own consultant placed the sessions. Only then can a first
    * placement record the plan's Auto choice; any other caller (staff, a host

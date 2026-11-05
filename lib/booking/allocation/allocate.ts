@@ -276,6 +276,7 @@ export async function dispatch(
       placedBefore: before.placed > 0,
       releasedBefore: before.released,
       bySweep: request.bySweep,
+      byRegularTime: request.byRegularTime,
       byConsultant: request.byConsultant,
       confirmsReschedule: !!request.excludeRescheduleRequestId,
     }),
