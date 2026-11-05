@@ -194,11 +194,6 @@ function toItem(e: EventRow, kind: "credit" | "held-paid-seat") {
   };
 }
 
-/**
- * Support remedies approved without a live refund: the refund was refused,
- * failed at the gateway, or never ran. Each needs a retry or a void on its case;
- * a void also gives back the plan sessions the remedy removed.
- */
 /** What a void of a session-count remedy gives back to the plan. */
 function sessionsBackNote(sessionsRemoved: number | null): string {
   if (!sessionsRemoved) return "";
@@ -207,6 +202,11 @@ function sessionsBackNote(sessionsRemoved: number | null): string {
     : ` ${sessionsRemoved} sessions go back to the plan if you void this refund.`;
 }
 
+/**
+ * Support remedies approved without a live refund: the refund was refused,
+ * failed at the gateway, or never ran. Each needs a retry or a void on its case;
+ * a void also gives back the plan sessions the remedy removed.
+ */
 export async function readUnsentSupportRefunds(now = new Date()) {
   const rows = await prisma.supportFinancialRecommendation.findMany({
     where: {

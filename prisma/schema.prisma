@@ -4165,8 +4165,9 @@ model Subscription {
   /// expiry or the live cycle: use subscriptionPlanEnd() and
   /// subscriptionEntitlement().cycle.
   schedulingPeriodEndsAt   DateTime  @db.Timestamptz
-  /// Fixed plan end (exclusive): start + durationInMonths on the consultant's
-  /// calendar, month-end clamped. Null rows derive it from the start.
+  /// Fixed plan end (exclusive): start + durationInWeeks × 7 zone-days, or +
+  /// durationInMonths (month-end clamped), on the consultant's calendar.
+  /// Null rows derive it from the start.
   planEndsAt               DateTime? @db.Timestamptz
   // #1076 — stamped from the owning consultant's user.timezone at creation, so
   // the per-day/week caps bucket on the consultant's days. Pinned at creation

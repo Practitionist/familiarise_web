@@ -10,7 +10,6 @@
  */
 
 import * as React from "react";
-import { z } from "zod";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -47,6 +46,7 @@ import {
 } from "./sponsor-pricing-hint";
 import { useSession } from "@/lib/auth-client";
 import { activeClientsNotice } from "@/lib/booking/entitlement";
+import { activeClientsOf, withPricingNotice } from "./sold-terms-notice";
 import { sellHomeHref } from "@/lib/dashboard/sell-pages";
 
 interface OfferingEditorContainerProps {
@@ -124,29 +124,6 @@ function savedToast({
   return {
     title: "Draft saved",
     description: "Only you can see this until you publish it.",
-  };
-}
-
-const ActiveClientsSchema = z.object({
-  subscriptionPlan: z.object({ activeClients: z.number().int().nonnegative() }),
-});
-
-/** Live buyers of the plan being edited; the GET tells only its author. */
-function activeClientsOf(event: unknown): number {
-  const parsed = ActiveClientsSchema.safeParse(event);
-  return parsed.success ? parsed.data.subscriptionPlan.activeClients : 0;
-}
-
-/** Says on the pricing section that a terms edit spares existing buyers. */
-function withPricingNotice(
-  manifest: OfferingManifest,
-  notice: string,
-): OfferingManifest {
-  return {
-    ...manifest,
-    sections: manifest.sections.map((section) =>
-      section.id === "pricing" ? { ...section, description: notice } : section,
-    ),
   };
 }
 
