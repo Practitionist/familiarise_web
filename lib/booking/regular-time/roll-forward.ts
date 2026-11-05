@@ -141,11 +141,6 @@ async function rollForwardUnlocked(
         { now, deadline: outOfTime },
       );
       result.placed += placed.placed;
-      // The rotation stamp: a concurrent run that already stamped it wins.
-      await prisma.subscription.updateMany({
-        where: { id: row.id, lastRolledAt: row.lastRolledAt },
-        data: { lastRolledAt: now },
-      });
 
       const fresh = await prisma.subscription.findUnique({
         where: { id: row.id },
@@ -177,6 +172,19 @@ async function rollForwardUnlocked(
       failures.add("roll-forward-regular-time.plan", error, {
         subscriptionId: row.id,
       });
+    } finally {
+      // The rotation stamp, failed plans included, so one never starves the
+      // rest; a concurrent run that already stamped it wins.
+      await prisma.subscription
+        .updateMany({
+          where: { id: row.id, lastRolledAt: row.lastRolledAt },
+          data: { lastRolledAt: now },
+        })
+        .catch((error: unknown) => {
+          failures.add("roll-forward-regular-time.stamp", error, {
+            subscriptionId: row.id,
+          });
+        });
     }
   }
 

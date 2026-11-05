@@ -221,6 +221,11 @@ describe("rollForwardRegularTime", () => {
     const all = await rollForwardRegularTime({ now: NOW });
     expect(all.errors).toBe(1);
     expect(mockFailures.add).toHaveBeenCalledTimes(1);
+    // The failed plan still rotates to the back.
+    expect(mockPrisma.subscription.updateMany).toHaveBeenCalledWith({
+      where: { id: "sub-1", lastRolledAt: null },
+      data: { lastRolledAt: expect.any(Date) },
+    });
     expect(mockFailures.flush).toHaveBeenCalledTimes(1);
     expect(nudgeRegularTimeConflicts).toHaveBeenCalledTimes(1);
 
