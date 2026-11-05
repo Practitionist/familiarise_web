@@ -316,6 +316,9 @@ const nextConfig = {
         }
       : {}),
     webpackMemoryOptimizations: true,
+    // Sentry's webpack hook turns the build worker off by default; with it on,
+    // each compiler runs in its own process and frees its heap on exit.
+    webpackBuildWorker: true,
     // Disables NextNodeServer's cold-start `unstable_preloadEntries()` and
     // `preloadAppDocument()` loops (`next/dist/server/next-server.js`).
     //
@@ -609,15 +612,15 @@ const sentryNextConfig = withSentryConfig(withBundleAnalyzer(nextConfig), {
   },
 });
 
-// Only server maps are built. Sentry fills a falsy devtool, so the client
-// compiler is switched off after its hook has run.
+// Server maps only, without sourcesContent, so the build fits the 6144 MB heap.
+// Set after Sentry's hook, which replaces any falsy devtool with its own maps.
 const sentryWebpack = sentryNextConfig.webpack;
 export default {
   ...sentryNextConfig,
   webpack(config, context) {
     const out = sentryWebpack(config, context);
-    if (SENTRY_SOURCE_MAPS && !context.dev && !context.isServer) {
-      out.devtool = false;
+    if (SENTRY_SOURCE_MAPS && !context.dev) {
+      out.devtool = context.isServer ? "hidden-nosources-source-map" : false;
     }
     return out;
   },
