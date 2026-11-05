@@ -376,9 +376,8 @@ describe("5. flushNotificationsAfter concurrent bundle dispatch & inline fallbac
       "test-booking-flush",
     );
 
-    // Yield microtasks: all 3 dispatches must have started concurrently before gate opens
-    await Promise.resolve();
-    await Promise.resolve();
+    // Drain microtasks (the email sender loads lazily): all 3 dispatches must start before the gate opens
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(order).toEqual([
       "start:bell-ok",
       "start:bell-fail",
