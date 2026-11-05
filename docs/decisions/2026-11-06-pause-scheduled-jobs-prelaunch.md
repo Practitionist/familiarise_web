@@ -34,7 +34,7 @@ The homepage and `/api/health` monitors stay on, so an outage of the site itself
 
 - **Savings are partial.** About 45,000 job invocations a month go away, plus about 17,000 from the paused probe monitors. The scheduled function itself still fires about 11,000 times a month to read the key and exit. Deploy previews (about 71,000 a month) keep the site above the 125,000 tier unless they also fall, so the $25 step may still apply on legacy Pro. On credit-based Pro, the pause lowers credit use instead.
 - **The switch fails open.** If Upstash is unreachable or answers after more than 1 s, that tick runs the jobs. That is intended: a Redis outage must never stop production silently.
-- **No job runs on schedule,** including retention, auth-token cleanup and the Sentry canary. The backlog drains in bounded slices once the fleet resumes.
+- **Normally no job runs on schedule,** including retention, auth-token cleanup and the Sentry canary. The fail-open exception above means an occasional tick can still run the fleet, with its monitors paused. Most of the backlog drains in bounded slices once the fleet resumes. Some items may not drain by themselves and need operator review after resuming; for example, `expire-stale-requests` can leave retired or foreign-owned refund obligations. Read the Stuck work page and the first digest after resuming.
 - **This pause is the deliberate version of #2546.** It is safe only because it is recorded here and resumed from the go-live checklist.
 
 ## How to resume (go-live, or any time)
