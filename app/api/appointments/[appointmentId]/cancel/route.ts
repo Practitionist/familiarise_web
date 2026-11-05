@@ -888,6 +888,7 @@ export async function POST(
                       slotsTotal: bookingCtx.slotsTotal,
                       sessionsRemaining: bookingCtx.sessionsRemaining,
                       sessionsTotal: bookingCtx.sessionsTotal,
+                      sessionsRefunded: bookingCtx.sessionsRefunded,
                       sessionsCompleted: bookingCtx.sessionsCompleted,
                       scheduledStarts: bookingCtx.scheduledStarts,
                       alreadyRefundedPaise: bookingCtx.alreadyRefundedPaise,

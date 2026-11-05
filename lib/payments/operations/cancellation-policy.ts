@@ -183,6 +183,8 @@ export interface BookingRefundQuoteInput {
    * allocated-slot proration above.
    */
   sessionsTotal?: number | null;
+  /** Sessions a support refund already removed and paid for; never quoted again. */
+  sessionsRefunded?: number;
   /** #1766 — sessions delivered (COMPLETED or UNVERIFIED). */
   sessionsCompleted?: number;
   /** #1766 — start instants (epoch ms) of every session still scheduled. */
@@ -365,11 +367,14 @@ function quoteUnusedSessions(
 } {
   const total = input.sessionsTotal;
   const completed = Math.min(input.sessionsCompleted ?? 0, total);
+  // Sessions a support refund removed were paid back already; the denominator
+  // stays the sessions sold so this share plus that refund is the plan-end share.
+  const owed = Math.max(0, total - (input.sessionsRefunded ?? 0) - completed);
   const now = input.nowMs ?? Date.now();
   const scheduled = [...(input.scheduledStarts ?? [])]
     .sort((a, b) => a - b)
-    .slice(0, Math.max(0, total - completed));
-  const neverScheduled = Math.max(0, total - completed - scheduled.length);
+    .slice(0, owed);
+  const neverScheduled = Math.max(0, owed - scheduled.length);
   const noticeHours =
     scheduled.length > 0
       ? (scheduled[0] - now) / 3_600_000
@@ -397,9 +402,7 @@ function quoteUnusedSessions(
       input.isConsultantInitiated,
     ),
     noticeHours,
-    proratedBasePaise: Number(
-      (gross * BigInt(total - completed)) / BigInt(total),
-    ),
+    proratedBasePaise: Number((gross * BigInt(owed)) / BigInt(total)),
     refundBeforeClamp: Number(refundBeforeClamp),
   };
 }

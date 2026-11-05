@@ -18,6 +18,7 @@ import {
   subscriptionEntitlement,
 } from "../../lib/booking/entitlement";
 import { STAFF_REFUND_PER_PAYMENT_PAISE } from "../../lib/support/staff-refund-limits";
+import { quoteBookingRefund } from "../../lib/payments/operations/cancellation-policy";
 
 const A = 1_560_000;
 const START = new Date("2026-01-05T12:30:00.000Z"); // 18:00 in Kolkata
@@ -101,6 +102,48 @@ describe("severe failure: platform cancel in week 10 with 27 delivered", () => {
     const amount = sessionShareOf(A, 78 - 27, T);
     expect(amount).toBe(1_020_000);
     expect(amount).toBeGreaterThan(STAFF_REFUND_PER_PAYMENT_PAISE);
+  });
+});
+
+/** A platform cancel quote: every undelivered session back in full. */
+const cancelQuote = (delivered: number, refunded: number, returned: number) =>
+  quoteBookingRefund({
+    policy: null,
+    hoursUntilNextSession: null,
+    slotsTotal: delivered,
+    sessionsRemaining: 0,
+    isSubscription: true,
+    isConsultantInitiated: true,
+    isFreeCreditFunded: false,
+    grossPaise: A,
+    refundablePaise: A - returned,
+    sessionsTotal: T,
+    sessionsRefunded: refunded,
+    sessionsCompleted: delivered,
+    scheduledStarts: [],
+    alreadyRefundedPaise: 0,
+  }).refundPaise;
+
+describe("support partial refund, then a cancel", () => {
+  it("a platform cancel at 27 delivered after 9 refunded pays the 42 left: ₹8,400", () => {
+    const support = sessionShareOf(A, 9, T);
+    const cancel = cancelQuote(27, 9, support);
+    expect(cancel).toBe(840_000);
+    // Together they are exactly the 51 undelivered sessions' worth.
+    expect(support + cancel).toBe(sessionShareOf(A, 78 - 27, T));
+  });
+
+  it("without a support refund the same cancel is ₹10,200", () => {
+    expect(cancelQuote(27, 0, 0)).toBe(1_020_000);
+  });
+});
+
+describe("support partial refund, then the plan end", () => {
+  it("matches the table: ₹1,800 now and ₹1,600 at the end, 17 sessions in all", () => {
+    const support = sessionShareOf(A, 9, T);
+    const end = marker(78 - 61, [{ amountPaise: support, status: "SUCCEEDED" }]);
+    expect([support, end]).toEqual([180_000, 160_000]);
+    expect(support + end).toBe(sessionShareOf(A, 17, T));
   });
 });
 
