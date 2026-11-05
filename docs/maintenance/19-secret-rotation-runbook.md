@@ -129,7 +129,7 @@ Also rotate on offboarding: the Supabase access token, the Netlify team seat, th
 **Steps.**
 
 1. In the password manager, generate the new password using letters and digits only, so no percent-encoding is needed (Supabase says to percent-encode special symbols in the connection string). Keep the old password until step 9.
-2. Prepare the two new connection strings locally. Stage them on Netlify now; they take effect only at the next deploy, so staging is harmless:
+2. Freeze deploys first, then stage the two new connection strings. Any build that starts after staging and before the password reset in step 4 would carry the new URLs while Supabase still accepts only the old password, so hold the release train (no merges to the production or dev branches) and, in the Netlify **Deploys** list, choose **Lock to stop auto publishing**. A locked site keeps building but publishes nothing until you publish a deploy yourself ([Netlify: locked deploys](https://docs.netlify.com/deploy/manage-deploys/manage-deploys-overview/)). Then stage the strings; they take effect only at the next deploy:
 
    ```bash
    read -rs NEW_DATABASE_URL; read -rs NEW_DIRECT_URL
@@ -140,8 +140,8 @@ Also rotate on offboarding: the Supabase access token, the Netlify team seat, th
 
 3. Enter OFFLINE maintenance from the ADMIN Maintenance page (reason of at least five characters) and wait for running jobs to settle. Pause the Better Stack job-fleet monitor and the home-page and health monitors, because jobs are held and the probe would otherwise page: `PATCH https://uptime.betterstack.com/api/v2/monitors/<id>` with `{"paused": true}`.
 4. In the Supabase dashboard, reset the `postgres` password to the new value.
-5. Immediately trigger the production deploy: `netlify deploy --trigger`. Wait until it is published.
-6. Verify (the verification paragraph below). Then end maintenance through the explicit recovery step ([post-maintenance recovery](07-post-maintenance-recovery.md)) and resume the monitors.
+5. Immediately trigger the production deploy: `netlify deploy --trigger`. Because auto publishing is locked, wait for the build to finish and publish it with **Publish deploy** on its detail page.
+6. Verify (the verification paragraph below). Then choose **Unlock to start auto publishing**, release the train hold, end maintenance through the explicit recovery step ([post-maintenance recovery](07-post-maintenance-recovery.md)) and resume the monitors.
 7. Update the GitHub secrets: `gh secret set DATABASE_URL`, `gh secret set DIRECT_URL` (the CLI reads the value from standard input when `--body` is omitted, <https://cli.github.com/manual/gh_secret_set>), and rebuild `ENV_FILE`.
 8. Update every developer's local `.env`. A developer who forgets will see authentication errors, not data loss.
 9. Re-deploy the dev branch deploy (`dev.familiarisenow.com`) and any open preview: they hold the old password until rebuilt. Destroy the old password.
@@ -216,12 +216,12 @@ So the rotation is **not moot** unless the owner defines a reset that deletes th
 **Steps (owner decision required; not verified end to end).**
 
 1. Rotate the variable first so nothing else reuses the exposed value: generate a new value in the password manager and replace it in local `.env` files. This has no effect on the database.
-2. Sign in to production as `qa-admin-2` once (it will ask you to enrol an authenticator), do this soon because the exposed password is the only gate, and add the real administrator from the Team page. The real admin receives a set-password email, enrols 2FA, and signs in.
-3. As the real admin, **Suspend** each of the seven QA operators from the Team page (`PATCH /api/admin/team/members/{userId}` with action `suspend`: "signed out everywhere and cannot sign in until you reactivate them"). Check that the suspension has no end date.
-4. For the three enrolled operators, also run **Reset 2FA** (`DELETE /api/admin/team/members/{userId}/two-factor`, `app/api/admin/team/members/[userId]/two-factor/route.ts`). In one transaction it removes the authenticator and passkeys, replaces the password with an unusable value (`!disabled:` followed by random bytes) and ends every session. The setup link it sends goes to the undeliverable `.invalid` domain, which is the intended outcome. The Team page offers this action only for enrolled operators, so the four unenrolled accounts stay suspended with the old password hash intact; they cannot sign in while suspended.
+2. Do the handoff from an **enrolled** QA admin (`qa-admin-1` or `qa-admin-3`), never from `qa-admin-2`: the exposed password alone cannot pass their TOTP challenge, while anyone holding it can enrol their own authenticator on `qa-admin-2` first. The seed derives these accounts' authenticator codes from the `BETTER_AUTH_SECRET` it ran with (`computeSeedOperatorTotp` in `prisma/seedFiles/seed-two-factor.ts`), so this works only if that matches production; if neither enrolled admin can sign in, stop and decide another path (owner decision). Before acting, check read-only that `qa-admin-2` still has `twoFactorEnabled = false` and that no `OpsActionLog` row shows a Team action you did not take; either one means the password was already used, so treat it as an incident. Then, in this order: **Suspend** `qa-admin-2` from the Team page, and add the real administrator. The real admin receives a set-password email, enrols 2FA, and signs in.
+3. As the real admin, **Suspend** each remaining QA operator from the Team page (`PATCH /api/admin/team/members/{userId}` with action `suspend`), so all seven are suspended. A suspension needs a length of 1 to 365 days and lifts itself at the next sign-in after it ends, so suspension alone is temporary; step 4 is what makes the old password useless.
+4. As the real admin, run **Reset 2FA** (`DELETE /api/admin/team/members/{userId}/two-factor`, `app/api/admin/team/members/[userId]/two-factor/route.ts`) on **all seven** QA operators. In one transaction it removes the authenticator and passkeys, clears `twoFactorEnabled`, replaces the password with an unusable value (`!disabled:` followed by random bytes) and ends every session. The setup link it sends goes to the undeliverable `.invalid` domain, which is the intended outcome. The Team page shows the button only for enrolled operators, but the route itself accepts any `STAFF` or `ADMIN` account, so for the four unenrolled ones (`qa-admin-2`, `qa-staff-1`, `qa-staff-3`, `qa-staff-4`) call the same route from the signed-in Team page's browser session with a JSON body `{"reason": "..."}` of at least five characters, within 15 minutes of a fresh sign-in (it is a step-up action).
 5. Decide separately what happens to the seeded non-operator users before real customers join (delete through the erasure path, or keep them out of production by the database split).
 
-**Verification.** A read-only query shows `banned = true` for all seven operators and a password value starting with `!disabled:` for the three enrolled ones (count only; never select the hash). Try the old password on a preview and confirm it is refused. **Rollback.** Reactivate from the Team page. **Impact.** QA loses its operator logins on previews; after step 3 they must use a real operator or a development database.
+**Verification.** A read-only query over the seven QA operators shows seven with `banned = true`, seven with `twoFactorEnabled = false`, no `TwoFactor` rows, and seven credential accounts whose password value starts with `!disabled:` (counts only; never select the hash). Try the old password on a preview and confirm it is refused. **Rollback.** Reactivate from the Team page. **Impact.** QA loses its operator logins on previews; after step 3 they must use a real operator or a development database.
 
 ## 7. `CRON_SECRET`
 
@@ -265,16 +265,20 @@ flowchart TD
 
 3. **Netlify.** `read -rs NEW_VALUE`, then `netlify env:set CRON_SECRET "$NEW_VALUE" --context production --secret --force`. Do the same for `deploy-preview` and `branch-deploy` only if you want the previews on the new value too; previews refuse jobs (`JOB_RUN_PRODUCTION_ONLY`), so it matters little.
 4. **Deploy.** `netlify deploy --trigger`, and wait until the production deploy is published. The scheduled ticker keeps working with the old value until this deploy is live, then works with the new one.
-5. **Better Stack header.** Find the header's id with a filtered read, then change it. Per the vendor docs, "include the header's `id` from the response" to change one header and objects without an id are added as new headers; sending the whole array replaces all headers. Build the body from an environment variable so the value never appears in a command line:
+5. **Better Stack header.** The vendor docs say "Sending the array replaces all existing headers", so the PATCH must carry the monitor's complete header list: every existing header with its `id`, and only the `Authorization` value changed. Note the header names first, then build the body in Python from the read, so no value reaches the screen or a command line:
 
    ```bash
-   HID=$(curl -sS -H "Authorization: Bearer $BETTERSTACK_API_KEY" https://uptime.betterstack.com/api/v2/monitors/5189236 \
-     | jq -r '.data.attributes.request_headers[] | select(.name=="Authorization") | .id')
-   export NEW_VALUE HID      # NEW_VALUE already read with read -rs
-   python3 -I -c 'import os,json;print(json.dumps({"request_headers":[{"id":os.environ["HID"],"name":"Authorization","value":"Bearer "+os.environ["NEW_VALUE"]}]}))' \
-     | curl -sS -X PATCH -H "Authorization: Bearer $BETTERSTACK_API_KEY" -H 'Content-Type: application/json' --data @- \
-       https://uptime.betterstack.com/api/v2/monitors/5189236 | jq '.data.attributes | {paused, status, names: [.request_headers[].name]}'
+   M=https://uptime.betterstack.com/api/v2/monitors/5189236
+   curl -sS -H "Authorization: Bearer $BETTERSTACK_API_KEY" "$M" | jq '[.data.attributes.request_headers[].name]'
+   export NEW_VALUE          # already read with read -rs in step 3
+   BODY=$(curl -sS -H "Authorization: Bearer $BETTERSTACK_API_KEY" "$M" \
+     | python3 -I -c 'import os,sys,json;h=json.load(sys.stdin)["data"]["attributes"]["request_headers"];[x["name"] for x in h].count("Authorization")==1 or sys.exit("expected exactly one Authorization header");print(json.dumps({"request_headers":[{"id":x["id"],"name":x["name"],"value":"Bearer "+os.environ["NEW_VALUE"] if x["name"]=="Authorization" else x["value"]} for x in h]}))') \
+     && printf '%s' "$BODY" | curl -sS -X PATCH -H "Authorization: Bearer $BETTERSTACK_API_KEY" -H 'Content-Type: application/json' --data @- "$M" \
+       | jq '.data.attributes | {paused, status, names: [.request_headers[].name]}'
+   unset BODY
    ```
+
+   The names printed after the PATCH must equal the names printed before it.
 
 6. **Sentry header.** A read of the detector shows the header as a name and value pair at `dataSources[0].queryObj.headers`, with the value in plain text, so always filter. Sentry's public documentation does not describe the detector write schema **(vendor docs silent)**, but this call was run against the live detector on 2026-11-05 (HTTP success; the response echoed the new url, interval, timeout and one redacted header) and is the verified form. It builds the whole body in Python from the environment, so the value never reaches the shell history or the screen ([detector rollout decision](../decisions/2026-11-05-detector-rollout-and-redundancy.md)):
 
@@ -294,7 +298,7 @@ flowchart TD
 
    It must print `200`. Then wait one ticker interval (5 minutes) and confirm: the Better Stack heartbeat `familiarise cron-tick (prod)` is up, the Sentry cron monitor `cron-tick` is healthy, and both uptime monitors read `up`. A run by hand also works as proof: `curl -X POST -H "Authorization: Bearer ..." https://familiarisenow.com/api/cleanup/<registry-key>` ([detector rollout decision](../decisions/2026-11-05-detector-rollout-and-redundancy.md), R4).
 
-9. **Clean up.** `unset NEW_VALUE HID`; destroy the old value; `gh secret delete CRON_SECRET`.
+9. **Clean up.** `unset NEW_VALUE M`; destroy the old value; `gh secret delete CRON_SECRET`.
 
 **Rollback.** If the probe answers 401 after step 4, the monitors still hold the old value: finish steps 5 and 6. If the app or ticker misbehaves, put the old value back with step 3 and redeploy; the monitors then need the old value again. **Impact.** No user-visible effect and no session invalidated. A ticker run in flight at the moment the deploy flips may get one 401; jobs are idempotent and their leases expire.
 
@@ -303,7 +307,16 @@ flowchart TD
 The token is an Internal Integration token with Organization: Read, read at runtime by the `sentry-ingest-canary` job and the quota check. Sentry allows up to 20 tokens per internal integration and tokens "do not expire automatically, but you can manually revoke them" ([Sentry internal integrations](https://docs.sentry.io/organization/integrations/integration-platform/internal-integration/)). Whether a token value is shown only once was not stated on that page; the organisation-token page says it is shown once ([Sentry auth tokens](https://docs.sentry.io/account/auth-tokens/)). Copy it immediately.
 
 1. Sentry: **Settings, Developer Settings**, open the existing internal integration, generate a new token.
-2. Netlify: `netlify env:set SENTRY_STATS_TOKEN "$NEW_VALUE" --context production --secret --force`, then deploy.
+2. Netlify: read the new token silently in a fresh prompt, never a value left from another rotation, then set it and clear it:
+
+   ```bash
+   read -rs NEW_VALUE
+   [ -n "$NEW_VALUE" ] && netlify env:set SENTRY_STATS_TOKEN "$NEW_VALUE" --context production --secret --force
+   unset NEW_VALUE
+   ```
+
+   Then deploy.
+
 3. Verify: run the job by hand, `POST /api/cleanup/sentry-ingest-canary` with the cron bearer. The response must not report a config skip, and the digest's Sentry section stops reading "unknown".
 4. Delete the old token in the same integration.
 
@@ -390,7 +403,7 @@ Names only. Confirm with a final search before deleting.
 All read on 2026-11-05.
 
 - Supabase: <https://supabase.com/docs/guides/database/managing-passwords>, <https://supabase.com/docs/guides/api/api-keys>, <https://supabase.com/docs/guides/auth/signing-keys>, <https://supabase.com/docs/guides/troubleshooting/rotating-anon-service-and-jwt-secrets-1Jq6yd>, <https://supabase.com/docs/guides/platform/access-control>
-- Netlify: <https://docs.netlify.com/environment-variables/get-started/>, <https://docs.netlify.com/build/environment-variables/secrets-controller/>, <https://cli.netlify.com/commands/env/>, <https://cli.netlify.com/commands/deploy>
+- Netlify: <https://docs.netlify.com/environment-variables/get-started/>, <https://docs.netlify.com/build/environment-variables/secrets-controller/>, <https://cli.netlify.com/commands/env/>, <https://cli.netlify.com/commands/deploy>, <https://docs.netlify.com/deploy/manage-deploys/manage-deploys-overview/>
 - Restate: <https://docs.restate.dev/cloud/getting-started>
 - Sentry: <https://docs.sentry.io/organization/integrations/integration-platform/internal-integration/>, <https://docs.sentry.io/account/auth-tokens/>, <https://docs.sentry.io/product/monitors-and-alerts/monitors/uptime-monitoring/>
 - Better Stack: <https://betterstack.com/docs/uptime/api/update-an-existing-monitor/>, <https://betterstack.com/docs/uptime/api/getting-started-with-uptime-api/>
