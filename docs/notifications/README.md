@@ -43,9 +43,11 @@ Provider deduplication is time-limited. An extended outage or manual replay afte
 
 ## Announcements and marketing
 
-Public banners filter activation dates on their cached read. Creating a currently live announcement stages its bell in the creation transaction, keyed by announcement ID. Inactive, future and expired announcements do not immediately broadcast.
+Public banners return only currently active announcements. The authenticated management feed (`?view=manage`) returns up to 100 recent records, including drafts, scheduled and expired announcements, with private/no-store caching. The admin form validates its local-time schedule and API responses; rejected writes keep the form open instead of showing success.
 
-Future banners become visible through date filtering. There is currently no activation job that sends a bell when a future banner starts, and later edits/deletion do not recall an accepted bell. These limitations are tracked in the audit.
+Creating an active announcement stages a publication in its business transaction. Future publications use the existing outbox's `notBefore` floor and relay; there is no separate activation job. Edits replace an unsent revision, and deactivation/deletion cancels queued rows in the same transaction. A recorded send is not broadcast again by ordinary edits. Before delivery, the sender checks the source record, revision, content, links and date window. Expired, deleted or superseded work becomes an expected terminal cancellation without bug alerts or an operator-recovery entry.
+
+Provider-accepted and in-flight notices cannot be recalled atomically. The deletion dialog makes that limit explicit. Older queued announcement payloads without source/revision context require operator review rather than an unverified broadcast.
 
 Waitlist newsletters use confirmed waitlist subscriptions and separate newsletter sending identities. Account marketing consent and waitlist membership are separate surfaces; neither should be inferred from optional transactional preferences.
 

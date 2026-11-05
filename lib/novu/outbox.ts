@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import * as Sentry from "@sentry/nextjs";
 import type { NotificationOutboxKind, Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
+import { announcementDeliveryDecision } from "@/lib/announcements/delivery-policy";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { getNovuClient, isNovuConfigured } from "./client";
 import { toWire } from "./templates";
@@ -401,16 +402,49 @@ export async function attemptTrigger(
   opts: { relay?: boolean; now?: () => number; suppressSentry?: boolean } = {},
 ): Promise<TriggerResult> {
   if (row.status === "SENT") return { success: true, outcome: "SENT" };
+  if (row.status === "DEAD_LETTER")
+    return { success: true, outcome: "DEAD_LETTER" };
   if (!isNovuConfigured()) {
     return { success: false, error: "Novu not configured", outcome: "PENDING" };
   }
   const now = new Date(opts.now?.() ?? Date.now());
-  if (
-    !opts.relay &&
-    row.notBefore &&
-    new Date(row.notBefore).getTime() > now.getTime()
-  ) {
+  if (row.notBefore && new Date(row.notBefore).getTime() > now.getTime()) {
     return { success: true, staged: row, outcome: "PENDING" };
+  }
+  if (row.workflowId === "general-announcement") {
+    try {
+      const decision = await announcementDeliveryDecision(
+        row.payload,
+        now,
+        prisma,
+      );
+      if (decision && "skip" in decision) {
+        await settleRow(row, {
+          status: "DEAD_LETTER",
+          lastError: decision.skip,
+        });
+        return {
+          success: decision.skip !== "announcement:invalid_context",
+          ...(decision.skip === "announcement:invalid_context"
+            ? { error: decision.skip }
+            : {}),
+          outcome: "DEAD_LETTER",
+        };
+      }
+      if (decision && "notBefore" in decision) {
+        await settleRow(row, {
+          notBefore: decision.notBefore,
+          nextRetryAt: decision.notBefore,
+        });
+        return { success: true, outcome: "PENDING" };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error : String(error),
+        outcome: "PENDING",
+      };
+    }
   }
   const recipientCount = row.kind === "BROADCAST" ? 0 : row.recipients.length;
   const attempts = opts.relay ? row.attempts + 1 : row.attempts;

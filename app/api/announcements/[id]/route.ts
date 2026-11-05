@@ -1,11 +1,19 @@
+import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import prisma from "@/lib/prisma";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
-import type { UserRole } from "@prisma/client";
+import { UserRole } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
+import { UpdateAnnouncementSchema } from "@/schemas/announcements";
+import { assertBodySize } from "@/lib/validation/limits";
+import {
+  cancelAnnouncementBells,
+  stageAnnouncementBell,
+} from "@/lib/announcements/notifications";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { ANNOUNCEMENTS_TAG } from "@/lib/cache-tags";
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -26,14 +34,11 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Announcements fan out to every user (`notifyGeneralAnnouncement`), so
-    // BACKOFFICE_PERMISSIONS makes them ADMIN-only. The nav already hid the
-    // surface from staff; the route accepted the call regardless.
+    // Announcements fan out to every user and require announcement-management permission.
+    const role = z.nativeEnum(UserRole).safeParse(session.user.role);
     if (
-      !hasBackofficePermission(
-        session.user.role as UserRole,
-        "announcements.manage",
-      )
+      !role.success ||
+      !hasBackofficePermission(role.data, "announcements.manage")
     ) {
       return NextResponse.json(
         { success: false, error: "Forbidden" },
@@ -42,55 +47,60 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     }
 
     const { id } = await params;
-    const body = await request.json();
-
-    const existingAnnouncement = await prisma.announcement.findUnique({
-      where: { id },
+    const tooLarge = assertBodySize(request);
+    if (tooLarge) return tooLarge;
+    const parsed = UpdateAnnouncementSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success)
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Validation failed",
+          details: parsed.error.issues,
+        },
+        { status: 400 },
+      );
+    const result = await prisma.$transaction(async (tx) => {
+      const existing = await tx.announcement.findUnique({ where: { id } });
+      if (!existing) return { kind: "not_found" } as const;
+      const { startDate, endDate, ...fields } = parsed.data;
+      const start =
+        startDate === undefined
+          ? existing.startDate
+          : startDate
+            ? new Date(startDate)
+            : null;
+      const end =
+        endDate === undefined
+          ? existing.endDate
+          : endDate
+            ? new Date(endDate)
+            : null;
+      if (start && end && end <= start)
+        return { kind: "invalid_window" } as const;
+      const announcement = await tx.announcement.update({
+        where: { id },
+        data: { ...fields, startDate: start, endDate: end },
+      });
+      const staged = await stageAnnouncementBell(tx, announcement, existing);
+      return { kind: "updated", announcement, staged } as const;
     });
-
-    if (!existingAnnouncement) {
+    if (result.kind === "not_found")
       return NextResponse.json(
         { success: false, error: "Announcement not found" },
         { status: 404 },
       );
-    }
-
-    const {
-      title,
-      content,
-      isActive,
-      startDate,
-      endDate,
-      backgroundColor,
-      textColor,
-      linkUrl,
-      linkText,
-    } = body;
-
-    const announcement = await prisma.announcement.update({
-      where: { id },
-      data: {
-        ...(title !== undefined && { title }),
-        ...(content !== undefined && { content }),
-        ...(isActive !== undefined && { isActive }),
-        ...(startDate !== undefined && {
-          startDate:
-            startDate && !isNaN(new Date(startDate).getTime())
-              ? new Date(startDate)
-              : null,
-        }),
-        ...(endDate !== undefined && {
-          endDate:
-            endDate && !isNaN(new Date(endDate).getTime())
-              ? new Date(endDate)
-              : null,
-        }),
-        ...(backgroundColor !== undefined && { backgroundColor }),
-        ...(textColor !== undefined && { textColor }),
-        ...(linkUrl !== undefined && { linkUrl }),
-        ...(linkText !== undefined && { linkText }),
-      },
-    });
+    if (result.kind === "invalid_window")
+      return NextResponse.json(
+        { success: false, error: "End must be after start" },
+        { status: 400 },
+      );
+    const announcement = result.announcement;
+    await flushNotificationsAfter(
+      { bells: [result.staged] },
+      "announcements.update",
+    );
 
     // Invalidate the cached banner read so the edit shows immediately.
     revalidateTag(ANNOUNCEMENTS_TAG);
@@ -127,14 +137,11 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Announcements fan out to every user (`notifyGeneralAnnouncement`), so
-    // BACKOFFICE_PERMISSIONS makes them ADMIN-only. The nav already hid the
-    // surface from staff; the route accepted the call regardless.
+    // Announcements fan out to every user and require announcement-management permission.
+    const role = z.nativeEnum(UserRole).safeParse(session.user.role);
     if (
-      !hasBackofficePermission(
-        session.user.role as UserRole,
-        "announcements.manage",
-      )
+      !role.success ||
+      !hasBackofficePermission(role.data, "announcements.manage")
     ) {
       return NextResponse.json(
         { success: false, error: "Forbidden" },
@@ -144,20 +151,17 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     const { id } = await params;
 
-    const existingAnnouncement = await prisma.announcement.findUnique({
-      where: { id },
+    const deleted = await prisma.$transaction(async (tx) => {
+      const result = await tx.announcement.deleteMany({ where: { id } });
+      if (result.count === 0) return false;
+      await cancelAnnouncementBells(tx, id);
+      return true;
     });
-
-    if (!existingAnnouncement) {
+    if (!deleted)
       return NextResponse.json(
         { success: false, error: "Announcement not found" },
         { status: 404 },
       );
-    }
-
-    await prisma.announcement.delete({
-      where: { id },
-    });
 
     // Invalidate the cached banner read so the removal shows immediately.
     revalidateTag(ANNOUNCEMENTS_TAG);

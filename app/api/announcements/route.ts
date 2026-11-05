@@ -3,10 +3,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { unstable_cache, revalidateTag } from "next/cache";
 import prisma from "@/lib/prisma";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
-import type { UserRole } from "@prisma/client";
-import { notifyGeneralAnnouncement } from "@/lib/novu";
+import { UserRole } from "@prisma/client";
+import { z } from "zod";
+import { stageAnnouncementBell } from "@/lib/announcements/notifications";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
-import { CreateAnnouncementSchema } from "@/schemas/announcements";
+import {
+  CreateAnnouncementSchema,
+  AnnouncementListQuerySchema,
+} from "@/schemas/announcements";
 import { ANNOUNCEMENTS_TAG } from "@/lib/cache-tags";
 import { isTransientDbError, reportTransient } from "@/lib/data/fail-open";
 
@@ -27,12 +31,25 @@ const getActiveAnnouncements = unstable_cache(
         OR: [
           { startDate: null, endDate: null },
           { startDate: { lte: now }, endDate: null },
-          { startDate: null, endDate: { gte: now } },
-          { startDate: { lte: now }, endDate: { gte: now } },
+          { startDate: null, endDate: { gt: now } },
+          { startDate: { lte: now }, endDate: { gt: now } },
         ],
       },
       orderBy: { createdAt: "desc" },
       take: 5,
+      select: {
+        id: true,
+        title: true,
+        content: true,
+        isActive: true,
+        startDate: true,
+        endDate: true,
+        backgroundColor: true,
+        textColor: true,
+        linkUrl: true,
+        linkText: true,
+        createdAt: true,
+      },
     });
   },
   ["active-announcements"],
@@ -43,8 +60,47 @@ const getActiveAnnouncements = unstable_cache(
  * GET /api/announcements
  * Public endpoint to get active announcements
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const query = AnnouncementListQuerySchema.safeParse(
+      Object.fromEntries(request.nextUrl.searchParams),
+    );
+    if (!query.success)
+      return NextResponse.json(
+        { success: false, error: "Invalid query" },
+        { status: 400 },
+      );
+    if (query.data.view === "manage") {
+      const session = await getSession();
+      if (!session?.user?.id)
+        return NextResponse.json(
+          { success: false, error: "Unauthorized" },
+          {
+            status: 401,
+            headers: { "Cache-Control": "private, no-store", Vary: "Cookie" },
+          },
+        );
+      const role = z.nativeEnum(UserRole).safeParse(session.user.role);
+      if (
+        !role.success ||
+        !hasBackofficePermission(role.data, "announcements.manage")
+      )
+        return NextResponse.json(
+          { success: false, error: "Forbidden" },
+          {
+            status: 403,
+            headers: { "Cache-Control": "private, no-store", Vary: "Cookie" },
+          },
+        );
+      const announcements = await prisma.announcement.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      });
+      return NextResponse.json(
+        { success: true, data: announcements },
+        { headers: { "Cache-Control": "private, no-store", Vary: "Cookie" } },
+      );
+    }
     const announcements = await getActiveAnnouncements();
 
     return NextResponse.json(
@@ -74,9 +130,17 @@ export async function GET() {
       // disagreement. Whoever adds an s-maxage to the success path should not
       // have to also remember that a cached empty banner outlives the outage
       // that caused it. (#1125)
+      const management = request.nextUrl.searchParams.get("view") === "manage";
       return NextResponse.json(
-        { success: true, data: [] },
-        { headers: { "Cache-Control": "no-store" } },
+        management
+          ? { success: false, error: "Announcements temporarily unavailable" }
+          : { success: true, data: [] },
+        {
+          status: management ? 503 : 200,
+          headers: management
+            ? { "Cache-Control": "private, no-store", Vary: "Cookie" }
+            : { "Cache-Control": "no-store" },
+        },
       );
     }
     Sentry.captureException(
@@ -86,7 +150,7 @@ export async function GET() {
     console.error("Get announcements error:", error);
     return NextResponse.json(
       { success: false, error: "Failed to fetch announcements" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }
@@ -106,14 +170,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Announcements fan out to every user (`notifyGeneralAnnouncement`), so
-    // BACKOFFICE_PERMISSIONS makes them ADMIN-only. The nav already hid the
-    // surface from staff; the route accepted the call regardless.
+    // Announcements fan out to every user and require announcement-management permission.
+    const role = z.nativeEnum(UserRole).safeParse(session.user.role);
     if (
-      !hasBackofficePermission(
-        session.user.role as UserRole,
-        "announcements.manage",
-      )
+      !role.success ||
+      !hasBackofficePermission(role.data, "announcements.manage")
     ) {
       return NextResponse.json(
         { success: false, error: "Forbidden" },
@@ -125,7 +186,7 @@ export async function POST(request: NextRequest) {
     const tooLarge = assertBodySize(request);
     if (tooLarge) return tooLarge;
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
     const result = CreateAnnouncementSchema.safeParse(body);
     if (!result.success) {
       return NextResponse.json(
@@ -159,27 +220,8 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      const now = new Date();
-      const isLive =
-        announcement.isActive &&
-        (!announcement.startDate || announcement.startDate <= now) &&
-        (!announcement.endDate || announcement.endDate >= now);
-      const result = isLive
-        ? await notifyGeneralAnnouncement(
-            {
-              title: announcement.title,
-              content: announcement.content,
-              linkUrl: announcement.linkUrl || undefined,
-              linkText: announcement.linkText || undefined,
-            },
-            {
-              tx,
-              deferAttempt: true,
-              dedupeKey: `announcement:${announcement.id}`,
-            },
-          )
-        : undefined;
-      return { announcement, staged: result?.staged };
+      const staged = await stageAnnouncementBell(tx, announcement);
+      return { announcement, staged };
     });
     revalidateTag(ANNOUNCEMENTS_TAG);
     await flushNotificationsAfter({ bells: [staged] }, "announcements.create");

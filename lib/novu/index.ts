@@ -67,7 +67,6 @@ export {
   notifyAccountSuspended,
   notifyAccountBanned,
   // Admin & Compliance
-  notifyGeneralAnnouncement,
   notifyNewConsultantApplication,
   notifyComplianceAlert,
   // Disputes

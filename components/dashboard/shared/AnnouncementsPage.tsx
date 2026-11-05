@@ -27,18 +27,40 @@ import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2, Pencil, Megaphone, Loader2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 
-interface Announcement {
-  id: string;
-  title: string;
-  content: string;
-  isActive: boolean;
-  startDate: string | null;
-  endDate: string | null;
-  backgroundColor: string;
-  textColor: string;
-  linkUrl: string | null;
-  linkText: string | null;
-  createdAt: string;
+import { format } from "date-fns";
+import {
+  AnnouncementListResponseSchema,
+  AnnouncementMutationResponseSchema,
+  CreateAnnouncementSchema,
+  UpdateAnnouncementSchema,
+  type AnnouncementListItem as Announcement,
+} from "@/schemas/announcements";
+
+async function requireAnnouncementSuccess(response: Response) {
+  const result = AnnouncementMutationResponseSchema.safeParse(
+    await response.json().catch(() => null),
+  );
+  if (!response.ok || !result.success || !result.data.success) {
+    throw new Error(
+      result.success
+        ? (result.data.error ?? "Announcement request failed")
+        : "Announcement request failed",
+    );
+  }
+  return result.data;
+}
+
+function scheduleStatus(announcement: Announcement) {
+  if (!announcement.isActive) return "Inactive";
+  const now = Date.now();
+  if (announcement.endDate && new Date(announcement.endDate).getTime() <= now)
+    return "Expired";
+  if (
+    announcement.startDate &&
+    new Date(announcement.startDate).getTime() > now
+  )
+    return "Scheduled";
+  return "Active";
 }
 
 export interface AnnouncementsPageProps {
@@ -66,12 +88,16 @@ export function AnnouncementsPage({
 
   const queryKey = [queryKeyPrefix];
 
-  const { data: announcements = [], isLoading } = useQuery({
+  const {
+    data: announcements = [],
+    isLoading,
+    error,
+  } = useQuery({
     queryKey,
     queryFn: async (): Promise<Announcement[]> => {
-      const response = await fetch(apiBasePath);
-      const result = await response.json();
-      return result.success ? result.data : [];
+      const response = await fetch(`${apiBasePath}?view=manage`);
+      if (!response.ok) throw new Error("Failed to load announcements");
+      return AnnouncementListResponseSchema.parse(await response.json()).data;
     },
   });
 
@@ -82,7 +108,7 @@ export function AnnouncementsPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      return response.json();
+      return requireAnnouncementSuccess(response);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey });
@@ -107,7 +133,7 @@ export function AnnouncementsPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      return response.json();
+      return requireAnnouncementSuccess(response);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey });
@@ -126,7 +152,7 @@ export function AnnouncementsPage({
       });
       // Shown inside the confirm dialog, which stays open.
       if (!response.ok) throw new Error("The announcement was not deleted.");
-      return response.json();
+      return requireAnnouncementSuccess(response);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey });
@@ -137,20 +163,48 @@ export function AnnouncementsPage({
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    const data = {
-      title: formData.get("title") as string,
-      content: formData.get("content") as string,
-      isActive: formData.get("isActive") === "on",
-      backgroundColor: formData.get("backgroundColor") as string,
-      textColor: formData.get("textColor") as string,
-      linkUrl: (formData.get("linkUrl") as string) || null,
-      linkText: (formData.get("linkText") as string) || null,
-    };
-
-    if (editingAnnouncement) {
-      updateMutation.mutate({ id: editingAnnouncement.id, data });
-    } else {
-      createMutation.mutate(data);
+    try {
+      const dateField = (key: string) => {
+        const raw = formData.get(key);
+        return typeof raw === "string" && raw
+          ? new Date(raw).toISOString()
+          : null;
+      };
+      const data = {
+        title: String(formData.get("title") ?? ""),
+        content: String(formData.get("content") ?? ""),
+        isActive: formData.get("isActive") === "on",
+        backgroundColor: String(formData.get("backgroundColor") ?? "#000000"),
+        textColor: String(formData.get("textColor") ?? "#FFFFFF"),
+        linkUrl: String(formData.get("linkUrl") ?? "") || null,
+        linkText: String(formData.get("linkText") ?? "") || null,
+        startDate: dateField("startDate"),
+        endDate: dateField("endDate"),
+      };
+      const result = (
+        editingAnnouncement
+          ? UpdateAnnouncementSchema
+          : CreateAnnouncementSchema
+      ).safeParse(data);
+      if (!result.success) {
+        toast({
+          title: "Check the announcement",
+          description: result.error.issues[0]?.message,
+          variant: "destructive",
+        });
+        return;
+      }
+      if (editingAnnouncement)
+        updateMutation.mutate({
+          id: editingAnnouncement.id,
+          data: result.data,
+        });
+      else createMutation.mutate(result.data);
+    } catch {
+      toast({
+        title: "Enter valid announcement dates",
+        variant: "destructive",
+      });
     }
   };
 
@@ -193,6 +247,23 @@ export function AnnouncementsPage({
                   <Label htmlFor="content">Content</Label>
                   <Textarea id="content" name="content" required />
                 </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="startDate">Start (local time)</Label>
+                    <Input
+                      id="startDate"
+                      name="startDate"
+                      type="datetime-local"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="endDate">End (optional)</Label>
+                    <Input id="endDate" name="endDate" type="datetime-local" />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Scheduled inbox notices are sent shortly after the start time.
+                </p>
                 <div className="flex items-center gap-2">
                   <Switch id="isActive" name="isActive" defaultChecked />
                   <Label htmlFor="isActive">Active</Label>
@@ -256,6 +327,12 @@ export function AnnouncementsPage({
         <div className="flex items-center justify-center py-8">
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
+      ) : error ? (
+        <Card>
+          <CardContent className="py-8 text-center">
+            Announcements could not be loaded. Try again.
+          </CardContent>
+        </Card>
       ) : announcements.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
@@ -275,6 +352,10 @@ export function AnnouncementsPage({
                     </CardTitle>
                     <CardDescription>
                       Created {formatDate(announcement.createdAt)}
+                      {announcement.startDate &&
+                        ` · Starts ${new Date(announcement.startDate).toLocaleString()}`}
+                      {announcement.endDate &&
+                        ` · Ends ${new Date(announcement.endDate).toLocaleString()}`}
                     </CardDescription>
                   </div>
                   <div className="flex items-center gap-2">
@@ -285,7 +366,7 @@ export function AnnouncementsPage({
                           : "bg-zinc-100 text-zinc-700"
                       }`}
                     >
-                      {announcement.isActive ? "Active" : "Inactive"}
+                      {scheduleStatus(announcement)}
                     </span>
                   </div>
                 </div>
@@ -335,7 +416,7 @@ export function AnnouncementsPage({
                       </Button>
                     }
                     title="Delete this announcement?"
-                    description={`"${announcement.title}" disappears for every user. This cannot be undone.`}
+                    description={`"${announcement.title}" will be removed and its queued notices cancelled. Delivered inbox notices will remain.`}
                     confirmLabel="Delete"
                     tone="destructive"
                     onConfirm={async () => {
@@ -378,6 +459,59 @@ export function AnnouncementsPage({
                     defaultValue={editingAnnouncement.content}
                     required
                   />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-startDate">Start (local time)</Label>
+                    <Input
+                      id="edit-startDate"
+                      name="startDate"
+                      type="datetime-local"
+                      defaultValue={
+                        editingAnnouncement.startDate
+                          ? format(
+                              new Date(editingAnnouncement.startDate),
+                              "yyyy-MM-dd'T'HH:mm",
+                            )
+                          : ""
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-endDate">End (optional)</Label>
+                    <Input
+                      id="edit-endDate"
+                      name="endDate"
+                      type="datetime-local"
+                      defaultValue={
+                        editingAnnouncement.endDate
+                          ? format(
+                              new Date(editingAnnouncement.endDate),
+                              "yyyy-MM-dd'T'HH:mm",
+                            )
+                          : ""
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-linkUrl">Link URL (optional)</Label>
+                    <Input
+                      id="edit-linkUrl"
+                      name="linkUrl"
+                      type="url"
+                      defaultValue={editingAnnouncement.linkUrl ?? ""}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-linkText">Link text</Label>
+                    <Input
+                      id="edit-linkText"
+                      name="linkText"
+                      defaultValue={editingAnnouncement.linkText ?? ""}
+                    />
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Switch

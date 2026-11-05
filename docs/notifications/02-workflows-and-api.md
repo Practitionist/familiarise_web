@@ -264,10 +264,12 @@ sequenceDiagram
 
 | Workflow ID                  | Trigger Function                                          | Recipients                  | Payload Type                   |
 | ---------------------------- | --------------------------------------------------------- | --------------------------- | ------------------------------ |
-| `general-announcement`       | `notifyGeneralAnnouncement(payload)`                      | All subscribers (broadcast) | `AnnouncementPayload`          |
+| `general-announcement`       | `stageAnnouncementBell(tx, record, previous?)`            | All subscribers (broadcast) | Source/revision snapshot       |
 | `new-consultant-application` | `notifyNewConsultantApplication(adminUserIds[], payload)` | Admin team                  | `ConsultantApplicationPayload` |
 
-**AnnouncementPayload**: `title`, `content`, `linkUrl?`, `linkText?`
+**Announcement publication**: `announcementId`, `revision`, `title`, `content`, nullable ISO `startDate`/`endDate`, `linkUrl?`, `linkText?`. The routes stage this snapshot with the source transaction. The existing outbox relay handles future start times; source checks cancel stale/disabled/deleted/expired publications. Accepted notices cannot be recalled.
+
+`GET /api/announcements` is the public active-banner feed. `GET /api/announcements?view=manage` requires announcement-management permission, returns up to 100 recent records including inactive and future items, and uses private/no-store caching. POST and PATCH accept nullable schedule/link fields, validate HTTP(S) links and enforce end-after-start, including partial edits against the saved window. DELETE cancels queued publications in its source transaction. Ordinary edits do not rebroadcast a recorded send.
 
 **ConsultantApplicationPayload**: `applicantName`, `applicantEmail`, `dashboardUrl`
 
@@ -452,7 +454,7 @@ graph TD
     end
 
     subgraph "Admin"
-        AD1["/api/announcements"] -->|notifyGeneralAnnouncement| NOVU
+        AD1["/api/announcements"] -->|stage publication in outbox| NOVU
     end
 ```
 

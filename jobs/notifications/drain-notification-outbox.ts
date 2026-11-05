@@ -20,6 +20,7 @@ import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { runJob } from "@/lib/observability/job-sentry";
+import { DEAD_LETTER_NOTIFICATION_WHERE } from "@/lib/backoffice/queue-predicates";
 import { postOpsChat } from "@/lib/observability/ops-chat";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu/outbox";
 
@@ -118,6 +119,7 @@ export async function runNotificationDrainTick(params: {
         attempts: true,
         status: true,
         createdAt: true,
+        notBefore: true,
       },
     });
 
@@ -140,12 +142,13 @@ export async function runNotificationDrainTick(params: {
         result.sent += 1;
       } else if (outcome.outcome === "DEAD_LETTER") {
         result.deadLettered += 1;
-        tickFailures.push({
-          id: row.id,
-          workflowId: row.workflowId,
-          outcome: "DEAD_LETTER",
-          ...(outcome.error ? { error: String(outcome.error) } : {}),
-        });
+        if (!outcome.success)
+          tickFailures.push({
+            id: row.id,
+            workflowId: row.workflowId,
+            outcome: "DEAD_LETTER",
+            ...(outcome.error ? { error: String(outcome.error) } : {}),
+          });
       } else if (outcome.outcome === "RETRY") {
         result.retried += 1;
         tickFailures.push({
@@ -189,17 +192,22 @@ export async function runNotificationDrainTick(params: {
       }
     }
 
+    const failedDeadLetters = tickFailures.filter(
+      (f) => f.outcome === "DEAD_LETTER",
+    );
     if (tickFailures.length > 0) {
       Sentry.captureException(
         new Error(
           `Notification outbox drain encountered ${tickFailures.length} failure(s) (${result.deadLettered} dead-lettered, ${result.retried} retried)`,
         ),
         {
-          level: result.deadLettered > 0 ? "error" : "warning",
+          level: failedDeadLetters.length > 0 ? "error" : "warning",
           tags: {
             subsystem: "novu",
             op: "drain-outbox",
-            ...(result.deadLettered > 0 ? { outbox_dead_letter: "true" } : {}),
+            ...(failedDeadLetters.length > 0
+              ? { outbox_dead_letter: "true" }
+              : {}),
           },
           extra: {
             scanned: result.scanned,
@@ -232,7 +240,7 @@ export async function runNotificationDrainTick(params: {
             where: { status: { in: ["PENDING", "RETRY"] } },
           }),
           params.prisma.notificationOutbox.count({
-            where: { status: "DEAD_LETTER" },
+            where: DEAD_LETTER_NOTIFICATION_WHERE,
           }),
         ]);
         Sentry.metrics?.gauge?.("notifications.outbox.pending", pendingCount);
@@ -245,7 +253,7 @@ export async function runNotificationDrainTick(params: {
       }
     }
 
-    if (result.deadLettered > 0) {
+    if (failedDeadLetters.length > 0) {
       const deadLetterWorkflows = [
         ...new Set(
           tickFailures
@@ -254,7 +262,7 @@ export async function runNotificationDrainTick(params: {
         ),
       ].join(", ");
       await postOpsChat(
-        `:rotating_light: Notification outbox dead-lettered ${result.deadLettered} row(s) (${deadLetterWorkflows || "unknown"})`,
+        `:rotating_light: Notification outbox dead-lettered ${failedDeadLetters.length} row(s) (${deadLetterWorkflows || "unknown"})`,
       );
     }
 

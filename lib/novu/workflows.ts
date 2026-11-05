@@ -477,13 +477,6 @@ export type PayoutInput = Omit<PayoutPayload, "amount" | "amountPaise"> & {
   amount: number;
 };
 
-export type AnnouncementPayload = {
-  title: string;
-  content: string;
-  linkUrl?: string;
-  linkText?: string;
-};
-
 export type DisputePayload = {
   disputeId?: string;
   amount: string;
