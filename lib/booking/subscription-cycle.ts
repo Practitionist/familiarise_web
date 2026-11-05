@@ -151,9 +151,14 @@ export async function settleSubscriptionCycleWithNotice(
 
   // The money half: every tranche up to the highest matured one that is
   // still unstamped starts its hold now, anchored on the last delivered end.
-  // Tranches follow the sessions sold, as they were minted at capture.
+  // Tranches follow the sessions sold, as they were minted at capture. Once
+  // every session the buyer kept is delivered, every tranche left has matured,
+  // including the retained part of one a session-count refund cut short.
   const tranches = subscriptionTranches(terms, terms.sessionsTotal);
-  const matured = maturedTrancheOrdinal(tranches, entitlement.completed);
+  const matured =
+    entitlement.total > 0 && entitlement.completed >= entitlement.total
+      ? tranches.count - 1
+      : maturedTrancheOrdinal(tranches, entitlement.completed);
   if (matured >= 0 && wrapper.payment.length > 0) {
     const lastCompletedEnd = wrapper.occurrences
       .filter((o) => !o.deletedAt && isCompletedOccurrence(o))

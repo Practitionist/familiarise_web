@@ -57,7 +57,10 @@ import {
   transitionTrial,
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
-import { settleSubscriptionCycleWithNotice } from "@/lib/booking/subscription-cycle";
+import {
+  settleSubscriptionCycle,
+  settleSubscriptionCycleWithNotice,
+} from "@/lib/booking/subscription-cycle";
 import {
   soldTermsOf,
   subscriptionEntitlement,
@@ -723,15 +726,23 @@ async function completeSubscriptions(
       );
 
       // #836 — guard rides the WHERE: a cancel landing between the sweep's
-      // read and this write must not be overwritten by COMPLETED.
+      // read and this write must not be overwritten by COMPLETED. The tranche
+      // holds are stamped first in the same commit: a session-count refund
+      // can end the entitlement with no delivery left to stamp them.
+      const appointmentId = subscription.appointment?.id;
       const moved = await completeThroughHelper(() =>
-        prisma.$transaction((tx) =>
-          transitionSubscriptionRequest(tx, {
+        prisma.$transaction(async (tx) => {
+          if (appointmentId)
+            await settleSubscriptionCycle(tx, {
+              appointmentId,
+              now: new Date(),
+            });
+          return transitionSubscriptionRequest(tx, {
             where: { id: subscription.id },
             to: AppointmentStatus.COMPLETED,
             reason: AUTO_COMPLETE_REASON,
-          }),
-        ),
+          });
+        }),
       );
       if (!moved) {
         console.log(`   ⏭️ Skipped — status changed since sweep read`);

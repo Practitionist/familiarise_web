@@ -551,6 +551,12 @@ the plan end waits while such a remedy's refund is failed or unsent. Once the
 plan settled without those sessions, their refund is still owed: a retry pays it
 and a void is refused. The cancel's subscription CAS is pinned to the
 `sessionsRefunded` it quoted, so an approval landing mid-cancel re-quotes it.
+Earnings tranches keep the allocation minted at capture (over `sessionsTotal`),
+but once every session the buyer kept is delivered, every tranche left has
+matured: `settleSubscriptionCycle` stamps them all, including the retained part
+of one the refund cut short, and auto-complete runs that stamp in the commit
+that marks the plan COMPLETED, so a refund that ends the entitlement with no
+delivery left never strands an earned tranche.
 
 At the plan end the `settle-cancelled-sessions` sweep
 (`scripts/appointments/settle-cancelled-sessions.ts`) settles once: every
