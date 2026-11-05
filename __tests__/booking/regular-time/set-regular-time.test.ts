@@ -9,7 +9,11 @@ const mockPrisma = {
   $transaction: jest.fn(),
 };
 const mockTx = {
-  regularTime: { updateMany: jest.fn(), createMany: jest.fn() },
+  regularTime: {
+    findMany: jest.fn(),
+    updateMany: jest.fn(),
+    createMany: jest.fn(),
+  },
   subscription: { updateMany: jest.fn() },
 };
 jest.mock("@/lib/prisma", () => ({
@@ -116,6 +120,7 @@ beforeEach(() => {
     }),
   );
   mockTx.regularTime.createMany.mockResolvedValue({ count: 3 });
+  mockTx.regularTime.findMany.mockResolvedValue([]);
   mockTx.subscription.updateMany.mockResolvedValue({ count: 1 });
   (stageBell as jest.Mock).mockResolvedValue({ id: "bell-1" });
   (allocate as jest.Mock).mockResolvedValue({ success: true });
@@ -201,6 +206,9 @@ describe("setRegularTime", () => {
       appointment: { id: "appt-1", occurrences: placed },
     });
     mockPrisma.subscription.findUnique.mockResolvedValue(editable);
+    mockTx.regularTime.findMany.mockResolvedValue(
+      ["rt-0", "rt-1", "rt-2"].map((id) => ({ id })),
+    );
     const edited = [1, 2, 4].map((weekday) => ({
       weekday,
       localStartMinutes: 9 * 60,
@@ -237,6 +245,33 @@ describe("setRegularTime", () => {
     );
     expect(out).toMatchObject({ status: 409, code: "REGULAR_TIME_CHANGED" });
     expect(mockTx.regularTime.createMany).not.toHaveBeenCalled();
+  });
+
+  it("M1: rows changed between the read and the lock, or a racing insert, are a plain 409", async () => {
+    mockPrisma.subscription.findUnique.mockResolvedValue(
+      plan({ regularTimes: liveRows(START) }),
+    );
+    mockTx.regularTime.findMany.mockResolvedValue([{ id: "rt-other" }]);
+    const edited = [1, 2, 4].map((weekday) => ({
+      weekday,
+      localStartMinutes: 600,
+    }));
+    expect(
+      await setRegularTime(consultant, "sub-1", edited, NOW),
+    ).toMatchObject({ status: 409, code: "REGULAR_TIME_CHANGED" });
+    expect(mockTx.regularTime.updateMany).not.toHaveBeenCalled();
+
+    mockPrisma.subscription.findUnique.mockResolvedValue(plan());
+    mockTx.regularTime.findMany.mockResolvedValue([]);
+    mockTx.regularTime.createMany.mockRejectedValue(
+      Object.assign(new Error("unique"), {
+        code: "P2002",
+        meta: { target: ["subscriptionId", "weekday", "localStartMinutes"] },
+      }),
+    );
+    expect(
+      await setRegularTime(consultant, "sub-1", MWF_1800, NOW),
+    ).toMatchObject({ status: 409, code: "REGULAR_TIME_CHANGED" });
   });
 
   it("T14: wrong count, two on one day and off-grid are plain refusals", async () => {

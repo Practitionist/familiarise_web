@@ -44,6 +44,7 @@ import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { getAppUrl } from "@/lib/url";
 import { withAppointmentLock } from "@/utils/appointmentlock";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 
 /** Plans the roll-forward and the setter may place into. */
 export const LIVE_PLAN_STATUSES: AppointmentStatus[] = [
@@ -497,6 +498,15 @@ export async function setRegularTime(
   const appointmentId = plan.appointment.id;
   const written = await withAppointmentLock(appointmentId, async () => {
     const result = await prisma.$transaction(async (tx) => {
+      // The rows read before the lock must still be the live ones.
+      const stillLive = await tx.regularTime.findMany({
+        where: { subscriptionId, validUntil: null },
+        select: { id: true },
+      });
+      const sameRows =
+        stillLive.length === liveIds.length &&
+        stillLive.every((r) => liveIds.includes(r.id));
+      if (!sameRows) return "changed" as const;
       const closed = await tx.regularTime.updateMany({
         where: { id: { in: liveIds }, subscriptionId, validUntil: null },
         data: { validUntil: validFrom },
@@ -535,6 +545,8 @@ export async function setRegularTime(
     return "written" as const;
   }).catch((error: unknown) => {
     if (error instanceof PlanNotLiveError) return "not-live" as const;
+    // A racing first set inserted the same live slot (regular_time_one_live_slot).
+    if (isUniqueViolationOn(error, "subscriptionId")) return "changed" as const;
     throw error;
   });
   if (written === "not-live") {
