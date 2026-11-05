@@ -17,27 +17,9 @@ const PREFIX = "expert-reliability:";
 const expertReliabilityCorrelationId = (consultantProfileId: string) =>
   `${PREFIX}${consultantProfileId}`;
 
-/** HOURS_CHANGED: a placed session that started outside the host's hours, never moved. */
-type ExpertStrikeSource =
-  "EXPERT_CANCEL" | "CONSULTANT_NO_SHOW" | "HOURS_CHANGED";
+type ExpertStrikeSource = "EXPERT_CANCEL" | "CONSULTANT_NO_SHOW";
 /** A platform void is the platform's miss, never the expert's: it records nothing. */
 type ExpertMissCause = ExpertStrikeSource | "PLATFORM_VOID";
-
-/** Whether a strike already names this session, whatever its cause. */
-export async function hasStrikeForSession(
-  db: Pick<Tx, "systemEvent">,
-  consultantProfileId: string,
-  occurrenceId: string,
-): Promise<boolean> {
-  const row = await db.systemEvent.findFirst({
-    where: {
-      correlationId: expertReliabilityCorrelationId(consultantProfileId),
-      context: { path: ["occurrenceIds"], array_contains: [occurrenceId] },
-    },
-    select: { id: true },
-  });
-  return row !== null;
-}
 
 /** Writes the strike on the caller's transaction, so it commits with the cancel or claim. */
 export async function recordExpertStrike(
