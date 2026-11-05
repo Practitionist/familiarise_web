@@ -56,7 +56,7 @@ beforeEach(() => {
   delete process.env.EMAIL_ALLOWLIST;
   process.env.RESEND_API_KEY = "re_test";
   jest.spyOn(console, "info").mockImplementation(() => {});
-  mockCreate.mockResolvedValue({ id: "fe-1" });
+  mockCreate.mockResolvedValue({ id: "fe-1", createdAt: new Date() });
   mockFindSuppression.mockResolvedValue(null);
   mockSend.mockResolvedValue({ data: { id: "re-1" }, error: null });
 });

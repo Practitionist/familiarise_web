@@ -72,7 +72,7 @@ afterEach(() => {
 describe("deliver — missing key (#1298 Fix 3)", () => {
   it("dead-letters the message instead of returning early", async () => {
     delete process.env.RESEND_API_KEY;
-    mockCreate.mockResolvedValue({ id: "fe-1" });
+    mockCreate.mockResolvedValue({ id: "fe-1", createdAt: new Date() });
     mockUpdate.mockResolvedValue({});
 
     const result = await deliver(message, "WELCOME");
@@ -106,7 +106,9 @@ describe("stage + attempt (#1654)", () => {
   });
 
   it("stages inside the caller's transaction, then a successful attempt marks SENT with the Resend id", async () => {
-    const txCreate = jest.fn().mockResolvedValue({ id: "fe-tx" });
+    const txCreate = jest
+      .fn()
+      .mockResolvedValue({ id: "fe-tx", createdAt: new Date() });
     const tx = {
       failedEmail: { create: txCreate },
       // #1647 — the suppression read goes through the same transaction.
@@ -125,6 +127,7 @@ describe("stage + attempt (#1654)", () => {
     expect(staged).toEqual({
       id: "fe-tx",
       idempotencyKey: idempotencyKeyFor(message, "PAYMENT_SUCCESS", "fe-tx"),
+      createdAt: expect.any(Date),
     });
     // The row went through the transaction, not the global client.
     expect(txCreate.mock.calls[0][0].data).toMatchObject({
@@ -158,7 +161,7 @@ describe("stage + attempt (#1654)", () => {
     );
 
     const result = await attempt(
-      { id: "fe-2", idempotencyKey: "k" },
+      { id: "fe-2", createdAt: new Date(), idempotencyKey: "k" },
       message,
       "WELCOME",
       { budgetMs: 10 },
@@ -178,7 +181,7 @@ describe("stage + attempt (#1654)", () => {
     });
 
     const result = await attempt(
-      { id: "fe-3", idempotencyKey: "k" },
+      { id: "fe-3", createdAt: new Date(), idempotencyKey: "k" },
       message,
       "WELCOME",
       { budgetMs: 3_000 },
@@ -206,7 +209,7 @@ describe("suppressed recipient (#1647)", () => {
       email: "user@example.com",
       reason: "HARD_BOUNCE",
     });
-    mockCreate.mockResolvedValue({ id: "fe-s" });
+    mockCreate.mockResolvedValue({ id: "fe-s", createdAt: new Date() });
 
     const result = await deliver(message, "WELCOME");
 
@@ -242,7 +245,7 @@ describe("idempotencyKeyFor", () => {
       error: { message: "rate_limited", name: "rate_limit_exceeded" },
       headers: null,
     });
-    mockCreate.mockResolvedValue({ id: "fe-1" });
+    mockCreate.mockResolvedValue({ id: "fe-1", createdAt: new Date() });
     mockUpdate.mockResolvedValue({});
 
     await deliver(message, "WELCOME");
@@ -277,7 +280,7 @@ describe("isTerminalSendError", () => {
 describe("credential emails", () => {
   it("stage a redacted body so the outbox never holds a live code or link", async () => {
     process.env.RESEND_API_KEY = "re_test";
-    mockCreate.mockResolvedValue({ id: "fe-cred" });
+    mockCreate.mockResolvedValue({ id: "fe-cred", createdAt: new Date() });
     mockSend.mockResolvedValue({ data: { id: "re-cred" }, error: null });
     mockUpdate.mockResolvedValue({});
 
@@ -297,7 +300,7 @@ describe("credential emails", () => {
 describe("per-recipient daily cap", () => {
   it("drops the sixth reset mail to one address before staging, and leaves other types alone", async () => {
     process.env.RESEND_API_KEY = "re_test";
-    mockCreate.mockResolvedValue({ id: "fe-cap" });
+    mockCreate.mockResolvedValue({ id: "fe-cap", createdAt: new Date() });
     mockUpdate.mockResolvedValue({});
     mockSend.mockResolvedValue({ data: { id: "rs-cap" }, error: null });
     const reset = { ...message, to: "Capped@Example.com " };
@@ -320,7 +323,10 @@ describe("per-recipient daily cap", () => {
 
 it("rechecks suppression after staging and before the deferred attempt", async () => {
   process.env.RESEND_API_KEY = "re_test";
-  mockCreate.mockResolvedValue({ id: "fe-later-suppressed" });
+  mockCreate.mockResolvedValue({
+    id: "fe-later-suppressed",
+    createdAt: new Date(),
+  });
   const staged = await stage(message, "WELCOME");
   mockFindSuppression.mockResolvedValue({ reason: "COMPLAINT" });
   const result = await attempt(staged, message, "WELCOME", { budgetMs: 1000 });
@@ -340,7 +346,7 @@ describe("queued account delivery policy", () => {
   };
   beforeEach(() => {
     process.env.RESEND_API_KEY = "re_test";
-    mockCreate.mockResolvedValue({ id: "fe-policy" });
+    mockCreate.mockResolvedValue({ id: "fe-policy", createdAt: new Date() });
     mockPolicyUser.mockResolvedValue({
       email: message.to,
       erasedAt: null,

@@ -84,6 +84,7 @@ import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import { postOpsChat } from "@/lib/observability/ops-chat";
 import { nextRetryAt } from "@/lib/retry/backoff";
+import { providerWindowRefusal } from "@/lib/retry/provider-window";
 
 const MAX_BATCH = 50;
 const MAX_ATTEMPTS = 5;
@@ -225,6 +226,18 @@ export async function runEmailRetryTick(params: {
 
     for (const [index, row] of dueRows.entries()) {
       result.scanned += 1;
+      if (row.resendId || row.sentAt) {
+        await prisma.failedEmail.update({
+          where: { id: row.id },
+          data: {
+            status: "SENT",
+            sentAt: row.sentAt ?? nowDate,
+            lastError: null,
+          },
+        });
+        result.sent += 1;
+        continue;
+      }
 
       const heldDomain = heldRecipientDomain(row.recipient);
       if (heldDomain) {
@@ -271,6 +284,16 @@ export async function runEmailRetryTick(params: {
         await prisma.failedEmail.update({
           where: { id: row.id },
           data: { status: "DEAD_LETTER", lastError: `policy:${refusal}` },
+        });
+        result.deadLettered += 1;
+        continue;
+      }
+
+      const windowRefusal = providerWindowRefusal(row.createdAt, nowDate);
+      if (windowRefusal) {
+        await prisma.failedEmail.update({
+          where: { id: row.id },
+          data: { status: "DEAD_LETTER", lastError: windowRefusal },
         });
         result.deadLettered += 1;
         continue;
@@ -472,6 +495,14 @@ async function drainBatches(ctx: {
 
   for (const [index, row] of dueBatches.entries()) {
     result.batchesScanned += 1;
+    if (row.sentAt) {
+      await prisma.failedEmailBatch.update({
+        where: { id: row.id },
+        data: { status: "SENT", lastError: null },
+      });
+      result.batchesSent += 1;
+      continue;
+    }
 
     const parsed = batchMessagesSchema.safeParse(row.payload);
     if (!parsed.success) {
@@ -525,6 +556,16 @@ async function drainBatches(ctx: {
           lastError:
             "batch audience changed: consent, preferences or suppression",
         },
+      });
+      result.batchesDeadLettered += 1;
+      continue;
+    }
+
+    const windowRefusal = providerWindowRefusal(row.createdAt, nowDate);
+    if (windowRefusal) {
+      await prisma.failedEmailBatch.update({
+        where: { id: row.id },
+        data: { status: "DEAD_LETTER", lastError: windowRefusal },
       });
       result.batchesDeadLettered += 1;
       continue;

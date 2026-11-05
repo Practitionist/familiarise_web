@@ -311,6 +311,7 @@ describe("5. flushNotificationsAfter concurrent bundle dispatch & inline fallbac
               {
                 staged: {
                   id: "fe-1",
+                  createdAt: new Date(),
                   idempotencyKey: "APPOINTMENT_BOOKED/failed-email/fe-1",
                 },
                 message: {

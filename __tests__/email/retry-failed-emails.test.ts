@@ -738,3 +738,69 @@ describe("individual account policy at relay", () => {
     expect(updates).toEqual([]);
   });
 });
+
+describe("provider acceptance review", () => {
+  it("does not replay an old individual message under an expired provider key", async () => {
+    const stub = makePrismaStub(
+      makeRow({ createdAt: new Date(FROZEN_NOW_MS - 25 * 3600000) }),
+    );
+    const resend = mockResend(async () => ({
+      data: { id: "not-sent" },
+      error: null,
+      headers: null,
+    }));
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+    expect(resend.send).not.toHaveBeenCalled();
+    expect(result.deadLettered).toBe(1);
+    expect(stub.updates[0].data).toMatchObject({
+      status: "DEAD_LETTER",
+      lastError: "review:provider_acceptance_unknown",
+    });
+  });
+  it("does not replay an old batch or change its stored payload/key", async () => {
+    const batch = makeBatchRow({
+      createdAt: new Date(FROZEN_NOW_MS - 25 * 3600000),
+    });
+    const stub = makePrismaStub(makeRow({ resendId: "accepted" }), {
+      batches: [batch],
+    });
+    const batchSend = jest.fn();
+    const resend = mockResend(
+      async () => ({ data: { id: "not-sent" }, error: null, headers: null }),
+      batchSend,
+    );
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+    expect(resend.send).not.toHaveBeenCalled();
+    expect(batchSend).not.toHaveBeenCalled();
+    expect(result.batchesDeadLettered).toBe(1);
+    expect(stub.batchUpdates[0].data).toEqual({
+      status: "DEAD_LETTER",
+      lastError: "review:provider_acceptance_unknown",
+    });
+    expect(batch.idempotencyKey).toBe("WAITLIST_BROADCAST/abc");
+  });
+  it("acknowledges a recorded provider receipt without sending a second message", async () => {
+    const stub = makePrismaStub(makeRow({ resendId: "accepted" }));
+    const resend = mockResend(async () => ({
+      data: { id: "not-sent" },
+      error: null,
+      headers: null,
+    }));
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+    expect(result.sent).toBe(1);
+    expect(resend.send).not.toHaveBeenCalled();
+    expect(stub.updates[0].data).toMatchObject({ status: "SENT" });
+  });
+});

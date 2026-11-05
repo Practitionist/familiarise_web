@@ -244,12 +244,12 @@ Enforced in `lib/email/delivery-guard.ts` across `stage()`, `attempt()`, `retry-
 
 - **Mode**: Only `EMAIL_DELIVERY_MODE=live` disables the guard; any other value or unset defaults to `allowlist`.
 - **Allowlist Matching**: Permits recipients on `familiarisenow.com` (and its subdomains) or explicit entries in comma-separated `EMAIL_ALLOWLIST` (exact addresses or `@domain`/`domain`). If any recipient in `to`, `cc`, or `bcc` is disallowed, the entire message is held in `FailedEmail` as `DEAD_LETTER` (`lastError = "held:pre-launch"`).
-- **Production Launch Requirement**: Set `EMAIL_DELIVERY_MODE=live` in the Netlify production environment variables. Every scheduled job that sends mail runs on the Netlify ticker.
+- **Production Launch Requirement**: After controlled non-seeded recipient tests and legacy held-queue review, enable `EMAIL_DELIVERY_MODE=live` only in the active host's production scope. Preview scopes stay guarded. Sending jobs use the active platform ticker with Netlify standby retained; changing delivery mode never authorizes replaying held seeded messages.
 
 The full zone is in [Domains and DNS records](../deployment/README.md#domains-and-dns-records). In short:
 
 - The apex has SPF `v=spf1 -all` and a null MX (`0 .`), so `familiarisenow.com` neither sends nor receives as itself.
-- `_dmarc` is `v=DMARC1; p=none; rua=mailto:connect@practitionist.com; fo=1`. The policy tightens to `quarantine` and then `reject` after about two weeks of reports.
+- `_dmarc` is `v=DMARC1; p=none; rua=mailto:connect@practitionist.com; fo=1`. An owner reviews report receipt and authentication headers before changing enforcement. No job automatically tightens this DNS policy.
 - `mail.` and `news.` each have four records (DKIM, bounce MX, SPF and the `rsend` CNAME), verified in Resend region `ap-northeast-1`.
 - `EMAIL_ALLOWLIST` in the Netlify context `all` includes `connect@practitionist.com`, so pre-launch support and compliance mail is not held.
 

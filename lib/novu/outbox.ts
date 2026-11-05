@@ -9,20 +9,23 @@
  * when the inline attempt did not settle it. Same shape as lib/email/deliver.ts.
  */
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
 import type { NotificationOutboxKind, Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { announcementDeliveryDecision } from "@/lib/announcements/delivery-policy";
 import { nextRetryAt } from "@/lib/retry/backoff";
+import { providerWindowRefusal } from "@/lib/retry/provider-window";
 import { getNovuClient, isNovuConfigured } from "./client";
 import { toWire } from "./templates";
-import type { NovuWorkflowId } from "./templates/types";
+import { novuWorkflowIdSchema, type NovuWorkflowId } from "./templates/types";
+import { resolveRecipientBellPolicy } from "./policy";
 
 /** Payload base type — all workflow payloads extend this. */
-export type NovuPayload = Record<
-  string,
-  string | number | boolean | null | undefined
->;
+const novuPayloadSchema = z.record(
+  z.union([z.string(), z.number(), z.boolean(), z.null(), z.undefined()]),
+);
+export type NovuPayload = z.infer<typeof novuPayloadSchema>;
 
 export interface TriggerResult {
   success: boolean;
@@ -137,6 +140,7 @@ export function deriveTransactionId(
 
 const STAGED_SELECT = {
   id: true,
+  createdAt: true,
   workflowId: true,
   kind: true,
   recipients: true,
@@ -371,8 +375,8 @@ function errorText(error: unknown): string {
 async function sendRow(row: StagedTrigger): Promise<void> {
   const novu = getNovuClient();
   const wire = toWire(
-    row.workflowId as NovuWorkflowId,
-    row.payload as NovuPayload,
+    novuWorkflowIdSchema.parse(row.workflowId),
+    novuPayloadSchema.parse(row.payload),
   );
   const transactionId = row.transactionId || row.id;
   if (row.kind === "BROADCAST") {
@@ -437,6 +441,64 @@ export async function attemptTrigger(
           nextRetryAt: decision.notBefore,
         });
         return { success: true, outcome: "PENDING" };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error : String(error),
+        outcome: "PENDING",
+      };
+    }
+  }
+  const windowRefusal = providerWindowRefusal(
+    row.createdAt,
+    now,
+    row.notBefore,
+  );
+  if (windowRefusal) {
+    await settleRow(row, {
+      status: "DEAD_LETTER",
+      lastError: windowRefusal,
+    });
+    return { success: false, error: windowRefusal, outcome: "DEAD_LETTER" };
+  }
+  const workflow = novuWorkflowIdSchema.safeParse(row.workflowId);
+  if (
+    !workflow.success ||
+    !novuPayloadSchema.safeParse(row.payload).success ||
+    (row.kind !== "BROADCAST" && row.recipients.length === 0)
+  ) {
+    await settleRow(row, {
+      status: "DEAD_LETTER",
+      lastError: "notification:invalid_context",
+    });
+    return {
+      success: false,
+      error: "notification:invalid_context",
+      outcome: "DEAD_LETTER",
+    };
+  }
+  if (row.kind !== "BROADCAST") {
+    try {
+      const policy = await resolveRecipientBellPolicy(
+        workflow.data,
+        row.recipients,
+        { deferrable: false },
+      );
+      if (policy.allowedRecipients.length !== row.recipients.length) {
+        const partial = policy.allowedRecipients.length > 0;
+        const reason = partial
+          ? "review:audience_changed"
+          : "recipient:audience_changed";
+        await settleRow(row, {
+          status: "DEAD_LETTER",
+          lastError: reason,
+        });
+        return {
+          success: !partial,
+          ...(partial ? { error: reason } : {}),
+          outcome: "DEAD_LETTER",
+        };
       }
     } catch (error) {
       return {

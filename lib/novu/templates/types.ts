@@ -14,10 +14,10 @@
  */
 
 import { z } from "zod";
-import type { NOVU_WORKFLOWS } from "../workflows";
+import { NOVU_WORKFLOWS } from "../workflows";
 
-export type NovuWorkflowId =
-  (typeof NOVU_WORKFLOWS)[keyof typeof NOVU_WORKFLOWS];
+export const novuWorkflowIdSchema = z.nativeEnum(NOVU_WORKFLOWS);
+export type NovuWorkflowId = z.infer<typeof novuWorkflowIdSchema>;
 
 /**
  * The opt-out switch a workflow honours, written to `subscriber.data` by

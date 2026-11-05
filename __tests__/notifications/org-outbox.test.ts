@@ -58,6 +58,7 @@ const payload = {
 function stagedRow(args: { create: Record<string, unknown> }) {
   return {
     id: "row-1",
+    createdAt: new Date(),
     workflowId: args.create.workflowId,
     kind: args.create.kind,
     recipients: args.create.recipients,

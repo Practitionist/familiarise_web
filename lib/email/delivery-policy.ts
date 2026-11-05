@@ -24,7 +24,7 @@ export const emailDeliveryPolicySchema = z
 
 export type EmailDeliveryPolicy = z.infer<typeof emailDeliveryPolicySchema>;
 
-const RECIPIENT_SELECT = {
+export const EMAIL_POLICY_USER_SELECT = {
   email: true,
   erasedAt: true,
   orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
@@ -35,9 +35,9 @@ export interface EmailPolicyReader {
   user: {
     findUnique(args: {
       where: { id: string };
-      select: typeof RECIPIENT_SELECT;
+      select: typeof EMAIL_POLICY_USER_SELECT;
     }): Promise<Prisma.UserGetPayload<{
-      select: typeof RECIPIENT_SELECT;
+      select: typeof EMAIL_POLICY_USER_SELECT;
     }> | null>;
   };
 }
@@ -61,14 +61,25 @@ export async function emailPolicyRefusal(
   if (!parsed.success) return "invalid_policy";
   const user = await db.user.findUnique({
     where: { id: parsed.data.userId },
-    select: RECIPIENT_SELECT,
+    select: EMAIL_POLICY_USER_SELECT,
   });
+  return emailPolicyRefusalForUser(parsed.data, recipient, user);
+}
+
+/** Evaluates one validated policy against a snapshot loaded through the caller's transaction. */
+export function emailPolicyRefusalForUser(
+  policy: EmailDeliveryPolicy,
+  recipient: string,
+  user: Prisma.UserGetPayload<{
+    select: typeof EMAIL_POLICY_USER_SELECT;
+  }> | null,
+): EmailPolicyRefusal | null {
   if (!user) return "recipient_missing";
   if (user.erasedAt) return "recipient_erased";
   if (!user.email || normaliseEmail(user.email) !== normaliseEmail(recipient)) {
     return "recipient_changed";
   }
-  return isEmailAllowedForUser(user, parsed.data.category)
+  return isEmailAllowedForUser(user, policy.category)
     ? null
     : "preference_changed";
 }

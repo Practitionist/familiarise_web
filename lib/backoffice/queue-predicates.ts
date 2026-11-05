@@ -1,6 +1,6 @@
 import type { DisputeStatus, ErasureStatus, Prisma } from "@prisma/client";
 
-import { ANNOUNCEMENT_CANCELLATION_REASONS } from "@/schemas/announcements";
+import { EXPECTED_NOTIFICATION_CANCELLATIONS } from "@/lib/novu/cancellations";
 import { HELD_PRE_LAUNCH } from "@/lib/email/held";
 
 /**
@@ -75,12 +75,12 @@ export const DEAD_LETTER_EMAIL_WHERE: Prisma.FailedEmailWhereInput = {
   OR: [{ lastError: null }, { lastError: { not: HELD_PRE_LAUNCH } }],
 };
 
-/** Expected announcement cancellations are retained for audit, not operator recovery. */
+/** Expected recipient/source cancellations remain in the audit trail, not operator recovery. */
 export const DEAD_LETTER_NOTIFICATION_WHERE: Prisma.NotificationOutboxWhereInput =
   {
     status: "DEAD_LETTER",
     OR: [
       { lastError: null },
-      { lastError: { notIn: [...ANNOUNCEMENT_CANCELLATION_REASONS] } },
+      { lastError: { notIn: [...EXPECTED_NOTIFICATION_CANCELLATIONS] } },
     ],
   };

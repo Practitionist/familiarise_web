@@ -18,6 +18,10 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { BREACH_REPORTING_DEADLINE_HOURS } from "@/lib/backoffice/queue-predicates";
+import {
+  EMAIL_REPLAY_EXPLANATIONS,
+  type EmailReplayRefusal,
+} from "@/lib/email/replay-policy";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import { GstRegisterDownload } from "./GstRegisterDownload";
 
@@ -279,6 +283,7 @@ interface FailedEmail {
   attempts: number;
   lastError: string | null;
   createdAt: string;
+  replayRefusal: EmailReplayRefusal | null;
 }
 
 const EMAIL_STATUSES = ["DEAD_LETTER", "RETRY", "PENDING", "SENT"];
@@ -357,18 +362,26 @@ function FailedEmailsTab() {
         />
       }
       rowActions={(m) =>
-        m.status === "DEAD_LETTER" ? (
+        m.status === "DEAD_LETTER" && m.replayRefusal ? (
+          <span className="max-w-xs text-xs text-muted-foreground">
+            {EMAIL_REPLAY_EXPLANATIONS[m.replayRefusal]}
+          </span>
+        ) : m.status === "DEAD_LETTER" ? (
           <ConfirmDialog
             trigger={
               <Button size="sm" variant="outline">
                 Replay
               </Button>
             }
-            title="Send this email again?"
+            title="Retry this email?"
+            requireReason={{ label: "Reason for retry", minLength: 5 }}
             description={`"${m.subject}" to ${m.recipient}, exactly as it was rendered.`}
             confirmLabel="Replay"
-            onConfirm={async () => {
-              await postJson("/api/admin/failed-emails", { ids: [m.id] });
+            onConfirm={async ({ reason }) => {
+              await postJson("/api/admin/failed-emails", {
+                ids: [m.id],
+                reason,
+              });
               invalidate("compliance-emails");
             }}
           />

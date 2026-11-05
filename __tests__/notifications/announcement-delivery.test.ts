@@ -41,6 +41,7 @@ const current = {
 };
 const row: StagedTrigger = {
   id: "row",
+  createdAt: now,
   workflowId: "general-announcement",
   kind: "BROADCAST",
   recipients: [],

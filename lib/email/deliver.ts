@@ -19,6 +19,7 @@ import {
   type EmailDeliveryPolicy,
 } from "./delivery-policy";
 import { idempotencyKeyFor } from "./idempotency";
+import { providerWindowRefusal } from "@/lib/retry/provider-window";
 import { EmailRecipientCappedError, overRecipientCap } from "./recipient-cap";
 import { EmailSuppressedError, findSuppression } from "./suppression";
 import {
@@ -60,6 +61,7 @@ export type DeliverResult =
 
 export interface StagedEmail {
   id: string;
+  createdAt: Date;
   idempotencyKey: string;
   suppressed?: EmailSuppressionReason;
   held?: true;
@@ -232,13 +234,19 @@ export async function stage(
         lastError: refusal,
         entityRef: opts.entityRef ?? null,
       },
-      select: { id: true },
+      select: { id: true, createdAt: true },
     });
     const idempotencyKey = idempotencyKeyFor(payload, emailType, row.id);
-    if (heldDomain) return { id: row.id, idempotencyKey, held: true };
+    if (heldDomain)
+      return {
+        id: row.id,
+        createdAt: row.createdAt,
+        idempotencyKey,
+        held: true,
+      };
     return suppressed
-      ? { id: row.id, idempotencyKey, suppressed }
-      : { id: row.id, idempotencyKey };
+      ? { id: row.id, createdAt: row.createdAt, idempotencyKey, suppressed }
+      : { id: row.id, createdAt: row.createdAt, idempotencyKey };
   };
   if (opts.tx) return write();
   try {
@@ -322,6 +330,16 @@ export async function attempt(
   // "could not be resolved" error can still be recognised as our own abort.
   const signal = AbortSignal.timeout(opts.budgetMs);
   try {
+    const windowRefusal = staged
+      ? providerWindowRefusal(staged.createdAt, new Date())
+      : null;
+    if (windowRefusal && staged) {
+      await settleRow(staged, emailType, {
+        status: "DEAD_LETTER",
+        lastError: windowRefusal,
+      });
+      return { success: false, error: new Error(windowRefusal), staged: true };
+    }
     const { deliveryPolicy, ...wirePayload } = payload;
     const refusal = await emailPolicyRefusal(
       deliveryPolicy,

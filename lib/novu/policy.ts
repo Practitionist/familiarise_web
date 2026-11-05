@@ -38,6 +38,7 @@ const BELL_PREFERENCE_SELECT = {
 
 type BellUserRow = {
   id?: string;
+  erasedAt?: Date | null;
   timezone?: string | null;
   orgWorkspaceProfile?: {
     notificationRoutingMode?:
@@ -52,7 +53,7 @@ function isBellAllowedForRecipient(
   row: BellUserRow | undefined,
   category: PreferenceCategory | null,
 ): boolean {
-  if (!row) return false;
+  if (!row || row.erasedAt) return false;
   const routingMode = row.orgWorkspaceProfile?.notificationRoutingMode;
   if (routingMode === "EMAIL_ONLY" || routingMode === "NEITHER") {
     return false;
@@ -116,6 +117,7 @@ export async function resolveRecipientBellPolicy(
     where: { id: { in: recipients } },
     select: {
       id: true,
+      erasedAt: true,
       timezone: true,
       orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
       notificationPreferences: { select: BELL_PREFERENCE_SELECT },

@@ -25,6 +25,12 @@ jest.mock("../../lib/novu/client", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    user: {
+      findMany: jest.fn(
+        async ({ where }: { where: { id: { in: string[] } } }) =>
+          where.id.in.map((id) => ({ id, erasedAt: null })),
+      ),
+    },
     notificationOutbox: {
       upsert: (...args: unknown[]) => mockUpsert(...args),
       update: (...args: unknown[]) => mockUpdate(...args),
@@ -65,6 +71,7 @@ describe("stageTrigger + attemptTrigger", () => {
     );
     mockUpsert.mockImplementation(async (args) => ({
       id: "nx-1",
+      createdAt: new Date(),
       ...args.create,
     }));
     mockTrigger.mockResolvedValue({});
@@ -106,6 +113,7 @@ describe("stageTrigger + attemptTrigger", () => {
 
     const result = await attemptTrigger({
       id: "nx-2",
+      createdAt: new Date(),
       workflowId: "appointment-booked",
       kind: "SINGLE",
       recipients: ["u1"],
@@ -130,6 +138,7 @@ describe("stageTrigger + attemptTrigger", () => {
   it("holds a row whose notBefore is in the future for the drain", async () => {
     const result = await attemptTrigger({
       id: "nx-3",
+      createdAt: new Date(),
       workflowId: "appointment-booked",
       kind: "SINGLE",
       recipients: ["u1"],
@@ -231,6 +240,7 @@ describe("deriveTransactionId", () => {
     const before = Date.now();
     mockUpsert.mockImplementation(async (args) => ({
       id: "nx-lease",
+      createdAt: new Date(),
       ...args.create,
     }));
 
@@ -264,6 +274,7 @@ describe("deriveTransactionId", () => {
     const res = await attemptTrigger(
       {
         id: "nx-dlq",
+        createdAt: new Date(),
         workflowId: "appointment-booked",
         kind: "SINGLE",
         recipients: ["u1"],
