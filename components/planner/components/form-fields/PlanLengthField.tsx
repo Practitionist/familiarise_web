@@ -26,6 +26,12 @@ import { monthsForWeeks, planLengthLabel } from "@/lib/booking/entitlement";
 export const PLAN_WEEK_PRESETS: readonly number[] = [4, 8, 12, 26, 52];
 export const MAX_PLAN_WEEKS = 52;
 
+/** The weeks field's description under its summary. */
+export function weeksLengthHint(summary: string | null): string {
+  const length = summary ? `${summary}.` : "Pick a length from 1 to 52 weeks.";
+  return `${length} The price is for the whole plan.`;
+}
+
 /** "26 weeks · 78 sessions" for a valid length, else null. */
 function lengthSummary(
   weeks: unknown,
@@ -154,10 +160,7 @@ export function PlanLengthField<T extends FieldValues = FieldValues>({
           onChange={(e) => setWeeks(Number.parseInt(e.target.value, 10))}
         />
       </div>
-      <FormDescription>
-        {summary ?? "Pick a length from 1 to 52 weeks."} The price is for the
-        whole plan.
-      </FormDescription>
+      <FormDescription>{weeksLengthHint(summary)}</FormDescription>
       {weeksError?.message && <FormMessage>{weeksError.message}</FormMessage>}
     </FormItem>
   );
