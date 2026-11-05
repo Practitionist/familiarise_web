@@ -65,7 +65,7 @@ What it shows, with its limits:
 - **The largest fixable cold cost is the authenticated route graph.** On the same production deploy, a cold instance reaches `/api/perf/probe-full` at 6.7–6.9 s against 2.5–2.6 s for `probe-bare`, so about 4 s goes on importing that graph. esbuild counts 3,615 modules in the `lib/auth` graph that every authenticated route reaches through `lib/auth-helpers`: Better Auth, SSO, passkey (added 2026-10-10) and the whole email stack, which `lib/auth.ts` pulls in through the `lib/email` barrel for `sendPasswordResetEmail`. The full investigation, with the measurements and the ranked fixes, was run on 2026-11-05.
 - **Each 8-request burst also returned one Netlify platform error page** ("Error - Request ID …") on both deploys.
 
-Measure any fix with the same burst against a deploy permalink, idle for 15 minutes between bursts so instances go cold.
+Measure any fix with the same burst against a deploy permalink. An idle wait does not guarantee cold instances, and a published deploy also receives cron-tick traffic, so classify each sample by its own fields: a fresh instance reports a small `uptimeAtEntryMs` (a few seconds) and a new `instanceId`. Compare only those rows, and the same route on both sides.
 
 ## Sources
 
