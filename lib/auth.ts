@@ -602,6 +602,7 @@ export const auth = betterAuth({
     ...turnstileCaptcha({
       secretKey: process.env.TURNSTILE_SECRET_KEY,
       siteKey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
+      sentryEnvironment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
       allowedHostnames: turnstileHostnames({
         sentryEnvironment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
         authUrl: process.env.BETTER_AUTH_URL,

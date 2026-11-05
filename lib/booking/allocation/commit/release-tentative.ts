@@ -66,10 +66,8 @@ export async function deleteExistingAppointments(
         // can be re-seated on the replacement appointments.
         participants: { where: liveParticipant(), select: { userId: true } },
         occurrences: true,
-        // B8 — Payment has onDelete: Cascade on Appointment; deleting an
-        // appointment with payment rows destroys the payment/refund audit
-        // trail. The refusal now rides in the delete's own WHERE clause
-        // (B-P1-05) rather than this read, which can go stale mid-txn.
+        // Payment.appointment is onDelete: Restrict; the payment guard rides
+        // in the delete's own WHERE (`payment: { none: {} }`), not this read.
       },
     });
 
@@ -119,15 +117,8 @@ export async function deleteExistingAppointments(
         // the orphan sweep reports it. A surviving fresh hold or confirmed
         // slot keeps the wrapper: deleting it would cascade-destroy rows
         // this reschedule did not release.
-        //
-        // B-P1-05 (#1189 audit) — the payment guard rides IN the delete's
-        // WHERE clause rather than trusting `_count.payment` above. That
-        // count was read earlier in this transaction; a checkout's Payment
-        // insert can COMMIT between the read and the delete, and
-        // Payment.appointment is onDelete: Cascade, so an unconditional
-        // delete would cascade-destroy a payment that did not exist when we
-        // looked. Zero rows deleted means a payment appeared: keep the
-        // appointment exactly like the payment-bearing path.
+        // `payment: { none: {} }` in the WHERE (backed by the Restrict FK) keeps
+        // a wrapper whose Payment committed mid-transaction; zero rows means keep it.
         const hasRemaining = appointment.occurrences.some(
           (slot) => !isReleasedForReschedule(slot),
         );
@@ -218,13 +209,8 @@ export async function deleteExistingAppointments(
         });
       }
 
-      // Only delete the appointment if no slots remain at all — and never
-      // when it carries payments (#898 defense-in-depth: the Payment cascade
-      // is Restrict-blocked by ConsultantEarnings and rolls back the tx).
-      // Latent today (the subscription placeholder can't reach this branch),
-      // but mirrors the onlyTentative / full-delete guards. The payment
-      // guard rides in the delete's WHERE (B-P1-05) — same race as the
-      // onlyTentative branch.
+      // Delete only a slot-less appointment no Payment points at; the guard
+      // rides in the WHERE, backed by the Restrict FK on Payment.appointment.
       if (pastSlots.length === 0 && protectedFutureSlots.length === 0) {
         await tx.appointment.deleteMany({
           where: { id: appointment.id, payment: { none: {} } },
@@ -244,16 +230,8 @@ export async function deleteExistingAppointments(
       reusableAppointmentId,
     };
   } else {
-    // Full delete: remove all appointments for this event.
-    // B8 — an appointment that carries Payment rows must NOT be deleted: the
-    // delete cascades to Payment (onDelete: Cascade), which is Restrict-
-    // referenced by ConsultantEarnings, so the cascade trips the
-    // ConsultantEarnings_paymentId_fkey constraint and the whole allocation
-    // rolls back. This is exactly the SUBSCRIPTION case — checkout leaves a
-    // zero-slot placeholder Appointment carrying the signup Payment+earnings,
-    // and initial allocation reaches this branch. Mirror the onlyTentative
-    // guard: preserve payment-bearing appointments, just free their slots so
-    // they no longer block availability; delete the rest as before.
+    // Full delete: a payment-bearing appointment (Restrict FK) is kept with its
+    // seats and only its replaceable slots are freed; the rest are deleted.
     const existingAppointments = await tx.appointment.findMany({
       where: whereClause,
       include: {
@@ -362,12 +340,8 @@ export async function deleteExistingAppointments(
             where: occurrenceDeleteWhere,
           });
         }
-        // B-P1-05 (#1189 audit) — atomic payment guard, same as the
-        // onlyTentative branch: a checkout's Payment can commit between the
-        // `_count` read above and this delete; the WHERE clause re-checks at
-        // write time so the cascade can never consume it. Zero rows deleted
-        // means a payment appeared — keep the appointment and strip only its
-        // sessionless slots, exactly like the payment-bearing path above.
+        // The WHERE re-checks for a Payment committed since the `_count` read;
+        // zero rows deleted means keep the appointment and strip its slots.
         const deletedAppointment = await tx.appointment.deleteMany({
           where: { id: appointment.id, payment: { none: {} } },
         });

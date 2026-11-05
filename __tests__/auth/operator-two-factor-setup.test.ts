@@ -89,6 +89,14 @@ describe("seed-two-factor deterministic derivation & XChaCha20 round-trip", () =
     expect(() => requireAuthSecret()).toThrow(/BETTER_AUTH_SECRET/);
   });
 
+  it("refuses a captured CLI message in place of the secret", async () => {
+    const { requireAuthSecret } =
+      await import("@/prisma/seedFiles/seed-two-factor");
+    process.env.BETTER_AUTH_SECRET =
+      "You don't appear to be in a folder that is linked to a project";
+    expect(() => requireAuthSecret()).toThrow(/whitespace/);
+  });
+
   it("round-trips encrypted secret and backup codes with Better Auth symmetricDecrypt and verifies TOTP", async () => {
     const { symmetricDecrypt } = await import("better-auth/crypto");
     const { createOTP } = await import("@better-auth/utils/otp");
@@ -136,6 +144,48 @@ describe("seed-two-factor deterministic derivation & XChaCha20 round-trip", () =
       await expect(otp.verify(code)).resolves.toBe(true);
     } finally {
       jest.useRealTimers();
+    }
+  });
+
+  it("overwrites an existing row with the seed secret, re-enables 2FA and clears the lock", async () => {
+    const { symmetricDecrypt } = await import("better-auth/crypto");
+    const {
+      deriveSeedOperatorTotpSecret,
+      isSeedTotpOperatorEmail,
+      requireAuthSecret,
+      seedOperatorEnrolmentUpdate,
+    } = await import("@/prisma/seedFiles/seed-two-factor");
+    const email = "qa-admin-1@qa.familiarise.invalid";
+
+    const { where, data } = await seedOperatorEnrolmentUpdate({
+      id: "user-admin-1",
+      email,
+    });
+    expect(where).toEqual({ id: "user-admin-1" });
+    expect(data.twoFactorEnabled).toBe(true);
+    const { create, update: overwrite } = data.twoFactor.upsert;
+    expect(overwrite).toEqual(create);
+    expect(overwrite).toMatchObject({
+      verified: true,
+      failedVerificationCount: 0,
+      lockedUntil: null,
+    });
+    await expect(
+      symmetricDecrypt({ key: requireAuthSecret(), data: overwrite.secret }),
+    ).resolves.toBe(deriveSeedOperatorTotpSecret(email));
+
+    expect(isSeedTotpOperatorEmail(email)).toBe(true);
+    expect(isSeedTotpOperatorEmail("QA-Staff-2@qa.familiarise.invalid")).toBe(
+      true,
+    );
+    for (const refused of [
+      "qa-admin-2@qa.familiarise.invalid",
+      "qa-staff-1@qa.familiarise.invalid",
+      "qa-admin-1@familiarise.com",
+      "owner@qa.familiarise.invalid",
+      "qa-admin-1@qa.familiarise.invalid@evil.test",
+    ]) {
+      expect(isSeedTotpOperatorEmail(refused)).toBe(false);
     }
   });
 });

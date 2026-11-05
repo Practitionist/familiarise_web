@@ -739,6 +739,21 @@ The gauges themselves, their thresholds and the alert query for each are in the 
 
 ### Owner step: the oldest-pending-age alerts
 
+**Status (2026-11-05): all eight alerts exist and are paused.** They were created through the Telemetry API (`POST https://telemetry.betterstack.com/api/v2/explorations`, then `POST /api/v2/explorations/<id>/alerts` with `paused: true`), each as an exploration holding this section's SQL on the `familiarise-prod` source (2816999), with the thresholds and missing-data rules in the tables above. Each runs every 300 s over a 900 s window, with a 60 s confirmation and email only.
+
+| Alert                          | Exploration | Alert id   |
+| ------------------------------ | ----------- | ---------- |
+| `Ticker telemetry stale`       | 895174      | 2988727965 |
+| `Backlog: refundsOwed`         | 895175      | 2988727966 |
+| `Backlog: payoutsStuck`        | 895176      | 2988727967 |
+| `Backlog: dunningNotices`      | 895177      | 2988727968 |
+| `Backlog: disputesDue`         | 895178      | 2988727969 |
+| `Backlog: webhookEvents`       | 895179      | 2988727970 |
+| `Backlog: emailRetries`        | 895180      | 2988727971 |
+| `Backlog: notificationRetries` | 895181      | 2988727972 |
+
+Unpause an alert only after the go-live data reset, and only once every money gauge in the latest `cron-tick summary` event reads zero. To unpause it, send `PATCH https://telemetry.betterstack.com/api/v2/alerts/<alert id>` with `{"paused": false}`. Then list `GET /api/v2/alerts` and require `paused: false`. Whether the backlog gauges arrive in the summary events is not yet proven: before unpausing, open each exploration and confirm it plots values rather than nothing.
+
 Every tick's `cron-tick summary` event carries `oldestPendingAgeS`, an object of seven gauges. Each gauge is the number of seconds the oldest item in one queue has waited past its due point, and 0 means nothing is waiting. The tick's slot claim (`POST /api/health/jobs/tick`) reads all seven in one SQL statement (`readPendingAges` in `lib/cron/pending-ages.ts`) inside the transaction that already runs the idle probes, and only while the probes' 2-second budget lasts, so the claim's worst case stays 2.75 s and costs one extra round trip of about 62 ms from Netlify Singapore. A gauge fault never changes which targets run; the event then simply has no `oldestPendingAgeS`, which the missing-data policy above handles. There is no new ticker target and no new job.
 
 The thresholds live in one place in code, `PENDING_AGE_LIMITS_MS` in `lib/cron/pending-ages.ts`, which the Stuck work page also uses. Each is set from the cadence of the job that drains the queue in `lib/cron/schedule.ts`.

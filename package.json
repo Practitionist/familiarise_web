@@ -15,6 +15,7 @@
     "db:preflight": "npx tsx -r dotenv/config scripts/db/preflight-push.ts",
     "novu:sync": "npx tsx -r dotenv/config scripts/novu/sync-workflows.ts",
     "novu:check": "npx tsx -r dotenv/config scripts/novu/sync-workflows.ts --check",
+    "qa:totp": "npx tsx -r dotenv/config scripts/auth/qa-totp.ts",
     "db:triggers": "npx tsx -r dotenv/config scripts/db/apply-sidecars.ts --ledger-triggers",
     "db:leg-triggers": "npx tsx -r dotenv/config scripts/db/apply-sidecars.ts --payment-legs-triggers",
     "db:constraints": "npx tsx -r dotenv/config scripts/db/apply-sidecars.ts --check-constraints",

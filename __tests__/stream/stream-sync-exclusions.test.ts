@@ -1,11 +1,19 @@
 /** @jest-environment node */
 const mockQueryUsers = jest.fn();
 const mockDeleteUsers = jest.fn(async (..._args: unknown[]) => ({}));
+const mockPartialUpdateUsers = jest.fn(async (..._args: unknown[]) => ({}));
+const mockFindMany = jest.fn(
+  async (
+    ..._args: unknown[]
+  ): Promise<{ id: string; erasedAt: Date | null }[]> => [],
+);
 jest.mock("stream-chat", () => ({
   StreamChat: {
     getInstance: () => ({
       queryUsers: (...args: unknown[]) => mockQueryUsers(...args),
       deleteUsers: (...args: unknown[]) => mockDeleteUsers(...args),
+      partialUpdateUsers: (...args: unknown[]) =>
+        mockPartialUpdateUsers(...args),
     }),
   },
 }));
@@ -17,7 +25,9 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { user: { findMany: jest.fn(async () => []) } },
+  default: {
+    user: { findMany: (...args: unknown[]) => mockFindMany(...args) },
+  },
 }));
 
 import { readJobCheckpoint } from "../../lib/cron/with-cron-lock";
@@ -88,4 +98,121 @@ it("dry-run comparison preserves its starting checkpoint and issues no deletion 
     deletionTaskIds: [],
   });
   expect(mockDeleteUsers).not.toHaveBeenCalled();
+});
+
+describe("contact-field scrub", () => {
+  const prismaUsers = (ids: string[]) =>
+    mockFindMany.mockResolvedValueOnce(
+      ids.map((id) => ({ id, erasedAt: null })),
+    );
+
+  it("unsets a stored email on live users and leaves clean users alone", async () => {
+    prismaUsers(["leaky", "clean"]);
+    mockQueryUsers
+      .mockResolvedValueOnce({
+        users: [
+          { id: "clean", name: "Clean" },
+          { id: "leaky", name: "Leaky", email: "leaky@example.com" },
+        ],
+      })
+      .mockResolvedValueOnce({ users: [] });
+
+    const summary = await performStreamUserSync({ batchDelayMs: 0 });
+
+    expect(mockPartialUpdateUsers).toHaveBeenCalledTimes(1);
+    expect(mockPartialUpdateUsers).toHaveBeenCalledWith([
+      { id: "leaky", unset: ["email"] },
+    ]);
+    expect(summary).toMatchObject({
+      success: true,
+      totalContactFieldsScrubbed: 1,
+      totalFailedScrubs: 0,
+    });
+  });
+
+  it("writes nothing when no user carries a contact field", async () => {
+    prismaUsers(["clean"]);
+    mockQueryUsers
+      .mockResolvedValueOnce({ users: [{ id: "clean" }] })
+      .mockResolvedValueOnce({ users: [] });
+
+    await performStreamUserSync({ batchDelayMs: 0 });
+
+    expect(mockPartialUpdateUsers).not.toHaveBeenCalled();
+  });
+
+  it("counts but does not write on a dry run", async () => {
+    prismaUsers(["leaky"]);
+    mockQueryUsers
+      .mockResolvedValueOnce({
+        users: [{ id: "leaky", email: "leaky@example.com" }],
+      })
+      .mockResolvedValueOnce({ users: [] });
+
+    const summary = await performStreamUserSync({ dryRun: true });
+
+    expect(mockPartialUpdateUsers).not.toHaveBeenCalled();
+    expect(summary.totalContactFieldsScrubbed).toBe(1);
+  });
+
+  it("skips users already deleted in Stream or about to be hard-deleted", async () => {
+    mockFindMany.mockResolvedValueOnce([
+      { id: "erased", erasedAt: new Date() },
+    ]);
+    mockQueryUsers
+      .mockResolvedValueOnce({
+        users: [
+          { id: "erased", email: "erased@example.com" },
+          {
+            id: "gone",
+            email: "gone@example.com",
+            deleted_at: "2026-11-01T00:00:00Z",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ users: [] });
+
+    await performStreamUserSync({ batchDelayMs: 0 });
+
+    expect(mockPartialUpdateUsers).not.toHaveBeenCalled();
+  });
+
+  it("holds the checkpoint before a page whose scrub failed and sends none of its deletions", async () => {
+    jest.mocked(readJobCheckpoint).mockResolvedValue("before");
+    mockFindMany.mockResolvedValueOnce([]);
+    mockPartialUpdateUsers.mockRejectedValueOnce(new Error("rate limited"));
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    mockQueryUsers.mockResolvedValueOnce({
+      users: [{ id: "orphan-leaky", email: "orphan@example.com" }],
+    });
+
+    const summary = await performStreamUserSync({ batchDelayMs: 0 });
+
+    expect(summary).toMatchObject({
+      checkpoint: "before",
+      hasMore: true,
+      totalFailedScrubs: 1,
+    });
+    expect(mockQueryUsers).toHaveBeenCalledTimes(1);
+    expect(mockDeleteUsers).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed scrub once in the summary instead of throwing", async () => {
+    prismaUsers(["leaky"]);
+    mockPartialUpdateUsers.mockRejectedValueOnce(new Error("rate limited"));
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    mockQueryUsers
+      .mockResolvedValueOnce({
+        users: [{ id: "leaky", email: "leaky@example.com" }],
+      })
+      .mockResolvedValueOnce({ users: [] });
+
+    const summary = await performStreamUserSync({ batchDelayMs: 0 });
+
+    expect(summary).toMatchObject({
+      success: false,
+      totalContactFieldsScrubbed: 0,
+      totalFailedScrubs: 1,
+    });
+  });
 });
