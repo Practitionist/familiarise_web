@@ -56,35 +56,66 @@ const store = {
   marker: null as { key: string; paise: number } | null,
 };
 const mockEventRead = jest.fn();
-/** The window's events, oldest first, as the reader asks. */
-const inWindow = (gte?: Date) =>
-  store.events
-    .filter((e) => !gte || e.createdAt >= gte)
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+type EventQuery = {
+  where: {
+    correlationId?: { startsWith?: string; in?: string[] };
+    createdAt?: { gte: Date };
+    OR?: { correlationId?: { startsWith?: string } }[];
+  };
+  take?: number;
+  cursor?: { id: string };
+  skip?: number;
+};
+/** The events a query names, oldest first, paged as Prisma pages them. */
+function queryEvents(args: EventQuery): Event[] {
+  const { correlationId, createdAt, OR } = args.where;
+  let rows = store.events
+    .filter(
+      (e) =>
+        (!correlationId?.startsWith ||
+          e.correlationId.startsWith(correlationId.startsWith)) &&
+        (!correlationId?.in || correlationId.in.includes(e.correlationId)) &&
+        (!createdAt || e.createdAt >= createdAt.gte) &&
+        (!OR ||
+          OR.some((o) => {
+            const prefix = o.correlationId?.startsWith;
+            return prefix !== undefined && e.correlationId.startsWith(prefix);
+          })),
+    )
+    .sort(
+      (x, y) =>
+        x.createdAt.getTime() - y.createdAt.getTime() ||
+        x.id.localeCompare(y.id),
+    );
+  if (args.cursor) {
+    const at = rows.findIndex((e) => e.id === args.cursor?.id);
+    rows = rows.slice(at + (args.skip ?? 0));
+  }
+  return args.take === undefined ? rows : rows.slice(0, args.take);
+}
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     systemEvent: {
-      findMany: async (args: {
-        where: {
-          correlationId?: { startsWith?: string; in?: string[] };
-          createdAt?: { gte: Date };
-        };
-        take?: number;
-      }) => {
-        const ids = args.where.correlationId?.in;
-        if (ids)
-          return store.events.filter((e) => ids.includes(e.correlationId));
-        mockEventRead(args);
-        if (args.where.correlationId?.startsWith !== "owed-already-held:")
-          return [];
-        return inWindow(args.where.createdAt?.gte).slice(0, args.take);
+      findMany: async (args: EventQuery) => {
+        if (args.where.createdAt) mockEventRead(args);
+        return queryEvents(args);
       },
-      count: async (args: { where: { createdAt?: { gte: Date } } }) =>
-        inWindow(args.where.createdAt?.gte).length,
+      count: async (args: EventQuery) =>
+        queryEvents({ ...args, take: undefined }).length,
     },
     earningsHold: {
-      findMany: async () => store.holds.filter((h) => h.releasedAt === null),
+      findMany: async (args: {
+        where: { sourceRef?: { in?: string[]; startsWith?: string } };
+      }) =>
+        store.holds.filter(
+          (h) =>
+            h.releasedAt === null &&
+            (!args.where.sourceRef?.in ||
+              args.where.sourceRef.in.includes(h.sourceRef)) &&
+            (!args.where.sourceRef?.startsWith ||
+              h.sourceRef.startsWith(args.where.sourceRef.startsWith)),
+        ),
     },
     refund: { findMany: async () => store.refunds },
     payment: {
@@ -383,7 +414,9 @@ describe("the needs-human list of held top-ups", () => {
     expect(await read()).toEqual([
       expect.objectContaining({
         amountPaise: null,
-        message: `Payment pay-1 (${HELD_KEY}): the top-up is settled; release the hold on its earnings from the Earnings tab.`,
+        message: `Payment pay-1 (${HELD_KEY}): the top-up is settled; release its hold.`,
+        releasable: true,
+        holdRef: CORRELATION,
       }),
     ]);
     store.holds = [];
@@ -459,6 +492,30 @@ describe("the needs-human list of held top-ups", () => {
         paymentId: null,
         message:
           "1 more held top-up events are not listed yet (oldest first). Settle the rows above, then reload.",
+      }),
+    ]);
+  });
+
+  it("a paid top-up's hold is not offered for release while another top-up on the payment is unpaid", async () => {
+    const second = "owed-already-held:pay-1:overage-credit:pay-1";
+    store.events = [
+      event(at, 20_000),
+      { ...event(later(60_000), 20_000), id: "evt-2", correlationId: second },
+    ];
+    store.holds = [
+      { sourceRef: CORRELATION, releasedAt: null },
+      { sourceRef: second, releasedAt: null },
+    ];
+    store.refunds = [refund("ops:hand", 20_000, 120_000)];
+    expect(await read()).toEqual([
+      expect.objectContaining({
+        id: `owed-held:${CORRELATION}`,
+        releasable: false,
+        message: `Payment pay-1 (${HELD_KEY}): the top-up is settled; its hold is released once the other top-up on this payment is paid.`,
+      }),
+      expect.objectContaining({
+        id: `owed-held:${second}`,
+        amountPaise: 20_000,
       }),
     ]);
   });

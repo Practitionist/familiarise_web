@@ -26,6 +26,7 @@ import {
 import {
   EarningsHoldRaceError,
   HOLDABLE_EARNING_STATUSES,
+  OWED_ALREADY_HELD_PREFIX,
   placeEarningsHolds,
 } from "@/lib/payments/payouts/earnings-holds";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
@@ -795,9 +796,6 @@ export async function stampRefundOwed(
   });
   return count === 1;
 }
-
-/** The ops event a door records when its refund found another door's already owed. */
-export const OWED_ALREADY_HELD_PREFIX = "owed-already-held:";
 
 /** A door's refund that another door's owed refund already held: the door added nothing. */
 export type OwedRefundAlreadyHeld = {

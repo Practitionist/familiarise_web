@@ -34,6 +34,9 @@ const NeedsHumanList = z.object({
       unitPaise: z.number().nullish(),
       /** A held top-up's amount, preset in the refund door. */
       amountPaise: z.number().nullish(),
+      /** A paid top-up whose own hold may now be released. */
+      holdRef: z.string().nullish(),
+      releasable: z.boolean().optional(),
       caseId: z.string().nullish(),
       /** An ended credit plan: ops may answer that no credit is owed. */
       creditPlan: z.boolean().optional(),
@@ -101,6 +104,8 @@ export function RefundDoorsPanel() {
   );
   // The credit plan an operator is answering "no credit owed" for.
   const [closing, setClosing] = useState<string | null>(null);
+  // The paid top-up whose hold an operator is releasing.
+  const [releasing, setReleasing] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data } = useQuery({
@@ -171,6 +176,15 @@ export function RefundDoorsPanel() {
                           : "Return credits"}
                       </Button>
                     )}
+                  {item.releasable && item.holdRef && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setReleasing(item.holdRef ?? null)}
+                    >
+                      Release hold
+                    </Button>
+                  )}
                   {item.creditPlan && item.paymentId && (
                     <Button
                       size="sm"
@@ -194,6 +208,27 @@ export function RefundDoorsPanel() {
         presetAmountRupees={open?.amountRupees}
         onClose={() => setOpen(null)}
       />
+      {releasing !== null && (
+        <ConfirmDialog
+          open
+          onOpenChange={(o) => !o && setReleasing(null)}
+          title="Release the top-up's hold"
+          description="The top-up is paid. This releases only its own hold; the earnings stay held while anything else holds them."
+          confirmLabel="Release hold"
+          requireReason={{}}
+          onConfirm={async ({ reason }) => {
+            await callOpsDoor("/api/admin/earnings/top-up-hold", {
+              correlationId: releasing,
+              reason,
+            });
+            toast({ title: "Hold released" });
+            void queryClient.invalidateQueries({
+              queryKey: ["money-refund-needs"],
+            });
+            setReleasing(null);
+          }}
+        />
+      )}
       {closing !== null && (
         <ConfirmDialog
           open

@@ -4,8 +4,9 @@
  * holds the payment's unpaid earnings, consultant and host organisation, under
  * an OPERATOR hold keyed on that event, in the door's own transaction. A replay
  * adds neither a second event nor a second hold. The payment stays on the
- * needs-human list, with the amount to refund by hand, until an operator
- * releases the hold; a payment with nothing left to hold leaves the list once
+ * needs-human list, with the amount to refund by hand, until it is paid and an
+ * operator releases that top-up's own hold (another top-up's hold on the same
+ * earnings stays); a payment with nothing left to hold leaves the list once
  * another refund lands on it.
  */
 import { randomUUID } from "node:crypto";
@@ -20,10 +21,11 @@ jest.mock("../../../lib/payments/payouts/earnings-holds", () => {
 });
 
 import {
-  OWED_ALREADY_HELD_PREFIX,
   stampOwedOrHeld,
   type RefundOwedMarker,
 } from "../../../lib/payments/operations/refund-owed";
+import { OWED_ALREADY_HELD_PREFIX } from "../../../lib/payments/payouts/earnings-holds";
+import { releaseTopUpHold } from "../../../lib/backoffice/top-up-hold";
 import { readOwedAlreadyHeld } from "../../../lib/backoffice/needs-human";
 import { releaseHeldEarnings } from "../../../lib/payments/payouts/earnings-hold-ops";
 
@@ -138,6 +140,24 @@ async function settleHolding(s: { paymentId: string; heldKey: string }) {
   });
 }
 
+const release = (correlationId: string, actorUserId: string) =>
+  prisma.$transaction((tx) => releaseTopUpHold(tx, correlationId, actorUserId));
+
+const activeHolds = (sourceRef: string) =>
+  prisma.earningsHold.count({ where: { sourceRef, releasedAt: null } });
+
+async function statusOf(s: Seeded) {
+  const consultant = await prisma.consultantEarnings.findUniqueOrThrow({
+    where: { id: s.consultantEarningId },
+    select: { status: true },
+  });
+  const org = await prisma.organizationEarnings.findUniqueOrThrow({
+    where: { id: s.orgEarningId },
+    select: { status: true },
+  });
+  return { consultant: consultant.status, org: org.status };
+}
+
 const losingMarker = (s: Seeded): RefundOwedMarker => ({
   paymentId: s.paymentId,
   amountPaise: 25_000,
@@ -205,38 +225,71 @@ describe("a door whose refund another door's owed refund holds", () => {
       }),
     ]);
 
-    // An unrelated release of the hold does not close the row: the money is still owed.
-    await prisma.$transaction((tx) =>
-      releaseHeldEarnings(
-        tx,
-        s.consultantEarningId,
-        "released for another reason",
-        s.adminUserId,
+    // The Earnings tab's release leaves a top-up's hold alone while it is owed.
+    await expect(
+      prisma.$transaction((tx) =>
+        releaseHeldEarnings(
+          tx,
+          s.consultantEarningId,
+          "released for another reason",
+          s.adminUserId,
+        ),
       ),
-    );
-    expect(await listed(s)).toEqual([
-      expect.objectContaining({ amountPaise: 26_000 }),
-    ]);
+    ).rejects.toMatchObject({ code: "EARNING_HELD_FOR_TOP_UP" });
+    expect(await activeHolds(correlationOf(s))).toBe(2);
+    await expect(
+      release(correlationOf(s), s.adminUserId),
+    ).rejects.toMatchObject({ code: "TOP_UP_UNPAID" });
 
     // The older refund goes out and clears its marker, then the hand top-up
-    // settles the money; the row then asks for the hold release.
+    // settles the money; the row then offers its own hold's release.
     await settleHolding(s);
     await handRefund(s.paymentId, 25_000);
     expect(await listed(s)).toEqual([
       expect.objectContaining({
         amountPaise: null,
-        message: `Payment ${s.paymentId} (${s.heldKey}): the top-up is settled; release the hold on its earnings from the Earnings tab.`,
+        releasable: true,
+        message: `Payment ${s.paymentId} (${s.heldKey}): the top-up is settled; release its hold.`,
       }),
     ]);
-    await prisma.$transaction((tx) =>
-      releaseHeldEarnings(
-        tx,
-        s.orgEarningId,
-        "topped up by hand",
-        s.adminUserId,
-      ),
-    );
+    await release(correlationOf(s), s.adminUserId);
     expect(await listed(s)).toEqual([]);
+    expect(await statusOf(s)).toEqual({
+      consultant: "PENDING",
+      org: "PENDING",
+    });
+  });
+
+  it("releasing one paid top-up's hold leaves another top-up's hold on the same earnings", async () => {
+    const s = await seedHeldPayment("PENDING");
+    const a = losingMarker(s);
+    const b = { ...a, key: `rejection:${s.paymentId}`, amountPaise: 15_000 };
+    await prisma.$transaction((tx) => stampOwedOrHeld(tx, a));
+    await prisma.$transaction((tx) => stampOwedOrHeld(tx, b));
+    const refA = correlationOf(s);
+    const refB = `${OWED_ALREADY_HELD_PREFIX}${s.paymentId}:${b.key}`;
+    expect(await activeHolds(refA)).toBe(2);
+    expect(await activeHolds(refB)).toBe(2);
+
+    // The older refund clears; a hand refund pays A (oldest first); B is still owed.
+    await settleHolding(s);
+    await handRefund(s.paymentId, 25_000);
+    await expect(release(refA, s.adminUserId)).rejects.toMatchObject({
+      code: "OTHER_TOP_UP_UNPAID",
+    });
+
+    // B is paid too: A's release takes only A's hold, and the earnings stay HELD under B's.
+    await handRefund(s.paymentId, 15_000);
+    await release(refA, s.adminUserId);
+    expect(await activeHolds(refA)).toBe(0);
+    expect(await activeHolds(refB)).toBe(2);
+    expect(await statusOf(s)).toEqual({ consultant: "HELD", org: "HELD" });
+
+    await release(refB, s.adminUserId);
+    expect(await statusOf(s)).toEqual({
+      consultant: "PENDING",
+      org: "PENDING",
+    });
   });
 
   it("with nothing left to hold, stays listed until a refund other than the holding marker's covers it", async () => {

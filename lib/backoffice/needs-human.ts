@@ -1,7 +1,8 @@
 import { EarningsHoldReason } from "@prisma/client";
 import { z } from "zod";
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
+import { OWED_ALREADY_HELD_PREFIX } from "@/lib/payments/payouts/earnings-holds";
 import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
@@ -11,7 +12,6 @@ import { SUPPORT_REFUND_SEND_GRACE_MS } from "@/lib/support/money-policy";
 import {
   handTopUpCopy,
   MAX_REFUND_OWED_ATTEMPTS,
-  OWED_ALREADY_HELD_PREFIX,
 } from "@/lib/payments/operations/refund-owed";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { PARTIAL_CREDIT_CLOSED_PREFIX } from "@/lib/payments/operations/credit-plan-return";
@@ -322,27 +322,151 @@ function stillOwedFifo(
 
 const inr = (paise: number) => `₹${(paise / 100).toFixed(2)}`;
 
-/** The row's instruction: settled (release the hold), the top-up, or the top-up behind a still-owed older refund. */
-function topUpRowCopy(owed: number, older: number, holding: boolean): string {
-  if (owed <= 0) {
-    return "the top-up is settled; release the hold on its earnings from the Earnings tab.";
+/** One held top-up as it stands: what it still owes and what its hold allows. */
+export type TopUpStatus = {
+  ref: string;
+  createdAt: Date;
+  paymentId: string;
+  heldKey: string;
+  /** Still owed to the buyer; zero or less once refunds cover it. */
+  owed: number;
+  /** An older refund still stamped on the payment, which a hand refund settles first. */
+  older: number;
+  /** Its OPERATOR hold is still active. */
+  holding: boolean;
+  /** Another top-up on the same payment (so on the same earnings) is still unpaid. */
+  otherUnpaid: boolean;
+};
+
+type TopUpDb = Pick<Tx, "systemEvent" | "payment" | "refund" | "earningsHold">;
+
+/** Every held top-up recorded on these payments, as it stands, read on `db`. */
+export async function topUpStatuses(
+  db: TopUpDb,
+  paymentIds: readonly string[],
+): Promise<Map<string, TopUpStatus>> {
+  const ids = [...new Set(paymentIds)];
+  if (ids.length === 0) return new Map();
+  const events = await db.systemEvent.findMany({
+    where: {
+      category: "PAYMENT",
+      OR: ids.map((id) => ({
+        correlationId: { startsWith: `${OWED_ALREADY_HELD_PREFIX}${id}:` },
+      })),
+    },
+    orderBy: { createdAt: "asc" },
+    select: EVENT_SELECT,
+  });
+  const first = new Map<string, OpenTopUp>();
+  for (const e of events) {
+    const ctx = owedHeldContextSchema.safeParse(e.context);
+    if (!e.correlationId || !ctx.success || first.has(e.correlationId))
+      continue;
+    first.set(e.correlationId, { ...ctx.data, createdAt: e.createdAt });
   }
-  const topUp = handTopUpCopy(owed, holding);
-  if (older <= 0) return topUp;
-  return `${topUp} The older refund of ${inr(older)} is still owed and a hand refund settles it first, so refund ${inr(owed + older)} in total.`;
+  if (first.size === 0) return new Map();
+  const payments = await db.payment.findMany({
+    where: { id: { in: ids } },
+    select: {
+      id: true,
+      amount: true,
+      refundOwedKey: true,
+      refundOwedPaise: true,
+      ...REFUNDABLE_BALANCE_SELECT,
+    },
+  });
+  const byPayment = new Map(payments.map((p) => [p.id, p]));
+  const refunds = await db.refund.findMany({
+    where: { paymentId: { in: ids }, status: { in: ["SUCCEEDED", "PENDING"] } },
+    select: {
+      paymentId: true,
+      dedupeKey: true,
+      createdAt: true,
+      amountPaise: true,
+      metadata: true,
+    },
+  });
+  const activeHolds = await db.earningsHold.findMany({
+    where: {
+      reason: EarningsHoldReason.OPERATOR,
+      sourceRef: { in: [...first.keys()] },
+      releasedAt: null,
+    },
+    select: { sourceRef: true },
+  });
+  const held = new Set(activeHolds.map((h) => h.sourceRef));
+  const still = stillOwedFifo(first, refunds);
+  const statuses = new Map<string, TopUpStatus>();
+  for (const [ref, t] of first) {
+    const payment = byPayment.get(t.paymentId);
+    const owed = Math.min(
+      still.get(ref) ?? 0,
+      payment ? refundableBalancePaise(Number(payment.amount), payment) : 0,
+    );
+    const older =
+      payment?.refundOwedKey === t.heldKey && payment.refundOwedPaise !== null
+        ? Number(payment.refundOwedPaise)
+        : 0;
+    statuses.set(ref, {
+      ref,
+      createdAt: t.createdAt,
+      paymentId: t.paymentId,
+      heldKey: t.heldKey,
+      owed,
+      older,
+      holding: held.has(ref),
+      otherUnpaid: false,
+    });
+  }
+  for (const s of statuses.values()) {
+    s.otherUnpaid = [...statuses.values()].some(
+      (o) => o.ref !== s.ref && o.paymentId === s.paymentId && o.owed > 0,
+    );
+  }
+  return statuses;
+}
+
+/** The row's instruction: the top-up (behind any still-owed older refund), or its hold release. */
+function topUpRowCopy(s: TopUpStatus): string {
+  if (s.owed <= 0) {
+    return s.otherUnpaid
+      ? "the top-up is settled; its hold is released once the other top-up on this payment is paid."
+      : "the top-up is settled; release its hold.";
+  }
+  const topUp = handTopUpCopy(s.owed, s.holding);
+  if (s.older <= 0) return topUp;
+  return `${topUp} The older refund of ${inr(s.older)} is still owed and a hand refund settles it first, so refund ${inr(s.owed + s.older)} in total.`;
+}
+
+function topUpItem(s: TopUpStatus) {
+  return {
+    id: `owed-held:${s.ref}`,
+    message: `Payment ${s.paymentId} (${s.heldKey}): ${topUpRowCopy(s)}`,
+    createdAt: s.createdAt,
+    paymentId: s.paymentId,
+    occurrenceId: null,
+    unitPaise: null,
+    /** The Issue-refund preset: the top-up, plus an older refund a hand refund settles first; null once only the hold is left. */
+    amountPaise: s.owed > 0 ? s.owed + s.older : null,
+    /** The hold its release door takes, once the money is paid and no other top-up on the payment is open. */
+    holdRef: s.ref,
+    releasable: s.owed <= 0 && s.holding && !s.otherUnpaid,
+    kind: "owed-already-held" as const,
+    caseId: null,
+    creditPlan: false,
+  };
 }
 
 /** Held top-ups older than this leave the list unless their hold is still active; the runbook's triage query finds the rest. */
 export const OWED_HELD_WINDOW_DAYS = 180;
 const OWED_HELD_READ_LIMIT = 500;
-
 /**
  * Doors whose refund another door's owed refund already held (first writer
  * wins). Open while money is still owed: refunds landed on the payment since
  * the event (oldest top-up first; never a holding refund, nor a hand refund's
  * share that settled one) cover less than the top-up, and the payment still has
  * a refundable balance. Any later refund on the payment counts, whatever its
- * reason. Once paid, the row asks for the door's OPERATOR hold to be released.
+ * reason. Once paid, the row asks for its own hold to be released.
  */
 export async function readOwedAlreadyHeld(
   now = new Date(),
@@ -384,110 +508,39 @@ export async function readOwedAlreadyHeld(
           orderBy: { createdAt: "asc" },
           select: EVENT_SELECT,
         });
-  const events = [...heldEvents, ...recent].sort(
-    (x, y) => x.createdAt.getTime() - y.createdAt.getTime(),
+  const events = [...heldEvents, ...recent];
+  const statuses = await topUpStatuses(
+    prisma,
+    events.flatMap((e) => {
+      const ctx = owedHeldContextSchema.safeParse(e.context);
+      return ctx.success ? [ctx.data.paymentId] : [];
+    }),
   );
-  const first = new Map<
-    string,
-    { e: EventRow; paymentId: string; heldKey: string; owedPaise: number }
-  >();
-  for (const e of events) {
-    const ctx = owedHeldContextSchema.safeParse(e.context);
-    if (!e.correlationId || !ctx.success || first.has(e.correlationId))
-      continue;
-    first.set(e.correlationId, { e, ...ctx.data });
-  }
-  const more =
-    total > recent.length
-      ? [
-          {
-            id: "owed-held:more",
-            message: `${total - recent.length} more held top-up events are not listed yet (oldest first). Settle the rows above, then reload.`,
-            createdAt: now,
-            paymentId: null,
-            occurrenceId: null,
-            unitPaise: null,
-            amountPaise: null,
-            kind: "owed-already-held" as const,
-            caseId: null,
-            creditPlan: false,
-          },
-        ]
-      : [];
-  if (first.size === 0) return more;
-  const paymentIds = [...new Set([...first.values()].map((r) => r.paymentId))];
-  const payments = await prisma.payment.findMany({
-    where: { id: { in: paymentIds } },
-    select: {
-      id: true,
-      amount: true,
-      refundOwedKey: true,
-      refundOwedPaise: true,
-      ...REFUNDABLE_BALANCE_SELECT,
+  const rows = [...statuses.values()]
+    .filter(
+      (s) =>
+        events.some((e) => e.correlationId === s.ref) &&
+        (s.owed > 0 || s.holding),
+    )
+    .map(topUpItem);
+  if (total <= recent.length) return rows;
+  return [
+    ...rows,
+    {
+      id: "owed-held:more",
+      message: `${total - recent.length} more held top-up events are not listed yet (oldest first). Settle the rows above, then reload.`,
+      createdAt: now,
+      paymentId: null,
+      occurrenceId: null,
+      unitPaise: null,
+      amountPaise: null,
+      holdRef: null,
+      releasable: false,
+      kind: "owed-already-held" as const,
+      caseId: null,
+      creditPlan: false,
     },
-  });
-  const byPayment = new Map(payments.map((p) => [p.id, p]));
-  const refunds = await prisma.refund.findMany({
-    where: {
-      paymentId: { in: paymentIds },
-      status: { in: ["SUCCEEDED", "PENDING"] },
-    },
-    select: {
-      paymentId: true,
-      dedupeKey: true,
-      createdAt: true,
-      amountPaise: true,
-      metadata: true,
-    },
-  });
-  const activeHolds = await prisma.earningsHold.findMany({
-    where: {
-      reason: EarningsHoldReason.OPERATOR,
-      sourceRef: { in: [...first.keys()] },
-      releasedAt: null,
-    },
-    select: { sourceRef: true },
-  });
-  const held = new Set(activeHolds.map((h) => h.sourceRef));
-  const still = stillOwedFifo(
-    new Map(
-      [...first.entries()].map(([ref, row]) => [
-        ref,
-        { ...row, createdAt: row.e.createdAt },
-      ]),
-    ),
-    refunds,
-  );
-  const rows = [...first.entries()].flatMap(([ref, row]) => {
-    const payment = byPayment.get(row.paymentId);
-    const owed = Math.min(
-      still.get(ref) ?? 0,
-      payment ? refundableBalancePaise(Number(payment.amount), payment) : 0,
-    );
-    const holding = held.has(ref);
-    if (owed <= 0 && !holding) return [];
-    // A hand refund settles the still-stamped older refund first, so the door preset covers both.
-    const older =
-      payment?.refundOwedKey === row.heldKey && payment.refundOwedPaise !== null
-        ? Number(payment.refundOwedPaise)
-        : 0;
-    return [
-      {
-        id: `owed-held:${ref}`,
-        message: `Payment ${row.paymentId} (${row.heldKey}): ${topUpRowCopy(owed, older, holding)}`,
-        createdAt: row.e.createdAt,
-        paymentId: row.paymentId,
-        occurrenceId: null,
-        unitPaise: null,
-        /** The Issue-refund preset: the top-up, plus an older refund a hand refund settles first; null once only the hold release is left. */
-        amountPaise: owed > 0 ? owed + older : null,
-        kind: "owed-already-held" as const,
-        caseId: null,
-        creditPlan: false,
-      },
-    ];
-  });
-  return [...rows, ...more];
+  ];
 }
 
 /**
