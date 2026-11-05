@@ -303,7 +303,7 @@ describe("a whole-event refund a held refund marker refuses", () => {
     expect(await res.json()).toMatchObject({
       code: "REFUND_NEEDS_SUPPORT",
       error:
-        "Seat payment pay_seat_1 has a refund still owed from another action (occ:occ-1:pay:pay_seat_1); settle it from Refunds → Needs human, then cancel the class again.",
+        "Seat payment pay_seat_1 has a refund still owed from another action (occ:occ-1:pay:pay_seat_1); settle it from Refunds → Needs human, then run this again.",
     });
   });
 });

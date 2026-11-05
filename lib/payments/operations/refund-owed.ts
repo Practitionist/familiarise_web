@@ -716,10 +716,15 @@ export async function heldMarkerRefusal(
 }
 
 /**
- * The held-marker refusal as an operator reads it (ADMIN or STAFF): which seat
- * payment holds which refund, and the next step; null for any other refusal.
+ * The held-marker refusal as an operator reads it (ADMIN or STAFF): which
+ * payment holds which refund, and the next step; `retry` names the operator's
+ * own door (default: cancel the class, webinar or booking again). Null for any
+ * other refusal.
  */
-export function opsHeldMarkerMessage(refusal: Refusal): string | null {
+export function opsHeldMarkerMessage(
+  refusal: Refusal,
+  retry?: string,
+): string | null {
   if (
     refusal.code !== REFUND_NEEDS_SUPPORT &&
     refusal.code !== REFUND_IN_PROGRESS
@@ -730,13 +735,17 @@ export function opsHeldMarkerMessage(refusal: Refusal): string | null {
   const heldKey = refusal.context?.heldKey;
   const from = typeof heldKey === "string" ? ` (${heldKey})` : "";
   const subject = refusal.context?.subject;
-  const target =
-    subject === "class" || subject === "webinar"
-      ? `the ${subject}`
-      : "this booking";
+  const event = subject === "class" || subject === "webinar";
+  const payment =
+    event || subject === "seat"
+      ? `Seat payment ${paymentId}`
+      : `Payment ${paymentId}`;
+  const next =
+    retry ??
+    `cancel ${event ? `the ${String(subject)}` : "this booking"} again`;
   return refusal.code === REFUND_NEEDS_SUPPORT
-    ? `Seat payment ${paymentId} has a refund still owed from another action${from}; settle it from Refunds → Needs human, then cancel ${target} again.`
-    : `Seat payment ${paymentId} has a refund from another action${from} still being retried; cancel ${target} again once it completes, or settle it by hand from Refunds → Issue refund.`;
+    ? `${payment} has a refund still owed from another action${from}; settle it from Refunds → Needs human, then ${next}.`
+    : `${payment} has a refund from another action${from} still being sent; wait for it to finish, then ${next}. If it fails, settle it by hand from Refunds → Needs human.`;
 }
 
 /**

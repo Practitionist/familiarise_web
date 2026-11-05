@@ -332,8 +332,9 @@ async function runWorkItem(
       kind: item.kind,
       id: item.id,
       error:
-        (isRefusal(error) ? opsHeldMarkerMessage(error) : null) ??
-        errMsg(error),
+        (isRefusal(error)
+          ? opsHeldMarkerMessage(error, "re-run the ban's bulk cancel")
+          : null) ?? errMsg(error),
     });
     // A held refund marker refused the cancel with nothing committed; a re-run retries it.
     if (isRefusal(error)) await recordRefundNeedsSupport(error);

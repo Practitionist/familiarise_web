@@ -89,14 +89,14 @@ For each, compare the payment's refunds with what the door owed (the event's mes
 
 ## A class or webinar won't cancel: a seat's refund is still owed
 
-**Symptom.** The class-wide cancel (money console, `cancel-series`), the admin whole-event refund, or the host's cancel answers 409. An operator reads "Seat payment … has a refund still owed from another action (…); settle it from Refunds → Needs human, then cancel the class again." (`REFUND_NEEDS_SUPPORT`) or "… still being retried; cancel the class again once it completes, or settle it by hand from Refunds → Issue refund." (`REFUND_IN_PROGRESS`). A host reads "This class couldn't be cancelled yet: a refund on one of its seats …". A moderation ban lists the class under `failures` with the same operator line.
+**Symptom.** The class-wide cancel (money console, `cancel-series`), the admin whole-event refund, or the host's cancel answers 409. An operator reads "Seat payment … has a refund still owed from another action (…); settle it from Refunds → Needs human, then cancel the class again." (`REFUND_NEEDS_SUPPORT`; the admin whole-event refund says "then run this again") or "Seat payment … has a refund from another action (…) still being sent; wait for it to finish, then cancel the class again. If it fails, settle it by hand from Refunds → Needs human." (`REFUND_IN_PROGRESS`). A host reads "This class couldn't be cancelled yet: a refund on one of its seats …". A moderation ban lists the class under `failures` with the operator line ending "then re-run the ban's bulk cancel".
 
 **Impact.** Nothing was committed: the class, its sessions, its seats and every other seat's payment are as they were, and the class stays live. A whole-event cancel must own every seat's refund marker, so it waits for the older refund rather than leaving one seat's refund owned by nobody.
 
 **Fix.**
 
 1. `REFUND_NEEDS_SUPPORT`: the older refund spent its retries or a dispute holds it. Settle it from the Refunds tab's stuck owed refund row (**Issue refund**), or resolve the dispute first.
-2. `REFUND_IN_PROGRESS`: the older refund is still retrying (up to about 5 hours). Wait for it, or refund its amount by hand through **Issue refund**, which settles the marker.
+2. `REFUND_IN_PROGRESS`: the older refund is still being sent or retrying (up to about 5 hours). Wait for it; a hand refund is refused while its refund is in flight (`OWED_REFUND_IN_FLIGHT`). If it fails for good, it appears under Refunds → Needs human: settle it there.
 3. Cancel the class again from the same door. For a moderation ban, re-run the ban's bulk cancel from the moderation console once the refund settles: a refused class is not retried automatically, and each step of the sweep is idempotent.
 
 **Verify.** The cancel answers 200 and every seat's refund carries the event's own key (`event-cancel:<eventId>:pay:<paymentId>`).

@@ -34,7 +34,7 @@ export function refusalResponse(err: unknown): NextResponse | null {
   if (isRefusal(err))
     return body(
       err.code,
-      opsHeldMarkerMessage(err) ?? err.userMessage,
+      opsHeldMarkerMessage(err, "run this again") ?? err.userMessage,
       err.httpStatus,
     );
   if (err instanceof BookingRuleError)
