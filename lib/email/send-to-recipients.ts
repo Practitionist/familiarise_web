@@ -92,6 +92,10 @@ async function prepare(
         html,
         text,
         replyTo: args.replyTo,
+        deliveryPolicy: {
+          userId: recipient.userId,
+          category: recipient.category,
+        },
         headers: recipient.unsubscribeUrl
           ? listUnsubscribeHeaders(recipient.unsubscribeUrl)
           : undefined,

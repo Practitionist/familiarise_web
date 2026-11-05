@@ -32,6 +32,7 @@ import {
 } from "@/lib/email/send-to-recipients";
 
 const allowed: EmailRecipient = {
+  category: "appointments",
   userId: "user_1",
   email: "one@example.com",
   name: "One",
@@ -97,4 +98,20 @@ it("reports render failures once for the whole fanout", async () => {
     expect.any(Error),
     expect.objectContaining({ extra: { failedRecipients: 2 } }),
   );
+});
+
+it("carries the explicit recipient category into prepared and staged messages", async () => {
+  jest.mocked(renderEmail).mockResolvedValue({ html: "<p>hi</p>", text: "hi" });
+  const result = await prepareRecipientEmails({
+    recipients: [{ ...allowed, category: "appointments" }],
+    emailType: "APPOINTMENT_BOOKED",
+    from: "sender@example.com",
+    subject: () => "Booked",
+    render: () => React.createElement("p"),
+    entityRef: "appointment:1",
+  });
+  expect(result.messages[0].deliveryPolicy).toEqual({
+    userId: "user_1",
+    category: "appointments",
+  });
 });

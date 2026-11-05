@@ -60,6 +60,10 @@ import {
   resendErrorText,
   terminalSendReason,
 } from "@/lib/email/classify";
+import {
+  emailPolicyRefusal,
+  type EmailPolicyReader,
+} from "@/lib/email/delivery-policy";
 import { idempotencyKeyFor } from "@/lib/email/idempotency";
 import { findSuppressed, normaliseEmail } from "@/lib/email/suppression";
 import { reconstructUnsubscribeHeaders } from "@/lib/email/unsubscribe";
@@ -133,7 +137,7 @@ export interface EmailRetryRunResult {
   errors: string[];
 }
 
-export interface FailedEmailStore {
+export interface FailedEmailStore extends EmailPolicyReader {
   waitlist: {
     findMany(args: {
       where: { email: { in: string[] }; status: "SUBSCRIBED" };
@@ -248,6 +252,20 @@ export async function runEmailRetryTick(params: {
             status: "DEAD_LETTER",
             lastError: `not replayed: ${row.emailType} carried a single-use credential`,
           },
+        });
+        result.deadLettered += 1;
+        continue;
+      }
+
+      const refusal = await emailPolicyRefusal(
+        row.deliveryPolicy,
+        row.recipient,
+        prisma,
+      );
+      if (refusal) {
+        await prisma.failedEmail.update({
+          where: { id: row.id },
+          data: { status: "DEAD_LETTER", lastError: `policy:${refusal}` },
         });
         result.deadLettered += 1;
         continue;

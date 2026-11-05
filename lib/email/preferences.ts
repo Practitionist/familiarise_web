@@ -47,6 +47,7 @@ export const EMAIL_CATEGORY_COLUMN: Record<
 
 export type EmailRecipient = {
   userId: string;
+  category: PreferenceCategory | null;
   email: string;
   name: string | null;
   /** IANA zone every time in the message is rendered in. */
@@ -76,7 +77,7 @@ type UserRow = {
 
 type UserReader = Pick<PrismaLike, "user">;
 
-const PREFERENCE_SELECT = {
+export const EMAIL_PREFERENCE_SELECT = {
   allNotifications: true,
   emailEnabled: true,
   appointmentReminders: true,
@@ -92,8 +93,8 @@ const PREFERENCE_SELECT = {
 
 // A required notice (null category) ignores the switches; otherwise a missing
 // row means defaults, and every default is on.
-function isAllowed(
-  user: UserRow,
+export function isEmailAllowedForUser(
+  user: Pick<UserRow, "orgWorkspaceProfile" | "notificationPreferences">,
   category: PreferenceCategory | null,
 ): boolean {
   if (category === null) return true;
@@ -118,7 +119,7 @@ async function fetchUsers(ids: string[], db: UserReader): Promise<UserRow[]> {
       name: true,
       timezone: true,
       orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
-      notificationPreferences: { select: PREFERENCE_SELECT },
+      notificationPreferences: { select: EMAIL_PREFERENCE_SELECT },
     },
   });
 }
@@ -144,13 +145,14 @@ export async function loadEmailRecipients(
     return [
       {
         userId: user.id,
+        category,
         email: user.email,
         name: user.name,
         zone: resolveViewerZone({
           userTimezone: user.timezone,
           fallbackZone: DEFAULT_NOTIFICATION_TIMEZONE,
         }),
-        allowed: isAllowed(user, category),
+        allowed: isEmailAllowedForUser(user, category),
         unsubscribeUrl: signable ? buildEmailUnsubscribeUrl(user.id) : null,
       },
     ];
@@ -165,5 +167,5 @@ export async function isEmailAllowed(
 ): Promise<boolean> {
   const [user] = await fetchUsers([userId], db);
   if (!user) return false;
-  return isAllowed(user, category);
+  return isEmailAllowedForUser(user, category);
 }

@@ -26,8 +26,12 @@ Postgres `NotificationPreference` is the authority. Novu subscriber data mirrors
 - Routine bells honor quiet hours; security changes, actionable payment/refund/payout failures, disputes opened, and compliance deadlines bypass quiet-hours deferral. Other preference switches still apply.
 - Enabling quiet hours persists the displayed start, end and timezone. Shared-recipient rows currently use the latest applicable quiet-hours end.
 - Email suppression is checked at staging and again before inline delivery; the relay also checks it.
+- Recipient-aware email stores explicit user/category context in nullable `FailedEmail.deliveryPolicy`. Inline attempts and retries re-read the current account, address, category and workspace policy; required notices bypass optional switches but never recipient identity checks. Temporary read failures leave durable work pending. Older rows and direct-address mail lack this context and retain their existing policy.
+
 - Newsletter batch retries validate the stored payload, current subscription state and suppression. If any recipient is no longer eligible, the whole batch is dead-lettered with `batch audience changed: consent or suppression`. Operators must review it before a new send; the relay never edits a previously attempted payload under the same idempotency key.
 - Every email passes the pre-launch delivery guard, including batch replay. No audit or test should send real messages to seeded addresses.
+
+The delivery-policy column is additive work in this PR. The human-run schema rollout must precede deployment of its reader/writer; the audit did not change the shared database.
 
 ## Idempotency and recovery
 

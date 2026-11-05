@@ -13,6 +13,7 @@ const mockSend = jest.fn();
 const mockCreate = jest.fn();
 const mockUpdate = jest.fn();
 const mockFindSuppression = jest.fn();
+const mockPolicyUser = jest.fn();
 const mockCaptureException = jest.fn();
 
 jest.mock("resend", () => ({
@@ -24,6 +25,7 @@ jest.mock("resend", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    user: { findUnique: (...args: unknown[]) => mockPolicyUser(...args) },
     failedEmail: {
       create: (...args: unknown[]) => mockCreate(...args),
       update: (...args: unknown[]) => mockUpdate(...args),
@@ -329,4 +331,66 @@ it("rechecks suppression after staging and before the deferred attempt", async (
       data: { status: "DEAD_LETTER", lastError: "suppressed:COMPLAINT" },
     }),
   );
+});
+
+describe("queued account delivery policy", () => {
+  const guarded: RenderedEmail = {
+    ...message,
+    deliveryPolicy: { userId: "account", category: "appointments" },
+  };
+  beforeEach(() => {
+    process.env.RESEND_API_KEY = "re_test";
+    mockCreate.mockResolvedValue({ id: "fe-policy" });
+    mockPolicyUser.mockResolvedValue({
+      email: message.to,
+      erasedAt: null,
+      notificationPreferences: null,
+      orgWorkspaceProfile: null,
+    });
+    mockSend.mockResolvedValue({
+      data: { id: "accepted" },
+      error: null,
+      headers: null,
+    });
+  });
+  it("persists policy context but never sends it to Resend", async () => {
+    const staged = await stage(guarded, "APPOINTMENT_BOOKED");
+    expect(mockCreate.mock.calls[0][0].data.deliveryPolicy).toEqual(
+      guarded.deliveryPolicy,
+    );
+    expect(
+      (await attempt(staged, guarded, "APPOINTMENT_BOOKED", { budgetMs: 1000 }))
+        .success,
+    ).toBe(true);
+    expect(mockSend.mock.calls[0][0]).not.toHaveProperty("deliveryPolicy");
+  });
+  it("refuses deferred content after its account address changes", async () => {
+    const staged = await stage(guarded, "APPOINTMENT_BOOKED");
+    mockPolicyUser.mockResolvedValue({
+      email: "changed@example.com",
+      erasedAt: null,
+      notificationPreferences: null,
+      orgWorkspaceProfile: null,
+    });
+    expect(
+      (await attempt(staged, guarded, "APPOINTMENT_BOOKED", { budgetMs: 1000 }))
+        .success,
+    ).toBe(false);
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(mockUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { status: "DEAD_LETTER", lastError: "policy:recipient_changed" },
+      }),
+    );
+  });
+  it("keeps the staged row pending when the account cannot be read", async () => {
+    const staged = await stage(guarded, "APPOINTMENT_BOOKED");
+    mockPolicyUser.mockRejectedValueOnce(new Error("pool unavailable"));
+    expect(
+      (await attempt(staged, guarded, "APPOINTMENT_BOOKED", { budgetMs: 1000 }))
+        .success,
+    ).toBe(false);
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(mockUpdate.mock.calls[0][0].data.status).toBeUndefined();
+  });
 });

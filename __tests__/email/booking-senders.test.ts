@@ -34,6 +34,7 @@ import {
 } from "@/lib/email/senders/booking";
 
 const allowed: EmailRecipient = {
+  category: "appointments",
   userId: "user_1",
   email: "one@example.com",
   name: "One",

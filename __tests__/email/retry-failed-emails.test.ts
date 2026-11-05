@@ -59,6 +59,7 @@ function makeRow(overrides: Partial<FailedEmail> = {}): FailedEmail {
     // #1654 — the outbox columns; a replayed dead-letter row has neither yet.
     resendId: null,
     entityRef: null,
+    deliveryPolicy: null,
     createdAt: new Date("2026-06-16T11:58:00Z"),
     updatedAt: new Date("2026-06-16T11:58:00Z"),
     ...overrides,
@@ -96,6 +97,7 @@ function makePrismaStub(
   const updates: Prisma.FailedEmailUpdateArgs[] = [];
   const batchUpdates: Prisma.FailedEmailBatchUpdateArgs[] = [];
   const prisma: FailedEmailStore = {
+    user: { findUnique: jest.fn().mockResolvedValue(null) },
     waitlist: {
       findMany: jest.fn(async (args) => {
         const emails = args.where?.email;
@@ -346,6 +348,7 @@ describe("runEmailRetryTick — pacing (#1654)", () => {
     jest.useFakeTimers();
     const rows = [makeRow({ id: "fe-a" }), makeRow({ id: "fe-b" })];
     const prisma: FailedEmailStore = {
+      user: { findUnique: jest.fn().mockResolvedValue(null) },
       waitlist: {
         findMany: jest.fn(async (args) => {
           const emails = args.where?.email;
@@ -602,5 +605,91 @@ describe("batch audience safety at replay", () => {
     });
     expect(sender.batch.send).not.toHaveBeenCalled();
     expect(result.batchesDeadLettered).toBe(1);
+  });
+});
+
+describe("individual account policy at relay", () => {
+  it("does not send an optional notice after the master switch is disabled", async () => {
+    const { prisma, updates } = makePrismaStub(
+      makeRow({ deliveryPolicy: { userId: "account", category: "payments" } }),
+    );
+    jest.mocked(prisma.user.findUnique).mockResolvedValue({
+      email: "user@example.com",
+      erasedAt: null,
+      orgWorkspaceProfile: null,
+      notificationPreferences: {
+        allNotifications: false,
+        emailEnabled: true,
+        appointmentReminders: true,
+        paymentNotifications: true,
+        subscriptionAlerts: true,
+        trialNotifications: true,
+        supportUpdates: true,
+        feedbackAlerts: true,
+        orgBillingAlerts: true,
+        orgMembershipAlerts: true,
+        orgProgramAlerts: true,
+      },
+    });
+    const sender = mockResend(async () => ({
+      data: { id: "sent" },
+      error: null,
+      headers: null,
+    }));
+    const result = await runEmailRetryTick({
+      prisma,
+      resend: sender,
+      now: () => FROZEN_NOW_MS,
+    });
+    expect(sender.send).not.toHaveBeenCalled();
+    expect(result.deadLettered).toBe(1);
+    expect(updates[0].data).toMatchObject({
+      status: "DEAD_LETTER",
+      lastError: "policy:preference_changed",
+    });
+  });
+  it("sends required account mail without an optional preference gate", async () => {
+    const { prisma } = makePrismaStub(
+      makeRow({ deliveryPolicy: { userId: "account", category: null } }),
+    );
+    jest.mocked(prisma.user.findUnique).mockResolvedValue({
+      email: "user@example.com",
+      erasedAt: null,
+      orgWorkspaceProfile: { notificationRoutingMode: "NEITHER" },
+      notificationPreferences: null,
+    });
+    const sender = mockResend(async () => ({
+      data: { id: "sent" },
+      error: null,
+      headers: null,
+    }));
+    expect(
+      (
+        await runEmailRetryTick({
+          prisma,
+          resend: sender,
+          now: () => FROZEN_NOW_MS,
+        })
+      ).sent,
+    ).toBe(1);
+    expect(sender.send.mock.calls[0][0]).not.toHaveProperty("deliveryPolicy");
+  });
+  it("propagates account read failures without attempting or dead-lettering mail", async () => {
+    const { prisma, updates } = makePrismaStub(
+      makeRow({ deliveryPolicy: { userId: "account", category: "payments" } }),
+    );
+    jest
+      .mocked(prisma.user.findUnique)
+      .mockRejectedValueOnce(new Error("pool unavailable"));
+    const sender = mockResend(async () => ({
+      data: { id: "sent" },
+      error: null,
+      headers: null,
+    }));
+    await expect(
+      runEmailRetryTick({ prisma, resend: sender, now: () => FROZEN_NOW_MS }),
+    ).rejects.toThrow("pool unavailable");
+    expect(sender.send).not.toHaveBeenCalled();
+    expect(updates).toEqual([]);
   });
 });

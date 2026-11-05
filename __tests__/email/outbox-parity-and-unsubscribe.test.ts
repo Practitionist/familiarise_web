@@ -68,6 +68,7 @@ function makeFailedEmail(overrides: Partial<FailedEmail> = {}): FailedEmail {
     sentAt: null,
     resendId: null,
     entityRef: null,
+    deliveryPolicy: null,
     createdAt: new Date(T0 - 60_000),
     updatedAt: new Date(T0 - 60_000),
     ...overrides,
@@ -129,6 +130,7 @@ function createStatefulOutboxStore(initial: {
   const batches = [...(initial.batches ?? [])];
 
   const store: FailedEmailStore = {
+    user: { findUnique: jest.fn().mockResolvedValue(null) },
     waitlist: {
       findMany: jest.fn(async (args) => {
         const emails = args.where?.email;

@@ -13,6 +13,11 @@ import {
   resendErrorText,
   terminalSendReason,
 } from "./classify";
+import {
+  emailPolicyRefusal,
+  EmailPolicyRefusedError,
+  type EmailDeliveryPolicy,
+} from "./delivery-policy";
 import { idempotencyKeyFor } from "./idempotency";
 import { EmailRecipientCappedError, overRecipientCap } from "./recipient-cap";
 import { EmailSuppressedError, findSuppression } from "./suppression";
@@ -24,8 +29,7 @@ import {
   recipientsOf,
 } from "./delivery-guard";
 
-// #474 — the already-RENDERED message a sender handed to Resend. We persist
-// THIS verbatim (not the sender args) so retry is a re-send, not a re-render.
+// Retries reuse rendered content; account context stays internal to delivery checks.
 export interface RenderedEmail {
   from: string;
   to: string;
@@ -33,9 +37,9 @@ export interface RenderedEmail {
   html: string;
   text?: string;
   replyTo?: string;
-  // #1653 — List-Unsubscribe and friends. Sent inline only: the row does not
-  // persist them, so the relay's resend of a staged row carries none.
+  // The relay reconstructs unsubscribe headers from signed footer links.
   headers?: Record<string, string>;
+  deliveryPolicy?: EmailDeliveryPolicy;
 }
 
 export type DeliverResult =
@@ -164,6 +168,9 @@ export async function recordFailedEmail(
         replyTo: message.replyTo ?? null,
         subject: message.subject,
         ...storedBodies(message, emailType),
+        ...(message.deliveryPolicy && {
+          deliveryPolicy: { ...message.deliveryPolicy },
+        }),
         emailType,
         status: "PENDING",
         // Retry-now: the worker's first pass picks it up; backoff only kicks
@@ -216,6 +223,9 @@ export async function stage(
         replyTo: payload.replyTo ?? null,
         subject: payload.subject,
         ...storedBodies(payload, emailType),
+        ...(payload.deliveryPolicy && {
+          deliveryPolicy: { ...payload.deliveryPolicy },
+        }),
         emailType,
         status: refusal ? "DEAD_LETTER" : "PENDING",
         nextRetryAt: new Date(Date.now() + 60_000),
@@ -312,6 +322,24 @@ export async function attempt(
   // "could not be resolved" error can still be recognised as our own abort.
   const signal = AbortSignal.timeout(opts.budgetMs);
   try {
+    const { deliveryPolicy, ...wirePayload } = payload;
+    const refusal = await emailPolicyRefusal(
+      deliveryPolicy,
+      payload.to,
+      prisma,
+    );
+    if (refusal) {
+      if (staged)
+        await settleRow(staged, emailType, {
+          status: "DEAD_LETTER",
+          lastError: `policy:${refusal}`,
+        });
+      return {
+        success: false,
+        error: new EmailPolicyRefusedError(refusal),
+        staged: staged !== null,
+      };
+    }
     const suppression = await findSuppression(payload.to, prisma);
     if (suppression) {
       if (staged) {
@@ -331,7 +359,7 @@ export async function attempt(
 
     // #1654 — the SDK's post() spreads these options into fetch, so the signal
     // really aborts a slow call; its option type just does not declare it.
-    const data = await client.emails.send(payload, {
+    const data = await client.emails.send(wirePayload, {
       idempotencyKey,
       signal,
     } as CreateEmailRequestOptions);
