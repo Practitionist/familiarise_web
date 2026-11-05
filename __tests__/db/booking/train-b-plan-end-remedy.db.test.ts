@@ -172,7 +172,9 @@ const endPlan = (subscriptionId: string) =>
 const planEndCalls = (subscriptionId: string, paymentId: string) =>
   refundDoor.refundBookingPayment.mock.calls
     .map(([args]) => args as { dedupeKey?: string; amountPaise?: number })
-    .filter((args) => args.dedupeKey === planEndRefundKey(subscriptionId, paymentId))
+    .filter(
+      (args) => args.dedupeKey === planEndRefundKey(subscriptionId, paymentId),
+    )
     .map((args) => args.amountPaise);
 
 const voidAs = async (caseId: string, recommendationId: string) =>
@@ -198,7 +200,10 @@ beforeEach(() => {
 describe("plan end vs a session-count remedy", () => {
   it("waits while the remedy's refund failed; a void gives the session back and the plan settles the full share", async () => {
     const plan = await seedPlanCase();
-    const recommendationId = await approveOneSession(plan.caseId, plan.paymentId);
+    const recommendationId = await approveOneSession(
+      plan.caseId,
+      plan.paymentId,
+    );
     await bindRefund(recommendationId, plan.paymentId, "FAILED");
     await endPlan(plan.subscriptionId);
 
@@ -207,10 +212,14 @@ describe("plan end vs a session-count remedy", () => {
     expect(planEndCalls(plan.subscriptionId, plan.paymentId)).toEqual([]);
 
     await voidAs(plan.caseId, recommendationId);
-    expect((await subscriptionOf(plan.subscriptionId)).sessionsRefunded).toBe(0);
+    expect((await subscriptionOf(plan.subscriptionId)).sessionsRefunded).toBe(
+      0,
+    );
 
     await settleCancelledSessions();
-    expect((await subscriptionOf(plan.subscriptionId)).status).toBe("COMPLETED");
+    expect((await subscriptionOf(plan.subscriptionId)).status).toBe(
+      "COMPLETED",
+    );
     // 2 of 4 undelivered at ₹250, nothing returned.
     expect(planEndCalls(plan.subscriptionId, plan.paymentId)).toEqual([50_000]);
   });
@@ -227,7 +236,10 @@ describe("plan end vs a session-count remedy", () => {
 
   it("settles net of a sent remedy, then refuses a retry and voids without a give-back", async () => {
     const plan = await seedPlanCase();
-    const recommendationId = await approveOneSession(plan.caseId, plan.paymentId);
+    const recommendationId = await approveOneSession(
+      plan.caseId,
+      plan.paymentId,
+    );
     const refundId = await bindRefund(
       recommendationId,
       plan.paymentId,
@@ -236,7 +248,9 @@ describe("plan end vs a session-count remedy", () => {
     await endPlan(plan.subscriptionId);
 
     await settleCancelledSessions();
-    expect((await subscriptionOf(plan.subscriptionId)).status).toBe("COMPLETED");
+    expect((await subscriptionOf(plan.subscriptionId)).status).toBe(
+      "COMPLETED",
+    );
     // floor(100,000 × 2 / 4) − 25,000 already returned.
     expect(planEndCalls(plan.subscriptionId, plan.paymentId)).toEqual([25_000]);
 
@@ -245,9 +259,11 @@ describe("plan end vs a session-count remedy", () => {
       where: { id: refundId },
       data: { status: "FAILED", failedAt: new Date() },
     });
-    const decider = await prisma.supportFinancialRecommendation.findUniqueOrThrow(
-      { where: { id: recommendationId }, select: { decidedById: true } },
-    );
+    const decider =
+      await prisma.supportFinancialRecommendation.findUniqueOrThrow({
+        where: { id: recommendationId },
+        select: { decidedById: true },
+      });
     const deciderUser = await prisma.user.findUniqueOrThrow({
       where: { id: decider.decidedById ?? "" },
       select: { id: true, role: true },

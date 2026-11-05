@@ -141,7 +141,9 @@ describe("support partial refund, then a cancel", () => {
 describe("support partial refund, then the plan end", () => {
   it("matches the table: ₹1,800 now and ₹1,600 at the end, 17 sessions in all", () => {
     const support = sessionShareOf(A, 9, T);
-    const end = marker(78 - 61, [{ amountPaise: support, status: "SUCCEEDED" }]);
+    const end = marker(78 - 61, [
+      { amountPaise: support, status: "SUCCEEDED" },
+    ]);
     expect([support, end]).toEqual([180_000, 160_000]);
     expect(support + end).toBe(sessionShareOf(A, 17, T));
   });

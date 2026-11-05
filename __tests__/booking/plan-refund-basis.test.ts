@@ -79,7 +79,10 @@ describe("removePlanSessions", () => {
 
 describe("restorePlanSessions", () => {
   it("leaves a settled plan's count alone", async () => {
-    const { tx, updateMany } = txFor({ status: "COMPLETED", sessionsRefunded: 3 });
+    const { tx, updateMany } = txFor({
+      status: "COMPLETED",
+      sessionsRefunded: 3,
+    });
     await expect(restorePlanSessions(tx, "pay-1", 3)).resolves.toEqual({
       ok: true,
       sessionsRefunded: 3,

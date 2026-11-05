@@ -30,7 +30,11 @@ export async function freezeSoldTerms(
   // the length it was sold at before the edit can move it.
   const unended = await tx.subscription.findMany({
     where: { subscriptionPlanId, planEndsAt: null },
-    select: { id: true, schedulingPeriodStartsAt: true, schedulingTimezone: true },
+    select: {
+      id: true,
+      schedulingPeriodStartsAt: true,
+      schedulingTimezone: true,
+    },
   });
   for (const row of unended) {
     await tx.subscription.updateMany({

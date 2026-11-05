@@ -543,7 +543,12 @@ describe("support partial refund priced in sessions", () => {
 
   it("re-checks at approval: a plan that ended after the recommendation is refused", async () => {
     const { subscriptionId, paymentId, caseId } = await planCase();
-    const recommendation = await recommendSessions(caseId, paymentId, 2, 100_000);
+    const recommendation = await recommendSessions(
+      caseId,
+      paymentId,
+      2,
+      100_000,
+    );
     await prisma.subscription.update({
       where: { id: subscriptionId },
       data: { planEndsAt: new Date(Date.now() - 3_600_000) },
@@ -567,7 +572,12 @@ describe("support partial refund priced in sessions", () => {
 
   it("a cancel after a session-count refund quotes only the sessions left", async () => {
     const { subscriptionId, paymentId, caseId } = await planCase();
-    const recommendation = await recommendSessions(caseId, paymentId, 3, 150_000);
+    const recommendation = await recommendSessions(
+      caseId,
+      paymentId,
+      3,
+      150_000,
+    );
     await performCaseAction(caseId, await seedUser("STAFF"), {
       action: "REVIEW_REFUND",
       clientActionId: randomUUID(),

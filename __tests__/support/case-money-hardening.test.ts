@@ -680,9 +680,11 @@ describe("refund execution correctness", () => {
   });
 
   it("refuses an approval when the plan closed after the recommendation", async () => {
-    jest
-      .mocked(removePlanSessions)
-      .mockResolvedValueOnce({ ok: false, reason: "PLAN_CLOSED", removable: 0 });
+    jest.mocked(removePlanSessions).mockResolvedValueOnce({
+      ok: false,
+      reason: "PLAN_CLOSED",
+      removable: 0,
+    });
     mockStore.recommendations = [recommendation({ sessionsRemoved: 9 })];
     await expect(
       performCaseAction("case-1", admin, review(true)),
