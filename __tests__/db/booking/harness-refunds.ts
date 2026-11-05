@@ -66,3 +66,14 @@ export const refundedPaise = async (paymentId: string) =>
       select: { amountPaise: true },
     })
   ).reduce((sum, r) => sum + Number(r.amountPaise), 0);
+
+/** Every test in the suite refunds through {@link refundOnRows}, reset before each. */
+export function refundOnRowsEachTest(): void {
+  const door = jest.requireMock(
+    "../../../lib/payments/operations/booking-refund",
+  ) as { refundBookingPayment: jest.Mock };
+  beforeEach(() => {
+    door.refundBookingPayment.mockReset();
+    door.refundBookingPayment.mockImplementation(refundOnRows);
+  });
+}

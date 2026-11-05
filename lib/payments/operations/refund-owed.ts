@@ -1,4 +1,10 @@
-import { PaymentStatus, Prisma, RefundStatus } from "@prisma/client";
+import {
+  EarningStatus,
+  EarningsHoldReason,
+  PaymentStatus,
+  Prisma,
+  RefundStatus,
+} from "@prisma/client";
 import { z } from "zod";
 
 import prisma, { type Tx } from "@/lib/prisma";
@@ -17,6 +23,13 @@ import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
+import {
+  EarningsHoldRaceError,
+  HOLDABLE_EARNING_STATUSES,
+  OWED_ALREADY_HELD_PREFIX,
+  placeEarningsHolds,
+} from "@/lib/payments/payouts/earnings-holds";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { refundBookingPayment } from "./booking-refund";
 import {
   findDedupedRefund,
@@ -624,9 +637,10 @@ const STAMPABLE = {
 } as const;
 
 export const REFUND_NEEDS_SUPPORT = "REFUND_NEEDS_SUPPORT";
+export const REFUND_IN_PROGRESS = "REFUND_IN_PROGRESS";
 
-/** What the refused door was changing: a whole booking, or one seat in it. */
-export type HeldMarkerSubject = "booking" | "seat";
+/** What the refused door was changing: a whole booking, one seat in it, or a whole class or webinar. */
+export type HeldMarkerSubject = "booking" | "seat" | "class" | "webinar";
 
 const HELD_MARKER_COPY: Record<
   HeldMarkerSubject,
@@ -643,6 +657,18 @@ const HELD_MARKER_COPY: Record<
       "This seat couldn't be released yet: a refund on it needs our support team. We've been notified and will be in touch.",
     inProgress:
       "This seat couldn't be released yet: a refund on it is still being processed. You can release it once that completes.",
+  },
+  class: {
+    needsSupport:
+      "This class couldn't be cancelled yet: a refund on one of its seats needs our support team. We've been notified and will be in touch.",
+    inProgress:
+      "This class couldn't be cancelled yet: a refund on one of its seats is still being processed. Try again once it completes.",
+  },
+  webinar: {
+    needsSupport:
+      "This webinar couldn't be cancelled yet: a refund on one of its seats needs our support team. We've been notified and will be in touch.",
+    inProgress:
+      "This webinar couldn't be cancelled yet: a refund on one of its seats is still being processed. Try again once it completes.",
   },
 };
 
@@ -678,16 +704,48 @@ export async function heldMarkerRefusal(
       httpStatus: 409,
       userMessage: HELD_MARKER_COPY[subject].needsSupport,
       devMessage: `Payment ${paymentId} holds a stuck refund marker; refused`,
-      context: { ...context, paymentId, heldKey: held?.refundOwedKey },
+      context: { ...context, paymentId, heldKey: held?.refundOwedKey, subject },
     });
   }
   return new Refusal({
-    code: "REFUND_IN_PROGRESS",
+    code: REFUND_IN_PROGRESS,
     httpStatus: 409,
     userMessage: HELD_MARKER_COPY[subject].inProgress,
     devMessage: `Payment ${paymentId} already owes another door's refund; refused`,
-    context: { ...context, paymentId },
+    context: { ...context, paymentId, heldKey: held?.refundOwedKey, subject },
   });
+}
+
+/**
+ * The held-marker refusal as an operator reads it (ADMIN or STAFF): which
+ * payment holds which refund, and the next step; `retry` names the operator's
+ * own door (default: cancel the class, webinar or booking again). Null for any
+ * other refusal.
+ */
+export function opsHeldMarkerMessage(
+  refusal: Refusal,
+  retry?: string,
+): string | null {
+  if (
+    refusal.code !== REFUND_NEEDS_SUPPORT &&
+    refusal.code !== REFUND_IN_PROGRESS
+  )
+    return null;
+  const paymentId = refusal.context?.paymentId;
+  if (typeof paymentId !== "string") return null;
+  const heldKey = refusal.context?.heldKey;
+  const from = typeof heldKey === "string" ? ` (${heldKey})` : "";
+  const subject = refusal.context?.subject;
+  const event = subject === "class" || subject === "webinar";
+  const payment =
+    event || subject === "seat"
+      ? `Seat payment ${paymentId}`
+      : `Payment ${paymentId}`;
+  const target = event ? "the " + String(subject) : "this booking";
+  const next = retry ?? `cancel ${target} again`;
+  return refusal.code === REFUND_NEEDS_SUPPORT
+    ? `${payment} has a refund still owed from another action${from}; settle it from Refunds → Needs human, then ${next}.`
+    : `${payment} has a refund from another action${from} still being sent; wait for it to finish, then ${next}. If it fails, settle it by hand from Refunds → Needs human.`;
 }
 
 /**
@@ -739,9 +797,6 @@ export async function stampRefundOwed(
   return count === 1;
 }
 
-/** The ops event a door records when its refund found another door's already owed. */
-export const OWED_ALREADY_HELD_PREFIX = "owed-already-held:";
-
 /** A door's refund that another door's owed refund already held: the door added nothing. */
 export type OwedRefundAlreadyHeld = {
   paymentId: string;
@@ -757,7 +812,8 @@ export type OwedRefundAlreadyHeld = {
 /**
  * Stamps the door's marker; when another door's owed refund already holds the
  * payment (first writer wins), records in the caller's transaction that this
- * action added nothing and answers what holds it, so an operator can top up by hand.
+ * action added nothing, holds the payment's earnings for the hand top-up, and
+ * answers what holds it.
  */
 export async function stampOwedOrHeld(
   tx: Tx,
@@ -788,6 +844,100 @@ async function heldBy(
   return row ? reportHeld(tx, marker, row) : null;
 }
 
+/** The ops instruction for a door's refund another door's owed refund held: what to pay by hand. */
+export function handTopUpCopy(owedPaise: number, held: boolean): string {
+  const remaining = `the remaining ${rupees(owedPaise)}`;
+  return held
+    ? `Another refund is still owed on this payment; refund ${remaining} by hand, then release the hold.`
+    : `Another refund is still owed on this payment; refund ${remaining} by hand.`;
+}
+
+/** The earnings a hand top-up hold freezes: unpaid, or already held by another owner. */
+const TOP_UP_HOLDABLE: EarningStatus[] = [
+  ...HOLDABLE_EARNING_STATUSES,
+  EarningStatus.HELD,
+];
+
+/**
+ * Freezes the payment's unpaid earnings under an OPERATOR hold keyed on the
+ * door's event, so they wait for the hand top-up; a replay finds its own hold.
+ * A row that keeps moving refuses with a retryable 409 and rolls the door back:
+ * no earning is ever left HELD without an active hold.
+ */
+async function holdForHandTopUp(
+  tx: Tx,
+  paymentId: string,
+  sourceRef: string,
+  owedPaise: number,
+): Promise<void> {
+  const where = { paymentId, status: { in: TOP_UP_HOLDABLE } };
+  const consultant = await tx.consultantEarnings.findMany({
+    where,
+    select: { id: true },
+  });
+  const org = await tx.organizationEarnings.findMany({
+    where,
+    select: { id: true },
+  });
+  const hold = {
+    reason: EarningsHoldReason.OPERATOR,
+    sourceRef,
+    note: handTopUpCopy(owedPaise, true),
+  };
+  try {
+    await placeEarningsHolds(
+      tx,
+      "consultant",
+      consultant.map((r) => r.id),
+      hold,
+    );
+    await placeEarningsHolds(
+      tx,
+      "org",
+      org.map((r) => r.id),
+      hold,
+    );
+  } catch (err) {
+    if (err instanceof EarningsHoldRaceError) {
+      throw new BookingRuleError(
+        "PAYMENT_BUSY",
+        "Another update is in progress on this payment — try again.",
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * What the losing door still adds on top of the holding marker: its own amount
+ * (a full-balance door: everything left), capped at the balance the holding
+ * marker leaves. Zero when a full-balance marker already covers it.
+ */
+async function topUpOwedPaise(
+  tx: Tx,
+  marker: RefundOwedMarker,
+  held: { key: string; paise: number | null },
+): Promise<number> {
+  if (held.paise === null) return 0;
+  const payment = await tx.payment.findUnique({
+    where: { id: marker.paymentId },
+    select: { amount: true, ...REFUNDABLE_BALANCE_SELECT },
+  });
+  if (!payment) return 0;
+  // A holding refund already sent (or in flight) is in the balance; never subtract it twice.
+  const sent = await tx.refund.findFirst({
+    where: {
+      dedupeKey: held.key,
+      status: { in: [RefundStatus.SUCCEEDED, RefundStatus.PENDING] },
+    },
+    select: { id: true },
+  });
+  const left =
+    refundableBalancePaise(Number(payment.amount), payment) -
+    (sent ? 0 : held.paise);
+  return Math.max(0, Math.min(marker.amountPaise ?? left, left));
+}
+
 async function reportHeld(
   tx: Tx,
   marker: RefundOwedMarker,
@@ -804,14 +954,30 @@ async function reportHeld(
     heldPaise,
     note: owedAlreadyHeldNote(marker.paymentId, heldKey, heldPaise),
   };
-  await recordSystemEvent({
-    category: "PAYMENT",
-    severity: "WARN",
-    message: held.note,
-    context: { ...held, reason: marker.reason, owedPaise: marker.amountPaise },
-    correlationId: `${OWED_ALREADY_HELD_PREFIX}${marker.paymentId}:${marker.key}`,
-    db: tx,
+  const owedPaise = await topUpOwedPaise(tx, marker, {
+    key: heldKey,
+    paise: heldPaise,
   });
+  // Nothing to add on top of the holding marker: no ops row, no hold.
+  if (owedPaise <= 0) return held;
+  const correlationId = `${OWED_ALREADY_HELD_PREFIX}${marker.paymentId}:${marker.key}`;
+  // The event is the needs-human row: written once per payment and door key, with the door's commit.
+  const standing = await tx.systemEvent.findFirst({
+    where: { correlationId },
+    select: { id: true },
+  });
+  if (!standing) {
+    await recordSystemEvent({
+      category: "PAYMENT",
+      severity: "WARN",
+      message: held.note,
+      context: { ...held, reason: marker.reason, owedPaise },
+      correlationId,
+      db: tx,
+      strict: true,
+    });
+  }
+  await holdForHandTopUp(tx, marker.paymentId, correlationId, owedPaise);
   return held;
 }
 
