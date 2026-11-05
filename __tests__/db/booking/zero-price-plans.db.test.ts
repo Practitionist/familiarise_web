@@ -74,6 +74,12 @@ afterAll(() => {
 });
 beforeEach(() => jest.clearAllMocks());
 
+/** Conversion is about the expert relationship, so a ₹0 plan after a trial still converts it. */
+const TRIAL_AFTER_FREE_PURCHASE = (subscriptionId: string | null) => ({
+  status: "CONVERTED",
+  convertedToSubscriptionId: subscriptionId,
+});
+
 /** The buyer's one payment, after asserting it settled at ₹0 with nothing journalled or invoiced. */
 async function expectFreeSettledPayment(userId: string) {
   const gateway = jest.requireMock("../../../lib/payments/index") as {
@@ -217,4 +223,88 @@ it("a ₹0 class seat is bought on the no-gateway rail", async () => {
     where: { appointmentId: cls.appointmentId, userId: buyer.userId },
   });
   expect(seat.paymentId).toBe(payment.id);
+});
+
+it("a completed trial bought at ₹0 is confirmed without a fault", async () => {
+  const host = await seedHost();
+  await publishEveryHour(host);
+  const buyer = await seedBuyer();
+  const plan = await prisma.subscriptionPlan.create({
+    data: {
+      title: "Free plan after a trial",
+      price: BigInt(0),
+      consultantProfileId: host.consultantProfileId,
+      sessionsPerWeek: 1,
+      durationInMonths: 1,
+      sessionDurationInHours: 1,
+      totalSessions: 4,
+    },
+  });
+  const trial = await prisma.trial.create({
+    data: {
+      consulteeProfileId: buyer.consulteeProfileId,
+      consultantProfileId: host.consultantProfileId,
+      subscriptionPlanId: plan.id,
+      status: "COMPLETED",
+      completedAt: new Date(Date.now() - 24 * 3_600_000),
+    },
+  });
+
+  await handleCheckout(
+    {
+      appointmentType: "SUBSCRIPTION",
+      planId: plan.id,
+      schedulingPeriodStartsAt: futureAt(2, 0).toISOString(),
+      paymentGateway: "RAZORPAY",
+      clientIdempotencyKey: `free-trial-${randomUUID()}`,
+      consumerStateCode: "29",
+    },
+    buyer.userId,
+  );
+
+  const payment = await expectFreeSettledPayment(buyer.userId);
+  const { subscriptionId } = await prisma.appointment.findUniqueOrThrow({
+    where: { id: payment.appointmentId! },
+    select: { subscriptionId: true },
+  });
+  expect(
+    await prisma.trial.findUniqueOrThrow({
+      where: { id: trial.id },
+      select: { status: true, convertedToSubscriptionId: true },
+    }),
+  ).toEqual(TRIAL_AFTER_FREE_PURCHASE(subscriptionId));
+});
+
+it("a charged payment whose earnings carry no gross still needs its journal", async () => {
+  const host = await seedHost();
+  const buyer = await seedBuyer();
+  const payment = await prisma.payment.create({
+    data: {
+      amount: BigInt(9_000),
+      originalAmount: BigInt(0),
+      paymentMethod: "card",
+      paymentIntent: `order_dbtier_${randomUUID()}`,
+      paymentGateway: "RAZORPAY",
+      paymentStatus: "SUCCEEDED",
+      userId: buyer.userId,
+      isMockPayment: true,
+      legs: { create: [{ source: "CARD", amountPaise: BigInt(9_000) }] },
+    },
+  });
+  await prisma.consultantEarnings.create({
+    data: {
+      consultantProfileId: host.consultantProfileId,
+      paymentId: payment.id,
+      grossAmount: BigInt(0),
+      platformFeePaise: BigInt(0),
+      consultantSharePaise: BigInt(0),
+    },
+  });
+
+  const audit = await runReconcileLedgers({
+    scope: `zero-price-${randomUUID()}`,
+  });
+  expect(
+    audit.findings.filter((f) => f.paymentId === payment.id).map((f) => f.kind),
+  ).toEqual(["EARNINGS_WITHOUT_BOOKING_TXN"]);
 });
