@@ -16,7 +16,8 @@ import { createHash } from "node:crypto";
 import { resendErrorText } from "@/lib/email/classify";
 import { companyPostalAddress } from "@/lib/email/config";
 import { heldRecipientDomain } from "@/lib/email/delivery-guard";
-import { findSuppressed } from "@/lib/email/suppression";
+import { findSuppressed, normaliseEmail } from "@/lib/email/suppression";
+import { findNewsletterPreferenceBlocks } from "@/lib/email/newsletter-preferences";
 import prisma from "@/lib/prisma";
 import { listSendableSubscribers } from "@/lib/waitlist/service";
 import { buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
@@ -55,14 +56,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const allSubscribers = await listSendableSubscribers();
     // #1647 — a bounced or complaining address stays SUBSCRIBED only until the
     // webhook settles it; the suppression list is the authority either way.
-    const suppressed = await findSuppressed(allSubscribers.map((s) => s.email));
+    const addresses = allSubscribers.map((s) => s.email);
+    const [suppressed, preferenceBlocks] = await Promise.all([
+      findSuppressed(addresses),
+      findNewsletterPreferenceBlocks(addresses),
+    ]);
     const unsuppressed = allSubscribers.filter((s) => !suppressed.has(s.email));
     const skippedSuppressed = allSubscribers.length - unsuppressed.length;
+    const permitted = unsuppressed.filter(
+      (s) => !preferenceBlocks.has(normaliseEmail(s.email)),
+    );
+    const skippedPreferences = unsuppressed.length - permitted.length;
     // The pre-launch guard holds every subscriber outside the allowlist.
-    const subscribers = unsuppressed.filter(
+    const subscribers = permitted.filter(
       (s) => heldRecipientDomain(s.email) === null,
     );
-    const skippedHeld = unsuppressed.length - subscribers.length;
+    const skippedHeld = permitted.length - subscribers.length;
     if (skippedHeld > 0) {
       console.info("[email] held pre-launch", {
         event: "email.held_pre_launch",
@@ -75,6 +84,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         {
           error: "No confirmed subscribers to send to",
           skippedSuppressed,
+          skippedPreferences,
           skippedHeld,
         },
         { status: 404 },
@@ -112,6 +122,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       failed,
       total: subscribers.length,
       skippedSuppressed,
+      skippedPreferences,
       skippedHeld,
       ...(errors.length > 0 && { errors }),
     });
@@ -175,6 +186,30 @@ async function sendBatch(
     select: { id: true },
   });
   try {
+    const addresses = emails.map((message) => normaliseEmail(message.to));
+    const [subscribers, suppressed, preferenceBlocks] = await Promise.all([
+      prisma.waitlist.findMany({
+        where: { email: { in: addresses }, status: "SUBSCRIBED" },
+        select: { email: true },
+      }),
+      findSuppressed(addresses),
+      findNewsletterPreferenceBlocks(addresses),
+    ]);
+    const subscribed = new Set(subscribers.map((s) => normaliseEmail(s.email)));
+    if (
+      addresses.some(
+        (email) =>
+          !subscribed.has(email) ||
+          suppressed.has(email) ||
+          preferenceBlocks.has(email),
+      )
+    ) {
+      // The stored payload and key stay paired, including when a recipient opts out.
+      const error =
+        "batch audience changed: consent, preferences or suppression";
+      await settleBatch(row.id, { status: "DEAD_LETTER", lastError: error });
+      return { ok: false, error };
+    }
     const result = await resend.batch.send(emails, {
       idempotencyKey,
     });

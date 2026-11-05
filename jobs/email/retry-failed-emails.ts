@@ -66,6 +66,10 @@ import {
 } from "@/lib/email/delivery-policy";
 import { idempotencyKeyFor } from "@/lib/email/idempotency";
 import { findSuppressed, normaliseEmail } from "@/lib/email/suppression";
+import {
+  findNewsletterPreferenceBlocks,
+  type NewsletterPreferenceReader,
+} from "@/lib/email/newsletter-preferences";
 import { reconstructUnsubscribeHeaders } from "@/lib/email/unsubscribe";
 import {
   HELD_PRE_LAUNCH,
@@ -138,6 +142,7 @@ export interface EmailRetryRunResult {
 }
 
 export interface FailedEmailStore extends EmailPolicyReader {
+  user: EmailPolicyReader["user"] & NewsletterPreferenceReader["user"];
   waitlist: {
     findMany(args: {
       where: { email: { in: string[] }; status: "SUBSCRIBED" };
@@ -489,6 +494,8 @@ async function drainBatches(ctx: {
       continue;
     }
 
+    if (index > 0) await sleep(SEND_GAP_MS);
+
     const addresses = [...new Set(messages.map((m) => normaliseEmail(m.to)))];
     const suppressed = await findSuppressed(addresses, prisma);
     const subscribers =
@@ -499,9 +506,14 @@ async function drainBatches(ctx: {
           })
         : [];
     const subscribed = new Set(subscribers.map((s) => normaliseEmail(s.email)));
+    const preferenceBlocks =
+      row.emailType === "WAITLIST_BROADCAST"
+        ? await findNewsletterPreferenceBlocks(addresses, prisma)
+        : new Set<string>();
     const audienceChanged = addresses.some(
       (email) =>
         suppressed.has(email) ||
+        preferenceBlocks.has(email) ||
         (row.emailType === "WAITLIST_BROADCAST" && !subscribed.has(email)),
     );
     if (audienceChanged) {
@@ -510,14 +522,13 @@ async function drainBatches(ctx: {
         where: { id: row.id },
         data: {
           status: "DEAD_LETTER",
-          lastError: "batch audience changed: consent or suppression",
+          lastError:
+            "batch audience changed: consent, preferences or suppression",
         },
       });
       result.batchesDeadLettered += 1;
       continue;
     }
-
-    if (index > 0) await sleep(SEND_GAP_MS);
 
     let sendError: string | undefined;
     try {

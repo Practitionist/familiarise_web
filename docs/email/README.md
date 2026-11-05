@@ -182,6 +182,8 @@ All ops alerts set `Reply-To: connect@practitionist.com` (`SUPPORT_EMAIL` in `li
 
 ### Newsletter & Waitlist (`newsletter@news.familiarisenow.com`)
 
+Broadcasts require confirmed waitlist membership. Matching accounts must also have marketing, master and email preferences enabled; a missing account preference row defaults marketing off. Accounts can veto a subscription, but turning marketing on never enrolls an address. External subscribers remain governed by double opt-in. The producer filters the initial audience and rechecks it after staging; the relay repeats those reads before replay. Any changed staged audience terminates the whole batch without altering its payload/idempotency key. Preference-read failures leave staged work pending. Privacy consent evidence and newsletter enrollment are still separate flows.
+
 | Type                            | Trigger                             | Recipient             | Guard & Channel                                             | Source Path                                 |
 | ------------------------------- | ----------------------------------- | --------------------- | ----------------------------------------------------------- | ------------------------------------------- |
 | Waitlist confirmation & welcome | Double opt-in signup / confirmation | Subscriber            | `deliver()`                                                 | `emails/waitlist/`, `lib/email/index.ts`    |

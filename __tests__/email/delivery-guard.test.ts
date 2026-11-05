@@ -132,7 +132,10 @@ describe("pre-launch delivery guard", () => {
       status: "PENDING",
     } as FailedEmail;
     const store: FailedEmailStore = {
-      user: { findUnique: jest.fn().mockResolvedValue(null) },
+      user: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       waitlist: {
         findMany: jest.fn(async (args) => {
           const emails = args.where?.email;

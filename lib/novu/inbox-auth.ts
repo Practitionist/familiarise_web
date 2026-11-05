@@ -1,21 +1,23 @@
 import { z } from "zod";
 
-const SyncBodySchema = z.object({ subscriberHash: z.string().min(1) });
+const SyncBodySchema = z.object({
+  success: z.literal(true),
+  subscriberHash: z.string().regex(/^[a-f0-9]{64}$/),
+});
 
 /**
- * The Inbox must not connect until the subscriber sync has settled: a first
- * connection without `subscriberHash` is rejected when the Novu environment
- * enforces HMAC. A failed sync still lets it mount (hash-less) so a fault in
- * the sync route cannot hide the bell.
+ * Inbox sessions require a successful subscriber sync and its SHA-256 HMAC.
+ * Never fall back to an unsigned session after a failed or malformed response.
  */
 export function resolveInboxAuth(
   status: "pending" | "error" | "success",
   data: unknown,
-): { ready: boolean; subscriberHash?: string } {
-  if (status === "pending") return { ready: false };
+):
+  | { ready: false; subscriberHash?: undefined }
+  | { ready: true; subscriberHash: string } {
+  if (status !== "success") return { ready: false };
   const parsed = SyncBodySchema.safeParse(data);
-  return {
-    ready: true,
-    ...(parsed.success ? { subscriberHash: parsed.data.subscriberHash } : {}),
-  };
+  return parsed.success
+    ? { ready: true, subscriberHash: parsed.data.subscriberHash }
+    : { ready: false };
 }

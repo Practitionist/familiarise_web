@@ -25,7 +25,11 @@ type OrgMembershipLite = {
 export function NotificationInbox() {
   const router = useRouter();
   const { data: session } = useSession();
-  const { data: subscriberSync, status: syncStatus } = useNovuSubscriberSync();
+  const {
+    data: subscriberSync,
+    status: syncStatus,
+    refetch: retrySubscriberSync,
+  } = useNovuSubscriberSync();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const hydrated = useHydrated();
@@ -85,8 +89,27 @@ export function NotificationInbox() {
 
   // #1527 QA — the server never renders the bell (no session there), so it
   // waits for hydration; a session resolved first threw #418 on slow pages.
-  if (!hydrated || !session?.user?.id || !NOVU_APP_ID || !authReady) {
+  if (!hydrated || !session?.user?.id || !NOVU_APP_ID) {
     return null;
+  }
+
+  if (!authReady) {
+    const label =
+      syncStatus === "pending"
+        ? "Loading notifications"
+        : "Notifications unavailable. Retry";
+    return (
+      <button
+        type="button"
+        className="rounded-md p-2 text-muted-foreground disabled:opacity-50"
+        disabled={syncStatus === "pending"}
+        aria-label={label}
+        title={label}
+        onClick={() => void retrySubscriberSync()}
+      >
+        <BellIcon className="h-5 w-5" aria-hidden="true" />
+      </button>
+    );
   }
 
   /**
@@ -106,7 +129,7 @@ export function NotificationInbox() {
     <Inbox
       applicationIdentifier={NOVU_APP_ID}
       subscriberId={session.user.id}
-      {...(subscriberHash ? { subscriberHash } : {})}
+      subscriberHash={subscriberHash}
       tabs={tabs}
       appearance={{
         variables: {

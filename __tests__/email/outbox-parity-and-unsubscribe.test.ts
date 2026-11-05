@@ -130,7 +130,10 @@ function createStatefulOutboxStore(initial: {
   const batches = [...(initial.batches ?? [])];
 
   const store: FailedEmailStore = {
-    user: { findUnique: jest.fn().mockResolvedValue(null) },
+    user: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     waitlist: {
       findMany: jest.fn(async (args) => {
         const emails = args.where?.email;

@@ -18,6 +18,7 @@ import {
 import { WaitlistSource, WaitlistStatus } from "@prisma/client";
 import { format } from "date-fns";
 import { Download, Mail, Search, Send, Users } from "lucide-react";
+import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,6 +46,16 @@ import { useToast } from "@/components/ui/use-toast";
 
 const ALL = "all";
 const PER_PAGE = 50;
+
+const broadcastResultSchema = z.object({
+  success: z.literal(true),
+  sent: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  skippedPreferences: z.number().int().nonnegative(),
+  skippedSuppressed: z.number().int().nonnegative(),
+  skippedHeld: z.number().int().nonnegative(),
+});
 
 type Subscriber = {
   id: string;
@@ -185,16 +196,17 @@ export function WaitlistManagement() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subject, htmlBody }),
       });
-      const payload = await response.json();
+      const payload: unknown = await response.json();
       if (!response.ok) {
-        throw new Error(payload.error ?? "Failed to send");
+        const error = z.object({ error: z.string() }).safeParse(payload);
+        throw new Error(error.success ? error.data.error : "Failed to send");
       }
-      return payload as { sent: number; failed: number; total: number };
+      return broadcastResultSchema.parse(payload);
     },
     onSuccess: (result) => {
       toast({
-        title: "Newsletter sent",
-        description: `${result.sent} delivered, ${result.failed} failed, ${result.total} on the list.`,
+        title: "Newsletter processed",
+        description: `${result.sent} accepted for sending, ${result.failed} unsuccessful. Skipped: ${result.skippedPreferences} by preferences, ${result.skippedSuppressed} suppressed, ${result.skippedHeld} held before launch.`,
       });
       setSubject("");
       setHtmlBody("");

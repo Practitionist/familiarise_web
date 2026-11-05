@@ -97,7 +97,10 @@ function makePrismaStub(
   const updates: Prisma.FailedEmailUpdateArgs[] = [];
   const batchUpdates: Prisma.FailedEmailBatchUpdateArgs[] = [];
   const prisma: FailedEmailStore = {
-    user: { findUnique: jest.fn().mockResolvedValue(null) },
+    user: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     waitlist: {
       findMany: jest.fn(async (args) => {
         const emails = args.where?.email;
@@ -348,7 +351,10 @@ describe("runEmailRetryTick — pacing (#1654)", () => {
     jest.useFakeTimers();
     const rows = [makeRow({ id: "fe-a" }), makeRow({ id: "fe-b" })];
     const prisma: FailedEmailStore = {
-      user: { findUnique: jest.fn().mockResolvedValue(null) },
+      user: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       waitlist: {
         findMany: jest.fn(async (args) => {
           const emails = args.where?.email;
@@ -560,6 +566,44 @@ describe("runEmailRetryTick — no sender", () => {
 });
 
 describe("batch audience safety at replay", () => {
+  it.each(["marketingEmails", "allNotifications", "emailEnabled"])(
+    "never replays a newsletter after the account disables %s",
+    async (field) => {
+      const { prisma, batchUpdates } = makePrismaStub(makeRow(), {
+        batches: [makeBatchRow()],
+      });
+      jest.mocked(prisma.user.findMany).mockResolvedValue([
+        {
+          email: "B@Y",
+          erasedAt: null,
+          notificationPreferences: {
+            marketingEmails: true,
+            allNotifications: true,
+            emailEnabled: true,
+            [field]: false,
+          },
+        },
+      ]);
+      const sender = mockResend(async () => ({
+        data: { id: "single-send" },
+        error: null,
+        headers: null,
+      }));
+      const result = await runEmailRetryTick({
+        prisma,
+        resend: sender,
+        now: () => FROZEN_NOW_MS,
+      });
+      expect(sender.batch.send).not.toHaveBeenCalled();
+      expect(result.batchesDeadLettered).toBe(1);
+      expect(batchUpdates[0].data).toMatchObject({
+        status: "DEAD_LETTER",
+        lastError:
+          "batch audience changed: consent, preferences or suppression",
+      });
+    },
+  );
+
   it.each(["unsubscribed", "suppressed"])(
     "never replays a batch after a recipient is %s",
     async (reason) => {
@@ -585,7 +629,7 @@ describe("batch audience safety at replay", () => {
       expect(sender.batch.send).not.toHaveBeenCalled();
       expect(result.batchesDeadLettered).toBe(1);
       expect(batchUpdates[0].data.lastError).toBe(
-        "batch audience changed: consent or suppression",
+        "batch audience changed: consent, preferences or suppression",
       );
     },
   );

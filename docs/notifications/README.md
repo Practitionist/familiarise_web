@@ -19,7 +19,7 @@ An outbox row proves staging, and a provider response proves acceptance. Neither
 
 ## Preferences and recipient safety
 
-Postgres `NotificationPreference` is the authority. Novu subscriber data mirrors the settings for its workflow conditions; it is not the email preference source.
+Postgres `NotificationPreference` is the authority. Novu subscriber data mirrors the settings for its workflow conditions; it is not the email preference source. The React Inbox requires a successful subscriber-sync response with a valid HMAC. Failed or malformed responses show an unavailable/retry bell, never an unsigned session. Vendor-side HMAC enforcement must also be enabled; the client check does not protect a publicly callable vendor endpoint by itself.
 
 - Optional email obeys master, email, category, and workspace routing settings. Required notices (`category: null`) bypass optional switches and workspace email routing.
 - Bells obey master, in-app, category, and workspace routing settings. Unknown recipients are excluded. Failed policy reads never authorize a send; transactional failures propagate, while the nontransactional service returns failure.
@@ -28,7 +28,7 @@ Postgres `NotificationPreference` is the authority. Novu subscriber data mirrors
 - Email suppression is checked at staging and again before inline delivery; the relay also checks it.
 - Recipient-aware email stores explicit user/category context in nullable `FailedEmail.deliveryPolicy`. Inline attempts and retries re-read the current account, address, category and workspace policy; required notices bypass optional switches but never recipient identity checks. Temporary read failures leave durable work pending. Older rows and direct-address mail lack this context and retain their existing policy.
 
-- Newsletter batch retries validate the stored payload, current subscription state and suppression. If any recipient is no longer eligible, the whole batch is dead-lettered with `batch audience changed: consent or suppression`. Operators must review it before a new send; the relay never edits a previously attempted payload under the same idempotency key.
+- Newsletter sends and retries check subscription, suppression and matching account preferences. Existing accounts require marketing, master and email switches enabled; a missing preference row uses the displayed marketing-off default. Confirmed subscribers without an account remain eligible. If any staged recipient becomes ineligible, the whole batch is dead-lettered with `batch audience changed: consent, preferences or suppression`; its stored payload/key pair is never modified.
 - Every email passes the pre-launch delivery guard, including batch replay. No audit or test should send real messages to seeded addresses.
 
 The delivery-policy column is additive work in this PR. The human-run schema rollout must precede deployment of its reader/writer; the audit did not change the shared database.
@@ -49,7 +49,9 @@ Creating an active announcement stages a publication in its business transaction
 
 Provider-accepted and in-flight notices cannot be recalled atomically. The deletion dialog makes that limit explicit. Older queued announcement payloads without source/revision context require operator review rather than an unverified broadcast.
 
-Waitlist newsletters use confirmed waitlist subscriptions and separate newsletter sending identities. Account marketing consent and waitlist membership are separate surfaces; neither should be inferred from optional transactional preferences.
+Waitlist newsletters use confirmed waitlist subscriptions and separate newsletter sending identities. Account switches can veto delivery but cannot subscribe an address or replace double opt-in. Privacy consent artifacts, cookie preferences and newsletter membership remain separate records; the account settings route does not yet reconcile all three. Enabling marketing alone creates no newsletter audience.
+
+The public announcement bar is a date-filtered site surface with browser-local dismissal by announcement ID. Closing it does not mark a bell read, unsubscribe email or hide maintenance banners. Maintenance banners follow the maintenance provider's state, independently of communication preferences. General announcement bells obey master/in-app/routing switches, but have no marketing category: do not use that operational workflow as a promotional audience.
 
 ## Operational ownership
 
