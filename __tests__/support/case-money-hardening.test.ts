@@ -566,23 +566,28 @@ describe("refund execution correctness", () => {
     expect(mockStore.recommendations[0]).toMatchObject({ approved: false });
   });
 
-  it("gives a session-count remedy's sessions back when its failed refund is voided", async () => {
-    mockStore.recommendations = [
-      recommendation({
-        decidedAt: new Date(Date.now() - 3_600_000),
-        approved: true,
-        sessionsRemoved: 9,
-        refundId: "refund-0",
-        refund: { id: "refund-0", status: "FAILED" },
-      }),
-    ];
-    await performCaseAction("case-1", admin, {
+  /** An approved remedy whose refund failed an hour ago. */
+  const failedRemedy = (over: Row = {}) =>
+    recommendation({
+      decidedAt: new Date(Date.now() - 3_600_000),
+      approved: true,
+      sessionsRemoved: 9,
+      refundId: "refund-0",
+      refund: { id: "refund-0", status: "FAILED" },
+      ...over,
+    });
+  const voidRemedy = () =>
+    performCaseAction("case-1", admin, {
       action: "VOID_RECOMMENDATION",
       clientActionId: "void-1",
       expectedUpdatedAt: caseUpdatedAt.toISOString(),
       recommendationId: "rec-1",
       reason: "Gateway refused; refunding by bank transfer",
     });
+
+  it("gives a session-count remedy's sessions back when its failed refund is voided", async () => {
+    mockStore.recommendations = [failedRemedy()];
+    await voidRemedy();
     expect(mockStore.recommendations[0]).toMatchObject({ approved: false });
     expect(restorePlanSessions).toHaveBeenCalledTimes(1);
     expect(restorePlanSessions).toHaveBeenCalledWith(
@@ -592,47 +597,20 @@ describe("refund execution correctness", () => {
     );
   });
 
-  it("refuses the void when the plan's session count moved under it", async () => {
+  it.each([
+    ["the plan's session count moved under it", "RACED", "CONFLICT"],
+    ["its plan settled without it", "PLAN_SETTLED", "NOT_VOIDABLE"],
+  ] as const)("refuses the void when %s", async (_why, reason, code) => {
     jest
       .mocked(restorePlanSessions)
-      .mockResolvedValueOnce({ ok: false, reason: "RACED", removable: 0 });
-    mockStore.recommendations = [
-      recommendation({
-        decidedAt: new Date(Date.now() - 3_600_000),
-        approved: true,
-        sessionsRemoved: 9,
-        refundId: "refund-0",
-        refund: { id: "refund-0", status: "FAILED" },
-      }),
-    ];
-    await expect(
-      performCaseAction("case-1", admin, {
-        action: "VOID_RECOMMENDATION",
-        clientActionId: "void-1",
-        expectedUpdatedAt: caseUpdatedAt.toISOString(),
-        recommendationId: "rec-1",
-        reason: "Gateway refused; refunding by bank transfer",
-      }),
-    ).rejects.toMatchObject({ code: "CONFLICT" });
+      .mockResolvedValueOnce({ ok: false, reason, removable: 0 });
+    mockStore.recommendations = [failedRemedy()];
+    await expect(voidRemedy()).rejects.toMatchObject({ code });
   });
 
   it("voids a money-only remedy without touching the plan", async () => {
-    mockStore.recommendations = [
-      recommendation({
-        decidedAt: new Date(Date.now() - 3_600_000),
-        approved: true,
-        sessionsRemoved: null,
-        refundId: "refund-0",
-        refund: { id: "refund-0", status: "FAILED" },
-      }),
-    ];
-    await performCaseAction("case-1", admin, {
-      action: "VOID_RECOMMENDATION",
-      clientActionId: "void-1",
-      expectedUpdatedAt: caseUpdatedAt.toISOString(),
-      recommendationId: "rec-1",
-      reason: "Gateway refused; refunding by bank transfer",
-    });
+    mockStore.recommendations = [failedRemedy({ sessionsRemoved: null })];
+    await voidRemedy();
     expect(restorePlanSessions).not.toHaveBeenCalled();
   });
 
@@ -645,63 +623,19 @@ describe("refund execution correctness", () => {
       9,
     );
     jest.mocked(removePlanSessions).mockClear();
-    mockStore.recommendations = [
-      recommendation({
-        decidedAt: new Date(Date.now() - 3_600_000),
-        decidedById: admin.userId,
-        approved: true,
-        sessionsRemoved: 9,
-        refundId: "refund-0",
-        refund: { id: "refund-0", status: "FAILED" },
-      }),
-    ];
+    mockStore.recommendations = [failedRemedy({ decidedById: admin.userId })];
     await performCaseAction("case-1", admin, review(true));
     expect(removePlanSessions).not.toHaveBeenCalled();
   });
 
   it("retries a session-count remedy after its plan settled, under the same key", async () => {
-    mockStore.recommendations = [
-      recommendation({
-        decidedAt: new Date(Date.now() - 3_600_000),
-        decidedById: admin.userId,
-        approved: true,
-        sessionsRemoved: 9,
-        refundId: "refund-0",
-        refund: { id: "refund-0", status: "FAILED" },
-      }),
-    ];
+    mockStore.recommendations = [failedRemedy({ decidedById: admin.userId })];
     await performCaseAction("case-1", admin, review(true));
     expect(refundBookingPayment).toHaveBeenCalledTimes(1);
     expect(refundBookingPayment).toHaveBeenCalledWith(
       expect.objectContaining({ dedupeKey: "case-recommendation:rec-1" }),
     );
     expect(removePlanSessions).not.toHaveBeenCalled();
-  });
-
-  it("refuses to void a session-count remedy once its plan settled without it", async () => {
-    jest.mocked(restorePlanSessions).mockResolvedValueOnce({
-      ok: false,
-      reason: "PLAN_SETTLED",
-      removable: 0,
-    });
-    mockStore.recommendations = [
-      recommendation({
-        decidedAt: new Date(Date.now() - 3_600_000),
-        approved: true,
-        sessionsRemoved: 9,
-        refundId: "refund-0",
-        refund: { id: "refund-0", status: "FAILED" },
-      }),
-    ];
-    await expect(
-      performCaseAction("case-1", admin, {
-        action: "VOID_RECOMMENDATION",
-        clientActionId: "void-1",
-        expectedUpdatedAt: caseUpdatedAt.toISOString(),
-        recommendationId: "rec-1",
-        reason: "Gateway refused; refunding by bank transfer",
-      }),
-    ).rejects.toMatchObject({ code: "NOT_VOIDABLE" });
   });
 
   it("refuses an approval when the plan closed after the recommendation", async () => {
