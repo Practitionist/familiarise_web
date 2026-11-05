@@ -26,6 +26,7 @@ import {
   productFor,
   type HookDriftReport,
 } from "../../lib/stream/control-plane-contract";
+import { scriptClientOptions } from "./target";
 
 type IdentifiedHook = EventHook & { id: string };
 
@@ -151,14 +152,14 @@ export async function ensureWebhookSubscription(
   rewriteUrl = false,
 ): Promise<number> {
   const apply = mode === "apply";
-  if (!isStreamConfigured()) {
+  if (!isStreamConfigured(scriptClientOptions())) {
     console.error(
       "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
     );
     return 1;
   }
 
-  const client = getStreamChatClient();
+  const client = getStreamChatClient(scriptClientOptions());
   const app = await client.getAppSettings();
   const allHooks = app.app?.event_hooks ?? [];
   const hooks = allHooks.filter(

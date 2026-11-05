@@ -29,6 +29,7 @@ import {
   intendedDefaultCallTypeGrants,
   isRevokedClientPermission,
 } from "../../lib/stream/control-plane-contract";
+import { scriptClientOptions } from "./target";
 
 export interface EnsureCallTypeGrantsOptions {
   apply: boolean;
@@ -248,14 +249,14 @@ export async function ensureCallTypeGrants(
 ): Promise<number> {
   if (!requireDeployConfirmation(opts)) return 1;
 
-  if (!isStreamConfigured()) {
+  if (!isStreamConfigured(scriptClientOptions())) {
     console.error(
       "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
     );
     return 1;
   }
 
-  const client = getStreamVideoClient();
+  const client = getStreamVideoClient(scriptClientOptions());
 
   if (!(await requireSomeoneHoldsMemberRole(client, opts))) return 1;
   const existing = await client.video.getCallType({ name: STREAM_CALL_TYPE });

@@ -14,6 +14,7 @@ import {
   UNUSED_CALL_TYPES,
   shouldStripFromUnusedCallType,
 } from "../../lib/stream/control-plane-contract";
+import { scriptClientOptions } from "./target";
 
 const BACKUP_DIR = ".stream-backups";
 
@@ -84,7 +85,7 @@ async function hardenOne(
 export async function hardenUnusedCallTypes(
   opts: HardenUnusedOptions,
 ): Promise<number> {
-  const client = getStreamVideoClient();
+  const client = getStreamVideoClient(scriptClientOptions());
 
   if ((UNUSED_CALL_TYPES as readonly string[]).includes(STREAM_CALL_TYPE)) {
     console.error(

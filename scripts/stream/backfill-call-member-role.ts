@@ -46,6 +46,7 @@ import {
   CO_PRESENTER_CALL_ROLE,
   STREAM_CALL_TYPE,
 } from "../../lib/stream/call-cid";
+import { scriptClientOptions } from "./target";
 
 type StreamVideoClient = ReturnType<typeof getStreamVideoClient>;
 
@@ -279,7 +280,7 @@ export async function backfillCallMemberRole(
     ok: false,
   };
 
-  if (!isStreamConfigured()) {
+  if (!isStreamConfigured(scriptClientOptions())) {
     console.error(
       "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
     );
@@ -288,7 +289,7 @@ export async function backfillCallMemberRole(
     return result;
   }
 
-  const client = getStreamVideoClient();
+  const client = getStreamVideoClient(scriptClientOptions());
 
   for await (const call of iterateOpenCalls(client)) {
     result.callsScanned++;

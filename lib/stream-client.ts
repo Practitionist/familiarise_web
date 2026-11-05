@@ -8,7 +8,14 @@ import { StreamChat } from "stream-chat";
 import { StreamClient } from "@stream-io/node-sdk";
 import { Refusal } from "@/lib/errors/refusal";
 import { createCircuitBreaker } from "@/lib/redis";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 import type { RunFailureReporter } from "@/lib/observability/run-failures";
+import { streamLogger } from "@/lib/stream-logger";
+import {
+  assertStreamKeyAllowedHere,
+  StreamEnvironmentError,
+  type StreamClientOptions,
+} from "@/lib/stream/environment-guard";
 
 // Environment validation
 const STREAM_API_KEY = process.env.NEXT_PUBLIC_STREAM_API_KEY;
@@ -25,7 +32,7 @@ let isInitialized = false;
  * Validates that Stream API credentials are configured
  * @throws Error if credentials are missing
  */
-export function validateStreamConfig(): void {
+export function validateStreamConfig(options?: StreamClientOptions): void {
   if (!STREAM_API_KEY) {
     throw new Error(
       "NEXT_PUBLIC_STREAM_API_KEY is not configured. Please set it in your environment variables.",
@@ -36,21 +43,44 @@ export function validateStreamConfig(): void {
       "STREAM_API_SECRET is not configured. Please set it in your environment variables.",
     );
   }
+  const refusal = checkKeyAllowedHere(options);
+  if (refusal) throw refusal;
+}
+
+/** Logs and reports (throttled) when the production key is used outside production. */
+function checkKeyAllowedHere(
+  options?: StreamClientOptions,
+): StreamEnvironmentError | null {
+  try {
+    assertStreamKeyAllowedHere(STREAM_API_KEY, options);
+    return null;
+  } catch (error) {
+    if (!(error instanceof StreamEnvironmentError)) throw error;
+    const reported = captureThrottled("stream.environment-guard", error, {
+      subsystem: "stream",
+      op: "environment-guard",
+    });
+    if (reported) streamLogger.error(error.message);
+    return error;
+  }
 }
 
 /**
- * Check if Stream is properly configured
+ * Check if Stream is properly configured. The production key on a
+ * non-production deployment reads as "not configured", so every caller takes
+ * its existing unconfigured path.
  */
-export function isStreamConfigured(): boolean {
-  return !!(STREAM_API_KEY && STREAM_API_SECRET);
+export function isStreamConfigured(options?: StreamClientOptions): boolean {
+  if (!(STREAM_API_KEY && STREAM_API_SECRET)) return false;
+  return checkKeyAllowedHere(options) === null;
 }
 
 /**
  * Get the singleton StreamChat server client instance
  * This client is for server-side operations only (has secret)
  */
-export function getStreamChatClient(): StreamChat {
-  validateStreamConfig();
+export function getStreamChatClient(options?: StreamClientOptions): StreamChat {
+  validateStreamConfig(options);
 
   if (!chatClientInstance) {
     chatClientInstance = StreamChat.getInstance(
@@ -70,8 +100,10 @@ export function getStreamChatClient(): StreamChat {
  * Get the singleton Stream Video server client instance
  * This client is for server-side video operations only (has secret)
  */
-export function getStreamVideoClient(): StreamClient {
-  validateStreamConfig();
+export function getStreamVideoClient(
+  options?: StreamClientOptions,
+): StreamClient {
+  validateStreamConfig(options);
 
   if (!videoClientInstance) {
     // The SDK default is 3 s; 15 s leaves headroom under the ~26 s function ceiling.

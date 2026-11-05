@@ -14,6 +14,7 @@ import {
   grantDifferences,
   intendedMessagingGrants,
 } from "@/lib/stream/control-plane-contract";
+import { scriptClientOptions } from "./target";
 
 export interface EnsureMessagingGrantsOptions {
   apply: boolean;
@@ -26,14 +27,14 @@ function parseArgs(argv: string[]): EnsureMessagingGrantsOptions {
 export async function ensureMessagingGrants(
   opts: EnsureMessagingGrantsOptions,
 ): Promise<number> {
-  if (!isStreamConfigured()) {
+  if (!isStreamConfigured(scriptClientOptions())) {
     console.error(
       "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
     );
     return 1;
   }
 
-  const client = getStreamChatClient();
+  const client = getStreamChatClient(scriptClientOptions());
   const before = await client.getChannelType(MESSAGING_CHANNEL_TYPE);
   const intended = intendedMessagingGrants(before.grants);
   const changes = grantDifferences(before.grants, intended);

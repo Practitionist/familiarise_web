@@ -5,6 +5,7 @@
 ## Table of Contents
 
 - [Environment Variables](#environment-variables)
+- [Environment Isolation: Production App vs Familiarise-dev](#environment-isolation-production-app-vs-familiarise-dev)
 - [Production Operator Cutover & Verification Runbook](#production-operator-cutover--verification-runbook)
 - [Package Installation](#package-installation)
 - [Pinned SDK Version Holds](#pinned-sdk-version-holds)
@@ -134,6 +135,59 @@ BETTER_AUTH_URL=""
 ```
 
 ---
+
+## Environment Isolation: Production App vs Familiarise-dev
+
+Stream runs two separate apps. The production app (API key `k4n5crxtstrx`, app id 1366319) serves only the production deployment. A second, free app named "Familiarise-dev" serves local development, Netlify deploy previews and branch deploys, so a preview can never mint a token for a real user or open a billable call. The production key is public (it ships to browsers as `NEXT_PUBLIC_STREAM_API_KEY`), which is why the boundary is enforced by code rather than by hiding the key.
+
+### The Environment Matrix
+
+| Where the code runs                              | Stream app      | How the code knows                                                                                         |
+| ------------------------------------------------ | --------------- | ---------------------------------------------------------------------------------------------------------- |
+| Netlify production context                       | Production app  | `NETLIFY === "true"` and `CONTEXT === "production"`                                                        |
+| Netlify deploy-preview and branch-deploy context | Familiarise-dev | `NETLIFY === "true"` and `CONTEXT` is anything else                                                        |
+| Vercel production                                | Production app  | `VERCEL === "1"` and `VERCEL_ENV === "production"`                                                         |
+| Vercel preview and development                   | Familiarise-dev | `VERCEL === "1"` and `VERCEL_ENV` is anything else                                                         |
+| Container host, local                            | see below       | Production only when `NEXT_PUBLIC_SENTRY_ENVIRONMENT === "production"`, the marker Novu key selection uses |
+
+The scheduled Stream jobs run on the production deployment through the ticker, so they keep the production keys; a container host in production must set the marker. A laptop does not set it, so a laptop holding the production key is refused. A Netlify runtime that does not expose `CONTEXT` falls back to the same marker.
+
+### What the Guard Does
+
+`lib/stream/environment-guard.ts` exports `PRODUCTION_STREAM_API_KEY`, `isProductionDeployment()` and `assertStreamKeyAllowedHere(apiKey, options)`. The check is lazy: it runs the first time a server Stream client is built or `isStreamConfigured()` is asked, never at import or at build time, so a build or prerender never fails because of it. When the production key appears outside production:
+
+- `isStreamConfigured()` returns `false`, so every caller takes its existing "Stream not configured" path (the token actions throw "Stream API is not configured", `mintInitialStreamTokens` returns `null`, and the rest degrade as they do when Stream is unset).
+- `getStreamChatClient()` and `getStreamVideoClient()` throw a `StreamEnvironmentError` before the SDK client is constructed.
+- One log line and one Sentry event (`captureThrottled`, once per minute per instance) say which rule fired.
+
+The browser gets no separate guard: tokens come from the server, which has already refused.
+
+### Owner Scripts Against Production
+
+The `scripts/stream/*` CLIs build their clients through the same functions, so a laptop holding the production key is refused unless the command line says `--target=production` (`scripts/stream/target.ts`). There is deliberately no environment variable that does the same. The daily `stream-control-plane-drift` ticker job runs inside the production deployment, so it needs no flag.
+
+```bash
+# Production app from a laptop (dry run first; --apply writes)
+npx tsx scripts/stream/ensure.ts --target=production
+```
+
+### Activation Runbook (Owner)
+
+1. In the Stream dashboard create a free app named "Familiarise-dev" and copy its API key and secret. Generate a webhook secret for it if you want webhooks (step 5).
+2. In Netlify, open the site's environment variables. For each of `STREAM_API_KEY`, `STREAM_API_SECRET`, `NEXT_PUBLIC_STREAM_API_KEY` and `STREAM_WEBHOOK_SECRET`, give the **Deploy Previews** and **Branch deploys** contexts the Familiarise-dev values. Leave the **Production** context on the production app's values.
+3. Put the same four dev values in your local `.env`. Remove the production Stream secret from any laptop; owner scripts that must hit production can pass it for one command together with `--target=production`.
+4. With the dev values loaded, provision the dev app, then check it:
+
+   ```bash
+   npx tsx scripts/stream/ensure.ts
+   npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed
+   ```
+
+   Run `ensure-webhook-subscription.ts --apply` only after step 5 has created a hook.
+
+5. Either leave the dev app's webhook unset (chat and calls work; webhook-driven attendance, recordings and presence do not fire) or create a webhook in the dev app pointing at one preview's `/api/stream/webhooks`, signed with the dev `STREAM_WEBHOOK_SECRET`.
+6. Redeploy one preview. `NEXT_PUBLIC_STREAM_API_KEY` is baked at build time, so a preview built before step 2 still carries the production key and is refused by the server guard. Confirm in the preview that chat connects and that Stream's dashboard shows the traffic in Familiarise-dev, not the production app.
+7. Confirm production is untouched: its Netlify context still holds the production values and `/api/health` reports Stream healthy.
 
 ## Production Operator Cutover & Verification Runbook
 

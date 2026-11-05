@@ -11,6 +11,7 @@
 import "dotenv/config";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { getStreamChatClient, isStreamConfigured } from "@/lib/stream-client";
+import { scriptClientOptions } from "./target";
 
 const CHANNEL_TYPES = ["messaging", "team"] as const;
 // The `-owner` / `-any-team` attachment grants and the giphy command stay: GIFs
@@ -54,7 +55,7 @@ async function ensureChannelType(
   name: (typeof CHANNEL_TYPES)[number],
   opts: Options,
 ): Promise<boolean> {
-  const client = getStreamChatClient();
+  const client = getStreamChatClient(scriptClientOptions());
   const before = await client.getChannelType(name);
   const uploadRoles = grantedUploadRoles(before.grants);
   if (before.uploads === false && uploadRoles.length === 0) {
@@ -95,7 +96,7 @@ async function ensureChannelType(
 }
 
 export async function ensureChatTextOnly(opts: Options): Promise<number> {
-  if (!isStreamConfigured()) {
+  if (!isStreamConfigured(scriptClientOptions())) {
     console.error(
       "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
     );

@@ -11,6 +11,7 @@ import type { AppResponseFields } from "@stream-io/node-sdk";
 import { getStreamVideoClient, isStreamConfigured } from "@/lib/stream-client";
 import { canonical, diffFingerprints } from "@/lib/stream/config-fingerprint";
 import { TARGET_APP_SETTINGS as TARGET } from "@/lib/stream/control-plane-contract";
+import { scriptClientOptions } from "./target";
 
 const BACKUP_DIR = ".stream-backups";
 
@@ -40,14 +41,14 @@ function fingerprint(app: AppResponseFields): Record<string, string> {
 }
 
 export async function ensureAppSettings(opts: Options): Promise<number> {
-  if (!isStreamConfigured()) {
+  if (!isStreamConfigured(scriptClientOptions())) {
     console.error(
       "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
     );
     return 1;
   }
 
-  const client = getStreamVideoClient();
+  const client = getStreamVideoClient(scriptClientOptions());
   const before = (await client.getApp()).app;
 
   console.log("App settings — current:");

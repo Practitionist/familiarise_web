@@ -7,6 +7,7 @@ import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import { StreamClient } from "@stream-io/node-sdk";
 import { z } from "zod";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import { assertStreamKeyAllowedHere } from "@/lib/stream/environment-guard";
 import {
   CLASS_PREFIX,
   getChannelTypeFromId,
@@ -39,6 +40,7 @@ function maintenanceStreamClient() {
       apiKey: process.env.NEXT_PUBLIC_STREAM_API_KEY,
       secret: process.env.STREAM_API_SECRET,
     });
+  assertStreamKeyAllowedHere(config.apiKey);
   return new StreamClient(config.apiKey, config.secret, {
     timeout: VENDOR_TIMEOUT_MS,
   });

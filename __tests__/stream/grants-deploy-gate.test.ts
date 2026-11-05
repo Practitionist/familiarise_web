@@ -88,7 +88,9 @@ describe("the script actually implements this", () => {
     // the call type first — otherwise an outage turns a clear refusal into a
     // confusing connection error.
     const gateCall = source.indexOf("if (!requireDeployConfirmation(opts))");
-    const configCheck = source.indexOf("if (!isStreamConfigured())");
+    const configCheck = source.indexOf(
+      "if (!isStreamConfigured(scriptClientOptions()))",
+    );
     const firstRead = source.indexOf("client.video.getCallType");
     expect(gateCall).toBeGreaterThan(-1);
     expect(gateCall).toBeLessThan(configCheck);

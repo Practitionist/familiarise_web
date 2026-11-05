@@ -1,6 +1,6 @@
 # 18. Architecture Decision Records (ADRs)
 
-> Authoritative architecture decision records governing Stream Video call lifecycle isolation, call-ID rotation, synchronous CAS state convergence, the immutable booked end with extension state on `Meeting`, meeting exit controls, the attendance witness behind session outcomes, the launch participant cap, staff-editable video quality, the unread digest, synchronous access revocation, and the recording copy and Stream-copy deletion.
+> Authoritative architecture decision records governing Stream Video call lifecycle isolation, call-ID rotation, synchronous CAS state convergence, the immutable booked end with extension state on `Meeting`, meeting exit controls, the attendance witness behind session outcomes, the launch participant cap, staff-editable video quality, the unread digest, synchronous access revocation, the recording copy and Stream-copy deletion, and the separate Stream app for non-production.
 
 ## Table of Contents
 
@@ -16,6 +16,7 @@
 - [ADR-09: Unread Digest via Stream Unread Reminders](#adr-09-unread-digest-via-stream-unread-reminders)
 - [ADR-10: Synchronous Server-Side Revocation with a Durable Retry and a Daily Reconciler](#adr-10-synchronous-server-side-revocation-with-a-durable-retry-and-a-daily-reconciler)
 - [ADR-11: Recordings Are Pulled into R2, Stream's Copy Is Deleted After a Verified Copy, and There Is No Second Store](#adr-11-recordings-are-pulled-into-r2-streams-copy-is-deleted-after-a-verified-copy-and-there-is-no-second-store)
+- [ADR-12: Separate Stream App for Non-Production, Enforced by a Prod-Key Guard](#adr-12-separate-stream-app-for-non-production-enforced-by-a-prod-key-guard)
 - [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
 
 ---
@@ -37,6 +38,7 @@ Stream Video SFU and PostgreSQL (`PG_POOL_MAX=1`) enforce distinct operational c
 | **ADR-09** | Chat unread digest from Stream's `user.unread_message_reminder`                               | `lib/stream/chat/unread-digest.ts`, `lib/stream/control-plane-contract.ts`                                                       | One durable email and bell per user per 30-minute window, never quoting message text                                                 |
 | **ADR-10** | Remove access synchronously on the action, queue failures, reconcile daily                    | `lib/stream/access-revocation.ts`, `scripts/cleanup/retry-moderation-enforcement.ts`, `lib/stream/membership-reconciler.ts`      | A cancelled or removed user loses chat access without waiting for their own browser, and a Stream failure cannot lose the revocation |
 | **ADR-11** | Pull recordings into R2, delete Stream's copy 24 hours after a verified copy, no second store | `lib/stream/recording-transfer-service.ts`, `lib/stream/recording-retention.ts`, `lib/stream/recording-stream-delete.ts`         | A recording is never lost to a failed push, and Stream does not keep a playable copy after we hold a verified one                    |
+| **ADR-12** | Separate Stream app for non-production, enforced by a prod-key guard                          | `lib/stream/environment-guard.ts`, `lib/stream-client.ts`, `scripts/stream/target.ts`                                            | A preview or local server can never mint tokens for real users or open billable calls on the production app                          |
 
 ---
 
@@ -379,6 +381,28 @@ Example. Grace's session ends at 17:12 IST on Tuesday 3 November 2026 and the re
 
 ---
 
+## ADR-12: Separate Stream App for Non-Production, Enforced by a Prod-Key Guard
+
+### Context & Problem Statement
+
+One Stream app served local development, deploy previews and production. The API key is public, so any preview build or laptop holding the app secret could mint tokens for real production users and create billable calls and channels in the production app.
+
+### Decision
+
+Production keeps its own Stream app; a free "Familiarise-dev" app serves every other environment (matrix and activation runbook in `docs/stream/02-setup-configuration.md`). The boundary is enforced in code, not by convention:
+
+- `lib/stream/environment-guard.ts` decides whether the deployment is production (Netlify `CONTEXT`, Vercel `VERCEL_ENV`, otherwise `NEXT_PUBLIC_SENTRY_ENVIRONMENT === "production"`) and `assertStreamKeyAllowedHere` throws `StreamEnvironmentError` when the production key is configured anywhere else.
+- The check is lazy, at the first server client or `isStreamConfigured()` call, so builds and prerenders never fail. `isStreamConfigured()` returns `false` instead of throwing, which routes every caller, including both token-mint paths, to its existing "Stream not configured" behaviour, with one log line and one throttled Sentry event.
+- Owner CLIs under `scripts/stream/` may use the production key from a laptop only with `--target=production`. No environment variable bypasses the guard.
+
+### Consequences
+
+- A misconfigured preview degrades to "Stream unavailable" instead of touching production data.
+- A new non-Netlify, non-Vercel production host must set `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production`, or the guard treats it as non-production and disables Stream there.
+- `NEXT_PUBLIC_STREAM_API_KEY` is baked at build time, so rotating a context's key needs a rebuild.
+
+---
+
 ## Deprecated & Superseded Approaches
 
 - **Permanent Per-Appointment / Per-Consultant Stream Call IDs**: Superseded by strict `1 AppointmentOccurrence = 1 active Stream Call ID` isolation (`occurrence-<uuid>`) so recurring `SUBSCRIPTION` and `CLASS` sessions never bleed attendance, duration caps, or recording state across occurrences.
@@ -391,3 +415,4 @@ Example. Grace's session ends at 17:12 IST on Tuesday 3 November 2026 and the re
 - **Hard-coded 720p in the 1-to-Many builder and quality left on the call type**: Superseded by `PlatformVideoConfig` (ADR-08). Delete any literal `target_resolution` in `lib/meetings/**` and any environment variable that tunes video quality.
 - **Client-cooperative revocation (browser sync gates and a session flag):** Superseded by ADR-10. Delete any residue of the `initialSyncCompletedUsers` set and the `stream_sync_<id>` flag.
 - **Leaving Stream's copy of a recording until its 14-day expiry, and Supabase or a push to our bucket as recording stores:** Superseded by ADR-11. Delete any code that treats Stream's copy as permanent or adds a second recording destination.
+- **One Stream App Shared by Dev, Preview and Production**: Superseded by the Familiarise-dev app plus the prod-key guard (`ADR-12`); delete any assumption that previews may use the production key.
