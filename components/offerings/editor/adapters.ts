@@ -223,6 +223,8 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
     imageType: "subscription-plans",
     defaults: {
       ...sharedDefaults,
+      // New plans are sold in weeks; months follow from them.
+      durationInWeeks: 4,
       durationInMonths: 1,
       sessionsPerWeek: 1,
       sessionDurationInHours: 1,

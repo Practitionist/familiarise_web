@@ -62,6 +62,7 @@ const delivered = [0, 2, 4].map((day) => {
 const sub = (id: string, consulteeName: string, startDayOffset = 0) => ({
   id,
   sessionsTotal: 72,
+  sessionsRefunded: 0,
   schedulingPeriodStartsAt: new Date(
     START.getTime() + startDayOffset * 24 * HOUR,
   ),

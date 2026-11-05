@@ -345,6 +345,7 @@ describe("UnifiedCalendar allocate-page states (#1764, #1766)", () => {
       eventOccurrences: [],
       subscriptionMeta: {
         sessionsTotal: 144,
+        sessionsRefunded: 0,
         sessionsPerWeek: 3,
         durationInMonths: 12,
         schedulingPeriodStartsAt: new Date(2026, 0, 1).toISOString(),
@@ -375,6 +376,7 @@ describe("UnifiedCalendar allocate-page states (#1764, #1766)", () => {
       eventOccurrences: [],
       subscriptionMeta: {
         sessionsTotal: 12,
+        sessionsRefunded: 0,
         sessionsPerWeek: 3,
         durationInMonths: 1,
         schedulingPeriodStartsAt: new Date(2026, 0, 1).toISOString(),

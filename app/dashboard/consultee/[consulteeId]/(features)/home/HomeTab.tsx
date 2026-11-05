@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { schedulableSessionsOf } from "@/lib/booking/entitlement";
 import { useRouter } from "next/navigation";
 import {
   Calendar,
@@ -464,7 +465,7 @@ function lowSessionSubscriptions(
     const planId = sub.subscriptionPlan.id ?? sub.subscriptionPlanId;
     if (!planId) return [];
 
-    const planTotal = sub.sessionsTotal ?? sub.subscriptionPlan.totalSessions;
+    const planTotal = schedulableSessionsOf(sub);
     if (!planTotal || planTotal <= 0) return [];
 
     const occurrences = sub.appointment?.occurrences ?? [];

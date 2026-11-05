@@ -45,6 +45,8 @@ import {
   resolveSponsorPricingHint,
 } from "./sponsor-pricing-hint";
 import { useSession } from "@/lib/auth-client";
+import { activeClientsNotice } from "@/lib/booking/entitlement";
+import { activeClientsOf, withPricingNotice } from "./sold-terms-notice";
 import { sellHomeHref } from "@/lib/dashboard/sell-pages";
 
 interface OfferingEditorContainerProps {
@@ -165,9 +167,16 @@ export function OfferingEditorContainer({
     !existingPlan && sponsorPricingHint
       ? applySponsorPricingHintToManifest(manifest, sponsorPricingHint)
       : manifest;
-  const effectiveManifest = onSave
-    ? withoutTrial(hintedManifest)
+  const soldTermsNotice =
+    type === "subscription"
+      ? activeClientsNotice(activeClientsOf(initialEvent))
+      : null;
+  const noticedManifest = soldTermsNotice
+    ? withPricingNotice(hintedManifest, soldTermsNotice)
     : hintedManifest;
+  const effectiveManifest = onSave
+    ? withoutTrial(noticedManifest)
+    : noticedManifest;
 
   const form = useForm({
     resolver: zodResolver(adapter.schema),

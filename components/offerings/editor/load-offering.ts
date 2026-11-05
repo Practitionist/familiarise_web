@@ -18,7 +18,8 @@ import type { OfferingType } from "./manifest";
 
 const PLAN_PATH: Record<OfferingType, (id: string) => string> = {
   consultation: (id) => `/api/plans/consultations/${id}`,
-  subscription: (id) => `/api/plans/subscriptions/${id}`,
+  // The author also learns how many live buyers keep their current terms.
+  subscription: (id) => `/api/plans/subscriptions/${id}?include=activeClients`,
   webinar: (id) => `/api/plans/webinars/${id}`,
   class: (id) => `/api/plans/classes/${id}`,
 };

@@ -15,6 +15,7 @@ import {
   type BookingPresentationInput,
   type PaymentInput,
 } from "@/lib/dashboard/money-state";
+import { exitThresholdFor } from "@/lib/booking/class-series";
 import { PLAN_END_REFUND_REASON } from "@/lib/payments/refund-reasons";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
@@ -452,8 +453,8 @@ describe("ALLOCATE (#1775 C-5)", () => {
   });
 });
 
-// #1780 E-5 — a confirmed class seat whose host missed three sessions (or a
-// quarter) is offered a full-refund exit; below the threshold it is not.
+// #1780 E-5 — a confirmed class seat past the exit threshold is offered a
+// full-refund exit; below the threshold it is not.
 describe("EXIT_SERIES (#1780 E-5)", () => {
   const classSeat = (misses: number, N: number) =>
     base({
@@ -465,14 +466,15 @@ describe("EXIT_SERIES (#1780 E-5)", () => {
       series: {
         misses,
         N,
-        exitRight: misses >= 3 || 4 * misses >= N,
+        exitRight: misses >= exitThresholdFor(N),
         undelivered: 6,
       },
     });
   it.each([
     [3, 12, "EXIT_SERIES"],
     [2, 12, "NONE"],
-    [2, 8, "EXIT_SERIES"],
+    [14, 100, "NONE"],
+    [15, 100, "EXIT_SERIES"],
   ])("%i misses of %i → %s", (misses, N, kind) => {
     expect(
       deriveBookingPresentation(classSeat(misses, N), "CONSULTEE", { now: NOW })

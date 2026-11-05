@@ -51,6 +51,7 @@ function quotaFor(
   const zone = opts.zone ?? IST;
   const entitlement = subscriptionEntitlement({
     sessionsTotal: 12,
+    sessionsRefunded: 0,
     sessionsPerWeek: 3,
     durationInMonths: 1,
     occurrences,

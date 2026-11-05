@@ -6,7 +6,9 @@ import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import type { AppointmentStatus } from "@prisma/client";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import {
-  sessionsTotalOf,
+  soldSessionMinutes,
+  soldSessionsPerWeek,
+  soldTermsOf,
   subscriptionEntitlement,
   type SubscriptionEntitlement,
 } from "@/lib/booking/entitlement";
@@ -123,6 +125,9 @@ async function readAllocationRequestOrThrow(
         schedulingTimezone: true,
         planEndsAt: true,
         sessionsTotal: true,
+        sessionsPerWeek: true,
+        sessionMinutes: true,
+        sessionsRefunded: true,
         requestedBy: requestedBySelect,
         subscriptionPlan: {
           select: {
@@ -144,9 +149,7 @@ async function readAllocationRequestOrThrow(
     const plan = subscription.subscriptionPlan;
     const occurrences = subscription.appointment?.occurrences ?? [];
     const entitlement = subscriptionEntitlement({
-      sessionsTotal: sessionsTotalOf(subscription),
-      sessionsPerWeek: plan.sessionsPerWeek,
-      durationInMonths: plan.durationInMonths,
+      ...soldTermsOf(subscription),
       occurrences,
       schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
       schedulingTimezone: subscription.schedulingTimezone,
@@ -162,8 +165,8 @@ async function readAllocationRequestOrThrow(
       consultantProfileId: plan.consultantProfileId,
       consulteeUserId: subscription.requestedBy?.userId,
       consulteeName: subscription.requestedBy?.user?.name,
-      sessionDurationInHours: plan.sessionDurationInHours,
-      sessionsPerWeek: plan.sessionsPerWeek,
+      sessionDurationInHours: soldSessionMinutes(subscription) / 60,
+      sessionsPerWeek: soldSessionsPerWeek(subscription),
       durationInMonths: plan.durationInMonths,
       totalSessions: entitlement.total,
       schedulingTimezone: subscription.schedulingTimezone,

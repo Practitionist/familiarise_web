@@ -66,7 +66,7 @@ export function ClassSeriesDoors({ classId }: Readonly<{ classId: string }>) {
                 {v.series.hostMisses} by the host).{" "}
                 {v.series.exitRight
                   ? "Learners may leave with every undelivered session refunded."
-                  : "Learners have no exit right yet."}
+                  : `Learners have no exit right yet: it opens at 3 host misses within 30 days, or ${v.series.exitThreshold} misses in all.`}
               </p>
               <p>
                 Reliability flag:{" "}

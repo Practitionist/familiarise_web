@@ -39,6 +39,7 @@ export type FieldKind =
   | "stringList"
   | "learningOutcomes"
   | "languageLevel"
+  | "planLength"
   | "image";
 
 export interface FieldSpec {

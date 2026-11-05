@@ -84,7 +84,7 @@ Crypto. Follow the active maintenance implementation and recovery instructions;
 never infer that a cached phase quiesces work already in flight. See the linked
 references for transaction-client, deployed-runtime and environment constraints.
 
-The infrastructure orientation at `docs/start-here/10-infra-and-maintenance-sre-orientation.md` is the onboarding and portability guide. Keep its guarantees, failure limits and pending-versus-active scheduler ownership synchronized with source; the generated inventory owns counts, and GitHub comments alone are not architecture documentation. Keep the Stream-owned worker runbooks linked for active-host, execution-envelope and deployment verification constraints.
+The infrastructure orientation at `docs/start-here/09-infra-and-maintenance-sre-orientation.md` is the onboarding and portability guide. Keep its guarantees, failure limits and pending-versus-active scheduler ownership synchronized with source; the generated inventory owns counts, and GitHub comments alone are not architecture documentation. Keep the Stream-owned worker runbooks linked for active-host, execution-envelope and deployment verification constraints.
 
 PATCH updates require a validated non-empty reason, including ETA-only changes; use that value for incident and audit text. Maintenance retries preserve the active window's configuration and repeat OFFLINE setup until its completion stamp exists. Recovery checks database, Redis and chat before incident resolution and phase change. Preserve sequential session and channel-batch admission checks, paced vendor batches, transaction-client writes and ordered sidecar statements; a loop await is required when the next step depends on its predecessor or remaining budget.
 
@@ -112,6 +112,17 @@ Raw SQL must follow Prisma's physical `@map`/`@@map` identifiers; the subscripti
 status column is `requestStatus`. Derive disposable SQL fixture identifiers from
 the generated schema metadata, and verify query planning read-only before making
 production capacity claims.
+
+## Running a job by hand, secrets and vendor monitors
+
+Reasons and alternatives: `docs/decisions/2026-11-05-detector-rollout-and-redundancy.md`.
+
+- **Run a job from a terminal:** `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://familiarisenow.com/api/cleanup/<registry-key>`. It prints the job's JSON result and records a production-tagged run. Use the registry key in the URL; the run row's `jobName` can differ (`tds-return-draft` writes `tds-26q-draft-export`; `jobNameFor` in `lib/cron/schedule.ts` maps them). System Jobs "Run now" is the in-process alternative with less detail.
+- **A windowed job's first-ever slot holds the probe red.** If `/api/health/jobs` answers 503 `JOB_OVERDUE` for a weekly or quarterly job that never ran under a production-tagged row, run it once by hand, then poll the probe.
+- **`CRON_SECRET` is a write-only Netlify secret.** The CLI, API and dashboard show `****`; GitHub secrets are write-only too. Never try to retrieve it: rotate it, keep one copy in the owner's password manager, and never paste it into a doc, ticket, chat or persisted command line. Rotation updates three places (Netlify production, the Better Stack probe monitor, the Sentry uptime detector). Both vendors store the header value, so a leak there means rotate.
+- **Create vendor monitors with each vendor's API or CLI, never by clicking.** Better Stack: `https://uptime.betterstack.com/api/v2/monitors` and `/heartbeats` with `BETTERSTACK_API_KEY`. Sentry: `sentry api /organizations/<org>/detectors/<id>/ -X PUT --input -`, body on stdin. No Terraform (AGENTS.md §1.2). The app never creates vendor monitors.
+- **A monitor is done when it reads `up`, not when it exists.** A created-paused heartbeat detects nothing. Read it back and require `paused: false` and status `up`.
+- **Gotchas.** macOS has no `timeout`, so a `timeout 40 cmd` loop silently fails and looks like "unset". `netlify env:get` prints secrets as `***`. Netlify env changes apply only at the next deploy. Better Stack `paused` is settable on create and by PATCH.
 
 ## Worktree verification
 

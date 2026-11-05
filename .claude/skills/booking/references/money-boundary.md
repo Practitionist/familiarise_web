@@ -390,11 +390,31 @@ a time and the first writer wins, so a door that finds another door's marker
 already on the payment commits nothing and answers through `heldMarkerRefusal`:
 409 `REFUND_IN_PROGRESS` while that marker is still retrying, or 409
 `REFUND_NEEDS_SUPPORT` once it has spent `MAX_REFUND_OWED_ATTEMPTS` or a live
-dispute holds the payment. The cancel route, trial cancel and seat leave all
-follow this rule, so no door drives a refund it does not own and none leaves its
-own refund undurable. A `REFUND_NEEDS_SUPPORT` refusal writes one audited
+dispute holds the payment. The cancel route, trial cancel, seat leave and the
+whole-event cancel all follow this rule, so no door drives a refund it does not
+own and none leaves its own refund undurable. `stampWholeEventRefundsOwed` stamps
+the roster in one statement, accepts a replay of its own key, and throws the
+refusal (subject `class` or `webinar`) on any seat whose marker is not its own,
+so the cancel route, the ADMIN `cancel-series` door and the moderation cancel
+commit nothing; `refundWholeEventPayments` then drives only the event's own keys. A `REFUND_NEEDS_SUPPORT` refusal writes one audited
 `SystemEvent` per payment and marker (`recordRefundNeedsSupport`), and support
 settles the marker through an operator refund door.
+
+**A door that proceeds anyway holds the money for a hand top-up.** Rejection,
+moderation of a 1:1 booking or a removed attendee, a consultant no-show, the
+maintenance freeze and the overage credit-back end the booking even when another
+door's partial marker holds the payment (a full-balance one already covers
+them). `stampOwedOrHeld` / `heldInsteadOf` then records one
+`owed-already-held:<payment>:<key>` `SystemEvent` with the top-up amount and
+places an `OPERATOR` `EarningsHold` keyed on it, in the door's transaction; a
+hold race refuses with a retryable 409 and rolls the door back.
+`readOwedAlreadyHeld` lists it in the Refunds tab while the money is unpaid
+(later refunds, oldest row first, minus any share that settled the holding
+refund; the balance), then until the hold is released. Operators (ADMIN or
+STAFF) read a held-marker refusal through `opsHeldMarkerMessage`: the payment,
+the holding key and their own door's next step. The miss ledger's class lock
+is `FOR NO KEY UPDATE`, compatible with the key-share lock history-row foreign
+keys take.
 
 **An operator's refund settles the owed refund by hand.** Every operator door
 passes `settlesOwedByHand` to `refundBookingPayment`: the issue and ladder
@@ -520,22 +540,58 @@ predicate, never a caller's copy of it.
 
 ## 13. A subscription settles at its fixed plan end
 
-A subscription's plan end is fixed at purchase in `Subscription.planEndsAt`:
-the start plus `durationInMonths` on the consultant's wall clock, clamped to the
-month's last day (31 January plus one month is 28 or 29 February), exclusive
-(`planEndOf` in `lib/booking/entitlement.ts`). Every sweep, admin view, incident
-extension, document and renewal reads it through `subscriptionPlanEnd` or
-`subscriptionIsOver`; an incident extension or a returned session moves the
-stored value. A plan holds `sessionsPerWeek × durationInMonths × 4` sessions
-(`planTotalSessions`), frozen at purchase, and the plan or period of a purchased
-subscription cannot be changed.
+A subscription's terms are fixed at purchase by `purchaseTermsOf`
+(`lib/booking/entitlement.ts`): the weekly cap (`Subscription.sessionsPerWeek`),
+the session length (`sessionMinutes`), the sessions sold (`sessionsTotal` =
+weeks × sessions a week, where a months plan counts `durationInMonths × 4`
+weeks) and the plan end (`planEndsAt`). A weeks plan ends `durationInWeeks × 7`
+zone-days after the start at the same wall time (`weeksPlanEndOf`, so a DST
+change never moves the end hour); a months plan ends on the same date
+`durationInMonths` later, clamped to the month's last day (`planEndOf`),
+exclusive. Every sweep, admin view, incident extension, document and renewal
+reads the end through `subscriptionPlanEnd` or `subscriptionIsOver`; an incident
+extension or a returned session moves the stored value. Readers of a sold plan's
+cadence use `soldTermsOf` / `soldSessionsPerWeek` / `soldSessionMinutes`, which
+fall back to the plan only for a row sold before the freeze, and a plan edit
+stamps those rows first (`freezeSoldTerms`), so an edit applies to new buyers
+only.
+
+A support partial refund of k sessions (the `REVIEW_REFUND` door with a
+session count) refunds `min(floor(paid × k / sessionsTotal), refundable)` and,
+in the approval's commit, adds k to `Subscription.sessionsRefunded` by CAS on
+the count read (`removePlanSessions`, `lib/booking/plan-refund.ts`). Those
+sessions leave the schedulable total (`sessionsTotal − sessionsRefunded`), so
+the expert never delivers a session whose earnings were already reversed. A
+void of that approval puts them back (`restorePlanSessions`) while the plan is
+live; a settled plan refuses the void. Only an open plan (live, before its end, no
+owed marker) gives up sessions. Every other door nets them: the cancel quote
+(`quoteUnusedSessions`) owes `T − sessionsRefunded − delivered` sessions over a
+denominator of `T`, and `alreadyRefundedPaise` adds money-only support refunds;
+the plan end waits while such a remedy's refund is failed or unsent. Once the
+plan settled without those sessions, their refund is still owed: a retry pays it
+and a void is refused. The cancel's subscription CAS is pinned to the
+`sessionsRefunded` it quoted, so an approval landing mid-cancel re-quotes it.
+Earnings tranches keep the allocation minted at capture (over `sessionsTotal`),
+but once every session the buyer kept is delivered, every tranche left has
+matured: `settleSubscriptionCycle` stamps them all, including the retained part
+of one the refund cut short, and auto-complete runs that stamp in the commit
+that marks the plan COMPLETED, so a refund that ends the entitlement with no
+delivery left never strands an earned tranche.
 
 At the plan end the `settle-cancelled-sessions` sweep
 (`scripts/appointments/settle-cancelled-sessions.ts`) settles once: every
 session not delivered (voided, returned or never placed) is refunded pro rata
 through `refundBookingPayment`, under a durable owed marker keyed
 `plan-end:<subscriptionId>:pay:<paymentId>` stamped in the commit that completes
-the plan. The pass resumes each tick from a checkpoint, so plans that must wait
+the plan. While that marker is set, the tranches stamped in the same commit
+stay `PENDING` (`RELEASABLE_PAYMENT`), so a refund that keeps failing never
+releases them. The share is `floor(paid × (T − delivered) / T)` less what the
+payment already returned, with `T = sessionsTotal` (the sessions sold, not the
+schedulable count): on a ₹15,600 plan of 78 sessions, a ₹1,800 support refund
+of 9 sessions in week 10 and a plan end with 61 delivered settle
+`floor(15,600 × 17 / 78) − 1,800` = ₹1,600, so no session is paid twice.
+
+The pass resumes each tick from a checkpoint, so plans that must wait
 never starve the ones behind them. A void in the middle of a plan is not paid
 back while the session can still be re-booked; it waits for the plan end.
 
@@ -548,6 +604,9 @@ back while the session can still be re-booked; it waits for the plan end.
 - **History-counted reschedule caps.** Caps once counted distinct RESCHEDULED
   history instants per side, so a declined or expired proposal that restored
   the booking still cost a reschedule. They count release records now.
+- **A sold plan reading the live plan row's cadence.** A plan edit once changed
+  the weekly cap and session length of plans already sold; they are frozen on
+  the subscription now.
 - **A plan end derived from the scheduling period.** Readers once treated
   `schedulingPeriodEndsAt` as the plan end, so a void mid-plan was refunded while
   still re-bookable. Read `subscriptionPlanEnd`.
@@ -563,3 +622,6 @@ back while the session can still be re-booked; it waits for the plan end.
   `assertNotBeingMoved` refuses it now.
 - **A passed, never-replaced released session quoted from its old start.** Its
   notice once came out negative, the lowest tier; it now counts as full notice.
+- **A whole-event cancel that committed without owning every seat's marker.** It
+  logged the seats another door held and drove whatever marker it found; it now
+  refuses, and a losing door that proceeds holds the earnings for a top-up.

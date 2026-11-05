@@ -60,12 +60,17 @@ export async function readClassSeries(
   const cleared =
     (flag?.context as { cleared?: unknown } | null)?.cleared === true;
 
+  const { hostMissAts, ...series } = seriesLedgerFrom({
+    N,
+    occurrences: live,
+    now,
+  });
   return {
     classId,
     appointmentId,
     title: cls.classPlan.title,
     status: cls.status,
-    series: seriesLedgerFrom({ N, occurrences: live, now }),
+    series,
     reliability: {
       active: !!flag && !cleared,
       since: flag && !cleared ? flag.createdAt.toISOString() : null,

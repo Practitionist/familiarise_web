@@ -104,6 +104,7 @@ export class SubscriptionService {
         title: plan.title,
         description: plan.description,
         durationInMonths: plan.durationInMonths,
+        durationInWeeks: plan.durationInWeeks ?? null,
         sessionDurationInHours: plan.sessionDurationInHours,
         sessionsPerWeek: plan.sessionsPerWeek,
         // The form edits rupees; the DB stores paise (#780 money model).

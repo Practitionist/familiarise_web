@@ -216,6 +216,7 @@ describe("returning a subscription session to the plan", () => {
     });
     const base = {
       sessionsTotal: 4,
+      sessionsRefunded: 0,
       sessionsPerWeek: 1,
       durationInMonths: 1,
       schedulingPeriodStartsAt: NOW,

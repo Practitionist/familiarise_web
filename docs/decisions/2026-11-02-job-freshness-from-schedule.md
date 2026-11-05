@@ -4,6 +4,7 @@
 - **Date**: 2026-11-02
 - **Author**: Platform engineering
 - **Related**: [Better Stack setup guide](../maintenance/00-betterstack-setup.md#independent-capability-freshness-probe) (the runbook), [Job machinery catalog](../maintenance/11-job-machinery-catalog.md), [Observability system design](../observability/00-system-design.md), [The ticker skips targets that have no work](2026-11-01-ticker-skip-idle-targets.md), [Observability gaps and launch posture](2026-11-01-observability-gaps-and-launch-posture.md), [Money go-live checklist](../finance/70-operations/07-go-live-checklist.md)
+- **Follow-up**: [2026-11-05-detector-rollout-and-redundancy.md](2026-11-05-detector-rollout-and-redundancy.md) (the owner steps as carried out, with the live monitor inventory)
 
 ## Context: absence of a signal was not a signal
 

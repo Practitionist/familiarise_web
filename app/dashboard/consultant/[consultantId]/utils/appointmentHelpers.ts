@@ -262,6 +262,8 @@ export const getSlotTimes = (appointment: TAppointment): Date[] => {
 /** #1766 — the wrapper's subscription, when the read carried its entitlement. */
 type EntitledSubscription = {
   sessionsTotal?: number | null;
+  sessionsPerWeek?: number | null;
+  sessionsRefunded?: number;
   schedulingPeriodStartsAt?: Date | string | null;
   schedulingTimezone?: string | null;
   planEndsAt?: Date | string | null;
@@ -310,7 +312,8 @@ export const calculateSessionProgress = (
   ) {
     const entitlement = subscriptionEntitlement({
       sessionsTotal: sub?.sessionsTotal ?? plan.totalSessions,
-      sessionsPerWeek: plan.sessionsPerWeek,
+      sessionsRefunded: sub?.sessionsRefunded ?? 0,
+      sessionsPerWeek: sub?.sessionsPerWeek ?? plan.sessionsPerWeek,
       durationInMonths: plan.durationInMonths,
       // A row with no end (legacy shape) contributes its start to the window.
       occurrences: rows.map((row) => ({

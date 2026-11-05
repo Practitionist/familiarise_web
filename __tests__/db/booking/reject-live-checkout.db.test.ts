@@ -23,20 +23,12 @@ jest.mock("../../../lib/rate-limit", () => ({
   ...jest.requireActual("../../../lib/rate-limit"),
   applyRateLimit: async () => null,
 }));
-jest.mock("../../../lib/novu", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
-jest.mock("../../../lib/novu/service", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
+jest.mock("../../../lib/novu", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
+jest.mock("../../../lib/novu/service", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
 
 import { PATCH as patchConsultation } from "../../../app/api/bookings/consultations/[consultationId]/route";
 import { PATCH as patchSubscription } from "../../../app/api/bookings/subscriptions/[subscriptionId]/route";

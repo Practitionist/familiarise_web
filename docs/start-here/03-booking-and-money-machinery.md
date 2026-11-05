@@ -4,7 +4,7 @@ type: tutorial
 band: index
 audience: sde2
 status: live
-last-reviewed: 2026-10-17
+last-reviewed: 2026-11-04
 ---
 
 # The Booking & Money Machinery — Visual Guide, Organizational Scoping & Worked Permutations
@@ -279,7 +279,7 @@ The sponsored-rail permutations (a licensed-seat programme on the `INVOICE` rail
 
 ### Permutation 8: Payout Pipeline, TDS Section 194-O Withholding, & MSME 43B(h) Deadlines
 
-Once `holdUntil` passes (`24h` Consultation and Class, `48h` Webinar, `168h` Subscription; anchored on the later of capture and the last live session end) and no live dispute or unsettled session void exists, `release-earnings` flips `ConsultantEarnings` and `OrganizationEarnings` from `PENDING → READY`.
+Once `holdUntil` passes (`24h` Consultation and Class, `48h` Webinar, `168h` Subscription; anchored on the later of capture and the last live session end) and no live dispute, unsettled session void, pending refund or owed-refund marker (`Payment.refundOwedKey`) exists, `release-earnings` flips `ConsultantEarnings` and `OrganizationEarnings` from `PENDING → READY`.
 
 ```mermaid
 sequenceDiagram
@@ -427,7 +427,7 @@ Payout journal `payout:<id>`: Debit `CONSULTANT_PAYABLE(grace)` `160,000` and cr
 **Cast.** Aarav Anderson hosts an eight-session class. David Brown's seat cost ₹8,000 plus ₹1,440 GST, so `944,000` paise, and the seat unit is `floor(944,000 / 8) = 118,000` paise (`seatLedger` in `lib/booking/class-series.ts`).
 
 - **Leaving.** After session 3 is delivered David leaves, and the next session starts in 10 hours. `quoteClassSeatRefund` tiers each of the five remaining units at its own notice: the next one at 50% (`118,000 × 5,000 / 10,000 = 59,000`) and the other four at 100% (`4 × 118,000 = 472,000`). The refund is `531,000` paise (₹5,310), sent through `refundRemovedAttendeeSeat` with the key `seat-leave:<participantId>`. A webinar seat or a class with no delivered session would instead be refused inside the host's refund window.
-- **A host-cancelled session.** On Mon 2 Nov at 10:00 Aarav cancels session 6. The occurrence moves `SCHEDULED` to `CANCELLED` with `hostCancelledAt` set and `deletedAt` left null, so it stays countable as a miss. Aarav has 14 days, until Mon 16 Nov 10:00. If he schedules a make-up at the same ordinal, for example Sat 14 Nov 11:00, no money moves. If he does not, `settle-cancelled-sessions` (every 30 minutes) refunds every seat one unit of `118,000` under the key `occ:<occurrence>:pay:<payment>`. One miss does not trip the exit right, which needs three misses or a quarter of the series (two sessions of eight).
+- **A host-cancelled session.** On Mon 2 Nov at 10:00 Aarav cancels session 6. The occurrence moves `SCHEDULED` to `CANCELLED` with `hostCancelledAt` set and `deletedAt` left null, so it stays countable as a miss. Aarav has 14 days, until Mon 16 Nov 10:00. If he schedules a make-up at the same ordinal, for example Sat 14 Nov 11:00, no money moves. If he does not, `settle-cancelled-sessions` (every 30 minutes) refunds every seat one unit of `118,000` under the key `occ:<occurrence>:pay:<payment>`. One miss does not trip the exit right, which needs 3 host misses inside any rolling 30 days, or max(3, 15 % of N) misses in all (3 of eight here).
 - **Calendar.** _Current:_ the cancelled session still counts as busy time for Aarav on the availability grid because its `deletedAt` stays null. _After Wave 0 (W0-5):_ the shared occupancy filter excludes host-cancelled class sessions.
 
 ### Example 6 — Cancelling at 23 hours while the dialog showed 100% (current behaviour, then the D3 fix landing in Wave 0 W0-3)

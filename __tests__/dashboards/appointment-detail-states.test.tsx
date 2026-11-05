@@ -284,6 +284,7 @@ describe("consultee · CONFIRMED subscription, one of four allocated (#1766)", (
       unknown
     >;
     sub.sessionsTotal = 4;
+    sub.sessionsRefunded = 0;
     sub.schedulingPeriodStartsAt = new Date(NOW);
     sub.schedulingTimezone = "UTC";
     (sub.subscriptionPlan as Record<string, unknown>).totalSessions = 4;

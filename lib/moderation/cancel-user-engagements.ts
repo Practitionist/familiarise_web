@@ -27,8 +27,11 @@ import { EMAIL_BUDGET_MS, sendAppointmentCancelledEmail } from "@/lib/email";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
+import { isRefusal } from "@/lib/errors/refusal";
 import {
   driveRefundOwed,
+  opsHeldMarkerMessage,
+  recordRefundNeedsSupport,
   stampOwedOrHeld,
   type OwedRefundAlreadyHeld,
   type RefundOwedMarker,
@@ -328,9 +331,14 @@ async function runWorkItem(
     summary.failures.push({
       kind: item.kind,
       id: item.id,
-      error: errMsg(error),
+      error:
+        (isRefusal(error)
+          ? opsHeldMarkerMessage(error, "re-run the ban's bulk cancel")
+          : null) ?? errMsg(error),
     });
-    captureModerationError(error);
+    // A held refund marker refused the cancel with nothing committed; a re-run retries it.
+    if (isRefusal(error)) await recordRefundNeedsSupport(error);
+    else captureModerationError(error);
   }
 }
 

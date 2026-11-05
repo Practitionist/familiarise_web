@@ -37,6 +37,11 @@ export interface ManageTimingsAppointmentLike {
     schedulingPeriodStartsAt?: string | Date | null;
     schedulingTimezone?: string | null;
     planEndsAt?: string | Date | null;
+    /** Terms frozen at purchase; null reads the plan. */
+    sessionsPerWeek?: number | null;
+    sessionMinutes?: number | null;
+    sessionsTotal?: number | null;
+    sessionsRefunded?: number;
     subscriptionPlan?: {
       sessionsPerWeek?: number | null;
       durationInMonths?: number | null;
@@ -93,26 +98,27 @@ function getEventDetails(
         title:
           appointment.consultation?.consultationPlan?.title || "Consultation",
       };
-    case "SUBSCRIPTION":
+    case "SUBSCRIPTION": {
+      const sub = appointment.subscription;
+      // The sold terms: frozen at purchase, else the plan's.
+      const sessionHours = sub?.sessionMinutes
+        ? sub.sessionMinutes / 60
+        : sub?.subscriptionPlan?.sessionDurationInHours || 1;
+      const sold =
+        sub?.sessionsTotal ?? sub?.subscriptionPlan?.totalSessions ?? null;
       return {
         eventType: "subscription",
-        eventId: appointment.subscription?.id || "",
+        eventId: sub?.id || "",
         sessionsPerWeek:
-          appointment.subscription?.subscriptionPlan?.sessionsPerWeek || 1,
-        durationInMonths:
-          appointment.subscription?.subscriptionPlan?.durationInMonths || 1,
-        durationInHours:
-          appointment.subscription?.subscriptionPlan?.sessionDurationInHours ||
-          1,
-        sessionDurationInHours:
-          appointment.subscription?.subscriptionPlan?.sessionDurationInHours ||
-          1,
+          sub?.sessionsPerWeek || sub?.subscriptionPlan?.sessionsPerWeek || 1,
+        durationInMonths: sub?.subscriptionPlan?.durationInMonths || 1,
+        durationInHours: sessionHours,
+        sessionDurationInHours: sessionHours,
         totalSessions:
-          appointment.subscription?.subscriptionPlan?.totalSessions ??
-          undefined,
-        title:
-          appointment.subscription?.subscriptionPlan?.title || "Subscription",
+          sold === null ? undefined : sold - (sub?.sessionsRefunded ?? 0),
+        title: sub?.subscriptionPlan?.title || "Subscription",
       };
+    }
     case "WEBINAR":
       return {
         eventType: "webinar",

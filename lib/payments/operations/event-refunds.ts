@@ -17,12 +17,10 @@ import { refundBookingPayment } from "./booking-refund";
 import { RefundValidationError } from "./refund";
 import {
   driveRefundOwed,
-  heldInsteadOf,
+  heldMarkerRefusal,
   markerFromRow,
-  owedAlreadyHeldNote,
   REFUND_OWED_SELECT,
   stampRefundsOwed,
-  type OwedRefundAlreadyHeld,
   type RefundOwedMarker,
 } from "./refund-owed";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
@@ -51,7 +49,8 @@ import {
  * as a single booking would.
  *
  * The seats are stamped owed in the cancelling commit
- * ({@link stampWholeEventRefundsOwed}), and this drives a bounded bite of them
+ * ({@link stampWholeEventRefundsOwed}), which owns every seat's marker or
+ * refuses with nothing committed, and this drives a bounded bite of them
  * inline; the retry-auto-refunds sweep drains the rest, so a large roster never
  * outlives the request.
  */
@@ -67,8 +66,6 @@ export type WholeEventRefundSummary = {
   deferred: number;
   /** Every seat was a skip: nothing issued, deferred or failed. */
   alreadyRefunded: boolean;
-  /** Seats whose payment already owed another door's refund, so this added nothing; top up by hand. */
-  alreadyOwed: OwedRefundAlreadyHeld[];
 };
 
 /** Seats refunded inline before the rest is left to the retry sweep. */
@@ -257,6 +254,8 @@ async function liveSeatPayments(
 /**
  * Stamps every owed seat of the event on the caller's transaction, in one
  * statement, so the commit that cancels the event also records what it owes.
+ * Every seat's marker must be this door's: a seat whose payment already owes
+ * another door's refund refuses the whole cancel, so the caller commits nothing.
  */
 export async function stampWholeEventRefundsOwed(
   tx: Tx,
@@ -266,11 +265,34 @@ export async function stampWholeEventRefundsOwed(
   const markers = [...plans.values()].flatMap((plan) =>
     plan.kind === "owe" ? [plan.marker] : [],
   );
-  // A seat another door already owes keeps that refund (first writer wins); it is recorded here.
   if ((await stampRefundsOwed(tx, markers)) < markers.length) {
-    await heldInsteadOf(tx, markers);
+    await assertOwnsEveryMarker(tx, markers, args);
   }
   return plans;
+}
+
+/**
+ * After a short batch stamp: a replay of this door's own key is owned; any
+ * other marker (or none) on an owed seat refuses with the held-marker answer.
+ */
+async function assertOwnsEveryMarker(
+  tx: Tx,
+  markers: readonly RefundOwedMarker[],
+  args: EventRefundArgs,
+): Promise<void> {
+  const rows = await tx.payment.findMany({
+    where: { id: { in: markers.map((m) => m.paymentId) } },
+    select: { id: true, refundOwedKey: true },
+  });
+  const held = new Map(rows.map((r) => [r.id, r.refundOwedKey]));
+  const lost = markers.find((m) => held.get(m.paymentId) !== m.key);
+  if (!lost) return;
+  throw await heldMarkerRefusal(
+    tx,
+    lost.paymentId,
+    { eventId: args.eventId, kind: args.kind, key: lost.key },
+    args.kind,
+  );
 }
 
 export async function refundWholeEventPayments(
@@ -296,7 +318,6 @@ export async function refundWholeEventPayments(
     skippedAlreadyRefunded: 0,
     deferred: 0,
     alreadyRefunded: false,
-    alreadyOwed: [],
   };
   const { plans: stamped, ...rest } = opts;
   const args: EventRefundArgs = { kind, eventId, reason, ...rest };
@@ -327,9 +348,14 @@ export async function refundWholeEventPayments(
     }
   }
 
+  const ownKeys = owing.flatMap((paymentId) => {
+    const plan = plans.get(paymentId);
+    return plan?.kind === "owe" ? [plan.marker.key] : [];
+  });
   const [rows, disputes] = await Promise.all([
+    // Only this door's own markers: another door's later marker is that door's to drive.
     prisma.payment.findMany({
-      where: { id: { in: owing }, refundOwedKey: { not: null } },
+      where: { id: { in: owing }, refundOwedKey: { in: ownKeys } },
       orderBy: { refundOwedAt: "asc" },
       select: REFUND_OWED_SELECT,
     }),
@@ -343,23 +369,7 @@ export async function refundWholeEventPayments(
   ]);
   const disputed = new Map(disputes.map((d) => [d.paymentId, d.status]));
   const markers = rows.flatMap((row) => markerFromRow(row) ?? []);
-  for (const marker of markers) {
-    const plan = plans.get(marker.paymentId);
-    if (plan?.kind === "owe" && plan.marker.key !== marker.key) {
-      summary.alreadyOwed.push({
-        paymentId: marker.paymentId,
-        key: plan.marker.key,
-        heldKey: marker.key,
-        heldPaise: marker.amountPaise,
-        note: owedAlreadyHeldNote(
-          marker.paymentId,
-          marker.key,
-          marker.amountPaise,
-        ),
-      });
-    }
-  }
-  // A seat planned owed whose marker is already gone was settled by a racing drive.
+  // A seat planned owed whose own marker is already gone was settled by a racing drive.
   summary.skippedAlreadyRefunded += owing.length - markers.length;
 
   const deadline = Date.now() + INLINE_BUDGET_MS;
@@ -760,19 +770,18 @@ async function creditSeatStates(
   paymentIds: string[],
 ): Promise<Map<string, { claimed: boolean; stillUsedPaise: number }>> {
   if (paymentIds.length === 0) return new Map();
-  const [claims, usages] = await Promise.all([
-    db.refund.findMany({
-      where: {
-        paymentId: { in: paymentIds },
-        status: { in: ["SUCCEEDED", "PENDING"] },
-      },
-      select: { paymentId: true },
-    }),
-    db.referralCreditUsage.findMany({
-      where: { paymentId: { in: paymentIds } },
-      select: { paymentId: true, amount: true },
-    }),
-  ]);
+  // Sequential: the cancel's transaction runs one statement at a time.
+  const claims = await db.refund.findMany({
+    where: {
+      paymentId: { in: paymentIds },
+      status: { in: ["SUCCEEDED", "PENDING"] },
+    },
+    select: { paymentId: true },
+  });
+  const usages = await db.referralCreditUsage.findMany({
+    where: { paymentId: { in: paymentIds } },
+    select: { paymentId: true, amount: true },
+  });
   const claimed = new Set(claims.map((c) => c.paymentId));
   return new Map(
     paymentIds.map((id) => [
