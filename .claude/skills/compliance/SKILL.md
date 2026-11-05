@@ -69,6 +69,7 @@ different layers. Building only the legal view is the standard mistake.
   decisions to retain, and why. Absence of deletion is evidence too.
 - **Read consent at the point of processing, not at enqueue.** Never trust a
   consent value copied into a job payload or a stale tab.
+- **Vendors get minimal fields.** Stream receives only `id`, `name`, `image` and `role` under `STREAM_DATA_PROCESSING` (`lib/compliance/purpose-codes.ts`), built by `toStreamUser()`; `stream-sync` unsets older contact fields.
 - **Vendor work is durable.** A process death between commit and the processor
   call must not lose the obligation. Outbox row in the same transaction, drained
   by a retry job.

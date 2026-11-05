@@ -1,9 +1,13 @@
-/** A bounded, checkpointed comparison of Stream principals against database ownership. */
+/**
+ * A bounded, checkpointed comparison of Stream principals against database
+ * ownership that also unsets contact fields Stream must not hold.
+ */
 
 import { StreamChat, type UserResponse } from "stream-chat";
 import prisma from "../../lib/prisma";
 import { readJobCheckpoint, withCronLock } from "@/lib/cron/with-cron-lock";
 import { SUPPORT_STREAM_USER_ID } from "@/lib/stream/support-user";
+import { staleContactFields } from "@/lib/stream/user-payload";
 
 export interface FailedDeletionEntry {
   id: string;
@@ -22,6 +26,9 @@ export interface SyncSummary {
   deletionTaskIds: string[];
   checkpoint: string | null;
   hasMore: boolean;
+  /** Users carrying a contact field (email) that this run unset, or would unset on a dry run. */
+  totalContactFieldsScrubbed: number;
+  totalFailedScrubs: number;
 }
 
 export interface SyncOptions {
@@ -169,6 +176,9 @@ async function performStreamUserSyncUnlocked(
   let hasMore = false;
   const deletionTaskIds: string[] = [];
   let deleteCallsIssued = 0;
+  let totalContactFieldsScrubbed = 0;
+  let totalFailedScrubs = 0;
+  let firstScrubError: string | undefined;
 
   const runDeleteUsersBatch = async (
     userIds: string[],
@@ -269,6 +279,28 @@ async function performStreamUserSyncUnlocked(
         }
       }
 
+      // Stream shows a user's fields to every channel co-member; contact data must not live there.
+      const hardDeleteSet = new Set(hardDeleteUsers);
+      const scrubs = currentPageUsers.flatMap((streamUser) => {
+        if (streamUser.deleted_at || hardDeleteSet.has(streamUser.id))
+          return [];
+        const unset = staleContactFields(streamUser);
+        return unset.length > 0 ? [{ id: streamUser.id, unset }] : [];
+      });
+      if (scrubs.length > 0) {
+        totalContactFieldsScrubbed += scrubs.length;
+        if (!dryRun) {
+          try {
+            await serverStreamClient.partialUpdateUsers(scrubs);
+          } catch (error) {
+            totalContactFieldsScrubbed -= scrubs.length;
+            totalFailedScrubs += scrubs.length;
+            firstScrubError ??=
+              error instanceof Error ? error.message : "Partial update failed";
+          }
+        }
+      }
+
       const staleCount = softDeleteUsers.length + hardDeleteUsers.length;
       if (staleCount === 0) {
         console.log("   No stale users in this page.");
@@ -290,10 +322,15 @@ async function performStreamUserSyncUnlocked(
       }
     }
 
+    if (totalFailedScrubs > 0) {
+      console.error(
+        `   ❌ Contact-field scrub failed for ${totalFailedScrubs} users: ${firstScrubError}`,
+      );
+    }
     console.log("\n✅ Synchronization completed successfully.");
 
     return {
-      success: allFailedDeletions.length === 0,
+      success: allFailedDeletions.length === 0 && totalFailedScrubs === 0,
       totalStreamUsersProcessed,
       totalStaleUsersIdentified,
       totalDeletionRequestsAccepted,
@@ -304,6 +341,8 @@ async function performStreamUserSyncUnlocked(
       deletionTaskIds,
       checkpoint: dryRun ? priorCheckpoint : (lastStreamUserId ?? null),
       hasMore,
+      totalContactFieldsScrubbed,
+      totalFailedScrubs,
     };
   } catch (error) {
     console.error("❌ Synchronization failed:", error);

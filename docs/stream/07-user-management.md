@@ -52,9 +52,9 @@ try {
 **Internal Process:**
 
 1. Validates Stream API credentials
-2. Fetches user details from Prisma database (id, name, email, image, role)
-3. Maps the user's role to Stream Chat role using `mapRoleToStream()`
-4. Calls `client.upsertUser()` with user data
+2. Fetches user details from Prisma database (id, name, image, role; email is deliberately not selected)
+3. Builds the Stream payload with `toStreamUser()` (`lib/stream/user-payload.ts`), which maps the role through `mapRoleToStream()` and returns only `id`, `name` (falling back to the id), `image` (omitted when empty) and `role`
+4. Calls `client.upsertUser()` with that payload
 5. Returns the Stream Chat user object
 
 **Error Handling:**
@@ -363,8 +363,19 @@ requests; erased users receive hard-delete requests. Support/system principals,
 reserved prefixes and the configured exclusion list remain exempt. There is no
 additional 30-day grace rule in this core.
 
+On every page it already reads, the job also removes contact data that older
+upserts stored at Stream. `staleContactFields()` (`lib/stream/user-payload.ts`)
+names the fields in `STREAM_CONTACT_FIELDS` (today `email`) that a user still
+carries, and one `partialUpdateUsers` call per page unsets them. Users already
+deleted in Stream or queued for hard delete are skipped, a dry run only counts,
+and a clean roster produces no writes. This costs no extra Stream reads and also
+catches any future regression that stores a contact field again. See the
+[Stream user allowlist decision](../decisions/2026-11-05-stream-user-allowlist.md).
+
 `SyncSummary` exposes processed/identified counts, accepted deletion-request
-counts, failed entries, asynchronous task IDs, `checkpoint` and `hasMore`.
+counts, failed entries, asynchronous task IDs, `checkpoint`, `hasMore`,
+`totalContactFieldsScrubbed` and `totalFailedScrubs`. A failed scrub sets
+`success` to false and is logged once per run, not once per user.
 Accepted requests do not prove asynchronous hard-delete completion. Dedicated
 erasure obligations retain their own retry owner. DeleteUsers requests remain
 paced at least ten seconds apart by default, including across soft/hard modes;
@@ -389,6 +400,6 @@ completion health, limits, host portability and deployment verification.
 ## Deprecated & Superseded Approaches
 
 - **Global `admin` Role Mapping**: Every account once mapped to Stream `admin`, later only `ADMIN`/`STAFF` did, alongside an operator bypass for minting tokens for other users. Superseded by mapping every account to `user` and self-only minting, because both paths gave operators silent, unaudited browser reads of any chat.
-- **Uncensored Email PII in Stream User Metadata**: Superseded by `stripStreamUserEmails` and DPDP `STREAM_DATA_PROCESSING` filtering (`droppedIds`) prior to `upsertUsers`.
+- **Email in Stream User Metadata**: The upserts sent `email` to Stream until the allowlist change, so channel co-members could read it. `stripStreamUserEmails` only ever stripped responses from our server actions, never what Stream stored. Superseded by `toStreamUser()`, which never carries email, and by the `stream-sync` scrub of older copies. `droppedIds` consent filtering (`STREAM_DATA_PROCESSING`) is separate and unchanged.
 - **Token Revocation Reported but Never Performed**: `revokeMemberStreamAccess` once returned `tokenRevoked: false` without revoking anything, so a removed member's token lived until it expired. It now revokes tokens issued before the removal.
 - **Ad-Hoc Account Scrubbing**: Superseded by `eraseStreamPrincipalFootprint` (`lib/compliance/erasure/scrub-user.ts`) with retry persistence (`StreamRevocationRetry`).

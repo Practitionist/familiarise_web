@@ -92,16 +92,15 @@ describe("User Actions", () => {
         select: {
           id: true,
           name: true,
-          email: true,
           image: true,
           role: true,
         },
       });
 
+      // Exact payload: Stream shows these fields to channel co-members, so no email.
       expect(mockStreamClient.upsertUser).toHaveBeenCalledWith({
         id: "user-123",
         name: "Test User",
-        email: "test@example.com",
         image: "https://example.com/avatar.jpg",
         role: "user",
       });
@@ -185,13 +184,11 @@ describe("User Actions", () => {
 
       await upsertUserToStream("user-456");
 
-      expect(mockStreamClient.upsertUser).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: "user-456",
-          name: "user-456",
-          image: undefined,
-        }),
-      );
+      expect(mockStreamClient.upsertUser).toHaveBeenCalledWith({
+        id: "user-456",
+        name: "user-456",
+        role: "user",
+      });
     });
 
     it("should reject empty user ID", async () => {
@@ -235,18 +232,15 @@ describe("User Actions", () => {
         select: {
           id: true,
           name: true,
-          email: true,
           image: true,
           role: true,
         },
       });
 
-      expect(mockStreamClient.upsertUsers).toHaveBeenCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({ id: "user-1" }),
-          expect.objectContaining({ id: "user-2" }),
-        ]),
-      );
+      expect(mockStreamClient.upsertUsers).toHaveBeenCalledWith([
+        { id: "user-1", name: "User 1", role: "user" },
+        { id: "user-2", name: "User 2", role: "user" },
+      ]);
 
       expect(mockUserCache.markUserSynced).toHaveBeenCalledTimes(2);
     });
