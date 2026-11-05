@@ -130,10 +130,12 @@ describe("setRegularTime", () => {
     const out = await setRegularTime(consultant, "sub-1", MWF_1800, NOW);
     expect(out).toMatchObject({ ok: true, placed: 3, replayed: false });
     expect(allocate).toHaveBeenCalledTimes(3);
+    expect((allocate as jest.Mock).mock.calls[1][0].topUp).toBe(true);
     expect((allocate as jest.Mock).mock.calls[0][0]).toMatchObject({
       mode: "manual",
       byRegularTime: true,
-      topUp: true,
+      // Nothing held yet: an ordinary partial allocation; later calls append.
+      topUp: false,
       allowPartial: true,
       slots: ["2026-11-02T12:30:00.000Z", "2026-11-02T13:00:00.000Z"],
     });

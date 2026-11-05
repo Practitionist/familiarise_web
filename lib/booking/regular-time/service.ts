@@ -292,6 +292,14 @@ export async function placeRegularWeeks(
   };
   let placed = 0;
   let skipped = 0;
+  // The allocator's top-up only appends to a plan that already holds a session.
+  const heldBefore = (plan.appointment?.occurrences ?? []).some(
+    (o) =>
+      !o.deletedAt &&
+      !o.isTentative &&
+      o.completionStatus !== "CANCELLED" &&
+      o.completionStatus !== "RESCHEDULED",
+  );
   for (const week of weeks) {
     let room = Math.max(0, week.capacity - week.held);
     for (const slot of projected) {
@@ -310,7 +318,7 @@ export async function placeRegularWeeks(
         eventId: plan.id,
         mode: "manual",
         slots: intervalStartsOf(slot).map((d) => d.toISOString()),
-        topUp: true,
+        topUp: heldBefore || placed > 0,
         allowPartial: true,
         byRegularTime: true,
       });
