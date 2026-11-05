@@ -4,6 +4,7 @@
 - **Date**: 2026-11-02
 - **Author**: Platform engineering
 - **Related**: [Job freshness is derived from the schedule](2026-11-02-job-freshness-from-schedule.md) (phase 1), [Better Stack setup guide](../maintenance/00-betterstack-setup.md#daily-ops-digest-and-its-heartbeat) (the runbooks), [Money go-live checklist](../finance/70-operations/07-go-live-checklist.md), [Observability gaps and launch posture](2026-11-01-observability-gaps-and-launch-posture.md), [Sentry is escalations only](2026-10-31-sentry-escalations-only.md)
+- **Follow-up**: [2026-11-05-detector-rollout-and-redundancy.md](2026-11-05-detector-rollout-and-redundancy.md) (the owner steps as carried out, with the live monitor inventory)
 
 ## Context: every alert fired on a failed run, none on a missing one
 

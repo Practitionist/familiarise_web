@@ -278,19 +278,21 @@ This tests the full OFFLINE → incident created → maintenance ended → incid
 
 ## Account Details (Current Setup)
 
-| Item                   | Value                                                          |
-| ---------------------- | -------------------------------------------------------------- |
-| **BetterStack URL**    | https://uptime.betterstack.com/team/t332379                    |
-| **Email**              | teetangh@gmail.com                                             |
-| **Plan**               | Free                                                           |
-| **Monitor 1**          | `https://familiarisenow.com` (public: "Website")               |
-| **Monitor 2**          | `https://familiarisenow.com/api/health` (public: "API Health") |
-| **Check frequency**    | 3 minutes (free plan minimum)                                  |
-| **API Health timeout** | 60 s request timeout, 1 min confirmation (see Step 3, #1557)   |
-| **Alert type**         | Email only (push/SMS require paid plan)                        |
-| **Status page**        | https://familiarise.betteruptime.com                           |
-| **API token name**     | "Familiarise Production"                                       |
-| **API base URL**       | `https://uptime.betterstack.com/api/v2`                        |
+| Item                   | Value                                                                             |
+| ---------------------- | --------------------------------------------------------------------------------- |
+| **BetterStack URL**    | https://uptime.betterstack.com/team/t332379                                       |
+| **Email**              | teetangh@gmail.com                                                                |
+| **Plan**               | Free                                                                              |
+| **Monitor 1**          | `https://familiarisenow.com` (public: "Website")                                  |
+| **Monitor 2**          | `https://familiarisenow.com/api/health` (public: "API Health")                    |
+| **Monitor 3**          | `familiarise job fleet probe (prod)` (5189236), on `/api/health/jobs`             |
+| **Heartbeats**         | `familiarise cron-tick (prod)` (521597), `familiarise ops digest (prod)` (523773) |
+| **Check frequency**    | 3 minutes (free plan minimum) for monitors 1 and 2; 5 minutes for monitor 3       |
+| **API Health timeout** | 60 s request timeout, 1 min confirmation (see Step 3, #1557)                      |
+| **Alert type**         | Email only (push/SMS require paid plan)                                           |
+| **Status page**        | https://familiarise.betteruptime.com                                              |
+| **API token name**     | "Familiarise Production"                                                          |
+| **API base URL**       | `https://uptime.betterstack.com/api/v2`                                           |
 
 ---
 
@@ -415,7 +417,9 @@ The probe reads, for each paging job and only as far back as that job's own budg
 
 A `RUNNING` attempt, a held or refused run, a plain `FAILED` run and the shared heartbeat do not count. The probe uses `endedAt` and the job's actual run-row name, so `reconcile-refunds` is judged as `reconcile-pending-refunds` and `appointment-reminders` as `send-appointment-reminders`.
 
-### Runbook: create the Better Stack monitor (owner step)
+### Runbook: create the Better Stack monitor (owner step, done 2026-11-05)
+
+**Done on 2026-11-05 as monitor `familiarise job fleet probe (prod)` (5189236):** status type, GET, bearer `CRON_SECRET` header, every 5 minutes, 60 s timeout, 1 minute confirmation, e-mail only (phone and SMS arrive with the responder seat at launch). It was created through the Better Stack API, not the dashboard (see [the decision](../decisions/2026-11-05-detector-rollout-and-redundancy.md)). The steps below remain the manual equivalent.
 
 The owner creates this monitor; the code never creates vendor monitors. It is the external dead-man's switch: it fires when a job goes stale, when the ticker stops, when a deploy breaks the route and when the app is down, even if Sentry and Netlify are quiet.
 
@@ -443,9 +447,11 @@ Two verdicts come from the daily ops digest rather than from the probe's own rea
 
 After fixing the cause, run `ops-digest` once from the System Jobs page; the next probe poll reads the new row and answers 200.
 
-### Runbook: the Sentry uptime monitor (second vendor, owner step)
+### Runbook: the Sentry uptime monitor (second vendor, done 2026-11-05)
 
 A second company watches `/api/health/jobs`, so a Better Stack outage cannot hide a stalled fleet. The Sentry Developer plan includes one uptime monitor.
+
+**Done on 2026-11-05.** Sentry uptime monitor 7689936 originally watched the homepage, which Better Stack already watches. It was repointed to `https://familiarisenow.com/api/health/jobs` (GET, 300 s interval, 60 s timeout, bearer header, response capture off) and renamed `familiarise job fleet probe (second watcher)`, through the Sentry CLI: `sentry api /organizations/<org>/detectors/7689936/ -X PUT --input -`, with the body piped on stdin so the secret never appears in a command line. The steps below remain the manual equivalent; the 30-second timeout they mention was the dashboard's documented maximum, and the live monitor uses 60 s.
 
 1. In Sentry, open **Monitors** and create an **Uptime Monitor**.
 2. **URL:** `https://familiarisenow.com/api/health/jobs`. **Method:** GET.
@@ -460,7 +466,9 @@ A second company watches `/api/health/jobs`, so a Better Stack outage cannot hid
 
 The email has a one-line headline ("All clear", or "N new, M standing"), then **New since yesterday**, then **Standing** items with their age, then **Context** per section, with at most 10 sample ids per item. Sections: overdue watched jobs and jobs only idle-skipped for 7 days; standing config skips with their first-seen age; pre-launch held email by type with the effective `EMAIL_DELIVERY_MODE`; new and total dead letters (email, notification, outbound webhook, and inbound webhook events past the 168-hour give-up); queue ages past their limits; the last inbound webhook per provider; rejected Better Stack telemetry in 24 hours; the last Sentry ingest canary verdict; paused or muted Better Stack monitors and heartbeats; Upstash usage against `UPSTASH_MONTHLY_COMMAND_CAP`; launch-critical settings as names and booleans only; and release lag. A section whose read fails is shown as unavailable and the email still goes.
 
-### Owner step: create the digest heartbeat
+### Owner step: create the digest heartbeat (done 2026-11-05)
+
+**Done:** heartbeat `familiarise ops digest (prod)` (523773), period 86400 s, grace 10800 s. It was created paused on purpose, because it would have fired before the first digest existed, and unpaused on 2026-11-05 after the first `ops-digest` ran (03:50 UTC, headline "0 new, 13 standing", heartbeat pinged). Unpausing is part of the step; see [the created-paused lesson](#lessons-from-the-2026-11-05-rollout).
 
 1. Better Stack → Uptime → **Heartbeats** → **Create heartbeat**, named "ops digest".
 2. **Expect a heartbeat every:** 24 hours. **Grace period:** 3 hours.
@@ -470,10 +478,36 @@ The email has a one-line headline ("All clear", or "N new, M standing"), then **
 
 The digest pings the URL only after `deliver()` accepted the email. After a failed or held send, or a thrown error, it pings `<url>/fail`, which raises an incident at once. With the URL unset the run row records `heartbeat: "not-configured"`. The recipient must be an own-domain address, because the pre-launch email guard holds anything else and the held send pings `/fail`.
 
-### Owner step: the release-lag token and the Upstash settings
+### Owner step: the release-lag token and the Upstash settings (deferred and skipped on 2026-11-05)
+
+**Decision:** `GITHUB_RELEASE_LAG_TOKEN` is deferred (the digest shows "release lag unknown" and nothing pages; production was within 3 commits of `dev`), and the four Upstash settings are skipped (they never existed in GitHub secrets; Upstash is pay-as-you-go at about $0.75 a month, so "Upstash usage unknown" is acceptable). Reasons and alternatives are in [the decision](../decisions/2026-11-05-detector-rollout-and-redundancy.md#r7-to-r9-the-three-deferred-or-skipped-settings). The instructions below apply if either is wanted later.
 
 - **`GITHUB_RELEASE_LAG_TOKEN`:** a fine-grained GitHub token with **Contents: read** on this repository only, in the Netlify production environment. The digest calls the compare API (`BUILD_SHA...dev`) once a day; without the token, release lag reads "unknown" and never pages.
 - **Upstash usage:** copy `UPSTASH_MANAGEMENT_API_KEY`, `UPSTASH_EMAIL`, `UPSTASH_DATABASE_ID` and `UPSTASH_MONTHLY_COMMAND_CAP` into the production environment. The usage line used to run in `cron-heartbeat.yml`; at 70% of the cap it becomes a standing digest item.
+
+## Lessons from the 2026-11-05 rollout
+
+The decision record is [2026-11-05-detector-rollout-and-redundancy.md](../decisions/2026-11-05-detector-rollout-and-redundancy.md); the explainer is [How we know a job did not run](../start-here/08-how-we-know-a-job-did-not-run.md). Two lessons belong in every monitor runbook.
+
+### A created-paused monitor looks configured and detects nothing
+
+Heartbeat 521597 was created paused on 2026-10-30 and sat paused until 2026-11-03. For about four days a dead ticker would have alerted nobody, although the monitor existed and the environment variable was set. After creating or changing any monitor, read it back from the vendor and require `paused: false` and status `up`. For a heartbeat, also confirm a ping has arrived:
+
+```bash
+curl -sS -H "Authorization: Bearer $BETTERSTACK_API_KEY" https://uptime.betterstack.com/api/v2/heartbeats
+```
+
+The `paused` flag is settable at creation and by PATCH, so a monitor that must start paused needs an explicit unpause step in the same runbook.
+
+### A windowed job's first slot can hold the probe red
+
+The probe counts only rows tagged with the serving environment, so a weekly or quarterly job that has never run under a production-tagged row is overdue until it runs. After the 2026-11-04 release the probe answered 503 `JOB_OVERDUE` for exactly `consent-retention-sweeper` and `tds-return-draft`. The fix is to run the job once from a terminal, using the registry key, and then poll the probe:
+
+```bash
+curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://familiarisenow.com/api/cleanup/<registry-key>
+```
+
+Both jobs were run once at 2026-11-05 08:24 UTC and answered HTTP 200, and the probe then answered 200 with `healthy: true`. The registry key and the run-row name can differ (`tds-return-draft` writes `tds-26q-draft-export`; `jobNameFor` in `lib/cron/schedule.ts` maps them). Never write the secret into a command line that persists; read it from the password manager into the shell session.
 
 ## Execution freshness and monitor acceptance
 
@@ -512,7 +546,7 @@ confirm the deployed behavior. The monitor detects ticker absence and reported
 tick failures. `/api/health/jobs` separately detects missing successful worker
 completions; neither establishes that vendor effects or all backlogs are complete.
 
-Better Stack adds a second "did not run" signal. When `BETTERSTACK_HEARTBEAT_URL` (optional, production Functions scope, documented in `.env.sample`) is set, the ticker sends one GET to it per completed tick, with a two-second timeout. A failed ping is logged and never fails the tick; an unset key skips the ping. Create a Better Stack heartbeat monitor with a five-minute period and a grace of a few minutes, and put its URL in that variable. A tick that was skipped (not the production deploy, or the fleet switch names another platform) or that stood down as a duplicate sends no ping.
+Better Stack adds a second "did not run" signal. When `BETTERSTACK_HEARTBEAT_URL` (optional, production Functions scope, documented in `.env.sample`) is set, the ticker sends one GET to it per completed tick, with a two-second timeout. A failed ping is logged and never fails the tick; an unset key skips the ping. Create a Better Stack heartbeat monitor with a five-minute period and a grace of a few minutes, and put its URL in that variable. Done on 2026-10-30 as `familiarise cron-tick (prod)` (521597, period 300 s, grace 600 s), but created paused and left so until 2026-11-03; read it back and require status `up` (see [the lessons](#lessons-from-the-2026-11-05-rollout)). A tick that was skipped (not the production deploy, or the fleet switch names another platform) or that stood down as a duplicate sends no ping.
 
 ### Configure the monitor and its notification route
 

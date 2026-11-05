@@ -4,6 +4,8 @@ This guide explains the implemented infrastructure, why its boundaries exist, an
 
 This guide describes current source contracts. Deployment and business-effect evidence remain separate: verify the required database schema and maintenance edge state before new readers, and verify actual worker effects after deployment. The Stream lifecycle catalog now dispatches through the ticker; its Netlify-only background destinations are a portability constraint.
 
+For how a job that did not run is detected, and which monitors watch which question, read [How we know a job did not run](./08-how-we-know-a-job-did-not-run.md).
+
 ## 1. The system in one picture
 
 ```mermaid
