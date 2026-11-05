@@ -9,7 +9,7 @@ import {
   subscriptionEntitlement,
   subscriptionIsOver,
 } from "@/lib/booking/entitlement";
-import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/payments/checkout/handlers/subscription";
+import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/booking/transitions";
 
 export interface PlanRefundBasis {
   subscriptionId: string;
@@ -105,6 +105,7 @@ export type PlanSessionsChange =
         | "PLAN_CLOSED"
         | "EXCEEDS_REMOVABLE"
         | "NOT_REMOVED"
+        | "PLAN_SETTLED"
         | "RACED";
       removable: number;
     };
@@ -142,8 +143,8 @@ export async function removePlanSessions(
 
 /**
  * Puts back sessions a withdrawn remedy removed, by CAS on the count it read.
- * A plan that already completed or was cancelled keeps its count: its
- * settlement is final. Fewer removed sessions than asked is refused.
+ * A plan that completed or was cancelled settled without those sessions, so
+ * their refund is still owed: the void is refused. Fewer removed than asked too.
  */
 export async function restorePlanSessions(
   tx: Pick<Tx, "payment" | "subscription">,
@@ -153,7 +154,7 @@ export async function restorePlanSessions(
   const basis = await planRefundBasis(tx, paymentId);
   if (!basis) return { ok: false, reason: "NOT_A_PLAN", removable: 0 };
   if (!basis.live)
-    return { ok: true, sessionsRefunded: basis.sessionsRefunded };
+    return { ok: false, reason: "PLAN_SETTLED", removable: 0 };
   if (basis.sessionsRefunded < sessions)
     return { ok: false, reason: "NOT_REMOVED", removable: basis.removable };
   const next = basis.sessionsRefunded - sessions;
@@ -167,13 +168,4 @@ export async function restorePlanSessions(
   if (moved.count !== 1)
     return { ok: false, reason: "RACED", removable: basis.removable };
   return { ok: true, sessionsRefunded: next };
-}
-
-/** Whether the plan behind `paymentId` has completed or been cancelled. */
-export async function planIsSettled(
-  tx: Pick<Tx, "payment">,
-  paymentId: string,
-): Promise<boolean> {
-  const basis = await planRefundBasis(tx, paymentId);
-  return basis !== null && !basis.live;
 }

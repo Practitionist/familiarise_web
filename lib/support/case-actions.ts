@@ -49,7 +49,6 @@ import {
 import { STAFF_REFUND_PER_PAYMENT_PAISE } from "./staff-refund-limits";
 import { deliveringPartiesByAppointment } from "./evidence-parties";
 import {
-  planIsSettled,
   planRefundBasis,
   removePlanSessions,
   restorePlanSessions,
@@ -1275,6 +1274,11 @@ function planClosedError() {
 /** The CAS on the plan's removed-session count lost, or the plan moved under the remedy. */
 function planSessionsError(change: Exclude<PlanSessionsChange, { ok: true }>) {
   if (change.reason === "PLAN_CLOSED") return planClosedError();
+  if (change.reason === "PLAN_SETTLED")
+    return new CaseActionError(
+      "NOT_VOIDABLE",
+      "This plan settled without these sessions, so their refund is still owed. Retry it instead of voiding it.",
+    );
   if (change.reason === "NOT_REMOVED")
     return new CaseActionError(
       "CONFLICT",
@@ -1406,20 +1410,9 @@ async function claimRefundRetry(
     paymentId: string;
     amountPaise: number | bigint;
     proposedById: string;
-    sessionsRemoved: number | null;
   },
   input: ActionInput<"REVIEW_REFUND">,
 ) {
-  // The plan's settlement already paid every unused session; resending this
-  // remedy's share would pay its sessions twice.
-  if (
-    recommendation.sessionsRemoved &&
-    (await planIsSettled(tx, recommendation.paymentId))
-  )
-    throw new CaseActionError(
-      "PLAN_SETTLED",
-      "This plan has settled, so its unused sessions were already refunded. Void this refund instead of retrying it.",
-    );
   await assertRefundExecutable(
     tx,
     caseId,

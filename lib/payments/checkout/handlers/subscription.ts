@@ -2,7 +2,10 @@
 // entitlement, plus the placeholder wrapper the payment hangs on.
 
 import { recordParticipants } from "@/lib/booking/participants";
-import { appendCreationHistory } from "@/lib/booking/transitions";
+import {
+  appendCreationHistory,
+  LIVE_SUBSCRIPTION_STATUSES,
+} from "@/lib/booking/transitions";
 import { convertCompletedTrial } from "@/lib/trials/conversion";
 import type { Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
@@ -21,13 +24,6 @@ import {
   resolvePlanStart,
   resolvePriorSubscriptionForRenewal,
 } from "@/lib/payments/checkout/renewal";
-
-/** The statuses under which a subscription still holds its entitlement. */
-export const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
-  AppointmentStatus.PENDING,
-  AppointmentStatus.APPROVED,
-  AppointmentStatus.APPROVED_PENDING_PAYMENT,
-];
 
 export async function handleSubscriptionCheckout(
   tx: Tx,

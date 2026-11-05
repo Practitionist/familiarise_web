@@ -23,7 +23,6 @@ jest.mock("../../lib/booking/plan-refund", () => ({
   ...jest.requireActual("../../lib/booking/plan-refund"),
   removePlanSessions: jest.fn(async () => ({ ok: true, sessionsRefunded: 9 })),
   restorePlanSessions: jest.fn(async () => ({ ok: true, sessionsRefunded: 0 })),
-  planIsSettled: jest.fn(async () => false),
 }));
 jest.mock("../../lib/support/case-service", () => ({
   executePatchLifecycleTx: jest.fn(),
@@ -145,7 +144,6 @@ import {
 } from "../../lib/support/case-service";
 import { requiresSecondApprover } from "../../lib/backoffice/ops-proposals";
 import {
-  planIsSettled,
   removePlanSessions,
   restorePlanSessions,
 } from "../../lib/booking/plan-refund";
@@ -661,8 +659,7 @@ describe("refund execution correctness", () => {
     expect(removePlanSessions).not.toHaveBeenCalled();
   });
 
-  it("refuses to retry a session-count remedy once its plan has settled", async () => {
-    jest.mocked(planIsSettled).mockResolvedValueOnce(true);
+  it("retries a session-count remedy after its plan settled, under the same key", async () => {
     mockStore.recommendations = [
       recommendation({
         decidedAt: new Date(Date.now() - 3_600_000),
@@ -673,10 +670,36 @@ describe("refund execution correctness", () => {
         refund: { id: "refund-0", status: "FAILED" },
       }),
     ];
+    await performCaseAction("case-1", admin, review(true));
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
+    expect(refundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ dedupeKey: "case-recommendation:rec-1" }),
+    );
+    expect(removePlanSessions).not.toHaveBeenCalled();
+  });
+
+  it("refuses to void a session-count remedy once its plan settled without it", async () => {
+    jest
+      .mocked(restorePlanSessions)
+      .mockResolvedValueOnce({ ok: false, reason: "PLAN_SETTLED", removable: 0 });
+    mockStore.recommendations = [
+      recommendation({
+        decidedAt: new Date(Date.now() - 3_600_000),
+        approved: true,
+        sessionsRemoved: 9,
+        refundId: "refund-0",
+        refund: { id: "refund-0", status: "FAILED" },
+      }),
+    ];
     await expect(
-      performCaseAction("case-1", admin, review(true)),
-    ).rejects.toMatchObject({ code: "PLAN_SETTLED" });
-    expect(refundBookingPayment).not.toHaveBeenCalled();
+      performCaseAction("case-1", admin, {
+        action: "VOID_RECOMMENDATION",
+        clientActionId: "void-1",
+        expectedUpdatedAt: caseUpdatedAt.toISOString(),
+        recommendationId: "rec-1",
+        reason: "Gateway refused; refunding by bank transfer",
+      }),
+    ).rejects.toMatchObject({ code: "NOT_VOIDABLE" });
   });
 
   it("refuses an approval when the plan closed after the recommendation", async () => {

@@ -253,6 +253,13 @@ export async function transitionConsultationRequest(
   );
 }
 
+/** The statuses under which a subscription still holds its entitlement. */
+export const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
+  "PENDING",
+  "APPROVED",
+  "APPROVED_PENDING_PAYMENT",
+];
+
 // A subscription goes from APPROVED straight to COMPLETED; it never enters
 // SCHEDULED (Consultation keeps that state for the incident rebook).
 export const SUBSCRIPTION_ALLOWED_FROM: Record<

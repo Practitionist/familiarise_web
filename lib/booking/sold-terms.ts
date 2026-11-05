@@ -4,7 +4,7 @@
  */
 import type { PrismaLike, Tx } from "@/lib/prisma";
 import { planEndOf, weeksPlanEndOf } from "@/lib/booking/entitlement";
-import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/payments/checkout/handlers/subscription";
+import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/booking/transitions";
 
 /**
  * Stamps the plan's current cadence, length, entitlement and end onto every

@@ -1,7 +1,8 @@
 /**
  * A session-count remedy can only take sessions off a live plan before its end
  * with no owed refund marker; a void gives sessions back only to a plan that
- * has not completed or been cancelled, and never more than were removed.
+ * has not completed or been cancelled (a settled plan still owes the refund),
+ * and never more than were removed.
  */
 import type { Tx } from "../../lib/prisma";
 import {
@@ -78,14 +79,15 @@ describe("removePlanSessions", () => {
 });
 
 describe("restorePlanSessions", () => {
-  it("leaves a settled plan's count alone", async () => {
+  it("refuses to give back to a settled plan, which was paid without them", async () => {
     const { tx, updateMany } = txFor({
       status: "COMPLETED",
       sessionsRefunded: 3,
     });
     await expect(restorePlanSessions(tx, "pay-1", 3)).resolves.toEqual({
-      ok: true,
-      sessionsRefunded: 3,
+      ok: false,
+      reason: "PLAN_SETTLED",
+      removable: 0,
     });
     expect(updateMany).not.toHaveBeenCalled();
   });

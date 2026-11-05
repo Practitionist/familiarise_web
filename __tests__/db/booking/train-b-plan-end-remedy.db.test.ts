@@ -1,12 +1,15 @@
 /**
- * The plan end and an approved session-count support remedy, on real
- * Postgres. The plan waits while that remedy's refund is not live, so its
- * sessions are never paid twice; once the plan settles, the remedy can only
- * be voided (no retry), and the void gives nothing back to a settled plan.
+ * The plan end, a cancel and an approved session-count support remedy, on
+ * real Postgres. The plan end waits while that remedy's refund is not live,
+ * and a cancel never quotes its sessions, so they are paid once; once the plan
+ * settled without them, the remedy's refund is still owed: a retry pays it and
+ * a void is refused. The buyer ends whole in every order.
  */
 import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
 import { performCaseAction } from "../../../lib/support/case-actions";
+import { resolveBookingRefundContext } from "../../../lib/booking/cancellation-scope";
+import { quoteBookingRefund } from "../../../lib/payments/operations/cancellation-policy";
 import { caseVersion, rowId, seedCase, seedUser } from "../seed";
 import { HOUR_MS, seedConsultee, seedHost } from "./harness";
 
@@ -186,6 +189,46 @@ const voidAs = async (caseId: string, recommendationId: string) =>
     reason: "Gateway refused; refunding by bank transfer",
   });
 
+
+/** The support door's sends for a recommendation, in order. */
+const supportCalls = (recommendationId: string) =>
+  refundDoor.refundBookingPayment.mock.calls
+    .map(([args]) => args as { dedupeKey?: string; amountPaise?: number })
+    .filter(
+      (args) => args.dedupeKey === `case-recommendation:${recommendationId}`,
+    )
+    .map((args) => args.amountPaise);
+
+/** The decider retries the approved remedy, as the case's money door would. */
+async function retryAsDecider(
+  caseId: string,
+  recommendationId: string,
+  refundablePaise: number,
+) {
+  const { decidedById } =
+    await prisma.supportFinancialRecommendation.findUniqueOrThrow({
+      where: { id: recommendationId },
+      select: { decidedById: true },
+    });
+  const decider = await prisma.user.findUniqueOrThrow({
+    where: { id: decidedById ?? "" },
+    select: { id: true, role: true },
+  });
+  return performCaseAction(
+    caseId,
+    { userId: decider.id, role: decider.role },
+    {
+      action: "REVIEW_REFUND",
+      clientActionId: randomUUID(),
+      expectedUpdatedAt: await caseVersion(caseId),
+      recommendationId,
+      approve: true,
+      reason: "Retrying the refund",
+      expectedRefundablePaise: refundablePaise,
+    },
+  );
+}
+
 beforeEach(() => {
   refundDoor.refundBookingPayment.mockReset();
   refundDoor.refundBookingPayment.mockImplementation(
@@ -234,7 +277,7 @@ describe("plan end vs a session-count remedy", () => {
     expect(planEndCalls(plan.subscriptionId, plan.paymentId)).toEqual([]);
   });
 
-  it("settles net of a sent remedy, then refuses a retry and voids without a give-back", async () => {
+  it("settles net of a sent remedy; if that refund later fails, the retry pays it and a void is refused", async () => {
     const plan = await seedPlanCase();
     const recommendationId = await approveOneSession(
       plan.caseId,
@@ -259,34 +302,61 @@ describe("plan end vs a session-count remedy", () => {
       where: { id: refundId },
       data: { status: "FAILED", failedAt: new Date() },
     });
-    const decider =
-      await prisma.supportFinancialRecommendation.findUniqueOrThrow({
-        where: { id: recommendationId },
-        select: { decidedById: true },
-      });
-    const deciderUser = await prisma.user.findUniqueOrThrow({
-      where: { id: decider.decidedById ?? "" },
-      select: { id: true, role: true },
-    });
-    await expect(
-      performCaseAction(
-        plan.caseId,
-        { userId: deciderUser.id, role: deciderUser.role },
-        {
-          action: "REVIEW_REFUND",
-          clientActionId: randomUUID(),
-          expectedUpdatedAt: await caseVersion(plan.caseId),
-          recommendationId,
-          approve: true,
-          reason: "Retrying the refund",
-          expectedRefundablePaise: PRICE - 25_000,
-        },
-      ),
-    ).rejects.toEqual(expect.objectContaining({ code: "PLAN_SETTLED" }));
+    // The settled plan cannot take the session back, so a void is refused.
+    await expect(voidAs(plan.caseId, recommendationId)).rejects.toEqual(
+      expect.objectContaining({ code: "NOT_VOIDABLE" }),
+    );
 
-    await voidAs(plan.caseId, recommendationId);
-    const sub = await subscriptionOf(plan.subscriptionId);
-    expect(sub.status).toBe("COMPLETED");
-    expect(sub.sessionsRefunded).toBe(1);
+    await retryAsDecider(plan.caseId, recommendationId, PRICE);
+    // The buyer ends whole: 25,000 support + 25,000 plan end = 2 sessions' worth.
+    expect(supportCalls(recommendationId)).toEqual([25_000, 25_000]);
+    expect(
+      25_000 + planEndCalls(plan.subscriptionId, plan.paymentId)[0],
+    ).toBe(PRICE / 2);
+  });
+});
+
+describe("cancel vs a session-count remedy", () => {
+  it("a failed remedy then a cancel: the cancel skips its session and the retry pays it", async () => {
+    const plan = await seedPlanCase();
+    const recommendationId = await approveOneSession(
+      plan.caseId,
+      plan.paymentId,
+    );
+    await bindRefund(recommendationId, plan.paymentId, "FAILED");
+    // The cancel quote owes the 1 session still unheld (4 − 2 delivered − 1 removed).
+    const ctx = await resolveBookingRefundContext({
+      subscriptionId: plan.subscriptionId,
+    });
+    const quote = quoteBookingRefund({
+      policy: ctx.policy,
+      hoursUntilNextSession: ctx.hoursUntilNextSession,
+      slotsTotal: ctx.slotsTotal,
+      sessionsRemaining: ctx.sessionsRemaining,
+      sessionsTotal: ctx.sessionsTotal,
+      sessionsRefunded: ctx.sessionsRefunded,
+      sessionsCompleted: ctx.sessionsCompleted,
+      scheduledStarts: ctx.scheduledStarts,
+      alreadyRefundedPaise: ctx.alreadyRefundedPaise,
+      isSubscription: true,
+      isConsultantInitiated: true,
+      isFreeCreditFunded: false,
+      grossPaise: ctx.paidPayment?.amountPaise ?? 0,
+      refundablePaise: ctx.paidPayment?.refundablePaise ?? 0,
+    });
+    expect(quote.refundPaise).toBe(25_000);
+    await prisma.subscription.update({
+      where: { id: plan.subscriptionId },
+      data: { status: "CANCELLED" },
+    });
+
+    await expect(voidAs(plan.caseId, recommendationId)).rejects.toEqual(
+      expect.objectContaining({ code: "NOT_VOIDABLE" }),
+    );
+    await retryAsDecider(plan.caseId, recommendationId, PRICE);
+    // 25,000 cancel + 25,000 support = the 2 undelivered sessions' worth.
+    expect(quote.refundPaise + supportCalls(recommendationId)[1]).toBe(
+      PRICE / 2,
+    );
   });
 });
