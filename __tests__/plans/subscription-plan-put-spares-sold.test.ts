@@ -9,6 +9,7 @@
  * between months and weeks.
  */
 const order: string[] = [];
+const sold = { count: 3 };
 const tx = {
   subscriptionContent: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   subscriptionPlan: {
@@ -28,6 +29,8 @@ const tx = {
     }),
   },
   subscription: {
+    // The unit lock counts buyers inside the edit's transaction.
+    count: jest.fn(async () => sold.count),
     findMany: jest.fn(async () => {
       order.push("read-unended");
       return [
@@ -106,6 +109,7 @@ beforeEach(() => {
     consultantProfile: { userId: "owner" },
   });
   db.subscription.count.mockResolvedValue(3);
+  sold.count = 3;
 });
 
 it("stamps sold rows (cadence, length, total, end) before the plan changes", async () => {
@@ -145,11 +149,13 @@ it("refuses to switch a sold months plan to weeks", async () => {
   const res = await put({ durationInWeeks: 26 });
   expect(res.status).toBe(409);
   expect(await res.json()).toMatchObject({ code: "PLAN_LENGTH_UNIT_LOCKED" });
+  expect(tx.subscription.count).toHaveBeenCalled();
   expect(tx.subscriptionPlan.update).not.toHaveBeenCalled();
 });
 
 it("lets an unsold months plan move to weeks", async () => {
   db.subscription.count.mockResolvedValue(0);
+  sold.count = 0;
   const res = await put({ durationInWeeks: 26 });
   expect(res.status).toBe(200);
   expect(tx.subscriptionPlan.update).toHaveBeenCalledWith(

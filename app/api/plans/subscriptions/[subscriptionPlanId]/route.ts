@@ -34,6 +34,16 @@ import {
 } from "@/lib/booking/offering-delete";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
 import { isHiddenDraft } from "@/lib/api/plans/draft-access";
+/** A sold plan cannot switch between months and weeks. */
+class PlanLengthUnitLockedError extends Error {
+  constructor() {
+    super(
+      "Clients have bought this plan, so its length stays in the unit it was sold in. Publish a new plan to sell it in weeks.",
+    );
+    this.name = "PlanLengthUnitLockedError";
+  }
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ subscriptionPlanId: string }> },
@@ -163,20 +173,8 @@ export async function PUT(
       validatedData.durationInWeeks === undefined
         ? existingPlan.durationInWeeks
         : validatedData.durationInWeeks;
-    // A sold plan keeps the unit it was sold in; a new unit is a new plan.
-    if (
-      (existingPlan.durationInWeeks === null) !== (durationInWeeks === null) &&
-      (await prisma.subscription.count({ where: { subscriptionPlanId } })) > 0
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Clients have bought this plan, so its length stays in the unit it was sold in. Publish a new plan to sell it in weeks.",
-          code: "PLAN_LENGTH_UNIT_LOCKED",
-        },
-        { status: 409 },
-      );
-    }
+    const unitSwitch =
+      (existingPlan.durationInWeeks === null) !== (durationInWeeks === null);
     const derived = termsChange
       ? {
           durationInWeeks,
@@ -247,6 +245,12 @@ export async function PUT(
           where: { subscriptionPlanId },
         });
       }
+      // A sold plan keeps the unit it was sold in; a new unit is a new plan.
+      if (
+        unitSwitch &&
+        (await tx.subscription.count({ where: { subscriptionPlanId } })) > 0
+      )
+        throw new PlanLengthUnitLockedError();
       if (derived) await freezeSoldTerms(tx, subscriptionPlanId);
 
       return tx.subscriptionPlan.update({
@@ -329,6 +333,12 @@ export async function PUT(
       { status: 200 },
     );
   } catch (error) {
+    if (error instanceof PlanLengthUnitLockedError) {
+      return NextResponse.json(
+        { error: error.message, code: "PLAN_LENGTH_UNIT_LOCKED" },
+        { status: 409 },
+      );
+    }
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
