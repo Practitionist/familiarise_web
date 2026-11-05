@@ -352,15 +352,6 @@ const nextConfig = {
     staleTimes: { dynamic: 30, static: 180 },
   },
 
-  // Sentry fills only an unset devtool. Maps without sourcesContent keep the
-  // production build inside the 6144 MB heap; frames still map to file and line.
-  webpack(config, { dev }) {
-    if (SENTRY_SOURCE_MAPS && !dev) {
-      config.devtool = "hidden-nosources-source-map";
-    }
-    return config;
-  },
-
   // `transpilePackages: ["date-fns"]` was removed 2026-09-24: date-fns is 4.1.0
   // with a proper exports map, and Next 15 already carries it in the default
   // optimizePackageImports list — transpiling only re-processed what the
@@ -567,7 +558,7 @@ const nextConfig = {
   },
 };
 
-export default withSentryConfig(withBundleAnalyzer(nextConfig), {
+const sentryNextConfig = withSentryConfig(withBundleAnalyzer(nextConfig), {
   // For all available options, see:
   // https://www.npmjs.com/package/@sentry/webpack-plugin#options
 
@@ -617,3 +608,17 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
     },
   },
 });
+
+// Only server maps are built. Sentry fills a falsy devtool, so the client
+// compiler is switched off after its hook has run.
+const sentryWebpack = sentryNextConfig.webpack;
+export default {
+  ...sentryNextConfig,
+  webpack(config, context) {
+    const out = sentryWebpack(config, context);
+    if (SENTRY_SOURCE_MAPS && !context.dev && !context.isServer) {
+      out.devtool = false;
+    }
+    return out;
+  },
+};
