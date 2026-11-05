@@ -344,6 +344,19 @@ export function purchaseTermsOf(
   };
 }
 
+/**
+ * Sessions a sold plan can still hold, for display reads: sold (frozen, else
+ * the plan's) less what a support refund removed; null when neither is known.
+ */
+export function schedulableSessionsOf(sub: {
+  sessionsTotal?: number | null;
+  sessionsRefunded?: number | null;
+  subscriptionPlan?: { totalSessions?: number | null } | null;
+}): number | null {
+  const sold = sub.sessionsTotal ?? sub.subscriptionPlan?.totalSessions ?? null;
+  return sold === null ? null : Math.max(0, sold - (sub.sessionsRefunded ?? 0));
+}
+
 /** A session count's share of a plan payment, in paise: floor(A × k / T). */
 export function sessionShareOf(
   amountPaise: number,

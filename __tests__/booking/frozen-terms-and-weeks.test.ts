@@ -9,6 +9,7 @@ import {
   planEndOf,
   planLengthLabel,
   purchaseTermsOf,
+  schedulableSessionsOf,
   soldSessionMinutes,
   soldSessionsPerWeek,
   soldTermsOf,
@@ -203,5 +204,31 @@ describe("a support refund shrinks the schedulable total", () => {
     expect(after.total).toBe(8);
     expect(after.remaining).toBe(1);
     expect(after.cycle.nextBatch).toBe(1);
+  });
+});
+
+describe("schedulableSessionsOf", () => {
+  it("is the sessions sold less those a support refund removed", () => {
+    expect(
+      schedulableSessionsOf({
+        sessionsTotal: 78,
+        sessionsRefunded: 9,
+        subscriptionPlan: { totalSessions: 72 },
+      }),
+    ).toBe(69);
+  });
+
+  it("falls back to the plan for a row sold before the freeze", () => {
+    expect(
+      schedulableSessionsOf({
+        sessionsTotal: null,
+        sessionsRefunded: 0,
+        subscriptionPlan: { totalSessions: 72 },
+      }),
+    ).toBe(72);
+  });
+
+  it("is null when nothing says how many were sold", () => {
+    expect(schedulableSessionsOf({ sessionsTotal: null })).toBeNull();
   });
 });
