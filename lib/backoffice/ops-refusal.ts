@@ -14,6 +14,7 @@ import {
 } from "@/lib/payments/operations/refund";
 import { IllegalEarningStatusTransitionError } from "@/lib/payments/payouts/earning-status";
 import { isRefusal } from "@/lib/errors/refusal";
+import { opsHeldMarkerMessage } from "@/lib/payments/operations/refund-owed";
 import { OpsRefusal } from "./ops-refusal-error";
 
 export { OpsRefusal };
@@ -29,8 +30,13 @@ const body = (
 export function refusalResponse(err: unknown): NextResponse | null {
   if (err instanceof OpsRefusal)
     return body(err.code, err.message, err.httpStatus, err.detail);
-  // A domain door's typed refusal (a held refund marker, say): its user copy, not a 500.
-  if (isRefusal(err)) return body(err.code, err.userMessage, err.httpStatus);
+  // A domain door's typed refusal (a held refund marker, say): operator copy, not a 500.
+  if (isRefusal(err))
+    return body(
+      err.code,
+      opsHeldMarkerMessage(err) ?? err.userMessage,
+      err.httpStatus,
+    );
   if (err instanceof BookingRuleError)
     return body(err.code, err.message, err.httpStatus);
   if (err instanceof RefundValidationError)

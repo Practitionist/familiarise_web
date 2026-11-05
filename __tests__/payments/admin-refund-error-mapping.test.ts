@@ -275,3 +275,35 @@ describe("the success paths", () => {
     });
   });
 });
+
+describe("a whole-event refund a held refund marker refuses", () => {
+  it("answers 409 with the operator copy naming the seat payment and the next step", async () => {
+    const { Refusal } = jest.requireActual<
+      typeof import("@/lib/errors/refusal")
+    >("@/lib/errors/refusal");
+    refundWholeEventPayments.mockRejectedValue(
+      new Refusal({
+        code: "REFUND_NEEDS_SUPPORT",
+        httpStatus: 409,
+        userMessage: "host copy",
+        context: {
+          paymentId: "pay_seat_1",
+          heldKey: "occ:occ-1:pay:pay_seat_1",
+          subject: "class",
+        },
+      }),
+    );
+
+    const res = await POST(
+      refundRequest({ classId: "cls_1", reason: "class cancelled" }),
+      ROUTE,
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: "REFUND_NEEDS_SUPPORT",
+      error:
+        "Seat payment pay_seat_1 has a refund still owed from another action (occ:occ-1:pay:pay_seat_1); settle it from Refunds → Needs human, then cancel the class again.",
+    });
+  });
+});

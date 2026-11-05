@@ -634,6 +634,7 @@ const STAMPABLE = {
 } as const;
 
 export const REFUND_NEEDS_SUPPORT = "REFUND_NEEDS_SUPPORT";
+export const REFUND_IN_PROGRESS = "REFUND_IN_PROGRESS";
 
 /** What the refused door was changing: a whole booking, one seat in it, or a whole class or webinar. */
 export type HeldMarkerSubject = "booking" | "seat" | "class" | "webinar";
@@ -700,16 +701,40 @@ export async function heldMarkerRefusal(
       httpStatus: 409,
       userMessage: HELD_MARKER_COPY[subject].needsSupport,
       devMessage: `Payment ${paymentId} holds a stuck refund marker; refused`,
-      context: { ...context, paymentId, heldKey: held?.refundOwedKey },
+      context: { ...context, paymentId, heldKey: held?.refundOwedKey, subject },
     });
   }
   return new Refusal({
-    code: "REFUND_IN_PROGRESS",
+    code: REFUND_IN_PROGRESS,
     httpStatus: 409,
     userMessage: HELD_MARKER_COPY[subject].inProgress,
     devMessage: `Payment ${paymentId} already owes another door's refund; refused`,
-    context: { ...context, paymentId },
+    context: { ...context, paymentId, heldKey: held?.refundOwedKey, subject },
   });
+}
+
+/**
+ * The held-marker refusal as an operator reads it (ADMIN or STAFF): which seat
+ * payment holds which refund, and the next step; null for any other refusal.
+ */
+export function opsHeldMarkerMessage(refusal: Refusal): string | null {
+  if (
+    refusal.code !== REFUND_NEEDS_SUPPORT &&
+    refusal.code !== REFUND_IN_PROGRESS
+  )
+    return null;
+  const paymentId = refusal.context?.paymentId;
+  if (typeof paymentId !== "string") return null;
+  const heldKey = refusal.context?.heldKey;
+  const from = typeof heldKey === "string" ? ` (${heldKey})` : "";
+  const subject = refusal.context?.subject;
+  const target =
+    subject === "class" || subject === "webinar"
+      ? `the ${subject}`
+      : "this booking";
+  return refusal.code === REFUND_NEEDS_SUPPORT
+    ? `Seat payment ${paymentId} has a refund still owed from another action${from}; settle it from Refunds → Needs human, then cancel ${target} again.`
+    : `Seat payment ${paymentId} has a refund from another action${from} still being retried; cancel ${target} again once it completes, or settle it by hand from Refunds → Issue refund.`;
 }
 
 /**

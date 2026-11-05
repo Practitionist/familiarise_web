@@ -30,6 +30,7 @@ import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { isRefusal } from "@/lib/errors/refusal";
 import {
   driveRefundOwed,
+  opsHeldMarkerMessage,
   recordRefundNeedsSupport,
   stampOwedOrHeld,
   type OwedRefundAlreadyHeld,
@@ -330,7 +331,9 @@ async function runWorkItem(
     summary.failures.push({
       kind: item.kind,
       id: item.id,
-      error: errMsg(error),
+      error:
+        (isRefusal(error) ? opsHeldMarkerMessage(error) : null) ??
+        errMsg(error),
     });
     // A held refund marker refused the cancel with nothing committed; a re-run retries it.
     if (isRefusal(error)) await recordRefundNeedsSupport(error);
