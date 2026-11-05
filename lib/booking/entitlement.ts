@@ -344,6 +344,18 @@ export function purchaseTermsOf(
   };
 }
 
+/** A session count's share of a plan payment, in paise: floor(A × k / T). */
+export function sessionShareOf(
+  amountPaise: number,
+  sessions: number,
+  sessionsTotal: number,
+): number {
+  if (sessionsTotal <= 0 || sessions <= 0) return 0;
+  return Math.floor(
+    (amountPaise * Math.min(sessions, sessionsTotal)) / sessionsTotal,
+  );
+}
+
 /** "3 active clients keep their current terms. …" or null with none. */
 export function activeClientsNotice(count: number): string | null {
   if (count <= 0) return null;

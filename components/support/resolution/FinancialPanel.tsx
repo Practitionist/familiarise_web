@@ -20,7 +20,7 @@ import { throwSupportError } from "@/lib/support/error-copy";
 import { formatDateTimeLabel } from "@/lib/time/display";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { sessionShareOf } from "@/lib/booking/plan-refund";
+import { sessionShareOf } from "@/lib/booking/entitlement";
 import { ReasonAction } from "./ReasonAction";
 import {
   rupeesToPaise,

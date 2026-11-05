@@ -15,6 +15,8 @@ import { freezeSoldTerms } from "../../../lib/booking/sold-terms";
 import { handleSubscriptionCheckout } from "../../../lib/payments/checkout/handlers/subscription";
 import { weeksPlanEndOf } from "../../../lib/booking/entitlement";
 import { checkoutSchema } from "../../../schemas/checkout";
+import { resolveBookingRefundContext } from "../../../lib/booking/cancellation-scope";
+import { quoteBookingRefund } from "../../../lib/payments/operations/cancellation-policy";
 import {
   CaseActionError,
   performCaseAction,
@@ -488,6 +490,121 @@ describe("support partial refund priced in sessions", () => {
       });
     expect(voided).toMatchObject({ approved: false, sessionsRemoved: 3 });
     expect(voided.voidedAt).not.toBeNull();
+  });
+
+  const recommendSessions = async (
+    caseId: string,
+    paymentId: string,
+    sessions: number,
+    amountPaise: number,
+  ) =>
+    performCaseAction(caseId, await seedUser("STAFF"), {
+      action: "RECOMMEND_REFUND",
+      clientActionId: randomUUID(),
+      expectedUpdatedAt: await caseVersion(caseId),
+      paymentId,
+      amountPaise,
+      reason: "The expert missed sessions",
+      releaseSeat: false,
+      sessions,
+    });
+
+  it.each([
+    ["cancelled", { status: "CANCELLED" as const }],
+    ["ended", { planEndsAt: new Date(Date.now() - 3_600_000) }],
+  ])("refuses a session count on a %s plan", async (_label, change) => {
+    const { subscriptionId, paymentId, caseId } = await planCase();
+    await prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: change,
+    });
+    await expect(
+      recommendSessions(caseId, paymentId, 1, 50_000),
+    ).rejects.toEqual(expect.objectContaining({ code: "INVALID_SESSIONS" }));
+  });
+
+  it("refuses a session count while the payment carries an owed refund marker", async () => {
+    const { paymentId, caseId } = await planCase();
+    await prisma.payment.update({
+      where: { id: paymentId },
+      data: { refundOwedKey: `plan-end:test:pay:${paymentId}` },
+    });
+    await expect(
+      recommendSessions(caseId, paymentId, 1, 50_000),
+    ).rejects.toEqual(expect.objectContaining({ code: "INVALID_SESSIONS" }));
+  });
+
+  it("re-checks at approval: a plan that ended after the recommendation is refused", async () => {
+    const { subscriptionId, paymentId, caseId } = await planCase();
+    const recommendation = await recommendSessions(caseId, paymentId, 2, 100_000);
+    await prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: { planEndsAt: new Date(Date.now() - 3_600_000) },
+    });
+    await expect(
+      performCaseAction(caseId, await seedUser("STAFF"), {
+        action: "REVIEW_REFUND",
+        clientActionId: randomUUID(),
+        expectedUpdatedAt: await caseVersion(caseId),
+        recommendationId: rowId(recommendation),
+        approve: true,
+        reason: "Checked the session log",
+        expectedRefundablePaise: 400_000,
+      }),
+    ).rejects.toEqual(expect.objectContaining({ code: "INVALID_SESSIONS" }));
+    const sub = await prisma.subscription.findUniqueOrThrow({
+      where: { id: subscriptionId },
+    });
+    expect(sub.sessionsRefunded).toBe(0);
+  });
+
+  it("a cancel after a session-count refund quotes only the sessions left", async () => {
+    const { subscriptionId, paymentId, caseId } = await planCase();
+    const recommendation = await recommendSessions(caseId, paymentId, 3, 150_000);
+    await performCaseAction(caseId, await seedUser("STAFF"), {
+      action: "REVIEW_REFUND",
+      clientActionId: randomUUID(),
+      expectedUpdatedAt: await caseVersion(caseId),
+      recommendationId: rowId(recommendation),
+      approve: true,
+      reason: "Checked the session log",
+      expectedRefundablePaise: 400_000,
+    });
+    // The support refund went out (the refund door is stubbed in this tier).
+    const sent = await prisma.refund.create({
+      data: {
+        paymentId,
+        amountPaise: BigInt(150_000),
+        status: "SUCCEEDED",
+        refundId: `rfnd_sent_${randomUUID()}`,
+        paymentGateway: "RAZORPAY",
+      },
+    });
+    await prisma.supportFinancialRecommendation.update({
+      where: { id: rowId(recommendation) },
+      data: { refundId: sent.id },
+    });
+    const ctx = await resolveBookingRefundContext({ subscriptionId });
+    expect(ctx.sessionsRefunded).toBe(3);
+    expect(ctx.alreadyRefundedPaise).toBe(0);
+    const quote = quoteBookingRefund({
+      policy: ctx.policy,
+      hoursUntilNextSession: ctx.hoursUntilNextSession,
+      slotsTotal: ctx.slotsTotal,
+      sessionsRemaining: ctx.sessionsRemaining,
+      sessionsTotal: ctx.sessionsTotal,
+      sessionsRefunded: ctx.sessionsRefunded,
+      sessionsCompleted: ctx.sessionsCompleted,
+      scheduledStarts: ctx.scheduledStarts,
+      alreadyRefundedPaise: ctx.alreadyRefundedPaise,
+      isSubscription: true,
+      isConsultantInitiated: true,
+      isFreeCreditFunded: false,
+      grossPaise: ctx.paidPayment?.amountPaise ?? 0,
+      refundablePaise: ctx.paidPayment?.refundablePaise ?? 0,
+    });
+    // 8 sessions at ₹500, 3 refunded, none delivered: the 5 left are ₹2,500.
+    expect(quote.refundPaise).toBe(250_000);
   });
 
   it("refuses an amount that is not the sessions' share", async () => {

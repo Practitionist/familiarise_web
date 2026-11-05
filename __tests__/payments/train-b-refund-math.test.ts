@@ -12,9 +12,9 @@
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 
 import { planEndMarker } from "../../scripts/appointments/settle-cancelled-sessions";
-import { sessionShareOf } from "../../lib/booking/plan-refund";
 import {
   purchaseTermsOf,
+  sessionShareOf,
   subscriptionEntitlement,
 } from "../../lib/booking/entitlement";
 import { STAFF_REFUND_PER_PAYMENT_PAISE } from "../../lib/support/staff-refund-limits";

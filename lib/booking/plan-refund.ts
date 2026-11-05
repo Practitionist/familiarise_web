@@ -7,26 +7,24 @@ import type { Tx } from "@/lib/prisma";
 import {
   soldTermsOf,
   subscriptionEntitlement,
+  subscriptionIsOver,
 } from "@/lib/booking/entitlement";
-
-/** A session count's share of a plan payment, in paise: floor(A × k / T). */
-export function sessionShareOf(
-  amountPaise: number,
-  sessions: number,
-  sessionsTotal: number,
-): number {
-  if (sessionsTotal <= 0 || sessions <= 0) return 0;
-  return Math.floor(
-    (amountPaise * Math.min(sessions, sessionsTotal)) / sessionsTotal,
-  );
-}
+import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/payments/checkout/handlers/subscription";
 
 export interface PlanRefundBasis {
   subscriptionId: string;
   /** Sessions sold at purchase (T in the refund formula). */
   sessionsTotal: number;
   sessionsRefunded: number;
-  /** Sessions neither delivered, booked nor already removed. */
+  /**
+   * Live, before its end and with no owed refund marker: only then can a
+   * session-count remedy take sessions off it. A cancelled, ended or settling
+   * plan is paid by its own settlement.
+   */
+  open: boolean;
+  /** Not yet completed or cancelled: a void can still give sessions back. */
+  live: boolean;
+  /** Sessions neither delivered, booked nor already removed; 0 unless open. */
   removable: number;
 }
 
@@ -34,15 +32,18 @@ export interface PlanRefundBasis {
 export async function planRefundBasis(
   tx: Pick<Tx, "payment">,
   paymentId: string,
+  now = new Date(),
 ): Promise<PlanRefundBasis | null> {
   const payment = await tx.payment.findUnique({
     where: { id: paymentId },
     select: {
+      refundOwedKey: true,
       appointment: {
         select: {
           subscription: {
             select: {
               id: true,
+              status: true,
               sessionsTotal: true,
               sessionsPerWeek: true,
               sessionsRefunded: true,
@@ -74,18 +75,24 @@ export async function planRefundBasis(
   const sub = payment?.appointment?.subscription;
   if (!sub || !payment?.appointment) return null;
   const terms = soldTermsOf(sub);
+  const live = LIVE_SUBSCRIPTION_STATUSES.includes(sub.status);
+  const open =
+    live && !subscriptionIsOver(sub, now) && payment.refundOwedKey === null;
   const entitlement = subscriptionEntitlement({
     ...terms,
     occurrences: payment.appointment.occurrences,
     schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt,
     schedulingTimezone: sub.schedulingTimezone,
     planEndsAt: sub.planEndsAt,
+    now,
   });
   return {
     subscriptionId: sub.id,
     sessionsTotal: terms.sessionsTotal,
     sessionsRefunded: sub.sessionsRefunded,
-    removable: entitlement.remaining,
+    open,
+    live,
+    removable: open ? entitlement.remaining : 0,
   };
 }
 
@@ -93,13 +100,18 @@ export type PlanSessionsChange =
   | { ok: true; sessionsRefunded: number }
   | {
       ok: false;
-      reason: "NOT_A_PLAN" | "EXCEEDS_REMOVABLE" | "RACED";
+      reason:
+        | "NOT_A_PLAN"
+        | "PLAN_CLOSED"
+        | "EXCEEDS_REMOVABLE"
+        | "NOT_REMOVED"
+        | "RACED";
       removable: number;
     };
 
 /**
- * Removes `sessions` from the plan behind `paymentId` inside the caller's tx,
- * by CAS on the count it read. A legacy row's entitlement is stamped with it.
+ * Removes `sessions` from the open plan behind `paymentId` inside the caller's
+ * tx, by CAS on the count it read. A legacy row's entitlement is stamped with it.
  */
 export async function removePlanSessions(
   tx: Pick<Tx, "payment" | "subscription">,
@@ -108,6 +120,7 @@ export async function removePlanSessions(
 ): Promise<PlanSessionsChange> {
   const basis = await planRefundBasis(tx, paymentId);
   if (!basis) return { ok: false, reason: "NOT_A_PLAN", removable: 0 };
+  if (!basis.open) return { ok: false, reason: "PLAN_CLOSED", removable: 0 };
   if (sessions > basis.removable)
     return {
       ok: false,
@@ -127,7 +140,11 @@ export async function removePlanSessions(
   return { ok: true, sessionsRefunded: next };
 }
 
-/** Puts back sessions a withdrawn remedy removed, by CAS on the count it read. */
+/**
+ * Puts back sessions a withdrawn remedy removed, by CAS on the count it read.
+ * A plan that already completed or was cancelled keeps its count: its
+ * settlement is final. Fewer removed sessions than asked is refused.
+ */
 export async function restorePlanSessions(
   tx: Pick<Tx, "payment" | "subscription">,
   paymentId: string,
@@ -135,7 +152,11 @@ export async function restorePlanSessions(
 ): Promise<PlanSessionsChange> {
   const basis = await planRefundBasis(tx, paymentId);
   if (!basis) return { ok: false, reason: "NOT_A_PLAN", removable: 0 };
-  const next = Math.max(0, basis.sessionsRefunded - sessions);
+  if (!basis.live)
+    return { ok: true, sessionsRefunded: basis.sessionsRefunded };
+  if (basis.sessionsRefunded < sessions)
+    return { ok: false, reason: "NOT_REMOVED", removable: basis.removable };
+  const next = basis.sessionsRefunded - sessions;
   const moved = await tx.subscription.updateMany({
     where: {
       id: basis.subscriptionId,

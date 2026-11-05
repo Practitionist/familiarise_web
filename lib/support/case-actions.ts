@@ -52,9 +52,9 @@ import {
   planRefundBasis,
   removePlanSessions,
   restorePlanSessions,
-  sessionShareOf,
   type PlanSessionsChange,
 } from "@/lib/booking/plan-refund";
+import { sessionShareOf } from "@/lib/booking/entitlement";
 import {
   activeHolds,
   caseHoldEvents,
@@ -1241,6 +1241,7 @@ async function assertSessionShare(
       "Session counts apply to plan payments only.",
       400,
     );
+  if (!basis.open) throw planClosedError();
   if (sessions > basis.removable)
     throw new CaseActionError(
       "SESSIONS_EXCEED_PLAN",
@@ -1261,8 +1262,23 @@ async function assertSessionShare(
     );
 }
 
+/** A cancelled, ended or settling plan is paid by its own settlement, not by a session count. */
+function planClosedError() {
+  return new CaseActionError(
+    "INVALID_SESSIONS",
+    "This plan has ended, been cancelled or is settling. Refund by amount if anything is still owed.",
+    400,
+  );
+}
+
 /** The CAS on the plan's removed-session count lost, or the plan moved under the remedy. */
 function planSessionsError(change: Exclude<PlanSessionsChange, { ok: true }>) {
+  if (change.reason === "PLAN_CLOSED") return planClosedError();
+  if (change.reason === "NOT_REMOVED")
+    return new CaseActionError(
+      "CONFLICT",
+      "The plan has fewer removed sessions than this refund took off. Ask engineering to check it before voiding.",
+    );
   if (change.reason === "EXCEEDS_REMOVABLE")
     return new CaseActionError(
       "SESSIONS_EXCEED_PLAN",
