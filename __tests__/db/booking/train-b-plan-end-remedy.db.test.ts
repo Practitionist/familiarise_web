@@ -12,6 +12,8 @@ import { resolveBookingRefundContext } from "../../../lib/booking/cancellation-s
 import { quoteBookingRefund } from "../../../lib/payments/operations/cancellation-policy";
 import { caseVersion, rowId, seedCase, seedUser } from "../seed";
 import { HOUR_MS, seedConsultee, seedHost } from "./harness";
+import { refundDoor } from "./harness-edges";
+import { seedCardPayment } from "./harness-plans";
 
 jest.mock("../../../lib/novu", () =>
   jest.requireActual("../../fixtures/noop-module").noopModule(),
@@ -19,19 +21,14 @@ jest.mock("../../../lib/novu", () =>
 jest.mock("../../../lib/novu/service", () =>
   jest.requireActual("../../fixtures/noop-module").noopModule(),
 );
-jest.mock("../../../lib/novu/stage-then-attempt", () => ({
-  __esModule: true,
-  flushNotificationsAfter: jest.fn(async () => undefined),
-}));
+jest.mock("../../../lib/novu/stage-then-attempt", () =>
+  jest.requireActual("./harness-edges").noFlushMock(),
+);
 
 import {
   planEndRefundKey,
   settleCancelledSessions,
 } from "../../../scripts/appointments/settle-cancelled-sessions";
-
-const refundDoor = jest.requireMock(
-  "../../../lib/payments/operations/booking-refund",
-) as { refundBookingPayment: jest.Mock };
 
 const DAY_MS = 24 * HOUR_MS;
 const PRICE = 100_000; // 4 sessions at ₹250
@@ -84,21 +81,7 @@ async function seedPlanCase() {
       },
     });
   }
-  const payment = await prisma.payment.create({
-    data: {
-      amount: BigInt(PRICE),
-      originalAmount: BigInt(PRICE),
-      paymentMethod: "card",
-      paymentIntent: `order_dbtier_${randomUUID()}`,
-      paymentGateway: "RAZORPAY",
-      paymentStatus: "SUCCEEDED",
-      userId: buyer.userId,
-      appointmentId: appointment.id,
-      isMockPayment: true,
-      legs: { create: [{ source: "CARD", amountPaise: BigInt(PRICE) }] },
-      expiresAt: null,
-    },
-  });
+  const payment = await seedCardPayment(buyer.userId, appointment.id, PRICE);
   const supportCase = await seedCase(buyer.userId, {
     category: "PAYMENT_ISSUE",
     subjects: [

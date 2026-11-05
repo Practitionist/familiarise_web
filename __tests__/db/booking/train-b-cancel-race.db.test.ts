@@ -7,28 +7,20 @@ import { NextRequest } from "next/server";
 import prisma from "../../../lib/prisma";
 import { removePlanSessions } from "../../../lib/booking/plan-refund";
 import { seedConsultee, seedHost, seedPaidSubscription } from "./harness";
+import { refundDoor, sessionUser } from "./harness-edges";
 
-const sessionUser = { current: null as null | Record<string, unknown> };
-jest.mock("../../../lib/auth-helpers", () => ({
-  ...jest.requireActual("../../../lib/auth-helpers"),
-  requireApiAuth: async () => ({ session: { user: sessionUser.current } }),
-  isPrivileged: () => false,
-}));
-jest.mock("../../../lib/rate-limit", () => ({
-  ...jest.requireActual("../../../lib/rate-limit"),
-  applyRateLimit: async () => null,
-}));
-jest.mock("../../../lib/novu", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
-jest.mock("../../../lib/stream/access-revocation", () => ({
-  revokeEndedBookingChatAccess: jest.fn(async () => undefined),
-  revokeEndedEventChatAccess: jest.fn(async () => undefined),
-}));
+jest.mock("../../../lib/auth-helpers", () =>
+  jest.requireActual("./harness-edges").authHelpersMock(),
+);
+jest.mock("../../../lib/rate-limit", () =>
+  jest.requireActual("./harness-edges").rateLimitMock(),
+);
+jest.mock("../../../lib/novu", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
+jest.mock("../../../lib/stream/access-revocation", () =>
+  jest.requireActual("./harness-edges").chatRevocationMock(),
+);
 
 /** Runs once, right after the cancel read its quote inputs. */
 const racer: { run: null | (() => Promise<void>) } = { run: null };
@@ -47,10 +39,6 @@ jest.mock("../../../lib/booking/cancellation-scope", () => {
 });
 
 import { POST as cancel } from "../../../app/api/appointments/[appointmentId]/cancel/route";
-
-const refundDoor = jest.requireMock(
-  "../../../lib/payments/operations/booking-refund",
-) as { refundBookingPayment: jest.Mock };
 
 const postCancel = (appointmentId: string, body: unknown) =>
   cancel(
