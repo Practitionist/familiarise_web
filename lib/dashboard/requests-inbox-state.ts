@@ -60,7 +60,7 @@ export type InboxRowKind =
  * Where a row sits inside its tab. "Answer today" is under 24 h (or overdue)
  * or has no clock at all (a trial request never expires on its own, so it is
  * always due); "This week" is under 7 d; "Later" is the rest of the rows this
- * consultant must answer (a subscription hold runs 30 d); "Waiting on them"
+ * consultant must answer (a subscription hold runs 30 d); "Waiting on the client"
  * is every row whose clock is the other party's.
  */
 export const INBOX_BUCKETS = [
@@ -98,6 +98,8 @@ export interface InboxRowInput {
   id: string;
   kind: InboxRowKind;
   appointmentId: string | null;
+  /** The server-validated manual reminder window; links and email stay server-side. */
+  reminderExpiresAt: Stamp | null;
   planTitle: string;
   requester: { name: string; image: string | null };
   requestedAt: Stamp;
@@ -164,9 +166,10 @@ export const toStampDate = (v: Stamp): Date =>
   v instanceof Date ? v : new Date(v);
 
 /**
- * REQUESTED is the one state this consultant answers; it is banded by how
- * much of its clock is left. Every other state's clock is the other party's
- * (a pay link, a checkout in progress, a finished cycle) or has run out.
+ * Bucketed by who acts next. A request to answer (REQUESTED) or sessions to
+ * schedule (a paid plan's cycle 1, or its open week) is the consultant's, banded
+ * by how much of its clock is left; a pay link or a checkout in progress is the
+ * client's.
  */
 export function inboxBucketOf(
   row: {
@@ -177,8 +180,14 @@ export function inboxBucketOf(
   },
   state: BookingStateKind,
   now: Date = new Date(),
+  /** The consultant must schedule sessions next (a paid plan's week, cycle 1 included). */
+  schedulesNext = false,
 ): InboxBucket {
-  if (row.kind === "next-cycle" || row.checkoutHold || state !== "REQUESTED") {
+  if (row.checkoutHold) return "waiting-on-them";
+  if (schedulesNext) {
+    // A plan week with no clock of its own is still this week's work.
+    if (row.deadline === null) return "this-week";
+  } else if (row.kind === "next-cycle" || state !== "REQUESTED") {
     return "waiting-on-them";
   }
   if (row.requestedStartPassed || row.deadline === null) return "answer-today";

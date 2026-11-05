@@ -14,10 +14,16 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
+import {
+  soldSessionMinutes,
+  soldSessionsPerWeek,
+} from "@/lib/booking/entitlement";
 import { requestListOrderBy } from "@/lib/booking/list-query";
 import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   parseRequestListQueryOrRespond,
+  NOT_BEING_MOVED,
+  assertNotBeingMoved,
   releaseDeclinedRequestHold,
   validateListRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
@@ -184,6 +190,9 @@ export async function GET(request: NextRequest) {
           schedulingTimezone: true,
           // #1766 — the Requests tab sizes the first cycle off the entitlement.
           sessionsTotal: true,
+          sessionsPerWeek: true,
+          sessionMinutes: true,
+          sessionsRefunded: true,
           subscriptionPlan: {
             select: {
               id: true,
@@ -207,7 +216,16 @@ export async function GET(request: NextRequest) {
     ]);
 
     return NextResponse.json({
-      data: subscriptions,
+      // Every consumer sizes a sold plan off the plan block, so it carries the
+      // weekly cap and session length the buyer bought.
+      data: subscriptions.map((sub) => ({
+        ...sub,
+        subscriptionPlan: {
+          ...sub.subscriptionPlan,
+          sessionsPerWeek: soldSessionsPerWeek(sub),
+          sessionDurationInHours: soldSessionMinutes(sub) / 60,
+        },
+      })),
       meta: {
         total,
         page,
@@ -323,8 +341,9 @@ export async function PATCH(request: NextRequest) {
       const { holdNotices, rejectionPlan } = await prisma.$transaction(
         async (tx) => {
           await assertNoLiveCheckoutHold(tx, "subscription", id);
+          await assertNotBeingMoved(tx, { subscriptionId: id }, "decline");
           await transitionSubscriptionRequest(tx, {
-            where: { id },
+            where: { id, ...NOT_BEING_MOVED },
             to: status,
             data: { pendingPaymentUrl: null },
           });

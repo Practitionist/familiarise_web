@@ -11,20 +11,12 @@ import type { AppointmentStatus } from "@prisma/client";
 import prisma from "../../../lib/prisma";
 import { HOUR_MS, seedConsultee, seedHost } from "./harness";
 
-jest.mock("../../../lib/novu", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
-jest.mock("../../../lib/novu/service", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
+jest.mock("../../../lib/novu", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
+jest.mock("../../../lib/novu/service", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
 jest.mock("../../../lib/novu/stage-then-attempt", () => ({
   __esModule: true,
   flushNotificationsAfter: jest.fn(async () => undefined),

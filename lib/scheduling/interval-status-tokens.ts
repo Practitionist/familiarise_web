@@ -155,7 +155,7 @@ const SLOT_STATUS_PAINT: Record<SlotStatusKey, SlotStatusPaint> = {
   },
   tooSoon: {
     label: "Too soon",
-    hint: "Starts in less than 15 minutes.",
+    hint: "Too close to its start for this booking — pick a later time.",
     fill: "bg-slate-100",
     border: "border-slate-500",
     text: "text-slate-700",

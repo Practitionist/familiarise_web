@@ -3,7 +3,7 @@ title: Checkout and pricing
 type: explanation
 audience: engineers changing checkout, pricing or booking holds
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-05
 ---
 
 # Checkout and pricing
@@ -58,7 +58,7 @@ flowchart LR
 1. **Discount.** A `DiscountCode` is re-validated against the database on the server. A `PERCENTAGE` code takes `round(list × value / 100)` capped by `maxDiscount`; a `FIXED_AMOUNT` code never takes more than the list price. With no code, the referee's welcome discount applies (`computeWelcomeDiscountPaise`, `lib/referrals/promo-math.ts`) and is dropped again if the cash left after it falls under its floor (`keepsWelcomeDiscount`).
 2. **GST.** `determineTax` (`lib/payments/tax/tax-engine.ts`) charges 18 % to every domestic buyer on the discounted base. An overseas buyer is zero-rated only while a platform Letter of Undertaking is valid for the financial year (`hasValidPlatformLut`); without one the sale is taxed at 18 % IGST. Buyer country is the profile country if it is a two-letter code, else `cf-ipcountry`, else India. `Accept-Language` is deliberately not used, because it once zero-rated Indian sales as exports.
 3. **Referral credits.** Credits apply only when the tax-inclusive total is at least `MIN_CREDIT_REDEMPTION_PAISE` (₹500, 50,000 paise), and the amount is the smallest of the available balance, the total, and `floor(list × creditCapBps / 10,000)` less any welcome discount (`creditCapPaise`). `creditCapBps` is the smaller of the programme's redemption cap (20 % by default) and the sale's take rate, and it is zero while the expert's fee waiver means the take cannot fund a promotion (`lib/referrals/attribution.ts`).
-4. **Floor.** An amount between ₹0.01 and ₹0.99 is refused, because Razorpay's minimum order is ₹1 (100 paise). An amount of exactly zero with credits applied takes the free path described in section 5.
+4. **Floor.** An amount between ₹0.01 and ₹0.99 is refused, because Razorpay's minimum order is ₹1 (100 paise). An amount of exactly zero (a ₹0 plan, a full discount, or credits covering the total) takes the free path described in section 5. Only a ₹0-priced plan moves no money at all: it posts no booking journal, mints no tax invoice and qualifies no referral reward (a completed trial still converts). A full discount still journals its `DISCOUNT` line and a credit-funded order its `PLATFORM_PROMO` line, because their list price is positive.
 
 ### Worked example
 

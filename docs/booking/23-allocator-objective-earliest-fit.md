@@ -17,7 +17,10 @@ time of day). Nothing else.**
 
 It walks the scheduling period forward one day at a time. Inside a day it walks
 that day's availability rows in chronological order, and inside a row it walks
-30-minute starts in chronological order. The first candidate that can host a
+30-minute starts in chronological order. A weekly row contributes its occurrence
+on that day; a custom row, an absolute range that may span several days,
+contributes its slice of that day in the plan's scheduling zone
+(`customRowDaySlices`), so every day it covers is walked. The first candidate that can host a
 whole session is the one that gets placed. Then the counters are updated and the
 same day is re-attempted, because the per-day cap permits more than one session
 on a day.
@@ -123,6 +126,14 @@ were chosen moments earlier by the server. See the comment in
 | The day-by-day walk                   | `findAvailableSlots` → `sweepPeriod` (`lib/booking/allocation/search/find-available-slots.ts`)       |
 | Placement inside one day              | `tryPlaceOnDay` → `bestFittingBlockInRow`                                                            |
 | Candidate starts inside one row       | `candidateStartsInRow` (floored to the booking grid)                                                 |
+| A custom row's days                   | `customRowDaySlices` / `customSpansInStartOrder` (`lib/booking/allocation/search/recurrence.ts`)     |
 | Preference as a ceiling, not a filter | `utils/scheduling-engine/preferenceScoring.ts`, `sweepPeriod(true)` followed by `sweepPeriod(false)` |
 | Per-day and per-week caps             | `utils/scheduling-engine/sessionCaps.ts`, the two counter maps in `findAvailableSlots`               |
 | The client's 15-minute lead time      | `lib/payments/constants.ts`, `lib/payments/utils/slot-validation.ts`                                 |
+
+## Deprecated & Superseded Approaches
+
+- **A custom row offered on its start day only.** The day walk once matched a
+  custom row to the UTC day of its `startsAt` (`matchCustomSlotToDay`) and walked
+  at most 48 starts from there, so a row spanning several days offered only its
+  first 24 hours. Each covered day is now its own slice.

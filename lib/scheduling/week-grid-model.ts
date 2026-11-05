@@ -41,6 +41,20 @@ export interface AtomContext {
   nowMs: number;
   allowedStartMs?: number;
   allowedEndMs?: number;
+  /** The server's lead time for this grid's purpose, re-applied between polls. */
+  leadMs?: number | null;
+}
+
+/** Too soon for this grid's writer: the server said so, or the clock has since moved. */
+function isTooSoonAt(
+  startMs: number,
+  endMs: number,
+  server: ServerCell | undefined,
+  ctx: Pick<AtomContext, "nowMs" | "leadMs">,
+): boolean {
+  if (server?.tooSoon === true) return true;
+  if (ctx.leadMs === undefined || ctx.leadMs === null) return false;
+  return endMs > ctx.nowMs && startMs <= ctx.nowMs + ctx.leadMs;
 }
 
 /** What one 30-minute atom is, before any markup. */
@@ -94,7 +108,7 @@ export function describeAtom(
     ctx.allowedStartMs,
     ctx.allowedEndMs,
   );
-  const isTooSoon = server?.tooSoon === true;
+  const isTooSoon = isTooSoonAt(startMs, endMs, server, ctx);
   const isLimitReached = server?.limitReached === true;
   const statusKey = resolveSlotStatusKey({
     isSelected: ctx.selectedStarts.has(startMs),
@@ -235,7 +249,7 @@ export function selectionConflicts(
       conflicts.set(startMs, "taken");
     } else if (
       server.endMs < ctx.nowMs ||
-      server.tooSoon ||
+      isTooSoonAt(server.startMs, server.endMs, server, ctx) ||
       server.limitReached
     ) {
       conflicts.set(startMs, "expired");

@@ -98,6 +98,7 @@ import {
 // Late-bound cycle: refund-owed drives its markers through this module.
 import {
   claimOwedMarker,
+  refuseIfOwedAlreadySent,
   settleOwedByHand,
   type HandSettledOwed,
   type OwedMarkerInput,
@@ -202,7 +203,7 @@ export async function refundBookingPayment(
   // #781 §B — soft-deleted financial rows are retired; never refund them.
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
-    select: { paymentIntent: true },
+    select: { paymentIntent: true, refundOwedKey: true },
   });
   if (!payment) {
     throw new RefundValidationError(
@@ -210,6 +211,8 @@ export async function refundBookingPayment(
       "PAYMENT_NOT_FOUND",
     );
   }
+  if (input.settlesOwedByHand)
+    await refuseIfOwedAlreadySent(input.paymentId, payment.refundOwedKey);
 
   if (isFreeCreditIntent(payment.paymentIntent)) {
     // The credits rail restores in full or not at all — honouring a partial
@@ -452,6 +455,7 @@ export async function restoreSessionCredits(input: {
       createdAt: true,
       appointmentId: true,
       appointment: { select: { classId: true, subscriptionId: true } },
+      refundOwedKey: true,
     },
   });
   if (
@@ -465,6 +469,7 @@ export async function restoreSessionCredits(input: {
     );
   }
   const isSubscription = !payment.appointment.classId;
+  await refuseIfOwedAlreadySent(payment.id, payment.refundOwedKey);
   if (!isFreeCreditIntent(payment.paymentIntent)) {
     throw new RefundValidationError(
       "This payment was not made with credits. Refund an amount instead.",

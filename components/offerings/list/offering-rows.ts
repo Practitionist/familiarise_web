@@ -170,8 +170,15 @@ function subscriptionRow(event: SubscriptionPlanEvent): OfferingRow {
     instanceId: undefined,
     title: plan.title,
     description: plan.description ?? "",
-    priceText: `${price(plan.price, plan.priceCurrency)}/mo`,
-    durationText: plural(plan.durationInMonths, "month", "months"),
+    // A weeks plan is priced for the whole plan; a months plan per month.
+    priceText:
+      typeof plan.durationInWeeks === "number"
+        ? `${price(plan.price, plan.priceCurrency)} for ${plural(plan.durationInWeeks, "week", "weeks")}`
+        : `${price(plan.price, plan.priceCurrency)}/mo`,
+    durationText:
+      typeof plan.durationInWeeks === "number"
+        ? plural(plan.durationInWeeks, "week", "weeks")
+        : plural(plan.durationInMonths, "month", "months"),
     sessionsPerWeek,
     sessionDurationInHours,
     cadenceText: formatCadence(sessionsPerWeek, sessionDurationInHours),

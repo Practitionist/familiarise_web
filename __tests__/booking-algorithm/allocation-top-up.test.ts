@@ -21,6 +21,8 @@ jest.mock("../../lib/booking/allocation/coverage", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    // The allocator counts what the event already holds to record how it was scheduled.
+    appointmentOccurrence: { count: jest.fn().mockResolvedValue(0) },
     // The allocator's slot batch reads co-host seats and an expert consultee's own profile.
     consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
     collaborator: { findMany: jest.fn().mockResolvedValue([]) },
@@ -78,6 +80,7 @@ import prisma from "@/lib/prisma";
 import { attemptTrigger, notifyAppointmentBooked } from "@/lib/novu";
 import { allocate } from "@/lib/booking/allocation";
 import { ScheduleType, DayOfWeek } from "@prisma/client";
+import { SOLD_TERMS_DEFAULTS } from "../fixtures/booking.mockData";
 
 /** One 09:00–11:00 UTC window on `day`; the 1/day cap makes it one session. */
 function morningOn(day: DayOfWeek) {
@@ -147,6 +150,7 @@ function makeSubscription(
   return {
     id: "sub-topup",
     sessionsTotal: 4,
+    ...SOLD_TERMS_DEFAULTS,
     schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
     schedulingPeriodEndsAt: new Date("2025-01-12T23:59:59Z"),
     schedulingTimezone: "UTC",

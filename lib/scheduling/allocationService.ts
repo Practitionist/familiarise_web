@@ -1,4 +1,5 @@
 import { reportSentryError } from "@/lib/observability/report";
+import type { LeadPurpose } from "@/lib/booking/lead-time";
 import { isExpectedRefusal } from "@/lib/errors/client-refusal";
 import {
   ApiResponseError,
@@ -56,6 +57,15 @@ export interface AvailabilityContext {
   subscriptionId?: string;
   /** Comma-separated occurrence ids a reschedule would release. */
   releasing?: string;
+  /** Whose lead time the cells honour (`leadMsFor`); the route defaults to book. */
+  lead?: GridLead;
+}
+
+/** The writer a grid is drawn for, so its "too soon" matches that writer's. */
+export interface GridLead {
+  purpose: LeadPurpose;
+  /** The booking still has to be paid for (2 h for a request or an allocation). */
+  unpaid?: boolean;
 }
 
 interface RawAvailabilityApiSlot {
@@ -616,6 +626,10 @@ export class AllocationService {
       params.set("subscriptionId", options.subscriptionId);
       if (options.releasing) params.set("releasing", options.releasing);
     }
+    if (options?.lead && options.lead.purpose !== "book") {
+      params.set("purpose", options.lead.purpose);
+      if (options.lead.unpaid) params.set("unpaid", "1");
+    }
     return `/api/scheduling/availability-with-allocation/${consultantId}?${params}`;
   }
 
@@ -735,6 +749,7 @@ export class AllocationService {
         weekly: allSlots.filter((s) => s.type === "WEEKLY"),
         custom: allSlots.filter((s) => s.type === "CUSTOM"),
         quota: quota.success ? quota.data : null,
+        leadMs: typeof result.leadMs === "number" ? result.leadMs : null,
         etag: response.headers.get("ETag"),
         notModified: false as const,
       };

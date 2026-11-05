@@ -18,26 +18,9 @@
  */
 
 import "./setup";
+import { emptySearchDb } from "../fixtures/allocator-search";
 
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
-    appointment: { findMany: jest.fn() },
-    rescheduleRequest: { findFirst: jest.fn() },
-  },
-  ALLOCATION_TX_MAX_WAIT_MS: 8000,
-  ALLOCATION_TX_TIMEOUT_MS: 30000,
-}));
-
-// The allocator imports appointmentlock, which pulls @upstash/redis (ESM) in.
-jest.mock("../../utils/appointmentlock", () => ({
-  lockAutoAllocate: jest.fn(),
-  unlockAutoAllocate: jest.fn(),
-  lockConsulteeBooking: jest.fn(),
-  unlockConsulteeBooking: jest.fn(),
-}));
-
-import prisma, { type PrismaLike, type Tx } from "../../lib/prisma";
+import prisma, { type Tx } from "../../lib/prisma";
 import { findAvailableSlots as searchSlots } from "../../lib/booking/allocation/search/find-available-slots";
 import {
   findAllocationPreference,
@@ -77,7 +60,7 @@ const findAvailableSlots = (
   preference?: AllocationPreference,
 ): Promise<Date[]> =>
   searchSlots(
-    emptyDb() as unknown as PrismaLike,
+    emptySearchDb(),
     consultant,
     totalSlotsNeeded,
     slotsPerCall,
@@ -107,11 +90,6 @@ function weeklyConsultant(
     availabilityWindowsCustom: [],
   };
 }
-
-/** Nobody is booked; every candidate the availability allows is placeable. */
-const emptyDb = () => ({
-  appointment: { findMany: jest.fn().mockResolvedValue([]) },
-});
 
 const consultationConfig: EventConfig = {
   durationInHours: 1,

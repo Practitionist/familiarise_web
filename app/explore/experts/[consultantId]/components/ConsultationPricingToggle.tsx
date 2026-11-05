@@ -1,5 +1,6 @@
 "use client";
 
+import { leadMsForPlan } from "@/lib/booking/lead-time";
 import {
   HELD_BY_SOMEONE_ELSE,
   NotifyWhenFreeButton,
@@ -136,6 +137,10 @@ export default function ConsultationPricingToggle({
   );
 
   const selectedDuration = activePlanOption?.durationInHours ?? 1;
+  // The list never offers a time request-for-approval refuses.
+  const requestMode =
+    (consultantDetails.bookingMode ?? "INSTANT") === "REQUEST";
+  const leadMs = leadMsForPlan(requestMode, activePlanOption?.price);
 
   useEffect(() => {
     onDurationChange?.(selectedDuration);
@@ -150,8 +155,9 @@ export default function ConsultationPricingToggle({
       selectedDuration,
       timezone,
       now.getTime(),
+      leadMs,
     );
-  }, [slotTimings, selectedDuration, timezone, selectedDate, now]);
+  }, [slotTimings, selectedDuration, timezone, selectedDate, now, leadMs]);
 
   // The pick is re-read from the latest windows every render; the CTA only
   // ever acts on this live copy, never on the object the buyer clicked.
@@ -208,13 +214,14 @@ export default function ConsultationPricingToggle({
     );
     if (intentPlan) setActiveConsultationOption(intentPlan.id);
 
-    // Matched against the intent plan's own windows, so the restored pick is
-    // still live once the plan tab switches to it.
+    // Matched against the intent plan's own windows and lead, so the restored
+    // pick is still live once the plan tab switches to it.
     const match = windowsForDay(
       slotTimings,
       intentPlan?.durationInHours ?? selectedDuration,
       timezone,
       Date.now(),
+      intentPlan ? leadMsForPlan(requestMode, intentPlan.price) : leadMs,
     ).find((slot) => sameWindow(slot, intent.slot) && isBookableWindow(slot));
     if (match) {
       setSelectedSlot(match);
@@ -228,6 +235,8 @@ export default function ConsultationPricingToggle({
     slotTimings,
     selectedDuration,
     timezone,
+    leadMs,
+    requestMode,
     consultationOptions,
     consultantDetails.id,
     session?.user?.id,

@@ -14,7 +14,7 @@ jest.mock("../../lib/redis", () => ({
 }));
 
 import {
-  leadTimeFor,
+  leadMsFor,
   UNPAID_APPROVAL_LEAD_TIME_MS,
 } from "@/lib/booking/lead-time";
 import {
@@ -28,10 +28,10 @@ import { ScheduleType } from "@prisma/client";
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 
-describe("leadTimeFor", () => {
+describe("leadMsFor", () => {
   it("is 15 minutes settled and 2 hours unpaid", () => {
-    expect(leadTimeFor({ settled: true })).toBe(15 * MIN);
-    expect(leadTimeFor({ settled: false })).toBe(2 * HOUR);
+    expect(leadMsFor("allocate", { settled: true })).toBe(15 * MIN);
+    expect(leadMsFor("allocate", { settled: false })).toBe(2 * HOUR);
     expect(UNPAID_APPROVAL_LEAD_TIME_MS).toBe(2 * HOUR);
   });
 });

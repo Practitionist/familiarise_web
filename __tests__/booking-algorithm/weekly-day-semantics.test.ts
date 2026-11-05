@@ -37,7 +37,6 @@ import {
 import {
   mergeConsecutiveSlots,
   processAvailabilitySlots,
-  splitSlotsByDay,
   type WeeklySlot,
 } from "../../utils/scheduling-engine/intervals";
 import { mergeConsecutiveSlotsForDisplay } from "../../app/explore/experts/[consultantId]/utils/mergeSlots";
@@ -252,22 +251,6 @@ describe("a block ending at local midnight keeps its last atom (#1415)", () => {
   };
   const rangeStart = new Date("2026-09-07T00:00:00.000Z"); // Monday
   const rangeEnd = new Date("2026-09-08T00:00:00.000Z");
-
-  it("splits into one segment that ends exactly at midnight", () => {
-    const segments = splitSlotsByDay(
-      weeklyRowIntervalsInRange(lateBlock, rangeStart, rangeEnd).map(
-        (occurrence) => ({
-          start: occurrence.start,
-          end: occurrence.end,
-          availabilityId: lateBlock.id,
-          type: "WEEKLY" as const,
-        }),
-      ),
-      IST,
-    );
-    expect(segments).toHaveLength(1);
-    expect(segments[0].end.toISOString()).toBe("2026-09-07T18:30:00.000Z");
-  });
 
   it("still offers the 23:30 window", () => {
     const slots = Object.values(

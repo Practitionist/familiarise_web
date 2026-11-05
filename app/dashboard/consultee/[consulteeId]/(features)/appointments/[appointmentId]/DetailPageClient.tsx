@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { schedulableSessionsOf } from "@/lib/booking/entitlement";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -239,8 +240,7 @@ function deriveConsulteeActionMeta(vm: AppointmentVM) {
 
   const totalSessions =
     vm.group?.total ??
-    rawSub?.sessionsTotal ??
-    rawSub?.subscriptionPlan?.totalSessions ??
+    (rawSub ? schedulableSessionsOf(rawSub) : null) ??
     vm.occurrences.filter((o) => !isDeadOccurrence(o)).length;
   const completedSessions =
     vm.group?.completed ??

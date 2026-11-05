@@ -39,6 +39,7 @@ import { PriceField } from "@/components/planner/components/form-fields/PriceFie
 import { LanguageLevelFields } from "@/components/planner/components/form-fields/LanguageLevelFields";
 import { LearningOutcomesField } from "@/components/planner/components/form-fields/LearningOutcomesField";
 import { StringListField } from "@/components/planner/components/form-fields/StringListField";
+import { PlanLengthField } from "@/components/planner/components/form-fields/PlanLengthField";
 import {
   PlanImageUploader,
   type StagedPlanImage,
@@ -214,6 +215,14 @@ export function OfferingField<T extends FieldValues = FieldValues>({
           description={spec.description}
           required={spec.required}
         />
+      </div>
+    );
+  }
+
+  if (spec.kind === "planLength") {
+    return (
+      <div className={span}>
+        <PlanLengthField control={control} required={spec.required} />
       </div>
     );
   }

@@ -130,6 +130,7 @@ const quoteFor = (
     policy: ctx.policy,
     hoursUntilNextSession: ctx.hoursUntilNextSession,
     slotsTotal: ctx.slotsTotal,
+    sessionsRefunded: ctx.sessionsRefunded,
     sessionsRemaining: ctx.sessionsRemaining,
     isSubscription: false,
     isConsultantInitiated: false,

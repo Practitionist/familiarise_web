@@ -51,13 +51,13 @@ export const BUCKET_LABEL: Record<
 > = {
   "answer-today": {
     title: "Answer today",
-    hint: "Under a day left on the hold, or already past it.",
+    hint: "Under a day left to reply or schedule, or already past it.",
   },
   "this-week": { title: "This week", hint: "Under seven days left." },
-  later: { title: "Later", hint: "More than a week left on the hold." },
+  later: { title: "Later", hint: "More than a week left to reply." },
   "waiting-on-them": {
-    title: "Waiting on them",
-    hint: "The next step is the other side's — a payment or a new cycle.",
+    title: "Waiting on the client",
+    hint: "They need to pay, answer your new time, or finish checkout.",
   },
 };
 
@@ -116,8 +116,26 @@ export const TOAST = {
   declined: "Declined",
   reminderSent: "Reminder sent",
   approvalWithdrawn: "Approval withdrawn",
+  keptOriginal: "Kept the original time",
+  proposalWithdrawn: "Request withdrawn",
+  originalTimeTaken: "That time was taken meanwhile — pick a new one",
   changedElsewhere: "This request changed elsewhere — refreshed",
 } as const;
+
+/**
+ * The toast after answering a reschedule from the inbox. "Keep the original
+ * time" whose time was taken meanwhile comes back RELEASED: the session now
+ * needs a new time, so it never claims the original was kept.
+ */
+export function proposalAnswerToast(
+  answer: "keep-original" | "withdraw-proposal",
+  outcome: string | undefined,
+): string {
+  if (outcome === "RELEASED") return TOAST.originalTimeTaken;
+  return answer === "keep-original"
+    ? TOAST.keptOriginal
+    : TOAST.proposalWithdrawn;
+}
 
 /** Server codes → sentences; the code itself never renders. */
 const CODE_SENTENCE: Record<string, string> = {

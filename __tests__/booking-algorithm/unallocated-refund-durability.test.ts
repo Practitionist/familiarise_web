@@ -110,6 +110,11 @@ jest.mock("../../lib/prisma", () => {
         return { count: 1 };
       }),
     },
+    // The week-reminder scan sizes its consultant rotation first.
+    consultantProfile: {
+      count: jest.fn().mockResolvedValue(0),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     subscription: {
       findMany: jest.fn(
         async ({

@@ -23,7 +23,12 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 
+import * as React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { settleSubscriptionCycle } from "../../lib/booking/subscription-cycle";
+import { B2C_TEMPLATES } from "../../lib/novu/templates/b2c";
+import { NOVU_WORKFLOWS } from "../../lib/novu/workflows";
+import { TrialAndSubscriptionEmail } from "../../emails/booking/TrialAndSubscriptionEmail";
 
 const HOUR = 60 * 60 * 1000;
 const NOW = new Date("2026-03-09T10:00:00.000Z");
@@ -47,6 +52,7 @@ function wrapperWith(statuses: string[]) {
       id: "sub-1",
       status: "APPROVED",
       sessionsTotal: 12,
+      sessionsRefunded: 0,
       schedulingPeriodStartsAt: new Date("2026-03-02T00:00:00.000Z"),
       schedulingTimezone: "UTC",
       requestedBy: { userId: "consultee-user" },
@@ -130,7 +136,6 @@ it("stages one row when the last live occurrence completes with 8 left", async (
   expect(create.workflowId).toBe("subscription-renewed");
   expect(create.payload).toEqual(
     expect.objectContaining({
-      cycleOrdinal: 1,
       remainingSessions: 8,
       nextBatch: 4,
       consultantName: "Asha",
@@ -157,4 +162,31 @@ it("stays silent while a session is still live or the plan is spent", async () =
   expect(await settle(spent.tx)).toEqual([]);
   expect(live.upsert).not.toHaveBeenCalled();
   expect(spent.upsert).not.toHaveBeenCalled();
+});
+
+// The notice can fire mid-week (a session of that week not yet placed), so
+// neither the bell nor the email claims a week is done.
+it("words the cycle-done notice without a week claim", () => {
+  const bell = B2C_TEMPLATES.find(
+    (t) => t.workflowId === NOVU_WORKFLOWS.SUBSCRIPTION_RENEWED,
+  );
+  expect(bell?.inApp.body).toContain(
+    "Your latest {{payload.planTitle}} sessions are done",
+  );
+  expect(bell?.inApp.body).not.toMatch(/Week/);
+
+  const html = renderToStaticMarkup(
+    React.createElement(TrialAndSubscriptionEmail, {
+      kind: "SUBSCRIPTION_RENEWED",
+      planTitle: "Intensive",
+      consultantName: "Asha",
+      nextBatch: 2,
+      remainingSessions: 6,
+      dashboardUrl: "https://example.test/dashboard",
+    }),
+  );
+  expect(html).toContain(
+    "Your latest sessions of <strong>Intensive</strong> are complete",
+  );
+  expect(html).not.toMatch(/Week \d/);
 });

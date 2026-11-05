@@ -46,7 +46,7 @@ function row(index: number, completionStatus: string) {
 }
 
 /** A 12-session plan at 4 per week: three tranches of 4. */
-function wrapperWith(statuses: string[]) {
+function wrapperWith(statuses: string[], sessionsRefunded = 0) {
   return {
     organizationId: null,
     payment: [{ id: "pay-1" }],
@@ -54,6 +54,7 @@ function wrapperWith(statuses: string[]) {
       id: "sub-1",
       status: "APPROVED",
       sessionsTotal: 12,
+      sessionsRefunded,
       schedulingPeriodStartsAt: new Date("2026-03-02T00:00:00.000Z"),
       schedulingTimezone: "UTC",
       requestedBy: { userId: "consultee-user" },
@@ -70,11 +71,17 @@ function wrapperWith(statuses: string[]) {
 }
 
 /** One payee; tenured unless `firstPaidAt` says otherwise (the new-expert hold). */
-function makeTx(statuses: string[], firstPaidAt = new Date("2020-01-01")) {
+function makeTx(
+  statuses: string[],
+  firstPaidAt = new Date("2020-01-01"),
+  sessionsRefunded = 0,
+) {
   const updateMany = jest.fn().mockResolvedValue({ count: 1 });
   const tx = {
     appointment: {
-      findUnique: jest.fn().mockResolvedValue(wrapperWith(statuses)),
+      findUnique: jest
+        .fn()
+        .mockResolvedValue(wrapperWith(statuses, sessionsRefunded)),
     },
     consultantEarnings: {
       updateMany,
@@ -158,6 +165,29 @@ it("the 8th completion stamps up to tranche 1; the 3rd stamps nothing", async ()
   });
   expect(third.updateMany).not.toHaveBeenCalled();
 });
+
+it.each([
+  [0, 1],
+  [2, 2],
+])(
+  "10 completions with %i sessions refunded stamp up to tranche %i",
+  async (sessionsRefunded, lastTranche) => {
+    // 12 at 4 a week: refunding 2 leaves the buyer 10, so the 10th delivery
+    // matures the part of tranche 2 the refund did not claw back.
+    const { tx, updateMany } = makeTx(
+      completed(10),
+      new Date("2020-01-01"),
+      sessionsRefunded,
+    );
+    await settleSubscriptionCycle(tx as never, {
+      appointmentId: "apt-1",
+      now: NOW,
+    });
+    expect(stampCall(updateMany).where.cycleOrdinal).toEqual({
+      lte: lastTranche,
+    });
+  },
+);
 
 it("the final completion stamps the last tranche even though no bell is due", async () => {
   const { tx, updateMany } = makeTx(completed(12));

@@ -55,7 +55,7 @@ describe("month marks in the display zone", () => {
       "Asia/Kolkata",
     );
     expect(start.toISOString()).toBe("2026-09-30T18:30:00.000Z");
-    expect(end.toISOString()).toBe("2026-10-31T18:29:59.999Z");
+    expect(end.toISOString()).toBe("2026-10-31T18:30:00.000Z");
   });
 
   it("asks the grid for the zone's month, not the device's local midnight", async () => {
@@ -72,7 +72,7 @@ describe("month marks in the display zone", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const url = String(fetchMock.mock.calls[0][0]);
     expect(url).toContain("startDateInUtc=2026-09-30T18:30:00.000Z");
-    expect(url).toContain("endDateInUtc=2026-10-31T18:29:59.999Z");
+    expect(url).toContain("endDateInUtc=2026-10-31T18:30:00.000Z");
   });
 });
 

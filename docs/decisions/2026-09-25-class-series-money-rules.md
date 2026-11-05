@@ -103,6 +103,12 @@ seat that joined late and attended nothing yet is refunded in full.
 
 ### 8. The exit right trips at three misses or a quarter of the series
 
+> **Superseded** for the threshold by decision 11 of
+> [`2026-11-04-booking-v2-train-b.md`](2026-11-04-booking-v2-train-b.md): the
+> exit right now opens at 3 host misses inside any rolling 30 days, or total
+> misses ≥ max(3, 15 % of N). The rest of this decision (who is notified,
+> the flag and its clear) still holds.
+
 A learner holding a seat may leave with every undelivered session refunded
 in full once the series has accumulated three host-cancelled sessions, or a
 quarter of its total sessions, whichever comes first. Misses were host

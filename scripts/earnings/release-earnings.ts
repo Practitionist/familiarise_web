@@ -95,6 +95,9 @@ export const UNDELIVERED_OCCURRENCE = {
  */
 export const RELEASABLE_PAYMENT = {
   refunds: { none: { status: RefundStatus.PENDING, deletedAt: null } },
+  // A refund some door still owes (retrying, or spent and waiting on support)
+  // holds every earning on the payment until the marker clears.
+  refundOwedKey: null,
   NOT: {
     appointment: {
       occurrences: { some: UNDELIVERED_OCCURRENCE },

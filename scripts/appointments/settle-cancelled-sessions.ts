@@ -25,6 +25,7 @@
  * and app/api/cleanup/settle-cancelled-sessions/route.ts (the ticker twin).
  */
 
+import { PLAN_END_REFUND_REASON } from "@/lib/payments/refund-reasons";
 import {
   AppointmentStatus,
   OccurrenceCompletionStatus,
@@ -114,7 +115,6 @@ type CancelledSession = Prisma.AppointmentOccurrenceGetPayload<{
 /** The plan-end refund of a subscription's undelivered sessions, one per payment. */
 export const planEndRefundKey = (subscriptionId: string, paymentId: string) =>
   `plan-end:${subscriptionId}:pay:${paymentId}`;
-export const PLAN_END_REFUND_REASON = "PLAN_ENDED_UNUSED_SESSIONS";
 const PLAN_ENDED_HISTORY_REASON = "PLAN_ENDED";
 const PLAN_LIVE_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.APPROVED,
@@ -1042,6 +1042,23 @@ async function settleEndedPlan(
               select: { id: true },
             });
             if (openReschedule) throw new PlanWaiting();
+            // An approved session-count remedy whose refund is not live yet
+            // would be paid again by this share; ops retries or voids it first.
+            const unsentRemedy =
+              await tx.supportFinancialRecommendation.findFirst({
+                where: {
+                  payment: { appointmentId },
+                  approved: true,
+                  voidedAt: null,
+                  sessionsRemoved: { not: null },
+                  OR: [
+                    { refundId: null },
+                    { refund: { status: { in: ["FAILED", "CANCELLED"] } } },
+                  ],
+                },
+                select: { id: true },
+              });
+            if (unsentRemedy) throw new PlanWaiting();
 
             const rows = await tx.appointmentOccurrence.findMany({
               where: { appointmentId, isTentative: false, deletedAt: null },

@@ -24,7 +24,7 @@ import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import { BookingRuleError } from "./booking-rule-error";
-import { RESCHEDULE_MIN_LEAD_HOURS } from "./reschedule-proposals";
+import { RESCHEDULE_MIN_LEAD_HOURS } from "./lead-time";
 import {
   acceptedCohostProfileIds,
   hostBatchEntries,

@@ -345,6 +345,7 @@ describe("UnifiedCalendar allocate-page states (#1764, #1766)", () => {
       eventOccurrences: [],
       subscriptionMeta: {
         sessionsTotal: 144,
+        sessionsRefunded: 0,
         sessionsPerWeek: 3,
         durationInMonths: 12,
         schedulingPeriodStartsAt: new Date(2026, 0, 1).toISOString(),
@@ -360,21 +361,22 @@ describe("UnifiedCalendar allocate-page states (#1764, #1766)", () => {
       allowedEnd: new Date(2026, 0, 13, 23, 59, 59, 999),
     });
 
-    expect(host.textContent).toContain("Pick 3 for");
-    expect(host.textContent).toContain("3 per week · 0 of 144 booked");
+    expect(host.textContent).toMatch(/Week \d+ of \d+ · pick 3 for/);
+    expect(host.textContent).toContain("0 of 144 booked");
   });
 
   it.each([
     // A one-month plan that ended in February: nothing more to pick.
     ["ended", new Date(2026, 1, 1).toISOString(), "Plan ended on"],
     // The same plan extended by an incident far into the future opens again.
-    ["extended", new Date(2031, 0, 1).toISOString(), "Pick 3 for"],
+    ["extended", new Date(2031, 0, 1).toISOString(), "pick 3 for"],
   ])("reads the stored plan end (%s)", (_label, planEndsAt, expected) => {
     setCalendarData({
       eventSlots: [],
       eventOccurrences: [],
       subscriptionMeta: {
         sessionsTotal: 12,
+        sessionsRefunded: 0,
         sessionsPerWeek: 3,
         durationInMonths: 1,
         schedulingPeriodStartsAt: new Date(2026, 0, 1).toISOString(),
