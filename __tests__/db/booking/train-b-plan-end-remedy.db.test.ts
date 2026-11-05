@@ -311,7 +311,7 @@ describe("plan end vs a session-count remedy", () => {
     // The buyer ends whole: 25,000 support + 25,000 plan end = 2 sessions' worth.
     expect(supportCalls(recommendationId)).toEqual([25_000, 25_000]);
     expect(
-      25_000 + planEndCalls(plan.subscriptionId, plan.paymentId)[0],
+      25_000 + (planEndCalls(plan.subscriptionId, plan.paymentId)[0] ?? 0),
     ).toBe(PRICE / 2);
   });
 });
@@ -355,8 +355,8 @@ describe("cancel vs a session-count remedy", () => {
     );
     await retryAsDecider(plan.caseId, recommendationId, PRICE);
     // 25,000 cancel + 25,000 support = the 2 undelivered sessions' worth.
-    expect(quote.refundPaise + supportCalls(recommendationId)[1]).toBe(
-      PRICE / 2,
-    );
+    expect(
+      quote.refundPaise + (supportCalls(recommendationId)[1] ?? 0),
+    ).toBe(PRICE / 2);
   });
 });
