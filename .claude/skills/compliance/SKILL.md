@@ -119,6 +119,10 @@ an invalid officer configuration that must still allow eligible admins to stage.
 
 Retention and deadline workers preserve the original caller `startedAt` across maintenance checks, lease admission and batch slices. Check the budget after awaited selection/officer/chat work before admitting another write; timeouts leave continuation visible. Keep the existing consent-delete gate and stored retention deadlines. [Worker contracts and verification](../../../docs/maintenance/compliance-retention-workers.md) also document the ticker owner and operator recovery.
 
+## Environments share one database
+
+Every preview, the branch deploy and local development read and write production's rows, so treat a QA identity as a production identity: real operators keep 2FA on every deployment, only the exempt list in `lib/auth/qa-accounts.ts` skips it off production, and the seeded TOTP operators are repaired only by the owner with `scripts/auth/repair-qa-operator-2fa.ts --apply`. The vendor × environment matrix is [docs/start-here/10-environment-split.md](../../../docs/start-here/10-environment-split.md).
+
 ## Retention windows
 
 Every log-like and audit table has a window, a legal driver and a named prune job. Read [the retention table](references/retention-windows.md) before adding or changing any of them; the same table is in `docs/compliance/02-dpdp-and-privacy.md`.
