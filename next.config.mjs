@@ -596,7 +596,7 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   sourcemaps: {
     // Netlify's 8 GB builder can no longer fit source-map generation for this
     // bundle (V8 OOM past the 6144 MB heap), so no Netlify build emits them.
-    disable: CI_LEAN_BUILD || process.env.NETLIFY === "true",
+    disable: CI_LEAN_BUILD,
   },
   widenClientFileUpload: process.env.NETLIFY !== "true" && !CI_LEAN_BUILD,
   // A CI PR build is never deployed, so it must not create or finalize a
