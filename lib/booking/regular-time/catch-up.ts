@@ -13,6 +13,8 @@ export interface CatchUpInput {
   sessionsRefunded: number;
   /** Delivered + held sessions per zero-based plan week. */
   heldByWeek: readonly number[];
+  /** Zero-based plan week holding now; later weeks are assumed filled at cadence. */
+  currentWeek: number;
   /** Zone-days of week k inside the plan (7, fewer for a short last week). */
   daysInWeek: (k: number) => number;
 }
@@ -35,12 +37,19 @@ function remainingFor(input: CatchUpInput, k: number): number {
 }
 
 /**
- * Sessions behind cadence at the start of week k: perWeek·k less what was held
- * before it and what a support refund removed, never more than what remains.
+ * Sessions behind cadence at the start of week k: perWeek per elapsed week
+ * less what those weeks held and what a support refund removed, less any
+ * catch-up already placed in the open weeks before k; never more than remains.
  */
 export function backlog(input: CatchUpInput, k: number): number {
-  const behind =
-    input.perWeek * k - heldBefore(input, k) - input.sessionsRefunded;
+  const elapsed = Math.max(0, Math.min(k, input.currentWeek));
+  let behind =
+    input.perWeek * elapsed -
+    heldBefore(input, elapsed) -
+    input.sessionsRefunded;
+  for (let i = elapsed; i < k; i++) {
+    behind -= Math.max(0, (input.heldByWeek[i] ?? 0) - input.perWeek);
+  }
   return Math.max(0, Math.min(behind, remainingFor(input, k)));
 }
 

@@ -61,6 +61,10 @@ import {
 import { scheduleAnomalyReport } from "@/lib/appointments/report-anomalies";
 import type { TIntervalTiming } from "@/types/slots";
 import type { BookingStatus } from "@/utils/scheduling-engine/intervals";
+import {
+  LIVE_REGULAR_TIME_PROBE,
+  hasLiveRegularTime,
+} from "@/lib/booking/regular-time/queries";
 
 /** A weekly row as loaded, before its local columns are checked. */
 type StoredWeeklyRow = { id: string } & NullableWeeklyRowLocalColumns;
@@ -412,6 +416,7 @@ export async function GET(
       schedulingPeriodStartsAt: Date;
       schedulingTimezone: string;
       planEndsAt: Date | null;
+      hasRegularTime: boolean;
       fold: string;
     } | null = null;
     if (requestedSubscriptionId) {
@@ -430,6 +435,7 @@ export async function GET(
           schedulingPeriodStartsAt: true,
           schedulingTimezone: true,
           planEndsAt: true,
+          regularTimes: LIVE_REGULAR_TIME_PROBE,
           requestedBy: { select: { userId: true } },
           subscriptionPlan: {
             select: {
@@ -467,6 +473,7 @@ export async function GET(
         schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
         schedulingTimezone: subscription.schedulingTimezone,
         planEndsAt: subscription.planEndsAt,
+        hasRegularTime: hasLiveRegularTime(subscription),
         fold: subscriptionQuotaFold({
           subscriptionId: subscription.id,
           subscriptionUpdatedAt: subscription.updatedAt,
@@ -1097,6 +1104,7 @@ export async function GET(
         schedulingPeriodStartsAt: quotaSubject.schedulingPeriodStartsAt,
         schedulingTimezone: quotaSubject.schedulingTimezone,
         planEndsAt: quotaSubject.planEndsAt,
+        hasRegularTime: quotaSubject.hasRegularTime,
         now,
       });
       quotaSource = {

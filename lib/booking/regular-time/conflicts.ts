@@ -3,6 +3,7 @@
  * the projected slots that hold no session and why, plus placed sessions that
  * now fall outside the consultant's hours. Prisma-free.
  */
+import type { HorizonWeek } from "@/lib/booking/entitlement";
 import type { ProjectedSlot } from "@/lib/booking/regular-time/project";
 
 export const CONFLICT_REASONS = [
@@ -29,14 +30,6 @@ export interface Interval {
 
 export interface PlacedSession extends Interval {
   id: string;
-}
-
-export interface HorizonWeek {
-  weekIndex: number;
-  capacity: number;
-  held: number;
-  startsAt: Date;
-  endsAt: Date;
 }
 
 export interface RegularConflict extends Interval {

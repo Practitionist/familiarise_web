@@ -13,6 +13,10 @@ import { addMonths } from "date-fns";
 import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
 
 import { formatDateLabel, formatDateRangeLabel } from "@/lib/time/display";
+import { weekCapacity } from "@/lib/booking/regular-time/catch-up";
+
+/** A plan with a live Regular time opens this many plan weeks at once. */
+export const REGULAR_TIME_HORIZON_WEEKS = 4;
 
 export type CycleUnit = "week" | "month";
 
@@ -41,7 +45,19 @@ export interface SubscriptionEntitlementInput extends EntitlementPlanShape {
   schedulingTimezone: string;
   /** The stored plan end; null falls back to `planEndOf` from the start. */
   planEndsAt?: Date | string | null;
+  /** A live Regular time opens the 4-week horizon with catch-up capacity. */
+  hasRegularTime?: boolean;
   now?: Date;
+}
+
+/** One open plan week: its capacity, what it holds, and its plan-clamped bounds. */
+export interface HorizonWeek {
+  weekIndex: number;
+  capacity: number;
+  held: number;
+  startsAt: Date;
+  /** Exclusive. */
+  endsAt: Date;
 }
 
 export interface SubscriptionCycle {
@@ -72,6 +88,11 @@ export interface SubscriptionEntitlement {
   /** Exclusive plan end; nothing is placed at or after it. */
   planEndsAt: Date;
   cycle: SubscriptionCycle;
+  /**
+   * The weeks a placement may land in, each within its own capacity: the
+   * cycle's week alone, or current..current+3 with a Regular time.
+   */
+  horizon: HorizonWeek[];
 }
 
 const COMPLETED_STATUSES = new Set(["COMPLETED", "UNVERIFIED"]);
@@ -547,18 +568,55 @@ export function subscriptionEntitlement(
   const count = Number.isFinite(planEndMs)
     ? Math.max(1, indexOf(new Date(planEndMs - 1)) + 1)
     : Math.max(1, Math.ceil(total / capacity));
-  const heldIn = (k: number) =>
-    live.filter(
-      (o) =>
-        (isCompleted(o) || isScheduled(o)) && indexOf(toDate(o.startsAt)) === k,
-    ).length;
+  const heldByWeek = Array.from({ length: count }, () => 0);
+  for (const o of live) {
+    if (!isCompleted(o) && !isScheduled(o)) continue;
+    const k = indexOf(toDate(o.startsAt));
+    if (k >= 0 && k < count) heldByWeek[k] += 1;
+  }
+  const heldIn = (k: number) => heldByWeek[k] ?? 0;
+  const startMs = startOk ? planStart.getTime() : 0;
+  const boundsOf = (k: number) => ({
+    startsAt: new Date(Math.max(startOf(k).getTime(), startMs)),
+    endsAt: new Date(
+      Math.min(
+        startOf(k + 1).getTime(),
+        Number.isFinite(planEndMs) ? planEndMs : Infinity,
+      ),
+    ),
+  });
+  const current = Math.min(Math.max(0, indexOf(now)), count - 1);
+  const regular = Boolean(input.hasRegularTime) && unit === "week";
+  const capacityOf = regular
+    ? (k: number) => {
+        const { startsAt, endsAt } = boundsOf(k);
+        return weekCapacity(
+          {
+            perWeek: input.sessionsPerWeek,
+            sessionsTotal: input.sessionsTotal,
+            sessionsRefunded: input.sessionsRefunded,
+            heldByWeek,
+            currentWeek: current,
+            daysInWeek: () =>
+              Math.max(
+                0,
+                Math.ceil((endsAt.getTime() - startsAt.getTime()) / 86_400_000),
+              ),
+          },
+          k,
+        );
+      }
+    : () => capacity;
 
   // The current plan week, and the next one once it is full: a consultant
-  // may schedule a week ahead, never further, and never pack two weeks into one.
-  const current = Math.min(Math.max(0, indexOf(now)), count - 1);
-  const candidates = [current, current + 1].filter((k) => k < count);
+  // may schedule a week ahead, never further, and never pack two weeks into
+  // one. A Regular time opens current..current+3, each within its capacity.
+  const span = regular ? REGULAR_TIME_HORIZON_WEEKS : 2;
+  const candidates = Array.from({ length: span }, (_, i) => current + i).filter(
+    (k) => k < count,
+  );
   const ordinal =
-    candidates.find((k) => heldIn(k) < capacity) ??
+    candidates.find((k) => heldIn(k) < capacityOf(k)) ??
     candidates[candidates.length - 1];
   const filled = heldIn(ordinal);
 
@@ -575,10 +633,17 @@ export function subscriptionEntitlement(
       Number.isFinite(planEndMs) ? planEndMs : Infinity,
     ),
   );
+  const ordinalCapacity = capacityOf(ordinal);
   const nextBatch =
     windowEnd > windowStart
-      ? Math.max(0, Math.min(capacity - filled, remaining))
+      ? Math.max(0, Math.min(ordinalCapacity - filled, remaining))
       : 0;
+  const horizon = (regular ? candidates : [ordinal]).map((k) => ({
+    weekIndex: k,
+    capacity: capacityOf(k),
+    held: heldIn(k),
+    ...boundsOf(k),
+  }));
 
   return {
     total,
@@ -588,9 +653,10 @@ export function subscriptionEntitlement(
     held,
     remaining,
     planEndsAt,
+    horizon,
     cycle: {
       unit,
-      capacity,
+      capacity: ordinalCapacity,
       count,
       ordinal,
       filled,
@@ -599,6 +665,11 @@ export function subscriptionEntitlement(
       windowEnd,
     },
   };
+}
+
+/** Exclusive end of the last open week: where a placement may end at the latest. */
+export function horizonEndOf(entitlement: SubscriptionEntitlement): Date {
+  return entitlement.horizon.at(-1)?.endsAt ?? entitlement.cycle.windowEnd;
 }
 
 /**

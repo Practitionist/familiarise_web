@@ -24,6 +24,7 @@ import {
   soldSessionsPerWeek,
   soldTermsOf,
   subscriptionEntitlement,
+  horizonEndOf,
 } from "@/lib/booking/entitlement";
 import { formatDateLabel } from "@/lib/time/display";
 import {
@@ -46,6 +47,10 @@ import {
   AllocationValidationError,
   AllocationNotFoundError,
 } from "@/utils/scheduling-engine/errors";
+import {
+  LIVE_REGULAR_TIME_PROBE,
+  hasLiveRegularTime,
+} from "@/lib/booking/regular-time/queries";
 
 /**
  * #1775 B-9 — an unpaid approval's freshly placed sessions are the hold
@@ -402,6 +407,7 @@ export async function fetchEventData(
           schedulingPeriodStartsAt: true,
           schedulingTimezone: true,
           planEndsAt: true,
+          regularTimes: LIVE_REGULAR_TIME_PROBE,
           subscriptionPlan: {
             select: {
               totalSessions: true,
@@ -452,6 +458,7 @@ export async function fetchEventData(
         schedulingPeriodStartsAt: event.schedulingPeriodStartsAt,
         schedulingTimezone: event.schedulingTimezone,
         planEndsAt: event.planEndsAt,
+        hasRegularTime: hasLiveRegularTime(event),
       });
       if (entitlement.cycle.windowEnd <= entitlement.cycle.windowStart) {
         throw new AllocationValidationError(
@@ -470,7 +477,7 @@ export async function fetchEventData(
         totalSessions: entitlement.total,
         cycleTargetSessions: entitlement.cycle.nextBatch,
         schedulingPeriodStartsAt: entitlement.cycle.windowStart,
-        schedulingPeriodEndsAt: entitlement.cycle.windowEnd,
+        schedulingPeriodEndsAt: horizonEndOf(entitlement),
         schedulingTimezone: event.schedulingTimezone ?? undefined,
       };
       consulteeUserId = event.requestedBy?.user?.id;

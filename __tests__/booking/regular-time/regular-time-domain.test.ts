@@ -173,6 +173,7 @@ describe("catch-up", () => {
     perWeek: 3,
     sessionsTotal: 12,
     sessionsRefunded: 0,
+    currentWeek: 3,
     daysInWeek: () => 7,
   };
 
@@ -188,6 +189,14 @@ describe("catch-up", () => {
     // Never two a day: a 3-day week holds 3 even with a backlog.
     expect(
       weekCapacity({ ...base, heldByWeek: [1], daysInWeek: () => 3 }, 1),
+    ).toBe(3);
+    // Seen from week 1 with week 1 already holding 4: week 2 still owes 1,
+    // and an unplaced open week never inflates the next one.
+    expect(
+      weekCapacity({ ...base, currentWeek: 1, heldByWeek: [1, 4] }, 2),
+    ).toBe(4);
+    expect(
+      weekCapacity({ ...base, currentWeek: 1, heldByWeek: [3, 0] }, 2),
     ).toBe(3);
   });
 

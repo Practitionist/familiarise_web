@@ -11,7 +11,12 @@ import {
   soldTermsOf,
   subscriptionEntitlement,
   type SubscriptionEntitlement,
+  horizonEndOf,
 } from "@/lib/booking/entitlement";
+import {
+  LIVE_REGULAR_TIME_PROBE,
+  hasLiveRegularTime,
+} from "@/lib/booking/regular-time/queries";
 
 /**
  * The one pending request the allocate page is placing.
@@ -128,6 +133,7 @@ async function readAllocationRequestOrThrow(
         sessionsPerWeek: true,
         sessionMinutes: true,
         sessionsRefunded: true,
+        regularTimes: LIVE_REGULAR_TIME_PROBE,
         requestedBy: requestedBySelect,
         subscriptionPlan: {
           select: {
@@ -154,6 +160,7 @@ async function readAllocationRequestOrThrow(
       schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
       schedulingTimezone: subscription.schedulingTimezone,
       planEndsAt: subscription.planEndsAt,
+      hasRegularTime: hasLiveRegularTime(subscription),
     });
     return toPlain<AllocationRequest>({
       id: subscription.id,
@@ -171,7 +178,7 @@ async function readAllocationRequestOrThrow(
       totalSessions: entitlement.total,
       schedulingTimezone: subscription.schedulingTimezone,
       allowedStart: entitlement.cycle.windowStart,
-      allowedEnd: entitlement.cycle.windowEnd,
+      allowedEnd: horizonEndOf(entitlement),
       entitlement,
       hasReleasedSlots:
         subscription.appointment?.occurrences.some(isReleasedForReschedule) ??

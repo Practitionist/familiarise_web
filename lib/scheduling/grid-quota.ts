@@ -36,10 +36,21 @@ export interface GridQuota {
   windowEnd: string;
   /** ISO fixed plan end, exclusive; incident extensions move it. Nothing is placed at or after it. */
   planEndsAt: string;
+  /** The open plan weeks and what each still has room for (one, or four with a Regular time). */
+  horizon: GridQuotaWeek[];
   perDayCap: number;
   /** yyyy-MM-dd days in `schedulingTimezone` that already hold `perDayCap` live sessions. */
   fullDays: string[];
   schedulingTimezone: string;
+}
+
+export interface GridQuotaWeek {
+  weekNumber: number;
+  capacity: number;
+  held: number;
+  room: number;
+  startsAt: string;
+  endsAt: string;
 }
 
 export const gridQuotaSchema: z.ZodType<GridQuota> = z.object({
@@ -53,6 +64,16 @@ export const gridQuotaSchema: z.ZodType<GridQuota> = z.object({
   windowStart: z.string().datetime(),
   windowEnd: z.string().datetime(),
   planEndsAt: z.string().datetime(),
+  horizon: z.array(
+    z.object({
+      weekNumber: z.number().int().positive(),
+      capacity: z.number().int().nonnegative(),
+      held: z.number().int().nonnegative(),
+      room: z.number().int().nonnegative(),
+      startsAt: z.string().datetime(),
+      endsAt: z.string().datetime(),
+    }),
+  ),
   perDayCap: z.number().int().positive(),
   fullDays: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
   schedulingTimezone: z.string().min(1),
@@ -93,17 +114,29 @@ export function computeGridQuota(input: {
     .map(([key]) => key)
     .sort(byCodeUnit);
 
+  const remainingThisCycle = rescheduling > 0 ? rescheduling : cycle.nextBatch;
   return {
     unit: cycle.unit,
     capacity: cycle.capacity,
     weekNumber: cycle.ordinal + 1,
     weekCount: cycle.count,
     filled: Math.max(0, cycle.filled),
-    remainingThisCycle: rescheduling > 0 ? rescheduling : cycle.nextBatch,
+    remainingThisCycle,
     allBooked: remaining === 0 && rescheduling === 0,
     windowStart: cycle.windowStart.toISOString(),
     windowEnd: cycle.windowEnd.toISOString(),
     planEndsAt: entitlement.planEndsAt.toISOString(),
+    horizon: entitlement.horizon.map((w) => ({
+      weekNumber: w.weekIndex + 1,
+      capacity: w.capacity,
+      held: w.held,
+      room:
+        w.weekIndex === cycle.ordinal
+          ? remainingThisCycle
+          : Math.max(0, Math.min(w.capacity - w.held, remaining)),
+      startsAt: w.startsAt.toISOString(),
+      endsAt: w.endsAt.toISOString(),
+    })),
     perDayCap,
     fullDays,
     schedulingTimezone,
@@ -122,17 +155,13 @@ export function cellLimitReached(
 ): boolean {
   if (endMs > Date.parse(quota.planEndsAt)) return true;
   if (quota.allBooked) return true;
-  const windowStartMs = Date.parse(quota.windowStart);
-  const windowEndMs = Date.parse(quota.windowEnd);
-  // Before the open plan week: an earlier week that is full (or already past).
-  if (endMs <= windowStartMs) return true;
-  if (
-    quota.remainingThisCycle === 0 &&
-    startMs < windowEndMs &&
-    endMs > windowStartMs
-  ) {
-    return true;
-  }
+  // Before the first open plan week: an earlier week that is full (or already past).
+  if (endMs <= Date.parse(quota.windowStart)) return true;
+  // Inside an open week with no room left.
+  const week = quota.horizon.find(
+    (w) => startMs < Date.parse(w.endsAt) && endMs > Date.parse(w.startsAt),
+  );
+  if (week && week.room === 0) return true;
   return quota.fullDays.includes(
     quotaDayKey(startMs, quota.schedulingTimezone),
   );

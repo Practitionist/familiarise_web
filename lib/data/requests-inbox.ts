@@ -75,6 +75,10 @@ import { BUYER_PAYMENT_DISPLAY_SELECT } from "@/lib/data/payments-select";
 import { toPlain } from "@/lib/data/serialize";
 import { exactKeysetBand } from "@/lib/db/exact-keyset";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
+import {
+  LIVE_REGULAR_TIME_PROBE,
+  hasLiveRegularTime,
+} from "@/lib/booking/regular-time/queries";
 
 export interface ReadRequestsInboxArgs {
   consultantProfileId: string;
@@ -179,6 +183,7 @@ const SUBSCRIPTION_SELECT = {
   sessionsPerWeek: true,
   sessionMinutes: true,
   sessionsRefunded: true,
+  regularTimes: LIVE_REGULAR_TIME_PROBE,
   subscriptionPlan: {
     select: {
       id: true,
@@ -537,6 +542,7 @@ const ENTITLEMENT_SELECT = {
   schedulingPeriodStartsAt: true,
   schedulingTimezone: true,
   planEndsAt: true,
+  regularTimes: LIVE_REGULAR_TIME_PROBE,
   subscriptionPlan: {
     select: {
       sessionsPerWeek: true,
@@ -582,6 +588,7 @@ function entitlementOf(
     schedulingPeriodStartsAt: s.schedulingPeriodStartsAt,
     schedulingTimezone: s.schedulingTimezone,
     planEndsAt: s.planEndsAt,
+    hasRegularTime: hasLiveRegularTime(s),
     now,
   });
 }
