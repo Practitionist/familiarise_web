@@ -1,3 +1,4 @@
+import type { AppointmentStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { occurrenceRefundKey } from "@/lib/booking/class-sessions";
 import { SUPPORT_REFUND_SEND_GRACE_MS } from "@/lib/support/money-policy";
@@ -198,7 +199,7 @@ function toItem(e: EventRow, kind: "credit" | "held-paid-seat") {
 
 type UnsentPlan = {
   id: string;
-  status: string;
+  status: AppointmentStatus;
   planEndsAt: Date | null;
   schedulingPeriodStartsAt: Date;
   schedulingTimezone: string;
@@ -217,7 +218,7 @@ function planNote(
   now: Date,
 ): string {
   if (!sessionsRemoved || !plan) return "";
-  if (!LIVE_SUBSCRIPTION_STATUSES.some((s) => s === plan.status))
+  if (!LIVE_SUBSCRIPTION_STATUSES.includes(plan.status))
     return " The plan settled without these sessions, so this refund is still owed: retry it.";
   const back =
     sessionsRemoved === 1
