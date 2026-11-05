@@ -422,6 +422,74 @@ describe("support partial refund priced in sessions", () => {
     expect(stored.sessionsRemoved).toBe(3);
   });
 
+  it("gives the sessions back when the approved refund fails and is voided", async () => {
+    const { subscriptionId, paymentId, caseId } = await planCase();
+    const proposer = await seedUser("STAFF");
+    const reviewer = await seedUser("STAFF");
+    const admin = await seedUser("ADMIN");
+    const recommendation = await performCaseAction(caseId, proposer, {
+      action: "RECOMMEND_REFUND",
+      clientActionId: randomUUID(),
+      expectedUpdatedAt: await caseVersion(caseId),
+      paymentId,
+      amountPaise: 150_000,
+      reason: "The expert missed three sessions",
+      releaseSeat: false,
+      sessions: 3,
+    });
+    const recommendationId = rowId(recommendation);
+    await performCaseAction(caseId, reviewer, {
+      action: "REVIEW_REFUND",
+      clientActionId: randomUUID(),
+      expectedUpdatedAt: await caseVersion(caseId),
+      recommendationId,
+      approve: true,
+      reason: "Checked the session log",
+      expectedRefundablePaise: 400_000,
+    });
+    // The gateway refused the refund (the refund door is stubbed in this tier).
+    const failed = await prisma.refund.create({
+      data: {
+        paymentId,
+        amountPaise: BigInt(150_000),
+        status: "FAILED",
+        refundId: `rfnd_failed_${randomUUID()}`,
+        paymentGateway: "RAZORPAY",
+        failedAt: new Date(),
+      },
+    });
+    await prisma.supportFinancialRecommendation.update({
+      where: { id: recommendationId },
+      data: { refundId: failed.id },
+    });
+    expect(
+      (
+        await prisma.subscription.findUniqueOrThrow({
+          where: { id: subscriptionId },
+        })
+      ).sessionsRefunded,
+    ).toBe(3);
+
+    await performCaseAction(caseId, admin, {
+      action: "VOID_RECOMMENDATION",
+      clientActionId: randomUUID(),
+      expectedUpdatedAt: await caseVersion(caseId),
+      recommendationId,
+      reason: "Gateway refused; refunding by bank transfer",
+    });
+
+    const sub = await prisma.subscription.findUniqueOrThrow({
+      where: { id: subscriptionId },
+    });
+    expect(sub.sessionsRefunded).toBe(0);
+    const voided =
+      await prisma.supportFinancialRecommendation.findUniqueOrThrow({
+        where: { id: recommendationId },
+      });
+    expect(voided).toMatchObject({ approved: false, sessionsRemoved: 3 });
+    expect(voided.voidedAt).not.toBeNull();
+  });
+
   it("refuses an amount that is not the sessions' share", async () => {
     const { paymentId, caseId } = await planCase();
     const proposer = await seedUser("STAFF");

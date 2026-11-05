@@ -23,8 +23,30 @@ import {
 } from "@/components/ui/form";
 import { monthsForWeeks, planLengthLabel } from "@/lib/booking/entitlement";
 
-export const PLAN_WEEK_PRESETS = [4, 8, 12, 26, 52] as const;
+export const PLAN_WEEK_PRESETS: readonly number[] = [4, 8, 12, 26, 52];
 export const MAX_PLAN_WEEKS = 52;
+
+/** "26 weeks · 78 sessions" for a valid length, else null. */
+function lengthSummary(
+  weeks: unknown,
+  months: unknown,
+  perWeek: number,
+): string | null {
+  if (typeof weeks === "number") {
+    if (!(weeks >= 1 && weeks <= MAX_PLAN_WEEKS)) return null;
+    return planLengthLabel({
+      durationInWeeks: weeks,
+      durationInMonths: monthsForWeeks(weeks),
+      sessionsPerWeek: perWeek,
+    });
+  }
+  if (typeof months !== "number" || months < 1) return null;
+  return planLengthLabel({
+    durationInWeeks: null,
+    durationInMonths: months,
+    sessionsPerWeek: perWeek,
+  });
+}
 
 interface PlanLengthFieldProps<T extends FieldValues = FieldValues> {
   control: Control<T>;
@@ -60,21 +82,7 @@ export function PlanLengthField<T extends FieldValues = FieldValues>({
       monthsField.onChange(monthsForWeeks(next));
   };
 
-  const summary = inWeeks
-    ? weeks >= 1 && weeks <= MAX_PLAN_WEEKS
-      ? planLengthLabel({
-          durationInWeeks: weeks,
-          durationInMonths: monthsForWeeks(weeks),
-          sessionsPerWeek: perWeek,
-        })
-      : null
-    : typeof months === "number" && months >= 1
-      ? planLengthLabel({
-          durationInWeeks: null,
-          durationInMonths: months,
-          sessionsPerWeek: perWeek,
-        })
-      : null;
+  const summary = lengthSummary(weeks, months, perWeek);
 
   if (!inWeeks) {
     return (
@@ -111,7 +119,7 @@ export function PlanLengthField<T extends FieldValues = FieldValues>({
     );
   }
 
-  const isPreset = PLAN_WEEK_PRESETS.some((p) => p === weeks);
+  const isPreset = PLAN_WEEK_PRESETS.includes(weeks);
   return (
     <FormItem>
       <FormLabel>

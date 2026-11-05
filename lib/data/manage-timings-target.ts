@@ -40,6 +40,29 @@ export interface ManageTimingsTarget {
   groupTotalSessions?: number;
 }
 
+/** A plan's schedulable sessions: sold less refunded for a 1:1 plan, the class plan's count. */
+function groupTotalSessionsOf(appointment: {
+  appointmentType: string;
+  subscription: {
+    sessionsTotal: number | null;
+    sessionsRefunded: number;
+    subscriptionPlan: { totalSessions: number };
+  } | null;
+  class: { classPlan: { totalSessions: number } | null } | null;
+}): number | undefined {
+  if (
+    appointment.appointmentType === "SUBSCRIPTION" &&
+    appointment.subscription
+  )
+    return (
+      sessionsTotalOf(appointment.subscription) -
+      appointment.subscription.sessionsRefunded
+    );
+  if (appointment.appointmentType === "CLASS")
+    return appointment.class?.classPlan?.totalSessions ?? undefined;
+  return undefined;
+}
+
 function ownerIds(...ids: (string | null | undefined)[]): string[] {
   return ids.filter((id): id is string => Boolean(id));
 }
@@ -119,15 +142,7 @@ export async function readManageTimingsTarget(
   // session is simply absent, and counting rows made the total shrink to
   // whatever was already scheduled, so "remaining" then folded completed
   // sessions in with future ones.
-  const groupTotalSessions =
-    appointment.appointmentType === "SUBSCRIPTION"
-      ? appointment.subscription
-        ? sessionsTotalOf(appointment.subscription) -
-          appointment.subscription.sessionsRefunded
-        : undefined
-      : appointment.appointmentType === "CLASS"
-        ? (appointment.class?.classPlan?.totalSessions ?? undefined)
-        : undefined;
+  const groupTotalSessions = groupTotalSessionsOf(appointment);
 
   return {
     // Narrowed shape only: the guard above already ruled out TRIAL, but Prisma's

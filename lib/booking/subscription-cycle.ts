@@ -134,10 +134,10 @@ export async function settleSubscriptionCycleWithNotice(
       },
     },
   });
-  const sub = wrapper?.subscription;
-  if (!sub || sub.status !== "APPROVED") {
+  if (wrapper?.subscription?.status !== "APPROVED") {
     return { bells: [], emailArgs: null };
   }
+  const sub = wrapper.subscription;
 
   const terms = soldTermsOf(sub);
   const entitlement = subscriptionEntitlement({

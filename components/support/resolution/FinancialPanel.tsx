@@ -82,6 +82,34 @@ export function unsentRefund(rec: Recommendation, now: number): boolean {
   );
 }
 
+/** The line under the sessions box: the sum, the allowed range, or what it is for. */
+function sessionsHint(
+  plan: PlanRefund,
+  sessions: number | null,
+  amountPaise: number | null,
+  bySessions: boolean,
+): string {
+  if (sessions !== null && amountPaise !== null)
+    return sessionRefundCopy(plan, sessions, amountPaise);
+  if (bySessions)
+    return `Enter 1 to ${plan.removable}: only sessions not yet booked or delivered can be refunded.`;
+  return "Refund missed sessions by count, or leave this empty and enter an amount for a money-only refund.";
+}
+
+function removesLabel(sessionsRemoved: number | null): string {
+  if (!sessionsRemoved) return "";
+  const noun = sessionsRemoved === 1 ? "session" : "sessions";
+  return ` · Removes ${sessionsRemoved} ${noun} from the plan`;
+}
+
+/** A void gives back the plan sessions a session-count remedy removed. */
+function voidSessionsNote(sessionsRemoved: number | null): string {
+  if (!sessionsRemoved) return "";
+  return sessionsRemoved === 1
+    ? " 1 session goes back to the plan."
+    : ` ${sessionsRemoved} sessions go back to the plan.`;
+}
+
 function heldEarningsLabel(count: number) {
   if (count === 0) return "No unpaid earnings to hold";
   return count === 1
@@ -126,7 +154,7 @@ function VoidDialog({
           <AlertDialogTitle>Void this approved refund?</AlertDialogTitle>
           <AlertDialogDescription>
             {rec &&
-              `${inr(rec.amountPaise)} will not be retried. No money moves; the approval is withdrawn and recorded on the case.`}
+              `${inr(rec.amountPaise)} will not be retried. No money moves; the approval is withdrawn and recorded on the case.${voidSessionsNote(rec.sessionsRemoved)}`}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <label htmlFor={reasonId} className="text-sm font-medium">
@@ -335,11 +363,7 @@ function RecommendForm({
             placeholder={`Sessions to refund (up to ${plan.removable})`}
           />
           <p className="text-xs text-muted-foreground">
-            {sessions !== null && sessionAmount !== null
-              ? sessionRefundCopy(plan, sessions, sessionAmount)
-              : bySessions
-                ? `Enter 1 to ${plan.removable}: only sessions not yet booked or delivered can be refunded.`
-                : "Refund missed sessions by count, or leave this empty and enter an amount for a money-only refund."}
+            {sessionsHint(plan, sessions, sessionAmount, bySessions)}
           </p>
         </div>
       )}
@@ -467,9 +491,7 @@ export function FinancialPanel({
               <p>
                 {recommendationStatus(rec)}
                 {rec.releaseSeat ? " · Releases the seat" : ""}
-                {rec.sessionsRemoved
-                  ? ` · Removes ${rec.sessionsRemoved} session${rec.sessionsRemoved === 1 ? "" : "s"} from the plan`
-                  : ""}
+                {removesLabel(rec.sessionsRemoved)}
               </p>
               {awaiting && (
                 <output className="block space-y-1 rounded border border-border p-2">

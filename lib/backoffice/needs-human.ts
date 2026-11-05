@@ -196,8 +196,17 @@ function toItem(e: EventRow, kind: "credit" | "held-paid-seat") {
 
 /**
  * Support remedies approved without a live refund: the refund was refused,
- * failed at the gateway, or never ran. Each needs a retry or a void on its case.
+ * failed at the gateway, or never ran. Each needs a retry or a void on its case;
+ * a void also gives back the plan sessions the remedy removed.
  */
+/** What a void of a session-count remedy gives back to the plan. */
+function sessionsBackNote(sessionsRemoved: number | null): string {
+  if (!sessionsRemoved) return "";
+  return sessionsRemoved === 1
+    ? " 1 session goes back to the plan if you void this refund."
+    : ` ${sessionsRemoved} sessions go back to the plan if you void this refund.`;
+}
+
 export async function readUnsentSupportRefunds(now = new Date()) {
   const rows = await prisma.supportFinancialRecommendation.findMany({
     where: {
@@ -217,6 +226,7 @@ export async function readUnsentSupportRefunds(now = new Date()) {
       caseId: true,
       paymentId: true,
       amountPaise: true,
+      sessionsRemoved: true,
       decidedAt: true,
       createdAt: true,
       refund: { select: { status: true } },
@@ -225,7 +235,7 @@ export async function readUnsentSupportRefunds(now = new Date()) {
   });
   return rows.map((row) => ({
     id: row.id,
-    message: `Support case ${row.supportCase.referenceNumber}: an approved refund of ₹${(Number(row.amountPaise) / 100).toFixed(2)} ${row.refund ? "failed" : "was never sent"}. Retry or void it on the case.`,
+    message: `Support case ${row.supportCase.referenceNumber}: an approved refund of ₹${(Number(row.amountPaise) / 100).toFixed(2)} ${row.refund ? "failed" : "was never sent"}. Retry or void it on the case.${sessionsBackNote(row.sessionsRemoved)}`,
     createdAt: row.decidedAt ?? row.createdAt,
     paymentId: row.paymentId,
     occurrenceId: null,

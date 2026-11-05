@@ -1274,6 +1274,20 @@ function planSessionsError(change: Exclude<PlanSessionsChange, { ok: true }>) {
   );
 }
 
+/** The approval takes a session-count remedy's sessions off the plan in the same commit. */
+async function removeApprovedSessions(
+  tx: Tx,
+  recommendation: { paymentId: string; sessionsRemoved: number | null },
+) {
+  if (!recommendation.sessionsRemoved) return;
+  const change = await removePlanSessions(
+    tx,
+    recommendation.paymentId,
+    recommendation.sessionsRemoved,
+  );
+  if (!change.ok) throw planSessionsError(change);
+}
+
 function openRecommendationError() {
   return new CaseActionError(
     "RECOMMENDATION_OPEN",
@@ -1343,15 +1357,7 @@ async function reviewRefundTx(
       "CONFLICT",
       "Another administrator reviewed this recommendation.",
     );
-  // The approval takes the sessions off the plan in the same commit.
-  if (input.approve && recommendation.sessionsRemoved) {
-    const change = await removePlanSessions(
-      tx,
-      recommendation.paymentId,
-      recommendation.sessionsRemoved,
-    );
-    if (!change.ok) throw planSessionsError(change);
-  }
+  if (input.approve) await removeApprovedSessions(tx, recommendation);
   await caseEvent(
     tx,
     caseId,

@@ -240,7 +240,7 @@ export async function PUT(
         data: {
           title: validatedData.title,
           description: validatedData.description,
-          ...(derived ?? {}),
+          ...derived,
           price:
             validatedData.price !== undefined
               ? Math.round(validatedData.price)

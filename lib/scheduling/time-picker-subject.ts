@@ -63,6 +63,36 @@ function liveFutureSlots(detail: TAppointmentDetail): OccurrenceLike[] {
 }
 
 /**
+ * A sold 1:1 plan's picker terms: the frozen length and weekly cap, the
+ * schedulable total and the entitlement a reschedule window is cut from.
+ */
+function soldPlanFields(appointment: TAppointmentDetail["appointment"]) {
+  const subscription = appointment.subscription;
+  const plan = subscription?.subscriptionPlan;
+  if (!subscription || !plan) return {};
+  const sold = { ...subscription, subscriptionPlan: plan };
+  return {
+    sessionDurationInHours: soldSessionMinutes(sold) / 60,
+    sessionsPerWeek: soldSessionsPerWeek(sold),
+    totalSessions: sessionsTotalOf(sold) - subscription.sessionsRefunded,
+    rescheduleEntitlement: {
+      ...soldTermsOf(sold),
+      schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
+      schedulingTimezone: subscription.schedulingTimezone,
+      planEndsAt: subscription.planEndsAt ?? null,
+      occurrences: appointment.occurrences.map((o) => ({
+        id: o.id,
+        startsAt: o.startsAt,
+        endsAt: o.endsAt,
+        completionStatus: o.completionStatus,
+        isTentative: o.isTentative,
+        deletedAt: o.deletedAt,
+      })),
+    },
+  };
+}
+
+/**
  * Consultant, consultee, session length and copy for one booking.
  *
  * Returns null when the booking has no consultant to draw a grid for, which
@@ -122,13 +152,6 @@ export function buildRescheduleSubject(
           consulteeName: subscription?.requestedBy?.user?.name,
           title: plan?.title ?? "Subscription",
           typeLabel: "Subscription",
-          sessionDurationInHours:
-            subscription && plan
-              ? soldSessionMinutes({
-                  ...subscription,
-                  subscriptionPlan: plan,
-                }) / 60
-              : undefined,
           eventType: "subscription",
           eventId: subscription?.id ?? undefined,
           // The plan's scheduling period and cadence. Omitting these drew an
@@ -142,33 +165,7 @@ export function buildRescheduleSubject(
             ? subscriptionPlanEnd(subscription)
             : undefined,
           schedulingTimezone: subscription?.schedulingTimezone,
-          sessionsPerWeek:
-            subscription && plan
-              ? soldSessionsPerWeek({ ...subscription, subscriptionPlan: plan })
-              : undefined,
-          totalSessions:
-            subscription && plan
-              ? sessionsTotalOf({ ...subscription, subscriptionPlan: plan }) -
-                subscription.sessionsRefunded
-              : undefined,
-          rescheduleEntitlement:
-            subscription && plan
-              ? {
-                  ...soldTermsOf({ ...subscription, subscriptionPlan: plan }),
-                  schedulingPeriodStartsAt:
-                    subscription.schedulingPeriodStartsAt,
-                  schedulingTimezone: subscription.schedulingTimezone,
-                  planEndsAt: subscription.planEndsAt ?? null,
-                  occurrences: appointment.occurrences.map((o) => ({
-                    id: o.id,
-                    startsAt: o.startsAt,
-                    endsAt: o.endsAt,
-                    completionStatus: o.completionStatus,
-                    isTentative: o.isTentative,
-                    deletedAt: o.deletedAt,
-                  })),
-                }
-              : undefined,
+          ...soldPlanFields(appointment),
         };
       }
       case "WEBINAR": {
