@@ -56,21 +56,32 @@ const store = {
   marker: null as { key: string; paise: number } | null,
 };
 const mockEventRead = jest.fn();
+/** The window's events, oldest first, as the reader asks. */
+const inWindow = (gte?: Date) =>
+  store.events
+    .filter((e) => !gte || e.createdAt >= gte)
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     systemEvent: {
       findMany: async (args: {
-        where: { correlationId?: { startsWith?: string } };
+        where: {
+          correlationId?: { startsWith?: string; in?: string[] };
+          createdAt?: { gte: Date };
+        };
+        take?: number;
       }) => {
+        const ids = args.where.correlationId?.in;
+        if (ids)
+          return store.events.filter((e) => ids.includes(e.correlationId));
         mockEventRead(args);
-        // Newest first, as the reader asks.
-        return args.where.correlationId?.startsWith === "owed-already-held:"
-          ? [...store.events].sort(
-              (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
-            )
-          : [];
+        if (args.where.correlationId?.startsWith !== "owed-already-held:")
+          return [];
+        return inWindow(args.where.createdAt?.gte).slice(0, args.take);
       },
+      count: async (args: { where: { createdAt?: { gte: Date } } }) =>
+        inWindow(args.where.createdAt?.gte).length,
     },
     earningsHold: {
       findMany: async () => store.holds.filter((h) => h.releasedAt === null),
@@ -416,6 +427,33 @@ describe("the needs-human list of held top-ups", () => {
       expect.objectContaining({
         id: `owed-held:${second}`,
         amountPaise: 20_000,
+      }),
+    ]);
+  });
+
+  it("a top-up whose hold is still active stays listed past the window", async () => {
+    const old = new Date(at.getTime() - 400 * 86_400_000);
+    store.events = [event(old)];
+    store.holds = [{ sourceRef: CORRELATION, releasedAt: null }];
+    expect(await read()).toEqual([
+      expect.objectContaining({ amountPaise: 25_000 }),
+    ]);
+  });
+
+  it("past the read bound, says how many more events are not listed", async () => {
+    const second = "owed-already-held:pay-1:overage-credit:pay-1";
+    store.events = [
+      event(at),
+      { ...event(later(60_000)), id: "evt-2", correlationId: second },
+    ];
+    const rows = await readOwedAlreadyHeld(later(86_400_000), 1);
+    expect(rows).toEqual([
+      expect.objectContaining({ id: `owed-held:${CORRELATION}` }),
+      expect.objectContaining({
+        id: "owed-held:more",
+        paymentId: null,
+        message:
+          "1 more held top-up events are not listed yet (oldest first). Settle the rows above, then reload.",
       }),
     ]);
   });

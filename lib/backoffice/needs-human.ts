@@ -320,7 +320,7 @@ function stillOwedFifo(
   return still;
 }
 
-/** Held top-ups older than this leave the list; the runbook's triage query finds them. */
+/** Held top-ups older than this leave the list unless their hold is still active; the runbook's triage query finds the rest. */
 export const OWED_HELD_WINDOW_DAYS = 180;
 const OWED_HELD_READ_LIMIT = 500;
 
@@ -332,30 +332,77 @@ const OWED_HELD_READ_LIMIT = 500;
  * a refundable balance. Any later refund on the payment counts, whatever its
  * reason. Once paid, the row asks for the door's OPERATOR hold to be released.
  */
-export async function readOwedAlreadyHeld(now = new Date()) {
-  const events = await prisma.systemEvent.findMany({
-    where: {
-      category: "PAYMENT",
-      createdAt: {
-        gte: new Date(now.getTime() - OWED_HELD_WINDOW_DAYS * 86_400_000),
-      },
-      correlationId: { startsWith: OWED_ALREADY_HELD_PREFIX },
+export async function readOwedAlreadyHeld(
+  now = new Date(),
+  limit = OWED_HELD_READ_LIMIT,
+) {
+  // Oldest first inside the window, so an open row is never crowded out silently.
+  const where = {
+    category: "PAYMENT",
+    createdAt: {
+      gte: new Date(now.getTime() - OWED_HELD_WINDOW_DAYS * 86_400_000),
     },
-    orderBy: { createdAt: "desc" },
-    take: OWED_HELD_READ_LIMIT,
+    correlationId: { startsWith: OWED_ALREADY_HELD_PREFIX },
+  };
+  const recent = await prisma.systemEvent.findMany({
+    where,
+    orderBy: { createdAt: "asc" },
+    take: limit,
     select: EVENT_SELECT,
   });
+  const total =
+    recent.length < limit
+      ? recent.length
+      : await prisma.systemEvent.count({ where });
+  // A top-up whose hold is still active stays listed however old.
+  const holdRefs = await prisma.earningsHold.findMany({
+    where: {
+      reason: EarningsHoldReason.OPERATOR,
+      releasedAt: null,
+      sourceRef: { startsWith: OWED_ALREADY_HELD_PREFIX },
+    },
+    distinct: ["sourceRef"],
+    select: { sourceRef: true },
+  });
+  const heldEvents =
+    holdRefs.length === 0
+      ? []
+      : await prisma.systemEvent.findMany({
+          where: { correlationId: { in: holdRefs.map((h) => h.sourceRef) } },
+          orderBy: { createdAt: "asc" },
+          select: EVENT_SELECT,
+        });
+  const events = [...heldEvents, ...recent].sort(
+    (x, y) => x.createdAt.getTime() - y.createdAt.getTime(),
+  );
   const first = new Map<
     string,
     { e: EventRow; paymentId: string; heldKey: string; owedPaise: number }
   >();
-  for (const e of [...events].reverse()) {
+  for (const e of events) {
     const ctx = owedHeldContextSchema.safeParse(e.context);
     if (!e.correlationId || !ctx.success || first.has(e.correlationId))
       continue;
     first.set(e.correlationId, { e, ...ctx.data });
   }
-  if (first.size === 0) return [];
+  const more =
+    total > recent.length
+      ? [
+          {
+            id: "owed-held:more",
+            message: `${total - recent.length} more held top-up events are not listed yet (oldest first). Settle the rows above, then reload.`,
+            createdAt: now,
+            paymentId: null,
+            occurrenceId: null,
+            unitPaise: null,
+            amountPaise: null,
+            kind: "owed-already-held" as const,
+            caseId: null,
+            creditPlan: false,
+          },
+        ]
+      : [];
+  if (first.size === 0) return more;
   const paymentIds = [...new Set([...first.values()].map((r) => r.paymentId))];
   const payments = await prisma.payment.findMany({
     where: { id: { in: paymentIds } },
@@ -399,7 +446,7 @@ export async function readOwedAlreadyHeld(now = new Date()) {
     ),
     refunds,
   );
-  return [...first.entries()].flatMap(([ref, row]) => {
+  const rows = [...first.entries()].flatMap(([ref, row]) => {
     const payment = byPayment.get(row.paymentId);
     const owed = Math.min(
       still.get(ref) ?? 0,
@@ -434,6 +481,7 @@ export async function readOwedAlreadyHeld(now = new Date()) {
       },
     ];
   });
+  return [...rows, ...more];
 }
 
 /**
