@@ -36,6 +36,8 @@ export async function freezeSoldTerms(
       schedulingTimezone: true,
     },
   });
+  // Each row's end depends on its own start and zone, so each is its own CAS
+  // write; an interactive transaction runs them one at a time on one connection.
   for (const row of unended) {
     await tx.subscription.updateMany({
       where: { id: row.id, planEndsAt: null },
