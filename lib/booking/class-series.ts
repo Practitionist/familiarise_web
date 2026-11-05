@@ -247,7 +247,7 @@ function clustered(times: Date[], count: number, windowMs: number): boolean {
 
 /**
  * The learner's exit right: 3 host misses inside any rolling 30 days, or total
- * misses ≥ max(3, 15 % of N). Misses only accumulate, so once held it stays held.
+ * misses ≥ max(3, 15 % of N). Any window, not the last 30 days: once tripped it stays for the class.
  */
 export const exitRightFor = (l: {
   hostMissAts: Date[];

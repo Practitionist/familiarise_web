@@ -35,7 +35,7 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 - Return expected refusals as plain `{ error, code, ...detail }` (`CaseConflictError`, `CaseActionError`, `OpsRefusal`); use `supportError()` only for unexpected failures.
 - Add any new CHECK, partial unique or trigger to `prisma/sql/check-constraints.sql`, and keep the open-scope tuple out of `@@index`/`@@unique` on `SupportCase`.
 - A class-wide cancel (ADMIN, `classSeries.money`, `app/api/admin/class-series/[classId]/cancel-series`) refunds every attendee's unheld sessions through the normal rails, with no second admin. It refuses with 409 `REFUND_IN_PROGRESS` or `REFUND_NEEDS_SUPPORT` while any seat's payment still owes another refund; settle that refund first (wait, or refund it by hand from the Refunds tab), then cancel again.
-- A learner's class exit right opens at 3 host misses inside any rolling 30 days, or max(3, 15% of N) misses in all (`exitRightFor`); the class-series card in the money console states both thresholds.
+- A learner's class exit right opens at 3 host misses inside any rolling 30 days, or max(3, 15% of N) misses in all (`exitRightFor`), and once it trips the learner keeps it for the rest of the class; the class-series card in the money console states both thresholds.
 - A Refunds-tab row "Another refund is still owed on this payment; refund the remaining ₹X by hand, then release the hold" means a door ended a booking while another door's refund held the payment: refund ₹X through the issue door, then release the `OPERATOR` hold on the payment's earnings.
 - When code changes a rule here, update this skill and the matching `docs/support/` page in the same PR.
 

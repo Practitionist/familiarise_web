@@ -5,37 +5,30 @@
  *  - a seat still in the class gets every undelivered session back.
  * Real Postgres, the real cancel route, a refund door that writes Refund rows.
  */
-import { randomUUID } from "node:crypto";
-import { NextRequest } from "next/server";
 import prisma from "../../../lib/prisma";
 import { HOUR_MS, seedHost, type SeededHost } from "./harness";
-import { seedSeatBuyer } from "./harness-seats";
 
-const sessionUser = { current: null as null | Record<string, unknown> };
-jest.mock("../../../lib/auth-helpers", () => ({
-  ...jest.requireActual("../../../lib/auth-helpers"),
-  requireApiAuth: async () => ({ session: { user: sessionUser.current } }),
-  isPrivileged: () => false,
-}));
-jest.mock("../../../lib/rate-limit", () => ({
-  ...jest.requireActual("../../../lib/rate-limit"),
-  applyRateLimit: async () => null,
-}));
-jest.mock("../../../lib/novu", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
-jest.mock("../../../lib/stream/access-revocation", () => ({
-  revokeEndedBookingChatAccess: jest.fn(async () => undefined),
-  revokeEndedEventChatAccess: jest.fn(async () => undefined),
-}));
+jest.mock("../../../lib/auth-helpers", () =>
+  jest.requireActual("./harness-session").authAsSessionUser(),
+);
+jest.mock("../../../lib/rate-limit", () =>
+  jest.requireActual("./harness-session").rateLimitOff(),
+);
+jest.mock("../../../lib/novu", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
+jest.mock("../../../lib/stream/access-revocation", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
 
-import { POST as cancel } from "../../../app/api/appointments/[appointmentId]/cancel/route";
 import { occurrenceRefundsPaise } from "../../../lib/booking/class-series";
 import { leaveEventSeat } from "../../../lib/booking/seat-leave";
+import {
+  hostCancels as cancelAsHost,
+  seatClassBuyer,
+  seedClassUnderWay as seedClass,
+  type ClassShape,
+} from "./harness-class-series";
 import { refundOnRows, refundedPaise } from "./harness-refunds";
 
 const refundDoor = jest.requireMock(
@@ -43,88 +36,16 @@ const refundDoor = jest.requireMock(
 ) as { refundBookingPayment: jest.Mock };
 
 const DAY_MS = 24 * HOUR_MS;
-const PRICE = 10_000;
-const SESSIONS = 10;
-const DELIVERED = 3;
+/** A class of ten sessions, three already delivered, bought twenty days ago. */
+const SHAPE: ClassShape = { price: 10_000, sessions: 10, delivered: 3 };
 
 beforeEach(() => {
   refundDoor.refundBookingPayment.mockImplementation(refundOnRows);
 });
 
-/** A class of ten sessions, three already delivered, bought twenty days ago. */
-async function seedClassUnderWay(host: SeededHost) {
-  const now = Date.now();
-  const plan = await prisma.classPlan.create({
-    data: {
-      title: `Database tier class ${randomUUID().slice(0, 8)}`,
-      price: BigInt(PRICE),
-      totalSessions: SESSIONS,
-      consultantProfileId: host.consultantProfileId,
-    },
-  });
-  const cls = await prisma.class.create({
-    data: { classPlanId: plan.id, status: "SCHEDULED" },
-  });
-  const appointment = await prisma.appointment.create({
-    data: { appointmentType: "CLASS", classId: cls.id },
-  });
-  for (let i = 0; i < SESSIONS; i += 1) {
-    const offsetDays = i < DELIVERED ? i - 10 : i + 2;
-    const startsAt = new Date(now + offsetDays * DAY_MS);
-    await prisma.appointmentOccurrence.create({
-      data: {
-        appointmentId: appointment.id,
-        ordinal: i + 1,
-        startsAt,
-        endsAt: new Date(startsAt.getTime() + HOUR_MS),
-        isTentative: false,
-        consultantProfileId: host.consultantProfileId,
-        completionStatus: i < DELIVERED ? "COMPLETED" : "SCHEDULED",
-      },
-    });
-  }
-  await prisma.appointmentParticipant.create({
-    data: {
-      appointmentId: appointment.id,
-      userId: host.userId,
-      role: "CONSULTANT",
-      status: "CONFIRMED",
-    },
-  });
-  return { classId: cls.id, appointmentId: appointment.id };
-}
-
-async function seatBuyer(cls: { appointmentId: string }) {
-  const buyer = await seedSeatBuyer();
-  const boughtAt = new Date(Date.now() - 20 * DAY_MS);
-  const payment = await prisma.payment.create({
-    data: {
-      amount: BigInt(PRICE),
-      originalAmount: BigInt(PRICE),
-      paymentMethod: "card",
-      paymentIntent: `order_dbtier_${randomUUID()}`,
-      paymentGateway: "RAZORPAY",
-      paymentStatus: "SUCCEEDED",
-      userId: buyer.userId,
-      appointmentId: cls.appointmentId,
-      isMockPayment: true,
-      createdAt: boughtAt,
-      legs: { create: [{ source: "CARD", amountPaise: BigInt(PRICE) }] },
-    },
-  });
-  await prisma.appointmentParticipant.create({
-    data: {
-      appointmentId: cls.appointmentId,
-      userId: buyer.userId,
-      role: "CONSULTEE",
-      status: "CONFIRMED",
-      paymentId: payment.id,
-      sessionsPurchased: SESSIONS,
-      createdAt: boughtAt,
-    },
-  });
-  return { userId: buyer.userId, paymentId: payment.id };
-}
+const seedClassUnderWay = (host: SeededHost) => seedClass(host, SHAPE);
+const seatBuyer = (cls: { appointmentId: string }) =>
+  seatClassBuyer(cls, SHAPE);
 
 const leave = (classId: string, userId: string) =>
   leaveEventSeat({
@@ -136,28 +57,11 @@ const leave = (classId: string, userId: string) =>
   });
 
 async function hostCancels(host: SeededHost, appointmentId: string) {
-  sessionUser.current = {
-    id: host.userId,
-    role: "CONSULTANT",
-    consultantProfileId: host.consultantProfileId,
-    consulteeProfileId: null,
-    name: "Host",
-  };
-  const res = await cancel(
-    new NextRequest(
-      `http://localhost/api/appointments/${appointmentId}/cancel`,
-      {
-        method: "POST",
-        body: JSON.stringify({ reason: "SCHEDULE_CONFLICT" }),
-        headers: { "Content-Type": "application/json" },
-      },
-    ),
-    { params: Promise.resolve({ appointmentId }) },
-  );
-  expect(res.status).toBe(200);
+  expect((await cancelAsHost(host, appointmentId)).status).toBe(200);
 }
 
-const UNDELIVERED = (PRICE / SESSIONS) * (SESSIONS - DELIVERED);
+const UNDELIVERED =
+  (SHAPE.price / SHAPE.sessions) * (SHAPE.sessions - SHAPE.delivered);
 
 describe("series cancel after a seat already left", () => {
   it("pays a seat that left on the ladder nothing more, and a staying seat its undelivered sessions", async () => {
