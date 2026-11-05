@@ -43,7 +43,8 @@ export type BookingRuleCode =
   | "USE_RESCHEDULE_RESPOND"
   | "REQUEST_TOO_SOON"
   | "USE_CANCEL_ENDPOINT"
-  | "PLACE_RELEASED_SESSIONS";
+  | "PLACE_RELEASED_SESSIONS"
+  | "PAYMENT_BUSY";
 
 export class BookingRuleError extends Error {
   constructor(

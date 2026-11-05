@@ -33,7 +33,7 @@ import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
 
-import { requireApiAuth } from "@/lib/auth-helpers";
+import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import { platformCancelGrant } from "@/lib/booking/platform-cancel";
 import {
   recordSystemErrorSafe,
@@ -42,6 +42,7 @@ import {
 import {
   driveRefundOwed,
   heldMarkerRefusal,
+  opsHeldMarkerMessage,
   recordRefundNeedsSupport,
   stampRefundOwed,
   type RefundOwedMarker,
@@ -602,11 +603,14 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
+  // An operator (ADMIN or STAFF, the class-wide cancel door included) reads refusals with ids and next steps.
+  let opsViewer = false;
   try {
     // #1583 D-P0-02 — fresh, ban-aware read; 401 / 403 / 503 shapes are the helper's.
     const authResult = await requireApiAuth({ expectUser: true });
     if (authResult.error) return authResult.error;
     const { session } = authResult;
+    opsViewer = isPrivileged(session.user.role);
     // #1319 — this route triggers refunds/reallocation and had no limiter.
     const limited = await applyRateLimit(eventMutationLimiter, session.user.id);
     if (limited) return limited;
@@ -1468,8 +1472,10 @@ export async function POST(
   } catch (error) {
     if (isRefusal(error)) {
       await recordRefundNeedsSupport(error);
+      const message =
+        (opsViewer ? opsHeldMarkerMessage(error) : null) ?? error.userMessage;
       return NextResponse.json(
-        { error: error.userMessage, code: error.code },
+        { error: message, code: error.code },
         { status: error.httpStatus },
       );
     }

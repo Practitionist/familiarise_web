@@ -20,6 +20,13 @@ import { assertEarningStatusTransitionLegal } from "./earning-status";
 
 export type EarningsSide = "consultant" | "org";
 
+/**
+ * A held top-up: the correlation id of the event a refund door records when
+ * another door's owed refund held its own, and the source of the OPERATOR hold
+ * it places (`owed-already-held:<payment>:<door key>`).
+ */
+export const OWED_ALREADY_HELD_PREFIX = "owed-already-held:";
+
 export type EarningsHoldDb = Pick<
   Tx,
   "consultantEarnings" | "organizationEarnings" | "earningsHold"
@@ -211,6 +218,8 @@ export interface ReleaseMatch {
   reasons: EarningsHoldReason[];
   /** Omitted: every active hold of those reasons. */
   sourceRef?: string;
+  /** Holds whose source starts with this stay: another owner releases them. */
+  exceptSourceRefPrefix?: string;
 }
 
 export interface ReleaseOutcome {
@@ -248,6 +257,9 @@ export async function releaseEarningsHolds(
       ...rail.holdWhere(ids),
       reason: { in: match.reasons },
       ...(match.sourceRef !== undefined && { sourceRef: match.sourceRef }),
+      ...(match.exceptSourceRefPrefix !== undefined && {
+        NOT: { sourceRef: { startsWith: match.exceptSourceRefPrefix } },
+      }),
       releasedAt: null,
     },
     select: {

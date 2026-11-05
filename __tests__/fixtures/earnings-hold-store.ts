@@ -31,7 +31,7 @@ export interface FakeHold {
 
 type Where = Record<string, unknown>;
 
-const OPS = ["in", "notIn", "not", "lte", "gte", "lt", "gt"];
+const OPS = ["in", "notIn", "not", "lte", "gte", "lt", "gt", "startsWith"];
 
 function isOp(v: unknown): v is Record<string, unknown> {
   return (
@@ -53,6 +53,11 @@ function matchValue(actual: unknown, filter: unknown): boolean {
   if ("in" in f && !(f.in as unknown[]).includes(actual)) return false;
   if ("notIn" in f && (f.notIn as unknown[]).includes(actual)) return false;
   if ("not" in f && actual === f.not) return false;
+  if (
+    "startsWith" in f &&
+    !(typeof actual === "string" && actual.startsWith(String(f.startsWith)))
+  )
+    return false;
   const t = actual instanceof Date ? actual.getTime() : (actual as number);
   const n = (x: unknown) => (x instanceof Date ? x.getTime() : (x as number));
   if ("lte" in f && (actual === null || actual === undefined || t > n(f.lte)))
@@ -86,6 +91,10 @@ export function createEarningsHoldStore<
       if (filter === undefined) continue;
       if (key === "OR") {
         if (!(filter as Where[]).some((w) => matches(row, w, fk))) return false;
+        continue;
+      }
+      if (key === "NOT") {
+        if (matches(row, filter as Where, fk)) return false;
         continue;
       }
       if (key === "holds" && fk) {

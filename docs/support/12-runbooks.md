@@ -4,7 +4,7 @@ type: how-to
 band: domain
 audience: sde2
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-04
 ---
 
 # Support runbooks
@@ -40,6 +40,66 @@ Also look for a refund keyed to the recommendation that is not yet linked: `SELE
 **Verify.** The query returns no row for the recommendation, the case timeline shows `RECOMMENDATION_VOIDED` or a live refund, and the decision can be recorded.
 
 **Prevention.** [Money remedies](05-money-remedies.md#recommendation-to-refund).
+
+## A refund held by another door's owed refund
+
+**Symptom.** The Refunds tab lists "Payment … (…): Another refund is still owed on this payment; refund the remaining ₹X by hand, then release the hold." (or, with nothing left to freeze, without the hold clause), and the expert's earnings on that payment may show HELD. A later row "the top-up is settled; release the hold on its earnings" means only the hold is left.
+
+**Confirm.**
+
+```sql
+SELECT e."correlationId", e.context->>'owedPaise' AS owed_paise, e."createdAt",
+       p."refundOwedKey", p."refundOwedPaise"
+FROM system_events e
+JOIN "Payment" p ON p.id = e.context->>'paymentId'
+WHERE e.category = 'PAYMENT' AND e."correlationId" LIKE 'owed-already-held:%'
+  AND e."createdAt" >= now() - interval '180 days'
+ORDER BY e."createdAt";
+
+SELECT "consultantEarningsId", "organizationEarningsId", "releasedAt"
+FROM "EarningsHold"
+WHERE reason = 'OPERATOR' AND "sourceRef" = '<correlationId>';
+```
+
+**Impact.** A door (a rejection, a moderation cancel, a no-show, a maintenance freeze or an overage credit-back) ended the booking while another door's partial refund already held the payment, so its own refund of ₹X was never stamped. A full-balance holding refund already covers the door, so it records nothing. The buyer is short ₹X until someone refunds it, and the payment's unpaid earnings stay held. A class-wide cancel never gets here: it refuses (next runbook).
+
+**How the row closes.** It reads money, not the hold: it is open while the refunds that landed on the payment after the event cover less than ₹X and the payment still has a refundable balance. The holding refund's own refund never counts, nor does the share of a hand refund that settled the holding refund first. When two doors lost on one payment, later refunds pay the oldest row first. Any other later refund on the payment counts, whatever its reason. Releasing an earning from the Earnings tab leaves a top-up's hold alone (it answers "A refund top-up on this payment holds this earning…"); once the money is covered the row offers **Release hold**, which releases only that top-up's hold, and waits while another top-up on the same payment is unpaid. While the older refund's marker is still on the payment, the row says so and presets **Issue refund** to the older refund plus ₹X, because a hand refund settles the older one first. The list reads the last 180 days oldest first, skipping settled top-ups, until it has 500 open rows, then says more are waiting; a row whose hold is still active is listed at any age. Events written before this rule recorded an amount, or older than the window with no hold, are not listed: run the triage query below once after deploy.
+
+**Fix.**
+
+1. Check the payment's refunds: if the first door's refund and any later refunds already cover what the buyer is owed, skip to step 3.
+2. Refund through **Issue refund** on the row: the amount is preset to ₹X, or to the older refund plus ₹X while the older refund's marker is still on the payment (a hand refund settles it first). If the older refund is still being sent, wait for it: a hand refund is refused while it is in flight.
+3. Press **Release hold** on the row, with a reason. It releases only this top-up's hold; it is refused while another top-up on the payment is still owed or a refund or dispute is open.
+
+**Verify.** The row leaves the Refunds tab, and the earnings return to their prior status.
+
+**Triage of events from before the rule (read-only, once).**
+
+```sql
+SELECT e."correlationId", e."createdAt", e.context
+FROM system_events e
+WHERE e."correlationId" LIKE 'owed-already-held:%'
+  AND (e.context->>'owedPaise' IS NULL OR e."createdAt" < now() - interval '180 days')
+ORDER BY e."createdAt";
+```
+
+For each, compare the payment's refunds with what the door owed (the event's message names the holding refund); refund any shortfall through **Issue refund**.
+
+**Prevention.** None needed: the door records and holds automatically. See [refunds](../finance/30-refunds-disputes/01-refunds.md#5-when-a-refund-does-not-finish).
+
+## A class or webinar won't cancel: a seat's refund is still owed
+
+**Symptom.** The class-wide cancel (money console, `cancel-series`), the admin whole-event refund, or the host's cancel answers 409. An operator reads "Seat payment … has a refund still owed from another action (…); settle it from Refunds → Needs human, then cancel the class again." (`REFUND_NEEDS_SUPPORT`; the admin whole-event refund says "then run this again") or "Seat payment … has a refund from another action (…) still being sent; wait for it to finish, then cancel the class again. If it fails, settle it by hand from Refunds → Needs human." (`REFUND_IN_PROGRESS`). A host reads "This class couldn't be cancelled yet: a refund on one of its seats …". A moderation ban lists the class under `failures` with the operator line ending "then re-run the ban's bulk cancel".
+
+**Impact.** Nothing was committed: the class, its sessions, its seats and every other seat's payment are as they were, and the class stays live. A whole-event cancel must own every seat's refund marker, so it waits for the older refund rather than leaving one seat's refund owned by nobody.
+
+**Fix.**
+
+1. `REFUND_NEEDS_SUPPORT`: the older refund spent its retries or a dispute holds it. Settle it from the Refunds tab's stuck owed refund row (**Issue refund**), or resolve the dispute first.
+2. `REFUND_IN_PROGRESS`: the older refund is still being sent or retrying (up to about 5 hours). Wait for it; a hand refund is refused while its refund is in flight (`OWED_REFUND_IN_FLIGHT`). If it fails for good, it appears under Refunds → Needs human: settle it there.
+3. Cancel the class again from the same door. For a moderation ban, re-run the ban's bulk cancel from the moderation console once the refund settles: a refused class is not retried automatically, and each step of the sweep is idempotent.
+
+**Verify.** The cancel answers 200 and every seat's refund carries the event's own key (`event-cancel:<eventId>:pay:<paymentId>`).
 
 ## Failed evidence purge
 
