@@ -54,6 +54,12 @@ const CI_LEAN_BUILD = process.env.CI_LEAN_BUILD === "true";
 const SKIP_BUILD_CHECKS =
   (process.env.NETLIFY === "true" || CI_LEAN_BUILD) && !STRICT_BUILD;
 
+// Sentry source maps are built for production deploys only; previews, branch
+// deploys and CI's lean build skip them.
+const SENTRY_SOURCE_MAPS =
+  !CI_LEAN_BUILD &&
+  !(process.env.NETLIFY === "true" && process.env.CONTEXT !== "production");
+
 /**
  * CSP violations go straight to Sentry's security-report endpoint, derived
  * from the DSN (`https://<key>@<host>/<project>` →
@@ -347,6 +353,15 @@ const nextConfig = {
     staleTimes: { dynamic: 30, static: 180 },
   },
 
+  // Sentry fills only an unset devtool. Maps without sourcesContent keep the
+  // production build inside the 6144 MB heap; frames still map to file and line.
+  webpack(config, { dev }) {
+    if (SENTRY_SOURCE_MAPS && !dev) {
+      config.devtool = "hidden-nosources-source-map";
+    }
+    return config;
+  },
+
   // `transpilePackages: ["date-fns"]` was removed 2026-09-24: date-fns is 4.1.0
   // with a proper exports map, and Next 15 already carries it in the default
   // optimizePackageImports list — transpiling only re-processed what the
@@ -586,18 +601,12 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // For all available options, see:
   // https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
 
-  // Upload a larger set of source maps for prettier stack traces (increases build time)
-  // #1792 — off on Netlify: the 2026-09-21 build OOM'd (exit 137, Killed at
-  // static page 211/282) with heap already at the 8 GB container ceiling, so
-  // container RSS — not heap — is the constraint. The widened client upload
-  // holds the full client source-map set in memory during the finalize phase;
-  // CI/dev keeps it for stack-trace quality, Netlify skips it for survival.
-  // Skip generating hidden-source-map buffers on non-production Netlify previews to stay under the 8 GB container RSS cap.
+  // The map style is set by the `webpack` hook in nextConfig.
   sourcemaps: {
-    // Netlify's 8 GB builder can no longer fit source-map generation for this
-    // bundle (V8 OOM past the 6144 MB heap), so no Netlify build emits them.
-    disable: CI_LEAN_BUILD || process.env.NETLIFY === "true",
+    disable: !SENTRY_SOURCE_MAPS,
   },
+  // The widened client upload holds every client map in memory at finalize,
+  // which the 8 GB Netlify build container cannot afford.
   widenClientFileUpload: process.env.NETLIFY !== "true" && !CI_LEAN_BUILD,
   // A CI PR build is never deployed, so it must not create or finalize a
   // Sentry release (it was doing so — and failing — on every PR run).
