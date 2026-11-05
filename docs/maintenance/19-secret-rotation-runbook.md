@@ -276,15 +276,14 @@ flowchart TD
        https://uptime.betterstack.com/api/v2/monitors/5189236 | jq '.data.attributes | {paused, status, names: [.request_headers[].name]}'
    ```
 
-6. **Sentry header.** A read of the detector shows the header as a name and value pair at `dataSources[0].queryObj.headers`, with the value in plain text, so always filter. The repository's decision records that the 2026-11-05 update used `sentry api /organizations/practitionist/detectors/7689936/ -X PUT --input -` with the body on standard input ([detector rollout decision](../decisions/2026-11-05-detector-rollout-and-redundancy.md)). Sentry's public documentation does not document the detector write schema **(vendor docs silent)**, and the exact body of that earlier call is not recorded, so treat the body shape below as unverified. The safest form is read, replace one header, write back, without printing:
+6. **Sentry header.** A read of the detector shows the header as a name and value pair at `dataSources[0].queryObj.headers`, with the value in plain text, so always filter. Sentry's public documentation does not describe the detector write schema **(vendor docs silent)**, but this call was run against the live detector on 2026-11-05 (HTTP success; the response echoed the new url, interval, timeout and one redacted header) and is the verified form. It builds the whole body in Python from the environment, so the value never reaches the shell history or the screen ([detector rollout decision](../decisions/2026-11-05-detector-rollout-and-redundancy.md)):
 
    ```bash
-   sentry api organizations/practitionist/detectors/7689936/ --json \
-     | python3 -I -c 'import sys,os,json;d=json.load(sys.stdin)["body"];q=d["dataSources"][0]["queryObj"];q["headers"]=[["Authorization","Bearer "+os.environ["NEW_VALUE"]]];print(json.dumps({"dataSources":[q]}))' \
-     | sentry api organizations/practitionist/detectors/7689936/ -X PUT --input -
+   python3 -I -c 'import json,os;print(json.dumps({"dataSources":[{"url":"https://familiarisenow.com/api/health/jobs","method":"GET","intervalSeconds":300,"timeoutMs":60000,"headers":[["Authorization","Bearer "+os.environ["NEW_VALUE"]]],"traceSampling":False,"responseCaptureEnabled":False}]}))' \
+     | sentry api /organizations/practitionist/detectors/7689936/ -X PUT --input -
    ```
 
-   Read the detector back with a filter (`enabled`, `intervalSeconds`, header names only). If the PUT is rejected, fall back to editing the header in the Sentry **Monitors** page; Sentry's docs advise against secrets in monitor headers, which is why this is an accepted risk (see the decision, R5).
+   Read the detector back with a filter (`enabled`, `intervalSeconds`, header names only). If the PUT is rejected (for example after a Sentry API change), fall back to editing the header in the Sentry **Monitors** page; Sentry's docs advise against secrets in monitor headers, which is why this is an accepted risk (see the decision, R5).
 
 7. **Resume Better Stack.** `PATCH ... {"paused": false}`, then read back and require `paused: false` and status `up` after the next check.
 8. **Verify.** Call the probe with the new value, building the header without a literal secret:
