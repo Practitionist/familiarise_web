@@ -542,7 +542,13 @@ in the approval's commit, adds k to `Subscription.sessionsRefunded` by CAS on
 the count read (`removePlanSessions`, `lib/booking/plan-refund.ts`). Those
 sessions leave the schedulable total (`sessionsTotal − sessionsRefunded`), so
 the expert never delivers a session whose earnings were already reversed. A
-void of that approval puts them back (`restorePlanSessions`).
+void of that approval puts them back (`restorePlanSessions`) unless the plan
+already completed or was cancelled. Only an open plan (live, before its end, no
+owed marker) gives up sessions. Every other door nets them: the cancel quote
+(`quoteUnusedSessions`) owes `T − sessionsRefunded − delivered` sessions over a
+denominator of `T`, and `alreadyRefundedPaise` adds money-only support refunds;
+the plan end waits while such a remedy's refund is failed or unsent and refuses
+its retry once settled.
 
 At the plan end the `settle-cancelled-sessions` sweep
 (`scripts/appointments/settle-cancelled-sessions.ts`) settles once: every
