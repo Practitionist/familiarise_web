@@ -77,6 +77,29 @@ const rows = [
     },
   },
   {
+    id: "rec-waiting",
+    caseId: "case-5",
+    paymentId: "pay-5",
+    amountPaise: 180_000,
+    sessionsRemoved: 9,
+    decidedAt: new Date("2026-11-01T10:00:00Z"),
+    createdAt: new Date("2026-11-01T09:00:00Z"),
+    refund: { status: "FAILED" },
+    supportCase: { referenceNumber: "FAM-2026-000013" },
+    payment: {
+      appointment: {
+        subscription: {
+          id: "sub-5",
+          status: "APPROVED",
+          planEndsAt: new Date("2026-11-01T00:00:00Z"),
+          schedulingPeriodStartsAt: new Date("2026-05-01T00:00:00Z"),
+          schedulingTimezone: "UTC",
+          subscriptionPlan: { durationInMonths: 6 },
+        },
+      },
+    },
+  },
+  {
     id: "rec-settled",
     caseId: "case-4",
     paymentId: "pay-4",
@@ -120,6 +143,9 @@ it("says how many sessions a void puts back on the plan", async () => {
   );
   expect(byId["rec-one"]).toMatch(
     /was never sent\. Retry or void it on the case\. 1 session goes back to the plan if you void this refund\.$/,
+  );
+  expect(byId["rec-waiting"]).toBe(
+    "Support case FAM-2026-000013: an approved refund of ₹1800.00 failed. Retry or void it on the case. 9 sessions go back to the plan if you void this refund. Plan end for plan sub-5 is waiting for refund rec-waiting: retry it or void it.",
   );
   expect(byId["rec-settled"]).toBe(
     "Support case FAM-2026-000012: an approved refund of ₹1800.00 failed. Retry or void it on the case. The plan settled without these sessions, so this refund is still owed: retry it.",

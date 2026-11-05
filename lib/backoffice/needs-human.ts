@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { occurrenceRefundKey } from "@/lib/booking/class-sessions";
 import { SUPPORT_REFUND_SEND_GRACE_MS } from "@/lib/support/money-policy";
 import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/booking/transitions";
+import { subscriptionIsOver } from "@/lib/booking/entitlement";
 import { MAX_REFUND_OWED_ATTEMPTS } from "@/lib/payments/operations/refund-owed";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { PARTIAL_CREDIT_CLOSED_PREFIX } from "@/lib/payments/operations/credit-plan-return";
@@ -206,16 +207,24 @@ type UnsentPlan = {
 
 /**
  * What ops must know about a session-count remedy's plan: a live plan gets the
- * sessions back on a void; a settled plan was paid without them, so the refund
- * is still owed.
+ * sessions back on a void, and once over its end refund waits on this one; a
+ * settled plan was paid without them, so the refund is still owed.
  */
-function planNote(sessionsRemoved: number | null, plan: UnsentPlan): string {
+function planNote(
+  sessionsRemoved: number | null,
+  plan: UnsentPlan,
+  recommendationId: string,
+  now: Date,
+): string {
   if (!sessionsRemoved || !plan) return "";
   if (!LIVE_SUBSCRIPTION_STATUSES.some((s) => s === plan.status))
     return " The plan settled without these sessions, so this refund is still owed: retry it.";
-  return sessionsRemoved === 1
-    ? " 1 session goes back to the plan if you void this refund."
-    : ` ${sessionsRemoved} sessions go back to the plan if you void this refund.`;
+  const back =
+    sessionsRemoved === 1
+      ? " 1 session goes back to the plan if you void this refund."
+      : ` ${sessionsRemoved} sessions go back to the plan if you void this refund.`;
+  if (!subscriptionIsOver(plan, now)) return back;
+  return `${back} Plan end for plan ${plan.id} is waiting for refund ${recommendationId}: retry it or void it.`;
 }
 
 /**
@@ -269,7 +278,7 @@ export async function readUnsentSupportRefunds(now = new Date()) {
   });
   return rows.map((row) => ({
     id: row.id,
-    message: `Support case ${row.supportCase.referenceNumber}: an approved refund of ₹${(Number(row.amountPaise) / 100).toFixed(2)} ${row.refund ? "failed" : "was never sent"}. Retry or void it on the case.${planNote(row.sessionsRemoved, row.payment.appointment?.subscription ?? null)}`,
+    message: `Support case ${row.supportCase.referenceNumber}: an approved refund of ₹${(Number(row.amountPaise) / 100).toFixed(2)} ${row.refund ? "failed" : "was never sent"}. Retry or void it on the case.${planNote(row.sessionsRemoved, row.payment.appointment?.subscription ?? null, row.id, now)}`,
     createdAt: row.decidedAt ?? row.createdAt,
     paymentId: row.paymentId,
     occurrenceId: null,
