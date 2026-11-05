@@ -5,43 +5,23 @@
  *  - a seat still in the class gets every undelivered session back.
  * Real Postgres, the real cancel route, a refund door that writes Refund rows.
  */
+import "./harness-cancel-route";
 import prisma from "../../../lib/prisma";
 import { HOUR_MS, seedHost, type SeededHost } from "./harness";
-
-jest.mock("../../../lib/auth-helpers", () =>
-  jest.requireActual("./harness-session").authAsSessionUser(),
-);
-jest.mock("../../../lib/rate-limit", () =>
-  jest.requireActual("./harness-session").rateLimitOff(),
-);
-jest.mock("../../../lib/novu", () =>
-  jest.requireActual("../../fixtures/noop-module").noopModule(),
-);
-jest.mock("../../../lib/stream/access-revocation", () =>
-  jest.requireActual("../../fixtures/noop-module").noopModule(),
-);
 
 import { occurrenceRefundsPaise } from "../../../lib/booking/class-series";
 import { leaveEventSeat } from "../../../lib/booking/seat-leave";
 import {
+  CLASS_UNDER_WAY as SHAPE,
   hostCancels as cancelAsHost,
   seatClassBuyer,
   seedClassUnderWay as seedClass,
-  type ClassShape,
 } from "./harness-class-series";
-import { refundOnRows, refundedPaise } from "./harness-refunds";
-
-const refundDoor = jest.requireMock(
-  "../../../lib/payments/operations/booking-refund",
-) as { refundBookingPayment: jest.Mock };
+import { refundedPaise, refundOnRowsEachTest } from "./harness-refunds";
 
 const DAY_MS = 24 * HOUR_MS;
-/** A class of ten sessions, three already delivered, bought twenty days ago. */
-const SHAPE: ClassShape = { price: 10_000, sessions: 10, delivered: 3 };
 
-beforeEach(() => {
-  refundDoor.refundBookingPayment.mockImplementation(refundOnRows);
-});
+refundOnRowsEachTest();
 
 const seedClassUnderWay = (host: SeededHost) => seedClass(host, SHAPE);
 const seatBuyer = (cls: { appointmentId: string }) =>

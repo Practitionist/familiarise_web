@@ -7,45 +7,23 @@
  * deadlocking against the history rows their writes insert, so the exit email
  * goes out once and a miss racing the whole-event cancel lets both commit. Real Postgres, the real seat-leave door.
  */
+import "./harness-cancel-route";
 import prisma from "../../../lib/prisma";
 import { HOUR_MS, seedHost } from "./harness";
-
-jest.mock("../../../lib/auth-helpers", () =>
-  jest.requireActual("./harness-session").authAsSessionUser(),
-);
-jest.mock("../../../lib/rate-limit", () =>
-  jest.requireActual("./harness-session").rateLimitOff(),
-);
-jest.mock("../../../lib/novu", () =>
-  jest.requireActual("../../fixtures/noop-module").noopModule(),
-);
-jest.mock("../../../lib/stream/access-revocation", () =>
-  jest.requireActual("../../fixtures/noop-module").noopModule(),
-);
 
 import type { Tx } from "../../../lib/prisma";
 import { onClassSessionVoided } from "../../../lib/booking/class-sessions";
 import { transitionOccurrenceCompletion } from "../../../lib/booking/transitions";
 import { leaveEventSeat } from "../../../lib/booking/seat-leave";
 import {
+  CLASS_UNDER_WAY as SHAPE,
   hostCancels,
   seatClassBuyer,
   seedClassUnderWay,
-  type ClassShape,
 } from "./harness-class-series";
-import { refundOnRows, refundedPaise } from "./harness-refunds";
+import { refundedPaise, refundOnRowsEachTest } from "./harness-refunds";
 
-const refundDoor = jest.requireMock(
-  "../../../lib/payments/operations/booking-refund",
-) as { refundBookingPayment: jest.Mock };
-
-/** Ten sessions at ₹100, three already delivered: the exit right needs 3 misses. */
-const SHAPE: ClassShape = { price: 10_000, sessions: 10, delivered: 3 };
-
-beforeEach(() => {
-  refundDoor.refundBookingPayment.mockReset();
-  refundDoor.refundBookingPayment.mockImplementation(refundOnRows);
-});
+refundOnRowsEachTest();
 
 const exit = (classId: string, userId: string) =>
   leaveEventSeat({

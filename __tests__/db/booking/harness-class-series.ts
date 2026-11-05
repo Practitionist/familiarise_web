@@ -11,6 +11,13 @@ const DAY_MS = 24 * HOUR_MS;
 
 export type ClassShape = { price: number; sessions: number; delivered: number };
 
+/** Ten sessions at ₹100, three already delivered: the exit right needs 3 misses. */
+export const CLASS_UNDER_WAY: ClassShape = {
+  price: 10_000,
+  sessions: 10,
+  delivered: 3,
+};
+
 /** A class of `sessions`, the first `delivered` already held ten days ago, the rest from two days out. */
 export async function seedClassUnderWay(host: SeededHost, shape: ClassShape) {
   const now = Date.now();

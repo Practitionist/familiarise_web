@@ -7,21 +7,9 @@
  * pays the remainder exactly once. A cancel whose inline drive dies after the
  * commit leaves only its own markers, which a later drive pays exactly once.
  */
+import "./harness-cancel-route";
 import prisma from "../../../lib/prisma";
 import { seedHost } from "./harness";
-
-jest.mock("../../../lib/auth-helpers", () =>
-  jest.requireActual("./harness-session").authAsSessionUser(),
-);
-jest.mock("../../../lib/rate-limit", () =>
-  jest.requireActual("./harness-session").rateLimitOff(),
-);
-jest.mock("../../../lib/novu", () =>
-  jest.requireActual("../../fixtures/noop-module").noopModule(),
-);
-jest.mock("../../../lib/stream/access-revocation", () =>
-  jest.requireActual("../../fixtures/noop-module").noopModule(),
-);
 
 import { cancelFutureEngagementsForUser } from "../../../lib/moderation/cancel-user-engagements";
 import {
@@ -30,26 +18,25 @@ import {
   REFUND_OWED_SELECT,
 } from "../../../lib/payments/operations/refund-owed";
 import {
+  CLASS_UNDER_WAY as SHAPE,
   hostCancels,
   seatClassBuyer,
   seedClassUnderWay,
-  type ClassShape,
 } from "./harness-class-series";
-import { refundOnRows, refundedPaise } from "./harness-refunds";
+import {
+  refundOnRows,
+  refundedPaise,
+  refundOnRowsEachTest,
+} from "./harness-refunds";
 
 const refundDoor = jest.requireMock(
   "../../../lib/payments/operations/booking-refund",
 ) as { refundBookingPayment: jest.Mock };
 
-/** Ten sessions at ₹100, three already delivered. */
-const SHAPE: ClassShape = { price: 10_000, sessions: 10, delivered: 3 };
 const UNIT = SHAPE.price / SHAPE.sessions;
 const UNDELIVERED = UNIT * (SHAPE.sessions - SHAPE.delivered);
 
-beforeEach(() => {
-  refundDoor.refundBookingPayment.mockReset();
-  refundDoor.refundBookingPayment.mockImplementation(refundOnRows);
-});
+refundOnRowsEachTest();
 
 const seatBuyer = (cls: { appointmentId: string }) =>
   seatClassBuyer(cls, SHAPE);
