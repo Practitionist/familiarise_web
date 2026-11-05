@@ -13,7 +13,7 @@ import {
 } from "../../../lib/booking/plan-refund";
 import { freezeSoldTerms } from "../../../lib/booking/sold-terms";
 import { handleSubscriptionCheckout } from "../../../lib/payments/checkout/handlers/subscription";
-import { weeksPlanEndOf } from "../../../lib/booking/entitlement";
+import { planEndOf, weeksPlanEndOf } from "../../../lib/booking/entitlement";
 import { checkoutSchema } from "../../../schemas/checkout";
 import { resolveBookingRefundContext } from "../../../lib/booking/cancellation-scope";
 import { quoteBookingRefund } from "../../../lib/payments/operations/cancellation-policy";
@@ -273,6 +273,7 @@ describe("frozen purchase terms", () => {
           sessionsPerWeek: 5,
           sessionDurationInHours: 2,
           totalSessions: 20,
+          durationInMonths: 3,
         },
       });
     });
@@ -283,6 +284,7 @@ describe("frozen purchase terms", () => {
         sessionsPerWeek: true,
         sessionMinutes: true,
         sessionsTotal: true,
+        planEndsAt: true,
       },
     });
     const byId = new Map(rows.map((r) => [r.id, r]));
@@ -291,6 +293,11 @@ describe("frozen purchase terms", () => {
       sessionMinutes: 60,
       sessionsTotal: 8,
     });
+    // The end is fixed from the 1 month it was sold at, not the edit's 3.
+    const legacyRow = byId.get(legacy.id);
+    expect(legacyRow?.planEndsAt).toEqual(
+      planEndOf(legacy.schedulingPeriodStartsAt, 1, legacy.schedulingTimezone),
+    );
     expect(byId.get(frozen.id)).toMatchObject({
       sessionsPerWeek: 1,
       sessionMinutes: 30,

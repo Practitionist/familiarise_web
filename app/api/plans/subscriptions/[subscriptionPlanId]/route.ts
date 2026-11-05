@@ -163,6 +163,20 @@ export async function PUT(
       validatedData.durationInWeeks === undefined
         ? existingPlan.durationInWeeks
         : validatedData.durationInWeeks;
+    // A sold plan keeps the unit it was sold in; a new unit is a new plan.
+    if (
+      (existingPlan.durationInWeeks === null) !== (durationInWeeks === null) &&
+      (await prisma.subscription.count({ where: { subscriptionPlanId } })) > 0
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Clients have bought this plan, so its length stays in the unit it was sold in. Publish a new plan to sell it in weeks.",
+          code: "PLAN_LENGTH_UNIT_LOCKED",
+        },
+        { status: 409 },
+      );
+    }
     const derived = termsChange
       ? {
           durationInWeeks,
