@@ -127,9 +127,8 @@ resellers) tune it down.
 ### `locale`
 
 BCP-47 tag (e.g. `en-IN`, `en-US`, `fr-CA`). Drives `Intl.NumberFormat`
-
-- `Intl.DateTimeFormat` in the **cross-org workspace shell only** —
-  per-org pages render in the org's own region defaults.
+and `Intl.DateTimeFormat` in the **cross-org workspace shell only** —
+per-org pages render in the org's own region defaults.
 
 The settings UI offers a four-tag preset list (en-IN, en-US, en-GB,
 hi-IN) plus a `Custom…` escape hatch for operators with unusual locales.
