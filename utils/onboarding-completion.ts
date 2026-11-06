@@ -6,6 +6,7 @@ import {
   SIGNUP_PURPOSES,
   type PurposeCode,
 } from "@/lib/compliance/purpose-codes";
+import { subscribeForMarketingConsent } from "@/lib/waitlist/consent-link";
 import type { OnboardingConsent } from "./onboarding";
 
 /**
@@ -33,7 +34,10 @@ export async function claimOnboardingCompletion(
   return count > 0;
 }
 
-/** Sign-up purposes, plus marketing when ticked, each recorded at most once. */
+/**
+ * Sign-up purposes, plus marketing when ticked, each recorded at most once.
+ * Marketing consent also subscribes the account's address to the newsletter.
+ */
 export async function recordOnboardingConsent(
   tx: Tx,
   userId: string,
@@ -42,6 +46,16 @@ export async function recordOnboardingConsent(
   const purposes: PurposeCode[] = [...SIGNUP_PURPOSES];
   if (consent.marketingConsent) purposes.push(PURPOSE_CODES.MARKETING_COMMS);
   await ensureConsentPurposes(tx, userId, purposes);
+  if (!consent.marketingConsent) return;
+  const user = await tx.user.findUniqueOrThrow({
+    where: { id: userId },
+    select: { email: true },
+  });
+  await subscribeForMarketingConsent(tx, {
+    userId,
+    email: user.email,
+    now: new Date(),
+  });
 }
 
 /** An org member (invite or SSO JIT) is onboarded by the gate, not the B2C wizard. */

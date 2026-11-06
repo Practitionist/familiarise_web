@@ -17,7 +17,13 @@ jest.mock("../../lib/compliance/dpdp", () => ({
   ensureConsentPurposes: jest.fn(),
 }));
 
-const tx = { user: { updateMany: jest.fn() } };
+const tx = {
+  user: {
+    updateMany: jest.fn(),
+    findUniqueOrThrow: jest.fn(async () => ({ email: "Invitee@Example.com" })),
+  },
+  waitlist: { upsert: jest.fn() },
+};
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -132,6 +138,15 @@ describe("completeOnboardingGateAction", () => {
         "SESSION_BOOKING",
         "MARKETING_COMMS",
       ]),
+    );
+    expect(tx.waitlist.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { email: "invitee@example.com" },
+        update: expect.objectContaining({
+          userId: USER.id,
+          status: "SUBSCRIBED",
+        }),
+      }),
     );
   });
 

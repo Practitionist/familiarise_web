@@ -102,7 +102,6 @@ export function ConsentSection() {
             body: JSON.stringify({
               purposeCodes: [vars.purposeCode],
               language: "en-IN",
-              version: 1,
             }),
           })
         : await fetch(
@@ -177,7 +176,6 @@ export function ConsentSection() {
             body: JSON.stringify({
               purposeCodes: [vars.purposeCode],
               language: "en-IN",
-              version: 1,
             }),
           })
         : await fetch(

@@ -30,6 +30,7 @@ import { buildConsentArtifact, withdrawConsent } from "@/lib/compliance/dpdp";
 import {
   PURPOSE_CODES,
   SIGNUP_PURPOSES,
+  TERMS_VERSION,
   normalizePurposeCode,
   type PurposeCode,
 } from "@/lib/compliance/purpose-codes";
@@ -52,7 +53,6 @@ const LanguageSchema = z
 const GrantBodySchema = z.object({
   purposeCodes: z.array(z.string().min(1).max(64)).min(1).max(10),
   language: LanguageSchema,
-  version: z.coerce.number().int().min(1).default(1),
 });
 
 const WithdrawQuerySchema = z.object({
@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
     purposeCodes,
     language: parsed.data.language,
     consentManager: null,
-    version: parsed.data.version,
+    version: TERMS_VERSION,
   });
 
   try {

@@ -24,7 +24,12 @@ jest.mock("../../lib/compliance/dpdp", () => ({
 }));
 
 const tx = {
-  user: { updateMany: jest.fn(), update: jest.fn() },
+  user: {
+    updateMany: jest.fn(),
+    update: jest.fn(),
+    findUniqueOrThrow: jest.fn(async () => ({ email: "user@example.com" })),
+  },
+  waitlist: { upsert: jest.fn() },
   consulteeProfile: { upsert: jest.fn() },
 };
 jest.mock("../../lib/prisma", () => ({

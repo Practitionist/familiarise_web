@@ -89,6 +89,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import prisma from "../../lib/prisma";
+import { TERMS_VERSION } from "../../lib/compliance/purpose-codes";
 import {
   GET as getConsent,
   POST as postConsent,
@@ -191,6 +192,8 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
             userId: "user_dpdp_1",
             dataFiduciary: "Familiarise",
             purposeCodes: ["MARKETING_COMMS"],
+            // The server stamps the current notice, whatever the client sends.
+            version: TERMS_VERSION,
           }),
         }),
       );

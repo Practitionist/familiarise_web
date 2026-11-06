@@ -41,8 +41,11 @@ export const MESSAGE_REVIEW_NOTICE =
 export const MESSAGE_REVIEW_ARTICLE_HREF =
   "/support/help/how-we-review-messages";
 
-/** Terms and privacy-notice version written to every `ConsentArtifact.version`. */
-export const TERMS_VERSION = 2;
+/**
+ * Terms and privacy-notice version written to every `ConsentArtifact.version`;
+ * bump it when consent text changes. Consent is checked by purpose, so older grants stay valid.
+ */
+export const TERMS_VERSION = 3;
 
 /**
  * The purposes a sign-up grants. The SSO join gate and the invite-accept
@@ -84,7 +87,7 @@ export const PURPOSE_CODE_META: Record<
   [PURPOSE_CODES.MARKETING_COMMS]: {
     label: "Marketing communications",
     description:
-      "Send you marketing and promotional messages about products and offers.",
+      "Send you marketing emails, including the Familiarise newsletter, about our products, offers and updates.",
   },
   [PURPOSE_CODES.ANALYTICS]: {
     label: "Analytics",

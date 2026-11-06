@@ -39,6 +39,7 @@ import {
   withdrawConsent,
 } from "@/lib/compliance/dpdp";
 import {
+  TERMS_VERSION,
   normalizePurposeCode,
   type PurposeCode,
 } from "@/lib/compliance/purpose-codes";
@@ -131,7 +132,6 @@ const CreateBodySchema = z.object({
   purposeCodes: z.array(z.string().min(1).max(64)).min(1).max(20),
   language: LanguageSchema,
   consentManager: z.string().min(1).max(120).nullable().optional(),
-  version: z.coerce.number().int().min(1),
 });
 
 const QuerySchema = z.object({
@@ -293,7 +293,7 @@ export async function POST(
     purposeCodes,
     language: body.language,
     consentManager: body.consentManager ?? null,
-    version: body.version,
+    version: TERMS_VERSION,
   });
 
   const [consent] = await prisma.$transaction([
@@ -317,7 +317,7 @@ export async function POST(
           membershipId: member.id,
           purposeCodes,
           language: body.language,
-          version: body.version,
+          version: TERMS_VERSION,
           hash: draft.hash,
         },
       },
