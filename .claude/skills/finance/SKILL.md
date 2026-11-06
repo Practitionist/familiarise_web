@@ -27,6 +27,7 @@ This is the index for the finance domain: how money truth is written and proven 
 - Never release an earning while its payment has a `PENDING` refund or an owed-refund marker (`RELEASABLE_PAYMENT`); the marker is a hold that lifts only when a drive or a hand refund clears it.
 - Bill GST as principal supplier: 18% on the full price, platform invoices and credit notes, no Section 52 TCS. Book each supply's GST once; invoice journals cover only supplies without booking journals, and overages tax only their surcharge.
 - Pass the transaction client through every helper inside `$transaction`; global-client reads can deadlock at `PG_POOL_MAX=1`.
+- Render every email before the money transaction opens and only stage it inside; a notice's render failure never rolls back a capture, refund, ledger entry, payout or dunning claim (notification ADR decision 15).
 
 Detailed invariants and regime facts live in `references/doctrine.md`; verification procedures live in `references/verification.md`.
 
@@ -80,5 +81,6 @@ parked evidence, then recheck debt/order identity inside the claim transaction.
 The suspension budget starts at stage entry, independently of earlier reminders.
 Every dunning stage stages its bell and email inside the winning claim
 transaction (`stageOverdueNotices`, dedupe key `orgInvoice:<id>:overdue:<stage>`);
-a roster, read or render failure rolls the claim back and counts in `failed`.
+the email renders before the claim. A roster or read failure rolls the claim back
+and counts in `failed`; a render failure commits it with a `review:render_failed` row.
 Read `docs/maintenance/12-worker-recovery.md` for cadence, rotation and limits.

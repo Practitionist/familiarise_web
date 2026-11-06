@@ -37,6 +37,12 @@ Three facts shaped the answer:
 
     Go-live checklist §4.1 now lists every vendor-side setting to verify against the dashboards. The owner fixes the DNS and Netlify hygiene items there: the DMARC report-authorisation TXT on `practitionist.com`, the Netlify secret flags, the stale `dev`-context Resend key, and a sending-only Resend key.
 
+14. **Notifications never roll back a money or moderation write (2026-11-07).** A producer inside a payment, refund, payout, dunning or moderation transaction renders its React Email before the transaction opens and only inserts rows inside it: `prepare*Email` (built on `prepareBuiltSpec` in `lib/email/senders/shared.ts`) renders, and the matching `stage*Email(tx, args, pre)` stages through `stagePreparedEmails` (`lib/email/send-to-recipients.ts`). A pre-render is bound to the exact arguments that produced it, so when the inputs read inside the transaction differ (a roster changed, an occurrence moved) the stager renders inside the transaction instead.
+    - Where an input exists only inside the transaction (a restored credit amount, the payer a refund or dispute webhook finds, a payout's in-transaction read), the producer still renders there. A render failure then stages nothing and never throws, because `prepareRecipientEmails` catches it.
+    - A required notice (`traceRenderFailure: true`: refund processed and refund failed, the payment receipt, organisation billing receipts and the dunning overdue email) that fails to render leaves a body-less `FailedEmail` `DEAD_LETTER` row with `lastError` `review:render_failed` in the same transaction (`stageRenderFailure` in `lib/email/deliver.ts`). Needs attention and the ops digest count it, and replay refuses it (`render_failed` in `lib/email/replay-policy.ts`). It is not sent to Sentry, so a broken template in a sweep never reports once per row.
+    - The dunning claim therefore commits when its email fails to render. This supersedes decision 3 of `2026-11-01-dunning-atomic-notices.md`; a roster or read failure still rolls the claim back.
+    - Moderation notices render before the decision's transaction (`prepareModerationNotices` in `lib/moderation/side-effects.ts`) and are still staged inside it, so the outbox keeps its atomicity; the ban and suspension emails were already staged after commit. Bells (`stageBell`) render no React and stay inside the transaction.
+
 ## Alternatives considered
 
 - **Keep the mirror and fix its edge cases.** Rejected: a second copy of the flags can only disagree with Postgres, and the server check already makes it redundant.
@@ -57,3 +63,4 @@ Three facts shaped the answer:
 - Novu broadcasts for announcements and maintenance (`notifyGeneralAnnouncement` as a broadcast, `notifyMaintenanceScheduled`, `notifyMaintenanceStarted`, `notifyMaintenanceEnded`) are superseded by decisions 3 and 4. The `BROADCAST` outbox kind is unused.
 - Bell deferral by quiet hours is superseded by decision 2.
 - The workspace routing mode (`OrgWorkspaceProfile.notificationRoutingMode`, `NotificationRoutingSection.tsx`, `routingBlocks`) is superseded by decision 12. The column is unread until the next schema batch drops it; delete any reader that reappears.
+- `stageSpecRequired`, which threw on a render failure so the dunning claim rolled back, and `stageToRecipients`, which rendered inside the caller's transaction, are superseded by decision 15.
