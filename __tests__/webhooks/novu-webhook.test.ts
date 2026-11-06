@@ -139,7 +139,7 @@ describe("POST /api/webhooks/novu", () => {
 
     expect(res.status).toBe(200);
     expect(prisma.notificationOutbox.updateMany).toHaveBeenCalledWith({
-      where: { transactionId: "tx_svix_1", status: "PENDING" },
+      where: { transactionId: "tx_svix_1", status: "PENDING", kind: "SINGLE" },
       data: expect.objectContaining({
         status: "SENT",
         lastError: null,
@@ -250,7 +250,7 @@ describe("POST /api/webhooks/novu", () => {
 
     expect(res.status).toBe(200);
     expect(prisma.notificationOutbox.updateMany).toHaveBeenCalledWith({
-      where: { transactionId: "tx_sent_1", status: "PENDING" },
+      where: { transactionId: "tx_sent_1", status: "PENDING", kind: "SINGLE" },
       data: expect.objectContaining({
         status: "SENT",
         sentAt: expect.any(Date),
