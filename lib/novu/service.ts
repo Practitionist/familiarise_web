@@ -9,18 +9,12 @@ import { getAppUrl } from "@/lib/url";
 import { isNovuConfigured } from "./client";
 import {
   attemptTrigger,
-  stagePages,
   stageTrigger,
   type NovuPayload,
-  type StagedTrigger,
   type StageTriggerArgs,
   type TriggerResult,
 } from "./outbox";
-import {
-  bellAudience,
-  MAX_BELL_AUDIENCE,
-  resolveRecipientBellPolicy,
-} from "./policy";
+import { resolveRecipientBellPolicy } from "./policy";
 import type { NovuWorkflowId } from "./templates/types";
 import {
   NOVU_WORKFLOWS,
@@ -51,8 +45,6 @@ import {
   type DocumentReviewedPayload,
   type DocumentUploadedPayload,
   type FeedbackPayload,
-  type MaintenanceInput,
-  type MaintenancePayload,
   type ModerationWarningPayload,
   type OrgExpertRemovedPayload,
   type PaymentFailedInput,
@@ -552,19 +544,6 @@ function referralCreditsAppliedWire(
   };
 }
 
-function maintenanceWire(payload: MaintenanceInput): MaintenancePayload {
-  const { estimatedEnd: raw, ...rest } = payload;
-  const estimatedEnd = formatNotificationDateTime(
-    raw,
-    DEFAULT_NOTIFICATION_TIMEZONE,
-  );
-  return {
-    ...rest,
-    ...(estimatedEnd ? { estimatedEnd, estimatedEndIso: raw } : {}),
-    statusUrl: payload.statusUrl ?? `${getAppUrl()}/maintenance`,
-  };
-}
-
 // ============================================================================
 // Notification Senders
 // ============================================================================
@@ -826,42 +805,7 @@ export function notifyCollaboratorInviteExpired(
   );
 }
 
-// Maintenance & Compliance
-
-/**
- * Stages a platform maintenance notice for every user bell policy allows, as
- * MULTI pages keyed `maintenance:<windowId>:page:<n>` in the caller's
- * transaction, once per window and event: a later call stages nothing.
- * Returns null, staging nothing, over {@link MAX_BELL_AUDIENCE}.
- */
-export async function stageMaintenanceBells(
-  tx: Pick<Tx, "user" | "notificationOutbox" | "$executeRaw">,
-  workflowId:
-    | typeof W.MAINTENANCE_SCHEDULED
-    | typeof W.MAINTENANCE_STARTED
-    | typeof W.MAINTENANCE_ENDED,
-  input: MaintenanceInput,
-  windowId: string,
-): Promise<StagedTrigger[] | null> {
-  const entityRef = `maintenance:${windowId}`;
-  // Page keys hash their recipients, so a retried drain with a changed
-  // audience would stage the same notice again without this guard.
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`${entityRef}:${workflowId}`}, 0))`;
-  const staged = await tx.notificationOutbox.findFirst({
-    where: { entityRef, workflowId },
-    select: { id: true },
-  });
-  if (staged) return [];
-  const audience = await bellAudience(tx, workflowId, MAX_BELL_AUDIENCE);
-  if (audience === null) return null;
-  return stagePages(tx, {
-    workflowId,
-    recipients: audience,
-    payload: maintenanceWire(input),
-    dedupeKey: entityRef,
-    entityRef,
-  });
-}
+// Compliance
 
 export function notifyComplianceAlert(
   userIds: string | string[],

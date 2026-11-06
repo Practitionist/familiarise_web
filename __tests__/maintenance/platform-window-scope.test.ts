@@ -1,6 +1,3 @@
-jest.mock("../../lib/novu/service", () => ({
-  stageMaintenanceBells: jest.fn(),
-}));
 /**
  * @jest-environment node
  */

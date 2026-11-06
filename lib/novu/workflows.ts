@@ -103,10 +103,7 @@ export const NOVU_WORKFLOWS = {
   COLLABORATOR_DECLINED: "collaborator-declined",
   COLLABORATOR_INVITE_EXPIRED: "collaborator-invite-expired",
 
-  // Maintenance & Platform Compliance
-  MAINTENANCE_SCHEDULED: "maintenance-scheduled",
-  MAINTENANCE_STARTED: "maintenance-started",
-  MAINTENANCE_ENDED: "maintenance-ended",
+  // Platform Compliance
   COMPLIANCE_DEADLINE_ALERT: "compliance-deadline-alert",
 
   // Enterprise (org-scoped events)
@@ -596,16 +593,6 @@ export type CollaboratorRemovedPayload = {
 export type CollaboratorWithdrawnPayload = CollaboratorRemovedPayload & {
   collaboratorName: string;
 };
-
-export type MaintenancePayload = {
-  phase: string;
-  reason?: string;
-  estimatedEnd?: string;
-  estimatedEndIso?: string;
-  statusUrl?: string;
-};
-
-export type MaintenanceInput = Omit<MaintenancePayload, "estimatedEndIso">;
 
 // ============================================================================
 // Enterprise Payload Types

@@ -2,10 +2,7 @@
  * Maintenance Mode Library (Node.js reader & writer)
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { MaintenancePhase } from "@prisma/client";
-import { stageMaintenanceBells } from "@/lib/novu/service";
-import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 
 import prisma from "@/lib/prisma";
 import redis from "@/lib/redis";
@@ -70,97 +67,63 @@ export async function setMaintenanceState(
     config.estimatedEnd && !isNaN(new Date(config.estimatedEnd).getTime())
       ? new Date(config.estimatedEnd)
       : undefined;
-  let bellsSkipped = false;
-  const window = await prisma.$transaction(
-    async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('platform-maintenance'))`;
-      const activeWindow = await tx.maintenanceWindow.findFirst({
-        where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
-        orderBy: { createdAt: "desc" },
-      });
-
-      let row = activeWindow;
-      if (phase === MaintenancePhase.OFF) {
-        await tx.maintenanceWindow.updateMany({
-          where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
-          data: {
-            phase: MaintenancePhase.OFF,
-            endedAt: new Date(),
-            endedBy: config.endedBy,
-          },
-        });
-      } else if (activeWindow) {
-        row = await tx.maintenanceWindow.update({
-          where: { id: activeWindow.id },
-          data: {
-            phase,
-            reason: config.reason,
-            estimatedEnd: estimatedEndDate,
-            betterstackIncidentId: config.betterstackIncidentId,
-            ...(phase !== "OFFLINE" ? { offlineActivatedAt: null } : {}),
-          },
-        });
-      } else {
-        row = await tx.maintenanceWindow.create({
-          data: {
-            phase,
-            reason: config.reason,
-            startedAt: new Date(),
-            startedBy: config.startedBy,
-            estimatedEnd: estimatedEndDate,
-            bypassSecret: config.bypassSecret,
-            betterstackIncidentId: config.betterstackIncidentId,
-          },
-        });
-      }
-      // Staged for the relay; null means the audience is over the cap.
-      if (phase === MaintenancePhase.OFF && activeWindow) {
-        const staged = await stageMaintenanceBells(
-          tx,
-          NOVU_WORKFLOWS.MAINTENANCE_ENDED,
-          { phase: "OFF", reason: "Maintenance completed" },
-          activeWindow.id,
-        );
-        bellsSkipped = staged === null;
-      } else if (phase !== MaintenancePhase.OFF && !activeWindow && row) {
-        const staged = await stageMaintenanceBells(
-          tx,
-          NOVU_WORKFLOWS.MAINTENANCE_SCHEDULED,
-          {
-            phase,
-            ...(config.reason ? { reason: config.reason } : {}),
-            ...(config.estimatedEnd
-              ? { estimatedEnd: config.estimatedEnd }
-              : {}),
-          },
-          row.id,
-        );
-        bellsSkipped = staged === null;
-      }
-      const actor = config.startedBy ?? config.endedBy;
-      if (actor && row) {
-        await recordOpsAction(tx, {
-          actorUserId: actor,
-          actorRole: "ADMIN",
-          surface: "maintenance.manage",
-          action: "maintenance.transition",
-          targetKind: "MaintenanceWindow",
-          targetId: row.id,
-          reason: config.auditReason ?? config.reason ?? "Maintenance recovery",
-          before: { phase: activeWindow?.phase ?? "OFF" },
-          after: { phase },
-        });
-      }
-      return row;
-    },
-    { timeout: 15_000, maxWait: 5_000 },
-  );
-  if (bellsSkipped) {
-    Sentry.captureMessage("Maintenance notice not posted: audience over cap", {
-      level: "warning",
-      tags: { subsystem: "novu", op: "maintenance-bells" },
+  const window = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('platform-maintenance'))`;
+    const activeWindow = await tx.maintenanceWindow.findFirst({
+      where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
+      orderBy: { createdAt: "desc" },
     });
-  }
+
+    let row = activeWindow;
+    if (phase === MaintenancePhase.OFF) {
+      await tx.maintenanceWindow.updateMany({
+        where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
+        data: {
+          phase: MaintenancePhase.OFF,
+          endedAt: new Date(),
+          endedBy: config.endedBy,
+        },
+      });
+    } else if (activeWindow) {
+      row = await tx.maintenanceWindow.update({
+        where: { id: activeWindow.id },
+        data: {
+          phase,
+          reason: config.reason,
+          estimatedEnd: estimatedEndDate,
+          betterstackIncidentId: config.betterstackIncidentId,
+          ...(phase !== "OFFLINE" ? { offlineActivatedAt: null } : {}),
+        },
+      });
+    } else {
+      row = await tx.maintenanceWindow.create({
+        data: {
+          phase,
+          reason: config.reason,
+          startedAt: new Date(),
+          startedBy: config.startedBy,
+          estimatedEnd: estimatedEndDate,
+          bypassSecret: config.bypassSecret,
+          betterstackIncidentId: config.betterstackIncidentId,
+        },
+      });
+    }
+    const actor = config.startedBy ?? config.endedBy;
+    if (actor && row) {
+      await recordOpsAction(tx, {
+        actorUserId: actor,
+        actorRole: "ADMIN",
+        surface: "maintenance.manage",
+        action: "maintenance.transition",
+        targetKind: "MaintenanceWindow",
+        targetId: row.id,
+        reason: config.auditReason ?? config.reason ?? "Maintenance recovery",
+        before: { phase: activeWindow?.phase ?? "OFF" },
+        after: { phase },
+      });
+    }
+    return row;
+  });
 
   try {
     await redis.set(

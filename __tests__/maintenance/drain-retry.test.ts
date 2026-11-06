@@ -38,9 +38,6 @@ jest.mock("@stream-io/node-sdk", () => ({
 jest.mock("../../lib/booking/transitions", () => ({
   transitionOccurrenceCompletion: jest.fn(),
 }));
-jest.mock("../../lib/novu/service", () => ({
-  stageMaintenanceBells: jest.fn(),
-}));
 import * as Sentry from "@sentry/nextjs";
 import {
   drainActiveSessions,
