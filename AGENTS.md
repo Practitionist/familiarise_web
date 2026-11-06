@@ -45,7 +45,7 @@
    - Lint: `npm run lint` (errors fail CI; warnings are advisory)
    - Format check: `npm run format:check`
    - Targeted Jest test: `npx jest path/to/test.ts`
-   - The owner runs `next dev`, `next build`, `prisma db push` and the database-writing `npm run db:*` scripts (push, sidecars, seed, migrate, triggers, constraints). `.claude/settings.json` denies them to Claude Code in every permission mode; `npm run db:generate` and `npm run db:preflight` stay usable.
+   - The owner runs `next dev`, `next build`, `prisma db push` and the database-writing `npm run db:*` scripts (push, sidecars, seed, migrate, triggers, constraints). `.claude/settings.json` deny rules block their usual command forms for Claude Code in every permission mode (the rules match command text, so they are a guard, not a boundary); `npm run db:generate` and `npm run db:preflight` stay usable.
 
 ## 4. Engineering, Documentation & Review Practices
 

@@ -4,6 +4,9 @@ import {
   stripSql,
 } from "../../.claude/hooks/supabase-sql-gate";
 
+const UNPARSEABLE =
+  'unparseable SQL (unterminated literal or comment, or U&"…")';
+
 const sqlInput = (query: unknown, permission_mode = "default") => ({
   hook_event_name: "PreToolUse",
   tool_name: "mcp__supabase__execute_sql",
@@ -112,22 +115,58 @@ describe("classifySql", () => {
   });
 
   it.each([
+    [`SELECT "setval"('t_id_seq', 1)`, "mutating function setval()"],
+    [`SELECT pg_catalog."setval"('t_id_seq', 1)`, "mutating function setval()"],
+    [
+      `SELECT pg_catalog."set_config"('x', 'y', false)`,
+      "mutating function set_config()",
+    ],
+    [
+      `SELECT "cron"."schedule"('j', '* * * * *', 'x')`,
+      "schema-qualified call cron.…()",
+    ],
+    [`SELECT U&"\\0073etval"('s', 1)`, UNPARSEABLE],
+    [
+      "SELECT pg_catalog.now(), cron.unschedule('j')",
+      "schema-qualified call cron.…()",
+    ],
+    [
+      "SELECT pg_logical_emit_message(false, 'x', 'y')",
+      "mutating function pg_logical_emit_message()",
+    ],
+    [
+      "SELECT pg_stat_statements_reset()",
+      "mutating function pg_stat_statements_reset()",
+    ],
+    [
+      "SELECT brin_summarize_new_values('i')",
+      "mutating function brin_summarize_new_values()",
+    ],
+    ["SELECT 1 AS a$$$; DELETE FROM t; -- $$\n", "DELETE"],
+    ["SELECT $é$ '$é$; DELETE FROM t; -- '", "DELETE"],
+    ["SELECT 1; -- note\rDELETE FROM t", "DELETE"],
+  ])("asks for the disguised write %s", (query, reason) => {
+    expect(classifySql(query)).toEqual({ readOnly: false, reason });
+  });
+
+  it.each([
+    ['SELECT "id", "status" FROM "Payment" WHERE "update" IS NULL'],
+    ['SELECT "a""b" FROM t'],
+    ["SELECT $é$ ; delete $é$ AS note"],
+    ["SELECT a$b, $1 FROM t"],
+    ['SELECT pg_catalog."pg_get_constraintdef"(oid) FROM pg_constraint'],
+  ])("allows the quoted or tagged read %s", (query) => {
+    expect(classifySql(query)).toEqual({ readOnly: true, statements: 1 });
+  });
+
+  it.each([
     ["", "empty or missing query"],
     ["   ", "empty or missing query"],
     [undefined, "empty or missing query"],
     [42, "empty or missing query"],
-    [
-      "SELECT 'unterminated",
-      "unparseable SQL (unterminated string or comment)",
-    ],
-    [
-      "SELECT 1 /* open comment",
-      "unparseable SQL (unterminated string or comment)",
-    ],
-    [
-      "SELECT $q$ never closed",
-      "unparseable SQL (unterminated string or comment)",
-    ],
+    ["SELECT 'unterminated", UNPARSEABLE],
+    ["SELECT 1 /* open comment", UNPARSEABLE],
+    ["SELECT $q$ never closed", UNPARSEABLE],
     [";;", "no SQL statement"],
     ["}{ garbage", "unparsed statement"],
   ])("asks for garbage input %p", (query, reason) => {
