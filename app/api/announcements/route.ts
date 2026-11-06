@@ -120,17 +120,17 @@ export async function GET(request: NextRequest) {
       reportTransient("announcements read", error, {
         subsystem: "notifications",
       });
-      const management = request.nextUrl.searchParams.get("view") === "manage";
+      if (request.nextUrl.searchParams.get("view") === "manage")
+        return NextResponse.json(
+          { success: false, error: "Announcements temporarily unavailable" },
+          {
+            status: 503,
+            headers: { "Cache-Control": "private, no-store", Vary: "Cookie" },
+          },
+        );
       return NextResponse.json(
-        management
-          ? { success: false, error: "Announcements temporarily unavailable" }
-          : { success: true, data: [] },
-        {
-          status: management ? 503 : 200,
-          headers: management
-            ? { "Cache-Control": "private, no-store", Vary: "Cookie" }
-            : { "Cache-Control": "no-store" },
-        },
+        { success: true, data: [] },
+        { status: 200, headers: { "Cache-Control": "no-store" } },
       );
     }
     Sentry.captureException(
