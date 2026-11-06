@@ -7,6 +7,7 @@
  * rely on. A user with no row has never changed anything and gets the defaults.
  */
 
+import type { NotificationRoutingMode } from "@prisma/client";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import { DEFAULT_NOTIFICATION_TIMEZONE } from "@/lib/novu/humanize";
 import type { PreferenceCategory } from "@/lib/novu/templates/types";
@@ -47,6 +48,8 @@ export const EMAIL_CATEGORY_COLUMN: Record<
 
 export type EmailRecipient = {
   userId: string;
+  /** The preference the message is gated on; null for a required notice. */
+  category: PreferenceCategory | null;
   email: string;
   name: string | null;
   /** IANA zone every time in the message is rendered in. */
@@ -67,12 +70,15 @@ type UserRow = {
   email: string | null;
   name: string | null;
   timezone: string | null;
+  orgWorkspaceProfile: {
+    notificationRoutingMode: NotificationRoutingMode;
+  } | null;
   notificationPreferences: PreferenceRow | null;
 };
 
 type UserReader = Pick<PrismaLike, "user">;
 
-const PREFERENCE_SELECT = {
+export const EMAIL_PREFERENCE_SELECT = {
   allNotifications: true,
   emailEnabled: true,
   appointmentReminders: true,
@@ -86,13 +92,16 @@ const PREFERENCE_SELECT = {
   orgProgramAlerts: true,
 } as const;
 
-// A required notice (null category) ignores the switches; otherwise a missing
-// row means defaults, and every default is on.
-function isAllowed(
-  pref: PreferenceRow | null,
+// A required notice (null category) ignores the switches and workspace routing;
+// otherwise a missing row means defaults, and every default is on.
+export function isEmailAllowedForUser(
+  user: Pick<UserRow, "orgWorkspaceProfile" | "notificationPreferences">,
   category: PreferenceCategory | null,
 ): boolean {
   if (category === null) return true;
+  const routing = user.orgWorkspaceProfile?.notificationRoutingMode;
+  if (routing === "BELL_ONLY" || routing === "NEITHER") return false;
+  const pref = user.notificationPreferences;
   if (!pref) return true;
   return (
     pref.allNotifications &&
@@ -110,7 +119,8 @@ async function fetchUsers(ids: string[], db: UserReader): Promise<UserRow[]> {
       email: true,
       name: true,
       timezone: true,
-      notificationPreferences: { select: PREFERENCE_SELECT },
+      orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
+      notificationPreferences: { select: EMAIL_PREFERENCE_SELECT },
     },
   });
 }
@@ -136,13 +146,14 @@ export async function loadEmailRecipients(
     return [
       {
         userId: user.id,
+        category,
         email: user.email,
         name: user.name,
         zone: resolveViewerZone({
           userTimezone: user.timezone,
           fallbackZone: DEFAULT_NOTIFICATION_TIMEZONE,
         }),
-        allowed: isAllowed(user.notificationPreferences, category),
+        allowed: isEmailAllowedForUser(user, category),
         unsubscribeUrl: signable ? buildEmailUnsubscribeUrl(user.id) : null,
       },
     ];
@@ -157,5 +168,5 @@ export async function isEmailAllowed(
 ): Promise<boolean> {
   const [user] = await fetchUsers([userId], db);
   if (!user) return false;
-  return isAllowed(user.notificationPreferences, category);
+  return isEmailAllowedForUser(user, category);
 }

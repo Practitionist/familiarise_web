@@ -104,6 +104,17 @@ function makeFailedBatch(
   };
 }
 
+/** The first-attempt CAS: writes only rows whose anchor is still unset. */
+function stampWhereUnset<T extends { id: string; firstAttemptAt: Date | null }>(
+  rows: T[],
+  args: { where?: { id?: unknown }; data: { firstAttemptAt?: unknown } },
+): { count: number } {
+  const row = rows.find((r) => r.id === args.where?.id);
+  if (!row || row.firstAttemptAt !== null) return { count: 0 };
+  row.firstAttemptAt = args.data.firstAttemptAt as Date;
+  return { count: 1 };
+}
+
 function isRowDue(
   row: { status: string; nextRetryAt: Date | null },
   nowDate: Date,
@@ -133,6 +144,7 @@ function createStatefulOutboxStore(initial: {
   const batches = [...(initial.batches ?? [])];
 
   const store: FailedEmailStore = {
+    user: { findUnique: jest.fn().mockResolvedValue(null) },
     failedEmail: {
       findMany: jest.fn(async (args: Prisma.FailedEmailFindManyArgs) => {
         const whereJson = JSON.stringify(args.where);
@@ -149,6 +161,9 @@ function createStatefulOutboxStore(initial: {
         if (idx >= 0) emails[idx] = updated;
         return updated;
       }),
+      updateMany: jest.fn(async (args: Prisma.FailedEmailUpdateManyArgs) =>
+        stampWhereUnset(emails, args),
+      ),
       count: jest.fn(
         async () =>
           emails.filter((r) => r.status === "PENDING" || r.status === "RETRY")
@@ -157,6 +172,7 @@ function createStatefulOutboxStore(initial: {
     },
     emailSuppression: {
       findMany: jest.fn().mockResolvedValue([]),
+      findUnique: jest.fn().mockResolvedValue(null),
     },
     failedEmailBatch: {
       findMany: jest.fn(async (args: Prisma.FailedEmailBatchFindManyArgs) => {
@@ -174,6 +190,9 @@ function createStatefulOutboxStore(initial: {
         if (idx >= 0) batches[idx] = updated;
         return updated;
       }),
+      updateMany: jest.fn(async (args: Prisma.FailedEmailBatchUpdateManyArgs) =>
+        stampWhereUnset(batches, args),
+      ),
     },
   };
 

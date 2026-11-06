@@ -18,6 +18,7 @@ import { companyPostalAddress } from "@/lib/email/config";
 import { heldRecipientDomain } from "@/lib/email/delivery-guard";
 import { findSuppressed } from "@/lib/email/suppression";
 import prisma from "@/lib/prisma";
+import { stampFirstAttempt } from "@/lib/retry/provider-window";
 import { listSendableSubscribers } from "@/lib/waitlist/service";
 import { buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
 
@@ -174,6 +175,8 @@ async function sendBatch(
     update: {},
     select: { id: true },
   });
+  // Anchors the replay window on this request, not on the relay's first try.
+  await stampFirstAttempt(prisma.failedEmailBatch, row.id, new Date());
   try {
     const result = await resend.batch.send(emails, {
       idempotencyKey,

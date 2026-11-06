@@ -12,7 +12,9 @@
 const mockSend = jest.fn();
 const mockCreate = jest.fn();
 const mockUpdate = jest.fn();
+const mockUpdateMany = jest.fn();
 const mockFindSuppression = jest.fn();
+const mockPolicyUser = jest.fn();
 const mockCaptureException = jest.fn();
 
 jest.mock("resend", () => ({
@@ -24,9 +26,11 @@ jest.mock("resend", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    user: { findUnique: (...args: unknown[]) => mockPolicyUser(...args) },
     failedEmail: {
       create: (...args: unknown[]) => mockCreate(...args),
       update: (...args: unknown[]) => mockUpdate(...args),
+      updateMany: (...args: unknown[]) => mockUpdateMany(...args),
     },
     emailSuppression: {
       findUnique: (...args: unknown[]) => mockFindSuppression(...args),
@@ -60,6 +64,7 @@ const message: RenderedEmail = {
 const OLD_KEY = process.env.RESEND_API_KEY;
 beforeEach(() => {
   mockFindSuppression.mockResolvedValue(null);
+  mockUpdateMany.mockResolvedValue({ count: 1 });
 });
 afterEach(() => {
   if (OLD_KEY === undefined) delete process.env.RESEND_API_KEY;
@@ -94,6 +99,8 @@ describe("deliver — missing key (#1298 Fix 3)", () => {
     );
     // A missing key stays PENDING: the row replays once the key exists.
     expect(mockUpdate.mock.calls[0][0].data.status).toBeUndefined();
+    // Resend never saw the key, so the replay window is not started.
+    expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -313,5 +320,148 @@ describe("per-recipient daily cap", () => {
     expect(mockSend).toHaveBeenCalledTimes(5);
     expect((await deliver(reset, "WELCOME")).success).toBe(true);
     expect((await deliver(reset, "STAFF_INVITE")).success).toBe(true);
+  });
+});
+
+describe("attempt-time recipient recheck and first-attempt anchor", () => {
+  const guarded: RenderedEmail = {
+    ...message,
+    deliveryPolicy: { userId: "user-1", category: "appointments" },
+  };
+  const account = {
+    email: "user@example.com",
+    erasedAt: null,
+    orgWorkspaceProfile: null,
+    notificationPreferences: null,
+  };
+
+  beforeEach(() => {
+    process.env.RESEND_API_KEY = "re_test";
+    mockCreate.mockResolvedValue({ id: "fe-p" });
+    mockUpdate.mockResolvedValue({});
+    mockPolicyUser.mockResolvedValue(account);
+    mockSend.mockResolvedValue({ data: { id: "re-p" }, error: null });
+  });
+
+  it("stores the account and category in typed columns and never sends them", async () => {
+    const result = await deliver(guarded, "APPOINTMENT_BOOKED");
+
+    expect(result.success).toBe(true);
+    expect(mockCreate.mock.calls[0][0].data).toMatchObject({
+      deliveryUserId: "user-1",
+      deliveryCategory: "appointments",
+    });
+    expect(mockPolicyUser).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "user-1" } }),
+    );
+    expect(mockSend.mock.calls[0][0]).not.toHaveProperty("deliveryPolicy");
+  });
+
+  it("stores null columns for direct-address mail and reads no account", async () => {
+    await deliver(message, "CONTACT_INQUIRY");
+
+    expect(mockCreate.mock.calls[0][0].data).toMatchObject({
+      deliveryUserId: null,
+      deliveryCategory: null,
+    });
+    expect(mockPolicyUser).not.toHaveBeenCalled();
+    expect(mockSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("stamps firstAttemptAt once, only while unset, before the provider call", async () => {
+    const order: string[] = [];
+    mockUpdateMany.mockImplementation(async () => {
+      order.push("stamp");
+      return { count: 1 };
+    });
+    mockSend.mockImplementation(async () => {
+      order.push("send");
+      return { data: { id: "re-p" }, error: null };
+    });
+
+    await deliver(guarded, "APPOINTMENT_BOOKED");
+
+    expect(order).toEqual(["stamp", "send"]);
+    expect(mockUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: "fe-p", firstAttemptAt: null },
+      data: { firstAttemptAt: expect.any(Date) },
+    });
+  });
+
+  it.each([
+    [{ ...account, email: "changed@example.com" }, "policy:recipient_changed"],
+    [{ ...account, erasedAt: new Date() }, "policy:recipient_erased"],
+    [
+      {
+        ...account,
+        orgWorkspaceProfile: { notificationRoutingMode: "BELL_ONLY" },
+      },
+      "policy:preference_changed",
+    ],
+  ])(
+    "dead-letters a staged row whose account no longer accepts it (%#)",
+    async (user, lastError) => {
+      const staged = await stage(guarded, "APPOINTMENT_BOOKED");
+      mockPolicyUser.mockResolvedValue(user);
+
+      const result = await attempt(staged, guarded, "APPOINTMENT_BOOKED", {
+        budgetMs: 1_000,
+      });
+
+      expect(result.success).toBe(false);
+      expect(mockSend).not.toHaveBeenCalled();
+      expect(mockUpdateMany).not.toHaveBeenCalled();
+      expect(mockUpdate).toHaveBeenCalledWith({
+        where: { id: "fe-p" },
+        data: { status: "DEAD_LETTER", lastError },
+      });
+      expect(mockCaptureException).not.toHaveBeenCalled();
+    },
+  );
+
+  it("dead-letters a row suppressed after staging, right before the send", async () => {
+    const staged = await stage(guarded, "APPOINTMENT_BOOKED");
+    mockFindSuppression.mockResolvedValue({
+      email: "user@example.com",
+      reason: "COMPLAINT",
+    });
+
+    await attempt(staged, guarded, "APPOINTMENT_BOOKED", { budgetMs: 1_000 });
+
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(mockUpdate).toHaveBeenCalledWith({
+      where: { id: "fe-p" },
+      data: { status: "DEAD_LETTER", lastError: "suppressed:COMPLAINT" },
+    });
+  });
+
+  it("leaves the row pending and sends nothing when the account cannot be read", async () => {
+    const staged = await stage(guarded, "APPOINTMENT_BOOKED");
+    mockPolicyUser.mockRejectedValueOnce(new Error("pool unavailable"));
+
+    const result = await attempt(staged, guarded, "APPOINTMENT_BOOKED", {
+      budgetMs: 1_000,
+    });
+
+    expect(result).toMatchObject({ success: false, staged: true });
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+    const data = mockUpdate.mock.calls[0][0].data;
+    expect(data.status).toBeUndefined();
+    expect(data.lastError).toContain("pool unavailable");
+  });
+
+  it("persists an unstaged message with its policy when the recheck cannot read", async () => {
+    mockPolicyUser.mockRejectedValueOnce(new Error("pool unavailable"));
+
+    await attempt(null, guarded, "APPOINTMENT_BOOKED", { budgetMs: 1_000 });
+
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(mockCreate.mock.calls[0][0].data).toMatchObject({
+      status: "PENDING",
+      deliveryUserId: "user-1",
+      deliveryCategory: "appointments",
+    });
   });
 });

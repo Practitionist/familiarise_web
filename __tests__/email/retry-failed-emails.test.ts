@@ -19,6 +19,10 @@
  */
 
 const mockCaptureMessage = jest.fn();
+const mockPostOpsChat = jest.fn();
+jest.mock("@/lib/observability/ops-chat", () => ({
+  postOpsChat: (...args: unknown[]) => mockPostOpsChat(...args),
+}));
 jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
   ...jest.requireActual<typeof import("@sentry/core")>("@sentry/core"),
@@ -99,7 +103,11 @@ function makePrismaStub(
 ) {
   const updates: Prisma.FailedEmailUpdateArgs[] = [];
   const batchUpdates: Prisma.FailedEmailBatchUpdateArgs[] = [];
+  const stamps: Prisma.FailedEmailUpdateManyArgs[] = [];
+  const batchStamps: Prisma.FailedEmailBatchUpdateManyArgs[] = [];
+  const suppressions = extra.suppressions ?? [];
   const prisma: FailedEmailStore = {
+    user: { findUnique: jest.fn().mockResolvedValue(null) },
     failedEmail: {
       findMany: jest.fn().mockResolvedValue([initialRow]),
       update: jest
@@ -108,9 +116,19 @@ function makePrismaStub(
           updates.push(args);
           return Promise.resolve({ ...initialRow, ...args.data });
         }),
+      updateMany: jest
+        .fn()
+        .mockImplementation((args: Prisma.FailedEmailUpdateManyArgs) => {
+          stamps.push(args);
+          return Promise.resolve({ count: 1 });
+        }),
     },
     emailSuppression: {
-      findMany: jest.fn().mockResolvedValue(extra.suppressions ?? []),
+      findMany: jest.fn().mockResolvedValue(suppressions),
+      findUnique: jest.fn(async (args: { where: { email: string } }) => {
+        const hit = suppressions.find((row) => row.email === args.where.email);
+        return hit ? { reason: hit.reason } : null;
+      }),
     },
     failedEmailBatch: {
       findMany: jest.fn().mockResolvedValue(extra.batches ?? []),
@@ -120,9 +138,15 @@ function makePrismaStub(
           batchUpdates.push(args);
           return Promise.resolve({ ...makeBatchRow(), ...args.data });
         }),
+      updateMany: jest
+        .fn()
+        .mockImplementation((args: Prisma.FailedEmailBatchUpdateManyArgs) => {
+          batchStamps.push(args);
+          return Promise.resolve({ count: 1 });
+        }),
     },
   };
-  return { prisma, updates, batchUpdates };
+  return { prisma, updates, batchUpdates, stamps, batchStamps };
 }
 
 function mockResend(
@@ -339,6 +363,7 @@ describe("runEmailRetryTick — pacing (#1654)", () => {
     jest.useFakeTimers();
     const rows = [makeRow({ id: "fe-a" }), makeRow({ id: "fe-b" })];
     const prisma: FailedEmailStore = {
+      user: { findUnique: jest.fn().mockResolvedValue(null) },
       failedEmail: {
         findMany: jest.fn().mockResolvedValue(rows),
         update: jest
@@ -346,11 +371,16 @@ describe("runEmailRetryTick — pacing (#1654)", () => {
           .mockImplementation((args) =>
             Promise.resolve({ ...rows[0], ...args.data }),
           ),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      emailSuppression: { findMany: jest.fn().mockResolvedValue([]) },
+      emailSuppression: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
       failedEmailBatch: {
         findMany: jest.fn().mockResolvedValue([]),
         update: jest.fn(),
+        updateMany: jest.fn(),
       },
     };
     const resend = mockResend(async () => ({
@@ -472,7 +502,10 @@ describe("runEmailRetryTick — suppression and batch outbox (#1647)", () => {
     });
 
     expect(resend.send).not.toHaveBeenCalled();
-    expect(result.deadLettered).toBe(1);
+    // An expected refusal: settled, but not a dead letter that pages.
+    expect(result.refused).toBe(1);
+    expect(result.deadLettered).toBe(0);
+    expect(mockPostOpsChat).not.toHaveBeenCalled();
     expect(stub.updates[0].data).toMatchObject({
       status: "DEAD_LETTER",
       lastError: "suppressed:COMPLAINT",
@@ -535,5 +568,394 @@ describe("runEmailRetryTick — no sender", () => {
     expect(result.scanned).toBe(0);
     expect(result.errors[0]).toContain("RESEND_API_KEY not configured");
     expect(stub.prisma.failedEmail.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("runEmailRetryTick — provider window anchored on the first attempt", () => {
+  const HOUR = 3_600_000;
+  const sent = async () => ({
+    data: { id: "re-w" },
+    error: null,
+    headers: null,
+  });
+
+  it("sends a never-attempted row older than 24 h and stamps its first attempt", async () => {
+    const stub = makePrismaStub(
+      makeRow({ createdAt: new Date(FROZEN_NOW_MS - 72 * HOUR) }),
+    );
+    const resend = mockResend(sent);
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(result.sent).toBe(1);
+    expect(resend.send).toHaveBeenCalledTimes(1);
+    expect(stub.stamps).toEqual([
+      {
+        where: { id: "fe-1", firstAttemptAt: null },
+        data: { firstAttemptAt: new Date(FROZEN_NOW_MS) },
+      },
+    ]);
+  });
+
+  it("refuses a row first attempted 23 h ago without sending or re-stamping it", async () => {
+    const stub = makePrismaStub(
+      makeRow({ firstAttemptAt: new Date(FROZEN_NOW_MS - 23 * HOUR) }),
+    );
+    const resend = mockResend(sent);
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(resend.send).not.toHaveBeenCalled();
+    expect(stub.stamps).toEqual([]);
+    expect(result.deadLettered).toBe(1);
+    expect(stub.updates[0].data).toEqual({
+      status: "DEAD_LETTER",
+      lastError: "review:provider_acceptance_unknown",
+    });
+  });
+
+  it("keeps the first stamp across retries and replays under the same key inside the window", async () => {
+    const row = makeRow();
+    const prisma: FailedEmailStore = {
+      user: { findUnique: jest.fn().mockResolvedValue(null) },
+      failedEmail: {
+        findMany: jest.fn(async () => [{ ...row }]),
+        update: jest.fn(async (args: Prisma.FailedEmailUpdateArgs) => {
+          Object.assign(row, args.data);
+          return row;
+        }),
+        // Mirrors the SQL CAS: only an unset anchor is written.
+        updateMany: jest.fn(async (args: Prisma.FailedEmailUpdateManyArgs) => {
+          if (row.firstAttemptAt !== null) return { count: 0 };
+          row.firstAttemptAt = args.data.firstAttemptAt as Date;
+          return { count: 1 };
+        }),
+      },
+      emailSuppression: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
+      failedEmailBatch: {
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn(),
+        updateMany: jest.fn(),
+      },
+    };
+    const send = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("Resend 503"))
+      .mockResolvedValueOnce({ data: { id: "re-2" }, error: null });
+    const resend: RelaySender = {
+      emails: { send },
+      batch: { send: jest.fn() } as unknown as RelaySender["batch"],
+    };
+
+    await runEmailRetryTick({ prisma, resend, now: () => FROZEN_NOW_MS });
+    const later = FROZEN_NOW_MS + 22 * HOUR;
+    const second = await runEmailRetryTick({
+      prisma,
+      resend,
+      now: () => later,
+    });
+
+    expect(second.sent).toBe(1);
+    expect(row.firstAttemptAt).toEqual(new Date(FROZEN_NOW_MS));
+    expect(send.mock.calls[1][1].idempotencyKey).toBe(
+      send.mock.calls[0][1].idempotencyKey,
+    );
+  });
+
+  it("acknowledges a recorded provider receipt without sending again", async () => {
+    const stub = makePrismaStub(makeRow({ resendId: "re-accepted" }));
+    const resend = mockResend(sent);
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(result.sent).toBe(1);
+    expect(resend.send).not.toHaveBeenCalled();
+    expect(stub.updates[0].data).toMatchObject({ status: "SENT" });
+  });
+});
+
+describe("runEmailRetryTick — attempt-time recipient recheck", () => {
+  const sent = async () => ({
+    data: { id: "re-p" },
+    error: null,
+    headers: null,
+  });
+  const account = (overrides: Record<string, unknown> = {}) => ({
+    email: "user@example.com",
+    erasedAt: null,
+    orgWorkspaceProfile: null,
+    notificationPreferences: null,
+    ...overrides,
+  });
+
+  beforeEach(() => mockPostOpsChat.mockClear());
+
+  it("dead-letters a row whose account turned the category off, without paging", async () => {
+    const stub = makePrismaStub(
+      makeRow({ deliveryUserId: "u1", deliveryCategory: "payments" }),
+    );
+    jest.mocked(stub.prisma.user.findUnique).mockResolvedValue(
+      account({
+        notificationPreferences: {
+          allNotifications: true,
+          emailEnabled: true,
+          appointmentReminders: true,
+          paymentNotifications: false,
+          subscriptionAlerts: true,
+          trialNotifications: true,
+          supportUpdates: true,
+          feedbackAlerts: true,
+          orgBillingAlerts: true,
+          orgMembershipAlerts: true,
+          orgProgramAlerts: true,
+        },
+      }),
+    );
+    const resend = mockResend(sent);
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(resend.send).not.toHaveBeenCalled();
+    expect(stub.stamps).toEqual([]);
+    expect(result).toMatchObject({ refused: 1, deadLettered: 0 });
+    expect(stub.updates[0].data).toEqual({
+      status: "DEAD_LETTER",
+      lastError: "policy:preference_changed",
+    });
+    expect(mockPostOpsChat).not.toHaveBeenCalled();
+  });
+
+  it("sends a required notice whatever the optional switches and routing say", async () => {
+    const stub = makePrismaStub(
+      makeRow({ deliveryUserId: "u1", deliveryCategory: null }),
+    );
+    jest.mocked(stub.prisma.user.findUnique).mockResolvedValue(
+      account({
+        orgWorkspaceProfile: { notificationRoutingMode: "NEITHER" },
+      }),
+    );
+    const resend = mockResend(sent);
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(result.sent).toBe(1);
+    expect(stub.prisma.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "u1" } }),
+    );
+  });
+
+  it("rechecks suppression for the row immediately before its send", async () => {
+    const stub = makePrismaStub(makeRow({ recipient: " User@Example.com" }));
+    const resend = mockResend(sent);
+
+    await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(stub.prisma.emailSuppression.findUnique).toHaveBeenCalledWith({
+      where: { email: "user@example.com" },
+      select: { reason: true },
+    });
+    expect(resend.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the row pending and reports once when the account cannot be read", async () => {
+    const stub = makePrismaStub(
+      makeRow({ deliveryUserId: "u1", deliveryCategory: "payments" }),
+    );
+    jest
+      .mocked(stub.prisma.user.findUnique)
+      .mockRejectedValueOnce(new Error("pool unavailable"));
+    const resend = mockResend(sent);
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(resend.send).not.toHaveBeenCalled();
+    expect(stub.updates).toEqual([]);
+    expect(stub.stamps).toEqual([]);
+    expect(result.errors).toEqual([
+      "1 email(s) left pending: recipient recheck failed (pool unavailable)",
+    ]);
+  });
+});
+
+describe("runEmailRetryTick — batch replay safety", () => {
+  const HOUR = 3_600_000;
+  const twoRecipients = [
+    { from: "a@x", to: "keep@y", subject: "s", html: "<p/>" },
+    { from: "a@x", to: "Gone@Y", subject: "s", html: "<p/>" },
+  ];
+  function batchStub(
+    batch: FailedEmailBatch,
+    suppressions: Pick<EmailSuppression, "email" | "reason">[] = [],
+  ) {
+    const stub = makePrismaStub(makeRow(), {
+      batches: [batch],
+      suppressions,
+    });
+    stub.prisma.failedEmail.findMany = jest.fn().mockResolvedValue([]);
+    const batchSend = jest.fn().mockResolvedValue({
+      data: { data: [{ id: "re-b" }] },
+      error: null,
+      headers: null,
+    });
+    const resend = mockResend(async () => {
+      throw new Error("single send must not run");
+    }, batchSend);
+    return { ...stub, batchSend, resend };
+  }
+
+  it("dead-letters a malformed stored payload before calling the vendor", async () => {
+    const t = batchStub(makeBatchRow({ payload: [{ to: "b@y" }] }));
+
+    const result = await runEmailRetryTick({
+      prisma: t.prisma,
+      resend: t.resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(t.batchSend).not.toHaveBeenCalled();
+    expect(result.batchesDeadLettered).toBe(1);
+    expect(t.batchUpdates[0].data).toEqual({
+      status: "DEAD_LETTER",
+      lastError: "invalid batch payload",
+    });
+  });
+
+  it("sends a never-attempted batch older than 24 h and stamps it first", async () => {
+    const t = batchStub(
+      makeBatchRow({ createdAt: new Date(FROZEN_NOW_MS - 72 * HOUR) }),
+    );
+
+    const result = await runEmailRetryTick({
+      prisma: t.prisma,
+      resend: t.resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(result.batchesSent).toBe(1);
+    expect(t.batchStamps).toEqual([
+      {
+        where: { id: "feb-1", firstAttemptAt: null },
+        data: { firstAttemptAt: new Date(FROZEN_NOW_MS) },
+      },
+    ]);
+  });
+
+  it("refuses a batch first attempted 23 h ago and keeps its payload and key", async () => {
+    const batch = makeBatchRow({
+      firstAttemptAt: new Date(FROZEN_NOW_MS - 23 * HOUR),
+    });
+    const t = batchStub(batch);
+
+    const result = await runEmailRetryTick({
+      prisma: t.prisma,
+      resend: t.resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(t.batchSend).not.toHaveBeenCalled();
+    expect(result.batchesDeadLettered).toBe(1);
+    expect(t.batchUpdates[0].data).toEqual({
+      status: "DEAD_LETTER",
+      lastError: "review:provider_acceptance_unknown",
+    });
+    expect(t.batchStamps).toEqual([]);
+  });
+
+  it("drops a newly suppressed recipient from a never-attempted batch, storing the narrowed payload with the stamp", async () => {
+    const t = batchStub(makeBatchRow({ payload: twoRecipients }), [
+      { email: "gone@y", reason: "HARD_BOUNCE" },
+    ]);
+
+    const result = await runEmailRetryTick({
+      prisma: t.prisma,
+      resend: t.resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(result.batchesSent).toBe(1);
+    expect(t.batchStamps).toEqual([
+      {
+        where: { id: "feb-1", firstAttemptAt: null },
+        data: {
+          firstAttemptAt: new Date(FROZEN_NOW_MS),
+          payload: [twoRecipients[0]],
+        },
+      },
+    ]);
+    expect(t.batchSend).toHaveBeenCalledWith(
+      [twoRecipients[0]],
+      expect.objectContaining({ idempotencyKey: "WAITLIST_BROADCAST/abc" }),
+    );
+  });
+
+  it("does not narrow a batch the provider may already have accepted", async () => {
+    const t = batchStub(
+      makeBatchRow({
+        payload: twoRecipients,
+        firstAttemptAt: new Date(FROZEN_NOW_MS - HOUR),
+      }),
+      [{ email: "gone@y", reason: "COMPLAINT" }],
+    );
+
+    const result = await runEmailRetryTick({
+      prisma: t.prisma,
+      resend: t.resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(t.batchSend).not.toHaveBeenCalled();
+    expect(result.batchesDeadLettered).toBe(1);
+    expect(t.batchUpdates[0].data).toEqual({
+      status: "DEAD_LETTER",
+      lastError: "review:batch_recipient_suppressed",
+    });
+  });
+
+  it("settles a batch whose every recipient is now suppressed as an expected refusal", async () => {
+    const t = batchStub(makeBatchRow(), [{ email: "b@y", reason: "MANUAL" }]);
+
+    const result = await runEmailRetryTick({
+      prisma: t.prisma,
+      resend: t.resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(t.batchSend).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ refused: 1, batchesDeadLettered: 0 });
+    expect(t.batchUpdates[0].data).toEqual({
+      status: "DEAD_LETTER",
+      lastError: "suppressed:all_recipients",
+    });
   });
 });

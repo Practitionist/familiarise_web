@@ -13,7 +13,14 @@ import {
   resendErrorText,
   terminalSendReason,
 } from "./classify";
+import {
+  deliveryColumns,
+  emailPolicyRefusal,
+  EmailPolicyRefusedError,
+  type EmailDeliveryPolicy,
+} from "./delivery-policy";
 import { idempotencyKeyFor } from "./idempotency";
+import { stampFirstAttempt } from "@/lib/retry/provider-window";
 import { EmailRecipientCappedError, overRecipientCap } from "./recipient-cap";
 import { EmailSuppressedError, findSuppression } from "./suppression";
 import {
@@ -36,6 +43,8 @@ export interface RenderedEmail {
   // #1653 — List-Unsubscribe and friends. Sent inline only: the row does not
   // persist them, so the relay's resend of a staged row carries none.
   headers?: Record<string, string>;
+  /** Stored on the row and rechecked before every send; never sent to Resend. */
+  deliveryPolicy?: EmailDeliveryPolicy;
 }
 
 export type DeliverResult =
@@ -164,6 +173,7 @@ export async function recordFailedEmail(
         replyTo: message.replyTo ?? null,
         subject: message.subject,
         ...storedBodies(message, emailType),
+        ...deliveryColumns(message.deliveryPolicy),
         emailType,
         status: "PENDING",
         // Retry-now: the worker's first pass picks it up; backoff only kicks
@@ -216,6 +226,7 @@ export async function stage(
         replyTo: payload.replyTo ?? null,
         subject: payload.subject,
         ...storedBodies(payload, emailType),
+        ...deliveryColumns(payload.deliveryPolicy),
         emailType,
         status: refusal ? "DEAD_LETTER" : "PENDING",
         nextRetryAt: new Date(Date.now() + 60_000),
@@ -271,6 +282,53 @@ async function settleRow(
 }
 
 /**
+ * Rereads the account policy and suppression just before a send; null means
+ * send. A refusal dead-letters the row; a failed read leaves it pending (no
+ * send) for the relay, which runs the same recheck.
+ */
+async function recheckRecipient(
+  staged: StagedEmail | null,
+  payload: RenderedEmail,
+  emailType: string,
+): Promise<DeliverResult | null> {
+  let refusal: EmailPolicyRefusedError | EmailSuppressedError | null = null;
+  try {
+    const policy = await emailPolicyRefusal(
+      payload.deliveryPolicy ?? null,
+      payload.to,
+      prisma,
+    );
+    if (policy) {
+      refusal = new EmailPolicyRefusedError(policy);
+    } else {
+      const suppression = await findSuppression(payload.to, prisma);
+      if (suppression) refusal = new EmailSuppressedError(suppression.reason);
+    }
+  } catch (readError) {
+    console.error(`[email] ${emailType} recipient recheck failed:`, readError);
+    if (!staged) {
+      await recordFailedEmail(payload, emailType, readError);
+      return { success: false, error: readError, staged: false };
+    }
+    const reason =
+      readError instanceof Error ? readError.message : String(readError);
+    await settleRow(staged, emailType, {
+      lastError: `recipient recheck failed: ${reason}`,
+    });
+    return { success: false, error: readError, staged: true };
+  }
+  if (!refusal) return null;
+  console.warn(`[email] ${emailType} not sent: ${refusal.message}`);
+  if (staged) {
+    await settleRow(staged, emailType, {
+      status: "DEAD_LETTER",
+      lastError: refusal.message,
+    });
+  }
+  return { success: false, error: refusal, staged: staged !== null };
+}
+
+/**
  * #1654 — phase two: one inline send under a time budget. Success marks the
  * row SENT with the Resend id; a terminal error dead-letters it; a transient
  * error leaves it PENDING with `lastError`; a timeout leaves it PENDING and
@@ -306,6 +364,9 @@ export async function attempt(
     };
   }
   const payload = withReplyTo(message);
+  const refused = await recheckRecipient(staged, payload, emailType);
+  if (refused) return refused;
+  const { deliveryPolicy: _policy, ...wirePayload } = payload;
   const idempotencyKey =
     staged?.idempotencyKey ?? idempotencyKeyFor(payload, emailType);
   // Created here, not inline, so a send the SDK swallowed into a generic
@@ -314,10 +375,14 @@ export async function attempt(
   try {
     const client = getResendClient();
     if (!client) throw new EmailNotConfiguredError();
+    // Inline attempts follow staging in the same request, so no window check here.
+    if (staged) {
+      await stampFirstAttempt(prisma.failedEmail, staged.id, new Date());
+    }
 
     // #1654 — the SDK's post() spreads these options into fetch, so the signal
     // really aborts a slow call; its option type just does not declare it.
-    const data = await client.emails.send(payload, {
+    const data = await client.emails.send(wirePayload, {
       idempotencyKey,
       signal,
     } as CreateEmailRequestOptions);

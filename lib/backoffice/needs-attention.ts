@@ -411,7 +411,7 @@ const SOURCES: readonly AttentionSource[] = [
     key: "emailRetries",
     label: "Emails overdue or dead-lettered",
     money: false,
-    note: "Dead letters are listed at any age; pre-launch holds are not.",
+    note: "Dead letters are listed at any age; holds and recipient refusals are not.",
     read: async (now, limitMs) => {
       const cutoff = before(now, limitMs);
       const where: Prisma.FailedEmailWhereInput = {

@@ -97,3 +97,33 @@ describe("loadEmailRecipients", () => {
     expect(mockFindMany.mock.calls[0][0].where.id.in).toEqual(["user_1"]);
   });
 });
+
+describe("workspace notification routing", () => {
+  it.each(["BELL_ONLY", "NEITHER"])(
+    "blocks optional email for %s but keeps required notices",
+    async (notificationRoutingMode) => {
+      mockFindMany.mockResolvedValue([
+        { ...user(null), orgWorkspaceProfile: { notificationRoutingMode } },
+      ]);
+      const [optional] = await loadEmailRecipients(["user_1"], "appointments");
+      expect(optional).toMatchObject({
+        allowed: false,
+        category: "appointments",
+      });
+      const [required] = await loadEmailRecipients(["user_1"], null);
+      expect(required).toMatchObject({ allowed: true, category: null });
+    },
+  );
+
+  it.each(["EMAIL_ONLY", "BELL_AND_EMAIL"])(
+    "allows email for %s",
+    async (notificationRoutingMode) => {
+      mockFindMany.mockResolvedValue([
+        { ...user(null), orgWorkspaceProfile: { notificationRoutingMode } },
+      ]);
+      expect(
+        (await loadEmailRecipients(["user_1"], "appointments"))[0].allowed,
+      ).toBe(true);
+    },
+  );
+});

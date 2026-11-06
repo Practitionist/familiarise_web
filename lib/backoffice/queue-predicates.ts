@@ -1,6 +1,7 @@
 import type { DisputeStatus, ErasureStatus, Prisma } from "@prisma/client";
 
 import { HELD_PRE_LAUNCH } from "@/lib/email/held";
+import { EXPECTED_REFUSAL_PREFIXES } from "@/lib/email/replay-policy";
 
 /**
  * #1527 Q12 — the `where` behind every back-office queue, shared by the page's
@@ -67,9 +68,18 @@ export const UNREPORTED_BREACH_WHERE: Prisma.DataBreachWhereInput = {
 
 /**
  * Emails every retry gave up on; only an operator replays them. Pre-launch holds
- * are expected, not failures. `lastError: null` stays in: SQL `<>` drops NULLs.
+ * and policy/suppression refusals are expected, not failures. `lastError: null`
+ * stays in: SQL `<>` and `NOT LIKE` drop NULLs.
  */
 export const DEAD_LETTER_EMAIL_WHERE: Prisma.FailedEmailWhereInput = {
   status: "DEAD_LETTER",
-  OR: [{ lastError: null }, { lastError: { not: HELD_PRE_LAUNCH } }],
+  OR: [
+    { lastError: null },
+    {
+      lastError: { not: HELD_PRE_LAUNCH },
+      NOT: EXPECTED_REFUSAL_PREFIXES.map((prefix) => ({
+        lastError: { startsWith: prefix },
+      })),
+    },
+  ],
 };
