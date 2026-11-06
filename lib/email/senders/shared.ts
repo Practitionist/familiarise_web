@@ -156,6 +156,7 @@ export async function sendSpecGuarded(
       entityRef: spec.entityRef,
       budgetMs,
       ...(deferAttempt ? { deferAttempt: true } : {}),
+      ...(spec.traceRenderFailure ? { traceFailures: true } : {}),
     });
   } catch (error) {
     Sentry.captureException(

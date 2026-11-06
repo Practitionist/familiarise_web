@@ -7,7 +7,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import type { ReactElement } from "react";
-import type { Tx } from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   attempt,
   deliver,
@@ -31,6 +31,8 @@ export interface SendToRecipientsArgs {
   budgetMs: number;
   replyTo?: string;
   deferAttempt?: boolean;
+  /** A required notice: a render failure writes a `review:render_failed` row, not a Sentry event. */
+  traceFailures?: boolean;
 }
 
 export interface SendToRecipientsResult {
@@ -184,13 +186,39 @@ export async function stagePreparedEmails(
   return list;
 }
 
+async function traceSendRenderFailure(
+  recipient: EmailRecipient,
+  args: SendToRecipientsArgs,
+): Promise<void> {
+  try {
+    await stageRenderFailure(
+      prisma,
+      {
+        from: args.from,
+        to: recipient.email,
+        deliveryPolicy: {
+          userId: recipient.userId,
+          category: recipient.category,
+        },
+      },
+      args.emailType,
+      args.entityRef,
+    );
+  } catch (error) {
+    console.error(`[email] ${args.emailType} render trace failed:`, error);
+  }
+}
+
 export async function sendToRecipients(
   args: SendToRecipientsArgs,
 ): Promise<SendToRecipientsResult> {
   const result: SendToRecipientsResult = { sent: 0, skipped: 0, failed: 0 };
   const stagedEmails: StagedRecipientEmail[] = [];
   for (const recipient of args.recipients) {
-    const outcome = await prepare(recipient, args, true);
+    const outcome = await prepare(recipient, args, !args.traceFailures);
+    if (outcome.kind === "failed" && args.traceFailures) {
+      await traceSendRenderFailure(recipient, args);
+    }
     if (outcome.kind !== "message") {
       result[outcome.kind] += 1;
       continue;

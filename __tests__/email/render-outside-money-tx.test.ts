@@ -21,6 +21,13 @@ const mockDb = {
   organizationInvoice: { findMany: jest.fn(), updateMany: jest.fn() },
   orgAuditLog: { create: jest.fn(async () => ({})) },
   consultantReview: { findUnique: jest.fn(), updateMany: jest.fn() },
+  consultantPayout: { updateMany: jest.fn(), findUnique: jest.fn() },
+  consultantEarnings: { updateMany: jest.fn(async () => ({ count: 1 })) },
+  notificationOutbox: { upsert: jest.fn() },
+  organizationPayout: { updateMany: jest.fn(), findUniqueOrThrow: jest.fn() },
+  organizationEarnings: { updateMany: jest.fn(async () => ({ count: 1 })) },
+  tDSRecord: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+  membership: { findMany: jest.fn(async () => [{ userId: "owner-1" }]) },
   $transaction: jest.fn(async (run: (tx: unknown) => Promise<unknown>) => {
     mockEvents.push("begin");
     const result = await run(mockDb);
@@ -44,10 +51,27 @@ jest.mock("@/lib/email/render", () => ({
 jest.mock("@/lib/email/deliver", () => ({
   ...jest.requireActual("@/lib/email/deliver"),
   attempt: jest.fn(),
+  deliver: jest.fn(async () => ({ success: true, staged: true })),
+}));
+jest.mock("@/emails/payments/PayoutStatusEmail", () => ({
+  PayoutStatusEmail: () => {
+    throw new Error("payout template boom");
+  },
 }));
 jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
   captureMessage: jest.fn(),
+}));
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
+jest.mock("@/lib/payments/payouts/clawback-recovery", () => ({
+  releaseClawbackRecovery: jest.fn(),
+}));
+jest.mock("@/lib/enterprise/outbound-webhooks/dispatch", () => ({
+  dispatchWebhookEvent: jest.fn(),
+}));
+jest.mock("@/lib/novu/service", () => ({
+  notifyPayoutFailed: jest.fn(async () => null),
+  notifyPayoutProcessed: jest.fn(async () => null),
 }));
 jest.mock("@/lib/cron/with-cron-lock", () => ({
   withCronLock: (_name: string, _opts: unknown, run: () => unknown) => run(),
@@ -65,6 +89,7 @@ jest.mock("@/lib/payments/billing/org-invoice-settlement", () => ({
 }));
 jest.mock("@/lib/novu/org-workflows", () => ({
   notifyOrgInvoiceOverdue: jest.fn(async () => []),
+  notifyOrgPayoutFailed: jest.fn(async () => []),
   rosterForOrg: jest.fn(async () => ["owner-1"]),
   VISIBILITY_ROLES: ["OWNER"],
 }));
@@ -72,7 +97,7 @@ jest.mock("@/lib/novu/outbox", () => ({ attemptTrigger: jest.fn() }));
 jest.mock("@/lib/novu/stage-bell", () => ({
   stageBell: jest.fn(async () => null),
 }));
-jest.mock("@/lib/novu", () => ({}));
+jest.mock("@/lib/novu", () => ({ attemptTrigger: jest.fn() }));
 jest.mock("@/lib/reviews", () => ({ recomputeConsultantRating: jest.fn() }));
 jest.mock("@/lib/stream-client", () => ({}));
 
@@ -80,9 +105,10 @@ import * as Sentry from "@sentry/nextjs";
 import { runDunning } from "@/jobs/billing/dunning";
 import {
   prepareRefundProcessedEmail,
-  stagePayoutStatusEmail,
   stageRefundProcessedEmail,
 } from "@/lib/email/senders/money";
+import { markOrgPayoutFailed } from "@/lib/payments/payouts/org-payout-service";
+import { rejectPayout } from "@/lib/payments/payouts/payout-service";
 import {
   applyTransactionalEffects,
   prepareModerationNotices,
@@ -202,17 +228,47 @@ it("payment-success receipt: a render that failed before the capture stages its 
   ]);
 });
 
-it("payout notice rendered inside the payout transaction: a throwing template stages nothing and does not throw", async () => {
-  await expect(
-    stagePayoutStatusEmail(mockDb as never, {
-      userId: "owner-1",
-      payoutId: "po-1",
-      status: "COMPLETED",
-      amountPaise: 10_000,
+it("payout batch: a broken payout template commits every payout with one trace row each and no Sentry event", async () => {
+  mockRender.mockResolvedValue({ html: "<p>ok</p>", text: "ok" });
+  mockDb.consultantPayout.updateMany.mockResolvedValue({ count: 1 });
+  mockDb.consultantPayout.findUnique.mockImplementation(async () => ({
+    amount: 10_000,
+    currency: "INR",
+    method: "BANK_TRANSFER",
+    consultantProfile: { userId: "owner-1" },
+  }));
+  mockDb.organizationPayout.updateMany.mockResolvedValue({ count: 1 });
+  mockDb.organizationPayout.findUniqueOrThrow.mockImplementation(
+    async (args: { where: { id: string } }) => ({
+      id: args.where.id,
+      organizationId: "org-1",
+      netPayoutPaise: 20_000,
       currency: "INR",
+      organization: { name: "Org" },
     }),
-  ).resolves.toEqual([]);
-  expect(mockDb.failedEmail.create).not.toHaveBeenCalled();
+  );
+
+  for (const id of ["po-1", "po-2", "po-3"]) {
+    await rejectPayout(id, "bank rejected");
+  }
+  for (const id of ["opo-1", "opo-2"]) {
+    await expect(markOrgPayoutFailed(id, "bank rejected")).resolves.toEqual({
+      wasNoOp: false,
+      status: "FAILED",
+    });
+  }
+
+  expect(mockDb.consultantPayout.updateMany).toHaveBeenCalledTimes(3);
+  expect(mockDb.organizationPayout.updateMany).toHaveBeenCalledTimes(2);
+  expect(traceRows().map((row) => row.entityRef)).toEqual([
+    "payout:po-1",
+    "payout:po-2",
+    "payout:po-3",
+    "orgPayout:opo-1",
+    "orgPayout:opo-2",
+  ]);
+  expect(Sentry.captureException).not.toHaveBeenCalled();
+  expect(Sentry.captureMessage).not.toHaveBeenCalled();
 });
 
 it("moderation: the takedown commits with a broken template, rendered before the decision's transaction", async () => {

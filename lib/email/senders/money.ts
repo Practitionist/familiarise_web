@@ -311,6 +311,7 @@ export const sendOrgPayoutFailedEmail =
           category: "orgBilling",
           from: SENDERS.finance,
           entityRef: `orgPayout:${args.payoutId}`,
+          traceRenderFailure: true,
           subject: () => subject,
           render: (r) =>
             OrgPayoutFailedEmail({
@@ -527,6 +528,7 @@ function buildPayoutStatusEmail(args: PayoutStatusEmailArgs): {
       entityRef: args.orgName
         ? `orgPayout:${args.payoutId}`
         : `payout:${args.payoutId}`,
+      traceRenderFailure: true,
       subject: () => subject,
       render: (r: EmailRecipient): ReactElement =>
         PayoutStatusEmail({
