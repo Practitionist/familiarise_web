@@ -96,18 +96,27 @@ afterAll(async () => {
   delete process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT;
 });
 
-describe("previews send no error events", () => {
-  it("drops even an uncaught render error on a preview, and keeps it in production", async () => {
+describe("previews report errors like production", () => {
+  it("delivers an uncaught render error and a handled error from a preview", async () => {
     process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "preview";
     await onRequestError(p2022(), request, renderContext);
     Sentry.captureException(new Error("handled preview failure"));
     await Sentry.flush(2_000);
-    expect(delivered).toHaveLength(0);
+    const fromPreview = delivered.length;
+    const values = delivered.flatMap(
+      (event) => event.exception?.values?.map((v) => v.value) ?? [],
+    );
+    expect(values).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("SupportCase.legalHoldAt"),
+        "handled preview failure",
+      ]),
+    );
 
     process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
     Sentry.captureException(new Error("handled production failure"));
     await Sentry.flush(2_000);
-    expect(delivered).toHaveLength(1);
+    expect(delivered.length).toBe(fromPreview + 1);
   });
 });
 
