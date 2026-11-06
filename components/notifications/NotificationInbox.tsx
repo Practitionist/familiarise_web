@@ -234,8 +234,8 @@ export function NotificationInbox() {
           className="flex h-[min(36rem,calc(100vh-5rem))] w-[min(400px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] flex-col overflow-hidden p-0"
         >
           {/* hideNav removes Novu's preference editor: preferences live only in
-              Settings (the footer link), and the families are read-only in Novu. */}
-          <div className="min-h-0 flex-1">
+              Settings (the header gear), and the families are read-only in Novu. */}
+          <div className="relative min-h-0 flex-1">
             <InboxContent
               hideNav
               onNotificationClick={(notification) => {
@@ -297,19 +297,20 @@ export function NotificationInbox() {
                 }
               }}
             />
-          </div>
-          {settingsHref && (
-            <div className="flex shrink-0 justify-end border-t border-zinc-100 px-4 py-2">
+            {/* Novu's header has no slot, so the gear sits over its title row,
+                just left of the ⋯ menu; the offsets match @novu/react 3.19. */}
+            {settingsHref && (
               <Link
                 href={settingsHref}
                 onClick={() => setOpen(false)}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-600 underline-offset-4 hover:text-zinc-900 hover:underline"
+                aria-label="Notification settings"
+                title="Notification settings"
+                className="absolute right-[52px] top-[2px] z-10 inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <Settings className="h-3.5 w-3.5" aria-hidden="true" />
-                Notification settings
+                <Settings className="h-4 w-4" aria-hidden="true" />
               </Link>
-            </div>
-          )}
+            )}
+          </div>
         </PopoverContent>
       </Popover>
     </Inbox>
