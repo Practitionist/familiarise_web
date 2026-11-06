@@ -21,7 +21,7 @@ flowchart LR
     Guard -->|"Allowlisted / Live"| Outbox["FailedEmail / FailedEmailBatch (nextRetryAt = NOW() + 60s)"]
     Guard -->|"Outside Allowlist"| Held["Held in Outbox (DEAD_LETTER: held:pre-launch)"]
     Outbox -->|"3a. Fast-Path (flushNotificationsAfter / attempt)"| Resend["Resend API (Idempotency-Key: <TYPE>/failed-email/<id>)"]
-    Outbox -->|"3b. Relay (retry-failed-emails: every 15m at :00)"| Resend
+    Outbox -->|"3b. Relay (retry-failed-emails: every 15m at :05)"| Resend
     Resend -->|"4. Svix Signed Webhook (whsec_)"| Webhook["POST /api/webhooks/resend"]
     Webhook -->|"5. Single Atomic $transaction(tx)"| Tables["EmailEvent + EmailSuppression + Waitlist"]
     Webhook -->|"6. Post-Commit Domain Health Check"| SystemEvent["SystemEvent (recordSystemErrorSafe)"]
@@ -49,7 +49,7 @@ flowchart LR
 +---------------------------------------------------------------------------------------------------+
    |                                                          |
    | [Phase 2a — Fast-Path (`flushNotificationsAfter`)]       | [Phase 2b — Relay (`retry-failed-emails`)]
-   |  `scheduleAfter` -> `attemptStaged()`                    |  Every 15m at `:00` (`limit=20`, `125ms` gap)
+   |  `scheduleAfter` -> `attemptStaged()`                    |  Every 15m at `:05` (`limit=20`, `125ms` gap)
    |  Sends `<EMAIL_TYPE>/failed-email/<row.id>`              |  Reconstructs RFC 8058 headers statelessly via
    |  Updates `status = "SENT"`, `sentAt = NOW()`             |  `reconstructUnsubscribeHeaders(row)`
    v                                                          v
@@ -79,7 +79,7 @@ sequenceDiagram
     participant Prep as prepareRecipientEmails()
     participant DB as Postgres (PG_POOL_MAX=1)
     participant After as flushNotificationsAfter (after())
-    participant Cron as retry-failed-emails (:00/15m)
+    participant Cron as retry-failed-emails (:05/15m)
     participant Resend as Resend REST API
     participant Hook as POST /api/webhooks/resend
 
@@ -197,14 +197,15 @@ All ops alerts set `Reply-To: connect@practitionist.com` (`SUPPORT_EMAIL` in `li
 2. **Row-Scoped Idempotency Keys (`lib/email/idempotency.ts`)**:
    - Both `stage()` (`lib/email/deliver.ts`) and `runEmailRetryTick` (`jobs/email/retry-failed-emails.ts`) pass `row.id` to `idempotencyKeyFor(payload, emailType, row.id)`, producing `<EMAIL_TYPE>/failed-email/<row.id>`.
    - Inline attempts and relay retries for the same `FailedEmail` row share identical idempotency keys, while legitimate repeat transactional emails (e.g., two booking confirmations or receipts within 24 hours) receive distinct keys and are never dropped by Resend's 24-hour deduplication cache.
-3. **Post-Commit Fast-Path (`flushNotificationsAfter`) & Scheduled Relay (`retry-failed-emails`)**:
+3. **Conditional settle (compare-and-set).** Every status write on `FailedEmail` and `FailedEmailBatch` is an `updateMany` whose `WHERE` carries `status: UNSETTLED` (`PENDING` or `RETRY`, from `lib/retry/provider-window.ts`). The writers are `settleRow` in `lib/email/deliver.ts`, the relay in `jobs/email/retry-failed-emails.ts` and `settleBatch` in `app/api/admin/waitlist/broadcast/route.ts`. A writer that lost a race to another attempt matches no row, is skipped and is not counted, so a late writer can never overwrite `SENT` with a retry or dead-letter state.
+4. **Post-Commit Fast-Path (`flushNotificationsAfter`) & Scheduled Relay (`retry-failed-emails`)**:
    - Transactional producers prepare emails outside `$transaction` (`prepareRecipientEmails`), stage rows inside `tx` (`stagePreparedEmails` / `stageToRecipients`), and flush staged `bells` and `emails` concurrently post-response via `flushNotificationsAfter` (`lib/novu/stage-then-attempt.ts` -> `scheduleAfter`). Outside Next.js request scope (e.g., CLI scripts, cron jobs, Jest), `scheduleAfter` executes and settles inline.
    - A required notice whose state marker must never commit without it uses `stageSpecRequired(tx, spec, userIds)` (`lib/email/senders/shared.ts`). It reads recipients through `tx` and throws when any recipient's render fails, so the caller's claim rolls back instead of committing with a missing email. It passes `reportToSentry: false` to `prepareRecipientEmails`, because the caller retries the claim every run and reports its failure count once per run; every other sender still captures each render failure. `stageToRecipients` counts a render failure and stages the rest. Dunning's `stageOrgInvoiceOverdueEmail` is the one caller today: every dunning stage (first overdue notice, each reminder, suspension) stages its email and bell inside the winning claim transaction, and the relays below deliver whatever the inline attempt after commit did not.
-   - `netlify/functions/cron-tick.mts` dispatches `retry-failed-emails` **every 15 minutes at offset `:00`** (`:00, :15, :30, :45`) with `limit=20` and a `20_000 ms` per-target timeout, paced at `SEND_GAP_MS = 125 ms`. Active queue scans and 7-day `SENT` body scrubs use partial indexes `FailedEmail_active_outbox_idx`, `FailedEmail_sent_unscrubbed_updatedAt_idx`, and `FailedEmailBatch_active_outbox_idx` defined in `prisma/sql/check-constraints.sql`.
+   - `netlify/functions/cron-tick.mts` dispatches `retry-failed-emails` **every 15 minutes at offset `:05`** (`:05, :20, :35, :50`) with `limit=20` and a `20_000 ms` per-target timeout, paced at `SEND_GAP_MS = 125 ms`. Active queue scans and 7-day `SENT` body scrubs use partial indexes `FailedEmail_active_outbox_idx`, `FailedEmail_sent_unscrubbed_updatedAt_idx`, and `FailedEmailBatch_active_outbox_idx` defined in `prisma/sql/check-constraints.sql`.
    - Dead-letter alerts aggregate per tick (`0` per-row loop `Sentry.captureMessage` calls), update the `email.outbox.dead_letter` gauge metric, and post a single summary message to operations chat (`postOpsChat`).
-4. **Stateless RFC 8058 One-Click Unsubscribe & Link-Scanner Protection**:
+5. **Stateless RFC 8058 One-Click Unsubscribe & Link-Scanner Protection**:
    - `reconstructUnsubscribeHeaders(row)` (`lib/email/unsubscribe.ts`) reconstructs `List-Unsubscribe: <url>` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` statelessly on retry from persisted body links (`/api/notifications/unsubscribe?u=...` for lifecycle emails and `/api/waitlist/unsubscribe` for waitlist broadcasts), returning `undefined` for mandatory (`category === null`) notices.
-   - Both `GET /api/notifications/unsubscribe` (303 redirect to confirmation page) and `GET /api/waitlist/unsubscribe` (HTML confirmation page with `<form method="post">`) **never mutate database rows**, protecting subscribers from aggressive enterprise link-scanner prefetching. Only `POST` mutates state (`emailEnabled = false` mirrored to Novu, or waitlist opt-out).
+   - Both `GET /api/notifications/unsubscribe` (303 redirect to confirmation page) and `GET /api/waitlist/unsubscribe` (HTML confirmation page with `<form method="post">`) **never mutate database rows**, protecting subscribers from aggressive enterprise link-scanner prefetching. Only `POST` mutates state (`emailEnabled = false` in Postgres, with no Novu call, or waitlist opt-out).
 
 ---
 

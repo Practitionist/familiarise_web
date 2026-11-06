@@ -1,7 +1,10 @@
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import type { Db } from "@/lib/prisma";
-import { DEAD_LETTER_EMAIL_WHERE } from "@/lib/backoffice/queue-predicates";
+import {
+  DEAD_LETTER_BELL_WHERE,
+  DEAD_LETTER_EMAIL_WHERE,
+} from "@/lib/backoffice/queue-predicates";
 import {
   readCompletionEvidence,
   readStandingConfigSkips,
@@ -205,10 +208,7 @@ async function deadLetterSection(db: Db, now: Date): Promise<SectionBody> {
   const day = since(now, DAY_MS);
   const giveUp = since(now, WEBHOOK_GIVE_UP_MS);
   const freshEmail = { ...DEAD_LETTER_EMAIL_WHERE, updatedAt: { gte: day } };
-  const freshOutbox: Prisma.NotificationOutboxWhereInput = {
-    status: "DEAD_LETTER",
-    updatedAt: { gte: day },
-  };
+  const freshOutbox = { ...DEAD_LETTER_BELL_WHERE, updatedAt: { gte: day } };
   const freshDelivery: Prisma.OutboundWebhookDeliveryWhereInput = {
     status: "DEAD_LETTER",
     updatedAt: { gte: day },
@@ -232,7 +232,7 @@ async function deadLetterSection(db: Db, now: Date): Promise<SectionBody> {
     {
       label: "notification",
       total: () =>
-        db.notificationOutbox.count({ where: { status: "DEAD_LETTER" } }),
+        db.notificationOutbox.count({ where: DEAD_LETTER_BELL_WHERE }),
       fresh: () => db.notificationOutbox.count({ where: freshOutbox }),
       sample: () =>
         db.notificationOutbox.findMany({ where: freshOutbox, ...sample }),

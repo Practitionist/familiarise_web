@@ -2,7 +2,7 @@
 
 > End-to-end architecture for outbound transactional/lifecycle email (`lib/email/`) and multi-tenant Novu in-app feed orchestration (`lib/novu/`), including transactional outbox staging, 60-second inline lease protection, concurrent post-response flushing, stateless RFC 8058 unsubscribes, subscriber security, and scheduled relays.
 
-**Last Updated**: 2026-10-13
+**Last Updated**: 2026-11-06
 
 ---
 
@@ -12,7 +12,7 @@ Familiarise separates email delivery from in-app notification feed orchestration
 
 | Service    | Role                                              | Active Channels         | Outbox Table(s)                   | Relay Target & Ticker Schedule                           |
 | ---------- | ------------------------------------------------- | ----------------------- | --------------------------------- | -------------------------------------------------------- |
-| **Resend** | Outbound transactional, ops & newsletter delivery | Email (`mail.`/`news.`) | `FailedEmail`, `FailedEmailBatch` | `retry-failed-emails` (every **15m** at **`:00`**)       |
+| **Resend** | Outbound transactional, ops & newsletter delivery | Email (`mail.`/`news.`) | `FailedEmail`, `FailedEmailBatch` | `retry-failed-emails` (every **15m** at **`:05`**)       |
 | **Novu**   | Real-time in-app notification feed & inbox        | In-App Feed (WebSocket) | `NotificationOutbox`              | `drain-notification-outbox` (every **10m** at **`:05`**) |
 
 ```mermaid
@@ -28,8 +28,8 @@ graph LR
 
     subgraph "Fast-Path & Scheduled Relays"
         FLUSH["flushNotificationsAfter(bundle)<br/>(scheduleAfter -> concurrent Promise.all)"]
-        ERELAY["retry-failed-emails<br/>(cron-tick.mts: every 15m at :00, limit=20)"]
-        NRELAY["drain-notification-outbox<br/>(cron-tick.mts: every 10m at :05, limit=20)"]
+        ERELAY["retry-failed-emails<br/>(cron-tick.mts: every 15m at :05, limit=20)"]
+        NRELAY["drain-notification-outbox<br/>(cron-tick.mts: every 10m at :05, limit=100)"]
     end
 
     subgraph "Delivery Infrastructure"
@@ -63,8 +63,8 @@ graph LR
 |                   PHASE 1: ATOMIC POSTGRES `$transaction(tx)` (`PG_POOL_MAX=1`)             |
 |                                                                                             |
 |  1. Domain State Mutation (CAS `updateMany` with expected prior status in `WHERE`)          |
-|  2. `stageBell(tx, ...)` -> `resolveRecipientBellPolicy(tx)` filters opted-out users,       |
-|     computes quiet-hours `notBefore`, and upserts `NotificationOutbox`:                     |
+|  2. `stageBell(tx, ...)` -> `resolveRecipientBellPolicy(tx)` filters opted-out users       |
+|     and upserts one `NotificationOutbox` row per event (SINGLE, or MULTI <= 100):           |
 |     - `status = 'PENDING'`, `nextRetryAt = notBefore ?? NOW() + 60s`                        |
 |     - Deterministic `transactionId = <workflowId>:<sha256[:32]>` + `NotificationScope`      |
 |  3. `stage*Email(tx, ...)` / `stagePreparedEmails(tx, ...)` writes `FailedEmail`:           |
@@ -80,11 +80,12 @@ graph LR
 | PHASE 2: `flushNotificationsAfter()`     |  | PHASE 3: Scheduled Outbox Drains              |
 | - Uses Next.js `after()` (`scheduleAfter`)|  | - `withCronLock` (`SystemJobExecution` lease) |
 |   after HTTP response is sent (or inline |  | - `drain-notification-outbox` (10m @ `:05`)   |
-|   in CLI/cron/Jest).                     |  | - `retry-failed-emails` (15m @ `:00`):        |
+|   in CLI/cron/Jest).                     |  | - `retry-failed-emails` (15m @ `:05`):        |
 | - Concurrent `Promise.allSettled`:       |  |   reconstructs RFC 8058 `List-Unsubscribe`    |
 |   `attemptTrigger` + `attemptStaged`     |  |   headers via `reconstructUnsubscribeHeaders` |
 | - Marks `SENT` on 2xx; leaves `PENDING`  |  | - Per-tick aggregated Sentry + `postOpsChat`  |
-|   or `RETRY` (backoff) on failure.       |  |   when rows enter `DEAD_LETTER`.              |
+|   or `RETRY` (backoff) on failure.       |  |   when rows enter `DEAD_LETTER`; `policy:`    |
+|                                          |  |   skips never alert. Urgent workflows first.  |
 +------------------------------------------+  +-----------------------------------------------+
                      \                                       /
                       v                                     v
@@ -119,7 +120,13 @@ To guarantee atomicity with domain writes while strictly respecting `PG_POOL_MAX
    - Standard low-contention interactive routes stage directly inside `tx` via `stage*Email(tx, ...)` + `flushNotificationsAfter`, while bulk loops (`assignments`, `session-outcome-sweep`) stage and render after commit so per-item transactions stay short.
 2. **Phase 1 — Atomic Outbox Staging Inside `$transaction(tx)`**:
    - **Emails**: `stage()` / `stagePreparedEmails(tx, prepared)` (`lib/email/deliver.ts`) evaluates `EMAIL_DELIVERY_MODE` and `EmailSuppression` on `tx`, writes `FailedEmail` with `status: "PENDING"` and `nextRetryAt: new Date(Date.now() + 60_000)`, and generates a row-scoped `Idempotency-Key: <EMAIL_TYPE>/failed-email/<row.id>`.
-   - **In-App Bells**: `stageBell(tx, args)` (`lib/novu/stage-bell.ts`) queries `tx.user.findMany` via `resolveRecipientBellPolicy`, filters out recipients who opted out (`EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, or muted category column), computes quiet-hours `notBefore`, and upserts `NotificationOutbox` with `status: "PENDING"` and `nextRetryAt: notBefore ?? NOW() + 60s` (`INLINE_ATTEMPT_LEASE_MS`). If every recipient opted out, `stageBell` returns `null` without writing an outbox row.
+   - **In-App Bells**: `stageBell(tx, args)` (`lib/novu/stage-bell.ts`) queries `tx.user.findMany` via `resolveRecipientBellPolicy`, filters out recipients who opted out (`EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, or muted category column), and upserts `NotificationOutbox` with `status: "PENDING"` and `nextRetryAt: notBefore ?? NOW() + 60s` (`INLINE_ATTEMPT_LEASE_MS`); `notBefore` is set only by a producer that schedules the notification. If every recipient opted out, `stageBell` returns `null` without writing an outbox row.
+   - **Bell attempt** (`attemptTrigger`, `lib/novu/outbox.ts`): a row is sent in generations. A generation's first attempt rechecks current policy (`currentBellRecipients`, including `erasedAt`) and freezes the allowed recipients into the row in the same conditional update that stamps `firstAttemptAt`. No recipient left dead-letters the row as `policy:audience_revoked` (expected, never alerted); a failed policy read leaves the row for a later attempt and never sends. Each attempt makes one Novu request for the first 100 frozen recipients, one event each under `<transactionId>:<sha256(recipient)[:16]>`: one recipient goes through `novu.trigger` (1 rate-limit token), more through `novu.triggerBulk` (100 tokens per request). The Idempotency-Key hashes `firstAttemptAt`, the recipients and the wire payload: `<recipient transactionId>:<digest>` or `<transactionId>:bulk:<digest>`.
+     - **Unknown outcome** (timeout, network error, 5xx, `409` key in flight, `429`, an unreadable 2xx): the row retries with the same recipients and anchor, so the resend is byte-identical under the same key and Novu answers from its idempotency cache instead of ringing anyone twice. Soft opt-outs are not re-read, but an erased or deleted user is always dropped even though that changes the body and key. A `429` waits at least its `Retry-After` (else `RateLimit-Reset`), and the relay starts no further wave that tick.
+     - **Definitive response**: accepted recipients leave the row and the generation ends: `firstAttemptAt` and `lastError` return to null, so the next attempt rechecks policy and sends under a new key (Novu caches error responses for 24 h, so a reused key would replay the refusal). Retryable refusals (`error`, or a status the client does not know) stay. Terminal refusals (`trigger_not_active`, `invalid_recipients`, workflow not found, ...) move, in the same transaction, to their own `DEAD_LETTER` row (`<transactionId>:terminal:<digest>`, same workflow and payload), so they stay in Needs attention after the rest succeed. These writes require the anchor the sent key was built on. A duplicate `transactionId` counts as delivered. The row is `SENT` when nothing is left and nothing was refused, and `DEAD_LETTER` when only terminal refusals are left. A row over 100 recipients sends its next 100 as a new generation on the following attempt without spending a retry.
+     - `firstAttemptAt` older than 23 h dead-letters the row as `review:provider_acceptance_unknown` (Novu's idempotency cache lasts 24 h). Every status write is conditional on `PENDING`/`RETRY`, so nothing overwrites `SENT`.
+   - **Email settles are conditional too.** Every status write on `FailedEmail` and `FailedEmailBatch` is an `updateMany` filtered on `status: UNSETTLED` (`PENDING` or `RETRY`, from `lib/retry/provider-window.ts`): `settleRow` in `lib/email/deliver.ts`, the relay in `jobs/email/retry-failed-emails.ts` and `settleBatch` in `app/api/admin/waitlist/broadcast/route.ts`. A writer that lost a race to another attempt matches no row, is skipped and is not counted, so a late writer cannot overwrite `SENT`.
+     - An active row with a `lastError` but no `firstAttemptAt` was attempted under the earlier row-wide Novu identity and dead-letters as `review:legacy_delivery_format`; a `BROADCAST` row dead-letters as `review:legacy_broadcast`. See the cutover step in [05-pre-production-checklist.md](./05-pre-production-checklist.md#step-7-bell-outbox-delivery-format-cutover).
 3. **Phase 2 — Post-Commit Concurrent Dispatch via `flushNotificationsAfter`**:
    - After `$transaction` commits, `flushNotificationsAfter({ bells, emails }, op)` (`lib/novu/stage-then-attempt.ts`) schedules wire delivery through `scheduleAfter` (`lib/api/after-safe.ts`).
    - Inside a Next.js App Router request context, `scheduleAfter` registers the batch on Next.js `after()` (`waitUntil`) so the HTTP response returns immediately while `attemptTrigger(row)` and `attemptStaged(entry.rows, entry.emailType, budgetMs)` run concurrently in `Promise.all` with individual `.catch()` error isolation.
@@ -168,7 +175,7 @@ t > 60,000ms [Phase 3: Cron Relay]  If Phase 2 timed out or container froze befo
 stateDiagram-v2
     [*] --> PENDING: Staged in $transaction(tx)<br/>(nextRetryAt = notBefore ?? now + 60s)
     PENDING --> SENT: Fast-path flushNotificationsAfter()<br/>succeeds within 60s lease
-    PENDING --> SENT: Cron relay drain succeeds<br/>(after 60s lease or quiet-hours notBefore)
+    PENDING --> SENT: Cron relay drain succeeds<br/>(after 60s lease or scheduled notBefore)
     PENDING --> RETRY: Transient 429 / 5xx / timeout<br/>(attempts < 5, exponential backoff)
     RETRY --> SENT: Subsequent cron relay tick succeeds
     RETRY --> RETRY: Transient error (attempts < 5)
@@ -226,7 +233,7 @@ lib/email/
    - Because `FailedEmail` stores rendered HTML/text without a separate JSON headers column, `reconstructUnsubscribeHeaders(row)` inspects the persisted message body during `runEmailRetryTick`.
    - If the body contains `/api/notifications/unsubscribe?u=...`, it rebuilds `List-Unsubscribe` + `List-Unsubscribe-Post: List-Unsubscribe=One-Click` for that user ID; if it contains `/api/waitlist/unsubscribe`, it rebuilds the waitlist one-click headers for `row.recipient`; if `category === null` (mandatory account notices such as suspension/ban), it returns `undefined`.
 3. **Link-Scanner Safe `GET` vs. One-Click `POST`**:
-   - **Lifecycle (`/api/notifications/unsubscribe`)**: `GET` performs zero DB writes and returns a `303` redirect to `/email/unsubscribe`; `POST` verifies the HMAC token, sets `emailEnabled: false` on `NotificationPreference` (leaving in-app notifications untouched), and syncs Novu via `updateSubscriberPreferences`.
+   - **Lifecycle (`/api/notifications/unsubscribe`)**: `GET` performs zero DB writes and returns a `303` redirect to `/email/unsubscribe`; `POST` verifies the HMAC token, sets `emailEnabled: false` on `NotificationPreference` (leaving in-app notifications untouched), and makes no vendor call.
    - **Waitlist (`/api/waitlist/unsubscribe`)**: `GET` performs zero DB writes and renders a self-contained HTML confirmation page with a `<form method="post">`; `POST` executes immediate one-click opt-out (`unsubscribe({ email, token })`), preventing corporate mail link scanners from silently unsubscribing users on prefetch.
 
 ### Sending Domains & DMARC Alignment
@@ -243,9 +250,26 @@ lib/email/
 
 - **Environment Resolution (`lib/novu/secret-key.ts`)**: Production traffic (`NEXT_PUBLIC_SENTRY_ENVIRONMENT=production`) uses `NOVU_PRODUCTION_KEY`; previews, branch deploys, and local development use `NOVU_DEVELOPMENT_KEY`.
 - **HMAC Subscriber Authentication (`computeSubscriberHash`)**: `lib/novu/subscriber.ts` computes deterministic HMAC-SHA256 hex digests (`createHmac("sha256", key).update(subscriberId).digest("hex")`) returned by `POST /api/novu/subscriber` so `<Inbox />` authenticates real-time WebSocket inbox connections without exposing subscriber feeds to enumeration.
-- **Inbox mounts after the sync settles (`resolveInboxAuth`)**: `NotificationInbox` waits for `POST /api/novu/subscriber` to finish before rendering `<Inbox />`, so the first connection already carries `subscriberHash`. Mounting earlier sent hash-less requests that Novu answers with 400 "valid HMAC hash" wherever the in-app integration enforces HMAC. `NotificationInbox` is the only component that opens a Novu session; there is no app-wide `NovuProvider`. Previews pair the Development application identifier with `NOVU_DEVELOPMENT_KEY`, and production pairs the Production identifier with `NOVU_PRODUCTION_KEY`; the hash is only valid with the secret of the environment that owns the identifier.
-- **Fail-Closed Custom Data Merge (`buildSubscriberCustomData`)**: Merges caller overrides (`routingMode`, `preferences`) with persisted `OrgWorkspaceProfile` and `NotificationPreference` rows. Any database read error is **propagated** rather than caught and defaulted, ensuring transient DB faults never overwrite opted-out subscribers back to `masterEnabled: true` in Novu.
-- **Idempotent Preference Sync (`updateSubscriberPreferences`)**: Calls `novu.subscribers.create({ subscriberId, data: customData })` (upsert semantics) rather than PATCHing an existing subscriber record, ensuring preference changes succeed even if a user has never mounted the client dashboard yet.
+- **Inbox mounts after the hash request settles (`resolveInboxAuth`)**: `POST /api/novu/subscriber` only signs the session user's id; it makes no Novu call and sends no profile data, because Novu creates the subscriber on the first Inbox session or trigger. `NotificationInbox` waits for it before rendering `<Inbox />`, so the first connection already carries `subscriberHash`. Mounting earlier sent hash-less requests that Novu answers with 400 "valid HMAC hash" wherever the in-app integration enforces HMAC. `NotificationInbox` is the only component that opens a Novu session; there is no app-wide `NovuProvider`. Previews pair the Development application identifier with `NOVU_DEVELOPMENT_KEY`, and production pairs the Production identifier with `NOVU_PRODUCTION_KEY`; the hash is only valid with the secret of the environment that owns the identifier.
+- **Erasure**: `deleteSubscriber` removes the Novu subscriber and its feed; it never throws and reports whether Novu acknowledged the delete.
+
+### Single Preference Owner: Postgres Decides, Novu Delivers
+
+```mermaid
+flowchart LR
+    Prefs["NotificationPreference +<br/>OrgWorkspaceProfile.notificationRoutingMode"] --> Stage["Stage: resolveRecipientBellPolicy / bellAudience"]
+    Prefs --> Attempt["Attempt: currentBellRecipients"]
+    Stage --> Row["NotificationOutbox row"] --> Attempt
+    Attempt -->|"allowed recipients only"| Novu["Novu triggerBulk<br/>(families always on, read-only)"]
+    Novu --> Inbox["Inbox (no Novu preference editor)"]
+```
+
+- **One copy of the flags.** `NotificationPreference` and the workspace routing mode in Postgres are the only preference state. `PUT /api/novu/preferences`, the one-click unsubscribe and the workspace settings route each make one database write and no Novu call; the change applies to the next notification because both gates read Postgres.
+- **The server is the only gate.** A bell is filtered when it is staged and again at the first attempt of each generation (`currentBellRecipients`), which freezes the allowed set so a retry after an unknown outcome resends exactly that set, minus erased users, under the same Idempotency-Key.
+- **Novu is a plain in-app transport.** `toFamilyDto` writes every family with no step condition and with `preferences.user` and `preferences.workflow` set to `{ all: { enabled: true, readOnly: true }, channels: { in_app: { enabled: true } } }` (`FAMILY_PREFERENCES`), so subscribers cannot mute a family in Novu. `npm run novu:check` reports live subscriber-editable preferences or a leftover `skip` control as drift. `NotificationInbox` renders `InboxContent` with `hideNav`, which removes Novu's preference page; preferences live only in Settings.
+- **One-time reset of native mutes.** Mutes saved through Novu's old preference page are cleared once per environment by `scripts/novu/clear-native-mutes.ts` (dry run by default, `--apply` to write, `--env production` for Production). Run the dry run and then `--apply` **before** `npm run novu:sync` in that environment: the sync makes the families read-only, and Novu may refuse per-family writes on a read-only workflow, which the script reports separately as read-only refusals. It is idempotent, is not a scheduled job, and is deleted once both environments are clean.
+- **Announcements fan out through the same policy.** An inbox post is opt-in on create (`postToInbox`). The create transaction reads the audience with `bellAudience` and stages it with `stagePages` as `MULTI` rows of at most 100 recipients keyed `announcement:<id>:page:<n>`; a post over `MAX_BELL_AUDIENCE` (2,000) candidate users is refused. The create dialog first shows the eligible count (`GET /api/announcements/audience`, same `announcements.manage` permission) and asks the admin to confirm that each recipient uses one Novu workflow run. The staging takes no advisory lock: each post is keyed `announcement:<id>`, which is unique per create. The create transaction runs with `timeout: 15_000, maxWait: 5_000`. There are no maintenance bells: the `DEGRADED` banner and the `OFFLINE` maintenance page cover the live state, and advance notice goes out as an announcement.
+- **Novu quota.** Every recipient of every bell is one Novu workflow run. The plan is assumed to be Free (10,000 runs a month, counted across Development and Production together, `.claude/skills/billing-guardrails/references/novu.md`), so `MAX_BELL_AUDIENCE` keeps one fan-out to a fifth of the month. The plan is to upgrade once monthly runs pass about 60 %.
 
 ### Preference Categories & Workspace Routing Matrix
 
@@ -269,9 +293,7 @@ flowchart TD
     CheckModeBell -->|"Yes"| DropBell["Drop Recipient"]
     CheckModeBell -->|"No"| CheckMasterBell{"allNotifications && inAppEnabled<br/>&& categoryColumn !== false?"}
     CheckMasterBell -->|"No (and not mandatory)"| DropBell
-    CheckMasterBell -->|"Yes"| QuietHours{"Quiet Hours Active?"}
-    QuietHours -->|"Yes"| StageDeferred["Upsert NotificationOutbox<br/>(notBefore = quietEnd, nextRetryAt = quietEnd)"]
-    QuietHours -->|"No"| StageImmediate["Upsert NotificationOutbox<br/>(nextRetryAt = now + 60s)"]
+    CheckMasterBell -->|"Yes"| StageImmediate["Upsert NotificationOutbox<br/>(nextRetryAt = notBefore ?? now + 60s)"]
 
     Split -->|"Email (lib/email/)"| EmailPolicy["loadEmailRecipients(userIds, category, db)"]
     EmailPolicy --> CheckModeEmail{"routingMode in<br/>BELL_ONLY | NEITHER?"}
@@ -283,8 +305,7 @@ flowchart TD
     CheckSupp -->|"Disallowed in Allowlist Mode"| HoldRow["Insert FailedEmail<br/>(DEAD_LETTER: held:pre-launch)"]
     CheckSupp -->|"Allowed"| StageEmail["Insert FailedEmail<br/>(PENDING, nextRetryAt = now + 60s,<br/>key = <TYPE>/failed-email/<row.id>)"]
 
-    StageDeferred --> Flush["flushNotificationsAfter({ bells, emails })"]
-    StageImmediate --> Flush
+    StageImmediate --> Flush["flushNotificationsAfter({ bells, emails })"]
     StageEmail --> Flush
 ```
 
@@ -294,10 +315,10 @@ flowchart TD
 
 ### Phase-Staggered Ticker Cadences (`netlify/functions/cron-tick.mts`)
 
-| Relay Target                | Ticker Interval & Phase Offset    | Per-Tick Limit & Timeout | Pacing / Concurrency                                 |
-| --------------------------- | --------------------------------- | ------------------------ | ---------------------------------------------------- |
-| `drain-notification-outbox` | Every **10m** at offset **`:05`** | `limit=20`, `20_000 ms`  | First-row sequential probe + `DRAIN_CONCURRENCY = 5` |
-| `retry-failed-emails`       | Every **15m** at offset **`:00`** | `limit=20`, `20_000 ms`  | Sequential `SEND_GAP_MS = 125 ms` pacing             |
+| Relay Target                | Ticker Interval & Phase Offset    | Per-Tick Limit & Timeout | Pacing / Concurrency                                                                         |
+| --------------------------- | --------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------- |
+| `drain-notification-outbox` | Every **10m** at offset **`:05`** | `limit=100`, `24_000 ms` | Urgent workflows first; first-row probe + `DRAIN_CONCURRENCY = 5`; no wave starts after 12 s |
+| `retry-failed-emails`       | Every **15m** at offset **`:05`** | `limit=20`, `20_000 ms`  | Sequential `SEND_GAP_MS = 125 ms` pacing                                                     |
 
 Both relays acquire fail-closed Postgres leases (`withCronLock(..., { failMode: "closed" })`) enforced by `SystemJobExecution_running_jobName_key` in `prisma/sql/check-constraints.sql`, and scan active rows using partial indexes in `prisma/sql/check-constraints.sql`:
 
@@ -312,7 +333,7 @@ To protect the 5,000/month Sentry error quota:
 
 - Neither `runEmailRetryTick` nor `runNotificationDrainTick` emits per-row `Sentry.captureMessage` or `Sentry.captureException` calls inside row processing loops.
 - `runEmailRetryTick` collects terminal and exhausted row failures into a per-tick `alerts` map keyed by reason/type, emits deduplicated alerts after the loop with `tags: { subsystem: "email", outbox_dead_letter: "true" }`, records the `email.outbox.dead_letter` gauge, and posts a single summary alert via `postOpsChat`.
-- `runNotificationDrainTick` suppresses per-row Sentry reports (`suppressSentry: true`), emits one summary `Sentry.captureException` per failing tick, records `notifications.outbox.pending` and `notifications.outbox.dead_letter` gauges, and posts a summary alert via `postOpsChat`.
+- `runNotificationDrainTick` suppresses per-row Sentry reports (`suppressSentry: true`), emits one summary `Sentry.captureException` per failing tick, records `notifications.outbox.pending` and `notifications.outbox.dead_letter` gauges, and posts a summary alert via `postOpsChat`. Expected skips (`policy:` dead letters) are excluded from the alert, the gauge, the ops digest and Needs attention (`DEAD_LETTER_BELL_WHERE` in `lib/backoffice/queue-predicates.ts`).
 
 ---
 
@@ -350,8 +371,12 @@ flowchart LR
 - **Removed Accidental Operational Asymmetries**:
   - **Post-Commit Fire-and-Forget vs. In-Tx SSR**: Replaced mixed staging with `prepareRecipientEmails` outside `tx`, atomic `stage()` + policy-aware `stageBell(tx, ...)` (`60s` inline lease) inside `tx`, and `flushNotificationsAfter` concurrent settlement.
   - **24h Body-Hash Key Collisions & Stripped Retry Headers**: Replaced payload hashes with `<EMAIL_TYPE>/failed-email/<row.id>` keys, stateless `reconstructUnsubscribeHeaders(row)`, and confirmation-only `GET /api/waitlist/unsubscribe`.
-  - **Fail-Open Subscriber Sync**: Replaced catch-all defaults (`masterEnabled: true`) and 404-prone PATCH calls with fail-closed DB propagation and idempotent `novu.subscribers.create(...)`.
 - **Intentionally Retained Vendor-Plane Split (Novu In-App vs. Direct Resend Email)**:
   - Outbound emails are **not** routed through Novu's email step so transactional notices never depend on a second vendor's multi-tenant queue availability, bypass Novu's 20-workflow plan cap across 45+ React Email templates, and preserve native `resend.batch.send` throughput and `EmailEvent` Svix telemetry.
+
+- **Novu preference mirror and step conditions (removed)**: preference changes and every dashboard session copied the flags (and email, phone and name) onto the Novu subscriber's `data`, and each family's in-app step carried a `skip` rule over those flags (`inAppSkipRule`). The server already rechecked Postgres before every trigger, so the mirror could only drop a bell the server had approved, while the outbox recorded it as `SENT`. Delete any residual `subscriber.data` reads, `syncSubscriber`/`updateSubscriberPreferences` calls or `skip` controls.
+- **Announcement and maintenance broadcasts (removed)**: announcements and maintenance notices were Novu broadcasts to every subscriber, gated only by the mirror (and, once it was gone, by nothing). Announcements now fan out per audience page through bell policy, opt-in; the maintenance bells (`maintenance-scheduled`, `maintenance-started`, `maintenance-ended`, `stageMaintenanceBells`) are deleted because no window is scheduled ahead and the relay is blocked while maintenance is `OFFLINE`. The `BROADCAST` outbox kind is unused. See [the decision record](../decisions/2026-11-06-notification-single-preference-owner.md).
+
+- **In-app quiet hours (removed)**: bells were deferred to the end of a user's quiet window while the email for the same event went out at once, so the least intrusive channel was the one held back. The bell deferral and its urgent bypass are gone. The `quietHours*` columns now feed only the consultant's planning reminder (`lib/booking/week-nudge.ts`), whose email and bell wait together, as before; the settings page labels the control "Email quiet hours".
 
 - **Inbound forwarding via ImprovMX (planned, never configured)**: root `@` MX records `mx1.improvmx.com` and `mx2.improvmx.com` were meant to deliver role addresses on `familiarisenow.com`. They were never created, and the apex now publishes a null MX. Delete any residual references.

@@ -9,6 +9,10 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
+import {
+  QUIET_HOURS_DEFAULT_END,
+  QUIET_HOURS_DEFAULT_START,
+} from "@/schemas/user";
 
 interface NotificationPreferences {
   allNotifications: boolean;
@@ -69,7 +73,7 @@ const PUSH_COMING_SOON = {
     "Coming soon — push delivery is not available yet. Your choice is saved for when it launches.",
 } as const;
 
-/** Q3 fix — the zones the platform actually serves; keep in sync with staff settings. */
+/** The zones the platform actually serves; keep in sync with staff settings. */
 const QUIET_HOURS_TIMEZONES = [
   "Asia/Kolkata",
   "Asia/Dubai",
@@ -398,20 +402,21 @@ export function NotificationPreferencesPanel() {
         </Card>
       )}
 
-      {/* Quiet Hours */}
+      {/* Email quiet hours: read only by the planning reminder (lib/booking/week-nudge.ts) */}
       {prefs.allNotifications && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Quiet Hours</CardTitle>
+            <CardTitle className="text-lg">Email quiet hours</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
                 <Label className="text-sm font-medium">
-                  Enable Quiet Hours
+                  Hold planning reminders
                 </Label>
                 <p className="text-xs text-zinc-500">
-                  Pause non-urgent notifications during specific hours
+                  The email reminding you to schedule plan sessions waits until
+                  these hours end
                 </p>
               </div>
               <Switch
@@ -437,7 +442,7 @@ export function NotificationPreferencesPanel() {
                     <Label className="text-sm">Start Time</Label>
                     <Input
                       type="time"
-                      value={prefs.quietHoursStart ?? "22:00"}
+                      value={prefs.quietHoursStart ?? QUIET_HOURS_DEFAULT_START}
                       onChange={(e) =>
                         mutation.mutate({ quietHoursStart: e.target.value })
                       }
@@ -448,7 +453,7 @@ export function NotificationPreferencesPanel() {
                     <Label className="text-sm">End Time</Label>
                     <Input
                       type="time"
-                      value={prefs.quietHoursEnd ?? "08:00"}
+                      value={prefs.quietHoursEnd ?? QUIET_HOURS_DEFAULT_END}
                       onChange={(e) =>
                         mutation.mutate({ quietHoursEnd: e.target.value })
                       }
@@ -482,8 +487,9 @@ export function NotificationPreferencesPanel() {
                     ))}
                   </select>
                   <p className="mt-1 text-xs text-zinc-500">
-                    Non-urgent notifications pause during these hours and
-                    deliver afterwards.
+                    Only the planning-reminder email (and its matching bell)
+                    waits. Other emails and in-app notifications are not
+                    delayed.
                   </p>
                 </div>
               </>

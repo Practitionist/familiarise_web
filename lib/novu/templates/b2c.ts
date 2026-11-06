@@ -671,39 +671,6 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
-    workflowId: W.MAINTENANCE_SCHEDULED,
-    name: "Maintenance scheduled",
-    description: "Everyone, ahead of a maintenance window.",
-    category: null,
-    inApp: {
-      subject: "Scheduled maintenance",
-      body: "Maintenance is coming up{% if payload.estimatedEnd %}; we expect to be back by {{payload.estimatedEnd}}{% endif %}.{% if payload.reason %} {{payload.reason}}{% endif %}",
-      redirect: "statusUrl",
-    },
-  },
-  {
-    workflowId: W.MAINTENANCE_STARTED,
-    name: "Maintenance started",
-    description: "Everyone, as the window opens.",
-    category: null,
-    inApp: {
-      subject: "Under maintenance",
-      body: "Familiarise is under maintenance{% if payload.estimatedEnd %} and should be back by {{payload.estimatedEnd}}{% endif %}.{% if payload.reason %} {{payload.reason}}{% endif %}",
-      redirect: "statusUrl",
-    },
-  },
-  {
-    workflowId: W.MAINTENANCE_ENDED,
-    name: "Maintenance ended",
-    description: "Everyone, once the window closes.",
-    category: null,
-    inApp: {
-      subject: "Back online",
-      body: "Maintenance is finished — everything is back to normal.",
-      redirect: "statusUrl",
-    },
-  },
-  {
     workflowId: W.COMPLIANCE_DEADLINE_ALERT,
     name: "Compliance deadline alert",
     description:

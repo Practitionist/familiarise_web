@@ -4,7 +4,7 @@ type: how-to
 band: 70-operations
 audience: sde3
 status: live
-last-reviewed: 2026-11-02
+last-reviewed: 2026-11-06
 ---
 
 # Money go-live checklist
@@ -132,7 +132,33 @@ The [daily ops digest](../../maintenance/00-betterstack-setup.md#daily-ops-diges
 - **The digest heartbeat and the second watcher exist.** The "ops digest" Better Stack heartbeat is Up, and the Sentry uptime monitor on `/api/health/jobs` shows a recent successful check.
 - **Release lag is known, or knowingly unknown.** `GITHUB_RELEASE_LAG_TOKEN` is optional by owner decision (2026-11-05), so the "Release lag" section may read "Unknown" and nothing pages. If it does, record that a held release is then caught only by reading the digest and the deploy list. Create the token when releases become routine enough that a held one would go unnoticed. A commit count also needs `BUILD_SHA`, which `next.config.mjs` inlines only when the host provides `COMMIT_REF` (Netlify) or `VERCEL_GIT_COMMIT_SHA` (Vercel), and a successful GitHub read; a host with neither, such as a plain Docker build, stays "Unknown".
 
-## Part 4: GitHub plan and CI at launch
+## Part 4: notifications (Resend and Novu)
+
+Email and in-app notifications do not move money, but a wrong cutover silently drops mail or rings a bell twice. The full runbook is [the notifications pre-production checklist](../../notifications/05-pre-production-checklist.md); this part lists the steps that belong to the cutover.
+
+### 4.1 Resend domains and webhook
+
+- [ ] Both sending subdomains, `mail.familiarisenow.com` and `news.familiarisenow.com`, show as verified in Resend (region `ap-northeast-1`), with the DKIM, return-path MX, SPF and `rsend` CNAME records live in Netlify DNS ([Domains and DNS records](../../deployment/README.md#domains-and-dns-records)).
+- [ ] The Svix webhook `https://<production-host>/api/webhooks/resend` is registered for the delivery, bounce, complaint, suppression, `contact.*` and `domain.*` events, and its signing secret is stored as `RESEND_WEBHOOK_SECRET` in the production context.
+- [ ] Resend is on a plan that fits launch volume. The Free plan stops sending at 100 emails a day ([Resend billing guardrails](../../../.claude/skills/billing-guardrails/references/resend.md)).
+- [ ] Then flip `EMAIL_DELIVERY_MODE=live` ([Part 3](#part-3-the-daily-ops-digest-reads-clean)). Until it is live, mail to outside recipients is held as `DEAD_LETTER` `held:pre-launch`.
+
+### 4.2 Novu Production at the release promotion
+
+Run these in the same window as the production release that carries the single-preference-owner change, and not earlier: old production code still writes subscriber preferences, so an earlier sync would fight it. They run from a workstation with `NOVU_PRODUCTION_KEY` in the environment.
+
+1. `npx tsx scripts/novu/clear-native-mutes.ts --env production` (dry run). Read the list of stray native mutes.
+2. `npx tsx scripts/novu/clear-native-mutes.ts --env production --apply`.
+3. `npm run novu:sync -- --env production --dry-run`, then `npm run novu:sync -- --env production`.
+4. Five minutes after the sync, `npm run novu:check -- --env production` exits `0` with no drift on two runs in a row. Novu's read API serves stale workflows for about three minutes after a sync, so a `novu:check` in that window reports false drift on random families; wait five minutes, then expect two clean runs in a row.
+
+**Proof:** the dry run in step 1 lists nothing to clear when repeated, and a test booking rings one bell for each recipient who has not opted out. Novu Free allows 10,000 workflow runs a month across Development and Production together, so keep Development testing small ([Novu billing reference](../../../.claude/skills/billing-guardrails/references/novu.md)).
+
+### 4.3 Outbox recount and legacy-guard cleanup
+
+On 2026-11-06 the live database held zero `PENDING` or `RETRY` rows in `FailedEmail`, `FailedEmailBatch` and `NotificationOutbox`, so no `firstAttemptAt` backfill is needed. Immediately before the production release, repeat the read-only count in [Step 7 of the notifications checklist](../../notifications/05-pre-production-checklist.md#step-7-outbox-cutover-recount-no-backfill). If all three read zero, a cleanup PR deletes the legacy cutover guards (`LEGACY_DELIVERY_FORMAT` and `LEGACY_BROADCAST` in `lib/novu/outbox.ts`) and `scripts/novu/clear-native-mutes.ts`. If any row is present, follow Step 7 to settle or dispose of it first.
+
+## Part 5: GitHub plan and CI at launch
 
 Owner steps in GitHub, from [the CI decision](../../decisions/2026-11-07-ci-before-and-at-launch.md): move the `Practitionist` organisation to Team with one seat, cancel the personal Pro on `teetangh`, pay with an eligible Indian credit card, set the Actions budget to about $15 with stop-usage, and require the `Release checks` status check on `prod`.
 
@@ -146,6 +172,7 @@ Owner steps in GitHub, from [the CI decision](../../decisions/2026-11-07-ci-befo
 | RazorpayX credentials, egress guard, live-key guard | `lib/payments/payouts/razorpay-payouts.ts`                                                                     |
 | Live-payout gate                                    | `lib/feature-flags.ts`, `lib/payments/payouts/payout-service.ts`, `lib/payments/payouts/org-payout-service.ts` |
 | Sandbox smoke                                       | `scripts/smoke/org-payout-sandbox-smoke.ts`                                                                    |
+| Novu sync, drift check and native-mute reset        | `scripts/novu/sync-workflows.ts`, `scripts/novu/clear-native-mutes.ts`                                         |
 
 ## Related
 

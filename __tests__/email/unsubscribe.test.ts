@@ -4,12 +4,12 @@
 
 /**
  * #1653 — one-click unsubscribe. Pins the token round-trip and tamper
- * rejection, that POST flips `emailEnabled` and mirrors it to Novu, that a bad
+ * rejection, that POST flips `emailEnabled` in Postgres only, that a bad
  * token neither writes nor reveals anything, and that GET never writes.
  */
 
 const mockUpsert = jest.fn();
-const mockUpdateSubscriberPreferences = jest.fn();
+const mockGetNovuClient = jest.fn();
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -20,9 +20,9 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-jest.mock("../../lib/novu/subscriber", () => ({
-  updateSubscriberPreferences: (...args: unknown[]) =>
-    mockUpdateSubscriberPreferences(...args),
+jest.mock("../../lib/novu/client", () => ({
+  isNovuConfigured: () => true,
+  getNovuClient: (...args: unknown[]) => mockGetNovuClient(...args),
 }));
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
@@ -69,7 +69,7 @@ describe("email unsubscribe token", () => {
 });
 
 describe("POST /api/notifications/unsubscribe", () => {
-  it("flips emailEnabled only and mirrors the flags to Novu", async () => {
+  it("flips emailEnabled only, in Postgres, without calling Novu", async () => {
     const res = await POST(
       new NextRequest(buildEmailUnsubscribeUrl(USER), { method: "POST" }),
     );
@@ -80,10 +80,7 @@ describe("POST /api/notifications/unsubscribe", () => {
       update: { emailEnabled: false },
       create: { userId: USER, emailEnabled: false },
     });
-    expect(mockUpdateSubscriberPreferences).toHaveBeenCalledWith(
-      USER,
-      expect.objectContaining({ email: false, inApp: true }),
-    );
+    expect(mockGetNovuClient).not.toHaveBeenCalled();
   });
 
   it("answers 400 to a bad token without touching the row", async () => {

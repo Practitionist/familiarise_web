@@ -21,6 +21,7 @@ jest.mock("../../lib/prisma", () => ({
     failedEmail: {
       create: (...args: unknown[]) => mockCreate(...args),
       update: jest.fn(),
+      updateMany: jest.fn(async () => ({ count: 1 })),
     },
     emailSuppression: {
       findUnique: (...args: unknown[]) => mockFindSuppression(...args),
@@ -124,7 +125,7 @@ describe("pre-launch delivery guard", () => {
   });
 
   it("dead-letters a held outbox row instead of retrying it", async () => {
-    const updates: Prisma.FailedEmailUpdateArgs[] = [];
+    const updates: Prisma.FailedEmailUpdateManyArgs[] = [];
     const row = {
       id: "fe-9",
       recipient: "seeded.user@yahoo.com",
@@ -132,17 +133,21 @@ describe("pre-launch delivery guard", () => {
       status: "PENDING",
     } as FailedEmail;
     const store: FailedEmailStore = {
+      user: { findUnique: jest.fn().mockResolvedValue(null) },
       failedEmail: {
         findMany: jest.fn().mockResolvedValue([row]),
-        update: jest.fn(async (args: Prisma.FailedEmailUpdateArgs) => {
+        updateMany: jest.fn(async (args: Prisma.FailedEmailUpdateManyArgs) => {
           updates.push(args);
-          return row;
+          return { count: 1 };
         }),
       },
-      emailSuppression: { findMany: jest.fn().mockResolvedValue([]) },
+      emailSuppression: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
       failedEmailBatch: {
         findMany: jest.fn().mockResolvedValue([]),
-        update: jest.fn(),
+        updateMany: jest.fn(),
       },
     };
     const send = jest.fn();
@@ -154,7 +159,8 @@ describe("pre-launch delivery guard", () => {
     const result = await runEmailRetryTick({ prisma: store, resend: sender });
 
     expect(send).not.toHaveBeenCalled();
-    expect(result.deadLettered).toBe(1);
+    // A hold is an expected outcome: settled, not counted as a paging dead letter.
+    expect(result).toMatchObject({ refused: 1, deadLettered: 0 });
     expect(updates[0].data).toEqual({
       status: "DEAD_LETTER",
       lastError: HELD_PRE_LAUNCH,

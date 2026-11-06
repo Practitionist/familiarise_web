@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -41,6 +43,11 @@ interface Announcement {
   createdAt: string;
 }
 
+const ApiErrorSchema = z.object({ error: z.string().optional() });
+const InboxAudienceSchema = z.object({
+  data: z.object({ eligible: z.number().nullable(), cap: z.number() }),
+});
+
 export interface AnnouncementsPageProps {
   /** API base path for announcements, defaults to "/api/announcements" */
   apiBasePath?: string;
@@ -61,6 +68,8 @@ export function AnnouncementsPage({
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingAnnouncement, setEditingAnnouncement] =
     useState<Announcement | null>(null);
+  const [postToInbox, setPostToInbox] = useState(false);
+  const [confirmedRuns, setConfirmedRuns] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -69,28 +78,77 @@ export function AnnouncementsPage({
   const { data: announcements = [], isLoading } = useQuery({
     queryKey,
     queryFn: async (): Promise<Announcement[]> => {
-      const response = await fetch(apiBasePath);
-      const result = await response.json();
-      return result.success ? result.data : [];
+      const response = await fetch(`${apiBasePath}/manage`);
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error("Could not load announcements.");
+      return result?.success ? result.data : [];
     },
   });
 
+  // Counted only when an inbox post is being considered. The hook stays mounted,
+  // so an earlier count is kept while it refetches and must not be confirmable.
+  const inboxAudience = useQuery({
+    queryKey: [queryKeyPrefix, "inbox-audience"],
+    enabled: isCreateOpen && postToInbox,
+    gcTime: 0,
+    queryFn: async () => {
+      const response = await fetch(`${apiBasePath}/audience`);
+      const parsed = InboxAudienceSchema.safeParse(
+        await response.json().catch(() => null),
+      );
+      if (!response.ok || !parsed.success) {
+        throw new Error("Could not count the inbox audience.");
+      }
+      return parsed.data.data;
+    },
+  });
+  const eligible = inboxAudience.data?.eligible;
+  const inboxPostReady =
+    !postToInbox ||
+    (confirmedRuns &&
+      !inboxAudience.isFetching &&
+      eligible !== undefined &&
+      eligible !== null);
+
+  const openCreate = (open: boolean) => {
+    setIsCreateOpen(open);
+    if (!open) {
+      setPostToInbox(false);
+      setConfirmedRuns(false);
+    }
+  };
+
   const createMutation = useMutation({
-    mutationFn: async (data: Partial<Announcement>) => {
+    mutationFn: async (
+      data: Partial<Announcement> & { postToInbox: boolean },
+    ) => {
       const response = await fetch(apiBasePath, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      return response.json();
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        const parsed = ApiErrorSchema.safeParse(result);
+        throw new Error(
+          parsed.success && parsed.data.error
+            ? parsed.data.error
+            : "The announcement was not created.",
+        );
+      }
+      return result;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey });
-      setIsCreateOpen(false);
+      openCreate(false);
       toast({ title: "Announcement created" });
     },
-    onError: () => {
-      toast({ title: "Failed to create announcement", variant: "destructive" });
+    onError: (error) => {
+      toast({
+        title: "Failed to create announcement",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 
@@ -107,15 +165,28 @@ export function AnnouncementsPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      return response.json();
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        const parsed = ApiErrorSchema.safeParse(result);
+        throw new Error(
+          parsed.success && parsed.data.error
+            ? parsed.data.error
+            : "The announcement was not updated.",
+        );
+      }
+      return result;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey });
       setEditingAnnouncement(null);
       toast({ title: "Announcement updated" });
     },
-    onError: () => {
-      toast({ title: "Failed to update announcement", variant: "destructive" });
+    onError: (error) => {
+      toast({
+        title: "Failed to update announcement",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 
@@ -150,7 +221,7 @@ export function AnnouncementsPage({
     if (editingAnnouncement) {
       updateMutation.mutate({ id: editingAnnouncement.id, data });
     } else {
-      createMutation.mutate(data);
+      createMutation.mutate({ ...data, postToInbox });
     }
   };
 
@@ -169,7 +240,7 @@ export function AnnouncementsPage({
           <h1 className="text-2xl font-bold">{title}</h1>
           <p className="text-muted-foreground">{description}</p>
         </div>
-        <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+        <Dialog open={isCreateOpen} onOpenChange={openCreate}>
           <DialogTrigger asChild>
             <Button>
               <Plus className="mr-2 h-4 w-4" />
@@ -197,6 +268,71 @@ export function AnnouncementsPage({
                   <Switch id="isActive" name="isActive" defaultChecked />
                   <Label htmlFor="isActive">Active</Label>
                 </div>
+                <div className="flex items-start gap-2">
+                  <Checkbox
+                    id="postToInbox"
+                    checked={postToInbox}
+                    onCheckedChange={(checked) => {
+                      setPostToInbox(checked === true);
+                      setConfirmedRuns(false);
+                    }}
+                    aria-describedby="postToInbox-help"
+                    className="mt-0.5"
+                  />
+                  <div className="space-y-1">
+                    <Label htmlFor="postToInbox">
+                      Also post to every user&apos;s notification inbox
+                    </Label>
+                    <p
+                      id="postToInbox-help"
+                      className="text-xs text-muted-foreground"
+                    >
+                      Rings the bell for every user who allows in-app
+                      notifications, right away. An inbox post cannot be
+                      recalled, and later edits change only the banner.
+                    </p>
+                  </div>
+                </div>
+                {postToInbox && (
+                  <div
+                    className="space-y-2 rounded-md border p-3 text-sm"
+                    aria-live="polite"
+                  >
+                    {inboxAudience.isPending || inboxAudience.isFetching ? (
+                      <p className="text-muted-foreground">
+                        Counting eligible users…
+                      </p>
+                    ) : inboxAudience.isError ? (
+                      <p className="text-destructive">
+                        {inboxAudience.error.message}
+                      </p>
+                    ) : inboxAudience.data.eligible === null ? (
+                      <p className="text-destructive">
+                        More than {inboxAudience.data.cap.toLocaleString()}{" "}
+                        users are eligible, which is over the inbox limit.
+                        Create the announcement without posting to inboxes.
+                      </p>
+                    ) : (
+                      <div className="flex items-start gap-2">
+                        <Checkbox
+                          id="confirmInboxRuns"
+                          checked={confirmedRuns}
+                          onCheckedChange={(checked) =>
+                            setConfirmedRuns(checked === true)
+                          }
+                          className="mt-0.5"
+                        />
+                        <Label htmlFor="confirmInboxRuns" className="leading-5">
+                          Post to {inboxAudience.data.eligible.toLocaleString()}{" "}
+                          eligible{" "}
+                          {inboxAudience.data.eligible === 1 ? "user" : "users"}
+                          . Each recipient uses one Novu workflow run from the
+                          monthly quota.
+                        </Label>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="backgroundColor">Background Color</Label>
@@ -236,11 +372,14 @@ export function AnnouncementsPage({
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setIsCreateOpen(false)}
+                  onClick={() => openCreate(false)}
                 >
                   Cancel
                 </Button>
-                <Button type="submit" disabled={createMutation.isPending}>
+                <Button
+                  type="submit"
+                  disabled={createMutation.isPending || !inboxPostReady}
+                >
                   {createMutation.isPending && (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   )}

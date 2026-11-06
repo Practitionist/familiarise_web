@@ -19,8 +19,8 @@ export type NovuWorkflowId =
   (typeof NOVU_WORKFLOWS)[keyof typeof NOVU_WORKFLOWS];
 
 /**
- * The opt-out switch a workflow honours, written to `subscriber.data` by
- * `lib/novu/subscriber.ts`. `null` is a system notice with no opt-out.
+ * The `NotificationPreference` switch a workflow honours, checked by the
+ * server before every trigger. `null` is a system notice with no category.
  */
 export type PreferenceCategory =
   | "appointments"

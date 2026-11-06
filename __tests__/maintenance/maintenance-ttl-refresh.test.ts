@@ -1,8 +1,4 @@
 /** @jest-environment node */
-jest.mock("../../lib/novu/service", () => ({
-  notifyMaintenanceEnded: jest.fn(),
-  notifyMaintenanceScheduled: jest.fn(),
-}));
 const findFirst = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
