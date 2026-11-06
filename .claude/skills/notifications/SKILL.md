@@ -63,6 +63,13 @@ Novu Free is 10,000 workflow runs a month, counted across Development **and** Pr
 - There are no maintenance bells. Live state is `components/banners/MaintenanceBanner.tsx` (`DEGRADED`) and the middleware page (`OFFLINE`).
 - In-app quiet hours are removed. Only the consultant planning reminder (`lib/booking/week-nudge.ts`) reads `quietHours*` (22:00 to 08:00 when unset), for both its email and its bell.
 
+## Settings and unsubscribe
+
+- `PUT /api/novu/preferences` parses the strict `NotificationPreferenceUpdateSchema` (`schemas/user.ts`): an unknown key, a non-`HH:MM` time, an unknown zone or an empty quiet window is a 400. GET and PUT answer through `NotificationPreferenceSchema`.
+- The panel shows only the switches `receivableSwitches` (`lib/notifications/receivable.ts`) returns for the viewer's role. A new category, or an event sent to a new audience, updates that map, its test and the role table in `docs/notifications/02-workflows-and-api.md`. Its routing message comes from `routingBlocks`, pinned against both gates.
+- Panel saves are optimistic and share one mutation scope (serialized); never write a preference from a time input's `onChange`.
+- The unsubscribe undo is `POST /api/notifications/resubscribe`, same-origin only (`isSameOriginRequest`), with no `GET`. Neither route's `GET` may ever write.
+
 ## Never
 
 - Never call `novu.trigger` or the Resend SDK outside the outbox and `deliver()` (`lib/email/deliver.ts`); every send must pass the `EMAIL_DELIVERY_MODE` guard and the suppression check.
@@ -77,4 +84,4 @@ Novu Free is 10,000 workflow runs a month, counted across Development **and** Pr
 
 ## Verify
 
-`npx jest __tests__/notifications` (outbox, preferences single owner, templates, sync, clear-native-mutes) and `npx tsc --noEmit`. For a new event, `npm run novu:check` against Development.
+`npx jest __tests__/notifications __tests__/email/unsubscribe.test.ts` (outbox, preferences single owner and strict PUT, the settings panel, the role map, templates, sync, clear-native-mutes, unsubscribe and resubscribe) and `npx tsc --noEmit`. For a new event, `npm run novu:check` against Development.

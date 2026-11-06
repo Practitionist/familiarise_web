@@ -264,7 +264,7 @@ Without a configured Novu secret key the route returns `503` instead; it never r
 
 ### GET /api/novu/preferences
 
-Returns the current user's notification preferences. If none exist, returns defaults.
+Returns the current user's notification preferences. The row is parsed through `NotificationPreferenceSchema` (`schemas/user.ts`) before it is sent, so the response never carries `id` or `userId`, and a user with no row receives the schema defaults.
 
 **Auth**: Required (BetterAuth session)
 
@@ -286,6 +286,9 @@ Returns the current user's notification preferences. If none exist, returns defa
   "trialNotifications": true,
   "subscriptionAlerts": true,
   "marketingEmails": false,
+  "orgBillingAlerts": true,
+  "orgMembershipAlerts": true,
+  "orgProgramAlerts": true,
   "quietHoursEnabled": false,
   "quietHoursStart": null,
   "quietHoursEnd": null,
@@ -297,7 +300,7 @@ Returns the current user's notification preferences. If none exist, returns defa
 
 ### PUT /api/novu/preferences
 
-Updates notification preferences. Accepts partial updates (any subset of fields).
+Updates any subset of the preferences. The settings panel sends one key per change (two when quiet hours are first enabled, because the browser's zone is saved with them).
 
 **Auth**: Required (BetterAuth session)
 
@@ -314,21 +317,68 @@ Updates notification preferences. Accepts partial updates (any subset of fields)
 }
 ```
 
-**Validation**: `NotificationPreferenceUpdateSchema` (partial Zod schema from `schemas/user.ts`)
+**Validation**: `NotificationPreferenceUpdateSchema` in `schemas/user.ts`, which is strict:
+
+- A key that is not a preference column, for example `{"digest": true}`, is a `400`; nothing is silently dropped.
+- `quietHoursStart` and `quietHoursEnd` must be 24-hour `HH:MM` (`WallClockTimeSchema`), so `"25:00"` and `"8:0"` are refused. `null` resets a side to its default (22:00 start, 08:00 end).
+- `quietHoursTimezone` must be a zone the runtime's `Intl` knows (`isValidTimeZone` in `lib/time/viewer-zone.ts`); `"Mars/Olympus_Mons"` is refused.
+- The quiet window may not start and end at the same minute. When both sides are sent the schema checks them; when only one is sent the route compares it with the stored other side, or that side's default. So with nothing stored, `{"quietHoursStart": "08:00"}` is refused, because the default end is 08:00.
 
 **Quiet hours**: the `quietHours*` fields hold only the consultant's planning reminder (email and its bell, `lib/booking/week-nudge.ts`); no other notification waits for them.
 
 **Side effect**: None. The row is the only copy of the preferences; the bell and email gates read it at stage and send time, so the change applies to the next notification. Nothing is written to Novu.
 
-**Response**: Full updated preferences object
+**Response**: the full updated preferences, parsed through `NotificationPreferenceSchema`.
 
 **Errors**:
 
-| Status | Error                            | Cause                             |
-| ------ | -------------------------------- | --------------------------------- |
-| 400    | `"Validation failed"`            | Request body fails Zod validation |
-| 401    | `"Unauthorized"`                 | No valid session                  |
-| 500    | `"Failed to update preferences"` | Database error                    |
+| Status | Error                            | Cause                                                   |
+| ------ | -------------------------------- | ------------------------------------------------------- |
+| 400    | `"Validation failed"`            | Unknown key, bad time or zone, or an empty quiet window |
+| 401    | `"Unauthorized"`                 | No valid session                                        |
+| 500    | `"Failed to update preferences"` | Database error                                          |
+
+---
+
+## The settings panel
+
+`components/notifications/NotificationPreferencesPanel.tsx` is the one preference editor. It is mounted on the consultee and consultant Settings › Notifications pages, the staff and admin settings page, and the workspace operator's Workspace settings › Notifications page, under the routing section. The bell popover's footer links to it through `accountSettingsHref(user, "notifications")` (`lib/dashboard/account-href.ts`), because Novu's own preference nav is hidden.
+
+How a save behaves:
+
+- Every switch has an `id` and a `<Label htmlFor>`, so a screen reader announces its name, and its description is linked with `aria-describedby`.
+- A change is optimistic. `onMutate` cancels the preferences query, snapshots it and writes the new value; `onError` restores only the keys that save changed and shows a toast; `onSettled` refetches once the last queued save has finished. All saves share one TanStack Query mutation scope, so they run one at a time and a slow response cannot overwrite a newer choice.
+- A control is disabled while its own save is in flight; the other controls stay usable.
+- The quiet-hour time fields save on blur, never per keystroke, and refuse an incomplete time or a start equal to the end before sending anything.
+- With **Optional notifications** (`allNotifications`) off, the channel, category, organisation and quiet-hour cards stay visible but disabled, and the saved choices apply again when it is turned back on.
+
+What the switches actually gate:
+
+- **Optional notifications** off stops every bell (the bell gate checks it before the category) and every optional email. Required emails, which have a `null` category, still arrive: account and security notices, payment receipts and invitations or decisions the user must act on (see `docs/email/README.md`, section 3).
+- **In-app notifications** off stops every bell, required ones included. **Email notifications** off stops optional email only.
+- On the workspace page the panel receives the saved routing mode. When routing blocks a channel, the panel says so under that channel's switch: with `BELL_ONLY` it reads "Email is off because this workspace's routing is Bell only." The personal switch keeps its saved value, and both gates must allow a send.
+
+### Who receives which category
+
+The panel shows only the category switches whose notifications can reach the viewer, from `receivableSwitches` and `showsQuietHours` in `lib/notifications/receivable.ts`. The map is derived from the template audiences (the `description` of every entry in `lib/novu/templates/b2c.ts` and `lib/novu/templates/org.ts`) and from the email senders in `lib/email/senders/*.ts`; `__tests__/notifications/receivable.test.ts` pins it.
+
+| Viewer                                   | Category switches shown                                                                    | Quiet hours                    |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------ |
+| Consultee                                | Bookings & sessions, Payments & earnings, Subscriptions, Trial sessions, Support, Feedback | No                             |
+| Consultant                               | The same six                                                                               | Yes                            |
+| Workspace operator (`ORG_WORKSPACE`)     | Support, Feedback, and the three organisation switches                                     | No                             |
+| Any user with an organisation membership | Their role's switches plus Billing & payouts, Membership, Programs                         | As their role                  |
+| Staff and admins                         | All nine                                                                                   | Only with a consultant profile |
+
+The evidence for each row:
+
+- **Consultees and consultants share the six personal categories.** Both parties receive the appointment, subscription and trial families ("Both parties" in the template descriptions). Consultees are payers (`payment-success`, `refund-processed`, `payment-link`) and consultants are payees (`payout-processed`, `refund-requested`, `dispute-created`); both can earn referral credit. Both file support cases (`support-ticket-response`) and receive feedback-family bells (`moderation-report-outcome` and `platform-feedback-update` for a reporter or submitter, `new-review-received` for an expert).
+- **Workspace operators book and consult nothing**, so no appointment, payment, subscription or trial producer names them. They do file support cases and product feedback from their workspace (`lib/dashboard/nav/workspace.ts` links both), so Support and Feedback stay.
+- **Organisation categories** go to members by their membership role: billing admins and owners (`org-invoice-*`, `org-payout-*`), members (`org-seat-assigned`, `org-program-overage-due`) and invitees (`org-invite-sent`). Apart from a first invitation, each goes to someone who already holds a membership, so the three switches show for anyone with one, and always for an operator.
+- **Quiet hours** are read only by `lib/booking/week-nudge.ts`, which walks consultant profiles, so the card shows only for a viewer with a consultant profile.
+- **Staff and admins** receive the operations bells in every family (`support-ticket-created`, `feedback-received`, `refund-requested`, `dispute-updated`), so they see everything.
+
+The `marketingEmails` switch is not a notification category; it is shown to everyone until the consent work replaces it.
 
 ---
 
@@ -376,3 +426,4 @@ graph TD
 - **Novu preference mirror (removed)**: preference writes (`PUT /api/novu/preferences`, the one-click unsubscribe, workspace routing) and every dashboard session pushed the flags, plus email, phone and name, onto the Novu subscriber (`updateSubscriberPreferences`, `syncSubscriber`). Postgres is now the only copy and none of these routes calls Novu.
 - **Announcement broadcast (removed)**: every new announcement fired `notifyGeneralAnnouncement`, a Novu broadcast to every subscriber with no server-side preference check. Inbox posts are now opt-in and fan out through bell policy as described under Admin / System.
 - **Maintenance bells (removed)**: `maintenance-scheduled`, `maintenance-started` and `maintenance-ended` were first Novu broadcasts with no preference check, then per-audience fan-outs staged by `stageMaintenanceBells`. They are deleted: no window is ever scheduled ahead, the relay is blocked while maintenance is `OFFLINE`, and users cannot open the app then. The banner and the maintenance page cover the live state. Delete any residual reference.
+- **Unfiltered settings panel (replaced)**: the panel once showed every category to every viewer, a disabled "Push Notifications (Soon)" row, cards hidden when the master switch was off, and saved only after the server answered, one request per keystroke in the time fields. The role map, the optimistic serialized save and the blur-saved time fields above replace it; push has no delivery path, so its column is unused.
