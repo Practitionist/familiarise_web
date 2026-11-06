@@ -197,6 +197,28 @@ describe("contact-field scrub", () => {
     expect(mockDeleteUsers).not.toHaveBeenCalled();
   });
 
+  it("skips deactivated users, which Stream refuses to partially update", async () => {
+    prismaUsers(["benched", "leaky"]);
+    mockQueryUsers
+      .mockResolvedValueOnce({
+        users: [
+          {
+            id: "benched",
+            email: "benched@example.com",
+            deactivated_at: "2026-10-01T00:00:00Z",
+          },
+          { id: "leaky", email: "leaky@example.com" },
+        ],
+      })
+      .mockResolvedValueOnce({ users: [] });
+
+    await performStreamUserSync({ batchDelayMs: 0 });
+
+    expect(mockPartialUpdateUsers).toHaveBeenCalledWith([
+      { id: "leaky", unset: ["email"] },
+    ]);
+  });
+
   it("reports a failed scrub once in the summary instead of throwing", async () => {
     prismaUsers(["leaky"]);
     mockPartialUpdateUsers.mockRejectedValueOnce(new Error("rate limited"));
