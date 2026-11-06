@@ -2,8 +2,6 @@
  * @jest-environment node
  */
 
-const mockSubscriberCreate = jest.fn();
-const mockUserFindUnique = jest.fn();
 const mockAttemptTrigger = jest.fn();
 const mockAttemptStaged = jest.fn();
 const mockCaptureException = jest.fn();
@@ -24,9 +22,6 @@ jest.mock("@sentry/nextjs", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    user: {
-      findUnique: (...args: unknown[]) => mockUserFindUnique(...args),
-    },
     notificationOutbox: {
       upsert: jest.fn(),
       update: jest.fn(),
@@ -36,11 +31,7 @@ jest.mock("../../lib/prisma", () => ({
 
 jest.mock("../../lib/novu/client", () => ({
   isNovuConfigured: () => true,
-  getNovuClient: () => ({
-    subscribers: {
-      create: (...args: unknown[]) => mockSubscriberCreate(...args),
-    },
-  }),
+  getNovuClient: () => ({}),
 }));
 
 jest.mock("../../lib/email/send-to-recipients", () => ({
@@ -59,11 +50,7 @@ jest.mock("../../lib/novu/outbox", () => {
 
 import { createHmac } from "node:crypto";
 import { stageBell } from "@/lib/novu/stage-bell";
-import {
-  buildSubscriberCustomData,
-  computeSubscriberHash,
-  updateSubscriberPreferences,
-} from "@/lib/novu/subscriber";
+import { computeSubscriberHash } from "@/lib/novu/subscriber";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 
@@ -263,50 +250,7 @@ describe("2. computeSubscriberHash(subscriberId) HMAC-SHA256 digest", () => {
   });
 });
 
-describe("3. buildSubscriberCustomData fail-closed DB read", () => {
-  it("propagates DB failures rather than silently defaulting opted-out users back to masterEnabled: true", async () => {
-    mockUserFindUnique.mockRejectedValueOnce(
-      new Error("PgBouncer connection pool exhausted"),
-    );
-
-    await expect(
-      buildSubscriberCustomData("user_opted_out", {}),
-    ).rejects.toThrow("PgBouncer connection pool exhausted");
-  });
-});
-
-describe("4. updateSubscriberPreferences idempotent upsert", () => {
-  it("calls idempotent novu.subscribers.create(...) so unsynced users never 404", async () => {
-    mockUserFindUnique.mockResolvedValueOnce({
-      orgWorkspaceProfile: { notificationRoutingMode: "BELL_ONLY" },
-      notificationPreferences: null,
-    });
-    mockSubscriberCreate.mockResolvedValueOnce({});
-
-    await updateSubscriberPreferences("unsynced_user_7", {
-      allNotifications: true,
-      inApp: true,
-      email: false,
-      appointmentReminders: false,
-    });
-
-    expect(mockSubscriberCreate).toHaveBeenCalledTimes(1);
-    expect(mockSubscriberCreate).toHaveBeenCalledWith({
-      subscriberId: "unsynced_user_7",
-      data: expect.objectContaining({
-        routingMode: "BELL_ONLY",
-        routingBell: true,
-        routingEmail: false,
-        masterEnabled: true,
-        preferInApp: true,
-        preferEmail: false,
-        categoryAppointments: false,
-      }),
-    });
-  });
-});
-
-describe("5. flushNotificationsAfter concurrent bundle dispatch & inline fallback", () => {
+describe("3. flushNotificationsAfter concurrent bundle dispatch & inline fallback", () => {
   it("flushes both bells and emails bundles concurrently and awaits inline when outside Next.js request context", async () => {
     const order: string[] = [];
     let releaseAll!: () => void;

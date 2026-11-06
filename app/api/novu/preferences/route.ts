@@ -1,7 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { updateSubscriberPreferences } from "@/lib/novu/subscriber";
 import { NotificationPreferenceUpdateSchema } from "@/schemas/user";
 
 import { getSession } from "@/lib/auth-server";
@@ -91,28 +90,6 @@ export async function PUT(req: NextRequest) {
         userId: session.user.id,
         ...validatedData,
       },
-    });
-
-    // Sync master + channel + category preferences to Novu subscriber
-    // data (Q1: the bell skip rule reads masterEnabled + preferInApp).
-    await updateSubscriberPreferences(session.user.id, {
-      allNotifications: updated.allNotifications,
-      // Channel preferences
-      inApp: updated.inAppEnabled,
-      email: updated.emailEnabled,
-      push: updated.pushEnabled,
-      // Category preferences
-      appointmentReminders: updated.appointmentReminders,
-      paymentNotifications: updated.paymentNotifications,
-      supportUpdates: updated.supportUpdates,
-      feedbackAlerts: updated.feedbackAlerts,
-      trialNotifications: updated.trialNotifications,
-      subscriptionAlerts: updated.subscriptionAlerts,
-      marketingEmails: updated.marketingEmails,
-      // ADR 23 — org categories
-      orgBillingAlerts: updated.orgBillingAlerts,
-      orgMembershipAlerts: updated.orgMembershipAlerts,
-      orgProgramAlerts: updated.orgProgramAlerts,
     });
 
     return NextResponse.json(updated);

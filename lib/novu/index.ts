@@ -18,12 +18,7 @@ export { notificationHref, personalHref, scopedHref } from "./resolve-href";
  * call site, turning a 200 into a 500 in any suite that mocks the barrel.
  * These helpers are deterministic and want to run for real in tests anyway.
  */
-export {
-  computeSubscriberHash,
-  syncSubscriber,
-  deleteSubscriber,
-  updateSubscriberPreferences,
-} from "./subscriber";
+export { computeSubscriberHash, deleteSubscriber } from "./subscriber";
 export {
   // Appointments
   notifyAppointmentBooked,

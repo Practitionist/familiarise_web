@@ -1,7 +1,9 @@
-import type { CreateWorkflowDto } from "@novu/api/models/components";
+import type {
+  CreateWorkflowDto,
+  WorkflowPreferencesDto,
+} from "@novu/api/models/components";
 import { B2C_TEMPLATES } from "./b2c";
 import { ORG_TEMPLATES } from "./org";
-import { inAppSkipRule } from "./conditions";
 import {
   EVENT_FAMILY,
   FAMILIES,
@@ -39,6 +41,15 @@ export const IN_APP_STEP_NAME = "In-app";
 
 /** The one payload field every family's redirect reads. */
 export const HREF_FIELD = "href";
+
+/**
+ * Postgres owns notification preferences and gates every bell before the
+ * trigger, so a family is always on and subscribers cannot mute it in Novu.
+ */
+export const FAMILY_PREFERENCES: WorkflowPreferencesDto = {
+  all: { enabled: true, readOnly: true },
+  channels: { in_app: { enabled: true } },
+};
 
 /**
  * What actually goes over the wire: the family as the workflow, the event
@@ -113,6 +124,7 @@ export function toFamilyDto(family: Family): CreateWorkflowDto {
     active: true,
     validatePayload: false,
     source: "dashboard",
+    preferences: { user: FAMILY_PREFERENCES, workflow: FAMILY_PREFERENCES },
     steps: [
       {
         name: IN_APP_STEP_NAME,
@@ -123,7 +135,6 @@ export function toFamilyDto(family: Family): CreateWorkflowDto {
           ...(redirectUrl
             ? { redirect: { url: redirectUrl, target: "_self" } }
             : {}),
-          skip: inAppSkipRule(family.category),
         },
       },
     ],

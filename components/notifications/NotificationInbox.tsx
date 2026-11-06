@@ -227,7 +227,10 @@ export function NotificationInbox() {
           collisionPadding={12}
           className="flex h-[min(36rem,calc(100vh-5rem))] w-[min(400px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] flex-col overflow-hidden p-0"
         >
+          {/* hideNav removes Novu's preference editor: preferences live only in
+              Settings, and the families are read-only in Novu. */}
           <InboxContent
+            hideNav
             onNotificationClick={(notification) => {
               // Closed first: the panel must not still be sitting over the
               // grid it just sent the user to.

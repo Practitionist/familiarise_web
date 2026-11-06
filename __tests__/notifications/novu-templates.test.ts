@@ -19,7 +19,6 @@ import {
   toFamilyDto,
   toWire,
 } from "@/lib/novu/templates";
-import { inAppSkipRule } from "@/lib/novu/templates/conditions";
 import { Liquid } from "liquidjs";
 import { supportTicketStatusLabel } from "@/lib/novu/humanize";
 
@@ -169,8 +168,9 @@ describe("Novu workflow templates", () => {
       const step = toFamilyDto(f).steps[0] as {
         controlValues: Record<string, unknown>;
       };
-      const { skip: _skip, ...controls } = step.controlValues;
-      expect(() => engine.parse(JSON.stringify(controls))).not.toThrow();
+      expect(() =>
+        engine.parse(JSON.stringify(step.controlValues)),
+      ).not.toThrow();
     }
     for (const t of NOVU_WORKFLOW_TEMPLATES) {
       const text = [t.inApp.subject, t.inApp.body].filter(Boolean).join("\n");
@@ -191,9 +191,8 @@ describe("Novu workflow templates", () => {
     const engine = new Liquid();
     const step = toFamilyDto(FAMILIES.find((f) => f.id === "support-ticket")!)
       .steps[0] as { controlValues: Record<string, unknown> };
-    const { skip: _skip, ...controls } = step.controlValues;
     const rendered = JSON.parse(
-      engine.parseAndRenderSync(JSON.stringify(controls), {
+      engine.parseAndRenderSync(JSON.stringify(step.controlValues), {
         payload: toWire("support-ticket-response", {
           reference: "FAM-2026-000004",
           ticketTitle: "Can't access my account settings",
@@ -210,50 +209,17 @@ describe("Novu workflow templates", () => {
     expect(rendered.redirect.url).toBe("/dashboard");
   });
 
-  it("gates the bell on 'not explicitly false', never 'is true'", () => {
-    expect(inAppSkipRule("support")).toEqual({
-      and: [
-        { "!=": [{ var: "subscriber.data.routingBell" }, "false"] },
-        { "!=": [{ var: "subscriber.data.masterEnabled" }, "false"] },
-        { "!=": [{ var: "subscriber.data.preferInApp" }, "false"] },
-        { "!=": [{ var: "subscriber.data.categorySupport" }, "false"] },
-      ],
-    });
-    expect(inAppSkipRule(null).and).toHaveLength(3);
-  });
-
-  it("runs for a never-written flag under Novu's own != — the boolean form did not", () => {
-    // Novu's query-parser.service.ts replaces json-logic's `!=`: booleans and
-    // the strings "true"/"false" compare as booleans; anything else falls to
-    // Number(), where null and false are both 0; then to strict inequality.
-    const asBoolean = (d: unknown) =>
-      typeof d === "boolean"
-        ? d
-        : d === "true"
-          ? true
-          : d === "false"
-            ? false
-            : undefined;
-    const novuNotEqual = (a: unknown, b: unknown): boolean => {
-      const ba = asBoolean(a);
-      const bb = asBoolean(b);
-      if (ba !== undefined && bb !== undefined) return ba !== bb;
-      const na = Number(a);
-      const nb = Number(b);
-      if (!Number.isNaN(na) && !Number.isNaN(nb)) return na !== nb;
-      return a !== b;
-    };
-    const categoryClause = inAppSkipRule("support").and.find(
-      (clause) =>
-        clause["!="][0].var === "subscriber.data.categorySupport",
-    )!;
-    const [, comparison] = categoryClause["!="];
-    expect(novuNotEqual(null, comparison)).toBe(true); // never written → runs
-    expect(novuNotEqual(true, comparison)).toBe(true); // opted in → runs
-    expect(novuNotEqual(false, comparison)).toBe(false); // opted out → skipped
-    expect(novuNotEqual("false", comparison)).toBe(false);
-    // The trap this test exists for:
-    expect(novuNotEqual(null, false)).toBe(false);
+  it("writes every family always-on, read-only and without a step condition", () => {
+    for (const f of FAMILIES) {
+      const dto = toFamilyDto(f);
+      const readOnly = {
+        all: { enabled: true, readOnly: true },
+        channels: { in_app: { enabled: true } },
+      };
+      expect(dto.preferences).toEqual({ user: readOnly, workflow: readOnly });
+      const step = dto.steps[0] as { controlValues: Record<string, unknown> };
+      expect(step.controlValues).not.toHaveProperty("skip");
+    }
   });
 
   it("humanises a ticket status for the owner's bell", () => {

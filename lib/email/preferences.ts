@@ -1,10 +1,9 @@
 /**
  * #1653 — the email preference gate every lifecycle sender reads at send time.
  *
- * The gate reads `NotificationPreference` directly rather than Novu's copy of
- * the flags: Novu is in-app only here, and the copy it holds is a mirror
- * written after the fact, so the database row is the only truth a send can
- * rely on. A user with no row has never changed anything and gets the defaults.
+ * The gate reads `NotificationPreference` directly: Postgres is the only copy
+ * of the flags, shared with the bell gate in `lib/novu/policy.ts`. A user with
+ * no row has never changed anything and gets the defaults.
  */
 
 import type { NotificationRoutingMode } from "@prisma/client";
@@ -27,10 +26,7 @@ export type EmailCategoryColumn =
   | "orgMembershipAlerts"
   | "orgProgramAlerts";
 
-/**
- * Defined once: the email gate and the Novu subscriber mirror
- * (`lib/novu/subscriber.ts`) both read this map.
- */
+/** Defined once: the email gate and the bell gate (`lib/novu/policy.ts`) both read this map. */
 export const EMAIL_CATEGORY_COLUMN: Record<
   PreferenceCategory,
   EmailCategoryColumn
