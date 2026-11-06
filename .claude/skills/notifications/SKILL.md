@@ -73,7 +73,7 @@ Novu Free is 10,000 workflow runs a month, counted across Development **and** Pr
 - Panel saves are optimistic and share one mutation scope (serialized); never write a preference from a time input's `onChange`.
 - The bell-header gear is overlaid at offsets measured on `@novu/react` 3.19.2: the ⋯ row starts 10 px below the popover top and the gear sits 8 px left of ⋯ (`components/notifications/NotificationInbox.tsx`). Recheck both on any Novu SDK upgrade.
 - Both unsubscribe pages render bare, logo only: `/email/unsubscribe` is in `NO_CHROME_PREFIXES` (`lib/navigation/public-chrome.ts`) and the newsletter page is standalone HTML from `app/api/waitlist/unsubscribe/route.ts`.
-- Erasure: queued email for an erased user is dead-lettered `policy:erased` and redacted inside the erasure transaction (`scrubMailFootprintTx`); bells are dropped at send time by `unerasedRecipients` / `currentBellRecipients`. `EmailSuppression` survives erasure.
+- Erasure: queued email for an erased user is dead-lettered `policy:recipient_erased` and redacted, and every stored `recipient` becomes an `erased:<digest>` marker that no send or replay accepts, inside the erasure transaction (`scrubMailFootprintTx`); bells are dropped at send time by `unerasedRecipients` / `currentBellRecipients`. `EmailSuppression` survives erasure.
 - The unsubscribe undo is `POST /api/notifications/resubscribe`, same-origin only (`isSameOriginRequest`), with no `GET`. Neither route's `GET` may ever write.
 
 ## Never
