@@ -93,7 +93,7 @@ flowchart TB
         direction TB
         CL_INBOX["components/notifications/\nNotificationInbox.tsx\nBell icon + unread badge\nClick → redirect URL"]
         CL_HOOK["hooks/useNovuSubscriberSync.ts\nReact Query, 30min staleTime\nPOST /api/novu/subscriber"]
-        CL_PREFS["components/notifications/\nNotificationPreferencesPanel.tsx\n3 channels + 7 categories\n+ quiet hours"]
+        CL_PREFS["components/notifications/\nNotificationPreferencesPanel.tsx\n3 channels + 7 categories\n+ email quiet hours"]
     end
 
     subgraph DASHBOARDS["DASHBOARD INTEGRATION"]
@@ -225,8 +225,8 @@ Every address above is built on the `EMAIL_TRANSACTIONAL_DOMAIN` and `EMAIL_NEWS
 
 1. Business logic awaits a trigger function (e.g., `notifyAppointmentBooked(userIds, payload)`); a caller inside a transaction passes `{ tx, entityRef }` and runs `attemptTrigger()` after the commit
 2. `stageTrigger()` (`lib/novu/outbox.ts`) upserts a `NotificationOutbox` row keyed on a `transactionId` derived from the event, the sorted recipients and the payload (#1654)
-3. If `isNovuConfigured()` is false the row waits for the drain and the function returns `{success: false}`; otherwise `attemptTrigger()` calls `novu.trigger()` (single user or a batch of 100) or `novu.triggerBroadcast()` (all subscribers) under the client's five-second timeout, marks the row `SENT`, dead-letters it on a terminal 4xx, or leaves it `PENDING` on a timeout or 5xx for `jobs/notifications/drain-notification-outbox.ts`, which the Netlify ticker runs every five minutes
-4. Novu Cloud receives the event, deduplicates on the `Idempotency-Key` header (sent equal to the `transactionId`), and executes the workflow:
+3. If `isNovuConfigured()` is false the row waits for the drain and the function returns `{success: false}`; otherwise `attemptTrigger()` makes one `novu.triggerBulk()` call (one event per recipient, at most 100) under the client's five-second timeout, marks the row `SENT`, dead-letters it on a terminal refusal, or leaves it `PENDING` on a timeout or 5xx for `jobs/notifications/drain-notification-outbox.ts`, which the ticker runs every ten minutes
+4. Novu Cloud receives the events, deduplicates a resend on the `Idempotency-Key` header (derived from the row's `transactionId`, `firstAttemptAt`, recipients and payload), and executes the workflow:
    - **Email step (not yet created)** → would render a template with `{{payload.variables}}` and send via a Resend integration
    - **In-App step** → pushes to subscriber's WebSocket → appears in bell icon
    - **Digest/Delay steps** → can batch or schedule (configured per-workflow in Dashboard)
@@ -260,7 +260,7 @@ Every address above is built on the `EMAIL_TRANSACTIONAL_DOMAIN` and `EMAIL_NEWS
 | `lib/payments/payouts/payout-service.ts`                    | payoutProcessed, payoutFailed                                  |
 | `lib/collaborators/service.ts`                              | collaboratorInvited, collaboratorAccepted, collaboratorRemoved |
 | `app/api/stream/webhooks/route.ts`                          | recordingAvailable                                             |
-| `app/api/announcements/route.ts`                            | generalAnnouncement (broadcast)                                |
+| `app/api/announcements/route.ts`                            | generalAnnouncement (opt-in, per-page fan-out)                 |
 | `app/api/webhooks/utils.ts`                                 | refundProcessed, disputeCreated, disputeResolved               |
 | `app/api/user/feedbacks/route.ts`                           | feedbackReceived                                               |
 
@@ -438,9 +438,9 @@ The two relays are the outbox halves of #1654: every email and every Novu trigge
 
 | Feature                      | Route                              | Who                                             | What It Does                                                |
 | ---------------------------- | ---------------------------------- | ----------------------------------------------- | ----------------------------------------------------------- |
-| **Notification Preferences** | Settings page                      | Admin ✅, Staff ✅, Consultant ⚠️, Consultee ⚠️ | 3 channels + 7 categories + quiet hours                     |
+| **Notification Preferences** | Settings page                      | Admin ✅, Staff ✅, Consultant ⚠️, Consultee ⚠️ | 3 channels + 7 categories + email quiet hours               |
 | **Bell Icon / Inbox**        | All dashboards                     | All roles                                       | Novu in-app notifications, unread count, click-to-redirect  |
-| **Announcements**            | POST /api/announcements            | Admin, Staff                                    | Create announcement + broadcast to all Novu subscribers     |
+| **Announcements**            | POST /api/announcements            | Admin                                           | Create announcement; optional confirmed inbox fan-out       |
 | **Newsletter Send**          | POST /api/admin/waitlist/broadcast | Admin only                                      | Send HTML email to every SUBSCRIBED Waitlist row via Resend |
 | **Newsletter Stats**         | (not built)                        | —                                               | Would show subscriber count, open rates                     |
 | **Verification Review**      | /dashboard/admin/verification      | Admin, Staff                                    | Review applications → triggers verificationStatusChanged    |
@@ -466,7 +466,7 @@ The two relays are the outbox halves of #1654: every email and every Novu trigge
 | Auto-complete + notify                         | `scripts/appointments/auto-complete-appointments.ts`                                                  |
 | Stream recording webhook                       | `app/api/stream/webhooks/route.ts`                                                                    |
 | Stream main webhook                            | `app/api/stream/webhooks/route.ts`                                                                    |
-| Announcements + broadcast                      | `app/api/announcements/route.ts`                                                                      |
+| Announcements + inbox fan-out                  | `app/api/announcements/route.ts`                                                                      |
 | 30+ notification trigger wiring                | Various API routes and services                                                                       |
 
 ### STUB (placeholder code, no functionality)

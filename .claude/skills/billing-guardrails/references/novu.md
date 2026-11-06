@@ -6,7 +6,7 @@ The plan in use is not recorded as a fact; `docs/notifications/05-pre-production
 
 ## 2. What causes surprise bills or outages
 
-- One trigger per recipient is one run: a broadcast to 1,000 users spends 10 percent of the free month.
+- One trigger per recipient is one run: a fan-out to 1,000 users spends 10 percent of the free month.
 - Development and Production are separate tenants with separate keys; a preview that holds the production key spends the production quota.
 - Retried triggers count again unless idempotent.
 - The 20-workflow cap stops new families, not billing.
@@ -14,7 +14,8 @@ The plan in use is not recorded as a fact; `docs/notifications/05-pre-production
 ## 3. Exposure in this repo
 
 - `lib/novu/secret-key.ts` selects `NOVU_PRODUCTION_KEY` only when `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production`; everything else uses `NOVU_DEVELOPMENT_KEY`. Keep previews on the development key.
-- Notifications go through the `NotificationOutbox` table, drained by the `drain-notification-outbox` ticker target every 10 minutes with 20 rows per run (`TARGET_LIMITS`). This bounds Novu runs per tick and prevents retry storms; it does not bound total volume.
+- Notifications go through the `NotificationOutbox` table, drained by the `drain-notification-outbox` ticker target every 10 minutes with up to 100 rows per run (`TARGET_LIMITS`); each row attempt is one bulk call of at most 100 events. A retry after an unknown outcome reuses the row's Idempotency-Key, so Novu dedupes it instead of counting new runs. This bounds Novu calls per tick and prevents retry storms; it does not bound total volume.
+- Announcement inbox posts and maintenance notices are the only audience-wide fan-outs. Both are capped at `MAX_BELL_AUDIENCE` (2,000 recipients, `lib/novu/policy.ts`), and the announcement dialog shows the eligible count and asks for confirmation that each recipient uses one run.
 - Bell policy (`lib/novu/policy.ts`) drops opted-out recipients at staging and again at the attempt, before they become runs.
 
 ## 4. Guardrails to set

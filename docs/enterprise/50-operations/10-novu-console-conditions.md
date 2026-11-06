@@ -12,7 +12,7 @@ last-reviewed: 2026-11-06
 
 ## Where the opt-out is enforced
 
-Postgres is the only copy of notification preferences. `lib/novu/policy.ts` drops a recipient when the workspace routing mode (`OrgWorkspaceProfile.notificationRoutingMode`) is `EMAIL_ONLY` or `NEITHER`, when `allNotifications` or `inAppEnabled` is off, or when the family's category switch is off. It runs when the bell is staged and again right before every trigger, so Novu only receives recipients who are allowed at that moment.
+Postgres is the only copy of notification preferences. `lib/novu/policy.ts` drops a recipient when the workspace routing mode (`OrgWorkspaceProfile.notificationRoutingMode`) is `EMAIL_ONLY` or `NEITHER`, when `allNotifications` or `inAppEnabled` is off, or when the family's category switch is off. It runs when the bell is staged and again at the first attempt, which freezes the allowed recipients so a retry resends exactly that set.
 
 `npm run novu:sync` writes every family with that empty condition set and with read-only, always-on subscriber preferences, so a subscriber cannot mute a family inside Novu either. `npm run novu:check` reports a leftover `skip` control or subscriber-editable preferences as drift.
 

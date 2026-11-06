@@ -153,7 +153,7 @@ The apex carries SPF `v=spf1 -all`, a null MX `0 .`, and `_dmarc` is `v=DMARC1; 
    - `npm run novu:check`: Verifies live Novu workflows match code manifests in CI.
 3. **Server-Side Preference Gating (Postgres is the only owner)**:
    - **Stage and attempt gates (`stageBell`, `currentBellRecipients`)**: Filter out `EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, erased users and muted category columns before inserting into `NotificationOutbox`, and again at the first attempt, which freezes the allowed set.
-   - **Novu holds no preference state**: families sync always-on and read-only with no step conditions. Before launch, run `npx tsx scripts/novu/clear-native-mutes.ts` (dry run, then `--apply`) once per environment after `npm run novu:sync`.
+   - **Novu holds no preference state**: families sync always-on and read-only with no step conditions. Before launch, in each environment: run `npx tsx scripts/novu/clear-native-mutes.ts` (dry run, then `--apply`) **first**, then `npm run novu:sync`. The sync makes the families read-only, after which Novu may refuse per-family mute resets; the script lists any such read-only refusals separately.
 
 ---
 

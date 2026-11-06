@@ -1,6 +1,6 @@
 # Notification System
 
-The notification system uses a dual-layer architecture: **Resend** for direct transactional email delivery and **Novu** for multi-channel notification orchestration (in-app, email, push). Neither layer blocks the main transaction flow — a notification call never causes the calling operation to roll back. As of #1654 both layers are outbox-first: a transactional email is a `PENDING` `FailedEmail` row before Resend is called and a Novu trigger is a `NotificationOutbox` row before Novu is called, each written where the business change commits (inside its transaction when the caller has one), attempted once inline under a time budget, and finished by a relay on the Netlify ticker when that attempt times out or fails transiently. A timeout is not a failure and never pages; the row waits and the idempotency key (Resend) or the `transactionId` sent as Novu's `Idempotency-Key` makes a late duplicate harmless. As of #1298, a missing or invalid `RESEND_API_KEY` leaves the row `PENDING` for the relay rather than dropping the message. All sixteen Novu workflow families are in-app only, so Novu never sends an email.
+The notification system uses a dual-layer architecture: **Resend** for direct transactional email delivery and **Novu** for multi-channel notification orchestration (in-app, email, push). Neither layer blocks the main transaction flow — a notification call never causes the calling operation to roll back. As of #1654 both layers are outbox-first: a transactional email is a `PENDING` `FailedEmail` row before Resend is called and a Novu trigger is a `NotificationOutbox` row before Novu is called, each written where the business change commits (inside its transaction when the caller has one), attempted once inline under a time budget, and finished by a relay on the Netlify ticker when that attempt times out or fails transiently. A timeout is not a failure and never pages; the row waits and the idempotency key (Resend) or the row-derived bulk `Idempotency-Key` (Novu, reused verbatim after an unknown outcome) makes a late duplicate harmless. As of #1298, a missing or invalid `RESEND_API_KEY` leaves the row `PENDING` for the relay rather than dropping the message. All sixteen Novu workflow families are in-app only, so Novu never sends an email.
 
 ```mermaid
 graph TD
@@ -69,10 +69,10 @@ graph TD
                        v                                                           v
 +--------------------------------------------------+       +--------------------------------------------------+
 | Resend API (`POST /emails`, `/emails/batch`)     |       | Novu Cloud API (16 Multiplexed Workflow Families)|
-| - [FLAW #7] `idempotencyKeyFor()` hashes         |       | - [FLAW #8] `syncSubscriber` (on dashboard mount)|
-|   `to + subject + html` instead of `row.id`!     |       |   & `updateSubscriberPreferences` overwrite      |
-|   Resend caches keys 24h -> SILENTLY DROPS any   |       |   disjoint keys in `subscriber.data`, wiping out |
-|   2nd identical email sent within 24 hours!      |       |   muted preferences on every dashboard load!     |
+| - [FLAW #7] `idempotencyKeyFor()` hashes         |       | - [FLAW #8] A second copy of preferences in      |
+|   `to + subject + html` instead of `row.id`!     |       |   `subscriber.data`, rewritten on every          |
+|   Resend caches keys 24h -> SILENTLY DROPS any   |       |   dashboard load. Since deleted: Postgres is     |
+|   2nd identical email sent within 24 hours!      |       |   the only preference owner.                     |
 | - [FLAW #9] Exhausting 5 transient attempts ->   |       | - [FLAW #10] All 18 `ORG_*` workflows omit       |
 |   `DEAD_LETTER` emits ZERO Sentry error alerts!  |       |   `NotificationScope` (`organizationId`) -> org  |
 |   `NovuError.body` echoes PII to Sentry!         |       |   alerts NEVER show under Org tab in `<Inbox />`!|
@@ -162,7 +162,7 @@ The cron box above is the audit-time snapshot. It is no longer true that `cron-h
 - **Subscriber = User** -- Novu `subscriberId` is the Prisma `User.id`
 - **67 notification events in 16 Novu workflow families** -- each event has a typed payload; the family is the Novu workflow and carries the event as `payload.event`; every family is in-app only, so Novu never carries an email
 - **11 Resend senders, 10 React Email templates** -- `lib/email/index.ts` exports eleven sender functions; the contact-inquiry sender builds inline HTML instead of a template, so there are 10 React Email templates behind 11 senders. Every message is rendered server-side by `renderEmail()` (`lib/email/render.ts`, `react-email`'s `render()`) into both an HTML and a plain-text part
-- **User preferences** -- channel toggles (in-app, email, push), category toggles (7 categories), quiet hours
+- **User preferences** -- channel toggles (in-app, email, push), category toggles (7 categories), email quiet hours for the planning reminder
 
 ## Source Code Map
 
