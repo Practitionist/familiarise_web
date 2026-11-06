@@ -106,7 +106,7 @@ export default function PrivacyPolicyPage() {
                   Location information (approximate location based on IP
                   address)
                 </li>
-                <li>Cookies and similar tracking technologies</li>
+                <li>Essential cookies (see Section 6)</li>
               </ul>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
@@ -555,40 +555,21 @@ export default function PrivacyPolicyPage() {
                 6. Cookies and Tracking Technologies
               </h2>
               <p>
-                We use cookies and similar tracking technologies to enhance your
-                experience:
+                Familiarise uses only essential cookies: the cookies that keep
+                you signed in, protect your account and forms against forgery,
+                and complete checkout. The platform cannot work without them, so
+                they do not need your consent and there is no cookie banner.
               </p>
-
-              <h3 className="text-xl font-semibold mt-4 mb-2">
-                6.1 Types of Cookies
-              </h3>
-              <ul>
-                <li>
-                  <strong>Essential Cookies:</strong> Required for the platform
-                  to function properly
-                </li>
-                <li>
-                  <strong>Functional Cookies:</strong> Remember your preferences
-                  and settings
-                </li>
-                <li>
-                  <strong>Analytics Cookies:</strong> Help us understand how you
-                  use our platform
-                </li>
-                <li>
-                  <strong>Marketing Cookies:</strong> Track marketing campaign
-                  effectiveness
-                </li>
-              </ul>
-
-              <h3 className="text-xl font-semibold mt-4 mb-2">
-                6.2 Cookie Management
-              </h3>
               <p>
-                You can control cookies through your browser settings. However,
-                disabling certain cookies may affect the functionality of our
-                platform. Most browsers allow you to refuse cookies or delete
-                existing cookies.
+                We do not use analytics, advertising or other non-essential
+                cookies, and we do not load third-party tracking scripts. If we
+                ever add one, we will ask for your consent before it runs and
+                update this policy first.
+              </p>
+              <p>
+                You can delete or block cookies in your browser settings.
+                Blocking essential cookies will sign you out and stop bookings
+                and payments from working.
               </p>
 
               <Separator className="my-6" />
@@ -631,11 +612,22 @@ export default function PrivacyPolicyPage() {
               </h3>
               <ul>
                 <li>
-                  Opt-out of marketing emails by clicking "unsubscribe" in any
-                  email
+                  If you have an account, marketing emails and our newsletter
+                  follow your Marketing Communications consent (
+                  <code>MARKETING_COMMS</code>) in{" "}
+                  <strong>Settings &rarr; Account</strong> (&ldquo;Data
+                  consent&rdquo;). Giving it subscribes your account&apos;s
+                  email address to the newsletter; withdrawing it unsubscribes
+                  you.
                 </li>
                 <li>
-                  Manage notification preferences in your account settings
+                  The &ldquo;unsubscribe&rdquo; link in any newsletter stops it
+                  at once and also withdraws that consent for the linked
+                  account.
+                </li>
+                <li>
+                  Manage service notifications (bookings, payments, support) in
+                  your notification settings
                 </li>
                 <li>
                   Note: You will still receive essential transactional emails

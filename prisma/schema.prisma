@@ -949,6 +949,7 @@ enum SupportIssueType {
   OTHER
 }
 
+/// Unread: the cookie banner and its APIs are removed (essential cookies only); rows remain for the data export and the retention prune until the schema batch drops the model.
 model CookiePreference {
   id String @id @default(cuid())
 
