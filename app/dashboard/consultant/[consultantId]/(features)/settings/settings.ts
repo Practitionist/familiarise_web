@@ -331,9 +331,10 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   {
     group: "Account",
     key: "notifications",
-    label: "Notifications",
+    label: "Notifications & emails",
     slug: "notifications",
-    description: "Which updates reach you, and on which channel",
+    description:
+      "Service updates, inbox quiet hours and marketing email choices",
   },
   {
     group: "Public profile",

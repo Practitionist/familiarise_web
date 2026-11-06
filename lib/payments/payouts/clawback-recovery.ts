@@ -30,7 +30,6 @@ import {
   type Posting,
 } from "@/lib/payments/ledger/post";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
-import { stageClawbackNotice } from "./clawback-notifications";
 
 /** The org clawback journal `clawback:<driver>:<payoutId>[:<orgEarningsId>]` written by the reversal engine. */
 export const ORG_CLAWBACK_KEY_PREFIX = "clawback:";
@@ -256,6 +255,7 @@ export async function releaseClawbackRecovery(
         ? { rail: "ORG", organizationId: account.organizationId }
         : undefined;
     if (!payee) return;
+    const { stageClawbackNotice } = await import("./clawback-notifications");
     await stageClawbackNotice(tx, {
       payee,
       payoutId,
@@ -342,7 +342,8 @@ export async function voidClawbacksRaisedOnPayout(
         amountPaise: voidPaise,
       })),
     });
-    if (posted.created)
+    if (posted.created) {
+      const { stageClawbackNotice } = await import("./clawback-notifications");
       await stageClawbackNotice(tx, {
         payee,
         payoutId,
@@ -350,6 +351,7 @@ export async function voidClawbacksRaisedOnPayout(
         event: "VOIDED",
         amountPaise: voidPaise,
       });
+    }
   }
   return { voidedPaise, alreadyRecoveredPaise };
 }
@@ -384,7 +386,8 @@ export async function recoverClawbackOnPayout(
       },
     ],
   });
-  if (posted.created)
+  if (posted.created) {
+    const { stageClawbackNotice } = await import("./clawback-notifications");
     await stageClawbackNotice(tx, {
       payee: input.payee,
       payoutId: input.payoutId,
@@ -392,5 +395,6 @@ export async function recoverClawbackOnPayout(
       event: "OFFSET_RESERVED",
       amountPaise: recovered,
     });
+  }
   return recovered;
 }

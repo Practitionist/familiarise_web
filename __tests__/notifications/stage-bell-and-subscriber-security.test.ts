@@ -86,6 +86,10 @@ afterEach(() => {
 });
 
 describe("1. stageBells(tx, ...) preference gating, routing mode & quiet hours", () => {
+  beforeEach(() =>
+    jest.useFakeTimers().setSystemTime(new Date("2026-11-06T01:00:00Z")),
+  );
+  afterEach(() => jest.useRealTimers());
   it("never schedules a delayed survey earlier than its explicit receipt window", async () => {
     const tx = {
       user: {

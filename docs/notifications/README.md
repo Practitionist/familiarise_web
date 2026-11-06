@@ -1,6 +1,6 @@
 # Notification system
 
-Familiarise uses Resend for email and Novu for the in-app inbox. Novu's sixteen workflow families contain in-app steps only. Push delivery is not implemented; the settings control is disabled.
+Familiarise uses Resend for email and Novu for the in-app inbox. Novu's sixteen workflow families contain in-app steps only. Push delivery is not implemented; no push control is offered.
 
 ## Delivery flow
 
@@ -17,6 +17,23 @@ Business producers prepare recipient-specific content and stage durable rows in 
 Rendering uses React Email once per recipient and derives a plain-text part. Email rows preserve rendered content; credential messages store a redacted body and are never replayed by the relay. A fresh credential must be requested if its inline send did not succeed.
 
 An outbox row proves staging, and a provider response proves acceptance. Neither proves inbox delivery or human acknowledgement. Resend callbacks persist delivery events and enforce permanent-bounce and complaint suppression.
+
+## One place to manage delivery
+
+Settings → Notifications & emails owns the optional master, email/in-app channels, service categories, routine inbox quiet hours and marketing email consent. Turning the master off keeps saved choices visible and disabled. Marketing consent can still be withdrawn. Required account/security email remains an exception; old inbox history and unread counts are not deleted. Cookie permissions remain under account Privacy. Privacy consent rows show purpose status and link to the relevant control.
+
+The bell renders the notification feed and a role-aware settings link. It does not mount Novu's independent preferences/schedule editor. Novu's weekly Schedule applies to its other channel steps, not ordinary in-app steps or the direct Resend channel. Familiarise owns routine inbox timing through recipient-specific `notBefore`.
+
+Existing native Novu inbox restrictions can still veto delivery. The unified page reads and displays those restrictions. Only an account-owner confirmation may replace them: sync current Familiarise subscriber data, enable only the owned in-app global/workflow preferences, then verify the provider read-back. No automatic reset runs during subscriber sync, and no email channel, schedule or unrelated workflow is changed. Failed reads/writes remain visibly unconfirmed.
+
+The cookie banner and Privacy form share one API/cache. Cookie flags and current account ANALYTICS evidence commit in the same transaction. Anonymous browser choices are not inherited as account consent. Identity loading and late responses cannot borrow another identity's cached choices. A failed save does not dismiss the banner or write its acknowledgement. Optional cookie-using analytics/advertising integrations were not found in the app source; saving these permissions does not configure a vendor.
+
+| Endpoint                           | Caller payload and effect                                                                                                                                                      |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PUT /api/novu/preferences`        | Explicit channel/category/quiet-hour fields or `marketingEmails`; current settings, purpose evidence and mirror revision commit together.                                      |
+| `GET /api/novu/preferences/inbox`  | Current authenticated verified user's native inbox restrictions; no write.                                                                                                     |
+| `POST /api/novu/preferences/inbox` | `{useFamiliariseSettings:true}` after explicit confirmation; changes only this user's owned in-app restrictions and verifies them. Caller-selected subscriber IDs are refused. |
+| `PUT /api/cookie-preferences`      | `analytics` and/or `marketing` booleans; server chooses authenticated account or opaque anonymous identity. Essential cookies remain enabled.                                  |
 
 ## Preferences and recipient safety
 

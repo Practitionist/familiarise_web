@@ -78,5 +78,5 @@ export const CONSULTEE_PAGE_LABELS: Record<string, string> = {
   reschedule: "Reschedule",
   account: "Account",
   profile: "Learning profile",
-  notifications: "Notifications",
+  notifications: "Notifications & emails",
 };

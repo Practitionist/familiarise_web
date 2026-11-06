@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { accountSettingsHref } from "@/lib/dashboard/account-href";
 import { useEffect } from "react";
 import { Download } from "lucide-react";
 import {
@@ -97,47 +99,6 @@ export function ConsentSection() {
       return (await res.json()) as PersonalConsentResponse;
     },
     enabled: !!userId,
-  });
-
-  const personalChange = useMutation({
-    mutationFn: async (vars: { purposeCode: PurposeCode; grant: boolean }) => {
-      const res = vars.grant
-        ? await fetch("/api/user/privacy/consent", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              purposeCodes: [vars.purposeCode],
-              language: "en-IN",
-              version: TERMS_VERSION,
-            }),
-          })
-        : await fetch(
-            `/api/user/privacy/consent?${new URLSearchParams({ purposeCode: vars.purposeCode })}`,
-            { method: "DELETE" },
-          );
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as {
-          error?: string;
-        };
-        throw new Error(body.error ?? "Please try again.");
-      }
-    },
-    onSuccess: async (_data, vars) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: [PERSONAL_CONSENT_KEY] }),
-        queryClient.invalidateQueries({
-          queryKey: ["notification-preferences", userId],
-        }),
-      ]);
-      toast({ title: vars.grant ? "Consent given" : "Consent withdrawn" });
-    },
-    onError: (error) => {
-      toast({
-        title: "Couldn't update your consent",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
   });
 
   const memberships = useQuery<OrgMembership[]>({
@@ -267,7 +228,7 @@ export function ConsentSection() {
             Core platform purposes (including pseudonymous security &amp; error
             telemetry via <code className="text-[11px]">ust_&lt;hash&gt;</code>{" "}
             under DPDP §8(5) &amp; Rule 6) are required while your account is
-            open. Optional purposes can be toggled anytime in 1 click without
+            open. Manage optional purposes using the linked controls without
             affecting your bookings.
           </p>
           <ul className="divide-y divide-border">
@@ -300,10 +261,14 @@ export function ConsentSection() {
                       personalConsent.data?.preferences?.marketingEmails &&
                       personalGranted.has(code),
                     )
-                  : personalGranted.has(code);
-              const busy =
-                personalChange.isPending &&
-                personalChange.variables?.purposeCode === code;
+                  : Boolean(
+                      personalConsent.data?.preferences?.cookieAnalytics &&
+                      personalGranted.has(code),
+                    );
+              const destination = accountSettingsHref(
+                session?.user ?? {},
+                code === "MARKETING_COMMS" ? "notifications" : "account",
+              );
               return (
                 <li
                   key={code}
@@ -322,19 +287,17 @@ export function ConsentSection() {
                       label={isGranted ? "Given" : "Not given"}
                       tone={isGranted ? "success" : "neutral"}
                     />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={personalConsent.isLoading || busy}
-                      onClick={() =>
-                        personalChange.mutate({
-                          purposeCode: code,
-                          grant: !isGranted,
-                        })
-                      }
-                    >
-                      {isGranted ? "Withdraw" : "Give consent"}
-                    </Button>
+                    {destination && (
+                      <Button size="sm" variant="outline" asChild>
+                        <Link
+                          href={`${destination}#${code === "MARKETING_COMMS" ? "marketing-emails" : "cookie-preferences"}`}
+                        >
+                          {code === "MARKETING_COMMS"
+                            ? "Manage marketing emails"
+                            : "Manage cookies"}
+                        </Link>
+                      </Button>
+                    )}
                   </div>
                 </li>
               );

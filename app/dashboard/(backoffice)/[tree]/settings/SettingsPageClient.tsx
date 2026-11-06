@@ -1,6 +1,6 @@
 "use client";
 
-import { Shield, Bell, KeyRound } from "lucide-react";
+import { Shield, KeyRound } from "lucide-react";
 
 import {
   Card,
@@ -19,6 +19,7 @@ import {
   SessionsSection,
   ConnectedAccountsSection,
   ConsentSection,
+  CookiePreferencesSection,
 } from "@/components/dashboard/account";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { TwoFactorSettings } from "@/components/auth/TwoFactorSettings";
@@ -63,25 +64,13 @@ export default function StaffSettingsPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <Bell className="h-5 w-5 text-muted-foreground" />
-                <div>
-                  <CardTitle className="text-base">
-                    Notification Preferences
-                  </CardTitle>
-                  <CardDescription>
-                    Choose how and when you receive operational alerts and
-                    updates
-                  </CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <NotificationPreferencesPanel />
-            </CardContent>
-          </Card>
+          <section aria-label="Notifications & emails">
+            <h2 className="mb-4 text-lg font-semibold">
+              Notifications &amp; emails
+            </h2>
+            <NotificationPreferencesPanel />
+          </section>
+          <CookiePreferencesSection />
 
           <ConsentSection />
 

@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Bell, Inbox, InboxContent } from "@novu/nextjs";
+import { Bell, Inbox, Notifications } from "@novu/nextjs";
+import Link from "next/link";
 import { Bell as BellIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
@@ -9,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import { resolveInboxAuth } from "@/lib/novu/inbox-auth";
+import { accountSettingsHref } from "@/lib/dashboard/account-href";
 import {
   Popover,
   PopoverContent,
@@ -227,62 +229,80 @@ export function NotificationInbox() {
           collisionPadding={12}
           className="flex h-[min(36rem,calc(100vh-5rem))] w-[min(400px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] flex-col overflow-hidden p-0"
         >
-          <InboxContent
-            onNotificationClick={(notification) => {
-              // Closed first: the panel must not still be sitting over the
-              // grid it just sent the user to.
-              setOpen(false);
-              // Mark read so the dot clears. Fire-and-forget: navigation is
-              // what was asked for, and a failed ack must never block it
-              // (sync throws and async rejections both land in the catch).
-              void Promise.resolve()
-                .then(() => notification.read())
-                .catch(() => {});
-              // Redirect first; the wire copy (`payload.href`) and the
-              // event's own field behind it, for a redirect Novu dropped.
-              const data = (notification.data ?? {}) as Record<string, unknown>;
-              const raw =
-                notification.redirect?.url ??
-                (typeof data.href === "string" ? data.href : undefined) ??
-                (typeof data.dashboardUrl === "string"
-                  ? data.dashboardUrl
-                  : undefined);
-              if (!raw) {
-                toast({
-                  title: "No linked page",
-                  description:
-                    "This notification has no destination yet — nothing to open.",
-                });
-                return;
-              }
-              // `dashboardUrl` values are absolute (getAppUrl) and the
-              // router wants a path. Anything off-origin (a recording
-              // file, an invite link) opens in a new tab instead. Only
-              // http(s) ever navigates: a `javascript:`/`data:` payload
-              // must never reach the router or a new tab.
-              try {
-                const parsed = new URL(raw, window.location.origin);
-                if (
-                  parsed.protocol !== "http:" &&
-                  parsed.protocol !== "https:"
-                ) {
-                  throw new Error("unsupported notification protocol");
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3 text-sm">
+            <span className="font-semibold">Notifications</span>
+            {accountSettingsHref(session.user, "notifications") && (
+              <Link
+                href={accountSettingsHref(session.user, "notifications") ?? ""}
+                onClick={() => setOpen(false)}
+                className="text-xs underline underline-offset-4"
+              >
+                Notifications &amp; emails
+              </Link>
+            )}
+          </div>
+          <div className="min-h-0 flex-1 [&>div]:h-full">
+            <Notifications
+              onNotificationClick={(notification) => {
+                // Closed first: the panel must not still be sitting over the
+                // grid it just sent the user to.
+                setOpen(false);
+                // Mark read so the dot clears. Fire-and-forget: navigation is
+                // what was asked for, and a failed ack must never block it
+                // (sync throws and async rejections both land in the catch).
+                void Promise.resolve()
+                  .then(() => notification.read())
+                  .catch(() => {});
+                // Redirect first; the wire copy (`payload.href`) and the
+                // event's own field behind it, for a redirect Novu dropped.
+                const data = (notification.data ?? {}) as Record<
+                  string,
+                  unknown
+                >;
+                const raw =
+                  notification.redirect?.url ??
+                  (typeof data.href === "string" ? data.href : undefined) ??
+                  (typeof data.dashboardUrl === "string"
+                    ? data.dashboardUrl
+                    : undefined);
+                if (!raw) {
+                  toast({
+                    title: "No linked page",
+                    description:
+                      "This notification has no destination yet — nothing to open.",
+                  });
+                  return;
                 }
-                if (parsed.origin === window.location.origin) {
-                  router.push(
-                    `${parsed.pathname}${parsed.search}${parsed.hash}`,
-                  );
-                } else {
-                  window.open(parsed.href, "_blank", "noopener,noreferrer");
+                // `dashboardUrl` values are absolute (getAppUrl) and the
+                // router wants a path. Anything off-origin (a recording
+                // file, an invite link) opens in a new tab instead. Only
+                // http(s) ever navigates: a `javascript:`/`data:` payload
+                // must never reach the router or a new tab.
+                try {
+                  const parsed = new URL(raw, window.location.origin);
+                  if (
+                    parsed.protocol !== "http:" &&
+                    parsed.protocol !== "https:"
+                  ) {
+                    throw new Error("unsupported notification protocol");
+                  }
+                  if (parsed.origin === window.location.origin) {
+                    router.push(
+                      `${parsed.pathname}${parsed.search}${parsed.hash}`,
+                    );
+                  } else {
+                    window.open(parsed.href, "_blank", "noopener,noreferrer");
+                  }
+                } catch {
+                  toast({
+                    title: "Invalid link",
+                    description:
+                      "This notification's link could not be opened.",
+                  });
                 }
-              } catch {
-                toast({
-                  title: "Invalid link",
-                  description: "This notification's link could not be opened.",
-                });
-              }
-            }}
-          />
+              }}
+            />
+          </div>
         </PopoverContent>
       </Popover>
     </Inbox>

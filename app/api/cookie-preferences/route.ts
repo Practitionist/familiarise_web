@@ -1,104 +1,78 @@
-/**
- * GET /api/cookie-preferences — read the caller's saved consent.
- * PUT /api/cookie-preferences — persist granular consent (#381).
- *
- * Works for authenticated users (userId-keyed) and anonymous visitors
- * (sessionId via a cookie set on first save). The model existed since the
- * MVP but had zero writers — this route closes that gap (#1230 wave-6a).
- */
-
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { cookies } from "next/headers";
+import {
+  readCookiePreferences,
+  saveCookiePreferences,
+  type CookieIdentity,
+} from "@/lib/compliance/cookie-preferences";
+import { cookiePreferenceUpdateSchema } from "@/schemas/cookie-preferences";
 
 const SESSION_COOKIE = "cp_sid";
-
-const PrefsSchema = z.object({
-  analytics: z.boolean(),
-  marketing: z.boolean(),
-  functional: z.boolean(),
-});
-
-async function resolveIdentity(mintCookie = false): Promise<{
-  userId: string | null;
-  sessionId: string | null;
-}> {
+const headers = { "Cache-Control": "private, no-store", Vary: "Cookie" };
+async function resolveIdentity(
+  mintCookie: boolean,
+): Promise<CookieIdentity | null> {
   const session = await getSession();
-  if (session?.user?.id) return { userId: session.user.id, sessionId: null };
-
+  if (session?.user?.id) return { userId: session.user.id };
   const jar = await cookies();
-  let sid = jar.get(SESSION_COOKIE)?.value ?? null;
-  if (!sid && mintCookie) {
-    sid = crypto.randomUUID();
-    try {
-      jar.set(SESSION_COOKIE, sid, {
-        httpOnly: true,
-        sameSite: "lax",
-        maxAge: 60 * 60 * 24 * 365,
-      });
-    } catch {
-      // Read-only cookie context (server component render) — skip.
-    }
-  }
-  return { userId: null, sessionId: sid };
+  const parsed = z.string().uuid().safeParse(jar.get(SESSION_COOKIE)?.value);
+  if (parsed.success) return { sessionId: parsed.data };
+  if (!mintCookie) return null;
+  const sessionId = crypto.randomUUID();
+  jar.set(SESSION_COOKIE, sessionId, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 365 * 86400,
+  });
+  return { sessionId };
 }
 
 export async function GET() {
-  const { userId, sessionId } = await resolveIdentity(false);
-  if (!userId && !sessionId) {
+  try {
+    const identity = await resolveIdentity(false);
     return NextResponse.json(
-      {
-        essential: true,
-        analytics: false,
-        marketing: false,
-        functional: false,
-      },
-      { headers: { "Cache-Control": "private, no-store" } },
+      identity
+        ? await readCookiePreferences(prisma, identity)
+        : { essential: true, analytics: false, marketing: false },
+      { headers },
+    );
+  } catch {
+    return NextResponse.json(
+      { error: "Cookie preferences could not be loaded" },
+      { status: 503, headers },
     );
   }
-
-  const pref = await prisma.cookiePreference.findFirst({
-    where: userId ? { userId } : { sessionId },
-    select: {
-      essential: true,
-      analytics: true,
-      marketing: true,
-      functional: true,
-    },
-  });
-
-  return NextResponse.json(
-    pref ?? {
-      essential: true,
-      analytics: false,
-      marketing: false,
-      functional: false,
-    },
-    { headers: { "Cache-Control": "private, no-store" } },
-  );
 }
 
 export async function PUT(req: NextRequest) {
-  const parsed = PrefsSchema.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid body" }, { status: 400 });
+  const parsed = cookiePreferenceUpdateSchema.safeParse(
+    await req.json().catch(() => null),
+  );
+  if (!parsed.success)
+    return NextResponse.json(
+      { error: "Invalid cookie preferences" },
+      { status: 400, headers },
+    );
+  try {
+    const identity = await resolveIdentity(true);
+    if (!identity)
+      return NextResponse.json(
+        { error: "No identity" },
+        { status: 401, headers },
+      );
+    const result = await prisma.$transaction((tx) =>
+      saveCookiePreferences(tx, identity, parsed.data),
+    );
+    return NextResponse.json(result.preferences, { headers });
+  } catch {
+    return NextResponse.json(
+      { error: "Cookie preferences could not be saved" },
+      { status: 503, headers },
+    );
   }
-
-  const { userId, sessionId } = await resolveIdentity(true);
-  if (!userId && !sessionId) {
-    return NextResponse.json({ error: "No identity" }, { status: 401 });
-  }
-
-  const identity = userId ? { userId } : { sessionId };
-  const data = { ...identity, ...parsed.data };
-
-  await prisma.cookiePreference.upsert({
-    where: userId ? { userId } : { sessionId: sessionId! },
-    create: data,
-    update: parsed.data,
-  });
-
-  return NextResponse.json({ ok: true });
 }

@@ -8,28 +8,15 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { InboxPreferenceStatus } from "./InboxPreferenceStatus";
+import Link from "next/link";
+import { accountSettingsHref } from "@/lib/dashboard/account-href";
 import { useToast } from "@/hooks/use-toast";
 
-interface NotificationPreferences {
-  allNotifications: boolean;
-  inAppEnabled: boolean;
-  emailEnabled: boolean;
-  pushEnabled: boolean;
-  appointmentReminders: boolean;
-  paymentNotifications: boolean;
-  supportUpdates: boolean;
-  feedbackAlerts: boolean;
-  trialNotifications: boolean;
-  subscriptionAlerts: boolean;
-  marketingEmails: boolean;
-  orgBillingAlerts: boolean;
-  orgMembershipAlerts: boolean;
-  orgProgramAlerts: boolean;
-  quietHoursEnabled: boolean;
-  quietHoursStart: string | null;
-  quietHoursEnd: string | null;
-  quietHoursTimezone: string | null;
-}
+import {
+  NotificationPreferenceSchema,
+  type NotificationPreference as NotificationPreferences,
+} from "@/schemas/user";
 
 /** Keys that map to boolean values — used for Switch toggle fields. */
 type BooleanPreferenceKey = {
@@ -57,19 +44,7 @@ const CHANNEL_FIELDS: ToggleField[] = [
   },
 ];
 
-/**
- * Q2 fix — push has no delivery path (no FCM/APNS, no Novu push step; nothing
- * reads `preferPush`). The toggle stays visible so the setting is not silently
- * lost, but disabled with honest copy instead of implying it works.
- */
-const PUSH_COMING_SOON = {
-  key: "pushEnabled",
-  label: "Push Notifications",
-  description:
-    "Coming soon — push delivery is not available yet. Your choice is saved for when it launches.",
-} as const;
-
-/** Q3 fix — the zones the platform actually serves; keep in sync with staff settings. */
+/** Keep the supported zones in sync with staff settings. */
 const QUIET_HOURS_TIMEZONES = [
   "Asia/Kolkata",
   "Asia/Dubai",
@@ -85,13 +60,15 @@ const QUIET_HOURS_TIMEZONES = [
 const CATEGORY_FIELDS: ToggleField[] = [
   {
     key: "appointmentReminders",
-    label: "Appointment Reminders",
-    description: "Booking confirmations, cancellations, and reminders",
+    label: "Bookings & sessions",
+    description:
+      "Bookings, reminders, unread chat, recordings, documents and collaborator updates",
   },
   {
     key: "paymentNotifications",
-    label: "Payment Updates",
-    description: "Payment confirmations, failures, and refunds",
+    label: "Payments & earnings",
+    description:
+      "Payments, refunds, disputes, payouts and referral credit updates",
   },
   {
     key: "supportUpdates",
@@ -113,19 +90,9 @@ const CATEGORY_FIELDS: ToggleField[] = [
     label: "Subscription Updates",
     description: "Subscription renewals and changes",
   },
-  {
-    key: "marketingEmails",
-    label: "Marketing & Promotions",
-    description:
-      "Allow marketing and promotional messages about Familiarise products and offers. Newsletter subscription is separate; this does not enable marketing cookies.",
-  },
 ];
 
-/**
- * ADR 23 — the seven categories above are all B2C-shaped, so every ORG_*
- * workflow was unmutable. Rendered only for someone who actually belongs to an
- * organization; a purely B2C user has nothing behind these switches.
- */
+/** Organization controls are shown only to users with an organization membership. */
 const ORG_CATEGORY_FIELDS: ToggleField[] = [
   {
     key: "orgBillingAlerts",
@@ -145,7 +112,7 @@ const ORG_CATEGORY_FIELDS: ToggleField[] = [
 ];
 
 export function NotificationPreferencesPanel() {
-  const { data: session } = useSession();
+  const { data: session, isPending: sessionPending } = useSession();
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -169,9 +136,9 @@ export function NotificationPreferencesPanel() {
     queryFn: async () => {
       const res = await fetch("/api/novu/preferences");
       if (!res.ok) throw new Error("Failed to load preferences");
-      return res.json();
+      return NotificationPreferenceSchema.parse(await res.json());
     },
-    enabled: !!session?.user?.id,
+    enabled: !!session?.user?.id && !sessionPending,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -183,15 +150,21 @@ export function NotificationPreferencesPanel() {
         body: JSON.stringify(updates),
       });
       if (!res.ok) throw new Error("Failed to update preferences");
-      return res.json();
+      return NotificationPreferenceSchema.parse(await res.json());
     },
-    onSuccess: async (data) => {
+    onMutate: () => {
+      const userId = session?.user?.id;
+      if (!userId || sessionPending)
+        throw new Error("Your account is still loading");
+      return { userId };
+    },
+    onSuccess: async (data, _updates, context) => {
       queryClient.setQueryData(
-        ["notification-preferences", session?.user?.id],
+        ["notification-preferences", context.userId],
         data,
       );
       await queryClient.invalidateQueries({
-        queryKey: ["account-personal-consent"],
+        queryKey: ["account-personal-consent", context.userId],
       });
       toast({
         title: "Preferences updated",
@@ -211,7 +184,7 @@ export function NotificationPreferencesPanel() {
     mutation.mutate({ [key]: value });
   };
 
-  if (isLoading) {
+  if (sessionPending || isLoading) {
     return (
       <Card>
         <CardHeader>
@@ -226,6 +199,13 @@ export function NotificationPreferencesPanel() {
     );
   }
 
+  if (!session?.user?.id)
+    return (
+      <p className="text-sm text-muted-foreground">
+        Sign in to manage your notification and email preferences.
+      </p>
+    );
+
   if (error) {
     return (
       <Card>
@@ -236,27 +216,8 @@ export function NotificationPreferencesPanel() {
     );
   }
 
-  // Use defaults if preferences haven't been created yet
-  const prefs: NotificationPreferences = preferences ?? {
-    allNotifications: true,
-    inAppEnabled: true,
-    emailEnabled: true,
-    pushEnabled: false,
-    appointmentReminders: true,
-    paymentNotifications: true,
-    supportUpdates: true,
-    feedbackAlerts: true,
-    trialNotifications: true,
-    subscriptionAlerts: true,
-    marketingEmails: false,
-    orgBillingAlerts: true,
-    orgMembershipAlerts: true,
-    orgProgramAlerts: true,
-    quietHoursEnabled: false,
-    quietHoursStart: null,
-    quietHoursEnd: null,
-    quietHoursTimezone: null,
-  };
+  if (!preferences) return null;
+  const prefs = preferences;
 
   // Single source for "which zone the UI shows": saved preference, else the
   // browser zone, else the platform default. Used by the select value, the
@@ -265,24 +226,49 @@ export function NotificationPreferencesPanel() {
   const browserTimezone =
     Intl.DateTimeFormat().resolvedOptions().timeZone ?? "Asia/Kolkata";
   const effectiveTimezone = prefs.quietHoursTimezone ?? browserTimezone;
+  const privacyHref = accountSettingsHref(session?.user ?? {}, "account");
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" id="notifications-and-emails">
+      <div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Manage service updates, inbox timing and marketing email choices here.
+          Cookie choices stay in Privacy.
+        </p>
+        {privacyHref && (
+          <Link
+            href={`${privacyHref}#cookie-preferences`}
+            className="text-sm underline underline-offset-4"
+          >
+            Manage cookie choices
+          </Link>
+        )}
+      </div>
+      <InboxPreferenceStatus key={session.user.id} userId={session.user.id} />
       {/* Master Toggle */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Notifications</CardTitle>
+          <CardTitle className="text-lg">Delivery controls</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-between">
             <div>
-              <Label className="text-sm font-medium">All Notifications</Label>
+              <Label
+                htmlFor="optional-notifications"
+                className="text-sm font-medium"
+              >
+                Allow optional notifications &amp; emails
+              </Label>
               <p className="text-xs text-zinc-500">
-                Master toggle for all notification types
+                Pause optional email and inbox updates. Required emails still
+                arrive, including account access and security; your choices
+                below stay saved. Existing inbox items remain available.
               </p>
             </div>
             <Switch
+              id="optional-notifications"
               checked={prefs.allNotifications}
+              disabled={mutation.isPending}
               onCheckedChange={(checked) =>
                 handleToggle("allNotifications", checked)
               }
@@ -292,7 +278,7 @@ export function NotificationPreferencesPanel() {
       </Card>
 
       {/* Channel Preferences */}
-      {prefs.allNotifications && (
+      {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Channels</CardTitle>
@@ -303,11 +289,18 @@ export function NotificationPreferencesPanel() {
                 {index > 0 && <Separator className="mb-4" />}
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label className="text-sm font-medium">{field.label}</Label>
+                    <Label
+                      htmlFor={`notification-${field.key}`}
+                      className="text-sm font-medium"
+                    >
+                      {field.label}
+                    </Label>
                     <p className="text-xs text-zinc-500">{field.description}</p>
                   </div>
                   <Switch
+                    id={`notification-${field.key}`}
                     checked={prefs[field.key]}
+                    disabled={!prefs.allNotifications || mutation.isPending}
                     onCheckedChange={(checked) =>
                       handleToggle(field.key, checked)
                     }
@@ -315,35 +308,15 @@ export function NotificationPreferencesPanel() {
                 </div>
               </div>
             ))}
-            <Separator className="mb-4" />
-            <div className="flex items-center justify-between opacity-60">
-              <div>
-                <Label className="text-sm font-medium">
-                  {PUSH_COMING_SOON.label}{" "}
-                  <span className="ml-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                    Soon
-                  </span>
-                </Label>
-                <p className="text-xs text-zinc-500">
-                  {PUSH_COMING_SOON.description}
-                </p>
-              </div>
-              <Switch
-                checked={prefs.pushEnabled}
-                disabled
-                aria-disabled="true"
-                title="Push delivery is not available yet"
-              />
-            </div>
           </CardContent>
         </Card>
-      )}
+      }
 
       {/* Category Preferences */}
-      {prefs.allNotifications && (
+      {
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Categories</CardTitle>
+            <CardTitle className="text-lg">Service updates</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {CATEGORY_FIELDS.map((field, index) => (
@@ -351,11 +324,18 @@ export function NotificationPreferencesPanel() {
                 {index > 0 && <Separator className="mb-4" />}
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label className="text-sm font-medium">{field.label}</Label>
+                    <Label
+                      htmlFor={`notification-${field.key}`}
+                      className="text-sm font-medium"
+                    >
+                      {field.label}
+                    </Label>
                     <p className="text-xs text-zinc-500">{field.description}</p>
                   </div>
                   <Switch
+                    id={`notification-${field.key}`}
                     checked={prefs[field.key]}
+                    disabled={!prefs.allNotifications || mutation.isPending}
                     onCheckedChange={(checked) =>
                       handleToggle(field.key, checked)
                     }
@@ -365,10 +345,10 @@ export function NotificationPreferencesPanel() {
             ))}
           </CardContent>
         </Card>
-      )}
+      }
 
       {/* Organization categories — hidden for users with no membership */}
-      {prefs.allNotifications && hasOrgMembership && (
+      {hasOrgMembership && (
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Organization</CardTitle>
@@ -386,11 +366,18 @@ export function NotificationPreferencesPanel() {
                 {index > 0 && <Separator className="mb-4" />}
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label className="text-sm font-medium">{field.label}</Label>
+                    <Label
+                      htmlFor={`notification-${field.key}`}
+                      className="text-sm font-medium"
+                    >
+                      {field.label}
+                    </Label>
                     <p className="text-xs text-zinc-500">{field.description}</p>
                   </div>
                   <Switch
+                    id={`notification-${field.key}`}
                     checked={prefs[field.key]}
+                    disabled={!prefs.allNotifications || mutation.isPending}
                     onCheckedChange={(checked) =>
                       handleToggle(field.key, checked)
                     }
@@ -403,7 +390,7 @@ export function NotificationPreferencesPanel() {
       )}
 
       {/* Quiet Hours */}
-      {prefs.allNotifications && (
+      {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Quiet Hours</CardTitle>
@@ -411,15 +398,21 @@ export function NotificationPreferencesPanel() {
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <Label className="text-sm font-medium">
+                <Label
+                  htmlFor="quiet-hours-enabled"
+                  className="text-sm font-medium"
+                >
                   Enable Quiet Hours
                 </Label>
                 <p className="text-xs text-zinc-500">
-                  Pause non-urgent notifications during specific hours
+                  Delay routine inbox notifications during these hours. Urgent
+                  inbox alerts bypass quiet hours; email is not delayed.
                 </p>
               </div>
               <Switch
+                id="quiet-hours-enabled"
                 checked={prefs.quietHoursEnabled}
+                disabled={!prefs.allNotifications || mutation.isPending}
                 onCheckedChange={(checked) =>
                   checked
                     ? mutation.mutate({
@@ -441,6 +434,7 @@ export function NotificationPreferencesPanel() {
                     <Input
                       type="time"
                       value={prefs.quietHoursStart ?? "22:00"}
+                      disabled={!prefs.allNotifications || mutation.isPending}
                       onChange={(e) =>
                         mutation.mutate({ quietHoursStart: e.target.value })
                       }
@@ -452,6 +446,7 @@ export function NotificationPreferencesPanel() {
                     <Input
                       type="time"
                       value={prefs.quietHoursEnd ?? "08:00"}
+                      disabled={!prefs.allNotifications || mutation.isPending}
                       onChange={(e) =>
                         mutation.mutate({ quietHoursEnd: e.target.value })
                       }
@@ -466,6 +461,7 @@ export function NotificationPreferencesPanel() {
                   <select
                     id="quiet-hours-timezone"
                     value={effectiveTimezone}
+                    disabled={!prefs.allNotifications || mutation.isPending}
                     onChange={(e) =>
                       mutation.mutate({ quietHoursTimezone: e.target.value })
                     }
@@ -474,7 +470,10 @@ export function NotificationPreferencesPanel() {
                     {!QUIET_HOURS_TIMEZONES.includes(
                       effectiveTimezone as (typeof QUIET_HOURS_TIMEZONES)[number],
                     ) && (
-                      <option value={effectiveTimezone}>
+                      <option
+                        value={effectiveTimezone}
+                        disabled={!prefs.allNotifications || mutation.isPending}
+                      >
                         {effectiveTimezone} (current)
                       </option>
                     )}
@@ -485,7 +484,7 @@ export function NotificationPreferencesPanel() {
                     ))}
                   </select>
                   <p className="mt-1 text-xs text-zinc-500">
-                    Non-urgent notifications pause during these hours and
+                    Routine inbox notifications pause during these hours and
                     deliver afterwards.
                   </p>
                 </div>
@@ -493,7 +492,48 @@ export function NotificationPreferencesPanel() {
             )}
           </CardContent>
         </Card>
-      )}
+      }
+      <Card id="marketing-emails">
+        <CardHeader>
+          <CardTitle className="text-lg">Marketing emails</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <Label
+                htmlFor="marketing-email-consent"
+                className="text-sm font-medium"
+              >
+                Products and offers
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Allow Familiarise to email you about products and offers. This
+                records marketing consent; it does not enable marketing cookies
+                or subscribe you to the newsletter.
+              </p>
+            </div>
+            <Switch
+              id="marketing-email-consent"
+              checked={prefs.marketingEmails}
+              disabled={mutation.isPending}
+              onCheckedChange={(value) =>
+                handleToggle("marketingEmails", value)
+              }
+            />
+          </div>
+          {(!prefs.allNotifications || !prefs.emailEnabled) && (
+            <p className="text-sm text-muted-foreground">
+              Marketing delivery is paused by your delivery controls. You can
+              still grant or withdraw consent here.
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Newsletter membership is separate and still needs its own
+            confirmation. Withdrawing consent also stops a matching current
+            newsletter subscription.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }

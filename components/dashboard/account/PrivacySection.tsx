@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
+import { useCookiePreferences } from "@/hooks/useCookiePreferences";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,120 +20,120 @@ import { useSession } from "@/lib/auth-client";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { fetchWithReauth } from "@/lib/auth/reauth-client";
 
-interface CookiePrefs {
-  analytics: boolean;
-  marketing: boolean;
-}
-
-/** Cookie consent. Essential is always on. */
+/** Cookie choices share the banner's authenticated save and consent path. */
 export function CookiePreferencesSection() {
   const { toast } = useToast();
-  const [baseline, setBaseline] = useState<CookiePrefs>({
-    analytics: false,
-    marketing: false,
-  });
-  const [prefs, setPrefs] = useState<CookiePrefs>(baseline);
-  const [isSaving, setIsSaving] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const res = await fetch("/api/user/cookie-preferences").catch(() => null);
-      if (!res?.ok || cancelled) return;
-      const { data } = (await res.json()) as { data: CookiePrefs };
-      const loaded = { analytics: data.analytics, marketing: data.marketing };
-      setBaseline(loaded);
-      setPrefs(loaded);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setIsSaving(true);
-    try {
-      const res = await fetch("/api/user/cookie-preferences", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(prefs),
-      });
-      if (!res.ok) throw new Error("save failed");
-      setBaseline(prefs);
-      toast({ title: "Cookie preferences saved" });
-    } catch {
-      toast({
-        title: "Couldn't save your cookie preferences",
-        description: "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
+  const { query, mutation, identity } = useCookiePreferences();
+  const [draft, setDraft] = useState<{
+    identity: string;
+    values: { analytics: boolean; marketing: boolean };
+  } | null>(null);
+  const baseline = query.data ?? { analytics: false, marketing: false };
+  const prefs = draft?.identity === identity ? draft.values : baseline;
+  const unavailable = query.isPending || query.isError || !query.data;
   const rows = [
     {
-      key: "essential",
-      label: "Essential",
-      hint: "Required for sign-in and checkout; always on.",
-    },
-    {
       key: "analytics",
-      label: "Analytics",
-      hint: "Helps us see which pages are slow or confusing.",
+      label: "Analytics cookies",
+      hint: "Permission for optional usage-measurement cookies.",
     },
     {
       key: "marketing",
-      label: "Marketing",
-      hint: "Personalised recommendations.",
+      label: "Marketing cookies",
+      hint: "Permission for optional advertising cookies. This does not allow marketing emails or join a newsletter.",
     },
   ] as const;
-
   return (
     <Section
+      id="cookie-preferences"
       title="Cookies"
-      description="How this browser may use cookies."
+      description="Signed-in choices are saved for your account. Essential cookies are always enabled."
       variant="card"
     >
-      <form onSubmit={submit} className="space-y-4">
+      <form
+        className="space-y-4"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (unavailable || mutation.isPending) return;
+          try {
+            await mutation.mutateAsync({
+              analytics: prefs.analytics,
+              marketing: prefs.marketing,
+            });
+            setDraft(null);
+            toast({ title: "Cookie preferences saved" });
+          } catch {
+            toast({
+              title: "Couldn't save your cookie preferences",
+              description:
+                "Your changes have not been saved. Please try again.",
+              variant: "destructive",
+            });
+          }
+        }}
+      >
+        {query.isPending && (
+          <p role="status" className="text-sm text-muted-foreground">
+            Loading cookie preferences…
+          </p>
+        )}
+        {query.isError && (
+          <p role="alert" className="text-sm text-destructive">
+            Your saved choices could not be loaded.{" "}
+            <Button
+              type="button"
+              variant="link"
+              onClick={() => void query.refetch()}
+            >
+              Retry
+            </Button>
+          </p>
+        )}
         <ul className="divide-y divide-border">
+          <li className="flex items-center justify-between gap-4 py-3">
+            <div>
+              <Label htmlFor="cookie-essential">Essential</Label>
+              <p className="text-sm text-muted-foreground">
+                Required for sign-in and checkout; always on.
+              </p>
+            </div>
+            <Switch id="cookie-essential" checked disabled />
+          </li>
           {rows.map((row) => (
             <li
               key={row.key}
-              className="flex items-center justify-between gap-4 py-3 first:pt-0"
+              className="flex items-center justify-between gap-4 py-3"
             >
               <div>
-                <Label
-                  htmlFor={`cookie-${row.key}`}
-                  className="font-medium text-foreground"
-                >
-                  {row.label}
-                </Label>
+                <Label htmlFor={`cookie-${row.key}`}>{row.label}</Label>
                 <p className="text-sm text-muted-foreground">{row.hint}</p>
               </div>
-              {row.key === "essential" ? (
-                <Switch id="cookie-essential" checked disabled />
-              ) : (
-                <Switch
-                  id={`cookie-${row.key}`}
-                  checked={prefs[row.key]}
-                  onCheckedChange={(checked) =>
-                    setPrefs((prev) => ({ ...prev, [row.key]: checked }))
-                  }
-                />
-              )}
+              <Switch
+                id={`cookie-${row.key}`}
+                checked={prefs[row.key]}
+                disabled={unavailable || mutation.isPending}
+                onCheckedChange={(checked) =>
+                  setDraft({
+                    identity,
+                    values: { ...prefs, [row.key]: checked },
+                  })
+                }
+              />
             </li>
           ))}
         </ul>
+        <p className="text-xs text-muted-foreground">
+          These choices apply to optional browser features. Essential sign-in,
+          checkout and security functions remain available.
+        </p>
         <SettingsSaveBar
-          isSaving={isSaving}
+          isSaving={mutation.isPending}
           isDirty={
-            prefs.analytics !== baseline.analytics ||
-            prefs.marketing !== baseline.marketing
+            !unavailable &&
+            (prefs.analytics !== baseline.analytics ||
+              prefs.marketing !== baseline.marketing)
           }
-          onReset={() => setPrefs(baseline)}
+          onReset={() => setDraft(null)}
         />
       </form>
     </Section>

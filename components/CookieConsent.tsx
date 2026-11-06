@@ -1,40 +1,17 @@
 "use client";
-
-/**
- * Granular cookie consent (#381 / #1230 wave-6a).
- *
- * Replaces the old accept/decline-only wrapper. Essential cookies are
- * always on; analytics, marketing, and functional are individually
- * toggleable. Preferences persist to the CookiePreference table via
- * /api/cookie-preferences (which was read-but-never-written since MVP).
- */
-
 import { useCallback, useEffect, useState } from "react";
-import CookieConsent from "react-cookie-consent";
+import { useCookiePreferences } from "@/hooks/useCookiePreferences";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import type { CookiePreferenceUpdate } from "@/schemas/cookie-preferences";
 
-interface Prefs {
-  analytics: boolean;
-  marketing: boolean;
-  functional: boolean;
-}
-
-const DEFAULTS: Prefs = {
-  analytics: false,
-  marketing: false,
-  functional: false,
-};
-
-// #1527 3c — globals.css reserves this much at the end of every scrollport so
-// the fixed bar never covers content. Unset whenever the bar is not shown.
+// Reserve the fixed banner's height so it cannot cover page content.
 const BAR_HEIGHT_VAR = "--cookie-bar-height";
 
 function useReserveBarHeight() {
   const [bar, setBar] = useState<HTMLElement | null>(null);
-  // Our content mounts and unmounts with the library's bar, so its container
-  // is the element to measure.
+  // Measure the container while the banner is visible.
   const contentRef = useCallback((node: HTMLDivElement | null) => {
     setBar(node?.closest<HTMLElement>(".CookieConsent") ?? null);
   }, []);
@@ -54,127 +31,126 @@ function useReserveBarHeight() {
   return contentRef;
 }
 
-// Equal weight: declining must be as easy to find as accepting.
-const CHOICE_STYLE = {
-  background: "#fafafa",
-  color: "#18181b",
-  fontSize: "13px",
-  borderRadius: "6px",
-};
-
 export default function CookieConsentBanner() {
-  const [showPrefs, setShowPrefs] = useState(false);
-  const [prefs, setPrefs] = useState<Prefs>(DEFAULTS);
-  const [loaded, setLoaded] = useState(false);
-  const contentRef = useReserveBarHeight();
-
-  useEffect(() => {
-    if (!showPrefs || loaded) return;
-    fetch("/api/cookie-preferences")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d && typeof d.analytics === "boolean") setPrefs(d);
-        setLoaded(true);
-      })
-      .catch(() => setLoaded(true));
-  }, [showPrefs, loaded]);
-
+  const { query, mutation, identity, identityPending } = useCookiePreferences();
+  const [visible, setVisible] = useState(false);
+  const [customize, setCustomize] = useState(false);
+  const [draft, setDraft] = useState<{
+    identity: string;
+    values: { analytics: boolean; marketing: boolean };
+  } | null>(null);
   const [saveError, setSaveError] = useState(false);
-
-  const save = async (p: Prefs): Promise<boolean> => {
+  const contentRef = useReserveBarHeight();
+  useEffect(() => {
+    const acknowledged = document.cookie
+      .split(";")
+      .some((value) => /^cookie_consent=(true|false)$/.test(value.trim()));
+    setVisible(!acknowledged);
+  }, []);
+  const prefs = (draft?.identity === identity ? draft.values : null) ??
+    query.data ?? { analytics: false, marketing: false };
+  const save = async (values: CookiePreferenceUpdate) => {
+    setSaveError(false);
     try {
-      const res = await fetch("/api/cookie-preferences", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(p),
-      });
-      return res.ok;
+      await mutation.mutateAsync(values);
+      document.cookie = `cookie_consent=true; max-age=${365 * 86400}; path=/; SameSite=Lax${window.location.protocol === "https:" ? "; Secure" : ""}`;
+      setVisible(false);
     } catch {
-      return false;
+      setSaveError(true);
     }
   };
-
+  if (!visible) return null;
   return (
-    <CookieConsent
-      location="bottom"
-      buttonText="Accept all"
-      declineButtonText="Essential only"
-      ariaAcceptLabel="Accept all"
-      ariaDeclineLabel="Essential only"
-      enableDeclineButton
-      cookieName="cookie_consent"
-      style={{ background: "#18181b", fontSize: "13px" }}
-      buttonStyle={CHOICE_STYLE}
-      declineButtonStyle={CHOICE_STYLE}
-      expires={365}
-      onAccept={() =>
-        void save({ analytics: true, marketing: true, functional: true })
-      }
-      onDecline={() => void save(DEFAULTS)}
-      overlay={false}
+    <section
+      role="region"
+      aria-label="Cookie preferences"
+      className="CookieConsent fixed inset-x-0 bottom-0 z-50 bg-zinc-900 p-4 text-sm text-white"
     >
-      <div ref={contentRef} className="space-y-2">
+      <div ref={contentRef} className="mx-auto max-w-6xl space-y-3">
         <p>
-          We use cookies to improve your experience. Essential cookies are
-          always on.
+          Essential cookies support sign-in and checkout. Optional choices
+          record permission for analytics and advertising cookies; they never
+          subscribe you to emails. Essential sign-in and checkout remain
+          available either way.
         </p>
-        <div>
+        <div className="flex flex-wrap gap-3">
           <Button
-            size="sm"
-            variant="ghost"
-            className="text-zinc-400 underline text-xs h-auto p-0"
-            onClick={(e) => {
-              e.preventDefault();
-              setShowPrefs((v) => !v);
-            }}
+            type="button"
+            variant="secondary"
+            disabled={mutation.isPending || identityPending}
+            onClick={() => void save({ analytics: true, marketing: true })}
           >
-            {showPrefs ? "Hide preferences" : "Customize preferences"}
+            Allow optional cookies
           </Button>
-          {showPrefs && (
-            <div className="mt-2 space-y-2 text-left">
-              {(
-                [
-                  ["analytics", "Analytics", "Usage tracking (GA4, Hotjar)"],
-                  ["marketing", "Marketing", "Ad pixels, retargeting"],
-                  ["functional", "Functional", "Chat widgets, video embeds"],
-                ] as Array<[keyof Prefs, string, string]>
-              ).map(([key, label, desc]) => (
-                <div key={key} className="flex items-center gap-2">
-                  <Switch
-                    id={`cc-${key}`}
-                    checked={prefs[key]}
-                    onCheckedChange={(v) =>
-                      setPrefs((prev) => ({ ...prev, [key]: v }))
-                    }
-                  />
-                  <Label htmlFor={`cc-${key}`} className="text-xs">
-                    <span className="font-medium">{label}</span> — {desc}
-                  </Label>
-                </div>
-              ))}
-              <Button
-                size="sm"
-                onClick={async () => {
-                  const ok = await save(prefs);
-                  if (ok) {
-                    document.cookie = `cookie_consent=true; max-age=${365 * 24 * 3600}; path=/`;
-                    window.location.reload();
-                  } else {
-                    setSaveError(true);
-                  }
-                }}
-              >
-                Save preferences
-              </Button>
-              {saveError && (
-                <p className="text-xs text-red-600">
-                  Could not save — please try again.
-                </p>
-              )}
-            </div>
-          )}
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={mutation.isPending || identityPending}
+            onClick={() => void save({ analytics: false, marketing: false })}
+          >
+            Essential only
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={mutation.isPending || identityPending}
+            onClick={() => setCustomize((value) => !value)}
+          >
+            Choose cookies
+          </Button>
         </div>
+        {customize && (
+          <div className="space-y-3">
+            {query.isError && (
+              <p role="alert">
+                Saved choices could not be loaded.{" "}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => void query.refetch()}
+                >
+                  Retry
+                </button>
+              </p>
+            )}
+            {(["analytics", "marketing"] as const).map((key) => (
+              <div key={key} className="flex items-center gap-3">
+                <Switch
+                  id={`cc-${key}`}
+                  checked={prefs[key]}
+                  disabled={!query.data || query.isError || mutation.isPending}
+                  onCheckedChange={(checked) =>
+                    setDraft({ identity, values: { ...prefs, [key]: checked } })
+                  }
+                />
+                <Label htmlFor={`cc-${key}`}>
+                  {key === "analytics"
+                    ? "Analytics cookies"
+                    : "Marketing cookies"}
+                </Label>
+              </div>
+            ))}
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={!query.data || query.isError || mutation.isPending}
+              onClick={() =>
+                void save({
+                  analytics: prefs.analytics,
+                  marketing: prefs.marketing,
+                })
+              }
+            >
+              Save cookie choices
+            </Button>
+          </div>
+        )}
+        {saveError && (
+          <p role="alert">
+            Your cookie choices were not saved. Please try again.
+          </p>
+        )}
       </div>
-    </CookieConsent>
+    </section>
   );
 }

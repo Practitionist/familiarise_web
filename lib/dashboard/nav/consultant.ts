@@ -150,7 +150,7 @@ export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
   booking: "Booking requests",
   "get-paid": "Get paid",
   payouts: "Get paid",
-  notifications: "Notifications",
+  notifications: "Notifications & emails",
   security: "Security",
   support: "Help & support",
   evidence: "Evidence requests",

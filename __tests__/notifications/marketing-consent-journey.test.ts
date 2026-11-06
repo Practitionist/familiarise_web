@@ -19,7 +19,11 @@ const mockTx = {
   },
   user: { findUnique: jest.fn() },
   waitlist: { updateMany: jest.fn() },
-  cookiePreference: { upsert: jest.fn(), updateMany: jest.fn() },
+  cookiePreference: {
+    findUnique: jest.fn(async () => ({ analytics: false, marketing: false })),
+    upsert: jest.fn(),
+    updateMany: jest.fn(),
+  },
 };
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
@@ -85,8 +89,12 @@ beforeEach(() => {
       return { ...preferences };
     },
   );
-  mockTx.consentArtifact.findFirst.mockImplementation(async () =>
-    currentGrant?.withdrawnAt === null ? currentGrant : null,
+  mockTx.consentArtifact.findFirst.mockImplementation(
+    async (args: { where: { purposeCodes: { hasSome: string[] } } }) =>
+      args.where.purposeCodes.hasSome.includes("MARKETING_COMMS") &&
+      currentGrant?.withdrawnAt === null
+        ? currentGrant
+        : null,
   );
   mockTx.consentArtifact.create.mockImplementation(
     async ({ data }: { data: Record<string, unknown> }) => {
@@ -230,8 +238,8 @@ describe("one account marketing choice across settings and privacy", () => {
     expect(mockTx.cookiePreference.upsert).toHaveBeenCalledTimes(1);
     expect(mockTx.cookiePreference.upsert).toHaveBeenCalledWith({
       where: { userId: "account" },
-      create: { userId: "account", analytics: true },
-      update: { analytics: true },
+      create: { userId: "account", analytics: true, essential: true },
+      update: { analytics: true, essential: true },
     });
   });
 

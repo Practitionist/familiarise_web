@@ -1,3 +1,7 @@
+import {
+  readCookiePreferences,
+  saveCookiePreferences,
+} from "@/lib/compliance/cookie-preferences";
 import { marketingConsentWhere } from "@/lib/compliance/marketing-policy";
 /**
  * GET    /api/user/privacy/consent
@@ -79,10 +83,7 @@ export async function GET() {
         where: { userId },
         select: { marketingEmails: true },
       }),
-      prisma.cookiePreference.findUnique({
-        where: { userId },
-        select: { analytics: true, marketing: true },
-      }),
+      readCookiePreferences(prisma, { userId }),
       prisma.consentArtifact.findFirst({
         where: { userId, ...marketingConsentWhere() },
         select: { id: true },
@@ -141,6 +142,14 @@ export async function POST(req: NextRequest) {
           created.push(
             await grantMarketingConsent(tx, userId, parsed.data.language),
           );
+        } else if (purposeCode === PURPOSE_CODES.ANALYTICS) {
+          const saved = await saveCookiePreferences(
+            tx,
+            { userId },
+            { analytics: true },
+            parsed.data.language,
+          );
+          if (saved.consent) created.push(saved.consent);
         } else {
           created.push(
             await tx.consentArtifact.create({
@@ -155,12 +164,6 @@ export async function POST(req: NextRequest) {
             }),
           );
         }
-        if (purposeCode === PURPOSE_CODES.ANALYTICS)
-          await tx.cookiePreference.upsert({
-            where: { userId },
-            create: { userId, analytics: true },
-            update: { analytics: true },
-          });
       }
       return created;
     });
@@ -231,15 +234,18 @@ export async function DELETE(req: NextRequest) {
     const { withdrawnCount } = await prisma.$transaction(async (tx) => {
       if (purposeCode === PURPOSE_CODES.MARKETING_COMMS)
         return withdrawMarketingConsent(tx, userId);
+      if (purposeCode === PURPOSE_CODES.ANALYTICS) {
+        const saved = await saveCookiePreferences(
+          tx,
+          { userId },
+          { analytics: false },
+        );
+        return { withdrawnCount: saved.withdrawnCount };
+      }
       const result = await withdrawConsent(
         { userId, purposeCode, dataFiduciary: "Familiarise" },
         tx,
       );
-      if (purposeCode === PURPOSE_CODES.ANALYTICS)
-        await tx.cookiePreference.updateMany({
-          where: { userId },
-          data: { analytics: false },
-        });
       return result;
     });
 

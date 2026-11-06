@@ -93,7 +93,7 @@ flowchart TB
         direction TB
         CL_INBOX["components/notifications/\nNotificationInbox.tsx\nBell icon + unread badge\nClick → redirect URL"]
         CL_HOOK["hooks/useNovuSubscriberSync.ts\nReact Query, 30min staleTime\nPOST /api/novu/subscriber"]
-        CL_PREFS["components/notifications/\nNotificationPreferencesPanel.tsx\n3 channels + 7 categories\n+ quiet hours"]
+        CL_PREFS["components/notifications/\nNotificationPreferencesPanel.tsx\nemail/in-app, service categories and marketing consent\n+ quiet hours"]
     end
 
     subgraph DASHBOARDS["DASHBOARD INTEGRATION"]
@@ -438,14 +438,14 @@ The two relays are the outbox halves of #1654: every email and every Novu trigge
 
 ## Dashboard & Admin Features
 
-| Feature                      | Route                              | Who                                             | What It Does                                                |
-| ---------------------------- | ---------------------------------- | ----------------------------------------------- | ----------------------------------------------------------- |
-| **Notification Preferences** | Settings page                      | Admin ✅, Staff ✅, Consultant ⚠️, Consultee ⚠️ | 3 channels + 7 categories + quiet hours                     |
-| **Bell Icon / Inbox**        | All dashboards                     | All roles                                       | Novu in-app notifications, unread count, click-to-redirect  |
-| **Announcements**            | POST /api/announcements            | Admin, Staff                                    | Create announcement + broadcast to all Novu subscribers     |
-| **Newsletter Send**          | POST /api/admin/waitlist/broadcast | Admin only                                      | Send HTML email to every SUBSCRIBED Waitlist row via Resend |
-| **Newsletter Stats**         | (not built)                        | —                                               | Would show subscriber count, open rates                     |
-| **Verification Review**      | /dashboard/admin/verification      | Admin, Staff                                    | Review applications → triggers verificationStatusChanged    |
+| Feature                      | Route                              | Who                                             | What It Does                                                         |
+| ---------------------------- | ---------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------- |
+| **Notification Preferences** | Settings page                      | Admin ✅, Staff ✅, Consultant ⚠️, Consultee ⚠️ | email/in-app, service categories and marketing consent + quiet hours |
+| **Bell Icon / Inbox**        | All dashboards                     | All roles                                       | Novu in-app notifications, unread count, click-to-redirect           |
+| **Announcements**            | POST /api/announcements            | Admin, Staff                                    | Create announcement + broadcast to all Novu subscribers              |
+| **Newsletter Send**          | POST /api/admin/waitlist/broadcast | Admin only                                      | Send HTML email to every SUBSCRIBED Waitlist row via Resend          |
+| **Newsletter Stats**         | (not built)                        | —                                               | Would show subscriber count, open rates                              |
+| **Verification Review**      | /dashboard/admin/verification      | Admin, Staff                                    | Review applications → triggers verificationStatusChanged             |
 
 ---
 
