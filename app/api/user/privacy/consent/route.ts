@@ -15,9 +15,9 @@
  *     account (`DELETE /api/user/[id]`).
  *   - Optional Purposes (`MARKETING_COMMS`, `ANALYTICS`): Granular 1-click
  *     grant/withdraw at any time without affecting core account access.
- *     Toggling `MARKETING_COMMS` also synchronises
- *     `NotificationPreference.marketingEmails` and `CookiePreference.marketing`;
- *     toggling `ANALYTICS` synchronises `CookiePreference.analytics`.
+ *     `MARKETING_COMMS` is the only marketing control: its grant subscribes the
+ *     account's address to the newsletter and its withdrawal unsubscribes it,
+ *     in the same transaction as the consent artifact.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -25,6 +25,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import { stampedClientIp } from "@/lib/request-ip";
 import { buildConsentArtifact, withdrawConsent } from "@/lib/compliance/dpdp";
 import {
   PURPOSE_CODES,
@@ -32,6 +33,10 @@ import {
   normalizePurposeCode,
   type PurposeCode,
 } from "@/lib/compliance/purpose-codes";
+import {
+  subscribeForMarketingConsent,
+  unsubscribeForWithdrawnConsent,
+} from "@/lib/waitlist/consent-link";
 
 const CORE_PLATFORM_PURPOSES: ReadonlySet<PurposeCode> = new Set(
   SIGNUP_PURPOSES,
@@ -59,33 +64,16 @@ export async function GET() {
   if (auth.error) return auth.error;
   const userId = auth.session.user.id;
 
-  const [consents, notificationPref, cookiePref] = await Promise.all([
-    prisma.consentArtifact.findMany({
-      where: {
-        userId,
-        dataFiduciary: "Familiarise",
-      },
-      orderBy: { grantedAt: "desc" },
-      take: 100,
-    }),
-    prisma.notificationPreference.findUnique({
-      where: { userId },
-      select: { marketingEmails: true },
-    }),
-    prisma.cookiePreference.findUnique({
-      where: { userId },
-      select: { analytics: true, marketing: true },
-    }),
-  ]);
-
-  return NextResponse.json({
-    data: consents,
-    preferences: {
-      marketingEmails: notificationPref?.marketingEmails ?? false,
-      cookieAnalytics: cookiePref?.analytics ?? false,
-      cookieMarketing: cookiePref?.marketing ?? false,
+  const consents = await prisma.consentArtifact.findMany({
+    where: {
+      userId,
+      dataFiduciary: "Familiarise",
     },
+    orderBy: { grantedAt: "desc" },
+    take: 100,
   });
+
+  return NextResponse.json({ data: consents });
 }
 
 export async function POST(req: NextRequest) {
@@ -132,31 +120,19 @@ export async function POST(req: NextRequest) {
   try {
     const consent = await prisma.$transaction(async (tx) => {
       const created = await tx.consentArtifact.create({ data: draft });
-
-      // Sync downstream preference tables so marketing mailers and cookie gates
-      // honour the DPDP consent grant immediately.
       if (purposeCodes.includes(PURPOSE_CODES.MARKETING_COMMS)) {
-        await Promise.all([
-          tx.notificationPreference.upsert({
-            where: { userId },
-            create: { userId, marketingEmails: true },
-            update: { marketingEmails: true },
-          }),
-          tx.cookiePreference.upsert({
-            where: { userId },
-            create: { userId, marketing: true },
-            update: { marketing: true },
-          }),
-        ]);
-      }
-      if (purposeCodes.includes(PURPOSE_CODES.ANALYTICS)) {
-        await tx.cookiePreference.upsert({
-          where: { userId },
-          create: { userId, analytics: true },
-          update: { analytics: true },
+        const user = await tx.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: { email: true },
+        });
+        await subscribeForMarketingConsent(tx, {
+          userId,
+          email: user.email,
+          now: draft.grantedAt,
+          ip: stampedClientIp(req.headers),
+          userAgent: req.headers.get("user-agent"),
         });
       }
-
       return created;
     });
 
@@ -215,26 +191,21 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
-    const { withdrawnCount } = await withdrawConsent({ userId, purposeCode });
-
-    if (purposeCode === PURPOSE_CODES.MARKETING_COMMS) {
-      await Promise.all([
-        prisma.notificationPreference.updateMany({
-          where: { userId },
-          data: { marketingEmails: false },
-        }),
-        prisma.cookiePreference.updateMany({
-          where: { userId },
-          data: { marketing: false },
-        }),
-      ]);
-    }
-    if (purposeCode === PURPOSE_CODES.ANALYTICS) {
-      await prisma.cookiePreference.updateMany({
-        where: { userId },
-        data: { analytics: false },
-      });
-    }
+    const { withdrawnCount } = await prisma.$transaction(async (tx) => {
+      const result = await withdrawConsent({ userId, purposeCode }, tx);
+      if (purposeCode === PURPOSE_CODES.MARKETING_COMMS) {
+        const user = await tx.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: { email: true },
+        });
+        await unsubscribeForWithdrawnConsent(tx, {
+          userId,
+          email: user.email,
+          now: new Date(),
+        });
+      }
+      return result;
+    });
 
     return NextResponse.json({ withdrawnCount, purposeCode });
   } catch (error) {

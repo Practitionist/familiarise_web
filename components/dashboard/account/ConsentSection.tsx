@@ -36,11 +36,6 @@ interface Artifact {
 
 interface PersonalConsentResponse {
   data: Artifact[];
-  preferences?: {
-    marketingEmails: boolean;
-    cookieAnalytics: boolean;
-    cookieMarketing: boolean;
-  };
 }
 
 const OPTIONAL_PERSONAL_PURPOSES: readonly PurposeCode[] = [

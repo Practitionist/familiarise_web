@@ -7,7 +7,7 @@
  *        or a session.
  *
  * Both are enumeration-safe: the response is identical whether the address was
- * on the list or not.
+ * on the list or not. A failed write never answers "unsubscribed".
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -44,10 +44,14 @@ export async function POST(request: NextRequest): Promise<Response> {
   const email = searchParams.get("email");
   const token = searchParams.get("token");
 
+  let outcome: "unsubscribed" | "invalid" | "failed" = "invalid";
   if (email && token) {
     try {
-      await unsubscribe({ email, token });
+      outcome = (await unsubscribe({ email, token })).ok
+        ? "unsubscribed"
+        : "invalid";
     } catch (error) {
+      outcome = "failed";
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
         { tags: { subsystem: "waitlist" } },
@@ -56,16 +60,34 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
   }
 
+  const page = OUTCOME_PAGES[outcome];
   if (request.headers.get("accept")?.includes("text/html")) {
-    return html(
-      "You are unsubscribed",
-      "You will not receive any more newsletters from Familiarise. Changed your mind? You can sign up again from any page on the site.",
-      200,
-    );
+    return html(page.title, page.body, page.status);
   }
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json(
+    { success: outcome === "unsubscribed" },
+    { status: page.status },
+  );
 }
+
+const OUTCOME_PAGES = {
+  unsubscribed: {
+    status: 200,
+    title: "You are unsubscribed",
+    body: "You will not receive any more newsletters from Familiarise. Changed your mind? You can sign up again from any page on the site.",
+  },
+  invalid: {
+    status: 400,
+    title: "This link is not valid",
+    body: "That unsubscribe link is incomplete or has been changed. Reply to any of our emails and we will remove you by hand.",
+  },
+  failed: {
+    status: 500,
+    title: "We could not unsubscribe you",
+    body: "Nothing was changed. Please try the link again in a few minutes.",
+  },
+} as const;
 
 function html(
   title: string,
