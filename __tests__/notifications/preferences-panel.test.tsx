@@ -12,6 +12,7 @@ type SessionUser = {
   id: string;
   role?: string;
   consultantProfileId?: string;
+  consulteeProfileId?: string;
   organizationMemberships?: { organizationName: string }[];
 };
 
@@ -124,3 +125,16 @@ it.each([
     }
   },
 );
+
+it("has no marketing switch and points marketing to the consent section", async () => {
+  mockUser = { id: "u1", role: "CONSULTEE", consulteeProfileId: "ce1" };
+  renderPanel();
+  await screen.findByRole("switch", { name: "Optional notifications" });
+  expect(screen.queryByRole("switch", { name: /marketing/i })).toBeNull();
+  expect(
+    screen.getByRole("link", { name: "Data consent & privacy rights" }),
+  ).toHaveAttribute(
+    "href",
+    "/dashboard/consultee/ce1/settings/account#data-consent",
+  );
+});

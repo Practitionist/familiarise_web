@@ -525,7 +525,6 @@ export const NotificationPreferenceSchema = z.object({
   feedbackAlerts: z.boolean().default(true),
   trialNotifications: z.boolean().default(true),
   subscriptionAlerts: z.boolean().default(true),
-  marketingEmails: z.boolean().default(false),
 
   // Org category preferences (ADR 23) — the categories above are all
   // B2C-shaped, which left the ORG_* workflow family unmutable.

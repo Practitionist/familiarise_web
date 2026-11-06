@@ -1001,6 +1001,7 @@ model NotificationPreference {
   feedbackAlerts       Boolean @default(true)
   trialNotifications   Boolean @default(true)
   subscriptionAlerts   Boolean @default(true)
+  /// Unread: marketing follows the MARKETING_COMMS consent; kept only for the data export until the schema batch drops it.
   marketingEmails      Boolean @default(false)
 
   // Org category preferences (ADR 23). The seven categories above are all
