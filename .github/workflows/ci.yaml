@@ -306,7 +306,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.base_ref }}
-        run: npx --yes tsx@4.23.1 scripts/ci/check-comment-archaeology.ts "origin/${BASE_REF}"
+        run: node_modules/.bin/tsx scripts/ci/check-comment-archaeology.ts "origin/${BASE_REF}"
 
       - name: Docs drift guard (warn-only)
         # Cited repo paths, relative links and start-here line numbers in docs/
