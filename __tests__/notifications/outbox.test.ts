@@ -47,6 +47,7 @@ import {
   runNotificationDrainTick,
   type NotificationOutboxStore,
 } from "@/jobs/notifications/drain-notification-outbox";
+import { notifyPayoutFailed } from "@/lib/novu/service";
 
 const payload = {
   appointmentId: "appt-1",
@@ -292,5 +293,38 @@ describe("deriveTransactionId", () => {
         outbox_dead_letter: "true",
       }),
     });
+  });
+});
+
+describe("notifyPayoutFailed", () => {
+  it("keeps distinct failed payouts distinct when amount and reason match", async () => {
+    mockUpsert.mockImplementation(async (args) => ({
+      id: args.create.transactionId,
+      ...args.create,
+    }));
+    const details = {
+      amount: 10000,
+      currency: "INR",
+      reason: "bank rejected",
+      dashboardUrl: "/dashboard/earnings",
+    };
+
+    await notifyPayoutFailed(
+      "user-a",
+      { ...details, payoutId: "payout-one" },
+      { deferAttempt: true },
+    );
+    await notifyPayoutFailed(
+      "user-a",
+      { ...details, payoutId: "payout-two" },
+      { deferAttempt: true },
+    );
+
+    const [first, second] = mockUpsert.mock.calls.map(([args]) => args.create);
+    expect(first.transactionId).not.toBe(second.transactionId);
+    expect(first.payload).toMatchObject({ payoutId: "payout-one" });
+    expect(first.entityRef).toBe("payout:payout-one");
+    expect(second.entityRef).toBe("payout:payout-two");
+    expect(mockTrigger).not.toHaveBeenCalled();
   });
 });

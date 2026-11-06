@@ -788,7 +788,7 @@ export const notifyPayoutProcessed = defineSingleNotifier(
 );
 export const notifyPayoutFailed = defineSingleNotifier(
   W.PAYOUT_FAILED,
-  ({ payoutId: _id, ...rest }: PayoutInput) => payoutWire(rest),
+  payoutWire,
   { deferrable: false },
 );
 export const notifyOrgExpertRemoved =

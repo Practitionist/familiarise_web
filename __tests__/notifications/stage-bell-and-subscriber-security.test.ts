@@ -396,4 +396,34 @@ describe("5. flushNotificationsAfter concurrent bundle dispatch & inline fallbac
     );
     expect(mockCaptureException).toHaveBeenCalledTimes(1);
   });
+
+  it("attempts a bell staged twice under the same row id only once", async () => {
+    mockAttemptTrigger.mockResolvedValue({ success: true, outcome: "SENT" });
+    const row: StagedTrigger = {
+      id: "bell-shared",
+      workflowId: "appointment-booked",
+      kind: "SINGLE",
+      recipients: ["u1"],
+      payload: { appointmentId: "appt-1" },
+      transactionId: "appointment-booked:shared",
+      attempts: 0,
+      status: "PENDING",
+      notBefore: null,
+    };
+    const other: StagedTrigger = {
+      ...row,
+      id: "bell-other",
+      transactionId: "appointment-booked:other",
+    };
+
+    await flushNotificationsAfter(
+      { bells: [row, { ...row }, other, null, row] },
+      "test-dedupe-flush",
+    );
+
+    expect(mockAttemptTrigger.mock.calls.map(([r]) => r.id)).toEqual([
+      "bell-shared",
+      "bell-other",
+    ]);
+  });
 });
