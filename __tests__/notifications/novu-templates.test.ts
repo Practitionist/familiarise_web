@@ -12,6 +12,7 @@ jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import {
   EVENT_FAMILY,
+  FALLBACK_HREF,
   FAMILIES,
   NOVU_WORKFLOW_TEMPLATES,
   familyOf,
@@ -19,6 +20,7 @@ import {
   toFamilyDto,
   toWire,
 } from "@/lib/novu/templates";
+import type { NovuWorkflowId } from "@/lib/novu/templates/types";
 import { Liquid } from "liquidjs";
 import { supportTicketStatusLabel } from "@/lib/novu/humanize";
 
@@ -145,17 +147,25 @@ describe("Novu workflow templates", () => {
         href: "/dashboard/admin/support",
       },
     });
-    // The destination follows the event's own field, and is absent when the
-    // payload has none (the redirect then renders empty and is dropped).
+    // The destination follows the event's own field, and falls back to the
+    // dashboard home when there is none: Novu fails an empty redirect url.
     expect(
       toWire("org-wallet-low", { topUpUrl: "/o/x/wallet" }).payload.href,
     ).toBe("/o/x/wallet");
-    expect(
-      toWire("moderation-warning", { reason: "r" }).payload,
-    ).not.toHaveProperty("href");
+    expect(toWire("moderation-warning", { reason: "r" }).payload.href).toBe(
+      FALLBACK_HREF,
+    );
     expect(() => toWire("no-such-event" as never, {})).toThrow(
       /no workflow family/,
     );
+  });
+
+  it("gives every event a redirect url Novu accepts, with or without a destination", () => {
+    // Novu's IN_APP_REDIRECT_URL_REGEX: a url must start with `/` (not `//`) or http(s)://.
+    const accepted = /^(?:\/(?!\/)|https?:\/\/)/;
+    for (const event of Object.keys(EVENT_FAMILY) as NovuWorkflowId[]) {
+      expect(toWire(event, {}).payload.href).toMatch(accepted);
+    }
   });
 
   it("compiles under Novu's JSON-stringified Liquid pass, and never uses a double-quoted literal inside a tag", () => {
