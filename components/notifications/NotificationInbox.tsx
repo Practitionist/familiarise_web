@@ -236,6 +236,20 @@ export function NotificationInbox() {
           {/* hideNav removes Novu's preference editor: preferences live only in
               Settings (the header gear), and the families are read-only in Novu. */}
           <div className="relative min-h-0 flex-1">
+            {/* Novu's header has no slot, so the gear sits over its title row,
+                left of the ⋯ menu, at @novu/react 3.19.2's offsets (that row
+                starts 10 px down); first in the DOM so it precedes the feed. */}
+            {settingsHref && (
+              <Link
+                href={settingsHref}
+                onClick={() => setOpen(false)}
+                aria-label="Notification settings"
+                title="Notification settings"
+                className="absolute right-[52px] top-[10px] z-10 inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Settings className="h-4 w-4" aria-hidden="true" />
+              </Link>
+            )}
             <InboxContent
               hideNav
               onNotificationClick={(notification) => {
@@ -297,19 +311,6 @@ export function NotificationInbox() {
                 }
               }}
             />
-            {/* Novu's header has no slot, so the gear sits over its title row,
-                just left of the ⋯ menu; the offsets match @novu/react 3.19. */}
-            {settingsHref && (
-              <Link
-                href={settingsHref}
-                onClick={() => setOpen(false)}
-                aria-label="Notification settings"
-                title="Notification settings"
-                className="absolute right-[52px] top-[2px] z-10 inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <Settings className="h-4 w-4" aria-hidden="true" />
-              </Link>
-            )}
           </div>
         </PopoverContent>
       </Popover>

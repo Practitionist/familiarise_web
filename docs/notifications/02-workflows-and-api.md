@@ -342,7 +342,7 @@ Updates any subset of the preferences. The settings panel sends one key per chan
 
 ## The settings panel
 
-`components/notifications/NotificationPreferencesPanel.tsx` is the one preference editor. It is mounted on the consultee and consultant Settings › Notifications pages, the staff and admin settings page, and the workspace operator's Workspace settings › Notifications page, where it is the only control. A gear button in the bell popover's title row, left of Novu's ⋯ menu, links to it through `accountSettingsHref(user, "notifications")` (`lib/dashboard/account-href.ts`), because Novu's own preference nav is hidden. Novu's header has no slot, so the gear is overlaid at offsets that match `@novu/react` 3.19; recheck it when the SDK is upgraded. On the Free plan the "Inbox by Novu" branding stays at the bottom in production too.
+`components/notifications/NotificationPreferencesPanel.tsx` is the one preference editor. It is mounted on the consultee and consultant Settings › Notifications pages, the staff and admin settings page, and the workspace operator's Workspace settings › Notifications page, where it is the only control. A gear button in the bell popover's title row, left of Novu's ⋯ menu, links to it through `accountSettingsHref(user, "notifications")` (`lib/dashboard/account-href.ts`), because Novu's own preference nav is hidden. Novu's header has no slot, so the gear is overlaid at offsets measured on `@novu/react` 3.19.2 (the ⋯ row starts 10 px below the popover top; the gear sits 8 px left of ⋯); recheck both when the SDK is upgraded. On the Free plan the "Inbox by Novu" branding stays at the bottom in production too.
 
 How a save behaves:
 
