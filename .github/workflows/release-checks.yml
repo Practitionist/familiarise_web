@@ -55,5 +55,10 @@ jobs:
       - name: Cron job coverage
         run: npm run cron:coverage
 
+      - name: Comment archaeology guard
+        # Comment lines added since prod may not cite ticket numbers or planning
+        # ids (AGENTS.md §1.5). Diff-only, so old comments never block a release.
+        run: node_modules/.bin/tsx scripts/ci/check-comment-archaeology.ts origin/prod
+
       - name: Unit tests (changed since prod)
         run: node_modules/.bin/jest --changedSince=origin/prod --passWithNoTests --coverage=false
