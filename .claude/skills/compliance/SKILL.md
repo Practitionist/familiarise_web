@@ -1,6 +1,6 @@
 ---
 name: compliance
-description: Work on this repo's DPDP/consent/erasure/retention subsystem and the India-first compliance posture — the consent state model and its fail-closed gate, withdrawal versus erasure, the per-data-class retention engine, the processor inventory and vendor off-boarding, the terms-vs-privacy-policy change mechanism, and the staged DPDP commencement dates. Use when the user says "DPDP", "consent", "DPDP compliance", "privacy policy", "terms of service", "right to erasure", "delete my data", "data retention", "grievance", "RoPA", "processor", "India compliance", "cross-border transfer", "CERT-In", "data residency", or is touching lib/compliance/, lib/novu/, prisma's ConsentArtifact or ErasureRequest models, app/api/users/me/erasure-requests/, app/api/organizations/[orgId]/consent/, components/dashboard/account/ConsentSection.tsx, jobs/compliance/, or docs/compliance/.
+description: Work on this repo's DPDP/consent/erasure/retention subsystem and the India-first compliance posture — the consent state model and its fail-closed gate, withdrawal versus erasure, the per-data-class retention engine, the processor inventory and vendor off-boarding, the terms-vs-privacy-policy change mechanism, and the staged DPDP commencement dates. Use when the user says "DPDP", "consent", "DPDP compliance", "privacy policy", "terms of service", "right to erasure", "delete my data", "data retention", "grievance", "RoPA", "processor", "India compliance", "cross-border transfer", "CERT-In", "data residency", or is touching lib/compliance/, lib/novu/, lib/waitlist/, prisma's ConsentArtifact or ErasureRequest models, app/api/users/me/erasure-requests/, app/api/organizations/[orgId]/consent/, components/dashboard/account/ConsentSection.tsx, jobs/compliance/, or docs/compliance/.
 ---
 
 # Compliance
@@ -107,6 +107,14 @@ obvious from the compliance side alone. `/finance` and `/enterprise` own it.
   the user's 1:1 recordings; the row is marked `EXPIRED` only after the vendor
   confirms. A failed vendor delete fails the erasure and stays retryable —
   never downgrade it to a database-only delete.
+
+## Marketing consent, newsletter, cookies, mail erasure
+
+- `MARKETING_COMMS` is the only marketing control. Its grant upserts the account's `Waitlist` row `SUBSCRIBED` in the same transaction as the artifact; its withdrawal unsubscribes the account's rows (`lib/waitlist/consent-link.ts`, called from `app/api/user/privacy/consent/route.ts`). No double-opt-in email: the artifact is the evidence.
+- The newsletter unsubscribe (`unsubscribe` in `lib/waitlist/service.ts`) commits first, then withdraws a linked account's `MARKETING_COMMS` in its own best-effort transaction. Never put the two in one transaction, and never answer "unsubscribed" when the write failed.
+- Look consent up by purpose (`purposeCodeAliases`), never by a notice `version`.
+- `NotificationPreference.marketingEmails` and `CookiePreference` are unread; never add a reader or writer. There is no cookie banner: the site sets essential cookies only. Adding any non-essential script needs a consent prompt and a privacy-policy update first.
+- Erasure's mail scrub is `scrubMailFootprintTx` (`lib/compliance/erasure/mail-footprint.ts`), inside the `scrubUser` transaction: `Waitlist` rows deleted, queued `FailedEmail` dead-lettered `policy:erased` and redacted, the address removed from queued batches (`review:erased_recipient` when the provider may have seen the key). `EmailSuppression` is kept on purpose so the address stays unmailable. Bells are dropped at send time (`unerasedRecipients`). Proof: `__tests__/db/erasure-mail-footprint.db.test.ts`.
 
 For how the breach and MSME alert emails are routed and guarded, see [docs/email/README.md](../../../docs/email/README.md).
 

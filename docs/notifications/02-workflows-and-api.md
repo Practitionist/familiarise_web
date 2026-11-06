@@ -285,7 +285,6 @@ Returns the current user's notification preferences. The row is parsed through `
   "feedbackAlerts": true,
   "trialNotifications": true,
   "subscriptionAlerts": true,
-  "marketingEmails": false,
   "orgBillingAlerts": true,
   "orgMembershipAlerts": true,
   "orgProgramAlerts": true,
@@ -379,7 +378,11 @@ The evidence for each row:
 - **Quiet hours** are read only by `lib/booking/week-nudge.ts`, which walks consultant profiles, so the card shows only for a viewer with a consultant profile.
 - **Staff and admins** receive the operations bells in every family (`support-ticket-created`, `feedback-received`, `refund-requested`, `dispute-updated`), so they see everything.
 
-The `marketingEmails` switch is not a notification category; it is shown to everyone until the consent work replaces it.
+There is no marketing switch. Marketing email and the newsletter follow the account's DPDP `MARKETING_COMMS` consent, so the Categories card ends with a line linking to Settings › Account › Data consent & privacy rights (`accountSettingsHref(user, "account")` plus `#data-consent`). The strict PUT rejects `marketingEmails` with a 400. How the consent drives the `Waitlist` row is in `docs/email/README.md`, "The newsletter follows marketing consent".
+
+### Erased users
+
+Erasure stops every channel without a preference write. The bell relay drops an erased recipient at send time (`unerasedRecipients` for required bells and `currentBellRecipients` for the rest, both in `lib/novu/policy.ts`), so a `NotificationOutbox` row staged before the erasure never rings them. Queued email is dead-lettered and redacted inside the erasure transaction (`scrubMailFootprintTx`, `lib/compliance/erasure/mail-footprint.ts`).
 
 ---
 
@@ -428,4 +431,5 @@ graph TD
 - **Announcement broadcast (removed)**: every new announcement fired `notifyGeneralAnnouncement`, a Novu broadcast to every subscriber with no server-side preference check. Inbox posts are now opt-in and fan out through bell policy as described under Admin / System.
 - **Maintenance bells (removed)**: `maintenance-scheduled`, `maintenance-started` and `maintenance-ended` were first Novu broadcasts with no preference check, then per-audience fan-outs staged by `stageMaintenanceBells`. They are deleted: no window is ever scheduled ahead, the relay is blocked while maintenance is `OFFLINE`, and users cannot open the app then. The banner and the maintenance page cover the live state. Delete any residual reference.
 - **Unfiltered settings panel (replaced)**: the panel once showed every category to every viewer, a disabled "Push Notifications (Soon)" row, cards hidden when the master switch was off, and saved only after the server answered, one request per keystroke in the time fields. The role map, the optimistic serialized save and the blur-saved time fields above replace it; push has no delivery path, so its column is unused.
+- **Marketing & Promotions switch (removed 2026-11-07)**: the panel showed a `marketingEmails` switch to every viewer and the consent route copied `MARKETING_COMMS` into it, but no sender ever read the column. It is replaced by the consent link above; the column is unread until the schema batch drops it.
 - **Workspace routing (removed 2026-11-07)**: `OrgWorkspaceProfile.notificationRoutingMode` gated both channels for an operator on top of their personal switches, and the panel explained when it blocked one (`routingBlocks`). It duplicated the same person's switches, so both gates and the panel stopped reading it; the column is dropped with the next schema batch.

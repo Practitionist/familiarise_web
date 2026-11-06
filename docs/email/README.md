@@ -187,6 +187,28 @@ All ops alerts set `Reply-To: connect@practitionist.com` (`SUPPORT_EMAIL` in `li
 | Waitlist confirmation & welcome | Double opt-in signup / confirmation | Subscriber            | `deliver()`                                                 | `emails/waitlist/`, `lib/email/index.ts`    |
 | `WAITLIST_BROADCAST`            | Admin newsletter broadcast          | Confirmed subscribers | `heldRecipientDomain()` per subscriber + `FailedEmailBatch` | `app/api/admin/waitlist/broadcast/route.ts` |
 
+### The newsletter follows marketing consent
+
+The newsletter list is the `Waitlist` table. A visitor joins from the footer form with double opt-in (`subscribe` and `confirmSubscription` in `lib/waitlist/service.ts`). A signed-in account has one marketing control, its DPDP `MARKETING_COMMS` consent (`app/api/user/privacy/consent/route.ts`, shown in Settings › Account › Data consent & privacy rights):
+
+- **Granting** it upserts the `Waitlist` row for the account's normalised address in the same transaction as the consent artifact: `userId` set, `SUBSCRIBED`, `confirmedAt` now, `unsubscribedAt` null, and the hashed IP and user agent recorded (`subscribeForMarketingConsent` in `lib/waitlist/consent-link.ts`). No confirmation email is sent, because the authenticated consent artifact is the evidence. A row the grant creates carries the `account-consent` tag.
+- **Withdrawing** it sets every `PENDING` or `SUBSCRIBED` row linked to the account, by `userId` or address, to `UNSUBSCRIBED` with `unsubscribedAt` now, in the withdrawal's transaction (`unsubscribeForWithdrawnConsent`).
+- **The newsletter's own unsubscribe** (`POST /api/waitlist/unsubscribe`) commits the `UNSUBSCRIBED` write first. If the row is linked to an account, `unsubscribe` then withdraws that account's `MARKETING_COMMS` consent in a separate transaction, best-effort: a failure is logged once and never undoes the unsubscribe. If the unsubscribe write itself fails, the page says "We could not unsubscribe you" with a 500, never "You are unsubscribed"; an invalid token answers 400.
+- `NotificationPreference.marketingEmails` is no longer written or read by any sender, and the preferences PUT rejects it. It stays in the data export until the schema batch drops it.
+
+Both unsubscribe pages render bare: the logo and the message only, with no site navigation or footer newsletter form. `/email/unsubscribe` is in `NO_CHROME_PREFIXES` (`lib/navigation/public-chrome.ts`); the newsletter page is a standalone HTML response from the route.
+
+### What erasure does to mail
+
+`scrubUser` (`lib/compliance/erasure/scrub-user.ts`) calls `scrubMailFootprintTx` (`lib/compliance/erasure/mail-footprint.ts`) inside the erasure transaction, matching the user by id and by the address held before the scrub rewrites it:
+
+- Every `Waitlist` row with the user's `userId` or address is deleted.
+- Every `PENDING` or `RETRY` `FailedEmail` row with the user's `deliveryUserId` or `recipient` becomes `DEAD_LETTER` with `lastError = policy:erased`, through a compare-and-set on `UNSETTLED`. Its `subject` and `htmlBody` become `REDACTED_ERASED_BODY` (`lib/email/classify.ts`) and `textBody` becomes null, the same way credential mail is stored redacted. `policy:` is an expected refusal, so it never pages and the admin replay refuses it.
+- Every `PENDING` or `RETRY` `FailedEmailBatch` loses the user's messages. A batch the provider has never seen (`firstAttemptAt` null) keeps the rest and sends them under its key, as the relay's own suppression narrowing does. A batch the provider may have seen cannot reuse its key with a narrowed payload, so it becomes `DEAD_LETTER` with `review:erased_recipient` for an operator; a batch addressed only to the user becomes `DEAD_LETTER` with `policy:erased`. Either way the stored payload no longer holds the user's messages.
+- `EmailSuppression` is **kept**. It holds only the address and the reason, and it is the one record that stops a bounced or complaining address being mailed again if it is ever re-entered, for example by a new footer sign-up. Deleting it would let erasure re-open mail to an address that asked not to receive any.
+- Rows already `SENT` or `DEAD_LETTER` are left to the retention prune (`prune-system-job-executions`), which scrubs `SENT` bodies after seven days and deletes old rows.
+- Bells need no scrub: the bell relay drops an erased recipient at send time (`unerasedRecipients` and `currentBellRecipients` in `lib/novu/policy.ts`), and an email with a delivery policy is refused as `policy:recipient_erased` if it reaches the relay before the scrub.
+
 ---
 
 ## 3. Outbox Staging, Row-Scoped Idempotency, Relay Cadence & RFC 8058 Unsubscribe
@@ -289,4 +311,5 @@ flowchart LR
 - **Inbound forwarding via ImprovMX (planned, never configured)**: the design routed role addresses (`support@`, `ops@`, `dpdp@`, `billing@`) on `familiarisenow.com` to the operator inbox through MX records `mx1.improvmx.com` and `mx2.improvmx.com`. Those records were never created; the apex now publishes a null MX instead. Delete any residual references instead of configuring them.
 - **Personal-inbox DMARC reports and an unpublished root SPF**: the `rua` target used to be a personal Gmail that never authorised external reports, and the apex had no SPF. Both were replaced on 2026-10-28 by the records in the deployment inventory.
 - **One-way unsubscribe page**: the done page once redirected to a bare `?done=1`, so it could not offer an undo, and its copy said receipts stop. It now keeps the signed pair for the Resubscribe form and names the required emails that still arrive.
+- **The `marketingEmails` switch (removed 2026-11-07)**: the notification panel had a "Marketing & Promotions" switch and the consent route copied `MARKETING_COMMS` into `NotificationPreference.marketingEmails` and `CookiePreference.marketing`, but no sender read either. `MARKETING_COMMS` consent now drives the `Waitlist` row directly. Delete any new reader of the column.
 - **Workspace notification routing in the email gate (removed 2026-11-07)**: `isEmailAllowedForUser` also refused optional email when an operator's `OrgWorkspaceProfile.notificationRoutingMode` was `BELL_ONLY` or `NEITHER`. It duplicated the same person's Email switch, so the gate now reads only `NotificationPreference`; the column is dropped with the next schema batch.

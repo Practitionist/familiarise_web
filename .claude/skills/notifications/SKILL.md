@@ -52,7 +52,7 @@ Both are registered once in `lib/cron/cleanup-registry.ts` and run under `withCr
 ## Dead-letter reasons (`lastError`)
 
 - **Expected, never page, excluded from the ops digest and Needs attention:** `policy:` (a recipient opted out after staging, e.g. `policy:audience_revoked`), `suppressed:` (email address on `EmailSuppression`), `held:pre-launch` (the `EMAIL_DELIVERY_MODE` guard, `lib/email/held.ts`).
-- **Actionable:** every `review:` reason — `review:provider_acceptance_unknown`, `review:legacy_delivery_format`, `review:legacy_broadcast` (legacy cutover guards in `lib/novu/outbox.ts`, to be deleted after the production release), `review:batch_recipient_suppressed`. A terminal Novu refusal (`trigger_not_active`, workflow not found, `invalid_recipients`) splits into its own `DEAD_LETTER` row.
+- **Actionable:** every `review:` reason — `review:erased_recipient` (a queued newsletter batch the provider may have seen held an erased address), `review:provider_acceptance_unknown`, `review:legacy_delivery_format`, `review:legacy_broadcast` (legacy cutover guards in `lib/novu/outbox.ts`, to be deleted after the production release), `review:batch_recipient_suppressed`. A terminal Novu refusal (`trigger_not_active`, workflow not found, `invalid_recipients`) splits into its own `DEAD_LETTER` row.
 - Expected prefixes: `EXPECTED_REFUSAL_PREFIXES` (`lib/email/replay-policy.ts`), `EXPECTED_BELL_DEAD_LETTER_PREFIXES` (`lib/backoffice/queue-predicates.ts`).
 
 ## Quota math
@@ -68,9 +68,12 @@ Novu Free is 10,000 workflow runs a month, counted across Development **and** Pr
 ## Settings and unsubscribe
 
 - `PUT /api/novu/preferences` parses the strict `NotificationPreferenceUpdateSchema` (`schemas/user.ts`): an unknown key, a non-`HH:MM` time, an unknown zone or an empty quiet window is a 400. GET and PUT answer through `NotificationPreferenceSchema`.
+- There is no marketing switch: marketing email and the newsletter follow the `MARKETING_COMMS` consent, and the panel links to Settings › Account › Data consent. The strict PUT rejects `marketingEmails` (unread column).
 - The panel shows only the switches `receivableSwitches` (`lib/notifications/receivable.ts`) returns for the viewer's role. A new category, or an event sent to a new audience, updates that map, its test and the role table in `docs/notifications/02-workflows-and-api.md`.
 - Panel saves are optimistic and share one mutation scope (serialized); never write a preference from a time input's `onChange`.
 - The bell-header gear is overlaid at offsets measured on `@novu/react` 3.19.2: the ⋯ row starts 10 px below the popover top and the gear sits 8 px left of ⋯ (`components/notifications/NotificationInbox.tsx`). Recheck both on any Novu SDK upgrade.
+- Both unsubscribe pages render bare, logo only: `/email/unsubscribe` is in `NO_CHROME_PREFIXES` (`lib/navigation/public-chrome.ts`) and the newsletter page is standalone HTML from `app/api/waitlist/unsubscribe/route.ts`.
+- Erasure: queued email for an erased user is dead-lettered `policy:erased` and redacted inside the erasure transaction (`scrubMailFootprintTx`); bells are dropped at send time by `unerasedRecipients` / `currentBellRecipients`. `EmailSuppression` survives erasure.
 - The unsubscribe undo is `POST /api/notifications/resubscribe`, same-origin only (`isSameOriginRequest`), with no `GET`. Neither route's `GET` may ever write.
 
 ## Never
