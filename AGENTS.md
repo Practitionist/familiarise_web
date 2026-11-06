@@ -13,7 +13,7 @@
 3. **No JS Reconcilers for Postgres-Enforced Invariants**: before writing a reconciliation check or runtime assertion, read `prisma/AGENTS.md` and the `prisma/sql/*.sql` sidecars. Only reconcile across external vendor boundaries (Razorpay, Stream, Resend, Supabase Storage). Booking-overlap limits, which also bind `lib/appointments/` and `utils/scheduling-engine/`: `lib/booking/AGENTS.md`.
 4. **No Dual Schedulers by Default**: every scheduled job runs on the one ticker, gated by `ops:active_cron_platform`; no second scheduler and no GitHub Actions schedule for a registry job. Details, which also bind `app/api/cleanup/`, `app/api/admin/system-jobs/` and `netlify/functions/`: `lib/cron/AGENTS.md`.
 5. **No Ticket-Number Archaeology in Code Comments**:
-   - **NEVER** write multi-paragraph docblocks or inline comments citing historical PR/issue numbers (`#1234`, `FIX #568`, `P1-W02a`, `owner decision Q3`) or narrating what old deleted code used to do. CI (`scripts/ci/check-comment-archaeology.ts`) fails added comment lines that cite a ticket number, a planning id or "owner decision"; narrated history is caught in review, not by CI.
+   - **NEVER** write multi-paragraph docblocks or inline comments citing historical PR/issue numbers (`#1234`, `FIX #568`, `P1-W02a`, `owner decision Q3`) or narrating what old deleted code used to do. The `Release checks` workflow (`scripts/ci/check-comment-archaeology.ts`) fails comment lines added since `prod` that cite a ticket number, a planning id or "owner decision"; narrated history is caught in review, not by CI.
    - Comments must state **only** the current invariant or non-obvious runtime constraint in 1–2 concise lines. Git blame owns history.
 
 ## 2. Core Runtime, Database & Multi-Host Portability Invariants

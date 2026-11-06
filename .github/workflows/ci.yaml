@@ -300,14 +300,6 @@ jobs:
         # change what runs on the execution path of every money cron.
         run: npx --yes tsx@4.23.1 scripts/ci/check-workflow-hygiene.ts
 
-      - name: Comment archaeology guard
-        # Comment lines added in a PR may not cite ticket numbers or planning
-        # ids (AGENTS.md §1.5). Diff-only, so old comments never block a PR.
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_REF: ${{ github.base_ref }}
-        run: node_modules/.bin/tsx scripts/ci/check-comment-archaeology.ts "origin/${BASE_REF}"
-
       - name: Docs drift guard (warn-only)
         # Cited repo paths, relative links and start-here line numbers in docs/
         # and .claude/skills/. Warn-only until the existing docs are clean.

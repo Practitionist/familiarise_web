@@ -21,7 +21,7 @@ The repository had one 11 KB `AGENTS.md` that mixed universal bans, money and da
 4. **Rules that can be checked deterministically are checked, and the prose shrinks to a pointer**:
    - `.claude/settings.json` denies `prisma db push`, the database-writing `npm run db:*` scripts, `next dev` and `next build` to Claude Code in every permission mode. The owner runs them. Supabase MCP writes are gated separately ([Supabase MCP SQL approval hook](./2026-11-07-supabase-mcp-sql-approval-hook.md)).
    - `eslint.config.mjs` already rejects `eslint-disable*` and `@ts-*` comments (`noInlineConfig`, `ban-ts-comment`).
-   - `scripts/ci/check-comment-archaeology.ts` fails a pull request whose added comment lines cite ticket numbers or planning ids.
+   - `scripts/ci/check-comment-archaeology.ts` runs in `Release checks` on release pull requests into `prod` (full CI is disabled before launch) and fails when comment lines added since `prod` cite ticket numbers or planning ids.
 
 ## Consequences
 
