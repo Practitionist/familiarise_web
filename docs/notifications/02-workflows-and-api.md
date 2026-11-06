@@ -356,7 +356,7 @@ How a save behaves:
 What the switches actually gate:
 
 - **Optional notifications** off stops every bell (the bell gate checks it before the category) and every optional email. Required emails, which have a `null` category, still arrive: account and security notices, payment receipts and invitations or decisions the user must act on (see `docs/email/README.md`, section 3).
-- **In-app notifications** off stops every bell, required ones included. **Email notifications** off stops optional email only.
+- **In-app notifications** off stops optional bells only; a `required: true` notice still rings. **Email notifications** off stops optional email only.
 - A workspace operator's bells and emails follow these same personal switches and nothing else; there is no workspace-level channel setting.
 
 ### Who receives which category
