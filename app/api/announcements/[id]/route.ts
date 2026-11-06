@@ -26,9 +26,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Announcements fan out to every user (`notifyGeneralAnnouncement`), so
-    // BACKOFFICE_PERMISSIONS makes them ADMIN-only. The nav already hid the
-    // surface from staff; the route accepted the call regardless.
+    // An announcement can ring every user's bell, so BACKOFFICE_PERMISSIONS
+    // makes them ADMIN-only. The nav already hid the surface from staff; the
+    // route accepted the call regardless.
     if (
       !hasBackofficePermission(
         session.user.role as UserRole,
@@ -127,9 +127,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Announcements fan out to every user (`notifyGeneralAnnouncement`), so
-    // BACKOFFICE_PERMISSIONS makes them ADMIN-only. The nav already hid the
-    // surface from staff; the route accepted the call regardless.
+    // An announcement can ring every user's bell, so BACKOFFICE_PERMISSIONS
+    // makes them ADMIN-only. The nav already hid the surface from staff; the
+    // route accepted the call regardless.
     if (
       !hasBackofficePermission(
         session.user.role as UserRole,

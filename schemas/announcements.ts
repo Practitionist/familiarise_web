@@ -14,6 +14,8 @@ export const CreateAnnouncementSchema = z.object({
   endDate: z.string().datetime().optional(),
   backgroundColor: z.string().max(MAX_SHORT_FIELD_LENGTH).default("#000000"),
   textColor: z.string().max(MAX_SHORT_FIELD_LENGTH).default("#FFFFFF"),
-  linkUrl: z.string().url().max(MAX_TITLE_LENGTH).optional(),
-  linkText: z.string().max(MAX_TITLE_LENGTH).optional(),
+  linkUrl: z.string().url().max(MAX_TITLE_LENGTH).nullish(),
+  linkText: z.string().max(MAX_TITLE_LENGTH).nullish(),
+  /** Create-time action, not stored: also ring every eligible user's bell. */
+  postToInbox: z.boolean().default(false),
 });

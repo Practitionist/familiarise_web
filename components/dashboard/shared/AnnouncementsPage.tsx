@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -41,6 +43,8 @@ interface Announcement {
   createdAt: string;
 }
 
+const ApiErrorSchema = z.object({ error: z.string().optional() });
+
 export interface AnnouncementsPageProps {
   /** API base path for announcements, defaults to "/api/announcements" */
   apiBasePath?: string;
@@ -76,21 +80,36 @@ export function AnnouncementsPage({
   });
 
   const createMutation = useMutation({
-    mutationFn: async (data: Partial<Announcement>) => {
+    mutationFn: async (
+      data: Partial<Announcement> & { postToInbox: boolean },
+    ) => {
       const response = await fetch(apiBasePath, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      return response.json();
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        const parsed = ApiErrorSchema.safeParse(result);
+        throw new Error(
+          parsed.success && parsed.data.error
+            ? parsed.data.error
+            : "The announcement was not created.",
+        );
+      }
+      return result;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey });
       setIsCreateOpen(false);
       toast({ title: "Announcement created" });
     },
-    onError: () => {
-      toast({ title: "Failed to create announcement", variant: "destructive" });
+    onError: (error) => {
+      toast({
+        title: "Failed to create announcement",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 
@@ -150,7 +169,10 @@ export function AnnouncementsPage({
     if (editingAnnouncement) {
       updateMutation.mutate({ id: editingAnnouncement.id, data });
     } else {
-      createMutation.mutate(data);
+      createMutation.mutate({
+        ...data,
+        postToInbox: formData.get("postToInbox") === "on",
+      });
     }
   };
 
@@ -196,6 +218,27 @@ export function AnnouncementsPage({
                 <div className="flex items-center gap-2">
                   <Switch id="isActive" name="isActive" defaultChecked />
                   <Label htmlFor="isActive">Active</Label>
+                </div>
+                <div className="flex items-start gap-2">
+                  <Checkbox
+                    id="postToInbox"
+                    name="postToInbox"
+                    aria-describedby="postToInbox-help"
+                    className="mt-0.5"
+                  />
+                  <div className="space-y-1">
+                    <Label htmlFor="postToInbox">
+                      Also post to every user&apos;s notification inbox
+                    </Label>
+                    <p
+                      id="postToInbox-help"
+                      className="text-xs text-muted-foreground"
+                    >
+                      Rings the bell for every user who allows in-app
+                      notifications, right away. An inbox post cannot be
+                      recalled, and later edits change only the banner.
+                    </p>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">

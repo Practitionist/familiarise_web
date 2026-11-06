@@ -100,6 +100,30 @@ export async function resolveRecipientBellPolicy(
 }
 
 /**
+ * Every user a bell may reach now, in id order: verified, not banned, and
+ * allowed by {@link allowedRecipientsOf}. Refuses (`null`) rather than
+ * truncating when more than `cap` users would have to be read.
+ */
+export async function bellAudience(
+  tx: Pick<Tx, "user">,
+  workflowId: NovuWorkflowId,
+  cap: number,
+): Promise<string[] | null> {
+  const rows = await tx.user.findMany({
+    where: { emailVerified: true, banned: false, erasedAt: null },
+    select: BELL_POLICY_SELECT,
+    orderBy: { id: "asc" },
+    take: cap + 1,
+  });
+  if (rows.length > cap) return null;
+  return allowedRecipientsOf(
+    workflowId,
+    rows.map((row) => row.id),
+    rows,
+  );
+}
+
+/**
  * The recipients a bell may reach right now. Throws on a failed read so the
  * caller retries later instead of sending unchecked.
  */

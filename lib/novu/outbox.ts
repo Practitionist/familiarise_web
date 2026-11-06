@@ -233,6 +233,50 @@ export async function stageTrigger(
 }
 
 /**
+ * Stages an audience as MULTI rows of at most {@link NOVU_BULK_LIMIT}
+ * recipients in one insert, page `n` keyed `<dedupeKey>:page:<n>`. The
+ * recipients must already be policy-filtered; every attempt rechecks them.
+ */
+export async function stagePages(
+  tx: Pick<Tx, "notificationOutbox">,
+  args: {
+    workflowId: NovuWorkflowId;
+    recipients: string[];
+    payload: NovuPayload;
+    dedupeKey: string;
+    entityRef: string;
+  },
+): Promise<StagedTrigger[]> {
+  if (args.recipients.length === 0) return [];
+  const nextRetry = new Date(Date.now() + INLINE_ATTEMPT_LEASE_MS);
+  const data = [];
+  for (let i = 0; i < args.recipients.length; i += NOVU_BULK_LIMIT) {
+    const recipients = args.recipients.slice(i, i + NOVU_BULK_LIMIT);
+    const dedupeKey = `${args.dedupeKey}:page:${i / NOVU_BULK_LIMIT + 1}`;
+    data.push({
+      workflowId: args.workflowId,
+      kind: "MULTI" as const,
+      recipients,
+      payload: args.payload as Prisma.InputJsonObject,
+      transactionId: deriveTransactionId(
+        args.workflowId,
+        recipients,
+        args.payload,
+        dedupeKey,
+      ),
+      entityRef: args.entityRef,
+      status: "PENDING" as const,
+      nextRetryAt: nextRetry,
+    });
+  }
+  return tx.notificationOutbox.createManyAndReturn({
+    data,
+    skipDuplicates: true,
+    select: STAGED_SELECT,
+  });
+}
+
+/**
  * What the SDK actually told us about a failed trigger.
  *
  * `@novu/api` validates the RESPONSE against its own generated Zod schema and

@@ -22,7 +22,6 @@ import {
   type AccountSecurityNoticePayload,
   type AccountSuspendedInput,
   type AccountSuspendedPayload,
-  type AnnouncementPayload,
   type AppointmentCancelledInput,
   type AppointmentCancelledPayload,
   type AppointmentPartiallyScheduledInput,
@@ -729,8 +728,6 @@ export const notifyOrgExpertRemoved =
   }));
 
 // Admin / System
-export const notifyGeneralAnnouncement =
-  defineBroadcastNotifier<AnnouncementPayload>(W.GENERAL_ANNOUNCEMENT);
 export const notifyNewConsultantApplication =
   defineMultiNotifier<ConsultantApplicationPayload>(
     W.NEW_CONSULTANT_APPLICATION,
