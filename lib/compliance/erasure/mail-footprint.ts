@@ -1,17 +1,19 @@
 /**
  * The erased user's mailing footprint, scrubbed inside the erasure
- * transaction: newsletter rows are deleted and queued email is dead-lettered
- * and redacted. `EmailSuppression` is kept so the address stays unmailable.
+ * transaction: newsletter rows are deleted, queued email is dead-lettered and
+ * redacted, and every stored copy of the address is replaced or removed.
+ * `EmailSuppression` is kept so the address stays unmailable.
  */
 
+import { createHash } from "node:crypto";
 import type { Tx } from "@/lib/prisma";
 import { batchMessagesSchema } from "@/lib/email/batch-payload";
 import { REDACTED_ERASED_BODY } from "@/lib/email/classify";
+import { RECIPIENT_ERASED_REFUSAL } from "@/lib/email/delivery-policy";
+import { ERASED_RECIPIENT_PREFIX } from "@/lib/email/erased-recipient";
 import { normaliseEmail } from "@/lib/email/suppression";
 import { UNSETTLED } from "@/lib/retry/provider-window";
 
-/** An expected refusal: never paged, never replayed. */
-export const ERASED_POLICY_REASON = "policy:erased";
 /** The provider may already hold the batch's key, so its other recipients need an operator. */
 export const ERASED_BATCH_REVIEW = "review:erased_recipient";
 
@@ -20,8 +22,18 @@ type MailTx = Pick<Tx, "waitlist" | "failedEmail" | "failedEmailBatch">;
 export interface MailFootprintScrub {
   waitlistDeleted: number;
   emailsDeadLettered: number;
+  recipientsReplaced: number;
   batchesNarrowed: number;
   batchesDeadLettered: number;
+  settledBatchesScrubbed: number;
+}
+
+/** A stable, non-identifying stand-in for an erased address. */
+export function erasedRecipientMarker(email: string): string {
+  const digest = createHash("sha256")
+    .update(normaliseEmail(email))
+    .digest("hex");
+  return `${ERASED_RECIPIENT_PREFIX}${digest.slice(0, 16)}`;
 }
 
 export async function scrubMailFootprintTx(
@@ -30,48 +42,62 @@ export async function scrubMailFootprintTx(
 ): Promise<MailFootprintScrub> {
   const email = normaliseEmail(input.email);
   const sameAddress = { equals: email, mode: "insensitive" as const };
+  const theirs = {
+    OR: [{ deliveryUserId: input.userId }, { recipient: sameAddress }],
+  };
 
   const waitlist = await tx.waitlist.deleteMany({
     where: { OR: [{ userId: input.userId }, { email: sameAddress }] },
   });
   const emails = await tx.failedEmail.updateMany({
-    where: {
-      status: UNSETTLED,
-      OR: [{ deliveryUserId: input.userId }, { recipient: sameAddress }],
-    },
+    where: { status: UNSETTLED, ...theirs },
     data: {
       status: "DEAD_LETTER",
-      lastError: ERASED_POLICY_REASON,
+      lastError: RECIPIENT_ERASED_REFUSAL,
       subject: REDACTED_ERASED_BODY,
       htmlBody: REDACTED_ERASED_BODY,
       textBody: null,
     },
   });
-  const batches = await scrubQueuedBatches(tx, email);
+  // Every row, settled ones included; the relay and the replay refuse the marker.
+  const recipients = await tx.failedEmail.updateMany({
+    where: theirs,
+    data: { recipient: erasedRecipientMarker(email) },
+  });
+  const batches = await scrubBatches(tx, email);
   return {
     waitlistDeleted: waitlist.count,
     emailsDeadLettered: emails.count,
+    recipientsReplaced: recipients.count,
     ...batches,
   };
 }
 
 /**
- * Drops the address from every queued batch. A batch the provider has never
- * seen keeps sending to the rest; one it may have seen is dead-lettered for
- * review, because a narrowed payload cannot reuse the stored key.
+ * Drops the address from every batch that holds it. A queued batch the
+ * provider has never seen keeps sending to the rest; a queued one it may have
+ * seen is dead-lettered for review, because a narrowed payload cannot reuse
+ * the stored key. A settled batch is never replayed, so it just loses them.
  */
-async function scrubQueuedBatches(
+async function scrubBatches(
   tx: MailTx,
   email: string,
 ): Promise<
-  Pick<MailFootprintScrub, "batchesNarrowed" | "batchesDeadLettered">
+  Pick<
+    MailFootprintScrub,
+    "batchesNarrowed" | "batchesDeadLettered" | "settledBatchesScrubbed"
+  >
 > {
+  // Batch addresses come from `Waitlist.email`, which is stored normalised.
   const rows = await tx.failedEmailBatch.findMany({
-    where: { status: UNSETTLED },
-    select: { id: true, payload: true, firstAttemptAt: true },
+    where: { payload: { array_contains: [{ to: email }] } },
+    select: { id: true, status: true, payload: true, firstAttemptAt: true },
   });
-  let batchesNarrowed = 0;
-  let batchesDeadLettered = 0;
+  const counts = {
+    batchesNarrowed: 0,
+    batchesDeadLettered: 0,
+    settledBatchesScrubbed: 0,
+  };
   for (const row of rows) {
     // An unparseable payload is dead-lettered by the relay without a send.
     const parsed = batchMessagesSchema.safeParse(row.payload);
@@ -79,13 +105,21 @@ async function scrubQueuedBatches(
     const payload = parsed.data.filter((m) => normaliseEmail(m.to) !== email);
     if (payload.length === parsed.data.length) continue;
 
+    if (row.status === "SENT" || row.status === "DEAD_LETTER") {
+      const scrubbed = await tx.failedEmailBatch.updateMany({
+        where: { id: row.id, status: row.status },
+        data: { payload },
+      });
+      counts.settledBatchesScrubbed += scrubbed.count;
+      continue;
+    }
     if (!row.firstAttemptAt && payload.length > 0) {
       const narrowed = await tx.failedEmailBatch.updateMany({
         where: { id: row.id, status: UNSETTLED, firstAttemptAt: null },
         data: { payload },
       });
       if (narrowed.count > 0) {
-        batchesNarrowed += 1;
+        counts.batchesNarrowed += 1;
         continue;
       }
     }
@@ -94,11 +128,11 @@ async function scrubQueuedBatches(
       data: {
         status: "DEAD_LETTER",
         lastError:
-          payload.length === 0 ? ERASED_POLICY_REASON : ERASED_BATCH_REVIEW,
+          payload.length === 0 ? RECIPIENT_ERASED_REFUSAL : ERASED_BATCH_REVIEW,
         payload,
       },
     });
-    batchesDeadLettered += dead.count;
+    counts.batchesDeadLettered += dead.count;
   }
-  return { batchesNarrowed, batchesDeadLettered };
+  return counts;
 }

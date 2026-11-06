@@ -54,8 +54,11 @@ it("round-trips the policy through the typed columns", () => {
   ).toBeNull();
 });
 
-it("keeps direct-address mail free of account policy", async () => {
+it("keeps direct-address mail free of account policy but refuses an erased marker", async () => {
   expect(await emailPolicyRefusal(null, "reader@example.com", db)).toBeNull();
+  expect(await emailPolicyRefusal(null, "erased:0123456789abcdef", db)).toBe(
+    "recipient_erased",
+  );
   expect(findUnique).not.toHaveBeenCalled();
 });
 

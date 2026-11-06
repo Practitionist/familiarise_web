@@ -10,6 +10,7 @@ const HOUR = 3_600_000;
 const now = new Date("2026-11-06T00:00:00Z");
 const hoursAgo = (h: number) => new Date(now.getTime() - h * HOUR);
 const row = {
+  recipient: "user@example.com",
   status: "DEAD_LETTER",
   emailType: "PAYMENT_SUCCESS",
   lastError: "provider unavailable",
@@ -64,6 +65,7 @@ describe("emailReplayRefusal", () => {
     ["already_accepted", { sentAt: hoursAgo(2) }],
     ["recipient_policy", { lastError: "policy:preference_changed" }],
     ["recipient_policy", { lastError: "suppressed:COMPLAINT" }],
+    ["recipient_policy", { recipient: "erased:0123456789abcdef" }],
     [
       "provider_review",
       {

@@ -8,7 +8,10 @@ import { randomUUID } from "node:crypto";
 
 import prisma from "../../lib/prisma";
 import { REDACTED_ERASED_BODY } from "../../lib/email/classify";
-import { scrubMailFootprintTx } from "../../lib/compliance/erasure/mail-footprint";
+import {
+  erasedRecipientMarker,
+  scrubMailFootprintTx,
+} from "../../lib/compliance/erasure/mail-footprint";
 import { seedUser } from "./seed";
 
 function message(to: string) {
@@ -22,8 +25,9 @@ function message(to: string) {
 
 function queuedEmail(data: {
   recipient: string;
-  status: "PENDING" | "RETRY" | "SENT";
+  status: "PENDING" | "RETRY" | "SENT" | "DEAD_LETTER";
   deliveryUserId?: string;
+  lastError?: string;
 }) {
   return prisma.failedEmail.create({
     data: {
@@ -37,20 +41,25 @@ function queuedEmail(data: {
   });
 }
 
-function queuedBatch(to: string[], firstAttemptAt: Date | null = null) {
+function queuedBatch(
+  to: string[],
+  firstAttemptAt: Date | null = null,
+  status: "PENDING" | "SENT" | "DEAD_LETTER" = "PENDING",
+) {
   return prisma.failedEmailBatch.create({
     data: {
       idempotencyKey: `DB_TIER_TEST/${randomUUID()}`,
       emailType: "WAITLIST_BROADCAST",
       payload: to.map(message),
       firstAttemptAt,
+      status,
     },
     select: { id: true },
   });
 }
 
 describe("erasure mailing footprint", () => {
-  it("deletes newsletter rows, dead-letters and redacts queued mail, and keeps suppression", async () => {
+  it("deletes newsletter rows, scrubs queued and settled mail, and keeps suppression", async () => {
     const { userId } = await seedUser();
     const email = `${userId}@db-tier.example.invalid`;
     const other = `${randomUUID()}@db-tier.example.invalid`;
@@ -75,6 +84,11 @@ describe("erasure mailing footprint", () => {
       status: "RETRY",
     });
     const sent = await queuedEmail({ recipient: email, status: "SENT" });
+    const dead = await queuedEmail({
+      recipient: email,
+      status: "DEAD_LETTER",
+      lastError: "review:provider_acceptance_unknown",
+    });
     const someoneElse = await queuedEmail({
       recipient: other,
       status: "PENDING",
@@ -82,6 +96,8 @@ describe("erasure mailing footprint", () => {
     const unseen = await queuedBatch([email, other]);
     const seen = await queuedBatch([other, email], new Date());
     const onlyUser = await queuedBatch([email]);
+    const sentBatch = await queuedBatch([email, other], new Date(), "SENT");
+    const deadBatch = await queuedBatch([email], new Date(), "DEAD_LETTER");
 
     const result = await prisma.$transaction((tx) =>
       scrubMailFootprintTx(tx, { userId, email }),
@@ -90,8 +106,10 @@ describe("erasure mailing footprint", () => {
     expect(result).toEqual({
       waitlistDeleted: 2,
       emailsDeadLettered: 2,
+      recipientsReplaced: 4,
       batchesNarrowed: 1,
       batchesDeadLettered: 2,
+      settledBatchesScrubbed: 2,
     });
     expect(
       await prisma.waitlist.findMany({
@@ -102,10 +120,13 @@ describe("erasure mailing footprint", () => {
 
     const emails = await prisma.failedEmail.findMany({
       where: {
-        id: { in: [byUser.id, byAddress.id, sent.id, someoneElse.id] },
+        id: {
+          in: [byUser.id, byAddress.id, sent.id, dead.id, someoneElse.id],
+        },
       },
       select: {
         id: true,
+        recipient: true,
         status: true,
         lastError: true,
         subject: true,
@@ -114,23 +135,36 @@ describe("erasure mailing footprint", () => {
       },
     });
     const row = (id: string) => emails.find((e) => e.id === id);
+    const marker = erasedRecipientMarker(email);
+    expect(marker).toMatch(/^erased:[0-9a-f]{16}$/);
     for (const id of [byUser.id, byAddress.id]) {
       expect(row(id)).toMatchObject({
+        recipient: marker,
         status: "DEAD_LETTER",
-        lastError: "policy:erased",
+        lastError: "policy:recipient_erased",
         subject: REDACTED_ERASED_BODY,
         htmlBody: REDACTED_ERASED_BODY,
         textBody: null,
       });
     }
-    expect(row(sent.id)?.status).toBe("SENT");
+    expect(row(sent.id)).toMatchObject({ recipient: marker, status: "SENT" });
+    expect(row(dead.id)).toMatchObject({
+      recipient: marker,
+      status: "DEAD_LETTER",
+      lastError: "review:provider_acceptance_unknown",
+    });
     expect(row(someoneElse.id)).toMatchObject({
+      recipient: other,
       status: "PENDING",
       htmlBody: `<p>${other}</p>`,
     });
 
     const batches = await prisma.failedEmailBatch.findMany({
-      where: { id: { in: [unseen.id, seen.id, onlyUser.id] } },
+      where: {
+        id: {
+          in: [unseen.id, seen.id, onlyUser.id, sentBatch.id, deadBatch.id],
+        },
+      },
       select: { id: true, status: true, lastError: true, payload: true },
     });
     const batch = (id: string) => batches.find((b) => b.id === id);
@@ -146,7 +180,15 @@ describe("erasure mailing footprint", () => {
     });
     expect(batch(onlyUser.id)).toMatchObject({
       status: "DEAD_LETTER",
-      lastError: "policy:erased",
+      lastError: "policy:recipient_erased",
+      payload: [],
+    });
+    expect(batch(sentBatch.id)).toMatchObject({
+      status: "SENT",
+      payload: [message(other)],
+    });
+    expect(batch(deadBatch.id)).toMatchObject({
+      status: "DEAD_LETTER",
       payload: [],
     });
 
