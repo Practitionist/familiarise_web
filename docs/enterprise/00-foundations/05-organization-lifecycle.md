@@ -273,10 +273,11 @@ sequenceDiagram
     R->>U: Redirect /dashboard/organization/[orgId]/home
 ```
 
-If `Launch` fails after the POST succeeded but before the PATCH or
-invites land, the wizard keeps `initialData.orgId` in state so the
-retry hits the same org row — the POST path is short-circuited and the
-retry is fully idempotent.
+If `Launch` fails after the create POST succeeded but before the rate-card
+POST or the invitations land, `ReviewStep` keeps the new organization id in
+`createdOrgIdRef`, so a retry within the same mount skips the create call and
+reuses that org. A page reload loses the id, and the retry is not guaranteed
+idempotent.
 
 ## `Contract` lifecycle
 

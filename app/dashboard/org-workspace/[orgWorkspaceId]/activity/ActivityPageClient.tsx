@@ -63,6 +63,9 @@ interface ActivityResponse {
   };
 }
 
+/** A 401/403 means access was withdrawn: the loaded feed must not stay on screen. */
+class ActivityRefusedError extends Error {}
+
 async function fetchActivity(
   orgWorkspaceId: string,
   cursor: string | null,
@@ -78,6 +81,9 @@ async function fetchActivity(
   if (categoryFilter !== "all")
     url.searchParams.set("category", categoryFilter);
   const res = await fetch(url.toString());
+  if (res.status === 401 || res.status === 403) {
+    throw new ActivityRefusedError("Activity is not available");
+  }
   if (!res.ok) throw new Error("Failed to load activity");
   return res.json();
 }
@@ -170,6 +176,7 @@ export function ActivityPageClient({
   );
 
   const hasActiveFilters = orgFilter !== "all" || categoryFilter !== "all";
+  const refused = query.error instanceof ActivityRefusedError;
 
   const renderFeedBody = () => {
     if (query.isLoading) {
@@ -189,7 +196,7 @@ export function ActivityPageClient({
       );
     }
 
-    if (query.isError && !query.data) {
+    if (query.isError && (!query.data || refused)) {
       return (
         <Card>
           <CardContent className="py-10">
@@ -296,7 +303,7 @@ export function ActivityPageClient({
             setCategoryFilter("all");
           }}
         />
-        {query.isRefetchError && (
+        {query.isRefetchError && !refused && (
           <p
             role="alert"
             className="mb-3 flex flex-wrap items-center gap-2 text-sm text-amber-700"
@@ -314,7 +321,7 @@ export function ActivityPageClient({
         )}
         {renderFeedBody()}
 
-        {query.hasNextPage && (
+        {query.hasNextPage && !refused && (
           <div className="mt-4 flex flex-col items-center gap-2">
             {query.isFetchNextPageError && (
               <p role="alert" className="text-sm text-amber-700">

@@ -15,8 +15,12 @@ permission matrix in `lib/auth/org-permissions.ts`; the sidebar
 read the same keys. The sidebar is cosmetic. The API route is the enforcer,
 and the page guard keeps the URL honest.
 
-Two page-guard styles coexist, and both are safe because the API behind every
-page checks the same key:
+Two page-guard styles coexist. A server guard protects the page's own server
+reads, and the API routes protect API requests; neither relies on the other.
+Pages that read through server data helpers (for example `my-program`, which
+calls `getMyProgramData` and `getOrgMemberCatalog` after its guard) are
+enforced by the page guard alone. The client-guarded pages below are safe
+because the API behind each checks the same key:
 
 - **Server guard** (`requireOrgAccess` in the page): `members`, `billing`,
   `analytics`, `catalog`, `collaborations`, `library`, `messages`, `requests`,
@@ -203,40 +207,42 @@ server-guarded page answers a neutral "You don't have access to this page", a
 client-guarded one redirects to `/home`. Every member can reach `/home`,
 `/appointments` (Mine), `/messages`, `/library` (Mine) and `/support`; a
 SUSPENDED member keeps only Overview, Appointments (Mine) and Library (Mine).
+"(nav only)" in the Needs column means the capability gates the sidebar item,
+while the page itself renders an empty state when the capability is absent.
 
-| Route                                  | Needs        | Gate (matrix key)                                                        | OWNER | MAINT. | BILLING | MANAGER | SUPPORT | EXPERT | LEARNER |
-| -------------------------------------- | ------------ | ------------------------------------------------------------------------ | :---: | :----: | :-----: | :-----: | :-----: | :----: | :-----: |
-| `/home`                                | —            | any active member                                                        |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
-| `/my-program`                          | `canSponsor` | `myProgram.read`                                                         |   —   |   —    |    —    |    —    |    —    |   —    |    ✓    |
-| `/compensation`                        | `canHost`    | consultant profile or EXPERT (`deliversForOrg`)                          |   p   |   p    |    p    |    p    |    p    |   ✓    |    p    |
-| `/appointments` Mine                   | —            | active or suspended member                                               |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
-| `/appointments` Everyone               | —            | `operations.read`                                                        |   ✓   |   ✓    |    —    |    ✓    |    ✓    |   —    |    —    |
-| `/appointments` Unscheduled            | —            | `appointments.unscheduled.read`                                          |   ✓   |   ✓    |    —    |    ✓    |    —    |   —    |    —    |
-| `/appointments/[id]`                   | —            | on the booking, or `operations.read`                                     |   ✓   |   ✓    |    —    |    ✓    |    ✓    | on it  |  on it  |
-| `/requests`                            | `canHost`    | consultant profile (others are redirected)                               |   p   |   p    |    p    |    p    |    p    |   p    |    p    |
-| `/messages`                            | —            | active member                                                            |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
-| `/library` Mine                        | —            | active or suspended member                                               |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
-| `/library` Everyone                    | —            | `operations.read`, ACTIVE                                                |   ✓   |   ✓    |    —    |    ✓    |    ✓    |   —    |    —    |
-| `/members` directory                   | —            | `members.directory`                                                      |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
-| `/members` roster                      | —            | `members.read`                                                           |   ✓   |   ✓    |    —    |    ✓    |    ✓    |   —    |    —    |
-| `/members` Invitations                 | —            | `invitations.manage`                                                     |   ✓   |   ✓    |    —    |    —    |    —    |   —    |    —    |
-| `/programs`                            | `canSponsor` | `programs.read`; manage `programs.manage`                                |   ✓   |   ✓    |  read   |  read   |    —    |   —    |    —    |
-| `/contracts`                           | `canSponsor` | `contracts.read`; manage `contracts.manage`                              |   ✓   |  read  |  read   |    —    |    —    |   —    |    —    |
-| `/billing`                             | `canSponsor` | `billing.read`; manage `billing.manage`                                  |   ✓   |  read  |    ✓    |  read   |    —    |   —    |    —    |
-| `/catalog`, `/catalog/[type]/new`      | `canHost`    | `catalog.manage`                                                         |   ✓   |   ✓    |    —    |    ✓    |    —    |   —    |    —    |
-| `/collaborations`                      | `canHost`    | `catalog.manage` sees every hosted plan; `deliversForOrg` sees their own |  all  |  all   |    —    |   all   |    —    |  own   | own (p) |
-| `/payouts`                             | `canHost`    | `payouts.read`; manage and approve `payouts.manage` / `payouts.approve`  |   ✓   |  read  |    ✓    |    —    |    —    |   —    |    —    |
-| `/analytics`                           | —            | `operations.read`; money tiles `billing.read`                            |   ✓   |   ✓    |    —    |    ✓    |    ✓    |   —    |    —    |
-| `/audit`                               | —            | `audit.read`; CSV `dataExports.people`                                   |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   —    |    —    |
-| `/consent`                             | —            | `consent.read`, `consent.requestWithdrawal`                              |   ✓   |   ✓    |    —    |    ✓    |    —    |   —    |    —    |
-| `/support` Support cases               | —            | `supportRequests.org` (others get an empty state)                        |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   —    |    —    |
-| `/support` Evidence requests           | —            | any active member                                                        |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
-| `/support/activity`                    | —            | `operations.read`                                                        |   ✓   |   ✓    |    —    |    ✓    |    ✓    |   —    |    —    |
-| `/settings/general`, `/branding`       | —            | `settings.manage`                                                        |   ✓   |   ✓    |    —    |    —    |    —    |   —    |    —    |
-| `/settings/sso`                        | —            | `identity.read`; writes `identity.manage`                                |   ✓   |  read  |    —    |    —    |    —    |   —    |    —    |
-| `/settings/billing` (Billing contacts) | —            | `billing.manage`                                                         |   ✓   |   —    |    ✓    |    —    |    —    |   —    |    —    |
-| `/settings/webhooks`                   | —            | `integrations.manage`                                                    |   ✓   |   —    |    ✓    |    —    |    —    |   —    |    —    |
-| `/settings/data-exports`               | —            | `dataExports.people` or `dataExports.finance`                            |   ✓   |   ✓    |    ✓    |    —    |    —    |   —    |    —    |
+| Route                                  | Needs                   | Gate (matrix key)                                                        | OWNER | MAINT. | BILLING | MANAGER | SUPPORT | EXPERT | LEARNER |
+| -------------------------------------- | ----------------------- | ------------------------------------------------------------------------ | :---: | :----: | :-----: | :-----: | :-----: | :----: | :-----: |
+| `/home`                                | —                       | any active member                                                        |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
+| `/my-program`                          | `canSponsor` (nav only) | `myProgram.read`                                                         |   —   |   —    |    —    |    —    |    —    |   —    |    ✓    |
+| `/compensation`                        | `canHost` (nav only)    | consultant profile or EXPERT (`deliversForOrg`)                          |   p   |   p    |    p    |    p    |    p    |   ✓    |    p    |
+| `/appointments` Mine                   | —                       | active or suspended member                                               |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
+| `/appointments` Everyone               | —                       | `operations.read`                                                        |   ✓   |   ✓    |    —    |    ✓    |    ✓    |   —    |    —    |
+| `/appointments` Unscheduled            | —                       | `appointments.unscheduled.read`                                          |   ✓   |   ✓    |    —    |    ✓    |    —    |   —    |    —    |
+| `/appointments/[id]`                   | —                       | on the booking, or `operations.read`                                     |   ✓   |   ✓    |    —    |    ✓    |    ✓    | on it  |  on it  |
+| `/requests`                            | `canHost`               | consultant profile (others are redirected)                               |   p   |   p    |    p    |    p    |    p    |   p    |    p    |
+| `/messages`                            | —                       | active member                                                            |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
+| `/library` Mine                        | —                       | active or suspended member                                               |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
+| `/library` Everyone                    | —                       | `operations.read`, ACTIVE                                                |   ✓   |   ✓    |    —    |    ✓    |    ✓    |   —    |    —    |
+| `/members` directory                   | —                       | `members.directory`                                                      |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
+| `/members` roster                      | —                       | `members.read`                                                           |   ✓   |   ✓    |    —    |    ✓    |    ✓    |   —    |    —    |
+| `/members` Invitations                 | —                       | `invitations.manage`                                                     |   ✓   |   ✓    |    —    |    —    |    —    |   —    |    —    |
+| `/programs`                            | `canSponsor`            | `programs.read`; manage `programs.manage`                                |   ✓   |   ✓    |  read   |  read   |    —    |   —    |    —    |
+| `/contracts`                           | `canSponsor`            | `contracts.read`; manage `contracts.manage`                              |   ✓   |  read  |  read   |    —    |    —    |   —    |    —    |
+| `/billing`                             | `canSponsor`            | `billing.read`; manage `billing.manage`                                  |   ✓   |  read  |    ✓    |  read   |    —    |   —    |    —    |
+| `/catalog`, `/catalog/[type]/new`      | `canHost`               | `catalog.manage`                                                         |   ✓   |   ✓    |    —    |    ✓    |    —    |   —    |    —    |
+| `/collaborations`                      | `canHost`               | `catalog.manage` sees every hosted plan; `deliversForOrg` sees their own |  all  |  all   |    —    |   all   |    —    |  own   | own (p) |
+| `/payouts`                             | `canHost`               | `payouts.read`; manage and approve `payouts.manage` / `payouts.approve`  |   ✓   |  read  |    ✓    |    —    |    —    |   —    |    —    |
+| `/analytics`                           | —                       | `operations.read`; money tiles `billing.read`                            |   ✓   |   ✓    |    —    |    ✓    |    ✓    |   —    |    —    |
+| `/audit`                               | —                       | `audit.read`; CSV `dataExports.people`                                   |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   —    |    —    |
+| `/consent`                             | —                       | `consent.read`, `consent.requestWithdrawal`                              |   ✓   |   ✓    |    —    |    ✓    |    —    |   —    |    —    |
+| `/support` Support cases               | —                       | `supportRequests.org` (others get an empty state)                        |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   —    |    —    |
+| `/support` Evidence requests           | —                       | any active member                                                        |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
+| `/support/activity`                    | —                       | `operations.read`                                                        |   ✓   |   ✓    |    —    |    ✓    |    ✓    |   —    |    —    |
+| `/settings/general`, `/branding`       | —                       | `settings.manage`                                                        |   ✓   |   ✓    |    —    |    —    |    —    |   —    |    —    |
+| `/settings/sso`                        | —                       | `identity.read`; writes `identity.manage`                                |   ✓   |  read  |    —    |    —    |    —    |   —    |    —    |
+| `/settings/billing` (Billing contacts) | —                       | `billing.manage`                                                         |   ✓   |   —    |    ✓    |    —    |    —    |   —    |    —    |
+| `/settings/webhooks`                   | —                       | `integrations.manage`                                                    |   ✓   |   —    |    ✓    |    —    |    —    |   —    |    —    |
+| `/settings/data-exports`               | —                       | `dataExports.people` or `dataExports.finance`                            |   ✓   |   ✓    |    ✓    |    —    |    —    |   —    |    —    |
 
 Points the table compresses:
 

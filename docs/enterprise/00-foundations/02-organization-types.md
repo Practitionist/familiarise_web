@@ -26,12 +26,12 @@ The table below reads the four combinations of the two booleans down its first t
 columns and gives the derived kind and its meaning in the last two; the INERT row
 is the combination that the API rejects at create time.
 
-| canSponsor | canHost | Derived kind | Meaning                                                                                         |
-| ---------- | ------- | ------------ | ----------------------------------------------------------------------------------------------- |
-| `true`     | `false` | `SPONSOR`    | Pays for its members' sessions. Has a `BillingAccount`. No hosting-side payout flow.            |
-| `false`    | `true`  | `HOST`       | Hosts experts who earn through the org. Has an `OrganizationPayoutAccount`. No billing account. |
-| `true`     | `true`  | `HYBRID`     | Both flows run independently. Has both records.                                                 |
-| `false`    | `false` | `INERT`      | Transitional — rejected at create time (`app/api/organizations/route.ts` validates `canSponsor  |     | canHost`). |
+| canSponsor | canHost | Derived kind | Meaning                                                                                                        |
+| ---------- | ------- | ------------ | -------------------------------------------------------------------------------------------------------------- |
+| `true`     | `false` | `SPONSOR`    | Pays for its members' sessions. Has a `BillingAccount`. No hosting-side payout flow.                           |
+| `false`    | `true`  | `HOST`       | Hosts experts who earn through the org. Has an `OrganizationPayoutAccount`. No billing account.                |
+| `true`     | `true`  | `HYBRID`     | Both flows run independently. Has both records.                                                                |
+| `false`    | `false` | `INERT`      | Transitional — rejected at create time (`app/api/organizations/route.ts` validates `canSponsor \|\| canHost`). |
 
 ```mermaid
 flowchart TD

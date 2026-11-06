@@ -1729,7 +1729,7 @@ APIs under `app/api/organizations/[orgId]/`. Do not infer write access from the 
 
 #### 6.2.4. Tabs and legacy destinations
 
-Tabs keep one page per object. Current members tabs are `all`, `learners`, `experts`, and `invitations`; settings sections are general, SSO,
+Tabs keep one page per object. Current members tabs are Roster and Invitations; settings sections are general, SSO,
 webhooks and data exports; Billing and Payouts show at most three tabs plus a More menu, and an unknown `?tab=` opens the first tab (see [the dashboard IA page](../dashboard/information-architecture.md#organization-page-tabs)). `/purchase-orders`,
 `/reimbursements`, and `/disputes` no longer exist; those panels are Billing tabs. `/credits` is not an active page; the wallet is in Billing's
 Wallet & licence tab.

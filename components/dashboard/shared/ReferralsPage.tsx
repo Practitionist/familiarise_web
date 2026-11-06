@@ -646,7 +646,7 @@ export function ReferralsPage({
           columns={referralColumns}
         />
 
-        {creditsHref ? (
+        {creditsHref && !creditsError ? (
           <p className="mt-6 text-sm text-muted-foreground">
             Your credits and how you used them are in{" "}
             <Link

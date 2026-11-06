@@ -311,8 +311,16 @@ export function LibraryBrowser({
         : undefined,
   });
 
+  // The Everyone read ignores text, person and source, so they never explain an empty list.
+  const everyone = fixedParams?.scope === "everyone";
   const filtered =
-    !!q || FILTER_KEYS.some((k) => k !== "view" && filters[k] !== null);
+    (!everyone && !!q) ||
+    FILTER_KEYS.some(
+      (k) =>
+        k !== "view" &&
+        !(everyone && (k === "source" || k === "person")) &&
+        filters[k] !== null,
+    );
   const noun = docs ? "documents" : "recordings";
 
   function bookingColumn<T>(): LibraryColumn<Tagged<T>> {
@@ -555,7 +563,7 @@ export function LibraryBrowser({
     <div className="space-y-4">
       <FilterBar
         search={
-          fixedParams?.scope === "everyone"
+          everyone
             ? undefined
             : {
                 label: `Search ${noun}`,
