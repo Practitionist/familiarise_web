@@ -1,5 +1,7 @@
 import type { MetadataRoute } from "next";
 
+import { listIndexableEventPlanIds } from "@/lib/data/indexable-plans";
+import { reportSentryError } from "@/lib/observability/report";
 import {
   supportArticles,
   supportCategories,
@@ -7,7 +9,34 @@ import {
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
-export default function sitemap(): MetadataRoute.Sitemap {
+// Read at request time: prerendering would query the shared database at build.
+export const dynamic = "force-dynamic";
+
+/** Plan pages for events still on sale; a database failure leaves only the static routes. */
+async function eventPlanRoutes(): Promise<
+  { path: string; priority: number }[]
+> {
+  try {
+    const { webinarPlanIds, classPlanIds } = await listIndexableEventPlanIds(
+      new Date(),
+    );
+    return [
+      ...webinarPlanIds.map((id) => ({
+        path: `/explore/programs/plans/webinars/${id}`,
+        priority: 0.6,
+      })),
+      ...classPlanIds.map((id) => ({
+        path: `/explore/programs/plans/classes/${id}`,
+        priority: 0.6,
+      })),
+    ];
+  } catch (error) {
+    reportSentryError(error, { subsystem: "seo", op: "sitemap-plans" });
+    return [];
+  }
+}
+
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticRoutes: { path: string; priority: number }[] = [
     { path: "/", priority: 1.0 },
     { path: "/explore/experts", priority: 0.9 },
@@ -41,9 +70,11 @@ export default function sitemap(): MetadataRoute.Sitemap {
     })),
   ];
 
-  return staticRoutes.map(({ path, priority }) => ({
-    url: `${BASE_URL}${path}`,
-    changeFrequency: "weekly",
-    priority,
-  }));
+  return [...staticRoutes, ...(await eventPlanRoutes())].map(
+    ({ path, priority }) => ({
+      url: `${BASE_URL}${path}`,
+      changeFrequency: "weekly",
+      priority,
+    }),
+  );
 }

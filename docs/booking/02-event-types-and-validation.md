@@ -156,6 +156,33 @@ event by a capacity change.
 
 ---
 
+## Sharing
+
+A webinar or class plan page is built to be shared in a chat.
+
+- **Link-preview tags.** `generateMetadata` on both detail pages (through
+  `lib/seo/event-plan-share.ts`) sets the tab title, a description (the
+  subtitle, else the opening of the description), the canonical URL and the
+  Open Graph and Twitter tags. It runs behind the same `canViewPlanDetail`
+  gate as the page, so a hidden plan gets a generic title and `noindex`
+  instead of leaking its name.
+- **Preview image.** Each page's `opengraph-image` route draws a 1200x630 PNG
+  with `renderEventPlanShareImage`, about 20 to 50 KB, because WhatsApp drops
+  large images; a host-uploaded cover can be several MB. The image is drawn for
+  an anonymous visitor, so it names the plan only when anyone may see it. It
+  carries no price, date or seats left, because messaging apps cache a preview
+  for days. Responses are cacheable for five minutes.
+- **Search.** `app/sitemap.ts` lists the plans that are publicly discoverable
+  (`eventPlanDiscoverableWhere`), owned by a profile that is not erased and
+  still holding a session that has not finished (`lib/data/indexable-plans.ts`,
+  capped at 5,000 per kind). It is read at request time so a build never
+  queries the database, and a database failure leaves the static routes.
+- **No `Event` markup.** Google's Event structured-data documentation says
+  virtual-only events are not supported (checked 2026-11-01), so these pages
+  carry no schema.org `Event`.
+
+---
+
 ## Trial
 
 Free one-time session that lets a consultee try a subscription plan before committing.
