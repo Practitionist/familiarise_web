@@ -30,6 +30,13 @@ Three facts shaped the answer:
 
 12. **Workspace routing removed (2026-11-07).** It duplicated the personal channel switches for the same user. It reverses decision 9. `OrgWorkspaceProfile` is one-to-one with the operator's own user (`userId @unique`), so the routing mode and the personal In-App and Email switches gated the same channels for the same person, and the server ANDed them. The personal `NotificationPreference` switches are now the only channel control for every user, operators included: neither `lib/novu/policy.ts` nor `lib/email/preferences.ts` reads the mode, the workspace settings page shows only the personal panel, and `PATCH /api/org-workspace/[orgWorkspaceId]/settings` rejects the field (its body is strict). The column stays in the database, unread, until the owner's next schema batch drops it; the two live profiles were both effectively default, so there is no data migration and no backfill.
 
+13. **Vendor configuration is checked, not assumed (2026-11-07).** A read-only audit found three gaps that code review could not show:
+    - The Resend webhook never received `email.suppressed` or the domain-health events, although the handler has supported them since it was written. The subscription is now `email.sent`, `delivered`, `delivery_delayed`, `bounced`, `complained`, `failed`, `suppressed`, `domain.updated` and `domain.deleted`. `contact.*` stays unsubscribed because Resend Contacts are unused.
+    - Novu Production's In-App HMAC enforcement could not be read through the API, so it is now an owner check plus a post-release tampered-hash test.
+    - 333 Development subscribers still held mirrored profile data (email, names, phone, avatar, `data` flags). `scripts/novu/scrub-subscriber-pii.ts` cleared them on 2026-11-07; Production runs at the release promotion.
+
+    Go-live checklist §4.1 now lists every vendor-side setting to verify against the dashboards. The owner fixes the DNS and Netlify hygiene items there: the DMARC report-authorisation TXT on `practitionist.com`, the Netlify secret flags, the stale `dev`-context Resend key, and a sending-only Resend key.
+
 ## Alternatives considered
 
 - **Keep the mirror and fix its edge cases.** Rejected: a second copy of the flags can only disagree with Postgres, and the server check already makes it redundant.

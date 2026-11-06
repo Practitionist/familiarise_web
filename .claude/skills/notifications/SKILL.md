@@ -83,7 +83,11 @@ Novu Free is 10,000 workflow runs a month, counted across Development **and** Pr
 
 ## One-time operations (Novu)
 
-`scripts/novu/clear-native-mutes.ts` (dry run, then `--apply`, `--env production` for Production) clears stray native mutes **before** `npm run novu:sync` makes families read-only. Production steps are in the go-live skill and `docs/notifications/05-pre-production-checklist.md`.
+`scripts/novu/clear-native-mutes.ts` (dry run, then `--apply`, `--env production` for Production) clears stray native mutes **before** `npm run novu:sync` makes families read-only. `scripts/novu/scrub-subscriber-pii.ts` (same flags) nulls the email, names, phone, avatar and `data` that the old mirror copied onto subscribers. It prints counts and field names only. Development was scrubbed on 2026-11-07; Production runs at the release promotion. Previews built on older code can write the profile data back until they rebase. Both scripts are deleted after the Production run. Production steps are in the go-live skill and `docs/notifications/05-pre-production-checklist.md`.
+
+## Vendor configuration is not in the code
+
+Code audits and tests cannot see what is set in the Resend, Novu or Netlify dashboards, and that is how these drifted unnoticed until 2026-11-07: missing Resend webhook events, unknown Production HMAC and leftover subscriber PII. Check them with the vendor MCPs or CLIs (`mcp__resend__list-webhooks`, `mcp__novu__get_workflows` plus `npm run novu:check`, the Netlify env reader, and the Resend CLI at `~/.resend/bin/resend`). The list to check is go-live checklist §4.1. Resend's one webhook subscribes to `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.failed`, `email.suppressed`, `domain.updated` and `domain.deleted`. `contact.*` is not subscribed, because the app does not use Resend Contacts.
 
 ## Verify
 

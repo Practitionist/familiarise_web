@@ -230,7 +230,9 @@ Both `EmailEvent` creation (`@unique` on `svixId`) and recipient suppression / w
 - Duplicate redeliveries hit `EmailEvent.svixId` unique constraint (`isUniqueViolation`) and immediately return HTTP `200 { received: true, duplicate: true }`.
 - If any database write fails mid-transaction, the entire transaction rolls back (`EmailEvent` is **not** committed) and the route returns **HTTP `500`** so Resend/Svix retries the delivery cleanly.
 
-### 3. Complete Handled Resend Event Catalog
+### 3. Handled Resend Event Catalog, and what is actually subscribed
+
+The handler understands every event in the table below, but it only receives the ones the Resend dashboard subscribes to. Since 2026-11-07 the one endpoint is subscribed to `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.failed`, `email.suppressed`, `domain.updated` and `domain.deleted`. `contact.*` is deliberately left out, because the app does not use Resend Contacts: the newsletter is the `Waitlist` table with its own unsubscribe link. `domain.created` is left out because the handler ignores it. Check the subscription in the dashboard or with `mcp__resend__list-webhooks`; the code cannot show it.
 
 | Event Family                   | Event Name(s)                                                                                                                                   | Action                                                                                                                                                                                                                  |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
