@@ -3,6 +3,7 @@ import {
   caseOwnershipPermission,
   projectCaseForViewer,
 } from "@/lib/support/case-access";
+import { presenterAppointmentIdsIn } from "@/lib/support/evidence-parties";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -112,6 +113,7 @@ export async function GET(req: NextRequest) {
         referenceNumber: true,
         title: true,
         category: true,
+        issueType: true,
         priority: true,
         status: true,
         caseKind: true,
@@ -121,6 +123,7 @@ export async function GET(req: NextRequest) {
         organizationId: true,
         appointmentId: true,
         appointmentOccurrenceId: true,
+        externalRequesterEmail: true,
         callbackPhone: true,
         callbackWindow: true,
         ackDueAt: true,
@@ -133,19 +136,31 @@ export async function GET(req: NextRequest) {
       },
     });
 
+    const presenterAppointmentIds = staff
+      ? new Set<string>()
+      : await presenterAppointmentIdsIn(
+          prisma,
+          user.id,
+          cases.map((row) => row.appointmentId),
+        );
+
     const data = staff
       ? cases
       : cases.map((row) => {
           const view = projectCaseForViewer(
             row,
             user.id,
-            access.canCorrespond(row),
+            access.canCorrespond(row, presenterAppointmentIds),
           );
           if (view.summaryOnly) return view.summary;
           return {
             ...row,
             callbackPhone:
               row.submitterUserId === user.id ? row.callbackPhone : null,
+            // A presenter sees the thread, never the caller's scheduling window.
+            callbackWindow: access.isPresenter(row, presenterAppointmentIds)
+              ? null
+              : row.callbackWindow,
           };
         });
 

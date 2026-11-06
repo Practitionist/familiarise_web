@@ -27,6 +27,7 @@ type RefundRow = {
   status: "SUCCEEDED" | "PENDING" | "FAILED";
   failedNotifiedAt?: Date | null;
   createdAt?: Date;
+  refundId?: string | null;
 };
 
 const mockRows = new Map<string, Row>();
@@ -177,8 +178,10 @@ const mockDb = {
         : [],
     ),
     findUnique: jest.fn(
-      async ({ where }: { where: { dedupeKey: string } }) =>
-        mockRefunds.find((x) => x.dedupeKey === where.dedupeKey) ?? null,
+      async ({ where }: { where: { dedupeKey?: string; id?: string } }) =>
+        mockRefunds.find((x) =>
+          where.id ? x.id === where.id : x.dedupeKey === where.dedupeKey,
+        ) ?? null,
     ),
     updateMany: jest.fn(async ({ where }: { where: { id: string } }) => {
       const r = mockRefunds.find((x) => x.id === where.id);
@@ -255,6 +258,7 @@ jest.mock("../../lib/payments/operations/refund", () => {
       constructor(
         message: string,
         readonly gatewayCode?: string,
+        readonly refundRowId?: string,
       ) {
         super(message);
       }
@@ -309,6 +313,8 @@ jest.mock("../../lib/payments/webhooks/handlers", () => ({
 import { refundWholeEventPayments } from "../../lib/payments/operations/event-refunds";
 import {
   driveRefundOwed,
+  failRefund,
+  refuseIfOwedAlreadySent,
   settleOwedByHand,
 } from "../../lib/payments/operations/refund-owed";
 import { retryAutoRefunds } from "../../scripts/payments/retry-auto-refunds";
@@ -414,6 +420,200 @@ describe("driveRefundOwed", () => {
     expect(mockRows.get("p1")!.refundOwedKey).toBe("cancel:appt:p1");
     expect(mockRows.get("p1")!.refundOwedAttempts).toBe(3);
     expect(mockRecordSystemError).toHaveBeenCalledTimes(1);
+  });
+
+  it("spends no attempt on an ambiguous gateway error whose refund is still PENDING", async () => {
+    seat("p1", 10_000);
+    const owed = marker("p1", 5_000);
+    mockRows.get("p1")!.refundOwedAttempts = 2;
+    const { RefundGatewayError } = jest.requireMock<{
+      RefundGatewayError: new (
+        message: string,
+        gatewayCode?: string,
+        refundRowId?: string,
+      ) => Error;
+    }>("../../lib/payments/operations/refund");
+    mockRefundBookingPayment.mockImplementationOnce(
+      async (input: { paymentId: string; dedupeKey: string }) => {
+        mockRefunds.push({
+          id: "rf_ambiguous",
+          paymentId: input.paymentId,
+          dedupeKey: input.dedupeKey,
+          amountPaise: 5_000,
+          status: "PENDING",
+        });
+        throw new RefundGatewayError("timeout", undefined, "rf_ambiguous");
+      },
+    );
+
+    const outcome = await driveRefundOwed({ ...owed, attempts: 2 });
+    expect(outcome).toEqual({
+      kind: "refunded",
+      refund: {
+        refundId: "rf_ambiguous",
+        amountRefundedPaise: 5_000,
+        status: "PENDING",
+      },
+    });
+    expect(mockRows.get("p1")).toMatchObject({
+      refundOwedKey: "cancel:appt:p1",
+      refundOwedAttempts: 2,
+    });
+    expect(mockRecordSystemError).not.toHaveBeenCalled();
+  });
+});
+
+describe("a drive whose own refund is still PENDING", () => {
+  it("spends no attempt when the settle fails after the gateway took the refund", async () => {
+    seat("p1", 10_000);
+    const owed = marker("p1", 5_000);
+    mockRows.get("p1")!.refundOwedAttempts = 2;
+    mockRefundBookingPayment.mockImplementationOnce(
+      async (input: { paymentId: string; dedupeKey: string }) => {
+        // The gateway accepted it; the settling transaction then failed.
+        mockRefunds.push({
+          id: "rf_taken",
+          paymentId: input.paymentId,
+          dedupeKey: input.dedupeKey,
+          amountPaise: 5_000,
+          status: "PENDING",
+        });
+        throw new Error("cascade transaction failed");
+      },
+    );
+
+    expect(await driveRefundOwed({ ...owed, attempts: 2 })).toMatchObject({
+      kind: "refunded",
+      refund: { refundId: "rf_taken", status: "PENDING" },
+    });
+    expect(mockRows.get("p1")!.refundOwedAttempts).toBe(2);
+    expect(mockRecordSystemError).not.toHaveBeenCalled();
+  });
+});
+
+describe("a drive's own refund confirmed FAILED", () => {
+  /** The front door reserves under the key; `failNow` fails it in-flight, as a refusal does. */
+  function reservesThenThrows(failNow: boolean) {
+    const { RefundGatewayError } = jest.requireMock<{
+      RefundGatewayError: new (message: string, gatewayCode?: string) => Error;
+    }>("../../lib/payments/operations/refund");
+    mockRefundBookingPayment.mockImplementationOnce(
+      async (input: { paymentId: string; dedupeKey: string }) => {
+        const row: RefundRow = {
+          id: `rf_${mockRefunds.length + 1}`,
+          paymentId: input.paymentId,
+          dedupeKey: input.dedupeKey,
+          amountPaise: 5_000,
+          status: "PENDING",
+        };
+        mockRefunds.push(row);
+        if (failNow) await failRow(row);
+        throw new RefundGatewayError("gateway refund failed");
+      },
+    );
+  }
+  /** The failing transaction, as reconcile or the front door runs it. */
+  const failRow = (row: RefundRow) =>
+    failRefund(row.id, async () => {
+      row.status = "FAILED";
+      return { count: 1 };
+    });
+  /** The key frees once its refund failed, as the front door's replay check does. */
+  const freeKey = () =>
+    mockRefunds.forEach((r) => {
+      if (r.status === "FAILED") r.dedupeKey = null;
+    });
+
+  it("counts a refusal once, in the transaction that failed it, not again in the drive", async () => {
+    seat("p1", 10_000);
+    const owed = marker("p1", 5_000);
+    reservesThenThrows(true);
+
+    expect((await driveRefundOwed({ ...owed, attempts: 0 })).kind).toBe(
+      "failed",
+    );
+    expect(mockRows.get("p1")!.refundOwedAttempts).toBe(1);
+  });
+
+  it("an ambiguous answer reconcile later fails counts, so three cycles page once", async () => {
+    seat("p1", 10_000);
+    const owed = marker("p1", 5_000);
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      reservesThenThrows(false);
+      const attempts = mockRows.get("p1")!.refundOwedAttempts;
+      expect((await driveRefundOwed({ ...owed, attempts })).kind).toBe(
+        "refunded",
+      );
+      await failRow(mockRefunds[mockRefunds.length - 1]);
+      freeKey();
+    }
+    expect(mockRows.get("p1")).toMatchObject({
+      refundOwedKey: "cancel:appt:p1",
+      refundOwedAttempts: 3,
+      refundOwedNextAt: null,
+    });
+    expect(mockRecordSystemError).toHaveBeenCalledTimes(1);
+    expect((await retryAutoRefunds()).owed.scanned).toBe(0);
+    // Each failed attempt of a refund still owed is claimed silently: no notice per cycle.
+    expect((await notifyFailedRefunds()).notified).toBe(0);
+    expect(mockSendRefundFailedEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("a hand refund once the owed refund already went out", () => {
+  function ownRefundSucceeded() {
+    seat("p1", 10_000);
+    marker("p1", 5_000);
+    Object.assign(mockRows.get("p1")!, { refundOwedAttempts: 3 });
+    mockRefunds.push({
+      id: "rf_own",
+      paymentId: "p1",
+      dedupeKey: "cancel:appt:p1",
+      amountPaise: 5_000,
+      status: "SUCCEEDED",
+      createdAt: new Date("2026-11-02T06:30:00.000Z"),
+      refundId: "rfnd_gw_123",
+    });
+  }
+  /** The refusal names what went out, when, and its reference, and warns before a second payment. */
+  const ALREADY_SENT_COPY =
+    "₹50.00 already went back to the buyer on 2 Nov 2026 (refund rfnd_gw_123), so nothing is owed on this payment. Only submit again if you mean to refund more on top of this.";
+
+  it("is refused inside the refund transaction, so nothing is paid twice", async () => {
+    ownRefundSucceeded();
+    await expect(
+      settleOwedByHand(mockDb as never, "p1", { kind: "whole" }),
+    ).rejects.toMatchObject({
+      code: "OWED_REFUND_ALREADY_SENT",
+      message: ALREADY_SENT_COPY,
+    });
+  });
+
+  it("is refused before the transaction, and the stale marker is cleared", async () => {
+    ownRefundSucceeded();
+    await expect(
+      refuseIfOwedAlreadySent("p1", mockRows.get("p1")!.refundOwedKey),
+    ).rejects.toMatchObject({
+      code: "OWED_REFUND_ALREADY_SENT",
+      message: ALREADY_SENT_COPY,
+    });
+    expect(mockRows.get("p1")).toMatchObject({
+      refundOwedKey: null,
+      refundOwedAttempts: 0,
+    });
+    // The next attempt is an ordinary refund.
+    await expect(
+      refuseIfOwedAlreadySent("p1", mockRows.get("p1")!.refundOwedKey),
+    ).resolves.toBeUndefined();
+  });
+
+  it("lets a hand refund through while the owed refund has not gone out", async () => {
+    seat("p1", 10_000);
+    marker("p1", 5_000);
+    await expect(
+      refuseIfOwedAlreadySent("p1", mockRows.get("p1")!.refundOwedKey),
+    ).resolves.toBeUndefined();
+    expect(mockRows.get("p1")!.refundOwedKey).toBe("cancel:appt:p1");
   });
 });
 

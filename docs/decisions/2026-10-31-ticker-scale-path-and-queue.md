@@ -35,6 +35,8 @@ The ticker stays the only job engine until a trigger in decision 2 fires (AGENTS
 
 **Worked example.** At 10:40:16 UTC Netlify fires the tick for the 10:40 slot. The tick derives its id from `2026-10-31T10:40:00.000Z` and inserts the claim row, then dispatches 11 targets. Six seconds later Netlify fires the same slot a second time, which happened on 3.5 % of slots in the measured window. The second invocation derives the same id, its insert hits the primary key, and it answers `{duplicate: true}` without calling a single job, sending a second Sentry check-in or pinging Better Stack.
 
+**The free slot binds new jobs (owner decision, 2026-10-31).** Every 15-minute phase already has a tick at 11 targets, so no new 15-minute job fits. A 400-day simulation showed that moving five unrelated hourly and daily jobs still left 800 ticks at 12. The digital products recovery sweep `reconcile-standalone-purchases` therefore runs hourly at :45, the one phase band (:40 to :50) with room. It is the fallback behind the webhook and the buyer's verify route, so only a purchase both of those miss waits up to an hour. Its paging health SLO in `lib/cron/operational-health.ts` is 150 minutes, two intervals plus 30. A future job that needs a 15-minute cadence needs either a new owner decision on the cap or the phase 2 queue.
+
 ## Decision 2. The scale path: trial Vercel Pro in Mumbai before about 300 concurrent users
 
 - **What.** Before sustained traffic approaches about 300 concurrent users, trial the web tier on Vercel Pro in `bom1` (Mumbai), with Vercel Cron as the ticker. It calls the same `/api/cleanup/<slug>` routes and the same registry, so no job is rewritten.

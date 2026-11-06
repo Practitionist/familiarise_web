@@ -146,13 +146,24 @@ export interface AllocationRequest {
    * accept and auto-confirm): the allocator renews it instead of acquiring it.
    */
   heldAppointmentLock?: ApprovalLock;
+  /** The hourly top-up placing a plan's open week as the system, not a person. */
+  bySweep?: boolean;
+  /**
+   * The plan's own consultant placed the sessions. Only then can a first
+   * placement record the plan's Auto choice; any other caller (staff, a host
+   * or sponsor org operator, or a door that does not say) is a one-off.
+   */
+  byConsultant?: boolean;
 }
 
 /** The per-call extras every allocation mode threads into its transaction. */
 export type AllocationTxOptions = Pick<
   AllocationRequest,
   "approvableFrom" | "inTx"
->;
+> & {
+  /** The `reason` the approval's history row records (`scheduleReason`). */
+  historyReason?: string;
+};
 
 /**
  * Result of validation check
@@ -231,6 +242,7 @@ export type AllocationErrorCode =
   | "CHECKOUT_IN_PROGRESS" // the buyer's own direct checkout is still being paid — 409
   | "TOO_CLOSE_TO_START" // an unpaid approval whose first session starts too soon to pay — 409
   | "RESCHEDULE_NO_LONGER_OPEN" // the confirmed proposal was answered or expired mid-move — 409
+  | "PROPOSAL_AWAITING_CLIENT" // the consultant's own proposal with times is still open — 409
   | "SESSION_HAS_REMEDY" // a session to be re-planned carries an incident remedy — 409
   | "BOOKING_LOCK_UNAVAILABLE" // the locking service is down; retry shortly — 503
   | "SEARCH_TIMEOUT" // the auto search ran out of time before placing every session — 503

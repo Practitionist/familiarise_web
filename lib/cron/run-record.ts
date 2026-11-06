@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import type { RunContext } from "@/lib/cron/run-context";
+import { runTelemetryResult, settleTelemetry } from "@/lib/cron/run-telemetry";
 import {
   jobEnvironment,
   runItems,
@@ -74,6 +75,7 @@ export async function recordRouteRun(
   try {
     const status = statusOfOutcome(record.outcome);
     const summary = await summaryJson(record.summary);
+    await settleTelemetry(run.telemetry);
     const base = {
       outcome: record.outcome,
       reason: record.reason,
@@ -84,6 +86,7 @@ export async function recordRouteRun(
       opsActionLogId: run.opsActionLogId,
       holderRunId: record.holderRunId ?? undefined,
       summary,
+      ...runTelemetryResult(run.telemetry),
     };
     const { default: prisma } = await import("@/lib/prisma");
     if (run.finished.size > 0) {

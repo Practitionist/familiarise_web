@@ -1,5 +1,6 @@
 /** Stale-request expiry core, shared by the cleanup registry and admin recovery door. */
 
+import { nudgeUnplacedPlanWeeks } from "@/lib/booking/week-nudge";
 import prisma from "../../lib/prisma";
 import type { PrismaLike } from "../../lib/prisma";
 import {
@@ -2162,6 +2163,10 @@ async function expireStaleRequestsUnlocked(
   // #1703 — nudge the consultant before that 30-day refund ever fires.
   const nudges = await nudgeUnscheduledSubscriptions(limits);
   allErrors.push(...nudges.errors);
+
+  // Every later plan week with sessions still to place: bell + email at +0/24/72 h.
+  const weekNudges = await nudgeUnplacedPlanWeeks(limits);
+  allErrors.push(...weekNudges.errors);
 
   // Stale tentative-RESCHEDULED holds on APPROVED subscriptions go back to
   // the plan; the parent stays APPROVED and both parties are told.

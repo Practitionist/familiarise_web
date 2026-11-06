@@ -9,6 +9,7 @@ import { DEFAULT_FROM_ADDRESS } from "@/lib/email/config";
 import { getAppUrl } from "@/lib/url";
 import { canSignLinks, safeEquals, signToken } from "@/lib/waitlist/tokens";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { isPresenterAuthoredMessage } from "@/lib/support/case-message-actor";
 
 /**
  * Anonymous public grievances are held by this non-staff system account, so no
@@ -250,12 +251,18 @@ export function confirmExternalRequesterEmail(input: {
             note: "The complainant confirmed their email address.",
           },
         });
-        const replies = await tx.supportCaseMessage.findMany({
-          where: { caseId: supportCase.id, sender: "AGENT", isInternal: false },
-          orderBy: { seq: "asc" },
-          take: -WITHHELD_DIGEST_LIMIT,
-          select: { body: true, createdAt: true },
-        });
+        const replies = (
+          await tx.supportCaseMessage.findMany({
+            where: {
+              caseId: supportCase.id,
+              sender: "AGENT",
+              isInternal: false,
+            },
+            orderBy: { seq: "asc" },
+            take: -WITHHELD_DIGEST_LIMIT,
+            select: { body: true, createdAt: true, metadata: true },
+          })
+        ).filter((reply) => !isPresenterAuthoredMessage(reply.metadata));
         const decisions = await tx.supportCaseDecision.findMany({
           where: { caseId: supportCase.id },
           orderBy: { createdAt: "asc" },

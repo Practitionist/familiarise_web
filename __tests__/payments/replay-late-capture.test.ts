@@ -97,7 +97,13 @@ it("re-grants a late retry, refunds an unpurchasable replay and refunds a duplic
   // Late retry on a FAILED order while the replay is still listed: re-grant.
   mockTx.recordingPurchase.findUnique.mockResolvedValueOnce(purchase("FAILED"));
   mockTx.recordingPurchase.updateMany.mockResolvedValueOnce({ count: 1 });
-  await handleRecordingPurchaseSuccess("order_1", "pay_B", {}, 99900);
+  await handleRecordingPurchaseSuccess(
+    "order_1",
+    "pay_B",
+    {},
+    99900,
+    "netbanking",
+  );
   expect(mockTx.recordingPurchase.updateMany).toHaveBeenCalledWith({
     where: { id: "rp-1", status: "FAILED" },
     data: { status: "SUCCEEDED", gatewayPaymentId: "pay_B" },
@@ -107,6 +113,8 @@ it("re-grants a late retry, refunds an unpurchasable replay and refunds a duplic
     amount: 99900,
     paymentIntent: "order_1",
     paymentStatus: "SUCCEEDED",
+    // The real rail is recorded; the leg stays CARD, the gateway funding source.
+    paymentMethod: "NETBANKING",
     description: expect.stringMatching(/^Replay sale:/),
     legs: {
       create: { source: "CARD", amountPaise: 99900, sourceRef: "order_1" },
@@ -121,13 +129,14 @@ it("re-grants a late retry, refunds an unpurchasable replay and refunds a duplic
   mockTx.recordingPurchase.findUnique.mockResolvedValueOnce(
     purchase("FAILED", "UNPUBLISHED"),
   );
-  await handleRecordingPurchaseSuccess("order_2", "pay_C", {}, 99900);
+  await handleRecordingPurchaseSuccess("order_2", "pay_C", {}, 99900, "wallet");
   expect(mockTx.recordingPurchase.updateMany).not.toHaveBeenCalled();
   expect(mockCreateEarnings).not.toHaveBeenCalled();
   const staged = mockTx.payment.create.mock.calls[0][0].data;
   expect(staged).toMatchObject({
     paymentIntent: "order_2",
     amount: 99900,
+    paymentMethod: "GATEWAY_WALLET",
     legs: { create: { source: "CARD", amountPaise: 99900 } },
   });
   expect(staged.description).toMatch(/^Auto-refund pending:/);

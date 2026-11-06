@@ -8,6 +8,10 @@ import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatc
 import { transitionMembership } from "@/lib/enterprise/transitions";
 import { revokeOrgManagedUserSessions } from "@/lib/sso/session-sweeps";
 import {
+  stampSessionEnds,
+  type EndedSessions,
+} from "@/lib/auth/session-access-log";
+import {
   assertNotLastOwner,
   assertRemovable,
   countRemovalObligations,
@@ -75,6 +79,7 @@ interface PostCommit {
   memberBells: StagedTrigger[];
   email: StagedOnboardingEmail | null;
   revokedCollaborations: RevokedOrgCollaboration[];
+  endedSessions: EndedSessions[];
 }
 
 async function validateSelfLeaveObligations(
@@ -224,6 +229,7 @@ async function removeInTx(
       memberBells: [],
       email: null,
       revokedCollaborations: [],
+      endedSessions: [],
     };
   }
 
@@ -253,9 +259,9 @@ async function removeInTx(
     where: { id: memberId, organizationId: orgId },
     to: "REMOVED",
   });
-  if (!isSelfLeave) {
-    await revokeOrgManagedUserSessions(tx, orgId, current.userId);
-  }
+  const endedSessions = isSelfLeave
+    ? []
+    : (await revokeOrgManagedUserSessions(tx, orgId, current.userId)).ended;
   if (current.role === "EXPERT" && current.consultantProfileId) {
     await recomputeConsultantIsIndependent(tx, current.consultantProfileId);
   }
@@ -325,6 +331,7 @@ async function removeInTx(
       memberBells: [],
       email: null,
       revokedCollaborations,
+      endedSessions,
     };
   }
   const actorName = actorUser?.name ?? actorUser?.email ?? "An operator";
@@ -352,6 +359,7 @@ async function removeInTx(
       email,
       memberBells: [],
       revokedCollaborations,
+      endedSessions,
       expertNotice: {
         userId: current.userId,
         payload: {
@@ -383,6 +391,7 @@ async function removeInTx(
     memberBells,
     email,
     revokedCollaborations,
+    endedSessions,
   };
 }
 
@@ -465,6 +474,7 @@ export async function removeMember(
     }),
   );
 
+  await stampSessionEnds(result.endedSessions);
   // Fire-and-forget after commit: a failed notice must not undo a removal.
   if (result.expertNotice) {
     const notice = result.expertNotice;

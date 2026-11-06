@@ -183,7 +183,7 @@ import { allocateCycleClawback } from "./earnings-reversal";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import { applyCaseHoldsToNewEarnings } from "@/lib/support/case-holds";
 import {
-  sessionsTotalOf,
+  soldTermsOf,
   subscriptionTranches,
   type SubscriptionTranches,
 } from "@/lib/booking/entitlement";
@@ -211,6 +211,8 @@ async function resolveSubscriptionTranches(
       subscription: {
         select: {
           sessionsTotal: true,
+          sessionsPerWeek: true,
+          sessionsRefunded: true,
           subscriptionPlan: {
             select: {
               totalSessions: true,
@@ -224,10 +226,9 @@ async function resolveSubscriptionTranches(
   });
   const sub = appointment?.subscription;
   if (!sub) return null;
-  const tranches = subscriptionTranches(
-    sub.subscriptionPlan,
-    sessionsTotalOf(sub),
-  );
+  // The sessions sold at the frozen weekly cap; refunds never re-cut tranches.
+  const terms = soldTermsOf(sub);
+  const tranches = subscriptionTranches(terms, terms.sessionsTotal);
   return tranches.total > 0 ? tranches : null;
 }
 
@@ -242,11 +243,13 @@ async function resolveSubscriptionTranches(
  * `AppointmentType` or a renamed `CoveredPlanType` member is a compile error
  * here instead of a booking that silently settles on the wrong card.
  */
-const RATE_CARD_PLAN_TYPE: Record<AppointmentType, CoveredPlanType> = {
+const RATE_CARD_PLAN_TYPE: Record<AppointmentType, CoveredPlanType | null> = {
   CONSULTATION: "CONSULTATION",
   WEBINAR: "WEBINAR",
   SUBSCRIPTION: "SUBSCRIPTION",
   CLASS: "CLASS",
+  // No plan-typed rate card covers a file sale; it settles on the org default.
+  DIGITAL_PRODUCT: null,
 };
 
 /**
@@ -1771,6 +1774,17 @@ async function resolveBookingJournalCredits(
   return credits;
 }
 
+/**
+ * A ₹0 booking moves no money, so it has no journal. A paid booking always
+ * reaches `postLedgerTxn`, which refuses one that computed no lines.
+ */
+export function bookingNeedsJournal(
+  paymentAmountPaise: number,
+  postingCount: number,
+): boolean {
+  return postingCount > 0 || paymentAmountPaise !== 0;
+}
+
 async function postBookingLedgerJournal(
   tx: Tx,
   params: {
@@ -1792,11 +1806,13 @@ async function postBookingLedgerJournal(
       overageAccrualPaise,
       hasWalletSurcharge,
     });
+    const postings = [...debits, ...credits];
+    if (!bookingNeedsJournal(payment.amount, postings.length)) return;
     await postLedgerTxn(tx, {
       idempotencyKey: `booking:${payment.id}`,
       kind: "BOOKING",
       paymentId: payment.id,
-      postings: [...debits, ...credits],
+      postings,
     });
   } catch (err) {
     const isRetryableSerialization =

@@ -216,6 +216,7 @@ describe("returning a subscription session to the plan", () => {
     });
     const base = {
       sessionsTotal: 4,
+      sessionsRefunded: 0,
       sessionsPerWeek: 1,
       durationInMonths: 1,
       schedulingPeriodStartsAt: NOW,
@@ -295,6 +296,20 @@ describe("expert reliability strikes", () => {
     expect(create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         correlationId: "expert-reliability:cp-1",
+      }),
+    });
+  });
+  it("records the judged occurrence on a no-show strike", async () => {
+    const create = jest.fn(async () => ({}));
+    await recordExpertStrike({ systemEvent: { create } } as never, {
+      consultantProfileId: "cp-1",
+      cause: "CONSULTANT_NO_SHOW",
+      appointmentId: "appt-1",
+      occurrenceIds: ["occ-new"],
+    });
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        context: expect.objectContaining({ occurrenceIds: ["occ-new"] }),
       }),
     });
   });

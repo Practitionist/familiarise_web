@@ -4,6 +4,14 @@
 //
 // Init config lives in sentry.shared.config.ts (shared across runtimes — #913).
 
+import { setAfterCapture } from "@/lib/observability/report";
+import { scheduleSentryFlush } from "@/lib/observability/serverless-flush";
 import { initSentry } from "./sentry.shared.config";
 
 initSentry();
+
+// A Netlify function can freeze as soon as it responds, so every server-side
+// capture schedules a bounded flush (`after()` inside a request).
+if (process.env.NETLIFY) {
+  setAfterCapture(() => scheduleSentryFlush());
+}

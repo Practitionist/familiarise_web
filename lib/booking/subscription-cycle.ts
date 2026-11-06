@@ -22,8 +22,9 @@ import type { Tx } from "@/lib/prisma";
 
 import {
   isCompletedOccurrence,
+  planWeekNumber,
   maturedTrancheOrdinal,
-  sessionsTotalOf,
+  soldTermsOf,
   subscriptionEntitlement,
   subscriptionTranches,
 } from "./entitlement";
@@ -103,6 +104,8 @@ export async function settleSubscriptionCycleWithNotice(
           id: true,
           status: true,
           sessionsTotal: true,
+          sessionsPerWeek: true,
+          sessionsRefunded: true,
           schedulingPeriodStartsAt: true,
           schedulingTimezone: true,
           planEndsAt: true,
@@ -131,15 +134,14 @@ export async function settleSubscriptionCycleWithNotice(
       },
     },
   });
-  const sub = wrapper?.subscription;
-  if (!sub || (sub.status !== "APPROVED" && sub.status !== "SCHEDULED")) {
+  if (wrapper?.subscription?.status !== "APPROVED") {
     return { bells: [], emailArgs: null };
   }
+  const sub = wrapper.subscription;
 
+  const terms = soldTermsOf(sub);
   const entitlement = subscriptionEntitlement({
-    sessionsTotal: sessionsTotalOf(sub),
-    sessionsPerWeek: sub.subscriptionPlan.sessionsPerWeek,
-    durationInMonths: sub.subscriptionPlan.durationInMonths,
+    ...terms,
     occurrences: wrapper.occurrences,
     schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt,
     schedulingTimezone: sub.schedulingTimezone,
@@ -149,11 +151,14 @@ export async function settleSubscriptionCycleWithNotice(
 
   // The money half: every tranche up to the highest matured one that is
   // still unstamped starts its hold now, anchored on the last delivered end.
-  const tranches = subscriptionTranches(
-    sub.subscriptionPlan,
-    entitlement.total,
-  );
-  const matured = maturedTrancheOrdinal(tranches, entitlement.completed);
+  // Tranches follow the sessions sold, as they were minted at capture. Once
+  // every session the buyer kept is delivered, every tranche left has matured,
+  // including the retained part of one a session-count refund cut short.
+  const tranches = subscriptionTranches(terms, terms.sessionsTotal);
+  const matured =
+    entitlement.total > 0 && entitlement.completed >= entitlement.total
+      ? tranches.count - 1
+      : maturedTrancheOrdinal(tranches, entitlement.completed);
   if (matured >= 0 && wrapper.payment.length > 0) {
     const lastCompletedEnd = wrapper.occurrences
       .filter((o) => !o.deletedAt && isCompletedOccurrence(o))
@@ -195,12 +200,25 @@ export async function settleSubscriptionCycleWithNotice(
 
   const consulteeUserId = sub.requestedBy?.userId;
   if (!consulteeUserId) return { bells: [], emailArgs: null };
-  // 1-based number of the cycle the delivered sessions belong to: at a
-  // boundary the zero-based ordinal has already advanced, so it IS that
-  // number; mid-cycle (a cancelled row) the current cycle is ordinal + 1.
-  // The same key across a second pass over the same state dedupes.
-  const { ordinal, filled } = entitlement.cycle;
-  const cycleOrdinal = Math.max(1, ordinal + (filled > 0 ? 1 : 0));
+  // The 1-based plan week the last delivered session sits in: the same key
+  // across a second pass over the same state dedupes.
+  const lastDelivered = wrapper.occurrences
+    .filter((o) => !o.deletedAt && isCompletedOccurrence(o))
+    .reduce<Date | null>((latest, o) => {
+      const at = new Date(o.startsAt);
+      return !latest || at > latest ? at : latest;
+    }, null);
+  const cycleOrdinal = lastDelivered
+    ? planWeekNumber(
+        {
+          sessionsPerWeek: terms.sessionsPerWeek,
+          durationInMonths: terms.durationInMonths,
+          schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt,
+          schedulingTimezone: sub.schedulingTimezone,
+        },
+        lastDelivered,
+      )
+    : 1;
   const dashboardUrl = notificationHref(wrapper.organizationId, "appointments");
   const consultantName =
     sub.subscriptionPlan.consultantProfile?.user?.name ?? "Your consultant";
@@ -210,7 +228,6 @@ export async function settleSubscriptionCycleWithNotice(
       subscriptionId: sub.id,
       planTitle: sub.subscriptionPlan.title,
       consultantName,
-      cycleOrdinal,
       remainingSessions: entitlement.remaining,
       nextBatch: entitlement.cycle.nextBatch,
       dashboardUrl,
@@ -226,7 +243,6 @@ export async function settleSubscriptionCycleWithNotice(
       kind: "SUBSCRIPTION_RENEWED",
       planTitle: sub.subscriptionPlan.title,
       consultantName,
-      cycleOrdinal,
       nextBatch: entitlement.cycle.nextBatch,
       remainingSessions: entitlement.remaining,
       dashboardUrl,

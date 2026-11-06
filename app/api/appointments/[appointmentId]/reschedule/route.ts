@@ -1,4 +1,8 @@
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
+import {
+  isTooSoonFor,
+  RESCHEDULE_MIN_LEAD_HOURS,
+} from "@/lib/booking/lead-time";
 import * as Sentry from "@sentry/nextjs";
 import {
   applyRateLimit,
@@ -22,7 +26,6 @@ import type {
 } from "@prisma/client";
 import { RescheduleProposalSchema } from "@/schemas/appointments";
 import {
-  RESCHEDULE_MIN_LEAD_HOURS,
   autoConfirmRefusalIsFinal,
   autoConfirmTimesTaken,
   computeProposalExpiry,
@@ -45,7 +48,6 @@ import { stageAppointmentRescheduledEmail } from "@/lib/email/senders/booking";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
-import { logActivity } from "@/lib/activity/log-activity";
 import {
   dropRefusedProposalTimes,
   tryAutoConfirmProposal,
@@ -76,6 +78,10 @@ import {
 } from "@/lib/booking/reschedule-caps";
 import type { AppointmentType } from "@/lib/payments/payouts/constants";
 import { releasedSessionsOf } from "@/lib/booking/released-sessions";
+import {
+  RELEASE_ONE_WEEK_MESSAGE,
+  spansPlanWeeks,
+} from "@/lib/booking/release-weeks";
 
 const RESCHEDULE_REALLOCATION_BUFFER_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -455,11 +461,14 @@ export async function POST(
               );
             }
           }
-          const earliestAllowedProposal =
-            now.getTime() + RESCHEDULE_MIN_LEAD_HOURS * 3_600_000;
           if (
-            proposedSlots?.some(
-              (s) => s.startsAt.getTime() < earliestAllowedProposal,
+            proposedSlots?.some((s) =>
+              isTooSoonFor(
+                "reschedule",
+                { settled: true },
+                s.startsAt.getTime(),
+                now.getTime(),
+              ),
             )
           ) {
             throw Object.assign(
@@ -468,6 +477,29 @@ export async function POST(
               ),
               { httpStatus: 400, code: "PROPOSAL_TOO_SOON" },
             );
+          }
+
+          // A released batch is re-placed into one plan week, so a release
+          // across two weeks is refused before any confirmed time moves.
+          const plan = appointment.subscription?.subscriptionPlan;
+          if (
+            appointment.subscription &&
+            plan &&
+            spansPlanWeeks(
+              {
+                sessionsPerWeek: plan.sessionsPerWeek,
+                durationInMonths: plan.durationInMonths,
+                schedulingPeriodStartsAt:
+                  appointment.subscription.schedulingPeriodStartsAt,
+                schedulingTimezone: appointment.subscription.schedulingTimezone,
+              },
+              slotsToReschedule.map((s) => s.startsAt),
+            )
+          ) {
+            throw Object.assign(new Error(RELEASE_ONE_WEEK_MESSAGE), {
+              httpStatus: 409,
+              code: "RELEASE_ONE_WEEK",
+            });
           }
 
           // One open reschedule per booking: a second release (a double
@@ -804,16 +836,8 @@ export async function POST(
               rescheduleType === "entire_booking"
                 ? "All sessions marked for rescheduling. Please select new times."
                 : `${sessionsAffected} session(s) marked for rescheduling. Please select new time(s).`,
-            // B14 — context for the post-tx activity log (appointment is only
-            // in scope inside this callback).
+            // The parent ids the post-commit proposal read needs; appointment is only in scope here.
             logContext: {
-              cpId:
-                appointment.consultation?.consultationPlan
-                  ?.consultantProfileId ??
-                appointment.subscription?.subscriptionPlan
-                  ?.consultantProfileId ??
-                null,
-              appointmentType: appointment.appointmentType,
               consultationId: appointment.consultation?.id,
               subscriptionId: appointment.subscription?.id,
             },
@@ -911,20 +935,6 @@ export async function POST(
           }),
         );
       }
-    }
-
-    // B14 — reschedule now leaves an activity-log entry (cancel always did).
-    if (result.logContext.cpId) {
-      await logActivity({
-        activityType: "APPOINTMENT_RESCHEDULED",
-        description: `Appointment reschedule requested (${result.logContext.appointmentType.toLowerCase()})`,
-        actorId: session.user.id,
-        actorName: session.user.name || "User",
-        actorImage: session.user.image,
-        consultantProfileId: result.logContext.cpId,
-        consultationId: result.logContext.consultationId,
-        subscriptionId: result.logContext.subscriptionId,
-      });
     }
 
     // Fire-and-forget: notify both parties about reschedule

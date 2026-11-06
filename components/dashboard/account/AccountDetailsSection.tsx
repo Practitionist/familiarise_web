@@ -306,8 +306,7 @@ function AvatarEditor({
 }
 
 /**
- * #1527 §14 — name, photo, phone, address and timezone, from the retired
- * `/profile` page. Saves through the same `PUT /api/user/:id` it used.
+ * Name, photo, phone, address and timezone. Saves through `PUT /api/user/:id`.
  */
 export function AccountDetailsSection() {
   const { data: session } = useSession();

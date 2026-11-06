@@ -1,8 +1,8 @@
 /**
  * A small in-memory table whose `where` matching honours the predicates the
  * money paths repeat in their CAS writes (equality, null, `in` / `notIn` /
- * `not`, range operators, `OR` / `AND` / `NOT`, to-one relations and
- * `some` / `none` on to-many relations), so a double that ignored a predicate
+ * `not`, range operators, `OR` / `AND` / `NOT`, to-one relations bare or
+ * under `is`, and `some` / `none` on to-many relations), so a double that ignored a predicate
  * cannot make a guarded write look safe.
  */
 
@@ -18,6 +18,7 @@ const OPERATORS = [
   "lt",
   "lte",
   "startsWith",
+  "is",
   "some",
   "none",
 ];
@@ -62,6 +63,11 @@ function matchesOperators(actual: unknown, f: Where): boolean {
   if ("startsWith" in f) {
     if (typeof actual !== "string") return false;
     if (!actual.startsWith(String(f.startsWith))) return false;
+  }
+  if ("is" in f) {
+    if (f.is === null) return actual === null || actual === undefined;
+    if (!actual || typeof actual !== "object") return false;
+    if (!matchesWhere(actual as Row, f.is as Where)) return false;
   }
   if ("some" in f) {
     if (!Array.isArray(actual)) return false;
@@ -137,8 +143,20 @@ function pick(row: Row, select?: Row): Row {
   return out;
 }
 
-/** The CRUD surface the money paths use, over a caller-owned row array. */
-export function memTable(rows: Row[], idPrefix = "row") {
+/**
+ * The CRUD surface the money paths use, over a caller-owned row array.
+ * `unique` lists opt-in compound keys that `createMany` enforces, skipping a
+ * clash under `skipDuplicates` and throwing otherwise, as Postgres would.
+ */
+export function memTable(
+  rows: Row[],
+  idPrefix = "row",
+  opts: { unique?: string[][] } = {},
+) {
+  const clashes = (d: Row) =>
+    (opts.unique ?? []).some((key) =>
+      rows.some((r) => key.every((k) => sameValue(r[k], d[k]))),
+    );
   return {
     rows,
     findMany: jest.fn(async (args: { where?: Where; select?: Row } = {}) =>
@@ -174,11 +192,19 @@ export function memTable(rows: Row[], idPrefix = "row") {
       rows.push(row);
       return { ...row };
     }),
-    createMany: jest.fn(async (args: { data: Row[] }) => {
-      for (const d of args.data) {
-        rows.push({ id: `${idPrefix}-${rows.length + 1}`, ...d });
-      }
-      return { count: args.data.length };
-    }),
+    createMany: jest.fn(
+      async (args: { data: Row[]; skipDuplicates?: boolean }) => {
+        let count = 0;
+        for (const d of args.data) {
+          if (clashes(d)) {
+            if (args.skipDuplicates) continue;
+            throw new Error("Unique constraint failed");
+          }
+          rows.push({ id: `${idPrefix}-${rows.length + 1}`, ...d });
+          count++;
+        }
+        return { count };
+      },
+    ),
   };
 }

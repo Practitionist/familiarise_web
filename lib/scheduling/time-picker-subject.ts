@@ -4,7 +4,13 @@ import {
   toOccurrenceLike,
   type OccurrenceLike,
 } from "@/lib/appointments/view-model";
-import { subscriptionPlanEnd } from "@/lib/booking/entitlement";
+import {
+  sessionsTotalOf,
+  soldSessionMinutes,
+  soldSessionsPerWeek,
+  soldTermsOf,
+  subscriptionPlanEnd,
+} from "@/lib/booking/entitlement";
 
 /**
  * Turns one appointment into everything a reschedule page needs.
@@ -57,6 +63,36 @@ function liveFutureSlots(detail: TAppointmentDetail): OccurrenceLike[] {
 }
 
 /**
+ * A sold 1:1 plan's picker terms: the frozen length and weekly cap, the
+ * schedulable total and the entitlement a reschedule window is cut from.
+ */
+function soldPlanFields(appointment: TAppointmentDetail["appointment"]) {
+  const subscription = appointment.subscription;
+  const plan = subscription?.subscriptionPlan;
+  if (!subscription || !plan) return {};
+  const sold = { ...subscription, subscriptionPlan: plan };
+  return {
+    sessionDurationInHours: soldSessionMinutes(sold) / 60,
+    sessionsPerWeek: soldSessionsPerWeek(sold),
+    totalSessions: sessionsTotalOf(sold) - subscription.sessionsRefunded,
+    rescheduleEntitlement: {
+      ...soldTermsOf(sold),
+      schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
+      schedulingTimezone: subscription.schedulingTimezone,
+      planEndsAt: subscription.planEndsAt ?? null,
+      occurrences: appointment.occurrences.map((o) => ({
+        id: o.id,
+        startsAt: o.startsAt,
+        endsAt: o.endsAt,
+        completionStatus: o.completionStatus,
+        isTentative: o.isTentative,
+        deletedAt: o.deletedAt,
+      })),
+    },
+  };
+}
+
+/**
  * Consultant, consultee, session length and copy for one booking.
  *
  * Returns null when the booking has no consultant to draw a grid for, which
@@ -87,6 +123,7 @@ export function buildRescheduleSubject(
     schedulingTimezone?: string;
     sessionsPerWeek?: number;
     totalSessions?: number;
+    rescheduleEntitlement?: TimePickerSubject["rescheduleEntitlement"];
   } | null => {
     switch (appointment.appointmentType) {
       case "CONSULTATION": {
@@ -115,7 +152,6 @@ export function buildRescheduleSubject(
           consulteeName: subscription?.requestedBy?.user?.name,
           title: plan?.title ?? "Subscription",
           typeLabel: "Subscription",
-          sessionDurationInHours: plan?.sessionDurationInHours,
           eventType: "subscription",
           eventId: subscription?.id ?? undefined,
           // The plan's scheduling period and cadence. Omitting these drew an
@@ -129,8 +165,7 @@ export function buildRescheduleSubject(
             ? subscriptionPlanEnd(subscription)
             : undefined,
           schedulingTimezone: subscription?.schedulingTimezone,
-          sessionsPerWeek: plan?.sessionsPerWeek,
-          totalSessions: plan?.totalSessions,
+          ...soldPlanFields(appointment),
         };
       }
       case "WEBINAR": {
@@ -222,6 +257,7 @@ export function buildRescheduleSubject(
       schedulingTimezone: resolved.schedulingTimezone,
       sessionsPerWeek: resolved.sessionsPerWeek,
       totalSessions: resolved.totalSessions,
+      rescheduleEntitlement: resolved.rescheduleEntitlement,
       slots,
       // Tentative sessions mean a move is already in flight — pin the count
       // for allocate-path stale-tab guards if this subject is reused there.

@@ -41,7 +41,7 @@ The central rule is that Postgres is the source of truth and Stream is a project
 | Recordings and their retention                | Postgres: `Recording`                                          | The recording webhooks, the copy job and the expiry job.                                                   | A 14-day copy and the raw video.                                                  |
 | Message text and unread counters              | Stream                                                         | Users, through the client SDK under Stream's role grants.                                                  | Everything. The platform never stores message text.                               |
 
-Stream is the owner of exactly one thing: message content. Everything else it holds is rebuilt from Postgres if it is lost. Two consequences follow. First, no Stream call is ever made inside a Postgres transaction, because Prisma runs on a single connection on Netlify (`PG_POOL_MAX=1`) and a network wait there would stall every query. Second, every state change that matters is a compare-and-set (a conditional `updateMany` whose `WHERE` carries the expected prior state), so a webhook arriving late or twice cannot move a row backwards.
+Stream also holds a small identity record per user: id, display name, avatar and role, built only by `toStreamUser()` (`lib/stream/user-payload.ts`). New upserts never send an email address or other contact detail, because Stream shows a user's fields to every co-member of a channel. Users written before that rule may still carry an email until the scheduled `stream-sync` job reaches them and unsets it. Stream is the owner of exactly one thing: message content. Everything else it holds is rebuilt from Postgres if it is lost. Two consequences follow. First, no Stream call is ever made inside a Postgres transaction, because Prisma runs on a single connection on Netlify (`PG_POOL_MAX=1`) and a network wait there would stall every query. Second, every state change that matters is a compare-and-set (a conditional `updateMany` whose `WHERE` carries the expected prior state), so a webhook arriving late or twice cannot move a row backwards.
 
 ## 3. Component map
 
@@ -175,7 +175,7 @@ sequenceDiagram
   S->>P: upsert MeetingPresence
 ```
 
-The enforcers are `resolveMeetingAccess` (`lib/meetings/access.ts`) for who may enter and when, and `guardMeetingRoute` (`lib/meetings/route-guard.ts`) for authentication, the per-user rate limit and the "Stream is configured" check. In a 1:N room only the host keeps publish permissions, and the join route skips the membership write when Stream already shows the caller with the right role, because that write is broadcast to the whole room.
+The enforcers are `resolveMeetingAccess` (`lib/meetings/access.ts`) for who may enter and when, and `guardMeetingRoute` (`lib/meetings/route-guard.ts`) for authentication, the per-user rate limit and the "Stream is configured" check. An attendee of a webinar or class is admitted on their seat alone, so the seat must hold a fulfilled entitlement (`paidParticipant`): a confirmed or attended seat with a `SUCCEEDED` payment or none, or a held seat whose `SUCCEEDED` capture owes no refund, has no pending or completed refund, and carries no settled-elsewhere marker (auto-refund, `REQUIRES_MANUAL_RECOVERY:` or replay sale). In a 1:N room only the host keeps publish permissions, and the join route skips the membership write when Stream already shows the caller with the right role, because that write is broadcast to the whole room.
 
 ### 5.2 End and host reopen
 
@@ -361,8 +361,8 @@ a stale claim preserves its consumed attempt. All five lifecycle cores also fail
 closed on unavailable ownership. The adapters have no independent schedules.
 
 `/api/health/jobs` requires a successful environment-scoped transfer completion
-within 45 minutes, session recovery within 90 minutes, and each daily lifecycle
-capability within 27 hours. Admission cannot satisfy completion health. The risk
+within 60 minutes, session recovery within 90 minutes, and each daily lifecycle
+capability within 28.5 hours (budgets derived from the schedule). Admission cannot satisfy completion health. The risk
 alarm samples at most 100 READY Stream sources with a future expiry that is within
 72 hours or with at least three attempts. Each recording is conditionally claimed
 for an alarm at most once per six hours; expired sources are excluded. Alert

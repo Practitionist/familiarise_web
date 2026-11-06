@@ -35,17 +35,22 @@ export interface PinnedCta {
 
 /**
  * The header Help menu's private rows (#1527). The Help Center (`/support`)
- * is always there; these point at the viewer's own Support requests page.
+ * is always there; these point at the viewer's own Support cases page.
  */
 export interface SupportLinks {
   requestsHref: string;
+  /** The Help menu row label for the personal Support cases page. */
+  label: string;
   /** The separate product feedback page, when available. */
   feedbackHref: string | null;
 }
 
 /** Personal help destinations share an area, not a support conversation. */
-export function personalSupportLinks(requestsHref: string): SupportLinks {
-  return { requestsHref, feedbackHref: `${requestsHref}/feedback` };
+export function personalSupportLinks(
+  requestsHref: string,
+  label = "Support cases",
+): SupportLinks {
+  return { requestsHref, label, feedbackHref: `${requestsHref}/feedback` };
 }
 
 export interface DashboardNav {

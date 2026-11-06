@@ -1,4 +1,4 @@
-import prisma from "@/lib/prisma";
+import { getSubDomains } from "@/lib/data/taxonomy";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
@@ -6,12 +6,7 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const domainId = searchParams.get("domainId");
 
-    const subDomains = await prisma.subDomain.findMany({
-      where: domainId ? { domainId } : undefined,
-      include: {
-        domain: true,
-      },
-    });
+    const subDomains = await getSubDomains(domainId ?? undefined);
 
     return NextResponse.json(subDomains);
   } catch (error) {

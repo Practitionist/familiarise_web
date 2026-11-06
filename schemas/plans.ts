@@ -331,6 +331,14 @@ export const SubscriptionPlanSchema = z.object({
     .number()
     .min(1, "Duration must be at least 1 month")
     .max(24, "Duration cannot exceed 24 months"),
+  // A weeks plan's length; null keeps a months plan. Months are derived from it.
+  durationInWeeks: z
+    .number()
+    .int("Weeks must be a whole number")
+    .min(1, "A plan runs at least 1 week")
+    .max(52, "A plan runs at most 52 weeks")
+    .nullable()
+    .optional(),
   price: priceSchema,
   priceCurrency: z.nativeEnum(Currency).default(Currency.INR),
   trialEnabled: z.boolean().optional(),

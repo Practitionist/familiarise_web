@@ -5,8 +5,8 @@
  * ordinal, held by the day-14 deadline) or every seat that held it is
  * refunded one unit by the settle sweep. A cancelled session keeps no
  * `deletedAt`, so it stays countable: every host cancellation is a miss, made
- * up or not, and three misses (or a quarter of the series) give the learners
- * the right to leave with every undelivered session refunded.
+ * up or not, and 3 host misses inside 30 days (or max(3, 15 % of N) misses in
+ * all) give the learners the right to leave with every undelivered session refunded.
  */
 
 import { OccurrenceCompletionStatus, Prisma } from "@prisma/client";
@@ -72,9 +72,9 @@ import {
 } from "./retime-leave";
 import { MAKEUP_WINDOW_DAYS, MISS_WHERE, missedAt } from "./misses";
 import {
-  exitRightFor,
+  reliabilityThresholdMet,
   seatLedger,
-  seriesLedger,
+  seriesLedgerAfterMiss,
   type SeriesLedger,
 } from "./class-series";
 
@@ -192,8 +192,8 @@ export function reliabilityFlagDue(
 
 /**
  * The reliability flag when due, and the exit-right bells when the right first
- * trips. #1569 D6 — every miss counts toward the learner's exit right; only a
- * host-attributed one (a cancel, CUT_SHORT, HOST_ABSENT) can raise the flag.
+ * trips. Every miss counts toward the exit right's total; only host-attributed
+ * ones (a cancel, CUT_SHORT, HOST_ABSENT) count in its 30-day window and raise the flag.
  */
 async function onExitRightTripped(
   tx: Tx,
@@ -206,7 +206,7 @@ async function onExitRightTripped(
   exitEmailArgs: ClassExitAvailableEmailArgs | null;
 }> {
   const correlationId = `class-reliability:${hosted.cls.id}`;
-  if (opts.hostAttributed && exitRightFor(ledger.hostMisses, ledger.N)) {
+  if (opts.hostAttributed && reliabilityThresholdMet(ledger)) {
     const latest = await tx.systemEvent.findFirst({
       where: { correlationId },
       orderBy: { createdAt: "desc" },
@@ -328,14 +328,19 @@ export async function cancelClassSession(
           dashboardUrl,
         };
       }
-      const ledger = await seriesLedger(tx, appointmentId, now);
+      const { ledger, heldBefore } = await seriesLedgerAfterMiss(
+        tx,
+        appointmentId,
+        { occurrenceId },
+        now,
+      );
       // Past the threshold every miss re-checks the flag (an ops clear may
       // precede it); the learners' bells go out only on the first trip.
       if (ledger.exitRight) {
         const exit = await onExitRightTripped(tx, hosted, ledger, seatUserIds, {
           missedAt: now,
           hostAttributed: true,
-          firstTrip: !exitRightFor(ledger.misses - 1, ledger.N),
+          firstTrip: !heldBefore,
         });
         bells.push(...exit.bells);
         exitEmailArgs = exit.exitEmailArgs;
@@ -411,6 +416,8 @@ export async function onClassSessionVoided(
     startsAt: Date;
     voidedAt: Date;
     hostAttributed: boolean;
+    /** An existing void newly blamed on the host: the miss itself is not new. */
+    relabelled?: boolean;
   },
 ): Promise<{
   bells: StagedTrigger[];
@@ -469,12 +476,17 @@ export async function onClassSessionVoided(
       dashboardUrl,
     };
   }
-  const ledger = await seriesLedger(tx, args.appointmentId, args.voidedAt);
+  const { ledger, heldBefore } = await seriesLedgerAfterMiss(
+    tx,
+    args.appointmentId,
+    { occurrenceId: args.occurrenceId, relabelled: args.relabelled },
+    args.voidedAt,
+  );
   if (ledger.exitRight) {
     const exit = await onExitRightTripped(tx, hosted, ledger, seatUserIds, {
       missedAt: args.voidedAt,
       hostAttributed: args.hostAttributed,
-      firstTrip: !exitRightFor(ledger.misses - 1, ledger.N),
+      firstTrip: !heldBefore,
     });
     bells.push(...exit.bells);
     exitEmailArgs = exit.exitEmailArgs;

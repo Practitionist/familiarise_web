@@ -1203,6 +1203,8 @@ describe("Cancel Route Handler - POST", () => {
             // Pinned to the status this cancel read in its own transaction.
             in: ["SCHEDULED"],
           },
+          // Pinned to the removed-session count the quote was priced on.
+          sessionsRefunded: 0,
         },
         data: expect.objectContaining({
           status: "CANCELLED",

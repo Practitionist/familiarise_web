@@ -10,13 +10,18 @@ jest.mock("../../lib/support/case-access", () => ({
   ...jest.requireActual("../../lib/support/case-access"),
   visibleCaseWhere: jest.fn(async () => ({ deletedAt: null })),
   canCorrespondOnCase: jest.fn(async () => true),
+  isPresenterOnCase: jest.fn(async () => false),
 }));
 jest.mock("../../lib/support/case-workspace", () => ({
   TIMELINE_LIMIT: 200,
   readPayment: jest.fn(async () => null),
 }));
 import { readOwnSupportCase } from "../../lib/support/own-case-read";
-import { canCorrespondOnCase } from "../../lib/support/case-access";
+import {
+  canCorrespondOnCase,
+  isPresenterOnCase,
+} from "../../lib/support/case-access";
+import { readPayment } from "../../lib/support/case-workspace";
 
 const db = jest.requireMock<{
   default: {
@@ -27,6 +32,8 @@ const db = jest.requireMock<{
 const cases = db.supportCase.findFirst;
 const messages = db.supportCaseMessage.findMany;
 const access = jest.mocked(canCorrespondOnCase);
+const presenter = jest.mocked(isPresenterOnCase);
+const payment = jest.mocked(readPayment);
 const now = new Date("2026-10-19T10:00:00Z");
 const fixture = {
   id: "case-1",
@@ -50,6 +57,7 @@ const fixture = {
 beforeEach(() => {
   jest.clearAllMocks();
   access.mockResolvedValue(true);
+  presenter.mockResolvedValue(false);
   messages.mockResolvedValue([]);
 });
 
@@ -62,7 +70,9 @@ it("reads only canonical rows with a private-message exclusion and returns curre
     resolvedAt: now.toISOString(),
     csatRating: 4,
     canReply: true,
+    viewerIsPresenter: false,
   });
+  expect(presenter).not.toHaveBeenCalled();
   expect(messages).toHaveBeenCalledWith(
     expect.objectContaining({
       where: { caseId: "case-1", isInternal: false },
@@ -96,7 +106,7 @@ it("returns a summary without fetching transcript for the subject of a personal 
   cases.mockResolvedValue({ ...fixture, submitterUserId: "org-operator" });
   const view = await readOwnSupportCase("case-1", "user-1");
   expect(view).toMatchObject({
-    subject: "Organization support request",
+    subject: "Organization support case",
     timeline: [],
     payment: null,
     csatRating: null,
@@ -114,4 +124,82 @@ it("retains the transcript for an authorized organization successor", async () =
   });
   await readOwnSupportCase("case-1", "successor");
   expect(messages).toHaveBeenCalled();
+});
+
+it("gives an accepted presenter the public thread without payment, CSAT or reopen", async () => {
+  access.mockResolvedValue(false);
+  presenter.mockResolvedValue(true);
+  cases.mockResolvedValue({ ...fixture, appointmentId: "appt-1" });
+  messages.mockResolvedValue([
+    {
+      id: "m1",
+      seq: 1,
+      sender: "USER",
+      body: "hello",
+      createdAt: now,
+      metadata: null,
+      authorUser: null,
+    },
+    {
+      id: "m2",
+      seq: 2,
+      sender: "AGENT",
+      body: "Presenter here",
+      createdAt: now,
+      metadata: { actorKind: "PRESENTER" },
+      authorUser: { name: "Dr Rao" },
+    },
+  ]);
+  const view = await readOwnSupportCase("case-1", "presenter");
+  expect(view).toMatchObject({
+    canReply: true,
+    viewerIsPresenter: true,
+    payment: null,
+    csatRating: null,
+    filedByOrganizationNotice: false,
+  });
+  expect(view?.timeline).toHaveLength(2);
+  expect(view?.timeline[1]).toMatchObject({
+    author: "AGENT",
+    authorName: "Dr Rao",
+    actorKind: "PRESENTER",
+  });
+  expect(view?.timeline[0].actorKind).toBeUndefined();
+  expect(payment).not.toHaveBeenCalled();
+});
+
+it("refuses a selected case when its presenter grant has disappeared", async () => {
+  access.mockResolvedValue(false);
+  presenter.mockResolvedValue(false);
+  cases.mockResolvedValue({
+    ...fixture,
+    appointmentId: "appt-1",
+    subjects: [{ subjectType: "PAYMENT", subjectId: "payment-private" }],
+  });
+
+  await expect(
+    readOwnSupportCase("case-1", "removed-presenter"),
+  ).resolves.toBeNull();
+  expect(payment).not.toHaveBeenCalled();
+  expect(messages).not.toHaveBeenCalled();
+});
+
+it("keeps requester summary access after an organization grant is lost", async () => {
+  access.mockResolvedValue(false);
+  presenter.mockResolvedValue(false);
+  cases.mockResolvedValue({
+    ...fixture,
+    ownershipScope: "ORG_OPERATIONS",
+    subjects: [{ subjectType: "PAYMENT", subjectId: "payment-private" }],
+  });
+
+  await expect(readOwnSupportCase("case-1", "user-1")).resolves.toMatchObject({
+    filedByOrganizationNotice: true,
+    canReply: false,
+    payment: null,
+    csatRating: null,
+    timeline: [],
+  });
+  expect(payment).not.toHaveBeenCalled();
+  expect(messages).not.toHaveBeenCalled();
 });

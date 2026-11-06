@@ -11,7 +11,7 @@
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    consultation: { findUnique: jest.fn() },
+    consultation: { findUnique: jest.fn(), count: jest.fn(async () => 0) },
     subscription: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
     webinar: { findUnique: jest.fn() },
@@ -299,6 +299,7 @@ describe("readAllocationRequest subscription entitlement", () => {
       schedulingPeriodEndsAt: new Date("2026-02-08T23:59:59.999Z"),
       schedulingTimezone: "UTC",
       sessionsTotal: 12,
+      sessionsRefunded: 0,
       requestedBy: { userId: "user-1", user: { name: "Buyer" } },
       subscriptionPlan: {
         title: "Intensive",

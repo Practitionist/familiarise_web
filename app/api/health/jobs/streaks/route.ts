@@ -30,13 +30,11 @@ export async function GET(request: NextRequest) {
       { status: 503, headers: HEADERS },
     );
   }
-  // Targets whose core writes no execution row are left out: unknown history is a one-off.
   const jobByTarget = new Map<string, string>();
   for (const name of (request.nextUrl.searchParams.get("targets") ?? "")
     .split(",")
     .filter(isTarget)) {
-    const jobName = jobNameFor(name);
-    if (jobName !== null) jobByTarget.set(name, jobName);
+    jobByTarget.set(name, jobNameFor(name));
   }
   if (jobByTarget.size === 0) {
     return NextResponse.json({}, { headers: HEADERS });

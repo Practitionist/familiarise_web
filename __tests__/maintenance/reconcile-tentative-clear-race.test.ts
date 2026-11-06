@@ -31,6 +31,7 @@ jest.mock("../../lib/prisma", () => {
     appointment: { findMany: jest.fn().mockResolvedValue([]) },
     availabilityWindowWeekly: { groupBy: jest.fn().mockResolvedValue([]) },
     availabilityWindowCustom: { groupBy: jest.fn().mockResolvedValue([]) },
+    bookingStatusHistory: { findMany: jest.fn().mockResolvedValue([]) },
     $disconnect: jest.fn(),
   };
   return { __esModule: true, default: db };
@@ -73,6 +74,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleCalculationService", () => ({
 import prisma from "../../lib/prisma";
 import { reconcileOccurrenceAvailability } from "../../scripts/appointments/reconcile-occurrence-availability";
 import { OccurrenceCompletionStatus } from "@prisma/client";
+import { SCHEDULE_REASON } from "../../lib/booking/allocation/schedule-choice";
 
 describe("reconcile-occurrence-availability × tentative-clear race (#1424)", () => {
   it("skips a slot whose completion status changed after the cohort read", async () => {
@@ -232,12 +234,48 @@ describe("reconcile-occurrence-availability × top-up cohort (#1766)", () => {
   const allocate = jest.requireMock("../../lib/booking/allocation")
     .allocate as jest.Mock;
 
-  /** A held subscription at 2/week: `statuses` are its wrapper's rows. */
-  function heldSubscription(id: string, statuses: string[]) {
+  /** Plan-choice history; the mock applies the query's reason filter. */
+  function planHistory(rows: { entityId: string; reason: string }[]) {
+    (prisma.bookingStatusHistory.findMany as jest.Mock).mockImplementation(
+      async ({ where }: { where: { reason: string | { in: string[] } } }) =>
+        rows.filter((row) =>
+          typeof where.reason === "string"
+            ? row.reason === where.reason
+            : where.reason.in.includes(row.reason),
+        ),
+    );
+  }
+  afterEach(() => planHistory([]));
+
+  it("reads only Auto plans, so by-hand plans never take the scan's pages", async () => {
+    planHistory([
+      { entityId: "sub-auto", reason: SCHEDULE_REASON.planAuto },
+      { entityId: "sub-hand", reason: SCHEDULE_REASON.planByHand },
+      { entityId: "sub-week", reason: SCHEDULE_REASON.weekAuto },
+    ]);
+    await reconcileOccurrenceAvailability();
+    const { where } = (prisma.subscription.findMany as jest.Mock).mock
+      .calls[0][0];
+    expect(where.id).toEqual({ in: ["sub-auto"] });
+  });
+
+  // Plan weeks run from 2026-01-05 (UTC); each row names its plan week
+  // relative to the current one, so the fixture holds whatever today is.
+  const PLAN_START = Date.parse("2026-01-05T00:00:00Z");
+  const WEEK = 7 * 24 * HOUR;
+  const currentWeekStart = () =>
+    PLAN_START + Math.floor((Date.now() - PLAN_START) / WEEK) * WEEK;
+
+  /** A held subscription at 2/week: `rows` are its wrapper's rows. */
+  function heldSubscription(
+    id: string,
+    rows: Array<[completionStatus: string, weekOffset: number]>,
+  ) {
     return {
       id,
       updatedAt: new Date("2026-01-01T00:00:00Z"),
       sessionsTotal: 24,
+      sessionsRefunded: 0,
       schedulingPeriodStartsAt: new Date("2026-01-05T00:00:00Z"),
       schedulingTimezone: "UTC",
       // A plan end well ahead of the real clock: these rows are mid-plan.
@@ -250,15 +288,16 @@ describe("reconcile-occurrence-availability × top-up cohort (#1766)", () => {
         totalSessions: 48,
       },
       appointment: {
-        occurrences: statuses.map((completionStatus, i) => ({
-          startsAt: new Date(Date.now() - (statuses.length - i) * 24 * HOUR),
-          endsAt: new Date(
-            Date.now() - (statuses.length - i) * 24 * HOUR + HOUR,
-          ),
-          completionStatus,
-          isTentative: false,
-          deletedAt: null,
-        })),
+        occurrences: rows.map(([completionStatus, weekOffset], i) => {
+          const start = currentWeekStart() + weekOffset * WEEK + i * HOUR;
+          return {
+            startsAt: new Date(start),
+            endsAt: new Date(start + HOUR),
+            completionStatus,
+            isTentative: false,
+            deletedAt: null,
+          };
+        }),
       },
     };
   }
@@ -274,7 +313,10 @@ describe("reconcile-occurrence-availability × top-up cohort (#1766)", () => {
 
   it("uses the frozen sessionsTotal (24), so a spent plan is not a candidate even though the edited plan says 48", async () => {
     (prisma.subscription.findMany as jest.Mock).mockResolvedValueOnce([
-      heldSubscription("sub-spent", Array(24).fill("COMPLETED")),
+      heldSubscription(
+        "sub-spent",
+        Array.from({ length: 24 }, (): [string, number] => ["COMPLETED", -1]),
+      ),
     ]);
 
     await reconcileOccurrenceAvailability();
@@ -288,17 +330,26 @@ describe("reconcile-occurrence-availability × top-up cohort (#1766)", () => {
   });
 
   it("names a plan whose CURRENT cycle is short, and only that one", async () => {
+    // Both plans were scheduled with Auto, so the sweep may top them up.
+    planHistory([
+      { entityId: "sub-whole", reason: SCHEDULE_REASON.planAuto },
+      { entityId: "sub-short", reason: SCHEDULE_REASON.planAuto },
+    ]);
     (prisma.subscription.findMany as jest.Mock).mockResolvedValueOnce([
-      // Cycle two fully placed: nextBatch 0 → an hourly silent no-change before.
+      // This week and the next (the furthest open week) fully placed.
       heldSubscription("sub-whole", [
-        ...Array(2).fill("COMPLETED"),
-        "SCHEDULED",
-        "SCHEDULED",
+        ["COMPLETED", -1],
+        ["COMPLETED", -1],
+        ["SCHEDULED", 0],
+        ["SCHEDULED", 0],
+        ["SCHEDULED", 1],
+        ["SCHEDULED", 1],
       ]),
-      // Cycle two half placed: one session owed.
+      // This plan week half placed: one session owed.
       heldSubscription("sub-short", [
-        ...Array(2).fill("COMPLETED"),
-        "SCHEDULED",
+        ["COMPLETED", -1],
+        ["COMPLETED", -1],
+        ["SCHEDULED", 0],
       ]),
     ]);
 

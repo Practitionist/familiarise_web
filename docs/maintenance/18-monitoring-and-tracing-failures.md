@@ -72,16 +72,16 @@ The table reads the same signals.
 | Out of time budget     | `startDeadline` in `lib/cron/run-deadline.ts` stops a slice at about 16 s (`SWEEP_START_DEADLINE_MS`) and the work continues next tick. The lease TTL recovers a crashed run. Background Functions get 15 minutes      |
 | Duplicate side effects | Idempotency keys plus CAS                                                                                                                                                                                              |
 
-## 4. Gaps (filed, not built)
+## 4. Gaps: what is built and what is filed
 
-- A "needs attention" inbox with Retry buttons (issue #2424 Phase 2). It is gaps PR 1, together with the oldest-pending-age alerts below.
-- Oldest-pending-age alerts (issue #2492 holds the audit). Each tick computes the age of the oldest unprocessed row per job in Postgres and emits it as a gauge log line; the alert is a Better Stack SQL threshold. Both gaps PRs first need ingest rejections (402/403/5xx) to be visible and a freshness check, as the [2026-11-01 observability ownership decision](../decisions/2026-11-01-observability-ownership.md) requires.
-- Per-item history across runs (issue #2424 Phase 3 and issue #2453) will be batched Better Stack events. The design changed on 2026-11-01: there is **no** `SystemJobRunItem` table (section 6 explains why). It is gaps PR 2.
-- Charts beyond the Run metrics card. Every run is already a row, so SQL views in the back office or Better Stack are cheaper than Grafana.
+- **Built:** a read-only Stuck work page (`/dashboard/admin/stuck-work`, issue #2424 Phase 2 without Retry buttons) and seven oldest-pending-age gauges on the tick summary, alerted by Better Stack SQL thresholds that the owner configures. Ingest rejections (402/403/5xx) are counted on the run row, and a freshness alert fires when no tick summary arrives for 15 minutes. See the [2026-11-01 gaps decision](../decisions/2026-11-01-observability-gaps-and-launch-posture.md).
+- **Built, as a free-tier bridge:** per-item history across runs is the run row's `result.failures` (at most 50 `{ entityId, reason, attempt }` per run, kept 180 days). There is **no** `SystemJobRunItem` table (section 6 explains why).
+- **Deferred to traction:** batched per-item Better Stack events (issue #2424 Phase 3 and issue #2453), once known as gaps PR 2.
+- **Filed:** Retry buttons on the inbox (payouts: #2433), and charts beyond the Run metrics card. Every run is already a row, so SQL views in the back office or Better Stack are cheaper than Grafana.
 
 ## 5. Worked example: where is the refund for `pay_456`?
 
-This example is **planned** (gaps PR 2) and its identifiers are illustrative. Today the run row exists and the item history does not.
+The identifiers are illustrative. Today the item history is the run row's `result.failures`; the per-item Better Stack events shown in the first table are deferred to traction, and the second table is the same answer read from Postgres.
 
 The `retry-auto-refunds` job (`lib/cron/cleanup-registry.ts`) runs every 15 minutes on the ticker, at an offset of 10 minutes (`lib/cron/schedule.ts`). Its run on 2026-11-01 at 15:40 IST is one `SystemJobExecution` row, `run_8f2`, with the outcome PARTIAL (HTTP 207, `statusFor` in `lib/cron/cleanup-route.ts`) and `itemsProcessed` of 3. In the planned design the same run also sends one batched Better Stack log event per item. The table lists the three item events of that run.
 
@@ -91,7 +91,15 @@ The `retry-auto-refunds` job (`lib/cron/cleanup-registry.ts`) runs every 15 minu
 | run_8f2 | pay_456 | FAILED    | GATEWAY_TIMEOUT | 3       |
 | run_8f2 | pay_789 | SKIPPED   | LOST_CAS        |         |
 
-`LOST_CAS` means another door settled the payment between the read and the write (the compare-and-swap in `WHERE` matched zero rows), so the skip is correct and needs no action. `GATEWAY_TIMEOUT` is the interesting row. The support question "where is the refund for `pay_456`?" is answered by the history of that one entity across runs, a query on `entity_id = pay_456` in Better Stack:
+`LOST_CAS` means another door settled the payment between the read and the write (the compare-and-swap in `WHERE` matched zero rows), so the skip is correct and needs no action. `GATEWAY_TIMEOUT` is the interesting row. The support question "where is the refund for `pay_456`?" is answered by the history of that one entity across runs. Today that is a read-only query over the run rows still kept (180 days) (later, a query on `entity_id = pay_456` in Better Stack):
+
+```sql
+SELECT s."startedAt", s.id AS run, f->>'reason' AS reason, f->>'attempt' AS attempt
+FROM "SystemJobExecution" s
+CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.result->'failures', '[]'::jsonb)) AS f
+WHERE s."jobName" = 'retry-auto-refunds' AND f->>'entityId' = 'pay_456'
+ORDER BY s."startedAt";
+```
 
 | When (IST)       | Run     | Outcome | Reason          | Attempt |
 | ---------------- | ------- | ------- | --------------- | ------- |

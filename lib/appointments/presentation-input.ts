@@ -7,6 +7,7 @@
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
 import {
   sessionsTotalOf,
+  soldTermsOf,
   subscriptionEntitlement,
   type SubscriptionEntitlement,
 } from "@/lib/booking/entitlement";
@@ -65,9 +66,7 @@ export function detailEntitlement(
     return null;
   }
   return subscriptionEntitlement({
-    sessionsTotal: sub.sessionsTotal ?? plan.totalSessions,
-    sessionsPerWeek: plan.sessionsPerWeek,
-    durationInMonths: plan.durationInMonths,
+    ...soldTermsOf({ ...sub, subscriptionPlan: plan }),
     occurrences: normalizeOccurrences(a.occurrences).map((o) => ({
       ...o,
       endsAt: o.endsAt ?? o.startsAt,
@@ -242,10 +241,22 @@ function classSeriesSummary(a: Detail): BookingPresentationInput["series"] {
   };
 }
 
-function entitlementSummary(
+/**
+ * The card's entitlement facts. "Not held" is what was never placed or
+ * delivered: a placed session awaiting its outcome is not counted yet.
+ */
+export function entitlementSummary(
   e: SubscriptionEntitlement | null,
+  now = new Date(),
 ): BookingPresentationInput["entitlement"] {
-  return e ? { remaining: e.remaining, nextBatch: e.cycle.nextBatch } : null;
+  return e
+    ? {
+        remaining: e.remaining,
+        nextBatch: e.cycle.nextBatch,
+        notHeld: e.remaining,
+        planEnded: now.getTime() >= e.planEndsAt.getTime(),
+      }
+    : null;
 }
 
 /** Who pays and who delivers, by name; the derivation swaps in "you" per viewer. */

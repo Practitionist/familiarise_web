@@ -50,6 +50,7 @@ import {
 } from "@/lib/dashboard/requests-inbox-state";
 import { requestsFreshnessBadge } from "@/lib/scheduling/requestsFreshness";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import type { ViewerZone } from "@/lib/time/viewer-zone";
 import { cn } from "@/utils/tailwind";
 import { replaceUrl } from "@/lib/navigation/history";
 
@@ -59,6 +60,7 @@ import { InboxChips } from "./InboxChips";
 import {
   InboxRow,
   answerableProposal,
+  formatDateTime,
   isDialogFreeApproval,
   type RowAction,
 } from "./InboxRow";
@@ -76,6 +78,7 @@ import {
   approvedToast,
   errorSentence,
   nextReminderLine,
+  proposalAnswerToast,
 } from "./labels";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
 import {
@@ -142,6 +145,17 @@ const requestPath = (row: InboxRowInput) =>
       ? "subscriptions"
       : "consultations"
   }/${encodeURIComponent(row.id)}`;
+
+/** Answering a reschedule from the inbox: turn the client's down, or take yours back. */
+type ProposalAnswer = "keep-original" | "withdraw-proposal";
+
+/** The released time a reschedule would move away from, for the dialog copy. */
+function originalTimeOf(row: InboxRowInput, viewer: ViewerZone): string {
+  const released = row.slots.find((s) => s.completionStatus === "RESCHEDULED");
+  return released
+    ? formatDateTime(released.startsAt, viewer)
+    : "its original time";
+}
 
 /**
  * Tabs, chips, sort, page and cursor live in the URL. Writes go through `replaceUrl`,
@@ -610,6 +624,7 @@ export function RequestsInbox({
         variant: "destructive",
       });
     },
+    onSettled: invalidate,
   });
 
   const [withdrawTarget, setWithdrawTarget] = useState<InboxRowInput | null>(
@@ -647,6 +662,66 @@ export function RequestsInbox({
     },
   });
 
+  // ---- answer a reschedule (keep the original / withdraw mine) -------------
+  const [answerTarget, setAnswerTarget] = useState<{
+    row: InboxRowInput;
+    answer: ProposalAnswer;
+  } | null>(null);
+  const answerProposal = useMutation({
+    mutationFn: async ({
+      row,
+      answer,
+    }: {
+      row: InboxRowInput;
+      answer: ProposalAnswer;
+    }) => {
+      const base = `/api/appointments/${encodeURIComponent(row.appointmentId ?? "")}/reschedule`;
+      const response = await fetchWithIdentity(
+        answer === "keep-original" ? `${base}/respond` : `${base}/withdraw`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body:
+            answer === "keep-original"
+              ? JSON.stringify({ action: "decline" })
+              : undefined,
+        },
+      );
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        code?: string;
+        outcome?: string;
+      };
+      if (response.ok) {
+        return { kind: "done" as const, answer, outcome: body.outcome };
+      }
+      if (classifyProposalConflict(response.status, body.code) === "stale") {
+        return { kind: "stale" as const, answer };
+      }
+      throw new Error(
+        errorSentence(body.code, body.error ?? "Could not update the request"),
+      );
+    },
+    onSuccess: (outcome) => {
+      setAnswerTarget(null);
+      if (outcome.kind === "stale") {
+        changedElsewhere();
+        return;
+      }
+      toast({ title: proposalAnswerToast(outcome.answer, outcome.outcome) });
+      invalidate();
+    },
+    onError: (error) => {
+      setAnswerTarget(null);
+      toast({
+        title: "Couldn't update the request",
+        description: error instanceof Error ? error.message : "",
+        variant: "destructive",
+      });
+      invalidate();
+    },
+  });
+
   // ---- trial accept -------------------------------------------------------
   const [trialTarget, setTrialTarget] = useState<TrialAcceptTarget | null>(
     null,
@@ -655,7 +730,12 @@ export function RequestsInbox({
   const onAction = (row: InboxRowInput, action: RowAction) => {
     switch (action.kind) {
       case "approve":
+      case "accept-proposal":
         setApproveTarget(row);
+        return;
+      case "keep-original":
+      case "withdraw-proposal":
+        setAnswerTarget({ row, answer: action.kind });
         return;
       case "decline":
       case "trial-decline":
@@ -1086,6 +1166,53 @@ export function RequestsInbox({
                 </>
               ) : (
                 "Withdraw approval"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={answerTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !answerProposal.isPending) setAnswerTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {answerTarget?.answer === "withdraw-proposal"
+                ? "Withdraw your request?"
+                : "Keep the original time?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {answerTarget?.answer === "withdraw-proposal"
+                ? `${answerTarget.row.requester.name}'s booking goes back to ${originalTimeOf(answerTarget.row, viewer)}, if that time is still free.`
+                : answerTarget
+                  ? `We'll tell ${answerTarget.row.requester.name} you can't do the new time. Their booking stays at ${originalTimeOf(answerTarget.row, viewer)}. Nothing is refunded or cancelled.`
+                  : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={answerProposal.isPending}>
+              Back
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={answerProposal.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                if (answerTarget) answerProposal.mutate(answerTarget);
+              }}
+            >
+              {answerProposal.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                  Saving…
+                </>
+              ) : answerTarget?.answer === "withdraw-proposal" ? (
+                "Withdraw my request"
+              ) : (
+                "Keep the original time"
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

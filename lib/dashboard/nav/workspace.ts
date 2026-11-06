@@ -75,6 +75,7 @@ export function buildWorkspaceNav(
     ],
     support: {
       requestsHref: `${basePath}/support`,
+      label: "Support cases",
       feedbackHref: `${basePath}/support/feedback`,
     },
     mobileTabs: portfolio ? ["home", "activity", "billing"] : ["home"],

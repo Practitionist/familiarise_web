@@ -46,10 +46,17 @@ const key = (
   includeAppointmentDetails: false,
   consulteeUserId: "user-consultee",
   leadBucket: 1000,
+  leadMs: 15 * 60_000,
   ...overrides,
 });
 
 describe("availabilityGridEtag clock folds", () => {
+  it("a different purpose's lead time is a different tag", () => {
+    expect(availabilityGridEtag(marker(), key())).not.toBe(
+      availabilityGridEtag(marker(), key({ leadMs: 24 * 60 * 60_000 })),
+    );
+  });
+
   it("changes when the earliest live hold lapses with no row written", () => {
     // Two PENDING holds; the marker carries the earliest still-future deadline.
     const firstHold = new Date("2026-09-07T10:30:00.000Z");

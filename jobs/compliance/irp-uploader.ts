@@ -8,7 +8,8 @@
  * `irn`, `ackNumber`, `signedQrPayload`, `irpStatus`, plus retry
  * telemetry (`irpRetryCount`, `irpLastError`, `irpLastAttemptAt`).
  * When `PLATFORM_GSTIN` or any `CLEARTAX_*` setting is absent, the run
- * touches no invoice and returns `skipped: "<NAME> not configured"`.
+ * touches no invoice and returns `skipped: "<NAME> not configured"`; a set
+ * but malformed or wrong-state `PLATFORM_GSTIN` throws.
  *
  * Production approval requires:
  *   1. Sandbox credentials provisioned and end-to-end tested
@@ -33,7 +34,7 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { reportConfigSkip, type ConfigSkip } from "@/lib/cron/config-skip";
 import * as Sentry from "@sentry/nextjs";
 import { REGISTERED_OFFICE } from "@/lib/company";
-import { getPlatformSupplier } from "@/lib/pdf/supplier";
+import { platformSupplierForJob } from "@/lib/pdf/supplier";
 
 /** The seller block: the legal entity in lib/company.ts with the gated GSTIN. */
 type SellerIdentity = {
@@ -253,10 +254,9 @@ async function runIrpUploaderUnlocked(opts: {
   console.log("[cron][irp-uploader] starting");
   Sentry.logger.info("job:irp-uploader started");
 
-  // Config gate before any invoice is touched: an unset, malformed or
-  // wrong-state PLATFORM_GSTIN is an ENV outage, not a per-invoice defect, so
-  // the run is skipped and every row stays PENDING.
-  const supplier = getPlatformSupplier();
+  // Config gate before any invoice is touched: an unset PLATFORM_GSTIN skips the
+  // run and a malformed or wrong-state one throws, so every row stays PENDING.
+  const supplier = platformSupplierForJob();
   if (!supplier) {
     return configSkip("PLATFORM_GSTIN not configured");
   }
@@ -273,11 +273,9 @@ async function runIrpUploaderUnlocked(opts: {
   // would burn all twelve retries per pending invoice and permanently fail
   // them before the environment is fixed. A missing setting is an ENV
   // outage: skip the run, leave every row PENDING, recover automatically.
-  const missingCleartax = [
-    "CLEARTAX_API_KEY",
-    "CLEARTAX_GSP_TOKEN",
-    "PLATFORM_GSTIN",
-  ].filter((k) => !process.env[k]?.trim());
+  const missingCleartax = ["CLEARTAX_API_KEY", "CLEARTAX_GSP_TOKEN"].filter(
+    (k) => !process.env[k]?.trim(),
+  );
   if (missingCleartax.length > 0) {
     return configSkip(`${missingCleartax.join(", ")} not configured`);
   }

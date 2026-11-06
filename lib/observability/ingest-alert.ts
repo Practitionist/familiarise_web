@@ -14,7 +14,7 @@ export function canaryAlertRecipient(): string {
   return process.env.OBSERVABILITY_ALERT_EMAIL || supportEmail();
 }
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -105,12 +105,9 @@ export async function sendSentryIngestAlert(r: IngestCheck): Promise<boolean> {
       level: "error",
       message: "sentry-ingest-canary unhealthy",
       category: "OBSERVABILITY",
-      context: {
-        verdict: r.verdict,
-        accepted: r.accepted,
-        rejections: r.rejections,
-        detail: r.detail,
-      },
+      verdict: r.verdict,
+      accepted: r.accepted,
+      rejected: r.rejections.reduce((sum, x) => sum + x.count, 0),
     }),
   ]);
   if (email.success) await postOpsChat(buildAlertChatText(r));

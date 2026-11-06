@@ -135,6 +135,7 @@ function makeWorld() {
     },
     refund: { updateMany: jest.fn(async () => ({ count: 1 })) },
     recordingPurchase: { updateMany: jest.fn(async () => ({ count: 0 })) },
+    digitalProductPurchase: { findUnique: jest.fn(async () => null) },
     organizationInvoice: { findUnique: jest.fn(async () => null) },
     creditNote: { findUnique: jest.fn(async () => null) },
     orgAuditLog: { create: jest.fn(async () => ({})) },

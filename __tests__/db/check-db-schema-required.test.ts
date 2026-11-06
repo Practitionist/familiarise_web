@@ -17,6 +17,8 @@ import {
   baseRef,
   describeObject,
   isPresent,
+  missingObjects,
+  printedFix,
   requiredObjects,
   splitClauses,
   type LiveCatalog,
@@ -46,6 +48,28 @@ const MIXED_DIRECTION_PLAN = `
 -- AlterTable
 ALTER TABLE "ConsultationPlan" DROP COLUMN "recordingStoragePolicy", ADD COLUMN     "isFeatured" BOOLEAN NOT NULL DEFAULT false,
 ADD COLUMN     "sortOrder" INTEGER NOT NULL DEFAULT 0;
+`;
+
+/** A table the branch creates; an earlier push of the branch created it without receiptStagedAt. */
+const CREATED_TABLE_PLAN = `
+-- CreateTable
+CREATE TABLE "DigitalProductPurchase" (
+    "id" TEXT NOT NULL,
+    "productId" TEXT NOT NULL,
+    "buyerId" TEXT NOT NULL,
+    "gatewayOrderId" TEXT,
+    "gatewayPaymentId" TEXT,
+    "paymentId" TEXT,
+    "amountPaise" BIGINT NOT NULL,
+    "status" "DigitalProductPurchaseStatus" NOT NULL DEFAULT 'PENDING',
+    "firstDownloadedAt" TIMESTAMPTZ,
+    "reconciledAt" TIMESTAMPTZ,
+    "receiptStagedAt" TIMESTAMPTZ,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMPTZ NOT NULL,
+
+    CONSTRAINT "DigitalProductPurchase_pkey" PRIMARY KEY ("id")
+);
 `;
 
 describe("the plan reader", () => {
@@ -99,16 +123,17 @@ ALTER TYPE "SupportCaseStatus" ADD VALUE 'ON_HOLD';
     // the ORIGINAL type as well.
     expect(required.map((r) => r.kind)).toEqual([
       "table",
+      "column",
       "enumType",
       "enumValue",
       "enumValue",
       "enumValue",
     ]);
-    expect(required[2].owner).toBe("LedgerAccountKind");
-    expect(required[2].name).toBe("CASH");
-    expect(required[3].name).toBe("WALLET");
-    expect(required[4].owner).toBe("SupportCaseStatus");
-    expect(required[4].name).toBe("ON_HOLD");
+    expect(required[3].owner).toBe("LedgerAccountKind");
+    expect(required[3].name).toBe("CASH");
+    expect(required[4].name).toBe("WALLET");
+    expect(required[5].owner).toBe("SupportCaseStatus");
+    expect(required[5].name).toBe("ON_HOLD");
   });
 
   it("requires every label of a recreated enum, because the plan carries no ADD VALUE", () => {
@@ -129,6 +154,58 @@ ALTER TYPE "SupportCaseStatus" ADD VALUE 'ON_HOLD';
     expect(values[2].ddl).toBe(
       `ALTER TYPE "SupportCaseStatus" ADD VALUE IF NOT EXISTS 'ON_HOLD';`,
     );
+  });
+
+  it("requires each column of a created table, not only the table", () => {
+    const required = requiredObjects(CREATED_TABLE_PLAN);
+    expect(required[0]).toMatchObject({
+      kind: "table",
+      name: "DigitalProductPurchase",
+    });
+    const columns = required.filter((r) => r.kind === "column");
+    expect(columns).toHaveLength(13);
+    expect(columns.every((c) => c.owner === "DigitalProductPurchase")).toBe(
+      true,
+    );
+    expect(columns.find((c) => c.name === "receiptStagedAt")?.ddl).toBe(
+      'ALTER TABLE "DigitalProductPurchase" ADD COLUMN "receiptStagedAt" TIMESTAMPTZ;',
+    );
+  });
+
+  it("keeps a created column's default literal byte for byte", () => {
+    const plan = `CREATE TABLE "Note" (
+    "id" TEXT NOT NULL,
+    "label" TEXT NOT NULL DEFAULT 'two  spaces',
+
+    CONSTRAINT "Note_pkey" PRIMARY KEY ("id")
+);`;
+    expect(requiredObjects(plan).find((r) => r.name === "label")?.ddl).toBe(
+      `ALTER TABLE "Note" ADD COLUMN "label" TEXT NOT NULL DEFAULT 'two  spaces';`,
+    );
+  });
+
+  it("reports a created table's missing column past a semicolon in a quoted default", () => {
+    // Verbatim `migrate diff --from-empty --script` for a `@default("alpha;beta")` field.
+    const plan = `-- CreateSchema
+CREATE SCHEMA IF NOT EXISTS "public";
+
+-- CreateTable
+CREATE TABLE "ReviewNote" (
+    "id" TEXT NOT NULL,
+    "label" TEXT NOT NULL DEFAULT 'alpha;beta',
+    "receiptStagedAt" TIMESTAMP(3),
+
+    CONSTRAINT "ReviewNote_pkey" PRIMARY KEY ("id")
+);`;
+    const live: LiveCatalog = {
+      tables: new Set(["ReviewNote"]),
+      columns: new Set(["ReviewNote.id", "ReviewNote.label"]),
+      enumTypes: new Set(),
+      enumValues: new Set(),
+    };
+    expect(
+      missingObjects(requiredObjects(plan), live).map(describeObject),
+    ).toEqual(["ReviewNote.receiptStagedAt"]);
   });
 
   it("reads an empty plan as nothing to require", () => {
@@ -189,6 +266,41 @@ describe("the live catalog comparison", () => {
     expect(isPresent(sortOrder, catalog)).toBe(false);
   });
 
+  it("misses a column a created table lacks when the table already exists", () => {
+    const columns = [
+      "id",
+      "productId",
+      "buyerId",
+      "gatewayOrderId",
+      "gatewayPaymentId",
+      "paymentId",
+      "amountPaise",
+      "status",
+      "firstDownloadedAt",
+      "reconciledAt",
+      "createdAt",
+      "updatedAt",
+    ].map((c) => `DigitalProductPurchase.${c}`);
+    const live: LiveCatalog = {
+      tables: new Set(["DigitalProductPurchase"]),
+      columns: new Set(columns),
+      enumTypes: new Set(),
+      enumValues: new Set(),
+    };
+    const missing = missingObjects(requiredObjects(CREATED_TABLE_PLAN), live);
+    expect(missing.map(describeObject)).toEqual([
+      "DigitalProductPurchase.receiptStagedAt",
+    ]);
+  });
+
+  it("reports a missing created table once, not once per column", () => {
+    const missing = missingObjects(
+      requiredObjects(CREATED_TABLE_PLAN),
+      catalog,
+    );
+    expect(missing.map(describeObject)).toEqual(["DigitalProductPurchase"]);
+  });
+
   it("does not require the replacement type Prisma builds for a shrunken enum", () => {
     // The branch's code uses the ORIGINAL type, which the database already has.
     // The `_new` type is Prisma's own scaffolding.
@@ -226,6 +338,32 @@ describe("the live catalog comparison", () => {
         catalog,
       ),
     ).toBe(false);
+  });
+});
+
+describe("the printed fix", () => {
+  it("flags a NOT NULL column with no default, which a table with rows rejects", () => {
+    expect(
+      printedFix({
+        kind: "column",
+        owner: "Note",
+        name: "body",
+        ddl: 'ALTER TABLE "Note" ADD COLUMN "body" TEXT NOT NULL;',
+      }),
+    ).toBe(
+      'ALTER TABLE "Note" ADD COLUMN "body" TEXT NOT NULL;  -- NOT NULL with no default: fails if "Note" already has rows',
+    );
+  });
+
+  it("prints a column with a default, or a nullable one, as is", () => {
+    for (const ddl of [
+      'ALTER TABLE "Note" ADD COLUMN "pinned" BOOLEAN NOT NULL DEFAULT false;',
+      'ALTER TABLE "Note" ADD COLUMN "seenAt" TIMESTAMPTZ;',
+    ]) {
+      expect(
+        printedFix({ kind: "column", owner: "Note", name: "x", ddl }),
+      ).toBe(ddl);
+    }
   });
 });
 

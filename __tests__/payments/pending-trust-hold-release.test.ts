@@ -224,7 +224,7 @@ describe("releaseHeldEarnings restores the recorded prior", () => {
     },
   );
 
-  it("falls back to the hold-window rule for a NULL prior: READY once matured, PENDING until", async () => {
+  it("a row with no recorded prior returns to PENDING even when matured, so the release job's guards decide READY", async () => {
     const { store, tx } = storeWith([
       earning("matured-row", HELD, { holdUntil: matured }),
       earning("waiting-row", HELD, { holdUntil: notYet }),
@@ -240,7 +240,7 @@ describe("releaseHeldEarnings restores the recorded prior", () => {
     await releaseHeldEarnings(tx, "waiting-row", "lifted", "adm-1");
 
     expect(store.consultant.map((s) => s.status)).toEqual([
-      EarningStatus.READY,
+      EarningStatus.PENDING,
       EarningStatus.PENDING,
     ]);
   });

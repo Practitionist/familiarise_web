@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useSearchParams, useSelectedLayoutSegment } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Plus, SlidersHorizontal } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
@@ -30,6 +30,7 @@ import { cn } from "@/utils/tailwind";
 import { CaseList } from "./CaseList";
 import { StaffSupportComposeDialog } from "./StaffSupportComposeDialog";
 import { supportKeys } from "@/lib/support/support-keys";
+import styles from "./support-layout.module.css";
 
 const ANY = "any";
 const withAny = (
@@ -105,18 +106,35 @@ export function SupportInboxShell({
     list.setFilter(key, value === ANY ? null : value);
   const searchSuffix = search ? `?${search}` : "";
   const [composeOpen, setComposeOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [searchReset, setSearchReset] = useState(0);
+  const activeFilterCount = INBOX_FILTER_KEYS.filter(
+    (key) => key !== "view" && f[key] !== null,
+  ).length;
+  const clearFilters = () => {
+    setSearchReset((reset) => reset + 1);
+    list.setParams({
+      q: "",
+      filters: Object.fromEntries(
+        INBOX_FILTER_KEYS.filter((key) => key !== "view").map((key) => [
+          key,
+          null,
+        ]),
+      ),
+    });
+  };
 
   return (
-    <div className="space-y-3">
+    <div
+      className={cn(styles.inbox, "space-y-3")}
+      data-case-open={Boolean(caseKey)}
+    >
       <PageHeader
         title="Support inbox"
-        className="mb-0"
+        className={cn(styles.header, "mb-0")}
         actions={
           <div className="flex flex-wrap items-center gap-3">
-            <StatsLine
-              basePath={basePath}
-              className={cn(caseKey && "hidden lg:flex")}
-            />
+            <StatsLine basePath={basePath} className={styles.stats} />
             <Button
               size="sm"
               variant="outline"
@@ -127,7 +145,7 @@ export function SupportInboxShell({
           </div>
         }
       />
-      <div className={cn("space-y-3", caseKey && "hidden lg:block")}>
+      <div className={cn(styles.browseTools, "space-y-3")}>
         <Tabs
           value={view}
           onValueChange={(v) =>
@@ -143,123 +161,134 @@ export function SupportInboxShell({
           </TabsList>
         </Tabs>
         <FilterBar
+          key={searchReset}
           search={{
             label: "Search cases",
             placeholder: "Name, email, subject or reference",
             value: list.q,
             onChange: list.setQ,
           }}
-          selects={[
-            {
-              key: "sort",
-              label: "Sort",
-              value:
-                f.sort ??
-                (view === "needs-reply" || view === "sla-at-risk"
-                  ? "sla"
-                  : "activity"),
-              options: [
-                { value: "activity", label: "Latest activity" },
-                { value: "sla", label: "Nearest SLA deadline" },
-              ],
-              onChange: pick("sort"),
-            },
-            {
-              key: "scope",
-              label: "Kind",
-              value: f.scope ?? ANY,
-              options: withAny("Session and platform", [
-                { value: "session", label: "Session" },
-                { value: "platform", label: "Platform" },
-              ]),
-              onChange: pick("scope"),
-            },
-            {
-              key: "status",
-              label: "Status",
-              value: f.status ?? ANY,
-              options: withAny(
-                "Any status",
-                INBOX_STATUSES.map((s) => ({
-                  value: s,
-                  label: humanizeEnum(s),
-                })),
-              ),
-              onChange: pick("status"),
-            },
-            {
-              key: "priority",
-              label: "Priority",
-              value: f.priority ?? ANY,
-              options: withAny(
-                "Any priority",
-                ["URGENT", "HIGH", "MEDIUM", "LOW"].map((p) => ({
-                  value: p,
-                  label: humanizeEnum(p),
-                })),
-              ),
-              onChange: pick("priority"),
-            },
-            {
-              key: "topic",
-              label: "Category",
-              value: f.topic ?? ANY,
-              options: withAny(
-                "Any category",
-                CASE_TOPICS.map((t) => ({
-                  value: t,
-                  label: CASE_TOPIC_LABEL[t],
-                })),
-              ),
-              onChange: pick("topic"),
-            },
-          ]}
-          onClear={() =>
-            list.setParams({
-              q: "",
-              filters: Object.fromEntries(
-                INBOX_FILTER_KEYS.filter((k) => k !== "view").map((k) => [
-                  k,
-                  null,
-                ]),
-              ),
-            })
-          }
-          canClear={
-            !!list.q ||
-            INBOX_FILTER_KEYS.some((k) => k !== "view" && f[k] !== null)
-          }
+          onClear={clearFilters}
+          canClear={!!list.q || activeFilterCount > 0}
         >
-          <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
-            From
-            <Input
-              type="date"
-              className="h-9 w-auto"
-              value={f.from ?? ""}
-              onChange={(e) => list.setFilter("from", e.target.value || null)}
-            />
-          </label>
-          <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
-            To
-            <Input
-              type="date"
-              className="h-9 w-auto"
-              value={f.to ?? ""}
-              onChange={(e) => list.setFilter("to", e.target.value || null)}
-            />
-          </label>
+          <Button
+            size="sm"
+            variant="outline"
+            className={cn(styles.filterToggle, "h-9")}
+            aria-expanded={filtersOpen}
+            aria-controls="support-inbox-filters"
+            onClick={() => setFiltersOpen(!filtersOpen)}
+          >
+            <SlidersHorizontal className="mr-1.5 h-4 w-4" aria-hidden />
+            Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+          </Button>
         </FilterBar>
+        <div
+          id="support-inbox-filters"
+          className={styles.filters}
+          data-expanded={filtersOpen}
+        >
+          <FilterBar
+            selects={[
+              {
+                key: "sort",
+                label: "Sort",
+                value:
+                  f.sort ??
+                  (view === "needs-reply" || view === "sla-at-risk"
+                    ? "sla"
+                    : "activity"),
+                options: [
+                  { value: "activity", label: "Latest activity" },
+                  { value: "sla", label: "Nearest SLA deadline" },
+                ],
+                onChange: pick("sort"),
+              },
+              {
+                key: "scope",
+                label: "Kind",
+                value: f.scope ?? ANY,
+                options: withAny("Session and platform", [
+                  { value: "session", label: "Session" },
+                  { value: "platform", label: "Platform" },
+                ]),
+                onChange: pick("scope"),
+              },
+              {
+                key: "status",
+                label: "Status",
+                value: f.status ?? ANY,
+                options: withAny(
+                  "Any status",
+                  INBOX_STATUSES.map((s) => ({
+                    value: s,
+                    label: humanizeEnum(s),
+                  })),
+                ),
+                onChange: pick("status"),
+              },
+              {
+                key: "priority",
+                label: "Priority",
+                value: f.priority ?? ANY,
+                options: withAny(
+                  "Any priority",
+                  ["URGENT", "HIGH", "MEDIUM", "LOW"].map((p) => ({
+                    value: p,
+                    label: humanizeEnum(p),
+                  })),
+                ),
+                onChange: pick("priority"),
+              },
+              {
+                key: "topic",
+                label: "Category",
+                value: f.topic ?? ANY,
+                options: withAny(
+                  "Any category",
+                  CASE_TOPICS.map((t) => ({
+                    value: t,
+                    label: CASE_TOPIC_LABEL[t],
+                  })),
+                ),
+                onChange: pick("topic"),
+              },
+            ]}
+          >
+            <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              From
+              <Input
+                type="date"
+                className="h-9 w-auto"
+                value={f.from ?? ""}
+                onChange={(e) => list.setFilter("from", e.target.value || null)}
+              />
+            </label>
+            <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              To
+              <Input
+                type="date"
+                className="h-9 w-auto"
+                value={f.to ?? ""}
+                onChange={(e) => list.setFilter("to", e.target.value || null)}
+              />
+            </label>
+          </FilterBar>
+        </div>
       </div>
 
-      <div className="lg:grid lg:grid-cols-[22rem_minmax(0,1fr)] lg:items-start lg:gap-6">
-        <div className={cn(caseKey && "hidden lg:block")}>
+      <div className={styles.layout}>
+        <div className={styles.caseList}>
           <CaseList activeKey={caseKey} />
         </div>
-        <div className={cn(!caseKey && "hidden lg:block")}>
+        <div className={styles.reader}>
           {caseKey && (
             <Link
               href={`${basePath}/support${searchSuffix}`}
-              className="mb-3 inline-block text-sm text-muted-foreground underline-offset-4 hover:underline lg:hidden"
+              className={cn(
+                styles.backLink,
+                "mb-3 inline-block text-sm text-muted-foreground underline-offset-4 hover:underline",
+              )}
             >
               ← All cases
             </Link>

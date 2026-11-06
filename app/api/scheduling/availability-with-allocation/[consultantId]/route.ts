@@ -1,3 +1,4 @@
+import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import {
@@ -42,10 +43,10 @@ import {
   type GridQuota,
 } from "@/lib/scheduling/grid-quota";
 import {
-  sessionsTotalOf,
+  soldTermsOf,
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
-import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
+import { LEAD_PURPOSES, leadMsFor } from "@/lib/booking/lead-time";
 import {
   createWeeklyCoverage,
   partitionWeeklyRows,
@@ -77,6 +78,11 @@ type SlotTimingWithOverlap = TIntervalTiming & {
 // server-side — and the one caller that must never see it, the post-allocation
 // refetch, asks for `cache: "no-store"` (AllocationService, #1164).
 // No SWR: the 60s poll and return-tick must repaint fresh, not one-interval-old.
+const GridLeadQuerySchema = z.object({
+  purpose: z.enum(LEAD_PURPOSES).default("book"),
+  unpaid: z.enum(["1"]).optional(),
+});
+
 const GRID_CACHE_CONTROL = "private, max-age=30";
 
 /**
@@ -202,6 +208,21 @@ export async function GET(
     const webinarId = searchParams.get("webinarId");
     const classId = searchParams.get("classId");
     const requestedSubscriptionId = searchParams.get("subscriptionId");
+    // The purpose picks the lead time the cells honour (`leadMsFor`), so the
+    // grid never paints free what the writer for that purpose refuses.
+    const leadQuery = GridLeadQuerySchema.safeParse({
+      purpose: searchParams.get("purpose") ?? undefined,
+      unpaid: searchParams.get("unpaid") ?? undefined,
+    });
+    if (!leadQuery.success) {
+      return NextResponse.json(
+        { error: "Unknown purpose", code: "VALIDATION_ERROR" },
+        { status: 400 },
+      );
+    }
+    const leadMs = leadMsFor(leadQuery.data.purpose, {
+      settled: leadQuery.data.unpaid !== "1",
+    });
 
     // The gates below need the caller's identity, so resolve it once. Skipped
     // on the public path, where none of these parameters is present.
@@ -385,6 +406,7 @@ export async function GET(
     let quotaSubject: {
       id: string;
       sessionsTotal: number;
+      sessionsRefunded: number;
       sessionsPerWeek: number;
       durationInMonths: number;
       schedulingPeriodStartsAt: Date;
@@ -403,6 +425,8 @@ export async function GET(
           id: true,
           updatedAt: true,
           sessionsTotal: true,
+          sessionsPerWeek: true,
+          sessionsRefunded: true,
           schedulingPeriodStartsAt: true,
           schedulingTimezone: true,
           planEndsAt: true,
@@ -439,9 +463,7 @@ export async function GET(
       });
       quotaSubject = {
         id: subscription.id,
-        sessionsTotal: sessionsTotalOf(subscription),
-        sessionsPerWeek: subscription.subscriptionPlan.sessionsPerWeek,
-        durationInMonths: subscription.subscriptionPlan.durationInMonths,
+        ...soldTermsOf(subscription),
         schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
         schedulingTimezone: subscription.schedulingTimezone,
         planEndsAt: subscription.planEndsAt,
@@ -490,7 +512,8 @@ export async function GET(
           consulteeUserId,
           webinarId,
           classId,
-          leadBucket: leadTimeBucket(now.getTime()),
+          leadBucket: leadTimeBucket(now.getTime(), leadMs),
+          leadMs,
           quotaFold: quotaSubject?.fold ?? null,
         })
       : null;
@@ -937,16 +960,8 @@ export async function GET(
           return false;
         }
 
-        // Defensive: Check duration is reasonable (<= 24 hours)
-        const durationHours =
-          (end.getTime() - start.getTime()) / (1000 * 60 * 60);
-        if (durationHours > 24) {
-          console.warn(
-            `⚠️ Filtering out custom slot ${slot.id}: duration > 24 hours (${durationHours.toFixed(1)}h)`,
-          );
-          return false;
-        }
-
+        // No length cap: rows coalesce on save, so a custom row may span days;
+        // processCustomSlots clips it to the requested range.
         return true;
       })
       .map((slot) => ({
@@ -1075,6 +1090,7 @@ export async function GET(
       );
       const entitlement = subscriptionEntitlement({
         sessionsTotal: quotaSubject.sessionsTotal,
+        sessionsRefunded: quotaSubject.sessionsRefunded,
         sessionsPerWeek: quotaSubject.sessionsPerWeek,
         durationInMonths: quotaSubject.durationInMonths,
         occurrences,
@@ -1095,7 +1111,7 @@ export async function GET(
 
     // Per-cell flags the client paints as their own non-selectable states.
     const nowMs = now.getTime();
-    const leadCutoffMs = nowMs + MINIMUM_BOOKING_LEAD_TIME_MS;
+    const leadCutoffMs = nowMs + leadMs;
     const ownSessionRanges = (quotaSource?.ownSessions ?? []).map((o) => [
       o.startsAt.getTime(),
       o.endsAt.getTime(),
@@ -1111,7 +1127,8 @@ export async function GET(
             endMs,
           );
         }
-        if (endMs > nowMs && startMs < leadCutoffMs) slot.tooSoon = true;
+        // The writers refuse a start at or before the cutoff.
+        if (endMs > nowMs && startMs <= leadCutoffMs) slot.tooSoon = true;
         if (
           quotaSource &&
           cellLimitReached(quotaSource.quota, startMs, endMs) &&
@@ -1124,8 +1141,8 @@ export async function GET(
 
     return NextResponse.json(
       quotaSource
-        ? { data: slotsByDate, quota: quotaSource.quota }
-        : { data: slotsByDate },
+        ? { data: slotsByDate, quota: quotaSource.quota, leadMs }
+        : { data: slotsByDate, leadMs },
       {
         status: 200,
         headers: {

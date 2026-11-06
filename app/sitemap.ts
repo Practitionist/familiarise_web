@@ -13,7 +13,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { path: "/explore/experts", priority: 0.9 },
     { path: "/explore/programs", priority: 0.9 },
     { path: "/explore/enterprise/organisations", priority: 0.8 },
-    { path: "/explore/recordings", priority: 0.7 },
+    { path: "/explore/products", priority: 0.7 },
     { path: "/become-an-expert", priority: 0.8 },
     { path: "/enterprise", priority: 0.8 },
     { path: "/enterprise/team-training", priority: 0.7 },

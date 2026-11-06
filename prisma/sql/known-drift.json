@@ -108,6 +108,24 @@
   ],
   "knownDivergences": [
     {
+      "statement": "ALTER TABLE \"ActivityLog\" DROP CONSTRAINT \"ActivityLog_consultantProfileId_fkey\"",
+      "reason": "Write-only table dropped from the code. origin/prod still writes it, so the drop waits: move these to destructiveStatementsAllowed once the release carrying the drop is on prod.",
+      "trackedBy": "#2496",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "DROP TABLE \"ActivityLog\"",
+      "reason": "Write-only table dropped from the code. origin/prod still writes it, so the drop waits: move these to destructiveStatementsAllowed once the release carrying the drop is on prod.",
+      "trackedBy": "#2496",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "DROP TYPE \"ActivityType\"",
+      "reason": "Write-only table dropped from the code. origin/prod still writes it, so the drop waits: move these to destructiveStatementsAllowed once the release carrying the drop is on prod.",
+      "trackedBy": "#2496",
+      "expires": "2026-12-31"
+    },
+    {
       "statement": "ALTER TABLE \"AppointmentSupportThread\" DROP CONSTRAINT \"AppointmentSupportThread_appointmentId_fkey\"",
       "reason": "Legacy pre-#2257 support-ticket tables, re-created empty as a stop-gap for origin/prod. Dropped by the reconcile push once dev is promoted to prod.",
       "trackedBy": "#2271",

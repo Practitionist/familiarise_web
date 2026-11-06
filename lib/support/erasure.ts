@@ -69,7 +69,7 @@ export async function scrubSupportPiiTx(
   await tx.supportCase.updateMany({
     where: ownCases,
     data: {
-      title: "Erased support request",
+      title: "Erased support case",
       description: ERASED_SUPPORT_TEXT,
       callbackPhone: null,
       callbackWindow: null,

@@ -33,17 +33,23 @@ class StorageUploadError extends Error {
   }
 }
 
-/** PUTs a file to a signed upload URL, reporting progress. */
+/** PUTs a file to a signed upload URL, reporting progress; `headers` are any other signed headers. */
 export function putFileWithProgress(
   uploadUrl: string,
   file: File,
   mimeType: string,
   onProgress?: (percent: number) => void,
+  headers: Record<string, string> = {},
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", uploadUrl, true);
     xhr.setRequestHeader("Content-Type", mimeType);
+    for (const [name, value] of Object.entries(headers)) {
+      if (name.toLowerCase() !== "content-type") {
+        xhr.setRequestHeader(name, value);
+      }
+    }
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && onProgress) {
         onProgress(Math.round((event.loaded / event.total) * 100));

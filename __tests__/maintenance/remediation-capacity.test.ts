@@ -27,7 +27,10 @@ jest.mock("../../lib/novu/resolve-href", () => ({
   notificationHref: jest.fn(),
 }));
 jest.mock("../../lib/payments/operations/refund-owed", () => ({
-  stampRefundsOwed: jest.fn(),
+  // The freeze owns every marker it stamps here.
+  stampRefundsOwed: jest.fn(
+    async (_tx: unknown, markers: unknown[]) => markers.length,
+  ),
 }));
 jest.mock("../../lib/booking/transitions", () => ({
   SLOT_RESCHEDULABLE_FROM: ["SCHEDULED"],

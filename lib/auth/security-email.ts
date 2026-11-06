@@ -1,6 +1,7 @@
-import { sendSecurityNoticeEmail, type SecurityEvent } from "@/lib/email";
+import type { SecurityEvent } from "@/lib/email";
 import { notifyAccountSecurityNotice } from "@/lib/novu/service";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { goHref } from "@/lib/dashboard/go";
 import { getAppUrl } from "@/lib/url";
 import { reportSentryError } from "@/lib/observability/report";
 
@@ -57,20 +58,21 @@ export async function sendSecurityEventEmail(
     const bellKind = securityBellKind(event);
     const message = securityBellMessage(event);
     const [, bellResults] = await Promise.all([
-      sendSecurityNoticeEmail({
-        userId: user.id,
-        event,
-        occurredAt,
-      }).catch((err) => {
-        console.error("[auth] Failed to send security notice email:", err);
-        return undefined;
-      }),
+      // Loaded on send so the email stack stays out of every route's auth graph.
+      import("@/lib/email")
+        .then(({ sendSecurityNoticeEmail }) =>
+          sendSecurityNoticeEmail({ userId: user.id, event, occurredAt }),
+        )
+        .catch((err) => {
+          console.error("[auth] Failed to send security notice email:", err);
+          return undefined;
+        }),
       notifyAccountSecurityNotice(
         user.id,
         {
           kind: bellKind,
           ...(message ? { message } : {}),
-          dashboardUrl: `${getAppUrl()}/dashboard/settings/security`,
+          dashboardUrl: `${getAppUrl()}${goHref("auto", "settings/account")}`,
         },
         `security-event:${event.kind}:${user.id}:${occurredAt.getTime()}`,
         { deferAttempt: true },

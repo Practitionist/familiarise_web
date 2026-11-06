@@ -185,7 +185,7 @@ describe("unified support case reader redacts org-filed transcripts from member 
 
   it("routes the reader through the shared projection and returns an empty transcript", () => {
     expect(src).toContain(
-      "projectCaseForViewer(supportCase, viewer.userId, canCorrespond)",
+      "projectCaseForViewer(supportCase, viewer.userId, canRead)",
     );
     expect(src).toContain("messages: []");
   });

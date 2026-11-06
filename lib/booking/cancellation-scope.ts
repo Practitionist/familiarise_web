@@ -100,9 +100,15 @@ export type BookingRefundContext = {
    * for every other booking, which quotes off its slots.
    */
   sessionsTotal: number | null;
+  /** Sessions a support refund removed from the plan (0 for any other booking). */
+  sessionsRefunded: number;
   /** #1766 — start instants (epoch ms, ascending) of the sessions still scheduled. */
   scheduledStarts: number[];
-  /** Subscriptions: what single sessions of the payment already got back (voids, incidents). */
+  /**
+   * Subscriptions: what the payment already got back for single sessions
+   * (voids, incidents) and money-only support remedies. A session-count remedy
+   * is counted through `sessionsRefunded` instead, never both.
+   */
   alreadyRefundedPaise: number;
   /**
    * Slots of ANY status on the booking. Zero means no session was ever
@@ -142,6 +148,9 @@ export function bookingAppointmentFilter(
   if (ref.webinarId) return { webinarId: ref.webinarId };
   throw new Error("bookingAppointmentFilter: no booking identifier given");
 }
+
+/** The notice a never-replaced released session counts as: past every policy tier. */
+const NEVER_REPLACED_NOTICE_HOURS = 24 * 365;
 
 export async function resolveBookingRefundContext(
   ref: BookingRef,
@@ -190,6 +199,7 @@ export async function resolveBookingRefundContext(
       subscription: {
         select: {
           sessionsTotal: true,
+          sessionsRefunded: true,
           subscriptionPlan: { select: { totalSessions: true } },
         },
       },
@@ -264,36 +274,50 @@ export async function resolveBookingRefundContext(
     .sort((a, b) => a - b);
 
   const nowMs = Date.now();
-  // A session that already ended but is not swept yet is not "next".
-  const nextLive = liveSlots.find(
+  // A session that already ended but is not swept yet is not outstanding.
+  const outstanding = liveSlots.filter(
     (s) => s.completionStatus === "RESCHEDULED" || s.endsAt.getTime() > nowMs,
   );
-  // No live session left: nothing to give notice for, and the cancel door
-  // refuses through cancelWindowState before it ever quotes.
-  let hoursUntilNextSession: number | null = null;
-  if (nextLive) {
-    const raw = (nextLive.startsAt.getTime() - nowMs) / 3_600_000;
-    const floor = row
-      ? await consulteeRescheduleNoticeFloorHours(db, {
-          appointmentId: row.id,
-          ordinal: nextLive.ordinal,
-        })
+  // The notice the client gave when they released a session caps its notice.
+  const floors =
+    row && outstanding.length > 0
+      ? await consulteeReleaseNoticeFloors(db, row.id)
+      : new Map<number, number>();
+  // A released session whose time has passed was never given a new one: it
+  // counts as full notice, unless the client released it themselves.
+  const noticeHoursOf = (s: (typeof liveSlots)[number]) => {
+    const raw =
+      s.completionStatus === "RESCHEDULED" && s.startsAt.getTime() <= nowMs
+        ? NEVER_REPLACED_NOTICE_HOURS
+        : (s.startsAt.getTime() - nowMs) / 3_600_000;
+    const floor = floors.get(s.ordinal);
+    return floor === undefined ? raw : Math.min(raw, floor);
+  };
+  // The booking's notice is the shortest effective notice among its
+  // outstanding sessions; null with none left (the cancel door refuses
+  // through cancelWindowState before it ever quotes).
+  const hoursUntilNextSession =
+    outstanding.length > 0
+      ? Math.min(...outstanding.map((s) => noticeHoursOf(s)))
       : null;
-    hoursUntilNextSession = floor === null ? raw : Math.min(raw, floor);
-  }
 
   const sessionsCompleted = slots.filter(isCompletedOccurrence).length;
   const alreadyRefundedPaise =
     row?.subscription && payment
-      ? await occurrenceRefundsPaise(db, payment.id)
+      ? (await occurrenceRefundsPaise(db, payment.id)) +
+        (await moneyOnlySupportRefundsPaise(db, payment.id))
       : 0;
   const sessionsTotal = row?.subscription
     ? sessionsTotalOf(row.subscription)
     : null;
+  const sessionsRefunded = row?.subscription?.sessionsRefunded ?? 0;
+  // Sessions a support refund removed are not unscheduled entitlement.
+  const schedulable =
+    sessionsTotal === null ? null : sessionsTotal - sessionsRefunded;
   const windowState = cancelWindowState(slots, new Date(nowMs), {
     hasUnscheduledEntitlement:
-      sessionsTotal !== null &&
-      sessionsTotal - sessionsCompleted - scheduledStarts.length > 0,
+      schedulable !== null &&
+      schedulable - sessionsCompleted - scheduledStarts.length > 0,
   });
 
   return {
@@ -305,10 +329,31 @@ export async function resolveBookingRefundContext(
     slotsTotal: slots.length,
     confirmedSlotsTotal: slots.filter((s) => !s.isTentative).length,
     sessionsTotal,
+    sessionsRefunded,
     scheduledStarts,
     alreadyRefundedPaise,
     windowState,
   };
+}
+
+/**
+ * Live money-only support refunds (goodwill) on a payment: an advance against
+ * what the plan owes, so a cancel nets them as the plan end does. A
+ * session-count remedy is netted through `sessionsRefunded` instead.
+ */
+async function moneyOnlySupportRefundsPaise(
+  db: Pick<Tx, "refund">,
+  paymentId: string,
+): Promise<number> {
+  const rows = await db.refund.findMany({
+    where: {
+      paymentId,
+      status: { in: ["SUCCEEDED", "PENDING"] },
+      supportRecommendation: { is: { sessionsRemoved: null } },
+    },
+    select: { amountPaise: true },
+  });
+  return rows.reduce((sum, r) => sum + Number(r.amountPaise), 0);
 }
 
 /**
@@ -333,27 +378,31 @@ export async function readCancelWindowState(
 }
 
 /**
- * The shortest notice the consultee side gave when it moved this session (its
- * ordinal), read from the release records on its reschedule requests: the
+ * Per session (its ordinal), the shortest notice the consultee side gave when
+ * it moved it, read from the release records on its reschedule requests: the
  * original start against the instant of the release.
  */
-async function consulteeRescheduleNoticeFloorHours(
+async function consulteeReleaseNoticeFloors(
   db: Db | Tx,
-  args: { appointmentId: string; ordinal: number },
-): Promise<number | null> {
+  appointmentId: string,
+): Promise<Map<number, number>> {
   const releases = await countedReleases(db, {
-    appointmentId: args.appointmentId,
+    appointmentId,
     initiatorRole: "CONSULTEE",
   });
-  const notices = releases.flatMap((release) =>
-    release.sessions
-      .filter((session) => session.ordinal === args.ordinal)
-      .map(
-        (session) =>
-          (new Date(session.startsAt).getTime() - release.createdAt.getTime()) /
-          3_600_000,
-      )
-      .filter((hours) => hours >= 0),
-  );
-  return notices.length > 0 ? Math.min(...notices) : null;
+  const floors = new Map<number, number>();
+  for (const release of releases) {
+    for (const session of release.sessions) {
+      const hours =
+        (new Date(session.startsAt).getTime() - release.createdAt.getTime()) /
+        3_600_000;
+      if (hours < 0) continue;
+      const known = floors.get(session.ordinal);
+      floors.set(
+        session.ordinal,
+        known === undefined ? hours : Math.min(known, hours),
+      );
+    }
+  }
+  return floors;
 }

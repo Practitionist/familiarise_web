@@ -184,7 +184,7 @@ sequenceDiagram
     Note over DB: Payment.status → SUCCEEDED<br/>AppointmentOccurrence.isTentative → false<br/>Event.status → APPROVED
 
     WH->>DB: Phase 2 — fire-and-forget
-    Note over DB: Create ConsultantEarnings (80%)<br/>Create Invoice<br/>Trigger Novu notifications<br/>Create ActivityLog entry
+    Note over DB: Create ConsultantEarnings (80%)<br/>Create Invoice<br/>Trigger Novu notifications
 
     WH-->>C: Confirmation email + in-app notification
 ```

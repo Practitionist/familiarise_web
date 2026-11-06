@@ -166,6 +166,8 @@ model User {
   recordingsConsentAttested      Recording[]                      @relation("RecordingConsentAttestor")
   // #366 — replay purchases this user made.
   recordingPurchases             RecordingPurchase[]              @relation("RecordingPurchaseBuyer")
+  digitalProductPurchases        DigitalProductPurchase[]         @relation("DigitalProductPurchaseBuyer")
+  digitalProductReports          DigitalProductReport[]           @relation("DigitalProductReporter")
   // #1499 — cancellation-policy versions this OWNER published, for the audit trail.
   publishedCancellationPolicies  CancellationPolicy[]             @relation("CancellationPolicyPublisher")
   // Verification documents this user uploaded (owner column, #1224).
@@ -571,29 +573,32 @@ model SupportCaseDecision {
 }
 
 model SupportFinancialRecommendation {
-  id             String      @id @default(uuid())
-  caseId         String
-  supportCase    SupportCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
-  paymentId      String
-  payment        Payment     @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  proposedById   String
-  proposedBy     User        @relation("SupportRecommendationAuthor", fields: [proposedById], references: [id], onDelete: Restrict)
-  clientActionId String      @db.VarChar(128)
-  amountPaise    BigInt
-  reason         String      @db.Text
-  decidedAt      DateTime?   @db.Timestamptz
-  decidedById    String?
-  decidedBy      User?       @relation("SupportRecommendationDecider", fields: [decidedById], references: [id], onDelete: Restrict)
-  decisionReason String?     @db.Text
-  approved       Boolean?
+  id              String      @id @default(uuid())
+  caseId          String
+  supportCase     SupportCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  paymentId       String
+  payment         Payment     @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  proposedById    String
+  proposedBy      User        @relation("SupportRecommendationAuthor", fields: [proposedById], references: [id], onDelete: Restrict)
+  clientActionId  String      @db.VarChar(128)
+  amountPaise     BigInt
+  reason          String      @db.Text
+  decidedAt       DateTime?   @db.Timestamptz
+  decidedById     String?
+  decidedBy       User?       @relation("SupportRecommendationDecider", fields: [decidedById], references: [id], onDelete: Restrict)
+  decisionReason  String?     @db.Text
+  approved        Boolean?
   /// Marks the funded seat REFUNDED once the refund is sent (no session or recording access; group seats resell); never cancels the booking or its sessions.
-  releaseSeat    Boolean     @default(false)
+  releaseSeat     Boolean     @default(false)
+  /// Subscription sessions this remedy removes from the plan when approved
+  /// (Subscription.sessionsRefunded); null = a money-only remedy.
+  sessionsRemoved Int?
   /// An approval withdrawn because its refund never went live (null or FAILED).
-  voidedAt       DateTime?   @db.Timestamptz
-  voidedById     String?
-  refundId       String?     @unique
-  refund         Refund?     @relation(fields: [refundId], references: [id], onDelete: Restrict)
-  createdAt      DateTime    @default(now()) @db.Timestamptz
+  voidedAt        DateTime?   @db.Timestamptz
+  voidedById      String?
+  refundId        String?     @unique
+  refund          Refund?     @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  createdAt       DateTime    @default(now()) @db.Timestamptz
 
   @@unique([caseId, clientActionId])
   @@index([caseId, decidedAt])
@@ -1081,6 +1086,33 @@ model Verification {
   @@map("verifications")
 }
 
+// CERT-In access log: one row per session, kept 180 days after it ends.
+// No foreign keys, so the row outlives its Session; erasure nulls userId.
+model SessionAccessLog {
+  id        String            @id @default(uuid())
+  sessionId String            @unique
+  userId    String?
+  ipAddress String?
+  userAgent String?
+  startedAt DateTime          @db.Timestamptz
+  endedAt   DateTime?         @db.Timestamptz
+  endReason SessionEndReason?
+
+  // The 180-day prune (ended rows, then never-stamped rows by start).
+  @@index([endedAt, startedAt])
+  // Erasure detach and the DPDP export.
+  @@index([userId, startedAt])
+  @@map("session_access_logs")
+}
+
+enum SessionEndReason {
+  EXPIRED
+  EXPIRED_COOKIE
+  SIGN_OUT
+  REVOKED
+  UNKNOWN
+}
+
 ////////////////////////////////////////////////////
 // ENTERPRISE LAYER — Arch 4-Modified (Issue #681)
 ////////////////////////////////////////////////////
@@ -1273,6 +1305,7 @@ model Organization {
   // Org-tagged plan materials (mirrored from the owning plan's organizationId)
   // so org dashboards manage handouts without polymorphic joins.
   planMaterialsByOrg      PlanMaterial[]           @relation("PlanMaterialByOrg")
+  digitalProductsByOrg    DigitalProduct[]         @relation("DigitalProductByOrg")
   // Denormalized for org-scoped Stream call audit (#674). See
   // `Meeting.organizationId` for the write-side rationale.
   meetings                Meeting[]                @relation("MeetingByOrg")
@@ -3270,14 +3303,13 @@ model ConsultantProfile {
   subscriptionPlans SubscriptionPlan[]
   webinarPlans      WebinarPlan[]
   classPlans        ClassPlan[]
+  digitalProducts   DigitalProduct[]
 
   // Collaborator relations
   collaborations        Collaborator[] @relation("Collaborator")
   invitedCollaborations Collaborator[] @relation("CollaboratorInvitedBy")
 
-  // Trials and activity logs
-  trials       Trial[]
-  activityLogs ActivityLog[]
+  trials Trial[]
 
   // ADR 18 — program curated panels this consultant is listed on (enforced at checkout, #971)
   programAllowlists ProgramConsultantAllowlist[]
@@ -4048,6 +4080,9 @@ model SubscriptionPlan {
   subtitle         String?  @db.VarChar(160)
   description      String?  @db.Text
   durationInMonths Int      @default(1)
+  /// Plan length in weeks (1..52) for plans created with the weeks picker;
+  /// null = durationInMonths × 4 weeks. CHECK lives in prisma/sql.
+  durationInWeeks  Int?
   price            BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency    Currency @default(INR)
 
@@ -4130,8 +4165,9 @@ model Subscription {
   /// expiry or the live cycle: use subscriptionPlanEnd() and
   /// subscriptionEntitlement().cycle.
   schedulingPeriodEndsAt   DateTime  @db.Timestamptz
-  /// Fixed plan end (exclusive): start + durationInMonths on the consultant's
-  /// calendar, month-end clamped. Null rows derive it from the start.
+  /// Fixed plan end (exclusive): start + durationInWeeks × 7 zone-days, or +
+  /// durationInMonths (month-end clamped), on the consultant's calendar.
+  /// Null rows derive it from the start.
   planEndsAt               DateTime? @db.Timestamptz
   // #1076 — stamped from the owning consultant's user.timezone at creation, so
   // the per-day/week caps bucket on the consultant's days. Pinned at creation
@@ -4171,6 +4207,23 @@ model Subscription {
   /// 7 days later. CHECK 0..2 lives in prisma/sql.
   sessionsReturned Int @default(0)
 
+  /// Weekly cap and session length frozen at purchase; plan edits never move
+  /// them. Null = read the plan (rows sold before the freeze).
+  sessionsPerWeek Int?
+  sessionMinutes  Int?
+
+  /// Sessions removed from the plan by a support partial refund; the
+  /// schedulable total is sessionsTotal − sessionsRefunded. CHECK in prisma/sql.
+  sessionsRefunded Int @default(0)
+
+  /// Roll-forward fair rotation: the last time the Regular-time job filled it.
+  lastRolledAt DateTime? @db.Timestamptz
+  /// Set when the roll-forward pauses after 3 plan weeks with nothing placed.
+  rollPausedAt DateTime? @db.Timestamptz
+
+  regularTimes  RegularTime[]
+  planEndChoice PlanEndChoice?
+
   appointment               Appointment?
   convertedFromTrial        Trial?
   // #1743 — nullable-unique continuity link for same-plan re-purchase renewals.
@@ -4194,6 +4247,59 @@ model Subscription {
   @@index([cancelledAt])
   // Inbox tab counts filter by status + order by requestedAt across plans.
   @@index([status, requestedAt])
+  // Plan-end settlement keyset filters on status and walks planEndsAt.
+  @@index([status, planEndsAt])
+}
+
+/// One weekly slot of a 1:1 plan's Regular time (weekday + local start in
+/// `timezone`). An edit closes the live rows (validUntil) and inserts new ones.
+/// CHECK ranges and the one-live-slot partial unique live in prisma/sql.
+model RegularTime {
+  id                String       @id @default(cuid())
+  subscriptionId    String
+  subscription      Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  /// ISO weekday 1..7 in `timezone`.
+  weekday           Int
+  /// Minutes after local midnight, 0..1439.
+  localStartMinutes Int
+  /// The subscription's schedulingTimezone when the row was set.
+  timezone          String
+  /// First plan-week start this row applies to.
+  validFrom         DateTime     @db.Timestamptz
+  /// Set when a newer Regular time supersedes this row.
+  validUntil        DateTime?    @db.Timestamptz
+  createdByUserId   String
+  createdAt         DateTime     @default(now()) @db.Timestamptz
+
+  @@index([subscriptionId, validUntil])
+}
+
+enum PlanEndChoiceStatus {
+  OFFERED
+  EXTENDED
+  REFUNDED
+  EXPIRED
+  EXPERT_DECLINED
+}
+
+/// The learner's plan-end choice between extra weeks and a refund of unused
+/// sessions. One per subscription; shape CHECKs live in prisma/sql.
+model PlanEndChoice {
+  id                 String              @id @default(cuid())
+  subscriptionId     String              @unique
+  subscription       Subscription        @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  status             PlanEndChoiceStatus @default(OFFERED)
+  unusedAtOffer      Int
+  /// Null = refund only.
+  extraWeeksOffered  Int?
+  offeredAt          DateTime            @db.Timestamptz
+  deadline           DateTime            @db.Timestamptz
+  decidedAt          DateTime?           @db.Timestamptz
+  decidedByUserId    String?
+  /// The plan end before the extension; restored on EXPERT_DECLINED.
+  previousPlanEndsAt DateTime?           @db.Timestamptz
+
+  @@index([status, deadline])
 }
 
 enum AppointmentStatus {
@@ -4292,54 +4398,6 @@ enum TrialStatus {
   CONVERTED // Consultee subscribed after trial
   CANCELLED // Cancelled by consultee, lapsed unpaid, or TRIAL_UNANSWERED after 48 h
   REJECTED // Declined by consultant
-}
-
-// Activity tracking for consultant dashboard
-
-model ActivityLog {
-  id           String       @id @default(cuid())
-  activityType ActivityType
-  description  String
-  metadata     Json? // Additional context (e.g., plan name, amount)
-
-  // Actor (who performed the action)
-  actorId    String
-  actorName  String
-  actorImage String?
-
-  // Target consultant
-  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id])
-  consultantProfileId String
-
-  // Optional references
-  consultationId String?
-  subscriptionId String?
-  webinarId      String?
-  classId        String?
-  trialId        String?
-
-  createdAt DateTime @default(now())
-
-  @@index([consultantProfileId, createdAt(sort: Desc)])
-}
-
-enum ActivityType {
-  CONSULTATION_BOOKED
-  /// B14 — reschedule previously wrote no activity at all (cancel did).
-  APPOINTMENT_RESCHEDULED
-  CONSULTATION_COMPLETED
-  CONSULTATION_CANCELLED
-  SUBSCRIPTION_REQUESTED
-  SUBSCRIPTION_APPROVED
-  SUBSCRIPTION_CANCELLED
-  WEBINAR_REGISTERED
-  CLASS_ENROLLED
-  TRIAL_REQUESTED
-  TRIAL_SCHEDULED
-  TRIAL_COMPLETED
-  TRIAL_CONVERTED
-  REVIEW_SUBMITTED
-  MESSAGE_RECEIVED
 }
 
 enum BookingSource {
@@ -5715,12 +5773,165 @@ model RecordingPurchase {
   gatewayPaymentId String? // `pay_…`, stamped on capture
   amountPaise      BigInt
   status           RecordingPurchaseStatus @default(PENDING)
+  // Last gateway check by the recovery sweep; its rotation key, never the expiry clock.
+  reconciledAt     DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([recordingId, buyerId, status])
   @@index([buyerId])
+  @@index([status, reconciledAt])
+}
+
+enum DigitalProductStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+// Drives the invoice SAC and the library icon.
+enum DigitalProductCategory {
+  DOCUMENT
+  TEMPLATE
+  ARCHIVE
+  IMAGE
+  AUDIO
+}
+
+enum DigitalProductAssetStatus {
+  PENDING // Presigned, not yet verified
+  VERIFIED // Passed size, magic-byte and archive checks
+  REJECTED // Failed verification; its object is deleted
+  SUPERSEDED // Replaced or removed; its object is kept 30 days
+}
+
+enum DigitalProductPurchaseStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+// A standalone file sale with lifetime access; never an appointment or plan.
+model DigitalProduct {
+  id                  String                 @id @default(cuid())
+  consultantProfile   ConsultantProfile      @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfileId String
+  organization        Organization?          @relation("DigitalProductByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationId      String?
+  visibility          OrgPlanVisibility      @default(PUBLIC)
+  title               String
+  subtitle            String?
+  slug                String                 @unique
+  description         String                 @db.Text
+  category            DigitalProductCategory
+  pricePaise          BigInt
+  status              DigitalProductStatus   @default(DRAFT)
+  coverImagePath      String?
+  previewAssetId      String?
+  takenDownAt         DateTime?              @db.Timestamptz
+  takedownReason      String?
+  publishedAt         DateTime?              @db.Timestamptz
+  archivedAt          DateTime?              @db.Timestamptz
+  createdAt           DateTime               @default(now()) @db.Timestamptz
+  updatedAt           DateTime               @updatedAt @db.Timestamptz
+
+  assets    DigitalProductAsset[]
+  purchases DigitalProductPurchase[]
+  reports   DigitalProductReport[]
+
+  @@index([consultantProfileId, status])
+  @@index([organizationId])
+  @@index([status, publishedAt])
+}
+
+// One file of a product. Buyers always get the latest VERIFIED version.
+model DigitalProductAsset {
+  id           String                    @id @default(cuid())
+  product      DigitalProduct            @relation(fields: [productId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  productId    String
+  // R2 key in R2_DIGITAL_PRODUCTS_BUCKET: products/<productId>/<lineageId>/<assetId>.<ext>, written once
+  storageKey   String                    @unique
+  // Every version of one file shares this; versions are allocated under the product row lock.
+  lineageId    String                    @default(dbgenerated("(gen_random_uuid())::text"))
+  originalName String
+  mimeType     String
+  sizeBytes    BigInt
+  order        Int                       @default(0)
+  version      Int                       @default(1)
+  status       DigitalProductAssetStatus @default(PENDING)
+  rejectReason String?
+  sha256       String?
+  verifiedAt   DateTime?                 @db.Timestamptz
+  supersededAt DateTime?                 @db.Timestamptz
+  // When the storage sweep deleted this row's object; the row stays as download evidence.
+  purgedAt     DateTime?                 @db.Timestamptz
+  createdAt    DateTime                  @default(now()) @db.Timestamptz
+
+  downloads DigitalProductDownload[]
+
+  @@unique([lineageId, version])
+  @@index([productId, status, order])
+  @@index([status, supersededAt])
+}
+
+// One purchase attempt. Entitlement = a SUCCEEDED row for (productId, buyerId),
+// unique through a partial index in prisma/sql/check-constraints.sql.
+model DigitalProductPurchase {
+  id                String                       @id @default(cuid())
+  product           DigitalProduct               @relation(fields: [productId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  productId         String
+  buyer             User                         @relation("DigitalProductPurchaseBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  buyerId           String
+  // Razorpay order id; null only on a free claim.
+  gatewayOrderId    String?                      @unique
+  gatewayPaymentId  String?
+  payment           Payment?                     @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  paymentId         String?                      @unique
+  amountPaise       BigInt
+  status            DigitalProductPurchaseStatus @default(PENDING)
+  // Refundable until the first download stamps this.
+  firstDownloadedAt DateTime?                    @db.Timestamptz
+  // Last check by the recovery sweep (gateway or owed receipt); its rotation key, never the expiry clock.
+  reconciledAt      DateTime?                    @db.Timestamptz
+  // Set when the receipt is staged or deliberately skipped; null on a SUCCEEDED row means it is still owed.
+  receiptStagedAt   DateTime?                    @db.Timestamptz
+  createdAt         DateTime                     @default(now()) @db.Timestamptz
+  updatedAt         DateTime                     @updatedAt @db.Timestamptz
+
+  downloads DigitalProductDownload[]
+
+  @@index([productId, buyerId, status])
+  @@index([buyerId])
+  @@index([status, createdAt])
+  @@index([status, reconciledAt])
+}
+
+model DigitalProductDownload {
+  id         String                 @id @default(cuid())
+  purchase   DigitalProductPurchase @relation(fields: [purchaseId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  purchaseId String
+  asset      DigitalProductAsset    @relation(fields: [assetId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  assetId    String
+  createdAt  DateTime               @default(now()) @db.Timestamptz
+
+  @@index([purchaseId, createdAt])
+  @@index([assetId])
+}
+
+model DigitalProductReport {
+  id         String         @id @default(cuid())
+  product    DigitalProduct @relation(fields: [productId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  productId  String
+  reporter   User           @relation("DigitalProductReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reporterId String
+  reason     String         @db.Text
+  createdAt  DateTime       @default(now()) @db.Timestamptz
+  resolvedAt DateTime?      @db.Timestamptz
+
+  @@index([productId, resolvedAt])
+  @@index([reporterId])
 }
 
 // Model for storing recording details with dual storage support
@@ -5919,6 +6130,9 @@ model Payment {
 
   // #1365 — the statutory B2C tax invoice for this payment, at most one.
   consumerInvoice ConsumerInvoice?
+
+  // The digital product sale this payment settled, at most one.
+  digitalProductPurchase DigitalProductPurchase?
 
   // Payout relations
   earnings     ConsultantEarnings[]

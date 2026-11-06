@@ -29,9 +29,10 @@
  * mandatory rather than belt-and-braces.
  */
 
-import { NextResponse, after } from "next/server";
+import { NextResponse } from "next/server";
 import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
+import { scheduleSentryFlush } from "@/lib/observability/serverless-flush";
 
 export type SupportErrorCode =
   | "UNAUTHORIZED"
@@ -57,34 +58,6 @@ const USER_COPY: Record<SupportErrorCode, string> = {
   CONFLICT: "That was just updated somewhere else. Refresh and try again.",
   INTERNAL: "Something went wrong on our side. Please try again in a moment.",
 };
-
-/**
- * Schedule a Sentry flush for after the response is sent.
- *
- * `Sentry.flush` RESOLVES FALSE on timeout rather than throwing, and the
- * queued events are then gone — silent loss. Log that, so an empty dashboard
- * is distinguishable from a healthy one. Outside a request scope `after()`
- * throws, so the whole thing is guarded: telemetry must never be the reason a
- * response fails.
- */
-function scheduleSentryFlush(timeoutMs = 2000): void {
-  try {
-    after(async () => {
-      try {
-        const drained = await Sentry.flush(timeoutMs);
-        if (!drained) {
-          console.warn(
-            `[support] Sentry flush timed out after ${timeoutMs}ms; queued events were dropped`,
-          );
-        }
-      } catch (err) {
-        console.warn("[support] Sentry flush failed", err);
-      }
-    });
-  } catch {
-    // Not in a request scope (unit tests, scripts) — nothing to schedule.
-  }
-}
 
 export function supportError(opts: {
   status: number;
@@ -141,7 +114,7 @@ export function supportError(opts: {
   // freeze the function, which is precisely the window the transport needs.
   // Never awaited inline: a slow Sentry must not slow an error response down.
   if (!ignored) {
-    scheduleSentryFlush();
+    void scheduleSentryFlush();
   }
 
   return NextResponse.json(

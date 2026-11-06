@@ -257,8 +257,9 @@ throughput, storage permissions, backlog drain or actual gateway behavior.
 4. Verify actual worker completion and a bounded representative export on the
    deployed host, then inspect expiry retries, oldest eligible work and refund
    obligations. Whole-bundle size and outage catch-up need measured evidence.
-5. `/api/health/jobs` requires `process-data-exports` and `expire-stale-requests`
-   completion within 45 minutes, independently of other capabilities. The
+5. `/api/health/jobs` requires `process-data-exports` completion within 50
+   minutes and `expire-stale-requests` within 60, budgets derived from their
+   schedules, independently of other capabilities. The
    endpoint is environment scoped and read-only; a held or failed invocation
    does not refresh it. Independent monitoring must poll it and route an alert.
 

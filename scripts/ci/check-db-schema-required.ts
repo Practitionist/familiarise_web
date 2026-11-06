@@ -122,11 +122,24 @@ export function requiredObjects(plan: string): RequiredObject[] {
   for (const statement of planStatements(plan)) {
     const createdTable = /\bCREATE\s+TABLE\s+"([^"]+)"/i.exec(statement);
     if (createdTable) {
-      out.push({
-        kind: "table",
-        name: createdTable[1],
-        ddl: `${statement.trim()};`,
-      });
+      const table = createdTable[1];
+      out.push({ kind: "table", name: table, ddl: `${statement.trim()};` });
+      // An earlier push of the same branch may have created the table without
+      // a column added since, so each column is required on its own.
+      const open = statement.indexOf("(");
+      const close = statement.lastIndexOf(")");
+      if (open !== -1 && close > open) {
+        for (const clause of splitClauses(statement.slice(open + 1, close))) {
+          const column = /^"([^"]+)"/.exec(clause);
+          if (!column) continue;
+          out.push({
+            kind: "column",
+            owner: table,
+            name: column[1],
+            ddl: `ALTER TABLE "${table}" ADD COLUMN ${clause};`,
+          });
+        }
+      }
       continue;
     }
 
@@ -371,6 +384,17 @@ export async function readLiveCatalog(
   }
 }
 
+/** The fix line for a missing object; a NOT NULL column with no default is flagged, since Postgres rejects it on a table with rows. */
+export function printedFix(o: RequiredObject): string {
+  const rejectsRows =
+    o.kind === "column" &&
+    /\bNOT\s+NULL\b/i.test(o.ddl) &&
+    !/\bDEFAULT\b/i.test(o.ddl);
+  return rejectsRows
+    ? `${o.ddl}  -- NOT NULL with no default: fails if "${o.owner}" already has rows`
+    : o.ddl;
+}
+
 /** Is this object present in the live database? */
 export function isPresent(o: RequiredObject, catalog: LiveCatalog): boolean {
   switch (o.kind) {
@@ -387,6 +411,20 @@ export function isPresent(o: RequiredObject, catalog: LiveCatalog): boolean {
     case "enumValue":
       return catalog.enumValues.has(`${o.owner}.${o.name}`);
   }
+}
+
+/** What the database lacks; a missing table's CREATE already carries its columns, so they are not listed again. */
+export function missingObjects(
+  required: RequiredObject[],
+  catalog: LiveCatalog,
+): RequiredObject[] {
+  const missing = required.filter((o) => !isPresent(o, catalog));
+  const missingTables = new Set(
+    missing.filter((o) => o.kind === "table").map((o) => o.name),
+  );
+  return missing.filter(
+    (o) => !(o.kind === "column" && o.owner && missingTables.has(o.owner)),
+  );
 }
 
 async function main(): Promise<void> {
@@ -450,7 +488,7 @@ async function main(): Promise<void> {
   const catalog = await readLiveCatalog(
     (live && process.env.DIRECT_URL) || connectionString,
   );
-  const missing = required.filter((o) => !isPresent(o, catalog));
+  const missing = missingObjects(required, catalog);
 
   if (missing.length === 0) {
     console.log(
@@ -476,7 +514,7 @@ async function main(): Promise<void> {
       "",
       "Apply them to the shared database, then re-run this check:",
       "",
-      ...missing.map((o) => `  ${o.ddl}`),
+      ...missing.map((o) => `  ${printedFix(o)}`),
       "",
       "Do NOT run `prisma db push` from this branch. One database serves dev and prod,",
       "and a push from a branch that predates a column proposes to drop it.",

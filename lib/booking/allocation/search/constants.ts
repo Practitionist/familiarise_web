@@ -12,10 +12,11 @@ import type {
  *
  * The walk stops at the first candidate outside availability, but adjacent rows
  * make `isWithinAvailability` keep answering true past this row's own end, so a
- * consultant with contiguous cover would otherwise walk the whole week. 48 steps
- * is a day of cover, which bounds the scan without truncating any real row.
+ * consultant with contiguous cover would otherwise walk the whole week. 50 steps
+ * is a 25-hour fall-back day; a custom day slice is ≤ 25 h in every inhabited
+ * zone, so the cap bounds the scan without truncating a real row.
  */
-export const MAX_CANDIDATE_STARTS_PER_ROW = 48;
+export const MAX_CANDIDATE_STARTS_PER_ROW = 50;
 
 /**
  * Wall-clock ceiling on one allocation's availability searching (the first
@@ -60,6 +61,9 @@ export interface AllocationWalkContext {
   /** The weekly rows' projected occurrences, built on first use like `customIndex`. */
   weeklyCoverage?: WeeklyCoverage;
 }
+
+/** One span of availability the row walk can host calls in: its start and its exclusive end. */
+export type RowSpan = { start: Date; endMs: number };
 
 /** A weekly row the allocator can project. */
 export type ProjectableWeeklyRow = { id: string } & WeeklyRowLocalColumns;

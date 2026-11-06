@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { reportSentryError } from "@/lib/observability/report";
+import { razorpayKeyMode } from "@/lib/payments/core/razorpay-key-mode";
 import Razorpay from "razorpay";
 import { createHash } from "node:crypto";
 import {
@@ -78,9 +79,9 @@ import {
   // reported once per process at load; collections keep booting and each payout call refuses.
   if (
     process.env.NEXT_PHASE !== "phase-production-build" &&
-    (process.env.RAZORPAYX_KEY_ID || process.env.RAZORPAY_KEY_ID)?.startsWith(
-      "rzp_live_",
-    ) &&
+    razorpayKeyMode(
+      process.env.RAZORPAYX_KEY_ID || process.env.RAZORPAY_KEY_ID,
+    ) === "live" &&
     !process.env.RAZORPAYX_EGRESS_PROXY_URL
   ) {
     reportSentryError(
@@ -643,9 +644,16 @@ export async function cancelRazorpayOrder(
 
 /** What an order holds at the gateway: its captured payment, an uncaptured live one, or nothing. */
 export type RazorpayOrderHolding =
-  | { kind: "captured"; paymentId: string; amountPaise: number }
+  | {
+      kind: "captured";
+      paymentId: string;
+      amountPaise: number;
+      /** Razorpay's `method` (card, netbanking, upi, wallet, ...). */
+      method?: string;
+    }
   | { kind: "live" }
-  | { kind: "empty" };
+  /** `onlyFailed`: the order has attempts and every one of them failed. */
+  | { kind: "empty"; onlyFailed: boolean };
 
 /**
  * Reads the order's payments; an order Razorpay does not know holds nothing.
@@ -666,7 +674,7 @@ export async function readRazorpayOrderHolding(
       timeoutMs,
     );
   } catch (error) {
-    if (isUnknownOrderId(error)) return { kind: "empty" };
+    if (isUnknownOrderId(error)) return { kind: "empty", onlyFailed: false };
     throw error;
   }
   const captured = payments.items.find((p) => p.status === "captured");
@@ -681,11 +689,22 @@ export async function readRazorpayOrderHolding(
         `Order ${orderId} captured ${String(captured.amount)} ${captured.currency}, not positive whole INR paise`,
       );
     }
-    return { kind: "captured", paymentId: captured.id, amountPaise };
+    return {
+      kind: "captured",
+      paymentId: captured.id,
+      amountPaise,
+      ...(captured.method ? { method: captured.method } : {}),
+    };
   }
-  return payments.items.some((p) => LIVE_ORDER_PAYMENT_STATUSES.has(p.status))
-    ? { kind: "live" }
-    : { kind: "empty" };
+  if (payments.items.some((p) => LIVE_ORDER_PAYMENT_STATUSES.has(p.status))) {
+    return { kind: "live" };
+  }
+  return {
+    kind: "empty",
+    onlyFailed:
+      payments.items.length > 0 &&
+      payments.items.every((p) => p.status === "failed"),
+  };
 }
 
 /** The gateway's own order record; null without a client, throws when Razorpay cannot answer. */

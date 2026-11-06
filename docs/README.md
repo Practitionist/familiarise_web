@@ -50,6 +50,12 @@ Platform-wide orientation and end-to-end cross-subsystem explainers.
 
 ---
 
+### Dashboard
+
+- [information-architecture.md](./dashboard/information-architecture.md) - The dashboard glossary, the current navigation trees for every role, and the planned regrouping phases
+
+---
+
 ### Booking
 
 Booking system, slot allocation, validation, and scheduling logic for all 5 event types.
@@ -68,6 +74,9 @@ Booking system, slot allocation, validation, and scheduling logic for all 5 even
 - [12-concurrency-and-locking.md](./booking/12-concurrency-and-locking.md) - Distributed locks, Prisma transactions, race condition prevention
 - [13-cron-jobs-and-background-tasks.md](./booking/13-cron-jobs-and-background-tasks.md) - 6+ background jobs for lifecycle management
 - [14-local-development-and-testing.md](./booking/14-local-development-and-testing.md) - Dev setup, mock payments, test scenarios, debugging
+- [research/README.md](./booking/research/README.md) - The 2026-11-03 V2A booking review (with appendices A to D) and V2B retention review, as dated research snapshots
+- [2026-11-03-booking-v2-direction.md](./decisions/2026-11-03-booking-v2-direction.md) - Booking v2 direction: the correctness fixes and multi-week Phase 0, fixed plan weeks plus Regular time, retention phase 1 and the attendance policy
+- [2026-11-04-booking-v2-train-b.md](./decisions/2026-11-04-booking-v2-train-b.md) - Booking v2 train B: Regular time, the rolling 4-week horizon, the plan-end choice, frozen plan terms, and earnings that wait for owed refunds
 - [01-booking-system-hld.md](./start-here/01-booking-system-hld.md) - Booking system high-level design: pipeline, allocation, concurrency layers, state machines, cron architecture
 - [02-money-system-hld.md](./start-here/02-money-system-hld.md) - Money system high-level design: pricing, capture, legs, ledger, earnings, payouts, refunds and policy decisions
 - [03-booking-and-money-machinery.md](./start-here/03-booking-and-money-machinery.md) - Worked guide with the seeded cast, entity model and end-to-end ledger examples
@@ -95,6 +104,14 @@ The money subsystem: checkout and pricing, capture and webhooks, the double-entr
 - [finance/00-overview/01-money-map.md](./finance/00-overview/01-money-map.md) - Diagram-first system map
 - [finance/70-operations/05-money-runbooks.md](./finance/70-operations/05-money-runbooks.md) - Symptom-first money runbooks
 - [finance/90-decisions/README.md](./finance/90-decisions/README.md) - The money ADRs and the gateway decision
+
+---
+
+### Digital Products
+
+Standalone file sales: upload and verification, purchase and free claim, downloads, refunds and the R2 bucket setup.
+
+- [01-architecture.md](./digital-products/01-architecture.md) - Data model, sequence diagrams, verification rules, background jobs and the R2 setup runbook
 
 ---
 
@@ -276,6 +293,7 @@ How errors, findings and job failures reach a human. The Sentry set records the 
 - [maintenance/14-background-job-runtime-options.md](./maintenance/14-background-job-runtime-options.md) - Comparison matrix, request-flow and state diagrams, worked example, official sources and the owner's Q&A for Netlify, Inngest, QStash, Upstash Workflow, Trigger.dev, pg-boss, DBOS and Vercel `bom1`
 - [maintenance/15-job-runtime-layer-matrix.md](./maintenance/15-job-runtime-layer-matrix.md) - The eight layers of the jobs subsystem, the five compatibility rules and the eleven coherent stacks, with an HLD and a decision flowchart
 - [maintenance/18-monitoring-and-tracing-failures.md](./maintenance/18-monitoring-and-tracing-failures.md) - The four monitoring layers, the one-user-or-a-group flowchart, how each failure mode is handled and the filed gaps
+- [maintenance/19-secret-rotation-runbook.md](./maintenance/19-secret-rotation-runbook.md) - Secret inventory, the pre-launch rotation plan and ordered rotation procedures for the database password, API keys, `CRON_SECRET` and the seeded operators
 - [maintenance/17-target-architecture-and-roadmap.md](./maintenance/17-target-architecture-and-roadmap.md) - Executive summary, the greenfield target design (a proposal), the path from today and the Netlify billing status
 - [maintenance/16-job-machinery-and-portability.md](./maintenance/16-job-machinery-and-portability.md) - Job machinery line counts, what a host move removes, the Netlify-specific surface and portability as ports and adapters
 - [maintenance/experiments/2026-10-31-job-runtime/README.md](./maintenance/experiments/2026-10-31-job-runtime/README.md) - Index of the raw experiment reports, the method, the honesty labels, the dashboards to browse and the cleanup log
@@ -283,6 +301,7 @@ How errors, findings and job failures reach a human. The Sentry set records the 
 - [2026-11-01-dunning-atomic-notices.md](./decisions/2026-11-01-dunning-atomic-notices.md) - Every dunning stage stages its overdue bell and email inside the winning claim transaction; a roster or render failure rolls the claim back and counts as a failed run item
 - [2026-10-31-gpt-issue-triage.md](./decisions/2026-10-31-gpt-issue-triage.md) - Triage of the GPT-6.1 durable-jobs issues: org invoice rail off at launch, no second-scheduler pilot, fix order for the owner
 - [2026-10-26-launch-sweep-observability-and-money-holds.md](./decisions/2026-10-26-launch-sweep-observability-and-money-holds.md) - ADR-01 to ADR-12: money holds, invoice healing, tax identity, auth abuse controls, the three observability layers, ticker escalation and the Sentry quota posture
+- [2026-10-31-ci-on-github-hosted-with-cuts.md](./decisions/2026-10-31-ci-on-github-hosted-with-cuts.md) - CI stays on GitHub-hosted runners: the cuts applied, the roughly $15 a month hard-stop budget, the launch-pace target and the runner fallback
 
 ---
 

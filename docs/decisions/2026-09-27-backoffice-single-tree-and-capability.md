@@ -4,6 +4,8 @@
 - **Date**: 2026-09-27
 - **Part of**: #1527, PR #1842
 
+> Superseded in part: the redirect map and its catch-all page were deleted on 2026-11-03 (see [the decision](2026-11-03-dashboard-ia-drop-legacy-redirects.md)); the retired URLs now answer 404.
+
 ## Context
 
 The admin and staff dashboards lived in two separate URL trees, `app/dashboard/admin/**` and `app/dashboard/staff/[staffId]/**`. The `[staffId]` segment in the staff tree's URLs did nothing — it was never read to scope a query or a permission — so it existed only as an artefact of an earlier design. Thirteen of staff's pages were near-duplicates of an admin page, `isAdmin` and `canManage` boolean props were threaded through roughly 26 files to express what should have been one capability decision, and about 24 `/api/staff/**` routes existed alongside their admin equivalents, even though only two of them (`/api/staff/payouts`, `/api/staff/moderation/profiles[/:id]`) actually served identical data to an identical shape. A #1527 decision (item 13) had called for merging admin and staff into one route tree with a capability context, but by the time this PR started, only the chrome had been shared (PR #1812/#1841); the two URL trees, the `[staffId]` segment and the API duplication were all still in place.

@@ -36,6 +36,7 @@ describe("the cycle window end", () => {
       sessionsPerWeek: 1,
       durationInMonths: 1,
       sessionsTotal: 4,
+      sessionsRefunded: 0,
       occurrences: [],
       schedulingPeriodStartsAt: START,
       schedulingTimezone: KOLKATA,
@@ -61,6 +62,7 @@ describe("SubscriptionValidationService at the cycle boundary", () => {
           schedulingTimezone: KOLKATA,
           planEndsAt: null,
           sessionsTotal: 4,
+          sessionsRefunded: 0,
           subscriptionPlan: {
             sessionsPerWeek: 1,
             durationInMonths: 1,

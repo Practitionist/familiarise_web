@@ -5,10 +5,52 @@ import {
   assessOperationalCompletions,
   OPERATIONAL_COMPLETION_REQUIREMENTS,
 } from "@/lib/cron/operational-health";
+import {
+  OPS_DIGEST_JOB,
+  opsDigestRunResultSchema,
+} from "@/lib/observability/ops-digest-summary";
+import { collectionsAreLive } from "@/lib/payments/core/razorpay-key-mode";
+import type { Db } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 const HEADERS = { "Cache-Control": "no-store", Vary: "Authorization" };
 const skipResultSchema = z.object({ reason: z.string() });
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** After launch, a paging job skipping for a missing setting this long pages. */
+const STANDING_SKIP_PAGE_MS = 7 * DAY_MS;
+
+/**
+ * Verdicts the daily digest stored on its newest completed run row, judged now:
+ * one indexed read, so a poll never recomputes them.
+ */
+async function readDigestVerdicts(db: Db, environment: string, now: Date) {
+  const row = await db.systemJobExecution.findFirst({
+    where: {
+      jobName: OPS_DIGEST_JOB,
+      status: "COMPLETED",
+      result: { path: ["environment"], equals: environment },
+    },
+    orderBy: { startedAt: "desc" },
+    select: { result: true },
+  });
+  const summary = opsDigestRunResultSchema.safeParse(row?.result).data?.summary;
+  const standingConfigSkips = collectionsAreLive()
+    ? (summary?.standingSkips ?? []).filter(
+        (skip) =>
+          skip.tier === "paging" &&
+          now.getTime() - Date.parse(skip.firstSeenAt) > STANDING_SKIP_PAGE_MS,
+      )
+    : [];
+  const releaseLag = summary?.releaseLag ?? null;
+  return {
+    reasons: [
+      ...(standingConfigSkips.length > 0 ? ["STANDING_CONFIG_SKIP"] : []),
+      ...(releaseLag?.overdue ? ["RELEASE_LAG_OVERDUE"] : []),
+    ],
+    standingConfigSkips,
+    releaseLag,
+  };
+}
 
 /** Read-only external absence probe; never invokes or repairs a job. */
 export async function GET(request: NextRequest) {
@@ -30,56 +72,30 @@ export async function GET(request: NextRequest) {
   }
   try {
     const { default: prisma } = await import("@/lib/prisma");
+    const { configSkipWhere, readCompletionEvidence } =
+      await import("@/lib/cron/completion-evidence");
     const now = new Date();
-    const since = new Date(now.getTime() - 48 * 60 * 60 * 1000);
-    // An idle skip found no work, so it is as fresh as a finished run.
-    // A partial run ran to the end, so it is fresh; watched SLOs belong to the console, not this probe.
-    const rows = await prisma.systemJobExecution.groupBy({
-      by: ["jobName"],
-      where: {
-        jobName: {
-          in: OPERATIONAL_COMPLETION_REQUIREMENTS.filter(
-            (job) => job.tier === "paging",
-          ).map((job) => job.jobName),
-        },
-        result: { path: ["environment"], equals: environment },
-        OR: [
-          { status: "COMPLETED" },
-          {
-            status: "FAILED",
-            result: { path: ["outcome"], equals: "partial" },
-          },
-        ],
-        startedAt: { gte: since },
-      },
-      _max: { endedAt: true },
-    });
-    const { readIdleCompletions } = await import("@/lib/cron/idle-skips");
-    const idle = await readIdleCompletions(prisma, environment, since);
-    const report = assessOperationalCompletions(
-      [
-        ...rows.map((row) => ({
-          jobName: row.jobName,
-          endedAt: row._max.endedAt,
-        })),
-        ...idle,
-      ],
-      now,
-      "paging",
+    const paging = OPERATIONAL_COMPLETION_REQUIREMENTS.filter(
+      (job) => job.tier === "paging",
     );
-    // Config skips are listed for operators but never change `healthy`.
+    // Watched jobs belong to the console and the digest.
+    const evidence = await readCompletionEvidence(
+      prisma,
+      environment,
+      paging,
+      now,
+    );
+    const report = assessOperationalCompletions({
+      ...evidence,
+      now,
+      tier: "paging",
+    });
+    // The last day's config-skip reasons, listed for operators.
     const skips = await prisma.systemJobExecution
       .findMany({
         where: {
-          status: "CANCELLED",
+          ...configSkipWhere(environment),
           createdAt: { gte: new Date(now.getTime() - 26 * 60 * 60 * 1000) },
-          AND: [
-            { result: { path: ["environment"], equals: environment } },
-            { result: { path: ["outcome"], equals: "skipped" } },
-            {
-              result: { path: ["reason"], string_ends_with: " not configured" },
-            },
-          ],
         },
         distinct: ["jobName"],
         orderBy: { createdAt: "desc" },
@@ -92,10 +108,23 @@ export async function GET(request: NextRequest) {
       reason: skipResultSchema.safeParse(row.result).data?.reason ?? null,
       at: row.createdAt.toISOString(),
     }));
+    const digest = await readDigestVerdicts(prisma, environment, now);
+    const healthy = report.healthy && digest.reasons.length === 0;
     return NextResponse.json(
-      { ...report, configSkips },
       {
-        status: report.healthy ? 200 : 503,
+        ...report,
+        healthy,
+        reasons: [
+          ...(report.healthy ? [] : ["JOB_OVERDUE"]),
+          ...digest.reasons,
+        ],
+        configSkips,
+        standingConfigSkips: digest.standingConfigSkips,
+        releaseLag: digest.releaseLag,
+        buildSha: process.env.BUILD_SHA ?? null,
+      },
+      {
+        status: healthy ? 200 : 503,
         headers: HEADERS,
       },
     );

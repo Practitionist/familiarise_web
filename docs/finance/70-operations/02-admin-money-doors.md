@@ -9,7 +9,7 @@ last-reviewed: 2026-10-23
 
 # Admin money doors and the Money console
 
-Every back-office action that moves money, holds money or runs a money job goes through one shell, `withOpsAction` in `lib/backoffice/ops-action-log.ts`, and is surfaced in one place: the Money console at `/dashboard/admin/money/<section>` for admins and `/dashboard/staff/[staffId]/money/<section>` for staff. This page lists the sections, the checks every door applies, the exact thresholds, which doors need a second admin, and the on-demand jobs the console can start. The rule behind all of it is simple: staff see every money surface and own support; only an admin executes money, and staff executes only bounded support refunds and holds.
+Every back-office action that moves money, holds money or runs a money job goes through one shell, `withOpsAction` in `lib/backoffice/ops-action-log.ts`, and is surfaced in one place: the Money console at `/dashboard/admin/money/<section>` for admins and `/dashboard/staff/money/<section>` for staff. This page lists the sections, the checks every door applies, the exact thresholds, which doors need a second admin, and the on-demand jobs the console can start. The rule behind all of it is simple: staff see every money surface and own support; only an admin executes money, and staff executes only bounded support refunds and holds.
 
 ## The sections and who sees them
 
@@ -31,7 +31,7 @@ Every back-office action that moves money, holds money or runs a money job goes 
 
 Every payment row in the Payments and Refunds sections, the payment detail page and the Payments and Bookings sections of User 360 carry a **Trace** action. It opens `/dashboard/<tree>/trace`, a read-only timeline of one payment's or booking's life across payments, legs, refunds, disputes, the ledger, earnings and holds, payouts, invoices and credit notes, booking history, support cases and console actions, gated by `payments.read`. The System Jobs page (`systemJobs.manage`, admin) shows seven-day run metrics per job above the job list. Both are described in [the three observability layers](../../observability/three-layers.md).
 
-The four pages the console replaced (`/dashboard/admin/payments`, `refunds`, `disputes`, `payouts`) answer a 308 to their section with the query string carried over (`moneyHubHref`). The old `/money/class-series` URL answers a 308 to Appointments filtered to classes (`retiredMoneyTabHref`).
+The four index pages the console replaced (`/dashboard/admin/payments`, `refunds`, `disputes`, `payouts`) and the old `/money/class-series` URL no longer exist; use `/dashboard/<tree>/money/<section>` and Appointments filtered to classes. `moneyHubHref` builds the section URL with a query.
 
 ## What every door checks
 

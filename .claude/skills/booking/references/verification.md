@@ -80,18 +80,21 @@ Two others carry a `pull_request` trigger but are conditional and never gate a
 booking change: `claude-code-review.yml` fires only on a `labeled` event, and
 `claude.yml` only when a comment or review body contains `@claude`.
 
-CI's `test-and-build` job is the gate: it passes only when the `typecheck`
-job (`npm audit`, `prisma generate`, `npx tsc --noEmit`, and the money-column,
-auth-schema and workflow-hygiene guards), the unit-test job (full sharded `unit-tests` on pushes and PRs into `prod`;
-`unit-tests-changed`, `jest --changedSince`, on other PRs)
-and the `build` job (`npm run build`) all pass. The `db-guards` job starts a
-throwaway Postgres, pushes the schema and the sidecars, runs the DB-sidecar guard
-and then the whole database tier (`jest -c jest.db.config.ts`, §11). There is no `typecheck`
+CI's `test-and-build` job is the gate: it passes only when the `checks` job
+(lint on changed files, `npm audit`, `prisma generate`, `npx tsc --noEmit`, the
+money-column, auth-schema and workflow-hygiene guards, `jest --changedSince` on
+non-prod PRs, and the DB-sidecar guard plus the database tier
+`jest -c jest.db.config.ts` against a throwaway Postgres whenever `prisma/**`
+or `scripts/ci/check-db*` changed) passes, and, on PRs into `prod` and pushes to
+`staging` or `prod`, the full sharded `unit-tests` and the `build` job
+(`npm run build`) pass too. Draft PRs run nothing. There is no `typecheck`
 script, so type-check locally by typing `npx tsc --noEmit` yourself.
 
-In the separate `lint` job ESLint errors fail the job; the Prettier step carries
-`continue-on-error: true`, so formatting is advisory in CI. There is no
-`--max-warnings` anywhere, and the config marks almost everything `warn`; only
+In the `checks` job ESLint errors fail the job, and on non-release runs ESLint
+checks only the changed files with `--max-warnings=0`, so a warning in a touched
+file fails; release runs lint everything with warnings advisory. The Prettier
+step carries `continue-on-error: true`, so formatting is advisory in CI. The
+config marks almost everything `warn`; only
 `react-hooks/rules-of-hooks` and `no-restricted-imports` are errors. That
 layering guard is the one lint rule that catches a bad booking refactor — it
 forbids `lib/**`, `components/**`, `hooks/**`, `types/**` and `schemas/**` from
@@ -280,31 +283,34 @@ Most booking suites in `__tests__/db/booking/` make two writers meet at a real
 conflict and assert exactly one commit, one typed refusal, and a raw-SQL
 invariant (no two time-holding rows overlap per host profile or per buyer):
 
-| Suite                                   | What it pins                                                          |
-| --------------------------------------- | --------------------------------------------------------------------- |
-| `allocator-races.db.test.ts`            | The allocator against checkout, webinar publish and itself            |
-| `subscription-period-races.db.test.ts`  | Subscription-period allocation against concurrent buyer checkouts     |
-| `host-time-races.db.test.ts`            | Host-time writers against the allocator and the request door          |
-| `makeup-vs-holds.db.test.ts`            | A class make-up against every hold kind                               |
-| `event-retime.db.test.ts`               | Webinar re-time, attendee clashes and the free leave                  |
-| `reschedule-lifecycle.db.test.ts`       | Preference-only requests, withdraw and expiry restores, free restores |
-| `place-new-time.db.test.ts`             | Placing a new time on a booking with no live session                  |
-| `cancel-vs-capture.db.test.ts`          | A cancel and a capture landing together                               |
-| `cancel-money.db.test.ts`               | The cancel window, and a refund another door already owns             |
-| `notice-floor-real-path.db.test.ts`     | The notice floor read from real release records                       |
-| `capture-recheck-freed-time.db.test.ts` | A capture on time a cancelled or returned row freed                   |
-| `blocked-capture-sweep.db.test.ts`      | A blocked capture's hold against the tentative-clear sweep            |
-| `approval-mint-paid.db.test.ts`         | A pay-link mint for a request that is already paid                    |
-| `approval-pay-window.db.test.ts`        | The pay window and the too-close-to-start lapse                       |
-| `reject-live-checkout.db.test.ts`       | A decline against the buyer's own live checkout                       |
-| `checkout-tabs.db.test.ts`              | Two tabs, one plan, and the request fingerprint                       |
-| `seat-races.db.test.ts`                 | The seat herd and whole-event cancel against seat checkout            |
-| `seat-hold-grace.db.test.ts`            | A late capture inside the seat's capture grace                        |
-| `buyer-lapsed-seat.db.test.ts`          | A lapsed seat no longer blocking a dual-role buyer                    |
-| `seat-leave-redrive.db.test.ts`         | A seat-leave crash re-driven by the owed-refund sweep                 |
-| `seat-leave-owned-marker.db.test.ts`    | A seat leave refused by another door's owed marker                    |
-| `zero-total-checkout.db.test.ts`        | A fully discounted order taking the no-gateway rail                   |
-| `unique-violation-shape.db.test.ts`     | The real shape of a unique violation, classified by constraint        |
+| Suite                                    | What it pins                                                          |
+| ---------------------------------------- | --------------------------------------------------------------------- |
+| `allocator-races.db.test.ts`             | The allocator against checkout, webinar publish and itself            |
+| `subscription-period-races.db.test.ts`   | Subscription-period allocation against concurrent buyer checkouts     |
+| `host-time-races.db.test.ts`             | Host-time writers against the allocator and the request door          |
+| `makeup-vs-holds.db.test.ts`             | A class make-up against every hold kind                               |
+| `event-retime.db.test.ts`                | Webinar re-time, attendee clashes and the free leave                  |
+| `reschedule-lifecycle.db.test.ts`        | Preference-only requests, withdraw and expiry restores, free restores |
+| `place-new-time.db.test.ts`              | Placing a new time on a booking with no live session                  |
+| `cancel-vs-capture.db.test.ts`           | A cancel and a capture landing together                               |
+| `cancel-money.db.test.ts`                | The cancel window, and a refund another door already owns             |
+| `notice-floor-real-path.db.test.ts`      | The notice floor read from real release records                       |
+| `capture-recheck-freed-time.db.test.ts`  | A capture on time a cancelled or returned row freed                   |
+| `blocked-capture-sweep.db.test.ts`       | A blocked capture's hold against the tentative-clear sweep            |
+| `approval-mint-paid.db.test.ts`          | A pay-link mint for a request that is already paid                    |
+| `approval-pay-window.db.test.ts`         | The pay window and the too-close-to-start lapse                       |
+| `reject-live-checkout.db.test.ts`        | A decline against the buyer's own live checkout                       |
+| `decline-while-rescheduling.db.test.ts`  | Every decline door refusing a booking being moved, with nothing moved |
+| `trial-conversion-at-capture.db.test.ts` | A trial left COMPLETED at checkout start and converted at capture     |
+| `checkout-tabs.db.test.ts`               | Two tabs, one plan, and the request fingerprint                       |
+| `seat-races.db.test.ts`                  | The seat herd and whole-event cancel against seat checkout            |
+| `seat-hold-grace.db.test.ts`             | A late capture inside the seat's capture grace                        |
+| `buyer-lapsed-seat.db.test.ts`           | A lapsed seat no longer blocking a dual-role buyer                    |
+| `seat-leave-redrive.db.test.ts`          | A seat-leave crash re-driven by the owed-refund sweep                 |
+| `seat-leave-owned-marker.db.test.ts`     | A seat leave refused by another door's owed marker                    |
+| `owed-refund-earnings.db.test.ts`        | A failing plan-end refund holding both earnings arms past their hold  |
+| `zero-total-checkout.db.test.ts`         | A fully discounted order taking the no-gateway rail                   |
+| `unique-violation-shape.db.test.ts`      | The real shape of a unique violation, classified by constraint        |
 
 Read each suite's header before trusting a row of this table; the file is the
 contract. `__tests__/db/scope/` and `__tests__/db/support/` hold the scoping and

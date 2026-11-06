@@ -1,5 +1,10 @@
 import { createHmac } from "node:crypto";
 import { symmetricEncrypt } from "better-auth/crypto";
+import type { Prisma } from "@prisma/client";
+import {
+  QA_OPERATOR_DOMAIN,
+  isQaOperatorEmail,
+} from "../../lib/auth/qa-accounts";
 
 const BACKUP_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const BACKUP_CODE_COUNT = 10;
@@ -11,6 +16,12 @@ export function requireAuthSecret(): string {
   if (!secret) {
     throw new Error(
       "BETTER_AUTH_SECRET is required to pre-enrol seed operators.",
+    );
+  }
+  // A CLI message captured instead of the value (e.g. `netlify env:get` in an unlinked worktree) has spaces.
+  if (/\s/.test(secret)) {
+    throw new Error(
+      "BETTER_AUTH_SECRET contains whitespace, so it is not a secret; read it from a linked checkout or the main .env.",
     );
   }
   return secret;
@@ -91,4 +102,49 @@ export async function buildSeedOperatorTwoFactorRow(
     backupCodes,
     verified: true,
   };
+}
+
+const SEED_OPERATOR_LOCAL_PART = /^qa-(admin|staff)-\d+$/;
+
+/** A seeded QA operator that enrols TOTP: on the reserved domain and not 2FA-exempt. */
+export function isSeedTotpOperatorEmail(
+  email: string | null | undefined,
+): boolean {
+  const [localPart, domain, ...rest] = (
+    email?.trim().toLowerCase() ?? ""
+  ).split("@");
+  return (
+    rest.length === 0 &&
+    domain === QA_OPERATOR_DOMAIN &&
+    SEED_OPERATOR_LOCAL_PART.test(localPart) &&
+    !isQaOperatorEmail(email)
+  );
+}
+
+/**
+ * The user update that writes the seed-derived TOTP row over whatever the
+ * operator holds (fresh, or minted by a hand enrolment) and clears the lock.
+ */
+export async function seedOperatorEnrolmentUpdate(user: {
+  id: string;
+  email: string;
+}) {
+  const { secret, backupCodes } = await buildSeedOperatorTwoFactorRow(
+    user.id,
+    user.email,
+  );
+  const row = {
+    secret,
+    backupCodes,
+    verified: true,
+    failedVerificationCount: 0,
+    lockedUntil: null,
+  };
+  return {
+    where: { id: user.id },
+    data: {
+      twoFactorEnabled: true,
+      twoFactor: { upsert: { create: row, update: row } },
+    },
+  } satisfies Prisma.UserUpdateArgs;
 }

@@ -128,9 +128,8 @@ export function OperatorAppointmentsClient({
 }>) {
   const { toast } = useToast();
   const zoned = useZonedFormat();
-  // #1527 QA D2 — page, type, tab and search live in the URL, so reload and
-  // Back keep a triager's place. `?type=class` is the retired class-series
-  // URL (#1771); `?tab=awaiting-payment` the retired approval-payments one (Q9).
+  // Page, type, tab and search live in the URL, so reload and Back keep a
+  // triager's place.
   const list = useListParams({ filterKeys: ["tab", "type", "open"] });
   const { page, setParams } = list;
   // #1527 — a support case's booking card lands here as `?open=<id>`: search

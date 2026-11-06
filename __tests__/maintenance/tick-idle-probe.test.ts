@@ -32,7 +32,7 @@ jest.mock("../../lib/cron/cleanup-registry", () => ({
 }));
 
 import { POST } from "../../app/api/health/jobs/tick/route";
-import { idleTargets } from "../../lib/cron/idle-probe";
+import { probeTick } from "../../lib/cron/idle-probe";
 import prisma from "../../lib/prisma";
 import { CLEANUP_JOB_BUILDERS } from "../../lib/cron/cleanup-registry";
 
@@ -77,7 +77,7 @@ describe("tick claim idle probe", () => {
   });
 
   it("probes nothing once the budget is spent, so every target runs", async () => {
-    const idle = await idleTargets(due, prisma, new Date(), Date.now() - 1);
+    const { idle } = await probeTick(due, prisma, new Date(), Date.now() - 1);
     expect(idle).toEqual([]);
     expect(probeOf("maintenance-booking-remediation")).not.toHaveBeenCalled();
   });

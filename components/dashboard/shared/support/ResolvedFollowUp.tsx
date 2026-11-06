@@ -69,7 +69,7 @@ export function ResolvedFollowUp({
   return (
     <div className="flex flex-wrap items-center justify-between gap-2">
       <p id="support-reply-follow-up" className="text-xs text-muted-foreground">
-        This request is marked resolved. Your reply won&apos;t reopen it.
+        This support case is marked resolved. Your reply won&apos;t reopen it.
       </p>
       {action}
     </div>

@@ -28,6 +28,10 @@ import {
 import { deriveCallbackUrl } from "@/lib/sso/derive-urls";
 import { revokeEnforcedDomainSessions } from "@/lib/sso/session-sweeps";
 import {
+  stampSessionEnds,
+  type EndedSessions,
+} from "@/lib/auth/session-access-log";
+import {
   countProvenProviders,
   SSO_NOT_PROVEN_MESSAGE,
 } from "@/lib/sso/provider-proof";
@@ -298,6 +302,7 @@ export async function PATCH(
   const body = parsed.data;
 
   try {
+    let endedSessions: EndedSessions[] = [];
     const updated = await prisma.$transaction(async (tx) => {
       const existing = await tx.organizationSSOSettings.findUnique({
         where: { organizationId: orgId },
@@ -311,9 +316,10 @@ export async function PATCH(
 
       const next = await upsertSsoSettings(tx, orgId, body);
       if (body.enforceSSO === true && !(existing?.enforceSSO ?? false)) {
-        await revokeEnforcedDomainSessions(tx, orgId, {
+        const swept = await revokeEnforcedDomainSessions(tx, orgId, {
           keepSessionId: access.session.session.id,
         });
+        endedSessions = swept.ended;
       }
       await writeSsoAuditLog(tx, {
         orgId,
@@ -325,6 +331,7 @@ export async function PATCH(
 
       return next;
     });
+    await stampSessionEnds(endedSessions);
 
     return NextResponse.json({ settings: updated });
   } catch (err) {

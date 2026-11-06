@@ -29,13 +29,14 @@ This document is the finance counterpart of [01-booking-system-hld.md](./01-book
 
 Three rules hold the pipeline together. There is one checkout function, `handleCheckout()` in `lib/payments/checkout/orchestrate.ts`. `Payment.paymentStatus = SUCCEEDED` has several writers, listed below, and each is either a compare-and-set on the prior status or the transaction that creates the row together with its legs. And there is one append-only journal, written only through `postLedgerTxn()` in `lib/payments/ledger/post.ts`. Consumer and enterprise flows differ only in which `PaymentLeg` rows fund the payment and whether an organisation claims a host share. `PaymentStatus` has four values: `PENDING`, `SUCCEEDED`, `FAILED`, `EXPIRED`. A refund does not change it; refunds live in their own `Refund` rows.
 
-The writers of `SUCCEEDED` are these five:
+The writers of `SUCCEEDED` are these six:
 
 1. `handlePaymentSuccess()` in `lib/payments/webhooks/handlers.ts` confirms a booking capture. The capture-race stamps in the same file also write `SUCCEEDED` when a late or mismatched capture must be kept and auto-refunded.
 2. `handleOverageMemberSuccess()` in `lib/payments/webhooks/overage-handlers.ts` confirms a member's overage side-payment.
 3. `handleRecordingPurchaseSuccess()` in `lib/payments/webhooks/recording-purchase.ts` confirms a replay purchase.
-4. The payment row that `handleCheckout()` commits (`lib/payments/checkout/commit/payment-row.ts`) is born `SUCCEEDED` on the wallet, invoice, licence and free rails, because no gateway is involved.
-5. `mintChildOverageAccrualPayment()` in `lib/payments/billing/overage-settlement.ts` creates the child accrual payment of an invoiced overage already `SUCCEEDED`, so the next invoice rollup bills it.
+4. `handleDigitalProductPurchaseSuccess()` in `lib/payments/webhooks/digital-product-purchase.ts` confirms a digital product sale: it compare-and-sets the purchase from `PENDING` (or `FAILED` on a late retry) to `SUCCEEDED` and creates the `SUCCEEDED` Payment with its one `CARD` leg in the same transaction. A capture on either standalone rail that fulfils nothing is kept as a `SUCCEEDED` Payment under the auto-refund marker by the shared plumbing in `lib/payments/webhooks/standalone-sale-capture.ts`, then refunded. See [Digital products](../digital-products/01-architecture.md).
+5. The payment row that `handleCheckout()` commits (`lib/payments/checkout/commit/payment-row.ts`) is born `SUCCEEDED` on the wallet, invoice, licence and free rails, because no gateway is involved.
+6. `mintChildOverageAccrualPayment()` in `lib/payments/billing/overage-settlement.ts` creates the child accrual payment of an invoiced overage already `SUCCEEDED`, so the next invoice rollup bills it.
 
 ## 2. End-to-end architecture
 

@@ -492,6 +492,7 @@ describe("sequences of partial refunds", () => {
               policy: a.policy,
               hoursUntilNextSession: a.hoursUntilNextSession,
               slotsTotal: a.slotsTotal,
+              sessionsRefunded: 0,
               sessionsRemaining: Math.floor(
                 a.slotsTotal * a.sessionsRemainingFrac,
               ),
@@ -548,6 +549,7 @@ describe("sequences of partial refunds", () => {
             policy: null,
             hoursUntilNextSession: null,
             slotsTotal: 0,
+            sessionsRefunded: 0,
             sessionsRemaining: sessionsTotal,
             isSubscription: true,
             isConsultantInitiated: false,
@@ -589,6 +591,7 @@ describe("sequences of partial refunds", () => {
             policy,
             hoursUntilNextSession: null,
             slotsTotal: startHours.length,
+            sessionsRefunded: 0,
             sessionsRemaining: sessionsTotal - sessionsCompleted,
             isSubscription: true,
             isConsultantInitiated: false,

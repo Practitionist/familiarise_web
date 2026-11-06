@@ -59,3 +59,41 @@ it("lists an unsent support refund and links its case instead of a refund door",
     screen.queryByRole("button", { name: "Return credits" }),
   ).not.toBeInTheDocument();
 });
+
+it("keeps a session-count remedy's record refs in its details, not its message", async () => {
+  global.fetch = jest.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      items: [
+        {
+          id: "rec_2",
+          message:
+            "Support case SR-2026-0043: an approved refund of ₹1800.00 failed. Retry or void it on the case. The plan end is waiting for this refund: retry it or void it.",
+          createdAt: "2026-10-20T12:00:00.000Z",
+          paymentId: "pay_2",
+          kind: "support-recommendation",
+          caseId: "case_2",
+          details: "Plan sub_2 · refund rec_2",
+        },
+      ],
+    }),
+  });
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <RefundDoorsPanel />
+    </QueryClientProvider>,
+  );
+  expect(
+    await screen.findByText(/The plan end is waiting for this refund/),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Details")).toBeInTheDocument();
+  expect(screen.getByText("Plan sub_2 · refund rec_2")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open case" })).toHaveAttribute(
+    "href",
+    "/dashboard/admin/support/c_case_2",
+  );
+});

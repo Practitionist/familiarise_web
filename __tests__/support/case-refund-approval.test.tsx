@@ -30,6 +30,7 @@ const recommendation: CaseResolution["recommendations"][number] = {
   approved: null,
   decidedAt: null,
   releaseSeat: false,
+  sessionsRemoved: null,
   voidedAt: null,
   voidedById: null,
   refund: null,
@@ -52,6 +53,7 @@ const base: CaseResolution = {
   isAppeal: false,
   legalHoldAt: null,
   isAdmin: false,
+  planRefund: null,
 };
 
 let preview = {
@@ -356,4 +358,102 @@ it("keeps a hold reason out of the refund recommendation and explains an empty h
     screen.getByLabelText("Reason for the refund recommendation"),
   ).toHaveValue("");
   client.clear();
+});
+
+describe("a plan payment's refund priced in sessions", () => {
+  // ₹15,600 for 78 sessions; 9 refunded nowhere yet; 60 not held.
+  const planCase: CaseResolution = {
+    ...base,
+    recommendations: [],
+    planRefund: {
+      paymentId: "pay_1",
+      amountPaise: 1_560_000,
+      refundablePaise: 1_560_000,
+      sessionsTotal: 78,
+      sessionsRefunded: 0,
+      removable: 60,
+    },
+  };
+
+  it("shows the per-session math and sends the session count with its share", async () => {
+    renderPanel(planCase, "pay_1");
+    fireEvent.change(await screen.findByLabelText("Plan sessions to refund"), {
+      target: { value: "9" },
+    });
+    expect(
+      screen.getByText(
+        /9 of 78 sessions × about ₹200(\.00)? each = ₹1,800(\.00)?/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/69 stay on it/)).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Recommended refund in rupees"),
+    ).not.toBeInTheDocument();
+    fireEvent.change(
+      screen.getByLabelText("Reason for the refund recommendation"),
+      { target: { value: "The expert missed nine sessions" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Recommend refund" }));
+    await waitFor(() => expect(mockPost).toHaveBeenCalled());
+    expect(sentBody()).toMatchObject({
+      action: "RECOMMEND_REFUND",
+      paymentId: "pay_1",
+      amountPaise: 180_000,
+      sessions: 9,
+    });
+  });
+
+  it("refuses more sessions than the plan has unheld", async () => {
+    renderPanel(planCase, "pay_1");
+    fireEvent.change(await screen.findByLabelText("Plan sessions to refund"), {
+      target: { value: "61" },
+    });
+    expect(
+      screen.getByText(
+        /Enter 1 to 60: only sessions not yet booked or delivered/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Recommend refund" }),
+    ).toBeDisabled();
+  });
+
+  it("says nothing is left by count, and locks the box, when no session is removable", async () => {
+    renderPanel(
+      {
+        ...planCase,
+        planRefund: {
+          paymentId: "pay_1",
+          amountPaise: 1_560_000,
+          refundablePaise: 1_560_000,
+          sessionsTotal: 78,
+          sessionsRefunded: 18,
+          removable: 0,
+        },
+      },
+      "pay_1",
+    );
+    expect(
+      await screen.findByLabelText("Plan sessions to refund"),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Nothing is left to refund by session count on this plan.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Enter 1 to 0/)).not.toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Recommended refund in rupees"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the money-only form for a payment that is not a plan", async () => {
+    renderPanel(base, "pay_1");
+    expect(
+      await screen.findByLabelText("Recommended refund in rupees"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Plan sessions to refund"),
+    ).not.toBeInTheDocument();
+  });
 });

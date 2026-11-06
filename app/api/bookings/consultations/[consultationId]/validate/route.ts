@@ -25,7 +25,7 @@ import {
   categorizeValidationErrors,
   conflictDetailsBySlot,
 } from "@/lib/booking/validate-conflict-view";
-import { leadTimeFor } from "@/lib/booking/lead-time";
+import { leadMsFor } from "@/lib/booking/lead-time";
 import { SETTLED_CONSULTATION } from "@/lib/booking/approve-request";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
@@ -163,7 +163,7 @@ export async function POST(
           consulteeUserId,
           consultantProfileId: consultationPlan.consultantProfileId,
           // The same lead time the allocator applies: 2 h while unpaid.
-          leadTimeMs: leadTimeFor({
+          leadTimeMs: leadMsFor("allocate", {
             settled:
               (await prisma.consultation.count({
                 where: { id: consultationId, ...SETTLED_CONSULTATION },

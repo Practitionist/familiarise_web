@@ -27,19 +27,11 @@ const lockSources = ["lib", "scripts", "jobs", "app"]
 const writesRow = (jobName: string) =>
   lockSources.some((text) => new RegExp(`["'\`]${jobName}["'\`]`).test(text));
 
-const locksDirectly = (jobName: string) =>
-  lockSources.some((text) =>
-    new RegExp(`withCronLock\\(\\s*["'\`]${jobName}["'\`]`).test(text),
-  );
-
 describe("ticker target to SystemJobExecution jobName", () => {
   it.each(TARGETS.map((target) => [target]))(
-    "%s resolves to a jobName its core writes, or is explicitly null",
+    "%s resolves to a jobName its core writes",
     (target) => {
-      const jobName = jobNameFor(target);
-      const holds =
-        jobName === null ? !locksDirectly(target) : writesRow(jobName);
-      expect(holds).toBe(true);
+      expect(writesRow(jobNameFor(target))).toBe(true);
     },
   );
 });

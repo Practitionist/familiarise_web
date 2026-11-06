@@ -26,6 +26,7 @@ describe("subscription quote nets per-session refunds already paid", () => {
       policy: null,
       hoursUntilNextSession: null,
       slotsTotal: 3,
+      sessionsRefunded: 0,
       sessionsRemaining: 0,
       isSubscription: true,
       isConsultantInitiated: false,
@@ -47,6 +48,7 @@ describe("subscription quote nets per-session refunds already paid", () => {
       policy: null,
       hoursUntilNextSession: null,
       slotsTotal: 0,
+      sessionsRefunded: 0,
       sessionsRemaining: 0,
       isSubscription: true,
       isConsultantInitiated: false,
@@ -62,7 +64,13 @@ describe("subscription quote nets per-session refunds already paid", () => {
   });
 
   it("the refund context reads the per-session refunds of the subscription's payment", async () => {
-    const refundFindMany = jest.fn(async () => [{ amountPaise: 100_000 }]);
+    // Per-session refunds answer the first read; money-only support remedies the second.
+    const refundFindMany = jest.fn(
+      async (args: { where: { supportRecommendation?: unknown } }) =>
+        args.where.supportRecommendation
+          ? [{ amountPaise: 30_000 }]
+          : [{ amountPaise: 100_000 }],
+    );
     const db = {
       appointment: {
         findFirst: jest.fn(async () => ({
@@ -103,7 +111,15 @@ describe("subscription quote nets per-session refunds already paid", () => {
       undefined,
       db,
     );
-    expect(ctx.alreadyRefundedPaise).toBe(100_000);
+    expect(ctx.alreadyRefundedPaise).toBe(130_000);
+    // A session-count remedy is netted through sessionsRefunded, never as money.
+    expect(refundFindMany.mock.calls[1]).toEqual([
+      expect.objectContaining({
+        where: expect.objectContaining({
+          supportRecommendation: { is: { sessionsRemoved: null } },
+        }),
+      }),
+    ]);
     expect(ctx.windowState).toBe("BEFORE");
     const where = (
       refundFindMany.mock.calls[0] as unknown as [
@@ -119,6 +135,7 @@ describe("a credit-funded subscription cancelled after delivery", () => {
     policy: null,
     hoursUntilNextSession: null,
     slotsTotal: 10,
+    sessionsRefunded: 0,
     sessionsRemaining: 0,
     isSubscription: true,
     isConsultantInitiated: false,

@@ -66,14 +66,16 @@ shared Postgres. So the branch's schema is not a proposal for the database — i
 is a claim about what the database already contains, and until the database
 agrees, every reader of the new object 500s with _"does not exist in the current
 database"_. The preview build passes, because the build only runs
-`prisma generate`.
+`prisma generate` and the file-only job-coverage check (`npm run cron:coverage`), which reads no database.
 
 `scripts/ci/check-db-schema-required.ts` is the check that closes the gap. It
 diffs the branch's **merge base** schema against the branch's own schema, which
 is exactly what this pull request adds — a branch behind its base is not judged
 on objects it never touched — and then asks the live catalog whether each of
 those objects is there. Only objects whose absence makes a query fail are
-checked: a column, a table, an enum type, an enum value. A missing index costs
+checked: a column, a table, an enum type, an enum value. A table the branch
+creates is also checked column by column, because an earlier push of the same
+branch may have created it without a column added since. A missing index costs
 a sequential scan, not a 500.
 
 It runs as its own workflow, `.github/workflows/schema-required.yml`, on pull
