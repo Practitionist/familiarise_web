@@ -136,7 +136,7 @@ export function CatalogPanel({
   onToggleArchive,
   isMutating,
   expertNamesById,
-  blocked,
+  creationBlocked,
 }: Readonly<{
   kind: Kind;
   rows: CatalogRow[];
@@ -145,8 +145,8 @@ export function CatalogPanel({
   onToggleArchive: (planId: string, restore: boolean) => void;
   isMutating: boolean;
   expertNamesById?: Record<string, string>;
-  /** Replaces the live list when nobody can deliver; Archived still opens. */
-  blocked?: ReactNode;
+  /** Shown when nobody can deliver: creation is gated, existing plans still list. */
+  creationBlocked?: ReactNode;
 }>) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -265,7 +265,6 @@ export function CatalogPanel({
   );
 
   if (isLoading) {
-    if (blocked) return blocked;
     return (
       <div className="flex items-center justify-center py-12 text-muted-foreground">
         <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -283,8 +282,6 @@ export function CatalogPanel({
       />
     );
   }
-
-  if (blocked && !hasArchived) return blocked;
 
   const noun = kind === "WEBINAR" ? "webinars" : "classes";
 
@@ -309,6 +306,7 @@ export function CatalogPanel({
   }
 
   if (rows.length === 0) {
+    if (creationBlocked) return creationBlocked;
     return (
       <EmptyState
         icon={Library}
@@ -323,19 +321,16 @@ export function CatalogPanel({
       <StatusChips
         filter={filter}
         onChange={setStatusFilter}
-        showLive={!blocked}
+        showLive
         showArchived={hasArchived}
       />
-      {blocked && filter !== "ARCHIVED" ? (
-        blocked
-      ) : (
-        <ResponsiveTable
-          columns={columns}
-          rows={filteredRows}
-          getRowId={(r) => r.id}
-          empty="No offerings match the selected status filter."
-        />
-      )}
+      {filter !== "ARCHIVED" && creationBlocked}
+      <ResponsiveTable
+        columns={columns}
+        rows={filteredRows}
+        getRowId={(r) => r.id}
+        empty="No offerings match the selected status filter."
+      />
     </div>
   );
 }

@@ -236,7 +236,7 @@ export function BillingPageClient({
             {
               value: "purchase-orders",
               label: "Purchase orders",
-              show: (org?.requiresPO ?? false) && can("purchaseOrders.read"),
+              show: can("purchaseOrders.read"),
               content: <PurchaseOrdersPanel orgId={orgId} />,
             },
             {

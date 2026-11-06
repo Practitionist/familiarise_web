@@ -8,6 +8,7 @@
  * it (see the v2 money-safety rule); staleness would mislead a learner about
  * what they owe.
  */
+import type { AppointmentsType } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { toPlain } from "@/lib/data/serialize";
@@ -18,7 +19,7 @@ import { CONSULTEE_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 
 interface UpcomingSession {
   id: string;
-  type: string;
+  type: AppointmentsType;
   title: string;
   startsAt: Date;
   joinable: boolean;
@@ -133,9 +134,7 @@ export async function getMyProgramData(params: {
   });
 
   const upcomingSessions: UpcomingSession[] = upcomingAppointments
-    .filter(
-      (a) => a.occurrences.length > 0 && !a.consultation?.cancelledAt,
-    )
+    .filter((a) => a.occurrences.length > 0 && !a.consultation?.cancelledAt)
     .map((a) => {
       const slot = a.occurrences[0];
       const title =
@@ -147,7 +146,9 @@ export async function getMyProgramData(params: {
       const startMs = new Date(slot.startsAt).getTime();
       const endMs = new Date(slot.endsAt).getTime();
       const joinable =
-        !slot.isTentative && nowMs >= startMs - CONSULTEE_JOIN_WINDOW_MS && nowMs <= endMs;
+        !slot.isTentative &&
+        nowMs >= startMs - CONSULTEE_JOIN_WINDOW_MS &&
+        nowMs <= endMs;
       return {
         id: a.id,
         type: a.appointmentType,
@@ -184,8 +185,7 @@ export async function getMyProgramData(params: {
 
   // #777 §C.2 (SCHEMA-FREE) — active programs under the org's active contracts
   // this learner is NOT yet assigned to. Read-only discovery; assignment stays
-  // a MAINTAINER action — single or bulk (#1230 wave-9 auto-enroll) — with no
-  // self-service enrollment-request model.
+  // a MAINTAINER action, with no self-service enrollment-request model.
   const assignedProgramIds = new Set(assignments.map((a) => a.program.id));
   const eligiblePrograms = (
     await prisma.program.findMany({

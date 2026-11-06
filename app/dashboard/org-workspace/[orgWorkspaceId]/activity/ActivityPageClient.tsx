@@ -33,13 +33,15 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { formatDistanceToNow } from "date-fns";
+import type { OrgAuditCategory } from "@prisma/client";
+import { ORG_AUDIT_CATEGORY_LABEL } from "@/lib/labels/org-labels";
 
 interface ActivityRow {
   id: string;
   organizationId: string;
   organizationName: string | null;
   organizationSlug: string | null;
-  category: string;
+  category: OrgAuditCategory;
   action: string;
   description: string;
   createdAt: string;
@@ -79,20 +81,6 @@ async function fetchActivity(
   if (!res.ok) throw new Error("Failed to load activity");
   return res.json();
 }
-
-const CATEGORY_LABEL: Record<string, string> = {
-  MEMBER: "Member",
-  CONTRACT: "Contract",
-  PROGRAM: "Program",
-  WALLET: "Wallet",
-  INVOICE: "Invoice",
-  PAYOUT: "Payout",
-  SETTINGS: "Settings",
-  CONSENT: "Consent",
-  CATALOG: "Catalog",
-  WEBHOOK: "Webhook",
-  SYSTEM: "System",
-};
 
 function timeAgo(iso: string): string {
   const date = new Date(iso);
@@ -163,7 +151,7 @@ export function ActivityPageClient({
   const categoryOptions = useMemo(
     () => [
       { value: "all", label: "All categories" },
-      ...Object.entries(CATEGORY_LABEL).map(([value, label]) => ({
+      ...Object.entries(ORG_AUDIT_CATEGORY_LABEL).map(([value, label]) => ({
         value,
         label,
       })),
@@ -201,7 +189,7 @@ export function ActivityPageClient({
       );
     }
 
-    if (query.isError) {
+    if (query.isError && !query.data) {
       return (
         <Card>
           <CardContent className="py-10">
@@ -249,7 +237,7 @@ export function ActivityPageClient({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <Badge variant="outline" className="font-mono">
-                        {CATEGORY_LABEL[r.category] ?? r.category}
+                        {ORG_AUDIT_CATEGORY_LABEL[r.category]}
                       </Badge>
                       {r.organizationName && (
                         <Link
@@ -308,16 +296,41 @@ export function ActivityPageClient({
             setCategoryFilter("all");
           }}
         />
+        {query.isRefetchError && (
+          <p
+            role="alert"
+            className="mb-3 flex flex-wrap items-center gap-2 text-sm text-amber-700"
+          >
+            Couldn&apos;t refresh activity; showing the last loaded feed.
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={query.isFetching}
+              onClick={() => void query.refetch()}
+            >
+              Retry
+            </Button>
+          </p>
+        )}
         {renderFeedBody()}
 
         {query.hasNextPage && (
-          <div className="mt-4 flex justify-center">
+          <div className="mt-4 flex flex-col items-center gap-2">
+            {query.isFetchNextPageError && (
+              <p role="alert" className="text-sm text-amber-700">
+                Couldn&apos;t load more activity.
+              </p>
+            )}
             <Button
               variant="outline"
-              onClick={() => query.fetchNextPage()}
+              onClick={() => void query.fetchNextPage()}
               disabled={query.isFetchingNextPage}
             >
-              {query.isFetchingNextPage ? "Loading…" : "Load more"}
+              {query.isFetchingNextPage
+                ? "Loading…"
+                : query.isFetchNextPageError
+                  ? "Retry"
+                  : "Load more"}
             </Button>
           </div>
         )}

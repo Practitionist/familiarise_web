@@ -148,15 +148,15 @@ export function CatalogClient({
       ? "classes"
       : undefined;
 
-  // No experts, nothing to publish — an org plan needs somebody to deliver it,
-  // so say that plainly rather than opening a form that will 422.
+  // No experts, nothing new to publish: an org plan needs somebody to deliver
+  // it. Existing plans still list; only creation is gated.
   const blocked = experts.length === 0;
 
   const noExperts = (
     <EmptyState
       icon={Library}
-      title="Invite an expert first"
-      description="Catalog offerings are delivered by an organization expert. Invite one from Members, then come back to publish."
+      title="Invite an expert to publish new offerings"
+      description="New catalog offerings are delivered by an organization expert. Invite one from Members, then come back to publish. Existing offerings stay listed here."
     />
   );
 
@@ -243,7 +243,7 @@ export function CatalogClient({
                   onToggleArchive={archiveWebinar}
                   isMutating={setArchived.isPending}
                   expertNamesById={expertNamesById}
-                  blocked={blocked ? noExperts : undefined}
+                  creationBlocked={blocked ? noExperts : undefined}
                 />
               ),
             },
@@ -259,7 +259,7 @@ export function CatalogClient({
                   onToggleArchive={archiveClass}
                   isMutating={setArchived.isPending}
                   expertNamesById={expertNamesById}
-                  blocked={blocked ? noExperts : undefined}
+                  creationBlocked={blocked ? noExperts : undefined}
                 />
               ),
             },

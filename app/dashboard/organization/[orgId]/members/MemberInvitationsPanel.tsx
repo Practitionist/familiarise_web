@@ -22,6 +22,7 @@ const INVITATION_STATUS: Record<string, { label: string; tone: Tone }> = {
 };
 
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
+import { ErrorState } from "@/components/dashboard/ErrorState";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -74,7 +75,7 @@ export function MemberInvitationsPanel({ orgId }: { orgId: string }) {
   const { canSponsor, canHost } = useOrgRole(orgId);
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery({
+  const invitations = useQuery({
     queryKey: ["org-invitations", orgId],
     queryFn: () => fetchInvitations(orgId),
     // Don't fire the fetch until we know the caller passes the MAINTAINER
@@ -82,6 +83,7 @@ export function MemberInvitationsPanel({ orgId }: { orgId: string }) {
     // in the network tab before the redirect kicks in.
     enabled: allowed,
   });
+  const { data, isLoading } = invitations;
 
   // Confirm-before-revoke so a mis-click doesn't nuke a pending invite
   // and force the user to re-send it. Using the same dialog primitives
@@ -183,12 +185,36 @@ export function MemberInvitationsPanel({ orgId }: { orgId: string }) {
             <CardTitle className="text-base">
               {isLoading
                 ? "Loading…"
-                : `${data?.invitations.length ?? 0} invitations`}
+                : invitations.isError && !data
+                  ? "Invitations unavailable"
+                  : `${data?.invitations.length ?? 0} invitations`}
             </CardTitle>
           </CardHeader>
           <CardContent>
+            {invitations.isError && data && (
+              <p
+                role="alert"
+                className="mb-3 flex flex-wrap items-center gap-2 text-sm text-amber-700"
+              >
+                Couldn&apos;t refresh invitations; showing the last loaded list.
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={invitations.isFetching}
+                  onClick={() => void invitations.refetch()}
+                >
+                  Retry
+                </Button>
+              </p>
+            )}
             {isLoading ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : invitations.isError && !data ? (
+              <ErrorState
+                title="We couldn't load invitations"
+                description="Check your connection and try again."
+                onRetry={() => void invitations.refetch()}
+              />
             ) : (
               <ResponsiveTable<InvitationRow>
                 columns={columns}

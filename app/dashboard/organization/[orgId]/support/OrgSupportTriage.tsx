@@ -4,6 +4,7 @@
 
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Star, MessageSquareText, ShieldAlert } from "lucide-react";
 import { z } from "zod";
@@ -138,7 +139,10 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
   const { allowed, isLoading: gateLoading } = useRequireOrgAccess(orgId, {
     permission: "operations.read",
   });
-  const [status, setStatus] = useState<string>("");
+  const initialStatus = useSearchParams()?.get("status") ?? "";
+  const [status, setStatus] = useState<string>(
+    STATUS_FILTERS.some((f) => f === initialStatus) ? initialStatus : "",
+  );
 
   const summary = useQuery({
     queryKey: ["org-feedback-summary", orgId],
