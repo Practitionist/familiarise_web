@@ -223,12 +223,12 @@ export const supportCategories: SupportCategory[] = [
     slug: "help",
     title: "Notifications, privacy, security & getting help",
     description:
-      "Notification preferences, quiet hours, cookies, safety, tickets, and contacting support.",
+      "Notification preferences, cookies, safety, tickets, and contacting support.",
     icon: "help",
     subcategories: [
       {
         title: "Notifications",
-        description: "Channels, categories, quiet hours, unsubscribe.",
+        description: "Channels, categories, unsubscribe.",
       },
       {
         title: "Privacy & safety",
@@ -1311,7 +1311,7 @@ export const supportArticles: SupportArticle[] = [
       "In-app vs email, per-category toggles, the master switch, and push status.",
     updated: "September 2026",
     contactCategory: "general",
-    related: ["help/quiet-hours", "help/unsubscribe-cookies"],
+    related: ["help/unsubscribe-cookies"],
     sections: [
       {
         heading: "Your preference panel",
@@ -1323,29 +1323,6 @@ export const supportArticles: SupportArticle[] = [
         heading: "Push notifications",
         paragraphs: [
           "Native push is marked Coming soon and stays off until launch — keep email or in-app enabled for time-sensitive updates like payment failures and session reminders.",
-        ],
-      },
-    ],
-  },
-  {
-    slug: "quiet-hours",
-    category: "help",
-    title: "How do quiet hours work?",
-    excerpt: "The 22:00–08:00 window, timezones, and which messages bypass it.",
-    updated: "September 2026",
-    contactCategory: "general",
-    related: ["help/notification-preferences", "help/unsubscribe-cookies"],
-    sections: [
-      {
-        heading: "The quiet window",
-        paragraphs: [
-          "Quiet hours default to 22:00–08:00 in your timezone. Non-urgent notifications arriving overnight are held and delivered in the morning instead of buzzing your inbox at night.",
-        ],
-      },
-      {
-        heading: "Urgent bypasses",
-        paragraphs: [
-          "Time-critical messages — payment failures, imminent session changes — bypass quiet hours because acting late costs money or misses the session. Marketing never bypasses.",
         ],
       },
     ],

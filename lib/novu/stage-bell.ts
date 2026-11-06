@@ -8,7 +8,7 @@ export type StageBellTx = Pick<Tx, "notificationOutbox"> &
 
 /**
  * Stage an in-app bell inside the caller's transaction after enforcing
- * recipient workspace routing, channel/category preferences, and quiet hours.
+ * recipient workspace routing and channel/category preferences.
  */
 export async function stageBell(
   tx: StageBellTx,
@@ -18,7 +18,6 @@ export async function stageBell(
     payload: NovuPayload;
     dedupeKey: string;
     entityRef?: string;
-    deferrable?: boolean;
     notBefore?: Date;
   },
 ): Promise<StagedTrigger | null> {
@@ -26,18 +25,13 @@ export async function stageBell(
   const policy = await resolveRecipientBellPolicy(
     args.workflowId,
     args.recipients,
-    { tx, deferrable: args.deferrable },
+    { tx },
   );
   if (policy.allowedRecipients.length === 0) return null;
-  const notBefore =
-    args.notBefore && policy.notBefore
-      ? new Date(Math.max(args.notBefore.getTime(), policy.notBefore.getTime()))
-      : (args.notBefore ?? policy.notBefore);
   return stageTrigger({
     tx,
     ...args,
     recipients: policy.allowedRecipients,
-    ...(notBefore ? { notBefore } : {}),
     kind: policy.allowedRecipients.length > 1 ? "MULTI" : "SINGLE",
   });
 }

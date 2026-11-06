@@ -2356,7 +2356,7 @@ Privacy consequence: retry rows contain contact and message content. Include the
 
 #### 8.4.2. Novu notifications
 
-Novu is a hosted notification service, backed locally by `NotificationOutbox`. `lib/novu/outbox.ts:stageTrigger` creates an outbox record in the business transaction where possible, derives a stable transaction ID, and attempts delivery inline after the commit. A ticker relay retries due rows through the same trigger path. The unique transaction ID plus vendor idempotency avoids duplicate notification effects after an ambiguous timeout. Quiet-hours use `notBefore`; terminal errors dead-letter. `jobs/notifications/drain-notification-outbox.ts` tracks pending, retried, dead-lettered, and lag metrics.
+Novu is a hosted notification service, backed locally by `NotificationOutbox`. `lib/novu/outbox.ts:stageTrigger` creates an outbox record in the business transaction where possible, derives a stable transaction ID, and attempts delivery inline after the commit. A ticker relay retries due rows through the same trigger path. The unique transaction ID plus vendor idempotency avoids duplicate notification effects after an ambiguous timeout. `notBefore` is set only by a producer that schedules a notification (there are no in-app quiet hours); terminal errors dead-letter. `jobs/notifications/drain-notification-outbox.ts` tracks pending, retried, dead-lettered, and lag metrics.
 
 Notification targets and payloads are allowlisted by workflow/template code. The row itself contains recipient IDs and payload, so keep it private and within a declared retention window. A Novu trigger failing must not roll back a completed invoice, membership, or payout transition; the outbox retains the notification obligation for later recovery.
 

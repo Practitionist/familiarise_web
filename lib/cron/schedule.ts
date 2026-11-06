@@ -128,7 +128,7 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "abandoned-payments": 10,
   "dispatch-outbound-webhooks": 15,
   "retry-failed-emails": 20,
-  "drain-notification-outbox": 20,
+  "drain-notification-outbox": 100,
   "reconcile-orphaned-confirmations": 10,
   "vest-referral-credits": 10,
   "settle-cancelled-sessions": 10,
@@ -588,7 +588,8 @@ const PER_TARGET_TIMEOUT_MS = 15_000;
 const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "abandoned-payments": 20_000,
   "retry-failed-emails": 20_000,
-  "drain-notification-outbox": 20_000,
+  // The relay starts no wave after 12 s and an attempt makes one bulk call, so its last wave ends inside this.
+  "drain-notification-outbox": 24_000,
   "reconcile-orphaned-confirmations": 20_000,
   "appointment-reminders": 20_000,
   "expire-stale-requests": 20_000,

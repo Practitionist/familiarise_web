@@ -41,7 +41,7 @@ describe("searchSupport", () => {
   });
 
   it("matches body text, not just titles", () => {
-    expect(slugs("quiet hours")).toContain("help/quiet-hours");
+    expect(slugs("master toggle")).toContain("help/notification-preferences");
     expect(slugs("consecutive slots")).toContain("booking/picking-slots");
   });
 

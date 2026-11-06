@@ -13,12 +13,12 @@ Support never calls Novu or the email provider inside a business transaction. It
 
 ## The two outboxes
 
-| Outbox              | Table                                                         | Staged by                                                                                | Retried by                                                                                                                     |
-| ------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| In-app bells (Novu) | `NotificationOutbox`                                          | `stageBell()` in `lib/novu/stage-bell.ts` (via `stageTrigger()` in `lib/novu/outbox.ts`) | `drain-notification-outbox` on the ticker every 10 minutes (`jobs/notifications/drain-notification-outbox.ts`, up to 50 rows). |
-| Email               | `FailedEmail` (it holds every staged email, despite the name) | `deliver()` in `lib/email/deliver.ts`, and the support senders built on it               | `retry-failed-emails` on the ticker every 15 minutes.                                                                          |
+| Outbox              | Table                                                         | Staged by                                                                                | Retried by                                                                                                                                              |
+| ------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| In-app bells (Novu) | `NotificationOutbox`                                          | `stageBell()` in `lib/novu/stage-bell.ts` (via `stageTrigger()` in `lib/novu/outbox.ts`) | `drain-notification-outbox` on the ticker every 10 minutes (`jobs/notifications/drain-notification-outbox.ts`, up to 100 rows, urgent workflows first). |
+| Email               | `FailedEmail` (it holds every staged email, despite the name) | `deliver()` in `lib/email/deliver.ts`, and the support senders built on it               | `retry-failed-emails` on the ticker every 15 minutes.                                                                                                   |
 
-**Bell staging.** `stageBell()` filters recipients through the bell policy (workspace routing, channel and category preferences, quiet hours) and returns nothing if no one is left. It upserts on `transactionId`, which is the workflow plus a hash of the post-policy recipients and the dedupe key, so a repeat stage returns the existing row instead of failing the caller's transaction. A new row is leased for 60 seconds so the drain does not race the inline attempt. `notBefore` delays delivery; the CSAT prompt uses it.
+**Bell staging.** `stageBell()` filters recipients through the bell policy (workspace routing, channel and category preferences) and returns nothing if no one is left. It upserts on `transactionId`, which is the workflow plus a hash of the post-policy recipients and the dedupe key, so a repeat stage returns the existing row instead of failing the caller's transaction. A new row is leased for 60 seconds so the drain does not race the inline attempt. `notBefore` delays delivery; the CSAT prompt uses it.
 
 **Delivery states.** A row is SENT on success. A terminal 4xx or the fifth relay attempt makes it DEAD_LETTER; other failures retry with backoff. SENT rows are pruned after 30 days and DEAD_LETTER rows after 90 (`scripts/cleanup/prune-system-job-executions.ts`).
 
@@ -54,13 +54,13 @@ A public grievance filed without an account has no in-app recipient. `stageExter
 
 ## Invariants
 
-| Rule                                                       | Enforcer                                                                              | Test                                                                 |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| A notice exists only if its change committed.              | App: staging inside the business transaction.                                         | `__tests__/notifications/outbox.test.ts`                             |
-| A bell is staged once per identity and recipient set.      | The database: unique `NotificationOutbox.transactionId`; upsert with an empty update. | `__tests__/notifications/outbox.test.ts`                             |
-| Bell policy (preferences, quiet hours) applies to support. | App: `resolveRecipientBellPolicy()` inside `stageBell()`.                             | `__tests__/notifications/stage-bell-and-subscriber-security.test.ts` |
-| Every email passes the pre-launch guard.                   | App: `deliver()`.                                                                     | `__tests__/email/delivery-guard.test.ts`                             |
-| Unconfirmed external addresses get no staff text.          | App: `stageExternalRequesterEmail()`.                                                 | `__tests__/support/external-requester.test.ts`                       |
+| Rule                                                  | Enforcer                                                                              | Test                                                                 |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| A notice exists only if its change committed.         | App: staging inside the business transaction.                                         | `__tests__/notifications/outbox.test.ts`                             |
+| A bell is staged once per identity and recipient set. | The database: unique `NotificationOutbox.transactionId`; upsert with an empty update. | `__tests__/notifications/outbox.test.ts`                             |
+| Bell policy (preferences) applies to support.         | App: `resolveRecipientBellPolicy()` inside `stageBell()`.                             | `__tests__/notifications/stage-bell-and-subscriber-security.test.ts` |
+| Every email passes the pre-launch guard.              | App: `deliver()`.                                                                     | `__tests__/email/delivery-guard.test.ts`                             |
+| Unconfirmed external addresses get no staff text.     | App: `stageExternalRequesterEmail()`.                                                 | `__tests__/support/external-requester.test.ts`                       |
 
 Staff-status notices are the one exception to "staged in the transaction": the PATCH route stages them right after commit, then flushes them.
 
