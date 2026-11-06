@@ -11,6 +11,7 @@ const mockPrisma = {
     findMany: jest.fn(),
   },
   subscription: { findMany: jest.fn() },
+  notificationPreference: { findMany: jest.fn() },
   bookingStatusHistory: { findMany: jest.fn() },
   notificationOutbox: { findMany: jest.fn() },
   failedEmail: { findMany: jest.fn() },
@@ -105,6 +106,7 @@ beforeEach(() => {
     sub("sub-a", "Priya"),
     sub("sub-b", "Ravi"),
   ]);
+  mockPrisma.notificationPreference.findMany.mockResolvedValue([]);
   history([]);
   mockPrisma.notificationOutbox.findMany.mockResolvedValue([]);
   mockPrisma.failedEmail.findMany.mockResolvedValue([]);
@@ -134,6 +136,26 @@ it("sends one bell and one email per consultant listing every plan due", async (
       { consulteeName: "Ravi", number: 2, sessions: 3 },
     ],
   });
+});
+
+it("holds the email and the bell while the consultant is inside their quiet hours", async () => {
+  mockPrisma.notificationPreference.findMany.mockResolvedValue([
+    {
+      userId: "user-1",
+      quietHoursStart: "09:30",
+      quietHoursEnd: "11:00",
+      quietHoursTimezone: "Europe/London",
+    },
+  ]);
+
+  expect((await runAt("2026-03-09T10:00:00.000Z")).nudged).toBe(0);
+  expect(mockNotify).not.toHaveBeenCalled();
+  expect(mockSendEmail).not.toHaveBeenCalled();
+  expect(mockPrisma.notificationPreference.findMany).toHaveBeenCalledWith(
+    expect.objectContaining({
+      where: { userId: { in: ["user-1"] }, quietHoursEnabled: true },
+    }),
+  );
 });
 
 describe("rotation", () => {
@@ -238,7 +260,7 @@ it("never sends a reminder at 08:00 that would use up the day's batch", async ()
 });
 
 it("reports a failed read instead of throwing into the expiry job", async () => {
-  mockPrisma.notificationOutbox.findMany.mockRejectedValue(
+  mockPrisma.notificationPreference.findMany.mockRejectedValue(
     new Error("db down"),
   );
   const result = await runAt("2026-03-09T10:00:00.000Z");

@@ -152,7 +152,7 @@ The apex carries SPF `v=spf1 -all`, a null MX `0 .`, and `_dmarc` is `v=DMARC1; 
    - `npm run novu:sync`: Syncs `lib/novu/templates/` to Development (`--env production` promotes to Production).
    - `npm run novu:check`: Verifies live Novu workflows match code manifests in CI.
 3. **Dual-Layer Preference Gating**:
-   - **Pre-Stage Database Gate (`stageBell`)**: Filters out `EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, and muted category columns before inserting into `NotificationOutbox`, while calculating quiet-hours `notBefore`.
+   - **Pre-Stage Database Gate (`stageBell`)**: Filters out `EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, and muted category columns before inserting into `NotificationOutbox`.
    - **Subscriber Custom Data Gate (`buildSubscriberCustomData` & `updateSubscriberPreferences`)**: Upserts subscriber flags idempotently via `novu.subscribers.create(...)` and propagates DB errors fail-closed so transient outages never re-enable muted users.
 
 ---

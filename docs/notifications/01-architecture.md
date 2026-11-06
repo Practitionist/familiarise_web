@@ -356,6 +356,6 @@ flowchart LR
 - **Intentionally Retained Vendor-Plane Split (Novu In-App vs. Direct Resend Email)**:
   - Outbound emails are **not** routed through Novu's email step so transactional notices never depend on a second vendor's multi-tenant queue availability, bypass Novu's 20-workflow plan cap across 45+ React Email templates, and preserve native `resend.batch.send` throughput and `EmailEvent` Svix telemetry.
 
-- **In-app quiet hours (removed)**: bells were deferred to the end of a user's quiet window while the email for the same event went out at once, so the least intrusive channel was the one held back. The setting, its deferral and the urgent bypass are gone; the four `quietHours*` preference columns remain unused until a schema change drops them.
+- **In-app quiet hours (removed)**: bells were deferred to the end of a user's quiet window while the email for the same event went out at once, so the least intrusive channel was the one held back. The bell deferral and its urgent bypass are gone. The `quietHours*` columns now feed only the consultant's planning reminder (`lib/booking/week-nudge.ts`), whose email and bell wait together, as before; the settings page labels the control "Email quiet hours".
 
 - **Inbound forwarding via ImprovMX (planned, never configured)**: root `@` MX records `mx1.improvmx.com` and `mx2.improvmx.com` were meant to deliver role addresses on `familiarisenow.com`. They were never created, and the apex now publishes a null MX. Delete any residual references.

@@ -1,10 +1,10 @@
 // The consultant's reminder ladder for plan weeks that still have sessions to
 // place. Daytime only: the ladder starts at 09:00 on the week's first day in
 // the consultant's zone, runs on that day, the next and the third (+0/+1/+3
-// days), and anything due outside 08:00–21:00 local waits for the next run.
-// A plan scheduled with Auto skips the first day; the sweep places it. One
-// bell and one email per consultant per local day list every plan due; the
-// outbox rows dedupe.
+// days), and anything due outside 08:00–21:00 local (or inside the
+// consultant's quiet hours) waits for the next run. A plan scheduled with Auto
+// skips the first day; the sweep places it. One bell and one email per
+// consultant per local day list every plan due; the outbox rows dedupe.
 
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { AppointmentStatus, type Prisma } from "@prisma/client";
@@ -26,6 +26,7 @@ import {
 import { notifyUnplacedWeekNudge } from "@/lib/novu/service";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { deriveTransactionId } from "@/lib/novu/outbox";
+import { DEFAULT_NOTIFICATION_TIMEZONE } from "@/lib/novu/humanize";
 import { formatDateRangeLabel } from "@/lib/time/display";
 import { getAppUrl } from "@/lib/url";
 import { plansScheduledOnAuto } from "@/lib/data/plan-schedule-choice";
@@ -298,6 +299,58 @@ function dueNudgeFor(
   };
 }
 
+/** "HH:MM" as minutes past midnight, or null when malformed. */
+function wallMinutes(value: string | null): number | null {
+  const match = value ? /^(\d{1,2}):(\d{2})$/.exec(value.trim()) : null;
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  return hours > 23 || minutes > 59 ? null : hours * 60 + minutes;
+}
+
+function minutesNowIn(zone: string | null, now: Date): number {
+  let clock: string;
+  try {
+    clock = formatInTimeZone(
+      now,
+      zone?.trim() || DEFAULT_NOTIFICATION_TIMEZONE,
+      "HH:mm",
+    );
+  } catch {
+    clock = formatInTimeZone(now, DEFAULT_NOTIFICATION_TIMEZONE, "HH:mm");
+  }
+  return wallMinutes(clock) ?? 0;
+}
+
+/** Users inside their quiet hours now (an overnight window wraps midnight). */
+async function usersInQuietHours(
+  userIds: string[],
+  now: Date,
+): Promise<Set<string>> {
+  const prefs = await prisma.notificationPreference.findMany({
+    where: { userId: { in: userIds }, quietHoursEnabled: true },
+    select: {
+      userId: true,
+      quietHoursStart: true,
+      quietHoursEnd: true,
+      quietHoursTimezone: true,
+    },
+  });
+  const quiet = new Set<string>();
+  for (const pref of prefs) {
+    const start = wallMinutes(pref.quietHoursStart);
+    const end = wallMinutes(pref.quietHoursEnd);
+    if (start === null || end === null || start === end) continue;
+    const current = minutesNowIn(pref.quietHoursTimezone, now);
+    const inside =
+      start < end
+        ? current >= start && current < end
+        : current >= start || current < end;
+    if (inside) quiet.add(pref.userId);
+  }
+  return quiet;
+}
+
 interface DueConsultant {
   consultantProfileId: string;
   userId: string;
@@ -413,8 +466,14 @@ async function runWeekNudges(
   }
   if (byConsultant.size === 0) return { nudged: 0, errors };
 
+  // Quiet hours on top of the waking window, for the email as for the bell.
+  const quiet = await usersInQuietHours(
+    [...byConsultant.values()].map((c) => c.userId),
+    now,
+  );
   const due: DueConsultant[] = [...byConsultant].flatMap(
     ([consultantProfileId, c]) => {
+      if (quiet.has(c.userId)) return [];
       const localDay = formatInTimeZone(now, c.zone, "yyyy-MM-dd");
       const dedupeKey = weekNudgeDedupeKey(consultantProfileId, localDay);
       return [

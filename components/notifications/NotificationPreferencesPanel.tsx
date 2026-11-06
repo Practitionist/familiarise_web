@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 
 interface NotificationPreferences {
@@ -24,6 +25,10 @@ interface NotificationPreferences {
   orgBillingAlerts: boolean;
   orgMembershipAlerts: boolean;
   orgProgramAlerts: boolean;
+  quietHoursEnabled: boolean;
+  quietHoursStart: string | null;
+  quietHoursEnd: string | null;
+  quietHoursTimezone: string | null;
 }
 
 /** Keys that map to boolean values — used for Switch toggle fields. */
@@ -63,6 +68,19 @@ const PUSH_COMING_SOON = {
   description:
     "Coming soon — push delivery is not available yet. Your choice is saved for when it launches.",
 } as const;
+
+/** The zones the platform actually serves; keep in sync with staff settings. */
+const QUIET_HOURS_TIMEZONES = [
+  "Asia/Kolkata",
+  "Asia/Dubai",
+  "Asia/Singapore",
+  "Europe/London",
+  "Europe/Berlin",
+  "America/New_York",
+  "America/Chicago",
+  "America/Los_Angeles",
+  "Australia/Sydney",
+] as const;
 
 const CATEGORY_FIELDS: ToggleField[] = [
   {
@@ -230,7 +248,19 @@ export function NotificationPreferencesPanel() {
     orgBillingAlerts: true,
     orgMembershipAlerts: true,
     orgProgramAlerts: true,
+    quietHoursEnabled: false,
+    quietHoursStart: null,
+    quietHoursEnd: null,
+    quietHoursTimezone: null,
   };
+
+  // Single source for "which zone the UI shows": saved preference, else the
+  // browser zone, else the platform default. Used by the select value, the
+  // "(current)" fallback option, and the enable mutation so display and
+  // enforcement can never diverge.
+  const browserTimezone =
+    Intl.DateTimeFormat().resolvedOptions().timeZone ?? "Asia/Kolkata";
+  const effectiveTimezone = prefs.quietHoursTimezone ?? browserTimezone;
 
   return (
     <div className="space-y-6">
@@ -364,6 +394,102 @@ export function NotificationPreferencesPanel() {
                 </div>
               </div>
             ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Email quiet hours: read only by the planning reminder (lib/booking/week-nudge.ts) */}
+      {prefs.allNotifications && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Email quiet hours</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <Label className="text-sm font-medium">
+                  Hold planning reminders
+                </Label>
+                <p className="text-xs text-zinc-500">
+                  The email reminding you to schedule plan sessions waits until
+                  these hours end
+                </p>
+              </div>
+              <Switch
+                checked={prefs.quietHoursEnabled}
+                onCheckedChange={(checked) =>
+                  // Persist the effective timezone alongside the enable so
+                  // the displayed schedule and the enforced one cannot
+                  // diverge when nothing was stored yet.
+                  checked && !prefs.quietHoursTimezone
+                    ? mutation.mutate({
+                        quietHoursEnabled: true,
+                        quietHoursTimezone: browserTimezone,
+                      })
+                    : handleToggle("quietHoursEnabled", checked)
+                }
+              />
+            </div>
+            {prefs.quietHoursEnabled && (
+              <>
+                <Separator />
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm">Start Time</Label>
+                    <Input
+                      type="time"
+                      value={prefs.quietHoursStart ?? "22:00"}
+                      onChange={(e) =>
+                        mutation.mutate({ quietHoursStart: e.target.value })
+                      }
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-sm">End Time</Label>
+                    <Input
+                      type="time"
+                      value={prefs.quietHoursEnd ?? "08:00"}
+                      onChange={(e) =>
+                        mutation.mutate({ quietHoursEnd: e.target.value })
+                      }
+                      className="mt-1"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="quiet-hours-timezone" className="text-sm">
+                    Timezone
+                  </Label>
+                  <select
+                    id="quiet-hours-timezone"
+                    value={effectiveTimezone}
+                    onChange={(e) =>
+                      mutation.mutate({ quietHoursTimezone: e.target.value })
+                    }
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                  >
+                    {!QUIET_HOURS_TIMEZONES.includes(
+                      effectiveTimezone as (typeof QUIET_HOURS_TIMEZONES)[number],
+                    ) && (
+                      <option value={effectiveTimezone}>
+                        {effectiveTimezone} (current)
+                      </option>
+                    )}
+                    {QUIET_HOURS_TIMEZONES.map((zone) => (
+                      <option key={zone} value={zone}>
+                        {zone}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Only the planning-reminder email (and its matching bell)
+                    waits. Other emails and in-app notifications are not
+                    delayed.
+                  </p>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
       )}

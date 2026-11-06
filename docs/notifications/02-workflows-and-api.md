@@ -367,7 +367,11 @@ Returns the current user's notification preferences. If none exist, returns defa
   "feedbackAlerts": true,
   "trialNotifications": true,
   "subscriptionAlerts": true,
-  "marketingEmails": false
+  "marketingEmails": false,
+  "quietHoursEnabled": false,
+  "quietHoursStart": null,
+  "quietHoursEnd": null,
+  "quietHoursTimezone": null
 }
 ```
 
@@ -384,11 +388,17 @@ Updates notification preferences. Accepts partial updates (any subset of fields)
 ```json
 {
   "emailEnabled": false,
-  "appointmentReminders": false
+  "appointmentReminders": false,
+  "quietHoursEnabled": true,
+  "quietHoursStart": "22:00",
+  "quietHoursEnd": "08:00",
+  "quietHoursTimezone": "Asia/Kolkata"
 }
 ```
 
 **Validation**: `NotificationPreferenceUpdateSchema` (partial Zod schema from `schemas/user.ts`)
+
+**Quiet hours**: the `quietHours*` fields hold only the consultant's planning reminder (email and its bell, `lib/booking/week-nudge.ts`); no other notification waits for them.
 
 **Side effect**: If `inAppEnabled`, `emailEnabled`, or `pushEnabled` changes, the channel preferences are also synced to the Novu subscriber via `updateSubscriberPreferences()`.
 

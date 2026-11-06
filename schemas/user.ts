@@ -531,6 +531,12 @@ export const NotificationPreferenceSchema = z.object({
   orgBillingAlerts: z.boolean().default(true),
   orgMembershipAlerts: z.boolean().default(true),
   orgProgramAlerts: z.boolean().default(true),
+
+  // Quiet hours: hold the consultant's planning reminder (email and bell)
+  quietHoursEnabled: z.boolean().default(false),
+  quietHoursStart: z.string().nullable().default(null),
+  quietHoursEnd: z.string().nullable().default(null),
+  quietHoursTimezone: z.string().nullable().default(null),
 });
 
 export type NotificationPreference = z.infer<

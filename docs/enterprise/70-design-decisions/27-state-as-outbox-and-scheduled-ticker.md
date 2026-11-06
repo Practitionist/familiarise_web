@@ -64,7 +64,7 @@ Serverless functions on Netlify have no built-in durable queue worker and freeze
 +===================================================================================================+
    |
    | 1. Pre-render React Email OUTSIDE $transaction (`prepareRecipientEmails` -> `render` + `toPlainText`)
-   | 2. Gate bell recipients via `stageBell(tx, ...)` (routing mode, channel/category prefs, quiet hours)
+   | 2. Gate bell recipients via `stageBell(tx, ...)` (routing mode, channel/category prefs)
    | 3. Stage emails via `stage()` / `stagePreparedEmails(tx, ...)` inside `$transaction(tx)`:
    |    - `status: "PENDING"`, `nextRetryAt: NOW() + 60s` (`INLINE_ATTEMPT_LEASE_MS`)
    |    - Row-scoped Resend key: `<EMAIL_TYPE>/failed-email/<row.id>`
