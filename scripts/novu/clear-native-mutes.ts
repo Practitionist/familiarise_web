@@ -10,7 +10,12 @@
  *
  * Idempotent: a subscriber with nothing muted is skipped, so a second run
  * reports zero changes and a partial run is simply resumed. Not a job: it is
- * run by hand once per environment, after `npm run novu:sync`, then deleted.
+ * run by hand once per environment, then deleted.
+ *
+ * ORDER: dry run, then --apply, BEFORE `npm run novu:sync` in that
+ * environment. The sync makes the families read-only, and Novu may refuse a
+ * per-family preference write on a read-only workflow; such refusals are
+ * reported separately below.
  *
  *   npx tsx scripts/novu/clear-native-mutes.ts                       dry run, Development
  *   npx tsx scripts/novu/clear-native-mutes.ts --apply               write, Development
@@ -63,7 +68,11 @@ export interface ClearResult {
   mutes: Mute[];
   cleared: number;
   failures: Array<Mute & { error: string }>;
+  /** Family writes Novu refused because the workflow is already read-only. */
+  readOnlyRefusals: Mute[];
 }
+
+const READ_ONLY_REFUSAL = /read[\s_-]?only|critical/i;
 
 const PAGE_SIZE = 100;
 const OWNED_FAMILIES = new Set<string>(FAMILIES.map((f) => f.id));
@@ -99,6 +108,7 @@ export async function clearNativeMutes(
     mutes: [],
     cleared: 0,
     failures: [],
+    readOnlyRefusals: [],
   };
   let after: string | undefined;
   do {
@@ -135,7 +145,12 @@ export async function clearNativeMutes(
           );
           result.cleared += 1;
         } catch (error) {
-          result.failures.push({ ...mute, error: errorText(error) });
+          const text = errorText(error);
+          if (mute.workflowId && READ_ONLY_REFUSAL.test(text)) {
+            result.readOnlyRefusals.push(mute);
+          } else {
+            result.failures.push({ ...mute, error: text });
+          }
         }
       }
     }
@@ -172,11 +187,22 @@ async function main() {
   }
   if (result.mutes.length > 50) console.log("  …");
   if (apply) console.log(`Cleared ${result.cleared}.`);
-  else if (result.mutes.length > 0) {
+  if (result.readOnlyRefusals.length > 0) {
+    console.error(
+      `\n${result.readOnlyRefusals.length} family mute(s) refused because the workflow is read-only: \`novu:sync\` already ran in this environment. Run this script before the sync, or confirm in the Novu dashboard that read-only families ignore these mutes.`,
+    );
+    for (const mute of result.readOnlyRefusals.slice(0, 20)) {
+      console.error(`  ${mute.subscriberId} ${mute.workflowId}`);
+    }
+  } else if (result.mutes.length > 0) {
     console.log("\n(dry run — re-run with --apply to clear them)");
   }
-  if (result.failures.length > 0) {
-    console.error(`\n${result.failures.length} failure(s); re-run to resume:`);
+  if (result.failures.length > 0 || result.readOnlyRefusals.length > 0) {
+    if (result.failures.length > 0) {
+      console.error(
+        `\n${result.failures.length} failure(s); re-run to resume:`,
+      );
+    }
     for (const f of result.failures.slice(0, 20)) {
       console.error(
         `  ${f.subscriberId} ${f.workflowId ?? "(global)"}: ${f.error}`,

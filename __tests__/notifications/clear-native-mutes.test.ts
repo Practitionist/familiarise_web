@@ -136,4 +136,23 @@ describe("clearNativeMutes", () => {
     ]);
     expect(result.cleared).toBe(2);
   });
+
+  it("reports a family write refused as read-only apart from real failures", async () => {
+    const { novu, update } = fakeNovu(initial);
+    update.mockImplementation(async (dto: { workflowId?: string }) => {
+      if (dto.workflowId) {
+        throw new Error("Cannot update preferences of a readOnly workflow");
+      }
+      return {};
+    });
+
+    const result = await clearNativeMutes(novu, { apply: true });
+
+    expect(result.readOnlyRefusals).toEqual([
+      { subscriberId: "u1", workflowId: "payment" },
+      { subscriberId: "u2", workflowId: "org-billing" },
+    ]);
+    expect(result.failures).toEqual([]);
+    expect(result.cleared).toBe(1);
+  });
 });
