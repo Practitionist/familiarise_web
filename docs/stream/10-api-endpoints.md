@@ -135,6 +135,8 @@ Admits an entitled participant to an existing Stream call and upserts the caller
 
 **Authentication:** Required (Better Auth session + DPDP `STREAM_DATA_PROCESSING` consent + active booking entitlement within `[startsAt - 15m, roomEndsAt + 30m]`, where the room end is the booked end plus any granted extension)
 
+**Rate Limit:** two limits, both failing open when Redis is unreachable. `meetingJoinLimiter` (10 per minute per user) runs inside `guardMeetingRoute` straight after authentication. `streamJoinLimiter` (600 per minute per IP) runs at the edge in `middleware.ts` as an abuse backstop only: the edge cannot validate a session, and the ceiling is sized so a cohort of up to 200 behind one NAT, whose lobby pages all retry the join in the second the room opens, is not throttled together.
+
 **Response (Success - 200):**
 
 ```json
