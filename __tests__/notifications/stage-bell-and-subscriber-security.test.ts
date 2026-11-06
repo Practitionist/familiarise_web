@@ -89,7 +89,7 @@ afterEach(() => {
   }
 });
 
-describe("1. stageBell(tx, ...) preference gating, routing mode & quiet hours", () => {
+describe("1. stageBell(tx, ...) preference gating and routing mode", () => {
   it("never schedules a delayed survey earlier than its explicit receipt window", async () => {
     const tx = {
       user: {
@@ -123,21 +123,21 @@ describe("1. stageBell(tx, ...) preference gating, routing mode & quiet hours", 
     );
   });
 
-  it("filters out EMAIL_ONLY, NEITHER, allNotifications:false, inAppEnabled:false, and muted categories, computes quiet-hours notBefore, and returns null when all opt out", async () => {
+  it("filters out erased, EMAIL_ONLY, NEITHER, allNotifications:false, inAppEnabled:false, and muted categories, stages with no deferral, and returns null when all opt out", async () => {
     const txFindMany = jest.fn().mockResolvedValue([
       {
-        id: "u_allowed_quiet",
-        timezone: "UTC",
+        id: "u_allowed",
         orgWorkspaceProfile: { notificationRoutingMode: "BELL_AND_EMAIL" },
         notificationPreferences: {
           allNotifications: true,
           inAppEnabled: true,
           paymentNotifications: true,
-          quietHoursEnabled: true,
-          quietHoursStart: "00:00",
-          quietHoursEnd: "23:59",
-          quietHoursTimezone: "UTC",
         },
+      },
+      {
+        id: "u_erased",
+        erasedAt: new Date(),
+        notificationPreferences: { allNotifications: true, inAppEnabled: true },
       },
       {
         id: "u_email_only",
@@ -187,7 +187,8 @@ describe("1. stageBell(tx, ...) preference gating, routing mode & quiet hours", 
     const staged = await stageBell(tx, {
       workflowId: "payment-success",
       recipients: [
-        "u_allowed_quiet",
+        "u_allowed",
+        "u_erased",
         "u_email_only",
         "u_neither",
         "u_all_off",
@@ -202,10 +203,9 @@ describe("1. stageBell(tx, ...) preference gating, routing mode & quiet hours", 
     expect(txFindMany).toHaveBeenCalledTimes(1);
     expect(txUpsert).toHaveBeenCalledTimes(1);
     expect(staged).not.toBeNull();
-    expect(staged?.recipients).toEqual(["u_allowed_quiet"]);
+    expect(staged?.recipients).toEqual(["u_allowed"]);
     expect(staged?.kind).toBe("SINGLE");
-    expect(staged?.notBefore).toBeInstanceOf(Date);
-    expect((staged?.notBefore as Date).getTime()).toBeGreaterThan(Date.now());
+    expect(staged?.notBefore).toBeNull();
 
     // When all recipients opt out, stageBell returns null without writing to NotificationOutbox
     txUpsert.mockClear();

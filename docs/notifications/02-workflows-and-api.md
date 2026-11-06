@@ -367,11 +367,7 @@ Returns the current user's notification preferences. If none exist, returns defa
   "feedbackAlerts": true,
   "trialNotifications": true,
   "subscriptionAlerts": true,
-  "marketingEmails": false,
-  "quietHoursEnabled": false,
-  "quietHoursStart": null,
-  "quietHoursEnd": null,
-  "quietHoursTimezone": null
+  "marketingEmails": false
 }
 ```
 
@@ -388,11 +384,7 @@ Updates notification preferences. Accepts partial updates (any subset of fields)
 ```json
 {
   "emailEnabled": false,
-  "appointmentReminders": false,
-  "quietHoursEnabled": true,
-  "quietHoursStart": "22:00",
-  "quietHoursEnd": "08:00",
-  "quietHoursTimezone": "Asia/Kolkata"
+  "appointmentReminders": false
 }
 ```
 

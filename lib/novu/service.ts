@@ -104,8 +104,6 @@ export interface TriggerOptions {
   tx?: Pick<Tx, "notificationOutbox" | "membership" | "user">;
   entityRef?: string;
   dedupeKey?: string;
-  /** Urgent workflows (payment/payout failure) bypass quiet-hours deferral. */
-  deferrable?: boolean;
   /** Stage the outbox row and return without attempting inline delivery. */
   deferAttempt?: boolean;
 }
@@ -128,7 +126,7 @@ async function stageAndAttempt(
 ): Promise<TriggerResult> {
   const policy =
     args.kind === "BROADCAST"
-      ? { allowedRecipients: args.recipients, notBefore: undefined }
+      ? { allowedRecipients: args.recipients }
       : await resolveRecipientBellPolicy(
           args.workflowId,
           args.recipients,
@@ -138,21 +136,16 @@ async function stageAndAttempt(
     return { success: true };
   }
   const effectiveArgs = { ...args, recipients: policy.allowedRecipients };
-  const notBefore = effectiveArgs.notBefore ?? policy.notBefore;
-  const staged = await stageTrigger({
-    ...effectiveArgs,
-    ...(notBefore && { notBefore }),
-    ...opts,
-  });
+  const staged = await stageTrigger({ ...effectiveArgs, ...opts });
   if (!isNovuConfigured()) {
     reportNotConfigured(effectiveArgs.workflowId);
     return { success: false, error: "Novu not configured" };
   }
   if (!staged) {
-    if (notBefore && notBefore.getTime() > Date.now()) {
+    if (args.notBefore && args.notBefore.getTime() > Date.now()) {
       return {
         success: false,
-        error: "Stage failed; quiet-hours notice not sent",
+        error: "Stage failed; scheduled notice not sent",
       };
     }
     return sendUnstaged(effectiveArgs);
@@ -312,23 +305,16 @@ export async function triggerWorkflowZoned(
 function resolveTriggerArgs(
   dedupeKeyOrOpts?: string | TriggerOptions,
   opts?: TriggerOptions,
-  defaultOpts?: TriggerOptions,
 ): { dedupeKey: string | undefined; opts: TriggerOptions | undefined } {
-  const dedupeKey =
-    typeof dedupeKeyOrOpts === "string" ? dedupeKeyOrOpts : undefined;
-  const callerOpts =
-    typeof dedupeKeyOrOpts === "string" ? opts : dedupeKeyOrOpts;
-  const mergedOpts =
-    defaultOpts && callerOpts
-      ? { ...defaultOpts, ...callerOpts }
-      : (callerOpts ?? defaultOpts);
-  return { dedupeKey, opts: mergedOpts };
+  if (typeof dedupeKeyOrOpts === "string") {
+    return { dedupeKey: dedupeKeyOrOpts, opts };
+  }
+  return { dedupeKey: undefined, opts: dedupeKeyOrOpts };
 }
 
 function defineSingleNotifier<TInput>(
   workflowId: NovuWorkflowId,
   mapPayload: (input: TInput) => NovuPayload = (p) => p as NovuPayload,
-  defaultOpts?: TriggerOptions,
 ) {
   return (
     subscriberId: string,
@@ -336,7 +322,7 @@ function defineSingleNotifier<TInput>(
     dedupeKeyOrOpts?: string | TriggerOptions,
     opts?: TriggerOptions,
   ): Promise<TriggerResult> => {
-    const r = resolveTriggerArgs(dedupeKeyOrOpts, opts, defaultOpts);
+    const r = resolveTriggerArgs(dedupeKeyOrOpts, opts);
     return triggerWorkflow(
       workflowId,
       subscriberId,
@@ -350,7 +336,6 @@ function defineSingleNotifier<TInput>(
 function defineMultiNotifier<TInput>(
   workflowId: NovuWorkflowId,
   mapPayload: (input: TInput) => NovuPayload = (p) => p as NovuPayload,
-  defaultOpts?: TriggerOptions,
 ) {
   return (
     userIds: string[],
@@ -358,7 +343,7 @@ function defineMultiNotifier<TInput>(
     dedupeKeyOrOpts?: string | TriggerOptions,
     opts?: TriggerOptions,
   ): Promise<TriggerResult[]> => {
-    const r = resolveTriggerArgs(dedupeKeyOrOpts, opts, defaultOpts);
+    const r = resolveTriggerArgs(dedupeKeyOrOpts, opts);
     return triggerForMultiple(
       workflowId,
       userIds,
@@ -372,7 +357,6 @@ function defineMultiNotifier<TInput>(
 function defineZonedSingleNotifier<TInput>(
   workflowId: NovuWorkflowId,
   mapPayload: (input: TInput, timezone: string) => NovuPayload,
-  defaultOpts?: TriggerOptions,
 ) {
   return (
     subscriberId: string,
@@ -380,7 +364,7 @@ function defineZonedSingleNotifier<TInput>(
     dedupeKeyOrOpts?: string | TriggerOptions,
     opts?: TriggerOptions,
   ): Promise<TriggerResult> => {
-    const r = resolveTriggerArgs(dedupeKeyOrOpts, opts, defaultOpts);
+    const r = resolveTriggerArgs(dedupeKeyOrOpts, opts);
     return triggerWorkflowZoned(
       workflowId,
       subscriberId,
@@ -394,7 +378,6 @@ function defineZonedSingleNotifier<TInput>(
 function defineZonedMultiNotifier<TInput>(
   workflowId: NovuWorkflowId,
   mapPayload: (input: TInput, timezone: string) => NovuPayload,
-  defaultOpts?: TriggerOptions,
 ) {
   return (
     userIds: string[],
@@ -402,7 +385,7 @@ function defineZonedMultiNotifier<TInput>(
     dedupeKeyOrOpts?: string | TriggerOptions,
     opts?: TriggerOptions,
   ): Promise<TriggerResult[]> => {
-    const r = resolveTriggerArgs(dedupeKeyOrOpts, opts, defaultOpts);
+    const r = resolveTriggerArgs(dedupeKeyOrOpts, opts);
     return triggerForMultipleZoned(
       workflowId,
       userIds,
@@ -789,7 +772,6 @@ export const notifyPayoutProcessed = defineSingleNotifier(
 export const notifyPayoutFailed = defineSingleNotifier(
   W.PAYOUT_FAILED,
   payoutWire,
-  { deferrable: false },
 );
 export const notifyOrgExpertRemoved =
   defineSingleNotifier<OrgExpertRemovedPayload>(W.ORG_EXPERT_REMOVED, (p) => ({

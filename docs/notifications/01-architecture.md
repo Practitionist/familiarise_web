@@ -63,8 +63,8 @@ graph LR
 |                   PHASE 1: ATOMIC POSTGRES `$transaction(tx)` (`PG_POOL_MAX=1`)             |
 |                                                                                             |
 |  1. Domain State Mutation (CAS `updateMany` with expected prior status in `WHERE`)          |
-|  2. `stageBell(tx, ...)` -> `resolveRecipientBellPolicy(tx)` filters opted-out users,       |
-|     computes quiet-hours `notBefore`, and upserts `NotificationOutbox`:                     |
+|  2. `stageBell(tx, ...)` -> `resolveRecipientBellPolicy(tx)` filters opted-out users       |
+|     and upserts one `NotificationOutbox` row per event (SINGLE, or MULTI <= 100):           |
 |     - `status = 'PENDING'`, `nextRetryAt = notBefore ?? NOW() + 60s`                        |
 |     - Deterministic `transactionId = <workflowId>:<sha256[:32]>` + `NotificationScope`      |
 |  3. `stage*Email(tx, ...)` / `stagePreparedEmails(tx, ...)` writes `FailedEmail`:           |
@@ -84,7 +84,8 @@ graph LR
 | - Concurrent `Promise.allSettled`:       |  |   reconstructs RFC 8058 `List-Unsubscribe`    |
 |   `attemptTrigger` + `attemptStaged`     |  |   headers via `reconstructUnsubscribeHeaders` |
 | - Marks `SENT` on 2xx; leaves `PENDING`  |  | - Per-tick aggregated Sentry + `postOpsChat`  |
-|   or `RETRY` (backoff) on failure.       |  |   when rows enter `DEAD_LETTER`.              |
+|   or `RETRY` (backoff) on failure.       |  |   when rows enter `DEAD_LETTER`; `policy:`    |
+|                                          |  |   skips never alert. Urgent workflows first.  |
 +------------------------------------------+  +-----------------------------------------------+
                      \                                       /
                       v                                     v
@@ -119,7 +120,8 @@ To guarantee atomicity with domain writes while strictly respecting `PG_POOL_MAX
    - Standard low-contention interactive routes stage directly inside `tx` via `stage*Email(tx, ...)` + `flushNotificationsAfter`, while bulk loops (`assignments`, `session-outcome-sweep`) stage and render after commit so per-item transactions stay short.
 2. **Phase 1 — Atomic Outbox Staging Inside `$transaction(tx)`**:
    - **Emails**: `stage()` / `stagePreparedEmails(tx, prepared)` (`lib/email/deliver.ts`) evaluates `EMAIL_DELIVERY_MODE` and `EmailSuppression` on `tx`, writes `FailedEmail` with `status: "PENDING"` and `nextRetryAt: new Date(Date.now() + 60_000)`, and generates a row-scoped `Idempotency-Key: <EMAIL_TYPE>/failed-email/<row.id>`.
-   - **In-App Bells**: `stageBell(tx, args)` (`lib/novu/stage-bell.ts`) queries `tx.user.findMany` via `resolveRecipientBellPolicy`, filters out recipients who opted out (`EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, or muted category column), computes quiet-hours `notBefore`, and upserts `NotificationOutbox` with `status: "PENDING"` and `nextRetryAt: notBefore ?? NOW() + 60s` (`INLINE_ATTEMPT_LEASE_MS`). If every recipient opted out, `stageBell` returns `null` without writing an outbox row.
+   - **In-App Bells**: `stageBell(tx, args)` (`lib/novu/stage-bell.ts`) queries `tx.user.findMany` via `resolveRecipientBellPolicy`, filters out recipients who opted out (`EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, or muted category column), and upserts `NotificationOutbox` with `status: "PENDING"` and `nextRetryAt: notBefore ?? NOW() + 60s` (`INLINE_ATTEMPT_LEASE_MS`); `notBefore` is set only by a producer that schedules the notification. If every recipient opted out, `stageBell` returns `null` without writing an outbox row.
+   - **Bell attempt** (`attemptTrigger`, `lib/novu/outbox.ts`): rechecks current policy (`currentBellRecipients`, including `erasedAt`) and triggers only recipients still allowed, through `novu.triggerBulk` with one event per recipient under `<transactionId>:<sha256(recipient)[:16]>`. No recipient left dead-letters the row as `policy:audience_revoked` (expected, never alerted); a failed policy read leaves the row for a later attempt and never sends. `firstAttemptAt` is stamped by a conditional update before the first call; a retry 23 h or more after it dead-letters as `review:provider_acceptance_unknown`. The row is `SENT` only when every event was accepted; Novu `409` (same key in flight) is transient, and every status write is conditional on `PENDING`/`RETRY`, so nothing overwrites `SENT`.
 3. **Phase 2 — Post-Commit Concurrent Dispatch via `flushNotificationsAfter`**:
    - After `$transaction` commits, `flushNotificationsAfter({ bells, emails }, op)` (`lib/novu/stage-then-attempt.ts`) schedules wire delivery through `scheduleAfter` (`lib/api/after-safe.ts`).
    - Inside a Next.js App Router request context, `scheduleAfter` registers the batch on Next.js `after()` (`waitUntil`) so the HTTP response returns immediately while `attemptTrigger(row)` and `attemptStaged(entry.rows, entry.emailType, budgetMs)` run concurrently in `Promise.all` with individual `.catch()` error isolation.
@@ -168,7 +170,7 @@ t > 60,000ms [Phase 3: Cron Relay]  If Phase 2 timed out or container froze befo
 stateDiagram-v2
     [*] --> PENDING: Staged in $transaction(tx)<br/>(nextRetryAt = notBefore ?? now + 60s)
     PENDING --> SENT: Fast-path flushNotificationsAfter()<br/>succeeds within 60s lease
-    PENDING --> SENT: Cron relay drain succeeds<br/>(after 60s lease or quiet-hours notBefore)
+    PENDING --> SENT: Cron relay drain succeeds<br/>(after 60s lease or scheduled notBefore)
     PENDING --> RETRY: Transient 429 / 5xx / timeout<br/>(attempts < 5, exponential backoff)
     RETRY --> SENT: Subsequent cron relay tick succeeds
     RETRY --> RETRY: Transient error (attempts < 5)
@@ -269,9 +271,7 @@ flowchart TD
     CheckModeBell -->|"Yes"| DropBell["Drop Recipient"]
     CheckModeBell -->|"No"| CheckMasterBell{"allNotifications && inAppEnabled<br/>&& categoryColumn !== false?"}
     CheckMasterBell -->|"No (and not mandatory)"| DropBell
-    CheckMasterBell -->|"Yes"| QuietHours{"Quiet Hours Active?"}
-    QuietHours -->|"Yes"| StageDeferred["Upsert NotificationOutbox<br/>(notBefore = quietEnd, nextRetryAt = quietEnd)"]
-    QuietHours -->|"No"| StageImmediate["Upsert NotificationOutbox<br/>(nextRetryAt = now + 60s)"]
+    CheckMasterBell -->|"Yes"| StageImmediate["Upsert NotificationOutbox<br/>(nextRetryAt = notBefore ?? now + 60s)"]
 
     Split -->|"Email (lib/email/)"| EmailPolicy["loadEmailRecipients(userIds, category, db)"]
     EmailPolicy --> CheckModeEmail{"routingMode in<br/>BELL_ONLY | NEITHER?"}
@@ -283,8 +283,7 @@ flowchart TD
     CheckSupp -->|"Disallowed in Allowlist Mode"| HoldRow["Insert FailedEmail<br/>(DEAD_LETTER: held:pre-launch)"]
     CheckSupp -->|"Allowed"| StageEmail["Insert FailedEmail<br/>(PENDING, nextRetryAt = now + 60s,<br/>key = <TYPE>/failed-email/<row.id>)"]
 
-    StageDeferred --> Flush["flushNotificationsAfter({ bells, emails })"]
-    StageImmediate --> Flush
+    StageImmediate --> Flush["flushNotificationsAfter({ bells, emails })"]
     StageEmail --> Flush
 ```
 
@@ -294,10 +293,10 @@ flowchart TD
 
 ### Phase-Staggered Ticker Cadences (`netlify/functions/cron-tick.mts`)
 
-| Relay Target                | Ticker Interval & Phase Offset    | Per-Tick Limit & Timeout | Pacing / Concurrency                                 |
-| --------------------------- | --------------------------------- | ------------------------ | ---------------------------------------------------- |
-| `drain-notification-outbox` | Every **10m** at offset **`:05`** | `limit=20`, `20_000 ms`  | First-row sequential probe + `DRAIN_CONCURRENCY = 5` |
-| `retry-failed-emails`       | Every **15m** at offset **`:00`** | `limit=20`, `20_000 ms`  | Sequential `SEND_GAP_MS = 125 ms` pacing             |
+| Relay Target                | Ticker Interval & Phase Offset    | Per-Tick Limit & Timeout | Pacing / Concurrency                                                                         |
+| --------------------------- | --------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------- |
+| `drain-notification-outbox` | Every **10m** at offset **`:05`** | `limit=100`, `24_000 ms` | Urgent workflows first; first-row probe + `DRAIN_CONCURRENCY = 5`; no wave starts after 12 s |
+| `retry-failed-emails`       | Every **15m** at offset **`:00`** | `limit=20`, `20_000 ms`  | Sequential `SEND_GAP_MS = 125 ms` pacing                                                     |
 
 Both relays acquire fail-closed Postgres leases (`withCronLock(..., { failMode: "closed" })`) enforced by `SystemJobExecution_running_jobName_key` in `prisma/sql/check-constraints.sql`, and scan active rows using partial indexes in `prisma/sql/check-constraints.sql`:
 
@@ -312,7 +311,7 @@ To protect the 5,000/month Sentry error quota:
 
 - Neither `runEmailRetryTick` nor `runNotificationDrainTick` emits per-row `Sentry.captureMessage` or `Sentry.captureException` calls inside row processing loops.
 - `runEmailRetryTick` collects terminal and exhausted row failures into a per-tick `alerts` map keyed by reason/type, emits deduplicated alerts after the loop with `tags: { subsystem: "email", outbox_dead_letter: "true" }`, records the `email.outbox.dead_letter` gauge, and posts a single summary alert via `postOpsChat`.
-- `runNotificationDrainTick` suppresses per-row Sentry reports (`suppressSentry: true`), emits one summary `Sentry.captureException` per failing tick, records `notifications.outbox.pending` and `notifications.outbox.dead_letter` gauges, and posts a summary alert via `postOpsChat`.
+- `runNotificationDrainTick` suppresses per-row Sentry reports (`suppressSentry: true`), emits one summary `Sentry.captureException` per failing tick, records `notifications.outbox.pending` and `notifications.outbox.dead_letter` gauges, and posts a summary alert via `postOpsChat`. Expected skips (`policy:` and `announcement:` dead letters) are excluded from the alert, the gauge, the ops digest and Needs attention (`DEAD_LETTER_BELL_WHERE` in `lib/backoffice/queue-predicates.ts`).
 
 ---
 
@@ -353,5 +352,7 @@ flowchart LR
   - **Fail-Open Subscriber Sync**: Replaced catch-all defaults (`masterEnabled: true`) and 404-prone PATCH calls with fail-closed DB propagation and idempotent `novu.subscribers.create(...)`.
 - **Intentionally Retained Vendor-Plane Split (Novu In-App vs. Direct Resend Email)**:
   - Outbound emails are **not** routed through Novu's email step so transactional notices never depend on a second vendor's multi-tenant queue availability, bypass Novu's 20-workflow plan cap across 45+ React Email templates, and preserve native `resend.batch.send` throughput and `EmailEvent` Svix telemetry.
+
+- **In-app quiet hours (removed)**: bells were deferred to the end of a user's quiet window while the email for the same event went out at once, so the least intrusive channel was the one held back. The setting, its deferral and the urgent bypass are gone; the four `quietHours*` preference columns remain unused until a schema change drops them.
 
 - **Inbound forwarding via ImprovMX (planned, never configured)**: root `@` MX records `mx1.improvmx.com` and `mx2.improvmx.com` were meant to deliver role addresses on `familiarisenow.com`. They were never created, and the apex now publishes a null MX. Delete any residual references.

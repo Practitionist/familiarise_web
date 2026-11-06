@@ -15,7 +15,7 @@ The plan in use is not recorded as a fact; `docs/notifications/05-pre-production
 
 - `lib/novu/secret-key.ts` selects `NOVU_PRODUCTION_KEY` only when `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production`; everything else uses `NOVU_DEVELOPMENT_KEY`. Keep previews on the development key.
 - Notifications go through the `NotificationOutbox` table, drained by the `drain-notification-outbox` ticker target every 10 minutes with 20 rows per run (`TARGET_LIMITS`). This bounds Novu runs per tick and prevents retry storms; it does not bound total volume.
-- Quiet hours and policy (`lib/novu/quiet-hours.ts`, `lib/novu/policy.ts`) suppress sends before they become runs.
+- Bell policy (`lib/novu/policy.ts`) drops opted-out recipients at staging and again at the attempt, before they become runs.
 
 ## 4. Guardrails to set
 

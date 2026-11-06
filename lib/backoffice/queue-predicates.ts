@@ -83,3 +83,30 @@ export const DEAD_LETTER_EMAIL_WHERE: Prisma.FailedEmailWhereInput = {
     },
   ],
 };
+
+/** Bell dead-letter reasons that record a deliberate skip, not a delivery failure. */
+const EXPECTED_BELL_DEAD_LETTER_PREFIXES = [
+  "policy:",
+  "announcement:",
+] as const;
+
+export function isExpectedBellDeadLetter(
+  lastError: string | null | undefined,
+): boolean {
+  return EXPECTED_BELL_DEAD_LETTER_PREFIXES.some(
+    (prefix) => lastError?.startsWith(prefix) ?? false,
+  );
+}
+
+/** Bells that need an operator: every dead letter except the expected skips. */
+export const DEAD_LETTER_BELL_WHERE: Prisma.NotificationOutboxWhereInput = {
+  status: "DEAD_LETTER",
+  OR: [
+    { lastError: null },
+    {
+      NOT: EXPECTED_BELL_DEAD_LETTER_PREFIXES.map((prefix) => ({
+        lastError: { startsWith: prefix },
+      })),
+    },
+  ],
+};

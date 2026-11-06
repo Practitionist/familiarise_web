@@ -10,10 +10,13 @@
  */
 import { createHash } from "node:crypto";
 import * as Sentry from "@sentry/nextjs";
+import type { TriggerEventResponseDto } from "@novu/api/models/components";
 import type { NotificationOutboxKind, Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
+import { isExpectedBellDeadLetter } from "@/lib/backoffice/queue-predicates";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { getNovuClient, isNovuConfigured } from "./client";
+import { currentBellRecipients } from "./policy";
 import { toWire } from "./templates";
 import type { NovuWorkflowId } from "./templates/types";
 
@@ -30,6 +33,8 @@ export interface TriggerResult {
   staged?: StagedTrigger;
   /** #1654 — the row's status after the attempt, for the relay's counters. */
   outcome?: "SENT" | "PENDING" | "RETRY" | "DEAD_LETTER";
+  /** The `lastError` a dead-lettered row was settled with. */
+  deadLetterReason?: string;
 }
 
 /** #1654 — the outbox row as `attemptTrigger` needs it. */
@@ -42,8 +47,10 @@ export interface StagedTrigger {
   transactionId: string;
   attempts: number;
   status: string;
-  /** Quiet-hours floor; attempts before it leave the row for the drain. */
+  /** Scheduled floor; inline attempts before it leave the row for the drain. */
   notBefore: Date | null;
+  /** Stamped once, just before the first provider call. */
+  firstAttemptAt?: Date | null;
   createdAt?: Date | string;
 }
 
@@ -62,6 +69,15 @@ export interface StageTriggerArgs {
 }
 
 const MAX_ATTEMPTS = 5;
+const ACTIVE_STATUSES = ["PENDING", "RETRY"] as const;
+/** Novu's bulk endpoint takes at most 100 events per request. */
+const NOVU_BULK_LIMIT = 100;
+
+/**
+ * Provider idempotency caches last 24 h; past this age since the first
+ * attempt a retry could ring twice, so the row goes to review instead.
+ */
+export const PROVIDER_REPLAY_WINDOW_MS = 23 * 60 * 60 * 1000;
 
 /**
  * #1876 §4 — 60s lease window when staging a row due immediately so the
@@ -134,6 +150,25 @@ export function deriveTransactionId(
   return `${workflowId}:${hash.slice(0, 32)}`;
 }
 
+const sha256Hex = (value: string) =>
+  createHash("sha256").update(value).digest("hex");
+
+/** One recipient's Novu transactionId inside a targeted row: stable across retries. */
+export function recipientTransactionId(
+  rowTransactionId: string,
+  recipient: string,
+): string {
+  return `${rowTransactionId}:${sha256Hex(recipient).slice(0, 16)}`;
+}
+
+/** The row `transactionId` a Novu webhook's (possibly per-recipient) id belongs to. */
+export function outboxTransactionIdOf(novuTransactionId: string): string {
+  return (
+    /^(.+:[0-9a-f]{32}):[0-9a-f]{16}$/.exec(novuTransactionId)?.[1] ??
+    novuTransactionId
+  );
+}
+
 const STAGED_SELECT = {
   id: true,
   workflowId: true,
@@ -144,6 +179,7 @@ const STAGED_SELECT = {
   attempts: true,
   status: true,
   notBefore: true,
+  firstAttemptAt: true,
 } as const;
 
 /**
@@ -250,8 +286,8 @@ export function describeNovuFailure(error: unknown): {
 /**
  * The slug a terminal failure is fingerprinted on, or null when a retry may
  * help. Terminal is a 4xx Novu will answer the same way every time: an
- * unknown workflow, a rejected body, a bad key. 408 and 429 are transient,
- * as is anything without a status (timeout, connection reset, 5xx).
+ * unknown workflow, a rejected body, a bad key. 408, 409 and 429 are
+ * transient, as is anything without a status (timeout, connection reset, 5xx).
  */
 export function terminalTriggerReason(
   statusCode: number | undefined,
@@ -259,7 +295,10 @@ export function terminalTriggerReason(
 ): string | null {
   if (statusCode === undefined) return null;
   if (statusCode < 400 || statusCode >= 500) return null;
-  if (statusCode === 408 || statusCode === 429) return null;
+  // 409: the same Idempotency-Key is still in flight at Novu.
+  if (statusCode === 408 || statusCode === 409 || statusCode === 429) {
+    return null;
+  }
   if (novuMessage && /workflow_not_found|not found/i.test(novuMessage)) {
     return "workflow_not_found";
   }
@@ -301,12 +340,17 @@ export function reportTriggerFailure(
   error: unknown,
   workflowId: string,
   recipientCount: number,
-  opts?: { exhaustedRetries?: boolean; suppressSentry?: boolean },
+  opts?: {
+    exhaustedRetries?: boolean;
+    suppressSentry?: boolean;
+    /** Set when the terminal cause came back in a bulk response body. */
+    terminalReason?: string | null;
+  },
 ): { accepted: boolean; reason: string | null } {
   const { statusCode, novuMessage, accepted } = describeNovuFailure(error);
   const reason = accepted
     ? null
-    : terminalTriggerReason(statusCode, novuMessage);
+    : (opts?.terminalReason ?? terminalTriggerReason(statusCode, novuMessage));
   const isDeadLetter = Boolean(
     !accepted && (reason !== null || opts?.exhaustedRetries),
   );
@@ -346,12 +390,16 @@ export function reportTriggerFailure(
   return { accepted, reason };
 }
 
+/** Every write is conditional on an active status, so nothing overwrites SENT. */
 async function settleRow(
   row: StagedTrigger,
-  data: Prisma.NotificationOutboxUpdateInput,
+  data: Prisma.NotificationOutboxUpdateManyMutationInput,
 ): Promise<void> {
   try {
-    await prisma.notificationOutbox.update({ where: { id: row.id }, data });
+    await prisma.notificationOutbox.updateMany({
+      where: { id: row.id, status: { in: [...ACTIVE_STATUSES] } },
+      data,
+    });
   } catch (updateError) {
     console.error(`[Novu] ${row.workflowId} row update failed:`, updateError);
   }
@@ -366,8 +414,43 @@ function errorText(error: unknown): string {
     .slice(0, 500);
 }
 
-/** Sends one outbox row through the Novu client under its deterministic transactionId. */
-async function sendRow(row: StagedTrigger): Promise<void> {
+const asError = (error: unknown): Error | string =>
+  error instanceof Error ? error : String(error);
+
+/** What one bulk event's result means for the row. */
+function bulkEventOutcome(
+  result: TriggerEventResponseDto | undefined,
+): "accepted" | "retry" | { terminal: string } {
+  if (!result) return "retry";
+  if (result.status === "processed") return "accepted";
+  if (result.status !== "error") return { terminal: `novu_${result.status}` };
+  const message = (result.error ?? []).join("; ");
+  // Novu refusing a transactionId it already holds means an earlier attempt delivered it.
+  if (
+    /transactionId/i.test(message) &&
+    /unique|exist|duplicate/i.test(message)
+  ) {
+    return "accepted";
+  }
+  if (/workflow_not_found|not found/i.test(message)) {
+    return { terminal: "workflow_not_found" };
+  }
+  return "retry";
+}
+
+type SendResult =
+  | { accepted: true }
+  | { accepted: false; terminalReason: string | null; message: string };
+
+/**
+ * Sends one outbox row. A targeted row goes out as one bulk event per allowed
+ * recipient under a per-recipient transactionId, so a retry after partial
+ * success never rings a delivered recipient twice.
+ */
+async function sendRow(
+  row: StagedTrigger,
+  recipients: string[],
+): Promise<SendResult> {
   const novu = getNovuClient();
   const wire = toWire(
     row.workflowId as NovuWorkflowId,
@@ -379,28 +462,54 @@ async function sendRow(row: StagedTrigger): Promise<void> {
       { name: wire.workflowId, payload: wire.payload, transactionId },
       transactionId,
     );
-    return;
+    return { accepted: true };
   }
-  await novu.trigger(
-    {
+  const failures: string[] = [];
+  let retryable = false;
+  let terminalReason: string | null = null;
+  for (let i = 0; i < recipients.length; i += NOVU_BULK_LIMIT) {
+    const events = recipients.slice(i, i + NOVU_BULK_LIMIT).map((to) => ({
       workflowId: wire.workflowId,
-      to: row.kind === "SINGLE" ? row.recipients[0] : row.recipients,
+      to,
       payload: wire.payload,
-      transactionId,
-    },
-    transactionId,
-  );
+      transactionId: recipientTransactionId(transactionId, to),
+    }));
+    const idempotencyKey = `${transactionId}:bulk:${sha256Hex(
+      events.map((event) => event.transactionId).join(","),
+    ).slice(0, 16)}`;
+    const { result } = await novu.triggerBulk({ events }, idempotencyKey);
+    events.forEach((_, index) => {
+      const outcome = bulkEventOutcome(result[index]);
+      if (outcome === "accepted") return;
+      failures.push(result[index]?.status ?? "missing");
+      if (outcome === "retry") retryable = true;
+      else terminalReason ??= outcome.terminal;
+    });
+  }
+  if (failures.length === 0) return { accepted: true };
+  return {
+    accepted: false,
+    terminalReason: retryable ? null : terminalReason,
+    message: `Novu refused ${failures.length} of ${recipients.length} bell events (${[
+      ...new Set(failures),
+    ].join(", ")})`,
+  };
 }
 
 /**
- * Attempts wire delivery for one staged row. Inline attempts leave transient
- * failures PENDING for the drain; relay attempts advance backoff or dead-letter.
+ * Attempts wire delivery for one staged row. A targeted row is rechecked
+ * against current bell policy and sent only to recipients still allowed.
+ * Inline attempts leave transient failures PENDING for the drain; relay
+ * attempts advance backoff or dead-letter.
  */
 export async function attemptTrigger(
   row: StagedTrigger,
   opts: { relay?: boolean; now?: () => number; suppressSentry?: boolean } = {},
 ): Promise<TriggerResult> {
   if (row.status === "SENT") return { success: true, outcome: "SENT" };
+  if (row.status === "DEAD_LETTER") {
+    return { success: true, outcome: "DEAD_LETTER" };
+  }
   if (!isNovuConfigured()) {
     return { success: false, error: "Novu not configured", outcome: "PENDING" };
   }
@@ -412,13 +521,84 @@ export async function attemptTrigger(
   ) {
     return { success: true, staged: row, outcome: "PENDING" };
   }
-  const recipientCount = row.kind === "BROADCAST" ? 0 : row.recipients.length;
+  const deadLetter = async (
+    lastError: string,
+    attempts: number,
+  ): Promise<TriggerResult> => {
+    await settleRow(row, { status: "DEAD_LETTER", attempts, lastError });
+    Sentry.metrics?.count?.("notifications.outbox.transition", 1, {
+      attributes: { status: "DEAD_LETTER", workflowId: row.workflowId },
+    });
+    const expected = isExpectedBellDeadLetter(lastError);
+    return {
+      success: expected,
+      ...(expected ? {} : { error: lastError }),
+      outcome: "DEAD_LETTER",
+      deadLetterReason: lastError,
+    };
+  };
+
+  const pastReplayWindow = (at: Date | null | undefined) =>
+    at
+      ? now.getTime() - new Date(at).getTime() >= PROVIDER_REPLAY_WINDOW_MS
+      : false;
+  if (pastReplayWindow(row.firstAttemptAt)) {
+    return deadLetter("review:provider_acceptance_unknown", row.attempts);
+  }
+
+  let recipients = row.recipients;
+  if (row.kind !== "BROADCAST") {
+    try {
+      recipients = await currentBellRecipients(
+        row.workflowId as NovuWorkflowId,
+        row.recipients,
+      );
+    } catch (error) {
+      return { success: false, error: asError(error), outcome: "PENDING" };
+    }
+    if (recipients.length === 0) {
+      return deadLetter("policy:audience_revoked", row.attempts);
+    }
+  }
+
+  if (!row.firstAttemptAt) {
+    try {
+      const stamped = await prisma.notificationOutbox.updateMany({
+        where: {
+          id: row.id,
+          status: { in: [...ACTIVE_STATUSES] },
+          firstAttemptAt: null,
+        },
+        data: { firstAttemptAt: now },
+      });
+      if (stamped.count === 0) {
+        const current = await prisma.notificationOutbox.findUnique({
+          where: { id: row.id },
+          select: { status: true, firstAttemptAt: true },
+        });
+        if (!current) {
+          return {
+            success: false,
+            error: "Outbox row not found",
+            outcome: "PENDING",
+          };
+        }
+        if (current.status === "SENT" || current.status === "DEAD_LETTER") {
+          return { success: true, outcome: current.status };
+        }
+        if (pastReplayWindow(current.firstAttemptAt)) {
+          return deadLetter("review:provider_acceptance_unknown", row.attempts);
+        }
+      }
+    } catch (error) {
+      return { success: false, error: asError(error), outcome: "PENDING" };
+    }
+  }
+
+  const recipientCount = row.kind === "BROADCAST" ? 0 : recipients.length;
   const attempts = opts.relay ? row.attempts + 1 : row.attempts;
-  try {
-    await sendRow(row);
-    console.log(
-      `[Novu] Triggered ${row.workflowId} for ${recipientCount || "all"} subscribers`,
-    );
+  const exhaustedRetries = Boolean(opts.relay && attempts >= MAX_ATTEMPTS);
+  const markSent = async (): Promise<TriggerResult> => {
     await settleRow(row, {
       status: "SENT",
       sentAt: now,
@@ -426,50 +606,55 @@ export async function attemptTrigger(
       lastError: null,
     });
     return { success: true, outcome: "SENT" };
+  };
+
+  let failure: Error | string;
+  let reason: string | null;
+  try {
+    const sent = await sendRow(row, recipients);
+    if (sent.accepted) {
+      console.log(
+        `[Novu] Triggered ${row.workflowId} for ${recipientCount || "all"} subscribers`,
+      );
+      return markSent();
+    }
+    failure = new Error(sent.message);
+    reason = reportTriggerFailure(failure, row.workflowId, recipientCount, {
+      exhaustedRetries,
+      suppressSentry: opts.suppressSentry,
+      terminalReason: sent.terminalReason,
+    }).reason;
   } catch (error) {
-    const exhaustedRetries = Boolean(opts.relay && attempts >= MAX_ATTEMPTS);
-    const { accepted, reason } = reportTriggerFailure(
+    const reported = reportTriggerFailure(
       error,
       row.workflowId,
       recipientCount,
       { exhaustedRetries, suppressSentry: opts.suppressSentry },
     );
-    if (accepted) {
-      await settleRow(row, {
-        status: "SENT",
-        sentAt: now,
-        attempts,
-        lastError: null,
-      });
-      return { success: true, outcome: "SENT" };
-    }
-    const lastError = errorText(error);
-    const failure = {
-      success: false as const,
-      error: error instanceof Error ? error : String(error),
-    };
-    if (reason || exhaustedRetries) {
-      await settleRow(row, { status: "DEAD_LETTER", attempts, lastError });
-      Sentry.metrics?.count?.("notifications.outbox.transition", 1, {
-        attributes: { status: "DEAD_LETTER", workflowId: row.workflowId },
-      });
-      return { ...failure, outcome: "DEAD_LETTER" };
-    }
-    if (opts.relay) {
-      await settleRow(row, {
-        status: "RETRY",
-        attempts,
-        nextRetryAt: nextRetryAt(attempts + 1, now),
-        lastError,
-      });
-      Sentry.metrics?.count?.("notifications.outbox.transition", 1, {
-        attributes: { status: "RETRY", workflowId: row.workflowId },
-      });
-      return { ...failure, outcome: "RETRY" };
-    }
-    await settleRow(row, { lastError });
-    return { ...failure, outcome: "PENDING" };
+    if (reported.accepted) return markSent();
+    failure = asError(error);
+    reason = reported.reason;
   }
+
+  const lastError = errorText(failure);
+  if (reason || exhaustedRetries) {
+    const dead = await deadLetter(lastError, attempts);
+    return { ...dead, success: false, error: failure };
+  }
+  if (opts.relay) {
+    await settleRow(row, {
+      status: "RETRY",
+      attempts,
+      nextRetryAt: nextRetryAt(attempts + 1, now),
+      lastError,
+    });
+    Sentry.metrics?.count?.("notifications.outbox.transition", 1, {
+      attributes: { status: "RETRY", workflowId: row.workflowId },
+    });
+    return { success: false, error: failure, outcome: "RETRY" };
+  }
+  await settleRow(row, { lastError });
+  return { success: false, error: failure, outcome: "PENDING" };
 }
 
 export { MAX_ATTEMPTS as OUTBOX_MAX_ATTEMPTS };

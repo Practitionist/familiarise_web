@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { outboxTransactionIdOf } from "@/lib/novu/outbox";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import {
   extractNovuChannel,
@@ -22,7 +23,7 @@ async function handleNovuFailureEvent(
     extractNovuErrorMessage(payload) ?? `Novu delivery failure (${eventType})`;
   if (transactionId) {
     await prisma.notificationOutbox.updateMany({
-      where: { transactionId },
+      where: { transactionId: outboxTransactionIdOf(transactionId) },
       data: { lastError: errorText },
     });
   }
@@ -62,8 +63,13 @@ export async function processNovuWebhookPayload(
   }
 
   if (transactionId && isNovuDeliveredEvent(eventType, status)) {
+    // One recipient's delivery settles only a row with no other recipients.
     await prisma.notificationOutbox.updateMany({
-      where: { transactionId, status: "PENDING" },
+      where: {
+        transactionId: outboxTransactionIdOf(transactionId),
+        status: "PENDING",
+        kind: "SINGLE",
+      },
       data: {
         status: "SENT",
         sentAt: new Date(),

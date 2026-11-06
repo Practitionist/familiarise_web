@@ -5,6 +5,15 @@ import { updateSubscriberPreferences } from "@/lib/novu/subscriber";
 import { NotificationPreferenceUpdateSchema } from "@/schemas/user";
 
 import { getSession } from "@/lib/auth-server";
+
+// Unused columns slated for removal: never returned, and the schema strips them on write.
+const UNUSED_PREFERENCE_COLUMNS = {
+  quietHoursEnabled: true,
+  quietHoursStart: true,
+  quietHoursEnd: true,
+  quietHoursTimezone: true,
+} as const;
+
 /**
  * GET /api/novu/preferences
  * Returns the current user's notification preferences.
@@ -18,6 +27,7 @@ export async function GET() {
 
     const preferences = await prisma.notificationPreference.findUnique({
       where: { userId: session.user.id },
+      omit: UNUSED_PREFERENCE_COLUMNS,
     });
 
     // Return defaults if no preferences exist yet
@@ -40,10 +50,6 @@ export async function GET() {
         orgBillingAlerts: true,
         orgMembershipAlerts: true,
         orgProgramAlerts: true,
-        quietHoursEnabled: false,
-        quietHoursStart: null,
-        quietHoursEnd: null,
-        quietHoursTimezone: null,
       });
     }
 
@@ -91,6 +97,7 @@ export async function PUT(req: NextRequest) {
         userId: session.user.id,
         ...validatedData,
       },
+      omit: UNUSED_PREFERENCE_COLUMNS,
     });
 
     // Sync master + channel + category preferences to Novu subscriber

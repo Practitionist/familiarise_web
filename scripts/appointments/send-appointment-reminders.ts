@@ -68,6 +68,7 @@ function reminderEntityRef(appointmentId: string, window: ReminderWindowLabel) {
 
 const USER_BATCH_SELECT = {
   id: true,
+  erasedAt: true,
   email: true,
   name: true,
   timezone: true,
@@ -86,10 +87,6 @@ const USER_BATCH_SELECT = {
       orgBillingAlerts: true,
       orgMembershipAlerts: true,
       orgProgramAlerts: true,
-      quietHoursEnabled: true,
-      quietHoursStart: true,
-      quietHoursEnd: true,
-      quietHoursTimezone: true,
     },
   },
 } as const;

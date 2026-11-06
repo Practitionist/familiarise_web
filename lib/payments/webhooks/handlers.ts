@@ -1654,7 +1654,7 @@ export async function handlePaymentFailure(
         failureReason: payment.description || "Payment could not be processed",
         retryUrl: `${getAppUrl()}${goHref("client", "payments")}`,
       },
-      { tx, entityRef: `payment:${payment.id}`, deferrable: false },
+      { tx, entityRef: `payment:${payment.id}` },
     );
 
     console.log(

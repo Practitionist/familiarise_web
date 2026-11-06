@@ -89,8 +89,7 @@ const LINKEDIN_URL_MESSAGE =
   "Enter your public LinkedIn profile link, like https://linkedin.com/in/yourname";
 
 export type LinkedinNormaliseResult =
-  | { ok: true; url: string }
-  | { ok: false; reason: string };
+  { ok: true; url: string } | { ok: false; reason: string };
 
 /**
  * Validate a LinkedIn profile link and reduce it to one canonical form:
@@ -532,12 +531,6 @@ export const NotificationPreferenceSchema = z.object({
   orgBillingAlerts: z.boolean().default(true),
   orgMembershipAlerts: z.boolean().default(true),
   orgProgramAlerts: z.boolean().default(true),
-
-  // Quiet hours
-  quietHoursEnabled: z.boolean().default(false),
-  quietHoursStart: z.string().nullable().default(null),
-  quietHoursEnd: z.string().nullable().default(null),
-  quietHoursTimezone: z.string().nullable().default(null),
 });
 
 export type NotificationPreference = z.infer<

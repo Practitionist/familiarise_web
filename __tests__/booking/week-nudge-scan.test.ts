@@ -11,7 +11,6 @@ const mockPrisma = {
     findMany: jest.fn(),
   },
   subscription: { findMany: jest.fn() },
-  notificationPreference: { findMany: jest.fn() },
   bookingStatusHistory: { findMany: jest.fn() },
   notificationOutbox: { findMany: jest.fn() },
   failedEmail: { findMany: jest.fn() },
@@ -106,7 +105,6 @@ beforeEach(() => {
     sub("sub-a", "Priya"),
     sub("sub-b", "Ravi"),
   ]);
-  mockPrisma.notificationPreference.findMany.mockResolvedValue([]);
   history([]);
   mockPrisma.notificationOutbox.findMany.mockResolvedValue([]);
   mockPrisma.failedEmail.findMany.mockResolvedValue([]);
@@ -240,7 +238,7 @@ it("never sends a reminder at 08:00 that would use up the day's batch", async ()
 });
 
 it("reports a failed read instead of throwing into the expiry job", async () => {
-  mockPrisma.notificationPreference.findMany.mockRejectedValue(
+  mockPrisma.notificationOutbox.findMany.mockRejectedValue(
     new Error("db down"),
   );
   const result = await runAt("2026-03-09T10:00:00.000Z");

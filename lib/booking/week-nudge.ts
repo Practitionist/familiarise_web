@@ -1,10 +1,10 @@
 // The consultant's reminder ladder for plan weeks that still have sessions to
 // place. Daytime only: the ladder starts at 09:00 on the week's first day in
 // the consultant's zone, runs on that day, the next and the third (+0/+1/+3
-// days), and anything due outside 08:00–21:00 local (or inside the
-// consultant's quiet hours) waits for the next run. A plan scheduled with Auto
-// skips the first day; the sweep places it. One bell and one email
-// per consultant per local day list every plan due; the outbox rows dedupe.
+// days), and anything due outside 08:00–21:00 local waits for the next run.
+// A plan scheduled with Auto skips the first day; the sweep places it. One
+// bell and one email per consultant per local day list every plan due; the
+// outbox rows dedupe.
 
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { AppointmentStatus, type Prisma } from "@prisma/client";
@@ -26,7 +26,6 @@ import {
 import { notifyUnplacedWeekNudge } from "@/lib/novu/service";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { deriveTransactionId } from "@/lib/novu/outbox";
-import { computeQuietHoursNotBefore } from "@/lib/novu/quiet-hours";
 import { formatDateRangeLabel } from "@/lib/time/display";
 import { getAppUrl } from "@/lib/url";
 import { plansScheduledOnAuto } from "@/lib/data/plan-schedule-choice";
@@ -299,37 +298,6 @@ function dueNudgeFor(
   };
 }
 
-/** When each user's quiet hours end, if they are inside them now. */
-async function quietUntilByUser(
-  userIds: string[],
-  now: Date,
-): Promise<Map<string, Date | null>> {
-  const prefs = await prisma.notificationPreference.findMany({
-    where: { userId: { in: userIds } },
-    select: {
-      userId: true,
-      quietHoursEnabled: true,
-      quietHoursStart: true,
-      quietHoursEnd: true,
-      quietHoursTimezone: true,
-    },
-  });
-  return new Map(
-    prefs.map((p) => [
-      p.userId,
-      computeQuietHoursNotBefore(
-        {
-          quietHoursEnabled: p.quietHoursEnabled,
-          quietHoursStart: p.quietHoursStart,
-          quietHoursEnd: p.quietHoursEnd,
-          quietHoursTimezone: p.quietHoursTimezone,
-        },
-        now,
-      ),
-    ]),
-  );
-}
-
 interface DueConsultant {
   consultantProfileId: string;
   userId: string;
@@ -445,15 +413,8 @@ async function runWeekNudges(
   }
   if (byConsultant.size === 0) return { nudged: 0, errors };
 
-  // Quiet hours on top of the waking window, for the email as for the bell.
-  const quietUntil = await quietUntilByUser(
-    [...byConsultant.values()].map((c) => c.userId),
-    now,
-  );
   const due: DueConsultant[] = [...byConsultant].flatMap(
     ([consultantProfileId, c]) => {
-      const notBefore = quietUntil.get(c.userId);
-      if (notBefore && notBefore > now) return [];
       const localDay = formatInTimeZone(now, c.zone, "yyyy-MM-dd");
       const dedupeKey = weekNudgeDedupeKey(consultantProfileId, localDay);
       return [
