@@ -27,7 +27,7 @@ This is the index for the finance domain: how money truth is written and proven 
 - Never release an earning while its payment has a `PENDING` refund or an owed-refund marker (`RELEASABLE_PAYMENT`); the marker is a hold that lifts only when a drive or a hand refund clears it.
 - Bill GST as principal supplier: 18% on the full price, platform invoices and credit notes, no Section 52 TCS. Book each supply's GST once; invoice journals cover only supplies without booking journals, and overages tax only their surcharge.
 - Pass the transaction client through every helper inside `$transaction`; global-client reads can deadlock at `PG_POOL_MAX=1`.
-- Render every email before the money transaction opens and only stage it inside; a notice's render failure never rolls back a capture, refund, ledger entry, payout or dunning claim (notification ADR decision 15).
+- Render every email before the money transaction opens and only stage it inside; a notice's render failure never rolls back a capture, refund, ledger entry, payout or dunning claim. Receipts, refund, dunning and payout notices leave a `review:render_failed` row per recipient instead of a Sentry event (notification ADR decision 15).
 
 Detailed invariants and regime facts live in `references/doctrine.md`; verification procedures live in `references/verification.md`.
 
