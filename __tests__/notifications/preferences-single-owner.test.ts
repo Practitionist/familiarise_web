@@ -97,26 +97,17 @@ describe("preference writes never call Novu", () => {
     expect(mockGetNovuClient).not.toHaveBeenCalled();
   });
 
-  it("PATCH workspace routing writes the profile and nothing else", async () => {
-    mockProfileUpdate.mockResolvedValue({
-      id: "ows1",
-      notificationRoutingMode: "EMAIL_ONLY",
-    });
-
+  it("PATCH workspace settings refuses the removed routing field", async () => {
     const res = await patchWorkspaceSettings(
       jsonRequest("http://localhost/api/org-workspace/ows1/settings", "PATCH", {
+        locale: "en-IN",
         notificationRoutingMode: "EMAIL_ONLY",
       }),
       { params: Promise.resolve({ orgWorkspaceId: "ows1" }) },
     );
 
-    expect(res.status).toBe(200);
-    expect(mockProfileUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: { notificationRoutingMode: "EMAIL_ONLY" },
-      }),
-    );
-    expect(mockUserFindUnique).not.toHaveBeenCalled();
+    expect(res.status).toBe(400);
+    expect(mockProfileUpdate).not.toHaveBeenCalled();
     expect(mockGetNovuClient).not.toHaveBeenCalled();
   });
 });

@@ -40,24 +40,18 @@ describe("required bells", () => {
     ).toBeUndefined();
   });
 
-  it("rings a security notice for a user who muted every bell or routes to email only", async () => {
+  it("rings a security notice for a user who muted every bell", async () => {
     mockFindMany.mockResolvedValue([
       { id: "muted", erasedAt: null, notificationPreferences: MUTED },
-      {
-        id: "email-only",
-        erasedAt: null,
-        orgWorkspaceProfile: { notificationRoutingMode: "EMAIL_ONLY" },
-        notificationPreferences: null,
-      },
       { id: "erased", erasedAt: new Date(), notificationPreferences: null },
     ]);
 
     const { allowedRecipients } = await resolveRecipientBellPolicy(
       NOVU_WORKFLOWS.ACCOUNT_SECURITY_NOTICE,
-      ["muted", "email-only", "erased"],
+      ["muted", "erased"],
     );
 
-    expect(allowedRecipients).toEqual(["muted", "email-only"]);
+    expect(allowedRecipients).toEqual(["muted"]);
   });
 
   it("keeps an announcement behind the switches", async () => {

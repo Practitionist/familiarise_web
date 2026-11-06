@@ -21,17 +21,12 @@ const BELL_PREFERENCE_SELECT = {
 const BELL_POLICY_SELECT = {
   id: true,
   erasedAt: true,
-  orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
   notificationPreferences: { select: BELL_PREFERENCE_SELECT },
 } as const;
 
 type BellUserRow = {
   id?: string;
   erasedAt?: Date | null;
-  orgWorkspaceProfile?: {
-    notificationRoutingMode?:
-      "BELL_AND_EMAIL" | "BELL_ONLY" | "EMAIL_ONLY" | "NEITHER" | null;
-  } | null;
   notificationPreferences?: Partial<
     Record<keyof typeof BELL_PREFERENCE_SELECT, boolean | null>
   > | null;
@@ -55,10 +50,6 @@ function isBellAllowedForRecipient(
   if (!row) return true;
   if (row.erasedAt) return false;
   if (required) return true;
-  const routingMode = row.orgWorkspaceProfile?.notificationRoutingMode;
-  if (routingMode === "EMAIL_ONLY" || routingMode === "NEITHER") {
-    return false;
-  }
   const pref = row.notificationPreferences;
   if (!pref) return true;
   if (pref.allNotifications === false) return false;
@@ -134,25 +125,9 @@ function bellAllowedWhere({
   if (category !== null) preference[EMAIL_CATEGORY_COLUMN[category]] = true;
   return {
     erasedAt: null,
-    AND: [
-      {
-        OR: [
-          { orgWorkspaceProfile: { is: null } },
-          {
-            orgWorkspaceProfile: {
-              is: {
-                notificationRoutingMode: { notIn: ["EMAIL_ONLY", "NEITHER"] },
-              },
-            },
-          },
-        ],
-      },
-      {
-        OR: [
-          { notificationPreferences: { is: null } },
-          { notificationPreferences: { is: preference } },
-        ],
-      },
+    OR: [
+      { notificationPreferences: { is: null } },
+      { notificationPreferences: { is: preference } },
     ],
   };
 }

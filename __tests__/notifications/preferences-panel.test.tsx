@@ -1,7 +1,7 @@
 /**
  * The notification settings panel: labelled switches, an optimistic save that
- * rolls back on failure, a per-control pending lock, role-filtered categories
- * and the workspace-routing message.
+ * rolls back on failure, a per-control pending lock and role-filtered
+ * categories.
  */
 
 import * as React from "react";
@@ -40,15 +40,13 @@ beforeEach(() => {
   ) as unknown as typeof fetch;
 });
 
-function renderPanel(
-  props: React.ComponentProps<typeof NotificationPreferencesPanel> = {},
-) {
+function renderPanel() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <NotificationPreferencesPanel {...props} />
+      <NotificationPreferencesPanel />
     </QueryClientProvider>,
   );
 }
@@ -126,14 +124,3 @@ it.each([
     }
   },
 );
-
-it("says when workspace routing overrides a personal channel", async () => {
-  mockUser = { id: "u1", role: "ORG_WORKSPACE" };
-  renderPanel({ routing: { mode: "BELL_ONLY", label: "Bell only" } });
-  expect(
-    await screen.findByText(
-      "Email is off because this workspace's routing is Bell only.",
-    ),
-  ).toBeInTheDocument();
-  expect(screen.queryByText(/In-app notifications are off/)).toBeNull();
-});

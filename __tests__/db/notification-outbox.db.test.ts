@@ -2,7 +2,7 @@
  * Notification outbox semantics the unit stubs only imitate, against real
  * Postgres:
  *  - the SQL audience filter (`bellAudience`) and the per-recipient JS rule
- *    agree on every routing mode, switch, category and missing relation;
+ *    agree on every switch, category and missing relation, operators included;
  *  - fan-out pages stage once per key (`createManyAndReturn` skip-duplicates);
  *  - a definitive partial bell response keeps the retryable remainder on the
  *    row and moves terminal refusals to one DEAD_LETTER sibling;
@@ -21,7 +21,7 @@ jest.mock("../../lib/novu/client", () => ({
   }),
 }));
 
-import type { NotificationRoutingMode, Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { NOVU_WORKFLOWS } from "../../lib/novu/workflows";
 import { bellAudience, currentBellRecipients } from "../../lib/novu/policy";
@@ -49,7 +49,7 @@ type Prefs = Partial<
 
 async function seedUser(opts: {
   prefs?: Prefs | null;
-  routing?: NotificationRoutingMode | null;
+  operator?: boolean;
   erased?: boolean;
 }): Promise<string> {
   const user = await prisma.user.create({
@@ -61,13 +61,7 @@ async function seedUser(opts: {
       ...(opts.prefs
         ? { notificationPreferences: { create: opts.prefs } }
         : {}),
-      ...(opts.routing
-        ? {
-            orgWorkspaceProfile: {
-              create: { notificationRoutingMode: opts.routing },
-            },
-          }
-        : {}),
+      ...(opts.operator ? { orgWorkspaceProfile: { create: {} } } : {}),
     },
     select: { id: true },
   });
@@ -86,10 +80,8 @@ describe("bell audience: SQL filter matches the per-recipient rule", () => {
       { prefs: { appointmentReminders: false } },
       { prefs: { paymentNotifications: false } },
       { erased: true },
-      { routing: "BELL_AND_EMAIL" },
-      { routing: "BELL_ONLY", prefs: { appointmentReminders: false } },
-      { routing: "EMAIL_ONLY" },
-      { routing: "NEITHER" },
+      { operator: true },
+      { operator: true, prefs: { inAppEnabled: false } },
     ];
     for (const shape of shapes) ids.push(await seedUser(shape));
   });

@@ -4,7 +4,7 @@
 
 /**
  * The settings page shows only the switches a viewer's role can receive, and
- * its routing message matches what the bell and email gates actually block.
+ * those switches are the only channel control, workspace operators included.
  */
 
 const mockFindMany = jest.fn();
@@ -15,16 +15,11 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-import type { NotificationRoutingMode } from "@prisma/client";
-import {
-  EMAIL_CATEGORY_COLUMN,
-  isEmailAllowedForUser,
-} from "@/lib/email/preferences";
+import { EMAIL_CATEGORY_COLUMN, isEmailAllowed } from "@/lib/email/preferences";
 import { resolveRecipientBellPolicy } from "@/lib/novu/policy";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import {
   receivableSwitches,
-  routingBlocks,
   showsQuietHours,
 } from "@/lib/notifications/receivable";
 
@@ -75,37 +70,34 @@ describe("receivableSwitches", () => {
   });
 });
 
-describe("routingBlocks matches the server gates", () => {
-  const MODES: NotificationRoutingMode[] = [
-    "BELL_AND_EMAIL",
-    "BELL_ONLY",
-    "EMAIL_ONLY",
-    "NEITHER",
-  ];
-
-  it.each(MODES)("%s", async (mode) => {
-    const orgWorkspaceProfile = { notificationRoutingMode: mode };
+describe("a workspace operator's channels are only their personal switches", () => {
+  it.each([
+    [true, false],
+    [false, true],
+  ])("in-app %s, email %s", async (inAppEnabled, emailEnabled) => {
     mockFindMany.mockResolvedValue([
       {
-        id: "u1",
+        id: "op1",
+        email: "op@example.test",
+        name: null,
+        timezone: null,
         erasedAt: null,
-        orgWorkspaceProfile,
-        notificationPreferences: null,
+        notificationPreferences: {
+          allNotifications: true,
+          inAppEnabled,
+          emailEnabled,
+        },
       },
     ]);
-    const { allowedRecipients } = await resolveRecipientBellPolicy(
-      NOVU_WORKFLOWS.APPOINTMENT_BOOKED,
-      ["u1"],
-    );
-    expect(mockFindMany).toHaveBeenCalled();
-    const emailAllowed = isEmailAllowedForUser(
-      { orgWorkspaceProfile, notificationPreferences: null },
-      "appointments",
-    );
 
-    expect(routingBlocks(mode)).toEqual({
-      inApp: allowedRecipients.length === 0,
-      email: !emailAllowed,
-    });
+    const { allowedRecipients } = await resolveRecipientBellPolicy(
+      NOVU_WORKFLOWS.ORG_INVOICE_ISSUED,
+      ["op1"],
+    );
+    expect(allowedRecipients).toEqual(inAppEnabled ? ["op1"] : []);
+    expect(await isEmailAllowed("op1", "orgBilling")).toBe(emailEnabled);
+    for (const [args] of mockFindMany.mock.calls) {
+      expect(args.select).not.toHaveProperty("orgWorkspaceProfile");
+    }
   });
 });

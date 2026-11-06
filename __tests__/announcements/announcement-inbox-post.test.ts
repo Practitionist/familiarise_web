@@ -59,17 +59,8 @@ type OutboxRow = {
   workflowId: string;
 };
 
-function user(
-  id: string,
-  prefs: Record<string, boolean> | null = null,
-  routing: string | null = null,
-) {
-  return {
-    id,
-    erasedAt: null,
-    orgWorkspaceProfile: routing ? { notificationRoutingMode: routing } : null,
-    notificationPreferences: prefs,
-  };
+function user(id: string, prefs: Record<string, boolean> | null = null) {
+  return { id, erasedAt: null, notificationPreferences: prefs };
 }
 
 function createRequest(body: Record<string, unknown>) {
@@ -118,8 +109,6 @@ describe("POST /api/announcements", () => {
       ...allowed,
       user("v-inapp-off", { allNotifications: true, inAppEnabled: false }),
       user("v-paused", { allNotifications: false, inAppEnabled: true }),
-      user("v-email-only", null, "EMAIL_ONLY"),
-      user("v-neither", null, "NEITHER"),
     ]);
 
     const res = await POST(createRequest({ postToInbox: true }));

@@ -15,10 +15,6 @@ function recipient() {
   return {
     email: "reader@example.com",
     erasedAt: null as Date | null,
-    orgWorkspaceProfile: {
-      notificationRoutingMode: "BELL_AND_EMAIL" as
-        "BELL_AND_EMAIL" | "BELL_ONLY" | "EMAIL_ONLY" | "NEITHER",
-    },
     notificationPreferences: {
       allNotifications: true,
       emailEnabled: true,
@@ -75,26 +71,10 @@ it.each(["allNotifications", "emailEnabled", "appointmentReminders"] as const)(
   },
 );
 
-it.each(["BELL_ONLY", "NEITHER"] as const)(
-  "honours workspace %s while queued",
-  async (notificationRoutingMode) => {
-    findUnique.mockResolvedValue({
-      ...recipient(),
-      orgWorkspaceProfile: { notificationRoutingMode },
-    });
-    expect(await emailPolicyRefusal(policy, "reader@example.com", db)).toBe(
-      "preference_changed",
-    );
-  },
-);
-
-it("sends a required notice despite optional switches and routing", async () => {
+it("sends a required notice despite optional switches", async () => {
   const user = recipient();
   user.notificationPreferences.allNotifications = false;
-  findUnique.mockResolvedValue({
-    ...user,
-    orgWorkspaceProfile: { notificationRoutingMode: "NEITHER" },
-  });
+  findUnique.mockResolvedValue(user);
   expect(
     await emailPolicyRefusal(
       { ...policy, category: null },

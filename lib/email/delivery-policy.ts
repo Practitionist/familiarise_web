@@ -36,7 +36,6 @@ export function deliveryPolicyOf(
 export const EMAIL_POLICY_USER_SELECT = {
   email: true,
   erasedAt: true,
-  orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
   notificationPreferences: { select: EMAIL_PREFERENCE_SELECT },
 } as const;
 

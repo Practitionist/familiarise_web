@@ -1328,7 +1328,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Organisation workspaces",
         paragraphs: [
-          "A workspace operator also sets notification routing in Workspace settings › Notifications. Routing applies to every bell and every optional email for that account, on top of the personal switches, and the panel tells you when routing has turned a channel off.",
+          "A workspace operator uses the same panel, under Workspace settings › Notifications. Its In-app and Email switches are the only channel controls for that account; there is no separate workspace setting.",
         ],
       },
     ],

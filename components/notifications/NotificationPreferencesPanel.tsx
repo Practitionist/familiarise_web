@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import type { NotificationRoutingMode } from "@prisma/client";
 import {
   useMutation,
   useMutationState,
@@ -19,7 +18,6 @@ import { useToast } from "@/hooks/use-toast";
 import type { EmailCategoryColumn } from "@/lib/email/preferences";
 import {
   receivableSwitches,
-  routingBlocks,
   showsQuietHours,
 } from "@/lib/notifications/receivable";
 import {
@@ -167,7 +165,6 @@ function SwitchRow({
   description,
   checked,
   disabled,
-  note,
   onCheckedChange,
 }: Readonly<{
   id: string;
@@ -175,7 +172,6 @@ function SwitchRow({
   description: string;
   checked: boolean;
   disabled: boolean;
-  note?: string | null;
   onCheckedChange: (checked: boolean) => void;
 }>) {
   return (
@@ -187,7 +183,6 @@ function SwitchRow({
         <p id={`${id}-description`} className="text-xs text-zinc-500">
           {description}
         </p>
-        {note && <p className="mt-1 text-xs text-amber-700">{note}</p>}
       </div>
       <Switch
         id={id}
@@ -256,14 +251,7 @@ function QuietHoursTimeField({
   );
 }
 
-export interface NotificationPreferencesPanelProps {
-  /** The workspace routing mode and its label, on the org workspace page only. */
-  routing?: { mode: NotificationRoutingMode; label: string };
-}
-
-export function NotificationPreferencesPanel({
-  routing,
-}: Readonly<NotificationPreferencesPanelProps> = {}) {
+export function NotificationPreferencesPanel() {
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -280,7 +268,6 @@ export function NotificationPreferencesPanel({
     hasOrgMembership: memberships.length > 0,
   };
   const switches = receivableSwitches(viewer);
-  const blocked = routingBlocks(routing?.mode ?? null);
 
   const {
     data: prefs,
@@ -367,28 +354,16 @@ export function NotificationPreferencesPanel({
   const childDisabled = (key: keyof Preferences) =>
     optionalOff || pendingKeys.has(key);
 
-  const renderToggle = (field: ToggleField, note?: string | null) => (
+  const renderToggle = (field: ToggleField) => (
     <SwitchRow
       id={`notification-${field.key}`}
       label={field.label}
       description={field.description}
       checked={prefs[field.key]}
       disabled={childDisabled(field.key)}
-      note={note}
       onCheckedChange={(checked) => save({ [field.key]: checked })}
     />
   );
-
-  const channelNote = (key: BooleanPreferenceKey): string | null => {
-    if (!routing) return null;
-    if (key === "inAppEnabled" && blocked.inApp) {
-      return `In-app notifications are off because this workspace's routing is ${routing.label}.`;
-    }
-    if (key === "emailEnabled" && blocked.email) {
-      return `Email is off because this workspace's routing is ${routing.label}.`;
-    }
-    return null;
-  };
 
   const categoryFields = CATEGORY_FIELDS.filter((f) => switches.has(f.key));
   const orgFields = ORG_CATEGORY_FIELDS.filter((f) => switches.has(f.key));
@@ -433,7 +408,7 @@ export function NotificationPreferencesPanel({
           {CHANNEL_FIELDS.map((field, index) => (
             <div key={field.key}>
               {index > 0 && <Separator className="mb-4" />}
-              {renderToggle(field, channelNote(field.key))}
+              {renderToggle(field)}
             </div>
           ))}
         </CardContent>

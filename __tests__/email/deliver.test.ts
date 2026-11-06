@@ -332,7 +332,6 @@ describe("attempt-time recipient recheck and first-attempt anchor", () => {
   const account = {
     email: "user@example.com",
     erasedAt: null,
-    orgWorkspaceProfile: null,
     notificationPreferences: null,
   };
 
@@ -396,7 +395,10 @@ describe("attempt-time recipient recheck and first-attempt anchor", () => {
     [
       {
         ...account,
-        orgWorkspaceProfile: { notificationRoutingMode: "BELL_ONLY" },
+        notificationPreferences: {
+          allNotifications: true,
+          emailEnabled: false,
+        },
       },
       "policy:preference_changed",
     ],

@@ -6,7 +6,6 @@
  * `docs/notifications/02-workflows-and-api.md`.
  */
 
-import type { NotificationRoutingMode } from "@prisma/client";
 import { z } from "zod";
 import type { EmailCategoryColumn } from "@/lib/email/preferences";
 
@@ -62,15 +61,4 @@ export function receivableSwitches(
 /** Quiet hours are read only by the consultant planning reminder (`lib/booking/week-nudge.ts`). */
 export function showsQuietHours(viewer: PreferenceViewer): boolean {
   return viewer.role === "CONSULTANT" || !!viewer.consultantProfileId;
-}
-
-/** The channels a workspace routing mode blocks, as `lib/novu/policy.ts` and `isEmailAllowedForUser` apply it. */
-export function routingBlocks(mode: NotificationRoutingMode | null): {
-  inApp: boolean;
-  email: boolean;
-} {
-  return {
-    inApp: mode === "EMAIL_ONLY" || mode === "NEITHER",
-    email: mode === "BELL_ONLY" || mode === "NEITHER",
-  };
 }
