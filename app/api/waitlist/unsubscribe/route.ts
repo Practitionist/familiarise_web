@@ -7,7 +7,8 @@
  *        or a session.
  *
  * Both are enumeration-safe: the response is identical whether the address was
- * on the list or not. A failed write never answers "unsubscribed".
+ * on the list or not. A failed write never answers "unsubscribed". The page is
+ * bare: the logo only, with no site navigation or newsletter sign-up.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -109,6 +110,7 @@ function html(
   </head>
   <body style="margin:0;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',sans-serif">
     <div style="max-width:520px;margin:0 auto;padding:64px 20px">
+      <img src="${getAppUrl()}/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif" width="140" alt="Familiarise" style="display:block;margin:0 auto 24px" />
       <div style="background:#fff;border-radius:8px;padding:32px">
         <h1 style="margin:0 0 12px;font-size:24px;color:#111">${title}</h1>
         <p style="margin:0 0 24px;font-size:16px;line-height:1.5;color:#444">${body}</p>
