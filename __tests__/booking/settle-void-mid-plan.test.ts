@@ -132,6 +132,7 @@ const state = {
   /** When set, the stored-end cohort is this list, paged by its keyset. */
   cohort: null as Plan[] | null,
   waiting: new Set<string>(),
+  unsentRemedy: null as { id: string } | null,
   opened: [] as string[],
   budget: Infinity,
   checkpoint: null as string | null,
@@ -216,6 +217,10 @@ jest.mock("../../lib/prisma", () => {
       updateMany: (...a: unknown[]) => subscriptionUpdateMany(...a),
     },
     rescheduleRequest: { findFirst: async () => null },
+    // An approved session-count remedy with no live refund holds the plan.
+    supportFinancialRecommendation: {
+      findFirst: async () => state.unsentRemedy,
+    },
     payment: {
       findMany: async () => [
         {
@@ -259,6 +264,7 @@ beforeEach(() => {
     { id: "v1", completionStatus: "VOIDED", seatsSettledAt: null },
   ];
   state.undecided = 0;
+  state.unsentRemedy = null;
   state.refunds = [];
   state.payment = { amount: 120_000, paymentIntent: "order_1" };
   state.creditStillUsed = 50_000;
@@ -355,6 +361,14 @@ it("waits while a session is undecided, writing nothing to the plan", async () =
   expect(transitionSubscriptionRequest).not.toHaveBeenCalled();
   expect(stampRefundOwed).not.toHaveBeenCalled();
   expect(subscriptionUpdateMany).not.toHaveBeenCalled();
+});
+
+it("waits while an approved session-count remedy's refund is not live", async () => {
+  state.plan = plan({ planEndsAt: new Date("2026-05-15T06:00:00Z") });
+  state.unsentRemedy = { id: "rec-1" };
+  await settleCancelledSessions();
+  expect(transitionSubscriptionRequest).not.toHaveBeenCalled();
+  expect(stampRefundOwed).not.toHaveBeenCalled();
 });
 
 it("re-reads the plan under the lock: an extension that landed first wins", async () => {

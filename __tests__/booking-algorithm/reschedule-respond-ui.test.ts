@@ -149,7 +149,7 @@ describe("#1766 — the Requests inbox sizes a subscription's batch off the enti
     );
     expect(arm).toContain("entitlement.cycle.nextBatch * slotsPerSession");
     expect(arm).not.toContain("totalSessions * slotsPerSession");
-    expect(inboxRead).toContain("sessionsTotalOf(s)");
+    expect(inboxRead).toContain("soldTermsOf(s)");
     expect(inboxRead).not.toContain("countSundayWeeksInclusive");
   });
 });
@@ -158,6 +158,7 @@ describe("#1766 — the Requests list row reads entitlement words", () => {
   it("says booked-of-total and the pick, never a bare slot count, for a subscription", () => {
     const entitlement = subscriptionEntitlement({
       sessionsTotal: 12,
+      sessionsRefunded: 0,
       sessionsPerWeek: 4,
       durationInMonths: 3,
       occurrences: [],

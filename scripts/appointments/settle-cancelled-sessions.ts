@@ -1042,6 +1042,23 @@ async function settleEndedPlan(
               select: { id: true },
             });
             if (openReschedule) throw new PlanWaiting();
+            // An approved session-count remedy whose refund is not live yet
+            // would be paid again by this share; ops retries or voids it first.
+            const unsentRemedy =
+              await tx.supportFinancialRecommendation.findFirst({
+                where: {
+                  payment: { appointmentId },
+                  approved: true,
+                  voidedAt: null,
+                  sessionsRemoved: { not: null },
+                  OR: [
+                    { refundId: null },
+                    { refund: { status: { in: ["FAILED", "CANCELLED"] } } },
+                  ],
+                },
+                select: { id: true },
+              });
+            if (unsentRemedy) throw new PlanWaiting();
 
             const rows = await tx.appointmentOccurrence.findMany({
               where: { appointmentId, isTentative: false, deletedAt: null },

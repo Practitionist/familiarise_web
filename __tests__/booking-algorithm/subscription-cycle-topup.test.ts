@@ -66,6 +66,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 import prisma from "@/lib/prisma";
 import { allocate } from "@/lib/booking/allocation";
 import { ScheduleType } from "@prisma/client";
+import { SOLD_TERMS_DEFAULTS } from "../fixtures/booking.mockData";
 
 const mockPrisma = prisma as unknown as {
   $transaction: jest.Mock;
@@ -120,6 +121,7 @@ const wrapper = {
 const subscription = {
   id: "sub-cycle",
   sessionsTotal: 12,
+  ...SOLD_TERMS_DEFAULTS,
   schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
   schedulingPeriodEndsAt: new Date("2025-01-12T23:59:59Z"),
   schedulingTimezone: "UTC",

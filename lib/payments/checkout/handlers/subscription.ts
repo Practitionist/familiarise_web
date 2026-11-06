@@ -2,14 +2,17 @@
 // entitlement, plus the placeholder wrapper the payment hangs on.
 
 import { recordParticipants } from "@/lib/booking/participants";
-import { appendCreationHistory } from "@/lib/booking/transitions";
+import {
+  appendCreationHistory,
+  LIVE_SUBSCRIPTION_STATUSES,
+} from "@/lib/booking/transitions";
 import { convertCompletedTrial } from "@/lib/trials/conversion";
 import type { Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import {
   firstCycleWindow,
-  planEndOf,
-  sessionsTotalOf,
+  purchaseTermsOf,
+  soldTermsOf,
   subscriptionEntitlement,
   subscriptionPlanEnd,
 } from "@/lib/booking/entitlement";
@@ -21,18 +24,6 @@ import {
   resolvePlanStart,
   resolvePriorSubscriptionForRenewal,
 } from "@/lib/payments/checkout/renewal";
-
-/**
- * #1766 — the statuses under which a subscription still holds its
- * entitlement. SCHEDULED is legal in REQUEST_ALLOWED_FROM though no writer
- * reaches it yet; listing it keeps the guard right if one appears.
- */
-export const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
-  AppointmentStatus.PENDING,
-  AppointmentStatus.APPROVED,
-  AppointmentStatus.APPROVED_PENDING_PAYMENT,
-  AppointmentStatus.SCHEDULED,
-];
 
 export async function handleSubscriptionCheckout(
   tx: Tx,
@@ -94,11 +85,8 @@ export async function handleSubscriptionCheckout(
           ),
           schedulingTimezone,
         );
-  const planEndsAt = planEndOf(
-    startDate,
-    plan.durationInMonths,
-    schedulingTimezone,
-  );
+  // The plan's terms are frozen here once; plan edits apply to new buyers only.
+  const terms = purchaseTermsOf(plan, startDate, schedulingTimezone);
 
   // #1766 — the double-buy guard follows the entitlement, not the window: a
   // live row with sessions left blocks; a spent one is a renewal-as-repurchase.
@@ -113,6 +101,8 @@ export async function handleSubscriptionCheckout(
     },
     select: {
       sessionsTotal: true,
+      sessionsPerWeek: true,
+      sessionsRefunded: true,
       schedulingPeriodStartsAt: true,
       schedulingTimezone: true,
       planEndsAt: true,
@@ -143,9 +133,7 @@ export async function handleSubscriptionCheckout(
       Math.max(
         max,
         subscriptionEntitlement({
-          sessionsTotal: sessionsTotalOf(row),
-          sessionsPerWeek: row.subscriptionPlan.sessionsPerWeek,
-          durationInMonths: row.subscriptionPlan.durationInMonths,
+          ...soldTermsOf(row),
           occurrences: row.appointment?.occurrences ?? [],
           schedulingPeriodStartsAt: row.schedulingPeriodStartsAt,
           schedulingTimezone: row.schedulingTimezone,
@@ -175,11 +163,10 @@ export async function handleSubscriptionCheckout(
         bookingSource: "DIRECT_CHECKOUT",
         schedulingPeriodStartsAt: startDate,
         schedulingPeriodEndsAt: endDate,
-        planEndsAt,
         // #1076 — caps bucket on the consultant's days, not the column default.
         schedulingTimezone,
-        // #1766 — the entitlement is frozen at purchase; plan edits never move it.
-        sessionsTotal: plan.totalSessions,
+        // #1766 — the entitlement, cadence and length are frozen at purchase.
+        ...terms,
         ...(priorSubscription
           ? { renewedFromSubscriptionId: priorSubscription.id }
           : {}),

@@ -1,10 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { EMAIL_BUDGET_MS } from "@/lib/email/config";
-import {
-  attemptStaged,
-  type StagedRecipientEmail,
-} from "@/lib/email/send-to-recipients";
+import type { StagedRecipientEmail } from "@/lib/email/send-to-recipients";
 import {
   attemptTrigger,
   INLINE_BELL_ATTEMPT_LIMIT,
@@ -86,15 +83,20 @@ export function flushNotificationsAfter(
             errors.push(err);
           }),
       ),
+      // Loaded on send so the email stack stays out of every route's auth graph.
       ...emails.map((entry) =>
-        attemptStaged(
-          entryRows(entry),
-          entry.emailType,
-          entry.budgetMs ?? EMAIL_BUDGET_MS.LIFECYCLE,
-        ).catch((err: unknown) => {
-          console.error(`Failed to deliver email ${entry.emailType}`, err);
-          errors.push(err);
-        }),
+        import("@/lib/email/send-to-recipients")
+          .then(({ attemptStaged }) =>
+            attemptStaged(
+              entryRows(entry),
+              entry.emailType,
+              entry.budgetMs ?? EMAIL_BUDGET_MS.LIFECYCLE,
+            ),
+          )
+          .catch((err: unknown) => {
+            console.error(`Failed to deliver email ${entry.emailType}`, err);
+            errors.push(err);
+          }),
       ),
     ]);
     if (errors.length > 0) {

@@ -20,11 +20,11 @@ Phase 0 (the booking v2 correctness pull request) moved 1:1 plans to calendar pl
 3. **Conflict list, derived on read** (planned). For each horizon week: Regular-time slots with no session (taken by another booking, outside hours, too soon, past the plan end), plus placed sessions now outside availability. There is no table, so nothing drifts. Time off or an availability shrink over a placed session is never refused and never moves a confirmed session; it is listed. It counts as a consultant-caused miss only if it is still unresolved when its start passes.
 4. **Catch-up** (planned). While a plan has a backlog, a week may hold one session more than `sessionsPerWeek` (still at most one a day), inside the plan end. A placed session still unresolved when its plan week ends becomes missed and joins that backlog to be caught up. Alternatives are in [#2577](https://github.com/Practitionist/familiarise_web/issues/2577).
 5. **Pause** (planned). After 3 consecutive plan weeks with nothing placed, the plan's roll-forward pauses (`rollPausedAt`), both sides are told, and the consultant must re-confirm the Regular time.
-6. **Plan length in weeks** (planned). New plans choose `durationInWeeks` (1–52; presets 4, 8, 12, 26, 52). The price stays the plan price, and sessions = weeks × sessions a week. Existing plans keep months, with no backfill.
-7. **Frozen purchase terms** (planned). `Subscription.sessionsPerWeek` and `sessionMinutes` are stamped at purchase (null = read the plan, as today). Plan edits apply to new buyers only.
+6. **Plan length in weeks.** New plans choose `durationInWeeks` (1–52; presets 4, 8, 12, 26, 52). The price stays the plan price, and sessions = weeks × sessions a week. Existing plans keep months, with no backfill (built in [#2588](https://github.com/Practitionist/familiarise_web/pull/2588)).
+7. **Frozen purchase terms.** `Subscription.sessionsPerWeek` and `sessionMinutes` are stamped at purchase (null = read the plan, for rows sold before). Plan edits apply to new buyers only: an edit stamps those older rows from the plan before it changes (built in [#2588](https://github.com/Practitionist/familiarise_web/pull/2588)).
 8. **Missed sessions and support refunds.**
    - **"Missed" is derived; no mid-plan auto refund** (current). Money for 1:1 plans moves at plan end (decision 9), or **through support** when an expert or the platform fails badly. Support can cancel through the platform cancel door (100% of unheld sessions) or refund part of the plan through the refund review door. The dedicated support flow is P2 ([#2578](https://github.com/Practitionist/familiarise_web/issues/2578)).
-   - **A partial refund of k sessions removes k sessions from the plan** (planned). `Subscription.sessionsRefunded` records them, so the plan-end formula stays exact and the expert never delivers a session whose earnings were already reversed.
+   - **A partial refund of k sessions removes k sessions from the plan.** `Subscription.sessionsRefunded` records them, so the plan-end formula stays exact and the expert never delivers a session whose earnings were already reversed. Staff enter k on the refund recommendation; the amount is `min(floor(paid × k / sessions sold), refundable)` and the approval removes the sessions in the same commit (built in [#2588](https://github.com/Practitionist/familiarise_web/pull/2588)).
 9. **Plan-end choice** (planned). It is offered when a plan ends with host- or system-caused unused sessions (voided, never placed, returned and not replaced), and it waits while a session is parked for ops or a reschedule is open, as the settlement already does. The plan stays live with an `OFFERED` `PlanEndChoice`, and the settlement skips it.
    - The learner picks "Add N extra weeks" (N = ceil(unused / sessions a week), at most 4). This is offered only when the roll-forward can place those weeks in the expert's hours.
    - Or the learner picks "Refund the unused sessions". No answer within 7 days means a refund.
@@ -47,7 +47,7 @@ Phase 0 (the booking v2 correctness pull request) moved 1:1 plans to calendar pl
 | … then plan end with 61 delivered                | floor(15,600 × 17 / 78) − 1,800                | ₹1,600                               |
 | Support platform cancel in week 10, 27 delivered | floor(15,600 × 51 / 78)                        | ₹10,200 (ADMIN, above the STAFF cap) |
 
-Rows 3 and 4 rely on `sessionsRefunded` (decision 8, planned). The platform absorbs the gateway fee; each refund reverses earnings and discount pro rata and mints a GST credit note.
+Rows 3 and 4 rely on `sessionsRefunded` (decision 8). The platform absorbs the gateway fee; each refund reverses earnings and discount pro rata and mints a GST credit note.
 
 ## Alternatives considered
 

@@ -84,7 +84,7 @@ Crypto. Follow the active maintenance implementation and recovery instructions;
 never infer that a cached phase quiesces work already in flight. See the linked
 references for transaction-client, deployed-runtime and environment constraints.
 
-The infrastructure orientation at `docs/start-here/10-infra-and-maintenance-sre-orientation.md` is the onboarding and portability guide. Keep its guarantees, failure limits and pending-versus-active scheduler ownership synchronized with source; the generated inventory owns counts, and GitHub comments alone are not architecture documentation. Keep the Stream-owned worker runbooks linked for active-host, execution-envelope and deployment verification constraints.
+The infrastructure orientation at `docs/start-here/09-infra-and-maintenance-sre-orientation.md` is the onboarding and portability guide. Keep its guarantees, failure limits and pending-versus-active scheduler ownership synchronized with source; the generated inventory owns counts, and GitHub comments alone are not architecture documentation. Keep the Stream-owned worker runbooks linked for active-host, execution-envelope and deployment verification constraints.
 
 PATCH updates require a validated non-empty reason, including ETA-only changes; use that value for incident and audit text. Maintenance retries preserve the active window's configuration and repeat OFFLINE setup until its completion stamp exists. Recovery checks database, Redis and chat before incident resolution and phase change. Preserve sequential session and channel-batch admission checks, paced vendor batches, transaction-client writes and ordered sidecar statements; a loop await is required when the next step depends on its predecessor or remaining budget.
 
@@ -112,6 +112,17 @@ Raw SQL must follow Prisma's physical `@map`/`@@map` identifiers; the subscripti
 status column is `requestStatus`. Derive disposable SQL fixture identifiers from
 the generated schema metadata, and verify query planning read-only before making
 production capacity claims.
+
+## Running a job by hand, secrets and vendor monitors
+
+Reasons and alternatives: `docs/decisions/2026-11-05-detector-rollout-and-redundancy.md`.
+
+- **Run a job from a terminal:** `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://familiarisenow.com/api/cleanup/<registry-key>`. It prints the job's JSON result and records a production-tagged run. Use the registry key in the URL; the run row's `jobName` can differ (`tds-return-draft` writes `tds-26q-draft-export`; `jobNameFor` in `lib/cron/schedule.ts` maps them). System Jobs "Run now" is the in-process alternative with less detail.
+- **A windowed job's first-ever slot holds the probe red.** If `/api/health/jobs` answers 503 `JOB_OVERDUE` for a weekly or quarterly job that never ran under a production-tagged row, run it once by hand, then poll the probe.
+- **`CRON_SECRET` is a write-only Netlify secret.** The CLI, API and dashboard show `****`; GitHub secrets are write-only too. Never try to retrieve it: rotate it, keep one copy in the owner's password manager, and never paste it into a doc, ticket, chat or persisted command line. Rotation updates three places (Netlify production, the Better Stack probe monitor, the Sentry uptime detector). Both vendors store the header value, so a leak there means rotate.
+- **Create vendor monitors with each vendor's API or CLI, never by clicking.** Better Stack: `https://uptime.betterstack.com/api/v2/monitors` and `/heartbeats` with `BETTERSTACK_API_KEY`. Sentry: `sentry api /organizations/<org>/detectors/<id>/ -X PUT --input -`, body on stdin. No Terraform (AGENTS.md §1.2). The app never creates vendor monitors.
+- **A monitor is done when it reads `up`, not when it exists.** A created-paused heartbeat detects nothing. Read it back and require `paused: false` and status `up`.
+- **Gotchas.** macOS has no `timeout`, so a `timeout 40 cmd` loop silently fails and looks like "unset". `netlify env:get` prints secrets as `***`. Netlify env changes apply only at the next deploy. Better Stack `paused` is settable on create and by PATCH.
 
 ## Worktree verification
 
@@ -194,3 +205,5 @@ For plan-material commits, check session, rate limit, current plan-management ac
 - **Retention windows (owner decision, 2026-11-01, `docs/decisions/2026-11-01-data-retention-windows.md`):** every log-like and audit table has a window and a prune folded into `prune-audit-logs` (audit class) or `prune-system-job-executions` (telemetry and secondary tables); there is no new ticker target because the busiest tick holds 11 of `MAX_TARGETS_PER_TICK` = 12. `prune-system-events` keeps the newest state-bearing event per key. `auth-tokens` deletes each expired `Session` at expiry and stamps the removed rows into `SessionAccessLog` in the same transaction, and prunes access-log rows 180 days after the session ended (amended 2026-11-02, section 7). `ActivityLog` is gone.
 - **Launch job runtime (owner decision, 2026-10-31, `docs/decisions/2026-10-31-job-runtime-experiments.md`):** launch on the Netlify ticker plus Background Functions for jobs over 30 s. This governs the job runtime only, not the web tier: the web-tier scale path below (a Vercel Pro `bom1` trial before about 300 concurrent users) is separate and rejects only the always-on Mumbai container plan for web plus worker, not a Mumbai VM for jobs. After launch, choose the job runtime between Vercel Pro `bom1` plus Workflows and a Mumbai VM with DBOS once the real-app `bom1` test and the Mumbai VM test report cost and latency; revisit then, or at about 300 concurrent users. Moving the real app to Vercel needs code and build changes.
 - **Measured job-runtime facts (2026-10-31)** are evidence, not decisions: no runtime other than code in Mumbai removes the per-statement cost, side effects stay at-least-once, and DBOS, pg-boss, QStash and Inngest each have a footgun. Read `references/job-runtime-options.md` before proposing a hosted job service or a queue library.
+
+- **The production job fleet is PAUSED before launch (since 2026-11-05 22:41 UTC).** `ops:active_cron_platform` is `paused-prelaunch`, so `cron-tick` stands down on every tick where Upstash answers within 1 s, and the five monitors that would page are paused. The switch fails open, so a tick that cannot read the key still runs the fleet, with its monitors paused. A job that does not run is expected; run one by hand to test it. Resume steps are in `docs/decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md` and the go-live checklist.

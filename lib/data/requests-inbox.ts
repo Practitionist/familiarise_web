@@ -29,7 +29,8 @@ import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import { lifecycleOf, planOf } from "@/lib/appointments/presentation-input";
 import { isSponsoredPayment } from "@/lib/appointments/payment-display";
 import {
-  sessionsTotalOf,
+  soldSessionMinutes,
+  soldTermsOf,
   subscriptionEntitlement,
   subscriptionPlanEnd,
   type SubscriptionEntitlement,
@@ -175,6 +176,9 @@ const SUBSCRIPTION_SELECT = {
   schedulingTimezone: true,
   planEndsAt: true,
   sessionsTotal: true,
+  sessionsPerWeek: true,
+  sessionMinutes: true,
+  sessionsRefunded: true,
   subscriptionPlan: {
     select: {
       id: true,
@@ -528,6 +532,8 @@ const ENTITLEMENT_SELECT = {
   id: true,
   requestedAt: true,
   sessionsTotal: true,
+  sessionsPerWeek: true,
+  sessionsRefunded: true,
   schedulingPeriodStartsAt: true,
   schedulingTimezone: true,
   planEndsAt: true,
@@ -562,12 +568,10 @@ function entitlementOf(
   s: EntitlementRow,
   now: Date,
 ): SubscriptionEntitlement | null {
-  const total = sessionsTotalOf(s);
-  if (total <= 0 || !s.schedulingPeriodStartsAt) return null;
+  const terms = soldTermsOf(s);
+  if (terms.sessionsTotal <= 0 || !s.schedulingPeriodStartsAt) return null;
   return subscriptionEntitlement({
-    sessionsTotal: total,
-    sessionsPerWeek: s.subscriptionPlan.sessionsPerWeek,
-    durationInMonths: s.subscriptionPlan.durationInMonths,
+    ...terms,
     occurrences: (s.appointment?.occurrences ?? []).map((o) => ({
       startsAt: o.startsAt,
       endsAt: o.endsAt,
@@ -614,7 +618,7 @@ function subscriptionRow(
   };
   const slotsPerSession = Math.max(
     1,
-    Math.ceil((s.subscriptionPlan.sessionDurationInHours || 1) / SLOT_HOURS),
+    Math.ceil(soldSessionMinutes(s) / 60 / SLOT_HOURS),
   );
   // A reschedule replaces only the released rows; a fresh request places
   // the next cycle's batch (#1766); a plan that cannot say is disabled.

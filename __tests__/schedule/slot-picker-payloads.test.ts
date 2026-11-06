@@ -299,6 +299,7 @@ describe("readAllocationRequest subscription entitlement", () => {
       schedulingPeriodEndsAt: new Date("2026-02-08T23:59:59.999Z"),
       schedulingTimezone: "UTC",
       sessionsTotal: 12,
+      sessionsRefunded: 0,
       requestedBy: { userId: "user-1", user: { name: "Buyer" } },
       subscriptionPlan: {
         title: "Intensive",

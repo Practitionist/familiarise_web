@@ -8,7 +8,7 @@
  * rendered string is a function of (instant, zone, pattern) and nothing else.
  */
 
-import { enUS } from "date-fns/locale";
+import { enUS } from "date-fns/locale/en-US";
 import { formatInTimeZone } from "date-fns-tz";
 
 export const UTC_ZONE = "UTC";

@@ -260,6 +260,7 @@ describe("quota overlay", () => {
       id: "sub-1",
       updatedAt: new Date("2026-09-01T00:00:00.000Z"),
       sessionsTotal: 4,
+      sessionsRefunded: 0,
       schedulingPeriodStartsAt: new Date("2026-09-07T00:00:00.000Z"),
       schedulingTimezone: "UTC",
       requestedBy: { userId: "user-consultee" },

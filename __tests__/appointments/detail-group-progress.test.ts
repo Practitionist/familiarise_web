@@ -79,6 +79,7 @@ it("reads the entitlement for a fresh subscription: 0 of 12", () => {
       subscription: {
         ...base,
         sessionsTotal: 12,
+        sessionsRefunded: 0,
         schedulingPeriodStartsAt: NOW,
         schedulingTimezone: "UTC",
         subscriptionPlan: {

@@ -49,6 +49,13 @@ import {
 import { STAFF_REFUND_PER_PAYMENT_PAISE } from "./staff-refund-limits";
 import { deliveringPartiesByAppointment } from "./evidence-parties";
 import {
+  planRefundBasis,
+  removePlanSessions,
+  restorePlanSessions,
+  type PlanSessionsChange,
+} from "@/lib/booking/plan-refund";
+import { sessionShareOf } from "@/lib/booking/entitlement";
+import {
   activeHolds,
   caseHoldEvents,
   holdPaymentForCase,
@@ -106,6 +113,11 @@ export const CaseActionSchema = z.discriminatedUnion("action", [
     reason,
     /** Cancels the remaining service when executed; by default the seat stays. */
     releaseSeat: z.boolean().default(false),
+    /**
+     * Plan sessions this remedy removes; the amount must then be their share
+     * of the price, floor(paid × sessions / sessions sold).
+     */
+    sessions: z.number().int().min(1).max(1000).optional(),
   }),
   CaseRefundReviewSchema,
   VoidRecommendationSchema,
@@ -408,6 +420,43 @@ async function readCaseHolds(tx: Tx, caseId: string): Promise<HoldSummary[]> {
   return holds.reverse();
 }
 
+/**
+ * The case booking's captured plan payment and how many sessions can still
+ * come off it; null when that payment is outside the case's financial scope.
+ */
+async function casePlanRefund(
+  supportCase: Pick<
+    SupportCase,
+    "id" | "ownershipScope" | "requesterUserId" | "organizationId"
+  >,
+  appointmentId: string,
+) {
+  const payment = await prisma.payment.findFirst({
+    where: {
+      ...financialPaymentScope(supportCase),
+      appointmentId,
+      paymentStatus: "SUCCEEDED",
+      deletedAt: null,
+      appointment: { subscriptionId: { not: null } },
+    },
+    select: { id: true, amount: true, paymentIntent: true },
+  });
+  if (!payment || payment.paymentIntent.startsWith("free_")) return null;
+  const basis = await planRefundBasis(prisma, payment.id);
+  if (!basis) return null;
+  const quote = await prisma.$transaction((tx) =>
+    quoteCaseRefund(tx, supportCase.id, { id: "", paymentId: payment.id }),
+  );
+  return {
+    paymentId: payment.id,
+    amountPaise: Number(payment.amount),
+    refundablePaise: quote.refundablePaise,
+    sessionsTotal: basis.sessionsTotal,
+    sessionsRefunded: basis.sessionsRefunded,
+    removable: basis.removable,
+  };
+}
+
 export async function readCaseResolution(caseId: string, actor: CaseActor) {
   const supportCase = await prisma.supportCase.findFirst({
     where: { id: caseId, deletedAt: null },
@@ -489,6 +538,10 @@ export async function readCaseResolution(caseId: string, actor: CaseActor) {
     /** Per-payment cumulative refund ceiling for this operator; null is unbounded. */
     refundLimitPaise:
       actor.role === "ADMIN" ? null : STAFF_REFUND_PER_PAYMENT_PAISE,
+    planRefund:
+      moneyRead && supportCase.appointmentId
+        ? await casePlanRefund(supportCase, supportCase.appointmentId)
+        : null,
     ownershipScope: supportCase.ownershipScope,
     updatedAt: supportCase.updatedAt,
     caseKind: supportCase.caseKind,
@@ -685,6 +738,7 @@ async function replayCaseActionTx(
       Number(recommendation.amountPaise) !== input.amountPaise ||
       recommendation.reason !== input.reason ||
       recommendation.releaseSeat !== input.releaseSeat ||
+      recommendation.sessionsRemoved !== (input.sessions ?? null) ||
       recommendation.proposedById !== actor.userId
     )
       throw idempotencyKeyReused();
@@ -1143,6 +1197,14 @@ async function recommendRefundTx(
     select: { id: true },
   });
   if (open) throw openRecommendationError();
+  if (input.sessions !== undefined)
+    await assertSessionShare(
+      tx,
+      caseId,
+      linked,
+      input.amountPaise,
+      input.sessions,
+    );
   const recommendation = await tx.supportFinancialRecommendation.create({
     data: {
       caseId,
@@ -1152,6 +1214,7 @@ async function recommendRefundTx(
       amountPaise: input.amountPaise,
       reason: input.reason,
       releaseSeat: input.releaseSeat,
+      sessionsRemoved: input.sessions ?? null,
     },
   });
   await caseEvent(
@@ -1162,6 +1225,98 @@ async function recommendRefundTx(
     recommendation.id,
   );
   return recommendation;
+}
+
+/**
+ * A session-count remedy refunds exactly those sessions' share of the plan,
+ * capped at the refundable balance, and only sessions not yet held.
+ */
+async function assertSessionShare(
+  tx: Tx,
+  caseId: string,
+  payment: { id: string; amount: number | bigint; paymentIntent: string },
+  amountPaise: number,
+  sessions: number,
+) {
+  if (payment.paymentIntent.startsWith("free_"))
+    throw new CaseActionError(
+      "INVALID_SESSIONS",
+      "A plan paid with credits returns its credits in full. Recommend it without a session count.",
+      400,
+    );
+  const basis = await planRefundBasis(tx, payment.id);
+  if (!basis)
+    throw new CaseActionError(
+      "INVALID_SESSIONS",
+      "Session counts apply to plan payments only.",
+      400,
+    );
+  if (!basis.open) throw planClosedError();
+  if (sessions > basis.removable)
+    throw new CaseActionError(
+      "SESSIONS_EXCEED_PLAN",
+      `Only ${basis.removable} session${basis.removable === 1 ? "" : "s"} on this plan ${basis.removable === 1 ? "is" : "are"} not booked or delivered yet. Cancel booked sessions first to remove more.`,
+    );
+  const quote = await quoteCaseRefund(tx, caseId, {
+    id: "",
+    paymentId: payment.id,
+  });
+  const share = Math.min(
+    sessionShareOf(Number(payment.amount), sessions, basis.sessionsTotal),
+    quote.refundablePaise,
+  );
+  if (amountPaise !== share)
+    throw new CaseActionError(
+      "PREVIEW_CHANGED",
+      "The plan or its refundable balance changed. Refresh and enter the sessions again.",
+    );
+}
+
+/** A cancelled, ended or settling plan is paid by its own settlement, not by a session count. */
+function planClosedError() {
+  return new CaseActionError(
+    "INVALID_SESSIONS",
+    "This plan has ended, been cancelled or is settling. Refund by amount if anything is still owed.",
+    400,
+  );
+}
+
+/** The CAS on the plan's removed-session count lost, or the plan moved under the remedy. */
+function planSessionsError(change: Exclude<PlanSessionsChange, { ok: true }>) {
+  if (change.reason === "PLAN_CLOSED") return planClosedError();
+  if (change.reason === "PLAN_SETTLED")
+    return new CaseActionError(
+      "NOT_VOIDABLE",
+      "This plan settled without these sessions, so their refund is still owed. Retry it instead of voiding it.",
+    );
+  if (change.reason === "NOT_REMOVED")
+    return new CaseActionError(
+      "CONFLICT",
+      "The plan has fewer removed sessions than this refund took off. Ask engineering to check it before voiding.",
+    );
+  if (change.reason === "EXCEEDS_REMOVABLE")
+    return new CaseActionError(
+      "SESSIONS_EXCEED_PLAN",
+      `The plan changed: only ${change.removable} session${change.removable === 1 ? "" : "s"} can still be removed. Decline this recommendation and recommend again.`,
+    );
+  return new CaseActionError(
+    "CONFLICT",
+    "The plan changed while you were reviewing. Refresh and try again.",
+  );
+}
+
+/** The approval takes a session-count remedy's sessions off the plan in the same commit. */
+async function removeApprovedSessions(
+  tx: Tx,
+  recommendation: { paymentId: string; sessionsRemoved: number | null },
+) {
+  if (!recommendation.sessionsRemoved) return;
+  const change = await removePlanSessions(
+    tx,
+    recommendation.paymentId,
+    recommendation.sessionsRemoved,
+  );
+  if (!change.ok) throw planSessionsError(change);
 }
 
 function openRecommendationError() {
@@ -1233,6 +1388,7 @@ async function reviewRefundTx(
       "CONFLICT",
       "Another administrator reviewed this recommendation.",
     );
+  if (input.approve) await removeApprovedSessions(tx, recommendation);
   await caseEvent(
     tx,
     caseId,
@@ -1356,6 +1512,15 @@ async function voidRecommendationTx(
       "NOT_VOIDABLE",
       "Only an approved recommendation whose refund failed, or never started within 15 minutes, can be voided.",
     );
+  }
+  // The refund never went out, so the sessions it removed go back on the plan.
+  if (recommendation.sessionsRemoved) {
+    const change = await restorePlanSessions(
+      tx,
+      recommendation.paymentId,
+      recommendation.sessionsRemoved,
+    );
+    if (!change.ok) throw planSessionsError(change);
   }
   await caseEvent(
     tx,

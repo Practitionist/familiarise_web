@@ -10,7 +10,6 @@ import bcrypt from "bcrypt";
 import prisma from "@/lib/prisma";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { CLIENT_IP_HEADER } from "@/lib/request-ip";
-import { sendPasswordResetEmail } from "@/lib/email";
 import { assertSsoSessionAllowed } from "@/lib/sso/enforce-session";
 import {
   assertSsoAccountClaims,
@@ -248,6 +247,8 @@ export const auth = betterAuth({
         role?: string | null;
         twoFactorEnabled?: boolean | null;
       };
+      // Loaded on send so the email stack stays out of every route's auth graph.
+      const { sendPasswordResetEmail } = await import("@/lib/email");
       await sendPasswordResetEmail({
         email: user.email,
         name: user.name || "User",
@@ -602,6 +603,7 @@ export const auth = betterAuth({
     ...turnstileCaptcha({
       secretKey: process.env.TURNSTILE_SECRET_KEY,
       siteKey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
+      sentryEnvironment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
       allowedHostnames: turnstileHostnames({
         sentryEnvironment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
         authUrl: process.env.BETTER_AUTH_URL,

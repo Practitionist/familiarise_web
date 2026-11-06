@@ -57,9 +57,12 @@ import {
   transitionTrial,
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
-import { settleSubscriptionCycleWithNotice } from "@/lib/booking/subscription-cycle";
 import {
-  sessionsTotalOf,
+  settleSubscriptionCycle,
+  settleSubscriptionCycleWithNotice,
+} from "@/lib/booking/subscription-cycle";
+import {
+  soldTermsOf,
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
 import {
@@ -698,9 +701,7 @@ async function completeSubscriptions(
       // #1766 — COMPLETED is terminal: a plan whose live cycle ended but whose
       // entitlement is not spent is waiting for its next cycle, not finished.
       const entitlement = subscriptionEntitlement({
-        sessionsTotal: sessionsTotalOf(subscription),
-        sessionsPerWeek: subscription.subscriptionPlan.sessionsPerWeek,
-        durationInMonths: subscription.subscriptionPlan.durationInMonths,
+        ...soldTermsOf(subscription),
         occurrences: subscription.appointment?.occurrences ?? [],
         schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
         schedulingTimezone: subscription.schedulingTimezone,
@@ -725,16 +726,23 @@ async function completeSubscriptions(
       );
 
       // #836 — guard rides the WHERE: a cancel landing between the sweep's
-      // read and this write must not be overwritten by COMPLETED.
+      // read and this write must not be overwritten by COMPLETED. The tranche
+      // holds are stamped first in the same commit: a session-count refund
+      // can end the entitlement with no delivery left to stamp them.
+      const appointmentId = subscription.appointment?.id;
       const moved = await completeThroughHelper(() =>
-        prisma.$transaction((tx) =>
-          transitionSubscriptionRequest(tx, {
+        prisma.$transaction(async (tx) => {
+          if (appointmentId)
+            await settleSubscriptionCycle(tx, {
+              appointmentId,
+              now: new Date(),
+            });
+          return transitionSubscriptionRequest(tx, {
             where: { id: subscription.id },
             to: AppointmentStatus.COMPLETED,
-            fromIn: REQUEST_ALLOWED_FROM.COMPLETED,
             reason: AUTO_COMPLETE_REASON,
-          }),
-        ),
+          });
+        }),
       );
       if (!moved) {
         console.log(`   ⏭️ Skipped — status changed since sweep read`);

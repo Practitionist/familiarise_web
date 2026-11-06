@@ -165,7 +165,7 @@ nothing until the password has matched, and it is the main conversion path.
   the plugin's `allowedHostnames` holds the hostname of `BETTER_AUTH_URL`, so a token
   minted on another site is refused. The plugin matches hostnames exactly, so
   deploy previews (one hostname per PR) get no hostname check, and Cloudflare's
-  test keys, which report `example.com`, keep working there.
+  test keys keep working there.
 - **Configuration.** Both `TURNSTILE_SECRET_KEY` and
   `NEXT_PUBLIC_TURNSTILE_SITE_KEY` must be set. With either one unset the
   plugin is not installed and the widget is not rendered, so the two halves
@@ -173,17 +173,29 @@ nothing until the password has matched, and it is the main conversion path.
   `console.error` and one `AUTH_CAPTCHA_DISABLED` Sentry Logs warning (`Sentry.logger.warn`, which does not draw on the error quota and never opens an issue), rather than
   failing at boot: a throw in `lib/auth.ts` would take down every auth route,
   sign-in and session reads included.
+- **Test keys on production refuse.** When `NEXT_PUBLIC_SENTRY_ENVIRONMENT` is
+  `production` and either key is one of Cloudflare's published test keys
+  (`isTurnstileDummyKey()`), the plugin stays installed but verifies with the
+  always-fail test secret `2x0000000000000000000000000000000AA`, so the three
+  endpoints answer 403 `VERIFICATION_FAILED` until the real keys are set.
+  Skipping the plugin would let every bot through, and throwing would take down
+  sign-in. Each cold start outside `next build` logs one `console.error` and one
+  `AUTH_CAPTCHA_TEST_KEYS_IN_PRODUCTION` Sentry Logs warning naming the
+  variable ([decision record](../decisions/2026-11-05-environment-split-auth.md)).
 - **CSP.** `https://challenges.cloudflare.com` is in `script-src` and
   `frame-src` (`next.config.mjs`). The widget talks to Cloudflare from inside
   its own iframe, so `connect-src` needs nothing.
 
-Cloudflare publishes test keys that work on any hostname. Use them locally and
-on deploy previews:
+Cloudflare publishes test keys that work on any hostname. Use them locally
+(`.env.sample` ships the always-pass pair), on deploy previews and on the branch
+deploy, never on production:
 
 | Key    | Value                                 | Behaviour                     |
 | ------ | ------------------------------------- | ----------------------------- |
 | Site   | `1x00000000000000000000AA`            | Always passes (visible)       |
 | Site   | `2x00000000000000000000AB`            | Always fails (visible)        |
+| Site   | `1x00000000000000000000BB`            | Always passes (invisible)     |
+| Site   | `2x00000000000000000000BB`            | Always fails (invisible)      |
 | Site   | `3x00000000000000000000FF`            | Forces an interactive check   |
 | Secret | `1x0000000000000000000000000000000AA` | Always passes validation      |
 | Secret | `2x0000000000000000000000000000000AA` | Always fails validation       |

@@ -404,6 +404,8 @@ export async function readConsultantAppointmentsPage(
         schedulingTimezone: true,
         // #1766 — the allocate grid's cycle heading reads the frozen entitlement.
         sessionsTotal: true,
+        sessionsPerWeek: true,
+        sessionsRefunded: true,
         status: true,
       },
     },

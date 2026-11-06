@@ -3,6 +3,7 @@ import { toPlain } from "@/lib/data/serialize";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
 import { resolvePrimaryPlanOwnerIds } from "@/lib/booking/plan-owners";
 import { toOccurrenceLike } from "@/lib/appointments/view-model";
+import { sessionsTotalOf } from "@/lib/booking/entitlement";
 import {
   isOccurrenceOver,
   liveOccurrences,
@@ -37,6 +38,29 @@ export interface ManageTimingsTarget {
   planOwnerIds: string[];
   completedSessions?: number;
   groupTotalSessions?: number;
+}
+
+/** A plan's schedulable sessions: sold less refunded for a 1:1 plan, the class plan's count. */
+function groupTotalSessionsOf(appointment: {
+  appointmentType: string;
+  subscription: {
+    sessionsTotal: number | null;
+    sessionsRefunded: number;
+    subscriptionPlan: { totalSessions: number };
+  } | null;
+  class: { classPlan: { totalSessions: number } | null } | null;
+}): number | undefined {
+  if (
+    appointment.appointmentType === "SUBSCRIPTION" &&
+    appointment.subscription
+  )
+    return (
+      sessionsTotalOf(appointment.subscription) -
+      appointment.subscription.sessionsRefunded
+    );
+  if (appointment.appointmentType === "CLASS")
+    return appointment.class?.classPlan?.totalSessions ?? undefined;
+  return undefined;
 }
 
 function ownerIds(...ids: (string | null | undefined)[]): string[] {
@@ -118,12 +142,7 @@ export async function readManageTimingsTarget(
   // session is simply absent, and counting rows made the total shrink to
   // whatever was already scheduled, so "remaining" then folded completed
   // sessions in with future ones.
-  const groupTotalSessions =
-    appointment.appointmentType === "SUBSCRIPTION"
-      ? (appointment.subscription?.subscriptionPlan?.totalSessions ?? undefined)
-      : appointment.appointmentType === "CLASS"
-        ? (appointment.class?.classPlan?.totalSessions ?? undefined)
-        : undefined;
+  const groupTotalSessions = groupTotalSessionsOf(appointment);
 
   return {
     // Narrowed shape only: the guard above already ruled out TRIAL, but Prisma's

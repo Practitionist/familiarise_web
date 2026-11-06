@@ -257,7 +257,7 @@ Production enforces 2FA for every operator. On deploy previews, branch deploys a
 
 Every seeded operator lives on `qa.familiarise.invalid`. `.invalid` is a top-level domain reserved by RFC 2606 that never resolves, so no mail is ever delivered there: nobody outside can receive a password reset, a setup link or a lockout email for these accounts, and nobody can register a real inbox that collides with one. The exemption checks the domain as well as the exact address, so a public-mailbox address can never be exempted even if someone adds one to the list. QA signs in with the password alone, `SEED_OPERATOR_PASSWORD` from the local `.env`; never copy the value into a doc, prompt or PR. Because no reset mail can arrive, a forgotten or rotated password is fixed by reseeding or by the owner, not through forgot-password.
 
-Four of the seven seeded operators are exempt and have no 2FA enrolled; the seed (`prisma/seedFiles/1a-create-users.ts`) leaves exactly these unenrolled and pre-enrols the rest.
+Four of the seven seeded operators are exempt and have no 2FA enrolled; the seed (`prisma/seedFiles/1a-create-users.ts`) leaves exactly these unenrolled and enrols the rest.
 
 | Role  | Account                             |
 | ----- | ----------------------------------- |
@@ -266,7 +266,16 @@ Four of the seven seeded operators are exempt and have no 2FA enrolled; the seed
 | STAFF | `qa-staff-3@qa.familiarise.invalid` |
 | STAFF | `qa-staff-4@qa.familiarise.invalid` |
 
-The other three, `qa-admin-1`, `qa-admin-3` and `qa-staff-2`, keep TOTP and are the accounts to use when testing the 2FA flows themselves. To add or retire a QA account, edit `QA_OPERATOR_EMAILS` and this table in the same change, and check the live operator list (read-only) first.
+The other three, `qa-admin-1`, `qa-admin-3` and `qa-staff-2`, keep TOTP and are the accounts to use when testing the 2FA flows themselves.
+
+### How the seed enrols the TOTP operators
+
+The seed never stores a published or constant secret. `deriveSeedOperatorTotpSecret()` in `prisma/seedFiles/seed-two-factor.ts` computes an HMAC-SHA256 of `seed-operator-2fa:totp:<lower-cased email>` keyed with `BETTER_AUTH_SECRET`, and `buildSeedOperatorTwoFactorRow()` encrypts it, with ten derived backup codes, the way Better Auth does. `seedOperatorEnrolmentUpdate()` builds the update that upserts the `TwoFactor` row by user, sets `twoFactorEnabled`, and clears `failedVerificationCount` and `lockedUntil`. The seed applies it to every TOTP operator, whether the user was created in this run or already existed, so a secret minted by a hand enrolment is replaced on the next seed.
+
+- **Reading a code.** `npm run qa:totp -- <email>` (`scripts/auth/qa-totp.ts`) prints the current code and the seconds left. It refuses any address that is not one of these TOTP operators, and it needs the deployment's `BETTER_AUTH_SECRET`.
+- **Repairing the live rows.** `scripts/auth/repair-qa-operator-2fa.ts` rewrites the rows of exactly these operators on the shared database and resets their counters. It is a dry run unless `--apply` is passed, it refuses every other address, and only the owner runs it with `--apply`.
+
+The environment-by-environment picture, including why real operators keep 2FA on previews, is in [the environment split](../start-here/10-environment-split.md). To add or retire a QA account, edit `QA_OPERATOR_EMAILS` and this table in the same change, and check the live operator list (read-only) first.
 
 ## Deprecated & Superseded Approaches
 
@@ -284,3 +293,4 @@ The other three, `qa-admin-1`, `qa-admin-3` and `qa-staff-2`, keep TOTP and are 
 - **Trusted devices for operators**: refused (`TRUST_DEVICE_DISABLED`), because a stolen password would otherwise skip the authenticator for 30 days.
 - **A published constant TOTP secret for seed operators**: rejected, since a known password on a shared database plus a known secret would cancel the second factor.
 - **Enrolling QA operators by hand and reverting by SQL**: replaced by the QA operator exemption off production.
+- **Seeding `TwoFactor` rows for newly created operators only**: a hand enrolment left a secret the seed could not reproduce; the seed now upserts every TOTP operator.

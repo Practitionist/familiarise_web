@@ -13,7 +13,7 @@ import {
   lastInstantBefore,
   planWeekNumber,
   planWeekStartsAt,
-  sessionsTotalOf,
+  soldTermsOf,
   subscriptionEntitlement,
   type SubscriptionEntitlementInput,
 } from "@/lib/booking/entitlement";
@@ -158,6 +158,8 @@ export function rotationOffset(
 const NUDGE_PLAN_SELECT = {
   id: true,
   sessionsTotal: true,
+  sessionsPerWeek: true,
+  sessionsRefunded: true,
   schedulingPeriodStartsAt: true,
   schedulingTimezone: true,
   planEndsAt: true,
@@ -271,9 +273,7 @@ function dueNudgeFor(
   if (!inWakingHours(now, zone)) return null;
   const nudge = weekNudgeFor(
     {
-      sessionsTotal: sessionsTotalOf(sub),
-      sessionsPerWeek: plan.sessionsPerWeek,
-      durationInMonths: plan.durationInMonths,
+      ...soldTermsOf(sub),
       occurrences: sub.appointment?.occurrences ?? [],
       schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt,
       schedulingTimezone: sub.schedulingTimezone,

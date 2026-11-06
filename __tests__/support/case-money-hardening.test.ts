@@ -19,6 +19,11 @@ jest.mock("../../lib/support/case-access", () => ({
   canCorrespondOnCase: jest.fn(async () => true),
   caseCorrespondentIds: jest.fn(async () => []),
 }));
+jest.mock("../../lib/booking/plan-refund", () => ({
+  ...jest.requireActual("../../lib/booking/plan-refund"),
+  removePlanSessions: jest.fn(async () => ({ ok: true, sessionsRefunded: 9 })),
+  restorePlanSessions: jest.fn(async () => ({ ok: true, sessionsRefunded: 0 })),
+}));
 jest.mock("../../lib/support/case-service", () => ({
   executePatchLifecycleTx: jest.fn(),
   latestCaseDecisionTx: jest.fn(async () => null),
@@ -138,6 +143,10 @@ import {
   latestCaseDecisionTx,
 } from "../../lib/support/case-service";
 import { requiresSecondApprover } from "../../lib/backoffice/ops-proposals";
+import {
+  removePlanSessions,
+  restorePlanSessions,
+} from "../../lib/booking/plan-refund";
 import {
   CaseActionRequestSchema,
   performCaseAction,
@@ -555,6 +564,91 @@ describe("refund execution correctness", () => {
     mockStore.keyedRefund = null;
     await performCaseAction("case-1", admin, voidAction);
     expect(mockStore.recommendations[0]).toMatchObject({ approved: false });
+  });
+
+  /** An approved remedy whose refund failed an hour ago. */
+  const failedRemedy = (over: Row = {}) =>
+    recommendation({
+      decidedAt: new Date(Date.now() - 3_600_000),
+      approved: true,
+      sessionsRemoved: 9,
+      refundId: "refund-0",
+      refund: { id: "refund-0", status: "FAILED" },
+      ...over,
+    });
+  const voidRemedy = () =>
+    performCaseAction("case-1", admin, {
+      action: "VOID_RECOMMENDATION",
+      clientActionId: "void-1",
+      expectedUpdatedAt: caseUpdatedAt.toISOString(),
+      recommendationId: "rec-1",
+      reason: "Gateway refused; refunding by bank transfer",
+    });
+
+  it("gives a session-count remedy's sessions back when its failed refund is voided", async () => {
+    mockStore.recommendations = [failedRemedy()];
+    await voidRemedy();
+    expect(mockStore.recommendations[0]).toMatchObject({ approved: false });
+    expect(restorePlanSessions).toHaveBeenCalledTimes(1);
+    expect(restorePlanSessions).toHaveBeenCalledWith(
+      expect.anything(),
+      "pay-1",
+      9,
+    );
+  });
+
+  it.each([
+    ["the plan's session count moved under it", "RACED", "CONFLICT"],
+    ["its plan settled without it", "PLAN_SETTLED", "NOT_VOIDABLE"],
+  ] as const)("refuses the void when %s", async (_why, reason, code) => {
+    jest
+      .mocked(restorePlanSessions)
+      .mockResolvedValueOnce({ ok: false, reason, removable: 0 });
+    mockStore.recommendations = [failedRemedy()];
+    await expect(voidRemedy()).rejects.toMatchObject({ code });
+  });
+
+  it("voids a money-only remedy without touching the plan", async () => {
+    mockStore.recommendations = [failedRemedy({ sessionsRemoved: null })];
+    await voidRemedy();
+    expect(restorePlanSessions).not.toHaveBeenCalled();
+  });
+
+  it("removes a session-count remedy's sessions in the approval, not on a retry", async () => {
+    mockStore.recommendations = [recommendation({ sessionsRemoved: 9 })];
+    await performCaseAction("case-1", admin, review(true));
+    expect(removePlanSessions).toHaveBeenCalledWith(
+      expect.anything(),
+      "pay-1",
+      9,
+    );
+    jest.mocked(removePlanSessions).mockClear();
+    mockStore.recommendations = [failedRemedy({ decidedById: admin.userId })];
+    await performCaseAction("case-1", admin, review(true));
+    expect(removePlanSessions).not.toHaveBeenCalled();
+  });
+
+  it("retries a session-count remedy after its plan settled, under the same key", async () => {
+    mockStore.recommendations = [failedRemedy({ decidedById: admin.userId })];
+    await performCaseAction("case-1", admin, review(true));
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
+    expect(refundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ dedupeKey: "case-recommendation:rec-1" }),
+    );
+    expect(removePlanSessions).not.toHaveBeenCalled();
+  });
+
+  it("refuses an approval when the plan closed after the recommendation", async () => {
+    jest.mocked(removePlanSessions).mockResolvedValueOnce({
+      ok: false,
+      reason: "PLAN_CLOSED",
+      removable: 0,
+    });
+    mockStore.recommendations = [recommendation({ sessionsRemoved: 9 })];
+    await expect(
+      performCaseAction("case-1", admin, review(true)),
+    ).rejects.toMatchObject({ code: "INVALID_SESSIONS" });
+    expect(refundBookingPayment).not.toHaveBeenCalled();
   });
 
   it("keeps a void and a retry of the same failed refund mutually exclusive", async () => {
