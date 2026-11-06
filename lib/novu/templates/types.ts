@@ -53,5 +53,10 @@ export type WorkflowTemplate = {
   /** Who receives it and why — read by the sync's dry-run and the dashboard. */
   description: string;
   category: PreferenceCategory | null;
+  /**
+   * A mandatory account, moderation or compliance notice: it rings even when
+   * the recipient has turned bells off, like a required email. Needs `category: null`.
+   */
+  required?: true;
   inApp: InAppTemplate;
 };

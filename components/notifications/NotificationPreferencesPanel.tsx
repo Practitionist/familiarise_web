@@ -50,7 +50,8 @@ const CHANNEL_FIELDS: ToggleField[] = [
   {
     key: "inAppEnabled",
     label: "In-app notifications",
-    description: "Every notification in the bell, required ones included.",
+    description:
+      "Optional notifications in the bell. Required notices still appear.",
   },
   {
     key: "emailEnabled",
@@ -410,7 +411,7 @@ export function NotificationPreferencesPanel({
           <SwitchRow
             id="notification-allNotifications"
             label="Optional notifications"
-            description="Turn off to pause optional emails and every in-app notification. Required emails still arrive: account and security notices, payment receipts, and invitations you must answer."
+            description="Turn off to pause optional emails and in-app notifications. Required notices still arrive: account, security and moderation notices in the bell and by email, plus payment receipts and invitations you must answer by email."
             checked={prefs.allNotifications}
             disabled={pendingKeys.has("allNotifications")}
             onCheckedChange={(checked) => save({ allNotifications: checked })}

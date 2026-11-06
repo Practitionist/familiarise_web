@@ -1322,7 +1322,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "What always arrives",
         paragraphs: [
-          "Some emails are required and ignore these switches: account and security notices, payment receipts, and invitations or decisions you must act on. Booking updates, reminders, refunds, payouts and support replies are optional and follow your switches.",
+          "Some notices are required and ignore these switches. In the bell and by email: account, security, verification and moderation notices. By email only: payment receipts, and invitations or decisions you must act on. Booking updates, reminders, refunds, payouts, support replies and announcements are optional and follow your switches.",
         ],
       },
       {

@@ -585,6 +585,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     description:
       "The consultant. `status` is VERIFIED, REJECTED or NEEDS_INFO (a request for more information).",
     category: null,
+    required: true,
     inApp: {
       subject: "Verification update",
       body: "{% case payload.status %}{% when 'VERIFIED' %}Your profile is verified and now visible to clients.{% when 'REJECTED' %}Your profile verification was not approved.{% when 'NEEDS_INFO' %}The reviewer needs more information before your profile can be verified.{% else %}Your profile verification is pending review.{% endcase %}{% if payload.reason %} {{payload.reason}}{% endif %}",
@@ -596,6 +597,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     name: "Expert application",
     description: "Admins, when someone applies to become an expert.",
     category: null,
+    required: true,
     inApp: {
       subject: "New expert application",
       body: "{{payload.applicantName | default: 'An applicant'}}{% if payload.applicantEmail %} ({{payload.applicantEmail}}){% endif %} applied to become an expert.",
@@ -607,6 +609,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     name: "Moderation warning",
     description: "The reported user, after a staff warning (#693).",
     category: null,
+    required: true,
     inApp: {
       subject: "Warning",
       body: "You have received a warning from our moderation team{% if payload.reason %}: {{payload.reason}}{% endif %}. Further reports may lead to suspension.",
@@ -619,6 +622,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     description:
       "Mandatory account security notices for signup welcome, password changes, linked accounts, two-factor updates and account reinstatement.",
     category: null,
+    required: true,
     inApp: {
       subject:
         "{% case payload.kind %}{% when 'WELCOME' %}Welcome to Familiarise{% when 'PASSWORD_CHANGED' %}Password changed{% when 'ACCOUNT_LINKED' %}Account linked{% when 'TWO_FACTOR_ENABLED' %}Two-factor authentication enabled{% when 'TWO_FACTOR_DISABLED' %}Two-factor authentication turned off{% when 'PASSKEY_ADDED' %}Passkey added{% when 'PASSKEY_REMOVED' %}Passkey removed{% when 'SECURITY_UPDATE' %}Account security update{% when 'ACCOUNT_REINSTATED' %}Account reinstated{% else %}Account security update{% endcase %}",
@@ -631,6 +635,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     name: "Content removed",
     description: "The author, when moderation removes their content.",
     category: null,
+    required: true,
     inApp: {
       subject: "Your content was removed",
       body: "Your content was removed because it did not align with our community guidelines{% if payload.reason %}: {{payload.reason}}{% endif %}.",
@@ -642,6 +647,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     name: "Account suspended",
     description: "The suspended user.",
     category: null,
+    required: true,
     inApp: {
       subject: "Account suspended",
       body: `Your account is suspended until {{payload.suspendedUntil}}{% if payload.reason %}. Reason: {{payload.reason}}{% endif %}.${CANCELLED_COUNT}`,
@@ -653,6 +659,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     name: "Account closed",
     description: "The banned user.",
     category: null,
+    required: true,
     inApp: {
       subject: "Account closed",
       body: `Your account has been permanently closed{% if payload.reason %}. Reason: {{payload.reason}}{% endif %}.${CANCELLED_COUNT}`,
@@ -676,6 +683,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     description:
       "Platform admins and operators ahead of a statutory compliance filing or action.",
     category: null,
+    required: true,
     inApp: {
       subject: "Compliance deadline approaching",
       body: "{{payload.title | default: 'A statutory compliance obligation'}} is due{% if payload.dueDate %} on {{payload.dueDate}}{% endif %}{% if payload.orgName %} for {{payload.orgName}}{% endif %}.",

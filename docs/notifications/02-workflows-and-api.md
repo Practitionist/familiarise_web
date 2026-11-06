@@ -351,6 +351,7 @@ How a save behaves:
 - A control is disabled while its own save is in flight; the other controls stay usable.
 - The quiet-hour time fields save on blur, never per keystroke, and refuse an incomplete time or a start equal to the end before sending anything.
 - With **Optional notifications** (`allNotifications`) off, the channel, category, organisation and quiet-hour cards stay visible but disabled, and the saved choices apply again when it is turned back on.
+- Required notices ignore every switch and the workspace routing mode: a template marked `required: true` in `lib/novu/templates/b2c.ts` (security, account, verification, moderation and compliance notices, all `category: null`) always rings, as a null-category email always sends. `general-announcement` has no category but is optional, so it follows the master and In-App switches.
 
 What the switches actually gate:
 

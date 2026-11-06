@@ -99,6 +99,7 @@ describe("bell audience: SQL filter matches the per-recipient rule", () => {
     ["appointments", NOVU_WORKFLOWS.APPOINTMENT_BOOKED],
     ["payments", NOVU_WORKFLOWS.PAYMENT_LINK],
     ["orgBilling", NOVU_WORKFLOWS.ORG_INVOICE_ISSUED],
+    ["required", NOVU_WORKFLOWS.ACCOUNT_SECURITY_NOTICE],
   ])("%s", async (_label, workflowId) => {
     const seeded = new Set(ids);
     const sql = (await bellAudience(prisma, workflowId, 1_000_000)) ?? [];
