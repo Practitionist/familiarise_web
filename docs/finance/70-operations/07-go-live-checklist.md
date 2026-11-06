@@ -162,6 +162,10 @@ Run these in the same window as the production release that carries the single-p
 
 On 2026-11-06 the live database held zero `PENDING` or `RETRY` rows in `FailedEmail`, `FailedEmailBatch` and `NotificationOutbox`, so no `firstAttemptAt` backfill is needed. Immediately before the production release, repeat the read-only count in [Step 7 of the notifications checklist](../../notifications/05-pre-production-checklist.md#step-7-outbox-cutover-recount-no-backfill). If all three read zero, a cleanup PR deletes the legacy cutover guards (`LEGACY_DELIVERY_FORMAT` and `LEGACY_BROADCAST` in `lib/novu/outbox.ts`), `scripts/novu/clear-native-mutes.ts` and `scripts/novu/scrub-subscriber-pii.ts`. If any row is present, follow Step 7 to settle or dispose of it first.
 
+## Part 5: GitHub plan and CI at launch
+
+Owner steps in GitHub, from [the CI decision](../../decisions/2026-11-07-ci-before-and-at-launch.md): move the `Practitionist` organisation to Team with one seat, cancel the personal Pro on `teetangh` only once nothing personal depends on it (for example a private personal repository that relies on branch protection), pay with an eligible Indian credit card (a debit card works only for a one-time "Pay now" fallback), set the Actions budget to about $15 with stop-usage, and require the `Release checks` status check on `prod`.
+
 ## Where in code
 
 | Concern                                             | File                                                                                                           |
