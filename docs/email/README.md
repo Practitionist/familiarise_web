@@ -2,7 +2,7 @@
 
 > Canonical architecture reference for outbound email delivery (`lib/email/`), pre-launch recipient gating (`EMAIL_DELIVERY_MODE`), outbox lease protection, row-scoped idempotency, stateless RFC 8058 one-click unsubscribes, Svix-signed Resend webhook ingestion (`POST /api/webhooks/resend`), ops alert routing, and DNS authentication records.
 
-**Last Updated**: 2026-10-24
+**Last Updated**: 2026-11-07
 
 ---
 
@@ -36,8 +36,8 @@ flowchart LR
    |
    | [Phase 0 — Pre-Render Outside Serializable $transaction(tx)]
    |  prepareRecipientEmails() / preparePaymentSuccessEmail() / prepareOrgBillingEmail()
-   |  - Batch-loads User preference rows (`allNotifications`, `emailEnabled`, `notificationRouting`,
-   |    category column) + `EmailSuppression` (`HARD_BOUNCE`, `COMPLAINT`, `MANUAL`)
+   |  - Batch-loads User preference rows (`allNotifications`, `emailEnabled`, category column)
+   |    + `EmailSuppression` (`HARD_BOUNCE`, `COMPLAINT`, `MANUAL`)
    |  - Renders React Email JSX -> HTML + `toPlainText(html)` + HMAC-SHA256 RFC 8058 `List-Unsubscribe`
    v
 +---------------------------------------------------------------------------------------------------+
@@ -287,3 +287,4 @@ flowchart LR
 - **Inbound forwarding via ImprovMX (planned, never configured)**: the design routed role addresses (`support@`, `ops@`, `dpdp@`, `billing@`) on `familiarisenow.com` to the operator inbox through MX records `mx1.improvmx.com` and `mx2.improvmx.com`. Those records were never created; the apex now publishes a null MX instead. Delete any residual references instead of configuring them.
 - **Personal-inbox DMARC reports and an unpublished root SPF**: the `rua` target used to be a personal Gmail that never authorised external reports, and the apex had no SPF. Both were replaced on 2026-10-28 by the records in the deployment inventory.
 - **One-way unsubscribe page**: the done page once redirected to a bare `?done=1`, so it could not offer an undo, and its copy said receipts stop. It now keeps the signed pair for the Resubscribe form and names the required emails that still arrive.
+- **Workspace notification routing in the email gate (removed 2026-11-07)**: `isEmailAllowedForUser` also refused optional email when an operator's `OrgWorkspaceProfile.notificationRoutingMode` was `BELL_ONLY` or `NEITHER`. It duplicated the same person's Email switch, so the gate now reads only `NotificationPreference`; the column is dropped with the next schema batch.

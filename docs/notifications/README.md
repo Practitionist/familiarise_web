@@ -1,6 +1,6 @@
 # Notification System
 
-Notifications use two delivery layers that share one owner of user preferences. **Resend** sends email directly from the app (`lib/email/`). **Novu** is a plain in-app transport: it delivers the bell and inbox feed and nothing else (`lib/novu/`). **Postgres** is the transactional outbox for both layers (`FailedEmail`, `FailedEmailBatch` and `NotificationOutbox`) and the only owner of notification preferences (`NotificationPreference` and `OrgWorkspaceProfile.notificationRoutingMode`). Novu holds no preference copy and no profile data; see [the decision record](../decisions/2026-11-06-notification-single-preference-owner.md).
+Notifications use two delivery layers that share one owner of user preferences. **Resend** sends email directly from the app (`lib/email/`). **Novu** is a plain in-app transport: it delivers the bell and inbox feed and nothing else (`lib/novu/`). **Postgres** is the transactional outbox for both layers (`FailedEmail`, `FailedEmailBatch` and `NotificationOutbox`) and the only owner of notification preferences (`NotificationPreference`, the same personal switches for every user, workspace operators included). Novu holds no preference copy and no profile data; see [the decision record](../decisions/2026-11-06-notification-single-preference-owner.md).
 
 A notification call never rolls back the business change. Each message is first written as a `PENDING` outbox row where the change commits (inside its transaction when the caller has one). It is then attempted once after the response, under a time budget, and a relay on the Netlify ticker finishes it if that attempt times out or fails transiently. A timeout is not a failure and never pages. A late duplicate is harmless because Resend gets a row-scoped idempotency key and Novu gets a generation-scoped `Idempotency-Key` that is reused verbatim after an unknown outcome. A missing or invalid `RESEND_API_KEY` leaves the row `PENDING` for the relay rather than dropping the message. All sixteen Novu workflow families are in-app only, so Novu never sends an email.
 
@@ -11,7 +11,7 @@ graph TD
     end
 
     subgraph "Postgres (the only preference owner)"
-        P["NotificationPreference +<br/>notificationRoutingMode"]
+        P["NotificationPreference"]
         FE["FailedEmail / FailedEmailBatch"]
         NO["NotificationOutbox"]
     end
@@ -126,3 +126,4 @@ These are the shapes the subsystem used to have. Delete any residual code or doc
 - **Ticker with no stagger and a daily heartbeat workflow.** All targets fired on the same minutes, and a GitHub Actions workflow was the only writer of the cron heartbeat. The ticker is now phase-staggered and `withCronLock` writes the heartbeat.
 - **Message brokers.** Kafka, RabbitMQ or BullMQ, SQS and QStash were all considered and rejected because publishing to any of them from inside a Postgres transaction is a dual write that still needs a database outbox. The Postgres outbox plus the ticker is atomic with the business change, needs no extra compute, and handles the platform's volume. Upstash QStash remains a possible later step only if customer outbound webhooks (`OutboundWebhookDelivery`) outgrow the ticker.
 - **Engineering logs.** The September 2026 outage diagnosis and the outbox-first build log were folded into [01-architecture.md](./01-architecture.md) and are no longer separate files.
+- **Workspace notification routing.** `OrgWorkspaceProfile.notificationRoutingMode` duplicated the operator's own In-App and Email switches and was removed on 2026-11-07. Nothing reads it; the column is dropped with the next schema batch.

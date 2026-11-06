@@ -1,6 +1,6 @@
 ---
 name: notifications
-description: Work on this repo's notification subsystem — in-app bells through Novu and email through Resend, both written first to a Postgres outbox (FailedEmail, FailedEmailBatch, NotificationOutbox) and finished by relays on the ticker; Postgres as the single owner of notification preferences (NotificationPreference, OrgWorkspaceProfile.notificationRoutingMode); adding a notification event or Novu workflow family; staging a bell or email inside a transaction; announcement inbox posts; dead-letter reasons; Novu quota. Use when the user says "notification", "bell", "inbox", "Novu", "novu:sync", "outbox", "dead letter", "preferences", "quiet hours", "announcement", "retry-failed-emails", "drain-notification-outbox", or is touching lib/novu/, lib/email/, emails/, jobs/email/, components/notifications/, app/api/novu/, app/api/announcements/, or scripts/novu/.
+description: Work on this repo's notification subsystem — in-app bells through Novu and email through Resend, both written first to a Postgres outbox (FailedEmail, FailedEmailBatch, NotificationOutbox) and finished by relays on the ticker; Postgres as the single owner of notification preferences (NotificationPreference); adding a notification event or Novu workflow family; staging a bell or email inside a transaction; announcement inbox posts; dead-letter reasons; Novu quota. Use when the user says "notification", "bell", "inbox", "Novu", "novu:sync", "outbox", "dead letter", "preferences", "quiet hours", "announcement", "retry-failed-emails", "drain-notification-outbox", or is touching lib/novu/, lib/email/, emails/, jobs/email/, components/notifications/, app/api/novu/, app/api/announcements/, or scripts/novu/.
 ---
 
 # Notifications
@@ -9,10 +9,10 @@ Terse rules for agents. The human explanation is in `docs/notifications/` (start
 
 ## The model
 
-- Postgres is the transactional outbox (`FailedEmail`, `FailedEmailBatch`, `NotificationOutbox`) and the **only** owner of notification preferences (`NotificationPreference`, `OrgWorkspaceProfile.notificationRoutingMode`).
+- Postgres is the transactional outbox (`FailedEmail`, `FailedEmailBatch`, `NotificationOutbox`) and the **only** owner of notification preferences (`NotificationPreference`). Workspace routing is removed: `OrgWorkspaceProfile.notificationRoutingMode` is unread until the next schema batch drops it, so never read or write it.
 - Resend sends email. Novu is a plain in-app transport: 16 workflow families (`lib/novu/templates/families.ts`), in-app only, `readOnly: true` preferences (`FAMILY_PREFERENCES` in `lib/novu/templates/index.ts`), no step `skip` conditions, no subscriber profile or preference data. 94 events: `Object.keys(NOVU_WORKFLOWS).length === Object.keys(EVENT_FAMILY).length`.
 - The inbox mounts only with a signed HMAC (`POST /api/novu/subscriber`, `lib/novu/inbox-auth.ts`) and `hideNav`, so Novu has no preference page.
-- The server gates every bell twice: when staged (`resolveRecipientBellPolicy`, `bellAudience` in `lib/novu/policy.ts`) and at the first attempt of each generation (`currentBellRecipients`). The routing mode is the account-wide channel gate: for bells `EMAIL_ONLY` and `NEITHER` block; for optional email `BELL_ONLY` and `NEITHER` block. A template marked `required: true` (security, account, verification, moderation and compliance notices; always `category: null`) skips the switches and routing for bells, as a null-category email does; only erasure stops it. `general-announcement` has no category but is not required.
+- The server gates every bell twice: when staged (`resolveRecipientBellPolicy`, `bellAudience` in `lib/novu/policy.ts`) and at the first attempt of each generation (`currentBellRecipients`). The personal switches are the only channel control for every user, operators included: `allNotifications` and `inAppEnabled` for bells, `allNotifications` and `emailEnabled` for optional email, then the category column. A template marked `required: true` (security, account, verification, moderation and compliance notices; always `category: null`) skips the switches for bells, as a null-category email does; only erasure stops it. `general-announcement` has no category but is not required.
 
 ## How a producer stages
 
@@ -66,7 +66,7 @@ Novu Free is 10,000 workflow runs a month, counted across Development **and** Pr
 ## Settings and unsubscribe
 
 - `PUT /api/novu/preferences` parses the strict `NotificationPreferenceUpdateSchema` (`schemas/user.ts`): an unknown key, a non-`HH:MM` time, an unknown zone or an empty quiet window is a 400. GET and PUT answer through `NotificationPreferenceSchema`.
-- The panel shows only the switches `receivableSwitches` (`lib/notifications/receivable.ts`) returns for the viewer's role. A new category, or an event sent to a new audience, updates that map, its test and the role table in `docs/notifications/02-workflows-and-api.md`. Its routing message comes from `routingBlocks`, pinned against both gates.
+- The panel shows only the switches `receivableSwitches` (`lib/notifications/receivable.ts`) returns for the viewer's role. A new category, or an event sent to a new audience, updates that map, its test and the role table in `docs/notifications/02-workflows-and-api.md`.
 - Panel saves are optimistic and share one mutation scope (serialized); never write a preference from a time input's `onChange`.
 - The unsubscribe undo is `POST /api/notifications/resubscribe`, same-origin only (`isSameOriginRequest`), with no `GET`. Neither route's `GET` may ever write.
 

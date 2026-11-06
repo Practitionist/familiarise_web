@@ -255,7 +255,7 @@ Each section also lists:
 
 ### C.3 OrgWorkspace (cross-org operator) — ✅ Wired
 
-- **Schema:** `OrgWorkspaceProfile` (1:1 with `User`, mirrors `ConsultantProfile`/`StaffProfile`). Preference and white-label columns: `defaultLandingOrganizationId`, `notificationRoutingMode`, `locale`, `currencyDisplayCode`, `bannerUrl`, `customDomain`, `cnameTarget`, `hidePlatformBranding`.
+- **Schema:** `OrgWorkspaceProfile` (1:1 with `User`, mirrors `ConsultantProfile`/`StaffProfile`). Preference and white-label columns: `defaultLandingOrganizationId`, `locale`, `currencyDisplayCode`, `bannerUrl`, `customDomain`, `cnameTarget`, `hidePlatformBranding`.
 - **Code paths:** [`app/dashboard/org-workspace/`](../../../app/dashboard/org-workspace) — 6 pages.
 - **Why:** A single human can operate multiple orgs (consultancy with several clients). The workspace profile lets the session carry the operator's preferences and branding controls across the orgs they have access to, without polluting `Membership` (which is per-org).
 - **Future work:** none open.

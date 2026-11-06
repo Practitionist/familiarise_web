@@ -437,8 +437,7 @@ The two relays are the outbox halves of the design: every email and every Novu t
 | Novu templates as code and sync                | `lib/novu/templates/`, `scripts/novu/sync-workflows.ts` (`npm run novu:sync`, `npm run novu:check`)    |
 | Outbox relays on the ticker                    | `retry-failed-emails` (every 15 min at `:05`), `drain-notification-outbox` (every 10 min at `:05`)     |
 | Novu inbox + bell icon + HMAC hook             | `components/notifications/NotificationInbox.tsx`, `hooks/useNovuSubscriberSync.ts`                     |
-| Notification Preferences Panel                 | `components/notifications/NotificationPreferencesPanel.tsx` (admin, staff, consultant, consultee)      |
-| Workspace routing section                      | `app/dashboard/org-workspace/[orgWorkspaceId]/settings/components/NotificationRoutingSection.tsx`      |
+| Notification Preferences Panel                 | `components/notifications/NotificationPreferencesPanel.tsx` (every role, operators included)           |
 | Preferences API                                | `app/api/novu/preferences/route.ts` (GET/PUT)                                                          |
 | Inbox HMAC API                                 | `app/api/novu/subscriber/route.ts` (POST)                                                              |
 | Waitlist double opt-in confirm/unsubscribe     | `lib/waitlist/tokens.ts`, `lib/waitlist/service.ts`                                                    |
@@ -507,3 +506,4 @@ The two relays are the outbox halves of the design: every email and every Novu t
 - **Novu as the delivery audit trail.** The Novu activity feed (24 hours on Free) was once treated as the delivery log. `NotificationOutbox` is the audit trail now.
 - **Cron by GitHub Actions.** Earlier notes scheduled reminders, auto-complete and the relays from GitHub Actions or as an unbounded backstop. They run on the ticker, and no Actions workflow schedules a registry job.
 - **Preferences panel gaps.** The consultant and consultee settings pages once lacked the panel; both have it now.
+- **Workspace routing section.** `NotificationRoutingSection.tsx` set `OrgWorkspaceProfile.notificationRoutingMode`, which duplicated the operator's own channel switches. It was deleted on 2026-11-07; the operator's page shows only the personal panel.
