@@ -1,6 +1,6 @@
 ---
 name: go-live
-description: The ordered launch sequence for taking this platform from sandbox to real money, as an index into the docs rather than a copy — resuming the paused scheduled-job fleet first, the pre-launch secret rotation, PLATFORM_GSTIN before the Razorpay live keys, EMAIL_DELIVERY_MODE=live, the one-time sandbox identity purge, the two live ₹1 tests, unpausing the eight paused Better Stack Telemetry alerts only after the data reset, the Better Stack responder seat, QuotaGuard static egress at the first live payout, and the RazorpayX canary flip; plus the traps (a standing config skip pages as soon as live keys exist, the fleet switch fails open, Netlify secrets are write-only, CRON_SECRET lives in three places) and how to verify each step. Use when the user says "go-live", "launch", "go to production", "cutover", "real money", "turn on live keys", "resume jobs", "pre-launch checklist", or is touching RAZORPAY live keys, ENABLE_LIVE_PAYOUTS, EMAIL_DELIVERY_MODE or ops:active_cron_platform.
+description: The ordered launch sequence for taking this platform from sandbox to real money, as an index into the docs rather than a copy — resuming the paused scheduled-job fleet first, the pre-launch secret rotation, PLATFORM_GSTIN before the Razorpay live keys, EMAIL_DELIVERY_MODE=live, the one-time sandbox identity purge, the two live ₹1 tests, unpausing the eight paused Better Stack Telemetry alerts only after the data reset, the Better Stack responder seat, QuotaGuard static egress at the first live payout, the RazorpayX canary flip, and splitting the Stream app so dev and previews stop using the production one; plus the traps (a standing config skip pages as soon as live keys exist, the fleet switch fails open, Netlify secrets are write-only, CRON_SECRET lives in three places) and how to verify each step. Use when the user says "go-live", "launch", "go to production", "cutover", "real money", "turn on live keys", "resume jobs", "pre-launch checklist", or is touching RAZORPAY live keys, ENABLE_LIVE_PAYOUTS, EMAIL_DELIVERY_MODE or ops:active_cron_platform.
 ---
 
 # Go-live
@@ -22,6 +22,7 @@ Do these in order. Several only make sense after an earlier one.
 9. **Buy the responder seat** and the Telemetry bundle, then add phone and SMS to the four money backlog alerts. Same checklist 2.1 item.
 10. **Buy QuotaGuard static egress at the first live payout**, set `RAZORPAYX_EGRESS_PROXY_URL`, and allowlist its addresses in RazorpayX. Checklist 2.1, "Static egress".
 11. **Flip payouts with a canary.** Set `ENABLE_LIVE_PAYOUTS=true`, redeploy, pay one ₹1.00 verified payout, watch it reach `COMPLETED`, then release the rest. [Checklist 2.3](../../../docs/finance/70-operations/07-go-live-checklist.md#23-flip-canary-rollback).
+12. **Split the Stream app before real users arrive.** Create the Familiarise-dev app, put its four keys on the Netlify deploy-preview and branch-deploy contexts, run `scripts/stream/ensure.ts --apply` against it, then refresh and merge #2376 and rebuild previews. [The shared-app decision](../../../docs/decisions/2026-11-06-shared-stream-app-until-launch.md#when-this-changes).
 
 ## Traps
 

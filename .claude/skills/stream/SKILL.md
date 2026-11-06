@@ -11,7 +11,7 @@ Two products under one API key: **Stream Chat** (`stream-chat`, `stream-chat-rea
 
 ## 1. Live Verification Before Believing Code
 
-Always verify control-plane state and database rows before assuming code changes are active in production. Keep `STREAM_MCP_READ_ONLY: "true"` in `.mcp.json` because dev, preview, and production share one Stream app (`app_id: 1366319`, `placement: "gcp-us-east4.vega"`):
+Always verify control-plane state and database rows before assuming code changes are active in production. Keep `STREAM_MCP_READ_ONLY: "true"` in `.mcp.json` because dev, preview, and production share one Stream app (`app_id: 1366319`, `placement: "gcp-us-east4.vega"`). That stays deliberate until launch: the data is mock, and the dev-app split plus the production-key guard (#2376, parked as a draft) is go-live step 12 (`docs/decisions/2026-11-06-shared-stream-app-until-launch.md`):
 
 ```text
 mcp__streamio__app_get_settings
