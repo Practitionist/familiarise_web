@@ -45,9 +45,11 @@ jobs:
         run: node_modules/.bin/prisma generate
 
       - name: TypeScript Check
+        # A cold tsc of this project passes 4 GB of heap. 6 GB fits the ~7 GB
+        # runner because tsc is the only process running.
         run: node_modules/.bin/tsc --noEmit
         env:
-          NODE_OPTIONS: --max-old-space-size=4096
+          NODE_OPTIONS: --max-old-space-size=6144
 
       - name: ESLint
         run: npm run lint
