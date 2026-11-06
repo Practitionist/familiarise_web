@@ -64,7 +64,6 @@ const BLOCKED = [
   "/api/organizations/org_1/programs/prog_1",
   "/api/organizations/org_1/programs/prog_1/assignments",
   "/api/organizations/org_1/programs/prog_1/assignments/asg_1",
-  "/api/organizations/org_1/programs/prog_1/auto-enroll",
   "/api/organizations/org_1/contracts",
   "/api/organizations/org_1/contracts/ctr_1/supersede",
   "/api/organizations/org_1/rate-cards",

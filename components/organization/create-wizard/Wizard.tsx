@@ -11,7 +11,6 @@ import type { OrgWizardData } from "./types";
 import { OrgInfoStep } from "./OrgInfoStep";
 import { BillingStep } from "./BillingStep";
 import { RevenueRatesStep } from "./RevenueRatesStep";
-import { BrandingStep } from "./BrandingStep";
 import { InviteTeamStep } from "./InviteTeamStep";
 import { ReviewStep } from "./ReviewStep";
 
@@ -204,7 +203,6 @@ export function CreateOrganizationWizard({
             {currentStep.key === "revenue-rates" && (
               <RevenueRatesStep {...stepProps} />
             )}
-            {currentStep.key === "branding" && <BrandingStep {...stepProps} />}
             {currentStep.key === "invite-team" && (
               <InviteTeamStep {...stepProps} />
             )}
