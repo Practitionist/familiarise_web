@@ -13,6 +13,10 @@ import * as Sentry from "@sentry/nextjs";
 import type { TriggerEventResponseDto } from "@novu/api/models/components";
 import type { NotificationOutboxKind, Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
+import {
+  PROVIDER_WINDOW_EXPIRED,
+  providerWindowRefusal,
+} from "@/lib/retry/provider-window";
 import { isExpectedBellDeadLetter } from "@/lib/backoffice/queue-predicates";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { getNovuClient, isNovuConfigured } from "./client";
@@ -72,12 +76,6 @@ const MAX_ATTEMPTS = 5;
 const ACTIVE_STATUSES = ["PENDING", "RETRY"] as const;
 /** Novu's bulk endpoint takes at most 100 events per request. */
 const NOVU_BULK_LIMIT = 100;
-
-/**
- * Provider idempotency caches last 24 h; past this age since the first
- * attempt a retry could ring twice, so the row goes to review instead.
- */
-export const PROVIDER_REPLAY_WINDOW_MS = 23 * 60 * 60 * 1000;
 
 /**
  * #1876 §4 — 60s lease window when staging a row due immediately so the
@@ -539,11 +537,9 @@ export async function attemptTrigger(
   };
 
   const pastReplayWindow = (at: Date | null | undefined) =>
-    at
-      ? now.getTime() - new Date(at).getTime() >= PROVIDER_REPLAY_WINDOW_MS
-      : false;
+    providerWindowRefusal(at ? new Date(at) : null, now) !== null;
   if (pastReplayWindow(row.firstAttemptAt)) {
-    return deadLetter("review:provider_acceptance_unknown", row.attempts);
+    return deadLetter(PROVIDER_WINDOW_EXPIRED, row.attempts);
   }
 
   let recipients = row.recipients;
@@ -587,7 +583,7 @@ export async function attemptTrigger(
           return { success: true, outcome: current.status };
         }
         if (pastReplayWindow(current.firstAttemptAt)) {
-          return deadLetter("review:provider_acceptance_unknown", row.attempts);
+          return deadLetter(PROVIDER_WINDOW_EXPIRED, row.attempts);
         }
       }
     } catch (error) {

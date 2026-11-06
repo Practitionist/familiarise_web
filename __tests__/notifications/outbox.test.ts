@@ -55,12 +55,12 @@ import {
   attemptTrigger,
   deriveTransactionId,
   outboxTransactionIdOf,
-  PROVIDER_REPLAY_WINDOW_MS,
   recipientTransactionId,
   stageTrigger,
   terminalTriggerReason,
   type StagedTrigger,
 } from "@/lib/novu/outbox";
+import { PROVIDER_REPLAY_WINDOW_MS } from "@/lib/retry/provider-window";
 import {
   runNotificationDrainTick,
   URGENT_WORKFLOWS,
