@@ -53,10 +53,10 @@ no longer separate:
 
 ```sh
 npm run db:push
-# = prisma db push && npm run db:sidecars, then npm run db:assert-sidecars
+# = preflight, prisma db push, npm run db:sidecars, then scripts/ci/check-db-sidecars.ts
 ```
 
-`npm run db:sidecars` applies the three SQL files. `npm run db:assert-sidecars`
+`npm run db:sidecars` applies the three SQL files. `scripts/ci/check-db-sidecars.ts`
 reads the object names out of those files with the shared parser in
 `scripts/db/sidecar-objects.ts` and asserts each one exists in the database, so
 the assertion cannot drift from the files it checks. The script that pushed
@@ -102,7 +102,20 @@ constraint or trigger the change needs to the appropriate file in `prisma/sql/`
 rather than assuming `db push` will carry it. Update the seed suite so it
 populates the new shape from the first day, because new tables are written from every code path rather than backfilled. Run the type-check and the affected
 jest suites locally. Then let the orchestrator run `npm run db:push` once, at
-merge, and confirm `npm run db:assert-sidecars` passes afterwards.
+merge. That script runs the preflight, `prisma db push`, `npm run db:sidecars`
+and finally `scripts/ci/check-db-sidecars.ts`, which fails when a sidecar object
+is missing.
+
+**When the sidecar step times out.** `prisma db push` drops the sidecar-owned
+uniques `appointment_feedback_level_key`, `consultant_earnings_occurrence_key`
+and `organization_earnings_split_key`, and `db:sidecars` re-creates them. On the
+shared Supabase pooler, `check-constraints.sql` is one atomic transaction of
+about 292 statements and can exceed the client query timeout
+`PG_QUERY_TIMEOUT_MS` (6000 ms by default, `lib/prisma.ts`). The step then fails
+with "Query read timeout" and leaves those three uniques missing. Rerun with
+`PG_QUERY_TIMEOUT_MS=60000 npx tsx -r dotenv/config scripts/db/apply-sidecars.ts --all && npx tsx -r dotenv/config scripts/ci/check-db-sidecars.ts`.
+That is safe because every sidecar file is one transaction written with
+`IF EXISTS` and `IF NOT EXISTS`. Then confirm the three indexes exist.
 
 Until the cutover, do not write a data migration for existing rows. Do not push from a worktree to
 prove a test passes. If a change genuinely requires a rename, a drop or a type

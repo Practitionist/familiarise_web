@@ -1,9 +1,8 @@
 "use client";
 
 /**
- * One workspace settings section (#1527): Default landing organization (read
- * by lib/dashboard/landing.ts) or Notification routing, each with its own
- * Save. Locale and currency stay hidden until something reads them (§7.4).
+ * The Default landing organization section (read by lib/dashboard/landing.ts).
+ * Locale and currency stay hidden until something reads them.
  *
  * The IDOR check (`orgWorkspaceProfileId === orgWorkspaceId`) runs
  * server-side on every API call. Hydrates from WorkspaceSettingsPage's
@@ -13,18 +12,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 
-import type { WorkspaceSettingsKey } from "@/lib/dashboard/nav/workspace";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
 import { DefaultLandingOrgSection } from "./components/DefaultLandingOrgSection";
-import { NotificationRoutingSection } from "./components/NotificationRoutingSection";
 import { fetchSettings } from "./utils/api";
 
 export function WorkspaceSettingsSection({
   orgWorkspaceId,
-  section,
-}: Readonly<{ orgWorkspaceId: string; section: WorkspaceSettingsKey }>) {
+}: Readonly<{ orgWorkspaceId: string }>) {
   const settings = useQuery({
     queryKey: ["org-workspace-settings", orgWorkspaceId],
     queryFn: () => fetchSettings(orgWorkspaceId),
@@ -63,16 +59,11 @@ export function WorkspaceSettingsSection({
       </Card>
     );
   }
-  return section === "landing" ? (
+  return (
     <DefaultLandingOrgSection
       orgWorkspaceId={orgWorkspaceId}
       current={settings.data.profile.defaultLandingOrganizationId}
       candidates={settings.data.candidateOrgs}
-    />
-  ) : (
-    <NotificationRoutingSection
-      orgWorkspaceId={orgWorkspaceId}
-      current={settings.data.profile.notificationRoutingMode}
     />
   );
 }

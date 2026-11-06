@@ -33,7 +33,7 @@ Serverless functions on Netlify have no built-in durable queue worker and freeze
    - Domain-row obligations use explicit nullable stamps (e.g., `Appointment.chatChannelEnsuredAt`, `Payment.description` `Auto-refund pending:` prefix) walked by idempotent sweepers.
 2. **Pre-Render Outside `Serializable` `$transaction`, Stage Inside `tx` with 60s Lease Window, Flush via `flushNotificationsAfter`.**
    - High-contention `Serializable` money and billing transactions (`handlePaymentSuccess`, `handlePaymentFailure`, `invoice-rollup`) pre-render React Email payloads outside database transactions via `prepare*` (`prepareRecipientEmails` / `prepareSpecEmails` in `lib/email/send-to-recipients.ts`) and call `stagePreparedEmails(tx, ...)` inside `tx` so `PG_POOL_MAX=1` connections are never held during CPU-bound rendering, while standard low-contention routes stage via `stage*Email` + `flushNotificationsAfter` and bulk loops (`assignments`, `session-outcome-sweep`) stage/render after commit.
-   - Inside `$transaction(tx)`, producers stage emails (`stage()` / `stagePreparedEmails()`) and in-app bells (`stageBell(tx, ...)` in `lib/novu/stage-bell.ts`, which filters out `EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, and muted categories; the attempt rechecks that policy once and freezes the result).
+   - Inside `$transaction(tx)`, producers stage emails (`stage()` / `stagePreparedEmails()`) and in-app bells (`stageBell(tx, ...)` in `lib/novu/stage-bell.ts`, which filters out `allNotifications: false`, `inAppEnabled: false`, and muted categories; the attempt rechecks that policy once and freezes the result).
    - Staged rows receive `status = "PENDING"` and `nextRetryAt = NOW() + 60s` (`INLINE_ATTEMPT_LEASE_MS = 60_000`) so background cron sweeps skip rows whose inline post-commit delivery is still in flight.
    - Post-commit, `flushNotificationsAfter({ bells, emails }, op)` (`lib/novu/stage-then-attempt.ts`) dispatches all staged triggers and emails concurrently via `scheduleAfter` (`lib/api/after-safe.ts`, backed by Next.js `after()` inside a request scope and awaited inline outside request scopes).
    - Both `stage()` and `runEmailRetryTick` scope Resend idempotency keys to the outbox row ID (`<EMAIL_TYPE>/failed-email/<row.id>` via `idempotencyKeyFor`), preventing Resend's 24-hour payload hash cache from dropping repeat transactional emails.
@@ -64,7 +64,7 @@ Serverless functions on Netlify have no built-in durable queue worker and freeze
 +===================================================================================================+
    |
    | 1. Pre-render React Email OUTSIDE $transaction (`prepareRecipientEmails` -> `render` + `toPlainText`)
-   | 2. Gate bell recipients via `stageBell(tx, ...)` (routing mode, channel/category prefs)
+   | 2. Gate bell recipients via `stageBell(tx, ...)` (channel/category prefs)
    | 3. Stage emails via `stage()` / `stagePreparedEmails(tx, ...)` inside `$transaction(tx)`:
    |    - `status: "PENDING"`, `nextRetryAt: NOW() + 60s` (`INLINE_ATTEMPT_LEASE_MS`)
    |    - Row-scoped Resend key: `<EMAIL_TYPE>/failed-email/<row.id>`

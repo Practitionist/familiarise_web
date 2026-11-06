@@ -51,7 +51,6 @@ const account = {
   id: "u1",
   email: "test@example.test",
   erasedAt: null,
-  orgWorkspaceProfile: null,
   notificationPreferences: null,
 };
 function post(body: unknown) {

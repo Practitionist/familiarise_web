@@ -22,7 +22,7 @@ The Novu environment holds one workflow per family, not one per event. Each fami
 
 1. Edit the template in `lib/novu/templates/b2c.ts` or `org.ts`. For a new event, also follow "Adding a New Notification" in [02-workflows-and-api.md](./02-workflows-and-api.md).
 2. Run `npm run novu:sync -- --dry-run` to preview the change, then `npm run novu:sync` to write it to Development.
-3. Run `npm run novu:check`. It exits non-zero on any drift, including a leftover `skip` condition or a subscriber-editable preference.
+3. Wait five minutes after a sync, because Novu serves stale reads right after a write, then run `npm run novu:check`. It exits non-zero on any drift, including a leftover `skip` condition or a subscriber-editable preference. Treat the result as clean only after two clean runs.
 4. Production is written only at the release promotion that ships the change, with `npm run novu:sync -- --env production` and then `npm run novu:check -- --env production`. See [05-pre-production-checklist.md](./05-pre-production-checklist.md).
 
 Never create or edit a workflow by hand in the Novu dashboard. The next sync would overwrite it, and a hand-made per-event workflow would also spend one of the plan's 20 workflow slots.

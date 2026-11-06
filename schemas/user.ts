@@ -3,6 +3,7 @@ import { z } from "zod";
 import { UserRole } from "@prisma/client";
 import { experienceValidation } from "./shared";
 import { DateOfBirthSchema } from "@/lib/compliance/age";
+import { isValidTimeZone } from "@/lib/time/viewer-zone";
 
 // #region Enums
 
@@ -547,9 +548,47 @@ export type NotificationPreference = z.infer<
 export const QUIET_HOURS_DEFAULT_START = "22:00";
 export const QUIET_HOURS_DEFAULT_END = "08:00";
 
-/** Schema for partial updates to notification preferences (PUT endpoint). */
+/** A quiet-hours wall-clock time, as `<input type="time">` produces it. */
+export const WallClockTimeSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a 24-hour HH:MM time");
+
+/**
+ * PUT body: any subset of the live switches; an unknown key is a 400, not a
+ * silent drop. Columns no sender reads (push, the legacy categories) are not writable.
+ */
 export const NotificationPreferenceUpdateSchema =
-  NotificationPreferenceSchema.partial();
+  NotificationPreferenceSchema.omit({
+    pushEnabled: true,
+    mentions: true,
+    directMessages: true,
+    updates: true,
+  })
+    .partial()
+    .extend({
+      quietHoursStart: WallClockTimeSchema.nullable().optional(),
+      quietHoursEnd: WallClockTimeSchema.nullable().optional(),
+      quietHoursTimezone: z
+        .string()
+        .refine(isValidTimeZone, "Unknown IANA timezone")
+        .nullable()
+        .optional(),
+    })
+    .strict()
+    .refine(
+      (body) =>
+        !body.quietHoursStart ||
+        !body.quietHoursEnd ||
+        body.quietHoursStart !== body.quietHoursEnd,
+      {
+        message: "Quiet hours must start and end at different times",
+        path: ["quietHoursEnd"],
+      },
+    );
+
+export type NotificationPreferenceUpdate = z.infer<
+  typeof NotificationPreferenceUpdateSchema
+>;
 
 // #endregion
 

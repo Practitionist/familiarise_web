@@ -1308,21 +1308,27 @@ export const supportArticles: SupportArticle[] = [
     category: "help",
     title: "How do I control notifications?",
     excerpt:
-      "In-app vs email, per-category toggles, the master switch, and push status.",
-    updated: "September 2026",
+      "In-app vs email, per-category switches, optional notifications, and what always arrives.",
+    updated: "November 2026",
     contactCategory: "general",
     related: ["help/unsubscribe-cookies"],
     sections: [
       {
         heading: "Your preference panel",
         paragraphs: [
-          "Open notification preferences from your inbox or settings. A master toggle pauses everything; per-category toggles (appointment reminders, payments, support updates, feedback, trials, subscriptions, marketing) fine-tune each stream, with extra organisation categories on sponsored accounts.",
+          "Open Settings › Notifications, or the Notification settings link at the foot of the bell. The Optional notifications switch (the master switch) pauses optional emails and every in-app notification; the category switches fine-tune each stream, and you only see the categories your account can receive. Organisation categories appear when you belong to an organisation, and experts also see email quiet hours for their planning reminders.",
         ],
       },
       {
-        heading: "Push notifications",
+        heading: "What always arrives",
         paragraphs: [
-          "Native push is marked Coming soon and stays off until launch — keep email or in-app enabled for time-sensitive updates like payment failures and session reminders.",
+          "Some notices are required and ignore these switches. In the bell and by email: account, security, verification and moderation notices. By email only: payment receipts, and invitations or decisions you must act on. Booking updates, reminders, refunds, payouts, support replies and announcements are optional and follow your switches.",
+        ],
+      },
+      {
+        heading: "Organisation workspaces",
+        paragraphs: [
+          "A workspace operator uses the same panel, under Workspace settings › Notifications. Its In-app and Email switches are the only channel controls for that account; there is no separate workspace setting.",
         ],
       },
     ],
@@ -1342,7 +1348,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Unsubscribe",
         paragraphs: [
-          "Every marketing email carries an unsubscribe link that opts you out immediately; transactional emails (receipts, booking confirmations) continue because they are part of the service. You can also manage categories from notification preferences.",
+          "Every optional email carries an unsubscribe link. Confirming turns off optional emails for your account, such as booking updates, reminders and refunds; required emails like security notices and payment receipts still arrive, and in-app notifications are not affected. Changed your mind? The confirmation page has a Resubscribe button, and you can manage each category from notification preferences.",
         ],
       },
       {

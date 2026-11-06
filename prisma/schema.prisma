@@ -3682,6 +3682,7 @@ model OrgWorkspaceProfile {
   // Operator preferences. Per-field docs: docs/enterprise/40-compliance-and-data/05-workspace-preferences.md.
   // Soft FK on default-landing org (plain String) so org deletes don't cascade here.
   defaultLandingOrganizationId String?
+  /// Unread: personal NotificationPreference switches gate every channel; slated for drop with the next schema batch.
   notificationRoutingMode      NotificationRoutingMode @default(BELL_AND_EMAIL)
   locale                       String? // BCP-47 (e.g. "en-IN")
   currencyDisplayCode          String? // ISO 4217 (e.g. "INR")

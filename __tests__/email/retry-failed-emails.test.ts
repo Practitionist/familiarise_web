@@ -683,7 +683,6 @@ describe("runEmailRetryTick — attempt-time recipient recheck", () => {
   const account = (overrides: Record<string, unknown> = {}) => ({
     email: "user@example.com",
     erasedAt: null,
-    orgWorkspaceProfile: null,
     notificationPreferences: null,
     ...overrides,
   });
@@ -729,13 +728,25 @@ describe("runEmailRetryTick — attempt-time recipient recheck", () => {
     expect(mockPostOpsChat).not.toHaveBeenCalled();
   });
 
-  it("sends a required notice whatever the optional switches and routing say", async () => {
+  it("sends a required notice whatever the optional switches say", async () => {
     const stub = makePrismaStub(
       makeRow({ deliveryUserId: "u1", deliveryCategory: null }),
     );
     jest.mocked(stub.prisma.user.findUnique).mockResolvedValue(
       account({
-        orgWorkspaceProfile: { notificationRoutingMode: "NEITHER" },
+        notificationPreferences: {
+          allNotifications: false,
+          emailEnabled: false,
+          appointmentReminders: false,
+          paymentNotifications: false,
+          subscriptionAlerts: false,
+          trialNotifications: false,
+          supportUpdates: false,
+          feedbackAlerts: false,
+          orgBillingAlerts: false,
+          orgMembershipAlerts: false,
+          orgProgramAlerts: false,
+        },
       }),
     );
     const resend = mockResend(sent);

@@ -139,7 +139,8 @@ Email and in-app notifications do not move money, but a wrong cutover silently d
 ### 4.1 Resend domains and webhook
 
 - [ ] Both sending subdomains, `mail.familiarisenow.com` and `news.familiarisenow.com`, show as verified in Resend (region `ap-northeast-1`), with the DKIM, return-path MX, SPF and `rsend` CNAME records live in Netlify DNS ([Domains and DNS records](../../deployment/README.md#domains-and-dns-records)).
-- [ ] The Svix webhook `https://<production-host>/api/webhooks/resend` is registered for the delivery, bounce, complaint, suppression, `contact.*` and `domain.*` events, and its signing secret is stored as `RESEND_WEBHOOK_SECRET` in the production context.
+- [ ] The one Svix webhook, `https://<production-host>/api/webhooks/resend`, is enabled and subscribed to exactly `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.failed`, `email.suppressed`, `domain.updated` and `domain.deleted` (set 2026-11-07). Its signing secret is stored as `RESEND_WEBHOOK_SECRET` in the production context. Check this in the dashboard or with `mcp__resend__list-webhooks`, not from the code: the handler also understands `contact.*` and `domain.created`, but the app does not use Resend Contacts, so those are deliberately not subscribed.
+- [ ] Vendor-side settings match this list. The code cannot show them, and they drifted unnoticed before 2026-11-07. Check the webhook events above, Novu Production HMAC on the In-App integration (4.2), the DMARC report-authorisation TXT `familiarisenow.com._report._dmarc` on `practitionist.com` (`v=DMARC1`), Netlify's "contains secret values" flag on `RESEND_API_KEY`, `NOVU_DEVELOPMENT_KEY` and `NOVU_PRODUCTION_KEY`, no stale `RESEND_API_KEY` in the `dev` context, and a sending-only Resend key for the app.
 - [ ] Resend is on a plan that fits launch volume. The Free plan stops sending at 100 emails a day ([Resend billing guardrails](../../../.claude/skills/billing-guardrails/references/resend.md)).
 - [ ] Then flip `EMAIL_DELIVERY_MODE=live` ([Part 3](#part-3-the-daily-ops-digest-reads-clean)). Until it is live, mail to outside recipients is held as `DEAD_LETTER` `held:pre-launch`.
 
@@ -152,11 +153,14 @@ Run these in the same window as the production release that carries the single-p
 3. `npm run novu:sync -- --env production --dry-run`, then `npm run novu:sync -- --env production`.
 4. Five minutes after the sync, `npm run novu:check -- --env production` exits `0` with no drift on two runs in a row. Novu's read API serves stale workflows for about three minutes after a sync, so a `novu:check` in that window reports false drift on random families; wait five minutes, then expect two clean runs in a row.
 
+5. `npx tsx scripts/novu/scrub-subscriber-pii.ts --env production` (dry run), then the same with `--apply`, then a final dry run that reports `0 still carry mirrored data`. This clears the email, names, phone, avatar and `data` flags that the old mirror copied onto Production subscribers. Development was scrubbed on 2026-11-07 (333 of 712 subscribers).
+6. Confirm that "Security HMAC encryption" is on for the Novu In-App integration in Production (Novu dashboard → Production → Integrations → Novu In-App), then repeat the tampered-hash check on production: the inbox session must refuse a modified `subscriberHash` and another user's `subscriberId`.
+
 **Proof:** the dry run in step 1 lists nothing to clear when repeated, and a test booking rings one bell for each recipient who has not opted out. Novu Free allows 10,000 workflow runs a month across Development and Production together, so keep Development testing small ([Novu billing reference](../../../.claude/skills/billing-guardrails/references/novu.md)).
 
 ### 4.3 Outbox recount and legacy-guard cleanup
 
-On 2026-11-06 the live database held zero `PENDING` or `RETRY` rows in `FailedEmail`, `FailedEmailBatch` and `NotificationOutbox`, so no `firstAttemptAt` backfill is needed. Immediately before the production release, repeat the read-only count in [Step 7 of the notifications checklist](../../notifications/05-pre-production-checklist.md#step-7-outbox-cutover-recount-no-backfill). If all three read zero, a cleanup PR deletes the legacy cutover guards (`LEGACY_DELIVERY_FORMAT` and `LEGACY_BROADCAST` in `lib/novu/outbox.ts`) and `scripts/novu/clear-native-mutes.ts`. If any row is present, follow Step 7 to settle or dispose of it first.
+On 2026-11-06 the live database held zero `PENDING` or `RETRY` rows in `FailedEmail`, `FailedEmailBatch` and `NotificationOutbox`, so no `firstAttemptAt` backfill is needed. Immediately before the production release, repeat the read-only count in [Step 7 of the notifications checklist](../../notifications/05-pre-production-checklist.md#step-7-outbox-cutover-recount-no-backfill). If all three read zero, a cleanup PR deletes the legacy cutover guards (`LEGACY_DELIVERY_FORMAT` and `LEGACY_BROADCAST` in `lib/novu/outbox.ts`), `scripts/novu/clear-native-mutes.ts` and `scripts/novu/scrub-subscriber-pii.ts`. If any row is present, follow Step 7 to settle or dispose of it first.
 
 ## Part 5: GitHub plan and CI at launch
 

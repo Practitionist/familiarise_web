@@ -1,13 +1,11 @@
-import { WorkspaceSettingsPage } from "../WorkspaceSettingsPage";
+import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { NotificationPreferencesPanel } from "@/components/notifications";
 
-export default async function WorkspaceNotificationsSettingsPage({
-  params,
-}: Readonly<{ params: Promise<{ orgWorkspaceId: string }> }>) {
-  const { orgWorkspaceId } = await params;
+/** The operator's personal switches are the only notification channel control. */
+export default function WorkspaceNotificationsSettingsPage() {
   return (
-    <WorkspaceSettingsPage
-      orgWorkspaceId={orgWorkspaceId}
-      section="notifications"
-    />
+    <DashboardErrorBoundary>
+      <NotificationPreferencesPanel />
+    </DashboardErrorBoundary>
   );
 }

@@ -1,6 +1,12 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import {
+  useMutation,
+  useMutationState,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useSession } from "@/lib/auth-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -9,71 +15,109 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
+import type { EmailCategoryColumn } from "@/lib/email/preferences";
 import {
+  receivableSwitches,
+  showsQuietHours,
+} from "@/lib/notifications/receivable";
+import {
+  NotificationPreferenceSchema,
   QUIET_HOURS_DEFAULT_END,
   QUIET_HOURS_DEFAULT_START,
+  WallClockTimeSchema,
+  type NotificationPreference,
 } from "@/schemas/user";
 
-interface NotificationPreferences {
-  allNotifications: boolean;
-  inAppEnabled: boolean;
-  emailEnabled: boolean;
-  pushEnabled: boolean;
-  appointmentReminders: boolean;
-  paymentNotifications: boolean;
-  supportUpdates: boolean;
-  feedbackAlerts: boolean;
-  trialNotifications: boolean;
-  subscriptionAlerts: boolean;
-  marketingEmails: boolean;
-  orgBillingAlerts: boolean;
-  orgMembershipAlerts: boolean;
-  orgProgramAlerts: boolean;
-  quietHoursEnabled: boolean;
-  quietHoursStart: string | null;
-  quietHoursEnd: string | null;
-  quietHoursTimezone: string | null;
-}
+type Preferences = NotificationPreference;
+type PreferenceUpdate = Partial<Preferences>;
 
-/** Keys that map to boolean values — used for Switch toggle fields. */
+/** Keys that hold a boolean, i.e. the ones a Switch edits. */
 type BooleanPreferenceKey = {
-  [
-    K in keyof NotificationPreferences
-  ]: NotificationPreferences[K] extends boolean ? K : never;
-}[keyof NotificationPreferences];
+  [K in keyof Preferences]: Preferences[K] extends boolean ? K : never;
+}[keyof Preferences];
 
-interface ToggleField {
-  key: BooleanPreferenceKey;
+interface ToggleField<K extends BooleanPreferenceKey = BooleanPreferenceKey> {
+  key: K;
   label: string;
   description: string;
 }
 
+const SAVE_KEY = ["notification-preferences", "save"] as const;
+
 const CHANNEL_FIELDS: ToggleField[] = [
   {
     key: "inAppEnabled",
-    label: "In-App Notifications",
-    description: "Show notifications in the dashboard inbox",
+    label: "In-app notifications",
+    description:
+      "Optional notifications in the bell. Required notices still appear.",
   },
   {
     key: "emailEnabled",
-    label: "Email Notifications",
-    description: "Receive notification emails",
+    label: "Email notifications",
+    description: "Optional emails. Required emails still arrive.",
   },
 ];
 
-/**
- * Q2 fix — push has no delivery path (no FCM/APNS, no Novu push step; nothing
- * reads `preferPush`). The toggle stays visible so the setting is not silently
- * lost, but disabled with honest copy instead of implying it works.
- */
-const PUSH_COMING_SOON = {
-  key: "pushEnabled",
-  label: "Push Notifications",
-  description:
-    "Coming soon — push delivery is not available yet. Your choice is saved for when it launches.",
-} as const;
+const CATEGORY_FIELDS: ToggleField<EmailCategoryColumn>[] = [
+  {
+    key: "appointmentReminders",
+    label: "Bookings & sessions",
+    description:
+      "Bookings, reminders, unread chat, recordings, documents and collaborator updates",
+  },
+  {
+    key: "paymentNotifications",
+    label: "Payments & earnings",
+    description:
+      "Payment links, refunds, disputes, payouts and referral credit",
+  },
+  {
+    key: "supportUpdates",
+    label: "Support Cases",
+    description: "Updates on your support cases",
+  },
+  {
+    key: "feedbackAlerts",
+    label: "Feedback & reviews",
+    description: "Reviews, product feedback replies and moderation outcomes",
+  },
+  {
+    key: "trialNotifications",
+    label: "Trial sessions",
+    description: "Trial session requests and updates",
+  },
+  {
+    key: "subscriptionAlerts",
+    label: "Subscriptions",
+    description: "Subscription starts, renewals and cancellations",
+  },
+];
 
-/** The zones the platform actually serves; keep in sync with staff settings. */
+const MARKETING_FIELD: ToggleField = {
+  key: "marketingEmails",
+  label: "Marketing & Promotions",
+  description: "Platform updates, tips, and promotions",
+};
+
+const ORG_CATEGORY_FIELDS: ToggleField<EmailCategoryColumn>[] = [
+  {
+    key: "orgBillingAlerts",
+    label: "Billing & payouts",
+    description: "Invoices, dunning, wallet balance, payouts, and overages",
+  },
+  {
+    key: "orgMembershipAlerts",
+    label: "Membership",
+    description: "Invitations, roster changes, and role updates",
+  },
+  {
+    key: "orgProgramAlerts",
+    label: "Programs",
+    description: "Seats, cap warnings, exhausted programs, and renewals",
+  },
+];
+
+/** Keep in sync with staff settings. */
 const QUIET_HOURS_TIMEZONES = [
   "Asia/Kolkata",
   "Asia/Dubai",
@@ -86,132 +130,201 @@ const QUIET_HOURS_TIMEZONES = [
   "Australia/Sydney",
 ] as const;
 
-const CATEGORY_FIELDS: ToggleField[] = [
-  {
-    key: "appointmentReminders",
-    label: "Appointment Reminders",
-    description: "Booking confirmations, cancellations, and reminders",
-  },
-  {
-    key: "paymentNotifications",
-    label: "Payment Updates",
-    description: "Payment confirmations, failures, and refunds",
-  },
-  {
-    key: "supportUpdates",
-    label: "Support Cases",
-    description: "Updates on your support cases",
-  },
-  {
-    key: "feedbackAlerts",
-    label: "Feedback & Reviews",
-    description: "New feedback and review notifications",
-  },
-  {
-    key: "trialNotifications",
-    label: "Trial Sessions",
-    description: "Trial session requests and updates",
-  },
-  {
-    key: "subscriptionAlerts",
-    label: "Subscription Updates",
-    description: "Subscription renewals and changes",
-  },
-  {
-    key: "marketingEmails",
-    label: "Marketing & Promotions",
-    description: "Platform updates, tips, and promotions",
-  },
-];
+async function fetchPreferences(): Promise<Preferences> {
+  const res = await fetch("/api/novu/preferences");
+  if (!res.ok) throw new Error("Failed to load preferences");
+  return NotificationPreferenceSchema.parse(await res.json());
+}
 
-/**
- * ADR 23 — the seven categories above are all B2C-shaped, so every ORG_*
- * workflow was unmutable. Rendered only for someone who actually belongs to an
- * organization; a purely B2C user has nothing behind these switches.
- */
-const ORG_CATEGORY_FIELDS: ToggleField[] = [
-  {
-    key: "orgBillingAlerts",
-    label: "Billing & Payouts",
-    description: "Invoices, dunning, wallet balance, payouts, and overages",
-  },
-  {
-    key: "orgMembershipAlerts",
-    label: "Membership",
-    description: "Invitations, roster changes, and role updates",
-  },
-  {
-    key: "orgProgramAlerts",
-    label: "Programs",
-    description: "Cap warnings, exhausted programs, and renewals",
-  },
-];
+async function savePreferences(update: PreferenceUpdate): Promise<Preferences> {
+  const res = await fetch("/api/novu/preferences", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(update),
+  });
+  if (!res.ok) throw new Error("Failed to update preferences");
+  return NotificationPreferenceSchema.parse(await res.json());
+}
+
+/** The values `previous` held for the keys `update` changes. */
+function previousValues(
+  previous: Preferences,
+  update: PreferenceUpdate,
+): PreferenceUpdate {
+  const restored: PreferenceUpdate = {};
+  const keys = Object.keys(update).filter(
+    (key): key is keyof Preferences => key in previous,
+  );
+  for (const key of keys) Object.assign(restored, { [key]: previous[key] });
+  return restored;
+}
+
+function SwitchRow({
+  id,
+  label,
+  description,
+  checked,
+  disabled,
+  onCheckedChange,
+}: Readonly<{
+  id: string;
+  label: string;
+  description: string;
+  checked: boolean;
+  disabled: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}>) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div>
+        <Label htmlFor={id} className="text-sm font-medium">
+          {label}
+        </Label>
+        <p id={`${id}-description`} className="text-xs text-zinc-500">
+          {description}
+        </p>
+      </div>
+      <Switch
+        id={id}
+        checked={checked}
+        disabled={disabled}
+        aria-describedby={`${id}-description`}
+        onCheckedChange={onCheckedChange}
+      />
+    </div>
+  );
+}
+
+/** Saves on blur, never per keystroke; a rollback remounts it through its `key`. */
+function QuietHoursTimeField({
+  id,
+  label,
+  saved,
+  other,
+  disabled,
+  onCommit,
+}: Readonly<{
+  id: string;
+  label: string;
+  saved: string;
+  other: string;
+  disabled: boolean;
+  onCommit: (value: string) => void;
+}>) {
+  const [draft, setDraft] = useState(saved);
+  const [error, setError] = useState<string | null>(null);
+
+  const commit = () => {
+    if (draft === saved) return setError(null);
+    if (!WallClockTimeSchema.safeParse(draft).success) {
+      return setError("Enter a complete time.");
+    }
+    if (draft === other) {
+      return setError("Quiet hours must start and end at different times.");
+    }
+    setError(null);
+    onCommit(draft);
+  };
+
+  return (
+    <div>
+      <Label htmlFor={id} className="text-sm">
+        {label}
+      </Label>
+      <Input
+        id={id}
+        type="time"
+        value={draft}
+        disabled={disabled}
+        aria-invalid={error !== null}
+        aria-describedby={error ? `${id}-error` : undefined}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        className="mt-1"
+      />
+      {error && (
+        <p id={`${id}-error`} className="mt-1 text-xs text-red-600">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
 
 export function NotificationPreferencesPanel() {
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const user = session?.user;
+  const queryKey = ["notification-preferences", user?.id] as const;
 
-  // Same predicate the Inbox tabs use, so the two surfaces agree on whether
-  // this user has an org context at all.
-  const memberships = (session?.user as Record<string, unknown> | undefined)
-    ?.organizationMemberships;
-  const orgNames = Array.isArray(memberships)
-    ? (memberships as { organizationName?: string }[])
-        .map((m) => m.organizationName)
-        .filter((name): name is string => !!name)
-    : [];
-  const hasOrgMembership = Array.isArray(memberships) && memberships.length > 0;
+  const memberships = user?.organizationMemberships ?? [];
+  const orgNames = memberships
+    .map((m) => m.organizationName)
+    .filter((name): name is string => !!name);
+  const viewer = {
+    role: user?.role,
+    consultantProfileId: user?.consultantProfileId,
+    hasOrgMembership: memberships.length > 0,
+  };
+  const switches = receivableSwitches(viewer);
 
   const {
-    data: preferences,
-    isLoading,
+    data: prefs,
+    isPending,
     error,
-  } = useQuery<NotificationPreferences>({
-    queryKey: ["notification-preferences", session?.user?.id],
-    queryFn: async () => {
-      const res = await fetch("/api/novu/preferences");
-      if (!res.ok) throw new Error("Failed to load preferences");
-      return res.json();
-    },
-    enabled: !!session?.user?.id,
+  } = useQuery({
+    queryKey,
+    queryFn: fetchPreferences,
+    enabled: !!user?.id,
     staleTime: 5 * 60 * 1000,
   });
 
+  // One scope runs saves one at a time, so a late response never lands after a newer save.
   const mutation = useMutation({
-    mutationFn: async (updates: Partial<NotificationPreferences>) => {
-      const res = await fetch("/api/novu/preferences", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updates),
-      });
-      if (!res.ok) throw new Error("Failed to update preferences");
-      return res.json();
-    },
-    onSuccess: (data) => {
-      queryClient.setQueryData(
-        ["notification-preferences", session?.user?.id],
-        data,
+    mutationKey: SAVE_KEY,
+    scope: { id: "notification-preferences" },
+    mutationFn: savePreferences,
+    onMutate: async (update: PreferenceUpdate) => {
+      await queryClient.cancelQueries({ queryKey });
+      const previous = queryClient.getQueryData<Preferences>(queryKey);
+      queryClient.setQueryData<Preferences>(queryKey, (old) =>
+        old ? { ...old, ...update } : old,
       );
-      toast({
-        title: "Preferences updated",
-        description: "Your notification preferences have been saved.",
-      });
+      return { previous };
     },
-    onError: () => {
+    onError: (_error, update, context) => {
+      // Restore only this save's keys: a queued save of another switch keeps its value.
+      const previous = context?.previous;
+      if (previous) {
+        const restored = previousValues(previous, update);
+        queryClient.setQueryData<Preferences>(queryKey, (old) =>
+          old ? { ...old, ...restored } : previous,
+        );
+      }
       toast({
-        title: "Error",
-        description: "Failed to update preferences. Please try again.",
+        title: "Not saved",
+        description: "Your change could not be saved. Please try again.",
         variant: "destructive",
       });
     },
+    onSettled: () => {
+      if (queryClient.isMutating({ mutationKey: SAVE_KEY }) === 1) {
+        void queryClient.invalidateQueries({ queryKey });
+      }
+    },
   });
 
-  const handleToggle = (key: keyof NotificationPreferences, value: boolean) => {
-    mutation.mutate({ [key]: value });
-  };
+  const pendingKeys = new Set(
+    useMutationState({
+      filters: { mutationKey: SAVE_KEY, status: "pending" },
+      select: (m) => m.state.variables,
+    }).flatMap((vars) =>
+      vars && typeof vars === "object" ? Object.keys(vars) : [],
+    ),
+  );
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <Card>
         <CardHeader>
@@ -236,144 +349,89 @@ export function NotificationPreferencesPanel() {
     );
   }
 
-  // Use defaults if preferences haven't been created yet
-  const prefs: NotificationPreferences = preferences ?? {
-    allNotifications: true,
-    inAppEnabled: true,
-    emailEnabled: true,
-    pushEnabled: false,
-    appointmentReminders: true,
-    paymentNotifications: true,
-    supportUpdates: true,
-    feedbackAlerts: true,
-    trialNotifications: true,
-    subscriptionAlerts: true,
-    marketingEmails: false,
-    orgBillingAlerts: true,
-    orgMembershipAlerts: true,
-    orgProgramAlerts: true,
-    quietHoursEnabled: false,
-    quietHoursStart: null,
-    quietHoursEnd: null,
-    quietHoursTimezone: null,
-  };
+  const save = (update: PreferenceUpdate) => mutation.mutate(update);
+  const optionalOff = !prefs.allNotifications;
+  const childDisabled = (key: keyof Preferences) =>
+    optionalOff || pendingKeys.has(key);
 
-  // Single source for "which zone the UI shows": saved preference, else the
-  // browser zone, else the platform default. Used by the select value, the
-  // "(current)" fallback option, and the enable mutation so display and
-  // enforcement can never diverge.
+  const renderToggle = (field: ToggleField) => (
+    <SwitchRow
+      id={`notification-${field.key}`}
+      label={field.label}
+      description={field.description}
+      checked={prefs[field.key]}
+      disabled={childDisabled(field.key)}
+      onCheckedChange={(checked) => save({ [field.key]: checked })}
+    />
+  );
+
+  const categoryFields = CATEGORY_FIELDS.filter((f) => switches.has(f.key));
+  const orgFields = ORG_CATEGORY_FIELDS.filter((f) => switches.has(f.key));
+
+  // Saved zone, else the browser's: the select, the "(current)" option and the enable save all use it.
   const browserTimezone =
     Intl.DateTimeFormat().resolvedOptions().timeZone ?? "Asia/Kolkata";
   const effectiveTimezone = prefs.quietHoursTimezone ?? browserTimezone;
+  const quietStart = prefs.quietHoursStart ?? QUIET_HOURS_DEFAULT_START;
+  const quietEnd = prefs.quietHoursEnd ?? QUIET_HOURS_DEFAULT_END;
+  const quietDisabled = optionalOff || !prefs.quietHoursEnabled;
 
   return (
     <div className="space-y-6">
-      {/* Master Toggle */}
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Notifications</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-between">
-            <div>
-              <Label className="text-sm font-medium">All Notifications</Label>
-              <p className="text-xs text-zinc-500">
-                Master toggle for all notification types
-              </p>
-            </div>
-            <Switch
-              checked={prefs.allNotifications}
-              onCheckedChange={(checked) =>
-                handleToggle("allNotifications", checked)
-              }
-            />
-          </div>
+          <SwitchRow
+            id="notification-allNotifications"
+            label="Optional notifications"
+            description="Turn off to pause optional emails and in-app notifications. Required notices still arrive: account, security and moderation notices in the bell and by email, plus payment receipts and invitations you must answer by email."
+            checked={prefs.allNotifications}
+            disabled={pendingKeys.has("allNotifications")}
+            onCheckedChange={(checked) => save({ allNotifications: checked })}
+          />
+          {optionalOff && (
+            <p className="mt-3 text-xs text-zinc-500">
+              The choices below are kept and apply again when you turn optional
+              notifications back on.
+            </p>
+          )}
         </CardContent>
       </Card>
 
-      {/* Channel Preferences */}
-      {prefs.allNotifications && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Channels</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {CHANNEL_FIELDS.map((field, index) => (
-              <div key={field.key}>
-                {index > 0 && <Separator className="mb-4" />}
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label className="text-sm font-medium">{field.label}</Label>
-                    <p className="text-xs text-zinc-500">{field.description}</p>
-                  </div>
-                  <Switch
-                    checked={prefs[field.key]}
-                    onCheckedChange={(checked) =>
-                      handleToggle(field.key, checked)
-                    }
-                  />
-                </div>
-              </div>
-            ))}
-            <Separator className="mb-4" />
-            <div className="flex items-center justify-between opacity-60">
-              <div>
-                <Label className="text-sm font-medium">
-                  {PUSH_COMING_SOON.label}{" "}
-                  <span className="ml-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                    Soon
-                  </span>
-                </Label>
-                <p className="text-xs text-zinc-500">
-                  {PUSH_COMING_SOON.description}
-                </p>
-              </div>
-              <Switch
-                checked={prefs.pushEnabled}
-                disabled
-                aria-disabled="true"
-                title="Push delivery is not available yet"
-              />
+      <Card aria-disabled={optionalOff}>
+        <CardHeader>
+          <CardTitle className="text-lg">Channels</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {CHANNEL_FIELDS.map((field, index) => (
+            <div key={field.key}>
+              {index > 0 && <Separator className="mb-4" />}
+              {renderToggle(field)}
             </div>
-          </CardContent>
-        </Card>
-      )}
+          ))}
+        </CardContent>
+      </Card>
 
-      {/* Category Preferences */}
-      {prefs.allNotifications && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Categories</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {CATEGORY_FIELDS.map((field, index) => (
-              <div key={field.key}>
-                {index > 0 && <Separator className="mb-4" />}
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label className="text-sm font-medium">{field.label}</Label>
-                    <p className="text-xs text-zinc-500">{field.description}</p>
-                  </div>
-                  <Switch
-                    checked={prefs[field.key]}
-                    onCheckedChange={(checked) =>
-                      handleToggle(field.key, checked)
-                    }
-                  />
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
+      <Card aria-disabled={optionalOff}>
+        <CardHeader>
+          <CardTitle className="text-lg">Categories</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {[...categoryFields, MARKETING_FIELD].map((field, index) => (
+            <div key={field.key}>
+              {index > 0 && <Separator className="mb-4" />}
+              {renderToggle(field)}
+            </div>
+          ))}
+        </CardContent>
+      </Card>
 
-      {/* Organization categories — hidden for users with no membership */}
-      {prefs.allNotifications && hasOrgMembership && (
-        <Card>
+      {orgFields.length > 0 && (
+        <Card aria-disabled={optionalOff}>
           <CardHeader>
             <CardTitle className="text-lg">Organization</CardTitle>
-            {/* #1527 — moved here from each org's Settings. Preferences are
-                per person, so one set covers every membership. */}
             {orgNames.length > 0 && (
               <p className="text-xs text-zinc-500">
                 For every organization you belong to: {orgNames.join(", ")}.
@@ -381,85 +439,63 @@ export function NotificationPreferencesPanel() {
             )}
           </CardHeader>
           <CardContent className="space-y-4">
-            {ORG_CATEGORY_FIELDS.map((field, index) => (
+            {orgFields.map((field, index) => (
               <div key={field.key}>
                 {index > 0 && <Separator className="mb-4" />}
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label className="text-sm font-medium">{field.label}</Label>
-                    <p className="text-xs text-zinc-500">{field.description}</p>
-                  </div>
-                  <Switch
-                    checked={prefs[field.key]}
-                    onCheckedChange={(checked) =>
-                      handleToggle(field.key, checked)
-                    }
-                  />
-                </div>
+                {renderToggle(field)}
               </div>
             ))}
           </CardContent>
         </Card>
       )}
 
-      {/* Email quiet hours: read only by the planning reminder (lib/booking/week-nudge.ts) */}
-      {prefs.allNotifications && (
-        <Card>
+      {showsQuietHours(viewer) && (
+        <Card aria-disabled={optionalOff}>
           <CardHeader>
             <CardTitle className="text-lg">Email quiet hours</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <Label className="text-sm font-medium">
-                  Hold planning reminders
-                </Label>
-                <p className="text-xs text-zinc-500">
-                  The email reminding you to schedule plan sessions waits until
-                  these hours end
-                </p>
-              </div>
-              <Switch
-                checked={prefs.quietHoursEnabled}
-                onCheckedChange={(checked) =>
-                  // Persist the effective timezone alongside the enable so
-                  // the displayed schedule and the enforced one cannot
-                  // diverge when nothing was stored yet.
+            <SwitchRow
+              id="notification-quietHoursEnabled"
+              label="Hold planning reminders"
+              description="The reminder to schedule plan sessions, by email and in the bell, waits until these hours end. Nothing else is delayed."
+              checked={prefs.quietHoursEnabled}
+              disabled={childDisabled("quietHoursEnabled")}
+              onCheckedChange={(checked) =>
+                save(
                   checked && !prefs.quietHoursTimezone
-                    ? mutation.mutate({
+                    ? {
                         quietHoursEnabled: true,
                         quietHoursTimezone: browserTimezone,
-                      })
-                    : handleToggle("quietHoursEnabled", checked)
-                }
-              />
-            </div>
+                      }
+                    : { quietHoursEnabled: checked },
+                )
+              }
+            />
             {prefs.quietHoursEnabled && (
               <>
                 <Separator />
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-sm">Start Time</Label>
-                    <Input
-                      type="time"
-                      value={prefs.quietHoursStart ?? QUIET_HOURS_DEFAULT_START}
-                      onChange={(e) =>
-                        mutation.mutate({ quietHoursStart: e.target.value })
-                      }
-                      className="mt-1"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-sm">End Time</Label>
-                    <Input
-                      type="time"
-                      value={prefs.quietHoursEnd ?? QUIET_HOURS_DEFAULT_END}
-                      onChange={(e) =>
-                        mutation.mutate({ quietHoursEnd: e.target.value })
-                      }
-                      className="mt-1"
-                    />
-                  </div>
+                  <QuietHoursTimeField
+                    key={`start-${quietStart}`}
+                    id="quiet-hours-start"
+                    label="Start time"
+                    saved={quietStart}
+                    other={quietEnd}
+                    disabled={
+                      quietDisabled || pendingKeys.has("quietHoursStart")
+                    }
+                    onCommit={(value) => save({ quietHoursStart: value })}
+                  />
+                  <QuietHoursTimeField
+                    key={`end-${quietEnd}`}
+                    id="quiet-hours-end"
+                    label="End time"
+                    saved={quietEnd}
+                    other={quietStart}
+                    disabled={quietDisabled || pendingKeys.has("quietHoursEnd")}
+                    onCommit={(value) => save({ quietHoursEnd: value })}
+                  />
                 </div>
                 <div>
                   <Label htmlFor="quiet-hours-timezone" className="text-sm">
@@ -468,13 +504,16 @@ export function NotificationPreferencesPanel() {
                   <select
                     id="quiet-hours-timezone"
                     value={effectiveTimezone}
-                    onChange={(e) =>
-                      mutation.mutate({ quietHoursTimezone: e.target.value })
+                    disabled={
+                      quietDisabled || pendingKeys.has("quietHoursTimezone")
                     }
-                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                    onChange={(e) =>
+                      save({ quietHoursTimezone: e.target.value })
+                    }
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm disabled:opacity-50"
                   >
-                    {!QUIET_HOURS_TIMEZONES.includes(
-                      effectiveTimezone as (typeof QUIET_HOURS_TIMEZONES)[number],
+                    {!QUIET_HOURS_TIMEZONES.some(
+                      (zone) => zone === effectiveTimezone,
                     ) && (
                       <option value={effectiveTimezone}>
                         {effectiveTimezone} (current)
@@ -486,11 +525,6 @@ export function NotificationPreferencesPanel() {
                       </option>
                     ))}
                   </select>
-                  <p className="mt-1 text-xs text-zinc-500">
-                    Only the planning-reminder email (and its matching bell)
-                    waits. Other emails and in-app notifications are not
-                    delayed.
-                  </p>
                 </div>
               </>
             )}

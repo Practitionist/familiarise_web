@@ -21,32 +21,35 @@ const BELL_PREFERENCE_SELECT = {
 const BELL_POLICY_SELECT = {
   id: true,
   erasedAt: true,
-  orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
   notificationPreferences: { select: BELL_PREFERENCE_SELECT },
 } as const;
 
 type BellUserRow = {
   id?: string;
   erasedAt?: Date | null;
-  orgWorkspaceProfile?: {
-    notificationRoutingMode?:
-      "BELL_AND_EMAIL" | "BELL_ONLY" | "EMAIL_ONLY" | "NEITHER" | null;
-  } | null;
   notificationPreferences?: Partial<
     Record<keyof typeof BELL_PREFERENCE_SELECT, boolean | null>
   > | null;
 };
 
+/** How a workflow is gated: its preference switch, or none when it is required. */
+type BellGate = { category: PreferenceCategory | null; required: boolean };
+
+function gateOf(workflowId: NovuWorkflowId): BellGate {
+  const template = templateFor(workflowId);
+  return {
+    category: template?.category ?? null,
+    required: template?.required === true,
+  };
+}
+
 function isBellAllowedForRecipient(
   row: BellUserRow | undefined,
-  category: PreferenceCategory | null,
+  { category, required }: BellGate,
 ): boolean {
   if (!row) return true;
   if (row.erasedAt) return false;
-  const routingMode = row.orgWorkspaceProfile?.notificationRoutingMode;
-  if (routingMode === "EMAIL_ONLY" || routingMode === "NEITHER") {
-    return false;
-  }
+  if (required) return true;
   const pref = row.notificationPreferences;
   if (!pref) return true;
   if (pref.allNotifications === false) return false;
@@ -62,7 +65,7 @@ function allowedRecipientsOf(
   recipients: string[],
   rows: BellUserRow[],
 ): string[] {
-  const category = templateFor(workflowId)?.category ?? null;
+  const gate = gateOf(workflowId);
   const byId = new Map(
     rows
       .filter(
@@ -71,7 +74,7 @@ function allowedRecipientsOf(
       .map((r) => [r.id, r]),
   );
   return recipients.filter((id) =>
-    isBellAllowedForRecipient(byId.get(id), category),
+    isBellAllowedForRecipient(byId.get(id), gate),
   );
 }
 
@@ -110,9 +113,11 @@ export const MAX_BELL_AUDIENCE = 2_000;
  * {@link isBellAllowedForRecipient} as a query filter, so a cap counts only
  * the users a bell may reach.
  */
-function bellAllowedWhere(
-  category: PreferenceCategory | null,
-): Prisma.UserWhereInput {
+function bellAllowedWhere({
+  category,
+  required,
+}: BellGate): Prisma.UserWhereInput {
+  if (required) return { erasedAt: null };
   const preference: Prisma.NotificationPreferenceWhereInput = {
     allNotifications: true,
     inAppEnabled: true,
@@ -120,25 +125,9 @@ function bellAllowedWhere(
   if (category !== null) preference[EMAIL_CATEGORY_COLUMN[category]] = true;
   return {
     erasedAt: null,
-    AND: [
-      {
-        OR: [
-          { orgWorkspaceProfile: { is: null } },
-          {
-            orgWorkspaceProfile: {
-              is: {
-                notificationRoutingMode: { notIn: ["EMAIL_ONLY", "NEITHER"] },
-              },
-            },
-          },
-        ],
-      },
-      {
-        OR: [
-          { notificationPreferences: { is: null } },
-          { notificationPreferences: { is: preference } },
-        ],
-      },
+    OR: [
+      { notificationPreferences: { is: null } },
+      { notificationPreferences: { is: preference } },
     ],
   };
 }
@@ -157,7 +146,7 @@ export async function bellAudience(
     where: {
       emailVerified: true,
       banned: false,
-      ...bellAllowedWhere(templateFor(workflowId)?.category ?? null),
+      ...bellAllowedWhere(gateOf(workflowId)),
     },
     select: BELL_POLICY_SELECT,
     orderBy: { id: "asc" },

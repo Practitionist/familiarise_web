@@ -6,7 +6,6 @@
  * no row has never changed anything and gets the defaults.
  */
 
-import type { NotificationRoutingMode } from "@prisma/client";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import { DEFAULT_NOTIFICATION_TIMEZONE } from "@/lib/novu/humanize";
 import type { PreferenceCategory } from "@/lib/novu/templates/types";
@@ -66,9 +65,6 @@ type UserRow = {
   email: string | null;
   name: string | null;
   timezone: string | null;
-  orgWorkspaceProfile: {
-    notificationRoutingMode: NotificationRoutingMode;
-  } | null;
   notificationPreferences: PreferenceRow | null;
 };
 
@@ -88,15 +84,13 @@ export const EMAIL_PREFERENCE_SELECT = {
   orgProgramAlerts: true,
 } as const;
 
-// A required notice (null category) ignores the switches and workspace routing;
-// otherwise a missing row means defaults, and every default is on.
+// A required notice (null category) ignores the switches; otherwise a missing
+// row means defaults, and every default is on.
 export function isEmailAllowedForUser(
-  user: Pick<UserRow, "orgWorkspaceProfile" | "notificationPreferences">,
+  user: Pick<UserRow, "notificationPreferences">,
   category: PreferenceCategory | null,
 ): boolean {
   if (category === null) return true;
-  const routing = user.orgWorkspaceProfile?.notificationRoutingMode;
-  if (routing === "BELL_ONLY" || routing === "NEITHER") return false;
   const pref = user.notificationPreferences;
   if (!pref) return true;
   return (
@@ -115,7 +109,6 @@ async function fetchUsers(ids: string[], db: UserReader): Promise<UserRow[]> {
       email: true,
       name: true,
       timezone: true,
-      orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
       notificationPreferences: { select: EMAIL_PREFERENCE_SELECT },
     },
   });

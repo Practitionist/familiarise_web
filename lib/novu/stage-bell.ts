@@ -7,8 +7,8 @@ export type StageBellTx = Pick<Tx, "notificationOutbox"> &
   Partial<Pick<Tx, "user">>;
 
 /**
- * Stage an in-app bell inside the caller's transaction after enforcing
- * recipient workspace routing and channel/category preferences.
+ * Stage an in-app bell inside the caller's transaction after enforcing each
+ * recipient's channel and category preferences.
  */
 export async function stageBell(
   tx: StageBellTx,

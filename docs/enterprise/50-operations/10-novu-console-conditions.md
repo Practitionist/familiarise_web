@@ -1,18 +1,20 @@
 ---
-title: Novu console conditions for notification scoping
+title: Novu console conditions (superseded; none exist)
 band: 50-operations
 audience: operator
-status: live
-last-reviewed: 2026-11-06
+status: superseded
+last-reviewed: 2026-11-07
 ---
 
-# Novu console conditions runbook
+# Novu console conditions (superseded)
+
+> **Superseded.** No console conditions exist: Novu families carry no step conditions and no subscriber-editable preferences, and nothing in the console should be configured to filter bells. Preferences are enforced server-side (`lib/novu/policy.ts`); the design is in [the notification architecture](../../notifications/01-architecture.md). This page is kept only for the family-to-category map and the manual check below.
 
 [ADR 23](../70-design-decisions/23-notification-scope.md) made notifications carry their organization scope and made the organization preference categories writable. Those preferences are enforced by the application, not by the Novu console: Novu workflows carry **no step conditions**, and nothing in the console should be configured to filter bells.
 
 ## Where the opt-out is enforced
 
-Postgres is the only copy of notification preferences. `lib/novu/policy.ts` drops a recipient when the workspace routing mode (`OrgWorkspaceProfile.notificationRoutingMode`) is `EMAIL_ONLY` or `NEITHER`, when `allNotifications` or `inAppEnabled` is off, or when the family's category switch is off. It runs when the bell is staged and again at the first attempt, which freezes the allowed recipients so a retry resends exactly that set.
+Postgres is the only copy of notification preferences. `lib/novu/policy.ts` drops a recipient when `allNotifications` or `inAppEnabled` is off, or when the family's category switch is off. These personal switches are the only channel control, workspace operators included. It runs when the bell is staged and again at the first attempt, which freezes the allowed recipients so a retry resends exactly that set.
 
 `npm run novu:sync` writes every family with that empty condition set and with read-only, always-on subscriber preferences, so a subscriber cannot mute a family inside Novu either. `npm run novu:check` reports a leftover `skip` control or subscriber-editable preferences as drift.
 
@@ -69,7 +71,7 @@ The SSO workflow is membership rather than a category of its own: it concerns ho
 
 For a category, open your personal **Settings → Notifications**, turn **Billing & Payouts** off, and trigger an invoice event for an organization you belong to. Nothing should arrive. Turn it back on and repeat; the notification should arrive.
 
-For routing, set **Notification routing** to `EMAIL_ONLY` in the cross-organization workspace settings, then trigger any organization event. An email should arrive and the bell should stay silent. Both changes apply to the next notification; no reload is needed.
+For a channel, turn **In-app notifications** off in the same panel (an operator uses Workspace settings › Notifications, which shows the same personal panel), then trigger any organization event. An email should arrive and the bell should stay silent. Both changes apply to the next notification; no reload is needed.
 
 ## What is deliberately not conditioned
 
@@ -78,3 +80,4 @@ The `ORG_*` payloads do not carry a `NotificationScope`. They are unambiguous by
 ## Deprecated & Superseded Approaches
 
 - **Step conditions over a subscriber mirror (removed)**: the sync used to write a `skip` rule on every in-app step over `subscriber.data.routingBell`, `masterEnabled`, `preferInApp` and `category*` flags that the app copied onto each Novu subscriber. The server already rechecked the same flags in Postgres before every trigger, so the conditions could only drop bells the server had approved. Remove any such condition found in a Novu environment by running `npm run novu:sync`.
+- **Workspace routing (removed 2026-11-07)**: `OrgWorkspaceProfile.notificationRoutingMode` dropped bells for `EMAIL_ONLY` and `NEITHER` on top of the personal switches. It duplicated the operator's own In-App switch, so the policy no longer reads it.
