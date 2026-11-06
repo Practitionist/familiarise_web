@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import type { UserRole } from "@prisma/client";
 import { stagePages } from "@/lib/novu/outbox";
-import { bellAudience } from "@/lib/novu/policy";
+import { bellAudience, MAX_BELL_AUDIENCE } from "@/lib/novu/policy";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS, type AnnouncementPayload } from "@/lib/novu/workflows";
 import { CreateAnnouncementSchema } from "@/schemas/announcements";
@@ -15,11 +15,6 @@ import { isTransientDbError, reportTransient } from "@/lib/data/fail-open";
 import { getSession } from "@/lib/auth-server";
 import { assertBodySize } from "@/lib/validation/limits";
 
-/**
- * Largest audience one inbox post stages, read and inserted inside the create
- * transaction (one user read, one multi-row insert); beyond it the post is refused.
- */
-const MAX_INBOX_AUDIENCE = 10_000;
 /** Pages attempted right after the response; the relay sends the rest. */
 const INLINE_INBOX_PAGES = 5;
 
@@ -174,50 +169,54 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const created = await prisma.$transaction(async (tx) => {
-      const audience = validatedData.postToInbox
-        ? await bellAudience(
-            tx,
-            NOVU_WORKFLOWS.GENERAL_ANNOUNCEMENT,
-            MAX_INBOX_AUDIENCE,
-          )
-        : [];
-      if (audience === null) return null;
-      const announcement = await tx.announcement.create({
-        data: {
-          title: validatedData.title,
-          content: validatedData.content,
-          isActive: validatedData.isActive,
-          startDate,
-          endDate,
-          backgroundColor: validatedData.backgroundColor,
-          textColor: validatedData.textColor,
-          linkUrl: validatedData.linkUrl,
-          linkText: validatedData.linkText,
-          createdBy: session.user.id,
-        },
-      });
-      const payload: AnnouncementPayload = {
-        title: announcement.title,
-        content: announcement.content,
-        ...(announcement.linkUrl ? { linkUrl: announcement.linkUrl } : {}),
-        ...(announcement.linkText ? { linkText: announcement.linkText } : {}),
-      };
-      const bells = await stagePages(tx, {
-        workflowId: NOVU_WORKFLOWS.GENERAL_ANNOUNCEMENT,
-        recipients: audience,
-        payload,
-        dedupeKey: `announcement:${announcement.id}`,
-        entityRef: `announcement:${announcement.id}`,
-      });
-      return { announcement, bells };
-    });
+    // One bounded user read and one multi-row insert, so a short explicit timeout.
+    const created = await prisma.$transaction(
+      async (tx) => {
+        const audience = validatedData.postToInbox
+          ? await bellAudience(
+              tx,
+              NOVU_WORKFLOWS.GENERAL_ANNOUNCEMENT,
+              MAX_BELL_AUDIENCE,
+            )
+          : [];
+        if (audience === null) return null;
+        const announcement = await tx.announcement.create({
+          data: {
+            title: validatedData.title,
+            content: validatedData.content,
+            isActive: validatedData.isActive,
+            startDate,
+            endDate,
+            backgroundColor: validatedData.backgroundColor,
+            textColor: validatedData.textColor,
+            linkUrl: validatedData.linkUrl,
+            linkText: validatedData.linkText,
+            createdBy: session.user.id,
+          },
+        });
+        const payload: AnnouncementPayload = {
+          title: announcement.title,
+          content: announcement.content,
+          ...(announcement.linkUrl ? { linkUrl: announcement.linkUrl } : {}),
+          ...(announcement.linkText ? { linkText: announcement.linkText } : {}),
+        };
+        const bells = await stagePages(tx, {
+          workflowId: NOVU_WORKFLOWS.GENERAL_ANNOUNCEMENT,
+          recipients: audience,
+          payload,
+          dedupeKey: `announcement:${announcement.id}`,
+          entityRef: `announcement:${announcement.id}`,
+        });
+        return { announcement, bells };
+      },
+      { timeout: 15_000, maxWait: 5_000 },
+    );
 
     if (!created) {
       return NextResponse.json(
         {
           success: false,
-          error: `Inbox posts are limited to ${MAX_INBOX_AUDIENCE} users. Create the announcement without posting to inboxes.`,
+          error: `Inbox posts are limited to ${MAX_BELL_AUDIENCE} users. Create the announcement without posting to inboxes.`,
         },
         { status: 422 },
       );

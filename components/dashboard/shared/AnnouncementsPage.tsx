@@ -44,6 +44,9 @@ interface Announcement {
 }
 
 const ApiErrorSchema = z.object({ error: z.string().optional() });
+const InboxAudienceSchema = z.object({
+  data: z.object({ eligible: z.number().nullable(), cap: z.number() }),
+});
 
 export interface AnnouncementsPageProps {
   /** API base path for announcements, defaults to "/api/announcements" */
@@ -65,6 +68,8 @@ export function AnnouncementsPage({
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingAnnouncement, setEditingAnnouncement] =
     useState<Announcement | null>(null);
+  const [postToInbox, setPostToInbox] = useState(false);
+  const [confirmedRuns, setConfirmedRuns] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -78,6 +83,35 @@ export function AnnouncementsPage({
       return result.success ? result.data : [];
     },
   });
+
+  // Counted only when an inbox post is being considered; never cached across opens.
+  const inboxAudience = useQuery({
+    queryKey: [queryKeyPrefix, "inbox-audience"],
+    enabled: isCreateOpen && postToInbox,
+    gcTime: 0,
+    queryFn: async () => {
+      const response = await fetch(`${apiBasePath}/audience`);
+      const parsed = InboxAudienceSchema.safeParse(
+        await response.json().catch(() => null),
+      );
+      if (!response.ok || !parsed.success) {
+        throw new Error("Could not count the inbox audience.");
+      }
+      return parsed.data.data;
+    },
+  });
+  const eligible = inboxAudience.data?.eligible;
+  const inboxPostReady =
+    !postToInbox ||
+    (confirmedRuns && eligible !== undefined && eligible !== null);
+
+  const openCreate = (open: boolean) => {
+    setIsCreateOpen(open);
+    if (!open) {
+      setPostToInbox(false);
+      setConfirmedRuns(false);
+    }
+  };
 
   const createMutation = useMutation({
     mutationFn: async (
@@ -101,7 +135,7 @@ export function AnnouncementsPage({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey });
-      setIsCreateOpen(false);
+      openCreate(false);
       toast({ title: "Announcement created" });
     },
     onError: (error) => {
@@ -169,10 +203,7 @@ export function AnnouncementsPage({
     if (editingAnnouncement) {
       updateMutation.mutate({ id: editingAnnouncement.id, data });
     } else {
-      createMutation.mutate({
-        ...data,
-        postToInbox: formData.get("postToInbox") === "on",
-      });
+      createMutation.mutate({ ...data, postToInbox });
     }
   };
 
@@ -191,7 +222,7 @@ export function AnnouncementsPage({
           <h1 className="text-2xl font-bold">{title}</h1>
           <p className="text-muted-foreground">{description}</p>
         </div>
-        <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+        <Dialog open={isCreateOpen} onOpenChange={openCreate}>
           <DialogTrigger asChild>
             <Button>
               <Plus className="mr-2 h-4 w-4" />
@@ -222,7 +253,11 @@ export function AnnouncementsPage({
                 <div className="flex items-start gap-2">
                   <Checkbox
                     id="postToInbox"
-                    name="postToInbox"
+                    checked={postToInbox}
+                    onCheckedChange={(checked) => {
+                      setPostToInbox(checked === true);
+                      setConfirmedRuns(false);
+                    }}
                     aria-describedby="postToInbox-help"
                     className="mt-0.5"
                   />
@@ -240,6 +275,46 @@ export function AnnouncementsPage({
                     </p>
                   </div>
                 </div>
+                {postToInbox && (
+                  <div
+                    className="space-y-2 rounded-md border p-3 text-sm"
+                    aria-live="polite"
+                  >
+                    {inboxAudience.isPending ? (
+                      <p className="text-muted-foreground">
+                        Counting eligible users…
+                      </p>
+                    ) : inboxAudience.isError ? (
+                      <p className="text-destructive">
+                        {inboxAudience.error.message}
+                      </p>
+                    ) : inboxAudience.data.eligible === null ? (
+                      <p className="text-destructive">
+                        More than {inboxAudience.data.cap.toLocaleString()}{" "}
+                        users are eligible, which is over the inbox limit.
+                        Create the announcement without posting to inboxes.
+                      </p>
+                    ) : (
+                      <div className="flex items-start gap-2">
+                        <Checkbox
+                          id="confirmInboxRuns"
+                          checked={confirmedRuns}
+                          onCheckedChange={(checked) =>
+                            setConfirmedRuns(checked === true)
+                          }
+                          className="mt-0.5"
+                        />
+                        <Label htmlFor="confirmInboxRuns" className="leading-5">
+                          Post to {inboxAudience.data.eligible.toLocaleString()}{" "}
+                          eligible{" "}
+                          {inboxAudience.data.eligible === 1 ? "user" : "users"}
+                          . Each recipient uses one Novu workflow run from the
+                          monthly quota.
+                        </Label>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="backgroundColor">Background Color</Label>
@@ -279,11 +354,14 @@ export function AnnouncementsPage({
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setIsCreateOpen(false)}
+                  onClick={() => openCreate(false)}
                 >
                   Cancel
                 </Button>
-                <Button type="submit" disabled={createMutation.isPending}>
+                <Button
+                  type="submit"
+                  disabled={createMutation.isPending || !inboxPostReady}
+                >
                   {createMutation.isPending && (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   )}

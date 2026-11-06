@@ -12,6 +12,8 @@ const mockFindMany = jest.fn();
 const mockCreate = jest.fn();
 const mockCreateManyAndReturn = jest.fn();
 const mockFlush = jest.fn();
+const mockTransaction = jest.fn();
+const mockGetSession = jest.fn();
 const tx = {
   user: { findMany: (...args: unknown[]) => mockFindMany(...args) },
   announcement: { create: (...args: unknown[]) => mockCreate(...args) },
@@ -24,11 +26,15 @@ const tx = {
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
   default: {
-    $transaction: (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
+    $transaction: (fn: (t: typeof tx) => Promise<unknown>, opts: unknown) => {
+      mockTransaction(opts);
+      return fn(tx);
+    },
+    user: { findMany: (...args: unknown[]) => mockFindMany(...args) },
   },
 }));
 jest.mock("@/lib/auth-server", () => ({
-  getSession: jest.fn(async () => ({ user: { id: "admin1", role: "ADMIN" } })),
+  getSession: (...args: unknown[]) => mockGetSession(...args),
 }));
 jest.mock("next/cache", () => ({
   revalidateTag: jest.fn(),
@@ -41,7 +47,9 @@ jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/announcements/route";
+import { GET as getAudience } from "@/app/api/announcements/audience/route";
 import { deriveTransactionId } from "@/lib/novu/outbox";
+import { MAX_BELL_AUDIENCE } from "@/lib/novu/policy";
 
 type OutboxRow = {
   kind: string;
@@ -86,6 +94,7 @@ beforeEach(() => {
       data.map((row, i) => ({ id: `row${i}`, ...row })),
   );
   mockFlush.mockResolvedValue(undefined);
+  mockGetSession.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } });
 });
 
 describe("POST /api/announcements", () => {
@@ -150,6 +159,11 @@ describe("POST /api/announcements", () => {
     // Only the first pages are attempted inline; the relay sends the rest.
     const [[{ bells }]] = mockFlush.mock.calls;
     expect(bells).toHaveLength(3);
+    // The fan-out transaction runs under an explicit, bounded timeout.
+    expect(mockTransaction).toHaveBeenCalledWith({
+      timeout: 15_000,
+      maxWait: 5_000,
+    });
   });
 
   it("refuses an inbox post for an inactive or scheduled announcement", async () => {
@@ -171,7 +185,7 @@ describe("POST /api/announcements", () => {
 
   it("refuses, without creating, when the audience is over the cap", async () => {
     mockFindMany.mockResolvedValue(
-      Array.from({ length: 10_001 }, (_, i) => user(`u${i}`)),
+      Array.from({ length: MAX_BELL_AUDIENCE + 1 }, (_, i) => user(`u${i}`)),
     );
 
     const res = await POST(createRequest({ postToInbox: true }));
@@ -179,5 +193,47 @@ describe("POST /api/announcements", () => {
     expect(res.status).toBe(422);
     expect(mockCreate).not.toHaveBeenCalled();
     expect(mockCreateManyAndReturn).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/announcements/audience", () => {
+  it("counts the users an inbox post would ring, through the same policy", async () => {
+    mockFindMany.mockResolvedValue([
+      user("u1"),
+      user("u2"),
+      user("v-inapp-off", { allNotifications: true, inAppEnabled: false }),
+    ]);
+
+    const res = await getAudience();
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      success: true,
+      data: { eligible: 2, cap: MAX_BELL_AUDIENCE },
+    });
+    expect(mockFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: MAX_BELL_AUDIENCE + 1 }),
+    );
+  });
+
+  it("reports an audience over the cap as null", async () => {
+    mockFindMany.mockResolvedValue(
+      Array.from({ length: MAX_BELL_AUDIENCE + 1 }, (_, i) => user(`u${i}`)),
+    );
+
+    const res = await getAudience();
+
+    await expect(res.json()).resolves.toMatchObject({
+      data: { eligible: null },
+    });
+  });
+
+  it("needs the same permission as creating an announcement", async () => {
+    mockGetSession.mockResolvedValue({ user: { id: "s1", role: "STAFF" } });
+
+    const res = await getAudience();
+
+    expect(res.status).toBe(403);
+    expect(mockFindMany).not.toHaveBeenCalled();
   });
 });
