@@ -115,6 +115,26 @@ function stampWhereUnset<T extends { id: string; firstAttemptAt: Date | null }>(
   return { count: 1 };
 }
 
+/** Mirrors the relay's SQL: a status-filtered write settles only an unsettled row. */
+function writeMany<
+  T extends { id: string; status: string; firstAttemptAt: Date | null },
+>(
+  rows: T[],
+  args: {
+    where?: { id?: unknown; status?: unknown };
+    data: Record<string, unknown>;
+  },
+): { count: number } {
+  if (!args.where?.status) return stampWhereUnset(rows, args);
+  const idx = rows.findIndex((r) => r.id === args.where?.id);
+  if (idx < 0) return { count: 0 };
+  if (rows[idx].status !== "PENDING" && rows[idx].status !== "RETRY") {
+    return { count: 0 };
+  }
+  rows[idx] = { ...rows[idx], ...(args.data as Partial<T>) };
+  return { count: 1 };
+}
+
 function isRowDue(
   row: { status: string; nextRetryAt: Date | null },
   nowDate: Date,
@@ -152,17 +172,8 @@ function createStatefulOutboxStore(initial: {
         const nowDate = lteMatch ? new Date(lteMatch[1]) : new Date(T0);
         return emails.filter((row) => isRowDue(row, nowDate));
       }),
-      update: jest.fn(async (args: Prisma.FailedEmailUpdateArgs) => {
-        const idx = emails.findIndex((r) => r.id === args.where.id);
-        const updated = {
-          ...(idx >= 0 ? emails[idx] : makeFailedEmail()),
-          ...(args.data as Partial<FailedEmail>),
-        };
-        if (idx >= 0) emails[idx] = updated;
-        return updated;
-      }),
       updateMany: jest.fn(async (args: Prisma.FailedEmailUpdateManyArgs) =>
-        stampWhereUnset(emails, args),
+        writeMany(emails, args),
       ),
       count: jest.fn(
         async () =>
@@ -181,17 +192,8 @@ function createStatefulOutboxStore(initial: {
         const nowDate = lteMatch ? new Date(lteMatch[1]) : new Date(T0);
         return batches.filter((row) => isRowDue(row, nowDate));
       }),
-      update: jest.fn(async (args: Prisma.FailedEmailBatchUpdateArgs) => {
-        const idx = batches.findIndex((r) => r.id === args.where.id);
-        const updated = {
-          ...(idx >= 0 ? batches[idx] : makeFailedBatch()),
-          ...(args.data as Partial<FailedEmailBatch>),
-        };
-        if (idx >= 0) batches[idx] = updated;
-        return updated;
-      }),
       updateMany: jest.fn(async (args: Prisma.FailedEmailBatchUpdateManyArgs) =>
-        stampWhereUnset(batches, args),
+        writeMany(batches, args),
       ),
     },
   };

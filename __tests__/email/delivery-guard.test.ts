@@ -125,7 +125,7 @@ describe("pre-launch delivery guard", () => {
   });
 
   it("dead-letters a held outbox row instead of retrying it", async () => {
-    const updates: Prisma.FailedEmailUpdateArgs[] = [];
+    const updates: Prisma.FailedEmailUpdateManyArgs[] = [];
     const row = {
       id: "fe-9",
       recipient: "seeded.user@yahoo.com",
@@ -136,11 +136,10 @@ describe("pre-launch delivery guard", () => {
       user: { findUnique: jest.fn().mockResolvedValue(null) },
       failedEmail: {
         findMany: jest.fn().mockResolvedValue([row]),
-        update: jest.fn(async (args: Prisma.FailedEmailUpdateArgs) => {
+        updateMany: jest.fn(async (args: Prisma.FailedEmailUpdateManyArgs) => {
           updates.push(args);
-          return row;
+          return { count: 1 };
         }),
-        updateMany: jest.fn(),
       },
       emailSuppression: {
         findMany: jest.fn().mockResolvedValue([]),
@@ -148,7 +147,6 @@ describe("pre-launch delivery guard", () => {
       },
       failedEmailBatch: {
         findMany: jest.fn().mockResolvedValue([]),
-        update: jest.fn(),
         updateMany: jest.fn(),
       },
     };

@@ -3,6 +3,11 @@ export const PROVIDER_REPLAY_WINDOW_MS = 23 * 60 * 60 * 1000;
 
 export const PROVIDER_WINDOW_EXPIRED = "review:provider_acceptance_unknown";
 
+/** Status filter for every outbox settle: a row another attempt already settled is left alone. */
+export const UNSETTLED: { in: ("PENDING" | "RETRY")[] } = {
+  in: ["PENDING", "RETRY"],
+};
+
 /**
  * A row the provider never saw (`firstAttemptAt` null) is safe to send at any
  * age; one it may have accepted replays only while its key is still deduped.

@@ -29,8 +29,9 @@ jest.mock("../../lib/prisma", () => ({
     user: { findUnique: (...args: unknown[]) => mockPolicyUser(...args) },
     failedEmail: {
       create: (...args: unknown[]) => mockCreate(...args),
-      update: (...args: unknown[]) => mockUpdate(...args),
-      updateMany: (...args: unknown[]) => mockUpdateMany(...args),
+      // A write filtered on status is a settle; an unfiltered one is the anchor stamp.
+      updateMany: (args: { where?: { status?: unknown } }) =>
+        args.where?.status ? mockUpdate(args) : mockUpdateMany(args),
     },
     emailSuppression: {
       findUnique: (...args: unknown[]) => mockFindSuppression(...args),
@@ -148,7 +149,7 @@ describe("stage + attempt (#1654)", () => {
     expect(options.idempotencyKey).toBe(staged?.idempotencyKey);
     expect(options.signal).toBeInstanceOf(AbortSignal);
     expect(mockUpdate).toHaveBeenCalledWith({
-      where: { id: "fe-tx" },
+      where: { id: "fe-tx", status: { in: ["PENDING", "RETRY"] } },
       data: expect.objectContaining({
         status: "SENT",
         resendId: "re-123",
@@ -191,7 +192,7 @@ describe("stage + attempt (#1654)", () => {
 
     expect(result.success).toBe(false);
     expect(mockUpdate).toHaveBeenCalledWith({
-      where: { id: "fe-3" },
+      where: { id: "fe-3", status: { in: ["PENDING", "RETRY"] } },
       data: {
         status: "DEAD_LETTER",
         lastError: "validation_error: API key is invalid",
@@ -413,7 +414,7 @@ describe("attempt-time recipient recheck and first-attempt anchor", () => {
       expect(mockSend).not.toHaveBeenCalled();
       expect(mockUpdateMany).not.toHaveBeenCalled();
       expect(mockUpdate).toHaveBeenCalledWith({
-        where: { id: "fe-p" },
+        where: { id: "fe-p", status: { in: ["PENDING", "RETRY"] } },
         data: { status: "DEAD_LETTER", lastError },
       });
       expect(mockCaptureException).not.toHaveBeenCalled();
@@ -431,7 +432,7 @@ describe("attempt-time recipient recheck and first-attempt anchor", () => {
 
     expect(mockSend).not.toHaveBeenCalled();
     expect(mockUpdate).toHaveBeenCalledWith({
-      where: { id: "fe-p" },
+      where: { id: "fe-p", status: { in: ["PENDING", "RETRY"] } },
       data: { status: "DEAD_LETTER", lastError: "suppressed:COMPLAINT" },
     });
   });

@@ -91,6 +91,7 @@ import { nextRetryAt } from "@/lib/retry/backoff";
 import {
   providerWindowRefusal,
   stampFirstAttempt,
+  UNSETTLED,
 } from "@/lib/retry/provider-window";
 
 const MAX_BATCH = 50;
@@ -154,7 +155,6 @@ export interface EmailRetryRunResult {
 export interface FailedEmailStore extends EmailPolicyReader {
   failedEmail: {
     findMany(args: Prisma.FailedEmailFindManyArgs): Promise<FailedEmail[]>;
-    update(args: Prisma.FailedEmailUpdateArgs): Promise<FailedEmail>;
     updateMany(
       args: Prisma.FailedEmailUpdateManyArgs,
     ): Promise<Prisma.BatchPayload>;
@@ -170,7 +170,6 @@ export interface FailedEmailStore extends EmailPolicyReader {
     findMany(
       args: Prisma.FailedEmailBatchFindManyArgs,
     ): Promise<FailedEmailBatch[]>;
-    update(args: Prisma.FailedEmailBatchUpdateArgs): Promise<FailedEmailBatch>;
     updateMany(
       args: Prisma.FailedEmailBatchUpdateManyArgs,
     ): Promise<Prisma.BatchPayload>;
@@ -180,6 +179,31 @@ export interface FailedEmailStore extends EmailPolicyReader {
 export interface RelaySender {
   emails: Pick<Resend["emails"], "send">;
   batch: Pick<Resend["batch"], "send">;
+}
+
+/** Settles a row only while it is unsettled; false when another attempt got there first. */
+async function settleEmail(
+  db: FailedEmailStore,
+  id: string,
+  data: Prisma.FailedEmailUpdateManyMutationInput,
+): Promise<boolean> {
+  const { count } = await db.failedEmail.updateMany({
+    where: { id, status: UNSETTLED },
+    data,
+  });
+  return count > 0;
+}
+
+async function settleBatch(
+  db: FailedEmailStore,
+  id: string,
+  data: Prisma.FailedEmailBatchUpdateManyMutationInput,
+): Promise<boolean> {
+  const { count } = await db.failedEmailBatch.updateMany({
+    where: { id, status: UNSETTLED },
+    data,
+  });
+  return count > 0;
 }
 
 /** Current account policy, then suppression, read just before a send; throws on a failed read. */
@@ -264,48 +288,54 @@ export async function runEmailRetryTick(params: {
 
       // A recorded receipt means Resend accepted it; settle instead of sending again.
       if (row.resendId || row.sentAt) {
-        await prisma.failedEmail.update({
-          where: { id: row.id },
-          data: {
+        if (
+          await settleEmail(prisma, row.id, {
             status: "SENT",
             sentAt: row.sentAt ?? nowDate,
             lastError: null,
-          },
-        });
-        result.sent += 1;
+          })
+        ) {
+          result.sent += 1;
+        }
         continue;
       }
 
       const heldDomain = heldRecipientDomain(row.recipient);
       if (heldDomain) {
         logHeld(row.emailType, heldDomain);
-        await prisma.failedEmail.update({
-          where: { id: row.id },
-          data: { status: "DEAD_LETTER", lastError: HELD_PRE_LAUNCH },
-        });
-        result.refused += 1;
+        if (
+          await settleEmail(prisma, row.id, {
+            status: "DEAD_LETTER",
+            lastError: HELD_PRE_LAUNCH,
+          })
+        ) {
+          result.refused += 1;
+        }
         continue;
       }
 
       if (carriesCredential(row.emailType)) {
-        await prisma.failedEmail.update({
-          where: { id: row.id },
-          data: {
+        if (
+          await settleEmail(prisma, row.id, {
             status: "DEAD_LETTER",
             lastError: `not replayed: ${row.emailType} carried a single-use credential`,
-          },
-        });
-        result.deadLettered += 1;
+          })
+        ) {
+          result.deadLettered += 1;
+        }
         continue;
       }
 
       const windowRefusal = providerWindowRefusal(row.firstAttemptAt, nowDate);
       if (windowRefusal) {
-        await prisma.failedEmail.update({
-          where: { id: row.id },
-          data: { status: "DEAD_LETTER", lastError: windowRefusal },
-        });
-        result.deadLettered += 1;
+        if (
+          await settleEmail(prisma, row.id, {
+            status: "DEAD_LETTER",
+            lastError: windowRefusal,
+          })
+        ) {
+          result.deadLettered += 1;
+        }
         continue;
       }
 
@@ -322,11 +352,14 @@ export async function runEmailRetryTick(params: {
         continue;
       }
       if (refusal) {
-        await prisma.failedEmail.update({
-          where: { id: row.id },
-          data: { status: "DEAD_LETTER", lastError: refusal },
-        });
-        result.refused += 1;
+        if (
+          await settleEmail(prisma, row.id, {
+            status: "DEAD_LETTER",
+            lastError: refusal,
+          })
+        ) {
+          result.refused += 1;
+        }
         continue;
       }
 
@@ -363,17 +396,17 @@ export async function runEmailRetryTick(params: {
       }
 
       if (!sendError) {
-        await prisma.failedEmail.update({
-          where: { id: row.id },
-          data: {
+        if (
+          await settleEmail(prisma, row.id, {
             status: "SENT",
             attempts: row.attempts + 1,
             sentAt: nowDate,
             lastError: null,
             resendId,
-          },
-        });
-        result.sent += 1;
+          })
+        ) {
+          result.sent += 1;
+        }
         continue;
       }
 
@@ -401,25 +434,23 @@ export async function runEmailRetryTick(params: {
       }
 
       if (terminalReason || attemptNumber >= MAX_ATTEMPTS) {
-        await prisma.failedEmail.update({
-          where: { id: row.id },
-          data: {
+        if (
+          await settleEmail(prisma, row.id, {
             status: "DEAD_LETTER",
             attempts: attemptNumber,
             lastError: sendError,
-          },
-        });
-        result.deadLettered += 1;
-      } else {
-        await prisma.failedEmail.update({
-          where: { id: row.id },
-          data: {
-            status: "RETRY",
-            attempts: attemptNumber,
-            nextRetryAt: nextRetryAt(nextAttemptNumber, new Date(now())),
-            lastError: sendError,
-          },
-        });
+          })
+        ) {
+          result.deadLettered += 1;
+        }
+      } else if (
+        await settleEmail(prisma, row.id, {
+          status: "RETRY",
+          attempts: attemptNumber,
+          nextRetryAt: nextRetryAt(nextAttemptNumber, new Date(now())),
+          lastError: sendError,
+        })
+      ) {
         result.retried += 1;
       }
     }
@@ -542,21 +573,24 @@ async function drainBatches(ctx: {
     result.batchesScanned += 1;
 
     if (row.sentAt) {
-      await prisma.failedEmailBatch.update({
-        where: { id: row.id },
-        data: { status: "SENT", lastError: null },
-      });
-      result.batchesSent += 1;
+      if (
+        await settleBatch(prisma, row.id, { status: "SENT", lastError: null })
+      ) {
+        result.batchesSent += 1;
+      }
       continue;
     }
 
     const parsed = batchMessagesSchema.safeParse(row.payload);
     if (!parsed.success) {
-      await prisma.failedEmailBatch.update({
-        where: { id: row.id },
-        data: { status: "DEAD_LETTER", lastError: "invalid batch payload" },
-      });
-      result.batchesDeadLettered += 1;
+      if (
+        await settleBatch(prisma, row.id, {
+          status: "DEAD_LETTER",
+          lastError: "invalid batch payload",
+        })
+      ) {
+        result.batchesDeadLettered += 1;
+      }
       continue;
     }
     let messages = parsed.data;
@@ -564,21 +598,27 @@ async function drainBatches(ctx: {
     const heldDomain = heldRecipientDomain(messages.flatMap(recipientsOf));
     if (heldDomain) {
       logHeld(row.emailType, heldDomain);
-      await prisma.failedEmailBatch.update({
-        where: { id: row.id },
-        data: { status: "DEAD_LETTER", lastError: HELD_PRE_LAUNCH },
-      });
-      result.refused += 1;
+      if (
+        await settleBatch(prisma, row.id, {
+          status: "DEAD_LETTER",
+          lastError: HELD_PRE_LAUNCH,
+        })
+      ) {
+        result.refused += 1;
+      }
       continue;
     }
 
     const windowRefusal = providerWindowRefusal(row.firstAttemptAt, nowDate);
     if (windowRefusal) {
-      await prisma.failedEmailBatch.update({
-        where: { id: row.id },
-        data: { status: "DEAD_LETTER", lastError: windowRefusal },
-      });
-      result.batchesDeadLettered += 1;
+      if (
+        await settleBatch(prisma, row.id, {
+          status: "DEAD_LETTER",
+          lastError: windowRefusal,
+        })
+      ) {
+        result.batchesDeadLettered += 1;
+      }
       continue;
     }
 
@@ -618,12 +658,15 @@ async function drainBatches(ctx: {
       continue;
     }
     if (refusal) {
-      await prisma.failedEmailBatch.update({
-        where: { id: row.id },
-        data: { status: "DEAD_LETTER", lastError: refusal },
-      });
-      if (refusal.startsWith("suppressed:")) result.refused += 1;
-      else result.batchesDeadLettered += 1;
+      if (
+        await settleBatch(prisma, row.id, {
+          status: "DEAD_LETTER",
+          lastError: refusal,
+        })
+      ) {
+        if (refusal.startsWith("suppressed:")) result.refused += 1;
+        else result.batchesDeadLettered += 1;
+      }
       continue;
     }
 
@@ -639,16 +682,16 @@ async function drainBatches(ctx: {
     }
 
     if (!sendError) {
-      await prisma.failedEmailBatch.update({
-        where: { id: row.id },
-        data: {
+      if (
+        await settleBatch(prisma, row.id, {
           status: "SENT",
           attempts: row.attempts + 1,
           sentAt: nowDate,
           lastError: null,
-        },
-      });
-      result.batchesSent += 1;
+        })
+      ) {
+        result.batchesSent += 1;
+      }
       continue;
     }
 
@@ -674,25 +717,23 @@ async function drainBatches(ctx: {
     }
 
     if (terminalReason || attemptNumber >= MAX_ATTEMPTS) {
-      await prisma.failedEmailBatch.update({
-        where: { id: row.id },
-        data: {
+      if (
+        await settleBatch(prisma, row.id, {
           status: "DEAD_LETTER",
           attempts: attemptNumber,
           lastError: sendError,
-        },
-      });
-      result.batchesDeadLettered += 1;
-    } else {
-      await prisma.failedEmailBatch.update({
-        where: { id: row.id },
-        data: {
-          status: "RETRY",
-          attempts: attemptNumber,
-          nextRetryAt: nextRetryAt(attemptNumber + 1, nowDate),
-          lastError: sendError,
-        },
-      });
+        })
+      ) {
+        result.batchesDeadLettered += 1;
+      }
+    } else if (
+      await settleBatch(prisma, row.id, {
+        status: "RETRY",
+        attempts: attemptNumber,
+        nextRetryAt: nextRetryAt(attemptNumber + 1, nowDate),
+        lastError: sendError,
+      })
+    ) {
       result.batchesRetried += 1;
     }
   }

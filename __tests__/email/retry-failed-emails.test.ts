@@ -101,8 +101,9 @@ function makePrismaStub(
     batches?: FailedEmailBatch[];
   } = {},
 ) {
-  const updates: Prisma.FailedEmailUpdateArgs[] = [];
-  const batchUpdates: Prisma.FailedEmailBatchUpdateArgs[] = [];
+  // A write filtered on status is a settle; an unfiltered one is an anchor stamp.
+  const updates: Prisma.FailedEmailUpdateManyArgs[] = [];
+  const batchUpdates: Prisma.FailedEmailBatchUpdateManyArgs[] = [];
   const stamps: Prisma.FailedEmailUpdateManyArgs[] = [];
   const batchStamps: Prisma.FailedEmailBatchUpdateManyArgs[] = [];
   const suppressions = extra.suppressions ?? [];
@@ -110,16 +111,10 @@ function makePrismaStub(
     user: { findUnique: jest.fn().mockResolvedValue(null) },
     failedEmail: {
       findMany: jest.fn().mockResolvedValue([initialRow]),
-      update: jest
-        .fn()
-        .mockImplementation((args: Prisma.FailedEmailUpdateArgs) => {
-          updates.push(args);
-          return Promise.resolve({ ...initialRow, ...args.data });
-        }),
       updateMany: jest
         .fn()
         .mockImplementation((args: Prisma.FailedEmailUpdateManyArgs) => {
-          stamps.push(args);
+          (args.where?.status ? updates : stamps).push(args);
           return Promise.resolve({ count: 1 });
         }),
     },
@@ -132,16 +127,10 @@ function makePrismaStub(
     },
     failedEmailBatch: {
       findMany: jest.fn().mockResolvedValue(extra.batches ?? []),
-      update: jest
-        .fn()
-        .mockImplementation((args: Prisma.FailedEmailBatchUpdateArgs) => {
-          batchUpdates.push(args);
-          return Promise.resolve({ ...makeBatchRow(), ...args.data });
-        }),
       updateMany: jest
         .fn()
         .mockImplementation((args: Prisma.FailedEmailBatchUpdateManyArgs) => {
-          batchStamps.push(args);
+          (args.where?.status ? batchUpdates : batchStamps).push(args);
           return Promise.resolve({ count: 1 });
         }),
     },
@@ -366,11 +355,6 @@ describe("runEmailRetryTick — pacing (#1654)", () => {
       user: { findUnique: jest.fn().mockResolvedValue(null) },
       failedEmail: {
         findMany: jest.fn().mockResolvedValue(rows),
-        update: jest
-          .fn()
-          .mockImplementation((args) =>
-            Promise.resolve({ ...rows[0], ...args.data }),
-          ),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       emailSuppression: {
@@ -379,7 +363,6 @@ describe("runEmailRetryTick — pacing (#1654)", () => {
       },
       failedEmailBatch: {
         findMany: jest.fn().mockResolvedValue([]),
-        update: jest.fn(),
         updateMany: jest.fn(),
       },
     };
@@ -628,12 +611,15 @@ describe("runEmailRetryTick — provider window anchored on the first attempt", 
       user: { findUnique: jest.fn().mockResolvedValue(null) },
       failedEmail: {
         findMany: jest.fn(async () => [{ ...row }]),
-        update: jest.fn(async (args: Prisma.FailedEmailUpdateArgs) => {
-          Object.assign(row, args.data);
-          return row;
-        }),
-        // Mirrors the SQL CAS: only an unset anchor is written.
+        // Mirrors the SQL CAS: a settle needs an unsettled row, a stamp an unset anchor.
         updateMany: jest.fn(async (args: Prisma.FailedEmailUpdateManyArgs) => {
+          if (args.where?.status) {
+            if (row.status !== "PENDING" && row.status !== "RETRY") {
+              return { count: 0 };
+            }
+            Object.assign(row, args.data);
+            return { count: 1 };
+          }
           if (row.firstAttemptAt !== null) return { count: 0 };
           row.firstAttemptAt = args.data.firstAttemptAt as Date;
           return { count: 1 };
@@ -645,7 +631,6 @@ describe("runEmailRetryTick — provider window anchored on the first attempt", 
       },
       failedEmailBatch: {
         findMany: jest.fn().mockResolvedValue([]),
-        update: jest.fn(),
         updateMany: jest.fn(),
       },
     };
@@ -956,6 +941,55 @@ describe("runEmailRetryTick — batch replay safety", () => {
     expect(t.batchUpdates[0].data).toEqual({
       status: "DEAD_LETTER",
       lastError: "suppressed:all_recipients",
+    });
+  });
+});
+
+describe("runEmailRetryTick — conditional settles", () => {
+  it("never overwrites a row another attempt settled while this send was in flight", async () => {
+    const stub = makePrismaStub(makeRow());
+    // The inline attempt marks the row SENT first, so every settle misses.
+    stub.prisma.failedEmail.updateMany = jest.fn(
+      async (args: Prisma.FailedEmailUpdateManyArgs) => {
+        if (args.where?.status) stub.updates.push(args);
+        return { count: args.where?.status ? 0 : 1 };
+      },
+    );
+    const resend = mockResend(async () => {
+      throw new Error("Resend 503");
+    });
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(stub.updates[0].where).toEqual({
+      id: "fe-1",
+      status: { in: ["PENDING", "RETRY"] },
+    });
+    expect(result).toMatchObject({ sent: 0, retried: 0, deadLettered: 0 });
+  });
+
+  it("filters every batch settle on an unsettled status", async () => {
+    const stub = makePrismaStub(makeRow(), {
+      batches: [makeBatchRow({ sentAt: new Date(FROZEN_NOW_MS) })],
+    });
+    stub.prisma.failedEmail.findMany = jest.fn().mockResolvedValue([]);
+
+    await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend: mockResend(async () => ({
+        data: { id: "re-unused" },
+        error: null,
+        headers: null,
+      })),
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(stub.batchUpdates[0].where).toMatchObject({
+      status: { in: ["PENDING", "RETRY"] },
     });
   });
 });

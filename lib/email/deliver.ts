@@ -20,7 +20,7 @@ import {
   type EmailDeliveryPolicy,
 } from "./delivery-policy";
 import { idempotencyKeyFor } from "./idempotency";
-import { stampFirstAttempt } from "@/lib/retry/provider-window";
+import { stampFirstAttempt, UNSETTLED } from "@/lib/retry/provider-window";
 import { EmailRecipientCappedError, overRecipientCap } from "./recipient-cap";
 import { EmailSuppressedError, findSuppression } from "./suppression";
 import {
@@ -267,15 +267,18 @@ function isAbort(error: unknown): boolean {
   return name === "AbortError" || name === "TimeoutError";
 }
 
-// Best-effort row update: the send outcome is already decided, and the relay
-// re-reads the row, so losing this write costs a duplicate Resend dedupes.
+// Best-effort and conditional: a row the relay already settled is left alone,
+// and a lost write only costs a duplicate that Resend's key dedupes.
 async function settleRow(
   staged: StagedEmail,
   emailType: string,
-  data: Prisma.FailedEmailUpdateInput,
+  data: Prisma.FailedEmailUpdateManyMutationInput,
 ): Promise<void> {
   try {
-    await prisma.failedEmail.update({ where: { id: staged.id }, data });
+    await prisma.failedEmail.updateMany({
+      where: { id: staged.id, status: UNSETTLED },
+      data,
+    });
   } catch (updateError) {
     console.error(`[email] ${emailType} row update failed:`, updateError);
   }
