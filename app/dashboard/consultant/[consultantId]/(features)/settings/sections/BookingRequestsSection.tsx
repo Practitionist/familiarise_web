@@ -35,7 +35,7 @@ export function parseMaxOpenRequests(
 }
 
 /**
- * "Booking requests" settings. Presentational: the form saves the changed
+ * "Booking mode" settings. Presentational: the form saves the changed
  * fields through the booking-settings PATCH.
  */
 export function BookingRequestsSection({
@@ -45,7 +45,7 @@ export function BookingRequestsSection({
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-lg font-semibold">Booking requests</h3>
+        <h3 className="text-lg font-semibold">Booking mode</h3>
         <p className="text-sm text-muted-foreground">
           How new bookings reach your calendar, and whether you are taking new
           1:1 bookings right now.

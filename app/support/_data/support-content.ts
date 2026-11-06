@@ -1139,7 +1139,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Inviting collaborators",
         paragraphs: [
-          "The host of a webinar or class can invite other experts to deliver it with them. Invitations you send and receive live under Sell › Collaborations, where each invited expert accepts or declines.",
+          "The host of a webinar or class can invite other experts to deliver it with them. Invitations you send and receive live under Inbox › Collaborations, where each invited expert accepts or declines.",
         ],
       },
       {

@@ -14,6 +14,7 @@ import {
   CONSULTANT_OFFERING_TYPE_SEGMENTS,
   CONSULTANT_PAGE_LABELS,
   CONSULTANT_PATHLESS_SEGMENTS,
+  consultantOfferingsRootLabel,
 } from "@/lib/dashboard/nav/consultant";
 import { sellHomePath } from "@/lib/dashboard/sell-pages";
 import { usePersonalNavBadges } from "@/hooks/usePersonalNavBadges";
@@ -33,10 +34,11 @@ import {
 
 const PREFETCH_SUFFIXES = ["home", "appointments", "requests"];
 
-// An editor's `offerings/<type>` crumbs have no page; they open the type's Sell list.
+// An editor's `offerings/<type>` crumbs have no page; they open the type's list.
 const OFFERINGS_CRUMBS = {
   typeSegments: CONSULTANT_OFFERING_TYPE_SEGMENTS,
   listingPath: sellHomePath,
+  rootLabel: consultantOfferingsRootLabel,
 };
 
 interface PageProps {
