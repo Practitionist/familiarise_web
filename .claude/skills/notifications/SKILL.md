@@ -31,6 +31,8 @@ Terse rules for agents. The human explanation is in `docs/notifications/` (start
 4. `npm run novu:sync -- --dry-run`, then `npm run novu:sync`, then `npm run novu:check`. Novu's read API serves stale workflows for about three minutes after a sync, so a `novu:check` in that window reports false drift on random families; wait five minutes, then expect two clean runs in a row. Never build a workflow by hand in the Novu dashboard; the event is not a workflow, its family is, and the plan caps an environment at 20.
 5. Update the family table in `docs/notifications/02-workflows-and-api.md`.
 
+Every family redirects to `{{payload.href}}`, and `toWire` always sets it (the event's destination, else `FALLBACK_HREF`). Never let it render empty: Novu then fails the in-app step for every recipient while the trigger reports `processed`, so the outbox row settles `SENT` and the bell is lost silently. `__tests__/notifications/novu-templates.test.ts` checks every event.
+
 ## Relays and cadences (`lib/cron/schedule.ts`)
 
 | Job                         | Cadence                                             | Limit | Budget |
