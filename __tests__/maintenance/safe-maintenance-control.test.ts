@@ -57,7 +57,7 @@ jest.mock("../../actions/maintenance/post-recovery", () => ({
   runPostRecovery: (...args: unknown[]) => recovery(...args),
 }));
 jest.mock("../../lib/novu/service", () => ({
-  notifyMaintenanceScheduled: jest.fn(),
+  stageMaintenanceBells: jest.fn(),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   stageNowAttemptAfter: jest.fn(),

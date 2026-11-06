@@ -43,7 +43,7 @@ jest.mock("../../lib/booking/transitions", () => ({
   transitionOccurrenceCompletion: jest.fn(),
 }));
 jest.mock("../../lib/novu/service", () => ({
-  notifyMaintenanceStarted: jest.fn(),
+  stageMaintenanceBells: jest.fn(),
 }));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 import { StreamClient } from "@stream-io/node-sdk";

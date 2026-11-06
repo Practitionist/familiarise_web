@@ -1,0 +1,116 @@
+/**
+ * @jest-environment node
+ */
+
+/**
+ * Maintenance notices fan out server-side through bell policy, like inbox
+ * posts: MULTI outbox rows of at most 100 recipients, staged in the caller's
+ * transaction under stable per-page keys. Over the audience cap nothing is
+ * staged.
+ */
+
+jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {} }));
+jest.mock("@sentry/nextjs", () => ({
+  captureException: jest.fn(),
+  captureMessage: jest.fn(),
+}));
+
+import { stageMaintenanceBells } from "@/lib/novu/service";
+import { MAX_BELL_AUDIENCE } from "@/lib/novu/policy";
+import { deriveTransactionId } from "@/lib/novu/outbox";
+import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
+
+type OutboxRow = {
+  kind: string;
+  recipients: string[];
+  transactionId: string;
+  entityRef: string;
+  payload: Record<string, unknown>;
+};
+
+const findMany = jest.fn();
+const createManyAndReturn = jest.fn();
+const tx = {
+  user: { findMany: (...args: unknown[]) => findMany(...args) },
+  notificationOutbox: {
+    createManyAndReturn: (...args: unknown[]) => createManyAndReturn(...args),
+  },
+} as unknown as Parameters<typeof stageMaintenanceBells>[0];
+
+function user(
+  id: string,
+  prefs: Record<string, boolean> | null = null,
+  routing: string | null = null,
+) {
+  return {
+    id,
+    erasedAt: null,
+    orgWorkspaceProfile: routing ? { notificationRoutingMode: routing } : null,
+    notificationPreferences: prefs,
+  };
+}
+
+const stagedRows = (): OutboxRow[] =>
+  createManyAndReturn.mock.calls.flatMap(
+    ([args]: [{ data: OutboxRow[] }]) => args.data,
+  );
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  createManyAndReturn.mockImplementation(async ({ data }) => data);
+});
+
+it("stages policy-filtered pages under stable maintenance keys", async () => {
+  const allowed = Array.from({ length: 150 }, (_, i) => user(`u${i}`));
+  findMany.mockResolvedValue([
+    ...allowed,
+    user("muted", { allNotifications: true, inAppEnabled: false }),
+    user("email-only", null, "EMAIL_ONLY"),
+  ]);
+
+  const staged = await stageMaintenanceBells(
+    tx,
+    NOVU_WORKFLOWS.MAINTENANCE_ENDED,
+    { phase: "OFF", reason: "Maintenance completed" },
+    "win1",
+  );
+
+  expect(staged).toHaveLength(2);
+  const rows = stagedRows();
+  expect(rows.map((r) => r.recipients.length)).toEqual([100, 50]);
+  expect(rows.flatMap((r) => r.recipients)).not.toContain("muted");
+  expect(rows.flatMap((r) => r.recipients)).not.toContain("email-only");
+  expect(rows[0]).toMatchObject({
+    kind: "MULTI",
+    entityRef: "maintenance:win1",
+    payload: expect.objectContaining({ reason: "Maintenance completed" }),
+    transactionId: deriveTransactionId(
+      NOVU_WORKFLOWS.MAINTENANCE_ENDED,
+      rows[0].recipients,
+      rows[0].payload as Record<string, string>,
+      "maintenance:win1:page:1",
+    ),
+  });
+  expect(createManyAndReturn.mock.calls[0][0]).toMatchObject({
+    skipDuplicates: true,
+  });
+});
+
+it("stages nothing over the audience cap", async () => {
+  findMany.mockResolvedValue(
+    Array.from({ length: MAX_BELL_AUDIENCE + 1 }, (_, i) => user(`u${i}`)),
+  );
+
+  await expect(
+    stageMaintenanceBells(
+      tx,
+      NOVU_WORKFLOWS.MAINTENANCE_SCHEDULED,
+      { phase: "DEGRADED" },
+      "win2",
+    ),
+  ).resolves.toBeNull();
+  expect(findMany.mock.calls[0][0]).toMatchObject({
+    take: MAX_BELL_AUDIENCE + 1,
+  });
+  expect(createManyAndReturn).not.toHaveBeenCalled();
+});

@@ -24,7 +24,6 @@ jest.mock("../../lib/novu/client", () => ({
   isNovuConfigured: () => true,
   getNovuClient: () => ({
     triggerBulk: (...args: unknown[]) => mockTriggerBulk(...args),
-    triggerBroadcast: jest.fn(),
   }),
 }));
 

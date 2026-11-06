@@ -9,12 +9,18 @@ import { getAppUrl } from "@/lib/url";
 import { isNovuConfigured } from "./client";
 import {
   attemptTrigger,
+  stagePages,
   stageTrigger,
   type NovuPayload,
+  type StagedTrigger,
   type StageTriggerArgs,
   type TriggerResult,
 } from "./outbox";
-import { resolveRecipientBellPolicy } from "./policy";
+import {
+  bellAudience,
+  MAX_BELL_AUDIENCE,
+  resolveRecipientBellPolicy,
+} from "./policy";
 import type { NovuWorkflowId } from "./templates/types";
 import {
   NOVU_WORKFLOWS,
@@ -120,17 +126,12 @@ async function stageAndAttempt(
   args: Omit<StageTriggerArgs, "tx" | "entityRef">,
   opts: TriggerOptions | undefined,
 ): Promise<TriggerResult> {
-  const policy =
-    args.kind === "BROADCAST"
-      ? { allowedRecipients: args.recipients }
-      : await resolveRecipientBellPolicy(
-          args.workflowId,
-          args.recipients,
-          opts,
-        );
-  if (args.kind !== "BROADCAST" && policy.allowedRecipients.length === 0) {
-    return { success: true };
-  }
+  const policy = await resolveRecipientBellPolicy(
+    args.workflowId,
+    args.recipients,
+    opts,
+  );
+  if (policy.allowedRecipients.length === 0) return { success: true };
   const effectiveArgs = { ...args, recipients: policy.allowedRecipients };
   const staged = await stageTrigger({ ...effectiveArgs, ...opts });
   if (!isNovuConfigured()) {
@@ -187,17 +188,6 @@ export async function triggerForMultiple<T extends NovuPayload>(
     results.push(...batch.map(() => result));
   }
   return results;
-}
-
-async function triggerBroadcastWorkflow<T extends NovuPayload>(
-  workflowId: NovuWorkflowId,
-  payload: T,
-  opts?: TriggerOptions,
-): Promise<TriggerResult> {
-  return stageAndAttempt(
-    { workflowId, kind: "BROADCAST", recipients: [], payload },
-    opts,
-  );
 }
 
 export async function triggerForMultipleZoned(
@@ -341,14 +331,6 @@ function defineZonedMultiNotifier<TInput>(
       r.opts,
     );
   };
-}
-
-function defineBroadcastNotifier<TInput>(
-  workflowId: NovuWorkflowId,
-  mapPayload: (input: TInput) => NovuPayload = (p) => p as NovuPayload,
-) {
-  return (payload: TInput, opts?: TriggerOptions): Promise<TriggerResult> =>
-    triggerBroadcastWorkflow(workflowId, mapPayload(payload), opts);
 }
 
 function appointmentWire(
@@ -845,18 +827,31 @@ export function notifyCollaboratorInviteExpired(
 }
 
 // Maintenance & Compliance
-export const notifyMaintenanceScheduled = defineBroadcastNotifier(
-  W.MAINTENANCE_SCHEDULED,
-  maintenanceWire,
-);
-export const notifyMaintenanceStarted = defineBroadcastNotifier(
-  W.MAINTENANCE_STARTED,
-  maintenanceWire,
-);
-export const notifyMaintenanceEnded = defineBroadcastNotifier(
-  W.MAINTENANCE_ENDED,
-  maintenanceWire,
-);
+
+/**
+ * Stages a platform maintenance notice for every user bell policy allows, as
+ * MULTI pages keyed `maintenance:<windowId>:page:<n>` in the caller's
+ * transaction. Returns null, staging nothing, over {@link MAX_BELL_AUDIENCE}.
+ */
+export async function stageMaintenanceBells(
+  tx: Pick<Tx, "user" | "notificationOutbox">,
+  workflowId:
+    | typeof W.MAINTENANCE_SCHEDULED
+    | typeof W.MAINTENANCE_STARTED
+    | typeof W.MAINTENANCE_ENDED,
+  input: MaintenanceInput,
+  windowId: string,
+): Promise<StagedTrigger[] | null> {
+  const audience = await bellAudience(tx, workflowId, MAX_BELL_AUDIENCE);
+  if (audience === null) return null;
+  return stagePages(tx, {
+    workflowId,
+    recipients: audience,
+    payload: maintenanceWire(input),
+    dedupeKey: `maintenance:${windowId}`,
+    entityRef: `maintenance:${windowId}`,
+  });
+}
 
 export function notifyComplianceAlert(
   userIds: string | string[],

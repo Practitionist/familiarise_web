@@ -100,6 +100,12 @@ export async function resolveRecipientBellPolicy(
 }
 
 /**
+ * Largest audience one fan-out stages. Every recipient is one Novu workflow
+ * run, so this keeps a single post well inside the monthly run quota.
+ */
+export const MAX_BELL_AUDIENCE = 2_000;
+
+/**
  * Every user a bell may reach now, in id order: verified, not banned, and
  * allowed by {@link allowedRecipientsOf}. Refuses (`null`) rather than
  * truncating when more than `cap` users would have to be read.

@@ -60,7 +60,7 @@ export interface StagedTrigger {
 
 export interface StageTriggerArgs {
   workflowId: NovuWorkflowId;
-  kind: NotificationOutboxKind;
+  kind: "SINGLE" | "MULTI";
   recipients: string[];
   payload: NovuPayload;
   /** Lets a caller that legitimately re-sends an identical payload disambiguate. */
@@ -195,7 +195,7 @@ export async function stageTrigger(
 ): Promise<StagedTrigger | null> {
   const transactionId = deriveTransactionId(
     args.workflowId,
-    args.kind === "BROADCAST" ? [] : args.recipients,
+    args.recipients,
     args.payload,
     args.dedupeKey,
   );
@@ -607,18 +607,6 @@ async function sendChunk(
   return outcome;
 }
 
-async function sendBroadcast(row: StagedTrigger): Promise<void> {
-  const wire = toWire(
-    row.workflowId as NovuWorkflowId,
-    row.payload as NovuPayload,
-  );
-  const transactionId = row.transactionId || row.id;
-  await getNovuClient().triggerBroadcast(
-    { name: wire.workflowId, payload: wire.payload, transactionId },
-    transactionId,
-  );
-}
-
 /**
  * Attempts wire delivery for one staged row. The first attempt filters a
  * targeted row by current bell policy and freezes that set together with the
@@ -685,18 +673,16 @@ export async function attemptTrigger(
   let recipients = row.recipients;
   let anchor = row.firstAttemptAt ? new Date(row.firstAttemptAt) : null;
   if (!anchor) {
-    if (row.kind !== "BROADCAST") {
-      try {
-        recipients = await currentBellRecipients(
-          row.workflowId as NovuWorkflowId,
-          row.recipients,
-        );
-      } catch (error) {
-        return { success: false, error: asError(error), outcome: "PENDING" };
-      }
-      if (recipients.length === 0) {
-        return deadLetter("policy:audience_revoked", row.attempts);
-      }
+    try {
+      recipients = await currentBellRecipients(
+        row.workflowId as NovuWorkflowId,
+        row.recipients,
+      );
+    } catch (error) {
+      return { success: false, error: asError(error), outcome: "PENDING" };
+    }
+    if (recipients.length === 0) {
+      return deadLetter("policy:audience_revoked", row.attempts);
     }
     try {
       const stamped = await prisma.notificationOutbox.updateMany({
@@ -798,23 +784,6 @@ export async function attemptTrigger(
     await settleRow(row, { lastError, ...narrow }, guard);
     return { success: false, error: failure, outcome: "PENDING" };
   };
-
-  if (row.kind === "BROADCAST") {
-    try {
-      await sendBroadcast(row);
-      console.log(`[Novu] Triggered ${row.workflowId} for all subscribers`);
-      return markSent();
-    } catch (error) {
-      const reported = reportTriggerFailure(
-        error,
-        row.workflowId,
-        0,
-        reportOpts,
-      );
-      if (reported.accepted) return markSent();
-      return settleFailure(asError(error), reported.reason);
-    }
-  }
 
   // One bulk call per attempt keeps an attempt inside the drain's wave budget;
   // a row over the bulk limit sends its next chunk on the following attempt.

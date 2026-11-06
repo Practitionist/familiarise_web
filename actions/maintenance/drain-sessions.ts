@@ -19,7 +19,8 @@ import {
   STREAM_CONCURRENCY_LIMIT,
 } from "@/lib/stream/batch";
 import prisma from "@/lib/prisma";
-import { notifyMaintenanceStarted } from "@/lib/novu/service";
+import { stageMaintenanceBells } from "@/lib/novu/service";
+import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
 
 const LIVE_SESSION_WINDOW_MS = 6 * 60 * 60 * 1000;
@@ -175,17 +176,30 @@ export async function drainActiveSessions(): Promise<DrainResult> {
 
   if (result.drained > 0) {
     try {
-      await notifyMaintenanceStarted(
-        {
-          phase: "OFFLINE",
-          reason:
-            "Platform maintenance starting. Active calls may be interrupted.",
-        },
-        {
-          deferAttempt: true,
-          dedupeKey: `maintenance-started:${window.id}`,
-        },
+      // Staged for the relay; null means the audience is over the cap.
+      const staged = await prisma.$transaction(
+        (tx) =>
+          stageMaintenanceBells(
+            tx,
+            NOVU_WORKFLOWS.MAINTENANCE_STARTED,
+            {
+              phase: "OFFLINE",
+              reason:
+                "Platform maintenance starting. Active calls may be interrupted.",
+            },
+            window.id,
+          ),
+        { timeout: 15_000, maxWait: 5_000 },
       );
+      if (staged === null) {
+        Sentry.captureMessage(
+          "Maintenance notice not posted: audience over cap",
+          {
+            level: "warning",
+            tags: { subsystem: "novu", op: "maintenance-bells" },
+          },
+        );
+      }
     } catch (err) {
       result.errors.push(`Notification: ${messageOf(err)}`);
     }
