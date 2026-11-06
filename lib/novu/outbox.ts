@@ -10,7 +10,7 @@
  */
 import { createHash } from "node:crypto";
 import * as Sentry from "@sentry/nextjs";
-import type { TriggerEventResponseDto } from "@novu/api/models/components";
+import { z } from "zod";
 import type { NotificationOutboxKind, Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
@@ -125,20 +125,23 @@ export function deriveEntityRef(payload: NovuPayload): string | null {
 // mixed-case ids across runtimes and the id must be identical everywhere.
 const byCodePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
+const canonicalJson = (payload: Record<string, unknown>) =>
+  JSON.stringify(
+    Object.fromEntries(
+      Object.entries(payload).sort(([a], [b]) => byCodePoint(a, b)),
+    ),
+  );
+
 // Deterministic id from recipient(s) + workflow + canonical payload (or
-// `dedupeKey` for callers that legitimately re-send an identical payload). It is
-// also sent as the Idempotency-Key: Novu does not dedupe on transactionId alone.
+// `dedupeKey` for callers that legitimately re-send an identical payload).
+// Every Idempotency-Key the row sends is derived from it.
 export function deriveTransactionId(
   workflowId: string,
   recipients: string | string[],
   payload: NovuPayload,
   dedupeKey?: string,
 ): string {
-  const canonicalPayload = JSON.stringify(
-    Object.fromEntries(
-      Object.entries(payload).sort(([a], [b]) => byCodePoint(a, b)),
-    ),
-  );
+  const canonicalPayload = canonicalJson(payload);
   const recipientKey = Array.isArray(recipients)
     ? recipients.toSorted(byCodePoint).join(",")
     : recipients;
@@ -185,7 +188,7 @@ const STAGED_SELECT = {
  * staging the same notification twice (a replayed webhook, a re-run job)
  * returns the existing row instead of a unique violation that would roll back
  * the caller's transaction. Inside a transaction a failure propagates; outside
- * one it is reported and `null` is returned, and the caller sends directly.
+ * one it is reported and `null` is returned, and nothing is sent.
  */
 export async function stageTrigger(
   args: StageTriggerArgs,
@@ -246,7 +249,7 @@ export async function stageTrigger(
  * class itself is not re-exported from the package root, so an `instanceof`
  * would mean deep-importing generated internals.
  */
-export function describeNovuFailure(error: unknown): {
+function describeNovuFailure(error: unknown): {
   statusCode?: number;
   /** Novu's own error text. Never the whole body — it can echo payload values. */
   novuMessage?: string;
@@ -334,7 +337,7 @@ function sanitizeNovuErrorForSentry(
  * notification is already queued at Novu and only the SDK's response parsing
  * failed, so it is an expected outcome rather than a lost notification.
  */
-export function reportTriggerFailure(
+function reportTriggerFailure(
   error: unknown,
   workflowId: string,
   recipientCount: number,
@@ -388,14 +391,23 @@ export function reportTriggerFailure(
   return { accepted, reason };
 }
 
-/** Every write is conditional on an active status, so nothing overwrites SENT. */
+/**
+ * Every write is conditional on an active status, so nothing overwrites SENT.
+ * A write that narrows the recipients also requires the anchor the sent key
+ * was built on, so a stale attempt cannot narrow a newer generation.
+ */
 async function settleRow(
   row: StagedTrigger,
   data: Prisma.NotificationOutboxUpdateManyMutationInput,
+  anchor?: Date,
 ): Promise<void> {
   try {
     await prisma.notificationOutbox.updateMany({
-      where: { id: row.id, status: { in: [...ACTIVE_STATUSES] } },
+      where: {
+        id: row.id,
+        status: { in: [...ACTIVE_STATUSES] },
+        ...(anchor ? { firstAttemptAt: anchor } : {}),
+      },
       data,
     });
   } catch (updateError) {
@@ -415,13 +427,32 @@ function errorText(error: unknown): string {
 const asError = (error: unknown): Error | string =>
   error instanceof Error ? error : String(error);
 
-/** What one bulk event's result means for the row. */
+/** Event statuses Novu answers the same way on every retry. */
+const TERMINAL_EVENT_STATUSES: ReadonlySet<string> = new Set([
+  "trigger_not_active",
+  "no_workflow_active_steps_defined",
+  "no_workflow_steps_defined",
+  "no_tenant_found",
+  "invalid_recipients",
+]);
+
+/** `status` stays a string so a value the SDK's closed enum lacks still parses. */
+const bulkEventResultSchema = z.object({
+  status: z.string(),
+  error: z.array(z.string()).optional(),
+});
+type BulkEventResult = z.infer<typeof bulkEventResultSchema>;
+
+/** What one bulk event's result means for its recipient; an unrecognised status retries. */
 function bulkEventOutcome(
-  result: TriggerEventResponseDto | undefined,
+  result: BulkEventResult | undefined,
 ): "accepted" | "retry" | { terminal: string } {
   if (!result) return "retry";
   if (result.status === "processed") return "accepted";
-  if (result.status !== "error") return { terminal: `novu_${result.status}` };
+  if (TERMINAL_EVENT_STATUSES.has(result.status)) {
+    return { terminal: `novu_${result.status}` };
+  }
+  if (result.status !== "error") return "retry";
   const message = (result.error ?? []).join("; ");
   // Novu refusing a transactionId it already holds means an earlier attempt delivered it.
   if (
@@ -436,67 +467,121 @@ function bulkEventOutcome(
   return "retry";
 }
 
-type SendResult =
-  | { accepted: true }
-  | { accepted: false; terminalReason: string | null; message: string };
+/**
+ * The event results of a 2xx bulk response the SDK failed to validate. Any
+ * other error is rethrown; an unreadable 2xx becomes a status-less error, so
+ * its outcome counts as unknown and is retried, never marked SENT.
+ */
+function resultsOfRejectedBulkResponse(error: unknown): BulkEventResult[] {
+  const { statusCode } = describeNovuFailure(error);
+  if (statusCode === undefined || statusCode < 200 || statusCode >= 300) {
+    throw error;
+  }
+  const body =
+    typeof error === "object" && error !== null && "body" in error
+      ? error.body
+      : undefined;
+  try {
+    return z.array(bulkEventResultSchema).parse(JSON.parse(String(body)));
+  } catch {
+    throw new Error(`Novu bulk response unreadable (HTTP ${statusCode})`);
+  }
+}
 
 /**
- * Sends one outbox row. A targeted row goes out as one bulk event per allowed
- * recipient under a per-recipient transactionId, so a retry after partial
- * success never rings a delivered recipient twice.
+ * One bulk request's Idempotency-Key. The same anchor, recipients and wire
+ * body always give the same key, so a resend after an unknown outcome is
+ * deduped by Novu; a change to any of them gives a new key, never a reused
+ * key with a different body (which Novu refuses with 422).
  */
-async function sendRow(
-  row: StagedTrigger,
+export function bulkIdempotencyKey(
+  transactionId: string,
+  anchor: Date,
   recipients: string[],
-): Promise<SendResult> {
-  const novu = getNovuClient();
+  wire: { workflowId: string; payload: Record<string, unknown> },
+): string {
+  const digest = sha256Hex(
+    `${anchor.toISOString()}|${wire.workflowId}|${recipients.join(",")}|${canonicalJson(wire.payload)}`,
+  ).slice(0, 16);
+  return `${transactionId}:bulk:${digest}`;
+}
+
+interface ChunkOutcome {
+  accepted: string[];
+  retry: string[];
+  terminal: Array<{ recipient: string; reason: string }>;
+  /** Novu's status for every event that was not accepted. */
+  refusedStatuses: string[];
+}
+
+/**
+ * One bulk request: an event per recipient under its stable per-recipient
+ * transactionId. Throws when the outcome is unknown (no readable response).
+ */
+async function sendChunk(
+  row: StagedTrigger,
+  anchor: Date,
+  chunk: string[],
+): Promise<ChunkOutcome> {
   const wire = toWire(
     row.workflowId as NovuWorkflowId,
     row.payload as NovuPayload,
   );
   const transactionId = row.transactionId || row.id;
-  if (row.kind === "BROADCAST") {
-    await novu.triggerBroadcast(
-      { name: wire.workflowId, payload: wire.payload, transactionId },
-      transactionId,
+  const events = chunk.map((to) => ({
+    workflowId: wire.workflowId,
+    to,
+    payload: wire.payload,
+    transactionId: recipientTransactionId(transactionId, to),
+  }));
+  let results: BulkEventResult[];
+  try {
+    const response = await getNovuClient().triggerBulk(
+      { events },
+      bulkIdempotencyKey(transactionId, anchor, chunk, wire),
     );
-    return { accepted: true };
+    results = response.result;
+  } catch (error) {
+    results = resultsOfRejectedBulkResponse(error);
   }
-  const failures: string[] = [];
-  let retryable = false;
-  let terminalReason: string | null = null;
-  for (let i = 0; i < recipients.length; i += NOVU_BULK_LIMIT) {
-    const events = recipients.slice(i, i + NOVU_BULK_LIMIT).map((to) => ({
-      workflowId: wire.workflowId,
-      to,
-      payload: wire.payload,
-      transactionId: recipientTransactionId(transactionId, to),
-    }));
-    const idempotencyKey = `${transactionId}:bulk:${sha256Hex(
-      events.map((event) => event.transactionId).join(","),
-    ).slice(0, 16)}`;
-    const { result } = await novu.triggerBulk({ events }, idempotencyKey);
-    events.forEach((_, index) => {
-      const outcome = bulkEventOutcome(result[index]);
-      if (outcome === "accepted") return;
-      failures.push(result[index]?.status ?? "missing");
-      if (outcome === "retry") retryable = true;
-      else terminalReason ??= outcome.terminal;
-    });
-  }
-  if (failures.length === 0) return { accepted: true };
-  return {
-    accepted: false,
-    terminalReason: retryable ? null : terminalReason,
-    message: `Novu refused ${failures.length} of ${recipients.length} bell events (${[
-      ...new Set(failures),
-    ].join(", ")})`,
+  const outcome: ChunkOutcome = {
+    accepted: [],
+    retry: [],
+    terminal: [],
+    refusedStatuses: [],
   };
+  chunk.forEach((recipient, index) => {
+    const event = bulkEventOutcome(results[index]);
+    if (event === "accepted") {
+      outcome.accepted.push(recipient);
+      return;
+    }
+    outcome.refusedStatuses.push(results[index]?.status ?? "missing");
+    if (event === "retry") outcome.retry.push(recipient);
+    else outcome.terminal.push({ recipient, reason: event.terminal });
+  });
+  return outcome;
+}
+
+async function sendBroadcast(row: StagedTrigger): Promise<void> {
+  const wire = toWire(
+    row.workflowId as NovuWorkflowId,
+    row.payload as NovuPayload,
+  );
+  const transactionId = row.transactionId || row.id;
+  await getNovuClient().triggerBroadcast(
+    { name: wire.workflowId, payload: wire.payload, transactionId },
+    transactionId,
+  );
 }
 
 /**
- * Attempts wire delivery for one staged row. A targeted row is rechecked
- * against current bell policy and sent only to recipients still allowed.
+ * Attempts wire delivery for one staged row. The first attempt filters a
+ * targeted row by current bell policy and freezes that set together with the
+ * `firstAttemptAt` anchor. Later attempts send exactly the frozen set under a
+ * key built from it, so a resend after an unknown outcome is byte-identical
+ * and Novu dedupes it. Only a definitive response changes the set (to the
+ * recipients not yet accepted) and moves the anchor, which retires the old key.
  * Inline attempts leave transient failures PENDING for the drain; relay
  * attempts advance backoff or dead-letter.
  */
@@ -511,7 +596,8 @@ export async function attemptTrigger(
   if (!isNovuConfigured()) {
     return { success: false, error: "Novu not configured", outcome: "PENDING" };
   }
-  const now = new Date(opts.now?.() ?? Date.now());
+  const clock = () => opts.now?.() ?? Date.now();
+  const now = new Date(clock());
   if (
     !opts.relay &&
     row.notBefore &&
@@ -522,8 +608,18 @@ export async function attemptTrigger(
   const deadLetter = async (
     lastError: string,
     attempts: number,
+    narrow?: { recipients: string[]; anchor: Date },
   ): Promise<TriggerResult> => {
-    await settleRow(row, { status: "DEAD_LETTER", attempts, lastError });
+    await settleRow(
+      row,
+      {
+        status: "DEAD_LETTER",
+        attempts,
+        lastError,
+        ...(narrow ? { recipients: narrow.recipients } : {}),
+      },
+      narrow?.anchor,
+    );
     Sentry.metrics?.count?.("notifications.outbox.transition", 1, {
       attributes: { status: "DEAD_LETTER", workflowId: row.workflowId },
     });
@@ -543,21 +639,21 @@ export async function attemptTrigger(
   }
 
   let recipients = row.recipients;
-  if (row.kind !== "BROADCAST") {
-    try {
-      recipients = await currentBellRecipients(
-        row.workflowId as NovuWorkflowId,
-        row.recipients,
-      );
-    } catch (error) {
-      return { success: false, error: asError(error), outcome: "PENDING" };
+  let anchor = row.firstAttemptAt ? new Date(row.firstAttemptAt) : null;
+  if (!anchor) {
+    if (row.kind !== "BROADCAST") {
+      try {
+        recipients = await currentBellRecipients(
+          row.workflowId as NovuWorkflowId,
+          row.recipients,
+        );
+      } catch (error) {
+        return { success: false, error: asError(error), outcome: "PENDING" };
+      }
+      if (recipients.length === 0) {
+        return deadLetter("policy:audience_revoked", row.attempts);
+      }
     }
-    if (recipients.length === 0) {
-      return deadLetter("policy:audience_revoked", row.attempts);
-    }
-  }
-
-  if (!row.firstAttemptAt) {
     try {
       const stamped = await prisma.notificationOutbox.updateMany({
         where: {
@@ -565,12 +661,14 @@ export async function attemptTrigger(
           status: { in: [...ACTIVE_STATUSES] },
           firstAttemptAt: null,
         },
-        data: { firstAttemptAt: now },
+        data: { firstAttemptAt: now, recipients },
       });
-      if (stamped.count === 0) {
+      if (stamped.count > 0) {
+        anchor = now;
+      } else {
         const current = await prisma.notificationOutbox.findUnique({
           where: { id: row.id },
-          select: { status: true, firstAttemptAt: true },
+          select: { status: true, firstAttemptAt: true, recipients: true },
         });
         if (!current) {
           return {
@@ -582,18 +680,35 @@ export async function attemptTrigger(
         if (current.status === "SENT" || current.status === "DEAD_LETTER") {
           return { success: true, outcome: current.status };
         }
+        if (!current.firstAttemptAt) {
+          return {
+            success: false,
+            error: "Outbox first-attempt claim lost",
+            outcome: "PENDING",
+          };
+        }
         if (pastReplayWindow(current.firstAttemptAt)) {
           return deadLetter(PROVIDER_WINDOW_EXPIRED, row.attempts);
         }
+        // Another attempt froze the set first; send exactly what it sends.
+        anchor = new Date(current.firstAttemptAt);
+        recipients = current.recipients;
       }
     } catch (error) {
       return { success: false, error: asError(error), outcome: "PENDING" };
     }
   }
+  const sentAnchor = anchor;
 
-  const recipientCount = row.kind === "BROADCAST" ? 0 : recipients.length;
   const attempts = opts.relay ? row.attempts + 1 : row.attempts;
   const exhaustedRetries = Boolean(opts.relay && attempts >= MAX_ATTEMPTS);
+  const reportOpts = { exhaustedRetries, suppressSentry: opts.suppressSentry };
+  // The response said who was accepted: keep the rest under a later anchor, so
+  // the next attempt's key is new.
+  const narrowTo = (narrowed: string[]) => ({
+    recipients: narrowed,
+    firstAttemptAt: new Date(Math.max(clock(), sentAnchor.getTime() + 1)),
+  });
   const markSent = async (): Promise<TriggerResult> => {
     await settleRow(row, {
       status: "SENT",
@@ -603,54 +718,111 @@ export async function attemptTrigger(
     });
     return { success: true, outcome: "SENT" };
   };
-
-  let failure: Error | string;
-  let reason: string | null;
-  try {
-    const sent = await sendRow(row, recipients);
-    if (sent.accepted) {
-      console.log(
-        `[Novu] Triggered ${row.workflowId} for ${recipientCount || "all"} subscribers`,
+  const settleFailure = async (
+    failure: Error | string,
+    reason: string | null,
+    narrowed?: string[],
+  ): Promise<TriggerResult> => {
+    const lastError = errorText(failure);
+    if (reason || exhaustedRetries) {
+      const dead = await deadLetter(
+        lastError,
+        attempts,
+        narrowed && { recipients: narrowed, anchor: sentAnchor },
       );
-      return markSent();
+      return { ...dead, success: false, error: failure };
     }
-    failure = new Error(sent.message);
-    reason = reportTriggerFailure(failure, row.workflowId, recipientCount, {
-      exhaustedRetries,
-      suppressSentry: opts.suppressSentry,
-      terminalReason: sent.terminalReason,
-    }).reason;
+    const narrow = narrowed ? narrowTo(narrowed) : {};
+    const guard = narrowed ? sentAnchor : undefined;
+    if (opts.relay) {
+      await settleRow(
+        row,
+        {
+          status: "RETRY",
+          attempts,
+          nextRetryAt: nextRetryAt(attempts + 1, now),
+          lastError,
+          ...narrow,
+        },
+        guard,
+      );
+      Sentry.metrics?.count?.("notifications.outbox.transition", 1, {
+        attributes: { status: "RETRY", workflowId: row.workflowId },
+      });
+      return { success: false, error: failure, outcome: "RETRY" };
+    }
+    await settleRow(row, { lastError, ...narrow }, guard);
+    return { success: false, error: failure, outcome: "PENDING" };
+  };
+
+  if (row.kind === "BROADCAST") {
+    try {
+      await sendBroadcast(row);
+      console.log(`[Novu] Triggered ${row.workflowId} for all subscribers`);
+      return markSent();
+    } catch (error) {
+      const reported = reportTriggerFailure(
+        error,
+        row.workflowId,
+        0,
+        reportOpts,
+      );
+      if (reported.accepted) return markSent();
+      return settleFailure(asError(error), reported.reason);
+    }
+  }
+
+  // One bulk call per attempt keeps an attempt inside the drain's wave budget;
+  // a row over the bulk limit sends its next chunk on the following attempt.
+  const chunk = recipients.slice(0, NOVU_BULK_LIMIT);
+  const unsent = recipients.slice(NOVU_BULK_LIMIT);
+  let sent: ChunkOutcome;
+  try {
+    sent = await sendChunk(row, sentAnchor, chunk);
   } catch (error) {
+    // Unknown outcome: the next attempt resends the same body under the same key.
     const reported = reportTriggerFailure(
       error,
       row.workflowId,
-      recipientCount,
-      { exhaustedRetries, suppressSentry: opts.suppressSentry },
+      chunk.length,
+      reportOpts,
     );
-    if (reported.accepted) return markSent();
-    failure = asError(error);
-    reason = reported.reason;
+    return settleFailure(asError(error), reported.reason);
   }
 
-  const lastError = errorText(failure);
-  if (reason || exhaustedRetries) {
-    const dead = await deadLetter(lastError, attempts);
-    return { ...dead, success: false, error: failure };
+  const refused = sent.retry.length + sent.terminal.length;
+  if (refused === 0) {
+    console.log(
+      `[Novu] Triggered ${row.workflowId} for ${chunk.length} subscribers`,
+    );
+    if (unsent.length === 0) return markSent();
+    // Progress, not a failure: no attempt is spent and the rest is due now.
+    await settleRow(row, { ...narrowTo(unsent), nextRetryAt: now }, sentAnchor);
+    return { success: true, outcome: "PENDING" };
   }
-  if (opts.relay) {
-    await settleRow(row, {
-      status: "RETRY",
-      attempts,
-      nextRetryAt: nextRetryAt(attempts + 1, now),
-      lastError,
-    });
-    Sentry.metrics?.count?.("notifications.outbox.transition", 1, {
-      attributes: { status: "RETRY", workflowId: row.workflowId },
-    });
-    return { success: false, error: failure, outcome: "RETRY" };
-  }
-  await settleRow(row, { lastError });
-  return { success: false, error: failure, outcome: "PENDING" };
+
+  const remaining = [...sent.retry, ...unsent];
+  const dropped = sent.terminal.map((t) => t.reason);
+  const failure = new Error(
+    `Novu refused ${refused} of ${chunk.length} bell events (${[
+      ...new Set(sent.refusedStatuses),
+    ].join(", ")})${
+      dropped.length > 0 && remaining.length > 0
+        ? `; dropped ${dropped.length} (${[...new Set(dropped)].join(", ")})`
+        : ""
+    }`,
+  );
+  // Terminal refusals are dropped; the row dead-letters only when nothing is left.
+  const terminalReason = remaining.length === 0 ? (dropped[0] ?? null) : null;
+  reportTriggerFailure(failure, row.workflowId, chunk.length, {
+    ...reportOpts,
+    terminalReason,
+  });
+  return settleFailure(
+    failure,
+    terminalReason,
+    remaining.length > 0 ? remaining : sent.terminal.map((t) => t.recipient),
+  );
 }
 
 export { MAX_ATTEMPTS as OUTBOX_MAX_ATTEMPTS };

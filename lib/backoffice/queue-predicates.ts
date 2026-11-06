@@ -85,10 +85,7 @@ export const DEAD_LETTER_EMAIL_WHERE: Prisma.FailedEmailWhereInput = {
 };
 
 /** Bell dead-letter reasons that record a deliberate skip, not a delivery failure. */
-const EXPECTED_BELL_DEAD_LETTER_PREFIXES = [
-  "policy:",
-  "announcement:",
-] as const;
+const EXPECTED_BELL_DEAD_LETTER_PREFIXES = ["policy:"] as const;
 
 export function isExpectedBellDeadLetter(
   lastError: string | null | undefined,

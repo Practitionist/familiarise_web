@@ -74,7 +74,7 @@ function allowedRecipientsOf(
   );
 }
 
-/** Staging-time filter; the attempt rechecks with {@link currentBellRecipients}. */
+/** Staging-time filter; the first attempt rechecks once with {@link currentBellRecipients}. */
 export async function resolveRecipientBellPolicy(
   workflowId: NovuWorkflowId,
   recipients: string[],

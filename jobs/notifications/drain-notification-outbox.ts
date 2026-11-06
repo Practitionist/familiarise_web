@@ -6,8 +6,8 @@
  * transiently or never ran; RETRY on any later scheduled attempt), whose
  * `nextRetryAt` is now or earlier and whose `notBefore` has passed. One tick
  * takes up to `MAX_BATCH` rows, urgent workflows first, and re-triggers each
- * through the same wire path the inline attempt used, under the same
- * per-recipient transactionIds, so a row the inline path sent but could not
+ * through the same wire path the inline attempt used, with the same frozen
+ * recipients and Idempotency-Key, so a row the inline path sent but could not
  * mark is deduplicated by Novu instead of rung twice.
  * Outcomes: SENT; RETRY on the shared backoff ladder (lib/retry/backoff.ts);
  * DEAD_LETTER after MAX_ATTEMPTS or on a terminal 4xx. The table is the queue
@@ -31,7 +31,11 @@ import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 
 const MAX_BATCH = 100;
 export const DRAIN_CONCURRENCY = 5;
-/** No new wave starts past this, so the last one ends inside the 24 s target timeout. */
+/**
+ * No new wave starts past this. An attempt makes at most one bulk call (5 s
+ * timeout plus at most 5 s of SDK retries), so the last wave ends inside the
+ * 24 s target timeout.
+ */
 const WAVE_START_BUDGET_MS = 12_000;
 
 /** Security and money-failure bells drain ahead of routine ones. */
@@ -320,7 +324,7 @@ export async function runNotificationDrainTick(params: {
 
 // Fail-closed like the email relay (#1230): a held or unavailable lock pages
 // rather than letting two replicas trigger every row twice; Novu's dedupe on
-// transactionId is the backstop, not the design.
+// the Idempotency-Key is the backstop, not the design.
 export async function drainNotificationOutbox(opts?: {
   limit?: number;
 }): Promise<NotificationDrainResult> {

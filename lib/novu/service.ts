@@ -6,18 +6,15 @@
 import * as Sentry from "@sentry/nextjs";
 import type { Tx } from "@/lib/prisma";
 import { getAppUrl } from "@/lib/url";
-import { getNovuClient, isNovuConfigured } from "./client";
+import { isNovuConfigured } from "./client";
 import {
   attemptTrigger,
-  deriveTransactionId,
-  reportTriggerFailure,
   stageTrigger,
   type NovuPayload,
   type StageTriggerArgs,
   type TriggerResult,
 } from "./outbox";
 import { resolveRecipientBellPolicy } from "./policy";
-import { toWire } from "./templates";
 import type { NovuWorkflowId } from "./templates/types";
 import {
   NOVU_WORKFLOWS,
@@ -141,60 +138,11 @@ async function stageAndAttempt(
     reportNotConfigured(effectiveArgs.workflowId);
     return { success: false, error: "Novu not configured" };
   }
-  if (!staged) {
-    if (args.notBefore && args.notBefore.getTime() > Date.now()) {
-      return {
-        success: false,
-        error: "Stage failed; scheduled notice not sent",
-      };
-    }
-    return sendUnstaged(effectiveArgs);
-  }
+  // stageTrigger already reported the failure; with no row nothing is sent.
+  if (!staged)
+    return { success: false, error: "Stage failed; notice not sent" };
   if (opts?.tx || opts?.deferAttempt) return { success: true, staged };
   return attemptTrigger(staged);
-}
-
-async function sendUnstaged(
-  args: Omit<StageTriggerArgs, "tx" | "entityRef">,
-): Promise<TriggerResult> {
-  const transactionId = deriveTransactionId(
-    args.workflowId,
-    args.kind === "BROADCAST" ? [] : args.recipients,
-    args.payload,
-    args.dedupeKey,
-  );
-  try {
-    const novu = getNovuClient();
-    const wire = toWire(args.workflowId, args.payload);
-    if (args.kind === "BROADCAST") {
-      await novu.triggerBroadcast(
-        { name: wire.workflowId, payload: wire.payload, transactionId },
-        transactionId,
-      );
-    } else {
-      await novu.trigger(
-        {
-          workflowId: wire.workflowId,
-          to: args.kind === "SINGLE" ? args.recipients[0] : args.recipients,
-          payload: wire.payload,
-          transactionId,
-        },
-        transactionId,
-      );
-    }
-    return { success: true };
-  } catch (error) {
-    if (
-      reportTriggerFailure(error, args.workflowId, args.recipients.length)
-        .accepted
-    ) {
-      return { success: true };
-    }
-    return {
-      success: false,
-      error: error instanceof Error ? error : String(error),
-    };
-  }
 }
 
 export async function triggerWorkflow<T extends NovuPayload>(

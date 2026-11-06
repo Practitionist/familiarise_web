@@ -588,7 +588,7 @@ const PER_TARGET_TIMEOUT_MS = 15_000;
 const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "abandoned-payments": 20_000,
   "retry-failed-emails": 20_000,
-  // The relay starts no wave after 12 s, so its last bulk-trigger wave ends inside this.
+  // The relay starts no wave after 12 s and an attempt makes one bulk call, so its last wave ends inside this.
   "drain-notification-outbox": 24_000,
   "reconcile-orphaned-confirmations": 20_000,
   "appointment-reminders": 20_000,
