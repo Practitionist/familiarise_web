@@ -7,6 +7,8 @@
  * tests drive each page with a hidden plan and require a not-found.
  */
 
+import { Children, type ReactNode } from "react";
+
 const notFoundError = new Error("NEXT_NOT_FOUND");
 
 jest.mock("next/navigation", () => ({
@@ -165,8 +167,13 @@ describe("plan detail pages apply canViewPlanDetail", () => {
 });
 
 describe("event detail pages hand down only the viewer's own seat", () => {
-  const props = (element: unknown) =>
-    (element as { props: Record<string, unknown> }).props;
+  /** The page wraps its details component in a fragment beside the breadcrumb. */
+  const propOf = (element: unknown, key: string) =>
+    Children.toArray(
+      (element as { props: { children: ReactNode } }).props.children,
+    )
+      .map((child) => (child as { props: Record<string, unknown> }).props)
+      .find((childProps) => key in childProps)?.[key];
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -190,7 +197,7 @@ describe("event detail pages hand down only the viewer's own seat", () => {
     expect(mockViewerSeatAppointmentIds).toHaveBeenCalledWith("user-1", [
       "appt-1",
     ]);
-    expect(props(element).isRegistered).toBe(true);
+    expect(propOf(element, "isRegistered")).toBe(true);
   });
 
   it("class page asks about the signed-in viewer across the batches", async () => {
@@ -215,7 +222,7 @@ describe("event detail pages hand down only the viewer's own seat", () => {
       "appt-8",
       "appt-9",
     ]);
-    expect(props(element).enrolledAppointmentIds).toEqual(["appt-9"]);
+    expect(propOf(element, "enrolledAppointmentIds")).toEqual(["appt-9"]);
   });
 
   it.each([
