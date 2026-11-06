@@ -2360,7 +2360,7 @@ Novu is a hosted notification service, backed locally by `NotificationOutbox`. `
 
 Notification targets and payloads are allowlisted by workflow/template code. The row itself contains recipient IDs and payload, so keep it private and within a declared retention window. A Novu trigger failing must not roll back a completed invoice, membership, or payout transition; the outbox retains the notification obligation for later recovery.
 
-The integration map currently says “No Prisma — Novu is external (queued via NotificationOutbox).” That sentence is internally inconsistent: `NotificationOutbox` is a Prisma model and is the durable local queue. The accurate interpretation is that the provider is external and the trigger outbox is local. Preserve the distinction between Novu workflow IDs used in code and workflow-family names/templates managed in the console; use `docs/enterprise/50-operations/10-novu-console-conditions.md` for the current condition fields.
+The integration map currently says “No Prisma — Novu is external (queued via NotificationOutbox).” That sentence is internally inconsistent: `NotificationOutbox` is a Prisma model and is the durable local queue. The accurate interpretation is that the provider is external and the trigger outbox is local. Preserve the distinction between Novu workflow IDs used in code and workflow-family names/templates managed in the console; the console families carry no step conditions, because preferences are enforced server-side (`lib/novu/policy.ts`); see `docs/notifications/01-architecture.md` for the design.
 
 #### 8.4.3. Stream
 

@@ -160,7 +160,7 @@ Case actions, appeals, external-requester intake and attachments run Serializabl
 ## Verifying changes
 
 - Unit and route tests: `npx jest __tests__/support/lifecycle-transitions.test.ts __tests__/support/lifecycle-case-service.test.ts __tests__/support/lifecycle-routes.test.ts`.
-- The database race tier runs only in CI (`db-guards` job in `.github/workflows/ci.yaml`) against a disposable Postgres 17: `jest -c jest.db.config.ts` over `__tests__/db/**/*.db.test.ts`. Its guard (`__tests__/db/guard.ts`) refuses to run unless `CI=true` and `DATABASE_URL` points at a local `/ci` database. Never point it at the shared database.
+- The database race tier runs in CI (`db-guards` job in `.github/workflows/ci.yaml`), or locally per booking verification §11 (`.claude/skills/booking/references/verification.md`), against a disposable Postgres 17: `jest -c jest.db.config.ts` over `__tests__/db/**/*.db.test.ts`. Its guard (`__tests__/db/guard.ts`) refuses to run unless `CI=true` and `DATABASE_URL` points at a local `/ci` database. Never point it at the shared database.
 
 ## Where in code
 

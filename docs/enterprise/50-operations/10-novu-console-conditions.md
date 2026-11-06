@@ -1,12 +1,14 @@
 ---
-title: Novu console conditions for notification scoping
+title: Novu console conditions (superseded; none exist)
 band: 50-operations
 audience: operator
-status: live
+status: superseded
 last-reviewed: 2026-11-07
 ---
 
-# Novu console conditions runbook
+# Novu console conditions (superseded)
+
+> **Superseded.** No console conditions exist: Novu families carry no step conditions and no subscriber-editable preferences, and nothing in the console should be configured to filter bells. Preferences are enforced server-side (`lib/novu/policy.ts`); the design is in [the notification architecture](../../notifications/01-architecture.md). This page is kept only for the family-to-category map and the manual check below.
 
 [ADR 23](../70-design-decisions/23-notification-scope.md) made notifications carry their organization scope and made the organization preference categories writable. Those preferences are enforced by the application, not by the Novu console: Novu workflows carry **no step conditions**, and nothing in the console should be configured to filter bells.
 

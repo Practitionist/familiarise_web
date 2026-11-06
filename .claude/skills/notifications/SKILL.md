@@ -45,6 +45,8 @@ Both are registered once in `lib/cron/cleanup-registry.ts` and run under `withCr
 ## Settles are compare-and-set
 
 - Every status write on all three outbox tables is a conditional `updateMany` filtered on `PENDING`/`RETRY`: `UNSETTLED` (`lib/retry/provider-window.ts`) for email in `settleRow` (`lib/email/deliver.ts`), the relay (`jobs/email/retry-failed-emails.ts`) and `settleBatch` (`app/api/admin/waitlist/broadcast/route.ts`), and `ACTIVE_STATUSES` for bells (`lib/novu/outbox.ts`). A lost race matches no row, is skipped and is not counted. Never write a settle as read-then-update, and never overwrite `SENT`.
+- Novu honours the Idempotency-Key (measured 2026-11-07 in Development: two triggers, one notification). The terminal-split row id is `<transactionId>:terminal:<digest>`, a 16-hex-character sha256 prefix over the sorted refused recipients (`terminalSplitRow`, `lib/novu/outbox.ts`).
+- A Novu step failing after Novu accepted the trigger leaves the row `SENT` and is visible only in Novu's 24 h activity feed; closing that gap is a follow-up (decision 10), so do not treat `SENT` as proof a bell rendered.
 - `firstAttemptAt` anchors the provider idempotency key (`stampFirstAttempt`). An automatic replay 23 h (`PROVIDER_REPLAY_WINDOW_MS`) or more after it dead-letters as `review:provider_acceptance_unknown`, because both Resend and Novu cache keys for 24 h.
 
 ## Dead-letter reasons (`lastError`)
@@ -68,6 +70,7 @@ Novu Free is 10,000 workflow runs a month, counted across Development **and** Pr
 - `PUT /api/novu/preferences` parses the strict `NotificationPreferenceUpdateSchema` (`schemas/user.ts`): an unknown key, a non-`HH:MM` time, an unknown zone or an empty quiet window is a 400. GET and PUT answer through `NotificationPreferenceSchema`.
 - The panel shows only the switches `receivableSwitches` (`lib/notifications/receivable.ts`) returns for the viewer's role. A new category, or an event sent to a new audience, updates that map, its test and the role table in `docs/notifications/02-workflows-and-api.md`.
 - Panel saves are optimistic and share one mutation scope (serialized); never write a preference from a time input's `onChange`.
+- The bell-header gear is overlaid at offsets measured on `@novu/react` 3.19.2: the ⋯ row starts 10 px below the popover top and the gear sits 8 px left of ⋯ (`components/notifications/NotificationInbox.tsx`). Recheck both on any Novu SDK upgrade.
 - The unsubscribe undo is `POST /api/notifications/resubscribe`, same-origin only (`isSameOriginRequest`), with no `GET`. Neither route's `GET` may ever write.
 
 ## Never
@@ -84,4 +87,8 @@ Novu Free is 10,000 workflow runs a month, counted across Development **and** Pr
 
 ## Verify
 
-`npx jest __tests__/notifications __tests__/email/unsubscribe.test.ts` (outbox, preferences single owner and strict PUT, the settings panel, the role map, templates, sync, clear-native-mutes, unsubscribe and resubscribe) and `npx tsc --noEmit`. For a new event, `npm run novu:check` against Development.
+`npx jest __tests__/notifications __tests__/email/unsubscribe.test.ts` (outbox, preferences single owner and strict PUT, the settings panel, the role map, templates, sync, clear-native-mutes, unsubscribe and resubscribe) and `npx tsc --noEmit`. For a new event, `npm run novu:check` against Development (wait five minutes after a sync and require two clean runs).
+
+`__tests__/db/notification-outbox.db.test.ts` runs against real Postgres (see the booking verification reference, §11) and pins policy SQL/JS parity, page dedupe, the terminal split and compare-and-set settles.
+
+Relay fault drills run locally, never on a preview: previews refuse every relay and job run (`JOB_RUN_PRODUCTION_ONLY`), because they share the production database. Run `runNotificationDrainTick` (`jobs/notifications/drain-notification-outbox.ts`) against the disposable `localhost:5432/ci` Postgres with `NOVU_DEVELOPMENT_KEY` only, never the shared database URL, and set dummy `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`, because `lib/redis.ts` throws at import without them.

@@ -2,7 +2,7 @@
 
 ## 1. Plan and limits
 
-The plan in use is not recorded as a fact; `docs/notifications/05-pre-production-checklist.md` assumes the Free plan (10,000 workflow runs a month, 20 active workflows, 24-hour activity retention, 16 families deployed, in-app channel only). VERIFIED 2026-10-17 from [novu.co/pricing](https://novu.co/pricing/): Free is 10,000 workflow runs a month, 20 workflows, 24-hour activity retention; Team is 250,000+ runs, 100 workflows, 90-day retention and $1.20 per 1,000 additional runs; subscribers are unlimited. The overage behaviour on Free is not stated on the page (unknown); treat the 10,000 runs as a hard ceiling.
+Free is the plan the owner confirmed on 2026-11-06, and `docs/notifications/05-pre-production-checklist.md` plans for it (10,000 workflow runs a month, 20 active workflows, 24-hour activity retention, 16 families deployed, in-app channel only). VERIFIED 2026-10-17 from [novu.co/pricing](https://novu.co/pricing/): Free is 10,000 workflow runs a month, 20 workflows, 24-hour activity retention; Team is 250,000+ runs, 100 workflows, 90-day retention and $1.20 per 1,000 additional runs; subscribers are unlimited. The overage behaviour on Free is not stated on the page (unknown); treat the 10,000 runs as a hard ceiling.
 
 ## 2. What causes surprise bills or outages
 
