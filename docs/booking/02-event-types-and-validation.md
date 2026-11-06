@@ -149,12 +149,12 @@ Two readers count seats, and they read different things on purpose:
 
 - **The server gates** (checkout, the allocation lock, the revalidation) read
   the roster inside the lock through `getWebinarCapacity` and `getClassCapacity`.
-- **Public payloads** (the plan list and detail routes, and the explore and
+- **Public payloads** (the plan detail routes, and the explore detail and
   checkout pages built from them) carry a seat _count_ per event, taken with
   `seatHoldingParticipant(now)` so a lapsed unpaid hold stops counting, and turn
-  it into capacity with `eventCapacityFromCount`. They never carry who holds the
-  seats: those responses are public and CDN-cached, so an attendee id in them
-  would be readable by anyone.
+  it into capacity with `eventCapacityFromCount`. The plan list routes carry no
+  seat data. No public payload carries who holds the seats: those responses are
+  public and CDN-cached, so an attendee id in them would be readable by anyone.
 
 "Am I enrolled" is the viewer's own and is read on their own request. The
 explore detail pages are server components that look up the signed-in viewer's
