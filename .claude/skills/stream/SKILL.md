@@ -49,7 +49,7 @@ mcp__streamio__app_get_rate_limits   {}
 2. **Never Call Stream RPCs Inside `prisma.$transaction` (`PG_POOL_MAX=1`)**:
    - Execute all Stream network requests outside Prisma transactions wrapped in `withStreamCircuitBreaker`, and guard database transitions via conditional compare-and-set (`updateMany`).
    - Internal Stream modules (`user.action.ts`, `channel.action.ts`, `meeting.action.ts`) never expose unguarded `"use server"` actions; client-callable Server Actions verify `getSession()`, reject banned users, and strip emails (`stripStreamUserEmails`) from the Stream objects they return.
-   - Stream user payloads come only from `toStreamUser()` (`lib/stream/user-payload.ts`: `id`, `name`, `image`, `role`); never add email or another contact field. `performStreamUserSync` (`stream-sync`) unsets `STREAM_CONTACT_FIELDS` from older Stream users and reports `totalContactFieldsScrubbed` and `totalFailedScrubs`.
+   - Stream user payloads come only from `toStreamUser()` (`lib/stream/user-payload.ts`: `id`, `name`, `image`, `role`); never add email or another contact field. `performStreamUserSync` (`stream-sync`) unsets `STREAM_CONTACT_FIELDS` from older Stream users and reports `totalContactFieldsScrubbed` and `totalFailedScrubs`; a failed scrub ends the run with the checkpoint held at the start of that page, before its deletions, so the next run replays it.
 3. **Deterministic IDs Without `localeCompare` & Explicit Token `iat` / `exp`**:
    - Derive channel IDs using UTF-16 code-unit ordering (`a < b ? [a, b] : [b, a]`) capped at 64 chars (`lib/stream-channel-ids.ts`).
    - Always pass both `exp` and `iat` (`Math.floor(Date.now() / 1000) - 60`) when minting tokens so `revoke_tokens_issued_before` cutoffs take effect immediately.
