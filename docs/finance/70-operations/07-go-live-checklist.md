@@ -132,6 +132,10 @@ The [daily ops digest](../../maintenance/00-betterstack-setup.md#daily-ops-diges
 - **The digest heartbeat and the second watcher exist.** The "ops digest" Better Stack heartbeat is Up, and the Sentry uptime monitor on `/api/health/jobs` shows a recent successful check.
 - **Release lag is known, or knowingly unknown.** `GITHUB_RELEASE_LAG_TOKEN` is optional by owner decision (2026-11-05), so the "Release lag" section may read "Unknown" and nothing pages. If it does, record that a held release is then caught only by reading the digest and the deploy list. Create the token when releases become routine enough that a held one would go unnoticed. A commit count also needs `BUILD_SHA`, which `next.config.mjs` inlines only when the host provides `COMMIT_REF` (Netlify) or `VERCEL_GIT_COMMIT_SHA` (Vercel), and a successful GitHub read; a host with neither, such as a plain Docker build, stays "Unknown".
 
+## Part 4: GitHub plan and CI at launch
+
+Owner steps in GitHub, from [the CI decision](../../decisions/2026-11-07-ci-before-and-at-launch.md): move the `Practitionist` organisation to Team with one seat, cancel the personal Pro on `teetangh`, pay with an eligible Indian credit card, set the Actions budget to about $15 with stop-usage, and require the `Release checks` status check on `prod`.
+
 ## Where in code
 
 | Concern                                             | File                                                                                                           |

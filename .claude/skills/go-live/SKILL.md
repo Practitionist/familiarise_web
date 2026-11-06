@@ -23,6 +23,7 @@ Do these in order. Several only make sense after an earlier one.
 10. **Buy QuotaGuard static egress at the first live payout**, set `RAZORPAYX_EGRESS_PROXY_URL`, and allowlist its addresses in RazorpayX. Checklist 2.1, "Static egress".
 11. **Flip payouts with a canary.** Set `ENABLE_LIVE_PAYOUTS=true`, redeploy, pay one ₹1.00 verified payout, watch it reach `COMPLETED`, then release the rest. [Checklist 2.3](../../../docs/finance/70-operations/07-go-live-checklist.md#23-flip-canary-rollback).
 12. **Split the Stream app before real users arrive.** Create the Familiarise-dev app, put its four keys on the Netlify deploy-preview and branch-deploy contexts and in every local `.env`, run `npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed` against it, then refresh and merge #2376 and rebuild previews. [The shared-app decision](../../../docs/decisions/2026-11-06-shared-stream-app-until-launch.md#when-this-changes).
+13. **Move GitHub to Team and require the slim check.** Org to Team with one seat, cancel the personal Pro, Indian credit card, Actions budget about $15, require `Release checks` on `prod`. [Checklist Part 4](../../../docs/finance/70-operations/07-go-live-checklist.md#part-4-github-plan-and-ci-at-launch).
 
 ## Traps
 

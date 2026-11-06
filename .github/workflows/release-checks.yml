@@ -1,0 +1,59 @@
+# The slim gate for release pull requests into prod. ci.yaml stays disabled while
+# dev pull requests are gated by the Netlify preview build and local checks; its
+# own release run costs about 26 minutes, this one about 8.
+name: Release Checks
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [prod]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-checks:
+    name: Release checks
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # changedSince needs the merge base with prod.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: TypeScript Check
+        run: npx tsc --noEmit
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Cron job coverage
+        run: npm run cron:coverage
+
+      - name: Unit tests (changed since prod)
+        run: npx jest --changedSince=origin/prod --passWithNoTests --coverage=false
