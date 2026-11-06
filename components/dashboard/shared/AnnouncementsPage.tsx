@@ -78,9 +78,10 @@ export function AnnouncementsPage({
   const { data: announcements = [], isLoading } = useQuery({
     queryKey,
     queryFn: async (): Promise<Announcement[]> => {
-      const response = await fetch(apiBasePath);
-      const result = await response.json();
-      return result.success ? result.data : [];
+      const response = await fetch(`${apiBasePath}/manage`);
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error("Could not load announcements.");
+      return result?.success ? result.data : [];
     },
   });
 
@@ -164,15 +165,28 @@ export function AnnouncementsPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      return response.json();
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        const parsed = ApiErrorSchema.safeParse(result);
+        throw new Error(
+          parsed.success && parsed.data.error
+            ? parsed.data.error
+            : "The announcement was not updated.",
+        );
+      }
+      return result;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey });
       setEditingAnnouncement(null);
       toast({ title: "Announcement updated" });
     },
-    onError: () => {
-      toast({ title: "Failed to update announcement", variant: "destructive" });
+    onError: (error) => {
+      toast({
+        title: "Failed to update announcement",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 
