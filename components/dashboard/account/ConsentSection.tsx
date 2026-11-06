@@ -1,7 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { accountSettingsHref } from "@/lib/dashboard/account-href";
+import {
+  accountSettingsHref,
+  DATA_CONSENT_ANCHOR,
+} from "@/lib/dashboard/account-href";
 import { useEffect } from "react";
 import { Download } from "lucide-react";
 import {
@@ -16,7 +19,6 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { useToast } from "@/hooks/use-toast";
 import { useSession } from "@/lib/auth-client";
-import { DATA_CONSENT_ANCHOR } from "@/lib/dashboard/account-href";
 import {
   ALL_PURPOSE_CODES,
   TERMS_VERSION,

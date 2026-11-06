@@ -171,13 +171,13 @@ export function AnnouncementsPage({
           : null;
       };
       const data = {
-        title: String(formData.get("title") ?? ""),
-        content: String(formData.get("content") ?? ""),
+        title: formData.get("title") ?? "",
+        content: formData.get("content") ?? "",
         isActive: formData.get("isActive") === "on",
-        backgroundColor: String(formData.get("backgroundColor") ?? "#000000"),
-        textColor: String(formData.get("textColor") ?? "#FFFFFF"),
-        linkUrl: String(formData.get("linkUrl") ?? "") || null,
-        linkText: String(formData.get("linkText") ?? "") || null,
+        backgroundColor: formData.get("backgroundColor") ?? "#000000",
+        textColor: formData.get("textColor") ?? "#FFFFFF",
+        linkUrl: formData.get("linkUrl") || null,
+        linkText: formData.get("linkText") || null,
         startDate: dateField("startDate"),
         endDate: dateField("endDate"),
       };
@@ -323,24 +323,27 @@ export function AnnouncementsPage({
         </Dialog>
       </div>
 
-      {isLoading ? (
+      {isLoading && (
         <div className="flex items-center justify-center py-8">
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
-      ) : error ? (
+      )}
+      {!isLoading && error && (
         <Card>
           <CardContent className="py-8 text-center">
             Announcements could not be loaded. Try again.
           </CardContent>
         </Card>
-      ) : announcements.length === 0 ? (
+      )}
+      {!isLoading && !error && announcements.length === 0 && (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <Megaphone className="h-12 w-12 text-muted-foreground mb-4" />
             <p className="text-muted-foreground">No announcements yet</p>
           </CardContent>
         </Card>
-      ) : (
+      )}
+      {!isLoading && !error && announcements.length > 0 && (
         <div className="space-y-4">
           {announcements.map((announcement) => (
             <Card key={announcement.id}>

@@ -62,7 +62,6 @@ export default function CookieConsentBanner() {
   if (!visible) return null;
   return (
     <section
-      role="region"
       aria-label="Cookie preferences"
       className="CookieConsent fixed inset-x-0 bottom-0 z-50 bg-zinc-900 p-4 text-sm text-white"
     >

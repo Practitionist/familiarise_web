@@ -17,11 +17,7 @@ import { isTransientDbError, reportTransient } from "@/lib/data/fail-open";
 import { getSession } from "@/lib/auth-server";
 import { assertBodySize } from "@/lib/validation/limits";
 
-// Cache the active-announcements read. The banner is polled frequently and the
-// data only changes on the admin writes below (which revalidate the tag), so this
-// keeps the high-frequency GET off the cross-region pooler hot path (#932). `now`
-// is computed inside the cached fn — not in the key — so the active-window filter
-// is re-evaluated on each revalidation rather than frozen at first call.
+// Revalidation recomputes the active window and writes invalidate this shared banner cache.
 const getActiveAnnouncements = unstable_cache(
   async () => {
     const now = new Date();
@@ -56,6 +52,38 @@ const getActiveAnnouncements = unstable_cache(
   { revalidate: 60, tags: [ANNOUNCEMENTS_TAG] },
 );
 
+async function getManagedAnnouncements() {
+  const session = await getSession();
+  if (!session?.user?.id)
+    return NextResponse.json(
+      { success: false, error: "Unauthorized" },
+      {
+        status: 401,
+        headers: { "Cache-Control": "private, no-store", Vary: "Cookie" },
+      },
+    );
+  const role = z.nativeEnum(UserRole).safeParse(session.user.role);
+  if (
+    !role.success ||
+    !hasBackofficePermission(role.data, "announcements.manage")
+  )
+    return NextResponse.json(
+      { success: false, error: "Forbidden" },
+      {
+        status: 403,
+        headers: { "Cache-Control": "private, no-store", Vary: "Cookie" },
+      },
+    );
+  const announcements = await prisma.announcement.findMany({
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
+  return NextResponse.json(
+    { success: true, data: announcements },
+    { headers: { "Cache-Control": "private, no-store", Vary: "Cookie" } },
+  );
+}
+
 /**
  * GET /api/announcements
  * Public endpoint to get active announcements
@@ -71,35 +99,7 @@ export async function GET(request: NextRequest) {
         { status: 400 },
       );
     if (query.data.view === "manage") {
-      const session = await getSession();
-      if (!session?.user?.id)
-        return NextResponse.json(
-          { success: false, error: "Unauthorized" },
-          {
-            status: 401,
-            headers: { "Cache-Control": "private, no-store", Vary: "Cookie" },
-          },
-        );
-      const role = z.nativeEnum(UserRole).safeParse(session.user.role);
-      if (
-        !role.success ||
-        !hasBackofficePermission(role.data, "announcements.manage")
-      )
-        return NextResponse.json(
-          { success: false, error: "Forbidden" },
-          {
-            status: 403,
-            headers: { "Cache-Control": "private, no-store", Vary: "Cookie" },
-          },
-        );
-      const announcements = await prisma.announcement.findMany({
-        orderBy: { createdAt: "desc" },
-        take: 100,
-      });
-      return NextResponse.json(
-        { success: true, data: announcements },
-        { headers: { "Cache-Control": "private, no-store", Vary: "Cookie" } },
-      );
+      return await getManagedAnnouncements();
     }
     const announcements = await getActiveAnnouncements();
 
@@ -115,21 +115,11 @@ export async function GET(request: NextRequest) {
       },
     );
   } catch (error) {
-    // The announcements banner is non-critical and polled often. A transient
-    // pooler connect/read timeout (cross-region cold connect) should degrade to
-    // an empty banner, not a 500 + error-noise — report it as a warning and
-    // fail open. Real defects still surface as exceptions + 500. (FAMILIARISE_WEB-9)
+    // Public banners degrade to an empty uncached feed; management errors stay visible.
     if (isTransientDbError(error)) {
       reportTransient("announcements read", error, {
         subsystem: "notifications",
       });
-      // `no-store` on the degraded branch only, matching
-      // app/api/user/consultants/route.ts. Not load-bearing today — the success
-      // path sets no cache header and Next 15 leaves Route Handlers uncached —
-      // but the two siblings disagreed and this is the safe half of the
-      // disagreement. Whoever adds an s-maxage to the success path should not
-      // have to also remember that a cached empty banner outlives the outage
-      // that caused it. (#1125)
       const management = request.nextUrl.searchParams.get("view") === "manage";
       return NextResponse.json(
         management

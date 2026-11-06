@@ -361,12 +361,15 @@ function FailedEmailsTab() {
           }}
         />
       }
-      rowActions={(m) =>
-        m.status === "DEAD_LETTER" && m.replayRefusal ? (
-          <span className="max-w-xs text-xs text-muted-foreground">
-            {EMAIL_REPLAY_EXPLANATIONS[m.replayRefusal]}
-          </span>
-        ) : m.status === "DEAD_LETTER" ? (
+      rowActions={(m) => {
+        if (m.status !== "DEAD_LETTER") return null;
+        if (m.replayRefusal)
+          return (
+            <span className="max-w-xs text-xs text-muted-foreground">
+              {EMAIL_REPLAY_EXPLANATIONS[m.replayRefusal]}
+            </span>
+          );
+        return (
           <ConfirmDialog
             trigger={
               <Button size="sm" variant="outline">
@@ -385,8 +388,8 @@ function FailedEmailsTab() {
               invalidate("compliance-emails");
             }}
           />
-        ) : null
-      }
+        );
+      }}
       empty={
         <p className="py-10 text-center text-sm text-muted-foreground">
           No emails in this state.

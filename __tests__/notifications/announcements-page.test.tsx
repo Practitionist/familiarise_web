@@ -151,3 +151,39 @@ it("preserves link fields and converts scheduled local input back to an instant 
     ),
   );
 });
+
+it("rejects a file-valued text field instead of sending its object stringification", async () => {
+  show();
+  await screen.findByText("Scheduled notice");
+  fireEvent.click(screen.getByRole("button", { name: "New Announcement" }));
+  fireEvent.change(screen.getByLabelText("Content"), {
+    target: { value: "Some news" },
+  });
+  const form = screen.getByRole("button", { name: "Create" }).closest("form");
+  if (!form) throw new Error("Create form missing");
+  const originalGet = FormData.prototype.get;
+  const spy = jest
+    .spyOn(FormData.prototype, "get")
+    .mockImplementation(function (this: FormData, name: string) {
+      return name === "title"
+        ? new File(["unexpected"], "notice.txt")
+        : originalGet.call(this, name);
+    });
+  try {
+    fireEvent.submit(form);
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Check the announcement",
+          variant: "destructive",
+        }),
+      ),
+    );
+    expect(
+      mockFetch.mock.calls.some(([, options]) => options?.method === "POST"),
+    ).toBe(false);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  } finally {
+    spy.mockRestore();
+  }
+});

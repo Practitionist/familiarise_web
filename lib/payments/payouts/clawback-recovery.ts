@@ -249,11 +249,15 @@ export async function releaseClawbackRecovery(
     const account = recovery.entries.find(
       (e) => e.account.consultantProfileId || e.account.organizationId,
     )?.account;
-    const payee: ClawbackPayee | undefined = account?.consultantProfileId
-      ? { rail: "CONSULTANT", consultantProfileId: account.consultantProfileId }
-      : account?.organizationId
-        ? { rail: "ORG", organizationId: account.organizationId }
-        : undefined;
+    let payee: ClawbackPayee | undefined;
+    if (account?.consultantProfileId) {
+      payee = {
+        rail: "CONSULTANT",
+        consultantProfileId: account.consultantProfileId,
+      };
+    } else if (account?.organizationId) {
+      payee = { rail: "ORG", organizationId: account.organizationId };
+    }
     if (!payee) return;
     const { stageClawbackNotice } = await import("./clawback-notifications");
     await stageClawbackNotice(tx, {

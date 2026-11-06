@@ -93,6 +93,10 @@ The failed-email recovery door requires an operator reason, writes an audit with
 
 A request/post-commit bundle starts at most five bell attempts. Remaining staged rows use the existing relay; its ten-minute cadence (at UTC minutes ending in 5) means staging is not an immediate delivery guarantee. Nontransactional helpers open a short staging transaction and never send if persistence fails. Broadcast announcements retain their source/revision check. Per-recipient staging uses more rows and writes than the former shared audience row.
 
+## Production acceptance
+
+Track [release gates and controlled acceptance](05-pre-production-checklist.md) for this subsystem. Local behavior checks, review, schema/configuration, the deployed revision and actual delivery/alert evidence have separate statuses. The previous flat 70/100 estimate is withdrawn; a ready preview or increasing test count does not imply a working production journey.
+
 ## Operational ownership
 
 Sentry owns code failures; Better Stack owns uptime, freshness and backlog incidents. The email backlog gauge includes both individual and batch outboxes. Renderer failures are aggregated once per fan-out rather than reported per recipient. The ops chat mirror is optional; do not assume it is provisioned.

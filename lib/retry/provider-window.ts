@@ -9,7 +9,8 @@ export function providerWindowRefusal(
   now: Date,
   notBefore?: Date | null,
 ): typeof PROVIDER_WINDOW_EXPIRED | typeof PROVIDER_TIMESTAMP_INVALID | null {
-  const created = createdAt === undefined ? NaN : new Date(createdAt).getTime();
+  const created =
+    createdAt === undefined ? Number.NaN : new Date(createdAt).getTime();
   const floor = notBefore ? notBefore.getTime() : created;
   if (!Number.isFinite(created) || !Number.isFinite(floor))
     return PROVIDER_TIMESTAMP_INVALID;

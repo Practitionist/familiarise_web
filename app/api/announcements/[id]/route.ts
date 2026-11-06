@@ -65,18 +65,11 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       const existing = await tx.announcement.findUnique({ where: { id } });
       if (!existing) return { kind: "not_found" } as const;
       const { startDate, endDate, ...fields } = parsed.data;
-      const start =
-        startDate === undefined
-          ? existing.startDate
-          : startDate
-            ? new Date(startDate)
-            : null;
-      const end =
-        endDate === undefined
-          ? existing.endDate
-          : endDate
-            ? new Date(endDate)
-            : null;
+      let start = existing.startDate;
+      if (startDate !== undefined)
+        start = startDate ? new Date(startDate) : null;
+      let end = existing.endDate;
+      if (endDate !== undefined) end = endDate ? new Date(endDate) : null;
       if (start && end && end <= start)
         return { kind: "invalid_window" } as const;
       const announcement = await tx.announcement.update({

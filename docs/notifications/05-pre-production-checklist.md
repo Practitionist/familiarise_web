@@ -1,240 +1,96 @@
-# Pre-Production Checklist — Email, Notifications & Newsletter
+# Notification production acceptance
 
-> Production readiness runbook for outbound email (`lib/email/`), Novu in-app feed notifications (`lib/novu/`), DMARC/SPF/DKIM alignment, scheduled outbox relays, and environment variables.
+This runbook covers Familiarise's email, in-app inbox, preferences, consent and notification operations. It does not rate the whole application. Readiness is a set of release gates, with evidence for each deployed revision; it is not a percentage derived from test counts or completed commits.
 
-**Last Updated**: 2026-10-11
-**Live Domain**: `familiarisenow.com` (Netlify DNS)
+## Evidence and release decision
 
----
+Use `PASS` only for the stated scope and revision. `PARTIAL` records useful evidence with a remaining acceptance step. `BLOCKED` identifies a known unmet prerequisite. `UNVERIFIED` means the acceptance test has not established the result. A ready deploy preview proves the build/deploy step, not a working notification journey against the shared database. Every mandatory gate must pass before claiming production acceptance.
 
-## Table of Contents
+| Gate                      | Current evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Status and closure condition                                                                                                                                                                                                                                                                                    |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source behavior           | Durable email/bell staging, current-recipient checks, bounded replay, preference mirror, consent, announcements and lifecycle notices have mocked regression coverage.                                                                                                                                                                                                                                                                                                                                                        | Local checks pass within their recorded scope. Complete review and the deployed journey tests below.                                                                                                                                                                                                            |
+| Review                    | The analyzed notification branch has 51 Sonar code-smell findings. The current disposition separates actionable validation/readability fixes from deliberate bounded/transactional sequencing and valid status regions.                                                                                                                                                                                                                                                                                                       | Review closure requires all findings dispositioned against current source, relevant checks and the bounded local review. A green Sonar gate alone is insufficient.                                                                                                                                              |
+| Shared database           | Read-only catalog checks found `FailedEmail.deliveryPolicy`, `notification_preferences.novuSyncToken`, `novuSyncPendingAt` and its pending-time index absent.                                                                                                                                                                                                                                                                                                                                                                 | **BLOCKED.** Human canonical schema rollout and sidecars, then the read-only schema gate and explicit index check must pass.                                                                                                                                                                                    |
+| Novu workflows            | Both environment checks report seven of sixteen families different from this branch.                                                                                                                                                                                                                                                                                                                                                                                                                                          | **BLOCKED.** Review/apply Development changes, verify acceptance, then Production changes and zero drift in each environment.                                                                                                                                                                                   |
+| Authentication            | Client Inbox initialization requires a valid hash. Existing Resend callbacks have successful transport history; rejection-only checks are recorded separately.                                                                                                                                                                                                                                                                                                                                                                | Inbox provider HMAC enforcement remains **UNVERIFIED** until valid, absent, invalid and cross-account cases are proven with controlled subscribers. Resend rejected missing headers with 400 and an invalid signature with 401; valid-event persistence/suppression and new-revision receipt remain unverified. |
+| Configuration and release | Resolved Netlify production/preview configuration has matching Novu environment keys; production and preview use distinct public identifiers. Production has Resend/cron/unsubscribe secrets and Better Stack ingest settings. `EMAIL_DELIVERY_MODE` is absent, so the source guard stays in allowlist mode. Production serves an earlier `prod` SHA; the notification branch has a ready preview. The matching Upstash database currently returns `paused-prelaunch`, which makes Netlify stand down when read successfully. | **PARTIAL.** Verify build and function scopes, deployed SHA/configuration, active host and one scheduler before the controlled live-mode cutover. Never infer running values solely from local `.env` or current configuration.                                                                                 |
+| Delivery and recovery     | Provider acceptance, mailbox receipt, application callbacks, policy revocation and recovery are different stages. The new branch has not completed those controlled journeys in production.                                                                                                                                                                                                                                                                                                                                   | **UNVERIFIED.** Prove each applicable journey, outbox acknowledgement, suppression, preference-mirror recovery, finite replay refusal and receipt.                                                                                                                                                              |
+| Operational detection     | Sentry rules and production Better Stack ingest configuration exist. Independent backlog/freshness alert routes, recipient receipt and recovery remain unproven.                                                                                                                                                                                                                                                                                                                                                              | **UNVERIFIED.** Observe a controlled fault/backlog/missed-run signal and its recovery at the intended destination. Do not report every failed recipient to Sentry.                                                                                                                                              |
+| DNS reporting             | Both Resend sending domains are verified; the external DMARC report authorization is absent in the destination zone.                                                                                                                                                                                                                                                                                                                                                                                                          | **PARTIAL.** Owner adds the authorization TXT and verifies report receipt. This reporting gap is separate from verified sender authentication.                                                                                                                                                                  |
 
-- [Sending Domains & DMARC Architecture](#sending-domains--dmarc-architecture)
-- [Service Free Tier Limits & Quotas](#service-free-tier-limits--quotas)
-- [Pre-Launch Checklist (Free Tier, \$0/month)](#pre-launch-checklist-free-tier-0month)
-- [DNS Setup for Resend & DMARC](#dns-setup-for-resend--dmarc)
-- [Novu Environment & Workflow Configuration](#novu-environment--workflow-configuration)
-- [Scheduled Outbox Drains & Sweep Cadences](#scheduled-outbox-drains--sweep-cadences)
-- [Environment Variables](#environment-variables)
-- [Owner Runbook: Rotating `RESEND_API_KEY`](#owner-runbook-rotating-resend_api_key)
-- [When You'll Need to Upgrade](#when-youll-need-to-upgrade)
-- [Cost Projection Timeline](#cost-projection-timeline)
-- [Deferred Services (Post-Launch)](#deferred-services-post-launch)
-- [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
+The issue/PR checkpoint records the exact branch SHA, observation time, local checks, hosted CI and the review disposition. Update evidence when a gate changes; do not carry a flat readiness score forward.
 
----
+## Ordered rollout
 
-## Sending Domains & DMARC Architecture
+1. Review code and the exact schema/workflow/configuration changes. Capture vendor pre-images before any authorized external change.
+2. A human reconciles the notification schema additions into the canonical schema, runs the repository's `db:preflight` and `db:push` flow with sidecars, and reruns read-only schema/index checks. Do not run a stale audit-worktree schema push: development, production and previews share one database.
+3. Review Novu dry-run output for Development, apply only the intended owned families, and require `novu:check` to pass. Verify inbox security and the controlled journeys there before applying the equivalent Production plan.
+4. Confirm environment scopes, public identifier/secret environment pairing, active host and scheduler. Keep the Netlify standby configuration intact. The existing `ops:active_cron_platform` selector controls ticker ownership; Postgres owns cron leases. An absent selector follows the documented fail-open behavior. The observed `paused-prelaunch` value instead makes Netlify stand down; changing it affects the whole ticker, including money jobs, and is a separate owner rollout decision.
+5. Deploy the reviewed revision through the existing release process, then verify its SHA and required schema. Apply the pre-launch delivery-mode cutover only after controlled recipient tests and a reviewed audience decision. Never replay held seeded mail as a cutover step.
+6. Complete the acceptance cases below and record provider IDs, redacted application evidence, receipt and alert/recovery times. A failed mandatory case keeps release acceptance open.
 
-Outbound mail splits sender reputations across two dedicated Resend subdomains on `familiarisenow.com` (dispatched from Resend region `ap-northeast-1` Tokyo), while `familiarisenow.com` itself is send-only (it publishes a null MX) and every inbound address is `connect@practitionist.com` (`SUPPORT_EMAIL`):
+Read-only preparation and verification commands:
 
-```text
-Outbound Transactional & Ops (@mail.familiarisenow.com):
-  onboarding@mail.familiarisenow.com     -- Welcome & email verification
-  security@mail.familiarisenow.com       -- Password reset/changed, 2FA, SSO, account suspension/ban
-  payments@mail.familiarisenow.com       -- Payment links, receipts, failures, refunds, payouts, disputes
-  notifications@mail.familiarisenow.com  -- Bookings, reminders, org invites, support replies, reviews
-  finance@mail.familiarisenow.com        -- Org billing receipts, invoices, wallet low, overage due
-  dpdp@mail.familiarisenow.com           -- DPDP compliance & data-export notifications
-  noreply@mail.familiarisenow.com        -- Automated system notifications
-  system@mail.familiarisenow.com         -- Familiarise Ops alerts (Reply-To: connect@practitionist.com)
-
-Outbound Bulk / Waitlist (@news.familiarisenow.com):
-  newsletter@news.familiarisenow.com     -- Waitlist confirmation, welcome & broadcasts
-
-Inbound (practitionist.com):
-  connect@practitionist.com              -- The one live mailbox (SUPPORT_EMAIL): Reply-To, support, contact, billing, grievance and compliance alerts
+```sh
+npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script
+npx tsx -r dotenv/config scripts/ci/check-db-schema-required.ts --base origin/dev
+npm run novu:sync -- --dry-run
+npm run novu:check
+npm run novu:sync -- --dry-run --env production
+npm run novu:check -- --env production
 ```
 
----
+These commands do not apply the schema or workflow changes. Inspect the full Prisma diff for unrelated drift; an empty branch requirement check does not prove SQL-sidecar/index parity. Read the current script/environment selection before execution. Local tooling must explicitly load the intended ignored environment file without printing secrets.
 
-## Service Free Tier Limits & Quotas
+## Controlled acceptance cases
 
-### Resend (Email Delivery)
+Use existing non-seeded test accounts and an explicitly approved mailbox/audience. Development and Production Novu subscribers are separate. No notification test needs a real payment, payout, refund, dispute or erasure of an existing customer.
 
-| Feature                       | Free        | Pro (\$20/mo)          | Scale (\$90/mo)        |
-| ----------------------------- | ----------- | ---------------------- | ---------------------- |
-| Emails/month                  | 3,000       | 50,000                 | 100,000                |
-| **Daily limit**               | **100/day** | No limit               | No limit               |
-| Custom verified subdomains    | Yes         | Yes                    | Yes                    |
-| Svix delivery/bounce webhooks | Yes         | Yes                    | Yes                    |
-| Analytics UI (opens/clicks)   | No          | Yes                    | Yes                    |
-| Overage                       | Blocked     | Pay-as-you-go (5x cap) | Pay-as-you-go (5x cap) |
+| Case                             | Required result                                                                                                                                                                                                                                                                          |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inbox authentication             | The intended subscriber succeeds with its valid hash; absent, invalid and another controlled subscriber's hash are rejected without feed content. Record the provider environment/integration and response statuses. A legacy API flag or redacted credential cannot replace this proof. |
+| Service email and bell           | Stage through the deployed application flow; source transaction/outboxes commit, current policy passes, the provider accepts, relays acknowledge, the bell is visible and the approved mailbox receives the message. Check destination authorization and safe links.                     |
+| Paused delivery and marketing    | Master/email/in-app/category/routing switches veto their channel; marketing withdrawal remains accessible while paused. Granting does not create newsletter enrollment or cookie consent. Existing inbox history is retained.                                                            |
+| Consent changed after staging    | Unsubscribe, suppression, account erasure/address change and category/routing withdrawal prevent a queued attempt. Unknown acceptance never causes a changed payload under the old idempotency key. Use controlled fixtures for destructive account transitions.                         |
+| Quiet hours                      | Routine targeted bells retain each recipient's own due floor; urgent exceptions bypass timing only. Email timing is independent. Novu's Schedule is not Familiarise's in-app quiet-hours control.                                                                                        |
+| Cookie permission                | Banner and Privacy share persisted choices; account analytics evidence changes atomically, failed saves do not acknowledge/dismiss the banner, and identities cannot share stale consent state. No email/list grant follows a cookie choice.                                             |
+| Earlier native inbox preferences | Existing mutes remain until that account owner explicitly adopts Familiarise settings. Source mirror sync must succeed, only owned in-app settings/global inbox restrictions change, and provider read-back confirms the result.                                                         |
+| Announcements and lifecycle      | Confirm schedule/edit/deactivate/delete revision behavior, independent banner dismissal, current collaborator/referral audience and factual financial wording. Use staged/mocked domain events before any controlled production fixture.                                                 |
+| Recovery                         | Simulate failed/late mirror, transient provider failure and lost acknowledgement. Prove bounded retry, no resend of recorded acceptance, and manual-review refusal after the conservative replay window. Never use old seeded/held/ambiguous rows as fixtures.                           |
+| Callback and suppression         | Valid signed events persist expected application records; replay is idempotent, invalid signatures fail before persistence, and a controlled permanent bounce/complaint blocks later delivery. HTTP 200 transport history alone is partial evidence.                                     |
+| Operations                       | One active scheduler, healthy leased relays, observable due backlog, independently detected missed runs, delivered alert and observed recovery. Ingest token presence does not prove dashboard rules or mailbox receipt.                                                                 |
 
-**Operational notes on the 100/day free cap:**
+## Configuration ownership
 
-- Each booking triggers confirmation emails to active participants plus pre-session reminders.
-- Waitlist broadcasts count toward the daily limit and use `FailedEmailBatch` chunking with `EmailSuppression` pre-filtering.
-- Delivery events (`email.bounced`, `email.complained`, `email.suppressed`, `contact.*`, `domain.*`) stream continuously on the free tier via `POST /api/webhooks/resend` into `EmailEvent`, `EmailSuppression`, `Waitlist`, and `SystemEvent`.
+Email runs directly through Resend; all sixteen Novu families are in-app only. Do not add a Novu email integration. Keep `NEXT_PUBLIC_NOVU_APP_ID` paired with the selected `NOVU_DEVELOPMENT_KEY` or `NOVU_PRODUCTION_KEY`; `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production` selects the latter in application code. Public values are build-scoped as well as configuration-scoped.
 
-### Novu (In-App Feed Orchestration)
+Inspect resolved production and preview environments by explicit site/context and relevant build/function scopes. Keep secret values out of logs and downloadable artifacts. Verify `RESEND_API_KEY`, production `RESEND_WEBHOOK_SECRET`, `WAITLIST_HMAC_SECRET`, `CRON_SECRET`, delivery mode/allowlist and the existing observability settings. A missing `EMAIL_DELIVERY_MODE` retains the guard; only `live` removes the pre-launch allowlist. Preview absence of a production webhook secret or production Novu key is not itself a production defect.
 
-| Feature                     | Free                                     | Pro (~\$25–30/mo) |
-| --------------------------- | ---------------------------------------- | ----------------- |
-| Events/month                | ~10,000                                  | 30,000            |
-| In-app feed + WebSocket     | Yes (HMAC subscriber hash secured)       | Yes               |
-| Email channel               | Unused — all 16 families are in-app only | Unused            |
-| Activity feed retention     | 7 days                                   | 30 days           |
-| Subscribers                 | Unlimited                                | Unlimited         |
-| Active workflows per tenant | 20 (16 families deployed)                | 20 (100 on Team)  |
+The enabled Resend webhook subscribes to sent, delivered, delayed, bounced, complained and failed events. Source handling of suppressed/contact/domain events does not prove those optional event types are subscribed. Decide desired coverage explicitly, verify the signing secret and prove application persistence; do not silently widen vendor subscriptions.
 
-**Development vs. Production Tenants:**
+The current serverless budget uses the existing Postgres-backed cleanup registry. `drain-notification-outbox` runs every ten minutes at UTC minutes ending in five; email retry runs every fifteen minutes. Both stages and retries enforce the email delivery guard. Keep work bounded and preserve stable payload/key pairs. Check current cadence and limits in the registry and ticker before running a recovery drill.
 
-- Novu's Development and Production environments are fully isolated tenants with distinct workflows, subscribers, and secret keys.
-- `lib/novu/secret-key.ts` selects `NOVU_PRODUCTION_KEY` when `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production` (Netlify production deploys, including the ticker-run crons) and `NOVU_DEVELOPMENT_KEY` everywhere else.
-- `/api/novu/subscriber` authenticates subscribers via deterministic HMAC-SHA256 hashes (`computeSubscriberHash(subscriberId)` in `lib/novu/subscriber.ts`).
+For capacity and paid-plan changes, use the account's current usage/quota evidence and [billing guardrails](../../.claude/skills/billing-guardrails/references/resend.md), rather than a dated cost projection. Tests do not prove production throughput, provider deduplication enablement or a delivery SLO.
 
----
+## DNS and mailbox acceptance
 
-## Pre-Launch Checklist (Free Tier, \$0/month)
+`familiarisenow.com` uses Netlify/NS1 DNS; `practitionist.com` uses GoDaddy DNS. Per `mail` and `news` subdomain, the observed sender records are one DKIM TXT, one return-path SPF TXT, one return-path MX and one tracking CNAME: eight sender records total. Apex SPF, null MX and DMARC add three observed email records. This is an eleven-record observation, not a full-zone inventory or a requirement to create duplicates.
 
-### Step 1: Domain & Inbound Forwarding
+The owner change is in the **practitionist.com** zone:
 
-- [x] Subdomain architecture active in `lib/email/config.ts`: `mail.familiarisenow.com` (transactional/ops) and `news.familiarisenow.com` (newsletter)
-- [x] `familiarisenow.com` is send-only: its null MX (`0 .`) is live, and all inbound mail goes to `connect@practitionist.com`
-- [x] Root SPF `v=spf1 -all` and DMARC `p=none` with `rua=mailto:connect@practitionist.com` are live (verified 2026-10-28)
-- [ ] Owner: add TXT `familiarisenow.com._report._dmarc` = `v=DMARC1` in the `practitionist.com` zone at GoDaddy, and confirm auto-renew on both domains (see [Domains and DNS records](../deployment/README.md#domains-and-dns-records))
-- [ ] After about two weeks of clean reports, raise DMARC to `quarantine`, then `reject`
+```text
+Type: TXT
+Host: familiarisenow.com._report._dmarc
+Value: v=DMARC1
+FQDN: familiarisenow.com._report._dmarc.practitionist.com
+```
 
-### Step 2: Resend Subdomain Verification & Webhook Registration
-
-- [ ] Verify both `mail.familiarisenow.com` and `news.familiarisenow.com` in Resend (`ap-northeast-1` Tokyo)
-- [ ] Register Svix webhook endpoint `https://familiarisenow.com/api/webhooks/resend` for `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.suppressed`, `email.failed`, `contact.*`, and `domain.*`
-- [ ] Store signing secret `whsec_...` in Netlify production `RESEND_WEBHOOK_SECRET`
-
-### Step 3: Novu Tenant Sync & Subscriber HMAC
-
-- [ ] Run `npm run novu:sync -- --dry-run` followed by `npm run novu:sync` to sync all 16 workflow families to Development, then promote to Production (`npm run novu:sync -- --env production`)
-- [ ] Verify `npm run novu:check` exits `0` with zero drift
-- [ ] Enable HMAC encryption in Novu Dashboard → In-App Integration settings to pair with `computeSubscriberHash(subscriberId)`
-
-### Step 4: Database Schema & SQL Sidecars
-
-- [ ] Confirm zero schema drift via `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`
-- [ ] Have an operator deliberately apply `prisma/sql/check-constraints.sql` against the target environment (`FailedEmail_active_outbox_idx`, `FailedEmailBatch_active_outbox_idx`, `NotificationOutbox_active_outbox_idx`, `FailedEmail_sent_unscrubbed_updatedAt_idx`, `SystemJobExecution_running_jobName_key`) — never execute autonomously against the shared database
-
-### Step 5: Environment Variables & Pre-Launch Delivery Guard Cutover
-
-- [ ] Confirm all required environment variables are configured in Netlify Dashboard and GitHub Actions secrets
-- [ ] Move Resend from Free to Pro just before launch, before the first marketing batch, or when real volume needs it, whichever comes first: Free stops sending at 100 emails a day (see [Resend billing guardrails](../../.claude/skills/billing-guardrails/references/resend.md#5-when-to-move-to-pro-owner-decision-2026-11-03))
-- [ ] **Launch Cutover Gate**: Flip `EMAIL_DELIVERY_MODE=live` in the production env vars of the active application host and of the standby Netlify site (every scheduled job that sends mail runs on the Netlify ticker, so no Actions variable is read by a cron job) when opening public traffic (while unset or `allowlist`, external recipients are held safely as `DEAD_LETTER` `held:pre-launch` in `FailedEmail`)
-
-### Step 6: Smoke Test Verification
-
-- [ ] Sign up with a real mailbox or Resend test address (`delivered@resend.dev`) — never `example.com` (immediately dead-lettered by `terminalSendReason` on attempt 1)
-- [ ] Confirm welcome email arrives with valid DKIM/SPF/DMARC pass headers
-- [ ] Confirm lifecycle email footer link (`GET /api/notifications/unsubscribe`) renders confirmation UI without mutating DB, and one-click `POST` disables email while preserving in-app notifications
-- [ ] Confirm waitlist footer link (`GET /api/waitlist/unsubscribe`) renders confirmation form without mutating DB, and `POST` unsubscribes immediately
-- [ ] Trigger a test booking event and verify `flushNotificationsAfter` delivers both the Novu bell and Resend email
-
----
-
-## DNS Setup for Resend & DMARC
-
-All records are live in **Netlify DNS** (`familiarisenow.com` zone); the authoritative list is in [Domains and DNS records](../deployment/README.md#domains-and-dns-records). Per sending subdomain (`mail` and `news`) the zone holds:
-
-| Type  | Host                      | Value                                             | Purpose                       |
-| ----- | ------------------------- | ------------------------------------------------- | ----------------------------- |
-| TXT   | `resend._domainkey.<sub>` | DKIM public key (from the Resend dashboard)       | Signs mail from the subdomain |
-| MX    | `send.<sub>`              | `feedback-smtp.ap-northeast-1.amazonses.com` (10) | Return-Path bounce handling   |
-| TXT   | `send.<sub>`              | `v=spf1 include:amazonses.com ~all`               | SPF for the envelope sender   |
-| CNAME | `rsend.<sub>`             | `send.forge.rmta.net`                             | Resend tracking host          |
-
-The apex carries SPF `v=spf1 -all`, a null MX `0 .`, and `_dmarc` is `v=DMARC1; p=none; rua=mailto:connect@practitionist.com; fo=1`.
-
----
-
-## Novu Environment & Workflow Configuration
-
-1. **In-App Only Topology**: All 16 Novu workflow families contain only an in-app step (`lib/novu/templates/`). Do not configure an email integration inside Novu.
-2. **Declarative Sync & Drift Guard**:
-   - `npm run novu:sync -- --dry-run`: Previews workflow updates.
-   - `npm run novu:sync`: Syncs `lib/novu/templates/` to Development (`--env production` promotes to Production).
-   - `npm run novu:check`: Verifies live Novu workflows match code manifests in CI.
-3. **Dual-Layer Preference Gating**:
-   - **Pre-Stage Database Gate (`stageBells`)**: Filters out `EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, and muted category columns before inserting into `NotificationOutbox`, while calculating quiet-hours `notBefore`.
-   - **Durable subscriber mirror (`stageSubscriberSync` / `attemptSubscriberSync`)**: Settings commit a pending `novuSyncToken` revision. `buildSubscriberCustomData` derives flags from a loaded current snapshot; the attempt upserts the subscriber and conditionally acknowledges that revision. Failed or superseded attempts retain/requeue current work for the existing relay rather than defaulting muted users back on.
-
----
-
-## Scheduled Outbox Drains & Sweep Cadences
-
-Sub-hourly latency-sensitive relays run on the phase-staggered Netlify scheduled function (`netlify/functions/cron-tick.mts`, `*/5 * * * *`), and so do the daily and weekly batch maintenance jobs: no GitHub Actions workflow schedules a registry job:
-
-| Job Target                    | Driver          | Cadence & Offset                                      | Batch / Timeout        | Purpose                                                           |
-| ----------------------------- | --------------- | ----------------------------------------------------- | ---------------------- | ----------------------------------------------------------------- |
-| `drain-notification-outbox`   | `cron-tick.mts` | Every **10m** at offset **`:05`**                     | `limit=20`, `20s` cap  | Replays due `NotificationOutbox` rows (`notBefore <= now`)        |
-| `retry-failed-emails`         | `cron-tick.mts` | Every **15m** at offset **`:00`**                     | `limit=20`, `20s` cap  | Replays due `FailedEmail` & `FailedEmailBatch` with RFC 8058 hdrs |
-| `appointment-reminders`       | `cron-tick.mts` | Every **15m** at offset **`:10`**                     | `limit=25`, `20s` cap  | Dispatches pre-session email & in-app appointment reminders       |
-| `auto-complete-appointments`  | `cron-tick.mts` | Every **30m** at offset **`:15`**                     | `limit=25`, `20s` cap  | Auto-completes past sessions and triggers post-session flows      |
-| `prune-system-job-executions` | `cron-tick.mts` | Every **30m** at offset **`:25`**, 20:00 to 23:30 UTC | `limit=500`, `24s` cap | Scrubs `SENT` email HTML/text after 7d; prunes terminal rows      |
-
-Every target routes through `/api/cleanup/[job]`, authenticates via `CRON_SECRET`, and acquires an atomic Postgres lease on `SystemJobExecution` (`withCronLock`).
-
----
-
-## Environment Variables
-
-Set these in **Netlify Dashboard → Site → Environment Variables** (and matching GitHub Actions secrets/variables where noted):
-
-| Variable                    | Value / Source                                                                              | Required                                                 |
-| --------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `NEXT_PUBLIC_APP_URL`       | `https://familiarisenow.com`                                                                | Yes                                                      |
-| `EMAIL_DELIVERY_MODE`       | `live` at launch (defaults to `allowlist` pre-launch)                                       | Yes (Netlify + GitHub Actions variables)                 |
-| `EMAIL_ALLOWLIST`           | Comma-separated emails/`@domains` allowed pre-launch (includes `connect@practitionist.com`) | Optional (used when `EMAIL_DELIVERY_MODE != live`)       |
-| `RESEND_API_KEY`            | Resend API key (`re_...`)                                                                   | Yes (Netlify + GitHub Actions secrets)                   |
-| `RESEND_WEBHOOK_SECRET`     | Svix signing secret (`whsec_...`)                                                           | Yes (Netlify production context)                         |
-| `OBSERVABILITY_ALERT_EMAIL` | Ops recipient for Sentry canary/quota alerts                                                | Optional (fallback: `supportEmail()`)                    |
-| `SLACK_OPS_WEBHOOK_URL`     | Slack incoming webhook for dead-letter & ops fallback alerts                                | Optional (recommended)                                   |
-| `NOVU_DEVELOPMENT_KEY`      | Novu Development secret key                                                                 | Yes                                                      |
-| `NOVU_PRODUCTION_KEY`       | Novu Production secret key                                                                  | Yes (Netlify production + GitHub Actions secrets)        |
-| `NEXT_PUBLIC_NOVU_APP_ID`   | Novu Application Identifier                                                                 | Yes                                                      |
-| `CRON_SECRET`               | `openssl rand -hex 32`                                                                      | Yes (Netlify + GitHub Actions secrets)                   |
-| `WAITLIST_HMAC_SECRET`      | `openssl rand -hex 32`                                                                      | Yes (signs stateless email & waitlist unsubscribe links) |
-
----
-
-## Owner Runbook: Rotating `RESEND_API_KEY`
-
-Rotate `RESEND_API_KEY` across all four locations in lockstep so no environment dead-letters messages with 401 errors:
-
-1. **Netlify Production**: Site configuration → Environment variables → `RESEND_API_KEY`.
-2. **GitHub Actions Secret**: `gh secret set RESEND_API_KEY` (used by scheduled CLI/backstop jobs).
-3. **Local `.env`**: Update local developer workspace.
-4. **`.mcp.json`**: Update local MCP Resend configuration.
-5. **Redeploy & Verify**: Trigger a deploy on Netlify, send a test transactional email, verify zero new `DEAD_LETTER` rows in `FailedEmail`, and resolve any `["email-send-terminal", "invalid_api_key"]` Sentry alerts.
-
----
-
-## When You'll Need to Upgrade
-
-- **Resend Free → Pro (\$20/mo)**: When daily volume regularly exceeds ~80 emails/day, newsletter broadcasts exceed 100 subscribers in a single blast, or native Resend open/click analytics are required.
-- **Novu Free → Pro (~\$25–30/mo)**: When monthly triggers exceed ~10,000 events/month or in-app feed history retention beyond 7 days is required.
-- **Kit / Directus CMS**: Remain deferred post-launch (`lib/newsletter/convertkit.ts` and `app/api/webhooks/directus/route.ts`) until automated drip sequences or managed CMS publishing are prioritized.
-
----
-
-## Cost Projection Timeline
-
-| Phase                               | Resend  | Novu    | Kit  | Directus | Total            |
-| ----------------------------------- | ------- | ------- | ---- | -------- | ---------------- |
-| **Launch (Month 1)**                | \$0     | \$0     | \$0  | \$0      | **\$0/mo**       |
-| **Early Growth (Month 2–3)**        | \$20    | \$0     | \$0  | \$0      | **\$20/mo**      |
-| **Active Users (Month 3–6)**        | \$20    | \$25    | \$0  | \$0      | **\$45/mo**      |
-| **Content + Newsletter (Month 6+)** | \$20    | \$25    | \$0  | \$25     | **\$70/mo**      |
-| **Full Scale (Month 12+)**          | \$20–90 | \$25–50 | \$39 | \$25     | **\$109–204/mo** |
-
-_Kit free tier covers 10K subscribers. Creator (\$39/mo) is only needed for automated drip sequences._
-
-**Note:** These costs are separate from the shared platform stack (Supabase, Stream.io, Upstash, Sentry).
-
----
+Keep `p=none` while verifying alignment and reports; a calendar interval alone does not justify stronger enforcement. Confirm the intended reply-to/report mailbox receives messages. Resend domain verification and an existing tracking CNAME do not require enabling open/click tracking.
 
 ## Deprecated & Superseded Approaches
 
-- **Sending From Unowned `@familiarise.com` & Unrouted Root Mailboxes**: Replaced by `mail.familiarisenow.com` and `news.familiarisenow.com` verified in Resend (`ap-northeast-1`), with the live `_dmarc` policy at `p=none`.
-- **Standalone Sub-Hourly GitHub Actions Workflows (`cron-notifications.yml`, `cron-auto-complete.yml`)**: Superseded by phase-staggered dispatch in `netlify/functions/cron-tick.mts` (`drain-notification-outbox` every 10m at `:05`, `retry-failed-emails` every 15m at `:00`, `appointment-reminders` every 15m at `:10`, `auto-complete-appointments` every 30m at `:15`), avoiding GitHub Actions sub-hourly scheduling lag and duplicate cron workflows.
-- **Replaying 422 Invalid-Domain Sends Across Backoff**: Superseded by `terminalSendReason()` dead-lettering 422 validation errors immediately on attempt 1.
-- **Env-driven sender domains and contact addresses**: `EMAIL_TRANSACTIONAL_DOMAIN`, `EMAIL_NEWSLETTER_DOMAIN`, `NEXT_PUBLIC_SUPPORT_EMAIL`, `CONTACT_INBOX_ADDRESS`, `BILLING_EMAIL` and `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS` were replaced by constants in `lib/company.ts`. The footer and newsletters always print the registered-office postal line, and the broadcast route no longer refuses with 412 when it is missing. Remove any leftover copies from Netlify.
-- **Inbound forwarding via ImprovMX (planned, never configured)**: role addresses on `familiarisenow.com` were to be forwarded through ImprovMX MX records. The records were never created, and the apex now publishes a null MX; all inbound mail goes to `connect@practitionist.com`.
-- **Personal-inbox DMARC reports and an unpublished root SPF**: replaced on 2026-10-28 by the live records above.
+The repeated 70/100 estimate mixed local implementation progress with deployment/configuration and live acceptance. It had no fixed weighting or denominator and is withdrawn. Use the gate evidence and release decision above; a passed unit suite cannot close an unrun live case.
+
+A flat free-tier cost timeline, unchecked boxes for already verified sender domains, and claims that every supported callback type was subscribed obscured actual readiness. Current account observations and explicit acceptance cases replace them. No new provider, scheduler, cookie tracker or campaign channel is needed to complete the existing email/in-app scope.
+
+Standalone GitHub cron wrappers and broad replays of old failed email are superseded by the active-host ticker, Postgres leases, current recipient policy, finite replay window and audited recovery door. Old queues, browser banner dismissal and stored native inbox preferences are not migrated or reset to manufacture a green checklist.

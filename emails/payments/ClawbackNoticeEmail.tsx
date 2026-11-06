@@ -34,14 +34,16 @@ export const CLAWBACK_NOTICE_COPY: Record<
   },
 };
 
-export function ClawbackNoticeEmail(props: {
-  recipientName: string;
-  event: ClawbackNoticeEvent;
-  amountText: string;
-  payoutId: string;
-  dashboardUrl: string;
-  unsubscribeUrl?: string | null;
-}) {
+export function ClawbackNoticeEmail(
+  props: Readonly<{
+    recipientName: string;
+    event: ClawbackNoticeEvent;
+    amountText: string;
+    payoutId: string;
+    dashboardUrl: string;
+    unsubscribeUrl?: string | null;
+  }>,
+) {
   const copy = CLAWBACK_NOTICE_COPY[props.event];
   return (
     <EmailLayout

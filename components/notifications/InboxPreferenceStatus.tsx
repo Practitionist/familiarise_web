@@ -7,9 +7,9 @@ import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 
 export function InboxPreferenceStatus({
   userId,
-}: {
+}: Readonly<{
   userId: string | undefined;
-}) {
+}>) {
   const status = useQuery({
     queryKey: ["inbox-preferences", userId],
     enabled: Boolean(userId),
