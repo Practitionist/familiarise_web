@@ -129,6 +129,7 @@ describe("PUT /api/novu/preferences is strict", () => {
 
   it.each([
     ["an unknown key", { inAppEnabled: true, digest: true }],
+    ["a column no sender reads", { pushEnabled: true }],
     ["a bad time", { quietHoursStart: "25:00" }],
     ["a partial time", { quietHoursEnd: "8:0" }],
     ["a bad timezone", { quietHoursTimezone: "Mars/Olympus_Mons" }],

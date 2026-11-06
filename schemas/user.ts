@@ -553,9 +553,18 @@ export const WallClockTimeSchema = z
   .string()
   .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a 24-hour HH:MM time");
 
-/** PUT body: any subset of the switches; an unknown key is a 400, not a silent drop. */
+/**
+ * PUT body: any subset of the live switches; an unknown key is a 400, not a
+ * silent drop. Columns no sender reads (push, the legacy categories) are not writable.
+ */
 export const NotificationPreferenceUpdateSchema =
-  NotificationPreferenceSchema.partial()
+  NotificationPreferenceSchema.omit({
+    pushEnabled: true,
+    mentions: true,
+    directMessages: true,
+    updates: true,
+  })
+    .partial()
     .extend({
       quietHoursStart: WallClockTimeSchema.nullable().optional(),
       quietHoursEnd: WallClockTimeSchema.nullable().optional(),
