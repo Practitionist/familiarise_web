@@ -11,7 +11,7 @@ Two products under one API key: **Stream Chat** (`stream-chat`, `stream-chat-rea
 
 ## 1. Live Verification Before Believing Code
 
-Always verify control-plane state and database rows before assuming code changes are active in production. Keep `STREAM_MCP_READ_ONLY: "true"` in `.mcp.json` because dev, preview, and production share one Stream app (`app_id: 1366319`, `placement: "gcp-us-east4.vega"`):
+Always verify control-plane state and database rows before assuming code changes are active in production. Keep `STREAM_MCP_READ_ONLY: "true"` in `.mcp.json` because dev, preview, and production share one Stream app (`app_id: 1366319`, `placement: "gcp-us-east4.vega"`). That stays deliberate until launch: the data is mock, and the dev-app split plus the production-key guard (#2376, parked as a draft) is go-live step 12 (`docs/decisions/2026-11-06-shared-stream-app-until-launch.md`):
 
 ```text
 mcp__streamio__app_get_settings
@@ -49,7 +49,7 @@ mcp__streamio__app_get_rate_limits   {}
 2. **Never Call Stream RPCs Inside `prisma.$transaction` (`PG_POOL_MAX=1`)**:
    - Execute all Stream network requests outside Prisma transactions wrapped in `withStreamCircuitBreaker`, and guard database transitions via conditional compare-and-set (`updateMany`).
    - Internal Stream modules (`user.action.ts`, `channel.action.ts`, `meeting.action.ts`) never expose unguarded `"use server"` actions; client-callable Server Actions verify `getSession()`, reject banned users, and strip emails (`stripStreamUserEmails`) from the Stream objects they return.
-   - Stream user payloads come only from `toStreamUser()` (`lib/stream/user-payload.ts`: `id`, `name`, `image`, `role`); never add email or another contact field. `performStreamUserSync` (`stream-sync`) unsets `STREAM_CONTACT_FIELDS` from older Stream users and reports `totalContactFieldsScrubbed` and `totalFailedScrubs`; a failed scrub ends the run with the checkpoint held at the start of that page, before its deletions, so the next run replays it.
+   - Stream user payloads come only from `toStreamUser()` (`lib/stream/user-payload.ts`: `id`, `name`, `image`, `role`); never add email or another contact field. `performStreamUserSync` (`stream-sync`) unsets `STREAM_CONTACT_FIELDS` from older Stream users and reports `totalContactFieldsScrubbed` and `totalFailedScrubs`; it skips deactivated users, because Stream fails the whole `partialUpdateUsers` call on one; a failed scrub ends the run with the checkpoint held at the start of that page, before its deletions, so the next run replays it.
 3. **Deterministic IDs Without `localeCompare` & Explicit Token `iat` / `exp`**:
    - Derive channel IDs using UTF-16 code-unit ordering (`a < b ? [a, b] : [b, a]`) capped at 64 chars (`lib/stream-channel-ids.ts`).
    - Always pass both `exp` and `iat` (`Math.floor(Date.now() / 1000) - 60`) when minting tokens so `revoke_tokens_issued_before` cutoffs take effect immediately.
