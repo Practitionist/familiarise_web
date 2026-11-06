@@ -5,8 +5,8 @@
 /**
  * Maintenance notices fan out server-side through bell policy, like inbox
  * posts: MULTI outbox rows of at most 100 recipients, staged in the caller's
- * transaction under stable per-page keys. Over the audience cap nothing is
- * staged.
+ * transaction under stable per-page keys, once per window and event under an
+ * advisory lock. Over the audience cap nothing is staged.
  */
 
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {} }));
@@ -21,6 +21,7 @@ import { deriveTransactionId } from "@/lib/novu/outbox";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 
 type OutboxRow = {
+  workflowId: string;
   kind: string;
   recipients: string[];
   transactionId: string;
@@ -30,10 +31,22 @@ type OutboxRow = {
 
 const findMany = jest.fn();
 const createManyAndReturn = jest.fn();
+const executeRaw = jest.fn();
+/** The outbox rows staged so far, which the existence check reads. */
+let store: OutboxRow[] = [];
 const tx = {
+  $executeRaw: (...args: unknown[]) => executeRaw(...args),
   user: { findMany: (...args: unknown[]) => findMany(...args) },
   notificationOutbox: {
     createManyAndReturn: (...args: unknown[]) => createManyAndReturn(...args),
+    findFirst: async (args: {
+      where: { entityRef: string; workflowId: string };
+    }) =>
+      store.find(
+        (r) =>
+          r.entityRef === args.where.entityRef &&
+          r.workflowId === args.where.workflowId,
+      ) ?? null,
   },
 } as unknown as Parameters<typeof stageMaintenanceBells>[0];
 
@@ -57,7 +70,13 @@ const stagedRows = (): OutboxRow[] =>
 
 beforeEach(() => {
   jest.clearAllMocks();
-  createManyAndReturn.mockImplementation(async ({ data }) => data);
+  store = [];
+  createManyAndReturn.mockImplementation(
+    async ({ data }: { data: OutboxRow[] }) => {
+      store.push(...data);
+      return data;
+    },
+  );
 });
 
 it("stages policy-filtered pages under stable maintenance keys", async () => {
@@ -113,4 +132,54 @@ it("stages nothing over the audience cap", async () => {
     take: MAX_BELL_AUDIENCE + 1,
   });
   expect(createManyAndReturn).not.toHaveBeenCalled();
+});
+
+it("stages a window's notice once, even when a retry sees a larger audience", async () => {
+  findMany.mockResolvedValueOnce([user("u1"), user("u2")]);
+  const first = await stageMaintenanceBells(
+    tx,
+    NOVU_WORKFLOWS.MAINTENANCE_STARTED,
+    { phase: "OFFLINE" },
+    "win3",
+  );
+  findMany.mockResolvedValueOnce([user("u1"), user("u2"), user("u3")]);
+  const retry = await stageMaintenanceBells(
+    tx,
+    NOVU_WORKFLOWS.MAINTENANCE_STARTED,
+    { phase: "OFFLINE" },
+    "win3",
+  );
+
+  expect(first).toHaveLength(1);
+  expect(retry).toEqual([]);
+  expect(stagedRows()).toHaveLength(1);
+  // Both calls serialise on the same window/event lock before reading.
+  expect(executeRaw).toHaveBeenCalledTimes(2);
+  expect(executeRaw.mock.calls[0].slice(1)).toEqual([
+    `maintenance:win3:${NOVU_WORKFLOWS.MAINTENANCE_STARTED}`,
+  ]);
+  expect(executeRaw.mock.calls[1].slice(1)).toEqual(
+    executeRaw.mock.calls[0].slice(1),
+  );
+});
+
+it("still stages a different event for the same window", async () => {
+  findMany.mockResolvedValue([user("u1")]);
+  await stageMaintenanceBells(
+    tx,
+    NOVU_WORKFLOWS.MAINTENANCE_STARTED,
+    { phase: "OFFLINE" },
+    "win4",
+  );
+  await stageMaintenanceBells(
+    tx,
+    NOVU_WORKFLOWS.MAINTENANCE_ENDED,
+    { phase: "OFF" },
+    "win4",
+  );
+
+  expect(stagedRows().map((r) => r.workflowId)).toEqual([
+    NOVU_WORKFLOWS.MAINTENANCE_STARTED,
+    NOVU_WORKFLOWS.MAINTENANCE_ENDED,
+  ]);
 });
