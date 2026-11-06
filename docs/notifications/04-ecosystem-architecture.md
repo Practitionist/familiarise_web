@@ -59,13 +59,13 @@ flowchart TB
         P2_OUTBOX -. "timed out / transient" .-> P2_DRAIN
         P2_WF["lib/novu/workflows.ts\n40 workflow IDs\n20+ typed payload interfaces"]
         P2_CLIENT["lib/novu/client.ts\nSingleton, lazy init\nGraceful degradation"]
-        P2_SUB["lib/novu/subscriber.ts\nsyncSubscriber()\nupdateSubscriberPreferences()\ndeleteSubscriber()"]
+        P2_SUB["lib/novu/subscriber.ts\ncomputeSubscriberHash()\ndeleteSubscriber()"]
         subgraph NOVU_CLOUD["Novu Cloud Dashboard — NEEDS CONFIG"]
             NC_WF["15 Tier 1 Workflows\nSpecs: docs/notifications/\n03-novu-template-specs.md"]
             NC_EMAIL["Email Channel\nNOT CONFIGURED (ADR 30: in-app only)"]
             NC_INAPP["In-App Channel\nWebSocket → bell icon"]
             NC_PUSH["Push/FCM Channel\nNOT IMPLEMENTED"]
-            NC_PREFS["Subscriber Custom Data\n7 category flags\n3 channel flags"]
+            NC_PREFS["Workflow preferences\nalways on, read-only\n(no step conditions)"]
         end
     end
 
@@ -102,7 +102,7 @@ flowchart TB
         D_STAFF["Staff Settings\nHas NotificationPreferencesPanel ✅"]
         D_CONSULTANT["Consultant Settings\nMISSING prefs panel ⚠️"]
         D_CONSULTEE["Consultee Settings\nMISSING prefs panel ⚠️"]
-        D_ANNOUNCE["Admin: POST /api/announcements\nCreates announcement record\n+ notifyGeneralAnnouncement()\ntriggerBroadcast to ALL users"]
+        D_ANNOUNCE["Admin: POST /api/announcements\nCreates announcement record\n+ opt-in postToInbox:\nstagePages() per 100 eligible users"]
         D_NL_SEND["Admin: Newsletter Send UI\nPOST /api/admin/waitlist/broadcast"]
     end
 
@@ -122,7 +122,7 @@ flowchart TB
     T_BOOK -->|"notifyAppointmentBooked\nnotifyPaymentSuccess/Failed\nnotifyAppointmentCancelled"| P2_SVC
     T_SUPPORT -->|"notifySupportTicketCreated\nnotifyNewReview"| P2_SVC
     T_TRIAL -->|"notifyTrialRequested\nnotifyVerificationStatusChanged\nnotifyNewConsultantApplication"| P2_SVC
-    T_ADMIN -->|"notifyGeneralAnnouncement"| P2_SVC
+    T_ADMIN -->|"announcement postToInbox → stagePages"| P2_OUTBOX
     T_CRON -->|"notifyAppointmentReminder\nnotifyAppointmentCompleted"| P2_SVC
     T_STREAM -->|"notifyRecordingAvailable"| P2_SVC
 
@@ -162,9 +162,9 @@ flowchart TB
     DEL_EVENTS -.->|"stage() and the relay\nrefuse a suppressed address"| P1_STAGE
 
     %% Client → Backend
-    CL_PREFS -->|"PUT /api/novu/preferences"| P2_SUB
-    CL_HOOK -->|"POST /api/novu/subscriber"| P2_SUB
-    P2_SUB --> NC_PREFS
+    CL_PREFS -->|"PUT /api/novu/preferences\n(Postgres only)"| DB_PREFS[("NotificationPreference")]
+    DB_PREFS -.->|"read at stage and send"| P2_OUTBOX
+    CL_HOOK -->|"POST /api/novu/subscriber\n(HMAC only)"| P2_SUB
 
     %% Dashboard → Components
     CL_PREFS --> D_ADMIN
@@ -325,26 +325,24 @@ sequenceDiagram
 
     User->>Auth: Signs up (email/OAuth)
     Auth->>DB: Create User + NotificationPreference
-    Auth->>Novu: syncSubscriber(userId, name, email)
     Auth->>User: sendWelcomeEmail() via Resend
 
     Note over User,Novu: On every dashboard load (30min cache)
     User->>Bell: Opens dashboard
-    Bell->>Novu: useNovuSubscriberSync hook
+    Bell->>DB: POST /api/novu/subscriber (HMAC only)
+    Bell->>Novu: Inbox session (creates the subscriber if new)
     Novu-->>Bell: WebSocket connection established
     Novu-->>Bell: Push queued in-app notifications
 
     Note over User,Prefs: When user changes preferences
     User->>Prefs: Toggle category/channel
-    Prefs->>DB: PUT /api/novu/preferences → upsert
-    Prefs->>Novu: updateSubscriberPreferences()
-    Note right of Novu: Stores 7 category flags +<br/>3 channel flags as<br/>subscriber custom data
+    Prefs->>DB: PUT /api/novu/preferences → upsert (the only copy)
 
     Note over User,Novu: On any business event
-    DB->>Novu: notifyAppointmentBooked(userIds, payload)
-    Novu->>Novu: Check subscriber prefs
-    Novu->>User: Email via Resend (if emailEnabled + categoryAppointments)
-    Novu->>Bell: In-App notification (if inAppEnabled)
+    DB->>DB: Stage + recheck bell policy (routing, master, in-app, category)
+    DB->>Novu: triggerBulk to allowed recipients only
+    Novu->>Bell: In-App notification
+    DB->>User: Email via Resend (separate email gate)
 ```
 
 ---
@@ -461,7 +459,7 @@ The two relays are the outbox halves of #1654: every email and every Novu trigge
 | Novu inbox + bell icon + sync hook             | `components/notifications/NotificationInbox.tsx`, `hooks/useNovuSubscriberSync.ts`                    |
 | Notification Preferences Panel                 | `components/notifications/NotificationPreferencesPanel.tsx`                                           |
 | Preferences API                                | `app/api/novu/preferences/route.ts` (GET/PUT)                                                         |
-| Subscriber sync API                            | `app/api/novu/subscriber/route.ts` (POST)                                                             |
+| Inbox HMAC API                                 | `app/api/novu/subscriber/route.ts` (POST)                                                             |
 | Waitlist double opt-in confirm/unsubscribe     | `lib/waitlist/tokens.ts`, `lib/waitlist/service.ts`                                                   |
 | Admin waitlist broadcast                       | `app/api/admin/waitlist/broadcast/route.ts`                                                           |
 | Appointment reminders cron                     | `app/api/cleanup/appointment-reminders/route.ts`                                                      |

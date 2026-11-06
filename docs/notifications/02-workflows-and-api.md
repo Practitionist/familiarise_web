@@ -262,12 +262,14 @@ sequenceDiagram
 
 ### Admin / System
 
-| Workflow ID                  | Trigger Function                                          | Recipients                  | Payload Type                   |
-| ---------------------------- | --------------------------------------------------------- | --------------------------- | ------------------------------ |
-| `general-announcement`       | `notifyGeneralAnnouncement(payload)`                      | All subscribers (broadcast) | `AnnouncementPayload`          |
-| `new-consultant-application` | `notifyNewConsultantApplication(adminUserIds[], payload)` | Admin team                  | `ConsultantApplicationPayload` |
+| Workflow ID                  | Trigger Function                                          | Recipients          | Payload Type                   |
+| ---------------------------- | --------------------------------------------------------- | ------------------- | ------------------------------ |
+| `general-announcement`       | `POST /api/announcements` with `postToInbox: true`        | Every eligible user | `AnnouncementPayload`          |
+| `new-consultant-application` | `notifyNewConsultantApplication(adminUserIds[], payload)` | Admin team          | `ConsultantApplicationPayload` |
 
 **AnnouncementPayload**: `title`, `content`, `linkUrl?`, `linkText?`
+
+An announcement reaches inboxes only when the admin ticks "Also post to every user's notification inbox" on create (`postToInbox`, default off, not stored). The create transaction reads the audience through `bellAudience` (`lib/novu/policy.ts`: verified, not banned, not erased, and allowed by routing mode, the master switch and the In-App switch; the family has no category) and stages it with `stagePages` (`lib/novu/outbox.ts`) as `MULTI` rows of at most 100 recipients, keyed `announcement:<id>:page:<n>` with `entityRef` `announcement:<id>`. The first five pages are attempted after the response and the relay sends the rest; every attempt rechecks policy. A post is refused for an inactive or not-yet-live announcement, and for more than 10,000 candidate users. Edits and deletes never re-post or recall a sent bell; they change only the banner.
 
 **ConsultantApplicationPayload**: `applicantName`, `applicantEmail`, `dashboardUrl`
 
@@ -322,25 +324,26 @@ These emails bypass Novu and are sent directly through Resend, through `lib/emai
 
 ### POST /api/novu/subscriber
 
-Syncs the authenticated user to Novu as a subscriber. Called by the `useNovuSubscriberSync` hook on dashboard mount.
+Returns the Inbox HMAC for the session user. Called by the `useNovuSubscriberSync` hook on dashboard mount. It makes no Novu call and reads no profile: Novu creates the subscriber on the first Inbox session or trigger, and the app sends it nothing but the subscriber id.
 
-**Auth**: Required (NextAuth session)
+**Auth**: Required (BetterAuth session)
 
 **Request**: No body required (uses session user ID)
 
 **Response**:
 
 ```json
-{ "success": true }
+{ "success": true, "subscriberHash": "<64 hex chars>" }
 ```
+
+`subscriberHash` is omitted when no Novu secret key is configured.
 
 **Errors**:
 
-| Status | Error              | Cause                   |
-| ------ | ------------------ | ----------------------- |
-| 401    | `"Unauthorized"`   | No valid session        |
-| 404    | `"User not found"` | User ID not in database |
-| 500    | `"Sync failed"`    | Novu API error          |
+| Status | Error                 | Cause                 |
+| ------ | --------------------- | --------------------- |
+| 401    | `"Unauthorized"`      | No valid session      |
+| 500    | `"Inbox auth failed"` | Session lookup failed |
 
 ---
 
@@ -400,7 +403,7 @@ Updates notification preferences. Accepts partial updates (any subset of fields)
 
 **Quiet hours**: the `quietHours*` fields hold only the consultant's planning reminder (email and its bell, `lib/booking/week-nudge.ts`); no other notification waits for them.
 
-**Side effect**: If `inAppEnabled`, `emailEnabled`, or `pushEnabled` changes, the channel preferences are also synced to the Novu subscriber via `updateSubscriberPreferences()`.
+**Side effect**: None. The row is the only copy of the preferences; the bell and email gates read it at stage and send time, so the change applies to the next notification. Nothing is written to Novu.
 
 **Response**: Full updated preferences object
 
@@ -410,7 +413,7 @@ Updates notification preferences. Accepts partial updates (any subset of fields)
 | ------ | -------------------------------- | --------------------------------- |
 | 400    | `"Validation failed"`            | Request body fails Zod validation |
 | 401    | `"Unauthorized"`                 | No valid session                  |
-| 500    | `"Failed to update preferences"` | Database or Novu API error        |
+| 500    | `"Failed to update preferences"` | Database error                    |
 
 ---
 
@@ -422,11 +425,10 @@ Updates notification preferences. Accepts partial updates (any subset of fields)
 graph TD
     subgraph "Registration"
         R1["/api/auth/register"] -->|sendWelcomeEmail| RES[Resend]
-        R1 -->|syncSubscriber| NOVU[Novu]
     end
 
     subgraph "Booking Flow"
-        B1["Consultation/Subscription approval"] -->|notifyAppointmentBooked| NOVU
+        B1["Consultation/Subscription approval"] -->|notifyAppointmentBooked| NOVU[Novu]
         B2["Cancellation API"] -->|notifyAppointmentCancelled| NOVU
         B3["Reschedule API"] -->|notifyAppointmentRescheduled| NOVU
     end
@@ -454,7 +456,7 @@ graph TD
     end
 
     subgraph "Admin"
-        AD1["/api/announcements"] -->|notifyGeneralAnnouncement| NOVU
+        AD1["/api/announcements (postToInbox)"] -->|stagePages| NOVU
     end
 ```
 
@@ -466,3 +468,8 @@ graph TD
 4. **Add the template** to `lib/novu/templates/b2c.ts` or `org.ts` (subject, Liquid body, the payload field the tap should open) and **map the event to a family** in `lib/novu/templates/families.ts`; the unit test refuses an unmapped event or a bare Liquid variable
 5. **Sync**: `npm run novu:sync -- --dry-run`, then `npm run novu:sync` (a production operation — see the checklist). Never create a per-event workflow in the dashboard: the event is not a Novu workflow, its family is, and the plan caps the environment at 20 workflows
 6. **Call the trigger function** from the relevant API route/webhook handler (inside try-catch, after the main transaction)
+
+## Deprecated & Superseded Approaches
+
+- **Novu preference mirror (removed)**: preference writes (`PUT /api/novu/preferences`, the one-click unsubscribe, workspace routing) and every dashboard session pushed the flags, plus email, phone and name, onto the Novu subscriber (`updateSubscriberPreferences`, `syncSubscriber`). Postgres is now the only copy and none of these routes calls Novu.
+- **Announcement broadcast (removed)**: every new announcement fired `notifyGeneralAnnouncement`, a Novu broadcast to every subscriber with no server-side preference check. Inbox posts are now opt-in and fan out through bell policy as described under Admin / System.

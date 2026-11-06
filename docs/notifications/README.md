@@ -173,7 +173,7 @@ The cron box above is the audit-time snapshot. It is no longer true that `cron-h
 | `lib/novu/client.ts`                | Singleton Novu client, `isNovuConfigured()` guard                                                                                                                                                                 |
 | `lib/novu/service.ts`               | 20+ trigger functions: `notifyAppointmentBooked`, `notifyPaymentSuccess`, etc.                                                                                                                                    |
 | `lib/novu/workflows.ts`             | 69 event id constants and their typed payloads; `lib/novu/templates/` maps them onto 16 workflow families                                                                                                         |
-| `lib/novu/subscriber.ts`            | `syncSubscriber`, `updateSubscriberPreferences`, `deleteSubscriber`                                                                                                                                               |
+| `lib/novu/subscriber.ts`            | `computeSubscriberHash` (Inbox HMAC) and `deleteSubscriber`; Novu holds no profile or preference data                                                                                                             |
 | `lib/email/index.ts`                | Eleven Resend sender functions (welcome, password reset, verification, account linked, payment link/success/failed, org invitation, waitlist confirm/welcome, contact inquiry); `@/lib/email` still resolves here |
 | `lib/email/config.ts`               | `SENDERS` getters and `supportEmail()`/`contactInboxAddress()`/`billingEmail()`/`companyPostalAddress()`, all returning the constants in `lib/company.ts`                                                         |
 | `lib/email/deliver.ts`              | `deliver()`, the single send core: content-hash idempotency key, `EmailNotConfiguredError`, `recordFailedEmail`                                                                                                   |
@@ -187,19 +187,19 @@ The cron box above is the audit-time snapshot. It is no longer true that `cron-h
 
 ### Frontend
 
-| File                             | Purpose                                                       |
-| -------------------------------- | ------------------------------------------------------------- |
-| `hooks/useNovuSubscriberSync.ts` | Auto-syncs user to Novu on dashboard mount (30-min staleTime) |
+| File                             | Purpose                                                      |
+| -------------------------------- | ------------------------------------------------------------ |
+| `hooks/useNovuSubscriberSync.ts` | Fetches the Inbox HMAC on dashboard mount (30-min staleTime) |
 
 ### API Routes
 
 | Route                            | Method | Purpose                                                                                        |
 | -------------------------------- | ------ | ---------------------------------------------------------------------------------------------- |
-| `/api/novu/subscriber`           | POST   | Syncs authenticated user to Novu as subscriber                                                 |
+| `/api/novu/subscriber`           | POST   | Returns the session user's Inbox HMAC; no Novu call                                            |
 | `/api/novu/preferences`          | GET    | Returns user's notification preferences (with defaults)                                        |
-| `/api/novu/preferences`          | PUT    | Updates notification preferences, syncs channel prefs to Novu                                  |
+| `/api/novu/preferences`          | PUT    | Updates notification preferences in Postgres (the only copy)                                   |
 | `/api/notifications/unsubscribe` | GET    | Verifies the footer link's token and redirects to `/email/unsubscribe`; writes nothing (#1653) |
-| `/api/notifications/unsubscribe` | POST   | RFC 8058 one-click: sets `emailEnabled = false` and mirrors the flags to Novu (#1653)          |
+| `/api/notifications/unsubscribe` | POST   | RFC 8058 one-click: sets `emailEnabled = false` in Postgres; no Novu call                      |
 
 ### Email Templates (`emails/`)
 

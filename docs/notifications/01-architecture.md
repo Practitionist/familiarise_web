@@ -231,7 +231,7 @@ lib/email/
    - Because `FailedEmail` stores rendered HTML/text without a separate JSON headers column, `reconstructUnsubscribeHeaders(row)` inspects the persisted message body during `runEmailRetryTick`.
    - If the body contains `/api/notifications/unsubscribe?u=...`, it rebuilds `List-Unsubscribe` + `List-Unsubscribe-Post: List-Unsubscribe=One-Click` for that user ID; if it contains `/api/waitlist/unsubscribe`, it rebuilds the waitlist one-click headers for `row.recipient`; if `category === null` (mandatory account notices such as suspension/ban), it returns `undefined`.
 3. **Link-Scanner Safe `GET` vs. One-Click `POST`**:
-   - **Lifecycle (`/api/notifications/unsubscribe`)**: `GET` performs zero DB writes and returns a `303` redirect to `/email/unsubscribe`; `POST` verifies the HMAC token, sets `emailEnabled: false` on `NotificationPreference` (leaving in-app notifications untouched), and syncs Novu via `updateSubscriberPreferences`.
+   - **Lifecycle (`/api/notifications/unsubscribe`)**: `GET` performs zero DB writes and returns a `303` redirect to `/email/unsubscribe`; `POST` verifies the HMAC token, sets `emailEnabled: false` on `NotificationPreference` (leaving in-app notifications untouched), and makes no vendor call.
    - **Waitlist (`/api/waitlist/unsubscribe`)**: `GET` performs zero DB writes and renders a self-contained HTML confirmation page with a `<form method="post">`; `POST` executes immediate one-click opt-out (`unsubscribe({ email, token })`), preventing corporate mail link scanners from silently unsubscribing users on prefetch.
 
 ### Sending Domains & DMARC Alignment
@@ -248,9 +248,25 @@ lib/email/
 
 - **Environment Resolution (`lib/novu/secret-key.ts`)**: Production traffic (`NEXT_PUBLIC_SENTRY_ENVIRONMENT=production`) uses `NOVU_PRODUCTION_KEY`; previews, branch deploys, and local development use `NOVU_DEVELOPMENT_KEY`.
 - **HMAC Subscriber Authentication (`computeSubscriberHash`)**: `lib/novu/subscriber.ts` computes deterministic HMAC-SHA256 hex digests (`createHmac("sha256", key).update(subscriberId).digest("hex")`) returned by `POST /api/novu/subscriber` so `<Inbox />` authenticates real-time WebSocket inbox connections without exposing subscriber feeds to enumeration.
-- **Inbox mounts after the sync settles (`resolveInboxAuth`)**: `NotificationInbox` waits for `POST /api/novu/subscriber` to finish before rendering `<Inbox />`, so the first connection already carries `subscriberHash`. Mounting earlier sent hash-less requests that Novu answers with 400 "valid HMAC hash" wherever the in-app integration enforces HMAC. `NotificationInbox` is the only component that opens a Novu session; there is no app-wide `NovuProvider`. Previews pair the Development application identifier with `NOVU_DEVELOPMENT_KEY`, and production pairs the Production identifier with `NOVU_PRODUCTION_KEY`; the hash is only valid with the secret of the environment that owns the identifier.
-- **Fail-Closed Custom Data Merge (`buildSubscriberCustomData`)**: Merges caller overrides (`routingMode`, `preferences`) with persisted `OrgWorkspaceProfile` and `NotificationPreference` rows. Any database read error is **propagated** rather than caught and defaulted, ensuring transient DB faults never overwrite opted-out subscribers back to `masterEnabled: true` in Novu.
-- **Idempotent Preference Sync (`updateSubscriberPreferences`)**: Calls `novu.subscribers.create({ subscriberId, data: customData })` (upsert semantics) rather than PATCHing an existing subscriber record, ensuring preference changes succeed even if a user has never mounted the client dashboard yet.
+- **Inbox mounts after the hash request settles (`resolveInboxAuth`)**: `POST /api/novu/subscriber` only signs the session user's id; it makes no Novu call and sends no profile data, because Novu creates the subscriber on the first Inbox session or trigger. `NotificationInbox` waits for it before rendering `<Inbox />`, so the first connection already carries `subscriberHash`. Mounting earlier sent hash-less requests that Novu answers with 400 "valid HMAC hash" wherever the in-app integration enforces HMAC. `NotificationInbox` is the only component that opens a Novu session; there is no app-wide `NovuProvider`. Previews pair the Development application identifier with `NOVU_DEVELOPMENT_KEY`, and production pairs the Production identifier with `NOVU_PRODUCTION_KEY`; the hash is only valid with the secret of the environment that owns the identifier.
+- **Erasure**: `deleteSubscriber` removes the Novu subscriber and its feed; it never throws and reports whether Novu acknowledged the delete.
+
+### Single Preference Owner: Postgres Decides, Novu Delivers
+
+```mermaid
+flowchart LR
+    Prefs["NotificationPreference +<br/>OrgWorkspaceProfile.notificationRoutingMode"] --> Stage["Stage: resolveRecipientBellPolicy / bellAudience"]
+    Prefs --> Attempt["Attempt: currentBellRecipients"]
+    Stage --> Row["NotificationOutbox row"] --> Attempt
+    Attempt -->|"allowed recipients only"| Novu["Novu triggerBulk<br/>(families always on, read-only)"]
+    Novu --> Inbox["Inbox (no Novu preference editor)"]
+```
+
+- **One copy of the flags.** `NotificationPreference` and the workspace routing mode in Postgres are the only preference state. `PUT /api/novu/preferences`, the one-click unsubscribe and the workspace settings route each make one database write and no Novu call; the change applies to the next notification because both gates read Postgres.
+- **The server is the only gate.** A bell is filtered when it is staged and again right before every trigger (`currentBellRecipients`), so Novu only ever receives recipients who are allowed now.
+- **Novu is a plain in-app transport.** `toFamilyDto` writes every family with no step condition and with `preferences.user` and `preferences.workflow` set to `{ all: { enabled: true, readOnly: true }, channels: { in_app: { enabled: true } } }` (`FAMILY_PREFERENCES`), so subscribers cannot mute a family in Novu. `npm run novu:check` reports live subscriber-editable preferences or a leftover `skip` control as drift. `NotificationInbox` renders `InboxContent` with `hideNav`, which removes Novu's preference page; preferences live only in Settings.
+- **One-time reset of native mutes.** Mutes saved through Novu's old preference page are cleared once per environment by `scripts/novu/clear-native-mutes.ts` (dry run by default, `--apply` to write, `--env production` for Production; run after `npm run novu:sync`). It is idempotent, is not a scheduled job, and is deleted once both environments are clean.
+- **Announcements fan out through the same policy.** An inbox post is opt-in on create (`postToInbox`). The create transaction reads the audience with `bellAudience` and stages it with `stagePages` as `MULTI` rows of at most 100 recipients keyed `announcement:<id>:page:<n>`; a post over 10,000 candidate users is refused. Maintenance notices remain `BROADCAST` rows: they are platform-wide system notices with no opt-out, and Novu fans them out to every existing subscriber.
 
 ### Preference Categories & Workspace Routing Matrix
 
@@ -352,9 +368,11 @@ flowchart LR
 - **Removed Accidental Operational Asymmetries**:
   - **Post-Commit Fire-and-Forget vs. In-Tx SSR**: Replaced mixed staging with `prepareRecipientEmails` outside `tx`, atomic `stage()` + policy-aware `stageBell(tx, ...)` (`60s` inline lease) inside `tx`, and `flushNotificationsAfter` concurrent settlement.
   - **24h Body-Hash Key Collisions & Stripped Retry Headers**: Replaced payload hashes with `<EMAIL_TYPE>/failed-email/<row.id>` keys, stateless `reconstructUnsubscribeHeaders(row)`, and confirmation-only `GET /api/waitlist/unsubscribe`.
-  - **Fail-Open Subscriber Sync**: Replaced catch-all defaults (`masterEnabled: true`) and 404-prone PATCH calls with fail-closed DB propagation and idempotent `novu.subscribers.create(...)`.
 - **Intentionally Retained Vendor-Plane Split (Novu In-App vs. Direct Resend Email)**:
   - Outbound emails are **not** routed through Novu's email step so transactional notices never depend on a second vendor's multi-tenant queue availability, bypass Novu's 20-workflow plan cap across 45+ React Email templates, and preserve native `resend.batch.send` throughput and `EmailEvent` Svix telemetry.
+
+- **Novu preference mirror and step conditions (removed)**: preference changes and every dashboard session copied the flags (and email, phone and name) onto the Novu subscriber's `data`, and each family's in-app step carried a `skip` rule over those flags (`inAppSkipRule`). The server already rechecked Postgres before every trigger, so the mirror could only drop a bell the server had approved, while the outbox recorded it as `SENT`. Delete any residual `subscriber.data` reads, `syncSubscriber`/`updateSubscriberPreferences` calls or `skip` controls.
+- **Announcement broadcast (removed)**: every announcement triggered a Novu broadcast to every subscriber, gated only by the mirror. Inbox posts are now opt-in and staged per audience page.
 
 - **In-app quiet hours (removed)**: bells were deferred to the end of a user's quiet window while the email for the same event went out at once, so the least intrusive channel was the one held back. The bell deferral and its urgent bypass are gone. The `quietHours*` columns now feed only the consultant's planning reminder (`lib/booking/week-nudge.ts`), whose email and bell wait together, as before; the settings page labels the control "Email quiet hours".
 
