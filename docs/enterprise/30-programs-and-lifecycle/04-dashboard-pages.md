@@ -3,146 +3,116 @@ title: Dashboard pages
 band: 30-programs-and-lifecycle
 audience: sde1
 status: live
-last-reviewed: 2026-10-06
+last-reviewed: 2026-11-06
 ---
 
 # Dashboard pages
 
 Every organization-scoped dashboard page lives under
-`app/dashboard/organization/[orgId]/**`. Roles are gated server-side
-via `requireOrgAccess` at the API layer; the pages themselves do a
-thin `requireOrgAccess` check plus role-driven conditional rendering.
+`app/dashboard/organization/[orgId]/**`. Roles are granted through the
+permission matrix in `lib/auth/org-permissions.ts`; the sidebar
+(`lib/dashboard/nav/organization.ts`), the page guards and the API routes all
+read the same keys. The sidebar is cosmetic. The API route is the enforcer,
+and the page guard keeps the URL honest.
+
+Two page-guard styles coexist, and both are safe because the API behind every
+page checks the same key:
+
+- **Server guard** (`requireOrgAccess` in the page): `members`, `billing`,
+  `analytics`, `catalog`, `collaborations`, `library`, `messages`, `requests`,
+  `appointments`, `compensation`, `my-program`, `support/*`, `settings`.
+- **Client guard** (`useRequireOrgAccess` redirecting to `/home`): `programs`,
+  `contracts`, `payouts`, `audit`, `consent`. The page shell renders for a beat
+  before the redirect, but the data routes refuse the role regardless.
 
 ## Page tree
 
-The list below is the active route set under
-`app/dashboard/organization/[orgId]/` (see [ADR 19](../70-design-decisions/19-personal-vs-org-dashboard-split.md)).
+The active route set under `app/dashboard/organization/[orgId]/` (see
+[ADR 19](../70-design-decisions/19-personal-vs-org-dashboard-split.md)). The
+sidebar groups are Overview, My work, Messages, Library, People, Sponsor, Host,
+Insights and Help & support; Settings opens from the header avatar menu.
 
 ```
-/dashboard/organization                        → server-redirect (see § below):
-                                                  OrgWorkspace → /dashboard/org-workspace/
-                                                  <id>/home; everyone else → /dashboard
-/dashboard/organization/create                 → org-creation wizard
-/dashboard/organization/[orgId]                → role-aware redirect:
-                                                  SUSPENDED member → /appointments;
-                                                  MANAGER+ / OWNER / SUPPORT → /home;
-                                                  LEARNER → /my-program;
-                                                  EXPERT  → /compensation;
-                                                  no membership → personal
-                                                  dashboard via
-                                                  resolvePersonalDashboardHref
-/dashboard/organization/[orgId]/home           → state-aware activation center
-                                                  (action banners + Getting-Started
-                                                  checklist + stat grid). BILLING_ADMIN
-                                                  sees the finance overview; sub-MANAGER
-                                                  deep-links see a role-specific
-                                                  consumer card. See "/home" below.
-/dashboard/organization/[orgId]/my-program     → LEARNER's per-org allocation:
-                                                  ProgramAssignment progress bar,
-                                                  cycle reset countdown, coverage rules,
-                                                  confidentiality guarantee, and
-                                                  utilization history. canSponsor only.
-/dashboard/organization/[orgId]/compensation   → EXPERT's per-org payout view:
-                                                  Membership.payoutRecipient,
-                                                  RateCard split, recent earnings
-                                                  on org-tagged payments. canHost
-                                                  only.
-/dashboard/organization/[orgId]/appointments   → the member's own org sessions
-                                                  (ACTIVE and SUSPENDED members can
-                                                  view and join already-paid sessions),
-                                                  plus the org-wide operations
-                                                  feed under ?scope=everyone.
-                                                  See "Appointments scopes" below.
-/dashboard/organization/[orgId]/members        → unified Membership list, with
-                                                  ?tab=invitations. See "Members tabs".
-/dashboard/organization/[orgId]/collaborations → collaborators on THIS org's
-                                                  hosted webinar/class plans.
-                                                  Split by the PLAN's
-                                                  org-ness: B2C-plan
-                                                  collaborators stay on the
-                                                  personal consultant dashboard.
-                                                  canHost only.
-/dashboard/organization/[orgId]/contracts      → contracts + linked programs;
-                                                  term-edit drawer (locked vs editable)
-/dashboard/organization/[orgId]/catalog        → org-OWNED webinar + class
-                                                  plans; expert picker +
-                                                  visibility; archive/restore
-                                                  (never deletes). canHost only.
-/dashboard/organization/[orgId]/programs       → programs + batch member assignments,
-                                                  per-seat cycle usage & dormant-seat
-                                                  badges; config-lock-aware edit dialog
-/dashboard/organization/[orgId]/billing        → unified finance surface:
-                                                  BillingAccount summary, Invoices
-                                                  (with PDF download), Wallet,
-                                                  Purchase Orders (create/edit + ≥80%
-                                                  consumption banner), Member Spend
-                                                  Limits, Reimbursements, and Disputes
-/dashboard/organization/[orgId]/payouts        → OrganizationPayout list + TDS
-                                                  summary (host-side only)
-/dashboard/organization/[orgId]/analytics      → rollups (bookings, revenue,
-                                                  earnings, wallet burn-down,
-                                                  k=5 privacy-safe Session Quality,
-                                                  and Utilization CSV export)
-/dashboard/organization/[orgId]/library        → Library: Session documents and
-                                                  Session recordings tabs for this
-                                                  org's appointments (Mine ·
-                                                  Everyone); the old /documents
-                                                  and /recordings URLs redirect
-/dashboard/organization/[orgId]/audit          → per-org OrgAuditLog (rich filters)
-/dashboard/organization/[orgId]/consent        → ConsentArtifact roster + DPDP
-                                                  withdraw/grant (DPDP §6(4))
-/dashboard/organization/[orgId]/settings       → branding, GST/PAN/TAN/MSME tax
-                                                  compliance, and leave/archive
-                                                  Danger Zone, opened from the
-                                                  header avatar menu;
-                                                  /settings/general | sso | webhooks |
-                                                  data-exports are section URLs
+/dashboard/organization                        -> server-redirect: OrgWorkspace -> /dashboard/org-workspace/<id>/home,
+                                                  everyone else -> /dashboard
+/dashboard/organization/create                 -> org-creation wizard
+/dashboard/organization/[orgId]                -> role-aware redirect:
+                                                  SUSPENDED -> /appointments;
+                                                  LEARNER -> /my-program (canSponsor) else /appointments;
+                                                  EXPERT -> /compensation (canHost) else /appointments;
+                                                  OWNER, MAINTAINER, BILLING_ADMIN, MANAGER, SUPPORT -> /home;
+                                                  no membership -> the personal dashboard
+/home                    Overview. Operators: action center + checklist + stats. BILLING_ADMIN:
+                         finance overview. SUPPORT: member-support queue counts. LEARNER and
+                         EXPERT: a card pointing at My Program or Compensation.
+/my-program              LEARNER's allocation: assignments, cycle usage, coverage rules, upcoming
+                         sessions, utilization history. A host-only org shows an empty state.
+/compensation            The viewer's split and earnings under the org (anyone with a consultant
+                         profile). A sponsor-only org shows an empty state.
+/appointments            Tabs Mine | Everyone | Unscheduled; /appointments/[id] is the detail
+                         page, with /documents and /recordings beneath it.
+/requests                Booking requests for members who deliver (a consultant profile on a host org).
+/messages                Stream chat for this org's conversations only.
+/collaborations          Collaborators on this org's hosted webinar and class plans.
+/library                 Session documents | Session recordings, each Mine | Everyone.
+/members                 Tabs Members (roster, or the names-only directory) | Invitations.
+/programs                Sponsorship programs: seats, assignments, amendments.
+/contracts               Contracts and the programs attached to them.
+/billing                 Tabs Invoices & usage | Wallet & licence | Purchase orders |
+                         Payment disputes | Member spend.
+/catalog                 Org-owned webinar and class plans; /catalog/[type]/new creates one.
+/payouts                 Tabs Runs & earnings | Payout account | Rate cards & routing.
+/analytics               Rollups, session-quality aggregate, Utilization CSV.
+/audit                   Per-org OrgAuditLog with category filters.
+/consent                 ConsentArtifact roster; records withdrawal requests.
+/support                 Help & support: Support cases | Evidence requests | Member support
+                         activity (/support/activity); detail at /support/requests/[caseKey]
+                         and /support/evidence/[requestId].
+/settings/[section]      general | branding | sso | billing | webhooks | data-exports.
 ```
 
 ### Surfaces that are tabs, not routes
 
-The sidebar carried 28 entries at its peak, several of which were a filter or
-a single read-only table rather than a destination. Those became tabs on the
-page that already owned the object. Every tab is addressable as
-`?tab=<value>`; the retired standalone routes (`purchase-orders`, `reimbursements`,
-`disputes`) were deleted and answer 404.
+Several former sidebar entries were a filter or a single table, so they became
+tabs on the page that owns the object. The standalone `purchase-orders`,
+`reimbursements` and `disputes` routes are deleted and answer 404; their
+content is now Billing tabs.
 
-| Page        | Tabs / Sections                                                     | Why they merged                                                                                                          |
-| ----------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `/members`  | `members`, `invitations`                                            | Learners and Experts are role filter chips on the `members` list against `/api/organizations/[orgId]/members`, not tabs. |
-| `/settings` | `general`, `sso`, `webhooks`, `data-exports`                        | Rendered via `SettingsLayout` with one canonical URL per section.                                                        |
-| `/billing`  | `invoices`, `wallet`, `purchase-orders`, `member-spend`, `disputes` | Consolidates all sponsor-side billing, POs, member spend limits, reimbursements, and disputes onto one finance surface.  |
-
-Tabs are gated individually on the same `OrgSurface` keys the sidebar uses, so
-a role that cannot reach a surface does not get a trigger for it.
+| Page            | Tabs / sections                                                                                                                                                                                           | Notes                                                                                                                               |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `/members`      | `members` (roster), `invitations`                                                                                                                                                                         | Learners and Experts are role chips on the roster, not tabs. Invitations needs `invitations.manage`.                                |
+| `/billing`      | `invoices` (Invoices & usage), `wallet` (WALLET or LICENSE funding), `purchase-orders` (`purchaseOrders.read`), `disputes` (`disputes.read`), `member-spend` (PERSONAL funding and `reimbursements.read`) | The Purchase orders tab opens by permission, not by `requiresPO`: `requiresPO` only makes a PO mandatory on contracts and invoices. |
+| `/payouts`      | `runs` (Runs & earnings), `payout-account`, `rate-cards` (Rate cards & routing)                                                                                                                           | A BILLING_ADMIN repoints an expert's payout recipient from the routing section.                                                     |
+| `/support`      | Support cases, Evidence requests, Member support activity                                                                                                                                                 | Layout-level links, not `?tab=`. Activity needs `operations.read`.                                                                  |
+| `/settings`     | one URL per section                                                                                                                                                                                       | Rendered by `SettingsLayout`; each section carries its own gate (see the matrix).                                                   |
+| `/library`      | Session documents, Session recordings; each with Mine and Everyone                                                                                                                                        | See "Library: Mine and Everyone".                                                                                                   |
+| `/appointments` | Mine, Everyone, Unscheduled                                                                                                                                                                               | See "Appointments scopes".                                                                                                          |
 
 ### Appointments scopes
 
-`/appointments` replaced a pair of adjacent sidebar entries — `Appointments`
-and `My Appointments` — that shared a noun, differed only in scope, and were
-both visible to an OWNER.
+| Scope            | Query              | Data source                | Who sees it                                                               |
+| ---------------- | ------------------ | -------------------------- | ------------------------------------------------------------------------- |
+| `mine` (default) | `?scope=mine`      | `getOrgMemberAppointments` | any ACTIVE or SUSPENDED member, so a pure LEARNER sees their own sessions |
+| `everyone`       | `?scope=everyone`  | `getOrgAppointments`       | ACTIVE with `operations.read`                                             |
+| `unscheduled`    | `?tab=unscheduled` | org pending-requests read  | ACTIVE with `appointments.unscheduled.read` (OWNER, MAINTAINER, MANAGER)  |
 
-| Scope            | Query             | Data source                | Who sees it                                                                 |
-| ---------------- | ----------------- | -------------------------- | --------------------------------------------------------------------------- |
-| `mine` (default) | `?scope=mine`     | `getOrgMemberAppointments` | any ACTIVE member — a pure LEARNER has to be able to see their own sessions |
-| `everyone`       | `?scope=everyone` | `getOrgAppointments`       | `operations.read` only                                                      |
+A viewer without the grant never sees the toggle, and a hand-edited URL falls
+back to Mine rather than erroring. The Mine scope mounts a video-only
+`StreamProvider` so Join works without opening a chat socket. The Everyone
+scope of a sponsoring organization also lists the webinar and class seats its
+own members hold on its money in sessions hosted elsewhere: each row shows the
+member, the session title, the date and attendance, and nothing about other
+attendees or the host.
 
-A viewer without `operations.read` never sees the toggle, so the page cannot
-offer a control that would 403. A non-operator who hand-edits the URL to
-`?scope=everyone` is quietly served their own sessions rather than an error.
-The `mine` scope mounts a video-only `StreamProvider` around its subtree so
-Join works without connecting video on every org route.
+A row opens `/appointments/[id]`, which resolves three views in order: the
+attendee's full detail, the deliverer's detail, then the operator view of
+metadata only (`operations.read`). The funding org's payer-side actors can also
+cancel or ask to reschedule a 1:1 booking from it. Every refusal is
+`notFound()`, so the page never confirms that an appointment exists.
 
-Since #1854 (#1852 decision 3) the `everyone` scope of a sponsoring
-organization also lists the webinar and class seats its own members hold, on
-its money, in sessions hosted by someone else. Each such row shows the member,
-the session title, the date and whether they attended, and nothing about the
-other attendees or the host beyond the session title.
+### Payout routing, approval and compensation
 
-### Follow-up surfaces from #1854 and #1860
-
-Three later pages and tabs belong to the same overhaul, and each reads a
-matrix key. Org › Payouts carries an "Experts' payout routing" section, where
+Three pages and tabs here each read a matrix key. Org › Payouts carries an "Experts' payout routing" section, where
 a holder of `payouts.read` sees each EXPERT member's name and current payout
 recipient, and a holder of `members.payoutRecipient.change` (OWNER or BILLING_ADMIN)
 changes it through a confirm dialog backed by
@@ -157,10 +127,9 @@ platform default, and the offering editor's Materials tab shows the expert a
 "Changed by <Org>" line for every file the organization changed on an
 org-owned plan.
 
-There is **no `/credits` route** — the wallet view is a tab inside `/billing`
-(see "Billing surface" below). The old `/plans` org-catalog page was removed in
-the legacy-stub cleanup; discovery now reads the per-type plans' visibility (see
-[public pages & discovery](05-public-pages-and-discovery.md)).
+There is no `/credits` route; the wallet view is a tab inside `/billing`. There
+is no org `/plans` page either: discovery reads each per-type plan's visibility
+(see [public pages & discovery](05-public-pages-and-discovery.md)).
 
 A few additional surfaces are not in the org-scoped tree:
 
@@ -173,7 +142,7 @@ A few additional surfaces are not in the org-scoped tree:
   `Settings`: both collided head-on with the per-org dashboard's entries of the
   same name, and an operator moving between the two layers had no way to tell
   which one they were looking at.
-  - `/home` — "Overview". Cross-org stats row + grid of orgs you OWN (showing live `walletBalance`, low-wallet warning, dunning suspension, or pending verification badges) + "+ New organization" CTA. Replaces the old `/dashboard/organization` switcher list (which now 308-redirects here for `OrgWorkspace` profiles).
+  - `/home` — "Overview". Cross-org stats row + grid of orgs you OWN (showing live `walletBalance`, low-wallet warning, dunning suspension, or pending verification badges) + "+ New organization" CTA.
   - `/activity` — cross-org audit feed aggregating `OrgAuditLog` rows
     across all owned orgs with `<FilterBar>` organization and category filters (including `WEBHOOK`). Cursor-paginated. Distinct from per-org
     `/audit` which scopes to one org and supports rich filters.
@@ -193,118 +162,143 @@ A few additional surfaces are not in the org-scoped tree:
 - `/dashboard/admin/**` — the platform admin surface that can verify,
   suspend, or deactivate any org. Lives outside this doc set.
 
-The bare `/dashboard/organization` URL is now a server-redirect:
-OrgWorkspace → `/dashboard/org-workspace/<id>/home`; non-OrgWorkspace → `/dashboard`.
-The org grid that used to live there is gone — non-OrgWorkspace members
-(LEARNER, EXPERT) navigate between orgs via the `ContextSwitcher`
-(evolved from `OrganizationSwitcher` in PR #1842, part of #1527), anchored at
-the top of every dashboard sidebar and repeated in the mobile Menu sheet,
-which never required a list page.
+The bare `/dashboard/organization` URL is a server-redirect:
+OrgWorkspace → `/dashboard/org-workspace/<id>/home`; everyone else → `/dashboard`.
+Members move between orgs through the `ContextSwitcher`, anchored at the top of
+every dashboard sidebar and repeated in the mobile Menu sheet.
 
 ## Role-visibility nav-map
 
-The same `[orgId]` URL lands four different humans on four different surfaces.
-`[orgId]/page.tsx` does the role-branched redirect (consumers to their personal
-view, operators to `/home`); from there the sidebar shows only what that role's
-gate would let through. This is the mental model a new reader needs before the
-exhaustive matrix below — _who sees what_, not _which constant enforces it_:
+The same `[orgId]` URL lands different people on different surfaces.
+`[orgId]/page.tsx` does the role-branched redirect; from there the sidebar shows
+only what that role's gate lets through. Capability gates apply on top: a
+`canHost=false` org hides Catalog, Collaborations and Payouts even from an
+OWNER, and a `canSponsor=false` org hides Sponsorship programs, Contracts,
+Billing and My Program.
 
 ```mermaid
 flowchart TD
   ENTRY["/dashboard/organization/[orgId]<br/>role-branched redirect"]
-  ENTRY -->|LEARNER| LRN["/my-program only<br/>(own ProgramAssignment progress,<br/>coverage rules, utilization)"]
-  ENTRY -->|EXPERT| EXP["/compensation only<br/>(own payoutRecipient,<br/>RateCard split, earnings)"]
-  ENTRY -->|MANAGER+ / SUPPORT / OWNER| HOME["/home — activation center"]
+  ENTRY -->|LEARNER| LRN["/my-program"]
+  ENTRY -->|EXPERT| EXP["/compensation"]
+  ENTRY -->|OWNER, MAINTAINER, BILLING_ADMIN, MANAGER, SUPPORT| HOME["/home"]
+  ENTRY -->|SUSPENDED| SUS["/appointments, Mine only"]
 
-  subgraph MGR["MANAGER sees"]
-    direction LR
-    M1["/members<br/>(tabs: all · learners · experts · invitations)"]
-    M2["/billing · /analytics<br/>(/payouts needs payouts.read: OWNER, MAINTAINER, BILLING_ADMIN)"]
-    M3["/consent · /appointments · /audit"]
-  end
-  subgraph MNT["+ MAINTAINER adds"]
-    direction LR
-    T1["/programs"]
-    T2["/contracts · /purchase-orders"]
-    T3["/settings"]
-  end
-  subgraph OWN["+ settings with split holders"]
-    direction LR
-    O1["/settings/sso<br/>(policy + providers + domain claims; OWNER and MAINTAINER read, only OWNER writes)"]
-    O2["/settings/data-exports<br/>(DPDP §11: people bundle OWNER + MAINTAINER,<br/>finance bundle OWNER + BILLING_ADMIN)"]
-  end
-  HOME --> MGR --> MNT --> OWN
-
-  HOME -.->|BILLING_ADMIN branch| FIN["FinanceLeadViewCard<br/>finance-tuned /home overview"]
-  HOME -.->|sub-MANAGER deep-link| CON["role-specific ConsumerViewCard<br/>(deep-links to /my-program or /compensation)"]
+  HOME --> OPS["Operations roles (OWNER, MAINTAINER, MANAGER, SUPPORT):<br/>Analytics, Audit, Everyone tabs"]
+  HOME --> FIN["Finance roles (OWNER, MAINTAINER, BILLING_ADMIN, MANAGER):<br/>Billing and its tabs, Sponsorship programs"]
+  HOME --> GOV["Governance (OWNER, MAINTAINER):<br/>Settings, Invitations, program design"]
 ```
 
-Two nuances the table compresses. First, role access is no longer expressed
-as a cumulative rank floor: since the 2026-07 remediation, every surface is
-granted through the **permission matrix** in `lib/auth/org-permissions.ts`,
-which the sidebar, the page guards, and the API routes all consume — so the
-"Roles" column below names a matrix surface and lists exactly which roles it
-admits. Second, the boxes are _also_ capability-gated — a `canHost=false`
-org hides the Experts tab, `/payouts` and `/catalog` even from an OWNER, and a
-`canSponsor=false` org hides `/programs`, `/contracts`, `/billing`, and
-`/purchase-orders`.
+Access is not a cumulative rank floor. Every surface is a key in the matrix
+that lists exactly the roles it admits, so the "Roles" column below names the
+keys and the roles each one holds.
 
-## Visibility by capability
+## Route × Role matrix
 
-Visibility here is the **capability** gate only. Every tab is **also**
-role-gated through the matrix surface named in the "Roles" column, which the
-page enforces via `useRequireOrgAccess({ permission })` and the API enforces
-via `requireOrgAccess(orgId, { permission })`. The matrix definition in
-`lib/auth/org-permissions.ts` is the single source of truth; this table is a
-readable projection of it.
+Derived from `lib/auth/org-permissions.ts` (the keys), `lib/dashboard/nav/organization.ts`
+(the sidebar) and each page's guard. `✓` means the role holds the page's
+gate. `p` means the role passes only with a consultant profile on the
+membership (an OWNER can deliver too). `—` means the gate refuses the role: a
+server-guarded page answers a neutral "You don't have access to this page", a
+client-guarded one redirects to `/home`. Every member can reach `/home`,
+`/appointments` (Mine), `/messages`, `/library` (Mine) and `/support`; a
+SUSPENDED member keeps only Overview, Appointments (Mine) and Library (Mine).
 
-| Page                       | SPONSOR | HOST | HYBRID | Roles (matrix surface)                                                                                                      | In sidebar?                               | Notes                                                                                                                                                                                                                                                                                                                                                  |
-| -------------------------- | ------- | ---- | ------ | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `/home`                    | ✅      | ✅   | ✅     | any active member                                                                                                           | yes                                       | Renders the operator stat grid when `operations.read` passes; role-branched ConsumerViewCard otherwise.                                                                                                                                                                                                                                                |
-| `/my-program`              | ✅      | —    | ✅     | `myProgram.read` (LEARNER; page filters server-side to caller's assignments)                                                | yes (LEARNER + canSponsor only)           | Per-cycle ProgramAssignment progress, coverage rules, utilization history. 404 on canSponsor=false.                                                                                                                                                                                                                                                    |
-| `/compensation`            | —       | ✅   | ✅     | `myArrangement.read` (EXPERT; page filters to caller's earnings)                                                            | yes (EXPERT + canHost only)               | Membership.payoutRecipient, default RateCard split, recent earnings on org-tagged payments. 404 on canHost=false.                                                                                                                                                                                                                                      |
-| `/members`                 | ✅      | ✅   | ✅     | `members.read` (OWNER, MAINTAINER, MANAGER, SUPPORT)                                                                        | yes                                       | BILLING_ADMIN is operator-blind and excluded at sidebar, page, and API.                                                                                                                                                                                                                                                                                |
-| `/members?tab=invitations` | ✅      | ✅   | ✅     | `invitations.manage` (OWNER, MAINTAINER)                                                                                    | tab                                       | Tab on Members. Send-invite button disabled pre-verification; uses `humanizeOrgError` for `ORG_NOT_VERIFIED`.                                                                                                                                                                                                                                          |
-| `/catalog`                 | —       | ✅   | ✅     | `catalog.manage` (OWNER, MAINTAINER, MANAGER)                                                                               | yes (if `canHost`)                        | The offerings the org OWNS, distinct from the sponsorship entitlements on `/programs`. Webinar and Class only — `ConsultationPlan` and `SubscriptionPlan` require a `consultantProfileId`, so an org can never solely own one. The named deliverer is re-checked server-side against an ACTIVE EXPERT membership.                                      |
-| `/programs`                | ✅      | —    | ✅     | `programs.manage` (OWNER, MAINTAINER)                                                                                       | yes (if `canSponsor`)                     | The learner-facing catalog GETs stay open to any active member by design.                                                                                                                                                                                                                                                                              |
-| `/billing`                 | ✅      | —    | ✅     | `billing.read` (OWNER, MAINTAINER, BILLING_ADMIN, MANAGER); mutations `billing.manage` (OWNER, BILLING_ADMIN)               | yes (if `canSponsor`)                     | BillingAccount summary + wallet (`WalletTab`) + invoices — one unified surface. The former extra `fundingSource=WALLET` sidebar branch was removed as unreachable (a BillingAccount only exists when `canSponsor=true`).                                                                                                                               |
-| `/payouts`                 | —       | ✅   | ✅     | `payouts.read`; mutations `payouts.manage` (OWNER, BILLING_ADMIN)                                                           | yes (if `canHost`)                        | Host-side only.                                                                                                                                                                                                                                                                                                                                        |
-| `/analytics`               | ✅      | ✅   | ✅     | `operations.read` (OWNER, MAINTAINER, MANAGER, SUPPORT)                                                                     | yes                                       | Rollups respect capability — host-side numbers hidden when `canHost = false` and vice versa. SUPPORT reads for L1/L2 investigation.                                                                                                                                                                                                                    |
-| `/settings`                | ✅      | ✅   | ✅     | `settings.manage` (OWNER, MAINTAINER)                                                                                       | no — avatar menu ("<Org> settings")       | Branding + policy. As of PR #1842 (part of #1527), org settings is no longer a sidebar row: it opens from the header avatar menu, shown only to a role holding at least one section, and renders through `SettingsLayout` with one URL per section rather than `?tab=` state; see `docs/decisions/2026-09-27-dashboard-shell-and-context-switcher.md`. |
-| `/settings/sso`            | ✅      | ✅   | ✅     | `identity.read` (OWNER, MAINTAINER) for the `GET`; writes need `identity.manage`, which only the **OWNER** holds            | section, not tab                          | The former `/settings?tab=sso` now redirects here; reachable from the avatar menu's "<Org> settings" entry, not the sidebar.                                                                                                                                                                                                                           |
-| `/contracts`               | ✅      | —    | ✅     | `contracts.read` (OWNER, MAINTAINER); mutations `contracts.manage` (OWNER)                                                  | yes under `canSponsor` + `contracts.read` | The old `≥MAINTAINER ‖ finance` sidebar expression showed a dead tab to MANAGER and BILLING_ADMIN; the matrix entry ended that drift.                                                                                                                                                                                                                  |
-| `/purchase-orders`         | ✅      | —    | ✅     | `purchaseOrders.read` (OWNER, MAINTAINER, BILLING_ADMIN, MANAGER); mutations `purchaseOrders.manage` (OWNER, BILLING_ADMIN) | yes under `canSponsor && requiresPO`      | Receipt icon.                                                                                                                                                                                                                                                                                                                                          |
-| `/consent`                 | ✅      | ✅   | ✅     | `consent.read` / `consent.requestWithdrawal` (OWNER, MAINTAINER, MANAGER)                                                   | yes                                       | ShieldCheck icon; DPDP artifact roster. BILLING_ADMIN's former page-guard reach was closed to match the sidebar.                                                                                                                                                                                                                                       |
+| Route                                  | Needs        | Gate (matrix key)                                                        | OWNER | MAINT. | BILLING | MANAGER | SUPPORT | EXPERT | LEARNER |
+| -------------------------------------- | ------------ | ------------------------------------------------------------------------ | :---: | :----: | :-----: | :-----: | :-----: | :----: | :-----: |
+| `/home`                                | —            | any active member                                                        |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
+| `/my-program`                          | `canSponsor` | `myProgram.read`                                                         |   —   |   —    |    —    |    —    |    —    |   —    |    ✓    |
+| `/compensation`                        | `canHost`    | consultant profile or EXPERT (`deliversForOrg`)                          |   p   |   p    |    p    |    p    |    p    |   ✓    |    p    |
+| `/appointments` Mine                   | —            | active or suspended member                                               |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
+| `/appointments` Everyone               | —            | `operations.read`                                                        |   ✓   |   ✓    |    —    |    ✓    |    ✓    |   —    |    —    |
+| `/appointments` Unscheduled            | —            | `appointments.unscheduled.read`                                          |   ✓   |   ✓    |    —    |    ✓    |    —    |   —    |    —    |
+| `/appointments/[id]`                   | —            | on the booking, or `operations.read`                                     |   ✓   |   ✓    |    —    |    ✓    |    ✓    | on it  |  on it  |
+| `/requests`                            | `canHost`    | consultant profile (others are redirected)                               |   p   |   p    |    p    |    p    |    p    |   p    |    p    |
+| `/messages`                            | —            | active member                                                            |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
+| `/library` Mine                        | —            | active or suspended member                                               |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
+| `/library` Everyone                    | —            | `operations.read`, ACTIVE                                                |   ✓   |   ✓    |    —    |    ✓    |    ✓    |   —    |    —    |
+| `/members` directory                   | —            | `members.directory`                                                      |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
+| `/members` roster                      | —            | `members.read`                                                           |   ✓   |   ✓    |    —    |    ✓    |    ✓    |   —    |    —    |
+| `/members` Invitations                 | —            | `invitations.manage`                                                     |   ✓   |   ✓    |    —    |    —    |    —    |   —    |    —    |
+| `/programs`                            | `canSponsor` | `programs.read`; manage `programs.manage`                                |   ✓   |   ✓    |  read   |  read   |    —    |   —    |    —    |
+| `/contracts`                           | `canSponsor` | `contracts.read`; manage `contracts.manage`                              |   ✓   |  read  |  read   |    —    |    —    |   —    |    —    |
+| `/billing`                             | `canSponsor` | `billing.read`; manage `billing.manage`                                  |   ✓   |  read  |    ✓    |  read   |    —    |   —    |    —    |
+| `/catalog`, `/catalog/[type]/new`      | `canHost`    | `catalog.manage`                                                         |   ✓   |   ✓    |    —    |    ✓    |    —    |   —    |    —    |
+| `/collaborations`                      | `canHost`    | `catalog.manage` sees every hosted plan; `deliversForOrg` sees their own |  all  |  all   |    —    |   all   |    —    |  own   | own (p) |
+| `/payouts`                             | `canHost`    | `payouts.read`; manage and approve `payouts.manage` / `payouts.approve`  |   ✓   |  read  |    ✓    |    —    |    —    |   —    |    —    |
+| `/analytics`                           | —            | `operations.read`; money tiles `billing.read`                            |   ✓   |   ✓    |    —    |    ✓    |    ✓    |   —    |    —    |
+| `/audit`                               | —            | `audit.read`; CSV `dataExports.people`                                   |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   —    |    —    |
+| `/consent`                             | —            | `consent.read`, `consent.requestWithdrawal`                              |   ✓   |   ✓    |    —    |    ✓    |    —    |   —    |    —    |
+| `/support` Support cases               | —            | `supportRequests.org` (others get an empty state)                        |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   —    |    —    |
+| `/support` Evidence requests           | —            | any active member                                                        |   ✓   |   ✓    |    ✓    |    ✓    |    ✓    |   ✓    |    ✓    |
+| `/support/activity`                    | —            | `operations.read`                                                        |   ✓   |   ✓    |    —    |    ✓    |    ✓    |   —    |    —    |
+| `/settings/general`, `/branding`       | —            | `settings.manage`                                                        |   ✓   |   ✓    |    —    |    —    |    —    |   —    |    —    |
+| `/settings/sso`                        | —            | `identity.read`; writes `identity.manage`                                |   ✓   |  read  |    —    |    —    |    —    |   —    |    —    |
+| `/settings/billing` (Billing contacts) | —            | `billing.manage`                                                         |   ✓   |   —    |    ✓    |    —    |    —    |   —    |    —    |
+| `/settings/webhooks`                   | —            | `integrations.manage`                                                    |   ✓   |   —    |    ✓    |    —    |    —    |   —    |    —    |
+| `/settings/data-exports`               | —            | `dataExports.people` or `dataExports.finance`                            |   ✓   |   ✓    |    ✓    |    —    |    —    |   —    |    —    |
 
-> The `/plans` page (previous "org catalog" over the removed
-> `OrganizationPlan` model) is gone. Discovery now reads each per-type
-> plan's `OrgPlanVisibility` directly — see
-> [public pages & discovery](05-public-pages-and-discovery.md). The
-> operations surface `/appointments` uses the single `operations.read`
-> grant (OWNER, MAINTAINER, MANAGER, SUPPORT) at sidebar, page, and API.
-> `/documents` and `/recordings` moved out from under that grant in PR #1842
-> (part of #1527): both live in a sidebar Library group open to every
-> ACTIVE or SUSPENDED member for their own sessions (`?scope=mine`), and
-> `operations.read` now gates only the org-wide oversight view
-> (`?scope=everyone`), metadata only per ADR 20 — see
-> `docs/decisions/2026-09-27-org-role-matrix.md`.
-> `/reimbursements` uses `reimbursements.read` plus the
-> `fundingSource=PERSONAL` structural gate; `/audit` uses `audit.read`
-> (OWNER, MAINTAINER, BILLING_ADMIN, MANAGER, SUPPORT, because it is the
-> union of `audit.read.ops` and `audit.read.money`) with the CSV export gated on
-> `dataExports.people` (OWNER, MAINTAINER) because bulk export is a
-> governance action; and the
-> the `/settings` integration tabs (`webhooks`, `data-exports`)
-> use `integrations.manage` (OWNER and BILLING_ADMIN; PR #1842, part of #1527, matched this key to the existing server guards — webhook create was the OWNER-or-BILLING_ADMIN gate (today the `integrations.manage` key itself), and rotate, branding and domains stayed OWNER — replacing the earlier `integrations.read` grant).
+Points the table compresses:
 
-### Billing surface
+- **Billing tabs.** Invoices & usage opens with `billing.read`. Purchase orders
+  opens with `purchaseOrders.read` and Payment disputes with `disputes.read`,
+  both the same four finance readers. Member spend also needs PERSONAL funding.
+  Mutations are `billing.manage` and `purchaseOrders.manage` (OWNER,
+  BILLING_ADMIN).
+- **Payouts.** Three tabs. A BILLING_ADMIN cannot read the member list, so the
+  Expert routing section on the Rate cards & routing tab is where it decides
+  where experts are paid.
+- **Compensation and Requests are not role pages.** They follow the member's
+  own consultant profile, which is why the sidebar offers Compensation only to
+  the EXPERT role while the page also admits an OWNER who delivers.
+  Compensation and My Program render an empty state, not a 404, when the org
+  lacks the capability.
+- **Consent.** OWNER, MAINTAINER and MANAGER read the roster. Granting and
+  withdrawing are the member's own acts; the operator's button only records a
+  withdrawal request the member then sees in Account settings.
+- **Audit.** The categories a role may filter by follow `audit.read.ops` and
+  `audit.read.money`; the CSV export needs `dataExports.people`.
+- **Support cases.** OWNER, MAINTAINER, BILLING_ADMIN, MANAGER and SUPPORT read
+  and raise org-owned cases; the other roles see a pointer to their own
+  appointment instead.
 
-`/billing` is the **single** BillingAccount surface (invoices + payment terms +
-pending charges); the wallet view is a tab (`billing/WalletTab.tsx`), not a
-separate page. **There is no `/credits` route** — the old `/credits` alias was
-collapsed, so the prior "two-page split" TODO is resolved: one URL, one route
-guard, a `WalletTab` for WALLET-funded orgs. The NET-60 StatCard is conditional
-on `fundingSource !== "WALLET"`.
+### Capability kinds
+
+An org's capability decides which structural gate a route needs, on top of the
+role. `deriveCapabilityKind` in `lib/labels/org-labels.ts` names the four
+shapes:
+
+| Kind      | `canSponsor` | `canHost` | Routes it unlocks                                                            |
+| --------- | :----------: | :-------: | ---------------------------------------------------------------------------- |
+| `SPONSOR` |      ✓       |     —     | My Program, Sponsorship programs, Contracts, Billing                         |
+| `HOST`    |      —       |     ✓     | Compensation, Requests, Catalog, Collaborations, Payouts                     |
+| `HYBRID`  |      ✓       |     ✓     | both sets                                                                    |
+| `INERT`   |      —       |     —     | none; creation refuses it, so an existing INERT org is a configuration error |
+
+### Library: Mine and Everyone
+
+The Library (`lib/library/library-query.ts`, `lib/data/document-library.ts`,
+`lib/data/recording-library.ts`) is one component with two scopes per artifact.
+
+| Rule                                     | Mine                                                                           | Everyone                                                                                                                                                                    |
+| ---------------------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Who                                      | any ACTIVE or SUSPENDED member                                                 | ACTIVE with `operations.read`; the route re-checks `libraryScopeFor`                                                                                                        |
+| Which bookings                           | the viewer's own bookings (as buyer, attendee or deliverer) tagged to this org | `orgOwnedAppointmentWhere(orgId)`: tagged to the org and unpaid or paid from an org rail (WALLET, INVOICE, LICENSE), or delivered on a plan the org hosts whoever bought it |
+| A personally paid, org-tagged booking    | listed (it is the viewer's own)                                                | not listed: the tag alone is not ownership                                                                                                                                  |
+| An org-hosted plan bought by a B2C buyer | listed only if the viewer is a party                                           | listed, because the org hosts it                                                                                                                                            |
+| What a row carries                       | files, plan materials, recordings                                              | counts only: document threads open and done, recordings count and minutes; never a file name, URL or title of a file                                                        |
+| Filters                                  | search `q`, person, source, status, kind, dates                                | kind, dates and status only; `q`, person and source are ignored server-side so a match cannot confirm a file name or a participant                                          |
+| Row link                                 | the session's documents or recordings page                                     | the operator-metadata session detail at `/appointments/[id]`                                                                                                                |
+
+Documents list consultations, subscriptions and trials; webinar and class
+bookings appear only in recordings.
+
+### Open policy question
+
+`members.directory` is held by every role, so any member, a LEARNER included,
+can list every active member's name, avatar and role. Whether a LEARNER should
+see the other learners (and which fields) is undecided; the matrix pins the
+current grant, and narrowing it means a new key rather than a rank change.
 
 ## `/home` — the state-aware activation center
 
@@ -316,19 +310,22 @@ payload → an `OrgActivationSnapshot`, and runs two **pure** derivations from
 
 - **`deriveActionCenter(snapshot, orgId)`** → severity-ordered banners
   (`critical` / `warning` / `info`) for conditions that need action _now_:
-  pending verification, suspended, overdue invoices, credit-pool cap ≥ 80%,
+  overdue invoices, credit-pool cap ≥ 80%,
   contract expiring within 30 days, pending overages, **stuck payouts**, low
   wallet (< ₹1,000 `WALLET_LOW_BALANCE_PAISE`). Only conditions whose backing
-  data exists today render — dunning/dispute banners arrive with their crons.
+  data exists today render. Pending verification and suspension are not
+  repeated here: the dashboard shell's status banner owns them on every page.
 - **`deriveActivationChecklist(snapshot, orgId)`** → the Getting-Started steps,
   capability-aware: a SPONSOR runs verify → KYB(INVOICE) → billing → contract →
   program → invite → assign; a HOST-only org collapses to verify → invite. The
   checklist auto-hides once every applicable step is done.
 
-Branching: `BILLING_ADMIN` gets a finance-tuned overview (`FinanceLeadViewCard`);
-a sub-MANAGER who deep-links here sees a role-specific consumer card (deep-link
-to `/my-program` or `/compensation`); MANAGER+ gets the operator stat grid +
-checklist + activity feed.
+Branching: the roles holding `activity.read` (OWNER, MAINTAINER, MANAGER) get
+the operator stat grid, checklist and activity feed; BILLING_ADMIN gets the
+finance overview (`FinanceLeadViewCard`); SUPPORT gets the member-support queue
+counts, each linking to Help & support › Member support activity with the
+matching status filter; LEARNER and EXPERT get a card pointing at My Program or
+Compensation. The header reads "Overview" for every role.
 
 > **Honest "pending platform enablement" payout copy.** While
 > `ENABLE_LIVE_PAYOUTS=false`, the server counts `PROCESSING` payouts and the
@@ -367,7 +364,7 @@ The UI is convenience; the server is authoritative in both cases.
 
 Two compliance surfaces sit under the org dashboard:
 
-- **`/settings/data-exports`** (the retired `/settings?tab=data-exports` link now redirects here) — DPDP §11 right-to-access. OWNER and
+- **`/settings/data-exports`** — DPDP §11 right-to-access. OWNER and
   MAINTAINER request, list and download the people bundle through
   `dataExports.people`, and OWNER and BILLING_ADMIN do the same for the
   finance bundle through `dataExports.finance`; each requests a bundle (rate-limited 1/24h via `orgDataExportLimiter`);
@@ -375,21 +372,26 @@ Two compliance surfaces sit under the org dashboard:
   Storage, and the page exposes a 7-day signed-URL download. The page polls every
   15s while `PENDING`/`PROCESSING` and stops on terminal states
   (`READY`/`FAILED`/`EXPIRED`). (Model is `OrgDataExportJob` — not `OrgDataExport`.)
-- **`/consent`** — DPDP consent-artifact roster. Lists active + withdrawn
-  `ConsentArtifact`s and lets an admin grant/withdraw on a member's behalf, with
-  withdraw at the same prominence as grant (DPDP §6(4)). Gated via
-  `useRequireFinanceSurface` (OWNER + MAINTAINER + BILLING_ADMIN + MANAGER),
-  mirroring the MANAGER floor on `…/consent`.
+- **`/consent`** — DPDP consent-artifact roster, read-only. Lists active and
+  withdrawn `ConsentArtifact`s. Granting and withdrawing are the member's own
+  acts (DPDP §6(4)): an operator records a withdrawal request, which the member
+  sees in Account settings next to their own Withdraw control, and nothing is
+  withdrawn until they act. Gated by `consent.read` and
+  `consent.requestWithdrawal` (OWNER, MAINTAINER, MANAGER) through
+  `useRequireOrgAccess`.
 
 ## Navigation source of truth
 
 The sidebar is built by `buildOrganizationNav` in
-`lib/dashboard/nav/organization.ts` (mounted by `OrganizationShell` in
-`app/dashboard/organization/[orgId]/OrganizationShell.tsx`) from the
-org's `canSponsor` / `canHost` / `fundingSource` / `requiresPO` flags
-and the current user's `MemberRole` checked against the permission matrix
-through `useOrgRole().can`, which reads the same
-`lib/auth/org-permissions.ts` keys as the API routes. The sidebar is
+`lib/dashboard/nav/organization.ts` (mounted by `OrgDashboardShell` in
+`app/dashboard/organization/[orgId]/OrgDashboardShell.tsx`) from the org's
+`canSponsor` / `canHost` flags, the member's consultant profile and their
+`MemberRole` checked against the permission matrix, which reads the same
+`lib/auth/org-permissions.ts` keys as the API routes. The same file owns
+`ORGANIZATION_PAGE_LABELS`, so the sidebar label, the page header and the
+breadcrumb for a route share one name: Overview, Booking requests,
+Collaborations, Sponsorship programs, Audit, Consent, Help & support, and
+"Billing contacts" for the `settings/billing` section. The sidebar is
 cosmetic — it does not enforce authorization. Every page and API route
 calls `requireOrgAccess` / `useRequireOrgAccess` independently. Items
 that would 404/403/501 are hidden to keep the nav tidy.
@@ -422,9 +424,13 @@ instead of the raw error code.
 `lib/labels/org-labels.ts`:
 
 - `SelfServiceFundingSourceSchema` limits the dropdown to `PERSONAL |
-WALLET | INVOICE | LICENSE` (no PROJECT).
-- `SelfServiceMemberRoleSchema` limits the default-role selector to
-  `OWNER | MAINTAINER | MANAGER | LEARNER`.
+WALLET | LICENSE`; INVOICE credit is set by a platform admin.
+- `SelfServiceMemberRoleSchema` limits the invite role selector to
+  `OWNER | MAINTAINER | BILLING_ADMIN | MANAGER | LEARNER`.
+
+The steps are Org Info, then Billing (sponsors) and Revenue Rates (hosts), then
+Invite Team and Review. Logo and banner are uploaded afterwards under
+Settings › Branding.
 
 The wizard POSTs `{ canSponsor, canHost, fundingSource, ... }` to
 `/api/organizations`. An INERT-result body (both booleans false) is
@@ -447,3 +453,26 @@ updated without a full reload.
 - `api-reference` — the route each page calls.
 - [`feature-flags-and-rollout`](06-feature-flags-and-rollout.md) — the capability/flag gates that drive page visibility.
 - [`contract-lifecycle`](07-contract-lifecycle.md) — the contract term-lock the edit drawer reflects.
+
+## Deprecated & Superseded Approaches
+
+Delete any of these if you meet them in the code; they were replaced on purpose.
+
+- **Two collaborator pages.** `/collaborators` (operators) and `/collaborations`
+  (experts) over the same panel are one `/collaborations` route now, and the
+  server picks the view. There is no `/collaborators` route.
+- **"Programs" as the page name.** The route is still `programs`, but the nav
+  label, header and breadcrumb read "Sponsorship programs".
+- **`requiresPO` as the Purchase orders tab gate.** The tab follows
+  `purchaseOrders.read`; the flag only makes a PO mandatory.
+- **Raw `organizationId` as Library ownership.** The Everyone scope used the
+  tag, which a member's personally paid booking also carries, and honoured
+  `q` and `person`. It now uses `orgOwnedAppointmentWhere` and ignores both.
+- **Standalone `purchase-orders`, `reimbursements`, `disputes` routes** and the
+  `/credits` alias: all folded into Billing tabs.
+- **A branding step in the wizard.** It collected two colours nothing rendered;
+  the wizard no longer asks, and the PATCH route still accepts the fields.
+- **Bulk `auto-enroll` API and its rate limiter.** No page ever called it;
+  assignment goes through the single assignments route.
+- **Verification and suspension in the action center.** The shell banner owns
+  both; the action center lists only actionable conditions.

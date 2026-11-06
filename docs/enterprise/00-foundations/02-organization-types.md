@@ -26,12 +26,12 @@ The table below reads the four combinations of the two booleans down its first t
 columns and gives the derived kind and its meaning in the last two; the INERT row
 is the combination that the API rejects at create time.
 
-| canSponsor | canHost | Derived kind | Meaning |
-|------------|---------|--------------|---------|
-| `true`     | `false` | `SPONSOR`    | Pays for its members' sessions. Has a `BillingAccount`. No hosting-side payout flow. |
+| canSponsor | canHost | Derived kind | Meaning                                                                                         |
+| ---------- | ------- | ------------ | ----------------------------------------------------------------------------------------------- |
+| `true`     | `false` | `SPONSOR`    | Pays for its members' sessions. Has a `BillingAccount`. No hosting-side payout flow.            |
 | `false`    | `true`  | `HOST`       | Hosts experts who earn through the org. Has an `OrganizationPayoutAccount`. No billing account. |
-| `true`     | `true`  | `HYBRID`     | Both flows run independently. Has both records. |
-| `false`    | `false` | `INERT`      | Transitional — rejected at create time (`app/api/organizations/route.ts` validates `canSponsor || canHost`). |
+| `true`     | `true`  | `HYBRID`     | Both flows run independently. Has both records.                                                 |
+| `false`    | `false` | `INERT`      | Transitional — rejected at create time (`app/api/organizations/route.ts` validates `canSponsor  |     | canHost`). |
 
 ```mermaid
 flowchart TD
@@ -49,13 +49,13 @@ flowchart TD
 The four seeded orgs (`prisma/seedFiles/14a-create-organizations.ts`) exist
 precisely to put one real shape behind every cell of the table above:
 
-| Derived kind | Seeded org | One concrete line |
-|--------------|-----------|-------------------|
-| `SPONSOR`  | **Wipro** (`wipro`) | `canSponsor=true, canHost=false` — buys coaching for its own engineers; has a `BillingAccount` (INVOICE), a PO, and a `LICENSED_SEAT` program. No payout account, because Wipro never earns. |
-| `HOST`     | **LearnPro Academy** (`learnpro-academy`) | `canSponsor=false, canHost=true` — an agency that aggregates independent experts; has an `OrganizationPayoutAccount` + a 10/10/80 `RateCard` + 5 `EXPERT` memberships. No `BillingAccount`, because LearnPro never sponsors a learner. |
-| `HYBRID`   | **IIT Madras** (`iit-madras`) | `canSponsor=true, canHost=true` — sponsors its students (WALLET-funded `CREDIT_POOL`) **and** hosts its professors as experts (payout account). Both records exist; the two flows run in parallel. |
-| `HOST` (solo) | **Arjun's Coaching** (`arjun-anderson-coaching-…`) | `canSponsor=false, canHost=true` — a single-consultant convenience org so a freelancer (Arjun, the seeded solo consultant) has a payout surface. Same capability shape as LearnPro, one member. |
-| `INERT`    | — (never seeded) | `canSponsor=false, canHost=false` — rejected at create. Nothing to demo because it can't exist; see the INERT guard below. |
+| Derived kind  | Seeded org                                         | One concrete line                                                                                                                                                                                                                      |
+| ------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SPONSOR`     | **Wipro** (`wipro`)                                | `canSponsor=true, canHost=false` — buys coaching for its own engineers; has a `BillingAccount` (INVOICE), a PO, and a `LICENSED_SEAT` program. No payout account, because Wipro never earns.                                           |
+| `HOST`        | **LearnPro Academy** (`learnpro-academy`)          | `canSponsor=false, canHost=true` — an agency that aggregates independent experts; has an `OrganizationPayoutAccount` + a 10/10/80 `RateCard` + 5 `EXPERT` memberships. No `BillingAccount`, because LearnPro never sponsors a learner. |
+| `HYBRID`      | **IIT Madras** (`iit-madras`)                      | `canSponsor=true, canHost=true` — sponsors its students (WALLET-funded `CREDIT_POOL`) **and** hosts its professors as experts (payout account). Both records exist; the two flows run in parallel.                                     |
+| `HOST` (solo) | **Arjun's Coaching** (`arjun-anderson-coaching-…`) | `canSponsor=false, canHost=true` — a single-consultant convenience org so a freelancer (Arjun, the seeded solo consultant) has a payout surface. Same capability shape as LearnPro, one member.                                        |
+| `INERT`       | — (never seeded)                                   | `canSponsor=false, canHost=false` — rejected at create. Nothing to demo because it can't exist; see the INERT guard below.                                                                                                             |
 
 The seed covers all four real cells on purpose, so a sales engineer or a new
 SDE can open the dashboard for any capability shape without hand-crafting a
@@ -89,14 +89,14 @@ not an access gate.
 
 Columns are the two candidate designs; rows are the concrete extensibility and correctness scenarios that drove the choice — read it to understand why the INERT guard and `deriveCapabilityKind` are deliberate prices worth paying.
 
-| | Single `OrganizationKind` enum (rejected) | Two booleans (shipped) |
-|---|---|---|
-| Add a 4th capability (e.g. RESELL) | new enum value → migration + every `switch` re-audited for exhaustiveness | a 3rd typed boolean — one additive column, no consumer re-audit |
-| "Does it buy?" check | must special-case BUYER **and** HYBRID | `canSponsor` — one column |
-| HYBRID | a distinct value every consumer must remember to handle | falls out for free (both booleans true) |
-| Cost we pay back | — | two columns can drift into the INERT `false/false` combo, so every write path needs the guard below; and `deriveCapabilityKind` exists solely to re-derive the label the enum used to store |
+|                                    | Single `OrganizationKind` enum (rejected)                                 | Two booleans (shipped)                                                                                                                                                                      |
+| ---------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Add a 4th capability (e.g. RESELL) | new enum value → migration + every `switch` re-audited for exhaustiveness | a 3rd typed boolean — one additive column, no consumer re-audit                                                                                                                             |
+| "Does it buy?" check               | must special-case BUYER **and** HYBRID                                    | `canSponsor` — one column                                                                                                                                                                   |
+| HYBRID                             | a distinct value every consumer must remember to handle                   | falls out for free (both booleans true)                                                                                                                                                     |
+| Cost we pay back                   | —                                                                         | two columns can drift into the INERT `false/false` combo, so every write path needs the guard below; and `deriveCapabilityKind` exists solely to re-derive the label the enum used to store |
 
-The booleans win because the two questions (*buy?* / *sell?*) are genuinely
+The booleans win because the two questions (_buy?_ / _sell?_) are genuinely
 orthogonal — collapsing them into one axis made HYBRID a permanent special
 case. The price is the INERT guard (a combo the enum made unrepresentable by
 construction) and a presentation helper to reconstitute the label. We took
@@ -123,15 +123,15 @@ Every user-facing string for the capability kind lives in
 that renders in the UI and the Tailwind badge class that colours it, all read
 verbatim from `CAPABILITY_LABEL` and `CAPABILITY_BADGE_CLASS`.
 
-| Capability | Label | Badge class |
-|------------|-------|-------------|
-| `SPONSOR`  | "Sponsor" | `bg-blue-100 text-blue-900 border-blue-200` |
-| `HOST`     | "Host"    | `bg-emerald-100 text-emerald-900 border-emerald-200` |
-| `HYBRID`   | "Hybrid"  | `bg-purple-100 text-purple-900 border-purple-200` |
-| `INERT`    | "Inactive"| `bg-zinc-100 text-zinc-600 border-zinc-200` |
+| Capability | Label      | Badge class                                          |
+| ---------- | ---------- | ---------------------------------------------------- |
+| `SPONSOR`  | "Sponsor"  | `bg-blue-100 text-blue-900 border-blue-200`          |
+| `HOST`     | "Host"     | `bg-emerald-100 text-emerald-900 border-emerald-200` |
+| `HYBRID`   | "Hybrid"   | `bg-purple-100 text-purple-900 border-purple-200`    |
+| `INERT`    | "Inactive" | `bg-zinc-100 text-zinc-600 border-zinc-200`          |
 
-Descriptions (`CAPABILITY_DESCRIPTION`) are the authoritative tooltips;
-the wizard, OrgSwitcher, and Home page all render straight from there.
+Labels and badge classes come from `lib/labels/org-labels.ts`; the wizard,
+context switcher and Overview all render straight from there.
 
 ## INERT guard
 
@@ -172,13 +172,13 @@ The table below maps each pre-Arch-4 term in the left column to its current
 representation in the middle column, so a reader coming from the old vocabulary can
 find the new shape.
 
-| Pre-Arch-4 term | Now | Notes |
-|-----------------|-----|-------|
-| `OrganizationKind.BUYER` | `canSponsor=true, canHost=false` | — |
-| `OrganizationKind.PROVIDER` | `canSponsor=false, canHost=true` | — |
-| `OrganizationKind.HYBRID` | `canSponsor=true, canHost=true` | — |
-| `OrganizationProfile` | merged into `Organization` | branding + policies are now columns on the base row. |
-| `OrganizationProfile.id` (session) | `organizationId` | session exposes the Organization id directly. |
+| Pre-Arch-4 term                    | Now                              | Notes                                                |
+| ---------------------------------- | -------------------------------- | ---------------------------------------------------- |
+| `OrganizationKind.BUYER`           | `canSponsor=true, canHost=false` | —                                                    |
+| `OrganizationKind.PROVIDER`        | `canSponsor=false, canHost=true` | —                                                    |
+| `OrganizationKind.HYBRID`          | `canSponsor=true, canHost=true`  | —                                                    |
+| `OrganizationProfile`              | merged into `Organization`       | branding + policies are now columns on the base row. |
+| `OrganizationProfile.id` (session) | `organizationId`                 | session exposes the Organization id directly.        |
 
 ## Related docs
 
