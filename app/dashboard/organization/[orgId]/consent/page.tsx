@@ -328,7 +328,7 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
   return (
     <>
       <DashboardHeader
-        title="DPDP consent"
+        title="Consent"
         subtitle="Tamper-evident consent artifacts per the Digital Personal Data Protection Act 2023. Retained 7 years from the grant or the withdrawal, whichever is later."
       />
       <DashboardContent>

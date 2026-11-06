@@ -63,7 +63,7 @@ export function HelpSupportLayout({
   return (
     <div className="min-w-0 space-y-6">
       <PageHeader
-        title={organization ? "Organization help & support" : "Help & support"}
+        title="Help & support"
         description={
           organization
             ? "Get help and follow support activity for this organization."
