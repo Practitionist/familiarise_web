@@ -1,6 +1,6 @@
 # Notification System
 
-The notification system uses a dual-layer architecture: **Resend** for direct transactional email delivery and **Novu** for multi-channel notification orchestration (in-app, email, push). Neither layer blocks the main transaction flow — a notification call never causes the calling operation to roll back. As of #1654 both layers are outbox-first: a transactional email is a `PENDING` `FailedEmail` row before Resend is called and a Novu trigger is a `NotificationOutbox` row before Novu is called, each written where the business change commits (inside its transaction when the caller has one), attempted once inline under a time budget, and finished by a relay on the Netlify ticker when that attempt times out or fails transiently. A timeout is not a failure and never pages; the row waits and the idempotency key (Resend) or the row-derived bulk `Idempotency-Key` (Novu, reused verbatim after an unknown outcome) makes a late duplicate harmless. As of #1298, a missing or invalid `RESEND_API_KEY` leaves the row `PENDING` for the relay rather than dropping the message. All sixteen Novu workflow families are in-app only, so Novu never sends an email.
+The notification system uses a dual-layer architecture: **Resend** for direct transactional email delivery and **Novu** for multi-channel notification orchestration (in-app, email, push). Neither layer blocks the main transaction flow — a notification call never causes the calling operation to roll back. As of #1654 both layers are outbox-first: a transactional email is a `PENDING` `FailedEmail` row before Resend is called and a Novu trigger is a `NotificationOutbox` row before Novu is called, each written where the business change commits (inside its transaction when the caller has one), attempted once inline under a time budget, and finished by a relay on the Netlify ticker when that attempt times out or fails transiently. A timeout is not a failure and never pages; the row waits and the idempotency key (Resend) or the generation-scoped `Idempotency-Key` (Novu, reused verbatim after an unknown outcome) makes a late duplicate harmless. As of #1298, a missing or invalid `RESEND_API_KEY` leaves the row `PENDING` for the relay rather than dropping the message. All sixteen Novu workflow families are in-app only, so Novu never sends an email.
 
 ```mermaid
 graph TD
@@ -93,7 +93,7 @@ graph TD
                                                                status = 'RUNNING'` -> P0 TOCTOU lock race!
 ```
 
-The cron box above is the audit-time snapshot. It is no longer true that `cron-heartbeat.yml` writes `cron:heartbeat:last`: only `withCronLock` writes that key, and the workflow now watches just the Actions-scheduled workflows.
+The cron box and the relay cadences above are the audit-time snapshot; current cadences and limits are in [01-architecture.md §5](./01-architecture.md#5-scheduled-relays-sidecar-indexes--observability). It is no longer true that `cron-heartbeat.yml` writes `cron:heartbeat:last`: only `withCronLock` writes that key, and the workflow now watches just the Actions-scheduled workflows.
 
 ### 1.2 Target Production Architecture (Improvised, Decoupled & Hardened)
 
@@ -128,7 +128,8 @@ The cron box above is the audit-time snapshot. It is no longer true that `cron-h
   Netlify `cron-tick.mts` (Every 5m, Phase-Staggered):
   - Slot `:00, :15, :30, :45` (6 targets) | Slot `:05, :20, :35, :50` (6 targets) | Slot `:10, :25, :40, :55` (6 targets)
   - Max 6–7 concurrent targets per tick (matches warm pool + PgBouncer budget); 0% idle ticks!
-  - Per-target timeout raised from 6s -> 15s; `tracePropagationTargets: []` prevents warm container fetch pollution.
+  - Per-target timeout 15s by default (`drain-notification-outbox` 24s, `retry-failed-emails` 20s); `tracePropagationTargets: []` prevents warm container fetch pollution.
+  - `drain-notification-outbox` every 10m at :05 (limit 100); `retry-failed-emails` every 15m at :05 (limit 20).
   - Atomic Postgres lock: `CREATE UNIQUE INDEX "SystemJobExecution_running_jobName_key" ON "SystemJobExecution"("jobName") WHERE status = 'RUNNING'`
   - `/api/health` queries `pickFresherTimestamp(redisHeartbeat, SystemJobExecution.startedAt)` -> 0% false-stale rate!
 

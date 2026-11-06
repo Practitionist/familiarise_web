@@ -408,8 +408,8 @@ flowchart LR
     subgraph CRONS["Scheduled Jobs"]
         C1["appointment-reminders\nGET /api/cleanup/appointment-reminders\nEvery 15 minutes\nAuth: Bearer CRON_SECRET"]
         C2["auto-complete-appointments\nGET /api/cleanup/auto-complete-appointments\nEvery 1 hour\nAuth: Bearer CRON_SECRET"]
-        C3["retry-failed-emails\nPOST /api/cleanup/retry-failed-emails\nTicker every 15 minutes (limit 20) + Actions backstop\nAuth: Bearer CRON_SECRET"]
-        C4["drain-notification-outbox\nPOST /api/cleanup/drain-notification-outbox\nTicker every 5 minutes (limit 20)\nAuth: Bearer CRON_SECRET"]
+        C3["retry-failed-emails\nPOST /api/cleanup/retry-failed-emails\nTicker every 15 minutes at :05 (limit 20)\nAuth: Bearer CRON_SECRET"]
+        C4["drain-notification-outbox\nPOST /api/cleanup/drain-notification-outbox\nTicker every 10 minutes at :05 (limit 100)\nAuth: Bearer CRON_SECRET"]
     end
 
     subgraph LOGIC["Logic"]

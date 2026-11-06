@@ -2,7 +2,7 @@
 
 > Production readiness runbook for outbound email (`lib/email/`), Novu in-app feed notifications (`lib/novu/`), DMARC/SPF/DKIM alignment, scheduled outbox relays, and environment variables.
 
-**Last Updated**: 2026-10-11
+**Last Updated**: 2026-11-06
 **Live Domain**: `familiarisenow.com` (Netlify DNS)
 
 ---
@@ -12,6 +12,7 @@
 - [Sending Domains & DMARC Architecture](#sending-domains--dmarc-architecture)
 - [Service Free Tier Limits & Quotas](#service-free-tier-limits--quotas)
 - [Pre-Launch Checklist (Free Tier, \$0/month)](#pre-launch-checklist-free-tier-0month)
+  - [Step 7: Bell Outbox Delivery-Format Cutover](#step-7-bell-outbox-delivery-format-cutover)
 - [DNS Setup for Resend & DMARC](#dns-setup-for-resend--dmarc)
 - [Novu Environment & Workflow Configuration](#novu-environment--workflow-configuration)
 - [Scheduled Outbox Drains & Sweep Cadences](#scheduled-outbox-drains--sweep-cadences)
@@ -127,6 +128,24 @@ Inbound (practitionist.com):
 - [ ] Confirm waitlist footer link (`GET /api/waitlist/unsubscribe`) renders confirmation form without mutating DB, and `POST` unsubscribes immediately
 - [ ] Trigger a test booking event and verify `flushNotificationsAfter` delivers both the Novu bell and Resend email
 
+### Step 7: Bell Outbox Delivery-Format Cutover
+
+One-time, with the deploy that sends bells per recipient. The earlier sender keyed a whole `NotificationOutbox` row by its `transactionId`; the current one keys each recipient's event by `<transactionId>:<recipient hash>` under generation-scoped Idempotency-Keys. A row the earlier sender attempted but never settled may already be accepted by Novu, so resending it under the new identities could ring it twice. The relay therefore dead-letters such a row as `review:legacy_delivery_format` and any `BROADCAST` row as `review:legacy_broadcast`; both page once per drain tick and appear in Needs attention. A row never attempted (`lastError` null) sends normally.
+
+- [ ] Immediately before the deploy, count the affected rows read-only on the production database (an operator query, never an agent write):
+
+  ```sql
+  SELECT kind = 'BROADCAST' AS broadcast, status, count(*)
+  FROM "NotificationOutbox"
+  WHERE status IN ('PENDING', 'RETRY')
+    AND (kind = 'BROADCAST' OR "lastError" IS NOT NULL)
+  GROUP BY 1, 2;
+  ```
+
+- [ ] Zero rows: deploy. Otherwise, either wait for the running relay to settle them (re-run the count after each 10-minute drain tick), or deploy and dispose of the dead letters:
+  - `review:legacy_delivery_format`: look the row's `transactionId` up in the Novu Activity Feed (the earlier sender used it verbatim). If Novu holds the event, it was delivered; leave the dead letter. If not, and the notice still matters, an operator resets the row to never-attempted (`status = 'PENDING'`, `attempts = 0`, `"lastError" = NULL`, `"nextRetryAt" = now()`) and the relay sends it under the current format.
+  - `review:legacy_broadcast`: leave the dead letter. Broadcasts no longer exist; re-post a still-relevant announcement with **Post to inbox**, which fans out through bell policy.
+
 ---
 
 ## DNS Setup for Resend & DMARC
@@ -163,10 +182,10 @@ Sub-hourly latency-sensitive relays run on the phase-staggered Netlify scheduled
 
 | Job Target                    | Driver          | Cadence & Offset                                      | Batch / Timeout        | Purpose                                                           |
 | ----------------------------- | --------------- | ----------------------------------------------------- | ---------------------- | ----------------------------------------------------------------- |
-| `drain-notification-outbox`   | `cron-tick.mts` | Every **10m** at offset **`:05`**                     | `limit=20`, `20s` cap  | Replays due `NotificationOutbox` rows (`notBefore <= now`)        |
-| `retry-failed-emails`         | `cron-tick.mts` | Every **15m** at offset **`:00`**                     | `limit=20`, `20s` cap  | Replays due `FailedEmail` & `FailedEmailBatch` with RFC 8058 hdrs |
+| `drain-notification-outbox`   | `cron-tick.mts` | Every **10m** at offset **`:05`**                     | `limit=100`, `24s` cap | Replays due `NotificationOutbox` rows (`notBefore <= now`)        |
+| `retry-failed-emails`         | `cron-tick.mts` | Every **15m** at offset **`:05`**                     | `limit=20`, `20s` cap  | Replays due `FailedEmail` & `FailedEmailBatch` with RFC 8058 hdrs |
 | `appointment-reminders`       | `cron-tick.mts` | Every **15m** at offset **`:10`**                     | `limit=25`, `20s` cap  | Dispatches pre-session email & in-app appointment reminders       |
-| `auto-complete-appointments`  | `cron-tick.mts` | Every **30m** at offset **`:15`**                     | `limit=25`, `20s` cap  | Auto-completes past sessions and triggers post-session flows      |
+| `auto-complete-appointments`  | `cron-tick.mts` | Every **30m** at offset **`:15`**                     | `limit=25`, `24s` cap  | Auto-completes past sessions and triggers post-session flows      |
 | `prune-system-job-executions` | `cron-tick.mts` | Every **30m** at offset **`:25`**, 20:00 to 23:30 UTC | `limit=500`, `24s` cap | Scrubs `SENT` email HTML/text after 7d; prunes terminal rows      |
 
 Every target routes through `/api/cleanup/[job]`, authenticates via `CRON_SECRET`, and acquires an atomic Postgres lease on `SystemJobExecution` (`withCronLock`).
@@ -233,7 +252,7 @@ _Kit free tier covers 10K subscribers. Creator (\$39/mo) is only needed for auto
 ## Deprecated & Superseded Approaches
 
 - **Sending From Unowned `@familiarise.com` & Unrouted Root Mailboxes**: Replaced by `mail.familiarisenow.com` and `news.familiarisenow.com` verified in Resend (`ap-northeast-1`), with the live `_dmarc` policy at `p=none`.
-- **Standalone Sub-Hourly GitHub Actions Workflows (`cron-notifications.yml`, `cron-auto-complete.yml`)**: Superseded by phase-staggered dispatch in `netlify/functions/cron-tick.mts` (`drain-notification-outbox` every 10m at `:05`, `retry-failed-emails` every 15m at `:00`, `appointment-reminders` every 15m at `:10`, `auto-complete-appointments` every 30m at `:15`), avoiding GitHub Actions sub-hourly scheduling lag and duplicate cron workflows.
+- **Standalone Sub-Hourly GitHub Actions Workflows (`cron-notifications.yml`, `cron-auto-complete.yml`)**: Superseded by phase-staggered dispatch in `netlify/functions/cron-tick.mts` (`drain-notification-outbox` every 10m at `:05`, `retry-failed-emails` every 15m at `:05`, `appointment-reminders` every 15m at `:10`, `auto-complete-appointments` every 30m at `:15`), avoiding GitHub Actions sub-hourly scheduling lag and duplicate cron workflows.
 - **Replaying 422 Invalid-Domain Sends Across Backoff**: Superseded by `terminalSendReason()` dead-lettering 422 validation errors immediately on attempt 1.
 - **Env-driven sender domains and contact addresses**: `EMAIL_TRANSACTIONAL_DOMAIN`, `EMAIL_NEWSLETTER_DOMAIN`, `NEXT_PUBLIC_SUPPORT_EMAIL`, `CONTACT_INBOX_ADDRESS`, `BILLING_EMAIL` and `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS` were replaced by constants in `lib/company.ts`. The footer and newsletters always print the registered-office postal line, and the broadcast route no longer refuses with 412 when it is missing. Remove any leftover copies from Netlify.
 - **Inbound forwarding via ImprovMX (planned, never configured)**: role addresses on `familiarisenow.com` were to be forwarded through ImprovMX MX records. The records were never created, and the apex now publishes a null MX; all inbound mail goes to `connect@practitionist.com`.
