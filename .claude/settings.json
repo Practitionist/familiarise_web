@@ -1,20 +1,49 @@
 {
   "permissions": {
     "ask": [
-      "mcp__supabase__apply_migration",
-      "mcp__supabase__merge_branch",
-      "mcp__supabase__reset_branch"
+      "mcp__*supabase*__apply_migration",
+      "mcp__*supabase*__create_branch",
+      "mcp__*supabase*__create_project",
+      "mcp__*supabase*__delete_branch",
+      "mcp__*supabase*__deploy_edge_function",
+      "mcp__*supabase*__merge_branch",
+      "mcp__*supabase*__pause_project",
+      "mcp__*supabase*__rebase_branch",
+      "mcp__*supabase*__reset_branch",
+      "mcp__*supabase*__restore_project"
     ],
     "deny": [
       "Bash(npx prisma db push*)",
       "Bash(prisma db push*)",
-      "Bash(npm run db:*)",
+      "Bash(npm run db:push*)",
+      "Bash(npm run db:sidecars*)",
+      "Bash(npm run db:seed*)",
+      "Bash(npm run db:migrate*)",
+      "Bash(npm run db:triggers*)",
+      "Bash(npm run db:leg-triggers*)",
+      "Bash(npm run db:constraints*)",
+      "Bash(npm run db:recompute-ratings*)",
+      "Bash(npm run db:studio*)",
       "Bash(npm run dev*)",
       "Bash(npx next dev*)",
       "Bash(next dev*)",
       "Bash(npm run build*)",
       "Bash(npx next build*)",
       "Bash(next build*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__.*supabase.*__execute_sql",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --experimental-strip-types --no-warnings \"$CLAUDE_PROJECT_DIR/.claude/hooks/supabase-sql-gate.ts\" || exit 2",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

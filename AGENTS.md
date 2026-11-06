@@ -10,10 +10,10 @@
 2. **No Speculative Abstractions, Flags, or State Machines**:
    - Do not add feature flags, env-var tuning knobs, fallback dual-reads, or multi-step state machines unless required by an active user flow today.
    - Delete dead code and unused exports outright; never keep `@deprecated` re-exports or "back-compat" shims for internal callers.
-3. **No JS Reconcilers for Postgres-Enforced Invariants**: before writing a reconciliation check or runtime assertion, read `prisma/AGENTS.md` and the `prisma/sql/*.sql` sidecars. Only reconcile across external vendor boundaries (Razorpay, Stream, Resend, Supabase Storage). Booking-overlap limits: `lib/booking/AGENTS.md`.
-4. **No Dual Schedulers by Default**: every scheduled job runs on the one ticker, gated by `ops:active_cron_platform`; no second scheduler and no GitHub Actions schedule for a registry job. Details: `lib/cron/AGENTS.md`.
+3. **No JS Reconcilers for Postgres-Enforced Invariants**: before writing a reconciliation check or runtime assertion, read `prisma/AGENTS.md` and the `prisma/sql/*.sql` sidecars. Only reconcile across external vendor boundaries (Razorpay, Stream, Resend, Supabase Storage). Booking-overlap limits, which also bind `lib/appointments/` and `utils/scheduling-engine/`: `lib/booking/AGENTS.md`.
+4. **No Dual Schedulers by Default**: every scheduled job runs on the one ticker, gated by `ops:active_cron_platform`; no second scheduler and no GitHub Actions schedule for a registry job. Details, which also bind `app/api/cleanup/`, `app/api/admin/system-jobs/` and `netlify/functions/`: `lib/cron/AGENTS.md`.
 5. **No Ticket-Number Archaeology in Code Comments**:
-   - **NEVER** write multi-paragraph docblocks or inline comments citing historical PR/issue numbers (`#1234`, `FIX #568`, `P1-W02a`, `owner decision Q3`) or narrating what old deleted code used to do. CI (`scripts/ci/check-comment-archaeology.ts`) fails added comment lines that do.
+   - **NEVER** write multi-paragraph docblocks or inline comments citing historical PR/issue numbers (`#1234`, `FIX #568`, `P1-W02a`, `owner decision Q3`) or narrating what old deleted code used to do. CI (`scripts/ci/check-comment-archaeology.ts`) fails added comment lines that cite a ticket number, a planning id or "owner decision"; narrated history is caught in review, not by CI.
    - Comments must state **only** the current invariant or non-obvious runtime constraint in 1–2 concise lines. Git blame owns history.
 
 ## 2. Core Runtime, Database & Multi-Host Portability Invariants
@@ -24,8 +24,9 @@
    - All money columns are `BigInt` paise in Postgres (mapped to `number` at the Prisma client boundary in `lib/prisma.ts`). Settlement is INR-only.
    - Every status transition on `Payment`, `Appointment`, `Refund`, or `Payout` must use conditional `updateMany` with the expected prior status in `WHERE` (CAS-in-WHERE), never read-then-update. Payment confirmation rules: `lib/payments/AGENTS.md`.
 3. **Schema & Sidecar Discipline (`prisma/schema.prisma` + `prisma/sql/*.sql`)**:
-   - One Postgres database serves dev and prod across worktrees. **Never** run `prisma db push` or `npm run db:*` autonomously.
-   - Run `npx prisma generate` after editing `prisma/schema.prisma`. Supabase MCP writes: DDL needs the owner's explicit approval; DML needs it unless every row is proven mock data. Everything else: `prisma/AGENTS.md`.
+   - One Postgres database serves dev and prod across worktrees. **Never** run `prisma db push` or the database-writing `npm run db:*` scripts; the owner runs them.
+   - Run `npx prisma generate` after editing `prisma/schema.prisma`. Everything else: `prisma/AGENTS.md`.
+   - Supabase MCP: reads run freely, several batched into one `execute_sql` call. Every write or DDL needs the owner's approval in the session, shown by the prompt from `.claude/hooks/supabase-sql-gate.ts`. Schema changes still go through `prisma/schema.prisma`, the sidecars and the human-run `db:push`; MCP DDL is only for an owner-approved emergency.
 4. **Locking (`Postgres` vs `Upstash Redis`)**:
    - Cron mutual exclusion (`withCronLock` in `lib/cron/with-cron-lock.ts`) is backed by Postgres (`SystemJobExecution` lease). Do not add Redis locks for cron jobs.
    - Upstash Redis (`lib/redis.ts`, `lib/rate-limit.ts`, `utils/appointmentlock.ts`) is used only for request rate limiting, maintenance-mode / `ops:active_cron_platform` edge state, and short-lived interactive checkout/payout mutexes.
@@ -44,7 +45,7 @@
    - Lint: `npm run lint` (errors fail CI; warnings are advisory)
    - Format check: `npm run format:check`
    - Targeted Jest test: `npx jest path/to/test.ts`
-   - Never run `next dev`, `next build`, `npm run db:*` or `prisma db push` unless instructed. `.claude/settings.json` denies them to Claude Code, so the human runs them.
+   - The owner runs `next dev`, `next build`, `prisma db push` and the database-writing `npm run db:*` scripts (push, sidecars, seed, migrate, triggers, constraints). `.claude/settings.json` denies them to Claude Code in every permission mode; `npm run db:generate` and `npm run db:preflight` stay usable.
 
 ## 4. Engineering, Documentation & Review Practices
 

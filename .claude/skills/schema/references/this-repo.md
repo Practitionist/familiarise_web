@@ -21,7 +21,7 @@ project serves both development and production, and every `fw-*` worktree's
 environment points at it. A push, a seed and the data scripts all write
 rows that production reads. Pushes happen once per merged pull request, run by
 the orchestrator, never for two schema-bearing pull requests at once, and never
-to make a local test pass. DDL reaches the database through the human-run push above; the one exception is a statement the owner explicitly approves through the Supabase MCP (the shared entry is read-only and project-scoped; rules in `prisma/AGENTS.md`).
+to make a local test pass. DDL reaches the database through the human-run push above. Supabase MCP reads run freely; every MCP write or DDL needs the owner's approval in the session, enforced by the `.claude/hooks/supabase-sql-gate.ts` hook, and MCP DDL is only for an owner-approved emergency (rules in `prisma/AGENTS.md`).
 
 The second is that **`db push` drops whatever the schema file does not mention**.
 It has already removed capture tables that were created to survive it. Anything

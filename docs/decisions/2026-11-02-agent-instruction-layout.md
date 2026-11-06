@@ -19,7 +19,7 @@ The repository had one 11 KB `AGENTS.md` that mixed universal bans, money and da
 2. **The root file holds only rules that apply everywhere**, as one-line bans with a pointer. Section numbers are stable, so existing citations such as `AGENTS.md §1.3` keep resolving.
 3. **Directory rules live in nested `AGENTS.md` files** (`lib/cron/`, `lib/payments/`, `lib/booking/`, `prisma/`, `docs/`), each paired with a one-line `CLAUDE.md` import. Claude Code's default mode ignores a nested `AGENTS.md` once any `CLAUDE.md` sits above it, and a project cannot change that mode, so the paired import is what makes the nested file load. Claude Code loads a nested `CLAUDE.md` when it first reads a file in that directory; other agents use the nearest `AGENTS.md`.
 4. **Rules that can be checked deterministically are checked, and the prose shrinks to a pointer**:
-   - `.claude/settings.json` denies `prisma db push`, `npm run db:*`, `next dev` and `next build` to Claude Code. The human runs them.
+   - `.claude/settings.json` denies `prisma db push`, the database-writing `npm run db:*` scripts, `next dev` and `next build` to Claude Code in every permission mode. The owner runs them. Supabase MCP writes are gated separately ([Supabase MCP SQL approval hook](./2026-11-07-supabase-mcp-sql-approval-hook.md)).
    - `eslint.config.mjs` already rejects `eslint-disable*` and `@ts-*` comments (`noInlineConfig`, `ban-ts-comment`).
    - `scripts/ci/check-comment-archaeology.ts` fails a pull request whose added comment lines cite ticket numbers or planning ids.
 

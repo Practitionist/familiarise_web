@@ -36,14 +36,16 @@ frozen: additive changes only, with renames, drops and type changes deferred to
 launch cutover. Both rules are stated at the top of `prisma/schema.prisma` and
 enforced in review.
 
-A schema change goes through an MCP server only with the owner's explicit
-approval of the exact statement, and DML needs the same approval unless a
-`SELECT` first proves every touched row is mock data (rules:
-`prisma/AGENTS.md`). The Supabase MCP entry in `.mcp.json.example` is
-read-only and project-scoped, so it can inspect the live schema but cannot run
-direct DDL or DML until the owner sets up a write-capable entry. Read-only is
-defense-in-depth, not a hard boundary; the human-run `db:push` preflight and
-sidecar sequence remain the default schema write path.
+Agents read the live database freely through the Supabase MCP, batching
+several reads into one `execute_sql` call. Every write or DDL statement needs
+the owner's approval in the session: the `.claude/hooks/supabase-sql-gate.ts`
+hook lets a provably read-only batch through and prompts, naming the statement
+type, for anything else (in bypass-permissions mode it blocks the call until
+the owner leaves that mode). Schema changes still go through
+`prisma/schema.prisma`, the human-run `db:push` preflight and the sidecars; MCP
+DDL is only for an owner-approved emergency. The shared `.mcp.json.example`
+entry stays `--read-only` and project-scoped. Rules: `prisma/AGENTS.md`;
+decision: [Supabase MCP SQL approval hook](../decisions/2026-11-07-supabase-mcp-sql-approval-hook.md).
 
 The same database also serves every Netlify **deploy preview**, and that is the
 constraint that catches people out: a preview runs the _branch's_ code against
