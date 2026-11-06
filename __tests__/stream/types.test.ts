@@ -5,7 +5,6 @@
 
 import "../../types/stream-chat.d.ts";
 import type {
-  StreamChatUser,
   StreamChannelType,
   EventChannelType,
 } from "../../types/stream-chat";
@@ -13,45 +12,6 @@ import { getDmChannelId } from "@/lib/stream-utils";
 import { mapRoleToStream } from "@/lib/user";
 
 describe("Stream Chat Types", () => {
-  describe("StreamChatUser", () => {
-    it("should define user type with all properties", () => {
-      const user: StreamChatUser = {
-        id: "user-123",
-        name: "Test User",
-        image: "https://example.com/avatar.jpg",
-        email: "test@example.com",
-        role: "admin",
-      };
-
-      expect(user.id).toBe("user-123");
-      expect(user.name).toBe("Test User");
-      expect(user.image).toBe("https://example.com/avatar.jpg");
-      expect(user.email).toBe("test@example.com");
-      expect(user.role).toBe("admin");
-    });
-
-    it("should allow optional properties", () => {
-      const minimalUser: StreamChatUser = {
-        id: "user-minimal",
-      };
-
-      expect(minimalUser.id).toBe("user-minimal");
-      expect(minimalUser.name).toBeUndefined();
-      expect(minimalUser.image).toBeUndefined();
-      expect(minimalUser.email).toBeUndefined();
-      expect(minimalUser.role).toBeUndefined();
-    });
-
-    it("should allow null email", () => {
-      const userWithNullEmail: StreamChatUser = {
-        id: "user-null-email",
-        email: null,
-      };
-
-      expect(userWithNullEmail.email).toBeNull();
-    });
-  });
-
   describe("StreamChannelType", () => {
     it("should support messaging channel type", () => {
       const dmChannel: StreamChannelType = "messaging";

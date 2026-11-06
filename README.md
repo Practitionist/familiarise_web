@@ -4,74 +4,79 @@
 
 ## What is Familiarise?
 
-Familiarise is a **B2B/B2C marketplace platform** that connects world-class experts—mentors, consultants, coaches, and instructors—with learners seeking personalized guidance, mentorship, and education.
+Familiarise is a marketplace where people book time with experts. An expert publishes offerings and opens availability, a learner pays and books, and the platform runs the session, takes a platform fee (20% by default) and pays the expert out. It also sells recordings and digital files, and it lets an organisation sponsor its members' learning. Learners can book from anywhere; experts are paid in INR to an Indian bank account.
 
-Think of it as the "Airbnb for expertise": a platform where professionals can monetize their knowledge through one-on-one sessions, ongoing mentorship programs, structured courses, and live webinars, while learners get direct access to industry experts who can accelerate their careers and skill development.
+An expert can publish five kinds of offering: a one-off consultation, a subscription (a fixed number of sessions over a term), a webinar (a seat at one broadcast), a class (a seat in a series of sessions) and a free trial session that can convert into a purchase. The architecture is described in [Platform Architecture](docs/start-here/04-platform-architecture.md).
 
 ### Who is it for?
 
-**For Experts (Consultants):**
-
-- Industry professionals looking to monetize their expertise
-- Career coaches and mentors
-- Subject matter experts and educators
-- Entrepreneurs sharing startup knowledge
-- Specialists in tech, business, design, marketing, and more
-
-**For Learners (Consultees):**
-
-- Career changers breaking into new fields
-- Professionals seeking advancement
-- Students wanting industry guidance
-- Entrepreneurs needing business mentorship
-- Anyone seeking personalized skill development
+- **Experts (consultants)** are mentors, coaches, instructors and industry professionals who want to sell their time, courses and files. They set availability, receive requests, run sessions over video and chat, and track earnings and payouts.
+- **Learners (consultees)** are career changers, students and working professionals who book sessions, join webinars and classes, buy recordings and digital products, and review what they bought.
+- **Organisations** sponsor members' bookings through licensed seats or a credit pool, a prepaid wallet and consolidated invoices, and can sign members in through their own single sign-on. See the [enterprise docs](docs/enterprise/README.md).
+- **Staff and admins** run the back office: support cases, moderation, refunds, disputes, payouts, compliance filings and system jobs.
 
 ### Key Features
 
-| Feature                  | Description                                                                                                                                         |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1-on-1 Consultations** | Single sessions for career advice, mock interviews, code reviews, design feedback                                                                   |
-| **Subscriptions**        | Ongoing 4-12 week mentorship programs with recurring sessions                                                                                       |
-| **Classes**              | Structured multi-week courses with materials, recordings, and certifications                                                                        |
-| **Webinars**             | Live group learning events with Q&A and waitlist management                                                                                         |
-| **Video Calls**          | HD video via Stream.io with screen sharing and recording                                                                                            |
-| **In-App Messaging**     | Direct communication and document sharing between sessions                                                                                          |
-| **Document Review**      | Upload resumes, portfolios, or code for expert feedback                                                                                             |
-| **Smart Scheduling**     | Timezone-aware booking with weekly and custom availability                                                                                          |
-| **Secure Payments**      | Razorpay (INR settlement), with escrow protection. **Consultees book from anywhere; consultants must be able to receive INR in India** — see below. |
-| **Earnings Dashboard**   | 80/20 revenue split with transparent payout tracking                                                                                                |
-| **Referral System**      | Viral growth via referral links, credit rewards for referrer and referee                                                                            |
-| **Collaborators**        | Multi-creator webinars and classes with role-based revenue sharing                                                                                  |
+| Feature                             | Description                                                                                                                                        |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Consultations and trials**        | One-off sessions, and free trial sessions that can convert into a paid plan.                                                                       |
+| **Subscriptions**                   | A fixed number of sessions over a term, booked against the expert's availability.                                                                  |
+| **Classes and webinars**            | Seats in scheduled group sessions; a full webinar or class is simply sold out.                                                                     |
+| **Scheduling**                      | Timezone-aware booking from the expert's weekly or custom availability, with reschedules and cancellations.                                        |
+| **Video and chat**                  | Live meetings and direct messages through Stream, with optional recording ([chat and video HLD](docs/start-here/06-chat-and-video-system-hld.md)). |
+| **Recordings and digital products** | Experts sell session replays and downloadable files; buyers keep access.                                                                           |
+| **Payments and invoices**           | Razorpay checkout, GST tax invoices, refunds and credit notes, and a double-entry ledger ([money HLD](docs/start-here/02-money-system-hld.md)).    |
+| **Earnings and payouts**            | Expert earnings are held, released and paid out through RazorpayX in INR, with TDS withheld where the law requires it.                             |
+| **Collaborators**                   | Several experts can co-host a webinar or class and share its revenue by role.                                                                      |
+| **Referrals**                       | Referral links that reward both the referrer and the new user with credits.                                                                        |
+| **Organisations**                   | Sponsored seats or credit pools, a prepaid wallet, consolidated invoices and single sign-on for members.                                           |
+| **Support and reviews**             | Support cases with decisions and appeals, session feedback and public reviews.                                                                     |
 
-### Platform Stats
+## Subsystem map
 
-- 500+ verified expert mentors
-- 8+ domains (Technology, Business, Design, Marketing, Career Coaching, Education, Startups, Languages)
-- Multiple session types to fit any learning style
-- Money-back guarantee for unsatisfied sessions
+The platform is 27 subsystems in six areas. Each row links the documentation that exists today. "No doc yet" means no dedicated folder or explainer exists; nothing is invented to fill the gap. The indexes are [`docs/README.md`](docs/README.md) and [`docs/start-here/README.md`](docs/start-here/README.md).
 
-## Who can use this, and from where
+| Area                                  | Subsystem                                    | Documentation                                                                                                                                                                                               |
+| ------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Identity and discovery (4)**        | Authentication and account onboarding        | [`docs/authentication/`](docs/authentication/README.md), [`docs/onboarding/`](docs/onboarding/README.md)                                                                                                    |
+|                                       | Authorization and tenancy                    | [`docs/authorization/`](docs/authorization/README.md)                                                                                                                                                       |
+|                                       | Profiles and expert verification             | [Verification lifecycle](docs/onboarding/04-verification-lifecycle.md), [`docs/onboarding/`](docs/onboarding/README.md)                                                                                     |
+|                                       | Offerings, catalog and search                | No doc yet                                                                                                                                                                                                  |
+| **Booking and commerce (7)**          | Scheduling and calendar                      | [`docs/calendar/`](docs/calendar/), [availability contract](docs/onboarding/03-availability-contract.md)                                                                                                    |
+|                                       | Booking lifecycle                            | [`docs/booking/`](docs/booking/README.md), [booking HLD](docs/start-here/01-booking-system-hld.md)                                                                                                          |
+|                                       | Checkout and payments                        | [`docs/finance/10-money-in/`](docs/finance/10-money-in/01-checkout-and-pricing.md), [money HLD](docs/start-here/02-money-system-hld.md)                                                                     |
+|                                       | Ledger and earnings                          | [`docs/finance/20-ledger/`](docs/finance/20-ledger/01-double-entry-model.md), [earnings lifecycle](docs/finance/40-payouts/02-earnings-lifecycle.md)                                                        |
+|                                       | Payouts                                      | [`docs/finance/40-payouts/`](docs/finance/40-payouts/01-how-payouts-work.md)                                                                                                                                |
+|                                       | Refunds, disputes, chargebacks and clawbacks | [`docs/finance/30-refunds-disputes/`](docs/finance/30-refunds-disputes/README.md), [organisation payouts and clawbacks](docs/finance/40-payouts/05-org-payouts-and-clawbacks.md)                            |
+|                                       | Digital products                             | [`docs/digital-products/`](docs/digital-products/01-architecture.md)                                                                                                                                        |
+| **Communication and content (5)**     | Chat                                         | [`docs/stream/`](docs/stream/README.md), [chat and video HLD](docs/start-here/06-chat-and-video-system-hld.md)                                                                                              |
+|                                       | Video and recordings                         | [`docs/stream/`](docs/stream/README.md), [recordings lifecycle](docs/stream/19-recordings-lifecycle-and-access.md)                                                                                          |
+|                                       | Notifications and email                      | [`docs/notifications/`](docs/notifications/01-architecture.md), [`docs/email/`](docs/email/README.md)                                                                                                       |
+|                                       | Marketing, waitlist and announcements        | No doc yet                                                                                                                                                                                                  |
+|                                       | Documents and storage                        | [`docs/documents/`](docs/documents/README.md), [`docs/storage/`](docs/storage/management-strategy.md)                                                                                                       |
+| **Business relationships (3)**        | Enterprise and organizations                 | [`docs/enterprise/`](docs/enterprise/README.md), [enterprise design](docs/start-here/07-enterprise-system-design.md)                                                                                        |
+|                                       | Collaborators                                | [`docs/collaborators/`](docs/collaborators/00-overview.md)                                                                                                                                                  |
+|                                       | Referrals and credits                        | [`docs/referrals/`](docs/referrals/00-overview.md), [referral credits ledger](docs/finance/20-ledger/07-referral-credits.md)                                                                                |
+| **Customer experience and trust (4)** | Support                                      | [`docs/support/`](docs/support/README.md), [support design](docs/start-here/05-support-system-design.md)                                                                                                    |
+|                                       | Feedback and reviews                         | [`docs/feedback/`](docs/feedback/README.md), [`docs/reviews/`](docs/reviews/01-architecture.md)                                                                                                             |
+|                                       | Moderation and abuse                         | No folder yet; see [moderation enforcement decision](docs/decisions/2026-07-11-moderation-enforcement-and-peer-chat-block.md) and [rate limiting and abuse](docs/authentication/rate-limiting-and-abuse.md) |
+|                                       | Compliance, privacy and consent              | [`docs/compliance/`](docs/compliance/00-overview.md)                                                                                                                                                        |
+| **Platform operations (4)**           | Backoffice and admin                         | No folder yet; see [backoffice single tree decision](docs/decisions/2026-09-27-backoffice-single-tree-and-capability.md)                                                                                    |
+|                                       | Background jobs, maintenance and recovery    | [`docs/maintenance/`](docs/maintenance/README.md), [jobs that did not run](docs/start-here/08-how-we-know-a-job-did-not-run.md)                                                                             |
+|                                       | Observability and incidents                  | [`docs/observability/`](docs/observability/README.md)                                                                                                                                                       |
+|                                       | Infrastructure, deployment and CI/CD         | [`docs/deployment/`](docs/deployment/README.md), [SRE orientation](docs/start-here/09-infra-and-maintenance-sre-orientation.md), [environment split](docs/start-here/10-environment-split.md)               |
 
-This distinction is load-bearing and easy to get backwards, so it is stated up
-front rather than buried in the payments docs.
+Large domains such as enterprise and finance contain several independently complex components. Finance spans checkout, the ledger, refunds, payouts, tax and operations, and enterprise spans identity, programs, wallets, invoicing and compliance, so read the folder's own README before assuming one page covers it.
 
-**Consultees can be anywhere in the world.** International cards are accepted,
-Razorpay converts at the buyer's bank and settles INR to the platform, and the
-FIRC needed under FEMA is generated automatically. Nothing blocks a foreign
-buyer and nothing should — this is live and working.
+Vendors belong to the subsystem that depends on them:
 
-**Consultants must be able to receive INR into an Indian bank account.** This is
-not a preference, it is what is currently built. TDS is withheld under Section
-194-O, which by definition applies only to residents; paying a non-resident
-instead requires Section 195 withholding, treaty relief against a tax residency
-certificate and Form 10F, and a Form 15CA/15CB filing per remittance, none of
-which exists yet. RazorpayX also cannot pay a foreign bank account at all. The
-payout pipeline enforces this: `processSinglePayout` throws rather than
-half-paying someone, and the UI says so during consultant onboarding.
+- **Notifications and email:** Novu (in-app and workflow notifications) and Resend (transactional email).
+- **Observability and incidents:** Sentry (errors and cron monitors) and Better Stack (uptime, heartbeats and Telemetry logs).
+- **Infrastructure, deployment and CI/CD:** Netlify and Vercel (hosting), DNS, Supabase (Postgres and storage) and Upstash (Redis).
 
-If you are changing payout code and wondering why the non-resident branch
-refuses instead of falling through — that is deliberate, and removing it would
-create a statutory withholding failure, not a feature.
+## High-level design (HLD)
+
+To be written; see [docs/start-here/](docs/start-here/README.md) for the current per-subsystem HLDs.
 
 ## Quick Start
 
@@ -89,7 +94,7 @@ cd familiarise_web
 
 # 2. Create environment file
 cp .env.sample .env
-# Edit .env with your credentials (see Environment Variables section)
+# Edit .env with your credentials (see the Environment variables section)
 
 # 3. Start development server
 docker compose up --build
@@ -116,112 +121,84 @@ npx prisma generate
 npm run dev
 ```
 
-## Environment Variables
+## Environment variables
 
-Create a `.env` file based on `.env.sample`. Never commit `.env` or secrets to the repository.
+Create a `.env` file from [`.env.sample`](.env.sample) and never commit `.env` or any secret. `.env.sample` is the single place where every variable is described. It is split into groups that match the subsections below (database, authentication, payments, tax and compliance, video and chat, email and notifications, storage, observability, infrastructure and jobs, feature flags, seed, build and platform-provided), and each variable has a one-line comment saying what it is, which subsystem reads it, whether it is required or optional, and whether it is a secret. Every value in it is a placeholder. The test `__tests__/maintenance/env-sample-coverage.test.ts` fails when code reads a key that `.env.sample` does not list, so add a new key there in the same change. Fixed values such as the support mailbox, the sending domains and the invoice prefix are constants in `lib/company.ts`, not environment variables.
 
-`.env.sample` is grouped into eight sections (core runtime, vendors, compliance and encryption, ops and observability, pre-launch guards and feature flags, seed only, build only, platform-provided) and lists every key the code reads. The test `__tests__/maintenance/env-sample-coverage.test.ts` fails when code reads a key that is missing from it, so add any new key there in the same change. Fixed values such as the support mailbox, the sending domains and the invoice prefix are constants in `lib/company.ts`, not environment variables.
+Every deploy context shares one database, so a deploy preview is new code pointed at live data; the [environment split](docs/start-here/10-environment-split.md) says which keys differ between local, previews, the branch deploy and production. The inventory of every production secret, with where it lives and how to rotate it, is the [secret rotation runbook](docs/maintenance/19-secret-rotation-runbook.md). Netlify secrets are write-only, so keep each value in the password manager. The groups below explain the variables whose purpose or source is not obvious from the name.
 
-### Required Variables
+### Database and Supabase
 
-| Variable                      | Description                             | Local Value             | Production Value             |
-| ----------------------------- | --------------------------------------- | ----------------------- | ---------------------------- |
-| `DATABASE_URL`                | Supabase pooled connection string       | From Supabase dashboard | Same (or prod project)       |
-| `DIRECT_URL`                  | Supabase direct connection (migrations) | From Supabase dashboard | Same (or prod project)       |
-| `BETTER_AUTH_SECRET`          | Auth signing secret                     | Random 32+ char string  | Different secret for prod    |
-| `BETTER_AUTH_URL`             | App base URL for auth callbacks         | `http://localhost:3000` | `https://familiarisenow.com` |
-| `BETTER_AUTH_TRUSTED_ORIGINS` | Allowed origins for auth                | `http://localhost:3000` | `https://familiarisenow.com` |
-| `NEXT_PUBLIC_APP_URL`         | Public-facing app URL                   | `http://localhost:3000` | `https://familiarisenow.com` |
-| `NODE_ENV`                    | Runtime environment                     | `development`           | `production`                 |
-| `NEXT_PUBLIC_SUPABASE_URL`    | Supabase project URL                    | From Supabase dashboard | Same                         |
+- **`DATABASE_URL` and `DIRECT_URL`** (secret): both come from the Supabase dashboard's connection settings. `DATABASE_URL` is the pooled Supavisor string the app uses at runtime; `DIRECT_URL` is the direct connection used for schema work. Set `PG_POOL_MAX=1` on Netlify, because each function invocation holds one connection.
+- **`NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`:** the project URL is public. The service-role key is a server-only secret that bypasses row security, so it must never get a `NEXT_PUBLIC_` prefix.
+- **Production, preview and local** all point at the same Supabase project today, so a local `.env` reads and writes the shared data. See the [environment split](docs/start-here/10-environment-split.md).
 
-<details>
-<summary>All Environment Variables</summary>
+### Authentication (Better Auth, OAuth and Turnstile)
 
-### Authentication
+- **`BETTER_AUTH_SECRET`** (secret): generate it with `openssl rand -base64 32` and use a different value per environment. `BETTER_AUTH_SECRETS` is only used while rotating it. `NEXT_PUBLIC_APP_URL` and `BETTER_AUTH_URL` are the public origin, `http://localhost:3000` locally and `https://familiarisenow.com` in production. `BETTER_AUTH_TRUSTED_ORIGINS` lists extra origins of our own, such as deploy-preview URLs.
+- **`GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`:** from a GitHub OAuth app and a Google Cloud OAuth client. A provider's button appears only when both of its values are set, and the callback URL must match the origin you run on. Ids are public, secrets are not.
+- **`NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`:** from the Cloudflare Turnstile dashboard. Locally, keep Cloudflare's always-pass test keys that `.env.sample` ships. Production refuses a test key. Set both or neither.
+- **`AUTH_CONFIG_ENCRYPTION_KEY`** (secret): encrypts the single sign-on configuration an organisation registers. Generate it with `openssl rand -hex 32`. It is a different key from `PAN_ENCRYPTION_KEY` so that rotating one never rewrites the other. See [`docs/authentication/`](docs/authentication/README.md).
 
-| Variable                      | Description                | Notes                                           |
-| ----------------------------- | -------------------------- | ----------------------------------------------- |
-| `BETTER_AUTH_SECRET`          | Auth signing secret        | Must be unique per environment                  |
-| `BETTER_AUTH_URL`             | Auth callback base URL     | `localhost` for dev, production domain for prod |
-| `BETTER_AUTH_TRUSTED_ORIGINS` | CORS origins for auth      | Must match `BETTER_AUTH_URL`                    |
-| `JWT_SECRET`                  | JWT signing key            | Can match `BETTER_AUTH_SECRET`                  |
-| `GOOGLE_CLIENT_ID`            | Google OAuth client ID     | From Google Cloud Console                       |
-| `GOOGLE_CLIENT_SECRET`        | Google OAuth client secret | From Google Cloud Console                       |
-| `GITHUB_CLIENT_ID`            | GitHub OAuth client ID     | Optional                                        |
-| `GITHUB_CLIENT_SECRET`        | GitHub OAuth client secret | Optional                                        |
+### Payments (Razorpay and RazorpayX)
 
-### Database & Cache
+- **`RAZORPAY_KEY_ID`, `NEXT_PUBLIC_RAZORPAY_KEY_ID` and `RAZORPAY_SECRET`:** from the Razorpay dashboard. Use the test pair (`rzp_test_`) locally and on previews, and the live pair at cutover. The two key-id variables hold the same value; the secret never gets a `NEXT_PUBLIC_` prefix.
+- **`RAZORPAY_WEBHOOK_SECRET` and `RAZORPAYX_WEBHOOK_SECRET`:** you choose these when you create the webhook on each dashboard, and the dashboard and the deployment must hold the same value. The `_PREVIOUS` variants exist only while you rotate.
+- **`RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION`:** lets a pre-launch production deploy run on test keys. Delete it when the live keys go in, because without it a test key in production fails at boot.
+- **`RAZORPAYX_KEY_ID`, `RAZORPAYX_KEY_SECRET` and `RAZORPAYX_ACCOUNT_NUMBER`:** from RazorpayX, which is the payouts product and is separate from checkout. The key pair falls back to the Razorpay pair when unset; the account number has no fallback.
+- **`RAZORPAYX_EGRESS_PROXY_URL`:** the QuotaGuard Static proxy URL, bought at the first live payout because live RazorpayX only answers allowlisted IPs and Netlify has none. Do not set it earlier.
+- **`ENABLE_LIVE_PAYOUTS`:** the kill switch. Only the literal `true` lets a payout leave. The steps are in the [money go-live checklist](docs/finance/70-operations/07-go-live-checklist.md).
 
-| Variable                    | Description                | Notes                              |
-| --------------------------- | -------------------------- | ---------------------------------- |
-| `DATABASE_URL`              | Supabase pooled connection | Use `?pgbouncer=true` suffix       |
-| `DIRECT_URL`                | Supabase direct connection | For migrations only                |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase admin key         | Server-side only, never expose     |
-| `SUPABASE_ACCESS_TOKEN`     | Supabase management API    | For CLI/admin operations           |
-| `UPSTASH_REDIS_REST_URL`    | Upstash Redis URL          | Used for rate limiting and caching |
-| `UPSTASH_REDIS_REST_TOKEN`  | Upstash Redis auth token   | Required for Redis access          |
+### Tax, compliance and encryption
 
-> **Note:** Do NOT set `REDIS_URL=redis://localhost:6379` on Netlify. The platform uses Upstash Redis via REST API (`UPSTASH_REDIS_REST_URL`), not a TCP Redis connection.
+- **`PLATFORM_GSTIN`:** the platform's GSTIN, issued after GST registration. Leave it empty until then; invoice jobs record a config skip meanwhile. Set it before the live Razorpay keys.
+- **`PLATFORM_LUT_NUMBER` and `PLATFORM_LUT_VALID_TILL`:** the Letter of Undertaking for zero-rated exports, with the date as `YYYY-MM-DD`. Without both, exports are taxed at 18% IGST.
+- **`CLEARTAX_API_KEY`, `CLEARTAX_GSP_TOKEN` and `CLEARTAX_ENV`:** from ClearTax. The e-invoice uploader stays dormant until all of them and `PLATFORM_GSTIN` are set.
+- **`PAN_ENCRYPTION_KEY` and `ERASURE_SALT`** (secrets): generate each with `openssl rand -hex 32`. The PAN key has no previous slot and no re-encrypt script, so changing it leaves every stored consultant PAN unreadable. The salt only changes future pseudonyms when rotated.
 
-### Payments
+### Video and chat (Stream)
 
-| Variable                      | Description                     | Notes                                                                                                                                                                                                                                                                     |
-| ----------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NEXT_PUBLIC_RAZORPAY_KEY_ID` | Razorpay key ID                 | `rzp_test_` for dev, `rzp_live_` for prod                                                                                                                                                                                                                                 |
-| `RAZORPAY_KEY_ID`             | Razorpay key ID (server)        | Same as public key                                                                                                                                                                                                                                                        |
-| `RAZORPAY_SECRET`             | Razorpay secret                 | Different per environment                                                                                                                                                                                                                                                 |
-| `RAZORPAY_WEBHOOK_SECRET`     | Razorpay webhook signing secret | **Required.** `/api/webhooks/razorpay` returns 500 before verifying anything when it is unset, so every gateway event is rejected — silently, since no live payment has exercised it. Absent from Netlify's deploy-preview context; confirm it exists for **production**. |
+- **`STREAM_API_KEY` and `NEXT_PUBLIC_STREAM_API_KEY`:** the same public key, from the Stream dashboard for the app. **`STREAM_API_SECRET`** is the secret that mints user tokens. Setup is in [`docs/stream/02-setup-configuration.md`](docs/stream/02-setup-configuration.md).
+- **Previews share the production Stream app** today, so a chat or call on a preview lands in production Stream. See the [environment split](docs/start-here/10-environment-split.md).
+- **`STREAM_WEBHOOK_SECRET`:** optional; webhooks are signed with `STREAM_API_SECRET` when it is unset. `STREAM_SYNC_EXCLUDED_USERS` lists Stream user ids the sync job must never delete.
 
-> **Reminder — Dodo Payments is schema-only.** `DODO_PAYMENTS` exists as a
-> `PaymentGateway` enum value and nothing else: no client, no checkout path, no
-> webhook handler, no payout submitter, and no timeline. The value is reserved
-> only because Postgres cannot drop an enum value cheaply. It throws
-> (`UnsupportedGatewayError`) if it ever reaches gateway routing, a refund, or a
-> payout, so it cannot be used by accident — see
-> [docs/finance/10-money-in/04-razorpay-gateway-and-currency.md](docs/finance/10-money-in/04-razorpay-gateway-and-currency.md).
->
-> **For a finance or CA review:** the only live rail is **Razorpay** (INR
-> settlement); Stripe was removed from the code on 2026-10-04. Dodo has
-> never moved money and appears in no reconciliation or filing. Lemon Squeezy
-> and XFlow were evaluated in March 2026, rejected, and removed from the
-> codebase; they are not options.
+### Email and notifications (Resend and Novu)
 
-### Stream.io (Video & Chat)
+- **`RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET`:** from the Resend dashboard. The webhook signing secret is shown on the webhook you create for `/api/webhooks/resend`. See [`docs/email/README.md`](docs/email/README.md).
+- **`EMAIL_DELIVERY_MODE` and `EMAIL_ALLOWLIST`:** the pre-launch guard. Unset or `allowlist` sends only to our own domain and the allowlist; `live` sends to everyone. Production stays on allowlist until launch.
+- **`WAITLIST_HMAC_SECRET`** (secret): generate it yourself. It signs confirm and unsubscribe links with no fallback, so rotating it breaks every link already sent. Treat it as long-lived.
+- **`NOVU_DEVELOPMENT_KEY` and `NOVU_PRODUCTION_KEY`:** secret keys from the Novu dashboard, one per Novu environment. Production reads the production key and every other context reads the development key. **`NEXT_PUBLIC_NOVU_APP_ID`** is the public application identifier, and **`NOVU_WEBHOOK_SECRET`** verifies inbound webhooks. See [`docs/notifications/`](docs/notifications/01-architecture.md).
 
-| Variable                     | Description                | Notes                               |
-| ---------------------------- | -------------------------- | ----------------------------------- |
-| `NEXT_PUBLIC_STREAM_API_KEY` | Stream public API key      | Same for dev/prod (shared project)  |
-| `STREAM_API_SECRET`          | Stream server secret       | Never expose client-side            |
-| `STREAM_SYNC_SECRET`         | Stream sync webhook secret | Usually same as `STREAM_API_SECRET` |
+### Storage (Cloudflare R2 and Supabase Storage)
 
-### Notifications & Email
+- **`R2_BUCKET`, `R2_S3_ENDPOINT`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`:** from the Cloudflare R2 dashboard. Create an S3 API token scoped to the one bucket and copy its endpoint URL. The bucket holds the platform's copy of every recording. The access key id and secret are secrets.
+- **`R2_DIGITAL_PRODUCTS_BUCKET`:** a second, private R2 bucket on the same credentials for digital product files. Its CORS policy must allow `PUT` and `GET` from the app origins; the exact headers are in the [digital products architecture](docs/digital-products/01-architecture.md).
+- **`SUPABASE_DATA_EXPORT_BUCKET`:** optional name of the Supabase Storage bucket for organisation data exports. The default is `org-exports`. Other Supabase buckets are provisioned by the app; see the [storage strategy](docs/storage/management-strategy.md).
 
-| Variable                  | Description                                                                                                                                                                    | Notes                                        |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
-| `NOVU_DEVELOPMENT_KEY`    | Novu secret key for the Development environment; used locally and on every non-production deploy                                                                               | From Novu dashboard (Development → API Keys) |
-| `NOVU_PRODUCTION_KEY`     | Novu secret key for the Production environment; used only where `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production` (the Netlify production context and the GitHub Actions cron twins) | From Novu dashboard (Production → API Keys)  |
-| `NEXT_PUBLIC_NOVU_APP_ID` | Novu application ID                                                                                                                                                            | Public, safe to expose                       |
-| `RESEND_API_KEY`          | Resend email API key                                                                                                                                                           | For transactional emails                     |
+### Observability (Sentry and Better Stack)
 
-### Monitoring & Observability
+- **`NEXT_PUBLIC_SENTRY_DSN` and `NEXT_PUBLIC_SENTRY_ENVIRONMENT`:** the DSN is in the Sentry project settings and is public. The environment is `production`, `preview` or `development`; the code reads it as the marker of where it runs, so a wrong value changes behaviour.
+- **Three different Sentry tokens.** `SENTRY_AUTH_TOKEN` is build-time only and uploads source maps. `SENTRY_STATS_TOKEN` is an Internal Integration token with `Organization: Read`, used by the daily ingest canary ([steps](docs/observability/sentry/06-ingest-canary.md)). `SENTRY_API_TOKEN` is an optional runtime token with `event:read` for the back-office triage lookup. Never reuse one for another.
+- **`SENTRY_IDENTITY_ENABLED`, `NEXT_PUBLIC_SENTRY_IDENTITY_ENABLED` and `SENTRY_IDENTITY_SALT`:** off by default. When on, events carry a hashed user token, never the raw id.
+- **`BETTERSTACK_SOURCE_TOKEN` and `BETTERSTACK_INGEST_URL`:** from the Better Stack Telemetry source you create for logs, used only when `ENABLE_BETTERSTACK_TELEMETRY` is `true`. **`BETTERSTACK_API_KEY`** is a different token, from Better Stack Uptime. **`BETTERSTACK_HEARTBEAT_URL` and `BETTERSTACK_DIGEST_HEARTBEAT_URL`** are the heartbeat URLs of the ticker and the daily digest, production only. All of these are described in the [Better Stack setup guide](docs/maintenance/00-betterstack-setup.md).
+- **`OBSERVABILITY_ALERT_EMAIL`, `SLACK_OPS_WEBHOOK_URL` and `GITHUB_RELEASE_LAG_TOKEN`:** optional alert channels. The Slack value is an incoming-webhook URL and is secret. The GitHub token needs only `Contents: read` on this repository.
 
-| Variable                     | Description                    | Notes                      |
-| ---------------------------- | ------------------------------ | -------------------------- |
-| `NEXT_PUBLIC_SENTRY_DSN`     | Sentry error tracking DSN      | Public, safe to expose     |
-| `SENTRY_AUTH_TOKEN`          | Sentry release/sourcemap token | Build-time only            |
-| `BETTERSTACK_API_KEY`        | BetterStack uptime monitoring  | For status page/alerts     |
-| `NEXT_PUBLIC_LOGO_DEV_TOKEN` | Logo.dev API token             | For company logo rendering |
+### Infrastructure and jobs (Netlify, Upstash and `CRON_SECRET`)
 
-### Dev/Test Only (DO NOT set on production)
+- **`CRON_SECRET`** (secret): generate it with `openssl rand -hex 32`. It gates every `/api/cleanup/*` route and the Netlify ticker, and the same value is also stored in the Better Stack and Sentry monitor headers, so a rotation touches all three places. See the [secret rotation runbook](docs/maintenance/19-secret-rotation-runbook.md).
+- **`CRON_TICK_BASE_URL`:** optional. Where the ticker posts; it defaults to the deploy URL Netlify provides.
+- **`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`:** from the Upstash console, REST API section. The platform reaches Redis over REST only. Do not set `REDIS_URL` on Netlify. Local, previews and production share one Redis database today.
+- **`UPSTASH_MANAGEMENT_API_KEY`, `UPSTASH_EMAIL`, `UPSTASH_DATABASE_ID` and `UPSTASH_MONTHLY_COMMAND_CAP`:** optional, for the usage line in the daily digest. They are Upstash account credentials, not the database REST token.
+- **`MAINTENANCE_BYPASS_SECRET`:** optional secret that lets an operator through maintenance mode when none is stored in Redis.
+- **The scheduled fleet switch** is not an environment variable but the Upstash key `ops:active_cron_platform`; see the [pause decision](docs/decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md).
 
-| Variable        | Description                    | Notes          |
-| --------------- | ------------------------------ | -------------- |
-| `SEED_PASSWORD` | Password for seeded test users | Local dev only |
+The feature flags (`ENABLE_*`, `TDS_ENGINE`, `RATE_CARD_SCOPED_RESOLUTION`), the seed variables and the build-only variables are self-explanatory from their comments in `.env.sample`. `NEXT_PUBLIC_ENABLE_DEV_TOOLS` must never be `true` in production.
 
-</details>
+### Payment rails
 
-### Production vs Local Checklist
+Razorpay is the only live rail (INR settlement); Stripe was removed from the code on 2026-10-04. `DODO_PAYMENTS` exists only as a `PaymentGateway` enum value. There is no client, checkout path, webhook handler, payout submitter or timeline behind it, and it throws `UnsupportedGatewayError` if it ever reaches gateway routing, a refund or a payout. Dodo has never moved money and appears in no reconciliation or filing. Lemon Squeezy and XFlow were evaluated in March 2026, rejected and removed. See [the gateway page](docs/finance/10-money-in/04-razorpay-gateway-and-currency.md).
+
+### Production vs local checklist
 
 When deploying to production (Netlify), ensure:
 
@@ -229,9 +206,33 @@ When deploying to production (Netlify), ensure:
 - [ ] `NODE_ENV` set to `production`
 - [ ] `SEED_PASSWORD` removed
 - [ ] `REDIS_URL` removed (use `UPSTASH_REDIS_REST_URL` instead)
-- [ ] Payment keys switched from `test` to `live` when going live
+- [ ] Payment keys switched from `test` to `live` when going live (see the go-live highlights below)
 - [ ] `BETTER_AUTH_SECRET` is a unique production secret
 - [ ] No credentials committed to the repository
+
+## Go-live checklist highlights
+
+Taking the platform from sandbox to real money is a short ordered list of owner steps. This is the highlights version; the full checklist, with the proof for every step, is [the money go-live checklist](docs/finance/70-operations/07-go-live-checklist.md), and the agent-facing index is the [go-live skill](.claude/skills/go-live/SKILL.md). Do these in order, because some steps only make sense after an earlier one.
+
+1. **Resume the paused job fleet.** The scheduled jobs are deliberately paused until launch, and nothing runs on schedule until the Upstash key `ops:active_cron_platform` is deleted or set to `netlify`. The resume steps are in [the pause decision](docs/decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md#how-to-resume-go-live-or-any-time).
+2. **Run the pre-launch secret rotation.** Several credentials were exposed before launch, and Netlify secrets are write-only, so follow the ordered procedures in the [secret rotation runbook](docs/maintenance/19-secret-rotation-runbook.md).
+3. **Set `PLATFORM_GSTIN` before the Razorpay live keys.** Until it is set, the invoice jobs record a standing config skip, and live keys turn that skip into a page. See [1.2 Keys and the test-key guard](docs/finance/70-operations/07-go-live-checklist.md#12-keys-and-the-test-key-guard).
+4. **Make the daily ops digest read clean.** The latest digest email must show no config skips and no paused or muted monitor. See [Part 3](docs/finance/70-operations/07-go-live-checklist.md#part-3-the-daily-ops-digest-reads-clean).
+5. **Set `EMAIL_DELIVERY_MODE=live`.** Any other value holds every email to a domain other than ours and the allowlist. The digest's "Settings" line shows the current value ([Part 3](docs/finance/70-operations/07-go-live-checklist.md#part-3-the-daily-ops-digest-reads-clean)).
+6. **Clear the sandbox identities.** Razorpay rejects every test-mode customer, contact and fund-account id under a live key, so run the purge once, in the cutover window, and never again after live traffic. See [1.5 Clear sandbox identities from the database](docs/finance/70-operations/07-go-live-checklist.md#15-clear-sandbox-identities-from-the-database).
+7. **Switch to the Razorpay live keys and prove them with two live ₹1 tests**, a checkout and a full refund ([1.2](docs/finance/70-operations/07-go-live-checklist.md#12-keys-and-the-test-key-guard) and [1.6](docs/finance/70-operations/07-go-live-checklist.md#16-proof-for-collection-two-live-1-tests)).
+8. **Unpause the eight Better Stack Telemetry alerts after the go-live data reset and once every money gauge reads zero.** They were created paused because seeded and QA money rows would fire them, and the digest cannot see them, so tick each one off. See [2.1 Pre-flip checks](docs/finance/70-operations/07-go-live-checklist.md#21-pre-flip-checks) and the [Better Stack setup guide](docs/maintenance/00-betterstack-setup.md).
+9. **Buy the Better Stack responder seat** (phone and SMS paging) and the Telemetry bundle, then add phone and SMS to the four money backlog alerts. Also in [2.1 Pre-flip checks](docs/finance/70-operations/07-go-live-checklist.md#21-pre-flip-checks).
+10. **Buy static egress for RazorpayX (QuotaGuard) at the first live payout.** Live RazorpayX APIs answer only allowlisted IPs and Netlify has none, so every payout call refuses without `RAZORPAYX_EGRESS_PROXY_URL`. See the "Static egress" item in [2.1 Pre-flip checks](docs/finance/70-operations/07-go-live-checklist.md#21-pre-flip-checks).
+11. **Flip RazorpayX payouts with a canary.** Set `ENABLE_LIVE_PAYOUTS=true`, redeploy, pay exactly one small verified payout (₹1.00 is enough), and watch it reach `COMPLETED` before releasing the rest. See [2.3 Flip, canary, rollback](docs/finance/70-operations/07-go-live-checklist.md#23-flip-canary-rollback) and [Part 2](docs/finance/70-operations/07-go-live-checklist.md#part-2-paying-out-real-money-razorpayx).
+
+### Payment and tax prerequisites
+
+These constraints explain why the product statement says experts are paid in INR to an Indian bank account. They are deliberate, and removing a refusal would create a statutory failure rather than a feature.
+
+- **Learners can pay from anywhere.** International cards are accepted, Razorpay converts at the buyer's bank, and the platform settles in INR only. Enforcement is described in [the gateway page](docs/finance/10-money-in/04-razorpay-gateway-and-currency.md).
+- **Experts must be able to receive INR in India.** TDS is withheld under Section 194-O, which applies only to residents. Paying a non-resident would need Section 195 withholding, treaty relief and a Form 15CA/15CB filing per remittance, none of which exists, and RazorpayX cannot pay a foreign bank account. `processSinglePayout` therefore refuses a non-resident payee, and consultant onboarding says so. See [TDS withholding](docs/finance/40-payouts/06-tds-withholding.md).
+- **Tax invoices need `PLATFORM_GSTIN`** (step 3), and zero-rated exports need a valid Letter of Undertaking, otherwise they are taxed at 18% IGST.
 
 ## Docker Commands
 
@@ -296,10 +297,10 @@ npx prisma studio
 
 ## Architecture
 
-- **Framework:** Next.js 15 with App Router
+- **Framework:** Next.js 15 with App Router and React 18
 - **Database:** PostgreSQL via Supabase
-- **ORM:** Prisma 6
-- **Auth:** NextAuth.js
+- **ORM:** Prisma 7
+- **Auth:** Better Auth
 - **Payments:** Razorpay
 - **Real-time:** Stream.io
 - **Styling:** Tailwind CSS
@@ -317,7 +318,7 @@ npx prisma studio
 docker compose logs web
 
 # Ensure .env file exists and has required variables
-cat .env | grep -E "^(DATABASE_URL|NEXTAUTH)"
+cat .env | grep -E "^(DATABASE_URL|BETTER_AUTH)"
 ```
 
 **Hot reload not working:**

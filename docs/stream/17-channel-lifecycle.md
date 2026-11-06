@@ -304,6 +304,7 @@ must appear in neither the cron's freeze queue nor the sync's expected-set.**
   Browser-initiated calls require an authenticated session (`requireAuthenticatedStreamActor`),
   filter out users without `STREAM_DATA_PROCESSING` consent (`droppedIds`), and
   strip `email` fields (`stripStreamUserEmails`) from returned Stream user objects.
+  The payload it sends to Stream is built only by `toStreamUser()` and carries no email; `stripStreamUserEmails` remains for users whose older Stream copy has not yet been scrubbed by `stream-sync`.
 
 ## Testing map
 

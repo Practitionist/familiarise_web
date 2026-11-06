@@ -28,6 +28,7 @@ import { sendToRecipients } from "@/lib/email/send-to-recipients";
 
 const allowed: EmailRecipient = {
   userId: "user_1",
+  category: "appointments",
   email: "one@example.com",
   name: "One",
   zone: "Asia/Kolkata",
@@ -61,6 +62,8 @@ it("delivers to allowed recipients with one-click headers and skips the rest", a
     expect.objectContaining({
       to: "one@example.com",
       subject: "Hello One",
+      // Stored on the row so every attempt rechecks this account and category.
+      deliveryPolicy: { userId: "user_1", category: "appointments" },
       headers: {
         "List-Unsubscribe": `<${allowed.unsubscribeUrl}>`,
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",

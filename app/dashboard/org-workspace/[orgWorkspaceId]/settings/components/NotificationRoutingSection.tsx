@@ -6,12 +6,9 @@
  * Operator chooses where org-lifecycle events appear (bell, email, or
  * neither).
  *
- * The chosen mode is pushed onto the user's Novu subscriber record as
- * `data.routingMode` / `routingBell` / `routingEmail` by
- * `POST /api/novu/subscriber`, and the Novu workflow conditions gate the
- * channel steps on those flags — the same mechanism the category preferences
- * use. This docstring previously claimed `lib/novu/org-workflows.ts` read the
- * column directly; it never did, and the setting was inert (ADR 23).
+ * The mode is stored on `OrgWorkspaceProfile.notificationRoutingMode`; the
+ * server's bell and email gates read it before every send and apply it to
+ * every bell family, not only org-lifecycle events.
  */
 
 import { useState } from "react";

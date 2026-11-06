@@ -10,8 +10,8 @@
  *     PATCH against the caller's ACTIVE OWNER memberships so we can't
  *     pin an org the operator doesn't actually own.
  *   - `notificationRoutingMode` — BELL_AND_EMAIL | BELL_ONLY | EMAIL_ONLY
- *     | NEITHER. Read by Novu dispatchers when an org-lifecycle event
- *     fires for an operator who owns multiple orgs.
+ *     | NEITHER. The bell and email gates read it from Postgres at stage
+ *     and send time, so a change applies to the next notification.
  *   - `locale` — BCP 47 string used for cross-org workspace formatting.
  *     Per-org pages still use the org's own region defaults.
  *   - `currencyDisplayCode` — ISO 4217 used for the workspace overview
@@ -33,7 +33,6 @@ import { NotificationRoutingMode } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { getWorkspaceSettings } from "@/lib/data/org-workspace";
-import { syncSubscriber } from "@/lib/novu/subscriber";
 
 const PatchBodySchema = z
   .object({
@@ -41,9 +40,7 @@ const PatchBodySchema = z
     // distinction between "key absent" (don't touch) and "key=null"
     // (clear) is preserved via Zod's optional+nullable composition.
     defaultLandingOrganizationId: z.string().min(1).nullable().optional(),
-    notificationRoutingMode: z
-      .nativeEnum(NotificationRoutingMode)
-      .optional(),
+    notificationRoutingMode: z.nativeEnum(NotificationRoutingMode).optional(),
     // Light validation only — Intl.NumberFormat will tolerate most BCP-47
     // strings. We reject obvious garbage but don't enumerate every locale.
     locale: z
@@ -170,29 +167,6 @@ export async function PATCH(
       updatedAt: true,
     },
   });
-
-  // Q2-routing fix — the routing mode only took effect on the next 30-minute
-  // subscriber sync. Re-sync inline (awaited) so the bell/email gate applies
-  // before the success response: a notification triggered right after the
-  // save must see the new flags. syncSubscriber never throws (it swallows +
-  // reports internally), so awaiting cannot fail the settings save — at most
-  // it adds the Novu round-trip (5s client timeout) to this PATCH.
-  if (body.notificationRoutingMode !== undefined) {
-    const account = await prisma.user.findUnique({
-      where: { id: auth.session.user.id },
-      select: { email: true, name: true },
-    });
-    if (account?.email) {
-      const nameParts = (account.name || "User").split(" ");
-      await syncSubscriber({
-        userId: auth.session.user.id,
-        email: account.email,
-        firstName: nameParts[0],
-        lastName: nameParts.slice(1).join(" ") || undefined,
-        routingMode: body.notificationRoutingMode,
-      });
-    }
-  }
 
   return NextResponse.json({ profile: updated });
 }

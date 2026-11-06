@@ -89,8 +89,7 @@ const LINKEDIN_URL_MESSAGE =
   "Enter your public LinkedIn profile link, like https://linkedin.com/in/yourname";
 
 export type LinkedinNormaliseResult =
-  | { ok: true; url: string }
-  | { ok: false; reason: string };
+  { ok: true; url: string } | { ok: false; reason: string };
 
 /**
  * Validate a LinkedIn profile link and reduce it to one canonical form:
@@ -533,7 +532,7 @@ export const NotificationPreferenceSchema = z.object({
   orgMembershipAlerts: z.boolean().default(true),
   orgProgramAlerts: z.boolean().default(true),
 
-  // Quiet hours
+  // Quiet hours: hold the consultant's planning reminder (email and bell)
   quietHoursEnabled: z.boolean().default(false),
   quietHoursStart: z.string().nullable().default(null),
   quietHoursEnd: z.string().nullable().default(null),
@@ -543,6 +542,10 @@ export const NotificationPreferenceSchema = z.object({
 export type NotificationPreference = z.infer<
   typeof NotificationPreferenceSchema
 >;
+
+/** The quiet window shown and enforced while a stored start or end is null. */
+export const QUIET_HOURS_DEFAULT_START = "22:00";
+export const QUIET_HOURS_DEFAULT_END = "08:00";
 
 /** Schema for partial updates to notification preferences (PUT endpoint). */
 export const NotificationPreferenceUpdateSchema =

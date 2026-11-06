@@ -9,7 +9,7 @@
 
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("../../lib/email", () => ({}));
-jest.mock("../../lib/novu/subscriber", () => ({ syncSubscriber: jest.fn() }));
+jest.mock("../../lib/novu/subscriber", () => ({ deleteSubscriber: jest.fn() }));
 jest.mock("@sentry/nextjs", () => {
   const actual = jest.requireActual("@sentry/nextjs");
   return {
@@ -25,6 +25,7 @@ import type { BetterAuthOptions } from "better-auth";
 import { auth } from "../../lib/auth";
 import {
   CAPTCHA_PROTECTED_PATHS,
+  TURNSTILE_ALWAYS_FAIL_SECRET,
   turnstileCaptcha,
   turnstileHostnames,
 } from "../../lib/auth/captcha";
@@ -174,6 +175,44 @@ describe("lib/auth.ts config pin", () => {
       missing: "TURNSTILE_SECRET_KEY,NEXT_PUBLIC_TURNSTILE_SITE_KEY",
     });
     expect(Sentry.captureMessage).not.toHaveBeenCalled();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it("verifies with the always-fail secret when production holds a test key", () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    const verifiesWith = (
+      secretKey: string,
+      siteKey: string,
+      sentryEnvironment: string,
+      expected: string,
+    ) =>
+      expect(
+        turnstileCaptcha({ secretKey, siteKey, sentryEnvironment })[0]?.options,
+      ).toMatchObject({ secretKey: expected });
+    const passSecret = "1x0000000000000000000000000000000AA";
+    const passSite = "1x00000000000000000000AA";
+    try {
+      verifiesWith(
+        "real-secret",
+        passSite,
+        "production",
+        TURNSTILE_ALWAYS_FAIL_SECRET,
+      );
+      verifiesWith(
+        passSecret,
+        "real-site",
+        "production",
+        TURNSTILE_ALWAYS_FAIL_SECRET,
+      );
+      verifiesWith(passSecret, passSite, "preview", passSecret);
+      verifiesWith("real-secret", "real-site", "production", "real-secret");
+    } finally {
+      error.mockRestore();
+    }
+    expect(Sentry.logger.warn).toHaveBeenCalledWith(
+      "AUTH_CAPTCHA_TEST_KEYS_IN_PRODUCTION",
+      { keys: "NEXT_PUBLIC_TURNSTILE_SITE_KEY" },
+    );
     expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 });

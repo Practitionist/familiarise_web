@@ -2,8 +2,6 @@
  * @jest-environment node
  */
 
-const mockSubscriberCreate = jest.fn();
-const mockUserFindUnique = jest.fn();
 const mockAttemptTrigger = jest.fn();
 const mockAttemptStaged = jest.fn();
 const mockCaptureException = jest.fn();
@@ -24,9 +22,6 @@ jest.mock("@sentry/nextjs", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    user: {
-      findUnique: (...args: unknown[]) => mockUserFindUnique(...args),
-    },
     notificationOutbox: {
       upsert: jest.fn(),
       update: jest.fn(),
@@ -36,11 +31,7 @@ jest.mock("../../lib/prisma", () => ({
 
 jest.mock("../../lib/novu/client", () => ({
   isNovuConfigured: () => true,
-  getNovuClient: () => ({
-    subscribers: {
-      create: (...args: unknown[]) => mockSubscriberCreate(...args),
-    },
-  }),
+  getNovuClient: () => ({}),
 }));
 
 jest.mock("../../lib/email/send-to-recipients", () => ({
@@ -59,11 +50,7 @@ jest.mock("../../lib/novu/outbox", () => {
 
 import { createHmac } from "node:crypto";
 import { stageBell } from "@/lib/novu/stage-bell";
-import {
-  buildSubscriberCustomData,
-  computeSubscriberHash,
-  updateSubscriberPreferences,
-} from "@/lib/novu/subscriber";
+import { computeSubscriberHash } from "@/lib/novu/subscriber";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 
@@ -89,7 +76,7 @@ afterEach(() => {
   }
 });
 
-describe("1. stageBell(tx, ...) preference gating, routing mode & quiet hours", () => {
+describe("1. stageBell(tx, ...) preference gating and routing mode", () => {
   it("never schedules a delayed survey earlier than its explicit receipt window", async () => {
     const tx = {
       user: {
@@ -123,21 +110,21 @@ describe("1. stageBell(tx, ...) preference gating, routing mode & quiet hours", 
     );
   });
 
-  it("filters out EMAIL_ONLY, NEITHER, allNotifications:false, inAppEnabled:false, and muted categories, computes quiet-hours notBefore, and returns null when all opt out", async () => {
+  it("filters out erased, EMAIL_ONLY, NEITHER, allNotifications:false, inAppEnabled:false, and muted categories, stages with no deferral, and returns null when all opt out", async () => {
     const txFindMany = jest.fn().mockResolvedValue([
       {
-        id: "u_allowed_quiet",
-        timezone: "UTC",
+        id: "u_allowed",
         orgWorkspaceProfile: { notificationRoutingMode: "BELL_AND_EMAIL" },
         notificationPreferences: {
           allNotifications: true,
           inAppEnabled: true,
           paymentNotifications: true,
-          quietHoursEnabled: true,
-          quietHoursStart: "00:00",
-          quietHoursEnd: "23:59",
-          quietHoursTimezone: "UTC",
         },
+      },
+      {
+        id: "u_erased",
+        erasedAt: new Date(),
+        notificationPreferences: { allNotifications: true, inAppEnabled: true },
       },
       {
         id: "u_email_only",
@@ -187,7 +174,8 @@ describe("1. stageBell(tx, ...) preference gating, routing mode & quiet hours", 
     const staged = await stageBell(tx, {
       workflowId: "payment-success",
       recipients: [
-        "u_allowed_quiet",
+        "u_allowed",
+        "u_erased",
         "u_email_only",
         "u_neither",
         "u_all_off",
@@ -202,10 +190,9 @@ describe("1. stageBell(tx, ...) preference gating, routing mode & quiet hours", 
     expect(txFindMany).toHaveBeenCalledTimes(1);
     expect(txUpsert).toHaveBeenCalledTimes(1);
     expect(staged).not.toBeNull();
-    expect(staged?.recipients).toEqual(["u_allowed_quiet"]);
+    expect(staged?.recipients).toEqual(["u_allowed"]);
     expect(staged?.kind).toBe("SINGLE");
-    expect(staged?.notBefore).toBeInstanceOf(Date);
-    expect((staged?.notBefore as Date).getTime()).toBeGreaterThan(Date.now());
+    expect(staged?.notBefore).toBeNull();
 
     // When all recipients opt out, stageBell returns null without writing to NotificationOutbox
     txUpsert.mockClear();
@@ -263,50 +250,7 @@ describe("2. computeSubscriberHash(subscriberId) HMAC-SHA256 digest", () => {
   });
 });
 
-describe("3. buildSubscriberCustomData fail-closed DB read", () => {
-  it("propagates DB failures rather than silently defaulting opted-out users back to masterEnabled: true", async () => {
-    mockUserFindUnique.mockRejectedValueOnce(
-      new Error("PgBouncer connection pool exhausted"),
-    );
-
-    await expect(
-      buildSubscriberCustomData("user_opted_out", {}),
-    ).rejects.toThrow("PgBouncer connection pool exhausted");
-  });
-});
-
-describe("4. updateSubscriberPreferences idempotent upsert", () => {
-  it("calls idempotent novu.subscribers.create(...) so unsynced users never 404", async () => {
-    mockUserFindUnique.mockResolvedValueOnce({
-      orgWorkspaceProfile: { notificationRoutingMode: "BELL_ONLY" },
-      notificationPreferences: null,
-    });
-    mockSubscriberCreate.mockResolvedValueOnce({});
-
-    await updateSubscriberPreferences("unsynced_user_7", {
-      allNotifications: true,
-      inApp: true,
-      email: false,
-      appointmentReminders: false,
-    });
-
-    expect(mockSubscriberCreate).toHaveBeenCalledTimes(1);
-    expect(mockSubscriberCreate).toHaveBeenCalledWith({
-      subscriberId: "unsynced_user_7",
-      data: expect.objectContaining({
-        routingMode: "BELL_ONLY",
-        routingBell: true,
-        routingEmail: false,
-        masterEnabled: true,
-        preferInApp: true,
-        preferEmail: false,
-        categoryAppointments: false,
-      }),
-    });
-  });
-});
-
-describe("5. flushNotificationsAfter concurrent bundle dispatch & inline fallback", () => {
+describe("3. flushNotificationsAfter concurrent bundle dispatch & inline fallback", () => {
   it("flushes both bells and emails bundles concurrently and awaits inline when outside Next.js request context", async () => {
     const order: string[] = [];
     let releaseAll!: () => void;
@@ -376,9 +320,8 @@ describe("5. flushNotificationsAfter concurrent bundle dispatch & inline fallbac
       "test-booking-flush",
     );
 
-    // Yield microtasks: all 3 dispatches must have started concurrently before gate opens
-    await Promise.resolve();
-    await Promise.resolve();
+    // Drain microtasks (the email sender loads lazily): all 3 dispatches must start before the gate opens
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(order).toEqual([
       "start:bell-ok",
       "start:bell-fail",
@@ -396,5 +339,35 @@ describe("5. flushNotificationsAfter concurrent bundle dispatch & inline fallbac
       3_000,
     );
     expect(mockCaptureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("attempts a bell staged twice under the same row id only once", async () => {
+    mockAttemptTrigger.mockResolvedValue({ success: true, outcome: "SENT" });
+    const row: StagedTrigger = {
+      id: "bell-shared",
+      workflowId: "appointment-booked",
+      kind: "SINGLE",
+      recipients: ["u1"],
+      payload: { appointmentId: "appt-1" },
+      transactionId: "appointment-booked:shared",
+      attempts: 0,
+      status: "PENDING",
+      notBefore: null,
+    };
+    const other: StagedTrigger = {
+      ...row,
+      id: "bell-other",
+      transactionId: "appointment-booked:other",
+    };
+
+    await flushNotificationsAfter(
+      { bells: [row, { ...row }, other, null, row] },
+      "test-dedupe-flush",
+    );
+
+    expect(mockAttemptTrigger.mock.calls.map(([r]) => r.id)).toEqual([
+      "bell-shared",
+      "bell-other",
+    ]);
   });
 });

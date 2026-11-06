@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { outboxTransactionIdOf } from "@/lib/novu/outbox";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import {
   extractNovuChannel,
@@ -21,8 +22,13 @@ async function handleNovuFailureEvent(
   const errorText =
     extractNovuErrorMessage(payload) ?? `Novu delivery failure (${eventType})`;
   if (transactionId) {
+    // An active row without an anchor keeps lastError null: an error there marks
+    // a row sent under the earlier delivery format (lib/novu/outbox.ts).
     await prisma.notificationOutbox.updateMany({
-      where: { transactionId },
+      where: {
+        transactionId: outboxTransactionIdOf(transactionId),
+        NOT: { status: { in: ["PENDING", "RETRY"] }, firstAttemptAt: null },
+      },
       data: { lastError: errorText },
     });
   }
@@ -62,8 +68,13 @@ export async function processNovuWebhookPayload(
   }
 
   if (transactionId && isNovuDeliveredEvent(eventType, status)) {
+    // One recipient's delivery settles only a row with no other recipients.
     await prisma.notificationOutbox.updateMany({
-      where: { transactionId, status: "PENDING" },
+      where: {
+        transactionId: outboxTransactionIdOf(transactionId),
+        status: "PENDING",
+        kind: "SINGLE",
+      },
       data: {
         status: "SENT",
         sentAt: new Date(),

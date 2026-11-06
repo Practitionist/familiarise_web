@@ -1,6 +1,6 @@
+import type { Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { EMAIL_CATEGORY_COLUMN } from "@/lib/email/preferences";
-import { computeQuietHoursNotBefore } from "./quiet-hours";
 import { templateFor } from "./templates";
 import type { NovuWorkflowId, PreferenceCategory } from "./templates/types";
 
@@ -16,21 +16,24 @@ const BELL_PREFERENCE_SELECT = {
   orgBillingAlerts: true,
   orgMembershipAlerts: true,
   orgProgramAlerts: true,
-  quietHoursEnabled: true,
-  quietHoursStart: true,
-  quietHoursEnd: true,
-  quietHoursTimezone: true,
+} as const;
+
+const BELL_POLICY_SELECT = {
+  id: true,
+  erasedAt: true,
+  orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
+  notificationPreferences: { select: BELL_PREFERENCE_SELECT },
 } as const;
 
 type BellUserRow = {
   id?: string;
-  timezone?: string | null;
+  erasedAt?: Date | null;
   orgWorkspaceProfile?: {
     notificationRoutingMode?:
       "BELL_AND_EMAIL" | "BELL_ONLY" | "EMAIL_ONLY" | "NEITHER" | null;
   } | null;
   notificationPreferences?: Partial<
-    Record<keyof typeof BELL_PREFERENCE_SELECT, boolean | string | null>
+    Record<keyof typeof BELL_PREFERENCE_SELECT, boolean | null>
   > | null;
 };
 
@@ -39,6 +42,7 @@ function isBellAllowedForRecipient(
   category: PreferenceCategory | null,
 ): boolean {
   if (!row) return true;
+  if (row.erasedAt) return false;
   const routingMode = row.orgWorkspaceProfile?.notificationRoutingMode;
   if (routingMode === "EMAIL_ONLY" || routingMode === "NEITHER") {
     return false;
@@ -53,85 +57,156 @@ function isBellAllowedForRecipient(
   return true;
 }
 
-function computeLatestQuietHoursNotBefore(
+function allowedRecipientsOf(
+  workflowId: NovuWorkflowId,
+  recipients: string[],
   rows: BellUserRow[],
-  allowedRecipients: string[],
-): Date | undefined {
-  const allowedSet = new Set(allowedRecipients);
-  const now = new Date();
-  let latest: Date | undefined;
-  for (const row of rows) {
-    if (typeof row.id === "string" && !allowedSet.has(row.id)) continue;
-    const pref = row.notificationPreferences;
-    if (!pref?.quietHoursEnabled) continue;
-    const notBefore = computeQuietHoursNotBefore(
-      {
-        quietHoursEnabled: true,
-        quietHoursStart:
-          typeof pref.quietHoursStart === "string"
-            ? pref.quietHoursStart
-            : null,
-        quietHoursEnd:
-          typeof pref.quietHoursEnd === "string" ? pref.quietHoursEnd : null,
-        quietHoursTimezone:
-          typeof pref.quietHoursTimezone === "string"
-            ? pref.quietHoursTimezone
-            : null,
-        fallbackTimezone: row.timezone ?? null,
-      },
-      now,
-    );
-    if (notBefore && (!latest || notBefore > latest)) latest = notBefore;
-  }
-  return latest;
+): string[] {
+  const category = templateFor(workflowId)?.category ?? null;
+  const byId = new Map(
+    rows
+      .filter(
+        (r): r is BellUserRow & { id: string } => typeof r.id === "string",
+      )
+      .map((r) => [r.id, r]),
+  );
+  return recipients.filter((id) =>
+    isBellAllowedForRecipient(byId.get(id), category),
+  );
 }
 
+/** Staging-time filter; the first attempt rechecks once with {@link currentBellRecipients}. */
 export async function resolveRecipientBellPolicy(
   workflowId: NovuWorkflowId,
   recipients: string[],
-  opts?: {
-    tx?: Partial<Pick<Tx, "user">>;
-    deferrable?: boolean;
-  },
-): Promise<{ allowedRecipients: string[]; notBefore: Date | undefined }> {
-  if (recipients.length === 0) {
-    return { allowedRecipients: recipients, notBefore: undefined };
-  }
+  opts?: { tx?: Partial<Pick<Tx, "user">> },
+): Promise<{ allowedRecipients: string[] }> {
+  if (recipients.length === 0) return { allowedRecipients: recipients };
   try {
     const findMany = opts?.tx ? opts.tx.user?.findMany : prisma.user?.findMany;
     if (typeof findMany !== "function") {
-      return { allowedRecipients: recipients, notBefore: undefined };
+      return { allowedRecipients: recipients };
     }
     const rows = (await findMany({
       where: { id: { in: recipients } },
-      select: {
-        id: true,
-        timezone: true,
-        orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
-        notificationPreferences: { select: BELL_PREFERENCE_SELECT },
-      },
+      select: BELL_POLICY_SELECT,
     })) as BellUserRow[];
-
-    const category = templateFor(workflowId)?.category ?? null;
-    const byId = new Map(
-      rows
-        .filter(
-          (r): r is BellUserRow & { id: string } => typeof r.id === "string",
-        )
-        .map((r) => [r.id, r]),
-    );
-    const allowedRecipients = recipients.filter((id) =>
-      isBellAllowedForRecipient(byId.get(id), category),
-    );
-    if (allowedRecipients.length === 0 || opts?.deferrable === false) {
-      return { allowedRecipients, notBefore: undefined };
-    }
     return {
-      allowedRecipients,
-      notBefore: computeLatestQuietHoursNotBefore(rows, allowedRecipients),
+      allowedRecipients: allowedRecipientsOf(workflowId, recipients, rows),
     };
   } catch (err) {
     if (opts?.tx) throw err;
-    return { allowedRecipients: recipients, notBefore: undefined };
+    return { allowedRecipients: recipients };
   }
+}
+
+/**
+ * Largest audience one fan-out stages. Every recipient is one Novu workflow
+ * run, so this keeps a single post well inside the monthly run quota.
+ */
+export const MAX_BELL_AUDIENCE = 2_000;
+
+/**
+ * {@link isBellAllowedForRecipient} as a query filter, so a cap counts only
+ * the users a bell may reach.
+ */
+function bellAllowedWhere(
+  category: PreferenceCategory | null,
+): Prisma.UserWhereInput {
+  const preference: Prisma.NotificationPreferenceWhereInput = {
+    allNotifications: true,
+    inAppEnabled: true,
+  };
+  if (category !== null) preference[EMAIL_CATEGORY_COLUMN[category]] = true;
+  return {
+    erasedAt: null,
+    AND: [
+      {
+        OR: [
+          { orgWorkspaceProfile: { is: null } },
+          {
+            orgWorkspaceProfile: {
+              is: {
+                notificationRoutingMode: { notIn: ["EMAIL_ONLY", "NEITHER"] },
+              },
+            },
+          },
+        ],
+      },
+      {
+        OR: [
+          { notificationPreferences: { is: null } },
+          { notificationPreferences: { is: preference } },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * Every user a bell may reach now, in id order: verified, not banned, and
+ * allowed by {@link allowedRecipientsOf}. Refuses (`null`) rather than
+ * truncating when more than `cap` such users exist.
+ */
+export async function bellAudience(
+  tx: Pick<Tx, "user">,
+  workflowId: NovuWorkflowId,
+  cap: number,
+): Promise<string[] | null> {
+  const rows = await tx.user.findMany({
+    where: {
+      emailVerified: true,
+      banned: false,
+      ...bellAllowedWhere(templateFor(workflowId)?.category ?? null),
+    },
+    select: BELL_POLICY_SELECT,
+    orderBy: { id: "asc" },
+    take: cap + 1,
+  });
+  if (rows.length > cap) return null;
+  return allowedRecipientsOf(
+    workflowId,
+    rows.map((row) => row.id),
+    rows,
+  );
+}
+
+/**
+ * The recipients a bell may reach right now. Throws on a failed read so the
+ * caller retries later instead of sending unchecked.
+ */
+export async function currentBellRecipients(
+  workflowId: NovuWorkflowId,
+  recipients: string[],
+): Promise<string[]> {
+  if (recipients.length === 0) return [];
+  const rows = await prisma.user.findMany({
+    where: { id: { in: recipients } },
+    select: BELL_POLICY_SELECT,
+  });
+  // A recipient whose user row is gone has no subscriber left to ring.
+  const known = new Set(rows.map((row) => row.id));
+  return allowedRecipientsOf(
+    workflowId,
+    recipients.filter((id) => known.has(id)),
+    rows,
+  );
+}
+
+/**
+ * The recipients whose user row still exists and is not erased. Throws on a
+ * failed read so the caller retries later instead of sending unchecked.
+ */
+export async function unerasedRecipients(
+  recipients: string[],
+): Promise<string[]> {
+  if (recipients.length === 0) return [];
+  const rows = await prisma.user.findMany({
+    where: { id: { in: recipients } },
+    select: { id: true, erasedAt: true },
+  });
+  const live = new Set(
+    rows.filter((row) => !row.erasedAt).map((row) => row.id),
+  );
+  return recipients.filter((id) => live.has(id));
 }

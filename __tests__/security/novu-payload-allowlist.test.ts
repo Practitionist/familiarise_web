@@ -147,24 +147,32 @@ describe("ADR 23 — dual-context payloads are attributable", () => {
 describe("#536 — every payload leaves with customer-ready values", () => {
   const ISO = "2026-09-06T02:23:35.600Z";
 
-  const trigger = jest.fn();
+  const stage = jest.fn();
   const findMany = jest.fn();
 
   jest.mock("../../lib/novu/client", () => ({
     isNovuConfigured: () => true,
-    getNovuClient: () => ({ trigger, triggerBroadcast: trigger }),
+    getNovuClient: () => ({}),
   }));
   jest.mock("../../lib/prisma", () => ({
     __esModule: true,
-    default: { user: { findMany: (...args: unknown[]) => findMany(...args) } },
+    default: {
+      user: { findMany: (...args: unknown[]) => findMany(...args) },
+      notificationOutbox: { upsert: (...args: unknown[]) => stage(...args) },
+    },
   }));
 
-  /** The payload of the Nth `novu.trigger` call, whatever its recipients. */
+  /** The payload of the Nth staged outbox row; the wire sends it as is. */
   const payloadOf = (call: number): Record<string, unknown> =>
-    trigger.mock.calls[call][0].payload;
+    stage.mock.calls[call][0].create.payload;
 
   beforeEach(() => {
-    trigger.mockReset().mockResolvedValue(undefined);
+    // Returned already SENT, so the attempt stops at the staged row.
+    stage.mockReset().mockImplementation(async ({ create }) => ({
+      id: create.transactionId,
+      ...create,
+      status: "SENT",
+    }));
     // Two recipients in different zones: the same instant must reach each of
     // them written in their own time, which one shared payload cannot do.
     findMany.mockReset().mockResolvedValue([
@@ -192,10 +200,10 @@ describe("#536 — every payload leaves with customer-ready values", () => {
       dateTime: ISO,
     });
 
-    expect(trigger).toHaveBeenCalledTimes(2);
-    const rendered = trigger.mock.calls.map((c) => [
-      c[0].to,
-      c[0].payload.dateTime,
+    expect(stage).toHaveBeenCalledTimes(2);
+    const rendered = stage.mock.calls.map((c) => [
+      c[0].create.recipients[0],
+      c[0].create.payload.dateTime,
     ]);
     expect(rendered).toEqual([
       ["u_kolkata", "Sun, 6 Sep 2026 · 7:53 AM IST"],
