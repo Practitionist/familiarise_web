@@ -150,7 +150,7 @@ Run these in the same window as the production release that carries the single-p
 1. `npx tsx scripts/novu/clear-native-mutes.ts --env production` (dry run). Read the list of stray native mutes.
 2. `npx tsx scripts/novu/clear-native-mutes.ts --env production --apply`.
 3. `npm run novu:sync -- --env production --dry-run`, then `npm run novu:sync -- --env production`.
-4. `npm run novu:check -- --env production` exits `0` with no drift.
+4. Five minutes after the sync, `npm run novu:check -- --env production` exits `0` with no drift on two runs in a row. Novu's read API serves stale workflows for about three minutes after a sync, so a `novu:check` in that window reports false drift on random families; wait five minutes, then expect two clean runs in a row.
 
 **Proof:** the dry run in step 1 lists nothing to clear when repeated, and a test booking rings one bell for each recipient who has not opted out. Novu Free allows 10,000 workflow runs a month across Development and Production together, so keep Development testing small ([Novu billing reference](../../../.claude/skills/billing-guardrails/references/novu.md)).
 

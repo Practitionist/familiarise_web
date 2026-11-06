@@ -28,7 +28,7 @@ Terse rules for agents. The human explanation is in `docs/notifications/` (start
 1. Add the id to `NOVU_WORKFLOWS` and a typed payload in `lib/novu/workflows.ts`.
 2. Add the `notify*` function in `lib/novu/service.ts` with the matching `define*Notifier`.
 3. Add the template to `lib/novu/templates/b2c.ts` or `org.ts` and map the event in `EVENT_FAMILY`. `__tests__/notifications/novu-templates.test.ts` requires exactly one family per event and refuses a bare Liquid variable.
-4. `npm run novu:sync -- --dry-run`, then `npm run novu:sync`, then `npm run novu:check`. Never build a workflow by hand in the Novu dashboard; the event is not a workflow, its family is, and the plan caps an environment at 20.
+4. `npm run novu:sync -- --dry-run`, then `npm run novu:sync`, then `npm run novu:check`. Novu's read API serves stale workflows for about three minutes after a sync, so a `novu:check` in that window reports false drift on random families; wait five minutes, then expect two clean runs in a row. Never build a workflow by hand in the Novu dashboard; the event is not a workflow, its family is, and the plan caps an environment at 20.
 5. Update the family table in `docs/notifications/02-workflows-and-api.md`.
 
 ## Relays and cadences (`lib/cron/schedule.ts`)
