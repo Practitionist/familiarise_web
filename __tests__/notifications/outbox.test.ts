@@ -3,18 +3,30 @@
  */
 
 /**
- * The Novu trigger outbox. Pins: the first attempt freezes the recipients
- * current policy allows; an unknown outcome resends the identical body under
- * the identical key; only a definitive response narrows the recipients (and
- * so changes the key); the row is SENT only when Novu accepted every event;
- * revoked audiences, the replay window and Novu 409 settle the way the relay
- * expects; every status write is conditional so nothing overwrites SENT; and
- * the drain takes urgent workflows first.
+ * The Novu trigger outbox. Pins: a generation's first attempt freezes the
+ * recipients current policy allows; an unknown outcome resends the identical
+ * body under the identical key, except that erased users are always dropped;
+ * a definitive response ends the generation, so the rest are rechecked and
+ * re-keyed; terminal refusals beside retryable ones survive as their own
+ * dead-letter row; a single recipient uses the normal trigger and more use
+ * the bulk endpoint; a 429 honours Retry-After; rows the earlier sender
+ * attempted are held for review; every status write is conditional so
+ * nothing overwrites SENT; and the drain takes urgent workflows first.
  */
 
+type WireEvent = { to: string; transactionId: string; payload: unknown };
+type SentRequest = {
+  endpoint: "trigger" | "bulk";
+  events: WireEvent[];
+  key: string;
+};
+
+const mockTrigger = jest.fn();
 const mockTriggerBulk = jest.fn();
+const mockRequestLog: SentRequest[] = [];
 const mockUpsert = jest.fn();
 const mockUpdateMany = jest.fn();
+const mockCreateMany = jest.fn();
 const mockFindUnique = jest.fn();
 const mockUserFindMany = jest.fn();
 const mockCaptureException = jest.fn();
@@ -23,23 +35,36 @@ const mockPostOpsChat = jest.fn();
 jest.mock("../../lib/novu/client", () => ({
   isNovuConfigured: () => true,
   getNovuClient: () => ({
-    triggerBulk: (...args: unknown[]) => mockTriggerBulk(...args),
+    trigger: (event: WireEvent, key: string) => {
+      mockRequestLog.push({ endpoint: "trigger", events: [event], key });
+      return mockTrigger(event, key);
+    },
+    triggerBulk: (body: { events: WireEvent[] }, key: string) => {
+      mockRequestLog.push({ endpoint: "bulk", events: body.events, key });
+      return mockTriggerBulk(body, key);
+    },
   }),
 }));
 
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
-    notificationOutbox: {
-      upsert: (...args: unknown[]) => mockUpsert(...args),
-      updateMany: (...args: unknown[]) => mockUpdateMany(...args),
-      findUnique: (...args: unknown[]) => mockFindUnique(...args),
+jest.mock("../../lib/prisma", () => {
+  const notificationOutbox = {
+    upsert: (...args: unknown[]) => mockUpsert(...args),
+    updateMany: (...args: unknown[]) => mockUpdateMany(...args),
+    createMany: (...args: unknown[]) => mockCreateMany(...args),
+    findUnique: (...args: unknown[]) => mockFindUnique(...args),
+  };
+  return {
+    __esModule: true,
+    default: {
+      notificationOutbox,
+      user: {
+        findMany: (...args: unknown[]) => mockUserFindMany(...args),
+      },
+      $transaction: (fn: (tx: unknown) => Promise<unknown>) =>
+        fn({ notificationOutbox }),
     },
-    user: {
-      findMany: (...args: unknown[]) => mockUserFindMany(...args),
-    },
-  },
-}));
+  };
+});
 
 jest.mock("../../lib/observability/ops-chat", () => ({
   postOpsChat: (...args: unknown[]) => mockPostOpsChat(...args),
@@ -53,12 +78,14 @@ jest.mock("@sentry/nextjs", () => ({
 
 import {
   attemptTrigger,
-  bulkIdempotencyKey,
   deriveTransactionId,
+  LEGACY_BROADCAST,
+  LEGACY_DELIVERY_FORMAT,
   outboxTransactionIdOf,
   recipientTransactionId,
   stageTrigger,
   terminalTriggerReason,
+  triggerIdempotencyKey,
   type StagedTrigger,
 } from "@/lib/novu/outbox";
 import { PROVIDER_REPLAY_WINDOW_MS } from "@/lib/retry/provider-window";
@@ -103,16 +130,20 @@ const inAppOff = (id: string) => ({
   ...allowed(id),
   notificationPreferences: { allNotifications: true, inAppEnabled: false },
 });
+const erased = (id: string) => ({ ...allowed(id), erasedAt: new Date() });
 
 const processed = { acknowledged: true, status: "processed" };
+const refusedWith = (status: string, error?: string[]) => ({
+  acknowledged: true,
+  status,
+  ...(error ? { error } : {}),
+});
 
-/** Every bulk event the client was asked to send, in call order. */
-function sentEvents(): Array<{ to: string; transactionId: string }> {
-  return mockTriggerBulk.mock.calls.flatMap(
-    ([body]: [{ events: Array<{ to: string; transactionId: string }> }]) =>
-      body.events,
-  );
-}
+/** Every request the client was asked to send, in call order. */
+const requests = () => mockRequestLog;
+const request = (index: number) => mockRequestLog[index];
+/** Every event sent, across both endpoints, in call order. */
+const sentEvents = () => mockRequestLog.flatMap((r) => r.events);
 
 type UpdateManyArgs = {
   where: Record<string, unknown>;
@@ -131,25 +162,29 @@ function settleData(): Record<string, unknown> | undefined {
   return updateCalls().find((args) => args.where.firstAttemptAt !== null)?.data;
 }
 
-type BulkCall = [
-  { events: Array<{ to: string; transactionId: string; payload: unknown }> },
-  string,
-];
-const bulkCall = (index: number) =>
-  mockTriggerBulk.mock.calls[index] as BulkCall;
+/** Rows inserted beside a settle (the terminal split). */
+const insertedRows = (): Array<Record<string, unknown>> =>
+  mockCreateMany.mock.calls.flatMap(
+    ([args]: [{ data: Array<Record<string, unknown>> }]) => args.data,
+  );
 
 beforeEach(() => {
   mockUpdateMany.mockResolvedValue({ count: 1 });
+  mockCreateMany.mockResolvedValue({ count: 1 });
   mockUserFindMany.mockImplementation(
     async (args: { where: { id: { in: string[] } } }) =>
       args.where.id.in.map(allowed),
   );
+  mockTrigger.mockResolvedValue({ headers: {}, result: processed });
   mockTriggerBulk.mockImplementation(async (body: { events: unknown[] }) => ({
     headers: {},
     result: body.events.map(() => processed),
   }));
 });
-afterEach(() => jest.resetAllMocks());
+afterEach(() => {
+  jest.resetAllMocks();
+  mockRequestLog.length = 0;
+});
 
 describe("stageTrigger + attemptTrigger", () => {
   it("stages the row, then sends one bulk event per recipient and marks it SENT conditionally", async () => {
@@ -179,6 +214,7 @@ describe("stageTrigger + attemptTrigger", () => {
 
     const result = await attemptTrigger(staged!);
     expect(result).toEqual({ success: true, outcome: "SENT" });
+    expect(request(0).endpoint).toBe("bulk");
     expect(sentEvents()).toEqual([
       expect.objectContaining({
         to: "u2",
@@ -189,7 +225,7 @@ describe("stageTrigger + attemptTrigger", () => {
         transactionId: recipientTransactionId(transactionId, "u1"),
       }),
     ]);
-    expect(bulkCall(0)[1]).toMatch(
+    expect(request(0).key).toMatch(
       new RegExp(`^${transactionId}:bulk:[0-9a-f]{16}$`),
     );
     // The first attempt freezes the allowed set with the stamp, only while active.
@@ -203,10 +239,27 @@ describe("stageTrigger + attemptTrigger", () => {
     });
   });
 
+  it("sends a single recipient through the normal trigger under its own transactionId", async () => {
+    const result = await attemptTrigger(row());
+
+    expect(result).toEqual({ success: true, outcome: "SENT" });
+    expect(mockTriggerBulk).not.toHaveBeenCalled();
+    const recipientId = recipientTransactionId(row().transactionId, "u1");
+    expect(requests()).toEqual([
+      {
+        endpoint: "trigger",
+        events: [
+          expect.objectContaining({ to: "u1", transactionId: recipientId }),
+        ],
+        key: expect.stringMatching(new RegExp(`^${recipientId}:[0-9a-f]{16}$`)),
+      },
+    ]);
+  });
+
   it("leaves the row PENDING with the cause on a timeout, for the drain to finish", async () => {
     const timeout = new Error("Request timed out");
     timeout.name = "RequestTimeoutError";
-    mockTriggerBulk.mockRejectedValue(timeout);
+    mockTrigger.mockRejectedValue(timeout);
 
     const result = await attemptTrigger(row({ id: "nx-2" }));
 
@@ -227,7 +280,7 @@ describe("stageTrigger + attemptTrigger", () => {
     );
 
     expect(result).toMatchObject({ success: true, outcome: "PENDING" });
-    expect(mockTriggerBulk).not.toHaveBeenCalled();
+    expect(requests()).toHaveLength(0);
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
@@ -246,7 +299,7 @@ describe("stageTrigger + attemptTrigger", () => {
       success: false,
       error: "Stage failed; notice not sent",
     });
-    expect(mockTriggerBulk).not.toHaveBeenCalled();
+    expect(requests()).toHaveLength(0);
     expect(mockCaptureException).toHaveBeenCalledTimes(1);
   });
 });
@@ -300,14 +353,60 @@ describe("first attempt freezes the audience", () => {
       ),
     ).resolves.toEqual({ success: true, outcome: "SENT" });
 
-    expect(mockUserFindMany).not.toHaveBeenCalled();
-    expect(bulkCall(1)).toEqual(bulkCall(0));
+    // Only the erasure check runs on a retry; the soft opt-out is ignored.
+    expect(mockUserFindMany).toHaveBeenCalledWith({
+      where: { id: { in: ["u1", "u3"] } },
+      select: { id: true, erasedAt: true },
+    });
+    expect(request(1)).toEqual(request(0));
+  });
+
+  it("drops a recipient erased after an unknown outcome, even though the body changes", async () => {
+    const multi = row({ kind: "MULTI", recipients: ["u1", "u2"] });
+    mockTriggerBulk.mockRejectedValueOnce(new Error("socket hang up"));
+    await attemptTrigger(multi, { relay: true });
+    const frozen = stampCall()!.data as {
+      firstAttemptAt: Date;
+      recipients: string[];
+    };
+
+    mockUserFindMany.mockResolvedValue([allowed("u1"), erased("u2")]);
+    await attemptTrigger(
+      {
+        ...multi,
+        status: "RETRY",
+        attempts: 1,
+        recipients: frozen.recipients,
+        firstAttemptAt: frozen.firstAttemptAt,
+      },
+      { relay: true },
+    );
+
+    expect(request(1).events.map((event) => event.to)).toEqual(["u1"]);
+    expect(request(1).key).not.toBe(request(0).key);
+  });
+
+  it("dead-letters a retry whose every recipient was erased, without calling Novu", async () => {
+    mockUserFindMany.mockResolvedValue([erased("u1")]);
+
+    const result = await attemptTrigger(
+      row({
+        status: "RETRY",
+        attempts: 1,
+        firstAttemptAt: new Date(Date.now() - 60_000),
+      }),
+      { relay: true },
+    );
+
+    expect(result).toMatchObject({
+      outcome: "DEAD_LETTER",
+      deadLetterReason: "policy:audience_revoked",
+    });
+    expect(requests()).toHaveLength(0);
   });
 
   it("dead-letters as an expected skip when nobody may receive it, and never calls Novu", async () => {
-    mockUserFindMany.mockResolvedValue([
-      { ...allowed("u1"), erasedAt: new Date() },
-    ]);
+    mockUserFindMany.mockResolvedValue([erased("u1")]);
 
     const result = await attemptTrigger(row());
 
@@ -316,7 +415,7 @@ describe("first attempt freezes the audience", () => {
       outcome: "DEAD_LETTER",
       deadLetterReason: "policy:audience_revoked",
     });
-    expect(mockTriggerBulk).not.toHaveBeenCalled();
+    expect(requests()).toHaveLength(0);
     expect(mockUpdateMany).toHaveBeenCalledWith({
       where: { id: "nx-1", status: ACTIVE },
       data: expect.objectContaining({
@@ -335,7 +434,7 @@ describe("first attempt freezes the audience", () => {
       outcome: "DEAD_LETTER",
       deadLetterReason: "policy:audience_revoked",
     });
-    expect(mockTriggerBulk).not.toHaveBeenCalled();
+    expect(requests()).toHaveLength(0);
   });
 
   it("never sends when the policy read fails; the row waits for a later attempt", async () => {
@@ -344,7 +443,7 @@ describe("first attempt freezes the audience", () => {
     const result = await attemptTrigger(row(), { relay: true });
 
     expect(result).toMatchObject({ success: false, outcome: "PENDING" });
-    expect(mockTriggerBulk).not.toHaveBeenCalled();
+    expect(requests()).toHaveLength(0);
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
@@ -367,11 +466,11 @@ describe("first attempt freezes the audience", () => {
       row({ kind: "MULTI", recipients: ["u1"], firstAttemptAt: anchor }),
       { relay: true },
     );
-    expect(bulkCall(1)).toEqual(bulkCall(0));
+    expect(request(1)).toEqual(request(0));
   });
 });
 
-describe("definitive bulk responses", () => {
+describe("definitive responses", () => {
   const anchor = new Date(Date.now() - 60_000);
   const attempted = (overrides: Partial<StagedTrigger> = {}) =>
     row({
@@ -382,10 +481,10 @@ describe("definitive bulk responses", () => {
       ...overrides,
     });
 
-  it("narrows a partial response to the unaccepted recipients, and the next attempt uses a new key for them only", async () => {
+  it("narrows a partial response to the unaccepted recipients as a fresh generation with a new key", async () => {
     mockTriggerBulk.mockResolvedValueOnce({
       headers: {},
-      result: [processed, { acknowledged: true, status: "error" }],
+      result: [processed, refusedWith("error")],
     });
 
     await expect(
@@ -398,54 +497,83 @@ describe("definitive bulk responses", () => {
       status: ACTIVE,
       firstAttemptAt: anchor,
     });
-    expect(narrowing.data).toMatchObject({
+    expect(narrowing.data).toEqual({
       status: "RETRY",
       attempts: 2,
+      nextRetryAt: expect.any(Date),
       recipients: ["u2"],
+      firstAttemptAt: null,
+      lastError: null,
     });
-    const nextAnchor = narrowing.data.firstAttemptAt as Date;
-    expect(nextAnchor.getTime()).toBeGreaterThan(anchor.getTime());
 
+    mockUpdateMany.mockClear();
     await expect(
       attemptTrigger(
-        attempted({
-          recipients: ["u2"],
-          attempts: 2,
-          firstAttemptAt: nextAnchor,
-        }),
+        attempted({ recipients: ["u2"], attempts: 2, firstAttemptAt: null }),
         { relay: true },
       ),
     ).resolves.toEqual({ success: true, outcome: "SENT" });
-    expect(bulkCall(1)[0].events.map((event) => event.to)).toEqual(["u2"]);
-    expect(bulkCall(1)[1]).not.toBe(bulkCall(0)[1]);
+    // The new generation is rechecked and stamped before its request.
+    expect(stampCall()?.data).toEqual({
+      firstAttemptAt: expect.any(Date),
+      recipients: ["u2"],
+    });
+    expect(request(1).events.map((event) => event.to)).toEqual(["u2"]);
+    expect(request(1).key).not.toBe(request(0).key);
   });
 
-  it("moves the anchor when nothing was accepted, so a cached refusal is never replayed", async () => {
+  it("rechecks policy before the next generation, so a user erased after a refusal is never sent to", async () => {
     mockTriggerBulk.mockResolvedValueOnce({
       headers: {},
-      result: [{ acknowledged: true, status: "error" }],
+      result: [processed, refusedWith("error")],
     });
+    await attemptTrigger(attempted({ recipients: ["u1", "u2"] }), {
+      relay: true,
+    });
+    const narrowed = updateCalls()[0].data as { recipients: string[] };
 
-    await attemptTrigger(attempted({ kind: "SINGLE" }), { relay: true });
-    const narrowed = settleData()!;
-    expect(narrowed).toMatchObject({ recipients: ["u1"], status: "RETRY" });
-
-    await attemptTrigger(
+    mockUserFindMany.mockResolvedValue([erased("u2")]);
+    const result = await attemptTrigger(
       attempted({
-        kind: "SINGLE",
+        recipients: narrowed.recipients,
         attempts: 2,
-        firstAttemptAt: narrowed.firstAttemptAt as Date,
+        firstAttemptAt: null,
       }),
       { relay: true },
     );
-    expect(bulkCall(1)[0]).toEqual(bulkCall(0)[0]);
-    expect(bulkCall(1)[1]).not.toBe(bulkCall(0)[1]);
+
+    expect(result).toMatchObject({
+      outcome: "DEAD_LETTER",
+      deadLetterReason: "policy:audience_revoked",
+    });
+    expect(requests()).toHaveLength(1);
+  });
+
+  it("starts a fresh generation when nothing was accepted, so a cached refusal is never replayed", async () => {
+    mockTrigger.mockResolvedValueOnce({
+      headers: {},
+      result: refusedWith("error"),
+    });
+
+    await attemptTrigger(attempted({ kind: "SINGLE" }), { relay: true });
+    expect(settleData()).toMatchObject({
+      recipients: ["u1"],
+      firstAttemptAt: null,
+      status: "RETRY",
+    });
+
+    await attemptTrigger(
+      attempted({ kind: "SINGLE", attempts: 2, firstAttemptAt: null }),
+      { relay: true },
+    );
+    expect(request(1).events).toEqual(request(0).events);
+    expect(request(1).key).not.toBe(request(0).key);
   });
 
   it("retries an event status the client does not recognise and never marks it SENT", async () => {
-    mockTriggerBulk.mockResolvedValueOnce({
+    mockTrigger.mockResolvedValueOnce({
       headers: {},
-      result: [{ acknowledged: true, status: "subscriber_id_missing" }],
+      result: refusedWith("subscriber_id_missing"),
     });
 
     const result = await attemptTrigger(attempted({ kind: "SINGLE" }), {
@@ -477,7 +605,7 @@ describe("definitive bulk responses", () => {
   });
 
   it("treats an unreadable 2xx as an unknown outcome: retry with the recipients unchanged", async () => {
-    mockTriggerBulk.mockRejectedValueOnce(
+    mockTrigger.mockRejectedValueOnce(
       Object.assign(new Error("Response validation failed"), {
         statusCode: 201,
         body: "<html>",
@@ -491,15 +619,11 @@ describe("definitive bulk responses", () => {
     expect(updateCalls()[0].where).toEqual({ id: "nx-1", status: ACTIVE });
   });
 
-  it("counts a duplicate transactionId as delivered", async () => {
+  it("counts a duplicate transactionId as delivered on the bulk endpoint", async () => {
     mockTriggerBulk.mockResolvedValueOnce({
       headers: {},
       result: [
-        {
-          acknowledged: true,
-          status: "error",
-          error: ["transactionId property is not unique"],
-        },
+        refusedWith("error", ["transactionId property is not unique"]),
         processed,
       ],
     });
@@ -509,33 +633,99 @@ describe("definitive bulk responses", () => {
     ).resolves.toEqual({ success: true, outcome: "SENT" });
   });
 
-  it("drops terminally refused recipients and keeps retrying the rest", async () => {
+  it("counts a duplicate transactionId refused by the normal trigger as delivered", async () => {
+    mockTrigger.mockRejectedValueOnce(
+      Object.assign(new Error("Bad Request"), {
+        statusCode: 400,
+        body: JSON.stringify({
+          statusCode: 400,
+          message: "transactionId property is not unique",
+        }),
+      }),
+    );
+
+    await expect(
+      attemptTrigger(attempted({ kind: "SINGLE" }), { relay: true }),
+    ).resolves.toEqual({ success: true, outcome: "SENT" });
+  });
+
+  it("keeps terminally refused recipients as a dead-letter row while the rest retry and succeed", async () => {
     mockTriggerBulk.mockResolvedValueOnce({
       headers: {},
       result: [
         processed,
-        { acknowledged: true, status: "invalid_recipients" },
-        { acknowledged: true, status: "error" },
+        refusedWith("invalid_recipients"),
+        refusedWith("error"),
       ],
     });
 
     const result = await attemptTrigger(
-      attempted({ recipients: ["u1", "u2", "u3"] }),
+      attempted({
+        recipients: ["u1", "u2", "u3"],
+        entityRef: "appointment:appt-1",
+      }),
       { relay: true },
     );
 
-    expect(result).toMatchObject({ outcome: "RETRY" });
+    expect(result).toMatchObject({
+      outcome: "RETRY",
+      terminalSplit: expect.stringContaining("novu_invalid_recipients"),
+    });
     expect(settleData()).toMatchObject({
       status: "RETRY",
       recipients: ["u3"],
-      lastError: expect.stringContaining("dropped 1 (novu_invalid_recipients)"),
+      firstAttemptAt: null,
     });
+    expect(insertedRows()).toEqual([
+      expect.objectContaining({
+        workflowId: "appointment-booked",
+        kind: "SINGLE",
+        recipients: ["u2"],
+        payload,
+        status: "DEAD_LETTER",
+        entityRef: "appointment:appt-1",
+        firstAttemptAt: anchor,
+        transactionId: expect.stringMatching(
+          new RegExp(`^${row().transactionId}:terminal:[0-9a-f]{16}$`),
+        ),
+        lastError: expect.stringContaining("novu_invalid_recipients"),
+      }),
+    ]);
+
+    await expect(
+      attemptTrigger(
+        attempted({ recipients: ["u3"], attempts: 2, firstAttemptAt: null }),
+        { relay: true },
+      ),
+    ).resolves.toEqual({ success: true, outcome: "SENT" });
+    // The parent settles SENT; the dropped recipient stays recorded on its own row.
+    expect(mockUpdateMany).toHaveBeenLastCalledWith({
+      where: { id: "nx-1", status: ACTIVE },
+      data: expect.objectContaining({ status: "SENT" }),
+    });
+    expect(insertedRows()).toHaveLength(1);
+  });
+
+  it("inserts no split row when the narrowing lost to a newer generation", async () => {
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+    mockTriggerBulk.mockResolvedValueOnce({
+      headers: {},
+      result: [refusedWith("invalid_recipients"), refusedWith("error")],
+    });
+
+    const result = await attemptTrigger(
+      attempted({ recipients: ["u1", "u2"] }),
+      { relay: true },
+    );
+
+    expect(result).not.toHaveProperty("terminalSplit");
+    expect(mockCreateMany).not.toHaveBeenCalled();
   });
 
   it("dead-letters and pages only when nothing is left to send and something was refused terminally", async () => {
-    mockTriggerBulk.mockResolvedValue({
+    mockTrigger.mockResolvedValue({
       headers: {},
-      result: [{ acknowledged: true, status: "trigger_not_active" }],
+      result: refusedWith("trigger_not_active"),
     });
 
     const result = await attemptTrigger(row(), { relay: true });
@@ -545,6 +735,7 @@ describe("definitive bulk responses", () => {
       status: "DEAD_LETTER",
       recipients: ["u1"],
     });
+    expect(mockCreateMany).not.toHaveBeenCalled();
     expect(mockCaptureException.mock.calls[0][1]).toMatchObject({
       level: "error",
       fingerprint: ["novu-trigger-terminal", "novu_trigger_not_active"],
@@ -560,7 +751,7 @@ describe("definitive bulk responses", () => {
 
     expect(result).toEqual({ success: true, outcome: "PENDING" });
     expect(mockTriggerBulk).toHaveBeenCalledTimes(1);
-    expect(bulkCall(0)[0].events).toHaveLength(100);
+    expect(request(0).events).toHaveLength(100);
     const progress = updateCalls()[0];
     expect(progress.where).toEqual({
       id: "nx-1",
@@ -569,20 +760,74 @@ describe("definitive bulk responses", () => {
     });
     expect(progress.data).toEqual({
       recipients: recipients.slice(100),
-      firstAttemptAt: expect.any(Date),
+      firstAttemptAt: null,
+      lastError: null,
       nextRetryAt: expect.any(Date),
     });
   });
 });
 
-describe("bulkIdempotencyKey", () => {
+describe("rows attempted by the earlier sender", () => {
+  it("holds a row the earlier sender attempted for review instead of resending it under new identities", async () => {
+    // Novu accepted the earlier request under the row transactionId; only the ack was lost.
+    const legacy = row({
+      kind: "MULTI",
+      recipients: ["u1", "u2"],
+      status: "RETRY",
+      attempts: 2,
+      lastError: "Request timed out",
+    });
+
+    const result = await attemptTrigger(legacy, { relay: true });
+
+    expect(result).toEqual({
+      success: false,
+      error: LEGACY_DELIVERY_FORMAT,
+      outcome: "DEAD_LETTER",
+      deadLetterReason: LEGACY_DELIVERY_FORMAT,
+    });
+    expect(requests()).toHaveLength(0);
+    expect(mockUserFindMany).not.toHaveBeenCalled();
+  });
+
+  it("holds a row whose only earlier attempt was inline", async () => {
+    const result = await attemptTrigger(
+      row({ attempts: 0, lastError: "Request timed out" }),
+    );
+
+    expect(result).toMatchObject({ deadLetterReason: LEGACY_DELIVERY_FORMAT });
+    expect(requests()).toHaveLength(0);
+  });
+
+  it("sends a row nobody attempted yet under the current format", async () => {
+    await expect(
+      attemptTrigger(row({ attempts: 0, lastError: null }), { relay: true }),
+    ).resolves.toEqual({ success: true, outcome: "SENT" });
+  });
+
+  it("holds a broadcast row for review rather than skipping it as revoked", async () => {
+    const result = await attemptTrigger(
+      row({ kind: "BROADCAST", recipients: [] }),
+      { relay: true },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      outcome: "DEAD_LETTER",
+      deadLetterReason: LEGACY_BROADCAST,
+    });
+    expect(requests()).toHaveLength(0);
+  });
+});
+
+describe("triggerIdempotencyKey", () => {
   const wire = { workflowId: "appointments", payload: { a: 1, b: "x" } };
   const at = new Date("2026-11-01T00:00:00Z");
-  const key = bulkIdempotencyKey("wf:abc", at, ["u1", "u2"], wire);
+  const key = triggerIdempotencyKey("wf:abc", at, ["u1", "u2"], wire);
 
   it("is stable for the same anchor, recipients and canonical payload", () => {
     expect(
-      bulkIdempotencyKey("wf:abc", at, ["u1", "u2"], {
+      triggerIdempotencyKey("wf:abc", at, ["u1", "u2"], {
         workflowId: "appointments",
         payload: { b: "x", a: 1 },
       }),
@@ -591,14 +836,16 @@ describe("bulkIdempotencyKey", () => {
 
   it("changes when the payload, the recipients or the anchor change", () => {
     expect(
-      bulkIdempotencyKey("wf:abc", at, ["u1", "u2"], {
+      triggerIdempotencyKey("wf:abc", at, ["u1", "u2"], {
         ...wire,
         payload: { ...wire.payload, href: "/new" },
       }),
     ).not.toBe(key);
-    expect(bulkIdempotencyKey("wf:abc", at, ["u2"], wire)).not.toBe(key);
+    expect(triggerIdempotencyKey("wf:abc", at, ["u2", "u3"], wire)).not.toBe(
+      key,
+    );
     expect(
-      bulkIdempotencyKey(
+      triggerIdempotencyKey(
         "wf:abc",
         new Date(at.getTime() + 1),
         ["u1", "u2"],
@@ -606,12 +853,18 @@ describe("bulkIdempotencyKey", () => {
       ),
     ).not.toBe(key);
   });
+
+  it("prefixes a single recipient's key with that recipient's transactionId", () => {
+    expect(triggerIdempotencyKey("wf:abc", at, ["u1"], wire)).toMatch(
+      new RegExp(`^${recipientTransactionId("wf:abc", "u1")}:[0-9a-f]{16}$`),
+    );
+  });
 });
 
-describe("conditional writes and the replay window", () => {
+describe("conditional writes, rate limits and the replay window", () => {
   it("retries a Novu 409 (same key still in flight) with the recipients unchanged", async () => {
     expect(terminalTriggerReason(409, "in progress")).toBeNull();
-    mockTriggerBulk.mockRejectedValue(
+    mockTrigger.mockRejectedValue(
       Object.assign(new Error("Conflict"), { statusCode: 409, body: "" }),
     );
 
@@ -620,6 +873,43 @@ describe("conditional writes and the replay window", () => {
     expect(result).toMatchObject({ success: false, outcome: "RETRY" });
     expect(settleData()).toMatchObject({ status: "RETRY", attempts: 1 });
     expect(settleData()).not.toHaveProperty("recipients");
+  });
+
+  it("waits out a 429's Retry-After when it is longer than the backoff", async () => {
+    const now = Date.now();
+    mockTrigger.mockRejectedValue(
+      Object.assign(new Error("Too Many Requests"), {
+        statusCode: 429,
+        body: "",
+        headers: new Headers({ "retry-after": "1800" }),
+      }),
+    );
+
+    const result = await attemptTrigger(row(), { relay: true, now: () => now });
+
+    expect(result).toMatchObject({ outcome: "RETRY", retryAfterMs: 1_800_000 });
+    expect(settleData()).toMatchObject({
+      status: "RETRY",
+      nextRetryAt: new Date(now + 1_800_000),
+    });
+  });
+
+  it("falls back to the backoff when a 429 carries no usable header", async () => {
+    const now = Date.now();
+    mockTrigger.mockRejectedValue(
+      Object.assign(new Error("Too Many Requests"), {
+        statusCode: 429,
+        body: "",
+        headers: new Headers(),
+      }),
+    );
+
+    const result = await attemptTrigger(row(), { relay: true, now: () => now });
+
+    expect(result).not.toHaveProperty("retryAfterMs");
+    expect(settleData()).toMatchObject({
+      nextRetryAt: new Date(now + 5 * 60_000),
+    });
   });
 
   it("does not send when a concurrent attempt already settled the row SENT", async () => {
@@ -633,12 +923,12 @@ describe("conditional writes and the replay window", () => {
     const result = await attemptTrigger(row(), { relay: true });
 
     expect(result).toEqual({ success: true, outcome: "SENT" });
-    expect(mockTriggerBulk).not.toHaveBeenCalled();
+    expect(requests()).toHaveLength(0);
     expect(mockUpdateMany).toHaveBeenCalledTimes(1);
   });
 
   it("guards every settle on an active status, so a late failure cannot overwrite SENT", async () => {
-    mockTriggerBulk.mockRejectedValue(
+    mockTrigger.mockRejectedValue(
       Object.assign(new Error("Bad"), { statusCode: 400, body: "" }),
     );
 
@@ -657,7 +947,7 @@ describe("conditional writes and the replay window", () => {
     );
 
     expect(result).toEqual({ success: true, outcome: "SENT" });
-    expect(mockTriggerBulk).toHaveBeenCalledTimes(1);
+    expect(requests()).toHaveLength(1);
   });
 
   it("sends a row first attempted a replay window ago to review instead of retrying it", async () => {
@@ -675,7 +965,7 @@ describe("conditional writes and the replay window", () => {
       outcome: "DEAD_LETTER",
       deadLetterReason: "review:provider_acceptance_unknown",
     });
-    expect(mockTriggerBulk).not.toHaveBeenCalled();
+    expect(requests()).toHaveLength(0);
   });
 });
 
@@ -750,6 +1040,50 @@ describe("runNotificationDrainTick", () => {
     expect(result.deadLettered).toBe(1);
     expect(mockCaptureException).not.toHaveBeenCalled();
     expect(mockPostOpsChat).not.toHaveBeenCalled();
+  });
+
+  it("counts and alerts on a terminal split even though its parent only retries", async () => {
+    const findMany = jest
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([row()]);
+    const attempt = jest.fn().mockResolvedValue({
+      success: false,
+      outcome: "RETRY",
+      terminalSplit: "Novu refused 1 recipient(s) terminally (novu_x)",
+    });
+
+    const result = await runNotificationDrainTick({
+      prisma: { notificationOutbox: { findMany } },
+      now: () => now.getTime(),
+      attempt,
+    });
+
+    expect(result).toMatchObject({ retried: 1, deadLettered: 1 });
+    expect(mockPostOpsChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts no further wave after Novu answers 429, but records the whole wave", async () => {
+    const rows = Array.from({ length: 12 }, (_, i) => row({ id: `r${i}` }));
+    const findMany = jest
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(rows);
+    const attempt = jest.fn(async (r: StagedTrigger) =>
+      r.id === "r2"
+        ? { success: false, outcome: "RETRY" as const, retryAfterMs: 30_000 }
+        : { success: true, outcome: "SENT" as const },
+    );
+
+    const result = await runNotificationDrainTick({
+      prisma: { notificationOutbox: { findMany } },
+      now: () => now.getTime(),
+      attempt,
+    });
+
+    // The probe row, then one wave of five; r2's 429 stops the rest.
+    expect(attempt).toHaveBeenCalledTimes(6);
+    expect(result).toMatchObject({ scanned: 6, sent: 5, retried: 1 });
   });
 });
 
@@ -844,7 +1178,7 @@ describe("deriveTransactionId", () => {
       body: '{"subscriber":{"email":"secret@example.com"}}',
       rawValue: { email: "secret@example.com" },
     });
-    mockTriggerBulk.mockRejectedValue(novuErr);
+    mockTrigger.mockRejectedValue(novuErr);
 
     const res = await attemptTrigger(
       row({
@@ -904,6 +1238,6 @@ describe("notifyPayoutFailed", () => {
     expect(first.payload).toMatchObject({ payoutId: "payout-one" });
     expect(first.entityRef).toBe("payout:payout-one");
     expect(second.entityRef).toBe("payout:payout-two");
-    expect(mockTriggerBulk).not.toHaveBeenCalled();
+    expect(requests()).toHaveLength(0);
   });
 });

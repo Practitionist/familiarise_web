@@ -213,7 +213,10 @@ describe("POST /api/webhooks/novu", () => {
 
     expect(res.status).toBe(200);
     expect(prisma.notificationOutbox.updateMany).toHaveBeenCalledWith({
-      where: { transactionId: "tx_fail_1" },
+      where: {
+        transactionId: "tx_fail_1",
+        NOT: { status: { in: ["PENDING", "RETRY"] }, firstAttemptAt: null },
+      },
       data: { lastError: "Provider rejected message" },
     });
     expect(recordSystemEvent).toHaveBeenCalledWith(

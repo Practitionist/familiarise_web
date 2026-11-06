@@ -22,8 +22,13 @@ async function handleNovuFailureEvent(
   const errorText =
     extractNovuErrorMessage(payload) ?? `Novu delivery failure (${eventType})`;
   if (transactionId) {
+    // An active row without an anchor keeps lastError null: an error there marks
+    // a row sent under the earlier delivery format (lib/novu/outbox.ts).
     await prisma.notificationOutbox.updateMany({
-      where: { transactionId: outboxTransactionIdOf(transactionId) },
+      where: {
+        transactionId: outboxTransactionIdOf(transactionId),
+        NOT: { status: { in: ["PENDING", "RETRY"] }, firstAttemptAt: null },
+      },
       data: { lastError: errorText },
     });
   }

@@ -150,3 +150,21 @@ export async function currentBellRecipients(
     rows,
   );
 }
+
+/**
+ * The recipients whose user row still exists and is not erased. Throws on a
+ * failed read so the caller retries later instead of sending unchecked.
+ */
+export async function unerasedRecipients(
+  recipients: string[],
+): Promise<string[]> {
+  if (recipients.length === 0) return [];
+  const rows = await prisma.user.findMany({
+    where: { id: { in: recipients } },
+    select: { id: true, erasedAt: true },
+  });
+  const live = new Set(
+    rows.filter((row) => !row.erasedAt).map((row) => row.id),
+  );
+  return recipients.filter((id) => live.has(id));
+}

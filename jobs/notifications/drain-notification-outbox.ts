@@ -62,6 +62,8 @@ const DUE_ROW_SELECT = {
   status: true,
   notBefore: true,
   firstAttemptAt: true,
+  entityRef: true,
+  lastError: true,
   createdAt: true,
 } as const;
 
@@ -204,7 +206,17 @@ export async function runNotificationDrainTick(params: {
         result.errors.push(String(outcome.error));
         return false;
       }
-      return true;
+      if (outcome.terminalSplit) {
+        result.deadLettered += 1;
+        tickFailures.push({
+          id: row.id,
+          workflowId: row.workflowId,
+          outcome: "DEAD_LETTER",
+          error: outcome.terminalSplit,
+        });
+      }
+      // A 429 drains the shared token bucket; further waves would only spend retries.
+      return outcome.retryAfterMs === undefined;
     };
 
     if (dueRows.length > 0) {
@@ -227,10 +239,7 @@ export async function runNotificationDrainTick(params: {
           );
           let shouldContinue = true;
           for (let j = 0; j < chunk.length; j += 1) {
-            if (!recordOutcome(chunk[j], outcomes[j])) {
-              shouldContinue = false;
-              break;
-            }
+            if (!recordOutcome(chunk[j], outcomes[j])) shouldContinue = false;
           }
           if (!shouldContinue) break;
         }

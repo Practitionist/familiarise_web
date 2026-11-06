@@ -5,7 +5,8 @@
 /**
  * Novu webhooks carry the per-recipient transactionId a targeted row was sent
  * under. Pins: the handler maps it back to the row, and one recipient's
- * delivery settles only a single-recipient row.
+ * delivery settles only a single-recipient row, and a failure never writes
+ * lastError onto an active row between generations (that marks legacy rows).
  */
 
 const mockUpdateMany = jest.fn();
@@ -58,7 +59,10 @@ it("records a delivery failure on the row the recipient's event belongs to", asy
   });
 
   expect(mockUpdateMany).toHaveBeenCalledWith({
-    where: { transactionId: rowTransactionId },
+    where: {
+      transactionId: rowTransactionId,
+      NOT: { status: { in: ["PENDING", "RETRY"] }, firstAttemptAt: null },
+    },
     data: { lastError: "subscriber not found" },
   });
 });
