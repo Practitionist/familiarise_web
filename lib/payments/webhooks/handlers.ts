@@ -77,6 +77,7 @@ import {
   type RenderedEmail,
   type StagedRecipientEmail,
 } from "@/lib/email";
+import type { PreparedSpecEmails } from "@/lib/email/senders/shared";
 import {
   createEarningsFromPayment,
   planEarningsForPayment,
@@ -113,6 +114,7 @@ import {
 } from "./legacy-appointment-creation";
 import {
   loadAppointmentForEmails,
+  prepareBookedEmails,
   preparePaymentFailedEmail,
   preparePaymentSuccessEmail,
   resolveAppointmentNotificationContext,
@@ -351,6 +353,7 @@ export async function handlePaymentSuccess(
   }
 
   let preRenderedSuccessEmail: RenderedEmail | null | undefined;
+  let preRenderedBookedEmails: PreparedSpecEmails | null = null;
   try {
     const prePayment = await prisma.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
@@ -379,11 +382,17 @@ export async function handlePaymentSuccess(
             preApptForEmails,
             preApptType,
           );
+          preRenderedBookedEmails = await prepareBookedEmails(
+            prePayment,
+            preApptForEmails,
+            preApptType,
+          );
         }
       }
     }
   } catch {
     preRenderedSuccessEmail = undefined;
+    preRenderedBookedEmails = null;
   }
 
   // Phase 1: Serializable transaction for payment confirmation and appointment state transitions.
@@ -946,6 +955,7 @@ export async function handlePaymentSuccess(
                 payment,
                 appointmentForEmails,
                 metadata.appointmentType,
+                preRenderedBookedEmails,
               )
             : [];
           const stageBellsRan = Boolean(

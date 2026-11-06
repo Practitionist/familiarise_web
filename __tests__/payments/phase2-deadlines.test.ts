@@ -109,6 +109,7 @@ jest.mock("../../lib/email", () => ({
   __esModule: true,
   sendPaymentSuccessEmail: jest.fn(),
   sendPaymentFailedEmail: jest.fn(),
+  stageRenderFailure: jest.fn(),
 }));
 
 const notifyPaymentSuccess = jest.fn();

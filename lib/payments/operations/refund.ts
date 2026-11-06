@@ -62,6 +62,7 @@ import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS } from "@/lib/email/config";
 import {
   MONEY_EMAIL_TYPES,
+  prepareRefundProcessedEmail,
   stageRefundProcessedEmail,
 } from "@/lib/email/senders/money";
 import {
@@ -849,6 +850,18 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   };
   let stagedBell: StagedTrigger | null = null;
   let stagedEmails: StagedRecipientEmail[] = [];
+  const receiptArgs = payment.userId
+    ? {
+        userId: payment.userId,
+        paymentId: payment.id,
+        amountPaise: requested,
+        currency: payment.currency,
+      }
+    : null;
+  // Rendered before the settling transaction; a failed pre-read renders inside it instead.
+  const receipt = receiptArgs
+    ? await prepareRefundProcessedEmail(receiptArgs).catch(() => null)
+    : null;
   try {
     settled = await withSerializableRetry(() => {
       stagedBell = null;
@@ -902,10 +915,10 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
             );
           }
 
-          if (payment.userId) {
+          if (receiptArgs) {
             if (typeof tx.notificationOutbox?.upsert === "function") {
               const bell = await notifyRefundProcessed(
-                payment.userId,
+                receiptArgs.userId,
                 {
                   ...notificationScope(payment.organizationId),
                   amount: requested,
@@ -923,12 +936,11 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
               typeof tx.user?.findMany === "function" &&
               typeof tx.failedEmail?.create === "function"
             ) {
-              stagedEmails = await stageRefundProcessedEmail(tx, {
-                userId: payment.userId,
-                paymentId: payment.id,
-                amountPaise: requested,
-                currency: payment.currency,
-              });
+              stagedEmails = await stageRefundProcessedEmail(
+                tx,
+                receiptArgs,
+                receipt,
+              );
             }
           }
 
