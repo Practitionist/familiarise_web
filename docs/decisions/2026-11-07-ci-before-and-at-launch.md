@@ -22,7 +22,7 @@ Full CI on every pull request costs about 8,500 Actions minutes a month at the p
 
 1. Move the `Practitionist` organisation to GitHub Team with one seat: $4 a month, 3,000 included minutes, 2 GB of storage, and branch protection on private repositories.
 2. Cancel the personal GitHub Pro on `teetangh` ($4 a month). Actions usage is charged to the repository owner, so a personal plan never covers an organisation repository. Cancel only when nothing personal depends on it.
-3. Pay with an eligible Indian credit card that has a GitHub RBI e-mandate. Debit and prepaid cards are not accepted. Keep a second funded card for the one-time "Pay now" fallback.
+3. Pay with an eligible Indian credit card that has a GitHub RBI e-mandate. The recurring mandate accepts credit cards only; a debit card works for the one-time "Pay now" payment after a failed charge, so keep a funded one as the fallback.
 4. Set the Actions budget to about $15 with stop-usage on.
 5. Make `Release checks` a required status check in branch protection for `prod`.
 6. If monthly usage passes 3,000 minutes, change `runs-on` to Ubicloud or Blacksmith, and only then.

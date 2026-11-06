@@ -160,7 +160,7 @@ On 2026-11-06 the live database held zero `PENDING` or `RETRY` rows in `FailedEm
 
 ## Part 5: GitHub plan and CI at launch
 
-Owner steps in GitHub, from [the CI decision](../../decisions/2026-11-07-ci-before-and-at-launch.md): move the `Practitionist` organisation to Team with one seat, cancel the personal Pro on `teetangh`, pay with an eligible Indian credit card, set the Actions budget to about $15 with stop-usage, and require the `Release checks` status check on `prod`.
+Owner steps in GitHub, from [the CI decision](../../decisions/2026-11-07-ci-before-and-at-launch.md): move the `Practitionist` organisation to Team with one seat, cancel the personal Pro on `teetangh` only once nothing personal depends on it (for example a private personal repository that relies on branch protection), pay with an eligible Indian credit card (a debit card works only for a one-time "Pay now" fallback), set the Actions budget to about $15 with stop-usage, and require the `Release checks` status check on `prod`.
 
 ## Where in code
 

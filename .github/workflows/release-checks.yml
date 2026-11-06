@@ -19,9 +19,9 @@ concurrency:
 jobs:
   release-checks:
     name: Release checks
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false)
+    # Forks run too: the job needs no secrets, and a skipped required check
+    # counts as passing. Drafts skip; they cannot merge.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
