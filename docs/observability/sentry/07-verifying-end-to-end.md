@@ -20,7 +20,7 @@ The trap in rung 3 is that it is genuinely good evidence and feels final. Readin
 
 ## Why not just the local dev server
 
-Verify against a **deployed Netlify build whose environment is not `preview`** (today, production after release), not `next dev`. A local dev server is not a representative environment for this: dev builds skip the Sentry upload path, the release is a dirty working tree rather than a commit SHA, and the traffic would land in the production project where a real person might see a synthetic test error attributed to nobody in particular. A deployed build is a real build of a real commit, so `release` and `branch` are meaningful; use a seeded account so the test error is attributable.
+Verify against a **deployed Netlify build** (a deploy preview, or production after release), not `next dev`. A local dev server is not a representative environment for this: dev builds skip the Sentry upload path, the release is a dirty working tree rather than a commit SHA, and the traffic would land in the production project where a real person might see a synthetic test error attributed to nobody in particular. A deployed build is a real build of a real commit, so `release` and `branch` are meaningful; use a seeded account so the test error is attributable.
 
 **A deploy preview sends error events (since 2026-11-05).** They arrive as environment `preview` with the branch tag, so the rungs that need an event can run on a preview. Filter the Sentry search to `environment:preview` and the branch. Frames are minified, because previews upload no source maps; read mapped frames on production.
 
@@ -28,7 +28,7 @@ The trade-off is that a deployed build cannot see a local `.env`, so anything th
 
 ## The procedure
 
-1. **Open the deployed (non-preview) URL with a signed-in session.** Sign in as a real seeded user in that browser context. Do not fabricate an identity: the point of the test is that the _server_ supplies it from the session, and a hand-set client scope proves nothing about that.
+1. **Open the deployed URL (preview or production) with a signed-in session.** Sign in as a real seeded user in that browser context. Do not fabricate an identity: the point of the test is that the _server_ supplies it from the session, and a hand-set client scope proves nothing about that.
 2. **Note which user you are.** Get the cuid from the account page. Write it down before you start; you will need it to correlate the envelope, and reconstructing it afterwards from a log is painful.
 3. **Attach a transport spy.** The SDK is bundled by `sentry.shared.config.ts` and is deliberately **not** put on `window`, so there is no `window.Sentry` to inspect. The reliable place to see events is the HTTP layer: wrap `fetch` and `XMLHttpRequest` from a page-context script, and record the request URL, status, response body and the `x-sentry-rate-limits` header. `X-Sentry-Auth` carries the DSN, so the spy also confirms which project the client is aimed at.
 4. **Trigger a real, harmless error.** Navigate to something that fails for a modelled reason, or use a route with a test-only error. A synthetic `throw` from a script proves the transport works but not that the identity was applied by the server.

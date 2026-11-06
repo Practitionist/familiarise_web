@@ -279,7 +279,7 @@ The free Sentry plan stores 5,000 errors a month, shared by every environment. A
 - **Preview deploys send error events** to the shared project as environment `preview`; only production-scoped alert rules page.
 - **Spike Protection is on** for the project, so a burst is cut off by Sentry before it spends the month.
 
-**Documented alternative, not adopted:** a second Sentry project for previews, so preview errors stay visible without touching the production quota. Adopt it if preview debugging needs Sentry and the second project's quota is affordable. The decision record is `docs/decisions/2026-10-31-sentry-escalations-only.md`.
+**Documented alternative, not adopted:** a second Sentry project for previews, so preview issues stay out of the production issue list. It does not protect the quota: the 5,000 errors are per organisation, so a second project in the same organisation draws on the same allowance. Only Spike Protection or a separate organisation on its own plan limits what previews can spend. The decision record is `docs/decisions/2026-10-31-sentry-escalations-only.md`.
 
 ## Deprecated & Superseded Approaches
 

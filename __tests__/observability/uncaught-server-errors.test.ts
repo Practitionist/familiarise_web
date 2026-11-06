@@ -103,7 +103,15 @@ describe("previews report errors like production", () => {
     Sentry.captureException(new Error("handled preview failure"));
     await Sentry.flush(2_000);
     const fromPreview = delivered.length;
-    expect(fromPreview).toBeGreaterThan(0);
+    const values = delivered.flatMap(
+      (event) => event.exception?.values?.map((v) => v.value) ?? [],
+    );
+    expect(values).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("SupportCase.legalHoldAt"),
+        "handled preview failure",
+      ]),
+    );
 
     process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
     Sentry.captureException(new Error("handled production failure"));
