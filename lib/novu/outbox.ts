@@ -529,6 +529,7 @@ const TERMINAL_EVENT_STATUSES: ReadonlySet<string> = new Set([
 const eventResultSchema = z.object({
   status: z.string(),
   error: z.array(z.string()).optional(),
+  transactionId: z.string().optional(),
 });
 type EventResult = z.infer<typeof eventResultSchema>;
 
@@ -684,13 +685,23 @@ async function sendChunk(
     terminal: [],
     refusedStatuses: [],
   };
-  chunk.forEach((recipient, index) => {
-    const event = eventOutcome(results[index]);
+  // Novu echoes each event's transactionId but does not promise result order;
+  // only a result without one is matched by position.
+  const byTransactionId = new Map<string, EventResult>();
+  for (const result of results) {
+    if (result.transactionId) byTransactionId.set(result.transactionId, result);
+  }
+  events.forEach(({ to: recipient, transactionId: eventId }, index) => {
+    const positional = results[index];
+    const result =
+      byTransactionId.get(eventId) ??
+      (positional?.transactionId ? undefined : positional);
+    const event = eventOutcome(result);
     if (event === "accepted") {
       outcome.accepted.push(recipient);
       return;
     }
-    outcome.refusedStatuses.push(results[index]?.status ?? "missing");
+    outcome.refusedStatuses.push(result?.status ?? "missing");
     if (event === "retry") outcome.retry.push(recipient);
     else outcome.terminal.push({ recipient, reason: event.terminal });
   });

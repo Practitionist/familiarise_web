@@ -175,9 +175,9 @@ async function sendBatch(
     update: {},
     select: { id: true },
   });
-  // Anchors the replay window on this request, not on the relay's first try.
-  await stampFirstAttempt(prisma.failedEmailBatch, row.id, new Date());
   try {
+    // Anchors the replay window on this request, not on the relay's first try.
+    await stampFirstAttempt(prisma.failedEmailBatch, row.id, new Date());
     const result = await resend.batch.send(emails, {
       idempotencyKey,
     });

@@ -127,7 +127,11 @@ describe("POST /api/announcements", () => {
     expect(res.status).toBe(200);
     expect(mockFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { emailVerified: true, banned: false, erasedAt: null },
+        where: expect.objectContaining({
+          emailVerified: true,
+          banned: false,
+          erasedAt: null,
+        }),
         orderBy: { id: "asc" },
       }),
     );

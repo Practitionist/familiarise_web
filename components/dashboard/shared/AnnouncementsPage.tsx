@@ -84,7 +84,8 @@ export function AnnouncementsPage({
     },
   });
 
-  // Counted only when an inbox post is being considered; never cached across opens.
+  // Counted only when an inbox post is being considered. The hook stays mounted,
+  // so an earlier count is kept while it refetches and must not be confirmable.
   const inboxAudience = useQuery({
     queryKey: [queryKeyPrefix, "inbox-audience"],
     enabled: isCreateOpen && postToInbox,
@@ -103,7 +104,10 @@ export function AnnouncementsPage({
   const eligible = inboxAudience.data?.eligible;
   const inboxPostReady =
     !postToInbox ||
-    (confirmedRuns && eligible !== undefined && eligible !== null);
+    (confirmedRuns &&
+      !inboxAudience.isFetching &&
+      eligible !== undefined &&
+      eligible !== null);
 
   const openCreate = (open: boolean) => {
     setIsCreateOpen(open);
@@ -280,7 +284,7 @@ export function AnnouncementsPage({
                     className="space-y-2 rounded-md border p-3 text-sm"
                     aria-live="polite"
                   >
-                    {inboxAudience.isPending ? (
+                    {inboxAudience.isPending || inboxAudience.isFetching ? (
                       <p className="text-muted-foreground">
                         Counting eligible users…
                       </p>

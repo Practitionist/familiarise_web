@@ -543,6 +543,10 @@ export type NotificationPreference = z.infer<
   typeof NotificationPreferenceSchema
 >;
 
+/** The quiet window shown and enforced while a stored start or end is null. */
+export const QUIET_HOURS_DEFAULT_START = "22:00";
+export const QUIET_HOURS_DEFAULT_END = "08:00";
+
 /** Schema for partial updates to notification preferences (PUT endpoint). */
 export const NotificationPreferenceUpdateSchema =
   NotificationPreferenceSchema.partial();

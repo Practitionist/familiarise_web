@@ -336,14 +336,15 @@ Returns the Inbox HMAC for the session user. Called by the `useNovuSubscriberSyn
 { "success": true, "subscriberHash": "<64 hex chars>" }
 ```
 
-`subscriberHash` is omitted when no Novu secret key is configured.
+Without a configured Novu secret key the route returns `503` instead; it never returns `200` without `subscriberHash`.
 
 **Errors**:
 
-| Status | Error                 | Cause                 |
-| ------ | --------------------- | --------------------- |
-| 401    | `"Unauthorized"`      | No valid session      |
-| 500    | `"Inbox auth failed"` | Session lookup failed |
+| Status | Error                         | Cause                            |
+| ------ | ----------------------------- | -------------------------------- |
+| 401    | `"Unauthorized"`              | No valid session                 |
+| 503    | `"Notifications unavailable"` | No Novu secret key is configured |
+| 500    | `"Inbox auth failed"`         | Session lookup failed            |
 
 ---
 

@@ -30,6 +30,10 @@ import { DEFAULT_NOTIFICATION_TIMEZONE } from "@/lib/novu/humanize";
 import { formatDateRangeLabel } from "@/lib/time/display";
 import { getAppUrl } from "@/lib/url";
 import { plansScheduledOnAuto } from "@/lib/data/plan-schedule-choice";
+import {
+  QUIET_HOURS_DEFAULT_END,
+  QUIET_HOURS_DEFAULT_START,
+} from "@/schemas/user";
 
 /** Days after the week's first morning on which the consultant is reminded. */
 export const WEEK_NUDGE_DAYS = [0, 1, 3] as const;
@@ -338,8 +342,10 @@ async function usersInQuietHours(
   });
   const quiet = new Set<string>();
   for (const pref of prefs) {
-    const start = wallMinutes(pref.quietHoursStart);
-    const end = wallMinutes(pref.quietHoursEnd);
+    const start = wallMinutes(
+      pref.quietHoursStart ?? QUIET_HOURS_DEFAULT_START,
+    );
+    const end = wallMinutes(pref.quietHoursEnd ?? QUIET_HOURS_DEFAULT_END);
     if (start === null || end === null || start === end) continue;
     const current = minutesNowIn(pref.quietHoursTimezone, now);
     const inside =

@@ -66,3 +66,34 @@ it("refuses an inbox post over the audience cap", async () => {
   expect(await screen.findByText(/over the inbox limit/i)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /^create$/i })).toBeDisabled();
 });
+
+it("never offers an earlier count for confirmation while it is recounted", async () => {
+  mockFetch({ eligible: 5, cap: 2000 });
+  await openCreateAndTickInbox();
+  await screen.findByRole("checkbox", { name: /post to 5 eligible users/i });
+
+  let finishRecount: (value: unknown) => void = () => {};
+  globalThis.fetch = jest.fn(
+    () =>
+      new Promise((resolve) => {
+        finishRecount = resolve;
+      }),
+  ) as unknown as typeof fetch;
+  const inbox = screen.getByRole("checkbox", { name: /inbox/i });
+  fireEvent.click(inbox);
+  fireEvent.click(inbox);
+
+  expect(screen.getByText(/counting eligible users/i)).toBeInTheDocument();
+  expect(
+    screen.queryByRole("checkbox", { name: /post to 5 eligible/i }),
+  ).not.toBeInTheDocument();
+
+  finishRecount({
+    ok: true,
+    status: 200,
+    json: async () => ({ success: true, data: { eligible: 9, cap: 2000 } }),
+  });
+  expect(
+    await screen.findByRole("checkbox", { name: /post to 9 eligible users/i }),
+  ).toBeInTheDocument();
+});

@@ -9,6 +9,10 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
+import {
+  QUIET_HOURS_DEFAULT_END,
+  QUIET_HOURS_DEFAULT_START,
+} from "@/schemas/user";
 
 interface NotificationPreferences {
   allNotifications: boolean;
@@ -438,7 +442,7 @@ export function NotificationPreferencesPanel() {
                     <Label className="text-sm">Start Time</Label>
                     <Input
                       type="time"
-                      value={prefs.quietHoursStart ?? "22:00"}
+                      value={prefs.quietHoursStart ?? QUIET_HOURS_DEFAULT_START}
                       onChange={(e) =>
                         mutation.mutate({ quietHoursStart: e.target.value })
                       }
@@ -449,7 +453,7 @@ export function NotificationPreferencesPanel() {
                     <Label className="text-sm">End Time</Label>
                     <Input
                       type="time"
-                      value={prefs.quietHoursEnd ?? "08:00"}
+                      value={prefs.quietHoursEnd ?? QUIET_HOURS_DEFAULT_END}
                       onChange={(e) =>
                         mutation.mutate({ quietHoursEnd: e.target.value })
                       }

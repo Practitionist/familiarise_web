@@ -16,7 +16,7 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 
 import { stageMaintenanceBells } from "@/lib/novu/service";
-import { MAX_BELL_AUDIENCE } from "@/lib/novu/policy";
+import { bellAudience, MAX_BELL_AUDIENCE } from "@/lib/novu/policy";
 import { deriveTransactionId } from "@/lib/novu/outbox";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 
@@ -132,6 +132,64 @@ it("stages nothing over the audience cap", async () => {
     take: MAX_BELL_AUDIENCE + 1,
   });
   expect(createManyAndReturn).not.toHaveBeenCalled();
+});
+
+it("counts only users bell policy allows against the cap", async () => {
+  findMany.mockResolvedValue([user("u1")]);
+
+  await stageMaintenanceBells(
+    tx,
+    NOVU_WORKFLOWS.MAINTENANCE_SCHEDULED,
+    { phase: "DEGRADED" },
+    "win-cap",
+  );
+
+  // Muted and email-only users must not use up the cap in the query itself.
+  expect(findMany.mock.calls[0][0].where).toMatchObject({
+    emailVerified: true,
+    banned: false,
+    erasedAt: null,
+    AND: [
+      {
+        OR: [
+          { orgWorkspaceProfile: { is: null } },
+          {
+            orgWorkspaceProfile: {
+              is: {
+                notificationRoutingMode: { notIn: ["EMAIL_ONLY", "NEITHER"] },
+              },
+            },
+          },
+        ],
+      },
+      {
+        OR: [
+          { notificationPreferences: { is: null } },
+          {
+            notificationPreferences: {
+              is: { allNotifications: true, inAppEnabled: true },
+            },
+          },
+        ],
+      },
+    ],
+  });
+});
+
+it("also filters on the workflow's preference category", async () => {
+  findMany.mockResolvedValue([]);
+
+  await bellAudience(tx, NOVU_WORKFLOWS.PAYMENT_SUCCESS, MAX_BELL_AUDIENCE);
+
+  expect(findMany.mock.calls[0][0].where.AND[1].OR[1]).toEqual({
+    notificationPreferences: {
+      is: {
+        allNotifications: true,
+        inAppEnabled: true,
+        paymentNotifications: true,
+      },
+    },
+  });
 });
 
 it("stages a window's notice once, even when a retry sees a larger audience", async () => {

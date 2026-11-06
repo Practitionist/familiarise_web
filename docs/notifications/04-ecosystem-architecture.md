@@ -54,7 +54,7 @@ flowchart TB
         direction TB
         P2_SVC["lib/novu/service.ts\n30+ exported trigger functions\nawaited, outbox-first (#1654)"]
         P2_OUTBOX["lib/novu/outbox.ts\nstageTrigger() → NotificationOutbox row\nattemptTrigger() → 5 s inline"]
-        P2_DRAIN["drain-notification-outbox\nticker every 5 min\nbackoff ladder, 5 attempts"]
+        P2_DRAIN["drain-notification-outbox\nticker every 10 min\nbackoff ladder, 5 attempts"]
         P2_SVC --> P2_OUTBOX
         P2_OUTBOX -. "timed out / transient" .-> P2_DRAIN
         P2_WF["lib/novu/workflows.ts\n40 workflow IDs\n20+ typed payload interfaces"]
@@ -171,7 +171,7 @@ flowchart TB
     CL_PREFS --> D_STAFF
     CL_PREFS -.->|"NOT included"| D_CONSULTANT
     CL_PREFS -.->|"NOT included"| D_CONSULTEE
-    D_ANNOUNCE --> P2_SVC
+    D_ANNOUNCE --> P2_OUTBOX
     D_NL_SEND --> P3_SEND
 ```
 
@@ -230,7 +230,7 @@ Every address above is built on the `EMAIL_TRANSACTIONAL_DOMAIN` and `EMAIL_NEWS
    - **Email step (not yet created)** → would render a template with `{{payload.variables}}` and send via a Resend integration
    - **In-App step** → pushes to subscriber's WebSocket → appears in bell icon
    - **Digest/Delay steps** → can batch or schedule (configured per-workflow in Dashboard)
-5. Novu checks subscriber preference data before sending (category flags)
+5. Novu applies no preference logic of its own: the app filters recipients by bell policy in Postgres when it stages the row and once more before the first attempt
 
 **40 Workflow IDs (by tier):**
 

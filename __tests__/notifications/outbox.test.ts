@@ -522,6 +522,40 @@ describe("definitive responses", () => {
     expect(request(1).key).not.toBe(request(0).key);
   });
 
+  it("matches bulk results to recipients by transactionId, not position", async () => {
+    const eventId = (to: string) =>
+      recipientTransactionId(row().transactionId, to);
+    mockTriggerBulk.mockResolvedValueOnce({
+      headers: {},
+      result: [
+        { ...refusedWith("error"), transactionId: eventId("u2") },
+        { ...processed, transactionId: eventId("u1") },
+      ],
+    });
+
+    await expect(
+      attemptTrigger(attempted({ recipients: ["u1", "u2"] }), { relay: true }),
+    ).resolves.toMatchObject({ outcome: "RETRY" });
+    expect(updateCalls()[0].data).toMatchObject({ recipients: ["u2"] });
+  });
+
+  it("retries a recipient whose result is missing from a shortened response", async () => {
+    mockTriggerBulk.mockResolvedValueOnce({
+      headers: {},
+      result: [
+        {
+          ...processed,
+          transactionId: recipientTransactionId(row().transactionId, "u2"),
+        },
+      ],
+    });
+
+    await expect(
+      attemptTrigger(attempted({ recipients: ["u1", "u2"] }), { relay: true }),
+    ).resolves.toMatchObject({ outcome: "RETRY" });
+    expect(updateCalls()[0].data).toMatchObject({ recipients: ["u1"] });
+  });
+
   it("rechecks policy before the next generation, so a user erased after a refusal is never sent to", async () => {
     mockTriggerBulk.mockResolvedValueOnce({
       headers: {},

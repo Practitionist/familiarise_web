@@ -158,6 +158,22 @@ it("holds the email and the bell while the consultant is inside their quiet hour
   );
 });
 
+it("enforces the displayed 22:00-08:00 window when the times were never saved", async () => {
+  // 10:00 in London (inside the waking window) is 03:00 in Los Angeles.
+  mockPrisma.notificationPreference.findMany.mockResolvedValue([
+    {
+      userId: "user-1",
+      quietHoursStart: null,
+      quietHoursEnd: null,
+      quietHoursTimezone: "America/Los_Angeles",
+    },
+  ]);
+
+  expect((await runAt("2026-03-09T10:00:00.000Z")).nudged).toBe(0);
+  expect(mockNotify).not.toHaveBeenCalled();
+  expect(mockSendEmail).not.toHaveBeenCalled();
+});
+
 describe("rotation", () => {
   it("starts at an offset that moves one budget an hour and wraps", () => {
     const hour = (h: number) => new Date(h * HOUR);

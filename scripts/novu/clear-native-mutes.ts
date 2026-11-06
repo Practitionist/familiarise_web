@@ -98,6 +98,58 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+async function applyMuteReset(
+  novu: NovuPreferenceApi,
+  mute: Mute,
+  result: ClearResult,
+): Promise<void> {
+  try {
+    await novu.subscribers.preferences.update(
+      {
+        channels: { inApp: true },
+        ...(mute.workflowId ? { workflowId: mute.workflowId } : {}),
+      },
+      mute.subscriberId,
+    );
+    result.cleared += 1;
+  } catch (error) {
+    const text = errorText(error);
+    if (mute.workflowId && READ_ONLY_REFUSAL.test(text)) {
+      result.readOnlyRefusals.push(mute);
+    } else {
+      result.failures.push({ ...mute, error: text });
+    }
+  }
+}
+
+async function scanSubscriber(
+  novu: NovuPreferenceApi,
+  subscriberId: string,
+  apply: boolean,
+  result: ClearResult,
+): Promise<void> {
+  result.scanned += 1;
+  let mutes: Mute[];
+  try {
+    const { result: prefs } = await novu.subscribers.preferences.list({
+      subscriberId,
+    });
+    mutes = mutesOf(subscriberId, prefs);
+  } catch (error) {
+    result.failures.push({
+      subscriberId,
+      workflowId: null,
+      error: errorText(error),
+    });
+    return;
+  }
+  result.mutes.push(...mutes);
+  if (!apply) return;
+  for (const mute of mutes) {
+    await applyMuteReset(novu, mute, result);
+  }
+}
+
 /** Lists every subscriber's mutes and, only with `apply`, re-enables them. */
 export async function clearNativeMutes(
   novu: NovuPreferenceApi,
@@ -117,42 +169,7 @@ export async function clearNativeMutes(
       ...(after ? { after } : {}),
     });
     for (const { subscriberId } of page.result.data) {
-      result.scanned += 1;
-      let mutes: Mute[];
-      try {
-        const { result: prefs } = await novu.subscribers.preferences.list({
-          subscriberId,
-        });
-        mutes = mutesOf(subscriberId, prefs);
-      } catch (error) {
-        result.failures.push({
-          subscriberId,
-          workflowId: null,
-          error: errorText(error),
-        });
-        continue;
-      }
-      result.mutes.push(...mutes);
-      if (!opts.apply) continue;
-      for (const mute of mutes) {
-        try {
-          await novu.subscribers.preferences.update(
-            {
-              channels: { inApp: true },
-              ...(mute.workflowId ? { workflowId: mute.workflowId } : {}),
-            },
-            subscriberId,
-          );
-          result.cleared += 1;
-        } catch (error) {
-          const text = errorText(error);
-          if (mute.workflowId && READ_ONLY_REFUSAL.test(text)) {
-            result.readOnlyRefusals.push(mute);
-          } else {
-            result.failures.push({ ...mute, error: text });
-          }
-        }
-      }
+      await scanSubscriber(novu, subscriberId, opts.apply, result);
     }
     after = page.result.next ?? undefined;
   } while (after);
@@ -194,7 +211,7 @@ async function main() {
     for (const mute of result.readOnlyRefusals.slice(0, 20)) {
       console.error(`  ${mute.subscriberId} ${mute.workflowId}`);
     }
-  } else if (result.mutes.length > 0) {
+  } else if (!apply && result.mutes.length > 0) {
     console.log("\n(dry run — re-run with --apply to clear them)");
   }
   if (result.failures.length > 0 || result.readOnlyRefusals.length > 0) {

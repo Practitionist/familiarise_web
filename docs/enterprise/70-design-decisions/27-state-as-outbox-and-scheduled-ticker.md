@@ -41,7 +41,7 @@ Serverless functions on Netlify have no built-in durable queue worker and freeze
 3. **Phase-Staggered Netlify Scheduled Ticker (`netlify/functions/cron-tick.mts`).**
    - `cron-tick.mts` runs every 5 minutes (`*/5 * * * *`) and distributes 10-minute, 15-minute, and 30-minute targets across deterministic phase offsets (`TARGET_OFFSET_MINUTES`) so no 5-minute tick fires more than **8 targets** concurrently:
      - `retry-failed-emails`: **every 15 minutes at offset `:00`** (`:00, :15, :30, :45`), `limit=20`, `20_000 ms` timeout, sequential `SEND_GAP_MS = 125 ms` pacing.
-     - `drain-notification-outbox`: **every 10 minutes at offset `:05`** (`:05, :15, :25, :35, :45, :55`), `limit=20`, `20_000 ms` timeout, sequential probe + `DRAIN_CONCURRENCY = 5`.
+     - `drain-notification-outbox`: **every 10 minutes at offset `:05`** (`:05, :15, :25, :35, :45, :55`), `limit=100`, `24_000 ms` timeout, urgent workflows first, sequential probe + `DRAIN_CONCURRENCY = 5`, no wave started after 12 s.
    - Default target timeout is `15_000 ms` (`20_000 ms` for vendor round-trip sweeps), keeping every tick inside Netlify's 30-second ceiling.
 4. **Atomic Postgres Lease Lock (`withCronLock`) & Sidecar Partial Indexes (`prisma/sql/check-constraints.sql`).**
    - `lib/cron/with-cron-lock.ts` acquires fail-closed Postgres leases on `SystemJobExecution` enforced by `CREATE UNIQUE INDEX "SystemJobExecution_running_jobName_key" ON "SystemJobExecution" ("jobName") WHERE "status" = 'RUNNING'` in `prisma/sql/check-constraints.sql` with single-`UPDATE` CAS takeover for expired leases.
@@ -87,7 +87,7 @@ Serverless functions on Netlify have no built-in durable queue worker and freeze
 +===================================================================================================+
   Netlify `cron-tick.mts` (`*/5 * * * *`, max 8 concurrent targets per tick):
   - `retry-failed-emails`: every 15m at offset `:00` (`limit=20`, `20s` timeout, `SEND_GAP_MS = 125ms`)
-  - `drain-notification-outbox`: every 10m at offset `:05` (`limit=20`, `20s` timeout, `DRAIN_CONCURRENCY = 5`)
+  - `drain-notification-outbox`: every 10m at offset `:05` (`limit=100`, `24s` timeout, urgent first, `DRAIN_CONCURRENCY = 5`)
    - Atomic Postgres lease lock (`SystemJobExecution_running_jobName_key` in `prisma/sql/check-constraints.sql`)
    - Per-tick aggregated Sentry alerts + `*.outbox.dead_letter` gauges + `postOpsChat` fallback alerts
 ```
@@ -185,7 +185,7 @@ stateDiagram-v2
 | Partner webhook delivery             | `OutboundWebhookDelivery`                                 | Emitting domain service before any POST                                            | `dispatch-outbound-webhooks`, every 15m (offset `:00`, `limit=15`)         |
 | Stream chat channels after a capture | `Appointment.chatChannelEnsuredAt` (`NULL` until synced)  | Payment confirmation pipeline                                                      | `reconcile-orphaned-confirmations`, every 15m (offset `:05`, `limit=10`)   |
 | Transactional & batch email          | `FailedEmail` / `FailedEmailBatch` (`nextRetryAt = +60s`) | `stage()` in `lib/email/deliver.ts` inside caller `tx` where applicable            | `retry-failed-emails`, every 15m (offset `:00`, `limit=20`, `20s` timeout) |
-| Novu in-app notifications            | `NotificationOutbox` (`nextRetryAt = now + 60s`)          | `stageBell()` (`lib/novu/stage-bell.ts`) / `stageTrigger()` (`lib/novu/outbox.ts`) | `drain-notification-outbox`, every 10m (offset `:05`, `limit=20`, `20s`)   |
+| Novu in-app notifications            | `NotificationOutbox` (`nextRetryAt = now + 60s`)          | `stageBell()` (`lib/novu/stage-bell.ts`) / `stageTrigger()` (`lib/novu/outbox.ts`) | `drain-notification-outbox`, every 10m (offset `:05`, `limit=100`, `24s`)  |
 | Capture-webhook auto-refunds         | `Payment.description` (`Auto-refund pending:` prefix)     | Capture webhook Phase 1 transaction across auto-refund branches                    | `retry-auto-refunds`, every 15m (offset `:10`, `limit=10`, `20s` timeout)  |
 
 ---

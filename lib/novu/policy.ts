@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { EMAIL_CATEGORY_COLUMN } from "@/lib/email/preferences";
 import { templateFor } from "./templates";
@@ -106,9 +107,46 @@ export async function resolveRecipientBellPolicy(
 export const MAX_BELL_AUDIENCE = 2_000;
 
 /**
+ * {@link isBellAllowedForRecipient} as a query filter, so a cap counts only
+ * the users a bell may reach.
+ */
+function bellAllowedWhere(
+  category: PreferenceCategory | null,
+): Prisma.UserWhereInput {
+  const preference: Prisma.NotificationPreferenceWhereInput = {
+    allNotifications: true,
+    inAppEnabled: true,
+  };
+  if (category !== null) preference[EMAIL_CATEGORY_COLUMN[category]] = true;
+  return {
+    erasedAt: null,
+    AND: [
+      {
+        OR: [
+          { orgWorkspaceProfile: { is: null } },
+          {
+            orgWorkspaceProfile: {
+              is: {
+                notificationRoutingMode: { notIn: ["EMAIL_ONLY", "NEITHER"] },
+              },
+            },
+          },
+        ],
+      },
+      {
+        OR: [
+          { notificationPreferences: { is: null } },
+          { notificationPreferences: { is: preference } },
+        ],
+      },
+    ],
+  };
+}
+
+/**
  * Every user a bell may reach now, in id order: verified, not banned, and
  * allowed by {@link allowedRecipientsOf}. Refuses (`null`) rather than
- * truncating when more than `cap` users would have to be read.
+ * truncating when more than `cap` such users exist.
  */
 export async function bellAudience(
   tx: Pick<Tx, "user">,
@@ -116,7 +154,11 @@ export async function bellAudience(
   cap: number,
 ): Promise<string[] | null> {
   const rows = await tx.user.findMany({
-    where: { emailVerified: true, banned: false, erasedAt: null },
+    where: {
+      emailVerified: true,
+      banned: false,
+      ...bellAllowedWhere(templateFor(workflowId)?.category ?? null),
+    },
     select: BELL_POLICY_SELECT,
     orderBy: { id: "asc" },
     take: cap + 1,

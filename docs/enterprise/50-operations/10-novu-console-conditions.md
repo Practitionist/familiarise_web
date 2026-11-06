@@ -67,7 +67,7 @@ The SSO workflow is membership rather than a category of its own: it concerns ho
 
 ## Verify
 
-For a category, open the organization dashboard, go to **Settings → Notifications**, turn **Billing & Payouts** off, and trigger an invoice event for that organization. Nothing should arrive. Turn it back on and repeat; the notification should arrive.
+For a category, open your personal **Settings → Notifications**, turn **Billing & Payouts** off, and trigger an invoice event for an organization you belong to. Nothing should arrive. Turn it back on and repeat; the notification should arrive.
 
 For routing, set **Notification routing** to `EMAIL_ONLY` in the cross-organization workspace settings, then trigger any organization event. An email should arrive and the bell should stay silent. Both changes apply to the next notification; no reload is needed.
 
