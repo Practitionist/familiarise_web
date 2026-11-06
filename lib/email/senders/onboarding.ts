@@ -28,6 +28,7 @@ import {
   absolute,
   dateText,
   defineBudgetedEmailSender,
+  defineLifecyclePreparer,
   defineLifecycleStager,
   defineStagedEmailSender,
   greet,
@@ -101,6 +102,11 @@ function buildVerificationDecidedSpec(args: VerificationDecidedEmailArgs): {
 export const stageVerificationDecidedEmail =
   defineStagedEmailSender<VerificationDecidedEmailArgs>(
     EMAIL_BUDGET_MS.REQUEST,
+    buildVerificationDecidedSpec,
+  );
+
+export const prepareVerificationDecidedEmail =
+  defineLifecyclePreparer<VerificationDecidedEmailArgs>(
     buildVerificationDecidedSpec,
   );
 

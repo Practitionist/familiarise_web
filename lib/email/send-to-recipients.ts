@@ -12,8 +12,10 @@ import {
   attempt,
   deliver,
   stage,
+  stageRenderFailure,
   type RenderedEmail,
   type StagedEmail,
+  type UnrenderedEmail,
 } from "./deliver";
 import type { EmailRecipient } from "./preferences";
 import { renderEmail } from "./render";
@@ -51,6 +53,8 @@ export interface PreparedRecipientEmails {
   messages: RenderedEmail[];
   skipped: number;
   failed: number;
+  /** Recipients whose render failed, kept only when the caller traces failures. */
+  unrendered?: UnrenderedEmail[];
 }
 
 type Outcome =
@@ -102,15 +106,23 @@ async function prepare(
   }
 }
 
+export interface PrepareOptions {
+  /** False for a sweep, which reports its failures once per run. */
+  reportToSentry?: boolean;
+  /** Keep each failed recipient so staging leaves a `review:render_failed` row. */
+  traceFailures?: boolean;
+}
+
 /**
  * Pre-renders HTML, plain text, and unsubscribe headers in memory outside any DB transaction.
  * A caller that reports `failed` once per run passes `reportToSentry: false`.
  */
 export async function prepareRecipientEmails(
   args: PrepareArgs,
-  { reportToSentry = true }: { reportToSentry?: boolean } = {},
+  { reportToSentry = true, traceFailures = false }: PrepareOptions = {},
 ): Promise<PreparedRecipientEmails> {
   const messages: RenderedEmail[] = [];
+  const unrendered: UnrenderedEmail[] = [];
   let skipped = 0;
   let failed = 0;
   for (const recipient of args.recipients) {
@@ -119,6 +131,16 @@ export async function prepareRecipientEmails(
       skipped += 1;
     } else if (outcome.kind === "failed") {
       failed += 1;
+      if (traceFailures) {
+        unrendered.push({
+          from: args.from,
+          to: recipient.email,
+          deliveryPolicy: {
+            userId: recipient.userId,
+            category: recipient.category,
+          },
+        });
+      }
     } else {
       messages.push(outcome.message);
     }
@@ -134,10 +156,11 @@ export async function prepareRecipientEmails(
     messages,
     skipped,
     failed,
+    ...(traceFailures ? { unrendered } : {}),
   };
 }
 
-/** Persists pre-rendered messages to `FailedEmail` inside `tx`. */
+/** Persists pre-rendered messages, and a trace row per traced render failure, to `FailedEmail` inside `tx`. */
 export async function stagePreparedEmails(
   tx: Pick<Tx, "failedEmail" | "emailSuppression">,
   prepared: PreparedRecipientEmails,
@@ -149,6 +172,14 @@ export async function stagePreparedEmails(
       entityRef: prepared.entityRef,
     });
     list.push({ staged, message });
+  }
+  for (const unrendered of prepared.unrendered ?? []) {
+    await stageRenderFailure(
+      tx,
+      unrendered,
+      prepared.emailType,
+      prepared.entityRef,
+    );
   }
   return list;
 }
@@ -184,17 +215,6 @@ export async function sendToRecipients(
     );
   }
   return args.deferAttempt ? { ...result, stagedEmails } : result;
-}
-
-/**
- * Stages every allowed recipient's rendered message inside `tx` so callers can
- * invoke `attemptStaged()` post-commit.
- */
-export async function stageToRecipients(
-  args: PrepareArgs & { tx: Pick<Tx, "failedEmail" | "emailSuppression"> },
-): Promise<StagedRecipientEmail[]> {
-  const prepared = await prepareRecipientEmails(args);
-  return stagePreparedEmails(args.tx, prepared);
 }
 
 export async function attemptStaged(

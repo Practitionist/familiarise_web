@@ -10,6 +10,7 @@ export const emailReplayRefusalSchema = z.enum([
   "already_accepted",
   "recipient_policy",
   "provider_review",
+  "render_failed",
 ]);
 export type EmailReplayRefusal = z.infer<typeof emailReplayRefusalSchema>;
 
@@ -24,7 +25,12 @@ export const EMAIL_REPLAY_EXPLANATIONS: Record<EmailReplayRefusal, string> = {
     "The recipient's preferences or suppression stopped this message. Review the source journey.",
   provider_review:
     "The provider may have accepted this over 23 hours ago and its duplicate guard has lapsed. Check delivery before sending anything new.",
+  render_failed:
+    "This message never rendered, so there is nothing to send. Fix the template, then tell the recipient from the source record.",
 };
+
+/** A message whose template threw: a body-less row that records the miss and never sends. */
+export const RENDER_FAILED = "review:render_failed";
 
 /** Expected outcomes, not failures: they never page and never count as dead letters. */
 export const EXPECTED_REFUSAL_PREFIXES = ["policy:", "suppressed:"] as const;
@@ -44,6 +50,7 @@ export function emailReplayRefusal(
   if (row.resendId || row.sentAt) return "already_accepted";
   if (carriesCredential(row.emailType)) return "credential";
   if (row.lastError === HELD_PRE_LAUNCH) return "pre_launch_hold";
+  if (row.lastError === RENDER_FAILED) return "render_failed";
   if (row.status !== "DEAD_LETTER") return "not_dead_letter";
   if (EXPECTED_REFUSAL_PREFIXES.some((p) => row.lastError?.startsWith(p)))
     return "recipient_policy";

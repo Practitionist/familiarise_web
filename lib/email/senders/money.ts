@@ -57,11 +57,12 @@ import {
   defineLifecycleStager,
   greet,
   money,
+  prepareBuiltSpec,
   prepareSpecEmails,
-  stageSpecGuarded,
-  stageSpecRequired,
+  stageBuiltSpec,
   type Paise,
   type PreparedRecipientEmails,
+  type PreparedSpecEmails,
   type RecipientEmailSpec,
   type StagingTx,
 } from "./shared";
@@ -108,6 +109,7 @@ function refundProcessedSpec(
     category: "payments",
     from: SENDERS.payments,
     entityRef: `payment:${args.paymentId}`,
+    traceRenderFailure: true,
     subject: () => `Your refund of ${amountText} is on its way`,
     render: (r: EmailRecipient): ReactElement =>
       RefundProcessedEmail({
@@ -131,11 +133,23 @@ export const sendRefundProcessedEmail =
     NOTHING_SENT,
   );
 
-export async function stageRefundProcessedEmail(
+function buildRefundProcessedEmail(args: RefundProcessedEmailArgs) {
+  return { userIds: [args.userId], spec: refundProcessedSpec(args) };
+}
+
+/** Renders the refund receipt before the settling transaction opens. */
+export function prepareRefundProcessedEmail(
+  args: RefundProcessedEmailArgs,
+): Promise<PreparedSpecEmails> {
+  return prepareBuiltSpec(buildRefundProcessedEmail, args);
+}
+
+export function stageRefundProcessedEmail(
   tx: StagingTx,
   args: RefundProcessedEmailArgs,
+  pre?: PreparedSpecEmails | null,
 ): Promise<StagedRecipientEmail[]> {
-  return stageSpecGuarded(refundProcessedSpec(args), [args.userId], tx);
+  return stageBuiltSpec(tx, buildRefundProcessedEmail, args, pre);
 }
 
 // ── Digital product purchased ───────────────────────────────────────────────
@@ -229,6 +243,7 @@ function refundFailedSpec(args: RefundFailedEmailArgs): RecipientEmailSpec {
     category: "payments",
     from: SENDERS.payments,
     entityRef: `payment:${args.paymentId}`,
+    traceRenderFailure: true,
     subject: () => "We couldn't complete your refund",
     render: (r) =>
       RefundFailedEmail({
@@ -247,11 +262,23 @@ export const sendRefundFailedEmail =
     NOTHING_SENT,
   );
 
-export async function stageRefundFailedEmail(
+function buildRefundFailedEmail(args: RefundFailedEmailArgs) {
+  return { userIds: [args.userId], spec: refundFailedSpec(args) };
+}
+
+/** Renders the refund-failed notice before the claiming transaction opens. */
+export function prepareRefundFailedEmail(
+  args: RefundFailedEmailArgs,
+): Promise<PreparedSpecEmails> {
+  return prepareBuiltSpec(buildRefundFailedEmail, args);
+}
+
+export function stageRefundFailedEmail(
   tx: StagingTx,
   args: RefundFailedEmailArgs,
+  pre?: PreparedSpecEmails | null,
 ): Promise<StagedRecipientEmail[]> {
-  return stageSpecGuarded(refundFailedSpec(args), [args.userId], tx);
+  return stageBuiltSpec(tx, buildRefundFailedEmail, args, pre);
 }
 
 // ── Org payout failed or reversed ───────────────────────────────────────────
@@ -325,6 +352,7 @@ function orgInvoiceOverdueSpec(
     category: "orgBilling",
     from: SENDERS.finance,
     entityRef: `orgInvoice:${args.invoiceId}`,
+    traceRenderFailure: true,
     subject: () =>
       orgInvoiceOverdueSubject({
         invoiceNumber: args.invoiceNumber,
@@ -345,16 +373,24 @@ function orgInvoiceOverdueSpec(
   };
 }
 
-/** Stages the overdue email in the dunning claim's `tx`; a render failure throws. */
+function buildOrgInvoiceOverdueEmail(args: OrgInvoiceOverdueEmailArgs) {
+  return { userIds: args.recipientUserIds, spec: orgInvoiceOverdueSpec(args) };
+}
+
+/** Renders the overdue email before the dunning claim opens. */
+export function prepareOrgInvoiceOverdueEmail(
+  args: OrgInvoiceOverdueEmailArgs,
+): Promise<PreparedSpecEmails> {
+  return prepareBuiltSpec(buildOrgInvoiceOverdueEmail, args);
+}
+
+/** Stages the overdue email in the dunning claim's `tx`; a render failure leaves its trace row. */
 export function stageOrgInvoiceOverdueEmail(
   tx: StagingTx,
   args: OrgInvoiceOverdueEmailArgs,
+  pre?: PreparedSpecEmails | null,
 ): Promise<StagedRecipientEmail[]> {
-  return stageSpecRequired(
-    tx,
-    orgInvoiceOverdueSpec(args),
-    args.recipientUserIds,
-  );
+  return stageBuiltSpec(tx, buildOrgInvoiceOverdueEmail, args, pre);
 }
 
 // ── Org wallet low ──────────────────────────────────────────────────────────
@@ -626,6 +662,7 @@ function buildOrgBillingEmail(args: OrgBillingEmailArgs): {
       category: "orgBilling",
       from: SENDERS.finance,
       entityRef,
+      traceRenderFailure: true,
       subject: () => subject,
       render: (r: EmailRecipient): ReactElement =>
         OrgBillingReceiptEmail({
