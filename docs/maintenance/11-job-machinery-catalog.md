@@ -241,7 +241,7 @@ Four jobs use the typed `ConfigSkip` value (a string ending " not configured"): 
 ### 2.5 Sentry and alert posture
 
 - **Once per run.** Per-row failures are collected and reported once, through `createRunFailureReporter()` (`lib/observability/run-failures.ts`), a `firstError` plus a sample in `extra`, or `reportStandingFinding()`. Every job follows this; section 4.3 states the rule for new code.
-- **Previews.** Deploy previews send no error events: `beforeSend` drops them (`isPreviewDeploy` in `sentry.shared.config.ts`).
+- **Previews.** Deploy previews report errors to Sentry as environment `preview` (since 2026-11-05); error-paging alert rules are scoped to production.
 - **Escalations only.** A one-off ticker failure, a config skip and a business finding (orphaned-confirmation channel skips, Stream membership removals and brakes, the 72-hour needs-human queue, stalled webhook events, and consultant no-shows refused on Stream evidence) never reach Sentry. Money is the exception and pages once per new id set: wallet drift `fatal`, ledger drift `error`, the dispute deadline `warning` (each dispute once), and ambiguous placeholder refunds `warning`. A thrown error or failed run always reaches Sentry. See the noise policy in `docs/observability/00-system-design.md`.
 - **Uncaught errors.** `cleanupRoute()` reports any error a core throws through `captureThrottled`, keyed `cron:<job>`, at most once an hour per instance, level error, tags `subsystem: cron` and `job`.
 - **Durable escalations.** `recordSystemError()` writes a `SystemEvent` and also calls `Sentry.captureException`, with no run-level de-duplication.
