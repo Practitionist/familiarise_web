@@ -26,9 +26,10 @@ At launch, before real users sign up, take these steps in order. They are listed
 
 1. Create the Familiarise-dev app in the Stream dashboard.
 2. Set `STREAM_API_KEY`, `STREAM_API_SECRET`, `NEXT_PUBLIC_STREAM_API_KEY` and `STREAM_WEBHOOK_SECRET` to the dev app's values in the Netlify deploy-preview and branch-deploy contexts.
-3. Configure the dev app with `scripts/stream/ensure.ts --apply`, using the dev keys in the shell.
-4. Refresh #2376 onto `dev`, mark it ready, and merge it.
-5. Rebuild previews, because `NEXT_PUBLIC_STREAM_API_KEY` is inlined at build.
+3. Put the same four dev-app values in every local `.env`. After step 5, a laptop that still holds the production key gets no chat or video, because the guard refuses that key outside production.
+4. Configure the dev app with `npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed`, with the dev keys in the shell.
+5. Refresh #2376 onto `dev`, mark it ready, and merge it.
+6. Rebuild previews, because `NEXT_PUBLIC_STREAM_API_KEY` is inlined at build.
 
 ## Deprecated & Superseded Approaches
 

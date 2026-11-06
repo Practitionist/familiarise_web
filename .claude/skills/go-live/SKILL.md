@@ -22,7 +22,7 @@ Do these in order. Several only make sense after an earlier one.
 9. **Buy the responder seat** and the Telemetry bundle, then add phone and SMS to the four money backlog alerts. Same checklist 2.1 item.
 10. **Buy QuotaGuard static egress at the first live payout**, set `RAZORPAYX_EGRESS_PROXY_URL`, and allowlist its addresses in RazorpayX. Checklist 2.1, "Static egress".
 11. **Flip payouts with a canary.** Set `ENABLE_LIVE_PAYOUTS=true`, redeploy, pay one ₹1.00 verified payout, watch it reach `COMPLETED`, then release the rest. [Checklist 2.3](../../../docs/finance/70-operations/07-go-live-checklist.md#23-flip-canary-rollback).
-12. **Split the Stream app before real users arrive.** Create the Familiarise-dev app, put its four keys on the Netlify deploy-preview and branch-deploy contexts, run `scripts/stream/ensure.ts --apply` against it, then refresh and merge #2376 and rebuild previews. [The shared-app decision](../../../docs/decisions/2026-11-06-shared-stream-app-until-launch.md#when-this-changes).
+12. **Split the Stream app before real users arrive.** Create the Familiarise-dev app, put its four keys on the Netlify deploy-preview and branch-deploy contexts and in every local `.env`, run `npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed` against it, then refresh and merge #2376 and rebuild previews. [The shared-app decision](../../../docs/decisions/2026-11-06-shared-stream-app-until-launch.md#when-this-changes).
 
 ## Traps
 
