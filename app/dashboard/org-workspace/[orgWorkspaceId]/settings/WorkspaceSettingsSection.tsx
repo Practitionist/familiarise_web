@@ -1,9 +1,10 @@
 "use client";
 
 /**
- * One workspace settings section (#1527): Default landing organization (read
- * by lib/dashboard/landing.ts) or Notification routing, each with its own
- * Save. Locale and currency stay hidden until something reads them (§7.4).
+ * One workspace settings section: Default landing organization (read by
+ * lib/dashboard/landing.ts), or Notification routing above the operator's
+ * personal notification preferences. Locale and currency stay hidden until
+ * something reads them (§7.4).
  *
  * The IDOR check (`orgWorkspaceProfileId === orgWorkspaceId`) runs
  * server-side on every API call. Hydrates from WorkspaceSettingsPage's
@@ -16,10 +17,12 @@ import { Loader2 } from "lucide-react";
 import type { WorkspaceSettingsKey } from "@/lib/dashboard/nav/workspace";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { NotificationPreferencesPanel } from "@/components/notifications";
 
 import { DefaultLandingOrgSection } from "./components/DefaultLandingOrgSection";
 import { NotificationRoutingSection } from "./components/NotificationRoutingSection";
 import { fetchSettings } from "./utils/api";
+import { routingLabel } from "./utils/options";
 
 export function WorkspaceSettingsSection({
   orgWorkspaceId,
@@ -70,9 +73,17 @@ export function WorkspaceSettingsSection({
       candidates={settings.data.candidateOrgs}
     />
   ) : (
-    <NotificationRoutingSection
-      orgWorkspaceId={orgWorkspaceId}
-      current={settings.data.profile.notificationRoutingMode}
-    />
+    <div className="space-y-6">
+      <NotificationRoutingSection
+        orgWorkspaceId={orgWorkspaceId}
+        current={settings.data.profile.notificationRoutingMode}
+      />
+      <NotificationPreferencesPanel
+        routing={{
+          mode: settings.data.profile.notificationRoutingMode,
+          label: routingLabel(settings.data.profile.notificationRoutingMode),
+        }}
+      />
+    </div>
   );
 }

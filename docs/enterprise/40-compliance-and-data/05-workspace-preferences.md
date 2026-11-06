@@ -10,10 +10,10 @@ last-reviewed: 2026-06-05
 
 Plain version: one human can run several orgs (a consultancy with
 multiple client orgs, an M&A operator, a white-label reseller). This doc
-is the small bag of preferences that follows *the person* across all the
+is the small bag of preferences that follows _the person_ across all the
 orgs they touch — which org to open first, how loud notifications are,
 and how to format numbers in the cross-org rollup. It is deliberately
-*not* org settings; those follow the org.
+_not_ org settings; those follow the org.
 
 Cross-org operators (users who own / manage more than one Organization)
 get a per-account preferences row on `OrgWorkspaceProfile`. The
@@ -99,17 +99,26 @@ calling user. Otherwise the API returns 400 `DEFAULT_LANDING_ORG_INVALID`.
 
 ### `notificationRoutingMode`
 
-Where org-lifecycle events page the operator. The Novu dispatchers in
-`lib/novu/org-workflows.ts` read this column when fanning out the 9+
-multi-org workflows: `ORG_INVITE_ACCEPTED`, `ORG_INVOICE_ISSUED`,
-`ORG_PAYOUT_COMPLETED`, `ORG_SSO_PROVIDER_DELETED`, etc.
+The account-wide channel gate for the operator. It applies to every bell
+and every optional email the operator receives, not only organisation
+events, and it is ANDed with the operator's personal switches in
+`NotificationPreference`. The bell gate (`lib/novu/policy.ts`) and the email
+gate (`isEmailAllowedForUser` in `lib/email/preferences.ts`) read it before
+every send; `routingBlocks` in `lib/notifications/receivable.ts` mirrors the
+rule for the settings page. Required emails (a `null` category) ignore it.
+There is no digest: an allowed email is sent when its event happens.
 
-| Mode | Bell | Daily email digest | Use case |
-|---|---|---|---|
-| `BELL_AND_EMAIL` (default) | ✅ | ✅ | Most operators |
-| `BELL_ONLY` | ✅ | ❌ | Inbox-zero discipline |
-| `EMAIL_ONLY` | ❌ | ✅ | Bell is overwhelming on >5 orgs |
-| `NEITHER` | ❌ | ❌ | **Risky** — operator may miss invoice / payout events |
+| Mode                       | Bell | Optional email | Use case                                              |
+| -------------------------- | ---- | -------------- | ----------------------------------------------------- |
+| `BELL_AND_EMAIL` (default) | ✅   | ✅             | Most operators                                        |
+| `BELL_ONLY`                | ✅   | ❌             | Inbox-zero discipline                                 |
+| `EMAIL_ONLY`               | ❌   | ✅             | Bell is overwhelming on >5 orgs                       |
+| `NEITHER`                  | ❌   | ❌             | **Risky** — operator may miss invoice / payout events |
+
+The settings page (Workspace settings › Notifications) shows the routing
+radio group above the operator's personal preference panel. When the mode
+blocks a channel, the panel says so under that channel's switch, for
+example "Email is off because this workspace's routing is Bell only".
 
 The default is intentionally noisy. Operators who own a single org
 rarely set this; multi-org operators (M&A scenarios, white-label
@@ -118,8 +127,9 @@ resellers) tune it down.
 ### `locale`
 
 BCP-47 tag (e.g. `en-IN`, `en-US`, `fr-CA`). Drives `Intl.NumberFormat`
-+ `Intl.DateTimeFormat` in the **cross-org workspace shell only** —
-per-org pages render in the org's own region defaults.
+
+- `Intl.DateTimeFormat` in the **cross-org workspace shell only** —
+  per-org pages render in the org's own region defaults.
 
 The settings UI offers a four-tag preset list (en-IN, en-US, en-GB,
 hi-IN) plus a `Custom…` escape hatch for operators with unusual locales.
@@ -198,15 +208,15 @@ form drifts from the server-known value.
 
 Use this decision table to determine whether a new preference belongs on `OrgWorkspaceProfile` (per-operator, follows the person across orgs) or on one of the `Organization`-scoped models (shared by every member of that org).
 
-| Setting | Lives on | Scope |
-|---|---|---|
-| Default landing org | `OrgWorkspaceProfile` | Per-operator, cross-org |
-| Notification routing | `OrgWorkspaceProfile` | Per-operator, cross-org |
-| Cross-org locale | `OrgWorkspaceProfile` | Per-operator, cross-org |
-| Org name / branding | `Organization` | Per-org, shared by all members |
-| Org SSO config | `OrganizationSSOSettings` | Per-org |
-| Org billing currency | `BillingAccount.currency` | Per-org |
-| Org GST/PAN | `Organization` | Per-org |
+| Setting              | Lives on                  | Scope                          |
+| -------------------- | ------------------------- | ------------------------------ |
+| Default landing org  | `OrgWorkspaceProfile`     | Per-operator, cross-org        |
+| Notification routing | `OrgWorkspaceProfile`     | Per-operator, cross-org        |
+| Cross-org locale     | `OrgWorkspaceProfile`     | Per-operator, cross-org        |
+| Org name / branding  | `Organization`            | Per-org, shared by all members |
+| Org SSO config       | `OrganizationSSOSettings` | Per-org                        |
+| Org billing currency | `BillingAccount.currency` | Per-org                        |
+| Org GST/PAN          | `Organization`            | Per-org                        |
 
 The discriminator: if the preference would differ between two operators
 on the same org, it belongs here. If it's an org-level fact, it lives

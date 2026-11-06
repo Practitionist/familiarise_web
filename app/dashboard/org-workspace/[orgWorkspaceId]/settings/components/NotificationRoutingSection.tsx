@@ -1,14 +1,8 @@
 "use client";
 
 /**
- * Section: notification routing preferences.
- *
- * Operator chooses where org-lifecycle events appear (bell, email, or
- * neither).
- *
- * The mode is stored on `OrgWorkspaceProfile.notificationRoutingMode`; the
- * server's bell and email gates read it before every send and apply it to
- * every bell family, not only org-lifecycle events.
+ * Workspace notification routing: `OrgWorkspaceProfile.notificationRoutingMode`,
+ * which the bell and email gates apply to every bell and every optional email.
  */
 
 import { useState } from "react";
@@ -64,9 +58,10 @@ export function NotificationRoutingSection({
       <CardHeader>
         <CardTitle className="text-base">Notification routing</CardTitle>
         <CardDescription>
-          Where org-lifecycle events (invite-accepted, invoice-issued,
-          payout-completed, SSO-provider-deleted, …) page you. Applies across
-          all orgs you operate.
+          Where your notifications go for this workspace account. Applies to
+          every bell and every optional email, for all organizations you
+          operate, on top of your personal settings. Required emails always
+          arrive.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

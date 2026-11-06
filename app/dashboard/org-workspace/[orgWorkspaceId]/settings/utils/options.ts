@@ -7,6 +7,7 @@
 
 import type { NotificationRoutingMode } from "./types";
 
+/** The mode gates every bell and every optional email; `routingBlocks` in `lib/notifications/receivable.ts` says which. */
 export const NOTIFICATION_ROUTING_OPTIONS: ReadonlyArray<{
   value: NotificationRoutingMode;
   label: string;
@@ -14,24 +15,31 @@ export const NOTIFICATION_ROUTING_OPTIONS: ReadonlyArray<{
 }> = [
   {
     value: "BELL_AND_EMAIL",
-    label: "Bell + email digest",
+    label: "Bell and email",
     description:
-      "See lifecycle events on the in-app bell AND get the daily email digest.",
+      "Notifications appear in the bell and optional emails are sent, as your personal settings below allow.",
   },
   {
     value: "BELL_ONLY",
     label: "Bell only",
-    description: "In-app only. No emails for org lifecycle events.",
+    description: "Notifications appear in the bell. No optional emails.",
   },
   {
     value: "EMAIL_ONLY",
     label: "Email only",
-    description: "Daily digest only. The bell stream stays empty.",
+    description: "Optional emails are sent. The bell stays empty.",
   },
   {
     value: "NEITHER",
     label: "Neither",
     description:
-      "You won’t be paged on lifecycle events. Use sparingly — you may miss invoice or payout updates.",
+      "No bell and no optional emails. You may miss invoice or payout updates.",
   },
 ];
+
+export function routingLabel(mode: NotificationRoutingMode): string {
+  return (
+    NOTIFICATION_ROUTING_OPTIONS.find((opt) => opt.value === mode)?.label ??
+    mode
+  );
+}
