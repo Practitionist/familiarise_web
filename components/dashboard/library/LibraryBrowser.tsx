@@ -554,12 +554,16 @@ export function LibraryBrowser({
   return (
     <div className="space-y-4">
       <FilterBar
-        search={{
-          label: `Search ${noun}`,
-          placeholder: "Booking, plan or file name",
-          value: q,
-          onChange: list.setQ,
-        }}
+        search={
+          fixedParams?.scope === "everyone"
+            ? undefined
+            : {
+                label: `Search ${noun}`,
+                placeholder: "Booking, plan or file name",
+                value: q,
+                onChange: list.setQ,
+              }
+        }
         chips={{
           label: "Booking kind",
           options: [
