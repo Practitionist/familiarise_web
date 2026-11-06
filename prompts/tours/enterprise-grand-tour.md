@@ -2203,11 +2203,16 @@ events).
 >   delete the SSO provider from T.19 → 8.
 > - `manual` — Same; agent narrates each Novu trigger as it fires.
 
-**Verify.** Novu sends are non-throwing — there's no DB row to
-check. The agent should inspect `list_console_messages` and look
-for the `console.error` lines that fire on Novu failure (per
-`lib/novu/org-workflows.ts`'s `triggerOne` / `triggerMany` helpers).
-Absence of error lines = workflows triggered cleanly.
+**Verify.** A Novu send never throws into the mutation, but every trigger now leaves a `NotificationOutbox` row (staged where the change commits). For each trigger, read the newest rows read-only:
+
+```sql
+SELECT "workflowId", status, "lastError", recipients, "createdAt"
+FROM "NotificationOutbox"
+ORDER BY "createdAt" DESC
+LIMIT 20;
+```
+
+Expect `SENT` (or `PENDING` for up to 60 seconds until the relay or the post-response attempt settles it). A `DEAD_LETTER` with a `policy:` reason means a recipient opted out and is expected; any other `lastError` (a `review:` reason or a Novu refusal) is a finding. `list_console_messages` is a secondary check for the `console.error` lines from `triggerOne` / `triggerMany` in `lib/novu/org-workflows.ts`.
 
 For roster verification, run:
 

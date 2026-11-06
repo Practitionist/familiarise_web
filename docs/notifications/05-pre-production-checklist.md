@@ -12,7 +12,7 @@
 - [Sending Domains & DMARC Architecture](#sending-domains--dmarc-architecture)
 - [Service Free Tier Limits & Quotas](#service-free-tier-limits--quotas)
 - [Pre-Launch Checklist (Free Tier, \$0/month)](#pre-launch-checklist-free-tier-0month)
-  - [Step 7: Bell Outbox Delivery-Format Cutover](#step-7-bell-outbox-delivery-format-cutover)
+  - [Step 7: Outbox Cutover Recount (no backfill)](#step-7-outbox-cutover-recount-no-backfill)
 - [DNS Setup for Resend & DMARC](#dns-setup-for-resend--dmarc)
 - [Novu Environment & Workflow Configuration](#novu-environment--workflow-configuration)
 - [Scheduled Outbox Drains & Sweep Cadences](#scheduled-outbox-drains--sweep-cadences)
@@ -72,16 +72,16 @@ Inbound (practitionist.com):
 
 | Feature                     | Free                                     | Pro (~\$25–30/mo) |
 | --------------------------- | ---------------------------------------- | ----------------- |
-| Events/month                | ~10,000                                  | 30,000            |
+| Workflow runs/month         | 10,000, one run per bell recipient       | Higher            |
 | In-app feed + WebSocket     | Yes (HMAC subscriber hash secured)       | Yes               |
 | Email channel               | Unused — all 16 families are in-app only | Unused            |
-| Activity feed retention     | 7 days                                   | 30 days           |
+| Activity feed retention     | 24 hours                                 | Longer            |
 | Subscribers                 | Unlimited                                | Unlimited         |
 | Active workflows per tenant | 20 (16 families deployed)                | 20 (100 on Team)  |
 
 **Development vs. Production Tenants:**
 
-- Novu's Development and Production environments are fully isolated tenants with distinct workflows, subscribers, and secret keys.
+- Novu's Development and Production environments are separate tenants with distinct workflows, subscribers, and secret keys, but the monthly workflow-run quota is counted across both, so Development testing spends the same 10,000 runs. Keep it small. The plan limits are recorded in `.claude/skills/billing-guardrails/references/novu.md`.
 - `lib/novu/secret-key.ts` selects `NOVU_PRODUCTION_KEY` when `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production` (Netlify production deploys, including the ticker-run crons) and `NOVU_DEVELOPMENT_KEY` everywhere else.
 - `/api/novu/subscriber` authenticates subscribers via deterministic HMAC-SHA256 hashes (`computeSubscriberHash(subscriberId)` in `lib/novu/subscriber.ts`).
 
@@ -105,8 +105,9 @@ Inbound (practitionist.com):
 
 ### Step 3: Novu Tenant Sync & Subscriber HMAC
 
-- [ ] Run `npm run novu:sync -- --dry-run` followed by `npm run novu:sync` to sync all 16 workflow families to Development, then promote to Production (`npm run novu:sync -- --env production`)
-- [ ] Verify `npm run novu:check` exits `0` with zero drift
+- [ ] Development: run `npx tsx scripts/novu/clear-native-mutes.ts` (dry run, then `--apply`), then `npm run novu:sync -- --dry-run` followed by `npm run novu:sync`, to sync all 16 workflow families
+- [ ] Production: run the same sequence with `--env production` **in the same window as the production release promotion that carries the single-preference-owner change**, not earlier: the old production code still writes subscriber preferences, so an earlier Production sync would fight it
+- [ ] Verify `npm run novu:check` (and `npm run novu:check -- --env production` after the production sync) exits `0` with zero drift
 - [ ] Enable HMAC encryption in Novu Dashboard → In-App Integration settings to pair with `computeSubscriberHash(subscriberId)`
 
 ### Step 4: Database Schema & SQL Sidecars
@@ -128,22 +129,28 @@ Inbound (practitionist.com):
 - [ ] Confirm waitlist footer link (`GET /api/waitlist/unsubscribe`) renders confirmation form without mutating DB, and `POST` unsubscribes immediately
 - [ ] Trigger a test booking event and verify `flushNotificationsAfter` delivers both the Novu bell and Resend email
 
-### Step 7: Bell Outbox Delivery-Format Cutover
+### Step 7: Outbox Cutover Recount (no backfill)
 
-One-time, with the deploy that sends bells per recipient. The earlier sender keyed a whole `NotificationOutbox` row by its `transactionId`; the current one keys each recipient's event by `<transactionId>:<recipient hash>` under generation-scoped Idempotency-Keys. A row the earlier sender attempted but never settled may already be accepted by Novu, so resending it under the new identities could ring it twice. The relay therefore dead-letters such a row as `review:legacy_delivery_format` and any `BROADCAST` row as `review:legacy_broadcast`; both page once per drain tick and appear in Needs attention. A row never attempted (`lastError` null) sends normally.
+The earlier bell sender keyed a whole `NotificationOutbox` row by its `transactionId`; the current one keys each recipient's event by `<transactionId>:<recipient hash>` under generation-scoped Idempotency-Keys. A row the earlier sender attempted but never settled may already be accepted by Novu, so resending it under the new identities could ring it twice. The relay therefore dead-letters such a row as `review:legacy_delivery_format` and any `BROADCAST` row as `review:legacy_broadcast`. A row never attempted (`lastError` null) sends normally.
 
-- [ ] Immediately before the deploy, count the affected rows read-only on the production database (an operator query, never an agent write):
+No `firstAttemptAt` backfill is needed and none is planned: on 2026-11-06 the live database held zero `PENDING` or `RETRY` rows in `FailedEmail`, `FailedEmailBatch` and `NotificationOutbox`.
+
+- [ ] Skip the backfill. Immediately before the production release, recount read-only on the production database (an operator query, never an agent write):
 
   ```sql
-  SELECT kind = 'BROADCAST' AS broadcast, status, count(*)
-  FROM "NotificationOutbox"
-  WHERE status IN ('PENDING', 'RETRY')
-    AND (kind = 'BROADCAST' OR "lastError" IS NOT NULL)
-  GROUP BY 1, 2;
+  SELECT 'FailedEmail' AS tbl, status, count(*) FROM "FailedEmail"
+    WHERE status IN ('PENDING', 'RETRY') GROUP BY status
+  UNION ALL
+  SELECT 'FailedEmailBatch', status, count(*) FROM "FailedEmailBatch"
+    WHERE status IN ('PENDING', 'RETRY') GROUP BY status
+  UNION ALL
+  SELECT 'NotificationOutbox', status, count(*) FROM "NotificationOutbox"
+    WHERE status IN ('PENDING', 'RETRY') GROUP BY status;
   ```
 
-- [ ] Zero rows: deploy. Otherwise, either wait for the running relay to settle them (re-run the count after each 10-minute drain tick), or deploy and dispose of the dead letters:
-  - `review:legacy_delivery_format`: look the row's `transactionId` up in the Novu Activity Feed (the earlier sender used it verbatim). If Novu holds the event, it was delivered; leave the dead letter. If not, and the notice still matters, an operator resets the row to never-attempted (`status = 'PENDING'`, `attempts = 0`, `"lastError" = NULL`, `"nextRetryAt" = now()`) and the relay sends it under the current format.
+- [ ] All three counts are zero: release. The cleanup PR then deletes `LEGACY_DELIVERY_FORMAT` and `LEGACY_BROADCAST` in `lib/novu/outbox.ts`, together with `scripts/novu/clear-native-mutes.ts` once both Novu environments are clean.
+- [ ] Otherwise, wait for the running relay to settle the rows (re-run the count after each 10-minute drain tick), or release and dispose of the dead letters:
+  - `review:legacy_delivery_format`: look the row's `transactionId` up in the Novu Activity Feed (the earlier sender used it verbatim; the feed keeps only 24 hours on Free). If Novu holds the event, it was delivered; leave the dead letter. If not, and the notice still matters, an operator resets the row to never-attempted (`status = 'PENDING'`, `attempts = 0`, `"lastError" = NULL`, `"nextRetryAt" = now()`) and the relay sends it under the current format.
   - `review:legacy_broadcast`: leave the dead letter. Broadcasts no longer exist; re-post a still-relevant announcement with **Post to inbox**, which fans out through bell policy.
 
 ---
@@ -168,11 +175,11 @@ The apex carries SPF `v=spf1 -all`, a null MX `0 .`, and `_dmarc` is `v=DMARC1; 
 1. **In-App Only Topology**: All 16 Novu workflow families contain only an in-app step (`lib/novu/templates/`). Do not configure an email integration inside Novu.
 2. **Declarative Sync & Drift Guard**:
    - `npm run novu:sync -- --dry-run`: Previews workflow updates.
-   - `npm run novu:sync`: Syncs `lib/novu/templates/` to Development (`--env production` promotes to Production).
+   - `npm run novu:sync`: Syncs `lib/novu/templates/` to Development (`--env production` writes Production, at the release promotion).
    - `npm run novu:check`: Verifies live Novu workflows match code manifests in CI.
 3. **Server-Side Preference Gating (Postgres is the only owner)**:
    - **Stage and attempt gates (`stageBell`, `currentBellRecipients`)**: Filter out `EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, erased users and muted category columns before inserting into `NotificationOutbox`, and again at the first attempt, which freezes the allowed set.
-   - **Novu holds no preference state**: families sync always-on and read-only with no step conditions. Before launch, in each environment: run `npx tsx scripts/novu/clear-native-mutes.ts` (dry run, then `--apply`) **first**, then `npm run novu:sync`. The sync makes the families read-only, after which Novu may refuse per-family mute resets; the script lists any such read-only refusals separately.
+   - **Novu holds no preference state**: families sync always-on and read-only with no step conditions. In each environment: run `npx tsx scripts/novu/clear-native-mutes.ts` (dry run, then `--apply`; add `--env production` for Production) **first**, then `npm run novu:sync`. The sync makes the families read-only, after which Novu may refuse per-family mute resets; the script lists any such read-only refusals separately.
 
 ---
 
@@ -228,7 +235,7 @@ Rotate `RESEND_API_KEY` across all four locations in lockstep so no environment 
 ## When You'll Need to Upgrade
 
 - **Resend Free → Pro (\$20/mo)**: When daily volume regularly exceeds ~80 emails/day, newsletter broadcasts exceed 100 subscribers in a single blast, or native Resend open/click analytics are required.
-- **Novu Free → Pro (~\$25–30/mo)**: When monthly triggers exceed ~10,000 events/month or in-app feed history retention beyond 7 days is required.
+- **Novu Free → Pro (~\$25–30/mo)**: When monthly workflow runs (one per bell recipient, Development and Production together) pass about 60 % of the 10,000-run quota, or when activity history beyond the Free plan's 24 hours is required.
 - **Kit / Directus CMS**: Remain deferred post-launch (`lib/newsletter/convertkit.ts` and `app/api/webhooks/directus/route.ts`) until automated drip sequences or managed CMS publishing are prioritized.
 
 ---
