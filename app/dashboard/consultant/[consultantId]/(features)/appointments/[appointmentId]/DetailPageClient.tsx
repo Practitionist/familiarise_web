@@ -4,10 +4,7 @@ import { AppointmentDetailClient } from "@/components/appointments/detail/Appoin
 import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 import type { TAppointment } from "@/types/appointment";
 import { useConsultantAppointmentsAdapter } from "../ConsultantAppointmentsAdapter";
-import {
-  getParticipantManagementUrl,
-  supportsParticipantManagement,
-} from "../utils/participantHelpers";
+import { getParticipantManagementUrl } from "../utils/participantHelpers";
 
 export default function DetailPageClient({
   consultantId,
@@ -30,9 +27,7 @@ export default function DetailPageClient({
       }}
       participantsHref={(detail) => {
         const appointment = detail.appointment as unknown as TAppointment;
-        return supportsParticipantManagement(appointment)
-          ? getParticipantManagementUrl(appointment, consultantId)
-          : null;
+        return getParticipantManagementUrl(appointment, consultantId);
       }}
     />
   );

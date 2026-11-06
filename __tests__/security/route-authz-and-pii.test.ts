@@ -155,16 +155,10 @@ describe("the plan detail reads do not serve the host's email", () => {
 });
 
 describe("participant rosters do not return full User rows", () => {
-  const ROUTES = [
-    "app/api/participants/consultations/[consultationId]/route.ts",
-    "app/api/participants/subscriptions/[subscriptionId]/route.ts",
-  ];
-
-  it.each(ROUTES)("%s narrows the user select", (rel) => {
-    // `user: true` shipped phone, address, dateOfBirth, city and country on
-    // every roster poll. The class/ and webinar/ siblings were hardened in the
-    // #946 sweep; these two were missed.
-    const src = read(rel)
+  it("the webinar and class roster reader narrows the user select", () => {
+    // `user: true` ships phone, address, dateOfBirth, city and country on
+    // every roster poll.
+    const src = read("lib/api/participants/group-participants-route.ts")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
     expect(src).not.toMatch(/user: true/);

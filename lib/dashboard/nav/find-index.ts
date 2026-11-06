@@ -30,10 +30,11 @@ const SYNONYMS: Record<string, string[]> = {
   messages: ["chat", "inbox", "conversations"],
   billing: ["invoice", "invoices", "payment", "payments", "spend", "wallet"],
   payouts: ["earnings", "withdraw", "bank"],
-  earnings: ["income", "payouts", "revenue"],
+  earnings: ["income", "payouts", "revenue", "money"],
   payments: ["invoice", "receipts", "charges"],
   members: ["people", "team", "users", "invite"],
   support: ["help", "ticket", "requests", "support requests", "cases"],
+  requests: ["bookings", "pending", "approvals"],
   documents: ["files", "uploads", "materials"],
   recordings: ["recordings", "videos", "replays"],
   library: [
@@ -47,12 +48,17 @@ const SYNONYMS: Record<string, string[]> = {
   ],
   sessions: ["offerings", "consultations", "subscriptions", "1:1"],
   programs: ["offerings", "webinars", "classes", "cohorts"],
-  products: ["offerings", "digital products", "replays", "downloads"],
+  products: ["offerings", "digital products", "downloads", "ebooks", "files"],
   collaborations: ["co-host", "invitations", "collaborators"],
-  collaborators: ["co-host", "invitations", "collaborations"],
   analytics: ["reports", "metrics", "stats"],
   audit: ["log", "history"],
+  consent: ["privacy", "dpdp", "data protection"],
+  compensation: ["pay", "rates", "fees", "earnings"],
+  reviews: ["ratings", "feedback", "testimonials"],
+  referrals: ["referrals", "refer", "credits", "rewards"],
   settings: ["preferences", "account", "configure"],
+  account: ["password", "security", "email"],
+  profile: ["bio", "headline", "public page", "photo"],
   notifications: ["alerts", "email"],
   sso: ["sign-in", "saml", "login", "domains"],
   webhooks: ["integrations", "api"],
@@ -60,6 +66,19 @@ const SYNONYMS: Record<string, string[]> = {
   "get-paid": ["bank", "payouts", "tax"],
   availability: ["schedule", "hours", "calendar"],
 };
+
+// A tree's own words replace the shared ones for that page: an organization
+// sponsors programs rather than selling webinars, and its Library holds only
+// session documents and recordings.
+const TREE_SYNONYMS: Record<string, Record<string, string[]>> = {
+  organization: {
+    programs: ["sponsorship", "sponsor", "seats"],
+    library: ["purchases", "recordings", "documents", "downloads"],
+  },
+};
+
+/** `/dashboard/<tree>/…` → the tree's segment ("organization", "consultant"). */
+const treeOf = (basePath: string) => basePath.split("/")[2] ?? "";
 
 const lastSegment = (path: string) =>
   path.split(/[/?#]/).findLast(Boolean) ?? path;
@@ -82,7 +101,10 @@ export function buildFindIndex({
   const add = (label: string, href: string, group: string) => {
     if (seen.has(href)) return;
     seen.add(href);
-    const words = [label, ...(SYNONYMS[lastSegment(href)] ?? [])];
+    const segment = lastSegment(href);
+    const synonyms =
+      TREE_SYNONYMS[treeOf(nav.basePath)]?.[segment] ?? SYNONYMS[segment] ?? [];
+    const words = [label, ...synonyms];
     entries.push({
       label,
       href,

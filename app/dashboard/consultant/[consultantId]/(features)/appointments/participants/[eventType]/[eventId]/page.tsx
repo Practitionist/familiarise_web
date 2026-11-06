@@ -3,23 +3,9 @@
 /**
  * Participant roster for a group session — one route for webinars and classes.
  *
- * There were four of these: `webinars/[webinarId]`, `classes/[classId]`,
- * `consultations/[consultationId]` and `subscriptions/[subscriptionId]`.
- *
- * The last two were unreachable — `supportsParticipantManagement()` only
- * returns true for webinar/class, so nothing ever linked to them — and that
- * gate is right: consultations and subscriptions are 1-on-1, so their
- * "roster" was a list of two people (the consultation page literally rendered
- * `participants.length/2 (1-on-1 consultation)`). They're deleted rather than
- * wired up, along with the `getParticipantManagementUrl` branches that
- * emitted hrefs to them.
- *
- * The remaining two were ~270 lines each and collapse to this one route. Most
- * of the difference was the entity noun (`webinarEvent`/`webinarPlan` vs
- * `classEvent`/`classPlan`) and the API path segment, but not all of it: a
- * class carries `appointments: Appointment[]` while a webinar carries a single
- * `appointment | null`, so the two are narrowed rather than cast and the
- * appointment list is normalised before the participant flattening.
+ * A class carries `appointments: Appointment[]` while a webinar carries a
+ * single `appointment | null`, so the two are narrowed rather than cast and
+ * the appointment list is normalised before the participant flattening.
  */
 
 import * as Sentry from "@sentry/nextjs";

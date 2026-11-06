@@ -10,6 +10,7 @@ import { resolveBackofficeCapability } from "@/lib/backoffice/capability";
 import { accountSettingsLinks } from "@/components/dashboard/DashboardShellParts";
 import { buildWorkspaceNav } from "@/lib/dashboard/nav/workspace";
 import { buildBackofficeDashboardNav } from "@/lib/dashboard/nav/backoffice";
+import { buildConsultantNav } from "@/lib/dashboard/nav/consultant";
 import { buildConsulteeNav } from "@/lib/dashboard/nav/consultee";
 import { buildFindIndex, filterFind } from "@/lib/dashboard/nav/find-index";
 import { buildOrganizationNav } from "@/lib/dashboard/nav/organization";
@@ -100,5 +101,35 @@ describe("Find index", () => {
     expect(filterFind(index, "support requests").map((e) => e.label)).toContain(
       "Help & support",
     );
+  });
+
+  it("synonyms are scoped per tree: org programs and library shed the expert words", () => {
+    const org = buildFindIndex({
+      nav: buildOrganizationNav({
+        orgId: "org-1",
+        role: "OWNER",
+        canSponsor: true,
+        canHost: true,
+        consultantProfileId: null,
+      }),
+    });
+    const orgHits = (q: string) => filterFind(org, q).map((e) => e.href);
+    const orgBase = "/dashboard/organization/org-1";
+    expect(orgHits("sponsorship")).toContain(`${orgBase}/programs`);
+    expect(orgHits("webinar")).not.toContain(`${orgBase}/programs`);
+    expect(orgHits("classes")).not.toContain(`${orgBase}/programs`);
+    expect(orgHits("ebooks")).not.toContain(`${orgBase}/library`);
+    expect(orgHits("templates")).not.toContain(`${orgBase}/library`);
+    expect(orgHits("products")).not.toContain(`${orgBase}/library`);
+    expect(orgHits("recordings")).toContain(`${orgBase}/library`);
+
+    const expert = buildFindIndex({ nav: buildConsultantNav("cp-1") });
+    const hits = (q: string) => filterFind(expert, q).map((e) => e.href);
+    const base = "/dashboard/consultant/cp-1";
+    expect(hits("webinar")).toContain(`${base}/sell/programs`);
+    expect(hits("ebooks")).toContain(`${base}/products`);
+    expect(hits("replays")).not.toContain(`${base}/products`);
+    expect(hits("referrals")).toEqual([`${base}/referrals`]);
+    expect(hits("ratings")).toEqual([`${base}/reviews`]);
   });
 });
