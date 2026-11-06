@@ -1,8 +1,7 @@
 /**
- * #1527 §17b — where "my account" lives for each kind of viewer, now that
- * `/profile` is retired: a personal viewer's Settings › Account (or
- * Notifications), the back office's My profile, a workspace operator's
- * workspace settings. Pure, so the `/profile` redirect and client links
+ * Where "my account" lives for each kind of viewer: a personal viewer's
+ * Settings › Account (or Notifications), the back office's My profile, a
+ * workspace operator's workspace settings. Pure, so server and client links
  * share one answer.
  */
 
@@ -63,7 +62,7 @@ export function dataConsentHref(user: AccountHrefUser): string | null {
 }
 
 /**
- * The viewer's own Support requests page (#1527) — never an org's operator
+ * The viewer's own Support cases page (#1527) — never an org's operator
  * triage page. Null for the back office (staff answer requests, they don't
  * file them) and for viewers with no dashboard yet.
  */
@@ -82,5 +81,5 @@ export function supportRequestsHref(user: AccountHrefUser): string | null {
 export function supportLinksFor(user: AccountHrefUser): SupportLinks | null {
   const requestsHref = supportRequestsHref(user);
   if (!requestsHref) return null;
-  return personalSupportLinks(requestsHref);
+  return personalSupportLinks(requestsHref, "My support cases");
 }

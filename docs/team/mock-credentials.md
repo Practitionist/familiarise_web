@@ -14,6 +14,8 @@ Non-operator users seeded via `prisma/seedFiles/1a-create-users.ts` share the se
 
 Every ADMIN and STAFF account is on `qa.familiarise.invalid`, a domain reserved by RFC 2606 that receives no mail, so no password reset or setup link can be delivered for them. On deploy previews and local development, the QA operators marked below sign in with `SEED_OPERATOR_PASSWORD` alone and need no authenticator; production asks every operator for TOTP. The rule and the list live in `lib/auth/qa-accounts.ts` ([staff-onboarding.md §9](../authentication/staff-onboarding.md#9-two-factor-policy-seeds-and-qa-operators)).
 
+The three operators marked "TOTP (enrolled)" have a secret the seed derives from `BETTER_AUTH_SECRET` and the email address, so nobody needs to scan a QR code. Print the current code with `npm run qa:totp -- qa-admin-1@qa.familiarise.invalid`, which shows the six digits and the seconds left in the 30-second window; it needs the same `BETTER_AUTH_SECRET` as the deployment you sign in to, and refuses any other address. If a fresh code is rejected, the stored row has drifted from the seed derivation, and the owner repairs it with `scripts/auth/repair-qa-operator-2fa.ts` (a dry run unless `--apply` is passed). Which account to use where is explained in [the environment split](../start-here/10-environment-split.md#4-which-qa-account-to-use-for-what).
+
 Three manually-created test accounts (`owner-test`, `learner-test`, `a@gmail.com`) and the five `tour-2026-04-26-*` accounts were created outside the seed script — their passwords are **unknown**. Reset them via `/auth/forgot-password` or the Supabase Auth dashboard if needed.
 
 **Sign-in URL:** `/auth/signin`

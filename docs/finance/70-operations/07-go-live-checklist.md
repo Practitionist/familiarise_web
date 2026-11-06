@@ -4,12 +4,14 @@ type: how-to
 band: 70-operations
 audience: sde3
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-02
 ---
 
 # Money go-live checklist
 
 Use this page to take the money subsystem from sandbox to real money: first the collection side (Razorpay accepting real cards and UPI), then the disbursement side (RazorpayX paying real people). The two can be cut over together or separately. Each section ends with the proof that the step worked, because the failure mode at go-live is not a crash but a wrong amount or a wrong recipient on a path that was never exercised with live credentials. Items that live in the Razorpay dashboards rather than in code are marked "dashboard"; record a screenshot or a signed delivery log against the cutover issue for each.
+
+**Resume the paused job fleet first (paused 2026-11-05 to save invocations on mock data).** Delete the Upstash key `ops:active_cron_platform`, or set it to `netlify`. Confirm a new production `cron-tick` row appears. Then unpause the Better Stack tick heartbeat, digest heartbeat and probe monitor, and re-enable the Sentry `cron-tick` monitor and uptime detector. The exact commands are in [the pause decision](../../decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md#how-to-resume-go-live-or-any-time). Do this before Part 1: the digest checks in 1.2 and Part 3, and the job-freshness monitor in 2.1, all need the fleet running.
 
 ## Part 1: accepting real money (Razorpay)
 
@@ -21,9 +23,11 @@ Use this page to take the money subsystem from sandbox to real money: first the 
 
 ### 1.2 Keys and the test-key guard
 
+- Before the live keys go in, the daily ops digest reads clean ([Part 3](#part-3-the-daily-ops-digest-reads-clean)). Live collection keys are what turn a standing config skip into a page.
 - `RAZORPAY_KEY_ID` and `RAZORPAY_SECRET` hold the live pair (`rzp_live_...`). `NEXT_PUBLIC_RAZORPAY_KEY_ID` holds the same key id. A secret is never given a `NEXT_PUBLIC_` prefix.
 - `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION` is deleted from production. While it is unset, `lib/payments/core/razorpay.ts` throws `RAZORPAY_TEST_KEY_IN_PRODUCTION` at boot if a test key ever reaches production; set to `true` it only logs, which is for a pre-launch deploy that must not move money.
 - `RAZORPAY_WEBHOOK_SECRET` holds the live payment-webhook secret.
+- `PLATFORM_GSTIN` holds the platform's GSTIN as soon as GST registration is granted. Until then `heal-consumer-invoices`, `gst-outward-register-export` and `irp-uploader` record a config skip on every run (reason `PLATFORM_GSTIN not configured`) and checkout mints no consumer tax invoice. After setting it and redeploying, run `heal-consumer-invoices` from the System Jobs page and confirm its row is `completed`, then confirm `/api/health/jobs` no longer lists any of the three under `configSkips`. A malformed or other-state value fails these runs instead of skipping them.
 
 ### 1.3 Webhooks (dashboard)
 
@@ -38,7 +42,7 @@ The RazorpayX secret is tried only for `payout.*` and `fund_account.*` events (`
 
 ### 1.4 Rotating a webhook secret without downtime
 
-Each secret has a grace slot. To rotate the payment secret: set `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` to the old value and `RAZORPAY_WEBHOOK_SECRET` to the new one, deploy, and only then change the secret in the Razorpay dashboard. Until the dashboard changes, events signed with the old secret still verify through the previous slot, and the route records a `WEBHOOK` `WARN` `SystemEvent` for every delivery that lands on the previous secret, so you know when it is safe to retire. Rotate the RazorpayX secret the same way with `RAZORPAYX_WEBHOOK_SECRET_PREVIOUS`. After the rotation, remove the previous value, then start a `reconcile-ledgers` run to confirm nothing was lost in the transition. Resolution lives in `resolveRazorpayPaymentSecrets` and `resolveRazorpayXSecrets`. API keys are rotated by replacing `RAZORPAY_KEY_ID` and `RAZORPAY_SECRET` and redeploying; a live key never goes into the repository.
+Each secret has a grace slot. To rotate the payment secret: set `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` to the old value and `RAZORPAY_WEBHOOK_SECRET` to the new one, deploy, and only then change the secret in the Razorpay dashboard. Until the dashboard changes, events signed with the old secret still verify through the previous slot, and the route records a `WEBHOOK` `WARN` `SystemEvent` for every delivery that lands on the previous secret, so you know when it is safe to retire. Rotate the RazorpayX secret the same way with `RAZORPAYX_WEBHOOK_SECRET_PREVIOUS`. After the rotation, remove the previous value, then start a `reconcile-ledgers` run to confirm nothing was lost in the transition. Resolution lives in `resolveRazorpayPaymentSecrets` and `resolveRazorpayXSecrets`. API keys are rotated by replacing `RAZORPAY_KEY_ID` and `RAZORPAY_SECRET` and redeploying; a live key never goes into the repository. The inventory of every other production secret and the ordered rotation procedures are in the [secret rotation runbook](../../maintenance/19-secret-rotation-runbook.md).
 
 ### 1.5 Clear sandbox identities from the database
 
@@ -93,7 +97,16 @@ flowchart TD
 - **Reconcile is clean:** `reconcile-ledgers` reports `ok: true` with no unbaselined findings, including `ORG_PAYOUT_TOTAL_MISMATCH`.
 - **Monitoring is on:** `handle-stuck-payouts` and the webhook sweep report to Sentry, and a Sentry alert exists for them.
 - **Better Stack launch plan is bought.** Until launch Better Stack stays on the free plan (3-day logs, email and Slack alerts). At launch buy the responder seat (phone and SMS, about $29 to $34 a month) and the Telemetry Nano bundle (30-day retention, about $25 a month billed yearly, EU region), then add phone and SMS to the four money backlog alerts (`refundsOwed`, `payoutsStuck`, `dunningNotices`, `disputesDue`) described in the [Better Stack setup guide](../../maintenance/00-betterstack-setup.md#owner-step-the-oldest-pending-age-alerts).
-- **Better Stack backlog alerts are unmuted.** The freshness alert and the seven backlog alerts are created muted before launch, because seeded and QA money rows on the shared database would fire them. Unmute them after the go-live data reset, once every money gauge in the latest `cron-tick summary` event reads zero.
+- **The job-freshness monitor exists and is green.** A Better Stack uptime monitor polls `https://familiarisenow.com/api/health/jobs` every 5 minutes with `Authorization: Bearer <CRON_SECRET>` and alerts on any non-2xx status (keyword `"healthy":false` as a belt). It exists since 2026-11-05 (monitor `familiarise job fleet probe (prod)`; see [the detector rollout decision](../../decisions/2026-11-05-detector-rollout-and-redundancy.md)). At launch, confirm it still shows Up, is not paused, and that its body reads `"healthy":true`; the [runbook](../../maintenance/00-betterstack-setup.md#runbook-create-the-better-stack-monitor-owner-step-done-2026-11-05) recreates it.
+- **Better Stack backlog alerts are unmuted.** The freshness alert and the seven backlog alerts were created paused on 2026-11-05 (ids in the [runbook](../../maintenance/00-betterstack-setup.md#owner-step-the-oldest-pending-age-alerts)). They are paused before launch because seeded and QA money rows on the shared database would fire them. Unmute them after the go-live data reset, once every money gauge in the latest `cron-tick summary` event reads zero. The digest cannot see these Telemetry alerts, so tick each one off here:
+  - [ ] `Ticker telemetry stale` (the tick-summary freshness alert)
+  - [ ] `Backlog: refundsOwed`
+  - [ ] `Backlog: payoutsStuck`
+  - [ ] `Backlog: dunningNotices`
+  - [ ] `Backlog: disputesDue`
+  - [ ] `Backlog: webhookEvents`
+  - [ ] `Backlog: emailRetries`
+  - [ ] `Backlog: notificationRetries`
 
 ### 2.2 Sandbox proof
 
@@ -107,6 +120,17 @@ Run `npx tsx scripts/smoke/org-payout-sandbox-smoke.ts` with a RazorpayX test ke
 4. Run `reconcile-ledgers` and expect no unbaselined findings, then release the held payouts.
 
 **Rollback:** set the flag to `false` and redeploy. New runs stop submitting; payouts already submitted keep settling through their webhooks, because a transfer cannot be un-sent. A wrong disbursement is recovered by the clawback path, which nets the amount against the payee's future payouts; see [organisation payouts and clawbacks](../40-payouts/05-org-payouts-and-clawbacks.md). A row stuck in `PROCESSING` with no terminal webhook is polled by `handle-stuck-payouts`.
+
+## Part 3: the daily ops digest reads clean
+
+The [daily ops digest](../../maintenance/00-betterstack-setup.md#daily-ops-digest-and-its-heartbeat) lists everything that is parked, held or muted. Before the first live key, its latest email must show:
+
+- **Zero standing config skips.** The "Config skips" section is empty. Once `RAZORPAY_KEY_ID` is live, any paging job that has skipped for a missing setting for more than 7 days makes `/api/health/jobs` answer 503 (`STANDING_CONFIG_SKIP`) at once, and the streak usually started weeks earlier. Set each missing setting (typically `PLATFORM_GSTIN`), redeploy, run the skipping jobs and then `ops-digest` from the System Jobs page, and confirm the section is empty.
+- **No paused or muted Better Stack monitor or heartbeat.** For each one the "Better Stack" section lists, unmute it or resume it, and record the date here:
+  - [ ] every monitor and heartbeat in the digest's "Better Stack" section is active (list each by name in the cutover issue)
+- **`EMAIL_DELIVERY_MODE=live`.** The "Settings" line reads `EMAIL_DELIVERY_MODE: live`. Any other value holds every email to a domain other than ours and the allowlist; the "Held email" line counts what it held in the last 24 hours.
+- **The digest heartbeat and the second watcher exist.** The "ops digest" Better Stack heartbeat is Up, and the Sentry uptime monitor on `/api/health/jobs` shows a recent successful check.
+- **Release lag is known, or knowingly unknown.** `GITHUB_RELEASE_LAG_TOKEN` is optional by owner decision (2026-11-05), so the "Release lag" section may read "Unknown" and nothing pages. If it does, record that a held release is then caught only by reading the digest and the deploy list. Create the token when releases become routine enough that a held one would go unnoticed. A commit count also needs `BUILD_SHA`, which `next.config.mjs` inlines only when the host provides `COMMIT_REF` (Netlify) or `VERCEL_GIT_COMMIT_SHA` (Vercel), and a successful GitHub read; a host with neither, such as a plain Docker build, stays "Unknown".
 
 ## Where in code
 

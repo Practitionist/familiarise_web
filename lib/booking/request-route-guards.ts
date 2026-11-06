@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
-import { AppointmentStatus, PaymentStatus } from "@prisma/client";
+import { AppointmentStatus, PaymentStatus, type Prisma } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import { forbiddenResponse } from "@/lib/auth-helpers";
+import { BookingRuleError } from "./booking-rule-error";
+import { BEING_MOVED } from "@/lib/data/needs-you";
 import {
   stageNoticesForAppointmentHolds,
   type StagedBackupInterestNotices,
@@ -183,6 +185,64 @@ export function validateDetailRequestStatusPatch(
 
   return null;
 }
+
+/**
+ * The status PATCH answers requests only. A booking being moved (an open
+ * reschedule, or released sessions not yet re-placed) is answered through
+ * respond / withdraw, re-placed through the allocator, or ended through
+ * Cancel — never declined or approved here. A friendly 409 before the write;
+ * the write itself also carries `NOT_BEING_MOVED` in its CAS WHERE.
+ */
+export async function assertNotBeingMoved(
+  tx: Tx,
+  where: { consultationId: string } | { subscriptionId: string },
+  intent: "decline" | "approve",
+): Promise<void> {
+  const held = await tx.appointment.findFirst({
+    where: { ...where, deletedAt: null },
+    select: {
+      rescheduleRequests: {
+        where: { status: "PENDING_REVIEW" },
+        select: { id: true },
+        take: 1,
+      },
+      occurrences: {
+        where: {
+          isTentative: true,
+          completionStatus: "RESCHEDULED",
+          deletedAt: null,
+        },
+        select: { id: true },
+        take: 1,
+      },
+    },
+  });
+  if (!held) return;
+  if (held.rescheduleRequests.length > 0) {
+    throw new BookingRuleError(
+      "USE_RESCHEDULE_RESPOND",
+      intent === "decline"
+        ? "This booking is being moved, not requested. Keep the original time or answer the new one instead."
+        : "This booking is being moved. Accept the new time from the request instead.",
+    );
+  }
+  if (held.occurrences.length > 0) {
+    throw intent === "decline"
+      ? new BookingRuleError(
+          "USE_CANCEL_ENDPOINT",
+          "This booking was already confirmed. Place a new time, or cancel it to refund the client.",
+        )
+      : new BookingRuleError(
+          "PLACE_RELEASED_SESSIONS",
+          "Some sessions were released and need a new time. Place them from the booking instead.",
+        );
+  }
+}
+
+/** The status-PATCH CAS clause: never write a booking that is being moved. */
+export const NOT_BEING_MOVED = {
+  NOT: { appointment: BEING_MOVED },
+} satisfies Prisma.ConsultationWhereInput & Prisma.SubscriptionWhereInput;
 
 /**
  * Release any tentative appointment occurrences, participant seats, open

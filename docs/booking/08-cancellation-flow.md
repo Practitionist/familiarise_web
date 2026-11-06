@@ -1324,6 +1324,7 @@ sequenceDiagram
         Note over API,DB: 0 rows matched -> throw 409 NOT_CANCELLABLE<br/>(rolls back, no refund attempted)
         API->>DB: UPDATE AppointmentOccurrence SET completionStatus = CANCELLED<br/>WHERE appointmentId = ? AND status IN (SCHEDULED, RESCHEDULED)
         API->>DB: UPDATE RescheduleRequest SET status = DECLINED<br/>WHERE appointmentId = ? AND status IN (open)
+        Note over API,DB: Webinar or class: stampWholeEventRefundsOwed owns every seat's marker,<br/>or throws 409 REFUND_IN_PROGRESS / REFUND_NEEDS_SUPPORT (rolls back)
         DB-->>API: COMMIT<br/>(success, cancellationReason,<br/>cancelledAt, webinarId, classId)
     end
 

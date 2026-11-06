@@ -269,9 +269,9 @@ export async function planSelfLeave(
 }
 
 /**
- * #1780 E-5 — the exit right: with three host misses (or a quarter of the
- * series) the learner leaves with every undelivered session refunded, no
- * ladder, less any session already refunded on its own. Refused otherwise.
+ * #1780 E-5 — the exit right (`exitRightFor`): the learner leaves with every
+ * undelivered session refunded, no ladder, less any session already refunded
+ * on its own. Refused otherwise.
  */
 async function planSeriesExit(
   tx: Tx,

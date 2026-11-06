@@ -20,7 +20,7 @@ The table below defines the axes and where each is stored.
 | Organisation capability | sponsor only (`canSponsor`), host only (`canHost`), both, neither                                                                                               | `Organization.canSponsor`, `Organization.canHost` | `POST /api/organizations`; `canHost` is refused while `ENABLE_HOST_ORGS` is off (`HOST_ORGS_GATED`)                                                |
 | Membership role         | `OWNER`, `MAINTAINER`, `BILLING_ADMIN`, `MANAGER`, `SUPPORT`, `EXPERT`, `LEARNER`                                                                               | `Membership.role`, one per (user, organisation)   | Invitation accept, admin direct add, SSO JIT                                                                                                       |
 
-`User.role` is exclusive, but a person can hold several profiles: `consultantProfileId`, `consulteeProfileId` and `orgWorkspaceProfileId` are independent links on `User`, and the dashboard router (`app/dashboard/page.tsx`) sends a user to the home of their `role` first, then to whatever `resolvePersonalDashboardHref` finds, then to their highest-ranked organisation (`selectFallbackOrgMembership`, rank then slug).
+`User.role` is exclusive, but a person can hold several profiles: `consultantProfileId`, `consulteeProfileId` and `orgWorkspaceProfileId` are independent links on `User`, and the dashboard router (`app/dashboard/(index)/page.tsx`) sends a user to the home of their `role` first, then to whatever `resolvePersonalDashboardHref` finds, then to their highest-ranked organisation (`selectFallbackOrgMembership`, rank then slug).
 
 ## Platform identity × membership role
 

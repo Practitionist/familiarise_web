@@ -56,23 +56,26 @@ jest.mock("../../lib/stream-client", () => ({
     video: {
       call: () => ({
         getOrCreate: (...a: unknown[]) => {
-          const { assertValidGetOrCreateCall } =
-            require("../../lib/stream/video-contracts") as typeof import("../../lib/stream/video-contracts");
+          const { assertValidGetOrCreateCall } = jest.requireActual<
+            typeof import("../../lib/stream/video-contracts")
+          >("../../lib/stream/video-contracts");
           assertValidGetOrCreateCall(a[0]);
           sequence.push("getOrCreate");
           return mockGetOrCreate(...a);
         },
         updateCallMembers: (...a: unknown[]) => {
-          const { assertValidUpdateCallMembers } =
-            require("../../lib/stream/video-contracts") as typeof import("../../lib/stream/video-contracts");
+          const { assertValidUpdateCallMembers } = jest.requireActual<
+            typeof import("../../lib/stream/video-contracts")
+          >("../../lib/stream/video-contracts");
           assertValidUpdateCallMembers(a[0]);
           sequence.push("updateCallMembers");
           return mockUpdateCallMembers(...a);
         },
         queryMembers: (...a: unknown[]) => mockQueryMembers(...a),
         updateUserPermissions: (...a: unknown[]) => {
-          const { assertValidUpdateUserPermissions } =
-            require("../../lib/stream/video-contracts") as typeof import("../../lib/stream/video-contracts");
+          const { assertValidUpdateUserPermissions } = jest.requireActual<
+            typeof import("../../lib/stream/video-contracts")
+          >("../../lib/stream/video-contracts");
           assertValidUpdateUserPermissions(a[0]);
           return mockUpdateUserPermissions(...a);
         },
@@ -512,6 +515,7 @@ const { resolveMeetingAccess } = jest.requireActual<
 >("../../lib/meetings/access");
 
 import prismaClient from "../../lib/prisma";
+import { paidParticipant } from "../../lib/booking/participants";
 
 const db = prismaClient as unknown as {
   meeting: { findUnique: jest.Mock };
@@ -679,19 +683,8 @@ describe("resolveMeetingAccess still admits a live session", () => {
     );
     expect(db.appointmentParticipant.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({
-          appointmentId: "appt-1",
-          userId: "user_1",
-          // A HELD seat is an uncaptured payment and must not open the room,
-          // unless its payment already SUCCEEDED (a capture not yet confirmed).
-          OR: [
-            { status: { in: ["CONFIRMED", "ATTENDED"] } },
-            {
-              status: "HELD",
-              payment: { is: { paymentStatus: "SUCCEEDED" } },
-            },
-          ],
-        }),
+        // The fulfilled-entitlement predicate; its cases are pinned in paid-participant.test.ts.
+        where: { appointmentId: "appt-1", ...paidParticipant("user_1") },
       }),
     );
   });

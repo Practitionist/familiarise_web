@@ -20,7 +20,7 @@ Every money procedure (a stuck top-up, refund or payout, an overdue invoice, an 
 ## 🗓️ Scheduled work and ownership
 
 Use the [cron reference](../../maintenance/04-cron-jobs-reference.md) and
-[SRE orientation](../../start-here/10-infra-and-maintenance-sre-orientation.md)
+[SRE orientation](../../start-here/09-infra-and-maintenance-sre-orientation.md)
 for the current job inventory and operational boundaries. Source registry
 entries determine the implementation; the ticker determines its due slots.
 A workflow declaration or old per-job docstring is not evidence of execution.

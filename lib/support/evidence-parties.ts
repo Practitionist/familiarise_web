@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 
 type DeliveringDb = Pick<Tx, "appointment" | "consultantProfile">;
@@ -11,6 +12,8 @@ export const CAPTURED_PAYMENT_WHERE = {
 export interface BookingParties {
   /** Consultant seats, plan consultants and accepted PRESENTER collaborators; crew never. */
   deliveringIds: Set<string>;
+  /** Accepted PRESENTER collaborators only; crew and the host consultant stay out. */
+  presenterIds: Set<string>;
   /** Organizations hosting delivery through the booking's captured payments. */
   hostOrganizationIds: Set<string>;
 }
@@ -67,6 +70,15 @@ export async function deliveringPartiesByAppointment(
         (c) => c.consultantProfileId,
       ),
     ].filter((profileId): profileId is string => Boolean(profileId));
+  const presenterProfileIdsOf = (booking: (typeof bookings)[number]) =>
+    [
+      ...(booking.webinar?.webinarPlan.collaborators ?? []).map(
+        (c) => c.consultantProfileId,
+      ),
+      ...(booking.class?.classPlan.collaborators ?? []).map(
+        (c) => c.consultantProfileId,
+      ),
+    ].filter((profileId): profileId is string => Boolean(profileId));
   const allProfileIds = [...new Set(bookings.flatMap(profileIdsOf))];
   const profiles = allProfileIds.length
     ? await db.consultantProfile.findMany({
@@ -83,8 +95,14 @@ export async function deliveringPartiesByAppointment(
       const userId = profileUser.get(profileId);
       if (userId) deliveringIds.add(userId);
     }
+    const presenterIds = new Set<string>();
+    for (const profileId of presenterProfileIdsOf(booking)) {
+      const userId = profileUser.get(profileId);
+      if (userId) presenterIds.add(userId);
+    }
     result.set(booking.id, {
       deliveringIds,
+      presenterIds,
       hostOrganizationIds: new Set(
         booking.payment.flatMap((p) =>
           p.hostOrganizationId ? [p.hostOrganizationId] : [],
@@ -93,4 +111,46 @@ export async function deliveringPartiesByAppointment(
     });
   }
   return result;
+}
+
+/** Accepted PRESENTER collaborator seats for a consultant profile. */
+export function presenterCollaboratorWhere(
+  userId: string,
+): Prisma.CollaboratorWhereInput {
+  return {
+    status: "ACCEPTED",
+    tier: "PRESENTER",
+    consultantProfile: { userId, deletedAt: null },
+  };
+}
+
+/** Appointments the user presents: accepted PRESENTER on the webinar/class plan. */
+export function presenterAppointmentWhere(
+  userId: string,
+): Prisma.AppointmentWhereInput {
+  const collaborators = { some: presenterCollaboratorWhere(userId) };
+  return {
+    OR: [
+      { webinar: { webinarPlan: { collaborators } } },
+      { class: { classPlan: { collaborators } } },
+    ],
+  };
+}
+
+/**
+ * The subset of the given appointments the user presents. Callers pass the page
+ * they are about to render, so the lookup never grows with a recurring series.
+ */
+export async function presenterAppointmentIdsIn(
+  db: Pick<Tx, "appointment">,
+  userId: string,
+  appointmentIds: readonly (string | null | undefined)[],
+): Promise<Set<string>> {
+  const ids = [...new Set(appointmentIds.filter((id): id is string => !!id))];
+  if (ids.length === 0) return new Set();
+  const rows = await db.appointment.findMany({
+    where: { AND: [{ id: { in: ids } }, presenterAppointmentWhere(userId)] },
+    select: { id: true },
+  });
+  return new Set(rows.map((row) => row.id));
 }

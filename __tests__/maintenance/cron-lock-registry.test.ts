@@ -39,17 +39,8 @@ const WORKFLOW_DIR = path.join(ROOT, ".github", "workflows");
  * names the mechanism that replaces it — "no lock" is never an accepted reason.
  */
 const LOCK_EXEMPT: Record<string, string> = {
-  // The dead-man switch itself. Locking it through Redis would make the
-  // watchdog depend on the infrastructure it exists to report on, and the
-  // check is read-only, so a double-run costs nothing.
-  "cron-heartbeat.yml": "deliberately unlocked — read-only dead-man switch",
-  // Ticker-only probe: one Sentry event per run and no DB writes; a double run
-  // costs one extra event and the email alert is deduped in Redis.
-  "cron-tick:sentry-ingest-canary": "deliberately unlocked — vendor probe",
-  // Read-only drift detector: it only reads Stream app settings, and a lock
-  // would give a guard a hard dependency on Redis for no benefit.
-  "cron-tick:stream-control-plane-drift":
-    "deliberately unlocked — read-only drift check",
+  // Read-only Actions API check of the Actions-scheduled workflows; a double run costs nothing.
+  "cron-heartbeat.yml": "deliberately unlocked — read-only Actions watcher",
   // #1885 — Weekly supply-chain vulnerability scan (`npm audit --omit=dev`);
   // read-only lockfile audit with no database or external state mutation.
   "security-audit.yml": "deliberately unlocked — read-only npm audit check",

@@ -177,7 +177,7 @@ What the orchestrator enforces:
 
 ### 1a. Daily Control-Plane Drift Detector (`stream-control-plane-drift`)
 
-Because the Stream app is configured outside this repository, narrowing a grant or disabling the hook leaves no commit and no failing test. The cleanup job `stream-control-plane-drift` (`lib/stream/control-plane-drift.ts`, registered in `lib/cron/cleanup-registry.ts` and reachable at `/api/cleanup/stream-control-plane-drift`) reads the live app once a day and compares it with the contract. The Netlify ticker fires it in a single slot at 01:15 UTC; there is no GitHub Actions workflow for it.
+Because the Stream app is configured outside this repository, narrowing a grant or disabling the hook leaves no commit and no failing test. The cleanup job `stream-control-plane-drift` (`lib/stream/control-plane-drift.ts`, registered in `lib/cron/cleanup-registry.ts` and reachable at `/api/cleanup/stream-control-plane-drift`) reads the live app once a day and compares it with the contract. The Netlify ticker fires it in a single slot at 01:15 UTC; there is no GitHub Actions workflow for it. The run takes a fail-open `withCronLock` lease and so writes a run row like every other target. That row is what lets `/api/health/jobs` notice a detector that has silently stopped (a missed day turns the probe to 503); drift itself is still reported by the one Sentry message, and the run is recorded as `attention`.
 
 It checks, and never writes:
 

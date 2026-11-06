@@ -8,7 +8,10 @@ import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
-import { subscriptionPlanEnd } from "@/lib/booking/entitlement";
+import {
+  schedulableSessionsOf,
+  subscriptionPlanEnd,
+} from "@/lib/booking/entitlement";
 import {
   CANCELLABLE_FROM,
   transitionSubscriptionRequest,
@@ -239,8 +242,9 @@ export async function GET(req: NextRequest) {
           o.completionStatus !== "CANCELLED",
       ).length;
       const sessionsScheduled = occurrences.length;
-      const sessionsTotal =
-        subscription?.sessionsTotal ?? plan?.totalSessions ?? 0;
+      const sessionsTotal = subscription
+        ? (schedulableSessionsOf(subscription) ?? 0)
+        : (plan?.totalSessions ?? 0);
 
       const endDate = subscription ? subscriptionPlanEnd(subscription) : null;
       const isCancelled = subscription?.status === "CANCELLED";
@@ -267,7 +271,8 @@ export async function GET(req: NextRequest) {
         consultantEmail: consultantUser?.email ?? null,
         planTitle: plan?.title ?? "Subscription Plan",
         durationInMonths: plan?.durationInMonths ?? 1,
-        sessionsPerWeek: plan?.sessionsPerWeek ?? 1,
+        sessionsPerWeek:
+          subscription?.sessionsPerWeek ?? plan?.sessionsPerWeek ?? 1,
         sessionsTotal,
         sessionsCompleted,
         sessionsUpcoming,

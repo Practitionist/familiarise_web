@@ -98,6 +98,7 @@ describe("#1689 & #1723 — Availability grid ETag key and CDN suffix matching",
       includeAppointmentDetails: false,
       consulteeUserId: null,
       leadBucket: 0,
+      leadMs: 15 * 60_000,
     };
 
     const hostOnlyEtag = availabilityGridEtag(marker, baseKey);

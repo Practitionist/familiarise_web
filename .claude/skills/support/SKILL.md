@@ -34,6 +34,9 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 - Give every action a `clientActionId` and every turn a `clientTurnId`; replays must compare stored columns (`replayCaseActionTx()`), never trust the key alone.
 - Return expected refusals as plain `{ error, code, ...detail }` (`CaseConflictError`, `CaseActionError`, `OpsRefusal`); use `supportError()` only for unexpected failures.
 - Add any new CHECK, partial unique or trigger to `prisma/sql/check-constraints.sql`, and keep the open-scope tuple out of `@@index`/`@@unique` on `SupportCase`.
+- A class-wide cancel (ADMIN, `classSeries.money`, `app/api/admin/class-series/[classId]/cancel-series`) refunds every attendee's unheld sessions through the normal rails, with no second admin. It refuses with 409 `REFUND_IN_PROGRESS` or `REFUND_NEEDS_SUPPORT` while any seat's payment still owes another refund; settle that refund first (wait, or refund it by hand from the Refunds tab), then cancel again.
+- A learner's class exit right opens at 3 host misses inside any rolling 30 days, or max(3, 15% of N) misses in all (`exitRightFor`), and the learner keeps it once it trips, unless an ops correction (an un-void or a relabel to a non-host outcome) withdraws it before they use it; an exit already taken is final; the class-series card in the money console states both thresholds.
+- A Refunds-tab row "Another refund is still owed on this payment; refund the remaining ₹X by hand, then release the hold" means a door ended a booking while another door's refund held the payment: refund ₹X through the issue door, then release the `OPERATOR` hold on the payment's earnings.
 - When code changes a rule here, update this skill and the matching `docs/support/` page in the same PR.
 
 ## Never
@@ -49,11 +52,23 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 - Never write a channel's `config_overrides` outside `syncSupportBoundary()` (`lib/stream/support-boundary.ts`). It revokes member changes and owner truncation for `user` and `channel_moderator` while an INTERVENE grant is live and clears them when the last one ends; call it after commit wherever a grant starts or ends. A READ must change nothing in Stream.
 - Never mint a Stream token for another user, give operators Stream `admin`, or read a chat with a client `watch()`. Staff reach chats only through the case chat routes, which audit every page.
 - Never let an organization tag grant access to a personal case, and never return message bodies from organization feeds.
+- Recheck presenter grants after case selection. Revoked presenters get no detail; requester-only access gets a summary. Payment and CSAT require a current correspondence grant.
 - Never write a JS reconciler for a rule the sidecar already enforces (AGENTS.md §1.3); never add a second scheduler, Redis cron lock or `jobs/` wrapper for the sweep (AGENTS.md §1.1, §1.4).
 - Never capture to Sentry per row in a sweep arm; collect into `errors` and report once.
 - Never run `prisma db push`, `npm run db:*` or the DB race tier against the shared database.
 
+## Planned (owner decisions 2026-11-04, not built yet)
+
+The code still has the rules described above until these land; don't build against them early.
+
+- Auto-cases only for customer-impacting events that need a human: half a class missed, a refund still failing after 72 h, a disputed plan-end choice. Internal signals stay on the ops list (#2563).
+- A no-money make-up remedy from a case ("add N sessions" / "add up to 4 weeks"), logged and visible to both sides (#2563, #2561).
+- A half-missed class holds only that class's unpaid host earnings (`SUPPORT_CASE` hold) until the case closes (#2563).
+- Lean team (#2572): second-admin proposals, `assertNotOwnRemedy` and the payout maker-checker go; STAFF caps become ₹5,000 per payment and ₹30,000 per rolling 24 h. Multi-admin design: #2573.
+
 ## Gotchas
+
+- The back-office inbox responds to its container, not the viewport: list/reader split at 60rem; Details docks only when the case workspace reaches 64rem. Keep admin health and monthly reports stacked in the expandable Support reports section; preserve URL filters on All cases and drafts across resizing. See [inbox layout](../../../docs/support/README.md#back-office-inbox-layout).
 
 - Attachment finalisation and orphan removal compete on the pending row. Claim
   the tombstone before deleting, reread live references per 100-path batch, and
@@ -75,3 +90,8 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 - The DPDP export shows a chat grant's basis and case reference only to the person who filed the case.
 
 Auto-close polling uses Prisma `updateMany` on `autoCloseLastAttemptAt`, committed with eligibility and prior-attempt CAS before the closing transaction. Preserve `resolvedAt` and `updatedAt`; classify intentional recommendation/maintenance holds separately from genuine failures. The 16-second admission budget bounds this arm only, and `autoCloseHasMore` is conservative. Apply the reviewed column/index rollout before deploying readers; see [sweep contracts](../../../docs/support/07-sla-sweep.md#2-auto-close).
+
+## Deprecated & Superseded Approaches
+
+- The class-wide cancel listed as planned: it exists (`classSeries.money`) and now refuses while a seat's payment owes another refund.
+- A losing refund door's `owed-already-held:` event read by nobody: it now holds the earnings and shows on the Refunds tab.

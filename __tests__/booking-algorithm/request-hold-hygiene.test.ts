@@ -11,6 +11,7 @@
  * constant, the count query shape, and the expiry's slot release.
  */
 
+import { BEING_MOVED } from "@/lib/data/needs-you";
 import "./setup";
 
 jest.mock("../../lib/prisma", () => {
@@ -20,6 +21,11 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn().mockResolvedValue(null),
       updateMany: jest.fn(),
       count: jest.fn(),
+    },
+    // The week-reminder scan sizes its consultant rotation first.
+    consultantProfile: {
+      count: jest.fn().mockResolvedValue(0),
+      findMany: jest.fn().mockResolvedValue([]),
     },
     subscription: {
       findMany: jest.fn(),
@@ -151,6 +157,8 @@ describe("RFA active-request cap", () => {
         status: "PENDING",
         bookingSource: "REQUEST_SUBMITTED",
         requestedAt: { gte: expect.any(Date) },
+        // A booking a reschedule put back to PENDING is not a new request.
+        NOT: { appointment: BEING_MOVED },
       },
     });
   });

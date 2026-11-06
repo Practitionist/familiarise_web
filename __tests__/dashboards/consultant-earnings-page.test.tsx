@@ -144,7 +144,7 @@ it("sums the tiles, shows the hold date and the sponsor, and never a raw enum", 
   expect(html).toContain("₹799.20");
   expect(html).toContain("Payouts begin at launch");
   expect(html).toContain("Add your bank account to get paid");
-  // #1527 — straight to the hub section, no /settings/payouts 308 hop.
+  // Straight to the hub section.
   expect(html).toContain("/dashboard/consultant/c_1/settings/get-paid");
   expect(html).toContain("Lifetime");
   // The tile keeps "Paid out" for its COMPLETED-only sum (QA #1774 case 3).

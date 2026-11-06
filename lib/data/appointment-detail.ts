@@ -88,6 +88,7 @@ const paymentDisplaySelect = {
       amountPaise: true,
       status: true,
       refundId: true,
+      reason: true,
       createdAt: true,
       updatedAt: true,
     },

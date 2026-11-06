@@ -28,17 +28,6 @@ export const OFFERING_TYPE_LABEL: Record<OfferingPlanType, string> = {
   class: "Class",
 };
 
-/** The pill labels, in the spec's order (All is the unset filter). */
-export const OFFERING_TYPE_FILTERS: {
-  value: OfferingPlanType;
-  label: string;
-}[] = [
-  { value: "consultation", label: "1:1" },
-  { value: "subscription", label: "Subscriptions" },
-  { value: "webinar", label: "Webinars" },
-  { value: "class", label: "Classes" },
-];
-
 const PUBLIC_SEGMENT: Record<OfferingPlanType, string> = {
   consultation: "consultations",
   subscription: "subscriptions",
@@ -181,8 +170,15 @@ function subscriptionRow(event: SubscriptionPlanEvent): OfferingRow {
     instanceId: undefined,
     title: plan.title,
     description: plan.description ?? "",
-    priceText: `${price(plan.price, plan.priceCurrency)}/mo`,
-    durationText: plural(plan.durationInMonths, "month", "months"),
+    // A weeks plan is priced for the whole plan; a months plan per month.
+    priceText:
+      typeof plan.durationInWeeks === "number"
+        ? `${price(plan.price, plan.priceCurrency)} for ${plural(plan.durationInWeeks, "week", "weeks")}`
+        : `${price(plan.price, plan.priceCurrency)}/mo`,
+    durationText:
+      typeof plan.durationInWeeks === "number"
+        ? plural(plan.durationInWeeks, "week", "weeks")
+        : plural(plan.durationInMonths, "month", "months"),
     sessionsPerWeek,
     sessionDurationInHours,
     cadenceText: formatCadence(sessionsPerWeek, sessionDurationInHours),
@@ -337,7 +333,7 @@ export function buildOfferingRows(sources: Readonly<OfferingSources>) {
   ];
 }
 
-/** Type pill + search, the two URL-held filters. */
+/** The tab's plan kind plus the URL-held search. */
 export function filterOfferingRows(
   rows: readonly OfferingRow[],
   type: string | null,

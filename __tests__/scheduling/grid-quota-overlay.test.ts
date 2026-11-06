@@ -51,6 +51,7 @@ function quotaFor(
   const zone = opts.zone ?? IST;
   const entitlement = subscriptionEntitlement({
     sessionsTotal: 12,
+    sessionsRefunded: 0,
     sessionsPerWeek: 3,
     durationInMonths: 1,
     occurrences,
@@ -77,10 +78,14 @@ function cellsBetween(fromIso: string, toIso: string): number[] {
 
 describe("computeGridQuota + cellLimitReached", () => {
   it("paints every in-window cell when the cycle is full", () => {
+    // This week (2–8 Mar) and next week (9–15 Mar) both full.
     const quota = quotaFor([
       session("2026-03-03T04:30:00.000Z"),
       session("2026-03-04T04:30:00.000Z"),
       session("2026-03-05T04:30:00.000Z"),
+      session("2026-03-10T04:30:00.000Z"),
+      session("2026-03-11T04:30:00.000Z"),
+      session("2026-03-12T04:30:00.000Z"),
     ]);
     expect(quota).toMatchObject({
       unit: "week",
@@ -209,10 +214,14 @@ describe("computeGridQuota + cellLimitReached", () => {
 
 describe("quotaFooterText", () => {
   it("names the held count and the next opening when the cycle is full", () => {
+    // This week (2–8 Mar) and next week (9–15 Mar) both full.
     const quota = quotaFor([
       session("2026-03-03T04:30:00.000Z"),
       session("2026-03-04T04:30:00.000Z"),
       session("2026-03-05T04:30:00.000Z"),
+      session("2026-03-10T04:30:00.000Z"),
+      session("2026-03-11T04:30:00.000Z"),
+      session("2026-03-12T04:30:00.000Z"),
     ]);
     const nextOpens = formatDayLabel(
       new Date(Date.parse(quota.windowEnd) + 1),
@@ -221,7 +230,7 @@ describe("quotaFooterText", () => {
       },
     );
     expect(quotaFooterText(quota, IST, FIXTURE_NOW)).toBe(
-      `3 of 3 this week · next opens ${nextOpens}`,
+      `Week 2 of 5 is set · next opens ${nextOpens}`,
     );
     expect(quotaFooterText(quota, IST, FIXTURE_NOW)).not.toMatch(
       /slot|T\d\d:|Z\b/,
@@ -230,7 +239,9 @@ describe("quotaFooterText", () => {
 
   it("shows only the count while there is room", () => {
     const quota = quotaFor([session("2026-03-04T04:30:00.000Z")]);
-    expect(quotaFooterText(quota, IST, FIXTURE_NOW)).toBe("1 of 3 this week");
+    expect(quotaFooterText(quota, IST, FIXTURE_NOW)).toBe(
+      "Week 1 of 5 · 1 of 3 booked",
+    );
   });
 
   it("names no next opening once every session is booked", () => {
@@ -240,7 +251,9 @@ describe("quotaFooterText", () => {
       remainingThisCycle: 0,
       allBooked: true,
     };
-    expect(quotaFooterText(quota, IST, FIXTURE_NOW)).toBe("3 of 3 this week");
+    expect(quotaFooterText(quota, IST, FIXTURE_NOW)).toBe(
+      "Week 1 of 5 · 3 of 3 booked",
+    );
   });
 });
 

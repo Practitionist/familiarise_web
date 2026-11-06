@@ -25,13 +25,13 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import {
-  createHandleApiError,
   createHandleCheckoutSuccess,
   createRazorpayCheckoutHandlers,
   handleUnifiedCheckout,
   paymentGateways,
   reportPaymentsError,
 } from "../../utils";
+import { useHandleApiError } from "../../use-handle-api-error";
 import { calculatePricing, formatPercentage } from "../../math";
 import { eventCapacityFromCount } from "@/lib/events/capacity";
 import { useCurrency } from "@/hooks/useCurrency";
@@ -291,7 +291,7 @@ export default function WebinarCheckoutPage({
   };
 
   // Create utility functions using the toast instance
-  const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
+  const handleApiError = useHandleApiError(toast);
   const handleCheckoutSuccess = useMemo(
     () => createHandleCheckoutSuccess(toast, "WEBINAR"),
     [toast],

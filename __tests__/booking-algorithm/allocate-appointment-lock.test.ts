@@ -9,6 +9,8 @@ const mockFindFirst = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    // The allocator counts what the event already holds to record how it was scheduled.
+    appointmentOccurrence: { count: jest.fn().mockResolvedValue(0) },
     appointment: { findFirst: (...a: unknown[]) => mockFindFirst(...a) },
   },
 }));

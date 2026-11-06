@@ -417,7 +417,6 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
             consultantName: "Vikram",
             consulteeName: "Rohan",
             startsAtText: "Fri, 16 Oct, 6:00 PM IST",
-            cycleOrdinal: 2,
             nextBatch: 4,
             remainingSessions: 8,
             dashboardUrl: "https://familiarisenow.com/dashboard",

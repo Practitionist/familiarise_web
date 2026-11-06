@@ -1,41 +1,20 @@
 /**
- * Dead-man's switch for the scheduled fleet.
+ * Watches the workflows GitHub Actions schedules (today `db-live-drift` and
+ * `security-audit`) and fails when one has stopped starting. It does NOT watch
+ * runtime jobs: those run on the Netlify ticker and are watched from outside
+ * Actions by `/api/health/jobs`, the ticker heartbeat and the daily ops digest.
  *
- * The failure pager (`notify-ops-failure.sh`) only fires on runs that FAIL. It
- * cannot detect a run that never started, and there are two ways that happens:
- * GitHub disables scheduled workflows after 60 days of repository inactivity,
- * and the `schedule` trigger is explicitly best-effort with no SLA. Either way
- * the whole money fleet can go quiet without a single red run.
- *
- * This job asks the Actions API when each workflow last started and fails when
- * one has been silent for implausibly long.
- *
- * The threshold deliberately is NOT the declared cadence. Measured on this repo
- * (2026-07-28): an every-minute schedule actually delivers about one tick every
- * 102 minutes, and an every-15-minutes schedule about one every 100 minutes.
- * Alerting on the declared interval would page constantly and train everyone to
- * ignore it — the same trap the ledger reconciler fell into. So:
- *
- *   sub-daily jobs   -> alert after max(interval x 12, 6h)
- *   daily and slower -> alert after interval x 3
- *
- * The 6-hour floor is set from data, not taste: the worst observed real gap on
- * a sub-hourly job was 2.4h (cleanup-abandoned-payments), so a 3h floor left
- * only 1.25x headroom and would have flapped. Six hours of total silence from a
- * job declared every 15 minutes is unambiguous. Since this check runs daily,
- * the cost of the wider window is at most one day of detection latency, which
- * is the right trade for an alert that people still trust. Throttling severity
- * is a separate concern, tracked in #866 and ADR 22.
+ * Sub-daily schedules alert after max(interval x 12, 6h), daily and slower after
+ * interval x 3, because Actions delivers scheduled runs late and unevenly.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { Redis } from "@upstash/redis";
-import { runJobWithSentry } from "@/lib/observability/job-sentry";
-import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 const ROOT = path.join(__dirname, "..", "..");
 const WORKFLOW_DIR = path.join(ROOT, ".github", "workflows");
+/** A run of this check proves its own schedule fired. */
+const SELF = "cron-heartbeat.yml";
 
 const HOUR_MS = 60 * 60 * 1000;
 const MIN_MS = 60 * 1000;
@@ -96,7 +75,7 @@ const skipped: string[] = [];
 
 for (const file of fs
   .readdirSync(WORKFLOW_DIR)
-  .filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))) {
+  .filter((f) => (f.endsWith(".yml") || f.endsWith(".yaml")) && f !== SELF)) {
   const body = fs.readFileSync(path.join(WORKFLOW_DIR, file), "utf8");
   const stripped = body
     .split("\n")
@@ -154,165 +133,23 @@ for (const file of fs
   else ok.push(line);
 }
 
-/**
- * #1169/#866 — second dead-man leg. This check watches the fleet through the
- * Actions API, but nothing watches the check: if GitHub disables schedules
- * repo-wide, this workflow goes silent along with everything it guards. So the
- * fleet reports itself out-of-band too: every locked job run refreshes
- * `cron:heartbeat:last` (see lib/cron/with-cron-lock.ts), this daily run
- * refreshes it as well, and /api/health flags the key going >6h stale — a
- * surface an external uptime pinger can watch with no GitHub dependency.
- * Fail-open: the Redis write must never decide this check's verdict.
- */
-async function writeFleetHeartbeat(): Promise<void> {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) {
-    console.warn(
-      "check-cron-heartbeat: UPSTASH_REDIS env vars not set — skipping heartbeat write",
-    );
-    return;
-  }
-  try {
-    const redis = new Redis({ url, token });
-    await redis.set("cron:heartbeat:last", new Date().toISOString());
-  } catch (err) {
-    console.warn("check-cron-heartbeat: heartbeat write failed:", err);
-  }
-}
+// The full picture every run: shrinking headroom is the early warning of worse throttling.
+for (const s of skipped) console.log(`  skipped ${s}`);
+for (const s of ok.sort((a, b) => a.localeCompare(b))) console.log(`  ok ${s}`);
 
-/**
- * #1822 Q-8 — daily Upstash usage alarm. The cap was hit twice in September
- * 2026 (696K commands against a 500K cap) with nothing watching the climb
- * between the vendor's own 90%/100% emails. Reads the per-database monthly
- * command count from the Upstash MANAGEMENT API — a different credential
- * (email + management key) from the per-database REST token every other
- * Redis call in this repo uses — and warns at 70%/90% of the cap. Entirely
- * optional: skips silently when the management credentials are not set, so a
- * fork or a repo that never provisions them sees no change in behaviour.
- */
-const UPSTASH_USAGE_WARN_PCT = 70;
-const UPSTASH_USAGE_CRITICAL_PCT = 90;
-const UPSTASH_STATS_TIMEOUT_MS = 15_000;
-
-// #1822 — a monthly COMMAND count (free 500000, PAYG e.g. 2000000), never
-// dollars; no default, since a free-tier number would mis-alarm PAYG.
-function monthlyCommandCap(): number | null {
-  const cap = Number(process.env.UPSTASH_MONTHLY_COMMAND_CAP);
-  return Number.isFinite(cap) && cap > 0 ? cap : null;
-}
-
-async function checkUpstashUsage(): Promise<void> {
-  const apiKey = process.env.UPSTASH_MANAGEMENT_API_KEY;
-  const email = process.env.UPSTASH_EMAIL;
-  const databaseId = process.env.UPSTASH_DATABASE_ID;
-  if (!apiKey || !email || !databaseId) {
-    console.log(
-      "check-cron-heartbeat: UPSTASH_MANAGEMENT_API_KEY/UPSTASH_EMAIL/UPSTASH_DATABASE_ID not all set — skipping the usage alarm",
-    );
-    return;
-  }
-
-  // Sentry is only initialised for jobs/** processes (lib/observability/job-sentry.ts);
-  // this script is otherwise uninstrumented, so the usage alarm brings its own
-  // init+flush rather than depending on a capture silently going nowhere.
-  await runJobWithSentry("upstash-usage-alarm", async () => {
-    try {
-      await reportUpstashUsage(email, apiKey, databaseId);
-    } catch (err) {
-      // Optional alarm: reported, never fails the heartbeat job.
-      console.warn("check-cron-heartbeat: Upstash usage alarm failed", err);
-      captureThrottled("upstash-usage-alarm:probe", err, {
-        subsystem: "maintenance",
-        op: "upstash-usage-alarm",
-        expected: true,
-        level: "warning",
-      });
-    }
-  });
-}
-
-async function reportUpstashUsage(
-  email: string,
-  apiKey: string,
-  databaseId: string,
-): Promise<void> {
-  const auth = Buffer.from(`${email}:${apiKey}`).toString("base64");
-  const res = await fetch(
-    `https://api.upstash.com/v2/redis/stats/${databaseId}`,
-    {
-      headers: { Authorization: `Basic ${auth}` },
-      signal: AbortSignal.timeout(UPSTASH_STATS_TIMEOUT_MS),
-    },
+if (stale.length > 0) {
+  console.error(
+    `\ncheck-cron-heartbeat: FAILED — ${stale.length} workflow(s) have stopped firing:\n`,
   );
-  if (!res.ok) {
-    throw new Error(
-      `Upstash stats API answered ${res.status} ${res.statusText}`,
-    );
-  }
-  const stats = (await res.json()) as { total_monthly_requests?: unknown };
-  const used = stats.total_monthly_requests;
-  // A renamed/missing field must not read as 0% usage.
-  if (typeof used !== "number" || !Number.isFinite(used)) {
-    throw new TypeError("Upstash stats API returned no total_monthly_requests");
-  }
-  const cap = monthlyCommandCap();
-  if (cap === null) {
-    console.log(
-      `check-cron-heartbeat: Upstash usage ${used} commands this month; UPSTASH_MONTHLY_COMMAND_CAP unset — alarm skipped`,
-    );
-    return;
-  }
-  const pct = (used / cap) * 100;
+  for (const s of stale) console.error(`  - ${s}`);
+  console.error(
+    "\nA scheduled workflow that never starts produces no failed run. Check whether GitHub " +
+      "disabled the schedules (60 days of repository inactivity does that) or the Actions " +
+      "budget is spent before assuming a code fault.",
+  );
+  process.exitCode = 1;
+} else {
   console.log(
-    `check-cron-heartbeat: Upstash usage ${used}/${cap} commands this month (${pct.toFixed(1)}%)`,
+    `check-cron-heartbeat: ok (${ok.length} Actions-scheduled workflows firing within tolerance, ${skipped.length} skipped)`,
   );
-
-  if (pct >= UPSTASH_USAGE_WARN_PCT) {
-    const critical = pct >= UPSTASH_USAGE_CRITICAL_PCT;
-    captureThrottled(
-      "upstash-usage-alarm",
-      new Error(
-        `Upstash monthly command usage at ${pct.toFixed(1)}% of cap (${used}/${cap})`,
-      ),
-      {
-        subsystem: "maintenance",
-        op: "upstash-usage-alarm",
-        expected: true,
-        level: critical ? "error" : "warning",
-        tags: { threshold: critical ? "90" : "70" },
-      },
-    );
-  }
 }
-
-void checkUpstashUsage();
-
-void writeFleetHeartbeat().finally(() => {
-  // Always print the full picture: this job's log is the only place the fleet's
-  // real cadence is visible, and headroom shrinking over time is the early
-  // warning that throttling is getting worse.
-  for (const s of skipped) console.log(`  skipped ${s}`);
-  for (const s of ok.sort((a, b) => a.localeCompare(b)))
-    console.log(`  ok ${s}`);
-
-  if (stale.length > 0) {
-    console.error(
-      `\ncheck-cron-heartbeat: FAILED — ${stale.length} workflow(s) have stopped firing:\n`,
-    );
-    for (const s of stale) console.error(`  - ${s}`);
-    console.error(
-      "\nA scheduled workflow that never starts produces no failed run, so nothing else " +
-        "in this repo would have told you. Check whether GitHub disabled the schedules " +
-        "(60 days of repo inactivity does that automatically) before assuming a code fault.",
-    );
-    // exitCode, not exit(): the heartbeat write above already settled, but a
-    // hard exit here would also skip any queued stdio flushes.
-    process.exitCode = 1;
-    return;
-  }
-
-  console.log(
-    `check-cron-heartbeat: ok (${ok.length} scheduled workflows firing within tolerance, ${skipped.length} skipped)`,
-  );
-});

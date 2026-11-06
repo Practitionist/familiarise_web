@@ -83,6 +83,11 @@ const mockStamp = jest.fn(async () => ({ count: 1 }));
 const mockTxFindUnique = jest.fn();
 const tx = {
   payment: { updateMany: mockStamp, findUnique: mockTxFindUnique },
+  systemEvent: { findFirst: async () => null },
+  refund: { findFirst: async () => null },
+  // No unpaid earnings yet: the hand top-up hold has nothing to freeze.
+  consultantEarnings: { findMany: async () => [] },
+  organizationEarnings: { findMany: async () => [] },
 } as never;
 
 /** The route's two halves: stamp in the reject commit, drive after it. */
@@ -196,11 +201,18 @@ describe("refundRejectedRequest", () => {
 
   it("adds nothing to another door's owed refund, and says so", async () => {
     mockStamp.mockResolvedValueOnce({ count: 0 });
-    mockTxFindUnique.mockResolvedValueOnce({
+    const heldRow = {
       id: "pay-1",
       refundOwedKey: "cancel:appt-1:pay-1",
       refundOwedPaise: 40_000,
-    });
+      amount: 100_000,
+      refunds: [],
+      disputes: [],
+    };
+    // The holding marker, then the balance the top-up is capped at.
+    mockTxFindUnique
+      .mockResolvedValueOnce(heldRow)
+      .mockResolvedValueOnce(heldRow);
     const result = await rejectAndRefund({
       kind: "consultation",
       requestId: "cons-1",
@@ -219,6 +231,9 @@ describe("refundRejectedRequest", () => {
       expect.objectContaining({
         severity: "WARN",
         correlationId: "owed-already-held:pay-1:rejection:cons-1:pay-1",
+        strict: true,
+        // What the holding ₹400 leaves of the ₹1,000 balance.
+        context: expect.objectContaining({ owedPaise: 60_000 }),
       }),
     );
   });

@@ -25,7 +25,11 @@ jest.mock("../../lib/booking/allocation/modes/auto", () => ({
 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { appointment: { findFirst: jest.fn().mockResolvedValue(null) } },
+  default: {
+    // The allocator counts what the event already holds to record how it was scheduled.
+    appointmentOccurrence: { count: jest.fn().mockResolvedValue(0) },
+    appointment: { findFirst: jest.fn().mockResolvedValue(null) },
+  },
 }));
 
 import { allocate } from "@/lib/booking/allocation";

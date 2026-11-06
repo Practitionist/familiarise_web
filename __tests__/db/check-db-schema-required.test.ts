@@ -184,6 +184,30 @@ ALTER TYPE "SupportCaseStatus" ADD VALUE 'ON_HOLD';
     );
   });
 
+  it("reports a created table's missing column past a semicolon in a quoted default", () => {
+    // Verbatim `migrate diff --from-empty --script` for a `@default("alpha;beta")` field.
+    const plan = `-- CreateSchema
+CREATE SCHEMA IF NOT EXISTS "public";
+
+-- CreateTable
+CREATE TABLE "ReviewNote" (
+    "id" TEXT NOT NULL,
+    "label" TEXT NOT NULL DEFAULT 'alpha;beta',
+    "receiptStagedAt" TIMESTAMP(3),
+
+    CONSTRAINT "ReviewNote_pkey" PRIMARY KEY ("id")
+);`;
+    const live: LiveCatalog = {
+      tables: new Set(["ReviewNote"]),
+      columns: new Set(["ReviewNote.id", "ReviewNote.label"]),
+      enumTypes: new Set(),
+      enumValues: new Set(),
+    };
+    expect(
+      missingObjects(requiredObjects(plan), live).map(describeObject),
+    ).toEqual(["ReviewNote.receiptStagedAt"]);
+  });
+
   it("reads an empty plan as nothing to require", () => {
     expect(requiredObjects("-- This is an empty migration.")).toEqual([]);
   });

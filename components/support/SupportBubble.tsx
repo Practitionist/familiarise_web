@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Headset, Lock, UserRound } from "lucide-react";
+import { Bot, Headset, Lock, Presentation, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { toneClass } from "@/lib/ui/tone";
@@ -9,10 +9,15 @@ import { cn } from "@/utils/tailwind";
 export type BubbleAuthor = "USER" | "BOT" | "AGENT" | "SYSTEM";
 
 /** Announced to assistive tech; side and colour carry it visually. */
-function speakerLabel(author: BubbleAuthor, perspective: "staff" | "user") {
+function speakerLabel(
+  author: BubbleAuthor,
+  perspective: "staff" | "user",
+  presenter: boolean,
+) {
   if (author === "USER") {
     return perspective === "user" ? "You said" : "Customer said";
   }
+  if (presenter) return "Presenter said";
   return author === "AGENT" ? "Support said" : "Assistant said";
 }
 
@@ -43,6 +48,38 @@ function bubbleToneClass(
   return "bg-muted text-foreground";
 }
 
+function formatMessageTime(at?: string) {
+  if (!at) return null;
+  return new Date(at).toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function isOwnMessage(
+  author: BubbleAuthor,
+  perspective: "staff" | "user",
+  presenter: boolean,
+) {
+  if (perspective === "user") return author === "USER";
+  return author === "AGENT" && !presenter;
+}
+
+function senderNameFor(
+  author: BubbleAuthor,
+  authorName: string | null | undefined,
+  internal: boolean,
+  presenter: boolean,
+) {
+  if (internal) {
+    return authorName ? `Private note · ${authorName}` : "Private note";
+  }
+  if (!presenter) return authorName ?? DEFAULT_NAME[author];
+  return authorName ? `${authorName} · Presenter` : "Presenter";
+}
+
 /**
  * #1527 — one chat bubble for both sides of a support conversation. The
  * viewer's own messages sit on the right; a private note (staff only) is
@@ -54,6 +91,7 @@ export function SupportBubble({
   body,
   at,
   internal = false,
+  actorKind,
   perspective,
   pending = false,
   footer,
@@ -63,6 +101,8 @@ export function SupportBubble({
   body: string;
   at?: string;
   internal?: boolean;
+  /** A presenter reply is provider content, never Familiarise support. */
+  actorKind?: "PRESENTER";
   perspective: "staff" | "user";
   pending?: boolean;
   footer?: ReactNode;
@@ -75,19 +115,11 @@ export function SupportBubble({
       </p>
     );
   }
-  const own = perspective === "user" ? author === "USER" : author === "AGENT";
-  const Icon = ICON[author];
-  const time = at
-    ? new Date(at).toLocaleString(undefined, {
-        day: "numeric",
-        month: "short",
-        hour: "numeric",
-        minute: "2-digit",
-      })
-    : null;
-  const senderName = internal
-    ? `Private note${authorName ? ` · ${authorName}` : ""}`
-    : (authorName ?? DEFAULT_NAME[author]);
+  const presenter = actorKind === "PRESENTER";
+  const own = isOwnMessage(author, perspective, presenter);
+  const Icon = presenter ? Presentation : ICON[author];
+  const time = formatMessageTime(at);
+  const senderName = senderNameFor(author, authorName, internal, presenter);
   return (
     <div className={cn("flex", own ? "justify-end" : "justify-start")}>
       <div className="max-w-[85%] space-y-1">
@@ -117,7 +149,7 @@ export function SupportBubble({
           <span className="sr-only">
             {internal
               ? "Private note: "
-              : `${speakerLabel(author, perspective)}: `}
+              : `${speakerLabel(author, perspective, presenter)}: `}
           </span>
           {body}
         </div>

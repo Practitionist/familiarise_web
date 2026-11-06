@@ -278,6 +278,7 @@ export async function quoteTrialRefund(
         ? ctx.confirmedSlotsTotal
         : (ctx?.slotsTotal ?? 0),
     sessionsRemaining: ctx?.sessionsRemaining ?? 0,
+    sessionsRefunded: 0,
     isSubscription: false,
     isConsultantInitiated: args.isConsultantInitiated,
     // The rail alone is not enough: `free_` with a non-zero amount is a mixed

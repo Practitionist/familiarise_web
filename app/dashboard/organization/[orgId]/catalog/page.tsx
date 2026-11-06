@@ -17,7 +17,7 @@ import { CatalogClient } from "./CatalogClient";
  *
  * Only Webinar and Class appear here. `ConsultationPlan` and `SubscriptionPlan`
  * require a `consultantProfileId` in the schema, so an org can never solely own
- * one — those stay on the consultant's own planner with the org as a tag.
+ * one — those stay on the consultant's own Sell pages with the org as a tag.
  */
 export default async function OrgCatalogPage({
   params,

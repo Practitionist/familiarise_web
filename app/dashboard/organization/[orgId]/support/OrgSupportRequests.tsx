@@ -155,8 +155,8 @@ export function OrgSupportRequests({ orgId }: Readonly<{ orgId: string }>) {
         empty={
           <EmptyState
             icon={Inbox}
-            title="No organization requests"
-            description="Your organization’s operations and billing requests appear here. Authorized teammates can follow the conversation with the platform team."
+            title="No organization support cases"
+            description="Your organization’s operations and billing support cases appear here. Authorized teammates can follow the conversation with the platform team."
           />
         }
       />

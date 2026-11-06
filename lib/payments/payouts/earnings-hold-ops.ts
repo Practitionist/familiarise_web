@@ -4,7 +4,8 @@
  * Hold places an OPERATOR hold on a PENDING or READY row. Release clears the
  * operator and moderation holds (the ones an admin disposes of) and is refused
  * while the payment has an open refund or dispute; a dispute or overage hold
- * stays until its own settlement releases it.
+ * stays until its own settlement releases it, and a held top-up's hold until
+ * its own door releases it.
  */
 
 import {
@@ -18,6 +19,7 @@ import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import {
   EarningsHoldRaceError,
+  OWED_ALREADY_HELD_PREFIX,
   placeEarningsHolds,
   releaseEarningsHolds,
   type EarningsHoldDb,
@@ -134,14 +136,36 @@ export async function releaseHeldEarnings(
       "This payment has a refund or dispute still open — release once it settles.",
     );
   }
+  // A held top-up's hold is released by its own door once that top-up is paid.
   const out = await releaseEarningsHolds(
     db,
     row.side,
     [id],
-    { reasons: OPERATOR_RELEASABLE },
+    {
+      reasons: OPERATOR_RELEASABLE,
+      exceptSourceRefPrefix: OWED_ALREADY_HELD_PREFIX,
+    },
     { releasedById: actorUserId, now },
   );
   if (out.released.length === 0) {
+    const topUp = await db.earningsHold.findMany({
+      where: {
+        ...(row.side === "consultant"
+          ? { consultantEarningsId: id }
+          : { organizationEarningsId: id }),
+        reason: EarningsHoldReason.OPERATOR,
+        sourceRef: { startsWith: OWED_ALREADY_HELD_PREFIX },
+        releasedAt: null,
+      },
+      select: { id: true },
+      take: 1,
+    });
+    if (topUp.length > 0) {
+      throw new OpsRefusal(
+        "EARNING_HELD_FOR_TOP_UP",
+        "A refund top-up on this payment holds this earning; release it from Refunds → Needs human once the top-up is paid.",
+      );
+    }
     throw new OpsRefusal(
       "EARNING_HELD_BY_SETTLEMENT",
       "A dispute or an unpaid overage charge holds this earning; it is released when that settles.",

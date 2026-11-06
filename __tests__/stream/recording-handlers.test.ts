@@ -1037,7 +1037,8 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
             return (
               rows.find(
                 (row) =>
-                  row.streamRecordingId == null && row.status === where.status,
+                  (row.streamRecordingId ?? null) === null &&
+                  row.status === where.status,
               ) ?? null
             );
           }
@@ -1301,7 +1302,7 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
     mockMeetingFindUnique.mockResolvedValue({
       id: "m-fail",
       streamCallId: "slot-fail",
-      occurrence: { appointment: { organizationId: null } },
+      occurrence: { appointment: { id: "appt-fail", organizationId: null } },
     });
     mockRecordingFindFirst.mockResolvedValueOnce({ id: "rec-failed" });
     mockGetEventAttendeeIds.mockResolvedValue(["u-1"]);
@@ -1324,6 +1325,49 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
     const claim = mockStageEmailOnce.mock.calls[0][1];
     expect(claim.scope).toBe("stream.recording-failed");
     expect(claim.key("u-1")).toBe("recording-failed:rec-failed:u-1");
+  });
+
+  it("links B2C recording notices to the booking so the go resolver picks each recipient's side", async () => {
+    mockGetEventAttendeeIds.mockResolvedValue(["host-user", "attendee-user"]);
+    await stageAndSendRecordingReadyNotifications(
+      { id: "appt-b2c", organizationId: null } as never,
+      "rec-b2c",
+    );
+    const readyUrl = mockNotifyRecordingAvailable.mock.calls[0][1].dashboardUrl;
+    expect(readyUrl).toMatch(
+      /\/dashboard\/go\/auto\/appointments\/appt-b2c\/recordings$/,
+    );
+    expect(mockStageEmailOnce.mock.calls[0][0].dashboardUrl).toBe(readyUrl);
+
+    mockMeetingFindUnique.mockResolvedValue({
+      id: "m-fail-b2c",
+      streamCallId: "slot-fail-b2c",
+      occurrence: { appointment: { id: "appt-b2c", organizationId: null } },
+    });
+    mockRecordingFindFirst.mockResolvedValueOnce({ id: "rec-failed-b2c" });
+    mockNotifyRecordingFailed.mockResolvedValue({});
+    await handleRecordingFailed({
+      type: "call.recording_failed",
+      call_cid: "default:slot-fail-b2c",
+      egress_id: "eg-2",
+      recording_type: "composite",
+      created_at: "2026-10-03T11:01:00.000Z",
+    });
+    for (const call of mockNotifyRecordingFailed.mock.calls) {
+      expect(call[1].dashboardUrl).toBe(readyUrl);
+    }
+    expect(mockNotifyRecordingFailed).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps org-hosted recording notices on the org Library", async () => {
+    mockGetEventAttendeeIds.mockResolvedValue(["member-user"]);
+    await stageAndSendRecordingReadyNotifications(
+      { id: "appt-org", organizationId: "org-1" } as never,
+      "rec-org",
+    );
+    expect(mockNotifyRecordingAvailable.mock.calls[0][1].dashboardUrl).toMatch(
+      /\/dashboard\/organization\/org-1\/library\?tab=recordings$/,
+    );
   });
 
   it("keys the ready email claim on the recording and the recipient", async () => {

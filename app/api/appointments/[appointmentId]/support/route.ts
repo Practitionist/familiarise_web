@@ -27,10 +27,24 @@ import {
   authorizeAppointment,
   appointmentAuthzError,
 } from "@/lib/api/appointment-access";
+import { isPresenterAuthoredMessage } from "@/lib/support/case-message-actor";
 
 const SUPPORT_ROUTE = "appointments.support";
 
 const CATEGORY = SupportThreadCategoryEnum;
+
+const FlowMessageMetadataSchema = z.object({
+  nodeId: z.string().optional(),
+  options: z
+    .array(
+      z.object({
+        id: z.string(),
+        label: z.string(),
+        escalates: z.boolean().optional(),
+      }),
+    )
+    .optional(),
+});
 
 const turnSchema = z
   .object({
@@ -156,13 +170,23 @@ export async function GET(
       });
     }
 
+    const page = thread?.messages.slice(-200) ?? [];
     return NextResponse.json({
       data: thread
         ? {
             ...thread,
-            messages: thread.messages.slice(-200),
+            messages: page.map(({ metadata, ...message }) => {
+              const flow = FlowMessageMetadataSchema.safeParse(metadata);
+              return {
+                ...message,
+                metadata: flow.success ? flow.data : undefined,
+                actorKind: isPresenterAuthoredMessage(metadata)
+                  ? ("PRESENTER" as const)
+                  : undefined,
+              };
+            }),
             hasMore: thread.messages.length > 200,
-            nextBeforeSeq: thread.messages.slice(-200)[0]?.seq ?? null,
+            nextBeforeSeq: page[0]?.seq ?? null,
             userId: thread.requesterUserId,
             supportTicketId:
               thread.activeChannel === "HUMAN" ? thread.id : null,

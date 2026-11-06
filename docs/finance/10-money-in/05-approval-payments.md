@@ -46,7 +46,7 @@ For Razorpay the stored link is the order id, not a URL. `payPagePath` turns it 
 
 The link lives for 24 hours from the mint. The `abandoned-payments` sweep (`scripts/payments/cleanup-abandoned-payments.ts`) does three jobs for approvals:
 
-- **Half-window reminder.** When half the window is left (`APPROVAL_PAYMENT_REMINDER_MS`, 12 hours) it sends one reminder, deduplicated by the payment id and the reminder email type; it never sends after expiry. The expert can also nudge the buyer manually, once per 24 hours per appointment, under a separate email type so the two never dedupe each other (`lib/booking/remind-payment.ts`).
+- **Half-window reminder.** When half the window is left (`APPROVAL_PAYMENT_REMINDER_MS`, 12 hours) it sends one reminder, deduplicated by the payment id and the reminder email type; it never sends after expiry. The expert can also nudge the buyer manually, once per 24 hours per appointment, under a separate email type so the two never dedupe each other (`lib/booking/remind-payment.ts`), and only while the newest `PENDING` order is unexpired (`lib/booking/payment-reminder-eligibility.ts`).
 - **Lapse.** A `PENDING` payment past `expiresAt` is expired, its tentative holds are released by status, and the request is moved to `EXPIRED` by `lapseApprovedRequest` with reason `PAYMENT_LAPSED`. The request's compare-and-swap carries the unpaid predicate in its `WHERE`, so a capture that already flipped the row matches zero rows and nothing below runs.
 - **Gateway cleanup.** The Razorpay order cannot be voided, so the `EXPIRED` row is its tombstone. A capture that lands on it is refunded automatically ([capture confirmation](02-capture-confirmation-and-webhooks.md#4-what-handlepaymentsuccess-does)).
 

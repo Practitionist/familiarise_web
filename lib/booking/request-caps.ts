@@ -1,5 +1,6 @@
 import { AppointmentStatus, BookingSource, type Prisma } from "@prisma/client";
 import {
+  BEING_MOVED,
   countOpenRequestsForCap,
   holdingSince,
   type RequestCounters,
@@ -45,6 +46,7 @@ export async function countActiveConsultationRequests(
       bookingSource: BookingSource.REQUEST_SUBMITTED,
       // A request past its hold window no longer holds anything, swept or not.
       requestedAt: { gte: holdingSince("CONSULTATION", now) },
+      NOT: { appointment: BEING_MOVED },
     },
   });
 }

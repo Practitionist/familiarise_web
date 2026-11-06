@@ -51,14 +51,14 @@ describe("dayState (#1785 L-4)", () => {
     expect(dayState(date, NOW, slots)).toBe(expected);
   });
 
-  it("marks a day whose only free times are contended as bookable, like the list", () => {
-    // The list offers a contended time as "Request"; the mark must agree.
+  it("marks a day like the list: a contended free time rings, a partly booked one does not", () => {
     const contended = [at(20, 9, { isAllocated: true })];
     expect(dayState(day(20), NOW, contended)).toBe("bookable");
+    // Every writer refuses part of a booked half-hour, so no buyer is offered it.
     const partly = [
       at(20, 9, { isAllocated: true, bookingStatus: "partially-booked" }),
     ];
-    expect(dayState(day(20), NOW, partly)).toBe("bookable");
+    expect(dayState(day(20), NOW, partly)).toBe("none");
   });
 
   it("does not ring a day whose times are all too soon or over a plan limit", () => {

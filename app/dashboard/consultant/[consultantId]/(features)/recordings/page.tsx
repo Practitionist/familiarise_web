@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { HydrationBoundary } from "@tanstack/react-query";
 
 import {
@@ -5,8 +6,10 @@ import {
   DashboardHeader,
 } from "@/components/dashboard/PageScaffold";
 import { PersonalLibrary } from "@/components/dashboard/library/PersonalLibrary";
+import { Button } from "@/components/ui/button";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { readRecordingLibrary } from "@/lib/data/recording-library";
+import { sellPageHref } from "@/lib/dashboard/sell-pages";
 import { libraryKeys } from "@/lib/documents/query-keys";
 import { parseLibraryQuery } from "@/lib/library/library-query";
 import { seedLibraryPage } from "@/lib/library/library-seed";
@@ -41,6 +44,13 @@ export default async function ConsultantRecordingsRoute({
       <DashboardHeader
         title="Recordings"
         description="Recordings of the sessions you host, by booking. Open a booking to manage a recording."
+        actions={
+          <Button asChild size="sm" variant="outline">
+            <Link href={sellPageHref(consultantId, "products", "replays")}>
+              Sell as replay
+            </Link>
+          </Button>
+        }
       />
       <DashboardContent>
         <DisplayZoneProvider zone={viewerZone.zone}>

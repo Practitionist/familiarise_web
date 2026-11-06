@@ -34,7 +34,7 @@ export function HelpSupportLayout({
   )
     return children;
   const items = [
-    { label: "Requests", href: root, icon: MessagesSquare },
+    { label: "Support cases", href: root, icon: MessagesSquare },
     { label: "Evidence requests", href: `${root}/evidence`, icon: FileCheck },
     ...(!organization
       ? [
@@ -67,7 +67,7 @@ export function HelpSupportLayout({
         description={
           organization
             ? "Get help and follow support activity for this organization."
-            : "Get help, follow requests, and share product feedback."
+            : "Get help, follow support cases, and share product feedback."
         }
         className="mb-0"
       />

@@ -266,6 +266,13 @@ const nextConfig = {
     // Netlify sets NETLIFY only on the build machine, so runtime checks
     // (lease cap, pool guard) need it inlined here.
     ...(process.env.NETLIFY ? { NETLIFY: process.env.NETLIFY } : {}),
+    // The deployed commit (Netlify COMMIT_REF, else Vercel's), inlined at build for the jobs probe and digest.
+    ...((process.env.COMMIT_REF ?? process.env.VERCEL_GIT_COMMIT_SHA)
+      ? {
+          BUILD_SHA:
+            process.env.COMMIT_REF ?? process.env.VERCEL_GIT_COMMIT_SHA,
+        }
+      : {}),
   },
   // Skipped on Netlify by default: with them on, the deploy preview was killed
   // (exit 137) at "Linting and checking validity of types" on the 6144 MB
@@ -587,6 +594,8 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // CI/dev keeps it for stack-trace quality, Netlify skips it for survival.
   // Skip generating hidden-source-map buffers on non-production Netlify previews to stay under the 8 GB container RSS cap.
   sourcemaps: {
+    // Production builds with Turbopack, whose maps fit the 8 GB Netlify builder (webpack's did not).
+    // Previews, branch deploys and CI's lean build skip them: they are never uploaded there.
     disable:
       CI_LEAN_BUILD ||
       (process.env.NETLIFY === "true" && process.env.CONTEXT !== "production"),

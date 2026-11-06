@@ -20,6 +20,9 @@ import type { LucideIcon } from "lucide-react";
 export type OfferingType =
   "consultation" | "subscription" | "webinar" | "class";
 
+/** Every type the editor shell lays out; a digital product is not a plan. */
+export type EditorOfferingType = OfferingType | "digital-product";
+
 /**
  * How a field renders. Deliberately a closed set: a manifest that can express
  * anything is just JSX with extra steps, and the whole point is that the four
@@ -36,6 +39,7 @@ export type FieldKind =
   | "stringList"
   | "learningOutcomes"
   | "languageLevel"
+  | "planLength"
   | "image";
 
 export interface FieldSpec {
@@ -90,7 +94,7 @@ export interface SectionSpec {
 }
 
 export interface OfferingManifest {
-  type: OfferingType;
+  type: EditorOfferingType;
   /** Used in prose: "Create a webinar", "your class". */
   noun: string;
   sections: SectionSpec[];

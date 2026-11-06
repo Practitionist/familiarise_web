@@ -28,6 +28,8 @@ jest.mock("../../lib/prisma", () => ({
     class: { findUnique: jest.fn() },
     appointment: { findMany: jest.fn(), findFirst: jest.fn() },
     rescheduleRequest: { findFirst: jest.fn() },
+    // The allocator counts what the plan already holds to record how it was scheduled.
+    appointmentOccurrence: { count: jest.fn().mockResolvedValue(0) },
   },
   ALLOCATION_TX_MAX_WAIT_MS: 8000,
   ALLOCATION_TX_TIMEOUT_MS: 30000,

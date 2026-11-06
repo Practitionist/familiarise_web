@@ -1,16 +1,9 @@
 name: Cron Heartbeat
 
-# Dead-man's switch for the scheduled fleet.
-#
-# Every other alert in this repo fires on a run that FAILED. Nothing fires on a
-# run that never started, and there are two ways that happens: GitHub disables
-# scheduled workflows after 60 days of repository inactivity, and the `schedule`
-# trigger is best-effort with no SLA. Either way the money fleet can go silent
-# without producing a single red run.
-#
-# Runs at 04:40 UTC — a slot no other workflow occupies at any hour, and after
-# the 03:45 ledger reconcile so a fleet-wide stall shows up in the same
-# morning's signal.
+# Watches the workflows GitHub Actions schedules (db-live-drift, security-audit)
+# and fails when one has stopped starting. It does NOT watch runtime jobs: those
+# run on the Netlify ticker and are watched from outside Actions by
+# /api/health/jobs, the ticker heartbeat and the daily ops digest.
 
 on:
   schedule:
@@ -50,27 +43,11 @@ jobs:
         # arbitrary-code-execution path entirely.
         run: npm ci --ignore-scripts
 
-      # No prisma generate: this job never touches the database.
-      #
-      # Deliberately NOT wrapped in withCronLock (#1169): the dead-man switch
-      # must not depend on the Redis it helps monitor, and the check is
-      # read-only so a double-run is harmless. The Redis pair below is only for
-      # the fail-open `cron:heartbeat:last` write — the /api/health leg.
-      - name: Check that every scheduled workflow is still firing
+      # No prisma generate and no lock: a read-only Actions API check.
+      - name: Check that every Actions-scheduled workflow is still firing
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
-          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
-          # #1822 Q-8 — optional Upstash usage alarm; unset in most
-          # environments, in which case the check skips silently.
-          UPSTASH_MANAGEMENT_API_KEY: ${{ secrets.UPSTASH_MANAGEMENT_API_KEY }}
-          UPSTASH_EMAIL: ${{ secrets.UPSTASH_EMAIL }}
-          UPSTASH_DATABASE_ID: ${{ secrets.UPSTASH_DATABASE_ID }}
-          # Monthly COMMAND count (e.g. 2000000), not dollars; unset = no alarm.
-          UPSTASH_MONTHLY_COMMAND_CAP: ${{ vars.UPSTASH_MONTHLY_COMMAND_CAP }}
-          NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.NEXT_PUBLIC_SENTRY_DSN || secrets.SENTRY_DSN }}
-          NEXT_PUBLIC_SENTRY_ENVIRONMENT: production
         run: node_modules/.bin/tsx scripts/ci/check-cron-heartbeat.ts
 
       - name: Notify on failure

@@ -42,7 +42,8 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import { createHandleApiError, paymentGateways } from "../../utils";
+import { paymentGateways } from "../../utils";
+import { useHandleApiError } from "../../use-handle-api-error";
 import { isSlotStillOffered } from "@/app/explore/experts/[consultantId]/hooks/useAvailabilityWindow";
 import { useSlotJustTaken } from "@/app/explore/experts/[consultantId]/hooks/useSlotJustTaken";
 import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
@@ -370,7 +371,7 @@ export default function ConsultationCheckoutPage({
   // Shared error map covers slot-conflict types (AVAILABILITY, LOCK_CONTENTION)
   // so a slot taken mid-checkout shows a clear "pick another time" toast.
   // Matches subscription/class/webinar pages (de-dupes the old inline map).
-  const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
+  const handleApiError = useHandleApiError(toast);
 
   const consultantProfileId = eventData?.data?.consultantProfile?.id;
   const slotJustTaken = useSlotJustTaken(consultantProfileId);

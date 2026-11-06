@@ -8,7 +8,7 @@ import { AvailabilityForm } from "./AvailabilityForm";
  * /dashboard/consultant/[consultantId]/availability — the hours a consultant
  * publishes (#1785 L-1). A top-level destination rather than a Settings tab:
  * it is a daily work surface, not a preference, which is where Calendly and
- * Cal.com put it too. `settings?tab=availability` redirects here.
+ * Cal.com put it too.
  */
 export default function AvailabilityPage({
   params,

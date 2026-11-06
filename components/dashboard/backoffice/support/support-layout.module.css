@@ -1,0 +1,101 @@
+.inbox {
+  container: support-inbox / inline-size;
+  min-width: 0;
+}
+
+.header > div {
+  flex-wrap: wrap;
+}
+
+.header > div > :last-child {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.layout {
+  display: grid;
+  align-items: start;
+  gap: 1.5rem;
+}
+
+.caseList,
+.reader {
+  min-width: 0;
+}
+
+.inbox[data-case-open="true"] .browseTools,
+.inbox[data-case-open="true"] .caseList,
+.inbox[data-case-open="true"] .stats,
+.filters,
+.emptySelection {
+  display: none;
+}
+
+.filters[data-expanded="true"] {
+  display: block;
+}
+
+.workspace {
+  container: support-case / inline-size;
+  min-width: 0;
+}
+
+.detailsPanel {
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  z-index: 20;
+  width: 20rem;
+  max-width: 100%;
+  overflow-y: auto;
+}
+
+.reports {
+  container: support-reports / inline-size;
+}
+
+.complianceMetrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@container support-reports (min-width: 30rem) {
+  .complianceMetrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* Keep room for an 18rem list and a usable conversation beside the sidebar. */
+@container support-inbox (min-width: 60rem) {
+  .layout {
+    grid-template-columns: 18rem minmax(0, 1fr);
+  }
+
+  .inbox[data-case-open="true"] .browseTools,
+  .inbox[data-case-open="true"] .caseList,
+  .filters,
+  .emptySelection {
+    display: block;
+  }
+
+  .inbox[data-case-open="true"] .stats {
+    display: flex;
+  }
+
+  .backLink,
+  .filterToggle {
+    display: none;
+  }
+}
+
+/* Dock Details only when the case itself can also fit the conversation. */
+@container support-case (min-width: 64rem) {
+  .detailsPanel {
+    position: static;
+    width: 18rem;
+    max-width: none;
+    flex-shrink: 0;
+    align-self: start;
+    box-shadow: none;
+  }
+}

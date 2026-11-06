@@ -476,6 +476,7 @@ export function useConsultantAppointmentsAdapter(
             appointmentType={typeLabel}
             isLoading={actions.isLoading}
             appointmentId={activeVm.appointmentId}
+            viewerRole="consultant"
           />
 
           <RetimeDialog

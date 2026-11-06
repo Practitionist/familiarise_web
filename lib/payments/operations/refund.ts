@@ -124,7 +124,7 @@ import {
 } from "@/lib/payments/ledger/unapplied-receipts";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
-import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
+import { revokeStandaloneSaleEntitlement } from "@/lib/payments/digital-product-entitlement";
 import { refundReversalBasis } from "@/lib/payments/ledger/refund-reversal-basis";
 import {
   overageCaptureCredits,
@@ -133,6 +133,7 @@ import {
 // Late-bound cycle: refund-owed reaches refundPayment through booking-refund.
 import {
   claimOwedMarker,
+  clearOwedMarkerSettledBy,
   failRefund,
   stampOwedOrHeld,
   type HandSettledOwed,
@@ -1088,11 +1089,21 @@ export async function applyRefundCascade(
           status: true,
           cascadedAt: true,
           deletedAt: true,
+          dedupeKey: true,
         },
       },
       disputes: REFUNDABLE_BALANCE_SELECT.disputes,
     },
   });
+  // The refund its owed marker waited on has settled, whoever settled it.
+  if (payment.refundOwedKey) {
+    await clearOwedMarkerSettledBy(
+      tx,
+      payment.id,
+      payment.refunds.find((r) => r.id === rawInput.refundId)?.dedupeKey ??
+        null,
+    );
+  }
 
   // #1582 C-P0-03 — cumulative cap at cascade time closes the PENDING-then-LOST
   // window: every other returned refund and every LOST/CHARGE_REFUNDED dispute
@@ -1144,10 +1155,9 @@ export async function applyRefundCascade(
   const completesFullRefund =
     otherCascadedPaise + input.amountPaise >= payment.amount;
 
-  // Replay sales are the only appointment-less payments that grant playback;
-  // only a full refund revokes it, so a partial goodwill refund keeps access.
+  // A full refund of a standalone sale revokes its entitlement; a partial goodwill refund keeps access.
   if (payment.appointmentId === null && completesFullRefund) {
-    await revokeReplayEntitlement(tx, payment.paymentIntent);
+    await revokeStandaloneSaleEntitlement(tx, payment);
   }
 
   if (payment.amount <= 0 || input.amountPaise <= 0) {

@@ -25,13 +25,13 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import {
-  createHandleApiError,
   createHandleCheckoutSuccess,
   createRazorpayCheckoutHandlers,
   handleUnifiedCheckout,
   paymentGateways,
   reportPaymentsError,
 } from "../../utils";
+import { useHandleApiError } from "../../use-handle-api-error";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { AppliedDiscount } from "@/types/checkout";
@@ -302,7 +302,7 @@ export default function ClassCheckoutPage({
     }
   };
 
-  const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
+  const handleApiError = useHandleApiError(toast);
   const handleCheckoutSuccess = useMemo(
     () => createHandleCheckoutSuccess(toast, "CLASS"),
     [toast],

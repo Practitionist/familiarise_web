@@ -47,13 +47,14 @@ import {
   SearchTimeoutError,
 } from "@/utils/scheduling-engine/errors";
 import {
-  matchCustomSlotToDay,
+  customSpansInStartOrder,
   sortWeeklyByNextOccurrence,
 } from "@/lib/booking/allocation/search/recurrence";
 import {
   DAY_MS,
   ALLOCATOR_SEARCH_TIME_BUDGET_MS,
   type AllocationWalkContext,
+  type RowSpan,
 } from "@/lib/booking/allocation/search/constants";
 import {
   projectableWeeklyRows,
@@ -79,6 +80,20 @@ import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
  * sees SLOT_SHORTAGE with a real placeable count — or, with `allowPartial`,
  * the sessions that did fit.
  */
+/**
+ * The scheduling-zone calendar days either side of `start`'s day, as day
+ * keys. Calendar arithmetic on the key, so a daylight-saving change (a 23 or
+ * 25 hour day) never skips or repeats a neighbour.
+ */
+export function adjacentDayKeys(start: Date, timeZone?: string): string[] {
+  const dayMs = Date.parse(
+    `${ScheduleCalculationService.dayKey(start, timeZone)}T00:00:00Z`,
+  );
+  return [dayMs - DAY_MS, dayMs + DAY_MS].map((ms) =>
+    new Date(ms).toISOString().slice(0, 10),
+  );
+}
+
 export async function findAvailableSlots(
   // #908 — accepts the base client so slot discovery can run OUTSIDE the write
   // transaction (under the locks). Reads only — no writes happen here.
@@ -115,7 +130,7 @@ export async function findAvailableSlots(
   // A caller that searches more than once passes one budget for all of them;
   // otherwise this search opens its own once the reads are done.
   sharedBudget?: SearchBudget,
-  // No candidate starts sooner than this from now (`leadTimeFor`).
+  // No candidate starts sooner than this from now (`leadMsFor`).
   leadTimeMs: number = MINIMUM_BOOKING_LEAD_TIME_MS,
 ): Promise<Date[]> {
   const walk: AllocationWalkContext = {
@@ -313,13 +328,6 @@ export async function findAvailableSlots(
     consultant.scheduleType === ScheduleType.WEEKLY
       ? sortWeeklyByNextOccurrence(projectableWeekly, now)
       : [];
-  const sortedCustom =
-    consultant.scheduleType === ScheduleType.CUSTOM
-      ? [...consultant.availabilityWindowsCustom].sort(
-          (a, b) =>
-            new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
-        )
-      : [];
 
   // #1065 — the preference's ceiling. Zero when nothing was asked for, which
   // makes every "is this candidate perfect?" test below true on the first
@@ -335,7 +343,7 @@ export async function findAvailableSlots(
       bookedSlots,
       now,
       sortedWeekly,
-      sortedCustom,
+      consultant.availabilityWindowsCustom,
       config.schedulingTimezone,
       preference,
       walk,
@@ -423,20 +431,23 @@ export async function findAvailableSlots(
       ? MAX_CLASS_SESSIONS_PER_DAY
       : MAX_SUBSCRIPTION_SESSIONS_PER_DAY;
 
-  // Weekly occurrences over the whole period, projected once and filed by the
-  // UTC day they start on, in `sortedWeekly` order.
-  const weeklyStartsByUtcDay = new Map<
-    number,
-    { start: Date; endMs: number }[]
-  >();
+  // Availability over the whole period, projected once and filed by the UTC day
+  // each span starts on: weekly occurrences in `sortedWeekly` order, custom rows
+  // as one slice per scheduling-zone day in start order.
+  const periodStart = new Date(
+    Date.UTC(
+      startDate.getUTCFullYear(),
+      startDate.getUTCMonth(),
+      startDate.getUTCDate(),
+    ),
+  );
+  const rowSpansByUtcDay = new Map<number, RowSpan[]>();
+  const fileSpan = (dayMs: number, span: RowSpan) => {
+    const spans = rowSpansByUtcDay.get(dayMs) ?? [];
+    spans.push(span);
+    rowSpansByUtcDay.set(dayMs, spans);
+  };
   if (consultant.scheduleType === ScheduleType.WEEKLY) {
-    const periodStart = new Date(
-      Date.UTC(
-        startDate.getUTCFullYear(),
-        startDate.getUTCMonth(),
-        startDate.getUTCDate(),
-      ),
-    );
     const periodEnd = new Date(endDate.getTime() + DAY_MS);
     for (const slot of sortedWeekly) {
       for (const occurrence of weeklyRowIntervalsInRange(
@@ -444,35 +455,31 @@ export async function findAvailableSlots(
         periodStart,
         periodEnd,
       )) {
-        const dayMs = Math.floor(occurrence.start.getTime() / DAY_MS) * DAY_MS;
-        const starts = weeklyStartsByUtcDay.get(dayMs) ?? [];
-        starts.push({
+        fileSpan(Math.floor(occurrence.start.getTime() / DAY_MS) * DAY_MS, {
           start: occurrence.start,
           endMs: occurrence.end.getTime(),
         });
-        weeklyStartsByUtcDay.set(dayMs, starts);
       }
+    }
+  } else {
+    // A custom row is an absolute range that may span days: clipped to the
+    // period, it is walked as one slice per scheduling-zone day, so every day
+    // it covers is a candidate, including the tail of a row begun earlier.
+    for (const span of customSpansInStartOrder(
+      consultant.availabilityWindowsCustom,
+      config.schedulingTimezone,
+      { startMs: startDate.getTime(), endMs: endDate.getTime() },
+    )) {
+      fileSpan(Math.floor(span.start.getTime() / DAY_MS) * DAY_MS, span);
     }
   }
 
   /**
-   * Availability rows that start on this UTC day, as {start, endMs} pairs.
-   * #1194 — the end lets candidateStartsInRow bound its walk to the row's
-   * own time range instead of a blind 48-step cap that adjacent rows can
-   * trick into walking past.
+   * Availability spans that start on this UTC day. The end lets
+   * candidateStartsInRow bound its walk to the span's own time range.
    */
-  const rowStartsForDay = (
-    currentDay: Date,
-  ): { start: Date; endMs: number }[] =>
-    consultant.scheduleType === ScheduleType.WEEKLY
-      ? (weeklyStartsByUtcDay.get(currentDay.getTime()) ?? [])
-      : sortedCustom
-          .map((slot) => {
-            const start = matchCustomSlotToDay(slot.startsAt, currentDay);
-            if (!start) return null;
-            return { start, endMs: new Date(slot.endsAt).getTime() };
-          })
-          .filter((r): r is { start: Date; endMs: number } => r !== null);
+  const rowStartsForDay = (currentDay: Date): RowSpan[] =>
+    rowSpansByUtcDay.get(currentDay.getTime()) ?? [];
 
   /**
    * Whether the per-day cap, and for a class the calendar-week cap, still
@@ -507,7 +514,23 @@ export async function findAvailableSlots(
    * before. Passing over a day in the first sweep never loses it, because the
    * second sweep walks the same window with the same cap counters.
    */
-  const tryPlaceOnDay = (currentDay: Date, perfectOnly: boolean): boolean => {
+  /**
+   * A subscription's sessions spread across its week: no session the day
+   * before or after another one (placed now or already held).
+   */
+  const isSpacedFrom = (candidateStart: Date): boolean =>
+    adjacentDayKeys(candidateStart, config.schedulingTimezone).every(
+      (key) => !placedPerDay.has(key),
+    );
+
+  const tryPlaceOnDay = (
+    currentDay: Date,
+    perfectOnly: boolean,
+    spaced: boolean,
+  ): boolean => {
+    const roomy = spaced
+      ? (start: Date) => hasRoomOn(start) && isSpacedFrom(start)
+      : hasRoomOn;
     let best: { block: Date[]; score: number } | null = null;
 
     for (const { start: rowStart, endMs: rowEndMs } of rowStartsForDay(
@@ -547,13 +570,13 @@ export async function findAvailableSlots(
           schedulingTimezone: config.schedulingTimezone,
           hasRoomOn: perfectOnly
             ? (start) =>
-                hasRoomOn(start) &&
+                roomy(start) &&
                 matchesPreferredDays(
                   start,
                   preference,
                   config.schedulingTimezone,
                 )
-            : hasRoomOn,
+            : roomy,
         },
         rowEndMs,
         preference,
@@ -617,7 +640,7 @@ export async function findAvailableSlots(
    * bounds the overrun: one day is one pass over that day's rows. A walk it
    * truncates before every session is placed answers SEARCH_TIMEOUT below.
    */
-  const sweepPeriod = (perfectOnly: boolean): void => {
+  const sweepPeriod = (perfectOnly: boolean, spaced = false): void => {
     const cursor = new Date(
       Date.UTC(
         startDate.getUTCFullYear(),
@@ -637,7 +660,7 @@ export async function findAvailableSlots(
       }
       while (
         selectedSlots.length < totalSlotsNeeded &&
-        tryPlaceOnDay(new Date(cursor), perfectOnly)
+        tryPlaceOnDay(new Date(cursor), perfectOnly, spaced)
       ) {
         // Placed; re-attempt the same day under the updated counters.
       }
@@ -646,7 +669,14 @@ export async function findAvailableSlots(
 
   // Skipped entirely when nothing was asked for, so the single sweep below is
   // the only one that runs and today's placements are reproduced exactly.
-  if (maxScore > 0) sweepPeriod(true);
+  if (maxScore > 0) {
+    if (eventType === "subscription") sweepPeriod(true, true);
+    sweepPeriod(true);
+  }
+  // A subscription first tries to keep a free day between sessions, so a
+  // week of 3 lands Mon/Wed/Fri rather than Mon/Tue/Wed; like the preference
+  // pass, it never costs a placement, because the sweep below reconsiders.
+  if (eventType === "subscription") sweepPeriod(false, true);
   // MUST stay unconditional and MUST stay over the whole window. This is the
   // only thing making the preferred-only sweep above a preference rather than
   // a filter: everything it declined is reconsidered here.

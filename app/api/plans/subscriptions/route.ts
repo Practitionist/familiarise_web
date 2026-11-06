@@ -9,7 +9,7 @@ import {
   planContentInclude,
 } from "@/lib/api/plans/content";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
-import { planTotalSessions } from "@/lib/booking/entitlement";
+import { subscriptionPlanTotals } from "@/lib/booking/entitlement";
 import {
   oneOnOnePlanListCacheControl,
   oneOnOnePlanListWhere,
@@ -153,13 +153,16 @@ export async function POST(request: NextRequest) {
     // Find or create topics by name
     const topicIds = await findOrCreateTopics(validatedData.topics ?? []);
 
-    // Compute derived metrics
+    // Sessions = weeks × sessions a week; a weeks plan derives its months.
     const sessionDurationInHours = validatedData.sessionDurationInHours ?? 1.0;
-    const totalSessions = planTotalSessions({
-      sessionsPerWeek: validatedData.sessionsPerWeek || 1,
-      durationInMonths: validatedData.durationInMonths,
-    });
-    const totalHours = totalSessions * sessionDurationInHours;
+    const durationInWeeks = validatedData.durationInWeeks ?? null;
+    const { durationInMonths, totalSessions, totalHours } =
+      subscriptionPlanTotals({
+        sessionsPerWeek: validatedData.sessionsPerWeek || 1,
+        durationInMonths: validatedData.durationInMonths,
+        durationInWeeks,
+        sessionDurationInHours,
+      });
 
     // Trial fields — Zod-validated; free by default until paid-trial
     // checkout is wired (the wiring PR flips the default to ₹100).
@@ -195,7 +198,8 @@ export async function POST(request: NextRequest) {
       data: {
         title: validatedData.title,
         description: validatedData.description,
-        durationInMonths: validatedData.durationInMonths,
+        durationInMonths,
+        durationInWeeks,
         price: Math.round(validatedData.price),
         priceCurrency: validatedData.priceCurrency,
         sessionsPerWeek: validatedData.sessionsPerWeek,

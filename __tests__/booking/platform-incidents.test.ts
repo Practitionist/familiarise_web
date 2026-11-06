@@ -252,6 +252,68 @@ function occ(
   };
 }
 
+type StrikeFixture = {
+  appointmentId: string;
+  occurrenceIds?: string[];
+};
+
+function strikeReader(opts: {
+  strikes: StrikeFixture[];
+  appointmentsInIncident?: string[];
+  occurrencesInIncident?: Array<{ id: string; appointmentId: string }>;
+}) {
+  return {
+    systemEvent: {
+      findMany: jest.fn(async () =>
+        opts.strikes.map(({ appointmentId, occurrenceIds }) => ({
+          context: occurrenceIds?.length
+            ? { appointmentId, occurrenceIds }
+            : { appointmentId },
+        })),
+      ),
+    },
+    platformIncident: {
+      findMany: jest.fn(async () => [{ startsAt: at(0), endsAt: at(60) }]),
+    },
+    appointmentOccurrence: {
+      findMany: jest.fn(
+        async ({
+          where,
+        }: {
+          where: {
+            AND?: Array<{
+              OR?: Array<{
+                id?: { in: string[] };
+                appointmentId?: { in: string[] };
+              }>;
+            }>;
+          };
+        }) => {
+          const scope = where.AND?.[0]?.OR ?? [];
+          const rows = [
+            ...(opts.occurrencesInIncident ?? []),
+            ...(opts.appointmentsInIncident ?? []).map((appointmentId) => ({
+              id: `${appointmentId}-occ`,
+              appointmentId,
+            })),
+          ];
+          return rows.filter((row) =>
+            scope.some(
+              (clause) =>
+                clause.id?.in.includes(row.id) ||
+                clause.appointmentId?.in.includes(row.appointmentId),
+            ),
+          );
+        },
+      ),
+    },
+  };
+}
+
+function strikeCount(reader: ReturnType<typeof strikeReader>) {
+  return countExpertStrikes("cp-1", at(-60), { db: reader as never });
+}
+
 describe("remedy rows", () => {
   it.each([
     [{ consultationId: "c" }, "REFUND_AT_DUE", 48 * 60],
@@ -464,24 +526,28 @@ describe("readers that must count incident refunds and skip incident strikes", (
   });
 
   it("drops a strike whose session sat inside a declared incident", async () => {
-    const strikeDb = {
-      systemEvent: {
-        findMany: jest.fn(async () =>
-          ["a", "b", "c"].map((appointmentId) => ({
-            context: { appointmentId },
-          })),
-        ),
-      },
-      platformIncident: {
-        findMany: jest.fn(async () => [{ startsAt: at(0), endsAt: at(60) }]),
-      },
-      appointmentOccurrence: {
-        findMany: jest.fn(async () => [{ appointmentId: "b" }]),
-      },
-    };
-    await expect(
-      countExpertStrikes("cp-1", at(-60), { db: strikeDb as never }),
-    ).resolves.toBe(2);
+    const reader = strikeReader({
+      strikes: ["a", "b", "c"].map((appointmentId) => ({ appointmentId })),
+      appointmentsInIncident: ["b"],
+    });
+    await expect(strikeCount(reader)).resolves.toBe(2);
+  });
+
+  it("counts a rebooked-session strike when only the appointment's other occurrence overlapped", async () => {
+    const reader = strikeReader({
+      strikes: [{ appointmentId: "a", occurrenceIds: ["occ-new"] }],
+      occurrencesInIncident: [{ id: "occ-old", appointmentId: "a" }],
+    });
+    await expect(strikeCount(reader)).resolves.toBe(1);
+  });
+
+  it("drops a strike whose own rebooked occurrence overlapped the incident", async () => {
+    const reader = strikeReader({
+      strikes: [{ appointmentId: "a", occurrenceIds: ["occ-new"] }],
+      appointmentsInIncident: ["a"],
+      occurrencesInIncident: [{ id: "occ-new", appointmentId: "a" }],
+    });
+    await expect(strikeCount(reader)).resolves.toBe(0);
   });
 
   it("suggests only an hour clearly above the weekly baseline", () => {

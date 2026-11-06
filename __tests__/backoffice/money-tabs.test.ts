@@ -3,11 +3,7 @@
  * and a retired money URL lands on its tab with its query intact.
  */
 
-import {
-  moneyHubHref,
-  moneyTabsFor,
-  retiredMoneyTabHref,
-} from "@/lib/backoffice/money-tabs";
+import { moneyHubHref, moneyTabsFor } from "@/lib/backoffice/money-tabs";
 
 it("hides the admin-only sections from staff and keeps the rest", () => {
   const staff = moneyTabsFor("STAFF").map((t) => t.key);
@@ -30,9 +26,6 @@ it("carries the old query onto the hub URL", () => {
   );
 });
 
-it("sends the retired class-series section to class bookings", () => {
-  expect(retiredMoneyTabHref("/dashboard/staff", "class-series")).toBe(
-    "/dashboard/staff/appointments?type=class",
-  );
+it("has no class-series section", () => {
   expect(moneyTabsFor("ADMIN").map((t) => t.key)).not.toContain("class-series");
 });

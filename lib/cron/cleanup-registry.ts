@@ -52,7 +52,7 @@ export interface CleanupJobEntry {
 
 // Per-run defaults for the per-row booking sweeps the ticker drives. `?limit=`
 // overrides them (clamped to LIMIT_CAP); no caller gets an unbounded cohort.
-/** Sessions per reminder window; each costs a claim, a bell and an email. */
+/** Sessions per reminder window; each costs a bell and an email. */
 const MAX_REMINDER_SESSIONS_PER_WINDOW = 25;
 /** Parents and slot outcomes per bite; one Stream report each, bites until the drain deadline. */
 const MAX_AUTO_COMPLETE_PER_PASS = 25;
@@ -92,6 +92,10 @@ const MAX_GST_HEALER_MINTS = 25;
 const MAX_CONSUMER_INVOICE_HEALS = 25;
 /** Document rows a single purge run may process; each costs one storage delete. */
 const MAX_DOCUMENT_PURGE_ROWS = 200;
+/** Pending standalone purchases per rail per run; up to two Razorpay calls each. */
+const MAX_STANDALONE_PURCHASE_CHECKS = 5;
+/** Digital product rows per storage arm per run; one R2 delete each. */
+const MAX_DIGITAL_PRODUCT_STORAGE_ROWS = 25;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins and the console's job list.
@@ -473,7 +477,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Auth token cleanup",
       description:
-        "Delete expired verification tokens, sessions 180 days after expiry and stale invitations",
+        "Delete expired verification tokens and sessions (logged to the access log first), access-log rows 180 days after their session ended, and stale invitations",
       category: "Cleanup",
       manualRun: "inline",
     },
@@ -492,6 +496,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           hasMore: r.hasMore,
           verificationTokensDeleted: r.verificationTokensDeleted,
           sessionsDeleted: r.sessionsDeleted,
+          accessLogsDeleted: r.accessLogsDeleted,
           idempotencyRecordsDeleted: r.idempotencyRecordsDeleted,
           staleInvitationsExpired: r.staleInvitationsExpired,
           totalCleaned: r.totalCleaned,
@@ -1218,6 +1223,36 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         },
         items: (r) => ({ processed: r.atRisk }),
         failureMessage: "Failed to send MSME payment alerts",
+      }),
+  },
+
+  // @cleanup-twin ops-digest
+  "ops-digest": {
+    meta: {
+      title: "Daily ops digest",
+      description:
+        "Email the daily operations digest to the observability inbox, then ping its Better Stack heartbeat",
+      category: "Alerts",
+      manualRun: "inline",
+    },
+    idle: {
+      alwaysRun: "Sent every day: its arrival is the signal.",
+    },
+    build: () =>
+      cleanupRoute({
+        job: "ops-digest",
+        run: async () => {
+          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
+          const { runOpsDigest } =
+            await import("@/lib/observability/ops-digest");
+          // Fail-open: read-only, and a repeat costs one extra email.
+          return withCronLock("ops-digest", { failMode: "open" }, () =>
+            runOpsDigest(),
+          );
+        },
+        status: (r) => (r.success ? 200 : 500),
+        items: () => ({ processed: 1 }),
+        failureMessage: "Failed to build the daily ops digest",
       }),
   },
 
@@ -2081,6 +2116,82 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       }),
   },
 
+  // @cleanup-twin reconcile-standalone-purchases
+  "reconcile-standalone-purchases": {
+    meta: {
+      title: "Recover standalone purchases",
+      description:
+        "Settle digital product and replay purchases whose capture never arrived; fail empty orders after 24 hours",
+      category: "Payments",
+      manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasStandalonePurchaseWork } =
+          await import("@/scripts/payments/reconcile-standalone-purchases");
+        return hasStandalonePurchaseWork(db, now, outOfTime);
+      },
+    },
+    build: () =>
+      cleanupRoute({
+        job: "reconcile-standalone-purchases",
+        run: async (req) => {
+          const { reconcileStandalonePurchases } =
+            await import("@/scripts/payments/reconcile-standalone-purchases");
+          return reconcileStandalonePurchases({
+            limit: parseLimitParamOrDefault(
+              req,
+              MAX_STANDALONE_PURCHASE_CHECKS,
+            ),
+          });
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          recovered: r.recovered,
+          expired: r.expired,
+          receipts: r.receipts,
+          errors: r.errors,
+        }),
+        items: (r) => ({ processed: r.scanned, errors: r.errors }),
+        failureMessage: "Failed to reconcile standalone purchases",
+      }),
+  },
+
+  // @cleanup-twin reconcile-digital-product-storage
+  "reconcile-digital-product-storage": {
+    meta: {
+      title: "Digital product storage",
+      description:
+        "Delete superseded, rejected and abandoned product files and bucket objects no row names",
+      category: "Cleanup",
+      manualRun: "inline",
+    },
+    idle: {
+      alwaysRun:
+        "Compares Supabase Storage objects with product file rows; vendor state.",
+    },
+    build: () =>
+      cleanupRoute({
+        job: "reconcile-digital-product-storage",
+        run: async (req) => {
+          const { reconcileDigitalProductStorage } =
+            await import("@/lib/digital-products/storage-sweep");
+          return reconcileDigitalProductStorage({
+            limit: parseLimitParamOrDefault(
+              req,
+              MAX_DIGITAL_PRODUCT_STORAGE_ROWS,
+            ),
+          });
+        },
+        status: (r) => statusFor(r),
+        items: (r) => ({
+          processed: r.supersededPurged + r.uploadsCleared + r.orphansDeleted,
+          errors: r.failed,
+        }),
+        failureMessage: "Failed to reconcile digital product storage",
+      }),
+  },
+
   // @cleanup-twin retry-failed-emails
   "retry-failed-emails": {
     meta: {
@@ -2208,7 +2319,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      alwaysRun: "A time-based check of Sentry's ingest outcomes; no rows.",
+      alwaysRun:
+        "A time-based check of Sentry's ingest outcomes; no queue to probe.",
     },
     build: () =>
       cleanupRoute({
@@ -2220,29 +2332,40 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             reportConfigSkip("sentry-ingest-canary", skipped);
             return { healthy: true, skipped };
           }
+          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
           const { checkSentryIngest, describeIngest, isIngestHealthy } =
             await import("@/lib/observability/ingest-canary");
           const { sendSentryIngestAlert } =
             await import("@/lib/observability/ingest-alert");
           const { checkSentryQuota } =
             await import("@/lib/observability/quota-alert");
-          const check = await checkSentryIngest(token);
-          const healthy = isIngestHealthy(check);
-          const alerted = healthy ? false : await sendSentryIngestAlert(check);
-          // After the page: the 70% warning must not spend the ceiling ahead of it.
-          const quota = await checkSentryQuota();
-          return {
-            healthy,
-            verdict: check.verdict,
-            accepted: check.accepted,
-            rejections: check.rejections,
-            alerted,
-            detail: describeIngest(check),
-            quota,
-          };
+          // Fail-open: a read-only vendor probe whose repeat costs one stats read.
+          return withCronLock(
+            "sentry-ingest-canary",
+            { failMode: "open" },
+            async () => {
+              const check = await checkSentryIngest(token);
+              const healthy = isIngestHealthy(check);
+              const alerted = healthy
+                ? false
+                : await sendSentryIngestAlert(check);
+              // After the page: the 70% warning must not spend the ceiling ahead of it.
+              const quota = await checkSentryQuota();
+              return {
+                healthy,
+                verdict: check.verdict,
+                accepted: check.accepted,
+                rejections: check.rejections,
+                alerted,
+                detail: describeIngest(check),
+                quota,
+              };
+            },
+          );
         },
-        status: (result) => (result.healthy ? 200 : 503),
-        items: (r) => ({ processed: 1, errors: r.healthy ? 0 : 1 }),
+        // An unhealthy verdict is a finding with its own email; the run still counts as ran.
+        needsAttention: (result) => !result.healthy,
+        items: () => ({ processed: 1 }),
         failureMessage:
           "The Sentry ingest canary route failed to run. This is a fault in the canary, not a verdict about Sentry.",
       }),
@@ -2408,9 +2531,15 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       cleanupRoute({
         job: "stream-control-plane-drift",
         run: async () => {
+          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
           const { detectStreamControlPlaneDrift } =
             await import("@/lib/stream/control-plane-drift");
-          return detectStreamControlPlaneDrift();
+          // Fail-open: the detector only reads Stream settings.
+          return withCronLock(
+            "stream-control-plane-drift",
+            { failMode: "open" },
+            () => detectStreamControlPlaneDrift(),
+          );
         },
         summarize: (r) => ({
           drifted: r.drifted,

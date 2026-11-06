@@ -202,28 +202,40 @@ export async function stageSpecOncePerRecipient(
   }
   if (pending.length === 0) return [];
 
+  return prisma.$transaction((tx) => claimAndStagePrepared(tx, claim, pending));
+}
+
+/**
+ * Inside the caller's transaction, claim each recipient under `claim` and stage
+ * their pre-rendered email only where the claim is new, so a re-run stages nothing.
+ */
+export async function claimAndStagePrepared(
+  tx: Pick<Tx, "idempotencyRecord" | "failedEmail" | "emailSuppression">,
+  claim: RecipientClaim,
+  prepared: { userId: string; prepared: PreparedRecipientEmails }[],
+): Promise<StagedRecipientEmail[]> {
+  const pending = prepared.filter((p) => p.prepared.messages.length > 0);
+  if (pending.length === 0) return [];
   const now = new Date();
-  return prisma.$transaction(async (tx) => {
-    const claimed = await tx.idempotencyRecord.createManyAndReturn({
-      data: pending.map(({ userId }) => ({
-        scope: claim.scope,
-        key: claim.key(userId),
-        userId,
-        requestHash: claim.key(userId),
-        completedAt: now,
-        expiresAt: new Date(now.getTime() + claim.ttlMs),
-      })),
-      skipDuplicates: true,
-      select: { userId: true },
-    });
-    const won = new Set(claimed.map((c) => c.userId));
-    const staged: StagedRecipientEmail[] = [];
-    for (const { userId, prepared } of pending) {
-      if (won.has(userId))
-        staged.push(...(await stagePreparedEmails(tx, prepared)));
-    }
-    return staged;
+  const claimed = await tx.idempotencyRecord.createManyAndReturn({
+    data: pending.map(({ userId }) => ({
+      scope: claim.scope,
+      key: claim.key(userId),
+      userId,
+      requestHash: claim.key(userId),
+      completedAt: now,
+      expiresAt: new Date(now.getTime() + claim.ttlMs),
+    })),
+    skipDuplicates: true,
+    select: { userId: true },
   });
+  const won = new Set(claimed.map((c) => c.userId));
+  const staged: StagedRecipientEmail[] = [];
+  for (const { userId, prepared: emails } of pending) {
+    if (won.has(userId))
+      staged.push(...(await stagePreparedEmails(tx, emails)));
+  }
+  return staged;
 }
 
 export function defineBudgetedEmailSender<TArgs>(

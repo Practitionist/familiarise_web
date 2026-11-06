@@ -3,7 +3,7 @@ title: The double-entry model
 type: explanation
 audience: engineers who need the money model before reading any posting
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-05
 ---
 
 # The double-entry model
@@ -54,6 +54,8 @@ Razorpay settles in INR and no conversion happens before posting, so every posti
 
 Each flow derives its key from a stable upstream id, so an at-least-once webhook or a retried sweep collapses to one posting: `booking:<paymentId>`, `refund:<refundId>`, `topup:<orderId>`, `topup-refund:<gatewayRefundId>`, `payout:<payoutId>`. A booking and its refund are different events on the same payment, and per-flow keys let each post once. If two callers race, the loser's insert hits the unique index, aborts its transaction, and the retry finds the first posting. The full vocabulary of keys is in [postings](04-postings.md#1-the-journal-vocabulary).
 
+A booking of a ₹0-priced plan moves no money, so it posts no journal (a full discount or a credit-funded order still journals its `DISCOUNT` or `PLATFORM_PROMO` line): `postBookingLedgerJournal` skips the journal only when it has no lines **and** the payment charged nothing (`bookingNeedsJournal`); a paid booking that computes no lines still reaches `postLedgerTxn`, which refuses an empty journal. Its earnings rows are ₹0 caches with nothing to mirror, so the reconciler expects a `booking:<paymentId>` journal for earnings with `grossAmount > 0` or a payment with `amount > 0` (`EARNINGS_WITHOUT_BOOKING_TXN`).
+
 ## Worked example
 
 IIT Madras tops up its prepaid wallet with ₹5,00,000 by card. The capture posts one transaction, `topup:<razorpay order id>`:
@@ -88,5 +90,7 @@ These are distinct and must not be conflated.
 - [Chart of accounts](02-chart-of-accounts.md), [payment legs](03-payment-legs.md), [postings](04-postings.md).
 
 ## Deprecated & Superseded Approaches
+
+Until 2026-11-05 a ₹0 booking called `postLedgerTxn` with an empty journal, which threw, so every ₹0 plan failed at checkout with a 500 and nothing was booked.
 
 Before the journal collapse the schema kept three single-entry, signed-delta logs: `FundingLedgerEntry`, `WalletEntry` and `SettlementLedgerEntry` with a `SettlementKind` enum. They could each be internally consistent while disagreeing with each other, and nothing forced them to agree. They were replaced by the one double-entry journal, and a reseed that reconciled with zero findings was the gate for deleting them. Treat any reference to those four names outside this note as stale. A maintained `LedgerAccountBalance` snapshot, folded on every posting and reconciled as `LEDGER_BALANCE_SNAPSHOT_DRIFT`, was removed because nothing on a request path read it and it made `CASH`, `PLATFORM_FEE` and `GST_PAYABLE` hot rows; its Prisma model and the fold are gone. An `OrganizationReimbursement` model was once listed beside refunds and payouts; it does not exist.

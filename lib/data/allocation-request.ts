@@ -1,11 +1,14 @@
 import prisma from "@/lib/prisma";
+import { SETTLED_CONSULTATION } from "@/lib/booking/approve-request";
 import { toPlain } from "@/lib/data/serialize";
 import { reportSentryError } from "@/lib/observability/report";
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import type { AppointmentStatus } from "@prisma/client";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import {
-  sessionsTotalOf,
+  soldSessionMinutes,
+  soldSessionsPerWeek,
+  soldTermsOf,
   subscriptionEntitlement,
   type SubscriptionEntitlement,
 } from "@/lib/booking/entitlement";
@@ -47,6 +50,8 @@ export interface AllocationRequest {
    * `initialAllocation` guard must NOT fire (#837).
    */
   hasReleasedSlots: boolean;
+  /** Paid (or free): a placed session needs 15 min notice, else 2 h to pay first. */
+  settled: boolean;
   /**
    * The times already asked for on the placeholder appointment — the buyer's
    * requested times, or the ones left behind by a partial reschedule. Same
@@ -120,6 +125,9 @@ async function readAllocationRequestOrThrow(
         schedulingTimezone: true,
         planEndsAt: true,
         sessionsTotal: true,
+        sessionsPerWeek: true,
+        sessionMinutes: true,
+        sessionsRefunded: true,
         requestedBy: requestedBySelect,
         subscriptionPlan: {
           select: {
@@ -141,9 +149,7 @@ async function readAllocationRequestOrThrow(
     const plan = subscription.subscriptionPlan;
     const occurrences = subscription.appointment?.occurrences ?? [];
     const entitlement = subscriptionEntitlement({
-      sessionsTotal: sessionsTotalOf(subscription),
-      sessionsPerWeek: plan.sessionsPerWeek,
-      durationInMonths: plan.durationInMonths,
+      ...soldTermsOf(subscription),
       occurrences,
       schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
       schedulingTimezone: subscription.schedulingTimezone,
@@ -152,13 +158,15 @@ async function readAllocationRequestOrThrow(
     return toPlain<AllocationRequest>({
       id: subscription.id,
       eventType: "subscription",
+      // A plan is allocated only once paid (an unpaid one is refused).
+      settled: true,
       title: plan.title,
       status: subscription.status,
       consultantProfileId: plan.consultantProfileId,
       consulteeUserId: subscription.requestedBy?.userId,
       consulteeName: subscription.requestedBy?.user?.name,
-      sessionDurationInHours: plan.sessionDurationInHours,
-      sessionsPerWeek: plan.sessionsPerWeek,
+      sessionDurationInHours: soldSessionMinutes(subscription) / 60,
+      sessionsPerWeek: soldSessionsPerWeek(subscription),
       durationInMonths: plan.durationInMonths,
       totalSessions: entitlement.total,
       schedulingTimezone: subscription.schedulingTimezone,
@@ -191,9 +199,15 @@ async function readAllocationRequestOrThrow(
   if (!consultation?.consultationPlan) return null;
 
   const plan = consultation.consultationPlan;
+  // The same money predicate the allocator and the approval CAS ride.
+  const settled =
+    (await prisma.consultation.count({
+      where: { id: consultation.id, ...SETTLED_CONSULTATION },
+    })) > 0;
   return toPlain<AllocationRequest>({
     id: consultation.id,
     eventType: "consultation",
+    settled,
     title: plan.title,
     status: consultation.status,
     consultantProfileId: plan.consultantProfileId,

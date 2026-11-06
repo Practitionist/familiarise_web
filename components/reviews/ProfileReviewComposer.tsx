@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * #705 — writing a review from the CONSULTANT's profile, which is where the
+ * Writing a review from the CONSULTANT's profile, which is where the
  * review lives and where you read the others.
  *
  * A client island on purpose. The expert profile is statically cached (ISR plus
@@ -12,29 +12,53 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
+import { useSession } from "@/lib/auth-client";
 import { throwSupportError } from "@/lib/support/error-copy";
-import { ReviewComposer, type ExistingReview } from "./ReviewComposer";
+import { RatingCauseSchema } from "@/schemas/enums";
+import { ReviewComposer } from "./ReviewComposer";
 
-interface ReviewableSession {
-  appointmentId: string;
-  consultantName: string | null;
-  title: string;
-  heldAt: string | null;
-  existingReview: ExistingReview | null;
-}
+const ReviewableSessionsResponseSchema = z.object({
+  data: z.array(
+    z.object({
+      appointmentId: z.string(),
+      consultantName: z.string().nullable(),
+      title: z.string(),
+      heldAt: z.string().nullable(),
+      existingReview: z
+        .object({
+          id: z.string(),
+          rating: z.number(),
+          reviewDescription: z.string().nullable(),
+          ratingCause: RatingCauseSchema.nullable(),
+        })
+        .nullable(),
+    }),
+  ),
+});
+type ReviewableSession = z.infer<
+  typeof ReviewableSessionsResponseSchema
+>["data"][number];
 
 export function ProfileReviewComposer({
   consultantProfileId,
   consultantName,
 }: Readonly<{ consultantProfileId: string; consultantName: string | null }>) {
-  const queryKey = ["reviewable-for-consultant", consultantProfileId] as const;
+  const { data: authSession, isPending: sessionPending } = useSession();
+  const viewerId = authSession?.user?.id ?? null;
+  // Keyed by viewer so a sign-out and sign-in on one tab never reuses another account's answer.
+  const queryKey = [
+    "reviewable-for-consultant",
+    consultantProfileId,
+    viewerId,
+  ] as const;
 
   const { data, isError, isLoading, refetch } = useQuery({
     queryKey,
-    // Signed-out visitors are the common case on a public profile; a 401 is an
-    // answer ("nothing to offer"), not a failure worth retrying or shouting
-    // about.
+    // Signed-out visitors are the common case on a public profile: never ask.
+    enabled: !!viewerId && !sessionPending,
+    // A 401 from an expired cookie is still an answer ("nothing to offer").
     retry: false,
     queryFn: async (): Promise<ReviewableSession[]> => {
       const res = await fetch(
@@ -42,8 +66,7 @@ export function ProfileReviewComposer({
       );
       if (res.status === 401) return [];
       if (!res.ok) await throwSupportError(res, "review eligibility");
-      const { data } = await res.json();
-      return data as ReviewableSession[];
+      return ReviewableSessionsResponseSchema.parse(await res.json()).data;
     },
   });
 

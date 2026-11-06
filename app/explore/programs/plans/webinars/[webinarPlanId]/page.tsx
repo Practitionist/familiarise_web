@@ -1,3 +1,4 @@
+import { PlanBreadcrumb } from "@/components/explore/PublicBreadcrumb";
 import { notFound } from "next/navigation";
 import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getSession } from "@/lib/auth-server";
@@ -46,11 +47,14 @@ export default async function WebinarDetailsPage({
     : false;
 
   return (
-    <WebinarDetails
-      plan={webinarData}
-      nextSession={nextSession}
-      webinarId={firstWebinarInstance?.id}
-      isRegistered={isRegistered}
-    />
+    <>
+      <PlanBreadcrumb plan={webinarData} />
+      <WebinarDetails
+        plan={webinarData}
+        nextSession={nextSession}
+        webinarId={firstWebinarInstance?.id}
+        isRegistered={isRegistered}
+      />
+    </>
   );
 }

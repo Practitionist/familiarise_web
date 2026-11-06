@@ -360,5 +360,10 @@ describe("needs-human lists stuck markers from the payments that hold them", () 
     expect(items[0].message).toContain("plan-end:sub-1:pay:pay-1");
     expect(items[1].message).toContain("live dispute");
     expect(items[1].message).toContain("its full balance");
+    for (const item of items) {
+      expect(item.message).toMatch(
+        / Its earnings stay held until this is settled\.$/,
+      );
+    }
   });
 });

@@ -38,8 +38,8 @@ A worked example from the live organisation, read on 2026-10-31 over 30 days: `a
 
 | Verdict                           | Route answer | Run row                                                                    | Alert                                                    |
 | --------------------------------- | ------------ | -------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `accepted`                        | 200          | None; the canary takes no lease, so only the tick summary records it       | None                                                     |
-| `rejecting` or `stats-unreadable` | 503          | None; the tick lists it under `failed`                                     | Email, Better Stack error line, ops chat mirror          |
+| `accepted`                        | 200          | `COMPLETED`; the canary takes a fail-open lease, so every run writes a row | None                                                     |
+| `rejecting` or `stats-unreadable` | 207          | `COMPLETED`, outcome `attention`; the tick files it as `ok`                | Email, Better Stack error line, ops chat mirror          |
 | `SENTRY_STATS_TOKEN` unset        | 200          | `CANCELLED`, outcome `skipped`, reason `SENTRY_STATS_TOKEN not configured` | None. It is a config skip, listed by `/api/health/jobs`. |
 
 `sendSentryIngestAlert` in `lib/observability/ingest-alert.ts` sends on two independent channels at once:
@@ -53,11 +53,15 @@ There is no cooldown. The job runs once a day, so an outage that lasts a week se
 
 After the verdict, the same run calls `checkSentryQuota` (`lib/observability/quota-alert.ts`), which emails once per billing period when accepted errors pass 70 % of `SENTRY_ERROR_QUOTA`. It uses the same token, and its failure never changes the canary's verdict.
 
-The canary's own 503 never reaches Sentry: `reportableToSentry()` in `netlify/functions/cron-tick.mts` keeps it out of the ticker's escalation, while it stays in the tick's `failed` list and in its run row.
+Because every run writes a row, `/api/health/jobs` judges the canary like any other paging target (a budget of 30.5 hours). An unhealthy verdict is a finding, not a failure: the route answers 207 through its `needsAttention` flag and the run is recorded as `attention`, which counts as having run. The probe therefore pages only when the canary itself stops running. A Sentry outage stays on the canary's own email and Better Stack line, so it never holds the probe at 503 and hides a second overdue job. A canary that crashes is still a `FAILED` run, and `reportableToSentry()` in `netlify/functions/cron-tick.mts` keeps it out of the ticker's Sentry escalation; the freshness probe catches it instead.
 
 ### The token
 
 `SENTRY_STATS_TOKEN` is **an Internal Integration token (Organization: Read)**, which grants the `org:read` scope the endpoint needs (it accepts `org:read`, `org:write` or `org:admin`). An organization auth token does not work, because it only carries `org:ci`. It is a runtime key for the production Netlify context. It is not `SENTRY_AUTH_TOKEN`, the build-time token that uploads source maps. `SENTRY_API_URL` defaults to `https://us.sentry.io` and `SENTRY_ORG` to `practitionist`.
+
+To create it by hand (Sentry's 2026 interface), open Settings, then Developer Settings, then **Custom Integrations**, and choose **Create New Integration**, then **Internal Integration** (the "Get started" button under "Start from scratch"; ignore the Public Integration and the "Trigger a Claude routine" template). Name it `familiarise-ingest-canary`, set only **Organization** to **Read**, leave every other permission on No Access and every webhook box unchecked, save, then use **New Token** and copy it at once, because Sentry shows it in full only once. Store it as a Netlify production secret in the Functions scope: read it into the shell with `read -rs SENTRY_STATS_TOKEN`, then run `netlify env:set SENTRY_STATS_TOKEN "$SENTRY_STATS_TOKEN" --context production --scope functions --secret`. The CLI has no stdin form, so this keeps the value out of shell history but not out of the process list while the command runs; the Netlify dashboard's "Contains secret values" form avoids both. It applies from the next production deploy. The Sentry CLI login cannot create the integration (the API answers "You do not have permission to perform this action"), so this step is a dashboard step.
+
+Prove the token without waiting for the daily run: call the canary's own endpoint, `GET <SENTRY_API_URL>/api/0/organizations/<SENTRY_ORG>/stats_v2/?field=sum(quantity)&groupBy=outcome&category=error&interval=1d&statsPeriod=1d`, with the token as a bearer and the production values of `SENTRY_API_URL` and `SENTRY_ORG` (the defaults above when unset). It must answer 200 with outcome counts. A call that needs more than `org:read`, such as listing issues, must answer 403; that confirms the token cannot read or change anything else. If a token ever appears in a chat, log or screenshot, create a new one under the same integration and delete the old one.
 
 ## Running it by hand
 
@@ -66,7 +70,7 @@ curl -sS -X POST https://<site>/api/cleanup/sentry-ingest-canary \
   -H "Authorization: Bearer $CRON_SECRET" | jq
 ```
 
-A healthy body is `{"healthy":true,"verdict":"accepted","accepted":<n>,"rejections":[],...}`. An unhealthy one answers 503 with `verdict`, `rejections`, `detail` and `alerted`. The admin Run door on the System Jobs page runs the same code in-process.
+A healthy body is `{"healthy":true,"verdict":"accepted","accepted":<n>,"rejections":[],...}`. An unhealthy one answers 207 with `verdict`, `rejections`, `detail` and `alerted`. The admin Run door on the System Jobs page runs the same code in-process.
 
 ## The remedy, and why you do not have to wait for the month
 

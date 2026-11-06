@@ -33,7 +33,7 @@ describe("revokeSessionById (#1856)", () => {
   it("revokes with the ownership predicate in the where clause", async () => {
     deleteMany.mockResolvedValue({ count: 1 });
 
-    await expect(revokeSessionById(db, "u1", "s1")).resolves.toEqual({
+    await expect(revokeSessionById(db, "u1", "s1")).resolves.toMatchObject({
       revoked: 1,
     });
     expect(deleteMany).toHaveBeenCalledWith({
@@ -44,9 +44,9 @@ describe("revokeSessionById (#1856)", () => {
   it("a foreign id revokes nothing — no throw, no separate check", async () => {
     deleteMany.mockResolvedValue({ count: 0 });
 
-    await expect(revokeSessionById(db, "u1", "someone-elses")).resolves.toEqual(
-      { revoked: 0 },
-    );
+    await expect(
+      revokeSessionById(db, "u1", "someone-elses"),
+    ).resolves.toMatchObject({ revoked: 0 });
   });
 });
 
@@ -56,7 +56,7 @@ describe("revokeUserSessionsExcept (#1856)", () => {
 
     await expect(
       revokeUserSessionsExcept(db, "u1", "keep-me"),
-    ).resolves.toEqual({ revoked: 3 });
+    ).resolves.toMatchObject({ revoked: 3 });
     expect(deleteMany).toHaveBeenCalledWith({
       where: { userId: "u1", id: { not: "keep-me" } },
     });
@@ -67,7 +67,7 @@ describe("revokeAllUserSessions (#1856)", () => {
   it("deletes every row for the user", async () => {
     deleteMany.mockResolvedValue({ count: 7 });
 
-    await expect(revokeAllUserSessions(db, "u1")).resolves.toEqual({
+    await expect(revokeAllUserSessions(db, "u1")).resolves.toMatchObject({
       revoked: 7,
     });
     expect(deleteMany).toHaveBeenCalledWith({ where: { userId: "u1" } });

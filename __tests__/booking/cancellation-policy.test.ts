@@ -126,6 +126,7 @@ describe("quoteBookingRefund — #1500 credit-funded bookings", () => {
     policy: null,
     hoursUntilNextSession: 3,
     slotsTotal: 1,
+    sessionsRefunded: 0,
     sessionsRemaining: 1,
     isSubscription: false,
     isConsultantInitiated: false,
@@ -176,6 +177,7 @@ describe("quoteBookingRefund — #1766 unused sessions against the plan", () => 
       policy: null,
       hoursUntilNextSession: null,
       slotsTotal: 0,
+      sessionsRefunded: 0,
       sessionsRemaining: 0,
       isSubscription: true,
       isConsultantInitiated: false,
@@ -252,6 +254,7 @@ describe("quoteBookingRefund — #1766 unused sessions against the plan", () => 
     const quote = plan({
       sessionsTotal: null,
       slotsTotal: 6,
+      sessionsRefunded: 0,
       sessionsRemaining: 3,
       hoursUntilNextSession: 72,
     });

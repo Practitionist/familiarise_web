@@ -5,7 +5,7 @@
 | Status        | Live                                                                                                                                                                           |
 | Audience      | Engineers changing auth code                                                                                                                                                   |
 | Last reviewed | 2026-10-10                                                                                                                                                                     |
-| Versions      | `better-auth`, `@better-auth/sso`, `@better-auth/passkey`: **1.7.7**, pinned exactly                                                                                           |
+| Versions      | `better-auth`, `@better-auth/core`, `@better-auth/sso`, `@better-auth/passkey`: **1.7.14**, pinned exactly                                                                     |
 | Source        | `lib/auth.ts`, `lib/auth/*`, `lib/auth-server.ts`, `lib/auth-session-lookup.ts`, `lib/auth-helpers.ts`, `lib/auth-guard.ts`, `providers/AuthSyncProvider.tsx`, `middleware.ts` |
 
 ## 1. Request path
@@ -21,12 +21,13 @@ guards.
 `/api/auth/*` is public at the edge and handled by
 `app/api/auth/[...all]/route.ts` (BetterAuth). That route adds two things to
 BetterAuth's handler: `withRetryAfter` copies `X-Retry-After` to `Retry-After`,
-and `GET /get-session` answers 503 instead of `200 null` when the lookup failed
-(§3.3). A page guard that finds a cookie but no live session redirects through
+and `GET /get-session` answers 503 instead of BetterAuth's 500 (or a `200 null`
+on a live row) when the lookup failed, and expires the cookie of a session the
+refresh hook ended (§3.3). A page guard that finds a cookie but no live session redirects through
 `/api/auth/clear-stale-session`, because only a route handler can delete
 cookies.
 
-Expired sessions and verification tokens are rejected by their runtime expiry checks. Housekeeping is separate: `cleanupAuthTokens` removes at most 100 expired verification and idempotency rows per arm by default, and expired session rows 180 days after `expiresAt` (the row holds the IP address and user agent, which CERT-In asks to be kept for 180 days; Better Auth `getSession` already returns null for an expired row, and the cookie cache is off, so a kept row cannot sign anyone in). A session ended by sign-out or revocation is deleted at once and leaves no trail, and examines at most 100 lapsed invitations. The maximum explicit limit is 500 per arm. Deletion repeats expiry after selection, so a refreshed row survives. Invitation expiry still conditionally claims PENDING and commits its audit row in the same transaction. A shared 16-second start budget and `hasMore` describe continuation; neither cleanup nor a successful batch establishes that the entire backlog is drained. See [housekeeping bounds](../maintenance/housekeeping-bounds.md).
+Expired sessions and verification tokens are rejected by their runtime expiry checks. Housekeeping is separate: `cleanupAuthTokens` removes at most 100 expired verification and idempotency rows per arm by default, and examines at most 100 lapsed invitations. Expired session rows are deleted at expiry, in 100-row pages until a page comes back short or the budget is spent; each page is first stamped `EXPIRED` into the CERT-In access log (§3.4), and a failed stamp keeps the page for the next run. The same run deletes access-log rows 180 days after their session ended. The maximum explicit limit is 500 per arm. Deletion repeats expiry after selection, so a refreshed row survives. Invitation expiry still conditionally claims PENDING and commits its audit row in the same transaction. A shared 16-second start budget and `hasMore` describe continuation; neither cleanup nor a successful batch establishes that the entire backlog is drained. See [housekeeping bounds](../maintenance/housekeeping-bounds.md).
 
 ## 2. Server composition (`lib/auth.ts`)
 
@@ -113,6 +114,8 @@ which is how staff onboarding calls `createUser` and step-up calls
   `lib/auth/cleanup-auth-tokens.ts`, the `auth-tokens` job in
   `lib/cron/cleanup-registry.ts`, which the Netlify ticker calls daily at 03:00 UTC
   via `POST /api/cleanup/auth-tokens`.
+- Every session start and end is recorded in `SessionAccessLog` for 180 days
+  (§3.4).
 
 ### 3.1 Lifetimes
 
@@ -175,13 +178,14 @@ flowchart LR
   DB --> CS["customSession<br/>User flags + Memberships"]
   CS --> R{"Result"}
   R -- session --> OK["found"]
-  R -- "null, no live row for the cookie" --> NONE["none: 401 or redirect to sign-in"]
-  R -- "null but signed cookie's row is live, or throw" --> FAIL["failed: SessionLookupFailedError<br/>503 + Retry-After 2, never signs out"]
+  R -- "null with no live row, or a 401 from the refresh hook" --> NONE["none: 401 or redirect to sign-in"]
+  R -- "null but signed cookie's row is live, or another throw" --> FAIL["failed: SessionLookupFailedError<br/>503 + Retry-After 2, never signs out"]
 ```
 
-BetterAuth's `customSession` turns lookup errors into `200 null`, which looks
-the same as "signed out". The app tells them apart with one indexed read of
-the `Session` row (`classifyMissingSession` in `lib/auth/session-cookie.ts`,
+BetterAuth's `customSession` throws a lookup error (a 500 over HTTP) and
+answers 401 when the refresh hook ends the session. The server reader treats
+that 401 as "none" and any other throw as "failed". A `null` on a validly
+signed cookie is settled with one indexed read of the `Session` row (`classifyMissingSession` in `lib/auth/session-cookie.ts`,
 cookie HMAC checked against the first `BETTER_AUTH_SECRETS` entry or
 `BETTER_AUTH_SECRET`):
 
@@ -203,6 +207,46 @@ cookie HMAC checked against the first `BETTER_AUTH_SECRETS` entry or
 read fails), the route answers 503 with `Retry-After: 2`. The BetterAuth client
 keeps its last session on any non-401, so open tabs do not render signed out
 during a database blip.
+
+### 3.4 Access log (CERT-In)
+
+`SessionAccessLog` (table `session_access_logs`) keeps one row per session for
+180 days after it ends: `sessionId` (unique, no foreign key, so the row
+outlives the `Session`), `userId`, the raw `ipAddress` and `userAgent`,
+`startedAt`, `endedAt` and `endReason`. Every write is in
+`lib/auth/session-access-log.ts`; failed sign-ins are not logged.
+
+- `session.create.after` inserts the row on every sign-in path, with the full
+  client IP from `x-familiarise-client-ip`; `Session.ipAddress` holds only the
+  /64 for IPv6, because Better Auth masks it for rate limiting.
+- `session.delete.after` stamps every Better Auth delete from its endpoint
+  path: `/sign-out` is `SIGN_OUT`, `/get-session` deleting an expired row a
+  browser presented is `EXPIRED_COOKIE`, any other path is `REVOKED`, and a
+  delete with no endpoint context is `UNKNOWN`.
+- The app's own deletes bypass those hooks, so every helper in
+  `lib/auth/session-revoke.ts` goes through `endSessions`: read the rows and
+  delete with the caller's predicate, returning them as `ended`. The caller
+  stamps them `REVOKED` with `stampSessionEnds` once its write is durable:
+  straight away outside a transaction, after commit inside one (erasure,
+  account deletion, ban, staff 2FA reset, SSO sweeps, org member suspension
+  and removal), so a log failure can never roll back the revoke. The operator
+  lifetime policy passes `EXPIRED` when it ends a session on refresh.
+- `auth-tokens` deletes expired rows and stamps the ones it removed `EXPIRED`
+  in the same transaction, so a session refreshed mid-sweep is never stamped.
+
+A row already past `expiresAt` ends at `expiresAt` as `EXPIRED`, whatever
+deletes it, except the expired-cookie delete. The end write upserts in one
+statement, so a session whose start was never logged still gets a full row,
+and the first stamp wins. A failed write is logged and reported to Sentry once
+per process and never fails the sign-in, sign-out or revoke. While the table
+does not exist yet, `sessionAccessLogReady` (a `to_regclass` probe, safe
+inside a transaction) skips every write and `auth-tokens` keeps expired
+sessions. Erasure sets `userId` to null inside its transaction and stamps the
+ended sessions without the user link after commit, keeping the rest for the
+180 days;
+the self-serve DPDP export lists the user's rows. Retention and the reasons
+are in the
+[retention decision record, section 7](../decisions/2026-11-01-data-retention-windows.md#7-the-session-access-log-amended-2026-11-02).
 
 ## 4. Guards
 
@@ -734,6 +778,7 @@ changes are additive only, and CI checks Prisma against what BetterAuth writes.
 | Sign-up policy, lifecycle    | `lib/auth/core-policy.ts`, `lib/auth/account-lifecycle.ts`                                 |
 | Unverified purge             | `lib/auth/purge-unverified-users.ts`                                                       |
 | Expired-row cleanup          | `lib/auth/cleanup-auth-tokens.ts`                                                          |
+| CERT-In access log           | `lib/auth/session-access-log.ts`                                                           |
 | Session lookup tri-state     | `lib/auth-server.ts`, `lib/auth-session-lookup.ts`, `lib/auth/session-cookie.ts`           |
 | API and page guards          | `lib/auth-helpers.ts`, `lib/auth-guard.ts`                                                 |
 | Device list and revoke       | `lib/auth/session-select.ts`, `lib/auth/session-revoke.ts`                                 |
@@ -764,3 +809,6 @@ changes are additive only, and CI checks Prisma against what BetterAuth writes.
   §5.3.
 - **`jobs/` and `scripts/` twins of `cleanup-auth-tokens`** and its own
   workflow; the registry job is the only implementation.
+- **Keeping expired `Session` rows 180 days as the CERT-In trail.** It missed
+  every session ended by sign-out, revocation or an expired cookie;
+  `SessionAccessLog` (§3.4) replaced it and expired rows are deleted at expiry.

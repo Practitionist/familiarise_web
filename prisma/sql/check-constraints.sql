@@ -757,12 +757,15 @@ CREATE TRIGGER usage_ledger_entry_immutable
   EXECUTE FUNCTION assert_usage_ledger_entry_immutable();
 
 -- SPLIT
--- BookingStatusHistory is append-only (reschedule-restore and response-rate read
--- it as truth). A trigger never scans existing rows, so it ships live, not staged.
+-- BookingStatusHistory is append-only except retention deletes of rows older than
+-- 3 years, which prune-audit-logs performs. A trigger never scans existing rows, so it ships live.
 DROP TRIGGER IF EXISTS booking_status_history_immutable ON "BookingStatusHistory";
 -- SPLIT
 CREATE OR REPLACE FUNCTION assert_booking_status_history_immutable() RETURNS trigger AS $$
 BEGIN
+  IF TG_OP = 'DELETE' AND OLD."createdAt" < now() - interval '3 years' THEN
+    RETURN OLD;
+  END IF;
   RAISE EXCEPTION 'BookingStatusHistory % is immutable (% refused)', OLD."id", TG_OP;
 END;
 $$ LANGUAGE plpgsql;
@@ -1230,6 +1233,61 @@ ALTER TABLE "Subscription" DROP CONSTRAINT IF EXISTS "subscription_sessions_retu
 ALTER TABLE "Subscription" ADD CONSTRAINT "subscription_sessions_returned_range"
   CHECK ("sessionsReturned" BETWEEN 0 AND 2);
 -- SPLIT
+-- A weeks plan runs 1..52 weeks; null keeps the months length.
+ALTER TABLE "SubscriptionPlan" DROP CONSTRAINT IF EXISTS "subscription_plan_weeks_range";
+-- SPLIT
+ALTER TABLE "SubscriptionPlan" ADD CONSTRAINT "subscription_plan_weeks_range"
+  CHECK ("durationInWeeks" IS NULL OR "durationInWeeks" BETWEEN 1 AND 52);
+-- SPLIT
+-- A support partial refund removes at most the sessions the plan sold.
+ALTER TABLE "Subscription" DROP CONSTRAINT IF EXISTS "subscription_sessions_refunded_range";
+-- SPLIT
+ALTER TABLE "Subscription" ADD CONSTRAINT "subscription_sessions_refunded_range"
+  CHECK ("sessionsRefunded" >= 0
+    AND ("sessionsTotal" IS NULL OR "sessionsRefunded" <= "sessionsTotal"));
+-- SPLIT
+-- A session-count remedy removes at least one session.
+ALTER TABLE "SupportFinancialRecommendation" DROP CONSTRAINT IF EXISTS "support_recommendation_sessions_removed_min";
+-- SPLIT
+ALTER TABLE "SupportFinancialRecommendation" ADD CONSTRAINT "support_recommendation_sessions_removed_min"
+  CHECK ("sessionsRemoved" IS NULL OR "sessionsRemoved" >= 1);
+-- SPLIT
+-- Frozen purchase terms are positive when stamped.
+ALTER TABLE "Subscription" DROP CONSTRAINT IF EXISTS "subscription_frozen_terms_positive";
+-- SPLIT
+ALTER TABLE "Subscription" ADD CONSTRAINT "subscription_frozen_terms_positive"
+  CHECK (("sessionsPerWeek" IS NULL OR "sessionsPerWeek" >= 1)
+    AND ("sessionMinutes" IS NULL OR "sessionMinutes" >= 1));
+-- SPLIT
+-- A Regular-time slot is an ISO weekday and a minute of the local day.
+ALTER TABLE "RegularTime" DROP CONSTRAINT IF EXISTS "regular_time_ranges";
+-- SPLIT
+ALTER TABLE "RegularTime" ADD CONSTRAINT "regular_time_ranges"
+  CHECK ("weekday" BETWEEN 1 AND 7 AND "localStartMinutes" BETWEEN 0 AND 1439);
+-- SPLIT
+-- One live row per plan slot; superseded rows keep their validUntil as history.
+DROP INDEX IF EXISTS "regular_time_one_live_slot";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "regular_time_one_live_slot"
+  ON "RegularTime" ("subscriptionId", "weekday", "localStartMinutes")
+  WHERE "validUntil" IS NULL;
+-- SPLIT
+-- An open plan-end choice has no decision; every other status has one.
+ALTER TABLE "PlanEndChoice" DROP CONSTRAINT IF EXISTS "plan_end_choice_shape";
+-- SPLIT
+ALTER TABLE "PlanEndChoice" ADD CONSTRAINT "plan_end_choice_shape"
+  CHECK (("status" = 'OFFERED' AND "decidedAt" IS NULL)
+    OR ("status" <> 'OFFERED' AND "decidedAt" IS NOT NULL));
+-- SPLIT
+-- An extension adds 1..4 weeks and remembers the plan end it replaced.
+ALTER TABLE "PlanEndChoice" DROP CONSTRAINT IF EXISTS "plan_end_choice_extended";
+-- SPLIT
+ALTER TABLE "PlanEndChoice" ADD CONSTRAINT "plan_end_choice_extended"
+  CHECK ("status" NOT IN ('EXTENDED', 'EXPERT_DECLINED')
+    OR ("extraWeeksOffered" IS NOT NULL
+      AND "extraWeeksOffered" BETWEEN 1 AND 4
+      AND "previousPlanEndsAt" IS NOT NULL));
+-- SPLIT
 -- A declared platform incident is a real window.
 ALTER TABLE "PlatformIncident" DROP CONSTRAINT IF EXISTS "platform_incident_time_order";
 -- SPLIT
@@ -1460,3 +1518,33 @@ ALTER TABLE "AdminRunRequest" ADD CONSTRAINT "admin_run_request_state"
   CHECK ("attempts" >= 0
     AND ("status" <> 'CLAIMED' OR "claimedAt" IS NOT NULL)
     AND ("status" NOT IN ('DONE', 'FAILED') OR "finishedAt" IS NOT NULL));
+-- SPLIT
+-- One live entitlement per buyer and product; failed and refunded attempts stay as history.
+CREATE UNIQUE INDEX IF NOT EXISTS "digital_product_purchase_succeeded_key"
+  ON "DigitalProductPurchase" ("productId", "buyerId")
+  WHERE "status" = 'SUCCEEDED';
+-- SPLIT
+-- Free, or at least Razorpay's ₹1 order floor (DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE).
+ALTER TABLE "DigitalProduct" DROP CONSTRAINT IF EXISTS "digital_product_price_nonnegative";
+-- SPLIT
+ALTER TABLE "DigitalProduct" DROP CONSTRAINT IF EXISTS "digital_product_price_free_or_min_paid";
+-- SPLIT
+ALTER TABLE "DigitalProduct" ADD CONSTRAINT "digital_product_price_free_or_min_paid"
+  CHECK ("pricePaise" = 0 OR "pricePaise" >= 100);
+-- SPLIT
+-- A free claim has no gateway order and a paid purchase always has one.
+ALTER TABLE "DigitalProductPurchase" DROP CONSTRAINT IF EXISTS "digital_product_purchase_free_has_no_order";
+-- SPLIT
+ALTER TABLE "DigitalProductPurchase" ADD CONSTRAINT "digital_product_purchase_free_has_no_order"
+  CHECK ("amountPaise" >= 0 AND ("amountPaise" = 0) = ("gatewayOrderId" IS NULL));
+-- SPLIT
+-- 250 MB per file (DIGITAL_PRODUCT_MAX_FILE_BYTES in lib/digital-products/constants.ts).
+ALTER TABLE "DigitalProductAsset" DROP CONSTRAINT IF EXISTS "digital_product_asset_size_cap";
+-- SPLIT
+ALTER TABLE "DigitalProductAsset" ADD CONSTRAINT "digital_product_asset_size_cap"
+  CHECK ("sizeBytes" >= 0 AND "sizeBytes" <= 262144000);
+-- SPLIT
+-- At most one current version per file lineage; verification retires the old one first.
+CREATE UNIQUE INDEX IF NOT EXISTS "digital_product_asset_one_verified_per_lineage"
+  ON "DigitalProductAsset" ("lineageId")
+  WHERE "status" = 'VERIFIED';

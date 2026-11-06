@@ -57,6 +57,7 @@ const PLATFORM_KEYS = [
   "DEPLOY_PRIME_URL",
   "URL",
   "SITE_ID",
+  "COMMIT_REF",
   "BRANCH",
   "CI",
   "NEXT_PHASE",
@@ -69,6 +70,7 @@ const PLATFORM_KEYS = [
   "VERCEL",
   "VERCEL_URL",
   "VERCEL_CRON_SECRET",
+  "VERCEL_GIT_COMMIT_SHA",
   "FLY_APP_NAME",
 ];
 

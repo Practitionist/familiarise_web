@@ -60,7 +60,7 @@ is real money on the first run — so the prerequisites below are hard gates.
 - [ ] **Payout accounts VERIFIED** for every org/consultant in the first batch
       (`OrganizationPayoutAccount.status === "VERIFIED"`; the contact +
       fund-account side-channel finished provisioning). Consultants onboard
-      themselves at `/dashboard/consultant/[consultantId]/settings/payouts`
+      themselves at `/dashboard/consultant/[consultantId]/settings/get-paid`
       (PR-Y2, #1675): the page offers the reverse penny drop (₹1 paid from
       their own UPI app, account details returned by RazorpayX and persisted
       reference-only) or manual bank/UPI entry with the standard penny drop,

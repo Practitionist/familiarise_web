@@ -9,8 +9,10 @@
 | Schema        | Frozen by [ADR 36](../enterprise/70-design-decisions/35-auth-schema-freeze.md) |
 
 This folder answers "who is this user, and how do we know?". It is built on
-[BetterAuth](https://better-auth.com) **1.7.7** with `@better-auth/sso` and
-`@better-auth/passkey` **1.7.7**, all pinned exactly in `package.json`. The
+[BetterAuth](https://better-auth.com) **1.7.14** with `@better-auth/core`,
+`@better-auth/sso` and `@better-auth/passkey` **1.7.14**, all pinned exactly in
+`package.json` and upgraded together because each plugin pins exact `better-call`
+and `@better-fetch/fetch` peers. The
 configuration lives in [`lib/auth.ts`](../../lib/auth.ts); this folder
 explains it.
 
@@ -54,7 +56,7 @@ flowchart LR
   end
 
   subgraph Node["Netlify Functions: Next.js"]
-    BA["/api/auth/[...all]<br/>BetterAuth 1.7.7<br/>get-session 503 on lookup failure"]
+    BA["/api/auth/[...all]<br/>BetterAuth 1.7.14<br/>get-session 503 on lookup failure"]
     APP["App routes<br/>/api/user/sessions/*, /api/user/reauthenticate,<br/>/api/admin/team/*, /api/organizations/[orgId]/sso/*"]
     G["Guards<br/>requireApiAuth, requireFreshSession,<br/>requireOperator, requireOrgAccess"]
   end

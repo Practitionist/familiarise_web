@@ -153,6 +153,7 @@ async function relabel(
       startsAt: occ.startsAt,
       voidedAt: now,
       hostAttributed: true,
+      relabelled: true,
     });
   }
 }

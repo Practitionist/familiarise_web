@@ -26,6 +26,7 @@ const MINT_CALL =
   /\b(?:createRazorpayOrder|createPaymentIntent)\(|\.orders\.create\(/;
 
 const KNOWN_MINT_SITES = [
+  "app/api/digital-products/[productId]/purchase/route.ts",
   "app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay/route.ts",
   "app/api/organizations/[orgId]/billing-account/wallet/top-ups/route.ts",
   "app/api/overage/[overageEventId]/order/route.ts",

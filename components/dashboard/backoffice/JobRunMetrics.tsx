@@ -42,8 +42,7 @@ const WINDOW: Record<
 };
 
 const BASIS: Record<NonNullable<JobRunMetric["missed"]["basis"]>, string> = {
-  slo: "completion SLO",
-  interval: "ticker interval",
+  slo: "freshness budget",
   window: "calendar window",
 };
 
