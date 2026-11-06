@@ -4,8 +4,10 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { eventUnionStatusBadge } from "@/lib/appointments/status";
-import { getProximityLabel } from "@/lib/appointments/occurrences";
+import {
+  appointmentStatusChip,
+  getProximityLabel,
+} from "@/lib/appointments/occurrences";
 import { noSessionLabel } from "@/lib/appointments/bucket";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
@@ -61,7 +63,7 @@ export function AppointmentRow({
 }: AppointmentRowProps) {
   const action = adapter.primaryAction(vm);
   const overflow = adapter.overflowItems(vm);
-  const badge = eventUnionStatusBadge(vm.status);
+  const badge = appointmentStatusChip(vm, adapter.role);
   const proximity =
     vm.bucket === "past" || vm.bucket === "cancelled"
       ? null

@@ -19,10 +19,13 @@ import {
   toDateOrNull,
   toOccurrenceVM,
   type AppointmentKind,
+  type AppointmentVM,
   type OccurrenceLike,
   type OccurrenceVM,
 } from "./view-model";
 import { normalizeOccurrences, type AnomalySink } from "./normalize";
+import { eventUnionStatusBadge } from "./status";
+import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 
 /** The engine's unit of arithmetic: every interval and duration is a multiple. */
 export const SCHEDULING_INTERVAL_MS = 30 * 60 * 1000;
@@ -512,6 +515,30 @@ export function getProximityLabel(
   if (dayDiff < 7) return `in ${dayDiff} days`;
   const weeks = Math.ceil(dayDiff / 7);
   return `in ${weeks} ${weeks === 1 ? "week" : "weeks"}`;
+}
+
+/**
+ * The status chip for a row. A group event stays IN_PROGRESS between its
+ * sessions, so a learner whose next session is still ahead of its join window
+ * reads "Registered" (or "Confirmed" for a 1:1) rather than "In progress".
+ */
+export function appointmentStatusChip(
+  vm: Pick<AppointmentVM, "status" | "kind" | "nextAt">,
+  role: "consultee" | "consultant",
+  now = new Date(),
+): StatusBadgeStyle {
+  const badge = eventUnionStatusBadge(vm.status);
+  const sessionAhead =
+    vm.nextAt !== null &&
+    vm.nextAt.getTime() - now.getTime() > CONSULTEE_JOIN_WINDOW_MS;
+  if (role !== "consultee" || vm.status !== "IN_PROGRESS" || !sessionAhead) {
+    return badge;
+  }
+  const group = vm.kind === "WEBINAR" || vm.kind === "CLASS";
+  return {
+    ...eventUnionStatusBadge("SCHEDULED"),
+    label: group ? "Registered" : "Confirmed",
+  };
 }
 
 export interface OccurrenceSourceAppointment {

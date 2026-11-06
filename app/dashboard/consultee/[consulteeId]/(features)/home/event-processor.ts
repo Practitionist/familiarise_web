@@ -24,7 +24,6 @@ import {
 } from "@/lib/appointments/occurrences";
 import { deriveBucket } from "@/lib/appointments/bucket";
 import { payLinkHref, payablePaymentId } from "@/lib/payments/pay-link-href";
-import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import {
   isInactiveStatus,
   isPendingPaymentStatus,
@@ -567,8 +566,7 @@ function processTrial(
       payLinkHref({
         paymentId: payablePaymentId(
           (trial.appointment as { payment?: unknown } | null)?.payment as
-            | Parameters<typeof payablePaymentId>[0]
-            | undefined,
+            Parameters<typeof payablePaymentId>[0] | undefined,
         ),
         checkoutUrl: trial.pendingPaymentUrl,
       }) ??
@@ -613,8 +611,7 @@ export function groupSlotsIntoSessions(
     startTime: row.startsAt,
     endTime: row.endsAt,
     status: (row.endsAt < now ? "completed" : "upcoming") as
-      | "completed"
-      | "upcoming",
+      "completed" | "upcoming",
   }));
 }
 
@@ -696,32 +693,4 @@ export function selectNextUp(
   return upcoming
     .filter((e) => e.startsAt !== null && !isInactiveStatus(e.status))
     .slice(0, limit);
-}
-
-/**
- * Filter events for a calendar month. `month` is the picker's local calendar
- * value; each slot is placed in the viewer's zone, the one the cards print
- * (#1703 B7), so a near-midnight slot lands in the month it displays under.
- */
-export function getMonthlyEvents(
-  events: ProcessedEvent[],
-  month: Date,
-  zone: string,
-): ProcessedEvent[] {
-  const inactive = ["cancelled", "rejected", "completed", "expired"];
-  const monthKey = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`;
-
-  return events
-    .filter((e) =>
-      e.slots.some(
-        (s) => formatInViewerZone(s.startsAt, zone, "yyyy-MM") === monthKey,
-      ),
-    )
-    .sort((a, b) => {
-      const aInactive = inactive.includes(a.status.toLowerCase());
-      const bInactive = inactive.includes(b.status.toLowerCase());
-      if (aInactive !== bInactive) return aInactive ? 1 : -1;
-      // Monthly rows always have a slot in the month, so the anchor exists.
-      return (a.startsAt?.getTime() ?? 0) - (b.startsAt?.getTime() ?? 0);
-    });
 }

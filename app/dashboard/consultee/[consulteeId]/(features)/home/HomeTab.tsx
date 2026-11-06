@@ -74,6 +74,7 @@ import {
   isOccurrenceOver,
 } from "@/lib/appointments/occurrences";
 import { useNowTick } from "@/hooks/use-now-tick";
+import { resolveDashboardFacets } from "@/lib/labels/personal-dashboard";
 import {
   openProposalTarget,
   type OpenRescheduleProposal,
@@ -359,11 +360,8 @@ function sessionsThisMonth(
   now: Date,
 ): number {
   const monthKey = formatInViewerZone(now, zone, "yyyy-MM");
-  // #1527 review — `getMonthlyEvents`'s own month-window reference reads
-  // `month.getFullYear()`/`.getMonth()` (the runtime's zone), which can
-  // disagree with `zone` near a midnight boundary and drop an event before
-  // the (correct) per-slot check below ever sees it. Filter `events`
-  // directly instead of pre-filtering through that helper.
+  // Compared in the viewer's zone per slot, so a near-midnight session lands
+  // in the month it displays under.
   return events
     .filter((event) => !isCancelledLikeStatus(event.status))
     .reduce(
@@ -615,7 +613,7 @@ export default function HomeTab({
   // Needs you and a request waiting on the expert is Appointments' concern.
   const nextUp = selectNextUp(upcomingEvents, NEXT_UP_LIMIT);
 
-  // Same key (and cache entry) as the Payments page's Needs-you band.
+  // Same key (and cache entry) as the Billing page's Needs-you band.
   const { data: money } = useQuery({
     queryKey: ["pending-payments", consulteeId],
     staleTime: 2 * 60_000,
@@ -720,6 +718,15 @@ export default function HomeTab({
     ],
   );
 
+  const orgDashboards = useMemo(
+    () =>
+      resolveDashboardFacets({
+        role: session?.user.role,
+        memberships: session?.user.organizationMemberships ?? [],
+      }).organizations.filter((f) => f.kind === "organization"),
+    [session?.user.role, session?.user.organizationMemberships],
+  );
+
   const monthSessions = useMemo(
     () => sessionsThisMonth(processedEvents, viewerZone.zone, now),
     [processedEvents, viewerZone.zone, now],
@@ -812,16 +819,38 @@ export default function HomeTab({
         )}
       </Section>
 
-      <Section title="This month">
+      <Section
+        title="This month · personal"
+        description={
+          orgDashboards.length > 0 ? (
+            <>
+              Sessions and payments you made yourself. Organization-funded
+              sessions appear on your organization dashboard:{" "}
+              {orgDashboards.map((org, i) => (
+                <span key={org.key}>
+                  {i > 0 && ", "}
+                  <Link
+                    href={org.href}
+                    className="font-medium text-foreground underline-offset-4 hover:underline"
+                  >
+                    {org.label}
+                  </Link>
+                </span>
+              ))}
+              .
+            </>
+          ) : undefined
+        }
+      >
         <StatRow columns={3}>
           <Stat
             label="Sessions"
             value={monthSessions}
-            hint="Scheduled or held this month"
+            hint="Your own, scheduled or held this month"
             href={`${basePath}/appointments`}
           />
           <Stat
-            label="Spent"
+            label="Spent personally"
             value={formatSpend(summary)}
             hint="Net of refunds"
             href={`${basePath}/payments?tab=history`}
