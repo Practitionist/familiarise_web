@@ -108,8 +108,7 @@ describe("the guard itself", () => {
     // Closing the hole must not quietly narrow who may look — the client
     // layouts permit privileged inspection, and server and client have to
     // agree or the page redirects in a loop.
-    expect(src).toContain('user.role === "ADMIN"');
-    expect(src).toContain('user.role === "STAFF"');
+    expect(src).toContain("isOperatorRole(role)");
   });
 
   it("refuses a banned session", () => {
