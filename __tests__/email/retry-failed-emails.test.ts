@@ -59,6 +59,9 @@ function makeRow(overrides: Partial<FailedEmail> = {}): FailedEmail {
     // #1654 — the outbox columns; a replayed dead-letter row has neither yet.
     resendId: null,
     entityRef: null,
+    deliveryUserId: null,
+    deliveryCategory: null,
+    firstAttemptAt: null,
     createdAt: new Date("2026-06-16T11:58:00Z"),
     updatedAt: new Date("2026-06-16T11:58:00Z"),
     ...overrides,
@@ -78,6 +81,7 @@ function makeBatchRow(
     nextRetryAt: null,
     lastError: null,
     sentAt: null,
+    firstAttemptAt: null,
     createdAt: new Date("2026-06-16T11:58:00Z"),
     updatedAt: new Date("2026-06-16T11:58:00Z"),
     ...overrides,
