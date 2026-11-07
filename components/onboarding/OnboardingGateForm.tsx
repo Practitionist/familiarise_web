@@ -153,8 +153,11 @@ export function OnboardingGateForm({
             htmlFor="gate-marketing"
             className="cursor-pointer text-sm leading-snug"
           >
-            <span className="font-medium">Optional:</span> send me product
-            updates and offers. You can withdraw this anytime in Settings.
+            <span className="font-medium">
+              Optional: {PURPOSE_CODE_META.MARKETING_COMMS.label}.
+            </span>{" "}
+            {PURPOSE_CODE_META.MARKETING_COMMS.description} You can withdraw
+            this anytime in Settings.
           </Label>
         </div>
       </div>

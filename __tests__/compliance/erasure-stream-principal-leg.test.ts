@@ -2,6 +2,9 @@
  * @jest-environment node
  */
 
+jest.mock("../../lib/compliance/erasure/mail-footprint", () => ({
+  scrubMailFootprintTx: jest.fn(),
+}));
 jest.mock("../../lib/enterprise/outbound-webhooks/dispatch", () => ({
   dispatchWebhookEvent: jest.fn(async () => undefined),
 }));

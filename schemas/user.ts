@@ -487,24 +487,6 @@ export type PreferredSchedule = z.infer<typeof PreferredScheduleSchema>;
 
 // #region Preferences Schemas
 
-export const CookiePreferenceSchema = z.object({
-  // Essential: Required for core functionality - authentication, security, CSRF tokens
-  // Cannot be disabled by users. Examples: BetterAuth session, security tokens
-  essential: z.boolean().default(true),
-
-  // Analytics: Usage tracking and performance measurement
-  // Examples: Google Analytics (GA4), Hotjar, Mixpanel, PostHog, Amplitude
-  analytics: z.boolean().default(false),
-
-  // Marketing: Advertising and retargeting
-  // Examples: Facebook Pixel, Google Ads, LinkedIn Insight Tag, TikTok Pixel
-  marketing: z.boolean().default(false),
-
-  // Functional: Enhanced features and third-party integrations
-  // Examples: Live chat (Intercom, Crisp), video embeds, social sharing, personalization
-  functional: z.boolean().default(false),
-});
-
 export const NotificationPreferenceSchema = z.object({
   allNotifications: z.boolean().default(true),
 
@@ -525,7 +507,6 @@ export const NotificationPreferenceSchema = z.object({
   feedbackAlerts: z.boolean().default(true),
   trialNotifications: z.boolean().default(true),
   subscriptionAlerts: z.boolean().default(true),
-  marketingEmails: z.boolean().default(false),
 
   // Org category preferences (ADR 23) — the categories above are all
   // B2C-shaped, which left the ORG_* workflow family unmutable.
@@ -603,7 +584,6 @@ export const FullUserSchema = z.object({
   consulteeProfile: ConsulteeProfileSchema.optional().nullable(),
   staffProfile: StaffProfileSchema.optional().nullable(),
   adminProfile: AdminProfileSchema.optional().nullable(),
-  cookiePreferences: CookiePreferenceSchema.optional().nullable(),
   notificationPreferences: NotificationPreferenceSchema.optional().nullable(),
 });
 

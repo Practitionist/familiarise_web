@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   useMutation,
   useMutationState,
@@ -15,6 +16,10 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
+import {
+  DATA_CONSENT_ANCHOR,
+  accountSettingsHref,
+} from "@/lib/dashboard/account-href";
 import type { EmailCategoryColumn } from "@/lib/email/preferences";
 import {
   receivableSwitches,
@@ -92,12 +97,6 @@ const CATEGORY_FIELDS: ToggleField<EmailCategoryColumn>[] = [
     description: "Subscription starts, renewals and cancellations",
   },
 ];
-
-const MARKETING_FIELD: ToggleField = {
-  key: "marketingEmails",
-  label: "Marketing & Promotions",
-  description: "Platform updates, tips, and promotions",
-};
 
 const ORG_CATEGORY_FIELDS: ToggleField<EmailCategoryColumn>[] = [
   {
@@ -268,6 +267,10 @@ export function NotificationPreferencesPanel() {
     hasOrgMembership: memberships.length > 0,
   };
   const switches = receivableSwitches(viewer);
+  const accountHref = user ? accountSettingsHref(user, "account") : null;
+  const consentHref = accountHref
+    ? `${accountHref}#${DATA_CONSENT_ANCHOR}`
+    : null;
 
   const {
     data: prefs,
@@ -419,12 +422,25 @@ export function NotificationPreferencesPanel() {
           <CardTitle className="text-lg">Categories</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {[...categoryFields, MARKETING_FIELD].map((field, index) => (
+          {categoryFields.map((field, index) => (
             <div key={field.key}>
               {index > 0 && <Separator className="mb-4" />}
               {renderToggle(field)}
             </div>
           ))}
+          <p className="text-xs text-zinc-500">
+            Marketing emails and the newsletter follow your marketing consent
+            {consentHref ? (
+              <>
+                {" "}
+                in{" "}
+                <Link href={consentHref} className="underline">
+                  Data consent &amp; privacy rights
+                </Link>
+              </>
+            ) : null}
+            .
+          </p>
         </CardContent>
       </Card>
 
