@@ -19,6 +19,8 @@ import {
   unlockSlotInterval,
   CHECKOUT_LOCK_TTL_MS,
   ApprovalLock,
+  ConsulteeBookingBusyError,
+  EventCheckoutBusyError,
   type SlotBatchGrant,
 } from "@/utils/appointmentlock";
 import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
@@ -998,8 +1000,11 @@ export async function handleCheckout(
         isKeyCollision ||
         error instanceof SlotTakenError,
     });
-    // Enhanced error handling with lock-specific errors
-    if (isLockContention) {
+    // Typed busy errors keep their 409 and retryAfter for the route and the client's retry.
+    const isTypedBusy =
+      error instanceof EventCheckoutBusyError ||
+      error instanceof ConsulteeBookingBusyError;
+    if (isLockContention && !isTypedBusy) {
       throw new Error(
         "Another user is currently booking this slot. Please wait a few seconds and try again.",
       );
