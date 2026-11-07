@@ -147,6 +147,16 @@ export function libraryScopeFor(
     : null;
 }
 
+/**
+ * The Everyone view is counts only, so no free text, person or source may
+ * narrow it: a match on a file name, a recording title or a participant would
+ * confirm content the view never shows. Kind, dates and status stay: the rows
+ * and counts display them.
+ */
+export function everyoneLibraryQuery(query: LibraryQuery): LibraryQuery {
+  return { ...query, q: "", person: null, source: null };
+}
+
 /** The Everyone view is counts only, so it offers no source filter. */
 export function documentSourcesFor(
   scope: LibraryScope,

@@ -25,19 +25,6 @@ export const billingSchema = z.object({
   gstStateCode: z.string().regex(/^\d{2}$/, "Choose your GST state"),
 });
 
-export const brandingSchema = z.object({
-  primaryColor: z
-    .string()
-    .regex(/^#[0-9a-fA-F]{6}$/, "Must be a hex color")
-    .nullable()
-    .optional(),
-  secondaryColor: z
-    .string()
-    .regex(/^#[0-9a-fA-F]{6}$/, "Must be a hex color")
-    .nullable()
-    .optional(),
-});
-
 // Basis points (integers summing to 10000) replace float percentages.
 // Integer math keeps rounding deterministic across high-volume settlements
 // and removes the need to chase drift between `SUM(splits) - grossAmount`.
@@ -58,5 +45,4 @@ export const revenueRatesSchema = z
 
 export type OrgInfoFormData = z.infer<typeof orgInfoSchema>;
 export type BillingFormData = z.infer<typeof billingSchema>;
-export type BrandingFormData = z.infer<typeof brandingSchema>;
 export type RevenueRatesFormData = z.infer<typeof revenueRatesSchema>;

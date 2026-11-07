@@ -32,7 +32,7 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
   return {
     basePath,
     groups: [
-      { items: [{ name: "Today", icon: Home, path: "home" }] },
+      { items: [{ name: "Home", icon: Home, path: "home" }] },
       {
         label: "Inbox",
         items: [
@@ -48,6 +48,7 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
             path: "messages",
             badgeKey: "messages",
           },
+          { name: "Collaborations", icon: Handshake, path: "collaborations" },
         ],
       },
       {
@@ -66,8 +67,6 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
             path: "sell/sessions",
           },
           { name: "Group programs", icon: UsersRound, path: "sell/programs" },
-          { name: "Products", icon: Package, path: "sell/products" },
-          { name: "Collaborations", icon: Handshake, path: "collaborations" },
         ],
       },
       {
@@ -75,6 +74,7 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
         items: [
           { name: "Recordings", icon: Video, path: "recordings" },
           { name: "Session documents", icon: FileText, path: "documents" },
+          { name: "Products", icon: Package, path: "products" },
         ],
       },
       {
@@ -112,15 +112,13 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
 }
 
 export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
-  home: "Today",
+  home: "Home",
   messages: "Messages",
   appointments: "Appointments",
   participants: "Participants",
   classes: "Class",
   class: "Class",
-  consultations: "Consultation",
   consultation: "Consultation",
-  subscriptions: "Subscription",
   subscription: "Subscription",
   webinars: "Webinar",
   webinar: "Webinar",
@@ -143,30 +141,34 @@ export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
   earnings: "Earnings & payouts",
   referrals: "Invite & earn",
   settings: "Settings",
-  // Settings hub sections (#1785): one URL each, so one crumb each.
+  // Settings hub sections: one URL each, so one crumb each.
   profile: "Profile",
   experience: "Experience & education",
   verification: "Verification",
-  booking: "Booking requests",
+  booking: "Booking mode",
   "get-paid": "Get paid",
-  payouts: "Get paid",
+  payouts: "Payouts",
   notifications: "Notifications",
-  security: "Security",
   support: "Help & support",
   evidence: "Evidence requests",
   reports: "Reports & appeals",
   feedback: "Product feedback",
-  help: "Help",
   edit: "Edit",
   new: "New",
 };
 
-// `participants` and `sell` have only child pages; linking their crumb would
-// prefetch a 404.
+// These have only child pages; linking their crumb would prefetch a 404.
 export const CONSULTANT_PATHLESS_SEGMENTS: ReadonlySet<string> = new Set([
   "participants",
   "sell",
+  "payouts",
 ]);
+
+/** An editor's first crumb: Studio's Products for a digital product, else Sell. */
+export const consultantOfferingsRootLabel = (
+  typeSegment: string | undefined,
+): string =>
+  typeSegment === "digital-product" ? CONSULTANT_PAGE_LABELS.products : "Sell";
 
 export const CONSULTANT_OFFERING_TYPE_SEGMENTS: ReadonlySet<string> = new Set(
   SellableKindSchema.options,

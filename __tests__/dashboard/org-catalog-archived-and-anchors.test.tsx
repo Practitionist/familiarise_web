@@ -69,7 +69,7 @@ describe("Catalog with no experts", () => {
       error={null}
       onToggleArchive={jest.fn()}
       isMutating={false}
-      blocked={<p>Invite an expert first</p>}
+      creationBlocked={<p>Invite an expert first</p>}
     />
   );
 
@@ -80,7 +80,14 @@ describe("Catalog with no experts", () => {
     expect(screen.queryByText("Invite an expert first")).toBeNull();
   });
 
-  it("shows the Archived chip beside the empty state, and it toggles", () => {
+  it("keeps listing live plans beside the creation notice", () => {
+    render(panel([row("live", null), row("old", "2026-10-01")], false));
+    expect(screen.getByText("Invite an expert first")).toBeTruthy();
+    expect(screen.getAllByText("Plan live").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Published" })).toBeTruthy();
+  });
+
+  it("shows the Archived chip beside the notice, and it toggles", () => {
     const rows = [row("old", "2026-10-01")];
     const { rerender } = render(panel(rows, false));
     expect(screen.getByText("Invite an expert first")).toBeTruthy();
@@ -95,7 +102,7 @@ describe("Catalog with no experts", () => {
   });
 
   it("shows only the empty state when nothing is archived", () => {
-    render(panel([], true));
+    render(panel([], false));
     expect(screen.getByText("Invite an expert first")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Archived" })).toBeNull();
   });

@@ -4,19 +4,25 @@ This page records the words the dashboards use for their pages and the navigatio
 
 ## Glossary
 
-| Term                            | Means                                                                               | Not to be confused with                                                    |
-| ------------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Recordings (in Studio)          | Recordings of sessions you hosted, which you can rename, delete or sell as a replay | Session recordings in Library                                              |
-| Session recordings (in Library) | Recordings of sessions you attended (in an organization, also sessions you deliver) | Replays                                                                    |
-| Replays                         | A recording listed for sale, which is a product                                     | Raw recordings                                                             |
-| Digital products                | Files sold or given away, such as e-books, templates and packs                      | Plan materials                                                             |
-| Session documents               | Files exchanged in one specific booking                                             | Plan materials, which are files attached to a plan for its buyers          |
-| Billing                         | What you pay, as a learner or as an organization sponsor                            | Earnings, which is what you are paid                                       |
-| Booking requests                | Clients asking to book you                                                          | Support cases                                                              |
-| Support cases                   | The conversations a person opens with the support team                              | Booking requests                                                           |
-| Library                         | Only the buyer's or attendee's library                                              | The organization Catalog, whose icon is `LayoutGrid` rather than `Library` |
+| Term                            | Means                                                                                                                     | Not to be confused with                                                     |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Recordings (in Studio)          | Recordings of sessions you hosted, which you can rename or delete                                                         | Session recordings in Library                                               |
+| Session recordings (in Library) | Recordings of sessions you attended (in an organization, also sessions you deliver)                                       | Replays                                                                     |
+| Replays                         | A recording listed for sale on the public site; the dashboards no longer sell them                                        | Raw recordings                                                              |
+| Digital products                | Files sold or given away, such as e-books, templates and packs; listed in Studio › Products                               | Plan materials                                                              |
+| Session documents               | Files exchanged in one specific booking                                                                                   | Plan materials, which are files attached to a plan for its buyers           |
+| Billing                         | What you pay, as a learner or as an organization sponsor                                                                  | Earnings, which is what you are paid                                        |
+| Booking requests                | Clients asking to book you; the expert Inbox page and the organization page                                               | Booking mode, the setting that decides whether people book instantly or ask |
+| Booking mode                    | An expert's setting: instant booking or request first, whether new 1:1 bookings are open, and the cap on waiting requests | Booking requests, the page that lists them                                  |
+| Sponsorship programs            | An organization's programs that fund seats for its members (route `programs`)                                             | Group programs, the webinars and classes an expert sells                    |
+| Compensation                    | What a hosting organization pays one of its experts (route `compensation`)                                                | Earnings, which is what an independent expert is paid                       |
+| Payouts                         | Money sent to a bank account: an organization's runs and payout account, an expert's payout history                       | Billing, which is what you pay                                              |
+| Collaborations                  | Invitations to co-host a webinar or class, and the plans co-hosted with others                                            | Collaborators, the people on one plan                                       |
+| Catalog                         | The webinar and class plans an organization hosts                                                                         | Library, which holds only what the viewer bought or attended                |
+| Support cases                   | The conversations a person opens with the support team                                                                    | Booking requests                                                            |
+| Library                         | Only the buyer's or attendee's library                                                                                    | The organization Catalog, whose icon is `LayoutGrid` rather than `Library`  |
 
-In the consultant dashboard, Studio holds what the expert made in sessions (Recordings and Session documents), Sell holds what the expert offers, and "My library" is the expert's buyer Library.
+In the consultant dashboard, Studio holds what the expert made (Recordings, Session documents and Products), Sell holds the plans the expert prices and schedules, Inbox holds what waits on an answer (Booking requests, Messages and Collaborations), and "My library" is the expert's buyer Library.
 
 ## Current navigation trees
 
@@ -24,16 +30,16 @@ Each tree is built by a pure function, so the groups below are what the sidebar 
 
 ### Consultant (`buildConsultantNav`)
 
-- Today (path `home`)
-- Inbox: Booking requests (badge), Messages (badge)
+- Home (path `home`)
+- Inbox: Booking requests (badge), Messages (badge), Collaborations (`collaborations`)
 - Calendar: Appointments, Availability
-- Sell: 1:1 & subscriptions (`sell/sessions`), Group programs (`sell/programs`), Products (`sell/products`), Collaborations (`collaborations`)
-- Studio: Recordings (hosted sessions, `recordings`), Session documents (`documents`)
+- Sell: 1:1 & subscriptions (`sell/sessions`), Group programs (`sell/programs`)
+- Studio: Recordings (hosted sessions, `recordings`), Session documents (`documents`), Products (`products`)
 - Money: Earnings & payouts
 - Reputation & growth: Reviews, Invite & earn
 - My library (its own top-level item)
 - Settings & help: Help & support, Settings
-- Pinned: View public page. Mobile tabs: Today, Requests, Appointments, Messages.
+- Pinned: View public page. Mobile tabs: Home, Requests, Appointments, Messages.
 
 ### Consultee (`buildConsulteeNav`)
 
@@ -41,28 +47,29 @@ Each tree is built by a pure function, so the groups below are what the sidebar 
 - Money: Billing, Invite & earn
 - Operations: Help & support, Settings
 - Pinned: Find experts. Mobile tabs: Home, Appointments, Library, Messages. Billing opens from the Menu sheet, and the "Needs you" card stays on Home.
+- Home and Billing totals are personal, and Home links to each organization the learner belongs to for sponsored sessions. The Personal view lists bookings that no organization hosts; within it, Home's Sessions stat also skips seats an organization rail paid for (WALLET, INVOICE or LICENSE, `lib/payments/org-funded.ts`), such as a seat an organization bought on an independent expert's webinar. "Spent personally" sums this month's settled payments the learner made on a personal rail, whether or not checkout tagged them with an organization. One helper, `appointmentStatusChip` in `lib/appointments/occurrences.ts`, sets the learner's status chip on Home, Appointments and the appointment page: a booked webinar or class reads "Registered", a booked 1:1 (approved or scheduled) reads "Confirmed", and a live webinar or class reads "In progress" from its next session's join window. The Billing page is titled Billing everywhere, including the "Billing › Credits" link on Invite & earn, which no longer repeats the credit history table; its route is still `payments`.
 
 ### Organization (`buildOrganizationNav`)
 
 Items appear only when the viewer's role and the organization's capabilities pass the same gates the pages check. The regrouping moved items between groups without changing any gate.
 
-| Group          | Items and their gates                                                                                                                                                                                                                          |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Overview       | Every member                                                                                                                                                                                                                                   |
-| My work        | My Program (`myProgram.read` and `canSponsor`), Compensation (`myArrangement.read` and `canHost`), Appointments (every member), Booking requests (a consultant profile and `canHost`), Plan collaborators (`myArrangement.read` and `canHost`) |
-| Messages       | Every member                                                                                                                                                                                                                                   |
-| Library        | Every member, one unlabelled item so the group does not restate it                                                                                                                                                                             |
-| People         | Members (`members.directory`)                                                                                                                                                                                                                  |
-| Sponsor        | Programs (`programs.read`), Contracts (`contracts.read`), Billing (`billing.read`), each also needing `canSponsor`                                                                                                                             |
-| Host           | Catalog (`catalog.manage`, icon `LayoutGrid`), Collaborators (`catalog.manage`), Payouts (`payouts.read`), each also needing `canHost`                                                                                                         |
-| Insights       | Analytics (`operations.read`), Audit (`audit.read`), Consent (`consent.read`)                                                                                                                                                                  |
-| Help & support | Every member; the page is the organization's triage, and each of its tabs carries its own gate                                                                                                                                                 |
+| Group          | Items and their gates                                                                                                                                                                                                                                   |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Overview       | Every member                                                                                                                                                                                                                                            |
+| My work        | My Program (`myProgram.read` and `canSponsor`), Compensation (`myArrangement.read` and `canHost`), Appointments (every member), Booking requests (a consultant profile and `canHost`), Collaborations (`myArrangement.read` and `canHost`, for experts) |
+| Messages       | Every member                                                                                                                                                                                                                                            |
+| Library        | Every member, one unlabelled item so the group does not restate it                                                                                                                                                                                      |
+| People         | Members (`members.directory`)                                                                                                                                                                                                                           |
+| Sponsor        | Sponsorship programs (`programs.read`, route `programs`), Contracts (`contracts.read`), Billing (`billing.read`), each also needing `canSponsor`                                                                                                        |
+| Host           | Catalog (`catalog.manage`, icon `LayoutGrid`), Collaborations (`catalog.manage`), Payouts (`payouts.read`), each also needing `canHost`                                                                                                                 |
+| Insights       | Analytics (`operations.read`), Audit (`audit.read`), Consent (`consent.read`)                                                                                                                                                                           |
+| Help & support | Every member; the page is the organization's triage, and each of its tabs carries its own gate                                                                                                                                                          |
 
-My work has five items, one more than the usual limit of about four, because every item in it is gated and most members see two or three of them. A learner on a sponsoring organization sees My Program and Appointments; an expert on a hosting organization sees Compensation, Appointments and Plan collaborators, plus Booking requests with a consultant profile.
+My work has five items, one more than the usual limit of about four, because every item in it is gated and most members see two or three of them. A learner on a sponsoring organization sees My Program and Appointments; an expert on a hosting organization sees Compensation, Appointments and Collaborations, plus Booking requests with a consultant profile.
 
-Plan collaborators (`collaborations`) and Collaborators (`collaborators`) are two pages over the same `InvitationsPanel`. Plan collaborators is an expert's own plans and invitations, and its page admits anyone who delivers for the organization (`deliversForOrg`). Collaborators is every plan the organization hosts, whoever delivers it, read-only, behind Catalog's gate. No current role holds both `catalog.manage` and `myArrangement.read`, so nobody sees both items.
+Collaborations (`collaborations`) is one route over `InvitationsPanel` that the server resolves by role. An operator holding `catalog.manage` reads every plan the organization hosts, whoever delivers it, read-only, from the Host group. Any other member who delivers for the organization (`deliversForOrg`) reads their own plans and invitations from My work. Both need `canHost`, and no viewer sees both nav items.
 
-The phone tabs did not change: operators get Overview, Appointments, Members and Billing or Payouts, and members get their own landing page, Appointments and Messages (`organizationMobileTabs`). `__tests__/dashboard/org-nav-gates.test.ts` snapshots the visible item set and phone tabs for every role, capability, suspension and consultant-profile combination (112 in all); the only difference since the regrouping is the Collaborators item, which appears exactly where Catalog does.
+The phone tabs did not change: operators get Overview, Appointments, Members and Billing or Payouts, and members get their own landing page, Appointments and Messages (`organizationMobileTabs`). `__tests__/dashboard/org-nav-gates.test.ts` snapshots the visible item set and phone tabs for every role, capability, suspension and consultant-profile combination (112 in all).
 
 Organization settings is not a rail item. It opens from the avatar menu and from the mobile Menu sheet, which lists the row only for an ACTIVE membership whose role passes `canOpenOrgSettings`. A suspended member sees Overview, Appointments and Library only.
 
@@ -86,24 +93,29 @@ Library means only what the viewer bought, attended or was given access to. One 
 
 An expert's attended sessions belong to their learner profile, so the expert's recordings and documents tabs read and link to the learner side (`/dashboard/consultee/<learner id>/…`). The organization Library keeps its gates: every member, a suspended one included, reads Mine (`requireOrgAccess` with `allowSuspended`), and Everyone needs an active member with `operations.read` (`libraryScopeFor()`).
 
-The account menu on every surface carries **My library**, which links to `/dashboard/go/library`. `resolveGoHref()` in `lib/dashboard/go.ts` sends a viewer with a learner profile to the learner Library, a viewer with only an expert profile to My library, and anyone else (an organization workspace operator, for example) to `/dashboard`. The go page forwards `?tab=`, so digital product receipts, the product page's "Open library" and "Back to library" links and the purchase email all use `/dashboard/go/library?tab=purchases` (`digitalProductLibraryHref()`); the email makes it absolute. Find matches the Library rail items on "purchases", "products", "recordings", "documents", "downloads", "ebooks" and "templates". In a personal tree that already has a Library item, Find skips the account menu's My library row, so a learner sees one Library entry; elsewhere it lists My library under Account. The Sell pages also match "offerings".
+The account menu on every surface carries **My library**, which links to `/dashboard/go/library`. `resolveGoHref()` in `lib/dashboard/go.ts` sends a viewer with a learner profile to the learner Library, a viewer with only an expert profile to My library, and anyone else (an organization workspace operator, for example) to `/dashboard`. The go page forwards `?tab=`, so digital product receipts, the product page's "Open library" and "Back to library" links and the purchase email all use `/dashboard/go/library?tab=purchases` (`digitalProductLibraryHref()`); the email makes it absolute. Find matches the learner and expert Library rail items on "purchases", "products", "recordings", "documents", "downloads", "ebooks" and "templates"; the organization Library, which holds only session documents and recordings, answers to "purchases", "recordings", "documents" and "downloads". In a personal tree that already has a Library item, Find skips the account menu's My library row, so a learner sees one Library entry; elsewhere it lists My library under Account. The Sell pages also match "offerings".
 
-## Sell
+## Sell, Studio products and Collaborations
 
-Sell is everything the expert offers. Each list page renders through `SellPageShell` (`components/offerings/list/SellPageShell.tsx`): a header with the **+ New** picker, `?tab=` links that navigate, and the active tab's list. The tab enums live in `SELL_TAB_SCHEMAS` (`lib/dashboard/sell-pages.ts`); an unknown or missing `tab` opens the first tab, and no page has more than three tabs.
+Sell is the two plan pages an expert prices and schedules. Each list page renders through `SellPageShell` (`components/offerings/list/SellPageShell.tsx`): a header with the **+ New** picker, `?tab=` links that navigate, and the active tab's list. The tab enums live in `SELL_TAB_SCHEMAS` (`lib/dashboard/sell-pages.ts`); an unknown or missing `tab` opens the first tab, and no page has more than two tabs.
 
-| Page                | Route                                       | Tabs                         | List                                                                 |
-| ------------------- | ------------------------------------------- | ---------------------------- | -------------------------------------------------------------------- |
-| 1:1 & subscriptions | `/dashboard/consultant/<id>/sell/sessions`  | Consultations, Subscriptions | `EventManagementDashboard` for one plan kind                         |
-| Group programs      | `/dashboard/consultant/<id>/sell/programs`  | Webinars, Classes            | `EventManagementDashboard` over the planner read                     |
-| Products            | `/dashboard/consultant/<id>/sell/products`  | Digital products, Replays    | `DigitalProductList`, or `HostedReplays` over `listHostedReplays()`  |
-| Collaborations      | `/dashboard/consultant/<id>/collaborations` | none                         | `InvitationsPanel`: invitations to co-host and the plans you co-host |
+| Page                | Route                                      | Tabs                         | List                                             |
+| ------------------- | ------------------------------------------ | ---------------------------- | ------------------------------------------------ |
+| 1:1 & subscriptions | `/dashboard/consultant/<id>/sell/sessions` | Consultations, Subscriptions | `EventManagementDashboard` for one plan kind     |
+| Group programs      | `/dashboard/consultant/<id>/sell/programs` | Webinars, Classes            | `EventManagementDashboard` over the planner read |
 
 `SellOfferingsList` passes `EventManagementDashboard` one plan kind. The 1:1 tabs read only their own plan list and skip the planner read; the webinar and class tabs read the planner, which carries the group instances. The search box stays in the URL as `?q=`.
 
-Replay sales are closed, so there is no listing editor. The Replays tab lists the expert's own recordings whose `listingStatus` is `PUBLISHED`, read on the server after `requirePersonalProfileAccess()`, and otherwise shows an empty state that links to Studio › Recordings. The Studio Recordings page carries a **Sell as replay** link to `sell/products?tab=replays`.
+Two pages sit outside Sell and do not use `SellPageShell`:
 
-The **+ New** picker (`NewOfferingMenu`) offers 1:1 consultation, subscription, webinar, class and digital product. Each opens the existing editor at `offerings/<kind>/new`; editing stays at `offerings/<kind>/<id>/edit`. After a save the editors return to the Sell page and tab that lists that kind (`sellHomeHref()`), and an editor's `offerings` and `<kind>` breadcrumbs open that list too (`sellHomePath()`).
+| Page           | Group  | Route                                       | List                                                                 |
+| -------------- | ------ | ------------------------------------------- | -------------------------------------------------------------------- |
+| Products       | Studio | `/dashboard/consultant/<id>/products`       | `DigitalProductList`, with one **New digital product** action        |
+| Collaborations | Inbox  | `/dashboard/consultant/<id>/collaborations` | `InvitationsPanel`: invitations to co-host and the plans you co-host |
+
+Replay sales are closed, so the dashboards carry no replay listing, tab or "Sell as replay" link. A recording is still listed for sale only through the public Replays grid.
+
+The **+ New** picker (`NewOfferingMenu`) offers 1:1 consultation, subscription, webinar, class and digital product. Each opens the existing editor at `offerings/<kind>/new`; editing stays at `offerings/<kind>/<id>/edit`. After a save the editors return to the page that lists that kind (`sellHomeHref()`): the Sell page and tab for a plan, `products` for a digital product. An editor's `offerings` and `<kind>` breadcrumbs open that list too (`sellHomePath()`); for a digital product the first crumb reads Products rather than Sell, so the trail is Products › Digital product › Edit.
 
 ## Organization page tabs
 
@@ -136,17 +148,17 @@ The public site follows the same words as the dashboards.
 
 ## Routes that did not move
 
-The editors under `offerings/<kind>/…` are live routes. The per-booking pages (`appointments/<id>/documents` and `appointments/<id>/recordings`) did not move, and neither did the expert's hosted Recordings and Session documents pages, which only moved into the Studio group. `/dashboard/go/<facet>/sell/…`, `collaborations` and `offerings/…` resolve only to the expert side (`EXPERT_ONLY` in `lib/dashboard/go.ts`). A B2C recording-ready or recording-failed notice goes to the host and every attendee with one link, `/dashboard/go/auto/appointments/<id>/recordings` (`appointmentRecordingsHref()` in `lib/novu/resolve-href.ts`); the go page reads the viewer's side of that booking, so the host lands on the booking's hosted recordings and an attendee on their own, never a host on the buyer Library. An org-hosted notice opens the org Library's Session recordings tab, which lists sessions a member attends or delivers. A no-show bell has one learner recipient and links to their Library tab through `personalHref()`, and document notices link each recipient to their own side of the booking's document thread.
+The editors under `offerings/<kind>/…` are live routes. The per-booking pages (`appointments/<id>/documents` and `appointments/<id>/recordings`) did not move, and neither did the expert's hosted Recordings and Session documents pages, which only moved into the Studio group. `/dashboard/go/<facet>/sell/…`, `products`, `collaborations` and `offerings/…` resolve only to the expert side (`EXPERT_ONLY` in `lib/dashboard/go.ts`). A B2C recording-ready or recording-failed notice goes to the host and every attendee with one link, `/dashboard/go/auto/appointments/<id>/recordings` (`appointmentRecordingsHref()` in `lib/novu/resolve-href.ts`); the go page reads the viewer's side of that booking, so the host lands on the booking's hosted recordings and an attendee on their own, never a host on the buyer Library. An org-hosted notice opens the org Library's Session recordings tab, which lists sessions a member attends or delivers. A no-show bell has one learner recipient and links to their Library tab through `personalHref()`, and document notices link each recipient to their own side of the booking's document thread.
 
 ## Support wording
 
-The support area is called Support cases wherever the viewer sees it: the first tab of Help & support, the breadcrumb, the case back link and the organization and workspace support page titles. The header Help menu has a personal row that links to the viewer's own cases page. Inside an organization that row reads "My support cases", so it is not mistaken for the organization's triage page behind the sidebar's Help & support; everywhere else it reads "Support cases". Booking "Requests" keeps its name. Find still matches the old words "recordings" and "support requests" through synonyms in `lib/dashboard/nav/find-index.ts`.
+The support area is called Support cases wherever the viewer sees it: the first tab of Help & support, the breadcrumb, the case back link and the organization and workspace support page titles. The header Help menu has a personal row that links to the viewer's own cases page. Inside an organization that row reads "My support cases", so it is not mistaken for the organization's triage page behind the sidebar's Help & support; everywhere else it reads "Support cases". Booking "Requests" keeps its name. Find still matches the old words "recordings" and "support requests" through synonyms in `lib/dashboard/nav/find-index.ts`, where each navigation tree can replace a page's shared synonyms with its own (the organization's Sponsorship programs answers to "sponsorship" and "seats", not "webinars" or "classes").
 
 ## Planned phases
 
 1. Glossary and labels: renames only, no route moves (done).
 2. A shared buyer Library with Purchases, Session recordings and Session documents for every role that can buy (done).
-3. A consultant Studio group holding the hosted Recordings and Session documents, and the Sell grouping of offerings into sessions, group programs and products (done).
+3. A consultant Studio group holding the hosted Recordings, Session documents and Products, the Sell grouping of plans into sessions and group programs, and Collaborations in Inbox (done).
 4. The organization regrouping into My work, Sponsor and Host, with Billing and Payouts tabs merged to at most three visible plus a "More" menu (done).
 5. Public pages: expert profile anchor tabs, a products index with replays, breadcrumbs and a public header account menu.
 
@@ -162,7 +174,11 @@ The expert's temporary "My purchases" item (`/dashboard/consultant/<id>/purchase
 
 The public "Recordings Library" at `/explore/recordings` was folded into the Replays tab of `/explore/products`. The index page was deleted and answers 404; `/explore/recordings/<slug>` still serves a replay. Do not link to the old index or add a page back there. The avatar used to be a plain link to Settings with a separate Sign out button; do not restore it.
 
-The consultant's single Offerings item (`offerings`, titled Offerings) held every kind behind a sub-tab bar (`OfferingsTabs`: My offerings, Digital products, Collaborations) and a type pill (All, 1:1, Subscriptions, Webinars, Classes). It was split into the Sell pages and the Collaborations page, and its Business, Library, Grow and Operations groups became Inbox, Calendar, Sell, Studio, Reputation & growth and Settings & help. `/collaborations` used to redirect to Offerings › Collaborations; it is the real page now. The Offerings list URLs (`offerings`, `offerings/products`, `offerings/collaborations`) and `planner` were deleted and answer 404; link to `sell/*` or `collaborations` instead.
+The consultant's single Offerings item (`offerings`, titled Offerings) held every kind behind a sub-tab bar (`OfferingsTabs`: My offerings, Digital products, Collaborations) and a type pill (All, 1:1, Subscriptions, Webinars, Classes). It was split into the Sell pages, Products and the Collaborations page, and its Business, Library, Grow and Operations groups became Inbox, Calendar, Sell, Studio, Reputation & growth and Settings & help. The Offerings list URLs (`offerings`, `offerings/products`, `offerings/collaborations`) and `planner` were deleted and answer 404; link to `sell/*`, `products` or `collaborations` instead.
+
+Sell briefly held four items: the two plan pages, Products (Digital products and Replays tabs) and Collaborations. Products moved to Studio at `products`, Collaborations to Inbox, and the Replays tab with `ReplaysPanel`, `HostedReplays` and `listHostedReplays()` was deleted. `sell/products` and `?tab=replays` on it answer 404 and are not redirected; link to `products` instead. The expert's home entry used to read "Today" and the booking-style Settings section "Booking requests"; they are Home and Booking mode.
+
+The organization's two collaboration pages, Plan collaborators (`collaborations`) and Collaborators (`collaborators`), merged into one Collaborations route, and its Programs page is titled Sponsorship programs with the `programs` route unchanged. The `collaborators` URL was deleted and answers 404.
 
 The organization rail used to group its items as an unlabelled top group (Overview, My Program, Compensation, Appointments, Messages, Booking requests, Plan collaborators), Library, People, Sponsorship (Programs, Contracts), Hosting (Catalog), Money (Billing, Payouts), Operations (Help & support) and Insights. Those became Overview, My work, Messages, Library, People, Sponsor, Host, Insights and Help & support, with every gate unchanged.
 

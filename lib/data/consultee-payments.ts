@@ -17,6 +17,7 @@ import prisma from "@/lib/prisma";
 import { spendableCreditsWhere } from "@/lib/referrals/service";
 import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
 import { refundedPaise } from "@/lib/appointments/seat-payments";
+import { ORG_FUNDED_PAYMENT_METHODS } from "@/lib/payments/org-funded";
 import { isSponsoredPayment } from "@/lib/appointments/payment-display";
 import { lifecycleOf, planOf } from "@/lib/appointments/presentation-input";
 import {
@@ -501,9 +502,8 @@ export interface ConsulteeMoneySummary {
 }
 
 /**
- * #1527 — Home's "This month" facts: what the learner spent this month and
- * the credit balance, without shipping a page of history to get two numbers.
- * Same ownership bind and personal pin as the history.
+ * Home's "This month" facts: what the learner spent this month and the credit
+ * balance. "Spent" is every settled payment on a personal rail, org-tagged or not.
  */
 export async function readConsulteeMoneySummary(args: {
   consulteeId: string;
@@ -521,7 +521,7 @@ export async function readConsulteeMoneySummary(args: {
         deletedAt: null,
         paymentStatus: "SUCCEEDED",
         createdAt: { gte: since },
-        ...scopeToWhereOrgId({ kind: "personal" }),
+        paymentMethod: { notIn: ORG_FUNDED_PAYMENT_METHODS },
       },
       select: {
         amount: true,

@@ -120,13 +120,13 @@ function creditStateBadge(state: CreditVestingState): {
 } {
   switch (state) {
     case "PENDING":
-      return { label: "PENDING", tone: "warning" };
+      return { label: "Pending", tone: "warning" };
     case "VESTED":
-      return { label: "VESTED", tone: "success" };
+      return { label: "Available", tone: "success" };
     case "EXPIRED":
-      return { label: "EXPIRED", tone: "neutral" };
+      return { label: "Expired", tone: "neutral" };
     case "VOID":
-      return { label: "VOID", tone: "critical" };
+      return { label: "Voided", tone: "critical" };
   }
 }
 
@@ -155,7 +155,8 @@ export interface ReferralsPageProps {
    */
   role: "CONSULTANT" | "CONSULTEE";
   /**
-   * Where the tree already lists credits (the consultee's Payments › Credits).
+   * Where the tree already lists credits (the consultee's Billing › Credits);
+   * when set, this page links there instead of repeating the credit history.
    */
   creditsHref?: string;
 }
@@ -645,24 +646,24 @@ export function ReferralsPage({
           columns={referralColumns}
         />
 
-        <CreditHistory
-          error={!!creditsError}
-          onRetry={() => void refetchCredits()}
-          rows={credits?.history ?? []}
-          columns={creditColumns}
-        />
-
-        {creditsHref && (
+        {creditsHref && !creditsError ? (
           <p className="mt-6 text-sm text-muted-foreground">
             Your credits and how you used them are in{" "}
             <Link
               href={creditsHref}
               className="font-medium text-foreground underline underline-offset-4"
             >
-              Payments › Credits
+              Billing › Credits
             </Link>
             .
           </p>
+        ) : (
+          <CreditHistory
+            error={!!creditsError}
+            onRetry={() => void refetchCredits()}
+            rows={credits?.history ?? []}
+            columns={creditColumns}
+          />
         )}
       </DashboardContent>
     </>

@@ -68,6 +68,7 @@ import {
   summarizeSeatPayments,
 } from "@/lib/appointments/seat-payments";
 import {
+  appointmentStatusChip,
   getOccurrenceVMJoinState,
   isDeadOccurrence,
   isDeliberateEnd,
@@ -380,6 +381,11 @@ export function AppointmentDetailClient({
   );
   const { bookingState, moneyState, nextAction } = presentation;
   const postApproval = POST_APPROVAL.has(bookingState.state);
+  // A confirmed booking wears the learner's Appointments chip; other states say why.
+  const headerChip =
+    role === "consultee" && bookingState.state === "CONFIRMED"
+      ? appointmentStatusChip(vm, role)
+      : toneBadge(bookingState.tone, bookingState.label);
   // #1163 — the proposal card below IS the answer surface; the adapter's
   // "Review reschedule request" list affordance would only link back here.
   // "Report issue" opens the same per-appointment support thread as the
@@ -559,11 +565,7 @@ export function AppointmentDetailClient({
                 <h1 className="text-xl font-semibold text-foreground">
                   {vm.title}
                 </h1>
-                <StatusBadge
-                  {...toneBadge(bookingState.tone, bookingState.label)}
-                  withDot
-                  size="sm"
-                />
+                <StatusBadge {...headerChip} withDot size="sm" />
                 {sponsoredBy && (
                   <span className="rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 px-1.5 py-px text-[10px] font-medium">
                     Sponsored · {sponsoredBy}

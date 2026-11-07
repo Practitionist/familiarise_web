@@ -47,9 +47,9 @@ export interface OrganizationNavInput {
 type ItemSpec = NavItem & { show?: boolean };
 
 /**
- * #1527 — the Compensation / Plan collaborators page gate: the EXPERT role,
- * or any member holding a consultant profile (an OWNER can deliver too).
- * Every member the nav offers those pages to passes it.
+ * The Compensation / Collaborations (own plans) page gate: the EXPERT role, or
+ * any member holding a consultant profile (an OWNER can deliver too). Every
+ * member the nav offers those pages to passes it.
  */
 export function deliversForOrg(
   input: Pick<OrganizationNavInput, "role" | "consultantProfileId">,
@@ -97,10 +97,12 @@ export function buildOrganizationNav(
     };
   }
   const can = (surface: OrgSurface) => hasOrgPermission(role, surface);
-  // Nav ⊆ page: the Compensation / Plan collaborators pages admit anyone who
-  // `deliversForOrg`; the nav offers them to experts only, since operators
-  // who deliver read collaborators in Catalog (#1527).
+  // Nav ⊆ page: the Compensation / Collaborations pages admit anyone who
+  // `deliversForOrg`; the nav offers them to experts only.
   const isExpertHost = can("myArrangement.read") && canHost;
+  // One Collaborations route: operators read every hosted plan from the Host
+  // group, experts their own from My work. Never both for one viewer.
+  const operatorCollaborations = canHost && can("catalog.manage");
 
   // Member-shaped: each item is gated, so most members see two or three.
   const myWork: ItemSpec[] = [
@@ -127,11 +129,10 @@ export function buildOrganizationNav(
       show: input.consultantProfileId !== null && canHost,
     },
     {
-      // Experts' own plans; operators read every hosted plan in Host › Collaborators.
-      name: "Plan collaborators",
+      name: "Collaborations",
       icon: Handshake,
       path: "collaborations",
-      show: isExpertHost,
+      show: isExpertHost && !operatorCollaborations,
     },
   ];
 
@@ -148,7 +149,7 @@ export function buildOrganizationNav(
 
   const sponsor: ItemSpec[] = [
     {
-      name: "Programs",
+      name: "Sponsorship programs",
       icon: Briefcase,
       path: "programs",
       show: canSponsor && can("programs.read"),
@@ -175,11 +176,10 @@ export function buildOrganizationNav(
       show: canHost && can("catalog.manage"),
     },
     {
-      // Catalog's gate: operators read every plan the org hosts.
-      name: "Collaborators",
+      name: "Collaborations",
       icon: Handshake,
-      path: "collaborators",
-      show: canHost && can("catalog.manage"),
+      path: "collaborations",
+      show: operatorCollaborations,
     },
     {
       name: "Payouts",
@@ -269,15 +269,13 @@ export const ORGANIZATION_PAGE_LABELS: Record<string, string> = {
   home: "Overview",
   "my-program": "My Program",
   compensation: "Compensation",
-  collaborations: "Plan collaborators",
-  collaborators: "Collaborators",
+  collaborations: "Collaborations",
   appointments: "Appointments",
   messages: "Messages",
   requests: "Booking requests",
   members: "Members",
   catalog: "Catalog",
-  materials: "Materials",
-  programs: "Programs",
+  programs: "Sponsorship programs",
   contracts: "Contracts",
   library: "Library",
   documents: "Session documents",
@@ -297,7 +295,6 @@ export const ORGANIZATION_PAGE_LABELS: Record<string, string> = {
   webhooks: "Webhooks",
   "data-exports": "Data exports",
   new: "New",
-  edit: "Edit",
 };
 
 /**

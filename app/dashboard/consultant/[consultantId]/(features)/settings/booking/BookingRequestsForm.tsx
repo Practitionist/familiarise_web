@@ -13,7 +13,7 @@ import {
 import { useSaveBookingRequestSettings } from "../use-save-booking-request-settings";
 
 /**
- * The Booking requests section's form. It sends only the fields the user
+ * The Booking mode section's form. It sends only the fields the user
  * changed, each with the value it replaces, so a save can never undo a change
  * made in another tab (the server answers SETTINGS_CHANGED instead).
  */
@@ -53,7 +53,7 @@ export function BookingRequestsForm({
     <form
       onSubmit={onSubmit}
       className="space-y-6"
-      aria-label="Booking requests form"
+      aria-label="Booking mode form"
     >
       <Card>
         <CardContent className="p-6 space-y-8">

@@ -14,8 +14,8 @@ import {
 } from "./settings";
 
 /**
- * Saves the Booking requests settings — shared by the Requests page's switch
- * and the Booking requests settings page. Success patches the shared settings
+ * Saves the Booking mode settings — shared by the Requests page's switch
+ * and the Booking mode settings page. Success patches the shared settings
  * query so both surfaces agree; a change made elsewhere refetches it so the
  * screen shows the latest values, and every refusal is toasted plainly.
  */

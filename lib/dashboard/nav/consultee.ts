@@ -62,7 +62,6 @@ export function buildConsulteeNav(consulteeId: string): DashboardNav {
 export const CONSULTEE_PAGE_LABELS: Record<string, string> = {
   home: "Home",
   appointments: "Appointments",
-  resources: "Resources",
   messages: "Messages",
   payments: "Billing",
   referrals: "Invite & earn",
@@ -74,8 +73,8 @@ export const CONSULTEE_PAGE_LABELS: Record<string, string> = {
   documents: "Session documents",
   recordings: "Session recordings",
   feedback: "Product feedback",
-  help: "Help",
   reschedule: "Reschedule",
+  rebook: "Rebook",
   account: "Account",
   profile: "Learning profile",
   notifications: "Notifications",

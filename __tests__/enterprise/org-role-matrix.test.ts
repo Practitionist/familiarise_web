@@ -342,11 +342,6 @@ describe("API guard ↔ page/tab gate parity (#1527)", () => {
       "programs.assign",
       `${DASH}/programs/page.tsx`,
     ],
-    [
-      `${API}/programs/[programId]/auto-enroll/route.ts`,
-      "programs.assign",
-      `${DASH}/programs/page.tsx`,
-    ],
     [`${API}/programs/route.ts`, "programs.read", `${DASH}/programs/page.tsx`],
     [
       `${API}/earnings/route.ts`,

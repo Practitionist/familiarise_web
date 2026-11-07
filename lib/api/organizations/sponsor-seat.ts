@@ -20,8 +20,8 @@ export type AssigneeRefusal =
 
 /**
  * A sponsored seat (and org money) goes only to an ACTIVE LEARNER of the org,
- * never to the operator assigning it. Assignment, auto-enroll and checkout's
- * org funding all decide through here; `actorMembershipId` is null at checkout.
+ * never to the operator assigning it. Assignment and checkout's org funding
+ * both decide through here; `actorMembershipId` is null at checkout.
  */
 export function checkAssignee<
   M extends { id: string; status: string; role: string },

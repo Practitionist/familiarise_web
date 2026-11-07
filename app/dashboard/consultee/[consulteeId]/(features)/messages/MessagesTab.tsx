@@ -9,6 +9,7 @@ import { ChatSurface } from "@/components/chat/ChatSurface";
 export default function MessagesTab() {
   return (
     <div className="-m-4 h-dashboard-fill overflow-hidden border-border bg-card sm:-m-6 lg:-m-8">
+      <h1 className="sr-only">Messages</h1>
       <ChatSurface />
     </div>
   );

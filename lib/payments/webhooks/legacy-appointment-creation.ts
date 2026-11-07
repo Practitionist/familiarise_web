@@ -19,10 +19,8 @@ import {
   recordParticipants,
 } from "@/lib/booking/participants";
 import { appendCreationHistory } from "@/lib/booking/transitions";
-import {
-  isOrgFundedPaymentMethod,
-  seatPayerOrganizationId,
-} from "@/lib/data/org-sponsored-seats";
+import { seatPayerOrganizationId } from "@/lib/data/org-sponsored-seats";
+import { isOrgFundedPaymentMethod } from "@/lib/payments/org-funded";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
 import { reportSentryError } from "@/lib/observability/report";

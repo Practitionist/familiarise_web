@@ -283,33 +283,3 @@ export const listPublicReplayCards = unstable_cache(
   ["public-replay-cards"],
   { revalidate: 300, tags: [PUBLIC_RECORDINGS_TAG] },
 );
-
-/**
- * The expert's own recordings listed for sale, whatever their plan's public
- * visibility; the caller has already checked the viewer may see this expert.
- */
-export async function listHostedReplays(
-  consultantProfileId: string,
-): Promise<RecordingListing[]> {
-  const rows = await prisma.recording.findMany({
-    where: {
-      listingStatus: "PUBLISHED",
-      meeting: {
-        occurrence: {
-          appointment: {
-            OR: [
-              { webinar: { webinarPlan: { consultantProfileId } } },
-              { class: { classPlan: { consultantProfileId } } },
-            ],
-          },
-        },
-      },
-    },
-    select: recordingListingSelect,
-    orderBy: [{ publishedAt: "desc" }, { id: "asc" }],
-    take: 48,
-  });
-  return rows
-    .map(flattenListing)
-    .filter((x): x is RecordingListing => x !== null);
-}

@@ -30,10 +30,7 @@ import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import { useNowTick } from "@/hooks/use-now-tick";
 import { useSession } from "@/lib/auth-client";
 import { operatorOpsHref } from "@/lib/backoffice/booking-href";
-import {
-  getParticipantManagementUrl,
-  supportsParticipantManagement,
-} from "./utils/participantHelpers";
+import { getParticipantManagementUrl } from "./utils/participantHelpers";
 import { useConsultantEventActions } from "./components/useConsultantEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
 import {
@@ -358,12 +355,14 @@ export function useConsultantAppointmentsAdapter(
         onClick: () => openTimings(vm),
       });
     }
-    if (appointment && supportsParticipantManagement(appointment)) {
+    const participantsUrl = appointment
+      ? getParticipantManagementUrl(appointment, consultantId)
+      : null;
+    if (participantsUrl) {
       items.push({
         key: "participants",
         label: "Participants",
-        onClick: () =>
-          router.push(getParticipantManagementUrl(appointment, consultantId)),
+        onClick: () => router.push(participantsUrl),
       });
     }
     const mayReschedule = canOfferReschedule(

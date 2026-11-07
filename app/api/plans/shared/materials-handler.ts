@@ -242,7 +242,7 @@ async function auditOrgMaterialChange(
       targetMembershipId: expert?.id ?? null,
       category: "CATALOG",
       action: change.action,
-      description: `Plan material ${change.fileName}: ${change.action}`,
+      description: `Plan material ${change.fileName} ${CHANGE_KIND[change.action]}`,
       details: {
         planType: actor.planType,
         planId: actor.planId,

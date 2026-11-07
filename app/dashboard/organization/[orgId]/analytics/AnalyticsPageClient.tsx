@@ -522,6 +522,15 @@ export function AnalyticsPageClient({ orgId }: { orgId: string }) {
           />
         </StatRow>
         {seesMoney && <MoneyStats data={data} />}
+        {canReadQuality && feedbackQuery.isError && !quality && (
+          <Section title="Session quality (anonymized CSAT)">
+            <ErrorState
+              title="Couldn't load session quality"
+              description="The rest of this page loaded. Retry to see member ratings."
+              onRetry={() => void feedbackQuery.refetch()}
+            />
+          </Section>
+        )}
         {canReadQuality && quality && (
           <Section
             title="Session quality (anonymized CSAT)"

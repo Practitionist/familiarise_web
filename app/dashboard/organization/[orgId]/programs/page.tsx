@@ -86,8 +86,14 @@ import {
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
-import { humanizeEnum, type Tone } from "@/lib/ui/tone";
+import { ErrorState } from "@/components/dashboard/ErrorState";
+import {
+  MEMBER_ROLE_LABEL,
+  PROGRAM_STATUS_LABEL,
+  PROGRAM_STATUS_TONE,
+  PROGRAM_TYPE_LABEL,
+} from "@/lib/labels/org-labels";
+import { humanizeEnum } from "@/lib/ui/tone";
 
 // ---------------------------------------------------------------------------
 // Types — shaped to match GET /api/organizations/[orgId]/programs
@@ -451,17 +457,11 @@ async function endAssignment(
   }
 }
 
-const PROGRAM_STATUS_TONE: Record<string, Tone> = {
-  ACTIVE: "success",
-  PAUSED: "caution",
-  CANCELLED: "neutral",
-};
-
-function ProgramStatusBadge({ status }: Readonly<{ status: string }>) {
+function ProgramStatusBadge({ status }: Readonly<{ status: ProgramStatus }>) {
   return (
     <StatusBadge
-      label={humanizeEnum(status)}
-      tone={PROGRAM_STATUS_TONE[status] ?? "neutral"}
+      label={PROGRAM_STATUS_LABEL[status]}
+      tone={PROGRAM_STATUS_TONE[status]}
     />
   );
 }
@@ -502,13 +502,13 @@ const PROGRAM_TYPE_META: Record<
   { label: string; description: string; available: boolean }
 > = {
   LICENSED_SEAT: {
-    label: "Licensed seat",
+    label: PROGRAM_TYPE_LABEL.LICENSED_SEAT,
     description:
       "Per-seat licence. Each seat covers N engagements (calendar occurrences) per cycle, or unlimited.",
     available: true,
   },
   CREDIT_POOL: {
-    label: "Credit pool",
+    label: PROGRAM_TYPE_LABEL.CREDIT_POOL,
     description:
       "Pool with a per-cycle credit cap (1 credit = ₹1). Each booking debits credits up to the cap.",
     available: true,
@@ -1233,7 +1233,7 @@ function CreateProgramDialog({
                 <SelectValue
                   placeholder={
                     contracts.length === 0
-                      ? "No ACTIVE contracts — create one first"
+                      ? "No active contracts. Create one first"
                       : "Pick a contract"
                   }
                 />
@@ -2636,22 +2636,26 @@ export default function OrgProgramsPage({
 
   const programList = programs.data?.data ?? [];
   const contractList = contracts.data?.data ?? [];
+  const contractsReady = contracts.isSuccess;
+  const contractsFailed = canManage && contracts.isError;
 
   return (
     <>
       <DashboardHeader
-        title="Programs"
+        title="Sponsorship programs"
         subtitle="Typed commercial offerings attached to a Contract. Each Program controls what's covered per assigned member."
         actions={
           canManage && (
             <Button
               size="sm"
               onClick={() => setDialogOpen(true)}
-              disabled={contractList.length === 0}
+              disabled={!contractsReady || contractList.length === 0}
               title={
-                contractList.length === 0
-                  ? "Create an ACTIVE contract before attaching a Program."
-                  : undefined
+                contractsFailed
+                  ? "Couldn't load your contracts. Retry before creating a program."
+                  : contractsReady && contractList.length === 0
+                    ? "Create an active contract before attaching a program."
+                    : undefined
               }
             >
               <Plus className="h-4 w-4 mr-1" /> New Program
@@ -2665,7 +2669,9 @@ export default function OrgProgramsPage({
             <CardTitle className="text-base">
               {programs.isLoading
                 ? "Loading…"
-                : `${programList.length} program${programList.length === 1 ? "" : "s"}`}
+                : programs.isError && !programs.data
+                  ? "Programs unavailable"
+                  : `${programList.length} program${programList.length === 1 ? "" : "s"}`}
             </CardTitle>
             <CardDescription>
               Active programs show their seat / credit config, current
@@ -2678,23 +2684,62 @@ export default function OrgProgramsPage({
             {rowStatusError && (
               <p className="mb-3 text-sm text-red-600">{rowStatusError}</p>
             )}
+            {programs.isError && programs.data && (
+              <p
+                role="alert"
+                className="mb-3 flex flex-wrap items-center gap-2 text-sm text-amber-700"
+              >
+                Couldn&apos;t refresh programs; showing the last loaded list.
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={programs.isFetching}
+                  onClick={() => void programs.refetch()}
+                >
+                  Retry
+                </Button>
+              </p>
+            )}
+            {canManage && contractsFailed && (
+              <p
+                role="alert"
+                className="mb-3 flex flex-wrap items-center gap-2 text-sm text-amber-700"
+              >
+                Couldn&apos;t load your active contracts, so new programs
+                can&apos;t be created right now.
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={contracts.isFetching}
+                  onClick={() => void contracts.refetch()}
+                >
+                  Retry
+                </Button>
+              </p>
+            )}
             {programs.isLoading ? (
               <div className="flex items-center gap-2 text-sm text-zinc-500">
                 <Loader2 className="h-4 w-4 animate-spin" /> Loading…
               </div>
+            ) : programs.isError && !programs.data ? (
+              <ErrorState
+                title="We couldn't load programs"
+                description="Your programs are safe. Check your connection and try again."
+                onRetry={() => void programs.refetch()}
+              />
             ) : programList.length === 0 ? (
               <div className="text-center py-12 text-zinc-500">
                 <Briefcase className="h-10 w-10 mx-auto mb-3 text-zinc-300" />
                 <p className="text-sm">No programs yet.</p>
-                {canManage && contractList.length > 0 && (
+                {canManage && contractsReady && contractList.length > 0 && (
                   <p className="text-xs mt-2">
                     Click <strong>New Program</strong> to create one against an
                     active contract.
                   </p>
                 )}
-                {contractList.length === 0 && canManage && (
+                {canManage && contractsReady && contractList.length === 0 && (
                   <p className="text-xs mt-2">
-                    Create an ACTIVE contract first — Programs must attach to
+                    Create an active contract first. Programs must attach to
                     one.
                   </p>
                 )}
