@@ -148,7 +148,7 @@ stateDiagram-v2
   SUCCEEDED --> [*]
 ```
 
-The kinds are `COLLAB_REVOKE`, `EVENT_CHANNEL_REMOVE`, `DM_REMOVE` and `ORG_REVOKE`, plus `ERASURE_REVOKE` for DPDP erasure, which is written by the erasure scrub rather than by `access-revocation.ts`. The attempt cap is `MAX_ATTEMPTS = 6` in `scripts/cleanup/retry-moderation-enforcement.ts`, and the waits between attempts come from `lib/retry/backoff.ts`: 1 minute, 5 minutes, 30 minutes, 2 hours, then 8 hours.
+The kinds are `COLLAB_REVOKE`, `EVENT_CHANNEL_REMOVE`, `DM_REMOVE`, `ORG_REVOKE` and `CALL_MEMBER_REMOVE` (the appointment whose unended calls the user leaves), plus `ERASURE_REVOKE` for DPDP erasure, which is written by the erasure scrub rather than by `access-revocation.ts`. The attempt cap is `MAX_ATTEMPTS = 6` in `scripts/cleanup/retry-moderation-enforcement.ts`, and the waits between attempts come from `lib/retry/backoff.ts`: 1 minute, 5 minutes, 30 minutes, 2 hours, then 8 hours.
 
 ## 5. Sequence diagrams
 

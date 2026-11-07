@@ -2,10 +2,15 @@ import type { CollaboratorType, StreamRevocationKind } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import {
   getStreamChatClient,
+  getStreamVideoClient,
   isExpectedStreamError,
+  isStreamConfigured,
 } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { getDmChannelId } from "@/lib/stream-utils";
+import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import { MAX_CALL_DURATION_MS } from "@/lib/meetings/duration-cap";
+import { liveParticipant } from "@/lib/booking/participants";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   isDmChannelIdEligible,
@@ -109,11 +114,14 @@ export interface EndedBookingAccess {
   dmCounterpartUserIds: string[];
   /** The scope the booking's DM lives in; null is the personal thread. */
   dmOrganizationId: string | null;
+  /** The booking's appointment, whose unended calls the users also leave. */
+  appointmentId?: string | null;
 }
 
 /**
- * Removes the users from the event channel and from every DM the ended booking
- * no longer justifies. Called after the ending commit; a Stream failure queues a retry.
+ * Removes the users from the event channel, from every DM the ended booking no
+ * longer justifies and from the booking's unended calls. Called after the
+ * ending commit; a Stream failure queues a retry.
  */
 export async function revokeEndedBookingChatAccess(
   input: EndedBookingAccess,
@@ -121,6 +129,18 @@ export async function revokeEndedBookingChatAccess(
   const userIds = Array.from(new Set(input.userIds.filter(Boolean)));
   if (userIds.length === 0) return;
   const retries: AccessRevocationTarget[] = [];
+
+  const appointmentId = input.appointmentId;
+  if (appointmentId) {
+    const failed = await removeFromAppointmentCalls(appointmentId, userIds);
+    for (const userId of failed) {
+      retries.push({
+        kind: "CALL_MEMBER_REMOVE",
+        userId,
+        planId: appointmentId,
+      });
+    }
+  }
 
   if (input.event) {
     const { type, id } = input.event;
@@ -201,6 +221,59 @@ export async function revokeEndedBookingChatAccess(
   await enqueueOrReport(dedupeTargets(retries), "booking.revokeChatAccess");
 }
 
+/** Stream caps one member update at 100 users. */
+const CALL_MEMBER_CHUNK = 100;
+const MAX_CALLS_PER_REVOCATION = 50;
+
+/**
+ * Drops the users from the appointment's unended calls: `call_member` alone lets
+ * a client join at Stream, and `/join` re-adds anyone Postgres still admits.
+ * Returns the users whose removal did not land.
+ */
+async function removeFromAppointmentCalls(
+  appointmentId: string,
+  userIds: string[],
+): Promise<string[]> {
+  if (!isStreamConfigured()) return [];
+  let callIds: string[];
+  try {
+    const occurrences = await prisma.appointmentOccurrence.findMany({
+      where: {
+        appointmentId,
+        endsAt: { gt: new Date(Date.now() - MAX_CALL_DURATION_MS) },
+        meeting: { is: { endedAt: null } },
+      },
+      select: { meeting: { select: { streamCallId: true } } },
+      take: MAX_CALLS_PER_REVOCATION,
+    });
+    callIds = occurrences.flatMap((o) =>
+      o.meeting ? [o.meeting.streamCallId] : [],
+    );
+  } catch (error) {
+    streamLogger.warn("Call membership lookup failed; queued for retry", {
+      appointmentId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return userIds;
+  }
+  const failed = new Set<string>();
+  const video = getStreamVideoClient().video;
+  for (const callId of callIds) {
+    for (let i = 0; i < userIds.length; i += CALL_MEMBER_CHUNK) {
+      const chunk = userIds.slice(i, i + CALL_MEMBER_CHUNK);
+      try {
+        await video
+          .call(STREAM_CALL_TYPE, toCallId(callId))
+          .updateCallMembers({ remove_members: chunk });
+      } catch (error) {
+        if (isExpectedStreamError(error)) continue;
+        for (const userId of chunk) failed.add(userId);
+      }
+    }
+  }
+  return Array.from(failed);
+}
+
 function dedupeTargets(
   targets: AccessRevocationTarget[],
 ): AccessRevocationTarget[] {
@@ -264,7 +337,21 @@ export async function redriveAccessRevocation(
       return redriveDmRemoval(row);
     case "ORG_REVOKE":
       return redriveOrgRevocation(row);
+    case "CALL_MEMBER_REMOVE":
+      return redriveCallMembershipRemoval(row);
   }
+}
+
+async function redriveCallMembershipRemoval(
+  row: AccessRevocationRow,
+): Promise<string | null> {
+  const readmitted = await prisma.appointmentParticipant.findFirst({
+    where: { appointmentId: row.planId, ...liveParticipant(row.userId) },
+    select: { id: true },
+  });
+  if (readmitted) return null;
+  const failed = await removeFromAppointmentCalls(row.planId, [row.userId]);
+  return failed.length === 0 ? null : "Call membership removal failed";
 }
 
 async function redriveCollaboratorRevocation(
@@ -344,10 +431,16 @@ async function redriveOrgRevocation(
   return outcome.complete ? null : outcome.failures.join("; ");
 }
 
+interface EventAccessContext {
+  counterparts: string[];
+  organizationId: string | null;
+  appointmentId: string | null;
+}
+
 async function loadEventDmContext(
   type: "webinar" | "class",
   eventId: string,
-): Promise<{ counterparts: string[]; organizationId: string | null }> {
+): Promise<EventAccessContext> {
   const planSelect = {
     organizationId: true,
     consultantProfile: { select: { userId: true } },
@@ -365,18 +458,20 @@ async function loadEventDmContext(
       ? await prisma.webinar.findUnique({
           where: { id: eventId },
           select: {
-            appointment: { select: { organizationId: true } },
+            appointment: { select: { id: true, organizationId: true } },
             webinarPlan: { select: planSelect },
           },
         })
       : await prisma.class.findUnique({
           where: { id: eventId },
           select: {
-            appointment: { select: { organizationId: true } },
+            appointment: { select: { id: true, organizationId: true } },
             classPlan: { select: planSelect },
           },
         });
-  if (!row) return { counterparts: [], organizationId: null };
+  if (!row) {
+    return { counterparts: [], organizationId: null, appointmentId: null };
+  }
   const plan = "webinarPlan" in row ? row.webinarPlan : row.classPlan;
   const counterparts = [
     plan.consultantProfile?.userId,
@@ -386,18 +481,20 @@ async function loadEventDmContext(
     counterparts,
     organizationId:
       plan.organizationId ?? row.appointment?.organizationId ?? null,
+    appointmentId: row.appointment?.id ?? null,
   };
 }
 
-/** Ends the users' access to a webinar or class channel and to the presenter DMs only that seat justified. */
+/** Ends the users' access to a webinar or class channel, its calls and the presenter DMs only that seat justified. */
 export async function revokeEndedEventChatAccess(
   type: "webinar" | "class",
   eventId: string,
   userIds: string[],
 ): Promise<void> {
-  let context: { counterparts: string[]; organizationId: string | null } = {
+  let context: EventAccessContext = {
     counterparts: [],
     organizationId: null,
+    appointmentId: null,
   };
   try {
     context = await loadEventDmContext(type, eventId);
@@ -415,5 +512,6 @@ export async function revokeEndedEventChatAccess(
     event: { type, id: eventId },
     dmCounterpartUserIds: context.counterparts,
     dmOrganizationId: context.organizationId,
+    appointmentId: context.appointmentId,
   });
 }

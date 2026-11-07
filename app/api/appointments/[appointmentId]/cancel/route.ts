@@ -1308,7 +1308,7 @@ export async function POST(
       );
     }
 
-    // Chat access ends with the booking, synchronously; a Stream failure queues a retry.
+    // Chat and call access end with the booking, synchronously; a Stream failure queues a retry.
     if (eventKind && eventId && attendees) {
       await revokeEndedEventChatAccess(eventKind, eventId, attendees.all);
     } else if (consulteeUserId && consultantUserId) {
@@ -1320,6 +1320,7 @@ export async function POST(
           subscriptionPlan: appointment.subscription?.subscriptionPlan,
           appointment,
         }),
+        appointmentId,
       });
     }
 

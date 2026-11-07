@@ -8341,6 +8341,8 @@ enum StreamRevocationKind {
   EVENT_CHANNEL_REMOVE
   DM_REMOVE
   ORG_REVOKE
+  /// planId is the appointment whose unended calls the user leaves.
+  CALL_MEMBER_REMOVE
 }
 
 enum ErasureVendor {

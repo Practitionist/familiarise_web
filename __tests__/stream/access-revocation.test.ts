@@ -6,6 +6,7 @@ const mockRemoveMembers = jest.fn();
 const mockRevocationQueryChannels = jest.fn();
 const mockReport = jest.fn();
 const mockIsDmContextEligible = jest.fn();
+const mockRevocationUpdateCallMembers = jest.fn();
 
 const mockRevocationPrisma = {
   streamRevocationRetry: {
@@ -18,6 +19,12 @@ const mockRevocationPrisma = {
   classPlan: { findUnique: jest.fn() },
   membership: { findFirst: jest.fn() },
   user: { findMany: jest.fn(async () => []) },
+  appointmentOccurrence: {
+    findMany: jest.fn(async (): Promise<unknown[]> => []),
+  },
+  appointmentParticipant: {
+    findFirst: jest.fn(async (): Promise<unknown> => null),
+  },
 };
 
 jest.mock("../../lib/prisma", () => ({
@@ -31,7 +38,15 @@ jest.mock("../../lib/stream-client", () => ({
     }),
     queryChannels: (...args: unknown[]) => mockRevocationQueryChannels(...args),
   }),
-  getStreamVideoClient: jest.fn(),
+  getStreamVideoClient: () => ({
+    video: {
+      call: (type: string, id: string) => ({
+        updateCallMembers: (payload: unknown) =>
+          mockRevocationUpdateCallMembers(type, id, payload),
+      }),
+    },
+  }),
+  isStreamConfigured: () => true,
   withStreamCircuitBreaker: <T>(fn: () => Promise<T>) => fn(),
   StreamUnavailableError: class StreamUnavailableError extends Error {},
   isExpectedStreamError: () => false,
@@ -154,6 +169,130 @@ describe("revocation on booking cancellation", () => {
       ],
       skipDuplicates: true,
     });
+  });
+});
+
+describe("call membership on booking end", () => {
+  beforeEach(() => {
+    mockRevocationUpdateCallMembers.mockResolvedValue({});
+    mockRevocationPrisma.appointmentOccurrence.findMany.mockResolvedValue([
+      { meeting: { streamCallId: "occurrence-o1" } },
+      { meeting: null },
+    ]);
+  });
+
+  it("removes the attendee from the event's unended calls", async () => {
+    mockRevocationPrisma.webinar.findUnique.mockResolvedValue({
+      ...webinarRoster,
+      appointment: { ...webinarRoster.appointment, id: "appt-1" },
+    });
+    const { revokeEndedEventChatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    await revokeEndedEventChatAccess("webinar", "w1", ["attendee-1"]);
+
+    expect(
+      mockRevocationPrisma.appointmentOccurrence.findMany,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          appointmentId: "appt-1",
+          meeting: { is: { endedAt: null } },
+        }),
+      }),
+    );
+    expect(mockRevocationUpdateCallMembers).toHaveBeenCalledTimes(1);
+    expect(mockRevocationUpdateCallMembers).toHaveBeenCalledWith(
+      "default",
+      "occurrence-o1",
+      { remove_members: ["attendee-1"] },
+    );
+  });
+
+  it("queues CALL_MEMBER_REMOVE when Stream refuses the removal", async () => {
+    mockRevocationUpdateCallMembers.mockRejectedValue(
+      new Error("Stream is down"),
+    );
+    const { revokeEndedBookingChatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    await revokeEndedBookingChatAccess({
+      userIds: ["client-1"],
+      dmCounterpartUserIds: [],
+      dmOrganizationId: null,
+      appointmentId: "appt-1",
+    });
+
+    expect(
+      mockRevocationPrisma.streamRevocationRetry.createMany,
+    ).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          kind: "CALL_MEMBER_REMOVE",
+          userId: "client-1",
+          planId: "appt-1",
+        }),
+      ],
+      skipDuplicates: true,
+    });
+  });
+
+  it("leaves calls alone when no appointment is given", async () => {
+    const { revokeEndedBookingChatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    await revokeEndedBookingChatAccess({
+      userIds: ["client-1"],
+      dmCounterpartUserIds: [],
+      dmOrganizationId: null,
+    });
+
+    expect(
+      mockRevocationPrisma.appointmentOccurrence.findMany,
+    ).not.toHaveBeenCalled();
+    expect(mockRevocationUpdateCallMembers).not.toHaveBeenCalled();
+  });
+
+  const retryRow = {
+    kind: "CALL_MEMBER_REMOVE" as const,
+    userId: "client-1",
+    planId: "appt-1",
+    planType: null,
+    counterpartUserId: null,
+    createdAt: new Date(),
+  };
+
+  it("redrive skips a user Postgres re-admitted to the booking", async () => {
+    mockRevocationPrisma.appointmentParticipant.findFirst.mockResolvedValue({
+      id: "seat-2",
+    });
+    const { redriveAccessRevocation } =
+      await import("../../lib/stream/access-revocation");
+
+    await expect(redriveAccessRevocation(retryRow)).resolves.toBeNull();
+    expect(mockRevocationUpdateCallMembers).not.toHaveBeenCalled();
+  });
+
+  it("redrive removes a user who holds no live seat, and reports a failure", async () => {
+    mockRevocationPrisma.appointmentParticipant.findFirst.mockResolvedValue(
+      null,
+    );
+    const { redriveAccessRevocation } =
+      await import("../../lib/stream/access-revocation");
+
+    await expect(redriveAccessRevocation(retryRow)).resolves.toBeNull();
+    expect(mockRevocationUpdateCallMembers).toHaveBeenCalledWith(
+      "default",
+      "occurrence-o1",
+      { remove_members: ["client-1"] },
+    );
+
+    mockRevocationUpdateCallMembers.mockRejectedValue(
+      new Error("Stream is down"),
+    );
+    await expect(redriveAccessRevocation(retryRow)).resolves.toBe(
+      "Call membership removal failed",
+    );
   });
 });
 
