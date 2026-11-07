@@ -174,6 +174,7 @@ model User {
   verificationDocumentsUploaded  ProfileVerificationDocument[]    @relation("VerificationDocumentUploader")
   // #1778 — the held windows this user asked to hear about when they free.
   windowBackupInterests          WindowBackupInterest[]
+  eventWaitlists                 AppointmentWaitlist[]
   supportCasesRequested          SupportCase[]                    @relation("SupportCaseRequester")
   supportCasesSubmitted          SupportCase[]                    @relation("SupportCaseSubmitter")
   supportCasesAssigned           SupportCase[]                    @relation("SupportCaseAssignee")
@@ -4420,6 +4421,9 @@ model WebinarPlan {
   price                           BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency                   Currency  @default(INR)
   certificateProvided             Boolean   @default(false)
+  waitlistEnabled                 Boolean   @default(true)
+  // null = MAX_GROUP_SESSION_PARTICIPANTS; the 200 ceiling is enforced in Zod.
+  waitlistMax                     Int?
   recordingEnabled                Boolean   @default(false) // Allow consultant to record sessions
   // Attendees see recordings of every run of this plan, not only the run they joined.
   shareRecordingsWithAllAttendees Boolean   @default(false)
@@ -4542,6 +4546,9 @@ model ClassPlan {
   price                        BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency                Currency         @default(INR)
   certificateProvided          Boolean          @default(false)
+  waitlistEnabled              Boolean          @default(true)
+  // null = MAX_GROUP_SESSION_PARTICIPANTS; the 200 ceiling is enforced in Zod.
+  waitlistMax                  Int?
   recordingEnabled             Boolean          @default(false) // Allow consultant to record sessions
   durationInMonths             Int              @default(1) // Duration in months
   // #1011 — was `meetingsPerWeek`. See SubscriptionPlan.sessionsPerWeek.
@@ -4797,6 +4804,33 @@ model WindowBackupInterest {
   @@index([userId, status])
 }
 
+// Notify-only interest in a sold-out webinar or class seat; nothing is reserved.
+model AppointmentWaitlist {
+  id String @id @default(cuid())
+
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  appointmentId String
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  // WEBINAR or CLASS (sidecar CHECK); planId is the WebinarPlan or ClassPlan id.
+  planKind AppointmentsType
+  planId   String
+
+  status     BackupInterestStatus @default(WAITING)
+  createdAt  DateTime             @default(now()) @db.Timestamptz
+  // Drives the 30-day purge of EXPIRED and BOOKED rows.
+  updatedAt  DateTime             @updatedAt @db.Timestamptz
+  notifiedAt DateTime?            @db.Timestamptz
+  bookedAt   DateTime?            @db.Timestamptz
+
+  @@unique([appointmentId, userId])
+  @@index([appointmentId, status, createdAt])
+  @@index([planKind, planId, status])
+  @@index([userId, status])
+}
+
 // #1778 — WAITING until the window frees (NOTIFIED), the learner books it
 // (BOOKED), or it passes or is withdrawn (EXPIRED).
 enum BackupInterestStatus {
@@ -4863,6 +4897,9 @@ model Appointment {
   // #1319 A9 / A12 — shadow-written participant edge + append-only status log.
   participants  AppointmentParticipant[]
   statusHistory BookingStatusHistory[]
+
+  // Notify-me rows for a sold-out webinar or class seat.
+  eventWaitlist AppointmentWaitlist[]
 
   // #674 personal-vs-org scope split — set at checkout for org-context bookings.
   organization   Organization? @relation("AppointmentByOrg", fields: [organizationId], references: [id], onDelete: SetNull)

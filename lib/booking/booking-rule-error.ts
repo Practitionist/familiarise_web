@@ -44,7 +44,13 @@ export type BookingRuleCode =
   | "REQUEST_TOO_SOON"
   | "USE_CANCEL_ENDPOINT"
   | "PLACE_RELEASED_SESSIONS"
-  | "PAYMENT_BUSY";
+  | "PAYMENT_BUSY"
+  | "EVENT_NOT_FOUND"
+  | "EVENT_CLOSED"
+  | "EVENT_NOT_FULL"
+  | "WAITLIST_DISABLED"
+  | "WAITLIST_FULL"
+  | "EVENT_WAITLIST_CAP";
 
 export class BookingRuleError extends Error {
   constructor(
