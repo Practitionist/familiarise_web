@@ -30,6 +30,10 @@ interface WebinarDetailsProps {
   readonly webinarId?: string;
   /** The signed-in viewer holds a seat on this webinar; read by the server. */
   readonly isRegistered: boolean;
+  /** The viewer is on this webinar's notify-me list; read by the server. */
+  readonly isWaiting: boolean;
+  /** Who the server rendered for, so the client can refresh on a mismatch. */
+  readonly viewerUserId: string | null;
 }
 
 export function WebinarDetails({
@@ -37,6 +41,8 @@ export function WebinarDetails({
   nextSession,
   webinarId,
   isRegistered,
+  isWaiting,
+  viewerUserId,
 }: WebinarDetailsProps) {
   const { formatPrice } = useCurrency();
   const [timeZone, setTimeZone] = useState("UTC");
@@ -310,6 +316,9 @@ export function WebinarDetails({
                 }
                 sessionStatus={sessionStatus}
                 isRegistered={isRegistered}
+                isWaiting={isWaiting}
+                viewerUserId={viewerUserId}
+                waitlistEnabled={plan.waitlistEnabled}
                 seatsTaken={
                   plan.webinars?.[0]?.appointment?._count.participants ?? 0
                 }

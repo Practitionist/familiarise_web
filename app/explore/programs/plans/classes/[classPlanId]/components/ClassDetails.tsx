@@ -22,11 +22,17 @@ interface ClassDetailsProps {
   readonly plan: TClassPlanDetailsData;
   /** Batches' appointments the signed-in viewer holds a seat on; read by the server. */
   readonly enrolledAppointmentIds: readonly string[];
+  /** Batches' appointments the viewer is on the notify-me list of; read by the server. */
+  readonly waitingAppointmentIds: readonly string[];
+  /** Who the server rendered for, so the client can refresh on a mismatch. */
+  readonly viewerUserId: string | null;
 }
 
 export function ClassDetails({
   plan,
   enrolledAppointmentIds,
+  waitingAppointmentIds,
+  viewerUserId,
 }: ClassDetailsProps) {
   const { formatPrice } = useCurrency();
   const [userTimeZone, setUserTimeZone] = useState("UTC");
@@ -149,6 +155,8 @@ export function ClassDetails({
                   cards={cards}
                   zone={userTimeZone}
                   enrolledAppointmentIds={enrolledAppointmentIds}
+                  waitingAppointmentIds={waitingAppointmentIds}
+                  viewerUserId={viewerUserId}
                 />
               </CardContent>
             </Card>
@@ -252,6 +260,9 @@ export function ClassDetails({
                 plan={plan}
                 maxParticipants={plan.maxParticipants ?? undefined}
                 enrolledAppointmentIds={enrolledAppointmentIds}
+                waitingAppointmentIds={waitingAppointmentIds}
+                viewerUserId={viewerUserId}
+                waitlistEnabled={plan.waitlistEnabled}
                 batch={cards.find((c) => c.canEnrol) ?? cards[0]}
               />
             </div>

@@ -219,6 +219,8 @@ export class ClassService {
       sessionDurationInHours: plan?.sessionDurationInHours,
       maxParticipants: plan?.maxParticipants ?? 1,
       certificateProvided: plan?.certificateProvided,
+      waitlistEnabled: plan?.waitlistEnabled,
+      waitlistMax: plan?.waitlistMax,
       ...recordingFields,
       emailSupport: plan?.emailSupport,
       language: plan?.language ?? undefined,

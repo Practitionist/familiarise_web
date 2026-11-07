@@ -1,3 +1,5 @@
+import { BackupInterestStatus } from "@prisma/client";
+
 import { liveParticipant } from "@/lib/booking/participants";
 import prisma from "@/lib/prisma";
 
@@ -21,4 +23,23 @@ export async function viewerSeatAppointmentIds(
     select: { appointmentId: true },
   });
   return seats.map((seat) => seat.appointmentId);
+}
+
+/** Which of these appointments the viewer is on the notify-me list of, read the same way. */
+export async function viewerWaitlistAppointmentIds(
+  userId: string | null | undefined,
+  appointmentIds: readonly string[],
+): Promise<string[]> {
+  if (!userId || appointmentIds.length === 0) return [];
+  const rows = await prisma.appointmentWaitlist.findMany({
+    where: {
+      userId,
+      appointmentId: { in: [...appointmentIds] },
+      status: {
+        in: [BackupInterestStatus.WAITING, BackupInterestStatus.NOTIFIED],
+      },
+    },
+    select: { appointmentId: true },
+  });
+  return rows.map((row) => row.appointmentId);
 }

@@ -6,6 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useSession } from "@/lib/auth-client";
+import { NotifyMeButton } from "@/components/booking/NotifyMeButton";
+import { useRefreshOnViewerChange } from "@/hooks/useRefreshOnViewerChange";
 import type { BatchCard } from "@/lib/booking/batch-cards";
 import {
   buildSessionsFromAppointment,
@@ -133,6 +135,7 @@ function BatchPanel({
   zone,
   userId,
   enrolledAppointmentIds,
+  waitingAppointmentIds,
 }: Readonly<{
   plan: Plan;
   batch: Batch;
@@ -140,6 +143,7 @@ function BatchPanel({
   zone: string;
   userId: string | undefined;
   enrolledAppointmentIds: readonly string[];
+  waitingAppointmentIds: readonly string[];
 }>) {
   const { formatPrice } = useCurrency();
   const checkoutUrl = `/checkout/plans/class/${plan.id}?eventId=${card.classId}`;
@@ -147,6 +151,13 @@ function BatchPanel({
     !!userId &&
     !!batch.appointment &&
     enrolledAppointmentIds.includes(batch.appointment.id);
+  const canWait =
+    !enrolled &&
+    card.isFull &&
+    card.enrolment.state === "open" &&
+    batch.status === "SCHEDULED" &&
+    plan.waitlistEnabled &&
+    !!batch.appointment;
   const href = userId
     ? checkoutUrl
     : `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`;
@@ -175,14 +186,20 @@ function BatchPanel({
             </p>
           )}
         </div>
-        {enrolled ? (
-          <Badge variant="secondary">You are enrolled</Badge>
-        ) : (
-          card.canEnrol && (
-            <Button asChild size="sm">
-              <Link href={href}>Enrol in this batch</Link>
-            </Button>
-          )
+        {enrolled && <Badge variant="secondary">You are enrolled</Badge>}
+        {canWait && batch.appointment && (
+          <NotifyMeButton
+            kind="CLASS"
+            eventId={card.classId}
+            waiting={waitingAppointmentIds.includes(batch.appointment.id)}
+            signedIn={!!userId}
+            compact
+          />
+        )}
+        {!enrolled && card.canEnrol && (
+          <Button asChild size="sm">
+            <Link href={href}>Enrol in this batch</Link>
+          </Button>
         )}
       </div>
       <BatchSessions
@@ -200,12 +217,17 @@ export function BatchSchedule({
   cards,
   zone,
   enrolledAppointmentIds,
+  waitingAppointmentIds,
+  viewerUserId,
 }: Readonly<{
   plan: Plan;
   cards: BatchCard[];
   zone: string;
   enrolledAppointmentIds: readonly string[];
+  waitingAppointmentIds: readonly string[];
+  viewerUserId: string | null;
 }>) {
+  useRefreshOnViewerChange(viewerUserId);
   const { data: session } = useSession();
   const userId = session?.user?.id;
   const byId = new Map(plan.classes.map((c) => [c.id, c]));
@@ -220,6 +242,7 @@ export function BatchSchedule({
         zone={zone}
         userId={userId}
         enrolledAppointmentIds={enrolledAppointmentIds}
+        waitingAppointmentIds={waitingAppointmentIds}
       />
     ) : null;
   };

@@ -84,7 +84,12 @@ type RegisteredParticipant = {
 type ParticipantsResponse = (
   | { webinarEvent: WebinarEvent; classEvent?: never }
   | { classEvent: ClassEvent; webinarEvent?: never }
-) & { participants?: RegisteredParticipant[]; seatPayments?: SeatPayment[] };
+) & {
+  participants?: RegisteredParticipant[];
+  seatPayments?: SeatPayment[];
+  /** Open notify-me rows; a count, never names. */
+  waitingCount?: number;
+};
 
 /**
  * What the DELETE handler answers (#1003). `refund` is null when the seat was
@@ -366,7 +371,7 @@ export default function EventParticipantsPage() {
         title={`${plan.title} — Participants`}
         subtitle={`${participants.length}/${effectiveCapacity} ${kind.countNoun}${
           participants.length >= effectiveCapacity ? " · sold out" : ""
-        }`}
+        }${data?.waitingCount ? ` · ${data.waitingCount} waiting` : ""}`}
         actions={
           <Link
             href={`/dashboard/consultant/${params.consultantId}/appointments`}

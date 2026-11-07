@@ -234,6 +234,8 @@ export class WebinarService {
       durationInHours: plan?.durationInHours ?? 1,
       maxParticipants: plan?.maxParticipants ?? 1,
       certificateProvided: plan?.certificateProvided,
+      waitlistEnabled: plan?.waitlistEnabled,
+      waitlistMax: plan?.waitlistMax,
       ...recordingFields,
       language: plan?.language ?? undefined,
       level: plan?.level ?? undefined,

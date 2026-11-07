@@ -21,12 +21,20 @@ import { eventCapacityFromCount } from "@/lib/events/capacity";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import type { BatchCard } from "@/lib/booking/batch-cards";
 import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
+import { NotifyMeButton } from "@/components/booking/NotifyMeButton";
+import { useRefreshOnViewerChange } from "@/hooks/useRefreshOnViewerChange";
 
 type ClientClassRegistrationProps = {
   readonly plan: ClassPlanProgram;
   maxParticipants?: number;
   /** Batches' appointments the signed-in viewer holds a seat on; read by the server. */
   enrolledAppointmentIds: readonly string[];
+  /** Batches' appointments the viewer is on the notify-me list of; read by the server. */
+  waitingAppointmentIds: readonly string[];
+  /** Who the server rendered for. */
+  viewerUserId: string | null;
+  /** The host takes a notify-me list when a batch sells out. */
+  waitlistEnabled: boolean;
   /** #1819 — the batch this card sells: the first joinable one, else the first. */
   batch?: BatchCard;
 };
@@ -35,6 +43,9 @@ export function ClientClassRegistration({
   plan,
   maxParticipants,
   enrolledAppointmentIds,
+  waitingAppointmentIds,
+  viewerUserId,
+  waitlistEnabled,
   batch,
 }: ClientClassRegistrationProps) {
   const { id: classId, price, classes } = plan;
@@ -44,6 +55,7 @@ export function ClientClassRegistration({
   const { data: session } = useSession();
   const router = useRouter();
   const { formatPrice } = useCurrency();
+  useRefreshOnViewerChange(viewerUserId);
 
   // Defer auth + timezone until after hydration to avoid mismatch
   const [hasMounted, setHasMounted] = useState(false);
@@ -70,6 +82,21 @@ export function ClientClassRegistration({
     taken: batchClass?.appointment?._count?.participants ?? 0,
   });
   const isFull = capacity.isFull;
+  const batchAppointmentId = batchClass?.appointment?.id;
+  const notifyMe =
+    isFull &&
+    waitlistEnabled &&
+    batch?.enrolment.state === "open" &&
+    batch.phase !== "completed" &&
+    batchClass &&
+    batchAppointmentId ? (
+      <NotifyMeButton
+        kind="CLASS"
+        eventId={batchClass.id}
+        waiting={waitingAppointmentIds.includes(batchAppointmentId)}
+        signedIn={isLoggedIn}
+      />
+    ) : null;
   // #1819 — a batch past its host's cutoff, or finished, is not for sale.
   const isClosed = !!batch && !batch.canEnrol && !isFull;
   const payPaise =
@@ -136,21 +163,22 @@ export function ClientClassRegistration({
               Please sign in to register for this class.
             </p>
           )}
-          {signInButtonDisabled ? (
-            <Button
-              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
-              disabled
-            >
-              {signInButtonText}
-            </Button>
-          ) : (
-            <Button
-              onClick={handleRegistration}
-              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
-            >
-              {signInButtonText}
-            </Button>
-          )}
+          {notifyMe ??
+            (signInButtonDisabled ? (
+              <Button
+                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+                disabled
+              >
+                {signInButtonText}
+              </Button>
+            ) : (
+              <Button
+                onClick={handleRegistration}
+                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+              >
+                {signInButtonText}
+              </Button>
+            ))}
         </CardContent>
       </Card>
     );
@@ -204,14 +232,17 @@ export function ClientClassRegistration({
             Sold out — all {capacity.max} seats taken
           </Badge>
           <p className="text-sm text-muted-foreground">
-            Enrollment for this class is closed. Check back in case the
-            instructor opens more seats.
+            {notifyMe
+              ? "Enrollment for this batch is closed. Ask to be notified and we will tell you the moment a seat opens; the first to pay gets it."
+              : "Enrollment for this class is closed. Check back in case the instructor opens more seats."}
           </p>
         </CardContent>
         <CardFooter>
-          <Button className="w-full" disabled>
-            Sold out
-          </Button>
+          {notifyMe ?? (
+            <Button className="w-full" disabled>
+              Sold out
+            </Button>
+          )}
         </CardFooter>
       </Card>
     );
