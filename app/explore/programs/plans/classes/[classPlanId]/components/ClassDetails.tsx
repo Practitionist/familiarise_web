@@ -20,23 +20,32 @@ import type { TClassPlanDetailsData } from "../types";
 
 interface ClassDetailsProps {
   readonly plan: TClassPlanDetailsData;
+  /** Batches' appointments the signed-in viewer holds a seat on; read by the server. */
+  readonly enrolledAppointmentIds: readonly string[];
+  /** Batches' appointments the viewer is on the notify-me list of; read by the server. */
+  readonly waitingAppointmentIds: readonly string[];
+  /** Who the server rendered for, so the client can refresh on a mismatch. */
+  readonly viewerUserId: string | null;
 }
 
-export function ClassDetails({ plan }: ClassDetailsProps) {
+export function ClassDetails({
+  plan,
+  enrolledAppointmentIds,
+  waitingAppointmentIds,
+  viewerUserId,
+}: ClassDetailsProps) {
   const { formatPrice } = useCurrency();
   const [userTimeZone, setUserTimeZone] = useState("UTC");
   useEffect(() => {
     setUserTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
   }, []);
   // #1819 — one derivation for the batch list and the registration card.
-  const hostUserId = plan.consultantProfile?.user?.id;
   const cards = useMemo(
     () =>
       deriveBatchCards(plan, plan.classes, new Date(), {
         timeZone: userTimeZone,
-        hostUserId,
       }),
-    [plan, userTimeZone, hostUserId],
+    [plan, userTimeZone],
   );
 
   return (
@@ -141,7 +150,14 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                 <h2 className="text-xl font-semibold text-foreground mb-6">
                   Class Schedule
                 </h2>
-                <BatchSchedule plan={plan} cards={cards} zone={userTimeZone} />
+                <BatchSchedule
+                  plan={plan}
+                  cards={cards}
+                  zone={userTimeZone}
+                  enrolledAppointmentIds={enrolledAppointmentIds}
+                  waitingAppointmentIds={waitingAppointmentIds}
+                  viewerUserId={viewerUserId}
+                />
               </CardContent>
             </Card>
           </motion.div>
@@ -243,7 +259,10 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
               <ClientClassRegistration
                 plan={plan}
                 maxParticipants={plan.maxParticipants ?? undefined}
-                consultantUserId={plan.consultantProfile?.user?.id}
+                enrolledAppointmentIds={enrolledAppointmentIds}
+                waitingAppointmentIds={waitingAppointmentIds}
+                viewerUserId={viewerUserId}
+                waitlistEnabled={plan.waitlistEnabled}
                 batch={cards.find((c) => c.canEnrol) ?? cards[0]}
               />
             </div>

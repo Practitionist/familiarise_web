@@ -8,11 +8,6 @@
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-jest.mock("next/image", () => ({
-  __esModule: true,
-  default: () => null,
-}));
-
 jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
 }));

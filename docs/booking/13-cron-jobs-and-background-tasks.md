@@ -163,6 +163,8 @@ The paid 48-hour family shares one 16-second start budget across current expiry 
 
 **Nudges.** Paid `PENDING` subscriptions with no live confirmed sessions or open proposal receive their latest reached 12-, 24- or 36-hour stage from the capture clock. Bell and email have separate durable dedupe guards; `subscriptionNudgesSent` records the run's count.
 
+**Notify-me rows.** After the backup-interest arm, the job calls `expireEventWaitlist` (`lib/booking/event-waitlist.ts`). It marks `EXPIRED` every open `AppointmentWaitlist` row whose webinar or class is `COMPLETED` or `CANCELLED`, whose appointment is deleted, or that has no live session left in the future, and it deletes `EXPIRED` and `BOOKED` rows 30 days after their last change (`EVENT_WAITLIST_RETENTION_MS`, read from `updatedAt`). A whole-event cancel stages no notice, so this arm is what closes its rows, within one 15-minute tick. `hasLapsedEventWaitlist` joins the job's idle probe (`hasStaleRequestWork`), so an idle tick still costs no invocation when there is nothing to expire or purge. No new job is registered.
+
 ---
 
 ### f. Reconcile Slot Availability
@@ -289,6 +291,18 @@ The ticker also drives `settle-cancelled-sessions` every 30 minutes with a batch
 `appointment-reminders` and `expire-stale-requests` get the 20-second tier because their per-row cost does not fit the 6-second default on a cold instance: the reminder job stages an outbox row per matching booking, and the stale-request sweep routes SUCCEEDED payments through the refund front door. Both twins already wrap their core in `withCronLock` and answer 409 on overlap with a concurrent run, so overlapping ticker ticks can never double-execute the same cohort — the loser's 409 is counted as `lockHeld`, not `failed`. All five read the `limit` query parameter, and the ticker's `TARGET_LIMITS` map states each batch size: 25 reminders, 20 stale requests per arm, 25 proposals, 200 tentative slots and 25 unpaid trials. There is no Actions backstop for any of the five, nor for the pre-existing ticker targets (webhook sweeps, refund reconciliation, earnings sync).
 
 `send-appointment-reminders.ts`, the core script behind the `appointment-reminders` target, also gained a TRIAL branch on 2026-09-19: a `SCHEDULED` trial with a live occurrence in the 24-hour or 1-hour reminder windows now gets the same reminder pair a consultation or subscription session gets, deduplicated by the same `${appointmentId}:${window}` outbox key. The ticker's 15-minute cadence is what closes the gap the trial branch fixes, because an hourly schedule was wide enough to miss a reminder window entirely.
+
+### Reminder windows and audience
+
+The job reminds each confirmed session in three windows (`REMINDER_WINDOWS` in `scripts/appointments/send-appointment-reminders.ts`):
+
+| Window | Sessions starting | Email wording      |
+| ------ | ----------------- | ------------------ |
+| `24h`  | 23 to 25 hours    | "tomorrow"         |
+| `1h`   | 45 to 75 minutes  | "in about an hour" |
+| `15m`  | 5 to 21 minutes   | "in a few minutes" |
+
+Each window is at least 16 minutes wide, because the job runs every 15 minutes and a tick can land up to a minute late; a narrower window would skip sessions. A session two ticks reach is still reminded once per window: the staged email row (`occurrence:<id>:<window>`) takes it out of the next tick's read, and the bell's outbox key is `<occurrence>:<window>`. For a webinar or class the reminder reaches the host, the accepted collaborators and the paid seats (`paidParticipant()`), never an unpaid `HELD` seat. A 1:1 booking reminds the consultant and the consultee; its sessions stay tentative until the payment lands, and the job reads only non-tentative sessions. Worked example: Hannah's webinar starts at 18:00 IST and the job ticks at 17:25, 17:40 and 17:55; the 17:40 tick finds it 20 minutes ahead and reminds Priya, who paid, but not Arjun, whose seat is still waiting on his card; the 17:55 tick finds it 5 minutes ahead, sees the staged row and sends nothing.
 
 ---
 

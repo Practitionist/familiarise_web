@@ -4,14 +4,12 @@ import { z } from "zod";
 export const SELL_TAB_SCHEMAS = {
   sessions: z.enum(["consultations", "subscriptions"]).catch("consultations"),
   programs: z.enum(["webinars", "classes"]).catch("webinars"),
-  products: z.enum(["digital", "replays"]).catch("digital"),
 };
 
 export type SellPage = keyof typeof SELL_TAB_SCHEMAS;
 export type SessionsTab = z.infer<typeof SELL_TAB_SCHEMAS.sessions>;
 export type ProgramsTab = z.infer<typeof SELL_TAB_SCHEMAS.programs>;
-export type ProductsTab = z.infer<typeof SELL_TAB_SCHEMAS.products>;
-export type SellTab = SessionsTab | ProgramsTab | ProductsTab;
+export type SellTab = SessionsTab | ProgramsTab;
 
 /** Every kind the "+ New" picker creates; its editor is `offerings/<kind>/…`. */
 export const SellableKindSchema = z.enum([
@@ -24,14 +22,19 @@ export const SellableKindSchema = z.enum([
 
 export type SellableKind = z.infer<typeof SellableKindSchema>;
 
-/** The Sell page and tab that lists each kind. */
-const SELL_HOME: Record<SellableKind, { page: SellPage; tab: SellTab }> = {
+/** The Sell page and tab that lists each plan kind. */
+const SELL_HOME: Record<
+  Exclude<SellableKind, "digital-product">,
+  { page: SellPage; tab: SellTab }
+> = {
   consultation: { page: "sessions", tab: "consultations" },
   subscription: { page: "sessions", tab: "subscriptions" },
   webinar: { page: "programs", tab: "webinars" },
   class: { page: "programs", tab: "classes" },
-  "digital-product": { page: "products", tab: "digital" },
 };
+
+/** Digital products are listed in Studio, not under Sell. */
+const DIGITAL_PRODUCTS_PATH = "products";
 
 const sellPath = (page: SellPage, tab?: SellTab) =>
   tab ? `sell/${page}?tab=${tab}` : `sell/${page}`;
@@ -48,6 +51,7 @@ export function sellPageHref(
 export function sellHomePath(segment: string | undefined): string {
   const kind = SellableKindSchema.safeParse(segment);
   if (!kind.success) return sellPath("sessions");
+  if (kind.data === "digital-product") return DIGITAL_PRODUCTS_PATH;
   const { page, tab } = SELL_HOME[kind.data];
   return sellPath(page, tab);
 }

@@ -3,6 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
+import { orgOwnedAppointmentWhere } from "@/lib/api/scope/list-appointments";
 import {
   documentBookingSelect,
   documentPartyWhere,
@@ -27,6 +28,7 @@ import { toLibraryThread } from "@/lib/library/document-threads";
 import {
   LIBRARY_PAGE_SIZE,
   compareLibraryThreads,
+  everyoneLibraryQuery,
   type LibraryDocStatus,
   type LibraryDocument,
   type LibraryGroup,
@@ -83,7 +85,7 @@ function scopeWhere(
   }
   if (owner.everyone) {
     return {
-      organizationId: owner.orgId,
+      ...orgOwnedAppointmentWhere(owner.orgId),
       deletedAt: null,
       appointmentType: { in: [...DOCUMENT_KINDS] },
     };
@@ -475,8 +477,9 @@ export async function readDocumentLibrary(args: {
   owner: LibraryOwner;
   query: LibraryQuery;
 }): Promise<LibraryPage<LibraryDocument>> {
-  const { userId, owner, query } = args;
+  const { userId, owner } = args;
   const everyone = owner.kind === "org" && owner.everyone;
+  const query = everyone ? everyoneLibraryQuery(args.query) : args.query;
   const pageRole: DocumentPartyRole =
     owner.kind === "personal" ? owner.side : "learner";
   const withMaterials =

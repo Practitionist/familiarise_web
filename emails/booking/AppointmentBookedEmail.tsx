@@ -1,10 +1,11 @@
 import * as React from "react";
-import { Button, Section, Text } from "react-email";
+import { Button, Link, Section, Text } from "react-email";
 import { EmailLayout } from "@/emails/components/EmailLayout";
 import {
   button,
   buttonContainer,
   heading,
+  link,
   paragraph,
 } from "@/emails/components/styles";
 
@@ -18,6 +19,8 @@ export interface AppointmentBookedEmailProps {
   startsAtText: string;
   dashboardUrl: string;
   cancellationWindowText?: string;
+  /** The attendee's own add-to-calendar links; absent for the host. */
+  calendar?: { googleUrl: string; icsUrl: string } | null;
   unsubscribeUrl?: string | null;
 }
 
@@ -32,6 +35,7 @@ export default function AppointmentBookedEmail({
   startsAtText,
   dashboardUrl,
   cancellationWindowText,
+  calendar,
   unsubscribeUrl,
 }: AppointmentBookedEmailProps) {
   const title =
@@ -67,6 +71,19 @@ export default function AppointmentBookedEmail({
           ? `Need to change plans? You can reschedule or cancel from your dashboard ${cancellationWindowText}.`
           : "Need to change plans? You can reschedule or cancel from your dashboard; the plan's cancellation policy applies."}
       </Text>
+      {calendar ? (
+        <Text style={paragraph}>
+          Add it to your calendar:{" "}
+          <Link href={calendar.googleUrl} style={link}>
+            Google Calendar
+          </Link>{" "}
+          or{" "}
+          <Link href={calendar.icsUrl} style={link}>
+            Apple, Outlook and others (.ics)
+          </Link>
+          .
+        </Text>
+      ) : null}
       <Section style={buttonContainer}>
         <Button style={button} href={dashboardUrl}>
           View booking

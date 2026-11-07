@@ -21,11 +21,16 @@
  */
 
 import type {
+  AppointmentsType,
   FundingSource,
   MemberRole,
   MemberStatus,
+  OrgAuditCategory,
   OrgDirectoryType,
   OrgSizeBucket,
+  OrgStatus,
+  ProgramStatus,
+  ProgramType,
 } from "@prisma/client";
 import { ORG_ROLE_RANK } from "@/lib/auth/role-ranks";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
@@ -59,16 +64,6 @@ export const CAPABILITY_BADGE_CLASS: Record<CapabilityKind, string> = {
   INERT: "bg-zinc-100 text-zinc-600 border-zinc-200",
 };
 
-export const CAPABILITY_DESCRIPTION: Record<CapabilityKind, string> = {
-  SPONSOR:
-    "Pays for its members' sessions. Has a BillingAccount; does not host consultants.",
-  HOST: "Hosts consultants who earn through the organization. Has a payout account; does not sponsor anyone.",
-  HYBRID:
-    "Both sponsors its members and hosts consultants. Runs both money flows independently.",
-  INERT:
-    "Neither sponsors nor hosts. Typically a transitional state — usually means the org was created but never configured.",
-};
-
 // ───────────────────────────── FundingSource ─────────────────────────────
 
 export const FUNDING_SOURCE_LABEL: Record<FundingSource, string> = {
@@ -94,6 +89,56 @@ export const FUNDING_SOURCE_BADGE_CLASS: Record<FundingSource, string> = {
   WALLET: "bg-amber-100 text-amber-900 border-amber-200",
   INVOICE: "bg-orange-100 text-orange-900 border-orange-200",
   LICENSE: "bg-green-100 text-green-900 border-green-200",
+};
+
+export const ORG_STATUS_LABEL: Record<OrgStatus, string> = {
+  PENDING_VERIFICATION: "Pending verification",
+  ACTIVE: "Active",
+  SUSPENDED: "Suspended",
+  DEACTIVATED: "Deactivated",
+};
+
+export const SESSION_TYPE_LABEL: Record<AppointmentsType, string> = {
+  CONSULTATION: "Consultation",
+  SUBSCRIPTION: "Subscription session",
+  WEBINAR: "Webinar",
+  CLASS: "Class",
+  TRIAL: "Trial session",
+};
+
+export const ORG_AUDIT_CATEGORY_LABEL: Record<OrgAuditCategory, string> = {
+  MEMBER: "Member",
+  CONTRACT: "Contract",
+  PROGRAM: "Program",
+  WALLET: "Wallet",
+  INVOICE: "Invoice",
+  PAYOUT: "Payout",
+  SETTINGS: "Settings",
+  CONSENT: "Consent",
+  CATALOG: "Catalog",
+  WEBHOOK: "Webhook",
+  SYSTEM: "System",
+};
+
+// ───────────────────────────── Program ─────────────────────────────
+
+export const PROGRAM_TYPE_LABEL: Record<ProgramType, string> = {
+  LICENSED_SEAT: "Licensed seat",
+  CREDIT_POOL: "Credit pool",
+};
+
+export const PROGRAM_STATUS_LABEL: Record<ProgramStatus, string> = {
+  ACTIVE: "Active",
+  PAUSED: "Paused",
+  EXPIRED: "Expired",
+  CANCELLED: "Cancelled",
+};
+
+export const PROGRAM_STATUS_TONE: Record<ProgramStatus, Tone> = {
+  ACTIVE: "success",
+  PAUSED: "caution",
+  EXPIRED: "neutral",
+  CANCELLED: "neutral",
 };
 
 // ───────────────────────────── MemberRole ─────────────────────────────

@@ -35,6 +35,7 @@ import {
 
 const allowed: EmailRecipient = {
   userId: "user_1",
+  category: "appointments",
   email: "one@example.com",
   name: "One",
   zone: "Asia/Kolkata",

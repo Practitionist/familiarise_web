@@ -7,7 +7,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest } from "next/server";
-import { confirmSubscription } from "@/lib/waitlist/service";
+import { confirmSubscription } from "@/lib/newsletter/service";
 import { getAppUrl } from "@/lib/url";
 
 function page(title: string, body: string, status: number): Response {

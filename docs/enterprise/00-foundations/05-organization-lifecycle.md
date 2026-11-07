@@ -258,14 +258,14 @@ sequenceDiagram
     Note over W: state only — no API call
     U->>W: Fill Billing / Revenue Rates
     Note over W: state only — no API call
-    U->>W: Fill Branding / Invites
+    U->>W: Fill Invites
     Note over W: state only — no API call
     U->>R: Review + edit pass
     U->>R: Launch Organization
     R->>API: POST / (create + BillingAccount + OWNER)
     API-->>R: { organization: {...} }
-    opt Branding / rate-card fields
-        R->>API: PATCH /[orgId] (colors, bps)
+    opt Rate-card fields
+        R->>API: POST /[orgId]/rate-cards (bps)
     end
     opt Invitees staged
         R->>API: POST /[orgId]/invitations (parallel)
@@ -273,10 +273,11 @@ sequenceDiagram
     R->>U: Redirect /dashboard/organization/[orgId]/home
 ```
 
-If `Launch` fails after the POST succeeded but before the PATCH or
-invites land, the wizard keeps `initialData.orgId` in state so the
-retry hits the same org row — the POST path is short-circuited and the
-retry is fully idempotent.
+If `Launch` fails after the create POST succeeded but before the rate-card
+POST or the invitations land, `ReviewStep` keeps the new organization id in
+`createdOrgIdRef`, so a retry within the same mount skips the create call and
+reuses that org. A page reload loses the id, and the retry is not guaranteed
+idempotent.
 
 ## `Contract` lifecycle
 

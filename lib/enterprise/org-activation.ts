@@ -148,7 +148,8 @@ export function isOrgActivated(s: OrgActivationSnapshot, orgId = "_"): boolean {
 /**
  * The "action required" center — the condition banners a customer should act on
  * NOW, ordered by severity. Only includes conditions whose backing data exists
- * today (no dunning/dispute banners — those land with v4's crons).
+ * today. Organization status (pending verification, suspended) is not repeated
+ * here: the dashboard shell banner owns it on every page.
  */
 export function deriveActionCenter(
   s: OrgActivationSnapshot,
@@ -156,28 +157,6 @@ export function deriveActionCenter(
 ): ActionItem[] {
   const base = `/dashboard/organization/${orgId}`;
   const items: ActionItem[] = [];
-
-  if (s.status === "PENDING_VERIFICATION") {
-    items.push({
-      key: "pending-verification",
-      severity: "warning",
-      title: "Verification pending",
-      // #1762-1 — checkout accepts unverified orgs; say what verification lifts.
-      body: "Until a platform admin verifies your organization, invitations are capped and invoice-funded bookings carry a starter credit limit.",
-      ctaLabel: "Review setup",
-      ctaHref: `${base}/settings`,
-    });
-  }
-  if (s.status === "SUSPENDED") {
-    items.push({
-      key: "suspended",
-      severity: "critical",
-      title: "Organization suspended",
-      body: "Invitations and payments are paused. Contact support to restore access.",
-      ctaLabel: "Contact support",
-      ctaHref: `${base}/settings`,
-    });
-  }
 
   if (s.pastDueInvoiceCount > 0) {
     items.push({

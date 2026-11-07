@@ -232,7 +232,7 @@ The table gives the same order with what each step changes. Nothing after #2494 
 On 2026-11-01 the first two steps are merged: #2486 at 14:56 IST and #2494 at 15:06 IST. #2497 is open, and PR A and PR B are issues with no pull request yet. Two things to watch once #2494 is released to production:
 
 - **`skippedIdle` in the tick logs.** The console line and the tick body carry `skippedIdle` (`netlify/functions/cron-tick.mts`), and the Better Stack summary carries `skippedIdleCount`. Idle ticks should list the probed jobs there. If it is always empty, the probe is failing open and dispatching everything.
-- **Netlify usage after about a week.** In the idle state the ticker should make about 22,450 invocations a month, against about 94,850 before the change ([the decision record](../decisions/2026-11-01-ticker-skip-idle-targets.md)). Read the invocation meter on the Netlify usage page after about seven days and compare. Real runs add to the idle floor.
+- **Netlify usage after about a week (measured 2026-11-03/04).** The ticker makes about 57,000 invocations a month, not the estimated 22,450 ([the decision record](../decisions/2026-11-01-ticker-skip-idle-targets.md)): eight probes that almost never report idle and duplicate scheduled dispatches keep it up. Both are tracked in #2613; re-measure after that lands.
 
 ## 4. Netlify billing: status only
 

@@ -68,7 +68,7 @@ export function PurchaseOrdersTable({
         {searchTerm.trim()
           ? `No POs match “${searchTerm.trim()}”.`
           : statusFilter !== "ALL"
-            ? `No ${statusFilter} POs.`
+            ? `No ${PO_STATUS[statusFilter].label.toLowerCase()} POs.`
             : "No purchase orders yet."}
       </p>
       {canMutate && !searchTerm.trim() && statusFilter === "ALL" && (

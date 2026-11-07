@@ -22,6 +22,8 @@ export const NO_CHROME_PREFIXES = [
   "/meetings/",
   // Middleware can rewrite any URL here; it has its own standalone shell.
   "/maintenance",
+  // Unsubscribe lands bare: the logo only, no site navigation or newsletter sign-up.
+  "/email/unsubscribe",
 ] as const;
 
 /**

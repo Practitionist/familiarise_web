@@ -17,7 +17,7 @@
 ## Database race tier
 
 - Files: `__tests__/db/support/*.db.test.ts` (decision race, intake scope, problem cascade, refund claim, turn replay). Config: `jest.db.config.ts`; guard: `__tests__/db/guard.ts`.
-- Runs only in the CI `db-guards` job (`.github/workflows/ci.yaml`): Postgres 17, schema pushed, `npm run db:sidecars`, `scripts/ci/check-db-sidecars.ts`, then `jest -c jest.db.config.ts`.
+- Runs in CI, or locally per booking verification §11 (`.claude/skills/booking/references/verification.md`). The CI `db-guards` job (`.github/workflows/ci.yaml`) does: Postgres 17, schema pushed, `npm run db:sidecars`, `scripts/ci/check-db-sidecars.ts`, then `jest -c jest.db.config.ts`.
 - The guard refuses unless `CI=true` and `DATABASE_URL` is a local `/ci` database. Do not bypass it; never point it at the shared database.
 - Add a `.db.test.ts` when a rule depends on a sidecar object or on real concurrency; mocked tests cannot prove either.
 

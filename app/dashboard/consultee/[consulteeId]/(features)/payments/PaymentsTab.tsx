@@ -59,13 +59,13 @@ function creditStateBadgeProps(state: CreditStateValue): {
 } {
   switch (state) {
     case "PENDING":
-      return { label: "PENDING", tone: "warning" };
+      return { label: "Pending", tone: "warning" };
     case "VESTED":
-      return { label: "VESTED", tone: "success" };
+      return { label: "Available", tone: "success" };
     case "EXPIRED":
-      return { label: "EXPIRED", tone: "neutral" };
+      return { label: "Expired", tone: "neutral" };
     case "VOID":
-      return { label: "VOID", tone: "critical" };
+      return { label: "Voided", tone: "critical" };
   }
 }
 
@@ -221,7 +221,7 @@ const creditUsageColumns = (
 ];
 
 /**
- * /payments — Needs you · History · Credits (#1527 §7.1), each a URL tab.
+ * /payments — Needs you · History · Credits, each a URL tab.
  * History pages and filters through the URL (`?page=&status=&range=`) with
  * no silent cap; each row opens its payment detail page.
  */
@@ -267,7 +267,7 @@ export function PaymentsTab({
     <DashboardErrorBoundary>
       <PageHeader
         title="Billing"
-        description="What you owe, what you paid, and your credits"
+        description="What you owe, what you paid, and your credits. Personal payments only; organization-funded sessions are on your organization dashboard."
       />
       <UrlTabs
         tabs={[

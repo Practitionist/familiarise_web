@@ -1,10 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { EMAIL_BUDGET_MS } from "@/lib/email/config";
-import {
-  attemptStaged,
-  type StagedRecipientEmail,
-} from "@/lib/email/send-to-recipients";
+import type { StagedRecipientEmail } from "@/lib/email/send-to-recipients";
 import {
   attemptTrigger,
   type StagedTrigger,
@@ -58,9 +55,14 @@ export function flushNotificationsAfter(
   bundle: StagedNotificationBundle,
   op = "flushNotificationsAfter",
 ): Promise<void> {
-  const bells = (bundle.bells ?? []).filter((row): row is StagedTrigger =>
-    Boolean(row),
-  );
+  // A re-staged row comes back with the same id; attempt it once.
+  const bells = [
+    ...new Map(
+      (bundle.bells ?? [])
+        .filter((row): row is StagedTrigger => Boolean(row))
+        .map((row) => [row.id, row]),
+    ).values(),
+  ];
   const emails = (bundle.emails ?? []).filter(
     (entry) => entryRows(entry).length > 0,
   );
@@ -76,15 +78,20 @@ export function flushNotificationsAfter(
           errors.push(err);
         }),
       ),
+      // Loaded on send so the email stack stays out of every route's auth graph.
       ...emails.map((entry) =>
-        attemptStaged(
-          entryRows(entry),
-          entry.emailType,
-          entry.budgetMs ?? EMAIL_BUDGET_MS.LIFECYCLE,
-        ).catch((err: unknown) => {
-          console.error(`Failed to deliver email ${entry.emailType}`, err);
-          errors.push(err);
-        }),
+        import("@/lib/email/send-to-recipients")
+          .then(({ attemptStaged }) =>
+            attemptStaged(
+              entryRows(entry),
+              entry.emailType,
+              entry.budgetMs ?? EMAIL_BUDGET_MS.LIFECYCLE,
+            ),
+          )
+          .catch((err: unknown) => {
+            console.error(`Failed to deliver email ${entry.emailType}`, err);
+            errors.push(err);
+          }),
       ),
     ]);
     if (errors.length > 0) {

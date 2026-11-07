@@ -4,14 +4,19 @@ import { unstable_cache, revalidateTag } from "next/cache";
 import prisma from "@/lib/prisma";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import type { UserRole } from "@prisma/client";
-import { notifyGeneralAnnouncement } from "@/lib/novu";
-import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
+import { stagePages } from "@/lib/novu/outbox";
+import { bellAudience, MAX_BELL_AUDIENCE } from "@/lib/novu/policy";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { NOVU_WORKFLOWS, type AnnouncementPayload } from "@/lib/novu/workflows";
 import { CreateAnnouncementSchema } from "@/schemas/announcements";
 import { ANNOUNCEMENTS_TAG } from "@/lib/cache-tags";
 import { isTransientDbError, reportTransient } from "@/lib/data/fail-open";
 
 import { getSession } from "@/lib/auth-server";
 import { assertBodySize } from "@/lib/validation/limits";
+
+/** Pages attempted right after the response; the relay sends the rest. */
+const INLINE_INBOX_PAGES = 5;
 
 // Cache the active-announcements read. The banner is polled frequently and the
 // data only changes on the admin writes below (which revalidate the tag), so this
@@ -106,9 +111,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Announcements fan out to every user (`notifyGeneralAnnouncement`), so
-    // BACKOFFICE_PERMISSIONS makes them ADMIN-only. The nav already hid the
-    // surface from staff; the route accepted the call regardless.
+    // An announcement can ring every user's bell, so BACKOFFICE_PERMISSIONS
+    // makes them ADMIN-only. The nav already hid the surface from staff; the
+    // route accepted the call regardless.
     if (
       !hasBackofficePermission(
         session.user.role as UserRole,
@@ -138,42 +143,97 @@ export async function POST(request: NextRequest) {
       );
     }
     const validatedData = result.data;
+    const now = new Date();
+    const startDate = validatedData.startDate
+      ? new Date(validatedData.startDate)
+      : null;
+    const endDate = validatedData.endDate
+      ? new Date(validatedData.endDate)
+      : null;
 
-    const announcement = await prisma.announcement.create({
-      data: {
-        title: validatedData.title,
-        content: validatedData.content,
-        isActive: validatedData.isActive,
-        startDate: validatedData.startDate
-          ? new Date(validatedData.startDate)
-          : null,
-        endDate: validatedData.endDate ? new Date(validatedData.endDate) : null,
-        backgroundColor: validatedData.backgroundColor,
-        textColor: validatedData.textColor,
-        linkUrl: validatedData.linkUrl,
-        linkText: validatedData.linkText,
-        createdBy: session.user.id,
+    // An inbox post goes out at once and cannot be recalled, so it is only
+    // allowed for an announcement that is live right now.
+    if (
+      validatedData.postToInbox &&
+      (!validatedData.isActive ||
+        (startDate && startDate > now) ||
+        (endDate && endDate <= now))
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Only an active announcement that is live now can be posted to inboxes.",
+        },
+        { status: 400 },
+      );
+    }
+
+    // One bounded user read and one multi-row insert, so a short explicit timeout.
+    const created = await prisma.$transaction(
+      async (tx) => {
+        const audience = validatedData.postToInbox
+          ? await bellAudience(
+              tx,
+              NOVU_WORKFLOWS.GENERAL_ANNOUNCEMENT,
+              MAX_BELL_AUDIENCE,
+            )
+          : [];
+        if (audience === null) return null;
+        const announcement = await tx.announcement.create({
+          data: {
+            title: validatedData.title,
+            content: validatedData.content,
+            isActive: validatedData.isActive,
+            startDate,
+            endDate,
+            backgroundColor: validatedData.backgroundColor,
+            textColor: validatedData.textColor,
+            linkUrl: validatedData.linkUrl,
+            linkText: validatedData.linkText,
+            createdBy: session.user.id,
+          },
+        });
+        const payload: AnnouncementPayload = {
+          title: announcement.title,
+          content: announcement.content,
+          ...(announcement.linkUrl ? { linkUrl: announcement.linkUrl } : {}),
+          ...(announcement.linkText ? { linkText: announcement.linkText } : {}),
+        };
+        const bells = await stagePages(tx, {
+          workflowId: NOVU_WORKFLOWS.GENERAL_ANNOUNCEMENT,
+          recipients: audience,
+          payload,
+          dedupeKey: `announcement:${announcement.id}`,
+          entityRef: `announcement:${announcement.id}`,
+        });
+        return { announcement, bells };
       },
-    });
+      { timeout: 15_000, maxWait: 5_000 },
+    );
+
+    if (!created) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Inbox posts are limited to ${MAX_BELL_AUDIENCE} users. Create the announcement without posting to inboxes.`,
+        },
+        { status: 422 },
+      );
+    }
 
     // Invalidate the cached banner read so the new announcement shows immediately.
     revalidateTag(ANNOUNCEMENTS_TAG);
 
-    await stageNowAttemptAfter("announcements.create", () =>
-      notifyGeneralAnnouncement(
-        {
-          title: announcement.title,
-          content: announcement.content,
-          linkUrl: announcement.linkUrl || undefined,
-          linkText: announcement.linkText || undefined,
-        },
-        { deferAttempt: true },
-      ),
+    // The first pages ring now; the relay drains the rest after the lease.
+    await flushNotificationsAfter(
+      { bells: created.bells.slice(0, INLINE_INBOX_PAGES) },
+      "announcements.create",
     );
 
     return NextResponse.json({
       success: true,
-      data: announcement,
+      data: created.announcement,
     });
   } catch (error) {
     Sentry.captureException(

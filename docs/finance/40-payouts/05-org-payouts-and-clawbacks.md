@@ -97,6 +97,8 @@ If a payout that recovered a clawback later fails, is cancelled or is reversed, 
 
 A clawback unrecovered after 90 days raises the `CLAWBACK_RECEIVABLE_STALE` finding in the nightly audit, so a person recovers it another way.
 
+**Notices.** Each newly created clawback journal stages a bell in the transaction that posts it (`stageClawbackNotice`, `lib/payments/payouts/clawback-notifications.ts`): `payout-clawback` for the consultant, `org-payout-clawback` for the organisation's billing roster. A raised clawback also emails (`ClawbackNoticeEmail`), because it is the only step that creates a debt; a recovery, a release and a void are bells only, and one bank return rings one `VOIDED` bell for the sum it voided. A replayed journal stages nothing, and a broken email template leaves a `review:render_failed` row instead of rolling the clawback back (notification decision 17).
+
 ## Worked examples
 
 **A payout that needs the platform.** LearnPro Academy hosts experts on the seeded card of 1000, 1000 and 8000 basis points. In one week 60 bookings of ₹10,000 are READY, each giving LearnPro 100,000 paise, so the org share is 6,000,000 paise (₹60,000) with no refunds. On Monday 2026-10-26 at 20:05 UTC (Tuesday 01:35 IST) the batch creates a payout PENDING. TDS at 10 basis points of 6,000,000 is 6,000 paise, so `amountPaise` is 5,994,000. That is above ₹50,000, so after the Owner approves it, it waits for a platform administrator. Because the net is above ₹25,000 and two administrators are active, the co-approval is itself held as a proposal until a different administrator approves it. After approval the hourly run sends 5,994,000 paise by IMPS. On completion the journal is `Dr ORG_PAYABLE 6,000,000`, `Cr CASH 5,994,000`, `Cr TDS_PAYABLE 6,000`.

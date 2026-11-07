@@ -34,7 +34,9 @@ const tx = {
       calls.push("orgWorkspaceProfileId" in args.data ? "link" : "claim");
       return { count: 1 };
     }),
+    findUniqueOrThrow: jest.fn(async () => ({ email: "owner@example.com" })),
   },
+  newsletterSubscriber: { upsert: jest.fn() },
   organization: {
     findUnique: jest.fn(async () => null),
     create: jest.fn(async (args: { data: { id: string; name: string } }) => {

@@ -112,3 +112,48 @@ describe("Plan Builder recording settings & session duration forwarding", () => 
     expect(partialClassUpdate.recordingEnabled).toBeUndefined();
   });
 });
+
+it("sends a cleared waitlist size as null so the PATCH resets it", () => {
+  const webinarBody = WebinarService.buildRequestBody(
+    {
+      webinarPlan: {
+        title: "Deep Dive Webinar",
+        price: 500,
+        durationInHours: 1,
+        maxParticipants: 50,
+        waitlistEnabled: true,
+        waitlistMax: undefined,
+      } as unknown as WebinarEvent["webinarPlan"],
+    },
+    "cp-1",
+    ["Q&A"],
+    null,
+    true,
+    "plan-1",
+    "web-1",
+  );
+  const classBody = ClassService.buildRequestBody(
+    {
+      classPlan: {
+        title: "Cohort",
+        price: 500,
+        maxParticipants: 25,
+        sessionsPerWeek: 1,
+        classContents: [],
+        waitlistMax: undefined,
+      } as unknown as ClassEvent["classPlan"],
+    },
+    "cp-1",
+    ["Full-Stack"],
+    true,
+    "cplan-1",
+    "cls-1",
+    null,
+  );
+  for (const body of [webinarBody, classBody]) {
+    expect(JSON.parse(JSON.stringify(body))).toHaveProperty(
+      "waitlistMax",
+      null,
+    );
+  }
+});

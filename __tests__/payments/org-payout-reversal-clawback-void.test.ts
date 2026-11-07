@@ -126,6 +126,10 @@ const db = {
     async (fn: (tx: unknown) => unknown): Promise<unknown> => fn(db),
   ),
 };
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(),
+  stageRaisedClawback: jest.fn(),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   get default() {

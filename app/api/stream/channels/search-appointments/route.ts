@@ -22,7 +22,7 @@ import { resolveViewerZone } from "@/lib/time/viewer-zone";
 import {
   MAX_SHORT_FIELD_LENGTH,
   MAX_TITLE_LENGTH,
-} from "@/lib/validation/limits";
+} from "@/lib/validation/input-limits";
 import {
   AppointmentSearchResultSchema,
   type AppointmentSearchResult,

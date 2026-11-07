@@ -20,6 +20,20 @@
  */
 
 const withSerializableRetry = jest.fn(async (fn: () => unknown) => fn());
+// The notify-me hooks are pinned by their own suites; here they stage nothing.
+jest.mock("@/lib/booking/event-waitlist", () => ({
+  stageSeatOpenedNotices: jest.fn(async () => ({ pages: [], email: null })),
+  finishSeatOpenedNotices: jest.fn(async () => undefined),
+  markEventWaitlistBooked: jest.fn(async () => ({ count: 0 })),
+  expireEventWaitlist: jest.fn(async () => ({ expired: 0, purged: 0 })),
+  hasLapsedEventWaitlist: jest.fn(async () => false),
+}));
+jest.mock("@/lib/referrals/referral-notify", () => ({
+  readCreditsApplied: jest.fn(async () => null),
+  prepareCreditsAppliedEmail: jest.fn(),
+  stageCreditsApplied: jest.fn(async () => ({})),
+  stageReferralReward: jest.fn(async () => ({})),
+}));
 jest.mock("../../lib/db/serializable-retry", () => ({
   __esModule: true,
   withSerializableRetry: (fn: () => unknown) => withSerializableRetry(fn),
@@ -123,6 +137,7 @@ jest.mock("../../lib/email", () => ({
   __esModule: true,
   sendPaymentSuccessEmail: jest.fn(),
   sendPaymentFailedEmail: jest.fn(),
+  stageRenderFailure: jest.fn(),
 }));
 jest.mock("../../lib/novu", () => ({
   __esModule: true,

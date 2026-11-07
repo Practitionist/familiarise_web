@@ -30,6 +30,11 @@ import {
   type StagedBackupInterestNotices,
 } from "@/lib/booking/backup-interest";
 import {
+  finishSeatOpenedNotices,
+  stageSeatOpenedNotices,
+  type StagedSeatOpened,
+} from "@/lib/booking/event-waitlist";
+import {
   cancelRazorpayOrder,
   type RazorpayOrderCancelResult,
 } from "../../lib/payments/core/razorpay";
@@ -571,11 +576,13 @@ async function restoreReferralCredits(
  * never released, and the shared occurrences stay for every other attendee.
  */
 async function releaseGroupSeats(
-  tx: Pick<Tx, "appointmentParticipant">,
+  tx: Tx,
   appointment: AbandonedAppointment,
   expired: AbandonedPayment[],
-): Promise<void> {
+  now: Date,
+): Promise<StagedSeatOpened | null> {
   const kind = appointment.webinar ? "webinar" : "class";
+  let total = 0;
   for (const payment of expired) {
     const released = await transitionParticipant(
       tx,
@@ -583,10 +590,13 @@ async function releaseGroupSeats(
       "CANCELLED",
       { fromIn: ["HELD"] },
     );
+    total += released;
     console.log(
       `🗑️ Released ${released} seat(s) for user ${payment.userId} on ${kind} appointment ${appointment.id}`,
     );
   }
+  // Once per appointment, however many holds this unit lapsed.
+  return total > 0 ? stageSeatOpenedNotices(tx, appointment.id, now) : null;
 }
 
 /**
@@ -744,6 +754,7 @@ async function cleanupAbandonedAppointment(
     return { outcome: "skipped", notice: null };
   }
 
+  const now = new Date();
   try {
     const txOut = await prisma.$transaction(async (tx) => {
       if (await anyPaymentSucceeded(tx, appointment)) {
@@ -751,6 +762,7 @@ async function cleanupAbandonedAppointment(
           outcome: "skipped" as const,
           notice: null,
           holdNotices: null,
+          seatOpened: null,
         };
       }
 
@@ -762,16 +774,17 @@ async function cleanupAbandonedAppointment(
           outcome: "skipped" as const,
           notice: null,
           holdNotices: null,
+          seatOpened: null,
         };
       }
       await restoreReferralCredits(tx, expired);
 
       if (appointment.webinar || appointment.class) {
-        await releaseGroupSeats(tx, appointment, expired);
         return {
           outcome: "cleaned" as const,
           notice: null,
           holdNotices: null,
+          seatOpened: await releaseGroupSeats(tx, appointment, expired, now),
         };
       }
       let notice: RequestExpiredNotice | null = null;
@@ -781,9 +794,15 @@ async function cleanupAbandonedAppointment(
         notice = expired.notice;
         holdNotices = expired.holdNotices;
       }
-      return { outcome: "cleaned" as const, notice, holdNotices };
+      return {
+        outcome: "cleaned" as const,
+        notice,
+        holdNotices,
+        seatOpened: null,
+      };
     });
     await flushBackupInterestNotices(txOut.holdNotices);
+    await finishSeatOpenedNotices(txOut.seatOpened);
     return { outcome: txOut.outcome, notice: txOut.notice };
   } catch (error) {
     // Raced a capture or an approval: the row moved out of the expirable set,

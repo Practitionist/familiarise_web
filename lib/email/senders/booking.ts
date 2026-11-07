@@ -1,12 +1,17 @@
 /**
  * Booking lifecycle emails: booked, cancelled, rescheduled, reminder,
- * new request, unscheduled nudge, trial scheduled, and window opened.
+ * new request, unscheduled nudge, trial scheduled, window opened and event
+ * seat opened.
  */
 
 import UnplacedWeeksEmail from "@/emails/booking/UnplacedWeeksEmail";
 import * as React from "react";
 import { Button, Section, Text } from "react-email";
 import type { Tx } from "@/lib/prisma";
+import {
+  calendarLinks,
+  type CalendarSession,
+} from "@/lib/appointments/calendar-links";
 import AppointmentBookedEmail from "@/emails/booking/AppointmentBookedEmail";
 import AppointmentCancelledEmail from "@/emails/booking/AppointmentCancelledEmail";
 import AppointmentRescheduledEmail, {
@@ -17,6 +22,7 @@ import ClassSessionEmail, {
   classSessionSubject,
   type ClassSessionEmailKind,
 } from "@/emails/booking/ClassSessionEmail";
+import EventSeatOpenedEmail from "@/emails/booking/EventSeatOpenedEmail";
 import DocumentAndRecordingEmail, {
   documentAndRecordingSubject,
   type DocumentAndRecordingEmailKind,
@@ -47,11 +53,14 @@ import {
   defineLifecycleStager,
   greet,
   money,
+  prepareBuiltSpec,
   prepareSpecEmails,
+  stageBuiltSpec,
   stageSpecGuarded,
   stageSpecOncePerRecipient,
   whenText,
   type PreparedRecipientEmails,
+  type PreparedSpecEmails,
   type RecipientClaim,
   type RecipientEmailSpec,
 } from "./shared";
@@ -83,6 +92,8 @@ export interface AppointmentBookedEmailArgs {
   planTitle: string;
   appointmentType: string;
   startsAt: Date;
+  /** The next session ahead, which the attendee's calendar links name; none means no links. */
+  calendarSession?: CalendarSession | null;
   dashboardUrl: string;
   cancellationWindowText?: string;
 }
@@ -110,15 +121,21 @@ function bookedSpec(args: AppointmentBookedEmailArgs): RecipientEmailSpec {
         startsAtText: whenText(args.startsAt, r.zone),
         dashboardUrl: absolute(args.dashboardUrl),
         cancellationWindowText: args.cancellationWindowText,
+        calendar:
+          role(r) === "consultee" && args.calendarSession
+            ? calendarLinks({
+                appointmentId: args.appointmentId,
+                userId: r.userId,
+                title: args.planTitle,
+                ...args.calendarSession,
+              })
+            : null,
         unsubscribeUrl: r.unsubscribeUrl,
       }),
   };
 }
 
-export async function stageAppointmentBookedEmail(
-  tx: Tx,
-  args: AppointmentBookedEmailArgs,
-): Promise<StagedRecipientEmail[]> {
+function buildBookedEmail(args: AppointmentBookedEmailArgs) {
   const userIds = Array.from(
     new Set(
       [
@@ -128,7 +145,22 @@ export async function stageAppointmentBookedEmail(
       ].filter((id): id is string => !!id),
     ),
   );
-  return stageSpecGuarded(bookedSpec(args), userIds, tx);
+  return { userIds, spec: bookedSpec(args) };
+}
+
+/** Renders the booked notices before the confirming transaction opens. */
+export function prepareAppointmentBookedEmail(
+  args: AppointmentBookedEmailArgs,
+): Promise<PreparedSpecEmails> {
+  return prepareBuiltSpec(buildBookedEmail, args);
+}
+
+export function stageAppointmentBookedEmail(
+  tx: Tx,
+  args: AppointmentBookedEmailArgs,
+  pre?: PreparedSpecEmails | null,
+): Promise<StagedRecipientEmail[]> {
+  return stageBuiltSpec(tx, buildBookedEmail, args, pre);
 }
 
 // ── Cancelled ───────────────────────────────────────────────────────────────
@@ -259,7 +291,7 @@ export const stageAppointmentRescheduledEmail =
 
 // ── Reminder ────────────────────────────────────────────────────────────────
 
-export type ReminderWindowLabel = "24h" | "1h";
+export type ReminderWindowLabel = "24h" | "1h" | "15m";
 
 /**
  * #1583 P1 — the `FailedEmail.emailType` the reminder twin stages under, and
@@ -289,6 +321,7 @@ export function legacyAppointmentReminderEntityRef(
 const WINDOW_WORDS: Record<ReminderWindowLabel, string> = {
   "24h": "tomorrow",
   "1h": "in about an hour",
+  "15m": "in a few minutes",
 };
 
 export interface AppointmentReminderEmailArgs {
@@ -639,6 +672,48 @@ export async function stageWindowOpenedEmail(
     },
     [args.userId],
     tx,
+  );
+}
+
+// ── Event seat opened ───────────────────────────────────────────────────────
+
+export const EVENT_SEAT_OPENED_EMAIL_TYPE = "EVENT_SEAT_OPENED";
+
+export interface EventSeatOpenedEmailArgs {
+  appointmentId: string;
+  /** The cooldown window this notice belongs to; part of the per-recipient claim key. */
+  bucket: number;
+  userIds: string[];
+  planTitle: string;
+  kind: "WEBINAR" | "CLASS";
+  startsAt: Date | null;
+  checkoutUrl: string;
+}
+
+/** Renders outside any transaction and stages once per recipient under `claim`; never call it inside `tx`. */
+export function stageEventSeatOpenedEmails(
+  args: EventSeatOpenedEmailArgs,
+  claim: RecipientClaim,
+): Promise<StagedRecipientEmail[]> {
+  const startsAt = args.startsAt;
+  return stageSpecOncePerRecipient(
+    {
+      emailType: EVENT_SEAT_OPENED_EMAIL_TYPE,
+      category: "appointments",
+      entityRef: `appointment:${args.appointmentId}`,
+      subject: () => `A seat just opened in ${args.planTitle}`,
+      render: (r) =>
+        React.createElement(EventSeatOpenedEmail, {
+          recipientName: greet(r),
+          planTitle: args.planTitle,
+          eventLabel: args.kind === "CLASS" ? "class" : "webinar",
+          startsText: startsAt ? whenText(startsAt, r.zone) : null,
+          checkoutUrl: absolute(args.checkoutUrl),
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+    args.userIds,
+    claim,
   );
 }
 

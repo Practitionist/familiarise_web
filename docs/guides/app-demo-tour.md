@@ -1,7 +1,9 @@
 # Familiarise — Guided App Tour (for the family demo)
 
-A phased, grouped walkthrough of the whole platform. Every login below works on the
-seeded `familiarise` database. **Operator accounts (Admin, Staff) use the `SEED_OPERATOR_PASSWORD` value from your local `.env`; ask the lead. All other accounts use the seed default password (see `prisma/seedFiles/1a-create-users.ts`).**
+A phased, grouped walkthrough of the whole platform. The logins below exist in the
+default `SEED_MODE=small` seed; the Platform Admin and Platform Staff rows also
+require `SEED_WITH_STAFF=true`.
+**Operator accounts (Admin, Staff) use the `SEED_OPERATOR_PASSWORD` value from your local `.env`; ask the lead. All other accounts use the seed default password (see `prisma/seedFiles/1a-create-users.ts`).**
 
 > Tip: do the demo in **Incognito windows** — one per role — so sessions don't collide,
 > and so the browser-extension noise (the `fdprocessedid` warnings) stays out of the way.
@@ -11,18 +13,24 @@ seeded `familiarise` database. **Operator accounts (Admin, Staff) use the `SEED_
 
 ## 🔑 Logins (one per role)
 
-| Role                       | What they are                                     | Email                        | Password                 |
-| -------------------------- | ------------------------------------------------- | ---------------------------- | ------------------------ |
-| **Consultee**              | A customer who books sessions                     | `aarav.campbell@hotmail.com` | seed default             |
-| **Consultant**             | An expert who sells & runs sessions               | `aarav.anderson@gmail.com`   | seed default             |
-| **Org admin (Enterprise)** | Runs the **Wipro** company workspace              | `tour-owner@familiarise.dev` | seed default             |
-| **Sponsored employee**     | A Wipro learner who books on the company's budget | `sarah.brown@yahoo.com`      | seed default             |
-| **Platform Admin**         | Familiarise back-office (money, verification)     | `robert.davis@yahoo.com`     | `SEED_OPERATOR_PASSWORD` |
-| **Platform Staff**         | Support / operations                              | `lauren.davis@gmail.com`     | `SEED_OPERATOR_PASSWORD` |
+| Role                       | What they are                                     | Email                               | Password                 |
+| -------------------------- | ------------------------------------------------- | ----------------------------------- | ------------------------ |
+| **Consultee**              | A customer who books sessions                     | `patrick.anderson@outlook.com`      | seed default             |
+| **Consultant**             | An expert who sells & runs sessions               | `aarav.anderson@gmail.com`          | seed default             |
+| **Org admin (Enterprise)** | Runs the **Wipro** company workspace              | `tour-owner@familiarise.dev`        | seed default             |
+| **Sponsored employee**     | A Wipro learner who books on the company's budget | `priya.anderson@yahoo.com`          | seed default             |
+| **Platform Admin**         | Familiarise back-office (money, verification)     | `qa-admin-2@qa.familiarise.invalid` | `SEED_OPERATOR_PASSWORD` |
+| **Platform Staff**         | Support / operations                              | `qa-staff-1@qa.familiarise.invalid` | `SEED_OPERATOR_PASSWORD` |
+
+> The consultee and sponsored-employee logins are among the first three seeded users
+> for their role, so they are always onboarded. Operator accounts sign in without TOTP
+> only when `NEXT_PUBLIC_SENTRY_ENVIRONMENT` is `preview` or `development`;
+> production asks for TOTP.
 
 **Extra orgs to show variety:** _IIT Madras_ (owner `charlotte.anderson@gmail.com`) and
-_LearnPro Academy_ (owner `daniel.anderson@outlook.com`). The DB has **80 consultants,
-123 consultees, 12 staff, 8 admins** — pick any name from the same pattern
+_LearnPro Academy_ (owner `daniel.anderson@outlook.com`). Seeded counts depend on
+`SEED_MODE`: the default `small` seed creates 30 consultants and 40 consultees, and
+`SEED_WITH_STAFF=true` adds 4 staff and 3 admins. Pick any name from the same pattern
 (`firstname.lastname@domain`) if you want more.
 
 ---
@@ -46,7 +54,7 @@ the customer → the expert → companies → the back office → the money engi
 
 > Say: _"It's a marketplace — like a storefront of experts you can book."_
 
-### Phase 2 — The customer journey · _log in as the Consultee_ (`aarav.campbell@hotmail.com`)
+### Phase 2 — The customer journey · _log in as the Consultee_ (`patrick.anderson@outlook.com`)
 
 **Where:** lands on the **Consultee dashboard** after login.
 
@@ -89,13 +97,13 @@ the customer → the expert → companies → the back office → the money engi
 - **Billing account & wallet** (the company's prepaid balance / top-ups), **Payouts**,
   and **Invoices** (GST-compliant, gapless numbering).
 - **Settings:** **SSO** (OIDC), **webhooks**, audit log, and the **analytics** dashboard.
-- **Then switch** to a **sponsored employee** (`sarah.brown@yahoo.com`) and book a session
+- **Then switch** to a **sponsored employee** (`priya.anderson@yahoo.com`) and book a session
   **on the company's budget** — to show the funding flow end-to-end.
 
 > Say: _"Companies sponsor their teams — they fund a wallet, set who can book what, and
 > get one compliant invoice."_ Other orgs to peek at: **IIT Madras**, **LearnPro Academy**.
 
-### Phase 5 — The back office · _log in as Admin_ (`robert.davis@yahoo.com`)
+### Phase 5 — The back office · _log in as Admin_ (`qa-admin-2@qa.familiarise.invalid`)
 
 **Where:** the **Admin** dashboards.
 
@@ -103,7 +111,7 @@ the customer → the expert → companies → the back office → the money engi
 - **Payments:** reconciliation, **refunds**, **disputes/chargebacks**.
 - **Invoices:** counters, IRN/e-invoice status.
 - **Moderation / profile verification**, and **overage events**.
-- Then **Staff** (`lauren.davis@gmail.com`) for the support/operations view.
+- Then **Staff** (`qa-staff-1@qa.familiarise.invalid`) for the support/operations view.
 
 > Say: _"This is the control room that keeps payments correct and the marketplace safe."_
 

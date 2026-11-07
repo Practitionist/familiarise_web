@@ -5,6 +5,12 @@
  */
 
 const mockSubscription = { findMany: jest.fn(), count: jest.fn() };
+// The inbox reaches payout setup, whose clawback notices load the email stack (unloadable in jsdom).
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(),
+  stageRaisedClawback: jest.fn(),
+}));
+
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {

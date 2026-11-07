@@ -1,11 +1,13 @@
 import "server-only";
 
+import { Suspense } from "react";
 import { HydrationBoundary } from "@tanstack/react-query";
 
 import {
   DashboardContent,
   DashboardHeader,
 } from "@/components/dashboard/PageScaffold";
+import { Skeleton } from "@/components/ui/skeleton";
 import { readDigitalProductLibrary } from "@/lib/data/digital-product-library";
 import { readDocumentLibrary } from "@/lib/data/document-library";
 import { readRecordingLibrary } from "@/lib/data/recording-library";
@@ -157,9 +159,24 @@ async function LibraryPanel({
   );
 }
 
+/** Same rows the list shows while its own request loads, so the swap is flat. */
+function LibraryPanelFallback() {
+  return (
+    <output aria-busy="true" className="block space-y-3">
+      <span className="sr-only">Loading…</span>
+      {[0, 1, 2].map((i) => (
+        <Skeleton key={i} className="h-20 rounded-xl" />
+      ))}
+    </output>
+  );
+}
+
 /**
  * The one buyer Library for every role: URL tabs (`?tab=`) that navigate, so
  * the server renders and reads only the active tab. One tab hides the bar.
+ * The header and tabs render without the panel's reads; the panel streams
+ * behind a boundary keyed by tab so every tab switch shows the fallback. The
+ * caller's access checks run before this renders, never inside the boundary.
  */
 export function LibraryPage({
   title,
@@ -192,7 +209,13 @@ export function LibraryPage({
             carryScope={owner.kind === "org"}
           />
         )}
-        <LibraryPanel owner={owner} tab={active} searchParams={searchParams} />
+        <Suspense key={active} fallback={<LibraryPanelFallback />}>
+          <LibraryPanel
+            owner={owner}
+            tab={active}
+            searchParams={searchParams}
+          />
+        </Suspense>
       </DashboardContent>
     </>
   );

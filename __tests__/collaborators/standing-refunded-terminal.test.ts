@@ -50,3 +50,6 @@ it("cancels the live collaborator seat and leaves the REFUNDED one unchanged", a
 
   expect(seats.map((s) => s.status)).toEqual(["CANCELLED", "REFUNDED"]);
 });
+jest.mock("@/lib/collaborators/notifications", () => ({
+  stageCollaboratorNotifications: jest.fn(async () => ({})),
+}));

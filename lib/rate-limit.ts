@@ -50,6 +50,8 @@ export const gstRegisterDownloadLimiter = makeLimiter(
 export const adminMutationLimiter = makeLimiter(10, "1 m", "rl:admin-mutation");
 /** 3 per hour — POST /api/waitlist newsletter signup (IP-based) */
 export const waitlistLimiter = makeLimiter(3, "1 h", "rl:waitlist");
+/** 30 per minute per IP — GET /api/calendar/[appointmentId], the signed .ics link */
+export const calendarLimiter = makeLimiter(30, "1 m", "rl:calendar");
 /** 3 per 24 hours — POST /api/referrals/apply */
 export const referralApplyLimiter = makeLimiter(3, "24 h", "rl:referral-apply");
 /** 1 per 24 hours per appointment — POST /api/bookings/{consultations,subscriptions}/[id]/remind */
@@ -60,8 +62,13 @@ export const spamLimiter = makeLimiter(5, "1 h", "rl:spam");
 export const supportTurnLimiter = makeLimiter(60, "1 h", "rl:support-turn");
 /** 20 per hour — review composer writes */
 export const reviewWriteLimiter = makeLimiter(20, "1 h", "rl:review-write");
-/** 20 per minute — POST /api/meetings/[id]/join */
-export const streamJoinLimiter = makeLimiter(20, "1 m", "rl:stream-join");
+/**
+ * 1,500 per minute per IP — POST /api/meetings/[id]/join, an abuse backstop only:
+ * 200 attendees on one NAT make about 5 calls each as a room opens. See `meetingJoinLimiter`.
+ */
+export const streamJoinLimiter = makeLimiter(1500, "1 m", "rl:stream-join");
+/** 10 per minute per user — POST /api/meetings/[id]/join (after authentication) */
+export const meetingJoinLimiter = makeLimiter(10, "1 m", "rl:meeting-join");
 /** 60 per minute — authenticated Stream reads/writes */
 export const streamApiLimiter = makeLimiter(60, "1 m", "rl:stream-api");
 /** 10 per minute per user — meeting room controls: end, extend, reopen, live */
@@ -175,12 +182,6 @@ export const orgWalletTopUpLimiter = makeLimiter(
 );
 /** 20 per hour per org — POST /api/organizations/[orgId]/invitations */
 export const orgInviteLimiter = makeLimiter(20, "1 h", "rl:org-invite");
-/** 10 per hour per org — POST /api/organizations/[orgId]/programs/[programId]/auto-enroll */
-export const orgAutoEnrollLimiter = makeLimiter(
-  10,
-  "1 h",
-  "rl:org-auto-enroll",
-);
 /** 5 per minute per org — outbound webhook CRUD + secret rotation */
 export const orgWebhookLimiter = makeLimiter(5, "1 m", "rl:org-webhook");
 /** 1 per 24h per org — POST /api/organizations/[orgId]/data-exports */

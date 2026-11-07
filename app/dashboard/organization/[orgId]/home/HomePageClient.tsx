@@ -10,16 +10,11 @@ import {
 import { Section } from "@/components/dashboard/Section";
 import { StatRow, StatSkeleton } from "@/components/dashboard/Stat";
 import { Button } from "@/components/ui/button";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { useOrgRole } from "../useOrgRole";
 import { FinanceLeadViewCard } from "./FinanceLeadViewCard";
 import { OperatorHome } from "./OperatorHome";
 import { SupportHome } from "./SupportHome";
-
-const OPERATOR_ROLES: ReadonlySet<MemberRole> = new Set([
-  "OWNER",
-  "MAINTAINER",
-  "MANAGER",
-]);
 
 function MemberHome({
   orgId,
@@ -98,7 +93,7 @@ export function HomePageClient({ orgId }: { orgId: string }) {
     );
   }
 
-  let title = "Overview";
+  const title = "Overview";
   let description = "Your membership on this organization.";
   let body: React.ReactNode;
   if (suspended) {
@@ -117,11 +112,10 @@ export function HomePageClient({ orgId }: { orgId: string }) {
         </Button>
       </Section>
     );
-  } else if (OPERATOR_ROLES.has(role)) {
+  } else if (hasOrgPermission(role, "activity.read")) {
     description = "What needs doing on this organization.";
     body = <OperatorHome orgId={orgId} />;
   } else if (role === "BILLING_ADMIN") {
-    title = "Finance overview";
     description = "Invoices, balances and payouts on this organization.";
     body = (
       <FinanceLeadViewCard

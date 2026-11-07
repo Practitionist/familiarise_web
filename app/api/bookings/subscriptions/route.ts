@@ -172,7 +172,7 @@ export async function GET(request: NextRequest) {
     // per-slot user M2M that no list consumer reads, and over-shared user
     // PII (email/role/phone) against the #946 allowlist direction. Field
     // superset verified across RequestSchedulingTab, the Mini tab,
-    // fetchApprovals, and useEvents consumers.
+    // and useEvents consumers.
     const [subscriptions, total] = await Promise.all([
       prisma.subscription.findMany({
         where: whereClause,

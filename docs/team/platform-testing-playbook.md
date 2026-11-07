@@ -117,7 +117,6 @@ graph LR
 | **Collaborators**    | No                         | No                    | Yes (co-hosts, moderators) | Yes (co-instructors, TAs) |
 | **Recording**        | Optional                   | Optional              | Optional                   | Optional                  |
 | **Materials**        | Yes                        | Yes + curriculum      | Yes                        | Yes + curriculum          |
-| **Waitlist**         | No                         | No                    | Yes                        | Yes                       |
 | **Request Approval** | Yes                        | Yes                   | No (direct checkout)       | No (direct checkout)      |
 
 ---
@@ -692,34 +691,6 @@ graph TD
 4. Submit
 5. Check that the review appears on the consultant's public profile
 
-### Waitlist
-
-**What:** When a webinar or class is full, consultees can join a waitlist. They get notified when a spot opens up with a 48-hour window to book.
-
-**Where:** `/dashboard/consultee/[id]/waitlists`
-
-**Who:** Consultee
-
-```mermaid
-graph TD
-    A[Webinar/Class is Full] --> B[Consultee Joins Waitlist]
-    B --> C[Position in Queue Assigned]
-    C --> D{Spot Opens Up?}
-    D -->|Yes| E[Consultee Notified<br/>48-hour window]
-    E --> F{Response?}
-    F -->|Books| G[Slot Confirmed!]
-    F -->|No response in 48h| H[Moved to EXPIRED<br/>Next in queue notified]
-    F -->|Skips| I[Moved to SKIPPED<br/>Goes to back of queue]
-    D -->|No| J[Remains WAITING]
-```
-
-**How to test:**
-
-1. Find a full webinar or class
-2. Click "Join Waitlist"
-3. Check your waitlist dashboard — you should see your position
-4. If a spot opens, you should get a notification with 48 hours to respond
-
 ### Payment History & Invoices
 
 **Where:** `/dashboard/consultee/[id]/payments`
@@ -1253,7 +1224,7 @@ Use these checklists to systematically test every feature. Check off each item a
 - [ ] Request a trial session
 - [ ] Register for a webinar
 - [ ] Enroll in a class
-- [ ] Join a waitlist for a full event
+- [ ] Open a full webinar or class and confirm it shows "Sold out" and cannot be bought
 - [ ] View payment history
 - [ ] Download an invoice
 - [ ] View referral credits balance
@@ -1338,7 +1309,7 @@ Use these checklists to systematically test every feature. Check off each item a
 
 - [ ] Consultee books → Consultant receives → Session happens → Review left → Earnings appear → Payout processed
 - [ ] Consultee applies discount code → Price reduces correctly → Payment processes correctly
-- [ ] Consultant creates webinar → Consultee registers → Webinar fills up → Another consultee joins waitlist → Spot opens → Waitlist user notified
+- [ ] Consultant creates webinar → Consultee registers → Webinar fills up → Another consultee sees it as sold out
 - [ ] Consultant invites collaborator → Collaborator accepts → Session conducted → Revenue splits correctly
 - [ ] Consultee requests trial → Consultant approves → Trial happens → Consultee converts to paid subscription
 - [ ] Consultee uploads document → Consultant reviews → Marks as "Needs Revision" → Consultee resubmits → Consultant approves
@@ -1397,22 +1368,22 @@ erDiagram
 
 ## Key Status Enums Reference
 
-| Entity                   | Statuses                                                                     | Meaning                      |
-| ------------------------ | ---------------------------------------------------------------------------- | ---------------------------- |
-| **Payment**              | PENDING → SUCCEEDED / FAILED / EXPIRED                                       | Payment processing lifecycle |
-| **Refund**               | PENDING → SUCCEEDED / FAILED / CANCELLED                                     | Refund processing            |
-| **Dispute**              | NEEDS_RESPONSE → UNDER_REVIEW → WON / LOST / CHARGE_REFUNDED                 | Chargeback lifecycle         |
-| **Earnings**             | PENDING → HELD → READY → PAID / REFUNDED                                     | Consultant money lifecycle   |
-| **Payout**               | PENDING → APPROVED → PROCESSING → COMPLETED / FAILED                         | Money transfer to bank       |
-| **Request**              | PENDING → APPROVED → SCHEDULED → COMPLETED / REJECTED / CANCELLED / EXPIRED  | Booking request lifecycle    |
-| **Trial**                | PENDING → SCHEDULED → COMPLETED → CONVERTED / CANCELLED / REJECTED           | Trial lifecycle              |
-| **Waitlist**             | WAITING → NOTIFIED → BOOKED / EXPIRED / CANCELLED / SKIPPED                  | Queue management             |
-| **Document Review**      | PENDING → IN_REVIEW → APPROVED / REJECTED / NEEDS_REVISION                   | Document review workflow     |
-| **Recording**            | RECORDING → PROCESSING → READY → TRANSFERRING → AVAILABLE / FAILED / EXPIRED | Recording storage lifecycle  |
-| **Profile Verification** | PENDING → APPROVED / REJECTED / NEEDS_INFO                                   | Consultant verification      |
-| **Moderation Report**    | PENDING → UNDER_REVIEW → DISMISSED / ACTION_TAKEN / ESCALATED                | Content moderation           |
-| **Support Ticket**       | OPEN → IN_PROGRESS → RESOLVED / CLOSED                                       | Support workflow             |
-| **Collaborator**         | PENDING → ACCEPTED / DECLINED / REMOVED                                      | Collaboration invitation     |
+| Entity                   | Statuses                                                                     | Meaning                                   |
+| ------------------------ | ---------------------------------------------------------------------------- | ----------------------------------------- |
+| **Payment**              | PENDING → SUCCEEDED / FAILED / EXPIRED                                       | Payment processing lifecycle              |
+| **Refund**               | PENDING → SUCCEEDED / FAILED / CANCELLED                                     | Refund processing                         |
+| **Dispute**              | NEEDS_RESPONSE → UNDER_REVIEW → WON / LOST / CHARGE_REFUNDED                 | Chargeback lifecycle                      |
+| **Earnings**             | PENDING → HELD → READY → PAID / REFUNDED                                     | Consultant money lifecycle                |
+| **Payout**               | PENDING → APPROVED → PROCESSING → COMPLETED / FAILED                         | Money transfer to bank                    |
+| **Request**              | PENDING → APPROVED → SCHEDULED → COMPLETED / REJECTED / CANCELLED / EXPIRED  | Booking request lifecycle                 |
+| **Trial**                | PENDING → SCHEDULED → COMPLETED → CONVERTED / CANCELLED / REJECTED           | Trial lifecycle                           |
+| **Window interest**      | WAITING → NOTIFIED → BOOKED / EXPIRED                                        | "Notify me if this time opens" (1:1 only) |
+| **Document Review**      | PENDING → IN_REVIEW → APPROVED / REJECTED / NEEDS_REVISION                   | Document review workflow                  |
+| **Recording**            | RECORDING → PROCESSING → READY → TRANSFERRING → AVAILABLE / FAILED / EXPIRED | Recording storage lifecycle               |
+| **Profile Verification** | PENDING → APPROVED / REJECTED / NEEDS_INFO                                   | Consultant verification                   |
+| **Moderation Report**    | PENDING → UNDER_REVIEW → DISMISSED / ACTION_TAKEN / ESCALATED                | Content moderation                        |
+| **Support Ticket**       | OPEN → IN_PROGRESS → RESOLVED / CLOSED                                       | Support workflow                          |
+| **Collaborator**         | PENDING → ACCEPTED / DECLINED / REMOVED                                      | Collaboration invitation                  |
 
 ---
 

@@ -20,6 +20,8 @@ import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import {
   applyTransactionalEffects,
   applyBestEffortEffects,
+  prepareModerationNotices,
+  type ModerationNoticeDrafts,
   persistActionSideEffects,
   type ModerationReportRef,
   type SideEffectSummary,
@@ -141,6 +143,7 @@ function applyModerationTransaction(
   notes: string | undefined,
   staffUserId: string,
   input: ModerationActionInput,
+  drafts: ModerationNoticeDrafts,
 ) {
   return withSerializableRetry(() =>
     prisma.$transaction(
@@ -180,10 +183,11 @@ function applyModerationTransaction(
           },
         });
 
-        const transactional = await applyTransactionalEffects(tx, {
-          ...input,
-          actionId: action.id,
-        });
+        const transactional = await applyTransactionalEffects(
+          tx,
+          { ...input, actionId: action.id },
+          drafts,
+        );
 
         const updatedReport = await tx.moderationReport.findUniqueOrThrow({
           where: { id: reportId },
@@ -310,6 +314,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       suspensionDays,
     };
 
+    // Rendered before the decision's transaction, which only stages them.
+    const drafts = await prepareModerationNotices(input);
     const { action, updatedReport, transactional } =
       await applyModerationTransaction(
         reportId,
@@ -317,6 +323,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         notes,
         session.user.id,
         input,
+        drafts,
       );
 
     if (transactional.reviewRemovedConsultantProfileId) {

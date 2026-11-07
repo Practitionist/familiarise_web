@@ -25,6 +25,7 @@ import { Prisma } from "@prisma/client";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { softCancelTrialAppointmentInTx } from "@/lib/trials/cancellation";
 import {
@@ -37,6 +38,11 @@ import {
   stageNoticesForAppointmentHolds,
   type StagedBackupInterestNotices,
 } from "./backup-interest";
+import {
+  finishSeatOpenedNotices,
+  stageSeatOpenedNotices,
+  type StagedSeatOpened,
+} from "./event-waitlist";
 import { releaseParticipant } from "./participants";
 import {
   cancelGatewayOrders,
@@ -112,6 +118,7 @@ type TxOutcome =
       // an order this run did not expire (the cancel-pending posture).
       gatewayCancels: GatewayCancel[];
       holdNotices?: StagedBackupInterestNotices | null;
+      seatOpened?: StagedSeatOpened | null;
     };
 
 /** Consultation or subscription: the request itself ends CANCELLED. */
@@ -241,7 +248,11 @@ async function abandonTrial(
  * HELD is the CAS — the capture webhook flips it to CONFIRMED in its own
  * Serializable transaction, so a seat that got paid matches nothing here.
  */
-async function abandonSeat(tx: Tx, target: AbandonTarget): Promise<TxOutcome> {
+async function abandonSeat(
+  tx: Tx,
+  target: AbandonTarget,
+  now: Date,
+): Promise<TxOutcome> {
   const released = await releaseParticipant(tx, {
     appointmentId: target.appointmentId,
     userId: target.userId,
@@ -263,6 +274,7 @@ async function abandonSeat(tx: Tx, target: AbandonTarget): Promise<TxOutcome> {
     paymentsExpired: expired,
     slotsReleased: released,
     gatewayCancels,
+    seatOpened: await stageSeatOpenedNotices(tx, target.appointmentId, now),
   };
 }
 
@@ -352,6 +364,7 @@ export async function abandonBooking(args: {
   // predicates in the WHERE, so a second abandon running concurrently matches
   // zero rows and answers NOT_ABANDONABLE / ALREADY_PAID. What it would cost is
   // the serialisation, which is the whole point of this key.
+  const now = new Date();
   const outcome = await withAppointmentLock(
     target.appointmentId,
     async (lock) =>
@@ -361,7 +374,7 @@ export async function abandonBooking(args: {
           (tx): Promise<TxOutcome> => {
             const { requestId } = target;
             if (target.kind === "webinar" || target.kind === "class") {
-              return abandonSeat(tx, target);
+              return abandonSeat(tx, target, now);
             }
             if (!requestId) {
               return Promise.resolve({ ok: false, code: "NOT_ABANDONABLE" });
@@ -380,6 +393,10 @@ export async function abandonBooking(args: {
   );
   if (!outcome.ok) return outcome;
   await flushBackupInterestNotices(outcome.holdNotices);
+  await scheduleAfter(
+    () => finishSeatOpenedNotices(outcome.seatOpened),
+    "abandon.seat-opened",
+  );
 
   await cancelGatewayOrders(outcome.gatewayCancels, {
     op: "abandon.gateway-cancel",

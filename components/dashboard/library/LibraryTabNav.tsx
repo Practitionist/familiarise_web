@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
+import { LinkPendingLabel } from "@/components/ui/NavLink";
 import type { LibraryTab } from "@/lib/dashboard/library-tabs";
 import { cn } from "@/utils/tailwind";
 
@@ -59,7 +60,7 @@ export function LibraryTabNav({
                   : "border-transparent text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground",
               )}
             >
-              {TAB_LABEL[tab]}
+              <LinkPendingLabel>{TAB_LABEL[tab]}</LinkPendingLabel>
             </Link>
           </li>
         ))}

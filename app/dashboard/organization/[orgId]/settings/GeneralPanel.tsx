@@ -19,6 +19,7 @@ import {
 import type {
   FundingSource,
   GstRegStatus,
+  MemberRole,
   MsmeStatus,
   OrgStatus,
 } from "@prisma/client";
@@ -28,6 +29,7 @@ import { CancellationPolicyCard } from "./CancellationPolicyCard";
 import { SupportContactCard } from "./SupportContactCard";
 import { orgDetailsQueryKey } from "@/lib/api/organizations/org-details";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
+import { ErrorState } from "@/components/dashboard/ErrorState";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,7 +43,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { humanizeEnum } from "@/lib/ui/tone";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -56,6 +57,8 @@ import {
   FUNDING_SOURCE_LABEL,
   CAPABILITY_BADGE_CLASS,
   CAPABILITY_LABEL,
+  MEMBER_ROLE_LABEL,
+  ORG_STATUS_LABEL,
   deriveCapabilityKind,
 } from "@/lib/labels/org-labels";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
@@ -635,11 +638,12 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
   const canManage = can("settings.manage");
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery({
+  const settings = useQuery({
     queryKey: ["org-settings", orgId],
     queryFn: () => fetchSettings(orgId),
     enabled: canManage,
   });
+  const { data, isLoading } = settings;
 
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -741,11 +745,21 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
     );
   }
 
-  if (isLoading || !data) {
+  if (isLoading) {
     return (
       <div className="space-y-6">
         <p className="text-sm text-zinc-500">Loading…</p>
       </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <ErrorState
+        title="We couldn't load organization settings"
+        description="Your settings are unchanged. Check your connection and try again."
+        onRetry={() => void settings.refetch()}
+      />
     );
   }
 
@@ -831,7 +845,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                 </Badge>
               )}
               <Badge variant="outline">
-                Status: {humanizeEnum(data.profile.status)}
+                Status: {ORG_STATUS_LABEL[data.profile.status]}
               </Badge>
             </div>
 
@@ -1388,7 +1402,8 @@ function DangerZoneCard({
                   <option value="">Select an active member…</option>
                   {eligibleMembers.map((m) => (
                     <option key={m.id} value={m.id}>
-                      {m.user.name ?? m.user.email ?? m.id} ({m.role})
+                      {m.user.name ?? m.user.email ?? m.id} (
+                      {MEMBER_ROLE_LABEL[m.role as MemberRole] ?? m.role})
                     </option>
                   ))}
                 </select>

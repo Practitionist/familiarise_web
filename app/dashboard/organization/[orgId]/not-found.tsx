@@ -9,31 +9,29 @@ import {
 } from "@/components/ui/card";
 
 /**
- * App-router not-found boundary for `/dashboard/organization/[orgId]/**`.
+ * App-router not-found boundary for pages under `/dashboard/organization/[orgId]`.
  *
- * Fires when a sub-page explicitly calls `notFound()` (e.g. layout-level
- * fetch of `fetchOrgDetails` returns null because the orgId doesn't
- * exist or the caller lost membership). Sends the user back to the org
- * switcher landing instead of the platform root so they keep their
- * dashboard context.
+ * A sub-page calls `notFound()` when the viewer's role or the org's
+ * capabilities do not include it, so the copy is a neutral access message. An
+ * unknown or foreign org id is rejected by the layout and lands on
+ * `app/dashboard/not-found.tsx` instead.
  */
 export default function OrgDashboardNotFound() {
   return (
     <div className="container mx-auto pt-24 py-8 px-4 min-h-[calc(100vh-400px)]">
       <Card className="max-w-2xl mx-auto text-center">
         <CardHeader>
-          <CardTitle>Organization not found</CardTitle>
+          <CardTitle>You don&apos;t have access to this page</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-muted-foreground">
-            We couldn&apos;t find what you were looking for. The
-            organization may have been deleted, or you may no longer be a
-            member.
+            This page isn&apos;t available for your role in this organization,
+            or it no longer exists. Ask an owner if you need access.
           </p>
         </CardContent>
         <CardFooter className="justify-center space-x-4">
           <Button variant="outline" asChild>
-            <Link href="/dashboard">Back to your organizations</Link>
+            <Link href="/dashboard">Back to your dashboard</Link>
           </Button>
         </CardFooter>
       </Card>

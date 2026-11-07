@@ -226,11 +226,11 @@ export const getMonthYearString = (date: Date) => {
   });
 };
 
-/** The query every settings section and the Requests page's paused banner share (#1703 D4). */
+/** The query every settings section and the Requests page's paused banner share. */
 export const consultantSettingsQueryKey = (consultantId: string) =>
   ["consultant-settings", consultantId] as const;
 
-/** The "Booking requests" settings; a null cap means no limit. */
+/** The "Booking mode" settings; a null cap means no limit. */
 export interface BookingRequestSettings {
   bookingMode: BookingMode;
   acceptingRequests: boolean;
@@ -274,7 +274,7 @@ export function bookingRequestSettingsChange(
 }
 
 /**
- * Saves the Booking requests settings through their own PATCH, the only
+ * Saves the Booking mode settings through their own PATCH, the only
  * writer of them. Throws the server's refusal (409 SETTINGS_CHANGED when they
  * changed elsewhere since the screen was drawn) for the caller's toast.
  */
@@ -295,7 +295,7 @@ export async function saveBookingRequestSettings(
 }
 
 /**
- * The Settings hub's sections (#1785 L-2), in the locked order. One entry is
+ * The Settings hub's sections in the locked order. One entry is
  * one URL under `/settings/<slug>`; `group` is the titled block the left nav
  * shows it under. Settings stays ONE sidebar entry with these inside it —
  * Material's settings pattern says to group with specific titles and never to
@@ -360,7 +360,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   {
     group: "Business",
     key: "booking",
-    label: "Booking requests",
+    label: "Booking mode",
     slug: "booking",
     description:
       "Whether people book you instantly or ask first, and how many can wait",

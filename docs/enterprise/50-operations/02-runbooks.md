@@ -71,7 +71,7 @@ withdrawal-of-consent request doesn't propagate.
    curl -X DELETE "https://app.familiarise.com/api/organizations/$ORG/consent" \
      -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{ "userId": "…", "purpose": "ANALYTICS" }'
+     -d '{ "userId": "…", "purpose": "MARKETING_COMMS" }'
    ```
    Omitting `purpose` withdraws all consents for that user in that org.
 4. Confirm the `ConsentArtifact.withdrawnAt` timestamp is set and an

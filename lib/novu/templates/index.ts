@@ -1,7 +1,9 @@
-import type { CreateWorkflowDto } from "@novu/api/models/components";
+import type {
+  CreateWorkflowDto,
+  WorkflowPreferencesDto,
+} from "@novu/api/models/components";
 import { B2C_TEMPLATES } from "./b2c";
 import { ORG_TEMPLATES } from "./org";
-import { inAppSkipRule } from "./conditions";
 import {
   EVENT_FAMILY,
   FAMILIES,
@@ -41,6 +43,21 @@ export const IN_APP_STEP_NAME = "In-app";
 export const HREF_FIELD = "href";
 
 /**
+ * Where a bell with no destination of its own opens: the viewer's dashboard
+ * home. Novu fails the in-app step when the redirect url renders empty.
+ */
+export const FALLBACK_HREF = "/dashboard/go/auto";
+
+/**
+ * Postgres owns notification preferences and gates every bell before the
+ * trigger, so a family is always on and subscribers cannot mute it in Novu.
+ */
+export const FAMILY_PREFERENCES: WorkflowPreferencesDto = {
+  all: { enabled: true, readOnly: true },
+  channels: { in_app: { enabled: true } },
+};
+
+/**
  * What actually goes over the wire: the family as the workflow, the event
  * as a payload field the template branches on, and the event's destination
  * copied into `href` because a redirect cannot branch (types.ts). Every
@@ -49,7 +66,7 @@ export const HREF_FIELD = "href";
 export function toWire<T extends Record<string, unknown>>(
   event: NovuWorkflowId,
   payload: T,
-): { workflowId: FamilyId; payload: T & { event: string; href?: string } } {
+): { workflowId: FamilyId; payload: T & { event: string; href: string } } {
   const family = EVENT_FAMILY[event];
   if (!family) {
     throw new Error(`Novu: "${event}" has no workflow family`);
@@ -61,9 +78,10 @@ export function toWire<T extends Record<string, unknown>>(
     payload: {
       ...payload,
       event,
-      ...(typeof destination === "string" && destination
-        ? { [HREF_FIELD]: destination }
-        : {}),
+      [HREF_FIELD]:
+        typeof destination === "string" && destination
+          ? destination
+          : FALLBACK_HREF,
     },
   };
 }
@@ -97,9 +115,8 @@ export function toFamilyDto(family: Family): CreateWorkflowDto {
   }
   const subject = caseOverEvents(members, (t) => t.inApp.subject);
   // One variable, not a `case`: Novu's IN_APP_REDIRECT_URL_REGEX admits a
-  // url that starts with `{{…}}`, `http(s)://` or `/` and nothing else. An
-  // event with no destination leaves `href` unset, which renders empty and
-  // Novu then drops the redirect rather than storing a blank one.
+  // url that starts with `{{…}}`, `http(s)://` or `/` and nothing else, and
+  // fails the step when it renders empty, so `toWire` always sets `href`.
   const redirectUrl = members.some((t) => t.inApp.redirect)
     ? `{{payload.${HREF_FIELD}}}`
     : "";
@@ -113,6 +130,7 @@ export function toFamilyDto(family: Family): CreateWorkflowDto {
     active: true,
     validatePayload: false,
     source: "dashboard",
+    preferences: { user: FAMILY_PREFERENCES, workflow: FAMILY_PREFERENCES },
     steps: [
       {
         name: IN_APP_STEP_NAME,
@@ -123,7 +141,6 @@ export function toFamilyDto(family: Family): CreateWorkflowDto {
           ...(redirectUrl
             ? { redirect: { url: redirectUrl, target: "_self" } }
             : {}),
-          skip: inAppSkipRule(family.category),
         },
       },
     ],

@@ -283,7 +283,12 @@ async function performStreamUserSyncUnlocked(
       // Stream shows a user's fields to every channel co-member; contact data must not live there.
       const hardDeleteSet = new Set(hardDeleteUsers);
       const scrubs = currentPageUsers.flatMap((streamUser) => {
-        if (streamUser.deleted_at || hardDeleteSet.has(streamUser.id))
+        // Stream rejects a partial update of a deactivated user (code 16), which would fail the whole batch.
+        if (
+          streamUser.deleted_at ||
+          streamUser.deactivated_at ||
+          hardDeleteSet.has(streamUser.id)
+        )
           return [];
         const unset = staleContactFields(streamUser);
         return unset.length > 0 ? [{ id: streamUser.id, unset }] : [];

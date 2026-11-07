@@ -238,11 +238,6 @@ function exceedsErrorBudget(
   return false;
 }
 
-/** Preview deploys send no events to the shared production project; previews log only. */
-export function isPreviewDeploy(): boolean {
-  return process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT === "preview";
-}
-
 /** The `beforeSend` budget stage, exported so a test can drive it directly. */
 export function applyErrorBudget<E extends Sentry.Event>(event: E): E | null {
   // An expected outcome at info level is an ANSWER, not a fault.
@@ -345,8 +340,8 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     enabled: Boolean(dsn) && isNotDevelopmentEnvironment(),
     environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
 
-    // Previews share the production project but `beforeSend` drops their
-    // error events; their traces and logs carry this branch tag.
+    // Previews report to the shared project as environment `preview`; every
+    // error-paging alert rule is scoped to `production`, and the branch tag names the PR.
     initialScope: {
       tags: {
         ...(process.env.NEXT_PUBLIC_SENTRY_BRANCH
@@ -453,10 +448,8 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
         event.level = "warning";
         event.tags = { ...event.tags, expected: "true" };
       }
-      // Drop previews, then expected-info, fingerprint the flood families,
-      // throttle per key and cap per process. A null drops before transport, so
-      // it spends no quota. Keyed on "preview", so an unset environment fails open.
-      if (isPreviewDeploy()) return null;
+      // Drop expected-info, fingerprint the flood families, throttle per key and
+      // cap per process. A null drops before transport, so it spends no quota.
       if (applyErrorBudget(event) === null) return null;
       // #1861 S4 — scrub AFTER the relabel/throttle above: this pass only
       // removes data, it never changes a drop/keep or level decision.

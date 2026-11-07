@@ -1,5 +1,5 @@
 import { faker } from "@faker-js/faker";
-import { WaitlistSource, WaitlistStatus } from "@prisma/client";
+import { NewsletterSource, NewsletterStatus } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { config } from "./config";
 
@@ -7,34 +7,34 @@ const NUM_SUBSCRIBERS = config.volumes.waitlistSubscribers;
 
 // Roughly what a real list looks like: mostly confirmed, a tail of people who
 // never clicked the confirmation link, a few opt-outs, the occasional bounce.
-const STATUS_WEIGHTS: Array<[WaitlistStatus, number]> = [
-  [WaitlistStatus.SUBSCRIBED, 70],
-  [WaitlistStatus.PENDING, 18],
-  [WaitlistStatus.UNSUBSCRIBED, 10],
-  [WaitlistStatus.BOUNCED, 2],
+const STATUS_WEIGHTS: Array<[NewsletterStatus, number]> = [
+  [NewsletterStatus.SUBSCRIBED, 70],
+  [NewsletterStatus.PENDING, 18],
+  [NewsletterStatus.UNSUBSCRIBED, 10],
+  [NewsletterStatus.BOUNCED, 2],
 ];
 
-function pickStatus(): WaitlistStatus {
+function pickStatus(): NewsletterStatus {
   const roll = faker.number.int({ min: 1, max: 100 });
   let cumulative = 0;
   for (const [status, weight] of STATUS_WEIGHTS) {
     cumulative += weight;
     if (roll <= cumulative) return status;
   }
-  return WaitlistStatus.SUBSCRIBED;
+  return NewsletterStatus.SUBSCRIBED;
 }
 
 export async function createWaitlistSubscribers() {
   console.log(`Creating ${NUM_SUBSCRIBERS} waitlist subscribers...`);
 
-  const sources = Object.values(WaitlistSource);
+  const sources = Object.values(NewsletterSource);
 
   for (let i = 0; i < NUM_SUBSCRIBERS; i++) {
     const status = pickStatus();
     const createdAt = faker.date.recent({ days: 180 });
 
     try {
-      await prisma.waitlist.create({
+      await prisma.newsletterSubscriber.create({
         data: {
           email: faker.internet.email().toLowerCase(),
           name: faker.datatype.boolean() ? faker.person.fullName() : null,
@@ -46,12 +46,12 @@ export async function createWaitlistSubscribers() {
           ),
           createdAt,
           confirmedAt:
-            status === WaitlistStatus.SUBSCRIBED ||
-            status === WaitlistStatus.UNSUBSCRIBED
+            status === NewsletterStatus.SUBSCRIBED ||
+            status === NewsletterStatus.UNSUBSCRIBED
               ? faker.date.between({ from: createdAt, to: new Date() })
               : null,
           unsubscribedAt:
-            status === WaitlistStatus.UNSUBSCRIBED
+            status === NewsletterStatus.UNSUBSCRIBED
               ? faker.date.between({ from: createdAt, to: new Date() })
               : null,
         },

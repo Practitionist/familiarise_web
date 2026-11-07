@@ -20,6 +20,9 @@ Every reviewer claim gets checked against the code as it stands today, not accep
 
 Parallel agents share one low-memory machine, one `node_modules` and one browser, so two resources are taken in turn through `mkdir` locks. `tsc`, `jest` and `eslint` runs wrap themselves in `until mkdir /tmp/fw-heavy.lock 2>/dev/null; do sleep 15; done; trap 'rmdir /tmp/fw-heavy.lock' EXIT; <command>` inside one `bash -c`. Every browser session (the chrome-devtools MCP) first takes `/tmp/fw-browser.lock` and releases it after closing its pages, so only one `qa-preview` agent drives Chrome at a time, as `.claude/agents/qa-preview.md` requires. After a crash or reboot, check that neither lock directory is left behind before resuming agents.
 
+- **Shell.** The Bash tool runs zsh, so an unquoted `$var` holding a list is not word-split: `npx jest $files` passes one argument and reports "0 matches". Expand with `${=var}`, quote globs (`--include='*.ts'`), and brace a variable before a colon (`"${B}:path"`), because `:l` and `:a` are zsh modifiers.
+- **Relay and job drills run locally.** Previews refuse them; see the notifications skill, Verify.
+
 ## CI cost
 
 Actions minutes are capped (about $15 a month hard stop; decision in `docs/decisions/2026-10-31-ci-on-github-hosted-with-cuts.md`). `.github/workflows/ci.yaml` runs one `checks` job on changed files for PRs into `dev` and pushes to `dev`, and the cold `tsc`, full sharded suite and Build only on release runs (PRs into `prod`, pushes to `staging` or `prod`). Draft PRs run nothing, so mark a PR ready only when it should be checked. The required check is `TypeScript, Tests & Build`; it is skipped (reported as passing) on non-release Dependabot runs, whose inputs skip too, and fails closed on a release run. A new job must say which of these cost rules it follows.

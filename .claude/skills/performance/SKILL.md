@@ -33,8 +33,8 @@ You are working on performance, Core Web Vitals (LCP, TBT, INP, CLS), or Lightho
   - Statically importing `@sentry/nextjs` or `./sentry.shared.config` at the top level of `instrumentation-client.ts` bundles ~368 KB (`103.5 KB` gzipped) of Sentry + OpenTelemetry instrumentation into the initial critical client chunk and costs ~2.1s of main-thread evaluation during hydration.
   - Always load Sentry on the client via dynamic `Promise.all([import("./sentry.shared.config"), import("@sentry/nextjs")])` triggered on first user interaction (`pointerdown`, `keydown`, `touchstart`, `scroll`) or a `15,000 ms` post-`load` fallback timer (skipped when `navigator.webdriver` or `/HeadlessChrome|Lighthouse/i.test(navigator.userAgent)` is true).
 - **Root-Layout Global Widgets (`app/layout.tsx`, `providers/DeferredGlobalWidgets.tsx`)**:
-  - Non-critical shell widgets (`CookieConsentBanner`, `NavigationProgress`) must be dynamically imported with `ssr: false` in `providers/DeferredGlobalWidgets.tsx`.
-  - Background status polls (`/api/health` in `MaintenanceProvider.tsx`, `/api/announcements/active` in `AnnouncementBar.tsx`, `/api/cookie-preferences` in `CookieConsent.tsx`) must wait for post-hydration idle (`3.5–4.5 s` timeout) so they never compete with initial hydration or trigger mid-hydration layout shifts (`ResizeObserver`).
+  - Non-critical shell widgets (`NavigationProgress`) must be dynamically imported with `ssr: false` in `providers/DeferredGlobalWidgets.tsx`.
+  - Background status polls (`/api/health` in `MaintenanceProvider.tsx`, `/api/announcements/active` in `AnnouncementBar.tsx`) must wait for post-hydration idle (`3.5–4.5 s` timeout) so they never compete with initial hydration or trigger mid-hydration layout shifts (`ResizeObserver`).
 - **Below-the-Fold Content Visibility (`.cv-auto`)**:
   - Wrap off-screen sections on long marketing pages (`app/page.tsx`) in `<div className="cv-auto">` (`content-visibility: auto; contain-intrinsic-size: auto 600px;` in `app/globals.css`) so Chromium skips initial Style, Layout, and Paint work for sections below the viewport.
 - **Marquee DOM Bounds**:
@@ -56,7 +56,7 @@ You are working on performance, Core Web Vitals (LCP, TBT, INP, CLS), or Lightho
 4. **WCAG 2.1 AA Color Contrast ($\ge 4.5:1$)**:
    - Keep `--muted-foreground: 0 0% 40%` (`#666666`) in `app/globals.css` (`5.32:1` on `--muted` `#f5f5f5`).
    - On dark (`bg-black` / `bg-zinc-950`) surfaces such as `Footer.tsx`, use `text-zinc-400` (`7.93:1`), never `text-zinc-500` or `text-zinc-600` for readable copy.
-5. **Label-Content-Name Alignment (WCAG 2.5.3)**: When a component has both visible text and an `aria-label` (such as `CookieConsent.tsx`), the `aria-label` must match or start with the exact visible button text.
+5. **Label-Content-Name Alignment (WCAG 2.5.3)**: When a component has both visible text and an `aria-label`, the `aria-label` must match or start with the exact visible button text.
 
 6. **Taxonomy Reads Go Through the Cache**: Domain, SubDomain and Tag lists come from `lib/data/taxonomy.ts` (`unstable_cache`, tag `taxonomy`), never a direct Prisma read in a route; any new write to those tables must call `purgeTaxonomy()` after it commits.
 

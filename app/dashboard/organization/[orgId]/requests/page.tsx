@@ -61,7 +61,7 @@ export default async function OrgRequestsPage({
   return (
     <>
       <DashboardHeader
-        title="Requests"
+        title="Booking requests"
         description="Bookings under this organization awaiting slot allocation."
       />
       <DashboardContent>

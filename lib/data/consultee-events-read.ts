@@ -55,11 +55,19 @@ const liveProposalInclude = {
   },
 } satisfies Prisma.Appointment$rescheduleRequestsArgs;
 
-/** Only the caller's own Payment rows: a group appointment carries every attendee's. */
+/**
+ * Only the caller's own Payment rows: a group appointment carries every attendee's.
+ * `paymentMethod` tells Home which bookings an organization's money paid for.
+ */
 function callerPaymentsInclude(userId: string) {
   return {
     where: { userId },
-    select: { id: true, paymentStatus: true, createdAt: true },
+    select: {
+      id: true,
+      paymentStatus: true,
+      paymentMethod: true,
+      createdAt: true,
+    },
   } satisfies Prisma.Appointment$paymentArgs;
 }
 

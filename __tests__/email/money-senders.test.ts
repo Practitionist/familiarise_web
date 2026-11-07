@@ -11,12 +11,14 @@
 const mockDeliver = jest.fn();
 const mockStage = jest.fn();
 const mockAttempt = jest.fn();
+const mockStageRenderFailure = jest.fn();
 const mockGlobalFindMany = jest.fn();
 
 jest.mock("../../lib/email/deliver", () => ({
   deliver: (...args: unknown[]) => mockDeliver(...args),
   stage: (...args: unknown[]) => mockStage(...args),
   attempt: (...args: unknown[]) => mockAttempt(...args),
+  stageRenderFailure: (...args: unknown[]) => mockStageRenderFailure(...args),
 }));
 
 jest.mock("../../lib/email/render", () => ({
@@ -33,6 +35,7 @@ jest.mock("../../lib/prisma", () => ({
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 import {
+  prepareOrgInvoiceOverdueEmail,
   sendOrgWalletLowEmail,
   stageOrgInvoiceOverdueEmail,
   stageRefundProcessedEmail,
@@ -124,7 +127,7 @@ it("sendOrgWalletLowEmail delivers once when one of two roster members opted out
   );
 });
 
-it("stageOrgInvoiceOverdueEmail stages through tx and throws, without a per-recipient Sentry event, when a render fails", async () => {
+it("stageOrgInvoiceOverdueEmail stages through tx; a render failure stages a trace row instead of throwing or paging", async () => {
   const tx = {
     user: {
       findMany: jest.fn().mockResolvedValue([user("own_1"), user("own_2")]),
@@ -158,9 +161,28 @@ it("stageOrgInvoiceOverdueEmail stages through tx and throws, without a per-reci
   jest.mocked(Sentry.captureException).mockClear();
   jest.spyOn(console, "error").mockImplementation(() => {});
   jest.mocked(renderEmail).mockRejectedValueOnce(new Error("render boom"));
-  await expect(stageOrgInvoiceOverdueEmail(tx as never, args)).rejects.toThrow(
-    "ORG_INVOICE_OVERDUE render failed for 1 recipient(s)",
+  await expect(
+    stageOrgInvoiceOverdueEmail(tx as never, args),
+  ).resolves.toHaveLength(1);
+  expect(mockStage).toHaveBeenCalledTimes(1);
+  expect(mockStageRenderFailure).toHaveBeenCalledWith(
+    tx,
+    expect.objectContaining({ to: "own_1@example.com" }),
+    "ORG_INVOICE_OVERDUE",
+    "orgInvoice:inv_1",
   );
-  expect(mockStage).not.toHaveBeenCalled();
   expect(Sentry.captureException).not.toHaveBeenCalled();
+
+  // Rendered before the transaction: staging inside it reads and renders nothing.
+  mockGlobalFindMany.mockResolvedValue([user("own_1"), user("own_2")]);
+  const pre = await prepareOrgInvoiceOverdueEmail(args);
+  jest.mocked(renderEmail).mockClear();
+  tx.user.findMany.mockClear();
+  mockStage.mockClear();
+  await expect(
+    stageOrgInvoiceOverdueEmail(tx as never, args, pre),
+  ).resolves.toHaveLength(2);
+  expect(renderEmail).not.toHaveBeenCalled();
+  expect(tx.user.findMany).not.toHaveBeenCalled();
+  expect(mockStage).toHaveBeenCalledTimes(2);
 });

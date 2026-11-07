@@ -2,6 +2,9 @@
  * @jest-environment node
  */
 
+jest.mock("../../lib/compliance/erasure/mail-footprint", () => ({
+  scrubMailFootprintTx: jest.fn(),
+}));
 jest.mock("../../lib/enterprise/outbound-webhooks/dispatch", () => ({
   dispatchWebhookEvent: jest.fn(async () => undefined),
 }));
@@ -74,6 +77,8 @@ const tx = {
   collaborator: { updateManyAndReturn: jest.fn(async () => []) },
   session: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   account: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+  appointmentWaitlist: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+  windowBackupInterest: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   erasureRequest: {
     findFirst: jest.fn(async () => ({ id: "er-principal-1" })),
   },

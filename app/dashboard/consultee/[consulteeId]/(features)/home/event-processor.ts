@@ -24,8 +24,10 @@ import {
 } from "@/lib/appointments/occurrences";
 import { deriveBucket } from "@/lib/appointments/bucket";
 import { payLinkHref, payablePaymentId } from "@/lib/payments/pay-link-href";
+import { isOrgFundedPaymentMethod } from "@/lib/payments/org-funded";
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import {
+  isCancelledLikeStatus,
   isInactiveStatus,
   isPendingPaymentStatus,
   isPendingStatus,
@@ -82,6 +84,23 @@ export interface ProcessedEvent {
   // Drives the "Sponsored by <Org>" pill on the Home card so org-funded
   // sessions are visually distinct from personal bookings.
   organizationId?: string | null;
+  /** An organization's money paid for the viewer's place (the plan host is irrelevant). */
+  orgFunded: boolean;
+}
+
+/** True when one of the viewer's live payments on the booking rode an org rail. */
+function paidByOrg(
+  payments:
+    | ReadonlyArray<{ paymentMethod?: string | null; paymentStatus?: string }>
+    | null
+    | undefined,
+): boolean {
+  return (payments ?? []).some(
+    (p) =>
+      p.paymentStatus !== "FAILED" &&
+      p.paymentStatus !== "EXPIRED" &&
+      isOrgFundedPaymentMethod(p.paymentMethod),
+  );
 }
 
 /**
@@ -308,6 +327,7 @@ function processConsultation(
     joinableSlot,
     joinableOccurrence: session?.run ?? null,
     organizationId: consultation.appointment?.organizationId ?? null,
+    orgFunded: paidByOrg(consultation.appointment?.payment),
   };
 }
 
@@ -376,6 +396,7 @@ function processSubscription(
     joinableSlot: nextSlot?.rawSlot,
     joinableOccurrence: nextSlot?.run ?? null,
     organizationId: nextAppointment?.organizationId ?? null,
+    orgFunded: paidByOrg(nextAppointment?.payment),
   };
 }
 
@@ -450,6 +471,7 @@ function processWebinar(
     bookingStatus,
     collaborators,
     organizationId: webinar.appointment?.organizationId ?? null,
+    orgFunded: paidByOrg(webinar.appointment?.payment),
   };
 }
 
@@ -521,6 +543,7 @@ function processClass(
     bookingStatus,
     collaborators,
     organizationId: nextAppointment?.organizationId ?? null,
+    orgFunded: paidByOrg(nextAppointment?.payment),
   };
 }
 
@@ -567,8 +590,7 @@ function processTrial(
       payLinkHref({
         paymentId: payablePaymentId(
           (trial.appointment as { payment?: unknown } | null)?.payment as
-            | Parameters<typeof payablePaymentId>[0]
-            | undefined,
+            Parameters<typeof payablePaymentId>[0] | undefined,
         ),
         checkoutUrl: trial.pendingPaymentUrl,
       }) ??
@@ -579,6 +601,7 @@ function processTrial(
     joinableSlot: session?.rawSlot,
     joinableOccurrence: session?.run ?? null,
     organizationId: trial.appointment?.organizationId ?? null,
+    orgFunded: paidByOrg(trial.appointment?.payment),
   };
 }
 
@@ -613,8 +636,7 @@ export function groupSlotsIntoSessions(
     startTime: row.startsAt,
     endTime: row.endsAt,
     status: (row.endsAt < now ? "completed" : "upcoming") as
-      | "completed"
-      | "upcoming",
+      "completed" | "upcoming",
   }));
 }
 
@@ -661,6 +683,30 @@ export function processAllEvents(
 }
 
 /**
+ * Live sessions of this viewer-zone month on bookings the viewer paid for
+ * personally; an org-funded place belongs to the organization dashboard.
+ */
+export function sessionsThisMonth(
+  events: ProcessedEvent[],
+  zone: string,
+  now: Date,
+): number {
+  const monthKey = formatInViewerZone(now, zone, "yyyy-MM");
+  // Compared in the viewer's zone per slot, so a near-midnight session lands
+  // in the month it displays under.
+  return events
+    .filter((event) => !event.orgFunded && !isCancelledLikeStatus(event.status))
+    .reduce(
+      (sum, event) =>
+        sum +
+        groupSlotsIntoSessions(event.slots).filter(
+          (s) => formatInViewerZone(s.startTime, zone, "yyyy-MM") === monthKey,
+        ).length,
+      0,
+    );
+}
+
+/**
  * Filter and sort events for upcoming display
  */
 export function getUpcomingEvents(
@@ -696,32 +742,4 @@ export function selectNextUp(
   return upcoming
     .filter((e) => e.startsAt !== null && !isInactiveStatus(e.status))
     .slice(0, limit);
-}
-
-/**
- * Filter events for a calendar month. `month` is the picker's local calendar
- * value; each slot is placed in the viewer's zone, the one the cards print
- * (#1703 B7), so a near-midnight slot lands in the month it displays under.
- */
-export function getMonthlyEvents(
-  events: ProcessedEvent[],
-  month: Date,
-  zone: string,
-): ProcessedEvent[] {
-  const inactive = ["cancelled", "rejected", "completed", "expired"];
-  const monthKey = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`;
-
-  return events
-    .filter((e) =>
-      e.slots.some(
-        (s) => formatInViewerZone(s.startsAt, zone, "yyyy-MM") === monthKey,
-      ),
-    )
-    .sort((a, b) => {
-      const aInactive = inactive.includes(a.status.toLowerCase());
-      const bInactive = inactive.includes(b.status.toLowerCase());
-      if (aInactive !== bInactive) return aInactive ? 1 : -1;
-      // Monthly rows always have a slot in the month, so the anchor exists.
-      return (a.startsAt?.getTime() ?? 0) - (b.startsAt?.getTime() ?? 0);
-    });
 }
