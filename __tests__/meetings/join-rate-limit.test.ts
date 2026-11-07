@@ -109,7 +109,7 @@ describe("where the join limits live", () => {
 
   it("the edge rule stays an IP backstop sized for a whole cohort on one NAT", () => {
     const limits = read("lib/rate-limit.ts");
-    expect(limits).toMatch(/streamJoinLimiter = makeLimiter\(600, "1 m"/);
+    expect(limits).toMatch(/streamJoinLimiter = makeLimiter\(1500, "1 m"/);
     expect(limits).toMatch(/meetingJoinLimiter = makeLimiter\(10, "1 m"/);
     const edge = read("middleware.ts");
     expect(edge).toContain("limiter: streamJoinLimiter");
