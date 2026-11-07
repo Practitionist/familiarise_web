@@ -159,9 +159,7 @@ describe("plan detail pages apply canViewPlanDetail", () => {
 
 // #1527 Q4 (QA D3) — a hidden plan's title must not reach the <title> tag.
 describe("plan detail metadata applies the same gate", () => {
-  it.each(
-    PAGES.filter((p) => p.name === "consultation" || p.name === "subscription"),
-  )(
+  it.each(PAGES)(
     "$name metadata stays generic for a plan the gate rejects",
     async ({ load, fetcher, params }) => {
       fetcher.mockResolvedValue({ ...hiddenPlan, title: "Secret draft" });

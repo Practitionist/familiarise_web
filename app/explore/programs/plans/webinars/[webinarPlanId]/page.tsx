@@ -1,13 +1,36 @@
 import { PlanBreadcrumb } from "@/components/explore/PublicBreadcrumb";
 import { notFound } from "next/navigation";
+import type { Metadata } from "next";
 import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getSession } from "@/lib/auth-server";
 import { reportSentryError } from "@/lib/observability/report";
 import { getWebinarPlanDetail } from "@/lib/data/plan-details";
+import {
+  eventPlanMetadata,
+  hiddenEventPlanMetadata,
+} from "@/lib/seo/event-plan-share";
 import { WebinarDetails } from "./components/WebinarDetails";
 
 // Stream behind the static layout's instant skeleton; don't prerender at build (#932).
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({
+  params,
+}: Readonly<{
+  params: Promise<{ webinarPlanId: string }>;
+}>): Promise<Metadata> {
+  const { webinarPlanId } = await params;
+  const [plan, session] = await Promise.all([
+    getWebinarPlanDetail(webinarPlanId).catch(() => null),
+    getSession().catch(() => null),
+  ]);
+  // The page's own gate: a draft, archived or ORG_ONLY plan must not leak its
+  // title through the tab or a link preview.
+  if (!plan || !(await canViewPlanDetail(plan, session))) {
+    return hiddenEventPlanMetadata("webinar");
+  }
+  return eventPlanMetadata(plan, "webinar");
+}
 
 export default async function WebinarDetailsPage({
   params,
