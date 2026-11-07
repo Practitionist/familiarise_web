@@ -36,6 +36,28 @@
 import { Prisma, PaymentStatus, RefundStatus } from "@prisma/client";
 import { transitionParticipant } from "@/lib/booking/participants";
 
+/**
+ * After a gateway refund commits: whether part of the payment is still unreturned. The last of
+ * two concurrent partials reads both rows, so together they end the seat.
+ */
+async function leavesRefundable(paymentId: string): Promise<boolean> {
+  const [payment, refunds] = await Promise.all([
+    prisma.payment.findUnique({
+      where: { id: paymentId },
+      select: { amount: true },
+    }),
+    prisma.refund.findMany({
+      where: {
+        paymentId,
+        status: { in: [RefundStatus.SUCCEEDED, RefundStatus.PENDING] },
+      },
+      select: { amountPaise: true },
+    }),
+  ]);
+  if (!payment) return false;
+  return refunds.reduce((sum, r) => sum + r.amountPaise, 0) < payment.amount;
+}
+
 async function markParticipantsRefunded(paymentId: string): Promise<void> {
   try {
     await transitionParticipant(prisma, { paymentId }, "REFUNDED");
@@ -225,6 +247,8 @@ async function refundBookingPaymentOnRail(
      * seat live; every other refund marks the funded seat REFUNDED.
      */
     keepSeat?: boolean;
+    /** The seat stays live only while this refund leaves part of the payment refundable. */
+    keepSeatIfPartial?: boolean;
   } & OwedMarkerInput,
 ): Promise<BookingRefundResult> {
   // #781 §B — soft-deleted financial rows are retired; never refund them.
@@ -258,7 +282,12 @@ async function refundBookingPaymentOnRail(
     const r = await refundPayment(input);
     // #1319 A9 — the seat this payment funded is refunded (best-effort, after
     // the gateway refund committed; the participant table is shadow-only).
-    if (!input.keepSeat) await markParticipantsRefunded(input.paymentId);
+    if (
+      !input.keepSeat &&
+      !(input.keepSeatIfPartial && (await leavesRefundable(input.paymentId)))
+    ) {
+      await markParticipantsRefunded(input.paymentId);
+    }
     return {
       refundId: r.refundId,
       amountRefundedPaise: r.amountRefundedPaise,
@@ -1150,6 +1179,7 @@ async function refundInternalFundedPayment(
     dedupeKey?: string;
     supportRecommendationId?: string;
     keepSeat?: boolean;
+    keepSeatIfPartial?: boolean;
   } & OwedMarkerInput,
 ): Promise<BookingRefundResult> {
   const payment = await prisma.payment.findUnique({
@@ -1282,7 +1312,9 @@ async function refundInternalFundedPayment(
           refundRow.id,
         );
 
-        if (!input.keepSeat) {
+        // Read inside the Serializable tx, so two partials that together return everything end the seat.
+        const partial = requested < refundable;
+        if (!input.keepSeat && !(input.keepSeatIfPartial && partial)) {
           await transitionParticipant(
             tx,
             { paymentId: payment.id },

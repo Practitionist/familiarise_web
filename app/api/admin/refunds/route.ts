@@ -145,8 +145,8 @@ const refundDoor = withOpsAction(
           reason: `admin refund: ${body.reason}`,
           initiatedByUserId: actor.userId,
           dedupeKey,
-          // A partial admin refund is not a cancellation: the seat stays live.
-          keepSeat: body.amountPaise !== undefined,
+          // A partial admin refund is not a cancellation; one that returns the rest ends the seat.
+          keepSeatIfPartial: true,
           settlesOwedByHand: true,
         }).catch((err: unknown) => refundInFlightOr(err, dedupeKey));
         return {

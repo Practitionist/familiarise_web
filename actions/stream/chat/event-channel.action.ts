@@ -16,7 +16,7 @@ import {
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import {
   dmEligibleStatusFilter,
-  excludeTrialBooking,
+  excludeNonDmDirectBooking,
   OPENABLE_EVENT_STATUSES,
 } from "@/lib/stream/dm-eligibility-statuses";
 import { queryChannelsPaged } from "@/lib/stream/batch";
@@ -643,7 +643,7 @@ async function collectConsultantDmPairs(
       where: {
         consultationPlan: { consultantProfileId },
         status: dmEligibleStatusFilter(),
-        ...excludeTrialBooking(),
+        ...excludeNonDmDirectBooking(),
       },
       include: {
         requestedBy: { include: { user: { select: { id: true } } } },
@@ -655,7 +655,7 @@ async function collectConsultantDmPairs(
       where: {
         subscriptionPlan: { consultantProfileId },
         status: dmEligibleStatusFilter(),
-        ...excludeTrialBooking(),
+        ...excludeNonDmDirectBooking(),
       },
       include: {
         requestedBy: { include: { user: { select: { id: true } } } },
@@ -687,7 +687,7 @@ async function collectConsulteeDmPairs(
       where: {
         requestedById: consulteeProfileId,
         status: dmEligibleStatusFilter(),
-        ...excludeTrialBooking(),
+        ...excludeNonDmDirectBooking(),
       },
       include: {
         consultationPlan: {
@@ -704,7 +704,7 @@ async function collectConsulteeDmPairs(
       where: {
         requestedById: consulteeProfileId,
         status: dmEligibleStatusFilter(),
-        ...excludeTrialBooking(),
+        ...excludeNonDmDirectBooking(),
       },
       include: {
         subscriptionPlan: {

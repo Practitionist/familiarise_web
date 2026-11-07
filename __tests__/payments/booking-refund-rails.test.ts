@@ -39,6 +39,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     payment: { findUnique: (...a: unknown[]) => mockPaymentFindUnique(...a) },
+    refund: { findMany: (...a: unknown[]) => mockRefundFindMany(...a) },
     $transaction: (fn: (tx: unknown) => unknown) =>
       fn({
         appointmentParticipant: {
@@ -100,6 +101,11 @@ jest.mock("../../lib/email", () => ({
 }));
 jest.mock("../../lib/email/send-to-recipients", () => ({
   attemptStaged: (...a: unknown[]) => mockAttemptStagedEmails(...a),
+}));
+const mockTransitionParticipant = jest.fn(async (..._a: unknown[]) => 1);
+jest.mock("../../lib/booking/participants", () => ({
+  ...jest.requireActual("../../lib/booking/participants"),
+  transitionParticipant: (...a: unknown[]) => mockTransitionParticipant(...a),
 }));
 const mockRevokeRefundedSeatAccess = jest.fn(
   async (_paymentId: string) => undefined,
@@ -406,5 +412,88 @@ describe("the internal rail tells the payer (#1589 N-P0-01)", () => {
 
     expect(mockNotifyRefundProcessed).not.toHaveBeenCalled();
     expect(mockStageRefundProcessedEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("keepSeatIfPartial: the seat ends once the payment is fully returned", () => {
+  const seatEnded = () =>
+    mockTransitionParticipant.mock.calls.some((c) => c[2] === "REFUNDED");
+
+  it("internal rail: a partial keeps the seat", async () => {
+    mockPaymentFindUnique
+      .mockResolvedValueOnce({ paymentIntent: "org_wallet_1_a" })
+      .mockResolvedValueOnce(orgFundedPayment("org_wallet_1_a"));
+
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      amountPaise: 10_000,
+      reason: "goodwill",
+      keepSeatIfPartial: true,
+    });
+
+    expect(seatEnded()).toBe(false);
+  });
+
+  it("internal rail: an explicit amount equal to the balance ends the seat", async () => {
+    mockPaymentFindUnique
+      .mockResolvedValueOnce({ paymentIntent: "org_wallet_1_a" })
+      .mockResolvedValueOnce(orgFundedPayment("org_wallet_1_a"));
+
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      amountPaise: 100_000,
+      reason: "goodwill",
+      keepSeatIfPartial: true,
+    });
+
+    expect(seatEnded()).toBe(true);
+  });
+
+  it("internal rail: a partial that returns the rest ends the seat", async () => {
+    mockRefundFindMany.mockResolvedValue([{ amountPaise: 60_000 }]);
+    mockPaymentFindUnique
+      .mockResolvedValueOnce({ paymentIntent: "org_wallet_1_a" })
+      .mockResolvedValueOnce(orgFundedPayment("org_wallet_1_a"));
+
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      amountPaise: 40_000,
+      reason: "goodwill",
+      keepSeatIfPartial: true,
+    });
+
+    expect(seatEnded()).toBe(true);
+  });
+
+  it("gateway rail: reads the cumulative total after the refund commits", async () => {
+    mockPaymentFindUnique.mockResolvedValue({
+      paymentIntent: "pay_ABC",
+      amount: 100_000,
+    });
+    mockRefundPayment.mockResolvedValue({
+      refundId: "r1",
+      amountRefundedPaise: 40_000,
+    });
+
+    mockRefundFindMany.mockResolvedValueOnce([{ amountPaise: 40_000 }]);
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      amountPaise: 40_000,
+      reason: "goodwill",
+      keepSeatIfPartial: true,
+    });
+    expect(seatEnded()).toBe(false);
+
+    mockRefundFindMany.mockResolvedValueOnce([
+      { amountPaise: 40_000 },
+      { amountPaise: 60_000 },
+    ]);
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      amountPaise: 60_000,
+      reason: "goodwill",
+      keepSeatIfPartial: true,
+    });
+    expect(seatEnded()).toBe(true);
   });
 });

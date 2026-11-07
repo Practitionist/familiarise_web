@@ -33,6 +33,20 @@ jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 import { GET } from "../../app/api/stream/channels/search-appointments/route";
 import { getDmChannelId } from "../../lib/stream-utils";
 
+/** The trial and refunded-seat exclusions /open applies to every direct booking. */
+const nonDmDirectBooking = {
+  NOT: [
+    { appointment: { is: { appointmentType: "TRIAL" } } },
+    {
+      appointment: {
+        is: {
+          participants: { some: { role: "CONSULTEE", status: "REFUNDED" } },
+        },
+      },
+    },
+  ],
+};
+
 type Person = { id: string; name: string | null; email?: string | null };
 
 const person = ({ id, name, email = null }: Person) => ({
@@ -171,13 +185,14 @@ describe("access", () => {
 });
 
 describe("what the query asks of the database", () => {
-  it("excludes trial bookings, which /open refuses", async () => {
+  it("excludes trial and refunded-seat bookings, which /open refuses", async () => {
     await search({ q: "karen" });
-    const trial = {
-      NOT: { appointment: { is: { appointmentType: "TRIAL" } } },
-    };
-    expect(mockConsultations.mock.calls[0][0].where.AND).toContainEqual(trial);
-    expect(mockSubscriptions.mock.calls[0][0].where.AND).toContainEqual(trial);
+    expect(mockConsultations.mock.calls[0][0].where.AND).toContainEqual(
+      nonDmDirectBooking,
+    );
+    expect(mockSubscriptions.mock.calls[0][0].where.AND).toContainEqual(
+      nonDmDirectBooking,
+    );
   });
 
   it("searches only the other party's name, never the caller's own", async () => {
@@ -494,11 +509,11 @@ describe("people mode (the New message picker)", () => {
     expect(mockWebinars).not.toHaveBeenCalled();
   });
 
-  it("keeps the trial exclusion", async () => {
+  it("keeps the trial and refunded-seat exclusions", async () => {
     await search({ mode: "people" });
-    expect(mockConsultations.mock.calls[0][0].where.AND).toContainEqual({
-      NOT: { appointment: { is: { appointmentType: "TRIAL" } } },
-    });
+    expect(mockConsultations.mock.calls[0][0].where.AND).toContainEqual(
+      nonDmDirectBooking,
+    );
   });
 
   it("returns no email when nothing was typed", async () => {

@@ -31,6 +31,7 @@ import {
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
 import { assertValidGetOrCreateCall } from "@/lib/stream/video-contracts";
+import { fenceSeatGrants } from "@/lib/stream/access-revocation";
 
 interface MeetingSlot {
   id: string;
@@ -335,6 +336,48 @@ export type ProvisionedMeeting =
 export async function provisionAppointmentMeeting(
   slot: MeetingSlot,
 ): Promise<ProvisionedMeeting> {
+  const result = await provisionRoom(slot);
+  if (result.ok) await fenceProvisionedSeats(slot.id);
+  return result;
+}
+
+/** A 1:1 room is created with its seat holders as members; a cancel that committed meanwhile found no room to clear. */
+async function fenceProvisionedSeats(occurrenceId: string): Promise<void> {
+  try {
+    const occurrence = await prisma.appointmentOccurrence.findUnique({
+      where: { id: occurrenceId },
+      select: {
+        appointmentId: true,
+        appointment: {
+          select: {
+            webinarId: true,
+            classId: true,
+            participants: { select: { userId: true } },
+          },
+        },
+      },
+    });
+    // A group room is created with its hosts only; its seats join through `/join`.
+    if (
+      !occurrence ||
+      occurrence.appointment.webinarId ||
+      occurrence.appointment.classId
+    ) {
+      return;
+    }
+    await fenceSeatGrants(
+      occurrence.appointmentId,
+      occurrence.appointment.participants.map((p) => p.userId),
+    );
+  } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
+  }
+}
+
+async function provisionRoom(slot: MeetingSlot): Promise<ProvisionedMeeting> {
   const anchorSlot: MeetingSlot = slot;
 
   const existingMeeting = await findDbMeetingBySlot(anchorSlot.id);

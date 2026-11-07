@@ -8341,8 +8341,10 @@ enum StreamRevocationKind {
   EVENT_CHANNEL_REMOVE
   DM_REMOVE
   ORG_REVOKE
-  /// planId is the appointment whose unended calls the user leaves.
-  CALL_MEMBER_REMOVE
+  /// An ended seat's channel, DM and room access; planId is the appointment.
+  SEAT_ACCESS_REVOKE
+  /// A refund's seats to revoke; planId is the payment, userId its payer.
+  REFUND_ACCESS_REVOKE
 }
 
 enum ErasureVendor {

@@ -98,11 +98,7 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
 import { recordExpertStrike } from "@/lib/booking/expert-reliability";
-import {
-  revokeEndedBookingChatAccess,
-  revokeEndedEventChatAccess,
-} from "@/lib/stream/access-revocation";
-import { bookingOrgId } from "@/lib/stream-utils";
+import { revokeEndedSeatAccess } from "@/lib/stream/access-revocation";
 
 /** Audit attribution shared by every CAS this cancel drives (#1322 A12). */
 type CancelAuditMeta = {
@@ -1308,20 +1304,11 @@ export async function POST(
       );
     }
 
-    // Chat and call access end with the booking, synchronously; a Stream failure queues a retry.
+    // Chat and room access end with the booking; the intent persists before any Stream call.
     if (eventKind && eventId && attendees) {
-      await revokeEndedEventChatAccess(eventKind, eventId, attendees.all);
-    } else if (consulteeUserId && consultantUserId) {
-      await revokeEndedBookingChatAccess({
-        userIds: [consulteeUserId],
-        dmCounterpartUserIds: [consultantUserId],
-        dmOrganizationId: bookingOrgId({
-          consultationPlan: appointment.consultation?.consultationPlan,
-          subscriptionPlan: appointment.subscription?.subscriptionPlan,
-          appointment,
-        }),
-        appointmentId,
-      });
+      await revokeEndedSeatAccess(appointmentId, attendees.all);
+    } else if (consulteeUserId) {
+      await revokeEndedSeatAccess(appointmentId, [consulteeUserId]);
     }
 
     // Notification metadata (for fire-and-forget notifications after transaction)

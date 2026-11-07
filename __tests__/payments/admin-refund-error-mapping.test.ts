@@ -139,7 +139,7 @@ describe("the door's own guards", () => {
     expect(opsLog).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the seat on a partial refund and ends it on a full one", async () => {
+  it("leaves the seat decision to the rail, with or without an amount", async () => {
     refundPayment.mockResolvedValue({ refundId: "rfnd_1" });
 
     await POST(refundRequest({ ...SINGLE, amountPaise: 10_000 }), ROUTE);
@@ -151,14 +151,15 @@ describe("the door's own guards", () => {
       ROUTE,
     );
 
-    expect(refundPayment).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ keepSeat: true }),
-    );
-    expect(refundPayment).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ keepSeat: false }),
-    );
+    for (const call of [1, 2]) {
+      expect(refundPayment).toHaveBeenNthCalledWith(
+        call,
+        expect.objectContaining({ keepSeatIfPartial: true }),
+      );
+      expect(refundPayment.mock.calls[call - 1][0]).not.toHaveProperty(
+        "keepSeat",
+      );
+    }
   });
 
   it("a replay answers the first refund; the same key on another payment does not collide", async () => {

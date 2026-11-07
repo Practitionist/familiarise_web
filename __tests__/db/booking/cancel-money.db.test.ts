@@ -34,8 +34,7 @@ jest.mock("../../../lib/novu", () => {
   );
 });
 jest.mock("../../../lib/stream/access-revocation", () => ({
-  revokeEndedBookingChatAccess: jest.fn(async () => undefined),
-  revokeEndedEventChatAccess: jest.fn(async () => undefined),
+  revokeEndedSeatAccess: jest.fn(async () => undefined),
 }));
 
 import { POST as cancel } from "../../../app/api/appointments/[appointmentId]/cancel/route";

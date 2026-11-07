@@ -87,8 +87,8 @@ export const POST = withOpsAction(
         reason: `ops refund: ${body.reason}`,
         initiatedByUserId: actor.userId,
         dedupeKey,
-        // A partial ops refund is not a cancellation: the seat stays live.
-        keepSeat: amountPaise !== undefined,
+        // A partial ops refund is not a cancellation; one that returns the rest ends the seat.
+        keepSeatIfPartial: true,
         settlesOwedByHand: true,
       }).catch((err: unknown) => refundInFlightOr(err, dedupeKey));
       return {

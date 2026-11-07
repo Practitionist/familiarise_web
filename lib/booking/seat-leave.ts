@@ -43,7 +43,7 @@ import {
   renewAppointmentLock,
   withAppointmentLock,
 } from "@/utils/appointmentlock";
-import { revokeEndedEventChatAccess } from "@/lib/stream/access-revocation";
+import { revokeEndedSeatAccess } from "@/lib/stream/access-revocation";
 import { BookingRuleError } from "./booking-rule-error";
 import {
   occurrenceRefundsPaise,
@@ -507,7 +507,7 @@ export async function leaveEventSeat(args: {
       initiatedByUserId: args.actorUserId,
     });
   }
-  await revokeEndedEventChatAccess(args.kind, args.eventId, [args.userId]);
+  await revokeEndedSeatAccess(eventAppointment.id, [args.userId]);
   return { refund };
 }
 

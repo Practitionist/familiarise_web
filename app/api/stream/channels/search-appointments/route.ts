@@ -13,7 +13,7 @@ import { CLASS_PREFIX, WEBINAR_PREFIX } from "@/lib/stream-channel-ids";
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import {
   dmEligibleStatusFilter,
-  excludeTrialBooking,
+  excludeNonDmDirectBooking,
   OPENABLE_EVENT_STATUSES,
 } from "@/lib/stream/dm-eligibility-statuses";
 import { buildBookingOrgScopeWhere } from "@/lib/stream/event-channel-service";
@@ -379,7 +379,7 @@ export async function GET(request: NextRequest) {
           ...(query ? [{ OR: consultationMatch(query, userId, days) }] : []),
           { status: dmEligibleStatusFilter() },
           // `/open` refuses a trial booking, so offering one is a dead row.
-          excludeTrialBooking(),
+          excludeNonDmDirectBooking(),
           {
             OR: [
               { requestedBy: { userId } },
@@ -411,7 +411,7 @@ export async function GET(request: NextRequest) {
         AND: [
           ...(query ? [{ OR: subscriptionMatch(query, userId, days) }] : []),
           { status: dmEligibleStatusFilter() },
-          excludeTrialBooking(),
+          excludeNonDmDirectBooking(),
           {
             OR: [
               { requestedBy: { userId } },
