@@ -168,7 +168,7 @@ export function recipientTransactionId(
   return `${rowTransactionId}:${sha256Hex(recipient).slice(0, 16)}`;
 }
 
-/** The row `transactionId` a Novu webhook's (possibly per-recipient) id belongs to. */
+/** The row `transactionId` a Novu activity's (possibly per-recipient) id belongs to. */
 export function outboxTransactionIdOf(novuTransactionId: string): string {
   return (
     /^(.+:[0-9a-f]{32}):[0-9a-f]{16}$/.exec(novuTransactionId)?.[1] ??

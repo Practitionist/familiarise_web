@@ -167,7 +167,7 @@ Every deploy context shares one database, so a deploy preview is new code pointe
 - **`RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET`:** from the Resend dashboard. The webhook signing secret is shown on the webhook you create for `/api/webhooks/resend`. See [`docs/email/README.md`](docs/email/README.md).
 - **`EMAIL_DELIVERY_MODE` and `EMAIL_ALLOWLIST`:** the pre-launch guard. Unset or `allowlist` sends only to our own domain and the allowlist; `live` sends to everyone. Production stays on allowlist until launch.
 - **`WAITLIST_HMAC_SECRET`** (secret): generate it yourself. It signs confirm and unsubscribe links with no fallback, so rotating it breaks every link already sent. Treat it as long-lived.
-- **`NOVU_DEVELOPMENT_KEY` and `NOVU_PRODUCTION_KEY`:** secret keys from the Novu dashboard, one per Novu environment. Production reads the production key and every other context reads the development key. **`NEXT_PUBLIC_NOVU_APP_ID`** is the public application identifier, and **`NOVU_WEBHOOK_SECRET`** verifies inbound webhooks. See [`docs/notifications/`](docs/notifications/01-architecture.md).
+- **`NOVU_DEVELOPMENT_KEY` and `NOVU_PRODUCTION_KEY`:** secret keys from the Novu dashboard, one per Novu environment. Production reads the production key and every other context reads the development key. **`NEXT_PUBLIC_NOVU_APP_ID`** is the public application identifier. See [`docs/notifications/`](docs/notifications/01-architecture.md).
 
 ### Storage (Cloudflare R2 and Supabase Storage)
 
