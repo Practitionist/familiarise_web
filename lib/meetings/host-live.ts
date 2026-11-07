@@ -1,8 +1,5 @@
-/**
- * "Host is live": one optional bell to a session's paid seats when its host is
- * first admitted through `POST /api/meetings/[meetingId]/join`. It runs after
- * the response, so the host's join never waits on the recipient read.
- */
+// "Host is live": one optional bell to a session's paid seats on the host's first admission
+// through the join route, run after the response so the join never waits on it.
 
 import { appointmentDashboardUrl } from "@/lib/appointments/calendar-links";
 import { paidParticipant } from "@/lib/booking/participants";

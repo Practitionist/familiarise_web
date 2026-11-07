@@ -1,9 +1,5 @@
-/**
- * GET /api/calendar/[appointmentId]?u=&t= — the attendee's .ics, reached from a
- * signed link with no session. A bad token, a missing booking and a seat that is
- * no longer paid all answer the same 404. The file carries the title, the times
- * and the dashboard link only: never the video link or anyone else's details.
- */
+// A signed, session-less .ics: every refusal is the same 404, and the file carries only the
+// title, the times and the dashboard link, never the video link or attendee details.
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";

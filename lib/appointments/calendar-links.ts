@@ -1,9 +1,5 @@
-/**
- * "Add to calendar" links for one attendee of one booking: a Google Calendar
- * template URL and a signed link to the hosted .ics (`GET /api/calendar/[appointmentId]`).
- * The token is an HMAC over the appointment and the user under the shared link
- * secret, bound to its own purpose; the route re-checks the paid seat on every read.
- */
+// One attendee's add-to-calendar links: a Google template URL and a signed .ics link whose
+// HMAC binds appointment, user and purpose; the route re-checks the paid seat on every read.
 
 import { getAppUrl } from "@/lib/url";
 import { canSignLinks, safeEquals, signToken } from "@/lib/waitlist/tokens";

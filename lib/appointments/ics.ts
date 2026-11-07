@@ -1,9 +1,5 @@
-/**
- * "Add to calendar" for a booking: the detail page builds it in the browser and
- * `GET /api/calendar/[appointmentId]` serves it to a signed link. Times are
- * written in UTC (`Z`), which every calendar converts to the reader's own zone,
- * and the viewer's zone rides along as `X-WR-TIMEZONE` for clients that label it.
- */
+// "Add to calendar" for a booking, built in the browser and by the signed .ics route. Times are
+// UTC (`Z`), which every calendar converts to the reader's zone; `zone` rides as `X-WR-TIMEZONE`.
 
 export interface IcsSession {
   id: string;
