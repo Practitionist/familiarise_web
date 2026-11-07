@@ -230,10 +230,18 @@ Pick a seeded webinar with 1 remaining seat (or shrink capacity via Prisma).
 Fire N≥10 concurrent checkouts from different seeded consultees.
 
 **Invariants**: at most one enrollment wins the seat; losers get a clean
-4xx answer, never 5xx: terminal `EVENT_SOLD_OUT`, or the retryable
-`EVENT_CHECKOUT_BUSY` (409 with `retryAfter`) when another buyer holds the event
-lock, which a retry after that delay resolves to a seat or `EVENT_SOLD_OUT`; `AppointmentOccurrence` user-join rows ≤ capacity;
-no duplicate Payment rows per user (idempotency keys).
+4xx answer, never 5xx: either the terminal `EVENT_SOLD_OUT` (409), or a
+retryable contention answer while another buyer holds the event lock.
+`/api/checkout` currently sends that contention answer as a 400 with
+`errorType: "AVAILABILITY_ERROR"`, no `retryAfter`, and the message "Another
+user is currently booking this slot", because the outer catch in
+`handleCheckout` (`lib/payments/checkout/orchestrate.ts`) rewrites the lock's
+`EVENT_CHECKOUT_BUSY` error before the route's 409 branch sees it. Retry each
+contention answer after a few seconds within a bounded window, staying under
+the per-user `checkoutLimiter`; every retry must end in the seat or
+`EVENT_SOLD_OUT`, and any request still busy at the deadline is reported
+separately rather than counted as a failure. `AppointmentOccurrence` user-join
+rows ≤ capacity; no duplicate Payment rows per user (idempotency keys).
 
 ### 4.4 Checkout idempotency replay (Agent C)
 
