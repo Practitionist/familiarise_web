@@ -139,6 +139,28 @@ describe("the door's own guards", () => {
     expect(opsLog).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the seat on a partial refund and ends it on a full one", async () => {
+    refundPayment.mockResolvedValue({ refundId: "rfnd_1" });
+
+    await POST(refundRequest({ ...SINGLE, amountPaise: 10_000 }), ROUTE);
+    await POST(
+      refundRequest(
+        { ...SINGLE, paymentId: "pay_row_2" },
+        "admin-refund-key-0002",
+      ),
+      ROUTE,
+    );
+
+    expect(refundPayment).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ keepSeat: true }),
+    );
+    expect(refundPayment).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ keepSeat: false }),
+    );
+  });
+
   it("a replay answers the first refund; the same key on another payment does not collide", async () => {
     refundPayment.mockResolvedValue({ refundId: "rfnd_1" });
 
