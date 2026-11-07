@@ -7,6 +7,7 @@
 import { createHash } from "node:crypto";
 import { WaitlistStatus } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
+import { stampedClientIp } from "@/lib/request-ip";
 
 /** Salted with the HMAC secret so the digest is not reversible from the v4 space. */
 export function hashIp(ip: string | null | undefined): string | null {
@@ -25,6 +26,21 @@ export const ACCOUNT_CONSENT_TAG = "account-consent";
 
 type WaitlistTx = Pick<Tx, "waitlist">;
 
+/** The request a consent grant came from; the IP is the middleware-stamped one. */
+export interface ConsentProvenance {
+  ip: string | null;
+  userAgent: string | null;
+}
+
+export function consentProvenance(headers: {
+  get(name: string): string | null;
+}): ConsentProvenance {
+  return {
+    ip: stampedClientIp(headers),
+    userAgent: headers.get("user-agent"),
+  };
+}
+
 /**
  * Subscribes the account's address in the grant's transaction. The consent
  * artifact is the evidence, so no double-opt-in email is sent.
@@ -35,8 +51,7 @@ export async function subscribeForMarketingConsent(
     userId: string;
     email: string;
     now: Date;
-    ip?: string | null;
-    userAgent?: string | null;
+    provenance: ConsentProvenance;
   },
 ): Promise<void> {
   const email = normalizeWaitlistEmail(input.email);
@@ -45,8 +60,8 @@ export async function subscribeForMarketingConsent(
     status: WaitlistStatus.SUBSCRIBED,
     confirmedAt: input.now,
     unsubscribedAt: null,
-    consentIpHash: hashIp(input.ip),
-    consentUserAgent: input.userAgent?.slice(0, 500) ?? null,
+    consentIpHash: hashIp(input.provenance.ip),
+    consentUserAgent: input.provenance.userAgent?.slice(0, 500) ?? null,
   };
   await tx.waitlist.upsert({
     where: { email },

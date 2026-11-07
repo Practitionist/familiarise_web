@@ -6,7 +6,10 @@ import {
   SIGNUP_PURPOSES,
   type PurposeCode,
 } from "@/lib/compliance/purpose-codes";
-import { subscribeForMarketingConsent } from "@/lib/waitlist/consent-link";
+import {
+  subscribeForMarketingConsent,
+  type ConsentProvenance,
+} from "@/lib/waitlist/consent-link";
 import type { OnboardingConsent } from "./onboarding";
 
 /**
@@ -42,6 +45,7 @@ export async function recordOnboardingConsent(
   tx: Tx,
   userId: string,
   consent: Pick<OnboardingConsent, "marketingConsent">,
+  provenance: ConsentProvenance,
 ): Promise<void> {
   const purposes: PurposeCode[] = [...SIGNUP_PURPOSES];
   if (consent.marketingConsent) purposes.push(PURPOSE_CODES.MARKETING_COMMS);
@@ -55,6 +59,7 @@ export async function recordOnboardingConsent(
     userId,
     email: user.email,
     now: new Date(),
+    provenance,
   });
 }
 

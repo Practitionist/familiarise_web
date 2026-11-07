@@ -17,6 +17,14 @@ jest.mock("../../lib/compliance/dpdp", () => ({
   ensureConsentPurposes: jest.fn(),
 }));
 
+jest.mock("next/headers", () => ({
+  headers: async () =>
+    new Headers({
+      "x-familiarise-client-ip": "203.0.113.9",
+      "user-agent": "Jest browser",
+    }),
+}));
+
 const tx = {
   user: {
     updateMany: jest.fn(),
@@ -145,6 +153,8 @@ describe("completeOnboardingGateAction", () => {
         update: expect.objectContaining({
           userId: USER.id,
           status: "SUBSCRIBED",
+          consentIpHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+          consentUserAgent: "Jest browser",
         }),
       }),
     );
