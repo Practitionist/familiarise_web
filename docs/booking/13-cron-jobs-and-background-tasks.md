@@ -290,6 +290,18 @@ The ticker also drives `settle-cancelled-sessions` every 30 minutes with a batch
 
 `send-appointment-reminders.ts`, the core script behind the `appointment-reminders` target, also gained a TRIAL branch on 2026-09-19: a `SCHEDULED` trial with a live occurrence in the 24-hour or 1-hour reminder windows now gets the same reminder pair a consultation or subscription session gets, deduplicated by the same `${appointmentId}:${window}` outbox key. The ticker's 15-minute cadence is what closes the gap the trial branch fixes, because an hourly schedule was wide enough to miss a reminder window entirely.
 
+### Reminder windows and audience
+
+The job reminds each confirmed session in three windows (`REMINDER_WINDOWS` in `scripts/appointments/send-appointment-reminders.ts`):
+
+| Window | Sessions starting | Email wording      |
+| ------ | ----------------- | ------------------ |
+| `24h`  | 23 to 25 hours    | "tomorrow"         |
+| `1h`   | 45 to 75 minutes  | "in about an hour" |
+| `15m`  | 5 to 21 minutes   | "in a few minutes" |
+
+Each window is at least 16 minutes wide, because the job runs every 15 minutes and a tick can land up to a minute late; a narrower window would skip sessions. A session two ticks reach is still reminded once per window: the staged email row (`occurrence:<id>:<window>`) takes it out of the next tick's read, and the bell's outbox key is `<occurrence>:<window>`. For a webinar or class the reminder reaches the host, the accepted collaborators and the paid seats (`paidParticipant()`), never an unpaid `HELD` seat. A 1:1 booking reminds the consultant and the consultee; its sessions stay tentative until the payment lands, and the job reads only non-tentative sessions. Worked example: Hannah's webinar starts at 18:00 IST and the job ticks at 17:25, 17:40 and 17:55; the 17:40 tick finds it 20 minutes ahead and reminds Priya, who paid, but not Arjun, whose seat is still waiting on his card; the 17:55 tick finds it 5 minutes ahead, sees the staged row and sends nothing.
+
 ---
 
 ## Job Architecture

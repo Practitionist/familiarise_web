@@ -1139,7 +1139,8 @@ Notifications are sent via Novu workflows. All workflow IDs are defined in `lib/
 | Appointment cancelled   | `appointment-cancelled`   | Consultee + Consultant | Cancellation API route                                    | Cancellation routes |
 | Appointment rescheduled | `appointment-rescheduled` | Consultee + Consultant | Reschedule API route                                      | Reschedule routes   |
 | Appointment completed   | `appointment-completed`   | Consultee + Consultant | Auto-complete cron (planned)                              | Cron scripts        |
-| Appointment reminder    | `appointment-reminder`    | Consultee + Consultant | Scheduled reminder cron                                   | Reminder scripts    |
+| Appointment reminder    | `appointment-reminder`    | Consultee + Consultant | Scheduled reminder cron (24h, 1h, 15m; paid seats only)   | Reminder scripts    |
+| Host is live            | `session-host-live`       | Paid seats             | Host's first admission through the meeting join route     | `host-live.ts`      |
 | New booking request     | `new-booking-request`     | Consultant             | Request submission API / Webhook Phase 2 for subscription | Request API routes  |
 
 ### Trial Notifications

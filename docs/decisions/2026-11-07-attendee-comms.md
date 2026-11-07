@@ -1,0 +1,36 @@
+# ADR: Attendee comms for webinars, classes and 1:1 sessions
+
+- **Status**: Accepted (owner decisions, 2026-11-07)
+- **Date**: 2026-11-07
+- **Author**: Platform engineering
+- **Related**: [Notification preferences have one owner](2026-11-06-notification-single-preference-owner.md), [A group room needs a fulfilled entitlement](2026-11-02-group-room-fulfilled-entitlement.md), `docs/booking/13-cron-jobs-and-background-tasks.md`, `docs/notifications/02-workflows-and-api.md`
+
+## Context
+
+An attendee who bought a seat heard from the platform twice before a session: a reminder a day ahead and one about an hour ahead. Nothing put the session in their calendar, nothing reached them in the last few minutes, and nothing told them the host had opened the room. The reminder job also read every live seat, so a webinar or class seat still waiting on its payment (an unpaid `HELD` seat) was reminded of a session it could not join. Separately, a buyer who lost the race for an event's checkout lock was told the slot was unavailable (a 400) instead of being asked to retry (a 409), so the checkout page's automatic retry never ran.
+
+## Decision
+
+1. **Calendar links, not attachments.** The booked email and the checkout success page carry two links for the attendee: a Google Calendar template URL and a signed link to a hosted `.ics` file, `GET /api/calendar/[appointmentId]?u=&t=`. The email sender has no attachment support and adding one would put a file on every confirmation; a link costs nothing until it is used and is re-checked when it is. The token is an HMAC over the appointment id and the user id with the purpose label `calendar-ics`, signed by `signToken` in `lib/waitlist/tokens.ts` under the existing link secret, so no new secret is added. The route needs no session, is rate limited per IP (`calendarLimiter`, 30 a minute), answers `Cache-Control: private, no-store`, and answers the same 404 for a bad token, a missing booking and a seat that is no longer paid. The file carries the title, the session times and the dashboard link (`/dashboard/go/auto/appointments/<id>`), never the video link and never another person's details.
+2. **A 15-minute reminder window.** The reminder job adds a third window, sessions starting 5 to 21 minutes ahead, beside the 24-hour (23 to 25 hours) and 1-hour (45 to 75 minutes) windows. The job runs every 15 minutes, not every 5, so the window is 16 minutes wide: wide enough that a tick up to a minute late still reaches every session. A session two ticks reach is reminded once, because the window uses the same staged email rows and the same bell dedupe key (`<occurrence>:15m`) as the other two.
+3. **Paid seats only.** Every reminder window reaches a group event's paid seats (`paidParticipant()`), never an unpaid `HELD` seat. A 1:1 booking keeps its reminders as they were: the job reads only confirmed (non-tentative) sessions, and an approved-but-unpaid request keeps its sessions tentative until the payment lands.
+4. **"Host is live" from our join route.** When the plan's host is admitted through `POST /api/meetings/[meetingId]/join`, an `after()` task claims the occurrence (an `IdempotencyRecord` in scope `meeting.host-live`, keyed on the occurrence) and stages one optional bell, `session-host-live` in the `appointment` family, to the paid seats in the same transaction. A rejoin, a reopened room or a second host finds the claim and rings nothing. It needs no Stream webhook, so it works on deploy previews, and the host's join never waits on the recipient read. There is no email for it.
+5. **Event-lock contention stays a 409.** The outer catch in `handleCheckout` rethrows `EventCheckoutBusyError` and `ConsulteeBookingBusyError` unchanged, so `POST /api/checkout` answers 409 `EVENT_CHECKOUT_BUSY` with `retryAfter` and the client's busy retry runs. The 1:1 slot-lock message path and the Sentry `expected` tagging are unchanged.
+
+## Alternatives considered
+
+| Alternative                                         | Why it lost                                                                                                                                                                   |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An `.ics` attachment on the booked email            | `deliver()` has no attachments, every confirmation would carry a file, and an attached file cannot be withdrawn after a refund.                                               |
+| A new secret for calendar tokens                    | The shared link secret already binds a purpose label into every signature, so a calendar token cannot be replayed as an unsubscribe or confirm token.                         |
+| A 10 to 20 minute window                            | The reminder job runs every 15 minutes, so a 10-minute window misses about a third of sessions.                                                                               |
+| Moving the reminder job to every 5 minutes          | Triples its requests and takes slots from the busiest ticks for a notice a 16-minute window already delivers.                                                                 |
+| "Host is live" from Stream's `call.session_started` | Stream's event hook reaches production only, so it would not work on previews, and a session starts when anyone joins, not only the host.                                     |
+| Deduping "host is live" on the outbox key alone     | The outbox transaction id includes the recipient list, so a seat bought between two host joins would produce a second row; the occurrence claim is independent of recipients. |
+
+## Consequences
+
+- The event catalogue is 97 events in 16 Novu families; no family is added.
+- The owner runs `npm run novu:sync` against Development now and against Production at the next release promotion, so the `appointment` family's body carries the new `session-host-live` case.
+- An attendee who forwards their booked email forwards a calendar link that works until their seat is refunded or cancelled; it names no one.
+- The checkout success page shows the links only for a gateway checkout that reached a confirmed booking with a session ahead. Bookings confirmed without a gateway (wallet, invoice, licence, credits) land on the dashboard and do not show them.

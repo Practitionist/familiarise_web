@@ -77,6 +77,7 @@ Booking system, slot allocation, validation, and scheduling logic for all 5 even
 - [research/README.md](./booking/research/README.md) - The 2026-11-03 V2A booking review (with appendices A to D) and V2B retention review, as dated research snapshots
 - [2026-11-03-booking-v2-direction.md](./decisions/2026-11-03-booking-v2-direction.md) - Booking v2 direction: the correctness fixes and multi-week Phase 0, fixed plan weeks plus Regular time, retention phase 1 and the attendance policy
 - [2026-11-04-booking-v2-train-b.md](./decisions/2026-11-04-booking-v2-train-b.md) - Booking v2 train B: Regular time, the rolling 4-week horizon, the plan-end choice, frozen plan terms, and earnings that wait for owed refunds
+- [2026-11-07-attendee-comms.md](./decisions/2026-11-07-attendee-comms.md) - Attendee comms: calendar links instead of attachments, a 15-minute reminder window, reminders to paid seats only, "host is live" from the join route, and event-lock contention kept a 409
 - [01-booking-system-hld.md](./start-here/01-booking-system-hld.md) - Booking system high-level design: pipeline, allocation, concurrency layers, state machines, cron architecture
 - [02-money-system-hld.md](./start-here/02-money-system-hld.md) - Money system high-level design: pricing, capture, legs, ledger, earnings, payouts, refunds and policy decisions
 - [03-booking-and-money-machinery.md](./start-here/03-booking-and-money-machinery.md) - Worked guide with the seeded cast, entity model and end-to-end ledger examples
