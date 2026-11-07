@@ -159,7 +159,7 @@ export function usePrograms(
   const seats = useMyEventSeats(userId);
   const programs = useMemo(
     () =>
-      (data ? data.pages.map((d) => d.programs).flat() : []).map(
+      (data ? data.pages.flatMap((d) => d.programs) : []).map(
         (program): Program => ({
           ...program,
           isRegistered: (program.type === "class"
