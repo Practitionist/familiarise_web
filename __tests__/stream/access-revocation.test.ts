@@ -22,6 +22,9 @@ const mockRevocationPrisma = {
   appointmentOccurrence: {
     findMany: jest.fn(async (): Promise<unknown[]> => []),
   },
+  appointment: {
+    findUnique: jest.fn(async (): Promise<unknown> => null),
+  },
   appointmentParticipant: {
     findFirst: jest.fn(async (): Promise<unknown> => null),
     findMany: jest.fn(async (): Promise<unknown[]> => []),
@@ -272,6 +275,26 @@ describe("call membership on booking end", () => {
 
     await expect(redriveAccessRevocation(retryRow)).resolves.toBeNull();
     expect(mockRevocationUpdateCallMembers).not.toHaveBeenCalled();
+  });
+
+  it("redrive on a group room counts only a paid seat as re-admitted", async () => {
+    mockRevocationPrisma.appointment.findUnique.mockResolvedValue({
+      webinarId: "w1",
+      classId: null,
+    });
+    const { redriveAccessRevocation } =
+      await import("../../lib/stream/access-revocation");
+    const { paidParticipant } = await import("../../lib/booking/participants");
+
+    await redriveAccessRevocation(retryRow);
+
+    expect(
+      mockRevocationPrisma.appointmentParticipant.findFirst,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { appointmentId: "appt-1", ...paidParticipant("client-1") },
+      }),
+    );
   });
 
   it("redrive removes a user who holds no live seat, and reports a failure", async () => {
