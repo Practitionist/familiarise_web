@@ -30,6 +30,7 @@ import {
   type Posting,
 } from "@/lib/payments/ledger/post";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
+import { stageClawbackNotice } from "./clawback-notifications";
 
 /** The org clawback journal `clawback:<driver>:<payoutId>[:<orgEarningsId>]` written by the reversal engine. */
 export const ORG_CLAWBACK_KEY_PREFIX = "clawback:";
@@ -238,13 +239,40 @@ export async function releaseClawbackRecovery(
   if (txns.length !== 1) return;
   const [recovery] = txns;
   if (recovery.idempotencyKey !== clawbackRecoveryKey(payoutId)) return;
-  await postLedgerTxn(tx, {
+  const posted = await postLedgerTxn(tx, {
     idempotencyKey: clawbackRecoveryReleaseKey(payoutId),
     kind: recovery.kind,
     payoutId,
     description: `Clawback recovery released: payout ${payoutId} did not complete`,
     postings: mirrorPostings(recovery),
   });
+  const payee = payeeOf(recovery);
+  if (!posted.created || !payee) return;
+  await stageClawbackNotice(tx, {
+    payee,
+    payoutId,
+    journalId: posted.transactionId,
+    event: "OFFSET_RELEASED",
+    amountPaise: recovery.entries
+      .filter((e) => e.direction === "DEBIT")
+      .reduce((s, e) => s + sumPaise(e.amountPaise), 0),
+  });
+}
+
+/** The payee whose payable a recovery journal debited. */
+function payeeOf(txn: MirroredTxn): ClawbackPayee | null {
+  for (const { account } of txn.entries) {
+    if (account.consultantProfileId) {
+      return {
+        rail: "CONSULTANT",
+        consultantProfileId: account.consultantProfileId,
+      };
+    }
+    if (account.organizationId) {
+      return { rail: "ORG", organizationId: account.organizationId };
+    }
+  }
+  return null;
 }
 
 /** Entries that raise what the payee owes: receivable debits, or clawback-journal credits on ORG_PAYABLE. */
@@ -296,6 +324,8 @@ export async function voidClawbacksRaisedOnPayout(
 
   let voidedPaise = 0;
   let alreadyRecoveredPaise = 0;
+  let firstVoidId: string | null = null;
+  let newlyVoidedPaise = 0;
   for (const txn of raised) {
     const at = debits.findIndex((d) => d.transactionId === txn.id);
     const raisedPaise = at === -1 ? 0 : sumPaise(debits[at].amountPaise);
@@ -311,7 +341,7 @@ export async function voidClawbacksRaisedOnPayout(
     alreadyRecoveredPaise += raisedPaise - voidPaise;
     if (voidPaise <= 0) continue;
     voidedPaise += voidPaise;
-    await postLedgerTxn(tx, {
+    const posted = await postLedgerTxn(tx, {
       idempotencyKey: `${CLAWBACK_VOID_KEY_PREFIX}${txn.idempotencyKey}`,
       kind: txn.kind,
       payoutId,
@@ -320,6 +350,20 @@ export async function voidClawbacksRaisedOnPayout(
         ...p,
         amountPaise: voidPaise,
       })),
+    });
+    if (posted.created) {
+      firstVoidId ??= posted.transactionId;
+      newlyVoidedPaise += voidPaise;
+    }
+  }
+  // One notice per returned payout, never per voided journal.
+  if (firstVoidId) {
+    await stageClawbackNotice(tx, {
+      payee,
+      payoutId,
+      journalId: firstVoidId,
+      event: "VOIDED",
+      amountPaise: newlyVoidedPaise,
     });
   }
   return { voidedPaise, alreadyRecoveredPaise };
@@ -337,7 +381,7 @@ export async function recoverClawbackOnPayout(
   const outstanding = await outstandingClawbackPaise(tx, input.payee);
   const recovered = Math.min(outstanding, input.recoverablePaise);
   if (recovered <= 0) return 0;
-  await postLedgerTxn(tx, {
+  const posted = await postLedgerTxn(tx, {
     idempotencyKey: clawbackRecoveryKey(input.payoutId),
     kind: input.payee.rail === "CONSULTANT" ? "PAYOUT" : "ORG_PAYOUT",
     payoutId: input.payoutId,
@@ -355,5 +399,14 @@ export async function recoverClawbackOnPayout(
       },
     ],
   });
+  if (posted.created) {
+    await stageClawbackNotice(tx, {
+      payee: input.payee,
+      payoutId: input.payoutId,
+      journalId: posted.transactionId,
+      event: "OFFSET_RESERVED",
+      amountPaise: recovered,
+    });
+  }
   return recovered;
 }

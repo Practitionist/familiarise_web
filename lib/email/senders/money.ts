@@ -33,6 +33,10 @@ import {
   PayoutStatusEmail,
   type PayoutStatusKind,
 } from "@/emails/payments/PayoutStatusEmail";
+import {
+  CLAWBACK_NOTICE_SUBJECT,
+  ClawbackNoticeEmail,
+} from "@/emails/payments/ClawbackNoticeEmail";
 import ReferralBonusEmail, {
   referralBonusSubject,
   type ReferralBonusEmailKind,
@@ -77,6 +81,7 @@ export const MONEY_EMAIL_TYPES = {
   REFUND_PROCESSED: "REFUND_PROCESSED",
   REFUND_FAILED: "REFUND_FAILED",
   PAYOUT_STATUS: "PAYOUT_STATUS",
+  PAYOUT_CLAWBACK: "PAYOUT_CLAWBACK",
   DISPUTE_NOTICE: "DISPUTE_NOTICE",
   ORG_BILLING_RECEIPT: "ORG_BILLING_RECEIPT",
   ORG_INVOICE_OVERDUE: "ORG_INVOICE_OVERDUE",
@@ -549,6 +554,49 @@ function buildPayoutStatusEmail(args: PayoutStatusEmailArgs): {
 
 export const stagePayoutStatusEmail =
   defineLifecycleStager<PayoutStatusEmailArgs>(buildPayoutStatusEmail);
+
+// ── Payout clawback raised ──────────────────────────────────────────────────
+
+export interface ClawbackNoticeEmailArgs {
+  recipientUserIds: string[];
+  organization: boolean;
+  payoutId: string;
+  journalId: string;
+  amountPaise: Paise;
+  dashboardUrl: string;
+}
+
+function buildClawbackNoticeEmail(args: ClawbackNoticeEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const amountText = money(args.amountPaise, "INR");
+  const dashboardUrl = absolute(args.dashboardUrl);
+  return {
+    userIds: args.recipientUserIds,
+    spec: {
+      emailType: MONEY_EMAIL_TYPES.PAYOUT_CLAWBACK,
+      category: args.organization ? "orgBilling" : "payments",
+      from: SENDERS.finance,
+      entityRef: `clawback:${args.journalId}`,
+      traceRenderFailure: true,
+      subject: () => CLAWBACK_NOTICE_SUBJECT,
+      render: (r: EmailRecipient): ReactElement =>
+        ClawbackNoticeEmail({
+          recipientName: greet(r),
+          organization: args.organization,
+          amountText,
+          payoutId: args.payoutId,
+          dashboardUrl,
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
+/** Renders inside the clawback's transaction, which computes the amount; a render failure leaves a trace row. */
+export const stageClawbackNoticeEmail =
+  defineLifecycleStager<ClawbackNoticeEmailArgs>(buildClawbackNoticeEmail);
 
 // ── Dispute notice ──────────────────────────────────────────────────────────
 

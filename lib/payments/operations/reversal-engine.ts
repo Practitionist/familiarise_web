@@ -3,6 +3,7 @@ import {
   reportSentryMessage,
 } from "@/lib/observability/report";
 import type { Tx } from "@/lib/prisma";
+import { stageClawbackNotice } from "@/lib/payments/payouts/clawback-notifications";
 /**
  * Unified reversal engine (#776 §C / ARCH #4).
  *
@@ -338,8 +339,9 @@ export async function postPayoutClawback(
     input;
   // The counter-post is part of the reversal, not a side effect: report, then
   // rethrow so the enclosing tx rolls back — an unbalanced journal never commits (#1583 C-P1-09).
+  let posted: Awaited<ReturnType<typeof postLedgerTxn>>;
   try {
-    await postLedgerTxn(tx, {
+    posted = await postLedgerTxn(tx, {
       idempotencyKey: orgClawbackKey(refundId, payoutId, orgEarningsId),
       kind: "ORG_PAYOUT",
       payoutId,
@@ -372,6 +374,15 @@ export async function postPayoutClawback(
       context: { orgPayoutId: payoutId, refundId },
     });
     throw err;
+  }
+  if (posted.created) {
+    await stageClawbackNotice(tx, {
+      payee: { rail: "ORG", organizationId },
+      payoutId,
+      journalId: posted.transactionId,
+      event: "RAISED",
+      amountPaise,
+    });
   }
 }
 
@@ -465,8 +476,9 @@ export async function postConsultantPayoutClawback(
 ): Promise<void> {
   const { consultantPayoutId, consultantProfileId, amountPaise } = input;
   // Rethrow so the enclosing tx rolls back: reversal and clawback stay atomic.
+  let posted: Awaited<ReturnType<typeof postLedgerTxn>>;
   try {
-    await postLedgerTxn(tx, {
+    posted = await postLedgerTxn(tx, {
       idempotencyKey: consultantClawbackKey(input.refundId, consultantPayoutId),
       // Counters a consultant `payout:<id>` txn (doc §4.4), hence PAYOUT.
       kind: "PAYOUT",
@@ -505,6 +517,15 @@ export async function postConsultantPayoutClawback(
       },
     });
     throw err;
+  }
+  if (posted.created) {
+    await stageClawbackNotice(tx, {
+      payee: { rail: "CONSULTANT", consultantProfileId },
+      payoutId: consultantPayoutId,
+      journalId: posted.transactionId,
+      event: "RAISED",
+      amountPaise,
+    });
   }
 }
 

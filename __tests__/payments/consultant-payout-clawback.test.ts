@@ -30,6 +30,9 @@ import {
   type PostLedgerTxnInput,
 } from "@/lib/payments/ledger/post";
 
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(),
+}));
 jest.mock("../../lib/payments/ledger/post", () => {
   const actual = jest.requireActual("../../lib/payments/ledger/post");
   return {

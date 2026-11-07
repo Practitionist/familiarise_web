@@ -5,6 +5,9 @@
  * below the payout floor, and whatever the payout cannot absorb carries to
  * the one after — all read from and posted to the ledger.
  */
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(),
+}));
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 
 import { txDouble } from "../fixtures/tx-double";
