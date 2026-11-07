@@ -40,6 +40,7 @@ import {
 } from "@/lib/compliance/dpdp";
 import {
   OFFERED_PURPOSE_CODES,
+  SIGNUP_PURPOSES,
   TERMS_VERSION,
   normalizePurposeCode,
   type PurposeCode,
@@ -214,8 +215,32 @@ export async function GET(
       : undefined;
 
   return NextResponse.json({
-    data: consents,
+    data: visibleToReader(consents, selfId),
     ...(withdrawalRequests && { withdrawalRequests }),
+  });
+}
+
+const ORG_RELIED_PURPOSES = new Set<string>(SIGNUP_PURPOSES);
+
+/**
+ * Another member's platform consent is shown only for the purposes the org
+ * relies on; their marketing choices are between them and Familiarise.
+ */
+function visibleToReader<
+  T extends {
+    userId: string | null;
+    dataFiduciary: string;
+    purposeCodes: string[];
+  },
+>(consents: T[], selfId: string): T[] {
+  return consents.flatMap((c) => {
+    if (c.userId === selfId || c.dataFiduciary !== PLATFORM_DATA_FIDUCIARY) {
+      return [c];
+    }
+    const purposeCodes = c.purposeCodes.filter((code) =>
+      ORG_RELIED_PURPOSES.has(normalizePurposeCode(code) ?? code),
+    );
+    return purposeCodes.length > 0 ? [{ ...c, purposeCodes }] : [];
   });
 }
 
