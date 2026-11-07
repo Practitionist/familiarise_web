@@ -1,8 +1,8 @@
 /**
- * #1527 — "Add to calendar" for a booking, built in the browser from the
- * occurrences the detail page already holds: no new API. Times are written
- * in UTC (`Z`), which every calendar converts to the reader's own zone, and
- * the viewer's zone rides along as `X-WR-TIMEZONE` for clients that label it.
+ * "Add to calendar" for a booking: the detail page builds it in the browser and
+ * `GET /api/calendar/[appointmentId]` serves it to a signed link. Times are
+ * written in UTC (`Z`), which every calendar converts to the reader's own zone,
+ * and the viewer's zone rides along as `X-WR-TIMEZONE` for clients that label it.
  */
 
 export interface IcsSession {
@@ -25,7 +25,13 @@ export interface IcsInput {
 /** A session without an end is booked for this long. */
 const DEFAULT_LENGTH_MS = 60 * 60 * 1000;
 
-function stamp(date: Date): string {
+/** The session's end, or its start plus the default length when it has none. */
+export function sessionEnd(startsAt: Date, endsAt: Date | null): Date {
+  return endsAt ?? new Date(startsAt.getTime() + DEFAULT_LENGTH_MS);
+}
+
+/** A UTC date-time in the basic format calendars read, e.g. `20261107T093000Z`. */
+export function stamp(date: Date): string {
   return date
     .toISOString()
     .replaceAll(/[-:]/g, "")
@@ -58,9 +64,7 @@ export function buildIcs({
     `X-WR-TIMEZONE:${zone}`,
   ];
   for (const session of sessions) {
-    const end =
-      session.endsAt ??
-      new Date(session.startsAt.getTime() + DEFAULT_LENGTH_MS);
+    const end = sessionEnd(session.startsAt, session.endsAt);
     lines.push(
       "BEGIN:VEVENT",
       `UID:${session.id}@familiarise`,

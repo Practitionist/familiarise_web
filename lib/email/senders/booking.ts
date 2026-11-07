@@ -7,6 +7,7 @@ import UnplacedWeeksEmail from "@/emails/booking/UnplacedWeeksEmail";
 import * as React from "react";
 import { Button, Section, Text } from "react-email";
 import type { Tx } from "@/lib/prisma";
+import { calendarLinks } from "@/lib/appointments/calendar-links";
 import AppointmentBookedEmail from "@/emails/booking/AppointmentBookedEmail";
 import AppointmentCancelledEmail from "@/emails/booking/AppointmentCancelledEmail";
 import AppointmentRescheduledEmail, {
@@ -86,6 +87,7 @@ export interface AppointmentBookedEmailArgs {
   planTitle: string;
   appointmentType: string;
   startsAt: Date;
+  endsAt?: Date | null;
   dashboardUrl: string;
   cancellationWindowText?: string;
 }
@@ -113,6 +115,16 @@ function bookedSpec(args: AppointmentBookedEmailArgs): RecipientEmailSpec {
         startsAtText: whenText(args.startsAt, r.zone),
         dashboardUrl: absolute(args.dashboardUrl),
         cancellationWindowText: args.cancellationWindowText,
+        calendar:
+          role(r) === "consultee"
+            ? calendarLinks({
+                appointmentId: args.appointmentId,
+                userId: r.userId,
+                title: args.planTitle,
+                startsAt: args.startsAt,
+                endsAt: args.endsAt,
+              })
+            : null,
         unsubscribeUrl: r.unsubscribeUrl,
       }),
   };

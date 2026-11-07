@@ -77,7 +77,7 @@ export async function loadAppointmentForEmails(tx: Tx, appointmentId: string) {
         where: liveOccurrenceWhere,
         orderBy: { startsAt: "asc" },
         take: 1,
-        select: { startsAt: true },
+        select: { startsAt: true, endsAt: true },
       },
       consultation: {
         include: {
@@ -299,7 +299,8 @@ function bookedEmailArgs(
   appointment: AppointmentForEmails,
   appointmentType: string,
 ): AppointmentBookedEmailArgs | null {
-  const startsAt = appointment.occurrences?.[0]?.startsAt;
+  const first = appointment.occurrences?.[0];
+  const startsAt = first?.startsAt;
   if (!startsAt) return null;
   const plan = planForEmails(appointment);
   const planTitle =
@@ -323,6 +324,7 @@ function bookedEmailArgs(
     planTitle,
     appointmentType,
     startsAt,
+    endsAt: first.endsAt,
     dashboardUrl: notificationHref(appointment.organizationId, "appointments"),
   };
 }

@@ -14,6 +14,9 @@ import {
   type MoneyStateKind,
 } from "@/lib/dashboard/money-state";
 import type { Prisma } from "@prisma/client";
+import { calendarLinks } from "@/lib/appointments/calendar-links";
+import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 
 /**
  * #1586 P1-J07/J08 — what the buyer's booking actually is once the money is
@@ -112,6 +115,34 @@ async function deriveBookingState(
     bookingState: presentation.bookingState.state,
     moneyState: presentation.moneyState.state,
   };
+}
+
+/** The buyer's add-to-calendar links for the next confirmed session, if one is ahead. */
+function buyerCalendarLinks(payment: VerifyPayment, userId: string) {
+  const appointment = payment.appointment;
+  if (!appointment) return null;
+  const now = Date.now();
+  const next = appointment.occurrences
+    .filter(
+      (o) =>
+        !o.isTentative && !isDeadOccurrence(o) && o.startsAt.getTime() > now,
+    )
+    .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime())[0];
+  if (!next) return null;
+  const title = planTitleOrSessionLabel(
+    appointment.consultation?.consultationPlan?.title ??
+      appointment.subscription?.subscriptionPlan?.title ??
+      appointment.webinar?.webinarPlan?.title ??
+      appointment.class?.classPlan?.title,
+    appointment.appointmentType,
+  );
+  return calendarLinks({
+    appointmentId: appointment.id,
+    userId,
+    title,
+    startsAt: next.startsAt,
+    endsAt: next.endsAt,
+  });
 }
 
 export async function GET(req: NextRequest) {
@@ -260,6 +291,10 @@ export async function GET(req: NextRequest) {
     }
 
     const derived = await deriveBookingState(payment);
+    const calendar =
+      derived?.bookingState === "CONFIRMED"
+        ? buyerCalendarLinks(payment, session.user.id)
+        : null;
 
     // Return success response with appointment details
     return NextResponse.json({
@@ -268,6 +303,7 @@ export async function GET(req: NextRequest) {
       appointmentType,
       status: "SUCCEEDED",
       ...(derived ?? {}),
+      ...(calendar ? { calendar } : {}),
       message: "Payment verified successfully",
       appointment: payment.appointment
         ? {
