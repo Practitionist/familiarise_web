@@ -7,9 +7,10 @@ import {
   appointmentTypeLabel,
   planTitleOrSessionLabel,
 } from "@/lib/novu/humanize";
-import { stagePages, type StagedTrigger } from "@/lib/novu/outbox";
+import type { StagedTrigger } from "@/lib/novu/outbox";
 import { resolveRecipientBellPolicy } from "@/lib/novu/policy";
-import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
+import { stageScopedPages } from "@/lib/novu/scoped-pages";
+import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import prisma from "@/lib/prisma";
 
 export const HOST_LIVE_CLAIM_SCOPE = "meeting.host-live";
@@ -56,7 +57,7 @@ export async function stageHostLiveBell(
             appointmentType: true,
             participants: {
               where: { ...paidParticipant(), role: "CONSULTEE" },
-              select: { userId: true },
+              select: { userId: true, organizationId: true },
             },
             consultation: { select: { consultationPlan: NAMED_PLAN } },
             subscription: { select: { subscriptionPlan: NAMED_PLAN } },
@@ -82,11 +83,22 @@ export async function stageHostLiveBell(
       appointment.participants.map((p) => p.userId),
       { tx },
     );
-    return stagePages(tx, {
+    // A group seat's own org is the attendee's scope; a 1:1 booking's org already is the payer's.
+    const isGroup =
+      appointment.appointmentType === "WEBINAR" ||
+      appointment.appointmentType === "CLASS";
+    const seatOrg = new Map(
+      appointment.participants.map((p) => [p.userId, p.organizationId]),
+    );
+    return stageScopedPages(tx, {
       workflowId,
-      recipients: allowedRecipients,
+      recipients: allowedRecipients.map((userId) => ({
+        userId,
+        organizationId: isGroup
+          ? (seatOrg.get(userId) ?? null)
+          : appointment.organizationId,
+      })),
       payload: {
-        ...notificationScope(appointment.organizationId),
         appointmentType: appointmentTypeLabel(appointment.appointmentType),
         planTitle: planTitleOrSessionLabel(
           plan?.title,
