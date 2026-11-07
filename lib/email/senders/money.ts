@@ -58,6 +58,7 @@ import {
   dateText,
   defineBudgetedEmailSender,
   defineFixedBudgetEmailSender,
+  defineLifecyclePreparer,
   defineLifecycleStager,
   greet,
   money,
@@ -847,10 +848,8 @@ export const stageOrgOperationalEmail =
 
 // ── Referral bonus & welcome credits ────────────────────────────────────────
 
-export interface ReferralBonusEmailArgs {
+interface ReferralBonusEmailBase {
   userId: string;
-  referralId: string;
-  kind: ReferralBonusEmailKind;
   counterpartyName?: string;
   amountPaise: Paise;
   remainingPaise?: Paise;
@@ -859,12 +858,26 @@ export interface ReferralBonusEmailArgs {
   dashboardUrl?: string;
 }
 
+/** A reward is keyed by its referral; a redemption by the payment that used it. */
+export type ReferralBonusEmailArgs = ReferralBonusEmailBase &
+  (
+    | {
+        kind: Exclude<ReferralBonusEmailKind, "CREDITS_APPLIED">;
+        referralId: string;
+      }
+    | { kind: "CREDITS_APPLIED"; paymentId: string }
+  );
+
 function buildReferralBonusEmail(args: ReferralBonusEmailArgs): {
   userIds: string[];
   spec: RecipientEmailSpec;
 } {
   const currency = args.currency ?? "INR";
-  const amountText = money(args.amountPaise, currency);
+  // The welcome discount is a cap; checkout applies the exact amount.
+  const amountText =
+    args.kind === "WELCOME_BONUS"
+      ? `up to ${money(args.amountPaise, currency)}`
+      : money(args.amountPaise, currency);
   const remainingText =
     args.remainingPaise !== undefined && args.remainingPaise !== null
       ? money(args.remainingPaise, currency)
@@ -879,7 +892,10 @@ function buildReferralBonusEmail(args: ReferralBonusEmailArgs): {
       emailType: `REFERRAL_${args.kind}`,
       category: "payments",
       from: SENDERS.payments,
-      entityRef: `referral:${args.referralId}:${args.kind.toLowerCase()}`,
+      entityRef:
+        args.kind === "CREDITS_APPLIED"
+          ? `payment:${args.paymentId}:referral-credits-applied`
+          : `referral:${args.referralId}:${args.kind.toLowerCase()}`,
       subject: () => referralBonusSubject({ kind: args.kind, amountText }),
       render: (r: EmailRecipient): ReactElement =>
         ReferralBonusEmail({
@@ -898,3 +914,6 @@ function buildReferralBonusEmail(args: ReferralBonusEmailArgs): {
 
 export const stageReferralBonusEmail =
   defineLifecycleStager<ReferralBonusEmailArgs>(buildReferralBonusEmail);
+
+export const prepareReferralBonusEmail =
+  defineLifecyclePreparer<ReferralBonusEmailArgs>(buildReferralBonusEmail);

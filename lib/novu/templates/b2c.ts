@@ -337,29 +337,30 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.REFERRAL_BONUS_EARNED,
     name: "Referral bonus earned",
-    description: "The referrer, when someone they invited completes signup.",
+    description: "The referrer, after an eligible referral reward vests.",
     category: "payments",
     inApp: {
       subject: "Referral bonus",
-      body: "{{payload.refereeName}} joined with your link — {{payload.bonusAmount}} in credits has been added to your account.",
+      body: "{{payload.refereeName}} qualified through your referral link — {{payload.bonusAmount}} in credits has been added to your account.",
       redirect: "dashboardUrl",
     },
   },
   {
     workflowId: W.REFEREE_WELCOME_BONUS,
-    name: "Welcome bonus",
-    description: "The new user who signed up through a referral.",
+    name: "Welcome discount",
+    description:
+      "The new user who signed up through a referral, with the first-booking discount cap.",
     category: "payments",
     inApp: {
-      subject: "Welcome bonus",
-      body: "Welcome! Your first-booking referral discount (up to {{payload.bonusAmount}}) from {{payload.referrerName}}'s referral is ready to use at checkout.",
+      subject: "Welcome discount",
+      body: "Through {{payload.referrerName}}'s referral, you may qualify for a first-booking discount of up to {{payload.bonusAmount}}. Checkout shows the exact discount.",
       redirect: "dashboardUrl",
     },
   },
   {
     workflowId: W.REFERRAL_CREDITS_APPLIED,
     name: "Credits applied",
-    description: "The payer, when referral credits reduce a checkout.",
+    description: "The payer, when a confirmed booking used referral credits.",
     category: "payments",
     inApp: {
       subject: "Credits applied",
