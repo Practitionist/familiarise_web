@@ -230,7 +230,9 @@ Pick a seeded webinar with 1 remaining seat (or shrink capacity via Prisma).
 Fire N≥10 concurrent checkouts from different seeded consultees.
 
 **Invariants**: at most one enrollment wins the seat; losers get a clean
-4xx sold-out path, never 5xx; `AppointmentOccurrence` user-join rows ≤ capacity;
+4xx answer, never 5xx: terminal `EVENT_SOLD_OUT`, or the retryable
+`EVENT_CHECKOUT_BUSY` (409 with `retryAfter`) when another buyer holds the event
+lock, which a retry after that delay resolves to a seat or `EVENT_SOLD_OUT`; `AppointmentOccurrence` user-join rows ≤ capacity;
 no duplicate Payment rows per user (idempotency keys).
 
 ### 4.4 Checkout idempotency replay (Agent C)

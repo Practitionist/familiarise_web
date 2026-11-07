@@ -23,12 +23,12 @@ Familiarise qualifies for Stream's [Maker Account](https://getstream.io/maker-ac
 
 ### What Maker Includes
 
-| Feature        | Hard Limit                        | Normal Paid Value |
-| -------------- | --------------------------------- | ----------------- |
-| Chat           | **2,000 MAU** (hard cap, pauses)  | $399/mo (10K MAU) |
-| Video          | 333,000 participant-minutes/month | $0.15–$9.60/1K PM |
-| Activity Feeds | 125,000 API calls/month           | $499/mo (Start)   |
-| AI Moderation  | $100 in credits                   | $2/1K msgs (PAYG) |
+| Feature        | Hard Limit                                                                                    | Normal Paid Value  |
+| -------------- | --------------------------------------------------------------------------------------------- | ------------------ |
+| Chat           | **2,000 MAU** (hard cap, pauses)                                                              | $399/mo (10K MAU)  |
+| Video          | $100 credit/month (about 66,667 HD or 333,333 audio-only PM), then pay-as-you-go; no hard cap | $0.30–$12.00/1K PM |
+| Activity Feeds | 125,000 API calls/month                                                                       | $499/mo (Start)    |
+| AI Moderation  | $100 in credits                                                                               | $2/1K msgs (PAYG)  |
 
 > The Chat 2K MAU cap is a **hard pause** — the service stops, it does not bill overages.
 

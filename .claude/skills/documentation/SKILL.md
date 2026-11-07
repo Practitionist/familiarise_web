@@ -77,7 +77,7 @@ The most common mistake is explanation creeping into a how-to, or a reference ta
    ```bash
    npx tsx scripts/ci/check-docs-drift.ts
    ```
-   It scans all of `docs/` and `.claude/skills/` and is warn-only, so compare its finding count with `dev` and make sure your change adds none. Do not hand-roll a `grep` for this: a bracket expression such as `[a-z\[\]]` closes at the first `]` in POSIX, so the pattern silently matches nothing and always reports a clean run.
+   It scans all of `docs/` and `.claude/skills/` and is warn-only, so compare its findings with `dev`, not only the count (one fixed warning can hide a new one), and make sure your change adds none. Do not hand-roll a `grep` for this: a bracket expression such as `[a-z\[\]]` closes at the first `]` in POSIX, so the pattern silently matches nothing and always reports a clean run.
 2. Confirm no line-number citations remain in `docs/start-here/` or `docs/<domain>/`: `grep -nE '\.(ts|tsx):[0-9]+' <changed docs>`.
 3. Confirm every planned behaviour is labelled (after Wave N / planned).
 4. Mermaid renders. Numbering is contiguous. The README indexes are updated.
