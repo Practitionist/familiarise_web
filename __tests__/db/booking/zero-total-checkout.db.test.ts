@@ -45,6 +45,7 @@ jest.mock("../../../lib/rate-limit", () => ({
 }));
 jest.mock("../../../lib/stream/access-revocation", () => ({
   revokeEndedSeatAccess: jest.fn(async () => undefined),
+  persistSeatRevocation: jest.fn(async () => undefined),
 }));
 
 import { handleCheckout } from "../../../lib/payments/checkout";

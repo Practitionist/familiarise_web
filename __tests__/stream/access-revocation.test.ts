@@ -25,8 +25,8 @@ const seats = {
 
 const mockRevocationPrisma = {
   streamRevocationRetry: {
-    updateMany: jest.fn(async () => ({ count: 0 })),
-    createMany: jest.fn(async () => ({ count: 1 })),
+    updateMany: jest.fn(async (_args: unknown) => ({ count: 0 })),
+    createMany: jest.fn(async (_args: unknown) => ({ count: 1 })),
   },
   webinar: { findUnique: jest.fn(), findFirst: jest.fn() },
   class: { findUnique: jest.fn(), findFirst: jest.fn() },
@@ -38,7 +38,9 @@ const mockRevocationPrisma = {
   payment: {
     findUnique: jest.fn(async (): Promise<unknown> => ({ userId: "payer-1" })),
   },
-  meeting: { findMany: jest.fn(async (): Promise<unknown[]> => []) },
+  meeting: {
+    findMany: jest.fn(async (_args: unknown): Promise<unknown[]> => []),
+  },
   appointmentParticipant: {
     findMany: jest.fn(
       async ({ where }: { where: ParticipantWhere }): Promise<unknown[]> => {
@@ -349,6 +351,23 @@ describe("revocation when a seat or booking ends", () => {
     expect(settledCalls()).toHaveLength(0);
   });
 
+  it("persists without driving when the caller still has slow work ahead", async () => {
+    const { persistSeatRevocation } =
+      await import("../../lib/stream/access-revocation");
+
+    await persistSeatRevocation("appt-1", ["attendee-1", "attendee-1"]);
+
+    expect(
+      mockRevocationPrisma.streamRevocationRetry.createMany,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [expect.objectContaining({ kind: "SEAT_ACCESS_REVOKE" })],
+      }),
+    );
+    expect(mockRevocationPrisma.appointment.findUnique).not.toHaveBeenCalled();
+    expect(mockRemoveMembers).not.toHaveBeenCalled();
+  });
+
   it("keeps the intent owed when the seat lookup fails", async () => {
     mockRevocationPrisma.appointment.findUnique.mockRejectedValue(
       new Error("db timeout"),
@@ -553,6 +572,27 @@ describe("grant fence", () => {
       "occurrence-0",
       { remove_members: ["attendee-1"] },
     );
+  });
+
+  it("spares crew who also hold an old client seat on the appointment", async () => {
+    mockRevocationPrisma.appointment.findUnique.mockResolvedValue({
+      ...webinarSeatContext,
+      webinar: {
+        ...webinarSeatContext.webinar,
+        webinarPlan: {
+          ...plan("host-1"),
+          collaborators: [
+            { tier: "CREW", consultantProfile: { userId: "crew-1" } },
+          ],
+        },
+      },
+    });
+    seats.holders = ["crew-1"];
+    const { fenceSeatGrants } =
+      await import("../../lib/stream/access-revocation");
+
+    await expect(fenceSeatGrants("appt-1", ["crew-1"])).resolves.toEqual([]);
+    expect(mockRevocationUpdateCallMembers).not.toHaveBeenCalled();
   });
 
   it("does nothing when every granted seat is still admitted", async () => {

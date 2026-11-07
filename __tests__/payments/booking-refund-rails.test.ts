@@ -465,17 +465,26 @@ describe("keepSeatIfPartial: the seat ends once the payment is fully returned", 
     expect(seatEnded()).toBe(true);
   });
 
-  it("gateway rail: reads the cumulative total after the refund commits", async () => {
-    mockPaymentFindUnique.mockResolvedValue({
-      paymentIntent: "pay_ABC",
-      amount: 100_000,
-    });
+  const gatewayBalance = (
+    refunds: number[],
+    disputes: { amountPaise: number; status: string }[] = [],
+  ) => ({
+    paymentIntent: "pay_ABC",
+    amount: 100_000,
+    refunds: refunds.map((amountPaise) => ({
+      amountPaise,
+      status: "SUCCEEDED",
+    })),
+    disputes,
+  });
+
+  it("gateway rail: reads the rail's own balance after the refund commits", async () => {
     mockRefundPayment.mockResolvedValue({
       refundId: "r1",
-      amountRefundedPaise: 40_000,
+      amountRefundedPaise: 1,
     });
 
-    mockRefundFindMany.mockResolvedValueOnce([{ amountPaise: 40_000 }]);
+    mockPaymentFindUnique.mockResolvedValue(gatewayBalance([40_000]));
     await refundBookingPayment({
       paymentId: PAYMENT_ID,
       amountPaise: 40_000,
@@ -484,10 +493,7 @@ describe("keepSeatIfPartial: the seat ends once the payment is fully returned", 
     });
     expect(seatEnded()).toBe(false);
 
-    mockRefundFindMany.mockResolvedValueOnce([
-      { amountPaise: 40_000 },
-      { amountPaise: 60_000 },
-    ]);
+    mockPaymentFindUnique.mockResolvedValue(gatewayBalance([40_000, 60_000]));
     await refundBookingPayment({
       paymentId: PAYMENT_ID,
       amountPaise: 60_000,
@@ -495,5 +501,44 @@ describe("keepSeatIfPartial: the seat ends once the payment is fully returned", 
       keepSeatIfPartial: true,
     });
     expect(seatEnded()).toBe(true);
+  });
+
+  it("gateway rail: a lost chargeback counts toward the returned total", async () => {
+    mockRefundPayment.mockResolvedValue({
+      refundId: "r1",
+      amountRefundedPaise: 1,
+    });
+    mockPaymentFindUnique.mockResolvedValue(
+      gatewayBalance([70_000], [{ amountPaise: 30_000, status: "LOST" }]),
+    );
+
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      amountPaise: 70_000,
+      reason: "goodwill",
+      keepSeatIfPartial: true,
+    });
+
+    expect(seatEnded()).toBe(true);
+  });
+
+  it("gateway rail: an unreadable balance keeps the seat and keeps the refund", async () => {
+    mockRefundPayment.mockResolvedValue({
+      refundId: "r1",
+      amountRefundedPaise: 1,
+    });
+    mockPaymentFindUnique
+      .mockResolvedValueOnce({ paymentIntent: "pay_ABC" })
+      .mockRejectedValueOnce(new Error("db down"));
+
+    await expect(
+      refundBookingPayment({
+        paymentId: PAYMENT_ID,
+        amountPaise: 10_000,
+        reason: "goodwill",
+        keepSeatIfPartial: true,
+      }),
+    ).resolves.toMatchObject({ refundId: "r1", rail: "GATEWAY" });
+    expect(seatEnded()).toBe(false);
   });
 });

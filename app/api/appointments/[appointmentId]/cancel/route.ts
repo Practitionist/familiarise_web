@@ -98,7 +98,10 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
 import { recordExpertStrike } from "@/lib/booking/expert-reliability";
-import { revokeEndedSeatAccess } from "@/lib/stream/access-revocation";
+import {
+  persistSeatRevocation,
+  revokeEndedSeatAccess,
+} from "@/lib/stream/access-revocation";
 
 /** Audit attribution shared by every CAS this cancel drives (#1322 A12). */
 type CancelAuditMeta = {
@@ -1213,7 +1216,20 @@ export async function POST(
         if (replay) return { replay };
         throw err;
       });
-    if ("replay" in committed) return NextResponse.json(committed.replay);
+    // Whoever loses chat and room access with this booking; read before the commit released them.
+    const revokedUserIds =
+      eventKind && eventId && attendees
+        ? attendees.all
+        : consulteeUserId
+          ? [consulteeUserId]
+          : [];
+    // A retry of a click that died after its commit still owes the revocation.
+    if ("replay" in committed) {
+      await revokeEndedSeatAccess(appointmentId, revokedUserIds);
+      return NextResponse.json(committed.replay);
+    }
+    // Persisted before the refunds below can stall or throw.
+    await persistSeatRevocation(appointmentId, revokedUserIds);
     const {
       holdNotices,
       paidPayment,
@@ -1304,12 +1320,8 @@ export async function POST(
       );
     }
 
-    // Chat and room access end with the booking; the intent persists before any Stream call.
-    if (eventKind && eventId && attendees) {
-      await revokeEndedSeatAccess(appointmentId, attendees.all);
-    } else if (consulteeUserId) {
-      await revokeEndedSeatAccess(appointmentId, [consulteeUserId]);
-    }
+    // Chat and room access end with the booking, inside the request's budget.
+    await revokeEndedSeatAccess(appointmentId, revokedUserIds);
 
     // Notification metadata (for fire-and-forget notifications after transaction)
     const notificationMeta = {

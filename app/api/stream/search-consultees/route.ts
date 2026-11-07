@@ -4,7 +4,10 @@ import prisma from "lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 
 import { getSession } from "@/lib/auth-server";
-import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
+import {
+  dmEligibleStatusFilter,
+  excludeNonDmDirectBooking,
+} from "@/lib/stream/dm-eligibility-statuses";
 import { buildBookingOrgScopeWhere } from "@/lib/stream/event-channel-service";
 // See schemas/stream-search.ts for why the shape does not live here.
 import {
@@ -94,6 +97,7 @@ export async function GET(req: NextRequest) {
         status: {
           ...dmEligibleStatusFilter(),
         },
+        ...excludeNonDmDirectBooking(),
         ...(userSearchWhere ? { requestedBy: { user: userSearchWhere } } : {}),
         ...(consultationScopeWhere ? { AND: [consultationScopeWhere] } : {}),
       },
@@ -144,6 +148,7 @@ export async function GET(req: NextRequest) {
         status: {
           ...dmEligibleStatusFilter(),
         },
+        ...excludeNonDmDirectBooking(),
         ...(userSearchWhere ? { requestedBy: { user: userSearchWhere } } : {}),
         ...(subscriptionScopeWhere ? { AND: [subscriptionScopeWhere] } : {}),
       },

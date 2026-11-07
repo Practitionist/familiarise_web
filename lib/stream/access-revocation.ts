@@ -182,10 +182,9 @@ const eventPlanSelect = {
     collaborators: {
       where: {
         status: "ACCEPTED" as const,
-        tier: "PRESENTER" as const,
         consultantProfile: { deletedAt: null },
       },
-      select: { consultantProfile: { select: { userId: true } } },
+      select: { tier: true, consultantProfile: { select: { userId: true } } },
     },
   },
 } as const;
@@ -229,11 +228,21 @@ function seatEvent(
 
 /** The host and presenters a seat holder may share a DM with. */
 function seatCounterparts(ctx: SeatContext): string[] {
+  return planStaffUserIds(ctx, { presentersOnly: true });
+}
+
+/** The plan owner and its accepted collaborators; `presentersOnly` keeps the DM-eligible tier. */
+function planStaffUserIds(
+  ctx: SeatContext,
+  opts: { presentersOnly: boolean },
+): string[] {
   const eventPlan = ctx.webinar?.webinarPlan ?? ctx.class?.classPlan;
   const ids = eventPlan
     ? [
         eventPlan.consultantProfile?.userId,
-        ...eventPlan.collaborators.map((c) => c.consultantProfile.userId),
+        ...eventPlan.collaborators
+          .filter((c) => !opts.presentersOnly || c.tier === "PRESENTER")
+          .map((c) => c.consultantProfile.userId),
       ]
     : [
         ctx.consultation?.consultationPlan.consultantProfile.userId ??
@@ -472,6 +481,39 @@ export async function revokeEndedSeatAccess(
 ): Promise<void> {
   const ids = Array.from(new Set(userIds.filter(Boolean)));
   if (ids.length === 0) return;
+  await persistSeatRevocation(appointmentId, ids);
+  let pending: Map<string, string>;
+  try {
+    pending = await driveSeatRevocation(
+      appointmentId,
+      ids,
+      Date.now() + SYNC_SEAT_REVOCATION_BUDGET_MS,
+    );
+  } catch (error) {
+    // The intents stay owed; the sweep re-drives them.
+    streamLogger.warn("Seat revocation interrupted", {
+      appointmentId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+  await settleIntents(
+    "SEAT_ACCESS_REVOKE",
+    appointmentId,
+    ids.filter((id) => !pending.has(id)),
+  );
+}
+
+/**
+ * Persists the seat revocation an action owes without driving it, so a caller
+ * with slow work left after its commit owns the obligation first. Never throws.
+ */
+export async function persistSeatRevocation(
+  appointmentId: string,
+  userIds: string[],
+): Promise<void> {
+  const ids = Array.from(new Set(userIds.filter(Boolean)));
+  if (ids.length === 0) return;
   await enqueueOrReport(
     ids.map((userId) => ({
       kind: "SEAT_ACCESS_REVOKE" as const,
@@ -480,16 +522,6 @@ export async function revokeEndedSeatAccess(
     })),
     "seat.persistRevocation",
     { nextRetryAt: intentNotBefore() },
-  );
-  const pending = await driveSeatRevocation(
-    appointmentId,
-    ids,
-    Date.now() + SYNC_SEAT_REVOCATION_BUDGET_MS,
-  );
-  await settleIntents(
-    "SEAT_ACCESS_REVOKE",
-    appointmentId,
-    ids.filter((id) => !pending.has(id)),
   );
 }
 
@@ -514,10 +546,13 @@ export async function fenceSeatGrants(
       }),
       admittedSeatHolders(appointmentId, ctx, ids),
     ]);
-    // Client seats only: hosts and crew reach the room through their own roles.
+    // Client seats only: the host and accepted crew reach the room through their own roles.
+    const staff = new Set(planStaffUserIds(ctx, { presentersOnly: false }));
     const lost = Array.from(
       new Set(
-        seatHolders.map((s) => s.userId).filter((id) => !admitted.has(id)),
+        seatHolders
+          .map((s) => s.userId)
+          .filter((id) => !admitted.has(id) && !staff.has(id)),
       ),
     );
     if (lost.length > 0) await revokeEndedSeatAccess(appointmentId, lost);

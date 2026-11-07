@@ -2,14 +2,12 @@ import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import {
   dmEligibleStatusFilter,
+  excludeNonDmDirectBooking,
   OPENABLE_EVENT_STATUSES,
 } from "@/lib/stream/dm-eligibility-statuses";
 
 export type StreamEventType =
-  | "webinar"
-  | "class"
-  | "consultation"
-  | "subscription";
+  "webinar" | "class" | "consultation" | "subscription";
 
 /**
  * Verify that `userId` is an active participant, host, or accepted collaborator
@@ -84,6 +82,7 @@ export async function verifyEventAccess(
         where: {
           id: eventId,
           status: dmEligibleStatusFilter(),
+          ...excludeNonDmDirectBooking(),
           OR: [
             { consultationPlan: { consultantProfile: { userId } } },
             { requestedBy: { userId } },
@@ -98,6 +97,7 @@ export async function verifyEventAccess(
         where: {
           id: eventId,
           status: dmEligibleStatusFilter(),
+          ...excludeNonDmDirectBooking(),
           OR: [
             { subscriptionPlan: { consultantProfile: { userId } } },
             { requestedBy: { userId } },

@@ -20,6 +20,7 @@ jest.mock("../../../lib/novu", () => {
 });
 jest.mock("../../../lib/stream/access-revocation", () => ({
   revokeEndedSeatAccess: jest.fn(async () => undefined),
+  persistSeatRevocation: jest.fn(async () => undefined),
 }));
 /** The seat refund door; a test makes it die after the release committed. */
 jest.mock("../../../lib/payments/operations/event-refunds", () => ({

@@ -336,48 +336,25 @@ export type ProvisionedMeeting =
 export async function provisionAppointmentMeeting(
   slot: MeetingSlot,
 ): Promise<ProvisionedMeeting> {
-  const result = await provisionRoom(slot);
-  if (result.ok) await fenceProvisionedSeats(slot.id);
+  const granted: RoomGrant = { appointmentId: null, userIds: [] };
+  const result = await provisionRoom(slot, granted);
+  // The room is created with its seat holders as members; a cancel that committed meanwhile found no room to clear.
+  if (result.ok && granted.appointmentId) {
+    await fenceSeatGrants(granted.appointmentId, granted.userIds);
+  }
   return result;
 }
 
-/** A 1:1 room is created with its seat holders as members; a cancel that committed meanwhile found no room to clear. */
-async function fenceProvisionedSeats(occurrenceId: string): Promise<void> {
-  try {
-    const occurrence = await prisma.appointmentOccurrence.findUnique({
-      where: { id: occurrenceId },
-      select: {
-        appointmentId: true,
-        appointment: {
-          select: {
-            webinarId: true,
-            classId: true,
-            participants: { select: { userId: true } },
-          },
-        },
-      },
-    });
-    // A group room is created with its hosts only; its seats join through `/join`.
-    if (
-      !occurrence ||
-      occurrence.appointment.webinarId ||
-      occurrence.appointment.classId
-    ) {
-      return;
-    }
-    await fenceSeatGrants(
-      occurrence.appointmentId,
-      occurrence.appointment.participants.map((p) => p.userId),
-    );
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
-    );
-  }
+/** Who the room's create payload made a member, under the caller's authorized appointment. */
+interface RoomGrant {
+  appointmentId: string | null;
+  userIds: string[];
 }
 
-async function provisionRoom(slot: MeetingSlot): Promise<ProvisionedMeeting> {
+async function provisionRoom(
+  slot: MeetingSlot,
+  granted: RoomGrant,
+): Promise<ProvisionedMeeting> {
   const anchorSlot: MeetingSlot = slot;
 
   const existingMeeting = await findDbMeetingBySlot(anchorSlot.id);
@@ -411,6 +388,8 @@ async function provisionRoom(slot: MeetingSlot): Promise<ProvisionedMeeting> {
     extensionsUsed: existingMeeting?.extensionsUsed ?? 0,
   });
   const resolvedAppointmentId = authorized.slot.appointmentId;
+  granted.appointmentId = resolvedAppointmentId ?? null;
+  granted.userIds = payload.data.members?.map((m) => m.user_id) ?? [];
 
   try {
     await upsertUsersToStream([authorUserId], {

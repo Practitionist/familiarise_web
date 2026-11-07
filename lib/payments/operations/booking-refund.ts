@@ -35,27 +35,34 @@
 
 import { Prisma, PaymentStatus, RefundStatus } from "@prisma/client";
 import { transitionParticipant } from "@/lib/booking/participants";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
 
 /**
- * After a gateway refund commits: whether part of the payment is still unreturned. The last of
- * two concurrent partials reads both rows, so together they end the seat.
+ * After a gateway refund commits: whether any of the payment is still refundable, by the rail's
+ * own balance maths. The last of two concurrent partials reads both rows, so together they end
+ * the seat. An unreadable balance keeps the seat and never fails the committed refund.
  */
 async function leavesRefundable(paymentId: string): Promise<boolean> {
-  const [payment, refunds] = await Promise.all([
-    prisma.payment.findUnique({
+  try {
+    const payment = await prisma.payment.findUnique({
       where: { id: paymentId },
-      select: { amount: true },
-    }),
-    prisma.refund.findMany({
-      where: {
+      select: { amount: true, ...REFUNDABLE_BALANCE_SELECT },
+    });
+    if (!payment) return false;
+    return refundableBalancePaise(payment.amount, payment) > 0;
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        event: "refund_balance_read_failed",
         paymentId,
-        status: { in: [RefundStatus.SUCCEEDED, RefundStatus.PENDING] },
-      },
-      select: { amountPaise: true },
-    }),
-  ]);
-  if (!payment) return false;
-  return refunds.reduce((sum, r) => sum + r.amountPaise, 0) < payment.amount;
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+    return true;
+  }
 }
 
 async function markParticipantsRefunded(paymentId: string): Promise<void> {
