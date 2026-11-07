@@ -19,6 +19,10 @@ const recordTDSDeduction = jest.fn().mockResolvedValue(undefined);
 const postLedgerTxn = jest.fn().mockResolvedValue({ created: true });
 const notifyPayoutProcessed = jest.fn().mockResolvedValue(undefined);
 
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(),
+  stageRaisedClawback: jest.fn(),
+}));
 jest.mock("../../lib/payments/tax/tds-service", () => ({
   __esModule: true,
   recordTDSDeduction: (...a: unknown[]) => recordTDSDeduction(...a),

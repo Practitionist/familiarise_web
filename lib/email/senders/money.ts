@@ -33,6 +33,10 @@ import {
   PayoutStatusEmail,
   type PayoutStatusKind,
 } from "@/emails/payments/PayoutStatusEmail";
+import {
+  CLAWBACK_NOTICE_SUBJECT,
+  ClawbackNoticeEmail,
+} from "@/emails/payments/ClawbackNoticeEmail";
 import ReferralBonusEmail, {
   referralBonusSubject,
   type ReferralBonusEmailKind,
@@ -54,6 +58,7 @@ import {
   dateText,
   defineBudgetedEmailSender,
   defineFixedBudgetEmailSender,
+  defineLifecyclePreparer,
   defineLifecycleStager,
   greet,
   money,
@@ -77,6 +82,7 @@ export const MONEY_EMAIL_TYPES = {
   REFUND_PROCESSED: "REFUND_PROCESSED",
   REFUND_FAILED: "REFUND_FAILED",
   PAYOUT_STATUS: "PAYOUT_STATUS",
+  PAYOUT_CLAWBACK: "PAYOUT_CLAWBACK",
   DISPUTE_NOTICE: "DISPUTE_NOTICE",
   ORG_BILLING_RECEIPT: "ORG_BILLING_RECEIPT",
   ORG_INVOICE_OVERDUE: "ORG_INVOICE_OVERDUE",
@@ -550,6 +556,49 @@ function buildPayoutStatusEmail(args: PayoutStatusEmailArgs): {
 export const stagePayoutStatusEmail =
   defineLifecycleStager<PayoutStatusEmailArgs>(buildPayoutStatusEmail);
 
+// ── Payout clawback raised ──────────────────────────────────────────────────
+
+export interface ClawbackNoticeEmailArgs {
+  recipientUserIds: string[];
+  organization: boolean;
+  payoutId: string;
+  journalId: string;
+  amountPaise: Paise;
+  dashboardUrl: string;
+}
+
+function buildClawbackNoticeEmail(args: ClawbackNoticeEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const amountText = money(args.amountPaise, "INR");
+  const dashboardUrl = absolute(args.dashboardUrl);
+  return {
+    userIds: args.recipientUserIds,
+    spec: {
+      emailType: MONEY_EMAIL_TYPES.PAYOUT_CLAWBACK,
+      category: args.organization ? "orgBilling" : "payments",
+      from: SENDERS.finance,
+      entityRef: `clawback:${args.journalId}`,
+      traceRenderFailure: true,
+      subject: () => CLAWBACK_NOTICE_SUBJECT,
+      render: (r: EmailRecipient): ReactElement =>
+        ClawbackNoticeEmail({
+          recipientName: greet(r),
+          organization: args.organization,
+          amountText,
+          payoutId: args.payoutId,
+          dashboardUrl,
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
+/** Renders inside the clawback's transaction, which computes the amount; a render failure leaves a trace row. */
+export const stageClawbackNoticeEmail =
+  defineLifecycleStager<ClawbackNoticeEmailArgs>(buildClawbackNoticeEmail);
+
 // ── Dispute notice ──────────────────────────────────────────────────────────
 
 export interface DisputeNoticeEmailArgs {
@@ -799,10 +848,8 @@ export const stageOrgOperationalEmail =
 
 // ── Referral bonus & welcome credits ────────────────────────────────────────
 
-export interface ReferralBonusEmailArgs {
+interface ReferralBonusEmailBase {
   userId: string;
-  referralId: string;
-  kind: ReferralBonusEmailKind;
   counterpartyName?: string;
   amountPaise: Paise;
   remainingPaise?: Paise;
@@ -811,12 +858,26 @@ export interface ReferralBonusEmailArgs {
   dashboardUrl?: string;
 }
 
+/** A reward is keyed by its referral; a redemption by the payment that used it. */
+export type ReferralBonusEmailArgs = ReferralBonusEmailBase &
+  (
+    | {
+        kind: Exclude<ReferralBonusEmailKind, "CREDITS_APPLIED">;
+        referralId: string;
+      }
+    | { kind: "CREDITS_APPLIED"; paymentId: string }
+  );
+
 function buildReferralBonusEmail(args: ReferralBonusEmailArgs): {
   userIds: string[];
   spec: RecipientEmailSpec;
 } {
   const currency = args.currency ?? "INR";
-  const amountText = money(args.amountPaise, currency);
+  // The welcome discount is a cap; checkout applies the exact amount.
+  const amountText =
+    args.kind === "WELCOME_BONUS"
+      ? `up to ${money(args.amountPaise, currency)}`
+      : money(args.amountPaise, currency);
   const remainingText =
     args.remainingPaise !== undefined && args.remainingPaise !== null
       ? money(args.remainingPaise, currency)
@@ -831,7 +892,10 @@ function buildReferralBonusEmail(args: ReferralBonusEmailArgs): {
       emailType: `REFERRAL_${args.kind}`,
       category: "payments",
       from: SENDERS.payments,
-      entityRef: `referral:${args.referralId}:${args.kind.toLowerCase()}`,
+      entityRef:
+        args.kind === "CREDITS_APPLIED"
+          ? `payment:${args.paymentId}:referral-credits-applied`
+          : `referral:${args.referralId}:${args.kind.toLowerCase()}`,
       subject: () => referralBonusSubject({ kind: args.kind, amountText }),
       render: (r: EmailRecipient): ReactElement =>
         ReferralBonusEmail({
@@ -850,3 +914,6 @@ function buildReferralBonusEmail(args: ReferralBonusEmailArgs): {
 
 export const stageReferralBonusEmail =
   defineLifecycleStager<ReferralBonusEmailArgs>(buildReferralBonusEmail);
+
+export const prepareReferralBonusEmail =
+  defineLifecyclePreparer<ReferralBonusEmailArgs>(buildReferralBonusEmail);

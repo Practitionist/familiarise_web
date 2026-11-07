@@ -32,12 +32,6 @@ import {
   type AppointmentRescheduledPayload,
   type BookingRequestInput,
   type BookingRequestPayload,
-  type CollaboratorAcceptedPayload,
-  type CollaboratorDeclinedPayload,
-  type CollaboratorInviteExpiredPayload,
-  type CollaboratorInvitedPayload,
-  type CollaboratorRemovedPayload,
-  type CollaboratorWithdrawnPayload,
   type ComplianceAlertPayload,
   type ConsultantApplicationPayload,
   type DisputeInput,
@@ -769,35 +763,6 @@ export function notifyAccountSecurityNotice(
   const ids = Array.isArray(userIds) ? userIds : [userIds];
   return triggerForMultiple(
     W.ACCOUNT_SECURITY_NOTICE,
-    ids,
-    payload,
-    r.dedupeKey,
-    r.opts,
-  );
-}
-
-// Collaborators
-export const notifyCollaboratorInvited =
-  defineSingleNotifier<CollaboratorInvitedPayload>(W.COLLABORATOR_INVITED);
-export const notifyCollaboratorAccepted =
-  defineSingleNotifier<CollaboratorAcceptedPayload>(W.COLLABORATOR_ACCEPTED);
-export const notifyCollaboratorDeclined =
-  defineSingleNotifier<CollaboratorDeclinedPayload>(W.COLLABORATOR_DECLINED);
-export const notifyCollaboratorRemoved =
-  defineSingleNotifier<CollaboratorRemovedPayload>(W.COLLABORATOR_REMOVED);
-export const notifyCollaboratorWithdrawn =
-  defineSingleNotifier<CollaboratorWithdrawnPayload>(W.COLLABORATOR_WITHDRAWN);
-
-export function notifyCollaboratorInviteExpired(
-  userIds: string | string[],
-  payload: CollaboratorInviteExpiredPayload,
-  dedupeKeyOrOpts?: string | TriggerOptions,
-  opts?: TriggerOptions,
-): Promise<TriggerResult[]> {
-  const r = resolveTriggerArgs(dedupeKeyOrOpts, opts);
-  const ids = Array.isArray(userIds) ? userIds : [userIds];
-  return triggerForMultiple(
-    W.COLLABORATOR_INVITE_EXPIRED,
     ids,
     payload,
     r.dedupeKey,

@@ -25,12 +25,18 @@ const mockRefundPayment = jest.fn();
 const mockApplyReversal = jest.fn();
 const mockReverseCredits = jest.fn();
 const mockReverseUtilization = jest.fn();
-const mockPostLedgerTxn = jest.fn();
+const mockPostLedgerTxn = jest
+  .fn()
+  .mockResolvedValue({ transactionId: "txn", created: true });
 const mockAssertEarningTransition = jest.fn();
 const mockRecordTdsReversal = jest.fn();
 const mockPaymentFindUnique = jest.fn();
 const mockFindDeduped = jest.fn(async (..._a: unknown[]) => null as unknown);
 const mockStampTranches = jest.fn(async (..._a: unknown[]) => 0);
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(),
+  stageRaisedClawback: jest.fn(),
+}));
 jest.mock("../../lib/booking/subscription-cycle", () => ({
   stampTranchesOnCancel: (...a: unknown[]) => mockStampTranches(...a),
 }));

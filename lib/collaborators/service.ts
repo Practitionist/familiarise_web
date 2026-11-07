@@ -28,29 +28,9 @@ import {
   WEBINAR_COLLABORATOR_ROLES,
   CLASS_COLLABORATOR_ROLES,
 } from "@/schemas/collaborators";
-import {
-  notifyCollaboratorInvited,
-  notifyCollaboratorAccepted,
-  notifyCollaboratorDeclined,
-  notifyCollaboratorRemoved,
-  notifyCollaboratorWithdrawn,
-} from "@/lib/novu/service";
-import { scheduleAfter } from "@/lib/api/after-safe";
-import {
-  sendCollaboratorInvitedEmail,
-  sendCollaboratorAcceptedEmail,
-  sendCollaboratorDeclinedEmail,
-  sendCollaboratorRemovedEmail,
-  sendCollaboratorWithdrawnEmail,
-} from "@/lib/email/senders/collaborators";
-import { EMAIL_BUDGET_MS } from "@/lib/email";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { stageCollaboratorNotifications } from "@/lib/collaborators/notifications";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
-import { getAppUrl } from "@/lib/url";
-import {
-  appointmentTypeLabel,
-  collaboratorRoleLabel,
-} from "@/lib/novu/humanize";
-import { goHref } from "@/lib/dashboard/go";
 import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
 import { reportSentryError } from "@/lib/observability/report";
 import { PRESENTER_ROLES, tierForRole } from "@/lib/collaborators/roles";
@@ -89,15 +69,6 @@ const MIN_HOST_SHARE = 10; // Host must keep at least 10%
 // only one of them a co-presenter; the host stays the accountable party.
 export const MAX_COLLABORATORS_PER_PLAN = 3;
 export { PRESENTER_ROLES } from "@/lib/collaborators/roles";
-
-/**
- * Sentence-start fallback when the plan row behind a bell is gone
- * ("Class", "Webinar") — never the "Unknown Plan" placeholder.
- */
-const planKindLabel = (planType: string): string => {
-  const label = appointmentTypeLabel(planType);
-  return label.charAt(0).toUpperCase() + label.slice(1);
-};
 
 // #772 B5 — collaborator shares are stored as basis points (bps) for integer
 // money math. The public API/param surface stays in percent (0–90); convert at
@@ -360,31 +331,35 @@ export async function inviteCollaborator(
 
         await assertCollaboratorCapTx(tx, planType, planId, planRole);
 
-        if (existing) {
-          return tx.collaborator.update({
-            where: { id: existing.id },
-            data: {
-              role: planRole,
-              tier: tierForRole(planRole),
-              revenueShareBps: pctToBps(revenueSharePercentage),
-              status: "PENDING",
-              invitedById,
-              respondedAt: null,
-            },
-          });
-        }
-
-        return tx.collaborator.create({
-          data: {
-            consultantProfileId,
-            ...planScope(planType, planId),
-            role: planRole,
-            tier: tierForRole(planRole),
-            revenueShareBps: pctToBps(revenueSharePercentage),
-            status: "PENDING",
-            invitedById,
-          },
-        });
+        const collaborator = existing
+          ? await tx.collaborator.update({
+              where: { id: existing.id },
+              data: {
+                role: planRole,
+                tier: tierForRole(planRole),
+                revenueShareBps: pctToBps(revenueSharePercentage),
+                status: "PENDING",
+                invitedById,
+                respondedAt: null,
+              },
+            })
+          : await tx.collaborator.create({
+              data: {
+                consultantProfileId,
+                ...planScope(planType, planId),
+                role: planRole,
+                tier: tierForRole(planRole),
+                revenueShareBps: pctToBps(revenueSharePercentage),
+                status: "PENDING",
+                invitedById,
+              },
+            });
+        const notices = await stageCollaboratorNotifications(
+          tx,
+          "INVITED",
+          collaborator,
+        );
+        return { collaborator, notices };
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -393,76 +368,9 @@ export async function inviteCollaborator(
     ),
   );
 
-  if (txResult) {
-    try {
-      const invitedProfile = await prisma.consultantProfile.findUnique({
-        where: { id: consultantProfileId },
-        select: { userId: true, user: { select: { name: true } } },
-      });
-      const planTitle =
-        planType === "webinar"
-          ? (
-              await prisma.webinarPlan.findUnique({
-                where: { id: planId },
-                select: { title: true },
-              })
-            )?.title
-          : (
-              await prisma.classPlan.findUnique({
-                where: { id: planId },
-                select: { title: true },
-              })
-            )?.title;
-
-      const inviterProfile = invitedById
-        ? await prisma.consultantProfile.findUnique({
-            where: { id: invitedById },
-            select: { user: { select: { name: true } } },
-          })
-        : null;
-
-      if (invitedProfile) {
-        const ownerName = inviterProfile?.user?.name ?? "Plan Owner";
-        const resolvedTitle = planTitle ?? planKindLabel(planType);
-        await scheduleAfter(async () => {
-          await Promise.all([
-            notifyCollaboratorInvited(invitedProfile.userId, {
-              planTitle: resolvedTitle,
-              planType,
-              role: collaboratorRoleLabel(role),
-              revenueSharePercentage,
-              ownerName,
-              dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-            }).catch(() => undefined),
-            sendCollaboratorInvitedEmail(
-              {
-                recipientUserId: invitedProfile.userId,
-                actorName: ownerName,
-                collaboratorName: invitedProfile.user?.name ?? "Collaborator",
-                planTitle: resolvedTitle,
-                planType,
-                role: txResult.role,
-                revenueShareBps: txResult.revenueShareBps,
-                collaboratorId: txResult.id,
-              },
-              EMAIL_BUDGET_MS.REQUEST,
-            ).catch(() => undefined),
-          ]);
-        }, "collaborator.invited");
-      }
-    } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "stream" }, level: "warning" },
-      );
-      console.error(
-        "[collaborators] Failed to send invitation notification:",
-        error,
-      );
-    }
-  }
-
-  return txResult;
+  if (!txResult) return null;
+  await flushNotificationsAfter(txResult.notices, "collaborator.invited");
+  return txResult.collaborator;
 }
 
 async function syncOpenCallPresenterRole(
@@ -642,7 +550,7 @@ export async function respondToInvitation(
           select: { startsAt: true, endsAt: true },
         })
       : [];
-  const updated = await withHostSlotBatch(
+  const committed = await withHostSlotBatch(
     hostBatchEntries([consultantProfileId], acceptWindows),
     (renewHostBatch) =>
       withSerializableRetry(() =>
@@ -672,9 +580,15 @@ export async function respondToInvitation(
               data: { status: response, respondedAt: new Date() },
             });
             if (moved.count === 0) return null;
-            return tx.collaborator.findUniqueOrThrow({
+            const collaborator = await tx.collaborator.findUniqueOrThrow({
               where: { id: collaborationId },
             });
+            const notices = await stageCollaboratorNotifications(
+              tx,
+              response,
+              collaborator,
+            );
+            return { collaborator, notices };
           },
           {
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -692,7 +606,9 @@ export async function respondToInvitation(
     }
     throw err;
   });
-  if (!updated) return null;
+  if (!committed) return null;
+  const updated = committed.collaborator;
+  await flushNotificationsAfter(committed.notices, "collaborator.response");
 
   if (response === "ACCEPTED") {
     await runAcceptedInvitationSideEffects(
@@ -703,8 +619,6 @@ export async function respondToInvitation(
       updated.role,
     );
   }
-
-  await notifyHostOfResponse(planType, planId, consultantProfileId, updated);
 
   return updated;
 }
@@ -849,100 +763,6 @@ async function syncCollaboratorParticipants(
   }
 }
 
-async function notifyHostOfResponse(
-  planType: PlanType,
-  planId: string,
-  consultantProfileId: string,
-  updated: Collaborator,
-): Promise<void> {
-  try {
-    const plan =
-      planType === "webinar"
-        ? await prisma.webinarPlan.findUnique({
-            where: { id: planId },
-            select: {
-              title: true,
-              consultantProfile: { select: { userId: true } },
-            },
-          })
-        : await prisma.classPlan.findUnique({
-            where: { id: planId },
-            select: {
-              title: true,
-              consultantProfile: { select: { userId: true } },
-            },
-          });
-    const [collabProfile, inviterProfile] = await Promise.all([
-      prisma.consultantProfile.findUnique({
-        where: { id: consultantProfileId },
-        select: { user: { select: { name: true } } },
-      }),
-      updated.invitedById
-        ? prisma.consultantProfile.findUnique({
-            where: { id: updated.invitedById },
-            select: { userId: true },
-          })
-        : Promise.resolve(null),
-    ]);
-    const hostUserId =
-      plan?.consultantProfile?.userId ?? inviterProfile?.userId ?? null;
-    if (!hostUserId) return;
-    const planTitle = plan?.title ?? planKindLabel(planType);
-    const collaboratorName = collabProfile?.user?.name ?? "A collaborator";
-    const payload = {
-      planTitle,
-      planType,
-      collaboratorName,
-      role: collaboratorRoleLabel(updated.role),
-      dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-    };
-    const emailPayload = {
-      recipientUserId: hostUserId,
-      actorName: collaboratorName,
-      collaboratorName,
-      planTitle,
-      planType,
-      role: updated.role,
-      revenueShareBps: updated.revenueShareBps,
-      collaboratorId: updated.id,
-    };
-    await scheduleAfter(async () => {
-      if (updated.status === "ACCEPTED") {
-        await Promise.all([
-          notifyCollaboratorAccepted(hostUserId, payload).catch(
-            () => undefined,
-          ),
-          sendCollaboratorAcceptedEmail(
-            emailPayload,
-            EMAIL_BUDGET_MS.REQUEST,
-          ).catch(() => undefined),
-        ]);
-      } else {
-        await Promise.all([
-          notifyCollaboratorDeclined(hostUserId, payload).catch(
-            () => undefined,
-          ),
-          sendCollaboratorDeclinedEmail(
-            emailPayload,
-            EMAIL_BUDGET_MS.REQUEST,
-          ).catch(() => undefined),
-        ]);
-      }
-    }, `collaborators.${updated.status.toLowerCase()}`);
-  } catch (error) {
-    reportSentryError(error, {
-      subsystem: "collaborators",
-      op: "respondToInvitation.notifyHost",
-      level: "warning",
-      extra: { planId, planType },
-    });
-    console.error(
-      "[collaborators] Failed to send response notification:",
-      error,
-    );
-  }
-}
-
 export type RemovedCollaborator = Collaborator & { accessRevoked: boolean };
 
 export async function removeCollaborator(
@@ -965,19 +785,31 @@ export async function removeCollaborator(
   });
   if (!collab) return null;
 
-  const moved = await prisma.collaborator.updateMany({
-    where: { id: collaborationId, status: { in: ["PENDING", "ACCEPTED"] } },
-    data: { status: opts.withdrawnByProfileId ? "WITHDRAWN" : "REMOVED" },
+  const event = opts.withdrawnByProfileId ? "WITHDRAWN" : "REMOVED";
+  const committed = await prisma.$transaction(async (tx) => {
+    const moved = await tx.collaborator.updateMany({
+      where: { id: collaborationId, status: { in: ["PENDING", "ACCEPTED"] } },
+      data: { status: event },
+    });
+    if (moved.count === 0) return null;
+    const collaborator = await tx.collaborator.findUniqueOrThrow({
+      where: { id: collaborationId },
+    });
+    const notices = await stageCollaboratorNotifications(
+      tx,
+      event,
+      collaborator,
+    );
+    return { collaborator, notices };
   });
-  if (moved.count === 0) return null;
-  const result = await prisma.collaborator.findUniqueOrThrow({
-    where: { id: collaborationId },
-  });
+  if (!committed) return null;
+  const result = committed.collaborator;
+  await flushNotificationsAfter(committed.notices, "collaborator.removal");
 
   const profile = await prisma.consultantProfile
     .findUnique({
       where: { id: collab.consultantProfileId },
-      select: { userId: true, user: { select: { name: true } } },
+      select: { userId: true },
     })
     .catch((error) => {
       reportSentryError(error, {
@@ -988,14 +820,10 @@ export async function removeCollaborator(
       return null;
     });
 
-  const withdrawn = Boolean(opts.withdrawnByProfileId);
-
   let accessRevoked = false;
   if (profile?.userId) {
     accessRevoked = (
-      await revokeCollaboratorAccess(planType, planId, profile.userId, {
-        notify: false,
-      })
+      await revokeCollaboratorAccess(planType, planId, profile.userId)
     ).success;
     if (!accessRevoked) {
       await enqueueCollaboratorRevocationRetry(
@@ -1006,176 +834,15 @@ export async function removeCollaborator(
     }
   }
 
-  if (!withdrawn && profile?.userId) {
-    try {
-      const plan =
-        planType === "webinar"
-          ? await prisma.webinarPlan.findUnique({
-              where: { id: planId },
-              select: {
-                title: true,
-                consultantProfile: {
-                  select: { user: { select: { name: true } } },
-                },
-              },
-            })
-          : await prisma.classPlan.findUnique({
-              where: { id: planId },
-              select: {
-                title: true,
-                consultantProfile: {
-                  select: { user: { select: { name: true } } },
-                },
-              },
-            });
-      const planTitle = plan?.title ?? planKindLabel(planType);
-      await scheduleAfter(async () => {
-        await Promise.all([
-          notifyCollaboratorRemoved(profile.userId, {
-            planTitle,
-            planType,
-            dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-          }).catch(() => undefined),
-          sendCollaboratorRemovedEmail(
-            {
-              recipientUserId: profile.userId,
-              actorName: plan?.consultantProfile?.user?.name ?? "Plan Owner",
-              collaboratorName: profile.user?.name ?? "Collaborator",
-              planTitle,
-              planType,
-              role: result.role,
-              revenueShareBps: result.revenueShareBps,
-              collaboratorId: result.id,
-            },
-            EMAIL_BUDGET_MS.REQUEST,
-          ).catch(() => undefined),
-        ]);
-      }, "collaborators.removed");
-    } catch (error) {
-      reportSentryError(error, {
-        subsystem: "collaborators",
-        op: "removeCollaborator.sendEmail",
-        level: "warning",
-        extra: { planId, planType },
-      });
-    }
-  }
-
-  if (withdrawn) {
-    await notifyHostOfWithdrawal(
-      planType,
-      planId,
-      profile?.user?.name ?? "A collaborator",
-      result,
-    );
-  }
-
   return { ...result, accessRevoked };
-}
-
-async function notifyHostOfWithdrawal(
-  planType: PlanType,
-  planId: string,
-  collaboratorName: string,
-  collaborator: Collaborator,
-): Promise<void> {
-  try {
-    const plan =
-      planType === "webinar"
-        ? await prisma.webinarPlan.findUnique({
-            where: { id: planId },
-            select: {
-              title: true,
-              consultantProfile: { select: { userId: true } },
-            },
-          })
-        : await prisma.classPlan.findUnique({
-            where: { id: planId },
-            select: {
-              title: true,
-              consultantProfile: { select: { userId: true } },
-            },
-          });
-    const inviterProfile = collaborator.invitedById
-      ? await prisma.consultantProfile.findUnique({
-          where: { id: collaborator.invitedById },
-          select: { userId: true },
-        })
-      : null;
-    const hostUserId =
-      plan?.consultantProfile?.userId ?? inviterProfile?.userId ?? null;
-    if (!hostUserId) return;
-    const planTitle = plan?.title ?? planKindLabel(planType);
-    await scheduleAfter(async () => {
-      await Promise.all([
-        notifyCollaboratorWithdrawn(hostUserId, {
-          planTitle,
-          planType,
-          collaboratorName,
-          dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-        }).catch(() => undefined),
-        sendCollaboratorWithdrawnEmail(
-          {
-            recipientUserId: hostUserId,
-            actorName: collaboratorName,
-            collaboratorName,
-            planTitle,
-            planType,
-            role: collaborator.role,
-            revenueShareBps: collaborator.revenueShareBps,
-            collaboratorId: collaborator.id,
-          },
-          EMAIL_BUDGET_MS.REQUEST,
-        ).catch(() => undefined),
-      ]);
-    }, "collaborators.withdrawn");
-  } catch (error) {
-    reportSentryError(error, {
-      subsystem: "collaborators",
-      op: "removeCollaborator.notifyHostOfWithdrawal",
-      extra: { planId, planType },
-    });
-  }
 }
 
 export async function revokeCollaboratorAccess(
   planType: PlanType,
   planId: string,
   userId: string,
-  opts: { notify?: boolean } = {},
 ): Promise<{ success: boolean }> {
   let success = true;
-
-  if (opts.notify ?? true) {
-    try {
-      const plan =
-        planType === "webinar"
-          ? await prisma.webinarPlan.findUnique({
-              where: { id: planId },
-              select: { title: true },
-            })
-          : await prisma.classPlan.findUnique({
-              where: { id: planId },
-              select: { title: true },
-            });
-      await scheduleAfter(async () => {
-        await notifyCollaboratorRemoved(userId, {
-          planTitle: plan?.title ?? planKindLabel(planType),
-          planType,
-          dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-        }).catch(() => undefined);
-      }, "collaborators.access_revoked");
-    } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "stream" }, level: "warning" },
-      );
-      console.error(
-        "[collaborators] Failed to send removal notification:",
-        error,
-      );
-    }
-  }
 
   try {
     await transitionParticipant(

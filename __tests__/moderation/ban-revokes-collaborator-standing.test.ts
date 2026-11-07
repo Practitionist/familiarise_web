@@ -10,6 +10,9 @@
  * `removeCollaborator` runs. Reinstatement does not restore the rows.
  */
 
+jest.mock("@/lib/collaborators/notifications", () => ({
+  stageCollaboratorNotifications: jest.fn(async () => ({})),
+}));
 jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
   captureMessage: jest.fn(),
@@ -119,7 +122,6 @@ describe("a ban revokes collaborator standing", () => {
         status: { in: ["PENDING", "ACCEPTED"] },
       },
       data: { status: "REMOVED", respondedAt: expect.any(Date) },
-      select: expect.any(Object),
     });
     expect(transactional.collaborationsRemoved).toEqual([
       { planType: "webinar", planId: "wp-1" },
@@ -133,17 +135,11 @@ describe("a ban revokes collaborator standing", () => {
       "webinar",
       "wp-1",
       "u1",
-      {
-        notify: false,
-      },
     );
     expect(revokeCollaboratorAccess).toHaveBeenCalledWith(
       "class",
       "cp-9",
       "u1",
-      {
-        notify: false,
-      },
     );
     expect(summary.collaboratorRevocation).toBe("ok");
     expect(summary.errors).toBeUndefined();

@@ -3,6 +3,7 @@ import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { reportSentryError } from "@/lib/observability/report";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { prorate } from "@/lib/payments/utils/money";
+import { stageRaisedClawback } from "./clawback-notifications";
 
 function consultantClawbackKey(
   refundId: string,
@@ -29,8 +30,9 @@ export async function postConsultantPayoutClawback(
   },
 ): Promise<void> {
   const { consultantPayoutId, consultantProfileId, amountPaise } = input;
+  let posted: Awaited<ReturnType<typeof postLedgerTxn>>;
   try {
-    await postLedgerTxn(tx, {
+    posted = await postLedgerTxn(tx, {
       idempotencyKey: consultantClawbackKey(input.refundId, consultantPayoutId),
       kind: "PAYOUT",
       payoutId: consultantPayoutId,
@@ -66,6 +68,11 @@ export async function postConsultantPayoutClawback(
     });
     throw err;
   }
+  await stageRaisedClawback(tx, posted, {
+    payee: { rail: "CONSULTANT", consultantProfileId },
+    payoutId: consultantPayoutId,
+    amountPaise,
+  });
 }
 
 /**

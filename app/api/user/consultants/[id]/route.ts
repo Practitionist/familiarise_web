@@ -725,7 +725,6 @@ async function revokeRemovedCollaborations(
         planType,
         planId,
         userId,
-        { notify: false },
       );
       if (!success) {
         Sentry.captureMessage(

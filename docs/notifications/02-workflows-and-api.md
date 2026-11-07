@@ -2,13 +2,13 @@
 
 ## Novu Workflows Overview
 
-All 94 event ids are defined in `lib/novu/workflows.ts` as the `NOVU_WORKFLOWS` constant, and every one is mapped to a family in `EVENT_FAMILY` (`lib/novu/templates/families.ts`). A unit test refuses an unmapped event. The event id is what application code triggers with; the Novu workflow that receives the trigger is the event's family, not a workflow with the event's name.
+All 96 event ids are defined in `lib/novu/workflows.ts` as the `NOVU_WORKFLOWS` constant, and every one is mapped to a family in `EVENT_FAMILY` (`lib/novu/templates/families.ts`). A unit test refuses an unmapped event. The event id is what application code triggers with; the Novu workflow that receives the trigger is the event's family, not a workflow with the event's name.
 
 ---
 
 ## Workflow families
 
-The Novu plan in use caps an environment at 20 workflows, and the application has 94 events, so a Novu workflow is a family — one per audience-and-opt-out combination — rather than one per event. The event id the application triggers is unchanged; `toWire` in `lib/novu/templates/index.ts` maps it to its family and adds `payload.event`, and the family's body branches on that field with a Liquid `case`. There are 16 families. Every family is in-app only, is synced with read-only preferences and no step conditions, and is gated by the server: the "Opt-out category" column is the `NotificationPreference` switch that `lib/novu/policy.ts` checks before a bell is staged (`none` means a system notice with no switch).
+The Novu plan in use caps an environment at 20 workflows, and the application has 96 events, so a Novu workflow is a family — one per audience-and-opt-out combination — rather than one per event. The event id the application triggers is unchanged; `toWire` in `lib/novu/templates/index.ts` maps it to its family and adds `payload.event`, and the family's body branches on that field with a Liquid `case`. There are 16 families. Every family is in-app only, is synced with read-only preferences and no step conditions, and is gated by the server: the "Opt-out category" column is the `NotificationPreference` switch that `lib/novu/policy.ts` checks before a bell is staged (`none` means a system notice with no switch).
 
 | Family ID        | Opt-out category | Events | Event ids                                                                                                                                                                                                                                                                                                                                          |
 | ---------------- | ---------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -16,7 +16,7 @@ The Novu plan in use caps an environment at 20 workflows, and the application ha
 | `session-media`  | appointments     | 5      | recording-available, recording-failed, recording-removed, document-uploaded, document-reviewed                                                                                                                                                                                                                                                     |
 | `payment`        | payments         | 4      | payment-link, payment-success, payment-failed, referral-credits-applied                                                                                                                                                                                                                                                                            |
 | `refund`         | payments         | 6      | refund-requested, refund-processed, refund-failed, dispute-created, dispute-updated, dispute-resolved                                                                                                                                                                                                                                              |
-| `payout`         | payments         | 2      | payout-processed, payout-failed                                                                                                                                                                                                                                                                                                                    |
+| `payout`         | payments         | 3      | payout-processed, payout-failed, payout-clawback                                                                                                                                                                                                                                                                                                   |
 | `referral`       | payments         | 2      | referral-bonus-earned, referee-welcome-bonus                                                                                                                                                                                                                                                                                                       |
 | `subscription`   | subscriptions    | 4      | subscription-started, subscription-cancelled, subscription-renewed, subscription-unallocated-refunded                                                                                                                                                                                                                                              |
 | `trial`          | trials           | 5      | trial-session-requested, trial-session-scheduled, trial-session-completed, trial-session-cancelled, trial-refunded                                                                                                                                                                                                                                 |
@@ -25,7 +25,7 @@ The Novu plan in use caps an environment at 20 workflows, and the application ha
 | `account`        | none             | 7      | account-security-notice, verification-status-changed, new-consultant-application, moderation-warning, content-removed-notice, account-suspended, account-banned                                                                                                                                                                                    |
 | `collaborator`   | appointments     | 6      | collaborator-invited, collaborator-accepted, collaborator-removed, collaborator-declined, collaborator-withdrawn, collaborator-invite-expired                                                                                                                                                                                                      |
 | `platform`       | none             | 2      | general-announcement, compliance-deadline-alert                                                                                                                                                                                                                                                                                                    |
-| `org-billing`    | orgBilling       | 11     | org-invoice-issued, org-invoice-paid, org-invoice-overdue, org-wallet-topup-confirmed, org-wallet-low, org-payout-completed, org-payout-failed, org-payout-reversed, org-member-overage-timed-out, org-program-overage-due, org-contract-status-changed                                                                                            |
+| `org-billing`    | orgBilling       | 12     | org-invoice-issued, org-invoice-paid, org-invoice-overdue, org-wallet-topup-confirmed, org-wallet-low, org-payout-completed, org-payout-failed, org-payout-reversed, org-payout-clawback, org-member-overage-timed-out, org-program-overage-due, org-contract-status-changed                                                                       |
 | `org-membership` | orgMembership    | 9      | org-created, org-invite-sent, org-invite-accepted, org-role-changed, org-member-removed, org-expert-removed, org-sso-provider-submitted, org-sso-provider-decided, org-sso-provider-deleted                                                                                                                                                        |
 | `org-program`    | orgProgram       | 6      | org-seat-assigned, org-seat-revoked, org-program-exhausted, org-program-cap-near, org-license-renewal-upcoming, org-data-export-ready                                                                                                                                                                                                              |
 
@@ -186,18 +186,21 @@ sequenceDiagram
 
 ### Consultant-Specific
 
-| Workflow ID                   | Trigger Function                                             | Recipients | Payload Type            |
-| ----------------------------- | ------------------------------------------------------------ | ---------- | ----------------------- |
-| `new-booking-request`         | `notifyNewBookingRequest(consultantUserId, payload)`         | Consultant | `BookingRequestPayload` |
-| `verification-status-changed` | `notifyVerificationStatusChanged(consultantUserId, payload)` | Consultant | `VerificationPayload`   |
-| `payout-processed`            | `notifyPayoutProcessed(consultantUserId, payload)`           | Consultant | `PayoutPayload`         |
-| `payout-failed`               | `notifyPayoutFailed(consultantUserId, payload)`              | Consultant | `PayoutPayload`         |
+| Workflow ID                   | Trigger Function                                                       | Recipients | Payload Type            |
+| ----------------------------- | ---------------------------------------------------------------------- | ---------- | ----------------------- |
+| `new-booking-request`         | `notifyNewBookingRequest(consultantUserId, payload)`                   | Consultant | `BookingRequestPayload` |
+| `verification-status-changed` | `notifyVerificationStatusChanged(consultantUserId, payload)`           | Consultant | `VerificationPayload`   |
+| `payout-processed`            | `notifyPayoutProcessed(consultantUserId, payload)`                     | Consultant | `PayoutPayload`         |
+| `payout-failed`               | `notifyPayoutFailed(consultantUserId, payload)`                        | Consultant | `PayoutPayload`         |
+| `payout-clawback`             | `stageClawbackNotice(tx, …)` inside the clawback journal's transaction | Consultant | `PayoutClawbackPayload` |
 
 **BookingRequestPayload**: `consulteeName`, `planTitle`, `appointmentType` (label), `appointmentTypeCode?`, `requestedDateTime?` (recipient-zone), `requestedDateTimeIso?`, `dashboardUrl`. Callers pass `BookingRequestInput`.
 
 **VerificationPayload**: `status`, `reason?`, `dashboardUrl`
 
 **PayoutPayload**: `amount` (formatted), `amountPaise`, `currency`, `payoutId?`, `dashboardUrl`. Callers pass `PayoutInput`.
+
+**PayoutClawbackPayload**: `eventKind` (`RAISED`, `OFFSET_RESERVED`, `OFFSET_RELEASED` or `VOIDED`), `amount` (formatted), `payoutId`, `dashboardUrl`. `org-payout-clawback` carries the same payload to the organisation's billing roster. Only `RAISED` also emails (`ClawbackNoticeEmail`).
 
 ---
 
