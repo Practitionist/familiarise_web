@@ -295,16 +295,27 @@ function seatsRemaining(view: EventView): number {
     : getClassCapacity({ ...params, classInstance: instance }).remaining;
 }
 
-/** The event is live for sale: scheduled, upcoming, its host active and its plan on sale. */
-function onSale(view: EventView, now: Date): boolean {
+const CLASS_SELLABLE = new Set(["SCHEDULED", "IN_PROGRESS"]);
+
+/** The event, its plan and its host are live; nothing about timing yet. */
+function eventLive(view: EventView): boolean {
   return (
-    view.status === "SCHEDULED" &&
     !view.deleted &&
     !view.appointment?.deletedAt &&
     !view.plan.archivedAt &&
     !view.plan.consultantProfile?.deletedAt &&
-    nextStart(view, now) !== null
+    (view.kind === "WEBINAR"
+      ? view.status === "SCHEDULED"
+      : CLASS_SELLABLE.has(view.status))
   );
+}
+
+/** A seat can be bought now: a webinar is upcoming; a class has enrolment open by checkout's rule, late join included. */
+function onSale(view: EventView, now: Date): boolean {
+  if (!eventLive(view)) return false;
+  return view.kind === "WEBINAR"
+    ? nextStart(view, now) !== null
+    : classEnrolmentOpen(view, now);
 }
 
 function listCap(plan: { waitlistMax: number | null }): number {
@@ -330,23 +341,21 @@ const notFound = () =>
     404,
   );
 
-/**
- * Join the notify-me list of a sold-out event. Hidden and missing events both
- * answer EVENT_NOT_FOUND; an open row returns as it is.
- */
-export async function joinEventWaitlist(args: {
-  userId: string;
-  /** The caller's own consultant profile, for the self-booking guard. */
-  viewerConsultantProfileId: string | null;
-  session: Parameters<typeof canViewPlanDetail>[1];
-  kind: EventWaitlistKind;
-  eventId: string;
-  now?: Date;
-}): Promise<{ status: BackupInterestStatus }> {
-  const now = args.now ?? new Date();
-  const view = await readEventById(prisma, args.kind, args.eventId, now);
-  if (!view || !(await canViewPlanDetail(view.plan, args.session))) {
-    throw notFound();
+/** The join refusals that depend on the event's current state; returns what the insert needs. */
+function assertJoinable(
+  view: EventView,
+  caller: { userId: string; viewerConsultantProfileId: string | null },
+  now: Date,
+): { appointmentId: string; plan: EventPlan } {
+  if (
+    view.kind === "CLASS" &&
+    eventLive(view) &&
+    !classEnrolmentOpen(view, now)
+  ) {
+    throw new BookingRuleError(
+      "ENROLMENT_CLOSED",
+      "Enrolment for this batch has closed. Please choose a batch that has not started yet.",
+    );
   }
   if (!onSale(view, now)) {
     throw new BookingRuleError(
@@ -354,13 +363,7 @@ export async function joinEventWaitlist(args: {
       "This session is no longer taking sign-ups.",
     );
   }
-  if (!classEnrolmentOpen(view, now)) {
-    throw new BookingRuleError(
-      "ENROLMENT_CLOSED",
-      "Enrolment for this batch has closed. Please choose a batch that has not started yet.",
-    );
-  }
-  assertNotSelfBooking(args.viewerConsultantProfileId, {
+  assertNotSelfBooking(caller.viewerConsultantProfileId, {
     consultantProfileId: view.plan.consultantProfileId,
     collaboratorProfileIds: view.plan.collaborators.map(
       (c) => c.consultantProfileId,
@@ -379,15 +382,41 @@ export async function joinEventWaitlist(args: {
       "Seats are available — book now.",
     );
   }
-  if (appointment.participants.some((p) => p.userId === args.userId)) {
-    throw alreadyHeldSeatError(args.kind);
+  if (appointment.participants.some((p) => p.userId === caller.userId)) {
+    throw alreadyHeldSeatError(view.kind);
   }
-  const appointmentId = appointment.id;
-  const plan = view.plan;
+  return { appointmentId: appointment.id, plan: view.plan };
+}
+
+/**
+ * Join the notify-me list of a sold-out event. Hidden and missing events both
+ * answer EVENT_NOT_FOUND; an open row returns as it is.
+ */
+export async function joinEventWaitlist(args: {
+  userId: string;
+  /** The caller's own consultant profile, for the self-booking guard. */
+  viewerConsultantProfileId: string | null;
+  session: Parameters<typeof canViewPlanDetail>[1];
+  kind: EventWaitlistKind;
+  eventId: string;
+  now?: Date;
+}): Promise<{ status: BackupInterestStatus }> {
+  const now = args.now ?? new Date();
+  const view = await readEventById(prisma, args.kind, args.eventId, now);
+  if (!view || !(await canViewPlanDetail(view.plan, args.session))) {
+    throw notFound();
+  }
+  // A cheap refusal before the transaction; the transaction re-checks it all.
+  assertJoinable(view, args, now);
 
   return withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
+        // Availability and the list settings are re-read on every attempt: a
+        // seat released after the read above must answer EVENT_NOT_FULL.
+        const fresh = await readEventById(tx, args.kind, args.eventId, now);
+        if (!fresh) throw notFound();
+        const { appointmentId, plan } = assertJoinable(fresh, args, now);
         const prior = (
           await findPriorSeatPayments(tx, appointmentId, [args.userId])
         ).get(args.userId);
@@ -502,7 +531,6 @@ export async function stageSeatOpenedNotices(
   if (
     !view ||
     !onSale(view, now) ||
-    !classEnrolmentOpen(view, now) ||
     !view.plan.waitlistEnabled ||
     seatsRemaining(view) <= 0
   ) {

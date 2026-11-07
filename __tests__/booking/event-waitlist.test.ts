@@ -22,9 +22,12 @@ const createManyAndReturn = jest.fn(async ({ data }: { data: unknown[] }) =>
   data.map((row, i) => ({ id: `row-${i}`, ...(row as object) })),
 );
 const webinarFindUnique = jest.fn();
+const classFindUnique = jest.fn();
 
 const tx = {
   appointment: { findUnique },
+  webinar: { findUnique: webinarFindUnique },
+  class: { findUnique: classFindUnique },
   appointmentWaitlist: {
     findMany: waitlistFindMany,
     findUnique: waitlistFindUnique,
@@ -42,6 +45,7 @@ jest.mock("@/lib/prisma", () => ({
   __esModule: true,
   default: {
     webinar: { findUnique: (...a: unknown[]) => webinarFindUnique(...a) },
+    class: { findUnique: (...a: unknown[]) => classFindUnique(...a) },
     $transaction: (fn: (t: typeof tx) => unknown) => fn(tx),
   },
 }));
@@ -130,6 +134,34 @@ function eventRow(opts: {
       webinarPlan: plan(opts.plan),
     },
     class: null,
+  };
+}
+
+/** A running class whose session 1 has started; late join is open until session `cutoff`. */
+function runningClass(seats: number, cutoff: number) {
+  const { occurrences, ...rest } = roster(seats);
+  const started = {
+    ...occurrences[0],
+    startsAt: new Date(NOW.getTime() - 3_600_000),
+    completionStatus: "COMPLETED",
+  };
+  return {
+    roster: {
+      ...rest,
+      occurrences: [started, { ...occurrences[0], ordinal: 2 }],
+    },
+    cls: {
+      id: "cls-1",
+      status: "IN_PROGRESS",
+      deletedAt: null,
+      maxParticipants: null,
+      classPlan: {
+        ...plan(),
+        price: 100_000,
+        totalSessions: 2,
+        lateJoinUntilSession: cutoff,
+      },
+    },
   };
 }
 
@@ -426,6 +458,75 @@ describe("the shared seat rule", () => {
     ).toThrow(/a refunded seat can't be bought again yet/);
     expect(() => assertSeatRemintable(prior({}), "CLASS")).toThrow(
       "You are already enrolled in this class",
+    );
+  });
+});
+
+describe("availability is re-read inside the join transaction", () => {
+  it("refuses a join when a seat was released after the first read", async () => {
+    const soldOutRow = eventRow({ seats: 2 });
+    const freedRow = eventRow({ seats: 1 });
+    webinarFindUnique
+      .mockResolvedValueOnce({ ...soldOutRow.webinar, appointment: roster(2) })
+      .mockResolvedValueOnce({ ...freedRow.webinar, appointment: roster(1) });
+    await expect(
+      joinEventWaitlist({
+        userId: "u-1",
+        viewerConsultantProfileId: null,
+        session: null,
+        kind: "WEBINAR",
+        eventId: "web-1",
+        now: NOW,
+      }),
+    ).rejects.toMatchObject({ code: "EVENT_NOT_FULL" });
+    expect(webinarFindUnique).toHaveBeenCalledTimes(2);
+    expect(waitlistUpsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("a running class with late join open counts as on sale", () => {
+  const joinClass = () =>
+    joinEventWaitlist({
+      userId: "u-1",
+      viewerConsultantProfileId: null,
+      session: null,
+      kind: "CLASS",
+      eventId: "cls-1",
+      now: NOW,
+    });
+
+  beforeEach(() => {
+    waitlistFindUnique.mockResolvedValue(null);
+    waitlistCount.mockResolvedValue(0);
+    waitlistUpsert.mockResolvedValue({ status: "WAITING" });
+    paymentFindMany.mockResolvedValue([]);
+  });
+
+  it("joins while late join is open and refuses once it closes", async () => {
+    const open = runningClass(2, 2);
+    classFindUnique.mockResolvedValue({
+      ...open.cls,
+      appointment: open.roster,
+    });
+    await expect(joinClass()).resolves.toEqual({ status: "WAITING" });
+
+    const closed = runningClass(2, 1);
+    classFindUnique.mockResolvedValue({
+      ...closed.cls,
+      appointment: closed.roster,
+    });
+    await expect(joinClass()).rejects.toMatchObject({
+      code: "ENROLMENT_CLOSED",
+    });
+  });
+
+  it("notifies waiters when a seat frees on a running class", async () => {
+    const { cls, roster: appt } = runningClass(1, 2);
+    findUnique.mockResolvedValue({ ...appt, webinar: null, class: cls });
+    waitlistFindMany.mockResolvedValueOnce(waiters(1));
+    const staged = await stageSeatOpenedNotices(tx as never, "appt-1", NOW);
+    expect(staged.email?.checkoutUrl).toBe(
+      "/checkout/plans/class/plan-1?eventId=cls-1",
     );
   });
 });
