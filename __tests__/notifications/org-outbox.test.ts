@@ -9,16 +9,16 @@
  * staged row comes back for the post-commit attempt.
  */
 
-const mockTrigger = jest.fn();
+const mockTriggerBulk = jest.fn();
 const mockUpsert = jest.fn();
-const mockUpdate = jest.fn();
+const mockUpdateMany = jest.fn();
 const mockFindMany = jest.fn();
+const mockUserFindMany = jest.fn();
 
 jest.mock("../../lib/novu/client", () => ({
   isNovuConfigured: () => true,
   getNovuClient: () => ({
-    trigger: (...args: unknown[]) => mockTrigger(...args),
-    triggerBroadcast: jest.fn(),
+    triggerBulk: (...args: unknown[]) => mockTriggerBulk(...args),
   }),
 }));
 
@@ -27,10 +27,13 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     notificationOutbox: {
       upsert: (...args: unknown[]) => mockUpsert(...args),
-      update: (...args: unknown[]) => mockUpdate(...args),
+      updateMany: (...args: unknown[]) => mockUpdateMany(...args),
     },
     membership: {
       findMany: (...args: unknown[]) => mockFindMany(...args),
+    },
+    user: {
+      findMany: (...args: unknown[]) => mockUserFindMany(...args),
     },
   },
 }));
@@ -68,8 +71,18 @@ function stagedRow(args: { create: Record<string, unknown> }) {
 beforeEach(() => {
   mockFindMany.mockResolvedValue(roster);
   mockUpsert.mockImplementation(async (args) => stagedRow(args));
-  mockUpdate.mockResolvedValue({});
-  mockTrigger.mockResolvedValue({});
+  mockUpdateMany.mockResolvedValue({ count: 1 });
+  mockUserFindMany.mockImplementation(
+    async (args: { where: { id: { in: string[] } } }) =>
+      args.where.id.in.map((id) => ({ id, erasedAt: null })),
+  );
+  mockTriggerBulk.mockImplementation(async (body: { events: unknown[] }) => ({
+    headers: {},
+    result: body.events.map(() => ({
+      acknowledged: true,
+      status: "processed",
+    })),
+  }));
 });
 afterEach(() => jest.clearAllMocks());
 
@@ -82,8 +95,10 @@ describe("org helpers ride the outbox (#691)", () => {
     expect(create.kind).toBe("MULTI");
     expect(create.workflowId).toBe(NOVU_WORKFLOWS.ORG_WALLET_LOW);
     expect(create.recipients).toEqual(["user-b", "user-a"]);
-    expect(mockTrigger).toHaveBeenCalledTimes(1);
-    expect(mockTrigger.mock.calls[0][0].to).toEqual(["user-b", "user-a"]);
+    expect(mockTriggerBulk).toHaveBeenCalledTimes(1);
+    expect(
+      mockTriggerBulk.mock.calls[0][0].events.map((e: { to: string }) => e.to),
+    ).toEqual(["user-b", "user-a"]);
     expect(staged).toEqual([]);
   });
 
@@ -105,7 +120,7 @@ describe("org helpers ride the outbox (#691)", () => {
     expect(txUpsert).toHaveBeenCalledTimes(1);
     expect(txUpsert.mock.calls[0][0].create.entityRef).toBe("org:org-1");
     expect(mockUpsert).not.toHaveBeenCalled();
-    expect(mockTrigger).not.toHaveBeenCalled();
+    expect(mockTriggerBulk).not.toHaveBeenCalled();
     expect(staged).toHaveLength(1);
     expect(staged[0].workflowId).toBe(NOVU_WORKFLOWS.ORG_WALLET_LOW);
   });

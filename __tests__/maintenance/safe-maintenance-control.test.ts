@@ -56,9 +56,6 @@ jest.mock("../../actions/maintenance/pause-discount-codes", () => ({
 jest.mock("../../actions/maintenance/post-recovery", () => ({
   runPostRecovery: (...args: unknown[]) => recovery(...args),
 }));
-jest.mock("../../lib/novu/service", () => ({
-  notifyMaintenanceScheduled: jest.fn(),
-}));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   stageNowAttemptAfter: jest.fn(),
 }));

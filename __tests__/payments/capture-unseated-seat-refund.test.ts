@@ -157,6 +157,8 @@ jest.mock("../../lib/email", () => ({
   attemptStaged: jest.fn(),
   stage: jest.fn(),
   stageAppointmentBookedEmail: jest.fn(),
+  stageRenderFailure: jest.fn(),
+  prepareAppointmentBookedEmail: jest.fn(),
   renderPaymentFailedEmail: jest.fn(),
   renderPaymentSuccessEmail: jest.fn(),
   EMAIL_BUDGET_MS: { WEBHOOK: 1 },

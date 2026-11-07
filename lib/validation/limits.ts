@@ -1,18 +1,6 @@
 import { NextResponse } from "next/server";
 
-/**
- * Shared input bounds for consumer-facing mutation routes (#831).
- *
- * Every user-typed string must carry a `.max()` — unbounded text is a
- * 10MB-payload DoS surface (Postgres TOAST bloat + log amplification).
- * One constant block so the numbers stay uniform across schemas.
- */
-export const MAX_TITLE_LENGTH = 200;
-export const MAX_TEXT_LENGTH = 2_000;
-export const MAX_SHORT_FIELD_LENGTH = 50;
-
-/** Default request-body ceiling for JSON mutation routes. */
-export const MAX_BODY_BYTES = 64 * 1024;
+import { MAX_BODY_BYTES } from "./input-limits";
 
 /**
  * Reject oversized request bodies before parsing (#831).

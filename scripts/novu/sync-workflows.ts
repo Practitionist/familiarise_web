@@ -14,6 +14,9 @@
  * the plan's 20-workflow cap is what forced the families. Production serves
  * familiarisenow.com, so `--env production` is a production operation — run
  * --dry-run first, and never from CI.
+ *
+ * Every family is written always-on with read-only subscriber preferences:
+ * Postgres owns preferences and the server gates each bell before triggering.
  */
 
 import { Novu } from "@novu/api";
@@ -31,11 +34,12 @@ import { NovuError } from "@novu/api/models/errors";
 import {
   EVENT_FAMILY,
   FAMILIES,
+  FAMILY_PREFERENCES,
   IN_APP_STEP_NAME,
   toFamilyDto,
 } from "../../lib/novu/templates";
 
-type Plan =
+export type Plan =
   | { action: "create"; id: string }
   | { action: "update"; id: string; changed: string[] }
   | { action: "unchanged"; id: string }
@@ -65,8 +69,21 @@ function inAppControls(live: WorkflowResponseDto): Record<string, unknown> {
   return (step?.controlValues ?? {}) as Record<string, unknown>;
 }
 
+/** Live subscriber preferences must be the manifest's always-on, read-only document. */
+function preferencesMatch(live: WorkflowResponseDto): boolean {
+  const effective = live.preferences.user ?? live.preferences.default;
+  return (
+    effective.all.enabled === FAMILY_PREFERENCES.all.enabled &&
+    effective.all.readOnly === FAMILY_PREFERENCES.all.readOnly &&
+    effective.channels.in_app?.enabled !== false
+  );
+}
+
 /** Fields whose live value must equal the manifest's. */
-function diff(live: WorkflowResponseDto, want: CreateWorkflowDto): string[] {
+export function diff(
+  live: WorkflowResponseDto,
+  want: CreateWorkflowDto,
+): string[] {
   const changed: string[] = [];
   if (live.name !== want.name) changed.push("name");
   if (live.active !== (want.active ?? true)) changed.push("active");
@@ -78,12 +95,14 @@ function diff(live: WorkflowResponseDto, want: CreateWorkflowDto): string[] {
   if (liveTags !== [...(want.tags ?? [])].sort(byCodePoint).join(",")) {
     changed.push("tags");
   }
+  if (!preferencesMatch(live)) changed.push("preferences");
   if (live.steps.length !== 1 || live.steps[0]?.type !== "in_app") {
     changed.push("steps");
     return changed;
   }
   const liveControls = inAppControls(live);
   const wantControls = want.steps[0]!.controlValues as Record<string, unknown>;
+  // `skip` is compared so a leftover live step condition counts as drift.
   for (const key of ["subject", "body", "redirect", "skip"]) {
     if (
       JSON.stringify(liveControls[key] ?? null) !==
@@ -128,7 +147,11 @@ async function planOthers(novu: Novu): Promise<Plan[]> {
     );
 }
 
-async function apply(novu: Novu, p: Plan, want?: CreateWorkflowDto) {
+export async function apply(
+  novu: Pick<Novu, "workflows">,
+  p: Plan,
+  want?: CreateWorkflowDto,
+) {
   switch (p.action) {
     case "unchanged":
     case "foreign":
@@ -140,16 +163,15 @@ async function apply(novu: Novu, p: Plan, want?: CreateWorkflowDto) {
       await novu.workflows.create(want!);
       return;
     case "update": {
-      // In place, keeping the live step's id so its history survives.
+      // In place, keeping the live step's id so its history survives. The
+      // manifest's preferences replace any subscriber-editable live ones.
       const live = (await novu.workflows.get(p.id)).result;
       const liveStep = live.steps.find((s) => s.type === "in_app");
       const step = want!.steps[0] as InAppStepUpsertDto;
       const update: UpdateWorkflowDto = {
         ...want!,
         origin: "novu-cloud",
-        preferences: live.preferences.user
-          ? { user: live.preferences.user }
-          : {},
+        preferences: { user: FAMILY_PREFERENCES, workflow: FAMILY_PREFERENCES },
         steps: [
           {
             ...step,
@@ -243,7 +265,9 @@ async function main() {
   for (const r of retirements) await run(r);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

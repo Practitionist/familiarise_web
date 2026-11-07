@@ -7,6 +7,9 @@ import path from "node:path";
 import * as Sentry from "@sentry/nextjs";
 
 // Digital product erasure has its own suite; these scrubs own no products.
+jest.mock("../../../lib/compliance/erasure/mail-footprint", () => ({
+  scrubMailFootprintTx: jest.fn(),
+}));
 jest.mock("../../../lib/digital-products/erasure", () => ({
   scrubDigitalProductsTx: jest.fn(async () => []),
   purgeErasedCreatorFiles: jest.fn(async () => []),

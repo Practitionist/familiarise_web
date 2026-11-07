@@ -1,15 +1,13 @@
 /**
  * Background recovery sweeper that re-drives inbound webhook events left unprocessed
- * or transiently failed across Razorpay, Stream, and Novu handlers.
+ * or transiently failed across the Razorpay and Stream handlers.
  */
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import prisma, { type PrismaLike } from "@/lib/prisma";
-import { processNovuWebhookPayload } from "@/lib/webhooks/novu-handler";
 import { processRazorpayWebhookEvent } from "@/app/api/webhooks/razorpay-dispatch";
 import { processStreamEvent } from "@/lib/stream/webhook-dispatch";
 import { reclaimStaleProcessingWebhookEvent } from "@/lib/stream/webhook-receipt";
-import { novuWebhookPayloadSchema } from "@/schemas/webhooks/novu";
 import { razorpayWebhookEnvelopeSchema } from "@/schemas/webhooks/razorpay";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
@@ -61,9 +59,6 @@ function toErrorMessage(error: unknown): string {
 function giveUpReason(provider: string): string {
   if (provider === "stream") {
     return "gave up: Stream event never became processable";
-  }
-  if (provider === "novu") {
-    return "gave up: Novu event never became processable";
   }
   return "gave up: payment never arrived";
 }
@@ -166,31 +161,6 @@ async function dispatchClaimedStuckEvent(
   ev: StuckWebhookRow,
   claim: WebhookClaim,
 ): Promise<string | null> {
-  if (ev.provider === "novu") {
-    const parsedNovu = novuWebhookPayloadSchema.safeParse(ev.payload);
-    if (!parsedNovu.success) {
-      return "invalid Novu webhook payload";
-    }
-    await withEventTimeout(ev.eventId, () =>
-      processNovuWebhookPayload(parsedNovu.data, ev.eventId),
-    );
-    const rotatedClaimedAt = new Date();
-    await prisma.webhookEvent.updateMany({
-      where: {
-        eventId: ev.eventId,
-        processed: false,
-        claimedAt: claim.claimedAt,
-      },
-      data: {
-        processed: true,
-        processedAt: rotatedClaimedAt,
-        claimedAt: rotatedClaimedAt,
-        error: null,
-      },
-    });
-    return null;
-  }
-
   if (ev.provider === "stream") {
     const parsedStream = streamEventPayloadSchema.safeParse(ev.payload);
     const callCid = parsedStream.success
@@ -404,7 +374,7 @@ function stuckWebhookEventWhere(
   giveUpOlderThan: Date,
 ): Prisma.WebhookEventWhereInput {
   return {
-    provider: { in: ["razorpay", "stream", "novu"] },
+    provider: { in: ["razorpay", "stream"] },
     receivedAt: { lt: staleBefore },
     AND: [
       {

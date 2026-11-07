@@ -320,7 +320,7 @@ jobs:
             integrity-result.json
             cleanup-result.json
           if-no-files-found: warn
-          retention-days: 90
+          retention-days: 7
 
       - name: Fail the workflow if the gate did not pass
         if: always()

@@ -1,10 +1,9 @@
 /**
  * #1653 — the email preference gate every lifecycle sender reads at send time.
  *
- * The gate reads `NotificationPreference` directly rather than Novu's copy of
- * the flags: Novu is in-app only here, and the copy it holds is a mirror
- * written after the fact, so the database row is the only truth a send can
- * rely on. A user with no row has never changed anything and gets the defaults.
+ * The gate reads `NotificationPreference` directly: Postgres is the only copy
+ * of the flags, shared with the bell gate in `lib/novu/policy.ts`. A user with
+ * no row has never changed anything and gets the defaults.
  */
 
 import prisma, { type PrismaLike } from "@/lib/prisma";
@@ -26,10 +25,7 @@ export type EmailCategoryColumn =
   | "orgMembershipAlerts"
   | "orgProgramAlerts";
 
-/**
- * Defined once: the email gate and the Novu subscriber mirror
- * (`lib/novu/subscriber.ts`) both read this map.
- */
+/** Defined once: the email gate and the bell gate (`lib/novu/policy.ts`) both read this map. */
 export const EMAIL_CATEGORY_COLUMN: Record<
   PreferenceCategory,
   EmailCategoryColumn
@@ -47,6 +43,8 @@ export const EMAIL_CATEGORY_COLUMN: Record<
 
 export type EmailRecipient = {
   userId: string;
+  /** The preference the message is gated on; null for a required notice. */
+  category: PreferenceCategory | null;
   email: string;
   name: string | null;
   /** IANA zone every time in the message is rendered in. */
@@ -72,7 +70,7 @@ type UserRow = {
 
 type UserReader = Pick<PrismaLike, "user">;
 
-const PREFERENCE_SELECT = {
+export const EMAIL_PREFERENCE_SELECT = {
   allNotifications: true,
   emailEnabled: true,
   appointmentReminders: true,
@@ -88,11 +86,12 @@ const PREFERENCE_SELECT = {
 
 // A required notice (null category) ignores the switches; otherwise a missing
 // row means defaults, and every default is on.
-function isAllowed(
-  pref: PreferenceRow | null,
+export function isEmailAllowedForUser(
+  user: Pick<UserRow, "notificationPreferences">,
   category: PreferenceCategory | null,
 ): boolean {
   if (category === null) return true;
+  const pref = user.notificationPreferences;
   if (!pref) return true;
   return (
     pref.allNotifications &&
@@ -110,7 +109,7 @@ async function fetchUsers(ids: string[], db: UserReader): Promise<UserRow[]> {
       email: true,
       name: true,
       timezone: true,
-      notificationPreferences: { select: PREFERENCE_SELECT },
+      notificationPreferences: { select: EMAIL_PREFERENCE_SELECT },
     },
   });
 }
@@ -136,13 +135,14 @@ export async function loadEmailRecipients(
     return [
       {
         userId: user.id,
+        category,
         email: user.email,
         name: user.name,
         zone: resolveViewerZone({
           userTimezone: user.timezone,
           fallbackZone: DEFAULT_NOTIFICATION_TIMEZONE,
         }),
-        allowed: isAllowed(user.notificationPreferences, category),
+        allowed: isEmailAllowedForUser(user, category),
         unsubscribeUrl: signable ? buildEmailUnsubscribeUrl(user.id) : null,
       },
     ];
@@ -157,5 +157,5 @@ export async function isEmailAllowed(
 ): Promise<boolean> {
   const [user] = await fetchUsers([userId], db);
   if (!user) return false;
-  return isAllowed(user.notificationPreferences, category);
+  return isEmailAllowedForUser(user, category);
 }

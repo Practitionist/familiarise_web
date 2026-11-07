@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TrialSessionStatusEnum } from "./enums";
-import { MAX_TEXT_LENGTH } from "@/lib/validation/limits";
+import { MAX_TEXT_LENGTH } from "@/lib/validation/input-limits";
 
 export const CreateTrialSchema = z.object({
   consulteeProfileId: z.string().min(1, "Consultee profile ID is required"),

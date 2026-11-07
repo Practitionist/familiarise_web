@@ -8,9 +8,10 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import { createHash } from "node:crypto";
 import { Prisma, WaitlistSource, WaitlistStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { withdrawConsent } from "@/lib/compliance/dpdp";
+import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import {
   sendWaitlistConfirmEmail,
   sendWaitlistWelcomeEmail,
@@ -20,6 +21,7 @@ import {
   verifyConfirmToken,
   verifyUnsubscribeToken,
 } from "./tokens";
+import { hashIp, normalizeWaitlistEmail } from "./consent-link";
 
 export type SubscribeInput = {
   email: string;
@@ -39,21 +41,6 @@ export type SubscribeResult =
   | { outcome: "CONFIRMATION_FAILED" };
 
 /**
- * Consent proof without storing a raw IP. Salted with the HMAC secret when
- * present so the digest isn't reversible from a rainbow table of v4 space.
- */
-function hashIp(ip: string | null | undefined): string | null {
-  if (!ip) return null;
-  return createHash("sha256")
-    .update(`${process.env.WAITLIST_HMAC_SECRET ?? "waitlist"}|${ip}`)
-    .digest("hex");
-}
-
-function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
-}
-
-/**
  * Upsert the address into the list and send a confirmation.
  *
  * A previously unsubscribed address goes back to PENDING rather than straight
@@ -63,7 +50,7 @@ function normalizeEmail(email: string): string {
 export async function subscribe(
   input: SubscribeInput,
 ): Promise<SubscribeResult> {
-  const email = normalizeEmail(input.email);
+  const email = normalizeWaitlistEmail(input.email);
   const now = new Date();
 
   // Checked before the membership lookup, deliberately. If this ran after the
@@ -156,7 +143,7 @@ export async function confirmSubscription(params: {
   token: string;
   issuedAt: number;
 }): Promise<ConfirmResult> {
-  const email = normalizeEmail(params.email);
+  const email = normalizeWaitlistEmail(params.email);
 
   if (!verifyConfirmToken(email, params.token, params.issuedAt)) {
     return { outcome: "INVALID" };
@@ -186,15 +173,18 @@ export async function confirmSubscription(params: {
 }
 
 /**
- * Always reports success. An unsubscribe endpoint that distinguished "you were
- * on the list" from "you were not" would leak membership to anyone holding a
- * valid token for a guessed address.
+ * Always reports success for a valid token. An unsubscribe endpoint that
+ * distinguished "you were on the list" from "you were not" would leak
+ * membership to anyone holding a valid token for a guessed address.
+ *
+ * The unsubscribe commits first; withdrawing a linked account's marketing
+ * consent is a separate, best-effort transaction that never undoes it.
  */
 export async function unsubscribe(params: {
   email: string;
   token: string;
 }): Promise<{ ok: boolean }> {
-  const email = normalizeEmail(params.email);
+  const email = normalizeWaitlistEmail(params.email);
 
   if (!verifyUnsubscribeToken(email, params.token)) {
     return { ok: false };
@@ -208,7 +198,34 @@ export async function unsubscribe(params: {
     },
   });
 
+  await withdrawLinkedMarketingConsent(email);
   return { ok: true };
+}
+
+async function withdrawLinkedMarketingConsent(email: string): Promise<void> {
+  try {
+    const row = await prisma.waitlist.findUnique({
+      where: { email },
+      select: { userId: true },
+    });
+    const userId = row?.userId;
+    if (!userId) return;
+    await prisma.$transaction((tx) =>
+      withdrawConsent(
+        { userId, purposeCode: PURPOSE_CODES.MARKETING_COMMS },
+        tx,
+      ),
+    );
+  } catch (error) {
+    console.error("[waitlist] marketing consent withdrawal failed:", error);
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      {
+        level: "warning",
+        tags: { subsystem: "waitlist", op: "unsubscribe.withdrawConsent" },
+      },
+    );
+  }
 }
 
 export type SubscriberFilters = {

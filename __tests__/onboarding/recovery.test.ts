@@ -24,7 +24,12 @@ jest.mock("../../lib/compliance/dpdp", () => ({
 }));
 
 const tx = {
-  user: { updateMany: jest.fn(), update: jest.fn() },
+  user: {
+    updateMany: jest.fn(),
+    update: jest.fn(),
+    findUniqueOrThrow: jest.fn(async () => ({ email: "user@example.com" })),
+  },
+  waitlist: { upsert: jest.fn() },
   consulteeProfile: { upsert: jest.fn() },
 };
 jest.mock("../../lib/prisma", () => ({
@@ -41,6 +46,7 @@ import { ensureConsentPurposes } from "../../lib/compliance/dpdp";
 import { processOnboardingData } from "../../utils/onboarding-server";
 
 const USER_ID = "user-1";
+const PROVENANCE = { ip: "203.0.113.9", userAgent: "Jest" };
 const mockTransaction = prisma.$transaction as unknown as jest.Mock;
 const mockFindUnique = prisma.user.findUnique as unknown as jest.Mock;
 const mockEnsureConsent = ensureConsentPurposes as unknown as jest.Mock;
@@ -96,6 +102,7 @@ describe("processOnboardingData claim-first CAS", () => {
     const result = await processOnboardingData(
       USER_ID,
       consulteeBody({ marketingConsent: true }),
+      PROVENANCE,
     );
 
     expect(result.success).toBe(true);
@@ -120,6 +127,7 @@ describe("processOnboardingData claim-first CAS", () => {
     const result = await processOnboardingData(
       USER_ID,
       consulteeBody({ termsAccepted: undefined }),
+      PROVENANCE,
     );
     expect(result).toMatchObject({
       success: false,
@@ -135,8 +143,8 @@ describe("processOnboardingData claim-first CAS", () => {
       .mockResolvedValueOnce({ count: 0 });
 
     const [first, second] = await Promise.all([
-      processOnboardingData(USER_ID, consulteeBody()),
-      processOnboardingData(USER_ID, consulteeBody()),
+      processOnboardingData(USER_ID, consulteeBody(), PROVENANCE),
+      processOnboardingData(USER_ID, consulteeBody(), PROVENANCE),
     ]);
 
     expect(first.success).toBe(true);
@@ -152,7 +160,11 @@ describe("processOnboardingData claim-first CAS", () => {
         : storedUser({ role: "CONSULTANT", consultantProfileId: "cp_1" }),
     );
 
-    const result = await processOnboardingData(USER_ID, consulteeBody());
+    const result = await processOnboardingData(
+      USER_ID,
+      consulteeBody(),
+      PROVENANCE,
+    );
 
     expect(result).toMatchObject({ success: false, code: "ALREADY_ONBOARDED" });
     expect(tx.consulteeProfile.upsert).not.toHaveBeenCalled();
@@ -168,6 +180,7 @@ describe("processOnboardingData claim-first CAS", () => {
     const result = await processOnboardingData(
       USER_ID,
       consulteeBody({ role: "CONSULTEE" }),
+      PROVENANCE,
     );
     expect(result).toMatchObject({ success: false, code: "ALREADY_ONBOARDED" });
   });
@@ -180,7 +193,11 @@ describe("processOnboardingData claim-first CAS", () => {
         meta: { target: ["userId"] },
       }),
     );
-    const result = await processOnboardingData(USER_ID, consulteeBody());
+    const result = await processOnboardingData(
+      USER_ID,
+      consulteeBody(),
+      PROVENANCE,
+    );
     expect(result.success).toBe(true);
   });
 
@@ -195,6 +212,7 @@ describe("processOnboardingData claim-first CAS", () => {
     const result = await processOnboardingData(
       USER_ID,
       consulteeBody({ phone: "+910000000000" }),
+      PROVENANCE,
     );
     expect(result).toMatchObject({
       success: false,
@@ -207,6 +225,7 @@ describe("processOnboardingData claim-first CAS", () => {
     const result = await processOnboardingData(
       USER_ID,
       consulteeBody({ workExperiences: [{ company: "" }] }),
+      PROVENANCE,
     );
     expect(result).toMatchObject({
       success: false,
@@ -225,7 +244,11 @@ describe("processOnboardingData result handed to the browser", () => {
         consultantProfileId: "cp_1",
       }),
     );
-    const result = await processOnboardingData(USER_ID, consulteeBody());
+    const result = await processOnboardingData(
+      USER_ID,
+      consulteeBody(),
+      PROVENANCE,
+    );
     expect(result.success).toBe(true);
     expect(result.user).toEqual({
       id: USER_ID,
@@ -235,7 +258,7 @@ describe("processOnboardingData result handed to the browser", () => {
   });
 
   it("reads the consultant profile through an id-only select", async () => {
-    await processOnboardingData(USER_ID, consulteeBody());
+    await processOnboardingData(USER_ID, consulteeBody(), PROVENANCE);
     expect(tx.user.update.mock.calls[0][0].include.consultantProfile).toEqual({
       select: { id: true },
     });

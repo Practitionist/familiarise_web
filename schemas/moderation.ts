@@ -1,7 +1,10 @@
 import { ModerationReportStatus, ModerationReportType } from "@prisma/client";
 import { z } from "zod";
 import { PlatformFeedbackStatusSchema } from "@/schemas/enums";
-import { MAX_TEXT_LENGTH, MAX_TITLE_LENGTH } from "@/lib/validation/limits";
+import {
+  MAX_TEXT_LENGTH,
+  MAX_TITLE_LENGTH,
+} from "@/lib/validation/input-limits";
 
 /** The reasons an expert or host organization admin can pick when reporting a review. */
 export const REVIEW_REPORT_REASONS = [
