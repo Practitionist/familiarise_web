@@ -200,7 +200,7 @@ The newsletter list is the `Waitlist` table. A visitor joins from the footer for
 - **The newsletter's own unsubscribe** (`POST /api/waitlist/unsubscribe`) commits the `UNSUBSCRIBED` write first. If the row is linked to an account, `unsubscribe` then withdraws that account's `MARKETING_COMMS` consent in a separate transaction, best-effort: a failure is logged once and never undoes the unsubscribe. If the unsubscribe write itself fails, the page says "We could not unsubscribe you" with a 500, never "You are unsubscribed"; an invalid token answers 400.
 - `NotificationPreference.marketingEmails` is no longer written or read by any sender, and the preferences PUT rejects it. It stays in the data export until the schema batch drops it.
 
-Both unsubscribe pages render bare: the logo and the message only, with no site navigation or footer newsletter form. `/email/unsubscribe` is in `NO_CHROME_PREFIXES` (`lib/navigation/public-chrome.ts`); the newsletter page is a standalone HTML response from the route.
+Both unsubscribe pages render bare: the text wordmark and the message only, with no site navigation or footer newsletter form. `/email/unsubscribe` is in `NO_CHROME_PREFIXES` (`lib/navigation/public-chrome.ts`); the newsletter page is a standalone HTML response from the route.
 
 ### What erasure does to mail
 

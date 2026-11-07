@@ -1,12 +1,11 @@
 import type { Metadata } from "next";
-import Image from "next/image";
 import Link from "next/link";
 import { MailX } from "lucide-react";
+import { BrandWordmark } from "@/components/brand/BrandWordmark";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { goHref } from "@/lib/dashboard/go";
 import { verifyEmailUnsubscribeToken } from "@/lib/email/unsubscribe";
-import familiariseLogo from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
 
 export const metadata: Metadata = {
   title: "Email notifications — Familiarise",
@@ -60,14 +59,9 @@ export default async function EmailUnsubscribePage({
   return (
     <section className="w-full">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <Image
-          src={familiariseLogo}
-          alt="Familiarise"
-          width={160}
-          height={36}
-          className="mx-auto mb-8"
-          priority
-        />
+        <div className="mb-8 flex h-9 items-center justify-center">
+          <BrandWordmark size="md" />
+        </div>
         <div className="text-center mb-12">
           <div className="flex justify-center mb-4">
             <MailX className="h-16 w-16 text-foreground" />

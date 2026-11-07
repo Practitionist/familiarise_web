@@ -26,13 +26,13 @@ import {
 import { useDashboardFacets } from "@/hooks/useDashboardFacets";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { Skeleton } from "@/components/ui/skeleton";
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { BrandWordmark } from "@/components/brand/BrandWordmark";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -52,8 +52,6 @@ import { RATE_PROVIDER_NAME, RATE_PROVIDER_URL } from "@/lib/currency-codes";
 import { resolveAuthView, useRememberedAuth } from "@/hooks/useRememberedAuth";
 import { hasDarkHero, isChromeHidden } from "@/lib/navigation/public-chrome";
 import { useAnnouncementBar } from "@/providers/AnnouncementBarProvider";
-import familiariseLogoTransparent from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
-import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
 
 const defaultUserImage = "/avif/static/assets/default-profile.avif";
 
@@ -583,18 +581,10 @@ const Navbar = () => {
           >
             {/* Logo */}
             <Link href="/" className="flex-shrink-0">
-              <div className="relative h-10 md:h-12 w-32 md:w-40">
-                <Image
-                  src={
-                    showDarkStyle
-                      ? familiariseLogoWhite
-                      : familiariseLogoTransparent
-                  }
-                  alt="Familiarise Logo"
-                  fill
-                  className="object-contain object-left"
-                  sizes="160px"
-                  priority
+              <div className="flex h-10 md:h-12 w-32 md:w-40 items-center">
+                <BrandWordmark
+                  size="nav"
+                  tone={showDarkStyle ? "inverse" : "default"}
                 />
               </div>
             </Link>
@@ -795,14 +785,8 @@ const Navbar = () => {
           <div className="lg:hidden fixed top-0 left-0 h-full w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl safe-top safe-bottom safe-left motion-safe:animate-in motion-safe:slide-in-from-left motion-safe:duration-300">
             {/* Drawer Header */}
             <div className="flex justify-between items-center p-5 border-b border-zinc-800">
-              <div className="relative h-8 w-28">
-                <Image
-                  src={familiariseLogoWhite}
-                  alt="Familiarise Logo"
-                  fill
-                  className="object-contain object-left"
-                  sizes="112px"
-                />
+              <div className="flex h-8 w-28 items-center">
+                <BrandWordmark size="sm" tone="inverse" />
               </div>
               <button
                 type="button"

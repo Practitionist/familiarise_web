@@ -1,17 +1,22 @@
 import * as React from "react";
-import { Img, Section } from "react-email";
-import { getAppUrl } from "@/lib/url";
+import { Section, Text } from "react-email";
+import { BRAND_COLOR_HEX, BRAND_NAME } from "@/lib/brand";
+import { main } from "./styles";
 
-// #1298 — absolute URL: a relative `../public/...` src is unreachable in mail.
-const LOGO_SRC = `${getAppUrl()}/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif`;
-
+// Text, not an image: it renders with images blocked and costs no request.
 export const EmailLogo = () => (
   <Section>
-    <Img src={LOGO_SRC} width="120" alt="Familiarise" style={logo} />
+    <Text style={wordmark}>{BRAND_NAME}</Text>
   </Section>
 );
 
-const logo = {
-  margin: "0 auto",
-  display: "block",
+const wordmark = {
+  margin: "8px 0 20px",
+  textAlign: "center" as const,
+  fontFamily: main.fontFamily,
+  fontSize: "26px",
+  fontWeight: "600",
+  lineHeight: "32px",
+  letterSpacing: "-0.02em",
+  color: BRAND_COLOR_HEX,
 };
