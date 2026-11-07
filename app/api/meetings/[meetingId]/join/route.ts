@@ -24,8 +24,6 @@ import {
   assertValidUpdateUserPermissions,
 } from "@/lib/stream/video-contracts";
 import { reportSentryError } from "@/lib/observability/report";
-import { scheduleAfter } from "@/lib/api/after-safe";
-import { announceHostLive } from "@/lib/meetings/host-live";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 /** The only capabilities Stream's UpdateUserPermissions accepts; any other name fails the whole request. */
@@ -192,15 +190,6 @@ export async function POST(
       meetingId: resolvedCallId,
       role: access.role,
     });
-
-    // The plan owner's first admission tells the paid seats; it runs after the response.
-    const occurrenceId = access.occurrence?.id;
-    if (access.role === "host" && !access.coPresenter && occurrenceId) {
-      await scheduleAfter(
-        () => announceHostLive(occurrenceId),
-        "meetings.join.hostLive",
-      );
-    }
 
     return NextResponse.json({
       callType: STREAM_CALL_TYPE,

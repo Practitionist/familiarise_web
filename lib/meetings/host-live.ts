@@ -1,5 +1,5 @@
-// "Host is live": one optional bell to a session's paid seats on the host's first admission
-// through the join route, run after the response so the join never waits on it.
+// "Host is live": one optional bell to a session's paid seats, staged when the host's client
+// reports its first successful call join (`POST /api/meetings/[meetingId]/host-live`).
 
 import { appointmentDashboardUrl } from "@/lib/appointments/calendar-links";
 import { paidParticipant } from "@/lib/booking/participants";
@@ -7,11 +7,7 @@ import {
   appointmentTypeLabel,
   planTitleOrSessionLabel,
 } from "@/lib/novu/humanize";
-import {
-  attemptTrigger,
-  stagePages,
-  type StagedTrigger,
-} from "@/lib/novu/outbox";
+import { stagePages, type StagedTrigger } from "@/lib/novu/outbox";
 import { resolveRecipientBellPolicy } from "@/lib/novu/policy";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import prisma from "@/lib/prisma";
@@ -103,10 +99,4 @@ export async function stageHostLiveBell(
       entityRef: `occurrence:${occurrenceId}`,
     });
   });
-}
-
-/** Stage, then attempt every page; meant for `scheduleAfter` from the join route. */
-export async function announceHostLive(occurrenceId: string): Promise<void> {
-  const pages = await stageHostLiveBell(occurrenceId);
-  await Promise.all(pages.map((page) => attemptTrigger(page)));
 }

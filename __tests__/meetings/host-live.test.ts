@@ -23,13 +23,7 @@ jest.mock("../../lib/novu/policy", () => ({
     allowedRecipients: ids,
   })),
 }));
-const attemptTrigger = jest.fn();
-jest.mock("../../lib/novu/outbox", () => ({
-  ...jest.requireActual("../../lib/novu/outbox"),
-  attemptTrigger: (...a: unknown[]) => attemptTrigger(...a),
-}));
-
-import { announceHostLive } from "../../lib/meetings/host-live";
+import { stageHostLiveBell } from "../../lib/meetings/host-live";
 import { paidParticipant } from "../../lib/booking/participants";
 
 const seats = Array.from({ length: 150 }, (_, i) => ({ userId: `seat-${i}` }));
@@ -50,7 +44,7 @@ findUnique.mockResolvedValue({
 
 it("rings all paid seats in attempt-sized pages on the first claim, and nothing on a later join", async () => {
   createMany.mockResolvedValueOnce({ count: 1 });
-  await announceHostLive("occ-1");
+  const first = await stageHostLiveBell("occ-1");
 
   expect(createMany.mock.calls[0][0]).toMatchObject({
     data: { scope: "meeting.host-live", key: "occ-1" },
@@ -70,10 +64,9 @@ it("rings all paid seats in attempt-sized pages on the first claim, and nothing 
     seats.map((s) => s.userId),
   );
   expect(pages[0].workflowId).toBe("session-host-live");
-  expect(attemptTrigger).toHaveBeenCalledTimes(2);
+  expect(first).toHaveLength(2);
 
   createMany.mockResolvedValueOnce({ count: 0 });
-  await announceHostLive("occ-1");
+  await expect(stageHostLiveBell("occ-1")).resolves.toEqual([]);
   expect(createManyAndReturn).toHaveBeenCalledTimes(1);
-  expect(attemptTrigger).toHaveBeenCalledTimes(2);
 });
