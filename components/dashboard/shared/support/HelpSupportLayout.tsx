@@ -13,6 +13,7 @@ import {
 import { cn } from "@/utils/tailwind";
 import { goHref } from "@/lib/dashboard/go";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
+import { LinkPendingLabel } from "@/components/ui/NavLink";
 
 /** Secondary page navigation stays out of request details so forms retain their full width. */
 export function HelpSupportLayout({
@@ -86,8 +87,10 @@ export function HelpSupportLayout({
                       : "border-transparent text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground",
                   )}
                 >
-                  <Icon className="h-4 w-4 shrink-0" aria-hidden />
-                  {label}
+                  <LinkPendingLabel className="inline-flex items-center gap-2">
+                    <Icon className="h-4 w-4 shrink-0" aria-hidden />
+                    {label}
+                  </LinkPendingLabel>
                 </Link>
               </li>
             ))}

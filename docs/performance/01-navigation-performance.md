@@ -1,11 +1,11 @@
 # Navigation Performance
 
-| Field | Value |
-|---|---|
-| Status | Stable |
-| Audience | All engineers |
-| Last reviewed | 2026-06-17 |
-| Source files | `next.config.mjs`, `lib/prisma.ts`, `components/ui/NavLink.tsx`, `components/dashboard/DashboardSkeletons.tsx`, `components/ui/dashboard-skeleton.tsx`, `providers/StreamProvider.tsx`, `providers/StreamProviderImpl.tsx`, `lib/stream/disconnect.ts`, `providers/ReactQueryProvider.tsx`, `app/api/dashboard/consultant/[consultantId]/route.ts`, `app/api/dashboard/consultee/[consulteeId]/events/route.ts` |
+| Field         | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status        | Stable                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Audience      | All engineers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Last reviewed | 2026-11-06                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Source files  | `next.config.mjs`, `lib/prisma.ts`, `components/ui/NavLink.tsx`, `components/dashboard/library/LibraryPage.tsx`, `components/dashboard/library/LibraryTabNav.tsx`, `lib/auth/personal-dashboard-access.ts`, `components/dashboard/DashboardSkeletons.tsx`, `components/ui/dashboard-skeleton.tsx`, `providers/StreamProvider.tsx`, `providers/StreamProviderImpl.tsx`, `lib/stream/disconnect.ts`, `providers/ReactQueryProvider.tsx`, `app/api/dashboard/consultant/[consultantId]/route.ts`, `app/api/dashboard/consultee/[consulteeId]/events/route.ts` |
 
 ## 1. Overview and Goals
 
@@ -17,13 +17,13 @@ None of these changes alter business logic, money handling, or authorization. Th
 
 ## 2. Scope
 
-| In scope | Out of scope |
-|---|---|
-| Route-level loading boundaries and skeletons | The React Query migration itself — see [`00-optimization-checklist.md`](./00-optimization-checklist.md) |
-| Client-router cache tuning and pending affordances | Hover-prefetching strategy — see [`02-dashboard-prefetching.md`](./02-dashboard-prefetching.md) |
-| Bundle composition: package-import optimization, lazy loading, dead-dependency removal | Real-time dashboard caching strategy |
-| Bounded dashboard-home queries and additive indexes | Schema design and migration mechanics — see [`../prisma/01-migrations-guide.md`](../prisma/01-migrations-guide.md) |
-| Prisma slow-query observability | Stream SDK internals — see [`../stream/01-architecture.md`](../stream/01-architecture.md) |
+| In scope                                                                               | Out of scope                                                                                                       |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Route-level loading boundaries and skeletons                                           | The React Query migration itself — see [`00-optimization-checklist.md`](./00-optimization-checklist.md)            |
+| Client-router cache tuning and pending affordances                                     | Hover-prefetching strategy — see [`02-dashboard-prefetching.md`](./02-dashboard-prefetching.md)                    |
+| Bundle composition: package-import optimization, lazy loading, dead-dependency removal | Real-time dashboard caching strategy                                                                               |
+| Bounded dashboard-home queries and additive indexes                                    | Schema design and migration mechanics — see [`../prisma/01-migrations-guide.md`](../prisma/01-migrations-guide.md) |
+| Prisma slow-query observability                                                        | Stream SDK internals — see [`../stream/01-architecture.md`](../stream/01-architecture.md)                          |
 
 ## 3. Perceived Performance
 
@@ -38,6 +38,35 @@ Each `loading.tsx` file is deliberately thin. It does no work of its own beyond 
 ### 3.2 Pending Affordance on Navigation Links
 
 A skeleton tells the user that the destination is loading, but the link they clicked also needs to acknowledge the click immediately. [`components/ui/NavLink.tsx`](../../components/ui/NavLink.tsx) wraps `next/link` and uses the `useLinkStatus` hook introduced in Next.js 15.5 to render a debounced pending spinner on the dashboard sidebar while the destination route is resolving. The debounce matters: showing a spinner for a navigation that completes in a few milliseconds would read as a flicker, so the affordance only appears once the navigation is slow enough that the user would otherwise wonder whether the click registered.
+
+### 3.2.1 Pending State on `?tab=` Links
+
+The sidebar and the mobile tab bar flip the clicked item's icon to a spinner through `LinkPendingIcon`. Text tabs that navigate with `?tab=` links use the sibling `LinkPendingLabel` in the same file: the label dims and pulses while its own Link is pending. It adds no spinner, so the tab does not change width. It is used by the Library tabs (`LibraryTabNav`), the Sell page tabs (`SellPageShell`) and the Help & support tabs (`HelpSupportLayout`). Both pieces rely on `useLinkStatus`, so they must render as descendants of the `<Link>` they report on.
+
+`UrlTabs` needs none: it keeps the active tab in local state and writes the address bar with `replaceUrl`, so a switch is instant and starts no navigation.
+
+### 3.2.2 Same-Route `searchParams` Navigations and the Library
+
+A `loading.tsx` shows its fallback when the segment changes, not when only `searchParams` change on the same segment. A `?tab=` link on a page that reads `searchParams` therefore re-renders the page on the server with the old screen still showing. The remedy is a Suspense boundary inside the page, plus the pending label above for the moment before the response starts.
+
+`LibraryPage` applies it for the learner Library, the expert "My library" and the organization Library. The route pages run their access checks (`requirePersonalProfileAccess`, `requireOrgAccess`, `notFound()`, `redirect()`) first and are not inside any boundary. `LibraryPage` then renders the header and the tab bar at once and wraps only the active tab's panel in `<Suspense key={tab}>`. The key forces a fresh boundary on every tab switch, so the fallback (three rows matching the list's own loading state) shows each time. The panel still reads only the active tab's data. A guard must never move inside the boundary: once a fallback has streamed, `notFound()` and `redirect()` can no longer change the status code (see the `nextjs` skill, section 2).
+
+### 3.2.3 Routes Without a Loading Boundary
+
+These are deliberate. A `loading.tsx` above a page that calls `redirect()` or `notFound()` turns the response into a streamed 200, so the redirect degrades to a meta refresh and a missing record becomes a soft 404.
+
+| Route                                                                   | Why it has no `loading.tsx`                                                                 |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `app/dashboard/go/[facet]/[[...path]]`                                  | Only resolves a facet and calls `redirect()`.                                               |
+| `app/dashboard/evidence/[requestId]`, `app/dashboard/support/[caseKey]` | Call `notFound()` after their reads, then `redirect()`.                                     |
+| `app/auth/two-factor/setup`                                             | The guard redirects an unauthorised visitor.                                                |
+| `app/auth/two-factor`, `app/dashboard/payouts/freeze`                   | Client pages with no server data to wait for; the first wraps its form in its own Suspense. |
+
+`app/files/loading.tsx` covers both file viewer pages, which return error views inline and never call `notFound()` or `redirect()`.
+
+### 3.2.4 One Session Read per Guard
+
+`requirePersonalProfileAccess` decides from the session user alone. The session cookie cache is off (`lib/auth.ts`), so the session user is the live row, with its role, ban state and profile ids. The guard issues no query of its own, which removes one `User` read from every personal dashboard page. Under `PG_POOL_MAX=1` the statements run one after another, so each statement removed is time saved. The layouts' existence check for an inspected profile stays in `viewerMayOpenProfile`, cached per request.
 
 ### 3.3 Client-Router Cache Tuning
 
@@ -80,14 +109,14 @@ The admin payouts page was the only consumer of `recharts` on a route that most 
 
 The dependency tree carried a number of libraries that were no longer imported, or that duplicated functionality already available through another dependency. Removing them shrinks both the install footprint and the bundle.
 
-| Action | Packages | Rationale |
-|---|---|---|
-| Removed | `npm`, `swr`, `axios`, `cmdk`, `react-day-picker`, `tweetnacl` (and `tweetnacl-util`) | No remaining imports; `swr` superseded by React Query, `axios` by `fetch`. |
-| Moved to `devDependencies` | `prettier`, `dotenv` | Tooling only; not needed in the production bundle. |
-| Replaced | `bcryptjs` → `bcrypt` | The seed script now uses the native `bcrypt`. |
-| Consolidated | `react-icons` → `react-icons/fa6` | Standardized on the FA6 set (for example `FaXTwitter`) so a single icon family ships. |
-| Pinned | `@next/bundle-analyzer` → `^15` | Aligns the analyzer major with Next.js 15. |
-| Raised floor | `next` → `^15.5.0` | Matches the `useLinkStatus` API relied on in [Section 3.2](#32-pending-affordance-on-navigation-links). |
+| Action                     | Packages                                                                              | Rationale                                                                                               |
+| -------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Removed                    | `npm`, `swr`, `axios`, `cmdk`, `react-day-picker`, `tweetnacl` (and `tweetnacl-util`) | No remaining imports; `swr` superseded by React Query, `axios` by `fetch`.                              |
+| Moved to `devDependencies` | `prettier`, `dotenv`                                                                  | Tooling only; not needed in the production bundle.                                                      |
+| Replaced                   | `bcryptjs` → `bcrypt`                                                                 | The seed script now uses the native `bcrypt`.                                                           |
+| Consolidated               | `react-icons` → `react-icons/fa6`                                                     | Standardized on the FA6 set (for example `FaXTwitter`) so a single icon family ships.                   |
+| Pinned                     | `@next/bundle-analyzer` → `^15`                                                       | Aligns the analyzer major with Next.js 15.                                                              |
+| Raised floor               | `next` → `^15.5.0`                                                                    | Matches the `useLinkStatus` API relied on in [Section 3.2](#32-pending-affordance-on-navigation-links). |
 
 ### 4.6 Image and Server-Externals Configuration
 
@@ -108,11 +137,11 @@ The consultee events route, [`app/api/dashboard/consultee/[consulteeId]/events/r
 
 The indexes added in this round, tracked under [#696](https://github.com/) and [#734](https://github.com/), were applied additively to the familiarise Supabase database with `CREATE INDEX CONCURRENTLY` so that no table was locked against writes during the build. See [`../prisma/01-migrations-guide.md`](../prisma/01-migrations-guide.md) for the project's broader migration conventions and the safe-operation rules around concurrent index creation.
 
-| Index | Columns | Why |
-|---|---|---|
-| `Payment` | `(userId, organizationId, createdAt)` | Supports the org-scoped, time-ordered payment reads on the dashboard-home routes. |
-| `Waitlist` | `(userId, status)` | Supports the per-user, status-filtered waitlist lookups. |
-| `ConsultantReview` | `(consultantProfileId)` | Fixes the explore "trending" sort, which ordered by `reviews._count` and was performing a full-table scan. |
+| Index              | Columns                               | Why                                                                                                        |
+| ------------------ | ------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `Payment`          | `(userId, organizationId, createdAt)` | Supports the org-scoped, time-ordered payment reads on the dashboard-home routes.                          |
+| `Waitlist`         | `(userId, status)`                    | Supports the per-user, status-filtered waitlist lookups.                                                   |
+| `ConsultantReview` | `(consultantProfileId)`               | Fixes the explore "trending" sort, which ordered by `reviews._count` and was performing a full-table scan. |
 
 The `Consultation` and `Subscription` `(planId, status)` indexes were considered and intentionally skipped as redundant: a superset index on `(planId, status, requestedAt)` already exists, and Postgres can satisfy a `(planId, status)` lookup from the leading columns of that index, so adding the shorter index would only duplicate maintenance cost.
 
@@ -142,3 +171,8 @@ The third is adopting `framer-motion`'s `LazyMotion` to defer the animation runt
 - [`../stream/01-architecture.md`](../stream/01-architecture.md) — Stream provider architecture, relevant to the SDK lazy-load split in [Section 4.2](#42-stream-sdk-lazy-loading).
 - [`../deployment/netlify.md`](../deployment/netlify.md) — deployment environment that serves the optimized bundle.
 - [`../prisma/01-migrations-guide.md`](../prisma/01-migrations-guide.md) — migration conventions and the rules around `CREATE INDEX CONCURRENTLY`.
+
+## Deprecated & Superseded Approaches
+
+- **Rendering the whole Library page behind one await.** The header and tabs used to wait for the active panel's reads; only the panel streams now.
+- **A second `User` read inside `requirePersonalProfileAccess`.** Superseded by the session user, which already carries the same live fields.
