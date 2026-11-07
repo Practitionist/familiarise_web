@@ -284,6 +284,27 @@ Every answer carries `Cache-Control: private, no-store`. A paid seat is a `CONSU
 
 ---
 
+## Notify-me Endpoint
+
+`POST /api/scheduling/event-waitlist` joins and `DELETE /api/scheduling/event-waitlist` leaves the notify-me list of a sold-out webinar or class (`app/api/scheduling/event-waitlist/route.ts`). Both take the body `{ "kind": "WEBINAR" | "CLASS", "eventId": "<id>" }`. There is no `GET`: the plan pages read the viewer's state on the server. The middleware already requires a session for everything under `/api/scheduling/`, the route is limited per user by `eventMutationLimiter`, and every answer carries `Cache-Control: no-store`.
+
+| Case                                                                       | Answer                                                                         |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Join succeeds, or the caller is already on the list                        | 200 `{ data: { status } }`                                                     |
+| Leave                                                                      | 200 `{ left: true }`, or `{ left: false }` when no open row                    |
+| Missing event or a plan the caller may not view                            | 404 `EVENT_NOT_FOUND`, the same answer for both                                |
+| Event cancelled, past or archived                                          | 409 `EVENT_CLOSED`; a class past its enrolment cut-off, 409 `ENROLMENT_CLOSED` |
+| The caller is the host or an accepted co-host                              | Refused like checkout (`assertNotSelfBooking`)                                 |
+| The host turned the waitlist off                                           | 409 `WAITLIST_DISABLED`                                                        |
+| Seats are still available                                                  | 409 `EVENT_NOT_FULL`                                                           |
+| The caller already holds a seat, or may not buy one again                  | The existing seat refusals (`alreadyHeldSeatError`, `assertSeatRemintable`)    |
+| The list holds `min(waitlistMax ?? 200, 200)` open rows                    | 409 `WAITLIST_FULL`                                                            |
+| The caller is already waiting on five sessions (`EVENT_WAITLIST_USER_CAP`) | 409 `EVENT_WAITLIST_CAP`                                                       |
+
+The checks run in that order, and nothing here reserves a seat. See [the event seat waitlist decision](../decisions/2026-11-07-event-seat-waitlist.md).
+
+---
+
 ## Error Codes
 
 | Status | Cause                   | Example                                                                   |

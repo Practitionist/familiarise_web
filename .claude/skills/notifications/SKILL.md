@@ -10,7 +10,7 @@ Terse rules for agents. The human explanation is in `docs/notifications/` (start
 ## The model
 
 - Postgres is the transactional outbox (`FailedEmail`, `FailedEmailBatch`, `NotificationOutbox`) and the **only** owner of notification preferences (`NotificationPreference`). Workspace routing is removed: `OrgWorkspaceProfile.notificationRoutingMode` is unread until the next schema batch drops it, so never read or write it.
-- Resend sends email. Novu is a plain in-app transport: 16 workflow families (`lib/novu/templates/families.ts`), in-app only, `readOnly: true` preferences (`FAMILY_PREFERENCES` in `lib/novu/templates/index.ts`), no step `skip` conditions, no subscriber profile or preference data. 97 events: `Object.keys(NOVU_WORKFLOWS).length === Object.keys(EVENT_FAMILY).length`.
+- Resend sends email. Novu is a plain in-app transport: 16 workflow families (`lib/novu/templates/families.ts`), in-app only, `readOnly: true` preferences (`FAMILY_PREFERENCES` in `lib/novu/templates/index.ts`), no step `skip` conditions, no subscriber profile or preference data. 98 events: `Object.keys(NOVU_WORKFLOWS).length === Object.keys(EVENT_FAMILY).length`.
 - The inbox mounts only with a signed HMAC (`POST /api/novu/subscriber`, `lib/novu/inbox-auth.ts`) and `hideNav`, so Novu has no preference page.
 - The server gates every bell twice: when staged (`resolveRecipientBellPolicy`, `bellAudience` in `lib/novu/policy.ts`) and at the first attempt of each generation (`currentBellRecipients`). The personal switches are the only channel control for every user, operators included: `allNotifications` and `inAppEnabled` for bells, `allNotifications` and `emailEnabled` for optional email, then the category column. A template marked `required: true` (security, account, verification, moderation and compliance notices; always `category: null`) skips the switches for bells, as a null-category email does; only erasure stops it. `general-announcement` has no category but is not required.
 
@@ -67,6 +67,7 @@ Novu Free is 10,000 workflow runs a month, counted across Development **and** Pr
 ## Announcements and quiet hours
 
 - An announcement reaches inboxes only with `postToInbox` on create; the dialog shows the eligible count (`GET /api/announcements/audience`) and asks for confirmation. Staging takes no advisory lock; each post is keyed `announcement:<id>`. `linkUrl` is `http(s)` only (`schemas/announcements.ts`); `PATCH /api/announcements/[id]` parses a strict `UpdateAnnouncementSchema`; admins list every row through `GET /api/announcements/manage`.
+- `event-seat-opened` (notify-me): stage with `stageSeatOpenedNotices` inside the releasing transaction (one `stageScopedPages` set per scope: an ORG_ONLY plan's bell carries the plan's organisation, any other is personal) and call `finishSeatOpenedNotices` after the commit. It ignores quiet hours on purpose.
 - There are no maintenance bells. Live state is `components/banners/MaintenanceBanner.tsx` (`DEGRADED`) and the middleware page (`OFFLINE`).
 - In-app quiet hours are removed. Only the consultant planning reminder (`lib/booking/week-nudge.ts`) reads `quietHours*` (22:00 to 08:00 when unset), for both its email and its bell.
 
