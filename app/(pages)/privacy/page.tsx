@@ -489,11 +489,12 @@ export default function PrivacyPolicyPage() {
                   de-identification safeguards, Familiarise does not send Sentry
                   your name, email address, phone number, IP address, cookies,
                   request or response headers, or the text of the pages you
-                  view, and Sentry records no session replays; events are tagged
-                  solely with a one-way salted HMAC-SHA256 virtual token (
-                  <code>ust_&lt;24-hex-chars&gt;</code>) and retained for 30–90
-                  days to help our support and engineering teams diagnose
-                  technical issues you report.
+                  view, and Sentry records no session replays. Where an event is
+                  linked to an account, it carries only a one-way salted
+                  HMAC-SHA256 virtual token (
+                  <code>ust_&lt;24-hex-chars&gt;</code>), never your identity.
+                  Events are retained for 30–90 days to help our support and
+                  engineering teams diagnose technical issues you report.
                 </li>
               </ul>
 

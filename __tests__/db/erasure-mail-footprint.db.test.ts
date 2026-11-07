@@ -29,6 +29,7 @@ function queuedEmail(data: {
   deliveryUserId?: string;
   lastError?: string;
   entityRef?: string;
+  replyTo?: string;
 }) {
   return prisma.failedEmail.create({
     data: {
@@ -98,6 +99,7 @@ describe("erasure mailing footprint", () => {
       recipient: "support@familiarise.test",
       status: "SENT",
       entityRef: `contact:${email.toUpperCase()}`,
+      replyTo: email,
     });
     const someoneElse = await queuedEmail({
       recipient: other,
@@ -118,6 +120,7 @@ describe("erasure mailing footprint", () => {
       emailsDeadLettered: 2,
       recipientsReplaced: 4,
       entityRefsReplaced: 2,
+      replyTosCleared: 1,
       batchesNarrowed: 1,
       batchesDeadLettered: 2,
       settledBatchesScrubbed: 2,
@@ -151,6 +154,7 @@ describe("erasure mailing footprint", () => {
         subject: true,
         htmlBody: true,
         textBody: true,
+        replyTo: true,
       },
     });
     const row = (id: string) => emails.find((e) => e.id === id);
@@ -179,7 +183,11 @@ describe("erasure mailing footprint", () => {
     expect(row(contact.id)).toMatchObject({
       recipient: "support@familiarise.test",
       entityRef: marker,
+      replyTo: null,
       status: "SENT",
+      subject: REDACTED_ERASED_BODY,
+      htmlBody: REDACTED_ERASED_BODY,
+      textBody: null,
     });
     expect(row(someoneElse.id)).toMatchObject({
       recipient: other,

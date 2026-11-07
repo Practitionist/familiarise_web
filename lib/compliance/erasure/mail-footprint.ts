@@ -24,6 +24,7 @@ export interface MailFootprintScrub {
   emailsDeadLettered: number;
   recipientsReplaced: number;
   entityRefsReplaced: number;
+  replyTosCleared: number;
   batchesNarrowed: number;
   batchesDeadLettered: number;
   settledBatchesScrubbed: number;
@@ -66,14 +67,25 @@ export async function scrubMailFootprintTx(
     where: theirs,
     data: { recipient: marker },
   });
-  // Newsletter and contact-form mail is anchored on the address itself.
+  // Newsletter and contact-form mail is anchored on the address itself, and its
+  // body is about the person, so it is redacted too.
   const entityRefs = await tx.failedEmail.updateMany({
     where: {
       OR: ["waitlist", "contact"].map((kind) => ({
         entityRef: { equals: `${kind}:${email}`, mode: "insensitive" as const },
       })),
     },
-    data: { entityRef: marker },
+    data: {
+      entityRef: marker,
+      subject: REDACTED_ERASED_BODY,
+      htmlBody: REDACTED_ERASED_BODY,
+      textBody: null,
+    },
+  });
+  // A contact form replies to the visitor; null, not the marker, keeps a replay sendable.
+  const replyTos = await tx.failedEmail.updateMany({
+    where: { replyTo: { equals: email, mode: "insensitive" } },
+    data: { replyTo: null },
   });
   const batches = await scrubBatches(tx, email);
   return {
@@ -81,6 +93,7 @@ export async function scrubMailFootprintTx(
     emailsDeadLettered: emails.count,
     recipientsReplaced: recipients.count,
     entityRefsReplaced: entityRefs.count,
+    replyTosCleared: replyTos.count,
     ...batches,
   };
 }
