@@ -23,7 +23,7 @@ export function DigitalProductLibrary({
         description="E-books, templates and other files you buy or claim from experts appear here, ready to download."
         action={
           <Button asChild size="sm">
-            <Link href="/explore/experts">Find experts</Link>
+            <Link href="/explore/products">Browse products</Link>
           </Button>
         }
       />

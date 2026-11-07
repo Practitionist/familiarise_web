@@ -82,8 +82,8 @@ const EXPERT_ONLY = new Set([
   "collaborations",
   "sell",
   "offerings",
+  "products",
   "reviews",
-  "analytics",
 ]);
 const CLIENT_ONLY = new Set(["payments"]);
 

@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { LIVE_PARTICIPANT_STATUSES } from "@/lib/booking/participants";
+import { ORG_FUNDED_PAYMENT_METHODS } from "@/lib/payments/org-funded";
 
 /**
  * #1852 decision 3 — the sponsor view. A webinar or class hosted by someone
@@ -13,20 +14,11 @@ import { LIVE_PARTICIPANT_STATUSES } from "@/lib/booking/participants";
  * Auth is enforced upstream (`operations.read` on the Everyone tab).
  */
 
-/** The org-funded rails; a card payment merely tagged to the org is not its money. */
-const ORG_FUNDED_METHODS = ["WALLET", "INVOICE", "LICENSE"];
-
-export function isOrgFundedPaymentMethod(
-  method: string | null | undefined,
-): boolean {
-  return ORG_FUNDED_METHODS.includes(method ?? "");
-}
-
 /** A payment the org's own money made: tagged to the org and on one of its rails. */
 export function orgFundedPaymentWhere(orgId: string): Prisma.PaymentWhereInput {
   return {
     organizationId: orgId,
-    paymentMethod: { in: ORG_FUNDED_METHODS },
+    paymentMethod: { in: ORG_FUNDED_PAYMENT_METHODS },
   };
 }
 

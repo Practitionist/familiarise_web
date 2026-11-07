@@ -28,14 +28,10 @@ import {
 import { EmptyState as EmptyBlock } from "@/components/dashboard/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { humanizeEnum } from "@/lib/ui/tone";
-
-const PROGRAM_TYPE_LABEL: Record<string, string> = {
-  LICENSED_SEAT: "Licensed seat",
-  CREDIT_POOL: "Credit pool",
-  PROJECT: "Project",
-  RETAINER: "Retainer",
-};
+import {
+  PROGRAM_TYPE_LABEL,
+  SESSION_TYPE_LABEL,
+} from "@/lib/labels/org-labels";
 
 const OVERAGE_BEHAVIOR_LABEL: Record<string, string> = {
   BLOCK: "Cap is enforced — bookings stop at the limit",
@@ -207,7 +203,7 @@ export default async function MyProgramPage({
                       Type
                     </th>
                     <th className="px-4 py-2 font-medium text-right whitespace-nowrap">
-                      Join
+                      Open
                     </th>
                   </tr>
                 </thead>
@@ -225,21 +221,21 @@ export default async function MyProgramPage({
                       </td>
                       <td className="px-4 py-2">{s.title}</td>
                       <td className="px-4 py-2 whitespace-nowrap">
-                        {humanizeEnum(s.type)}
+                        {SESSION_TYPE_LABEL[s.type]}
                       </td>
                       <td className="px-4 py-2 text-right whitespace-nowrap">
-                        {/* Real join needs the Stream client (consultee
-                          dashboard). Gate the link to the 10-min window. */}
+                        {/* The room opens from the appointments list; this link
+                          appears only inside the 10-minute window. */}
                         {s.joinable ? (
                           <Link
                             href={appointmentsHref}
                             className="inline-flex rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground"
                           >
-                            Join now
+                            Open appointments
                           </Link>
                         ) : (
                           <span className="text-xs text-muted-foreground">
-                            Not yet
+                            Opens 10 min before
                           </span>
                         )}
                       </td>
@@ -319,8 +315,7 @@ export default async function MyProgramPage({
                     <div>
                       <h2 className="font-medium">{a.program.name}</h2>
                       <p className="text-xs text-muted-foreground mt-1">
-                        {PROGRAM_TYPE_LABEL[a.program.type] ?? a.program.type} ·
-                        cycle{" "}
+                        {PROGRAM_TYPE_LABEL[a.program.type]} · cycle{" "}
                         {a.periodStart.toLocaleDateString("en-IN", {
                           timeZone: "Asia/Kolkata",
                         })}{" "}
@@ -333,7 +328,7 @@ export default async function MyProgramPage({
                       </p>
                     </div>
                     <span className="rounded-full border px-2.5 py-0.5 text-xs">
-                      {PROGRAM_TYPE_LABEL[a.program.type] ?? a.program.type}
+                      {PROGRAM_TYPE_LABEL[a.program.type]}
                     </span>
                   </div>
 
@@ -486,9 +481,11 @@ export default async function MyProgramPage({
                             })}
                           </td>
                           <td className="px-4 py-2 whitespace-nowrap">
-                            {humanizeEnum(
-                              u.payment.appointment?.appointmentType,
-                            ) || "—"}
+                            {u.payment.appointment?.appointmentType
+                              ? SESSION_TYPE_LABEL[
+                                  u.payment.appointment.appointmentType
+                                ]
+                              : "—"}
                           </td>
                           <td className="px-4 py-2 text-right whitespace-nowrap">
                             {isPoolUtilization
@@ -528,8 +525,8 @@ export default async function MyProgramPage({
                   <div>
                     <p className="font-medium">{p.name}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {PROGRAM_TYPE_LABEL[p.type] ?? p.type} · you're not
-                      assigned to this yet
+                      {PROGRAM_TYPE_LABEL[p.type]} · you're not assigned to this
+                      yet
                     </p>
                   </div>
                   <span className="shrink-0 text-xs text-muted-foreground">

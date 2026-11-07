@@ -3,7 +3,7 @@ import type { MemberRole, PaymentStatus } from "@prisma/client";
 
 import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { isOrgFundedPaymentMethod } from "@/lib/data/org-sponsored-seats";
+import { isOrgFundedPaymentMethod } from "@/lib/payments/org-funded";
 
 /** What the funding org may do to one of its bookings as the payer. */
 export type OrgActorAction = "reschedule" | "cancel";

@@ -3,7 +3,7 @@
  */
 
 /**
- * The "Booking requests" settings: the cap input reads blank as "no limit"
+ * The "Booking mode" settings: the cap input reads blank as "no limit"
  * and clamps into 1–50, the form seeds the three fields from the profile with
  * the schema defaults, and a save sends only what changed with the value it
  * replaces.

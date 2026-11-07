@@ -98,7 +98,7 @@ describe("deriveActionCenter", () => {
     expect(deriveActionCenter(healthy, ORG)).toHaveLength(0);
   });
 
-  it("surfaces pending verification + only banners whose data exists", () => {
+  it("surfaces only banners whose data exists; org status is the shell banner's job", () => {
     const keys = deriveActionCenter(
       {
         ...fresh,
@@ -114,7 +114,6 @@ describe("deriveActionCenter", () => {
     ).map((a) => a.key);
     expect(keys).toEqual(
       expect.arrayContaining([
-        "pending-verification",
         "past-due-invoices",
         "credit-pool-near-cap",
         "contract-expiring",
@@ -123,6 +122,7 @@ describe("deriveActionCenter", () => {
         "wallet-low",
       ]),
     );
+    expect(keys).not.toContain("pending-verification");
   });
 
   it("credit-pool banner only fires at ≥80%", () => {

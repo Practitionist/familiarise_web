@@ -13,7 +13,11 @@ import {
   Lock,
   RefreshCw,
 } from "lucide-react";
-import type { ContractStatus, FundingSource } from "@prisma/client";
+import type {
+  ContractStatus,
+  FundingSource,
+  ProgramType,
+} from "@prisma/client";
 
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import {
@@ -25,7 +29,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { FUNDING_SOURCE_LABEL } from "@/lib/labels/org-labels";
+import { ErrorState } from "@/components/dashboard/ErrorState";
+import {
+  FUNDING_SOURCE_LABEL,
+  PROGRAM_TYPE_LABEL,
+} from "@/lib/labels/org-labels";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import {
@@ -393,10 +401,7 @@ function parseLicensePricingOverride(
     }
     return { licenseFeePaise };
   }
-  if (
-    draft.licenseModel === "PER_SEAT" &&
-    draft.ratePerSeatINR.trim() !== ""
-  ) {
+  if (draft.licenseModel === "PER_SEAT" && draft.ratePerSeatINR.trim() !== "") {
     const licenseRatePerSeatPaise = parsePositiveInrToPaise(
       draft.ratePerSeatINR,
     );
@@ -637,7 +642,9 @@ function ContractFinancialTermsFields({
           checked={autoRenew}
           onCheckedChange={(v) => onAutoRenewChange(v === true)}
         />
-        <span className="text-sm">Auto-renew when effective-to date passes</span>
+        <span className="text-sm">
+          Auto-renew when effective-to date passes
+        </span>
       </label>
     </>
   );
@@ -774,12 +781,12 @@ function CreateContractDialog({
                         : "border-border hover:border-foreground/40"
                     }`}
                   >
-                    {s}
+                    {CONTRACT_STATUS[s].label}
                   </button>
                 ))}
               </div>
               <p className="text-xs text-muted-foreground">
-                ACTIVE contracts can immediately attach Programs. DRAFT
+                Active contracts can immediately attach programs. Draft
                 contracts need to be activated first.
               </p>
             </div>
@@ -871,9 +878,7 @@ function SupersedeContractDialog({
     const current = contractRef.current;
     setReason("AMENDMENT");
     setEffectiveFrom(new Date().toISOString().slice(0, 10));
-    setEffectiveTo(
-      current.effectiveTo ? current.effectiveTo.slice(0, 10) : "",
-    );
+    setEffectiveTo(current.effectiveTo ? current.effectiveTo.slice(0, 10) : "");
     setPaymentTermsDays(String(current.paymentTermsDays));
     setAutoRenew(current.autoRenew);
     setLicenseModel(current.subscription?.model ?? "FLAT_FEE");
@@ -958,7 +963,7 @@ function SupersedeContractDialog({
 
         <div className="space-y-4">
           <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
-            Creates a new ACTIVE contract with updated terms, transfers all
+            Creates a new active contract with updated terms, transfers all
             attached programs and license subscriptions, and retires the current
             contract with a supersession audit trail.
           </p>
@@ -1043,10 +1048,7 @@ function SupersedeContractDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={supersedeMutation.isPending}
-          >
+          <Button onClick={handleSubmit} disabled={supersedeMutation.isPending}>
             {supersedeMutation.isPending ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin mr-1" /> Superseding…
@@ -1189,7 +1191,7 @@ function ContractDetailDialog({
                     >
                       <span>{p.name}</span>
                       <Badge variant="secondary" className="text-xs">
-                        {humanizeEnum(p.type)}
+                        {PROGRAM_TYPE_LABEL[p.type as ProgramType]}
                       </Badge>
                     </li>
                   ))}
@@ -1652,19 +1654,43 @@ export default function OrgContractsPage({
             <CardTitle className="text-base">
               {contracts.isLoading
                 ? "Loading…"
-                : `${contractList.length} contract${contractList.length === 1 ? "" : "s"}`}
+                : contracts.isError && !contracts.data
+                  ? "Contracts unavailable"
+                  : `${contractList.length} contract${contractList.length === 1 ? "" : "s"}`}
             </CardTitle>
             <CardDescription>
-              ACTIVE contracts accept new Programs. DRAFT contracts need to be
-              activated first. Only DRAFT contracts with no attached Programs
-              can be deleted — use TERMINATED to close an active one.
+              Active contracts accept new programs. Draft contracts need to be
+              activated first. Only draft contracts with no attached programs
+              can be deleted; terminate an active contract to close it.
             </CardDescription>
           </CardHeader>
           <CardContent>
+            {contracts.isError && contracts.data && (
+              <p
+                role="alert"
+                className="mb-3 flex flex-wrap items-center gap-2 text-sm text-amber-700"
+              >
+                Couldn&apos;t refresh contracts; showing the last loaded list.
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={contracts.isFetching}
+                  onClick={() => void contracts.refetch()}
+                >
+                  Retry
+                </Button>
+              </p>
+            )}
             {contracts.isLoading ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" /> Loading…
               </div>
+            ) : contracts.isError && !contracts.data ? (
+              <ErrorState
+                title="We couldn't load contracts"
+                description="Your contracts are safe. Check your connection and try again."
+                onRetry={() => void contracts.refetch()}
+              />
             ) : contractList.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">
                 <FileText className="h-10 w-10 mx-auto mb-3 text-muted-foreground/40" />
@@ -1747,7 +1773,7 @@ export default function OrgContractsPage({
           <AlertDialogHeader>
             <AlertDialogTitle>Activate contract?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will move the contract from DRAFT to ACTIVE. Programs can be
+              This will move the contract from Draft to Active. Programs can be
               attached immediately. This action writes an audit log entry.
             </AlertDialogDescription>
           </AlertDialogHeader>

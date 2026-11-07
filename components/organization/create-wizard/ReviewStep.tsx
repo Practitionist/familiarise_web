@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Building2, Pencil, Check, X, Loader2 } from "lucide-react";
+import { Pencil, Check, X, Loader2 } from "lucide-react";
 import { z } from "zod";
 import { getSteps } from "./types";
 import type { StepProps } from "./types";
@@ -22,7 +22,6 @@ import {
 import {
   CreateOrganizationPayloadSchema,
   CreateOrganizationResponseSchema,
-  PatchOrganizationPayloadSchema,
   CreateRateCardPayloadSchema,
   CreateInvitationPayloadSchema,
   CreateInvitationResponseSchema,
@@ -95,7 +94,6 @@ function describeLaunchError(err: unknown): string {
 // `{ ok: true }`); the wizard doesn't read the body, only `res.ok`.
 // Passthrough schema lets parseJsonResponse own the success/error split
 // instead of the previous bespoke fetch + json + cast triplet.
-const PatchOrganizationResponseSchema = z.object({}).passthrough();
 
 export function ReviewStep({
   onBack,
@@ -190,31 +188,7 @@ export function ReviewStep({
         createdOrgIdRef.current = orgId;
       }
 
-      // Step 2a — PATCH branding colors (org endpoint accepts these).
-      const hasBranding =
-        (initialData.primaryColor ?? null) !== null ||
-        (initialData.secondaryColor ?? null) !== null;
-      if (hasBranding) {
-        const patchPayload = validateOutboundPayload(
-          PatchOrganizationPayloadSchema,
-          {
-            primaryColor: initialData.primaryColor ?? null,
-            secondaryColor: initialData.secondaryColor ?? null,
-          },
-        );
-        const patchRes = await fetch(`/api/organizations/${orgId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(patchPayload),
-        });
-        await parseJsonResponse(
-          patchRes,
-          PatchOrganizationResponseSchema,
-          "Failed to save branding",
-        );
-      }
-
-      // Step 2b — POST rate card for host orgs. Rate-card fields are owned
+      // Step 2 — POST rate card for host orgs. Rate-card fields are owned
       // by /api/organizations/[orgId]/rate-cards, not the org PATCH route.
       const hasRateCard =
         canHost &&
@@ -419,39 +393,6 @@ export function ReviewStep({
           </p>
         </Section>
       )}
-
-      <Section title="Branding" stepKey="branding">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-zinc-100 flex items-center justify-center">
-            <Building2 className="w-5 h-5 text-zinc-400" />
-          </div>
-          {initialData.primaryColor && (
-            <div className="flex items-center gap-1">
-              <div
-                className="w-5 h-5 rounded border border-zinc-200"
-                style={{ backgroundColor: initialData.primaryColor }}
-              />
-              <span className="font-mono text-xs">
-                {initialData.primaryColor}
-              </span>
-            </div>
-          )}
-          {initialData.secondaryColor && (
-            <div className="flex items-center gap-1">
-              <div
-                className="w-5 h-5 rounded border border-zinc-200"
-                style={{ backgroundColor: initialData.secondaryColor }}
-              />
-              <span className="font-mono text-xs">
-                {initialData.secondaryColor}
-              </span>
-            </div>
-          )}
-          {!initialData.primaryColor && !initialData.secondaryColor && (
-            <span>Skipped</span>
-          )}
-        </div>
-      </Section>
 
       <Section title="Team Invitations" stepKey="invite-team">
         {emails.length > 0 ? (

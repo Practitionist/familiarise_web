@@ -46,10 +46,9 @@ export function ConsultantSettingsLoader({
         <CardContent className="py-6">
           <EmptyState
             icon={SettingsIcon}
-            title="Couldn't load your settings"
+            title="Couldn't load your profile"
             description={
-              error.message ||
-              "Failed to load expert settings. Please try again."
+              error.message || "Failed to load your profile. Please try again."
             }
             action={
               <Button

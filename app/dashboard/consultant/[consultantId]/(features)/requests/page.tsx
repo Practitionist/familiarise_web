@@ -78,7 +78,7 @@ export default async function RequestsPage({
   return (
     <>
       <DashboardHeader
-        title="Requests"
+        title="Booking requests"
         subtitle="Everything waiting on an answer, a payment or a next cycle"
         actions={<AcceptingRequestsToggle consultantId={consultantId} />}
       />

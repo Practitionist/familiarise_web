@@ -6,7 +6,13 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CheckoutResultSkeleton } from "@/app/checkout/CheckoutSkeletons";
-import { CheckCircle, Clock, Calendar, ArrowRight } from "lucide-react";
+import {
+  CheckCircle,
+  Clock,
+  Calendar,
+  CalendarPlus,
+  ArrowRight,
+} from "lucide-react";
 import { reportPaymentsError } from "@/app/checkout/plans/utils";
 import type { BookingState, MoneyState } from "@/app/api/checkout/verify/route";
 import { useSession } from "@/lib/auth-client";
@@ -412,6 +418,31 @@ function CheckoutSuccessContent() {
                 {statusInfo.nextSteps}
               </p>
             </div>
+
+            {paymentDetails.calendar && (
+              <div className="border-t border-border pt-4">
+                <p className="flex items-center gap-2 text-sm font-medium text-foreground mb-2">
+                  <CalendarPlus className="h-4 w-4 text-muted-foreground" />
+                  Add to your calendar
+                </p>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                  <a
+                    href={paymentDetails.calendar.googleUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-foreground hover:underline"
+                  >
+                    Google Calendar
+                  </a>
+                  <a
+                    href={paymentDetails.calendar.icsUrl}
+                    className="font-medium text-foreground hover:underline"
+                  >
+                    Apple, Outlook and others (.ics)
+                  </a>
+                </div>
+              </div>
+            )}
 
             {paymentIntent && (
               <div className="border-t border-border pt-4">

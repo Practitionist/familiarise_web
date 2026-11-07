@@ -39,18 +39,24 @@ export default async function PaymentsPage({
   // Ownership is enforced HERE, not by the layout: the layout is a client
   // component, so its check runs after this server render has already read
   // and streamed the data. See lib/auth/personal-dashboard-access.ts.
-  await requirePersonalProfileAccess("consultee", consulteeId);
-  const profile = await prisma.consulteeProfile.findUnique({
-    where: { id: consulteeId },
-    select: { userId: true },
-  });
-  if (!profile) notFound();
+  const access = await requirePersonalProfileAccess("consultee", consulteeId);
+  // The owner's payments are the session user's; only an inspecting operator
+  // needs the profile row to find whose payments to read.
+  let userId = access.userId;
+  if (access.isInspecting) {
+    const profile = await prisma.consulteeProfile.findUnique({
+      where: { id: consulteeId },
+      select: { userId: true },
+    });
+    if (!profile) notFound();
+    userId = profile.userId;
+  }
 
   return (
     <Suspense fallback={<PageSkeleton />}>
       <SeededPayments
         consulteeId={consulteeId}
-        userId={profile.userId}
+        userId={userId}
         searchParams={await searchParams}
       />
     </Suspense>

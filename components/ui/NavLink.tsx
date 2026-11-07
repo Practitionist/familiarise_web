@@ -54,8 +54,35 @@ export function LinkPendingIcon({
   );
 }
 
-export interface NavLinkProps
-  extends Omit<React.ComponentProps<typeof Link>, "href"> {
+/**
+ * Label variant for text tabs: dims and pulses while its enclosing Link's
+ * navigation is in flight, with no spinner and so no layout shift. Same #15.5
+ * contract — MUST be a descendant of the <Link> it reports on.
+ */
+export function LinkPendingLabel({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const { pending } = useLinkStatus();
+  return (
+    <span
+      className={cn(
+        className,
+        pending && "opacity-60 motion-safe:animate-pulse",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+export interface NavLinkProps extends Omit<
+  React.ComponentProps<typeof Link>,
+  "href"
+> {
   href: React.ComponentProps<typeof Link>["href"];
   children: React.ReactNode;
   /** Extra classes applied to the inline pending spinner. */

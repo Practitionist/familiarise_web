@@ -35,6 +35,7 @@ import {
   ORGANIZATION_PAGE_LABELS,
 } from "@/lib/dashboard/nav/organization";
 import {
+  ORG_SETTINGS_SECTIONS,
   canOpenOrgSettings,
   orgSettingsGroups,
   orgSettingsHref,
@@ -187,11 +188,21 @@ function OrgDashboardShellInner({
     [org, orgId, sessionUser],
   );
 
-  const breadcrumbs = useDashboardBreadcrumbs({
+  const pageCrumbs = useDashboardBreadcrumbs({
     pathname,
     basePath: nav.basePath,
     pageLabels: ORGANIZATION_PAGE_LABELS,
   });
+  // A settings section's crumb carries the section's own label: the segment
+  // `billing` is "Billing contacts" there, not the Billing page.
+  const settingsSection = ORG_SETTINGS_SECTIONS.find((section) =>
+    pathname.startsWith(`${nav.basePath}/settings/${section.key}`),
+  );
+  const breadcrumbs = settingsSection
+    ? pageCrumbs.map((crumb, i) =>
+        i === 1 ? { ...crumb, label: settingsSection.label } : crumb,
+      )
+    : pageCrumbs;
 
   if (!session?.user?.id && !isSessionLoading) {
     return (

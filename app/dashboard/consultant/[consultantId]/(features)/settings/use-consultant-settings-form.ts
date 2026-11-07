@@ -45,7 +45,7 @@ export interface SettingsFormOptions {
 }
 
 /**
- * The one form behind Profile, Availability and Booking requests (#1785).
+ * The one form behind Profile, Availability and Booking mode.
  *
  * The three sections used to be tabs of a single component and are now three
  * pages, but the save contract did not move: `PUT /api/user/consultants/[id]`

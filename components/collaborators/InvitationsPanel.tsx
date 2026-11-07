@@ -41,7 +41,7 @@ export function InvitationsPanel({
 }: {
   orgScope?: string;
   /**
-   * Host › Collaborators: every plan the org hosts, whoever delivers it,
+   * Host › Collaborations: every plan the org hosts, whoever delivers it,
    * read-only. Received invitations are personal and hidden.
    */
   orgView?: boolean;

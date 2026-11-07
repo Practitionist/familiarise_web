@@ -408,7 +408,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
   "appointment-reminders": {
     meta: {
       title: "Appointment reminders",
-      description: "Send the 24-hour and 1-hour session reminders",
+      description: "Send the 24-hour, 1-hour and 15-minute session reminders",
       category: "Messaging",
       manualRun: "inline",
     },
@@ -435,8 +435,11 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         summarize: (r) => ({
           reminders24h: r.reminders24h,
           reminders1h: r.reminders1h,
+          reminders15m: r.reminders15m,
         }),
-        items: (r) => ({ processed: r.reminders24h + r.reminders1h }),
+        items: (r) => ({
+          processed: r.reminders24h + r.reminders1h + r.reminders15m,
+        }),
         failureMessage: "Failed to send appointment reminders",
       }),
   },

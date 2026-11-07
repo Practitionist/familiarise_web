@@ -4,6 +4,8 @@
  * Sends reminder notifications for upcoming appointments.
  * - 24-hour reminders: appointments starting in 23-25 hours
  * - 1-hour reminders: appointments starting in 45-75 minutes
+ * - 15-minute reminders: appointments starting in 5-21 minutes
+ * Group events remind paid seats only; unpaid HELD seats hear nothing.
  *
  * This module exports the core function.
  * It is imported by:
@@ -14,7 +16,7 @@
 
 import prisma from "../../lib/prisma";
 import type { PrismaLike } from "../../lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import { paidParticipant } from "@/lib/booking/participants";
 import {
   notifyAppointmentReminder,
   type TriggerOptions,
@@ -51,10 +53,21 @@ const REMINDER_1H = {
   maxMs: 75 * 60 * 1000, // 75 minutes
 };
 
+// 16 minutes wide, so a 15-minute cadence with a tick up to a minute late always reaches each session.
+const REMINDER_15M = {
+  label: "15m" as const,
+  minMs: 5 * 60 * 1000,
+  maxMs: 21 * 60 * 1000,
+};
+
+/** Every reminder window; staged rows dedupe a session a second tick also reaches. */
+export const REMINDER_WINDOWS = [REMINDER_24H, REMINDER_1H, REMINDER_15M];
+
 export interface ReminderResult {
   success: boolean;
   reminders24h: number;
   reminders1h: number;
+  reminders15m: number;
   errors: string[];
   timestamp: string;
 }
@@ -181,7 +194,7 @@ function queryUpcomingOccurrences(
       appointment: {
         include: {
           participants: {
-            where: liveParticipant(),
+            where: paidParticipant(),
             select: { userId: true },
           },
           consultation: {
@@ -711,9 +724,9 @@ function warnIfWindowCapped(label: ReminderWindowLabel, cap: number): void {
       window: label,
       cap,
       note:
-        label === "1h"
-          ? "sessions past the cap lose this window's 1h reminder — the window is 30 min wide and the tick is 15 min, so there may be no further tick before it closes"
-          : "the remainder drains on the next tick; the 24h window is 2 h wide",
+        label === "24h"
+          ? "the remainder drains on the next tick; the 24h window is 2 h wide"
+          : `sessions past the cap may lose this window's ${label} reminder — the tick is 15 min, so there may be no further tick before it closes`,
       timestamp: new Date().toISOString(),
     }),
   );
@@ -741,7 +754,7 @@ export async function sendAppointmentReminders(opts?: {
   );
 }
 
-/** One indexed read: is any live session inside either reminder window? */
+/** One indexed read: is any live session inside a reminder window? */
 export async function hasAppointmentReminderWork(
   db: PrismaLike,
   now: Date,
@@ -756,7 +769,11 @@ export async function hasAppointmentReminderWork(
   if (outOfTime()) return true;
   const found = await db.appointmentOccurrence.findFirst({
     where: {
-      OR: [offsetWindowWhere(REMINDER_24H), offsetWindowWhere(REMINDER_1H)],
+      OR: [
+        offsetWindowWhere(REMINDER_24H),
+        offsetWindowWhere(REMINDER_1H),
+        offsetWindowWhere(REMINDER_15M),
+      ],
     },
     select: { id: true },
   });
@@ -774,32 +791,39 @@ async function sendAppointmentRemindersUnlocked(
       success: true,
       reminders24h: 0,
       reminders1h: 0,
+      reminders15m: 0,
       errors: [],
       timestamp: new Date().toISOString(),
     };
   }
 
-  const [result24h, result1h] = await Promise.all([
+  const [result24h, result1h, result15m] = await Promise.all([
     sendRemindersForWindow(REMINDER_24H, maxPerWindow),
     sendRemindersForWindow(REMINDER_1H, maxPerWindow),
+    sendRemindersForWindow(REMINDER_15M, maxPerWindow),
   ]);
 
-  const allErrors = [...result24h.errors, ...result1h.errors];
+  const allErrors = [
+    ...result24h.errors,
+    ...result1h.errors,
+    ...result15m.errors,
+  ];
   // A capped run is not a failed run: the rows it did not reach are still in
   // the window and the next tick collects them. Reporting it as a failure
   // would page on a backlog that is draining.
-  const capped = result24h.capped || result1h.capped;
+  const capped = result24h.capped || result1h.capped || result15m.capped;
 
   const result: ReminderResult = {
     success: allErrors.length === 0,
     reminders24h: result24h.sent,
     reminders1h: result1h.sent,
+    reminders15m: result15m.sent,
     errors: allErrors,
     timestamp: new Date().toISOString(),
   };
 
   console.log(
-    `📊 Reminders sent: ${result.reminders24h} (24h) + ${result.reminders1h} (1h)`,
+    `📊 Reminders sent: ${result.reminders24h} (24h) + ${result.reminders1h} (1h) + ${result.reminders15m} (15m)`,
   );
   if (capped) {
     console.log(

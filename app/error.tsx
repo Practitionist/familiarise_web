@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import * as Sentry from "@sentry/nextjs";
-import Image from "next/image";
 import Link from "next/link";
+import { BrandWordmark } from "@/components/brand/BrandWordmark";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -13,8 +13,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { formatEta } from "@/utils/formatting";
-
-import familiariseLogo from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
 
 type MaintenancePhase = "OFF" | "DEGRADED" | "OFFLINE";
 
@@ -75,15 +73,8 @@ export default function GlobalError({
           data-testid="maintenance-error"
           className="mx-auto max-w-md px-6 text-center"
         >
-          <div className="mb-8">
-            <Image
-              src={familiariseLogo}
-              alt="Familiarise"
-              width={180}
-              height={40}
-              className="mx-auto"
-              priority
-            />
+          <div className="mb-8 flex h-10 items-center justify-center">
+            <BrandWordmark size="lg" />
           </div>
           <h1 className="mb-3 text-fluid-3xl font-semibold tracking-tight text-foreground">
             We&apos;re doing scheduled maintenance

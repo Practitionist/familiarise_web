@@ -70,7 +70,7 @@ export function SupportHome({ orgId }: Readonly<{ orgId: string }>) {
             label={q.label}
             value={counts[i].data ?? 0}
             tone={(counts[i].data ?? 0) > 0 ? q.tone : "neutral"}
-            href={`${base}/support`}
+            href={`${base}/support/activity?status=${q.status}`}
           />
         ))}
       </StatRow>

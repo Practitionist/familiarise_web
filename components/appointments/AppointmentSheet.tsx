@@ -14,11 +14,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { isApprovedStatus } from "@/lib/appointments/status";
 import {
-  eventUnionStatusBadge,
-  isApprovedStatus,
-} from "@/lib/appointments/status";
-import {
+  appointmentStatusChip,
   isDeadOccurrence,
   isDeliberateEnd,
 } from "@/lib/appointments/occurrences";
@@ -162,7 +160,7 @@ export function AppointmentSheet({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge
-              {...eventUnionStatusBadge(vm.status)}
+              {...appointmentStatusChip(vm, adapter.role)}
               withDot
               size="sm"
             />

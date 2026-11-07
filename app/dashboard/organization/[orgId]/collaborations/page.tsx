@@ -1,21 +1,7 @@
-/**
- * /dashboard/organization/[orgId]/collaborations — this org's hosted-plan
- * collaborators (#org-appts / #1025).
- *
- * Collaborators are split by the PLAN's org-ness, not the consultant's:
- * webinar/class plans with this org's organizationId are managed here;
- * B2C plans stay on the personal consultant dashboard. Received
- * invitations still aggregate personally either way — this page only
- * covers the host-perspective "my plans with collaborators" section.
- *
- * Access: members who deliver for the org (`deliversForOrg`, the nav's own
- * predicate — #1527). Operators read the org's hosted plans on the
- * Collaborators page.
- */
-
 import { notFound } from "next/navigation";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { deliversForOrg } from "@/lib/dashboard/nav/organization";
 import { InvitationsPanel } from "@/components/collaborators/InvitationsPanel";
 import {
@@ -23,27 +9,40 @@ import {
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
 
+/**
+ * Collaborators on this org's hosted webinar and class plans. The server picks
+ * the view: operators (`catalog.manage`) read every hosted plan whoever
+ * delivers it; any other delivering member reads their own plans. Both need
+ * `canHost`. B2C plans stay on the personal consultant dashboard.
+ */
 export default async function OrgCollaborationsPage({
   params,
-}: {
+}: Readonly<{
   params: Promise<{ orgId: string }>;
-}) {
+}>) {
   const { orgId } = await params;
 
-  const access = await requireOrgAccess(orgId, { readOnly: true });
-  // Same predicate as the nav item (#1527); operators use Collaborators.
-  if (access.error || !deliversForOrg(access.member)) {
-    notFound();
-  }
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    canHost: true,
+  });
+  if (access.error) notFound();
+
+  const orgView = hasOrgPermission(access.member.role, "catalog.manage");
+  if (!orgView && !deliversForOrg(access.member)) notFound();
 
   return (
     <>
       <DashboardHeader
-        title="Plan collaborators"
-        description={`Invitations and active collaborations on ${access.org.name}'s webinar and class plans.`}
+        title="Collaborations"
+        description={
+          orgView
+            ? `Invitations and active collaborations on every webinar and class plan ${access.org.name} hosts.`
+            : `Invitations and active collaborations on your webinar and class plans at ${access.org.name}.`
+        }
       />
       <DashboardContent>
-        <InvitationsPanel orgScope={orgId} />
+        <InvitationsPanel orgScope={orgId} orgView={orgView} />
       </DashboardContent>
     </>
   );

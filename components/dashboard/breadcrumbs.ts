@@ -21,6 +21,8 @@ export interface OfferingsCrumbConfig {
   typeSegments: ReadonlySet<string>;
   /** The list for an editor's type segment, relative to `basePath`. */
   listingPath: (typeSegment: string | undefined) => string;
+  /** The `offerings` crumb's label for a type; the page label when omitted. */
+  rootLabel?: (typeSegment: string | undefined) => string;
 }
 
 export interface DashboardBreadcrumbsInput {
@@ -56,6 +58,7 @@ interface SegmentCrumbCtx {
   onOfferings: boolean;
   offeringsConfig: OfferingsCrumbConfig | undefined;
   offeringsListingHref: string;
+  offeringsType: string | undefined;
   pageLabels: Record<string, string>;
   pathlessSegments: ReadonlySet<string> | undefined;
   paramValues: ReadonlySet<string>;
@@ -84,7 +87,13 @@ function resolveSegmentCrumb(ctx: Readonly<SegmentCrumbCtx>): Crumb | null {
       (ctx.onOfferings && offeringsConfig.typeSegments.has(seg)))
   ) {
     // A type segment has no page of its own; the list is where it lives.
-    return { label, href: ctx.offeringsListingHref };
+    return {
+      label:
+        seg === "offerings" && offeringsConfig.rootLabel
+          ? offeringsConfig.rootLabel(ctx.offeringsType)
+          : label,
+      href: ctx.offeringsListingHref,
+    };
   }
   // A segment bound to a dynamic param is never a URL of its own.
   const navigable =
@@ -125,6 +134,7 @@ export function useDashboardBreadcrumbs(
         onOfferings,
         offeringsConfig,
         offeringsListingHref,
+        offeringsType: parts[1],
         pageLabels,
         pathlessSegments,
         paramValues,

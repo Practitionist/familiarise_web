@@ -16,7 +16,7 @@ import { useSaveBookingRequestSettings } from "../settings/use-save-booking-requ
 /**
  * The pause switch on the working page. It saves the one flag through the
  * booking-settings PATCH, guarded by the value it showed, and shares the
- * settings query with the Booking requests page.
+ * settings query with the Booking mode page.
  */
 export function AcceptingRequestsToggle({
   consultantId,

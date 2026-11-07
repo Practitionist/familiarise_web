@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { Loader2, Save, Sparkles, Trash2 } from "lucide-react";
+import { Loader2, Save, Trash2 } from "lucide-react";
 import { z } from "zod";
 
 import {
@@ -62,8 +62,8 @@ async function failureCopy(res: Response): Promise<string> {
 
 /**
  * The host's manage sheet: rename, delete (attendees are told), who can
- * watch and how long it is kept. Replay sales are on hold, so the listing
- * form is not offered; an existing listing can still be withdrawn.
+ * watch and how long it is kept. Replays are not sold; a listing made
+ * before that can still be withdrawn.
  */
 export function RecordingManageSheet({
   open,
@@ -234,45 +234,44 @@ export function RecordingManageSheet({
             )}
           </section>
 
-          <section className="space-y-2 border-t border-border pt-5">
-            <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              <Sparkles className="h-4 w-4 text-primary" aria-hidden />
-              Replay marketplace
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Replay sales are coming soon.
-            </p>
-            {recording.sharedAcrossRuns !== null && (
-              <p className="text-xs text-muted-foreground">
-                Shared with attendees of every run:{" "}
-                {recording.sharedAcrossRuns ? "yes" : "no"} (set on the
-                offering)
-              </p>
-            )}
-            {recording.listingStatus === "PUBLISHED" && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={pending !== null}
-                onClick={() =>
-                  void act(
-                    "unpublish",
-                    () => fetch(`${base}/publish`, { method: "DELETE" }),
-                    "Listing withdrawn",
-                  )
-                }
-              >
-                {pending === "unpublish" && (
-                  <Loader2
-                    className="mr-1.5 h-3.5 w-3.5 animate-spin"
-                    aria-hidden
-                  />
-                )}
-                Withdraw the existing listing
-              </Button>
-            )}
-          </section>
+          {(recording.sharedAcrossRuns !== null ||
+            recording.listingStatus === "PUBLISHED") && (
+            <section className="space-y-2 border-t border-border pt-5">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Sharing
+              </h3>
+              {recording.sharedAcrossRuns !== null && (
+                <p className="text-xs text-muted-foreground">
+                  Shared with attendees of every run:{" "}
+                  {recording.sharedAcrossRuns ? "yes" : "no"} (set on the
+                  offering)
+                </p>
+              )}
+              {recording.listingStatus === "PUBLISHED" && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={pending !== null}
+                  onClick={() =>
+                    void act(
+                      "unpublish",
+                      () => fetch(`${base}/publish`, { method: "DELETE" }),
+                      "Listing withdrawn",
+                    )
+                  }
+                >
+                  {pending === "unpublish" && (
+                    <Loader2
+                      className="mr-1.5 h-3.5 w-3.5 animate-spin"
+                      aria-hidden
+                    />
+                  )}
+                  Withdraw the existing listing
+                </Button>
+              )}
+            </section>
+          )}
         </div>
       </SheetContent>
     </Sheet>

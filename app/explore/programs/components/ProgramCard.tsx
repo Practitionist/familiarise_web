@@ -7,6 +7,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCurrency } from "@/hooks/useCurrency";
 import { CompanyLogo } from "@/components/ui/company-logo";
+import { BrandMark } from "@/components/brand/BrandWordmark";
 import { isClassProgram, Program } from "@/lib/explore/programs";
 import { displayedScore, displayedScoreCount } from "@/lib/reviews-display";
 
@@ -228,12 +229,7 @@ function GridCard({
         </div>
 
         <div className="flex items-center gap-1 mt-2">
-          <Image
-            src="/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif"
-            alt="Familiarise"
-            width={12}
-            height={12}
-          />
+          <BrandMark className="h-3 w-3 text-[8px]" />
           <span className="text-[10px] text-muted-foreground/70">
             on Familiarise
           </span>
@@ -336,12 +332,7 @@ function ListCard({
             </span>
           </div>
           <div className="flex items-center gap-1 mt-2">
-            <Image
-              src="/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif"
-              alt="Familiarise"
-              width={12}
-              height={12}
-            />
+            <BrandMark className="h-3 w-3 text-[8px]" />
             <span className="text-[10px] text-muted-foreground/70">
               on Familiarise
             </span>

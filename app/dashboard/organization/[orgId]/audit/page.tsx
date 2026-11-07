@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { humanizeEnum } from "@/lib/ui/tone";
+import { ORG_AUDIT_CATEGORY_LABEL } from "@/lib/labels/org-labels";
 import { visibleAuditCategories } from "@/lib/enterprise/audit-visibility";
 import {
   Select,
@@ -187,7 +188,9 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
       header: "Category",
       // A neutral taxonomy, not a status: plain chips (#1762-4).
       cell: (row) => (
-        <Badge variant="secondary">{humanizeEnum(row.category)}</Badge>
+        <Badge variant="secondary">
+          {ORG_AUDIT_CATEGORY_LABEL[row.category]}
+        </Badge>
       ),
     },
     {
@@ -223,7 +226,7 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
   return (
     <>
       <DashboardHeader
-        title="Audit log"
+        title="Audit"
         description="Every change in your organization, with who made it and when."
       />
       <DashboardContent>
@@ -264,7 +267,7 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
                   <SelectItem value="ALL">All categories</SelectItem>
                   {categories.map((c) => (
                     <SelectItem key={c} value={c}>
-                      {humanizeEnum(c)}
+                      {ORG_AUDIT_CATEGORY_LABEL[c]}
                     </SelectItem>
                   ))}
                 </SelectContent>

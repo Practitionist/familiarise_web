@@ -7,6 +7,10 @@ import UnplacedWeeksEmail from "@/emails/booking/UnplacedWeeksEmail";
 import * as React from "react";
 import { Button, Section, Text } from "react-email";
 import type { Tx } from "@/lib/prisma";
+import {
+  calendarLinks,
+  type CalendarSession,
+} from "@/lib/appointments/calendar-links";
 import AppointmentBookedEmail from "@/emails/booking/AppointmentBookedEmail";
 import AppointmentCancelledEmail from "@/emails/booking/AppointmentCancelledEmail";
 import AppointmentRescheduledEmail, {
@@ -86,6 +90,8 @@ export interface AppointmentBookedEmailArgs {
   planTitle: string;
   appointmentType: string;
   startsAt: Date;
+  /** The next session ahead, which the attendee's calendar links name; none means no links. */
+  calendarSession?: CalendarSession | null;
   dashboardUrl: string;
   cancellationWindowText?: string;
 }
@@ -113,6 +119,15 @@ function bookedSpec(args: AppointmentBookedEmailArgs): RecipientEmailSpec {
         startsAtText: whenText(args.startsAt, r.zone),
         dashboardUrl: absolute(args.dashboardUrl),
         cancellationWindowText: args.cancellationWindowText,
+        calendar:
+          role(r) === "consultee" && args.calendarSession
+            ? calendarLinks({
+                appointmentId: args.appointmentId,
+                userId: r.userId,
+                title: args.planTitle,
+                ...args.calendarSession,
+              })
+            : null,
         unsubscribeUrl: r.unsubscribeUrl,
       }),
   };
@@ -274,7 +289,7 @@ export const stageAppointmentRescheduledEmail =
 
 // ── Reminder ────────────────────────────────────────────────────────────────
 
-export type ReminderWindowLabel = "24h" | "1h";
+export type ReminderWindowLabel = "24h" | "1h" | "15m";
 
 /**
  * #1583 P1 — the `FailedEmail.emailType` the reminder twin stages under, and
@@ -304,6 +319,7 @@ export function legacyAppointmentReminderEntityRef(
 const WINDOW_WORDS: Record<ReminderWindowLabel, string> = {
   "24h": "tomorrow",
   "1h": "in about an hour",
+  "15m": "in a few minutes",
 };
 
 export interface AppointmentReminderEmailArgs {

@@ -32,11 +32,7 @@ export interface OrgWizardData {
   orgBps: number;
   consultantBps: number;
 
-  // Step 2: Branding — colors only until the image-upload route lands.
-  primaryColor: string | null;
-  secondaryColor: string | null;
-
-  // Step 3: Invite Team
+  // Step 2: Invite Team
   inviteEmails: string[];
   inviteRole: SelfServiceMemberRole;
 }
@@ -76,12 +72,7 @@ export interface StepProps {
 }
 
 type StepKey =
-  | "org-info"
-  | "billing"
-  | "revenue-rates"
-  | "branding"
-  | "invite-team"
-  | "review";
+  "org-info" | "billing" | "revenue-rates" | "invite-team" | "review";
 
 export interface WizardStep {
   key: StepKey;
@@ -92,9 +83,9 @@ export interface WizardStep {
 /**
  * Returns the ordered list of wizard steps for a given capability shape.
  *
- * canSponsor-only: Org Info → Billing → Branding → Invite Team → Review    (5 steps)
- * canHost-only:    Org Info → Revenue Rates → Branding → Invite Team → Review (5 steps)
- * both (HYBRID):   Org Info → Billing → Revenue Rates → Branding → Invite Team → Review (6 steps)
+ * canSponsor-only: Org Info → Billing → Invite Team → Review    (4 steps)
+ * canHost-only:    Org Info → Revenue Rates → Invite Team → Review (4 steps)
+ * both (HYBRID):   Org Info → Billing → Revenue Rates → Invite Team → Review (5 steps)
  *
  * An org that has neither capability is a misconfiguration — the wizard
  * submit button validates at least one is set before advancing.
@@ -132,11 +123,6 @@ export function getSteps(capabilities: {
           },
         ]
       : []),
-    {
-      key: "branding",
-      label: "Branding",
-      subtitle: "Customize your organization's visual identity.",
-    },
     {
       key: "invite-team",
       label: "Invite Team",

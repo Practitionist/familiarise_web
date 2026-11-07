@@ -19,22 +19,11 @@
 
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
+import { ORG_FUNDED_PAYMENT_METHODS } from "@/lib/payments/org-funded";
 import { readOrgOwnerUserIds } from "@/lib/enterprise/related-party";
 import type { AppointmentsType, Prisma } from "@prisma/client";
 import type { Scope } from "./parse";
 import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
-
-/**
- * The rails on which an ORG's money paid — the same three values
- * `isOrgFundedPaymentMethod` (lib/data/org-sponsored-seats.ts) accepts, which
- * is the predicate `sponsoredSeatsWhere` already filters the sponsor view by.
- *
- * Duplicated as a literal because a Prisma `in` filter needs the values at
- * query-build time and that tuple is module-private there;
- * `__tests__/security/org-funded-predicate.test.ts` pins the two lists together
- * so they cannot drift. Derive a FOURTH copy instead of importing this one.
- */
-const ORG_FUNDED_PAYMENT_METHODS = ["WALLET", "INVOICE", "LICENSE"];
 
 /** Live sessions a list row carries; the rest are counted, not loaded. */
 const LIST_UPCOMING_OCCURRENCES = 3;
