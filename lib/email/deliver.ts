@@ -20,6 +20,7 @@ import {
   type EmailDeliveryPolicy,
 } from "./delivery-policy";
 import { idempotencyKeyFor } from "./idempotency";
+import { RENDER_FAILED } from "./replay-policy";
 import { stampFirstAttempt, UNSETTLED } from "@/lib/retry/provider-window";
 import { EmailRecipientCappedError, overRecipientCap } from "./recipient-cap";
 import { EmailSuppressedError, findSuppression } from "./suppression";
@@ -254,6 +255,40 @@ export async function stage(
     );
     return null;
   }
+}
+
+/** The recipient of a message whose template threw before it could be staged. */
+export interface UnrenderedEmail {
+  from: string;
+  to: string;
+  deliveryPolicy?: EmailDeliveryPolicy;
+}
+
+/**
+ * Records, inside `tx`, a required message that failed to render: a body-less
+ * `DEAD_LETTER` row that Needs attention lists and replay refuses.
+ */
+export async function stageRenderFailure(
+  tx: Pick<Tx, "failedEmail">,
+  unrendered: UnrenderedEmail,
+  emailType: string,
+  entityRef: string | null,
+): Promise<void> {
+  await tx.failedEmail.create({
+    data: {
+      recipient: unrendered.to,
+      fromAddress: unrendered.from,
+      subject: `Not rendered: ${emailType}`,
+      htmlBody: "",
+      textBody: null,
+      ...deliveryColumns(unrendered.deliveryPolicy),
+      emailType,
+      status: "DEAD_LETTER",
+      lastError: RENDER_FAILED,
+      entityRef,
+    },
+    select: { id: true },
+  });
 }
 
 // AbortSignal.timeout rejects with a DOMException named TimeoutError; a
