@@ -17,8 +17,12 @@ const FRESHNESS_FLOOR_MINUTES = 30;
  */
 export type SloTier = "paging" | "watched";
 
-/** Housekeeping: a late run only delays cleanup. Every other target is money, compliance or user-facing and pages. */
+/**
+ * Housekeeping, where a late run only delays cleanup, and the Novu probe, where it only delays a
+ * review row. Every other target is money, compliance or user-facing and pages.
+ */
 const WATCHED_TARGETS: ReadonlySet<Target> = new Set<Target>([
+  "novu-step-failure-probe",
   "prune-system-job-executions",
   "prune-system-events",
   "prune-audit-logs",

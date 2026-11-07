@@ -6,6 +6,9 @@
 // RazorpayX objects, nulls the masked bank fields and keeps the rzp ids.
 // Session-document erasure has its own suite; this one pins the vendors.
 // Digital product erasure has its own suite; this scrub owns no products.
+jest.mock("../../lib/compliance/erasure/mail-footprint", () => ({
+  scrubMailFootprintTx: jest.fn(),
+}));
 jest.mock("../../lib/digital-products/erasure", () => ({
   scrubDigitalProductsTx: jest.fn(async () => []),
   purgeErasedCreatorFiles: jest.fn(async () => []),

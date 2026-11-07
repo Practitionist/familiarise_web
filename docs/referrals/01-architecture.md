@@ -86,6 +86,7 @@ The consumer vest, in one transaction, does the following.
 2. It claims a slot on the referrer's code in one conditional update that checks the lifetime cap (25 vests), the yearly reward cap (₹10,000), and the weekly cap (5 vests). A refused slot becomes `VOID` for the lifetime or yearly cap, and a weekly refusal defers the referral to a later run.
 3. It claims the reward from the monthly budget by conditional update on the configuration `version`. If the budget cannot cover the reward, the whole row rolls back and waits for the next month.
 4. It moves the referral to `VESTED`, the credit to `VESTED` with an expiry of `creditExpiryDays` from now, and posts the ledger entry described in [03-credit-system.md](../finance/20-ledger/07-referral-credits.md).
+5. It stages the referrer's `referral-bonus-earned` bell and `REFERRAL_BONUS_EARNED` email in the same transaction (`stageReferralReward`, `lib/referrals/referral-notify.ts`), attempted after commit. Applying a code stages the referee's welcome notice the same way, stating the programme's `discountMaxPaise` as a cap, and the payment that redeems credits stages `referral-credits-applied` in its checkout or capture transaction (notification decision 17).
 
 ### Expert referral vest
 

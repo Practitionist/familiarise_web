@@ -1,6 +1,7 @@
 import React from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { PURPOSE_CODE_META } from "@/lib/compliance/purpose-codes";
 import { MessageReviewNotice } from "./MessageReviewNotice";
 
 interface AgreementProps {
@@ -119,10 +120,11 @@ const TermsAndPrivacyAgreement: React.FC<TermsAndPrivacyAgreementProps> = ({
           htmlFor="marketing-consent"
           className="text-sm cursor-pointer leading-snug"
         >
-          <span className="font-medium">Optional:</span> Send me product
-          updates, mentorship tips, and promotional offers (
-          <code>MARKETING_COMMS</code>). You can withdraw this anytime in
-          Settings.
+          <span className="font-medium">
+            Optional: {PURPOSE_CODE_META.MARKETING_COMMS.label}.
+          </span>{" "}
+          {PURPOSE_CODE_META.MARKETING_COMMS.description} You can withdraw this
+          anytime in Settings.
         </Label>
       </div>
     </div>

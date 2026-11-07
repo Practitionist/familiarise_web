@@ -16,6 +16,9 @@
  */
 
 // Session-document erasure has its own suite; this one pins the vendors.
+jest.mock("../../lib/compliance/erasure/mail-footprint", () => ({
+  scrubMailFootprintTx: jest.fn(),
+}));
 jest.mock("../../lib/documents/document-erasure", () => ({
   eraseUserSessionDocuments: jest.fn(async () => []),
 }));

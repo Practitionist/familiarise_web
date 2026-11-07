@@ -7,6 +7,9 @@ import type { UserRole } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
 import { ANNOUNCEMENTS_TAG } from "@/lib/cache-tags";
+import { assertBodySize } from "@/lib/validation/limits";
+import { UpdateAnnouncementSchema } from "@/schemas/announcements";
+
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
@@ -26,9 +29,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Announcements fan out to every user (`notifyGeneralAnnouncement`), so
-    // BACKOFFICE_PERMISSIONS makes them ADMIN-only. The nav already hid the
-    // surface from staff; the route accepted the call regardless.
+    // An announcement can ring every user's bell, so BACKOFFICE_PERMISSIONS
+    // makes them ADMIN-only. The nav already hid the surface from staff; the
+    // route accepted the call regardless.
     if (
       !hasBackofficePermission(
         session.user.role as UserRole,
@@ -42,7 +45,21 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     }
 
     const { id } = await params;
-    const body = await request.json();
+    const tooLarge = assertBodySize(request);
+    if (tooLarge) return tooLarge;
+    const parsed = UpdateAnnouncementSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Validation failed",
+          details: parsed.error.issues,
+        },
+        { status: 400 },
+      );
+    }
 
     const existingAnnouncement = await prisma.announcement.findUnique({
       where: { id },
@@ -55,40 +72,17 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const {
-      title,
-      content,
-      isActive,
-      startDate,
-      endDate,
-      backgroundColor,
-      textColor,
-      linkUrl,
-      linkText,
-    } = body;
-
+    const { startDate, endDate, ...fields } = parsed.data;
     const announcement = await prisma.announcement.update({
       where: { id },
       data: {
-        ...(title !== undefined && { title }),
-        ...(content !== undefined && { content }),
-        ...(isActive !== undefined && { isActive }),
+        ...fields,
         ...(startDate !== undefined && {
-          startDate:
-            startDate && !isNaN(new Date(startDate).getTime())
-              ? new Date(startDate)
-              : null,
+          startDate: startDate ? new Date(startDate) : null,
         }),
         ...(endDate !== undefined && {
-          endDate:
-            endDate && !isNaN(new Date(endDate).getTime())
-              ? new Date(endDate)
-              : null,
+          endDate: endDate ? new Date(endDate) : null,
         }),
-        ...(backgroundColor !== undefined && { backgroundColor }),
-        ...(textColor !== undefined && { textColor }),
-        ...(linkUrl !== undefined && { linkUrl }),
-        ...(linkText !== undefined && { linkText }),
       },
     });
 
@@ -127,9 +121,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Announcements fan out to every user (`notifyGeneralAnnouncement`), so
-    // BACKOFFICE_PERMISSIONS makes them ADMIN-only. The nav already hid the
-    // surface from staff; the route accepted the call regardless.
+    // An announcement can ring every user's bell, so BACKOFFICE_PERMISSIONS
+    // makes them ADMIN-only. The nav already hid the surface from staff; the
+    // route accepted the call regardless.
     if (
       !hasBackofficePermission(
         session.user.role as UserRole,

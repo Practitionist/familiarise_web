@@ -109,6 +109,7 @@ jest.mock("../../lib/email", () => ({
   __esModule: true,
   sendPaymentSuccessEmail: jest.fn(),
   sendPaymentFailedEmail: jest.fn(),
+  stageRenderFailure: jest.fn(),
 }));
 
 const notifyPaymentSuccess = jest.fn();
@@ -165,10 +166,17 @@ jest.mock("../../lib/events/capacity", () => ({
   getClassCapacity: jest.fn(() => ({ isFull: false, registered: 1, max: 10 })),
 }));
 
-const notifyCreditsApplied = jest.fn();
+const stageCreditsApplied = jest.fn(async (..._args: unknown[]) => ({}));
 jest.mock("../../lib/referrals/referral-notify", () => ({
-  notifyCreditsAppliedForPaymentBestEffort: (...args: unknown[]) =>
-    notifyCreditsApplied(...args),
+  readCreditsApplied: jest.fn(
+    async (_db: unknown, input: Record<string, unknown>) => ({
+      ...input,
+      creditsUsedPaise: 500,
+      remainingPaise: 0,
+    }),
+  ),
+  prepareCreditsAppliedEmail: jest.fn(async () => null),
+  stageCreditsApplied: (...args: unknown[]) => stageCreditsApplied(...args),
 }));
 
 import { handlePaymentSuccess } from "../../lib/payments/webhooks/handlers";
@@ -372,12 +380,17 @@ describe("credits-applied bell on capture", () => {
       10000,
     );
 
-    expect(notifyCreditsApplied).toHaveBeenCalledTimes(1);
-    expect(notifyCreditsApplied).toHaveBeenCalledWith({
-      paymentId: "pay1",
-      userId: CONSULTEE_USER,
-      appointmentType: "CONSULTATION",
-    });
+    // Staged inside the capture transaction, once.
+    expect(stageCreditsApplied).toHaveBeenCalledTimes(1);
+    expect(stageCreditsApplied).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        paymentId: "pay1",
+        userId: CONSULTEE_USER,
+        appointmentType: "CONSULTATION",
+      }),
+      null,
+    );
   });
 
   it("does not bell again when an operator recovers the payment", async () => {
@@ -389,6 +402,6 @@ describe("credits-applied bell on capture", () => {
       { recover: true },
     );
 
-    expect(notifyCreditsApplied).not.toHaveBeenCalled();
+    expect(stageCreditsApplied).not.toHaveBeenCalled();
   });
 });

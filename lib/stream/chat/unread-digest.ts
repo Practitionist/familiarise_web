@@ -250,7 +250,6 @@ export async function handleUnreadMessageReminder(
         recipients: [recipientId],
         dedupeKey,
         entityRef: dedupeKey,
-        deferrable: true,
         payload: {
           summary,
           threadCount: threads.length,

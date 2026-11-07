@@ -1,0 +1,14 @@
+# Schema & SQL Sidecars
+
+Applies to `prisma/schema.prisma` and `prisma/sql/*.sql`. The root `AGENTS.md` still applies.
+
+1. **Check Postgres before writing a reconciler**: read `prisma/sql/{check-constraints,ledger-triggers,payment-legs-triggers}.sql`. If a `CHECK` constraint, the `EXCLUDE USING gist` index (`occurrence_no_confirmed_overlap`), or a `CONSTRAINT TRIGGER` (`ledger_txn_balanced`, `payment_legs_sum_to_amount`, `ledger_*_immutable`) already prevents an invalid state at `COMMIT`, **do not** write application-level sweeps to re-verify it. Only reconcile across external vendor boundaries (Razorpay, Stream, Resend, Supabase Storage).
+2. **One database serves dev and prod across worktrees.** The owner runs `prisma db push` and the database-writing `npm run db:*` scripts; `.claude/settings.json` deny rules block their usual command forms for Claude Code; the rules match command text, so another spelling is still forbidden. Run `npx prisma generate` after editing `prisma/schema.prisma`.
+3. **Check live-DB drift read-only** with `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`. A plain `db push` would drop the `prisma/sql` sidecar uniques.
+4. **New `CHECK` constraints, partial unique indexes and triggers belong in `prisma/sql/*.sql`.** A trigger that rebuilds a summary or aggregate must be `FOR EACH STATEMENT` with transition tables, or a dirty-mark plus a sweep. Guard and constraint triggers stay `FOR EACH ROW`.
+5. **Supabase MCP: reads run freely; every write waits for the owner.** One Supabase project serves dev and prod, so every query is a production query.
+   - **Reads** need no approval. Batch several reads into one `execute_sql` call to cut round trips. The `.claude/hooks/supabase-sql-gate.ts` hook lets a call through without a prompt only when every statement is provably read-only (`SELECT`, `WITH … SELECT`, `EXPLAIN`, `SHOW`, with no data-modifying CTE, `SELECT … INTO`, row lock or known mutating function).
+   - **Anything else** (DML, DDL, `SET`, `DO`, unparseable SQL) needs the owner's approval of the exact statement in this session. The hook asks with the statement type; in bypass-permissions mode it denies instead, so show the owner the statement in chat and re-run after they leave bypass mode. `apply_migration` and the branch, project and edge-function tools always ask (`permissions.ask`).
+   - **Schema changes** still go through `prisma/schema.prisma`, the sidecars and the human-run `db:push`. MCP DDL is only for an owner-approved emergency, mirrored in `prisma/schema.prisma` or `prisma/sql/*.sql` in the same PR, or the next `db push` drops or reverts it.
+   - When a separate dev Supabase project exists, the hook can allow writes on that project ref without a prompt.
+6. **Playbook**: `.claude/skills/schema/SKILL.md`.

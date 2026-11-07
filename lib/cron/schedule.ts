@@ -22,6 +22,7 @@ export const TARGETS = [
   "release-earnings",
   "retry-failed-emails",
   "drain-notification-outbox",
+  "novu-step-failure-probe",
   "expire-unpaid-trials",
   "reschedule-proposals",
   "appointment-reminders",
@@ -128,7 +129,9 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "abandoned-payments": 10,
   "dispatch-outbound-webhooks": 15,
   "retry-failed-emails": 20,
-  "drain-notification-outbox": 20,
+  "drain-notification-outbox": 100,
+  // Pages are capped inside the probe; it reads a time window, not rows.
+  "novu-step-failure-probe": null,
   "reconcile-orphaned-confirmations": 10,
   "vest-referral-credits": 10,
   "settle-cancelled-sessions": 10,
@@ -212,6 +215,8 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "sweep-orphaned-topup-captures": 15,
   "dispatch-outbound-webhooks": 15,
   "drain-notification-outbox": 10,
+  // No 15, 30 or 60-minute phase has room left under the tick cap's free slot.
+  "novu-step-failure-probe": 120,
   "retry-failed-emails": 15,
   "sentry-ingest-canary": 1440,
   "sync-payment-earnings": 15,
@@ -315,6 +320,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-orphaned-confirmations": 5,
   "expire-unpaid-trials": 5,
   "drain-notification-outbox": 5,
+  "novu-step-failure-probe": 10,
   "reschedule-proposals": 10,
   "appointment-reminders": 10,
   "tentative-occurrences": 10,
@@ -588,7 +594,10 @@ const PER_TARGET_TIMEOUT_MS = 15_000;
 const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "abandoned-payments": 20_000,
   "retry-failed-emails": 20_000,
-  "drain-notification-outbox": 20_000,
+  // The relay starts no wave after 12 s and an attempt makes one bulk call, so its last wave ends inside this.
+  "drain-notification-outbox": 24_000,
+  // No Novu page starts after 10 s and each request times out at 5 s.
+  "novu-step-failure-probe": 20_000,
   "reconcile-orphaned-confirmations": 20_000,
   "appointment-reminders": 20_000,
   "expire-stale-requests": 20_000,

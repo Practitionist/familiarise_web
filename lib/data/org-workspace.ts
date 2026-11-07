@@ -423,7 +423,6 @@ export async function getWorkspaceActivity(
 export interface WorkspaceSettingsProfile {
   id: string;
   defaultLandingOrganizationId: string | null;
-  notificationRoutingMode: string;
   locale: string | null;
   currencyDisplayCode: string | null;
   updatedAt: string;
@@ -460,7 +459,6 @@ export async function getWorkspaceSettings(
     select: {
       id: true,
       defaultLandingOrganizationId: true,
-      notificationRoutingMode: true,
       locale: true,
       currencyDisplayCode: true,
       updatedAt: true,
@@ -495,7 +493,6 @@ export async function getWorkspaceSettings(
     profile: {
       id: profile.id,
       defaultLandingOrganizationId: profile.defaultLandingOrganizationId,
-      notificationRoutingMode: profile.notificationRoutingMode,
       locale: profile.locale,
       currencyDisplayCode: profile.currencyDisplayCode,
       updatedAt: profile.updatedAt.toISOString(),

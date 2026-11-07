@@ -1,11 +1,10 @@
 import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { goHref } from "@/lib/dashboard/go";
-import { EMAIL_BUDGET_MS } from "@/lib/email";
-import { sendCollaboratorInviteExpiredEmail } from "@/lib/email/senders/collaborators";
-import { collaboratorRoleLabel } from "@/lib/novu/humanize";
-import { notifyCollaboratorInviteExpired } from "@/lib/novu/service";
-import { getAppUrl } from "@/lib/url";
+import {
+  flushNotificationsAfter,
+  type StagedNotificationBundle,
+} from "@/lib/novu/stage-then-attempt";
+import { stageCollaboratorNotifications } from "./notifications";
 
 const STALE_INVITE_MS = 14 * 24 * 60 * 60 * 1000;
 
@@ -16,7 +15,7 @@ export interface ExpireStaleCollaboratorInvitesResult {
 
 /**
  * Transitions PENDING collaborator invitations older than 14 days to DECLINED
- * via conditional CAS update and notifies inviter and invitee.
+ * via conditional CAS update; each expiry stages its notices in the same transaction.
  */
 export async function expireStaleCollaboratorInvites(
   limit = 50,
@@ -30,118 +29,38 @@ export async function expireStaleCollaboratorInvites(
       const cutoff = new Date(now.getTime() - STALE_INVITE_MS);
 
       const candidates = await prisma.collaborator.findMany({
-        where: {
-          status: "PENDING",
-          updatedAt: { lt: cutoff },
-        },
+        where: { status: "PENDING", updatedAt: { lt: cutoff } },
         take: effectiveLimit,
         orderBy: { updatedAt: "asc" },
-        select: {
-          id: true,
-          collaboratorType: true,
-          role: true,
-          revenueShareBps: true,
-          consultantProfile: {
-            select: {
-              user: { select: { id: true, name: true } },
-            },
-          },
-          invitedBy: {
-            select: {
-              user: { select: { id: true, name: true } },
-            },
-          },
-          webinarPlan: {
-            select: {
-              title: true,
-              consultantProfile: {
-                select: {
-                  user: { select: { id: true, name: true } },
-                },
-              },
-            },
-          },
-          classPlan: {
-            select: {
-              title: true,
-              consultantProfile: {
-                select: {
-                  user: { select: { id: true, name: true } },
-                },
-              },
-            },
-          },
-        },
+        select: { id: true },
       });
 
       let expired = 0;
-
-      for (const c of candidates) {
-        const updated = await prisma.collaborator.updateMany({
-          where: { id: c.id, status: "PENDING" },
-          data: { status: "DECLINED", respondedAt: now },
+      const staged: StagedNotificationBundle[] = [];
+      for (const { id } of candidates) {
+        const notices = await prisma.$transaction(async (tx) => {
+          const updated = await tx.collaborator.updateMany({
+            where: { id, status: "PENDING", updatedAt: { lt: cutoff } },
+            data: { status: "DECLINED", respondedAt: now },
+          });
+          if (updated.count === 0) return null;
+          const row = await tx.collaborator.findUniqueOrThrow({
+            where: { id },
+          });
+          return stageCollaboratorNotifications(tx, "EXPIRED", row);
         });
-        if (updated.count === 0) continue;
-
+        if (!notices) continue;
         expired += 1;
-
-        const planType = c.collaboratorType === "WEBINAR" ? "webinar" : "class";
-        const plan =
-          c.collaboratorType === "WEBINAR" ? c.webinarPlan : c.classPlan;
-        const planTitle =
-          plan?.title ??
-          (planType === "webinar" ? "Untitled webinar" : "Untitled class");
-        const inviteeUser = c.consultantProfile.user;
-        const inviterUser =
-          c.invitedBy?.user ?? plan?.consultantProfile?.user ?? null;
-        const recipientUserIds = [inviteeUser.id];
-        if (inviterUser?.id && inviterUser.id !== inviteeUser.id) {
-          recipientUserIds.push(inviterUser.id);
-        }
-
-        await Promise.all([
-          notifyCollaboratorInviteExpired(
-            recipientUserIds,
-            {
-              planTitle,
-              planType,
-              collaboratorName: inviteeUser.name ?? "Collaborator",
-              role: collaboratorRoleLabel(c.role),
-              dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-            },
-            `collaborator.expired:${c.id}`,
-          ).catch(() => []),
-          sendCollaboratorInviteExpiredEmail(
-            {
-              recipientUserId: inviteeUser.id,
-              actorName: inviterUser?.name ?? "Plan host",
-              collaboratorName: inviteeUser.name ?? "Collaborator",
-              planTitle,
-              planType,
-              role: c.role,
-              revenueShareBps: c.revenueShareBps,
-              collaboratorId: c.id,
-            },
-            EMAIL_BUDGET_MS.JOB,
-          ).catch(() => undefined),
-          inviterUser?.id && inviterUser.id !== inviteeUser.id
-            ? sendCollaboratorInviteExpiredEmail(
-                {
-                  recipientUserId: inviterUser.id,
-                  actorName: inviteeUser.name ?? "Collaborator",
-                  collaboratorName: inviteeUser.name ?? "Collaborator",
-                  planTitle,
-                  planType,
-                  role: c.role,
-                  revenueShareBps: c.revenueShareBps,
-                  collaboratorId: c.id,
-                },
-                EMAIL_BUDGET_MS.JOB,
-              ).catch(() => undefined)
-            : Promise.resolve(),
-        ]);
+        staged.push(notices);
       }
 
+      await flushNotificationsAfter(
+        {
+          bells: staged.flatMap((n) => n.bells ?? []),
+          emails: staged.flatMap((n) => n.emails ?? []),
+        },
+        "collaborator.expired",
+      );
       return { expired, scanned: candidates.length };
     },
   );

@@ -7,11 +7,15 @@
  *  - `GET` lists FailedEmail rows (most recent first), optionally filtered to
  *    a single `status` (e.g. DEAD_LETTER) for triage.
  *
- *  - `POST { ids: [...] }` requeues DEAD_LETTER rows: status → PENDING,
- *    nextRetryAt → now, attempts reset to 0 so the backoff schedule restarts.
- *    The worker (jobs/email/retry-failed-emails.ts) replays the stored html/
- *    text VERBATIM on its next tick — no re-render, no dispatcher. Scoped to
- *    DEAD_LETTER so a replay can't yank a row that's mid-retry.
+ *  - `POST { ids: [...], reason }` requeues DEAD_LETTER rows through the
+ *    audited ops door: status → PENDING, nextRetryAt → now, attempts reset to
+ *    0 so the backoff schedule restarts. The worker
+ *    (jobs/email/retry-failed-emails.ts) replays the stored html/text VERBATIM
+ *    on its next tick — no re-render, no dispatcher. Credential mail, holds,
+ *    accepted rows, recipient refusals and rows past the provider window are
+ *    refused (lib/email/replay-policy.ts), as is a recipient whose current
+ *    preferences or suppression would stop the send. The prior failure reason
+ *    stays on the row and in the audit record.
  *
  * Access: `compliance.manage` (admin only, #1527 Q5 — tightened from
  * privileged, which admitted staff). The rendered bodies can carry
@@ -22,11 +26,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { withOpsAction } from "@/lib/backoffice/ops-action-log";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { DEAD_LETTER_EMAIL_WHERE } from "@/lib/backoffice/queue-predicates";
-
-const ReplayBodySchema = z.object({
-  ids: z.array(z.string().min(1)).min(1).max(200),
-});
+import {
+  deliveryPolicyOf,
+  emailPolicyRefusalForUser,
+  EMAIL_POLICY_USER_SELECT,
+} from "@/lib/email/delivery-policy";
+import {
+  emailReplayRefusal,
+  EMAIL_REPLAY_EXPLANATIONS,
+} from "@/lib/email/replay-policy";
+import { findSuppressed, normaliseEmail } from "@/lib/email/suppression";
 
 const StatusSchema = z.enum(["PENDING", "RETRY", "SENT", "DEAD_LETTER"]);
 
@@ -68,38 +80,116 @@ export async function GET(req: NextRequest) {
       nextRetryAt: true,
       lastError: true,
       sentAt: true,
+      resendId: true,
+      firstAttemptAt: true,
       createdAt: true,
       updatedAt: true,
     },
   });
 
-  return NextResponse.json({ data: rows });
-}
-
-export async function POST(req: NextRequest) {
-  const auth = await requireBackofficeSurface("compliance.manage");
-  if (auth.error) return auth.error;
-
-  const raw = await req.json().catch(() => ({}));
-  const parsed = ReplayBodySchema.safeParse(raw ?? {});
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid body", detail: parsed.error.flatten() },
-      { status: 400 },
-    );
-  }
-
-  // Only DEAD_LETTER rows are replayable — PENDING/RETRY are already in the
-  // worker's queue, and re-queuing a SENT row would re-deliver a live email.
-  const requeued = await prisma.failedEmail.updateMany({
-    where: { id: { in: parsed.data.ids }, status: "DEAD_LETTER" },
-    data: {
-      status: "PENDING",
-      attempts: 0,
-      nextRetryAt: new Date(),
-      lastError: null,
-    },
+  const now = new Date();
+  return NextResponse.json({
+    data: rows.map((row) => ({
+      ...row,
+      replayRefusal: emailReplayRefusal(row, now),
+    })),
   });
-
-  return NextResponse.json({ data: { requeued: requeued.count } });
 }
+
+export const POST = withOpsAction(
+  "compliance.manage",
+  "email.retry",
+  { ids: z.array(z.string().min(1)).min(1).max(200) },
+  {
+    mode: "tx",
+    async run(tx, { body }) {
+      const ids = [...new Set(body.ids)];
+      const rows = await tx.failedEmail.findMany({
+        where: { id: { in: ids } },
+        select: {
+          id: true,
+          recipient: true,
+          status: true,
+          emailType: true,
+          lastError: true,
+          resendId: true,
+          sentAt: true,
+          firstAttemptAt: true,
+          deliveryUserId: true,
+          deliveryCategory: true,
+          updatedAt: true,
+        },
+      });
+      const now = new Date();
+      for (const row of rows) {
+        const refusal = emailReplayRefusal(row, now);
+        if (refusal) {
+          throw new OpsRefusal(
+            "EMAIL_REPLAY_REFUSED",
+            EMAIL_REPLAY_EXPLANATIONS[refusal],
+            409,
+            { failedEmailId: row.id, reason: refusal },
+          );
+        }
+      }
+
+      const userIds = [
+        ...new Set(rows.flatMap((row) => row.deliveryUserId ?? [])),
+      ];
+      const users =
+        userIds.length > 0
+          ? await tx.user.findMany({
+              where: { id: { in: userIds } },
+              select: { ...EMAIL_POLICY_USER_SELECT, id: true },
+            })
+          : [];
+      const byId = new Map(users.map((user) => [user.id, user]));
+      const suppressed = await findSuppressed(
+        rows.map((row) => row.recipient),
+        tx,
+      );
+      for (const row of rows) {
+        const policy = deliveryPolicyOf(row);
+        const policyRefused =
+          policy !== null &&
+          emailPolicyRefusalForUser(
+            policy,
+            row.recipient,
+            byId.get(policy.userId) ?? null,
+          ) !== null;
+        if (policyRefused || suppressed.has(normaliseEmail(row.recipient))) {
+          throw new OpsRefusal(
+            "EMAIL_RECIPIENT_REFUSED",
+            "The recipient's current preferences or suppression prevent this message.",
+            409,
+            { failedEmailId: row.id },
+          );
+        }
+      }
+
+      // CAS on (status, updatedAt): skips a row anything touched since the read.
+      const requeued = await tx.failedEmail.updateMany({
+        where: {
+          status: "DEAD_LETTER",
+          OR: rows.map((row) => ({ id: row.id, updatedAt: row.updatedAt })),
+        },
+        data: { status: "PENDING", attempts: 0, nextRetryAt: now },
+      });
+      if (requeued.count !== ids.length) {
+        throw new OpsRefusal(
+          "EMAIL_REPLAY_RACED",
+          "A message changed or disappeared while it was being reviewed. Refresh and try again.",
+        );
+      }
+      return {
+        target: { kind: "FailedEmail", id: ids[0] },
+        response: { requeued: requeued.count },
+        before: {
+          status: "DEAD_LETTER",
+          rows: rows.map((row) => ({ id: row.id, lastError: row.lastError })),
+        },
+        after: { ids, status: "PENDING" },
+      };
+    },
+  },
+);
