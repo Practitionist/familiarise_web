@@ -25,7 +25,7 @@ export type TWebinarPlanData = Omit<
           appointment: {
             include: {
               occurrences: true;
-              participants: { select: { userId: true } };
+              _count: { select: { participants: true } };
               payment: true;
             };
           };

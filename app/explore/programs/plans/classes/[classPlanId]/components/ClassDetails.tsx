@@ -20,23 +20,26 @@ import type { TClassPlanDetailsData } from "../types";
 
 interface ClassDetailsProps {
   readonly plan: TClassPlanDetailsData;
+  /** Batches' appointments the signed-in viewer holds a seat on; read by the server. */
+  readonly enrolledAppointmentIds: readonly string[];
 }
 
-export function ClassDetails({ plan }: ClassDetailsProps) {
+export function ClassDetails({
+  plan,
+  enrolledAppointmentIds,
+}: ClassDetailsProps) {
   const { formatPrice } = useCurrency();
   const [userTimeZone, setUserTimeZone] = useState("UTC");
   useEffect(() => {
     setUserTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
   }, []);
   // #1819 — one derivation for the batch list and the registration card.
-  const hostUserId = plan.consultantProfile?.user?.id;
   const cards = useMemo(
     () =>
       deriveBatchCards(plan, plan.classes, new Date(), {
         timeZone: userTimeZone,
-        hostUserId,
       }),
-    [plan, userTimeZone, hostUserId],
+    [plan, userTimeZone],
   );
 
   return (
@@ -141,7 +144,12 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                 <h2 className="text-xl font-semibold text-foreground mb-6">
                   Class Schedule
                 </h2>
-                <BatchSchedule plan={plan} cards={cards} zone={userTimeZone} />
+                <BatchSchedule
+                  plan={plan}
+                  cards={cards}
+                  zone={userTimeZone}
+                  enrolledAppointmentIds={enrolledAppointmentIds}
+                />
               </CardContent>
             </Card>
           </motion.div>
@@ -243,7 +251,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
               <ClientClassRegistration
                 plan={plan}
                 maxParticipants={plan.maxParticipants ?? undefined}
-                consultantUserId={plan.consultantProfile?.user?.id}
+                enrolledAppointmentIds={enrolledAppointmentIds}
                 batch={cards.find((c) => c.canEnrol) ?? cards[0]}
               />
             </div>
