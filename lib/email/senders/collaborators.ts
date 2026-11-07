@@ -7,12 +7,13 @@ import { goHref } from "@/lib/dashboard/go";
 import { collaboratorRoleLabel } from "@/lib/novu/humanize";
 import {
   absolute,
-  defineBudgetedEmailSender,
+  defineLifecycleStager,
   greet,
   type RecipientEmailSpec,
 } from "./shared";
 
 export interface CollaboratorLifecycleEmailArgs {
+  event: CollaborationLifecycleEvent;
   recipientUserId: string;
   actorName: string;
   collaboratorName?: string;
@@ -23,10 +24,11 @@ export interface CollaboratorLifecycleEmailArgs {
   collaboratorId: string;
 }
 
-function buildCollaboratorSpec(
-  event: CollaborationLifecycleEvent,
-  args: CollaboratorLifecycleEmailArgs,
-): { userIds: string[]; spec: RecipientEmailSpec } {
+function buildCollaboratorSpec(args: CollaboratorLifecycleEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const { event } = args;
   const roleLabel = collaboratorRoleLabel(args.role);
   const planKindLabel = args.planType === "webinar" ? "Webinar" : "Class";
   const revenueSharePct =
@@ -66,27 +68,6 @@ function buildCollaboratorSpec(
   };
 }
 
-export const sendCollaboratorInvitedEmail =
-  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("INVITED", args),
-  );
-export const sendCollaboratorAcceptedEmail =
-  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("ACCEPTED", args),
-  );
-export const sendCollaboratorDeclinedEmail =
-  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("DECLINED", args),
-  );
-export const sendCollaboratorRemovedEmail =
-  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("REMOVED", args),
-  );
-export const sendCollaboratorWithdrawnEmail =
-  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("WITHDRAWN", args),
-  );
-export const sendCollaboratorInviteExpiredEmail =
-  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("EXPIRED", args),
-  );
+/** Stages one recipient's lifecycle email inside the collaborator transition's transaction. */
+export const stageCollaboratorLifecycleEmail =
+  defineLifecycleStager<CollaboratorLifecycleEmailArgs>(buildCollaboratorSpec);

@@ -9,14 +9,14 @@
  *     hits the workspace shell without a specific orgId. Validated on
  *     PATCH against the caller's ACTIVE OWNER memberships so we can't
  *     pin an org the operator doesn't actually own.
- *   - `notificationRoutingMode` — BELL_AND_EMAIL | BELL_ONLY | EMAIL_ONLY
- *     | NEITHER. The bell and email gates read it from Postgres at stage
- *     and send time, so a change applies to the next notification.
  *   - `locale` — BCP 47 string used for cross-org workspace formatting.
  *     Per-org pages still use the org's own region defaults.
  *   - `currencyDisplayCode` — ISO 4217 used for the workspace overview
  *     rollup numbers (per-org pages render in the org's billing
  *     currency).
+ *
+ * The body is strict: an unknown key is a 400. Notification channels are
+ * the operator's personal `NotificationPreference` switches, not a field here.
  *
  * Auth: the URL's `orgWorkspaceId` must match the caller's
  * `orgWorkspaceProfileId`. Mirrors the IDOR posture in
@@ -29,7 +29,6 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { NotificationRoutingMode } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { getWorkspaceSettings } from "@/lib/data/org-workspace";
@@ -40,7 +39,6 @@ const PatchBodySchema = z
     // distinction between "key absent" (don't touch) and "key=null"
     // (clear) is preserved via Zod's optional+nullable composition.
     defaultLandingOrganizationId: z.string().min(1).nullable().optional(),
-    notificationRoutingMode: z.nativeEnum(NotificationRoutingMode).optional(),
     // Light validation only — Intl.NumberFormat will tolerate most BCP-47
     // strings. We reject obvious garbage but don't enumerate every locale.
     locale: z
@@ -60,6 +58,7 @@ const PatchBodySchema = z
       .nullable()
       .optional(),
   })
+  .strict()
   .refine((v) => Object.keys(v).length > 0, {
     message: "PATCH body must contain at least one field",
   });
@@ -150,9 +149,6 @@ export async function PATCH(
       ...(body.defaultLandingOrganizationId !== undefined && {
         defaultLandingOrganizationId: body.defaultLandingOrganizationId,
       }),
-      ...(body.notificationRoutingMode !== undefined && {
-        notificationRoutingMode: body.notificationRoutingMode,
-      }),
       ...(body.locale !== undefined && { locale: body.locale }),
       ...(body.currencyDisplayCode !== undefined && {
         currencyDisplayCode: body.currencyDisplayCode,
@@ -161,7 +157,6 @@ export async function PATCH(
     select: {
       id: true,
       defaultLandingOrganizationId: true,
-      notificationRoutingMode: true,
       locale: true,
       currencyDisplayCode: true,
       updatedAt: true,

@@ -49,8 +49,8 @@ that mirrors `StaffProfile` and `AdminProfile`, and it exists for any user who
 operates at least one org. `POST /api/organizations` provisions one inside the
 creation transaction, and `prisma/scripts/backfill-org-workspace-profiles.ts`
 covers existing OWNERs. It stores operator workspace preferences
-(`defaultLandingOrganizationId`, `notificationRoutingMode`, `locale`,
-`currencyDisplayCode`), while public directory and co-branding presentation live on
+(`defaultLandingOrganizationId`, `locale`, `currencyDisplayCode`; the
+`notificationRoutingMode` column is unread until the next schema batch drops it), while public directory and co-branding presentation live on
 `OrgBrandingProfile` (`logo`, `bannerImage`, `primaryColor`, `secondaryColor`,
 `description`, `industry`, `website`, `sizeBucket`, `directoryType`). The profile id surfaces on the BetterAuth
 session and backs the operator home at
@@ -627,7 +627,7 @@ Tax.
 flowchart TD
     subgraph ORG["Organization (anchor)"]
         Org["Organization\nstatus · canSponsor · canHost · GST · hierarchy"]
-        OrgWorkspace["OrgWorkspaceProfile\ndefaultLandingOrganizationId · notificationRoutingMode · locale"]
+        OrgWorkspace["OrgWorkspaceProfile\ndefaultLandingOrganizationId · locale"]
         OrgBranding["OrgBrandingProfile\nlogo · bannerImage · directoryType"]
     end
     subgraph IAM["Identity & Access"]

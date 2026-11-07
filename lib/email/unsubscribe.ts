@@ -1,5 +1,5 @@
 /**
- * #1653 — stateless unsubscribe links for lifecycle email.
+ * Stateless unsubscribe links for lifecycle email.
  *
  * The token is an HMAC over the user id under the same secret the newsletter
  * links use (`lib/waitlist/tokens.ts`), bound to its own purpose so a
@@ -8,6 +8,10 @@
  * RFC 8058 one-click depends on it.
  */
 
+import * as Sentry from "@sentry/nextjs";
+import { Prisma } from "@prisma/client";
+import { z } from "zod";
+import prisma from "@/lib/prisma";
 import { getAppUrl } from "@/lib/url";
 import {
   buildUnsubscribeUrl,
@@ -29,6 +33,59 @@ export function verifyEmailUnsubscribeToken(
   token: string,
 ): boolean {
   return safeEquals(token, () => generateEmailUnsubscribeToken(userId));
+}
+
+// The token is a hex HMAC-SHA256 digest; anything else fails before the signature check.
+const SignedLinkSchema = z.object({
+  u: z.string().min(1),
+  t: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+/** The user a signed `?u=&t=` link names, or null unless its token verifies. */
+export function signedLinkUser(params: URLSearchParams): string | null {
+  const parsed = SignedLinkSchema.safeParse({
+    u: params.get("u") ?? "",
+    t: params.get("t") ?? "",
+  });
+  if (!parsed.success) return null;
+  const { u: userId, t: token } = parsed.data;
+  return verifyEmailUnsubscribeToken(userId, token) ? userId : null;
+}
+
+/**
+ * Writes `emailEnabled` for a signed link's user; false only on a database
+ * failure. An unknown user (P2003) answers like a real one, so the link is no oracle.
+ */
+export async function setEmailEnabled(
+  userId: string,
+  emailEnabled: boolean,
+): Promise<boolean> {
+  try {
+    await prisma.notificationPreference.upsert({
+      where: { userId },
+      update: { emailEnabled },
+      create: { userId, emailEnabled },
+    });
+    return true;
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2003"
+    ) {
+      return true;
+    }
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "notifications" } },
+    );
+    console.error("[notifications/unsubscribe]", error);
+    return false;
+  }
+}
+
+/** The confirmation page, carrying `query` (e.g. `done=1&u=…&t=…`). */
+export function unsubscribePageUrl(query: string): string {
+  return `${getAppUrl()}/email/unsubscribe?${query}`;
 }
 
 /** The one URL both the footer link (GET) and the one-click POST hit. */

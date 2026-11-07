@@ -310,7 +310,6 @@ async function executeErasureRevocationRow(
       planType: "webinar" | "class",
       planId: string,
       userId: string,
-      opts: { notify: boolean },
     ) => Promise<{ success: boolean }>;
   },
 ): Promise<string | null> {
@@ -329,7 +328,6 @@ async function executeErasureRevocationRow(
       planType,
       row.planId,
       row.erasureRequest.userId,
-      { notify: false },
     );
     return success ? null : "Collaborator Stream access not fully revoked";
   } catch (error_) {
@@ -667,7 +665,6 @@ async function retryCollaboratorRevocation(
         planType,
         planId,
         row.report.targetUserId,
-        { notify: false },
       );
       if (!success) failed.push(`${planType}:${planId}`);
     } catch (error) {

@@ -1,12 +1,18 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { NotificationPreferenceUpdateSchema } from "@/schemas/user";
+import {
+  NotificationPreferenceSchema,
+  NotificationPreferenceUpdateSchema,
+  QUIET_HOURS_DEFAULT_END,
+  QUIET_HOURS_DEFAULT_START,
+  type NotificationPreferenceUpdate,
+} from "@/schemas/user";
 
 import { getSession } from "@/lib/auth-server";
 /**
  * GET /api/novu/preferences
- * Returns the current user's notification preferences.
+ * The current user's preferences; a user with no row gets the schema defaults.
  */
 export async function GET() {
   try {
@@ -19,34 +25,9 @@ export async function GET() {
       where: { userId: session.user.id },
     });
 
-    // Return defaults if no preferences exist yet
-    if (!preferences) {
-      return NextResponse.json({
-        allNotifications: true,
-        inAppEnabled: true,
-        emailEnabled: true,
-        pushEnabled: false,
-        mentions: false,
-        directMessages: false,
-        updates: false,
-        appointmentReminders: true,
-        paymentNotifications: true,
-        supportUpdates: true,
-        feedbackAlerts: true,
-        trialNotifications: true,
-        subscriptionAlerts: true,
-        marketingEmails: false,
-        orgBillingAlerts: true,
-        orgMembershipAlerts: true,
-        orgProgramAlerts: true,
-        quietHoursEnabled: false,
-        quietHoursStart: null,
-        quietHoursEnd: null,
-        quietHoursTimezone: null,
-      });
-    }
-
-    return NextResponse.json(preferences);
+    return NextResponse.json(
+      NotificationPreferenceSchema.parse(preferences ?? {}),
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -60,9 +41,28 @@ export async function GET() {
   }
 }
 
+/** True when the update would leave quiet hours starting and ending at the same minute. */
+async function quietWindowCollapses(
+  userId: string,
+  update: NotificationPreferenceUpdate,
+): Promise<boolean> {
+  const sentStart = update.quietHoursStart !== undefined;
+  const sentEnd = update.quietHoursEnd !== undefined;
+  if (sentStart === sentEnd) return false; // none sent, or both checked by the schema
+  const stored = await prisma.notificationPreference.findUnique({
+    where: { userId },
+    select: { quietHoursStart: true, quietHoursEnd: true },
+  });
+  const start = sentStart ? update.quietHoursStart : stored?.quietHoursStart;
+  const end = sentEnd ? update.quietHoursEnd : stored?.quietHoursEnd;
+  return (
+    (start ?? QUIET_HOURS_DEFAULT_START) === (end ?? QUIET_HOURS_DEFAULT_END)
+  );
+}
+
 /**
  * PUT /api/novu/preferences
- * Updates the current user's notification preferences.
+ * Updates any subset of the current user's preferences.
  */
 export async function PUT(req: NextRequest) {
   try {
@@ -71,7 +71,7 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await req.json();
+    const body: unknown = await req.json().catch(() => null);
     const result = NotificationPreferenceUpdateSchema.safeParse(body);
 
     if (!result.success) {
@@ -82,6 +82,20 @@ export async function PUT(req: NextRequest) {
     }
 
     const validatedData = result.data;
+    if (await quietWindowCollapses(session.user.id, validatedData)) {
+      return NextResponse.json(
+        {
+          error: "Validation failed",
+          details: [
+            {
+              path: ["quietHoursEnd"],
+              message: "Quiet hours must start and end at different times",
+            },
+          ],
+        },
+        { status: 400 },
+      );
+    }
 
     const updated = await prisma.notificationPreference.upsert({
       where: { userId: session.user.id },
@@ -92,7 +106,7 @@ export async function PUT(req: NextRequest) {
       },
     });
 
-    return NextResponse.json(updated);
+    return NextResponse.json(NotificationPreferenceSchema.parse(updated));
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

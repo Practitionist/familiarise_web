@@ -469,7 +469,7 @@ describe("4. GET vs POST /api/waitlist/unsubscribe link-scanner safety", () => {
     expect(mockWaitlistUnsubscribe).not.toHaveBeenCalled();
 
     // RFC 8058 one-click POST immediately unsubscribes
-    mockWaitlistUnsubscribe.mockResolvedValue({ success: true });
+    mockWaitlistUnsubscribe.mockResolvedValue({ ok: true });
     const postRes = await postWaitlistUnsubscribe(
       new NextRequest(
         "https://familiarisenow.com/api/waitlist/unsubscribe?email=sub%40example.com&token=tok_xyz",
@@ -483,6 +483,20 @@ describe("4. GET vs POST /api/waitlist/unsubscribe link-scanner safety", () => {
       email: "sub@example.com",
       token: "tok_xyz",
     });
+  });
+
+  it("never answers unsubscribed when the write failed", async () => {
+    mockWaitlistUnsubscribe.mockRejectedValueOnce(new Error("db down"));
+    const res = await postWaitlistUnsubscribe(
+      new NextRequest(
+        "https://familiarisenow.com/api/waitlist/unsubscribe?email=sub%40example.com&token=tok_xyz",
+        { method: "POST", headers: { accept: "text/html" } },
+      ),
+    );
+    expect(res.status).toBe(500);
+    const page = await res.text();
+    expect(page).toContain("We could not unsubscribe you");
+    expect(page).not.toContain("You are unsubscribed");
   });
 });
 

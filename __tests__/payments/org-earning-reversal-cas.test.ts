@@ -33,11 +33,17 @@
 const mockApplyReversal = jest.fn();
 const mockReverseCredits = jest.fn();
 const mockReverseUtilization = jest.fn();
-const mockPostLedgerTxn = jest.fn();
+const mockPostLedgerTxn = jest
+  .fn()
+  .mockResolvedValue({ transactionId: "txn", created: true });
 const mockRecordTdsReversal = jest.fn();
 const mockPaymentFindUnique = jest.fn();
 const mockFindDeduped = jest.fn(async (..._a: unknown[]) => null as unknown);
 
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(),
+  stageRaisedClawback: jest.fn(),
+}));
 jest.mock("../../lib/payments/ledger/refund-reversal-basis", () =>
   jest.requireActual("../fixtures/no-refund-reversal-basis"),
 );

@@ -1,6 +1,6 @@
 import { cache } from "react";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import { toPlain } from "@/lib/data/serialize";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { planConsultantUserSelect } from "@/lib/api/plans/consultant-projection";
@@ -30,8 +30,19 @@ const publicMaterialsInclude = {
   },
 };
 
+/**
+ * How many seats hold a place on an event right now, as a number: the public
+ * payload never carries who they belong to. The host's own row has another
+ * role, so it never counts, and a lapsed unpaid hold stops counting, which is
+ * the rule checkout applies.
+ */
+const seatCount = (now: Date) => ({
+  select: { participants: { where: seatHoldingParticipant(now) } },
+});
+
 /** Raw function — importable by API routes (no React.cache). */
 export async function fetchWebinarPlanDetail(webinarPlanId: string) {
+  const now = new Date();
   const plan = await prisma.webinarPlan.findUnique({
     where: {
       id: webinarPlanId,
@@ -58,12 +69,7 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
           appointment: {
             include: {
               occurrences: true,
-              // #1554 — seat ids only; the explore/checkout capacity gates
-              // count these and never a User row per attendee.
-              participants: {
-                where: liveParticipant(),
-                select: { userId: true },
-              },
+              _count: seatCount(now),
             },
           },
         },
@@ -103,6 +109,7 @@ export const getWebinarPlanDetail = cache(fetchWebinarPlanDetail);
 
 /** Raw function — importable by API routes (no React.cache). */
 export async function fetchClassPlanDetail(classPlanId: string) {
+  const now = new Date();
   const plan = await prisma.classPlan.findUnique({
     where: {
       id: classPlanId,
@@ -131,10 +138,7 @@ export async function fetchClassPlanDetail(classPlanId: string) {
           appointment: {
             include: {
               occurrences: { orderBy: { startsAt: "asc" } },
-              participants: {
-                where: liveParticipant(),
-                select: { userId: true },
-              },
+              _count: seatCount(now),
             },
           },
         },

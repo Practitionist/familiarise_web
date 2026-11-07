@@ -9,6 +9,12 @@
  */
 
 // Digital product erasure has its own suite; these scrubs own no products.
+jest.mock("@/lib/collaborators/notifications", () => ({
+  stageCollaboratorNotifications: jest.fn(async () => ({})),
+}));
+jest.mock("../../lib/compliance/erasure/mail-footprint", () => ({
+  scrubMailFootprintTx: jest.fn(),
+}));
 jest.mock("../../lib/digital-products/erasure", () => ({
   scrubDigitalProductsTx: jest.fn(async () => []),
   purgeErasedCreatorFiles: jest.fn(async () => []),
@@ -110,7 +116,6 @@ describe("DPDP erasure flips collaborator rows", () => {
       "webinar",
       "wp-1",
       "u1",
-      { notify: false },
     );
   });
 

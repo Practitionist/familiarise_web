@@ -1,6 +1,8 @@
 "use server";
 
+import { headers } from "next/headers";
 import prisma from "@/lib/prisma";
+import { consentProvenance } from "@/lib/waitlist/consent-link";
 import { getSession } from "@/lib/auth-server";
 import { applyRateLimit, onboardingSubmitLimiter } from "@/lib/rate-limit";
 import { OnboardingGateSchema } from "@/utils/onboarding";
@@ -61,11 +63,12 @@ export async function completeOnboardingGateAction(
   }
 
   const gate = parsed.data;
+  const provenance = consentProvenance(await headers());
   await prisma.$transaction(async (tx) => {
     const claimed = await claimOnboardingCompletion(tx, user.id, {
       dateOfBirth: gate.dateOfBirth,
     });
-    if (claimed) await recordOnboardingConsent(tx, user.id, gate);
+    if (claimed) await recordOnboardingConsent(tx, user.id, gate, provenance);
   });
   return { success: true };
 }

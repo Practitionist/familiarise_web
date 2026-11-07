@@ -6,6 +6,7 @@ import {
   ConsulteePreferences,
   PersonalInfoAndRole,
 } from "@/schemas/user";
+import { PURPOSE_CODE_META } from "@/lib/compliance/purpose-codes";
 import { MessageReviewNotice } from "./MessageReviewNotice";
 
 type ConsulteeFormData = Partial<PersonalInfoAndRole> &
@@ -158,10 +159,11 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
             htmlFor="marketing-consent"
             className="text-sm cursor-pointer leading-snug"
           >
-            <span className="font-medium">Optional:</span> Send me product
-            updates, mentorship tips, and promotional offers (
-            <code>MARKETING_COMMS</code>). You can withdraw this anytime in
-            Settings.
+            <span className="font-medium">
+              Optional: {PURPOSE_CODE_META.MARKETING_COMMS.label}.
+            </span>{" "}
+            {PURPOSE_CODE_META.MARKETING_COMMS.description} You can withdraw
+            this anytime in Settings.
           </label>
         </div>
         {(!termsAccepted || !privacyAccepted) && (

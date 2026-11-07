@@ -94,6 +94,7 @@ jest.mock("../../../utils/appointmentlock", () => ({
 jest.mock("../../../lib/booking/participants", () => ({
   __esModule: true,
   liveParticipant: () => ({}),
+  paidParticipant: () => ({}),
   transitionParticipant: async () => 1,
 }));
 jest.mock("../../../lib/booking/transitions", () => ({

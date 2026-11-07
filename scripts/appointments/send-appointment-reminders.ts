@@ -72,7 +72,6 @@ const USER_BATCH_SELECT = {
   email: true,
   name: true,
   timezone: true,
-  orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
   notificationPreferences: {
     select: {
       allNotifications: true,

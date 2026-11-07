@@ -77,13 +77,6 @@ export {
   notifyReferralBonusEarned,
   notifyRefereeWelcomeBonus,
   notifyReferralCreditsApplied,
-  // Collaborators
-  notifyCollaboratorInvited,
-  notifyCollaboratorAccepted,
-  notifyCollaboratorDeclined,
-  notifyCollaboratorRemoved,
-  notifyCollaboratorWithdrawn,
-  notifyCollaboratorInviteExpired,
 } from "./service";
 export {
   notifyOrgCreated,

@@ -1,5 +1,5 @@
 /**
- * #1653 — one-click unsubscribe from optional email notifications.
+ * One-click unsubscribe from optional email notifications.
  *
  * GET  — a human clicked the footer link. Verifies the token and sends them to
  *        the confirmation page; flips nothing, because link scanners prefetch.
@@ -8,86 +8,47 @@
  *        switches are shared with the bell, and the bell was not the complaint.
  *
  * The token is the only guard; no session and no rate limit. The response
- * never says whether the user exists.
+ * never says whether the user exists. The undo is `../resubscribe`.
  */
 
-import * as Sentry from "@sentry/nextjs";
-import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import prisma from "@/lib/prisma";
-import { verifyEmailUnsubscribeToken } from "@/lib/email/unsubscribe";
-import { getAppUrl } from "@/lib/url";
+import {
+  setEmailEnabled,
+  signedLinkUser,
+  unsubscribePageUrl,
+} from "@/lib/email/unsubscribe";
 
 export const dynamic = "force-dynamic";
 
-const PAGE_PATH = "/email/unsubscribe";
-
-// The token is a hex HMAC-SHA256 digest; anything else is rejected before
-// the signature check runs.
-const linkSchema = z.object({
-  u: z.string().min(1),
-  t: z.string().regex(/^[0-9a-f]{64}$/),
-});
-
-function readLink(request: NextRequest): { userId: string; valid: boolean } {
-  const { searchParams } = new URL(request.url);
-  const parsed = linkSchema.safeParse({
-    u: searchParams.get("u") ?? "",
-    t: searchParams.get("t") ?? "",
-  });
-  if (!parsed.success) return { userId: "", valid: false };
-  const { u: userId, t: token } = parsed.data;
-  return { userId, valid: verifyEmailUnsubscribeToken(userId, token) };
-}
-
 function toPage(query: string): NextResponse {
-  return NextResponse.redirect(`${getAppUrl()}${PAGE_PATH}?${query}`, 303);
+  return NextResponse.redirect(unsubscribePageUrl(query), 303);
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const { valid } = readLink(request);
-  if (!valid) return toPage("error=1");
-  const { search } = new URL(request.url);
+  const { search, searchParams } = new URL(request.url);
+  if (!signedLinkUser(searchParams)) return toPage("error=1");
   return toPage(search.slice(1));
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const { userId, valid } = readLink(request);
+  const { searchParams } = new URL(request.url);
+  const userId = signedLinkUser(searchParams);
   // The page's <form> wants to land back on the page; a mail client wants JSON.
   const wantsHtml =
     request.headers.get("accept")?.includes("text/html") ?? false;
 
-  if (!valid) {
+  if (!userId) {
     return wantsHtml
       ? toPage("error=1")
       : NextResponse.json({ error: "invalid link" }, { status: 400 });
   }
 
-  try {
-    await prisma.notificationPreference.upsert({
-      where: { userId },
-      update: { emailEnabled: false },
-      create: { userId, emailEnabled: false },
-    });
-  } catch (error) {
-    // P2003: no such user. A signed link for an id that no longer exists
-    // answers exactly like a real one so the route is not an oracle.
-    const unknownUser =
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2003";
-    if (!unknownUser) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "notifications" } },
-      );
-      console.error("[notifications/unsubscribe]", error);
-      return NextResponse.json(
-        { error: "unsubscribe failed" },
-        { status: 500 },
-      );
-    }
+  if (!(await setEmailEnabled(userId, false))) {
+    return NextResponse.json({ error: "unsubscribe failed" }, { status: 500 });
   }
 
-  return wantsHtml ? toPage("done=1") : NextResponse.json({ ok: true });
+  // The done page keeps the signed pair so it can offer the undo.
+  const link = new URLSearchParams({ done: "1", u: userId });
+  link.set("t", searchParams.get("t") ?? "");
+  return wantsHtml ? toPage(link.toString()) : NextResponse.json({ ok: true });
 }

@@ -22,7 +22,6 @@ const PLAN_LIST_CACHE_HEADERS = publicCacheHeaders({
     "search",
     "level",
     "include",
-    "includeRegistration",
   ],
 });
 

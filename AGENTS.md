@@ -37,7 +37,7 @@
 ## 3. Cloudtop Worktree & Dependency Hygiene
 
 1. **Single Canonical `node_modules`**:
-   - In secondary git worktrees, always symlink the main checkout's `node_modules` (`ln -s <main-checkout>/node_modules node_modules`) and remove the worktree cleanly when finished. Never run standalone `npm ci` copies across worktrees.
+   - In secondary git worktrees, always symlink the main checkout's `node_modules` (`ln -s <main-checkout>/node_modules node_modules`) and remove the worktree cleanly when finished. Never run standalone `npm ci` copies across worktrees. A worktree shares `node_modules`, so `npx prisma generate` in a worktree rewrites the main checkout's generated client; regenerate from the main checkout when finished (see `.claude/skills/booking/references/verification.md` §3).
 2. **Minimum Patched Versions**:
    - Never downgrade `next` (`>= 15.5.27`) or `sharp` (`>= 0.35.5`).
 3. **Verification Commands**:

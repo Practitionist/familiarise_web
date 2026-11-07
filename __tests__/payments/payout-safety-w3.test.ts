@@ -29,6 +29,10 @@ const db = {
   $transaction: runTx,
 };
 runTx.mockImplementation(async (fn: (tx: unknown) => unknown) => fn(db));
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(),
+  stageRaisedClawback: jest.fn(),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   get default() {

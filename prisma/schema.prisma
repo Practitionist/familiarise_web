@@ -949,6 +949,7 @@ enum SupportIssueType {
   OTHER
 }
 
+/// Unread: the cookie banner and its APIs are removed (essential cookies only); rows remain for the data export and the retention prune until the schema batch drops the model.
 model CookiePreference {
   id String @id @default(cuid())
 
@@ -1001,6 +1002,7 @@ model NotificationPreference {
   feedbackAlerts       Boolean @default(true)
   trialNotifications   Boolean @default(true)
   subscriptionAlerts   Boolean @default(true)
+  /// Unread: marketing follows the MARKETING_COMMS consent; kept only for the data export until the schema batch drops it.
   marketingEmails      Boolean @default(false)
 
   // Org category preferences (ADR 23). The seven categories above are all
@@ -3682,6 +3684,7 @@ model OrgWorkspaceProfile {
   // Operator preferences. Per-field docs: docs/enterprise/40-compliance-and-data/05-workspace-preferences.md.
   // Soft FK on default-landing org (plain String) so org deletes don't cascade here.
   defaultLandingOrganizationId String?
+  /// Unread: personal NotificationPreference switches gate every channel; slated for drop with the next schema batch.
   notificationRoutingMode      NotificationRoutingMode @default(BELL_AND_EMAIL)
   locale                       String? // BCP-47 (e.g. "en-IN")
   currencyDisplayCode          String? // ISO 4217 (e.g. "INR")

@@ -57,7 +57,7 @@ flowchart TB
         P2_DRAIN["drain-notification-outbox\nticker every 10 min\nbackoff ladder, 5 attempts"]
         P2_SVC --> P2_OUTBOX
         P2_OUTBOX -. "timed out / transient" .-> P2_DRAIN
-        P2_WF["lib/novu/workflows.ts\n94 event ids\ntyped payload interfaces"]
+        P2_WF["lib/novu/workflows.ts\n96 event ids\ntyped payload interfaces"]
         P2_CLIENT["lib/novu/client.ts\nSingleton, lazy init\nGraceful degradation"]
         P2_SUB["lib/novu/subscriber.ts\ncomputeSubscriberHash()\ndeleteSubscriber()"]
         subgraph NOVU_CLOUD["Novu Cloud (written by npm run novu:sync)"]
@@ -214,7 +214,7 @@ Every sending address is built on the `EMAIL_TRANSACTIONAL_DOMAIN` and `EMAIL_NE
 4. Novu Cloud deduplicates a resend on the `Idempotency-Key` header (derived from the row's `transactionId`, `firstAttemptAt`, recipients and payload) and runs the family's single in-app step, which pushes to the subscriber's WebSocket and appears in the bell.
 5. The app filters recipients by bell policy in Postgres when it stages the row and once more before the first attempt of each generation.
 
-**Events and families:** all 94 events and the 16 families that carry them are listed in [02-workflows-and-api.md](./02-workflows-and-api.md#workflow-families). They are not repeated here.
+**Events and families:** all 96 events and the 16 families that carry them are listed in [02-workflows-and-api.md](./02-workflows-and-api.md#workflow-families). They are not repeated here.
 
 **Delivery audit trail:** the `NotificationOutbox` row is the record of what was staged, sent, retried or dead-lettered, with its `lastError` reason. The Novu activity feed keeps only 24 hours on the Free plan, so it is not the audit trail.
 
@@ -436,9 +436,9 @@ The two relays are the outbox halves of the design: every email and every Novu t
 | Novu client + service + workflows + subscriber | `lib/novu/*.ts`                                                                                        |
 | Novu templates as code and sync                | `lib/novu/templates/`, `scripts/novu/sync-workflows.ts` (`npm run novu:sync`, `npm run novu:check`)    |
 | Outbox relays on the ticker                    | `retry-failed-emails` (every 15 min at `:05`), `drain-notification-outbox` (every 10 min at `:05`)     |
+| Novu step-failure probe                        | `jobs/notifications/novu-step-failure-probe.ts` (every 2 h at `:10`, reads the last 4 h)               |
 | Novu inbox + bell icon + HMAC hook             | `components/notifications/NotificationInbox.tsx`, `hooks/useNovuSubscriberSync.ts`                     |
-| Notification Preferences Panel                 | `components/notifications/NotificationPreferencesPanel.tsx` (admin, staff, consultant, consultee)      |
-| Workspace routing section                      | `app/dashboard/org-workspace/[orgWorkspaceId]/settings/components/NotificationRoutingSection.tsx`      |
+| Notification Preferences Panel                 | `components/notifications/NotificationPreferencesPanel.tsx` (every role, operators included)           |
 | Preferences API                                | `app/api/novu/preferences/route.ts` (GET/PUT)                                                          |
 | Inbox HMAC API                                 | `app/api/novu/subscriber/route.ts` (POST)                                                              |
 | Waitlist double opt-in confirm/unsubscribe     | `lib/waitlist/tokens.ts`, `lib/waitlist/service.ts`                                                    |
@@ -502,8 +502,9 @@ The two relays are the outbox halves of the design: every email and every Novu t
 
 ## Deprecated & Superseded Approaches
 
-- **Novu as a multi-channel orchestrator.** Earlier versions of this map showed a Novu email step, push channel and digest steps, a hand-built dashboard workflow per event, and a "Tier 1/2/3" list of 40 workflow ids. Novu is now in-app only, workflows are 16 families written from `lib/novu/templates/`, and there are 94 events. Delete any residual reference to a Novu email step or a per-event workflow.
+- **Novu as a multi-channel orchestrator.** Earlier versions of this map showed a Novu email step, push channel and digest steps, a hand-built dashboard workflow per event, and a "Tier 1/2/3" list of 40 workflow ids. Novu is now in-app only, workflows are 16 families written from `lib/novu/templates/`, and there are 96 events. Delete any residual reference to a Novu email step or a per-event workflow.
 - **Maintenance notifications.** The `maintenance-*` events were removed; see [the decision record](../decisions/2026-11-06-notification-single-preference-owner.md).
 - **Novu as the delivery audit trail.** The Novu activity feed (24 hours on Free) was once treated as the delivery log. `NotificationOutbox` is the audit trail now.
 - **Cron by GitHub Actions.** Earlier notes scheduled reminders, auto-complete and the relays from GitHub Actions or as an unbounded backstop. They run on the ticker, and no Actions workflow schedules a registry job.
 - **Preferences panel gaps.** The consultant and consultee settings pages once lacked the panel; both have it now.
+- **Workspace routing section.** `NotificationRoutingSection.tsx` set `OrgWorkspaceProfile.notificationRoutingMode`, which duplicated the operator's own channel switches. It was deleted on 2026-11-07; the operator's page shows only the personal panel.

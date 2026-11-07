@@ -123,7 +123,6 @@ function row(overrides: Partial<StagedTrigger> = {}): StagedTrigger {
 const allowed = (id: string) => ({
   id,
   erasedAt: null,
-  orgWorkspaceProfile: null,
   notificationPreferences: { allNotifications: true, inAppEnabled: true },
 });
 const inAppOff = (id: string) => ({

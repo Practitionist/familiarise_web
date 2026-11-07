@@ -96,6 +96,7 @@ jest.mock("../../lib/email", () => ({
   MONEY_EMAIL_TYPES: { REFUND_PROCESSED: "REFUND_PROCESSED" },
   stageRefundProcessedEmail: (...a: unknown[]) =>
     mockStageRefundProcessedEmail(...a),
+  prepareRefundProcessedEmail: jest.fn(async () => null),
 }));
 jest.mock("../../lib/email/send-to-recipients", () => ({
   attemptStaged: (...a: unknown[]) => mockAttemptStagedEmails(...a),

@@ -77,6 +77,7 @@ import {
   type RenderedEmail,
   type StagedRecipientEmail,
 } from "@/lib/email";
+import type { PreparedSpecEmails } from "@/lib/email/senders/shared";
 import {
   createEarningsFromPayment,
   planEarningsForPayment,
@@ -97,7 +98,16 @@ import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
 import { recordReferralCaptureInSavepoint } from "@/lib/referrals/capture";
-import { notifyCreditsAppliedForPaymentBestEffort } from "@/lib/referrals/referral-notify";
+import {
+  prepareCreditsAppliedEmail,
+  readCreditsApplied,
+  stageCreditsApplied,
+  type CreditsApplied,
+} from "@/lib/referrals/referral-notify";
+import {
+  flushNotificationsAfter,
+  type StagedNotificationBundle,
+} from "@/lib/novu/stage-then-attempt";
 import { isMockPaymentId } from "@/lib/payments/operations/mock";
 import {
   isFreeCreditIntent,
@@ -113,6 +123,7 @@ import {
 } from "./legacy-appointment-creation";
 import {
   loadAppointmentForEmails,
+  prepareBookedEmails,
   preparePaymentFailedEmail,
   preparePaymentSuccessEmail,
   resolveAppointmentNotificationContext,
@@ -168,6 +179,7 @@ type PaymentSuccessTxResult =
       bookedEmails: StagedRecipientEmail[];
       stagedBells: StagedTrigger[];
       stageBellsRan: boolean;
+      creditNotices: StagedNotificationBundle;
     };
 
 const PHASE_2_DEADLINE_MS = 5_000;
@@ -351,11 +363,42 @@ export async function handlePaymentSuccess(
   }
 
   let preRenderedSuccessEmail: RenderedEmail | null | undefined;
+  let preRenderedBookedEmails: PreparedSpecEmails | null = null;
+  // Checkout already noticed mock, free_ and org_ credits; a recovery's first confirmation did too.
+  const noticeCredits =
+    !recovering &&
+    !isMockPaymentId(paymentIntentId) &&
+    !isFreeCreditIntent(paymentIntentId) &&
+    !isInternalFundedIntent(paymentIntentId);
+  // Read before the transaction; the transaction reads it again only for another payment row.
+  let preCredits:
+    { paymentId: string; applied: CreditsApplied | null } | undefined;
+  let preCreditsEmail: PreparedSpecEmails | null = null;
   try {
     const prePayment = await prisma.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
       include: { user: { include: { consulteeProfile: true } } },
     });
+    if (
+      noticeCredits &&
+      prePayment &&
+      prePayment.paymentStatus !== PaymentStatus.SUCCEEDED
+    ) {
+      try {
+        const applied = await readCreditsApplied(prisma, {
+          userId: prePayment.userId,
+          paymentId: prePayment.id,
+          appointmentType: metadata.appointmentType,
+        });
+        preCreditsEmail = applied
+          ? await prepareCreditsAppliedEmail(applied)
+          : null;
+        preCredits = { paymentId: prePayment.id, applied };
+      } catch {
+        preCredits = undefined;
+        preCreditsEmail = null;
+      }
+    }
     if (
       prePayment?.appointmentId &&
       prePayment.paymentStatus !== PaymentStatus.SUCCEEDED
@@ -379,11 +422,17 @@ export async function handlePaymentSuccess(
             preApptForEmails,
             preApptType,
           );
+          preRenderedBookedEmails = await prepareBookedEmails(
+            prePayment,
+            preApptForEmails,
+            preApptType,
+          );
         }
       }
     }
   } catch {
     preRenderedSuccessEmail = undefined;
+    preRenderedBookedEmails = null;
   }
 
   // Phase 1: Serializable transaction for payment confirmation and appointment state transitions.
@@ -946,6 +995,7 @@ export async function handlePaymentSuccess(
                 payment,
                 appointmentForEmails,
                 metadata.appointmentType,
+                preRenderedBookedEmails,
               )
             : [];
           const stageBellsRan = Boolean(
@@ -960,6 +1010,20 @@ export async function handlePaymentSuccess(
                   metadata.appointmentType,
                 )
               : [];
+          let credits: CreditsApplied | null = null;
+          if (noticeCredits && !blocked) {
+            credits =
+              preCredits?.paymentId === payment.id
+                ? preCredits.applied
+                : await readCreditsApplied(tx, {
+                    userId: payment.userId,
+                    paymentId: payment.id,
+                    appointmentType: metadata.appointmentType,
+                  });
+          }
+          const creditNotices = credits
+            ? await stageCreditsApplied(tx, credits, preCreditsEmail)
+            : {};
 
           return {
             outcome: "confirmed",
@@ -981,6 +1045,7 @@ export async function handlePaymentSuccess(
             bookedEmails,
             stagedBells,
             stageBellsRan,
+            creditNotices,
           };
         },
         {
@@ -1285,23 +1350,10 @@ export async function handlePaymentSuccess(
 
   await mintConsumerInvoiceBestEffort({ paymentId });
 
-  // Checkout already belled mock, free_ and org_ payments; a recovery re-runs
-  // Phase 2 for a payment whose first confirmation already belled.
-  if (
-    !recovering &&
-    !isMockPaymentId(paymentIntentId) &&
-    !isFreeCreditIntent(paymentIntentId) &&
-    !isInternalFundedIntent(paymentIntentId)
-  ) {
-    await withPhase2Deadline(
-      notifyCreditsAppliedForPaymentBestEffort({
-        paymentId,
-        userId,
-        appointmentType: metadata.appointmentType,
-      }),
-      `credits-applied-bell ${paymentId}`,
-    );
-  }
+  await flushNotificationsAfter(
+    txResult.creditNotices,
+    "referral.credits_applied",
+  );
 
   if (!txResult.stageBellsRan) {
     try {

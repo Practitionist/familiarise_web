@@ -76,7 +76,7 @@ afterEach(() => {
   }
 });
 
-describe("1. stageBell(tx, ...) preference gating and routing mode", () => {
+describe("1. stageBell(tx, ...) preference gating", () => {
   it("never schedules a delayed survey earlier than its explicit receipt window", async () => {
     const tx = {
       user: {
@@ -110,11 +110,10 @@ describe("1. stageBell(tx, ...) preference gating and routing mode", () => {
     );
   });
 
-  it("filters out erased, EMAIL_ONLY, NEITHER, allNotifications:false, inAppEnabled:false, and muted categories, stages with no deferral, and returns null when all opt out", async () => {
+  it("filters out erased, allNotifications:false, inAppEnabled:false, and muted categories, stages with no deferral, and returns null when all opt out", async () => {
     const txFindMany = jest.fn().mockResolvedValue([
       {
         id: "u_allowed",
-        orgWorkspaceProfile: { notificationRoutingMode: "BELL_AND_EMAIL" },
         notificationPreferences: {
           allNotifications: true,
           inAppEnabled: true,
@@ -127,18 +126,7 @@ describe("1. stageBell(tx, ...) preference gating and routing mode", () => {
         notificationPreferences: { allNotifications: true, inAppEnabled: true },
       },
       {
-        id: "u_email_only",
-        orgWorkspaceProfile: { notificationRoutingMode: "EMAIL_ONLY" },
-        notificationPreferences: { allNotifications: true, inAppEnabled: true },
-      },
-      {
-        id: "u_neither",
-        orgWorkspaceProfile: { notificationRoutingMode: "NEITHER" },
-        notificationPreferences: { allNotifications: true, inAppEnabled: true },
-      },
-      {
         id: "u_all_off",
-        orgWorkspaceProfile: { notificationRoutingMode: "BELL_ONLY" },
         notificationPreferences: {
           allNotifications: false,
           inAppEnabled: true,
@@ -146,7 +134,6 @@ describe("1. stageBell(tx, ...) preference gating and routing mode", () => {
       },
       {
         id: "u_inapp_off",
-        orgWorkspaceProfile: { notificationRoutingMode: "BELL_AND_EMAIL" },
         notificationPreferences: {
           allNotifications: true,
           inAppEnabled: false,
@@ -154,7 +141,6 @@ describe("1. stageBell(tx, ...) preference gating and routing mode", () => {
       },
       {
         id: "u_cat_muted",
-        orgWorkspaceProfile: { notificationRoutingMode: "BELL_AND_EMAIL" },
         notificationPreferences: {
           allNotifications: true,
           inAppEnabled: true,
@@ -176,8 +162,6 @@ describe("1. stageBell(tx, ...) preference gating and routing mode", () => {
       recipients: [
         "u_allowed",
         "u_erased",
-        "u_email_only",
-        "u_neither",
         "u_all_off",
         "u_inapp_off",
         "u_cat_muted",
@@ -198,12 +182,8 @@ describe("1. stageBell(tx, ...) preference gating and routing mode", () => {
     txUpsert.mockClear();
     txFindMany.mockResolvedValueOnce([
       {
-        id: "u_email_only",
-        orgWorkspaceProfile: { notificationRoutingMode: "EMAIL_ONLY" },
-      },
-      {
-        id: "u_neither",
-        orgWorkspaceProfile: { notificationRoutingMode: "NEITHER" },
+        id: "u_all_off",
+        notificationPreferences: { allNotifications: false },
       },
       {
         id: "u_inapp_off",
@@ -213,7 +193,7 @@ describe("1. stageBell(tx, ...) preference gating and routing mode", () => {
 
     const skipped = await stageBell(tx, {
       workflowId: "payment-success",
-      recipients: ["u_email_only", "u_neither", "u_inapp_off"],
+      recipients: ["u_all_off", "u_inapp_off"],
       payload: { paymentId: "pay-100", dashboardUrl: "/dashboard" },
       dedupeKey: "pay-100",
     });

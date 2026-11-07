@@ -33,6 +33,10 @@ import {
   PayoutStatusEmail,
   type PayoutStatusKind,
 } from "@/emails/payments/PayoutStatusEmail";
+import {
+  CLAWBACK_NOTICE_SUBJECT,
+  ClawbackNoticeEmail,
+} from "@/emails/payments/ClawbackNoticeEmail";
 import ReferralBonusEmail, {
   referralBonusSubject,
   type ReferralBonusEmailKind,
@@ -54,14 +58,16 @@ import {
   dateText,
   defineBudgetedEmailSender,
   defineFixedBudgetEmailSender,
+  defineLifecyclePreparer,
   defineLifecycleStager,
   greet,
   money,
+  prepareBuiltSpec,
   prepareSpecEmails,
-  stageSpecGuarded,
-  stageSpecRequired,
+  stageBuiltSpec,
   type Paise,
   type PreparedRecipientEmails,
+  type PreparedSpecEmails,
   type RecipientEmailSpec,
   type StagingTx,
 } from "./shared";
@@ -76,6 +82,7 @@ export const MONEY_EMAIL_TYPES = {
   REFUND_PROCESSED: "REFUND_PROCESSED",
   REFUND_FAILED: "REFUND_FAILED",
   PAYOUT_STATUS: "PAYOUT_STATUS",
+  PAYOUT_CLAWBACK: "PAYOUT_CLAWBACK",
   DISPUTE_NOTICE: "DISPUTE_NOTICE",
   ORG_BILLING_RECEIPT: "ORG_BILLING_RECEIPT",
   ORG_INVOICE_OVERDUE: "ORG_INVOICE_OVERDUE",
@@ -108,6 +115,7 @@ function refundProcessedSpec(
     category: "payments",
     from: SENDERS.payments,
     entityRef: `payment:${args.paymentId}`,
+    traceRenderFailure: true,
     subject: () => `Your refund of ${amountText} is on its way`,
     render: (r: EmailRecipient): ReactElement =>
       RefundProcessedEmail({
@@ -131,11 +139,23 @@ export const sendRefundProcessedEmail =
     NOTHING_SENT,
   );
 
-export async function stageRefundProcessedEmail(
+function buildRefundProcessedEmail(args: RefundProcessedEmailArgs) {
+  return { userIds: [args.userId], spec: refundProcessedSpec(args) };
+}
+
+/** Renders the refund receipt before the settling transaction opens. */
+export function prepareRefundProcessedEmail(
+  args: RefundProcessedEmailArgs,
+): Promise<PreparedSpecEmails> {
+  return prepareBuiltSpec(buildRefundProcessedEmail, args);
+}
+
+export function stageRefundProcessedEmail(
   tx: StagingTx,
   args: RefundProcessedEmailArgs,
+  pre?: PreparedSpecEmails | null,
 ): Promise<StagedRecipientEmail[]> {
-  return stageSpecGuarded(refundProcessedSpec(args), [args.userId], tx);
+  return stageBuiltSpec(tx, buildRefundProcessedEmail, args, pre);
 }
 
 // ── Digital product purchased ───────────────────────────────────────────────
@@ -229,6 +249,7 @@ function refundFailedSpec(args: RefundFailedEmailArgs): RecipientEmailSpec {
     category: "payments",
     from: SENDERS.payments,
     entityRef: `payment:${args.paymentId}`,
+    traceRenderFailure: true,
     subject: () => "We couldn't complete your refund",
     render: (r) =>
       RefundFailedEmail({
@@ -247,11 +268,23 @@ export const sendRefundFailedEmail =
     NOTHING_SENT,
   );
 
-export async function stageRefundFailedEmail(
+function buildRefundFailedEmail(args: RefundFailedEmailArgs) {
+  return { userIds: [args.userId], spec: refundFailedSpec(args) };
+}
+
+/** Renders the refund-failed notice before the claiming transaction opens. */
+export function prepareRefundFailedEmail(
+  args: RefundFailedEmailArgs,
+): Promise<PreparedSpecEmails> {
+  return prepareBuiltSpec(buildRefundFailedEmail, args);
+}
+
+export function stageRefundFailedEmail(
   tx: StagingTx,
   args: RefundFailedEmailArgs,
+  pre?: PreparedSpecEmails | null,
 ): Promise<StagedRecipientEmail[]> {
-  return stageSpecGuarded(refundFailedSpec(args), [args.userId], tx);
+  return stageBuiltSpec(tx, buildRefundFailedEmail, args, pre);
 }
 
 // ── Org payout failed or reversed ───────────────────────────────────────────
@@ -284,6 +317,7 @@ export const sendOrgPayoutFailedEmail =
           category: "orgBilling",
           from: SENDERS.finance,
           entityRef: `orgPayout:${args.payoutId}`,
+          traceRenderFailure: true,
           subject: () => subject,
           render: (r) =>
             OrgPayoutFailedEmail({
@@ -325,6 +359,7 @@ function orgInvoiceOverdueSpec(
     category: "orgBilling",
     from: SENDERS.finance,
     entityRef: `orgInvoice:${args.invoiceId}`,
+    traceRenderFailure: true,
     subject: () =>
       orgInvoiceOverdueSubject({
         invoiceNumber: args.invoiceNumber,
@@ -345,16 +380,24 @@ function orgInvoiceOverdueSpec(
   };
 }
 
-/** Stages the overdue email in the dunning claim's `tx`; a render failure throws. */
+function buildOrgInvoiceOverdueEmail(args: OrgInvoiceOverdueEmailArgs) {
+  return { userIds: args.recipientUserIds, spec: orgInvoiceOverdueSpec(args) };
+}
+
+/** Renders the overdue email before the dunning claim opens. */
+export function prepareOrgInvoiceOverdueEmail(
+  args: OrgInvoiceOverdueEmailArgs,
+): Promise<PreparedSpecEmails> {
+  return prepareBuiltSpec(buildOrgInvoiceOverdueEmail, args);
+}
+
+/** Stages the overdue email in the dunning claim's `tx`; a render failure leaves its trace row. */
 export function stageOrgInvoiceOverdueEmail(
   tx: StagingTx,
   args: OrgInvoiceOverdueEmailArgs,
+  pre?: PreparedSpecEmails | null,
 ): Promise<StagedRecipientEmail[]> {
-  return stageSpecRequired(
-    tx,
-    orgInvoiceOverdueSpec(args),
-    args.recipientUserIds,
-  );
+  return stageBuiltSpec(tx, buildOrgInvoiceOverdueEmail, args, pre);
 }
 
 // ── Org wallet low ──────────────────────────────────────────────────────────
@@ -491,6 +534,7 @@ function buildPayoutStatusEmail(args: PayoutStatusEmailArgs): {
       entityRef: args.orgName
         ? `orgPayout:${args.payoutId}`
         : `payout:${args.payoutId}`,
+      traceRenderFailure: true,
       subject: () => subject,
       render: (r: EmailRecipient): ReactElement =>
         PayoutStatusEmail({
@@ -511,6 +555,49 @@ function buildPayoutStatusEmail(args: PayoutStatusEmailArgs): {
 
 export const stagePayoutStatusEmail =
   defineLifecycleStager<PayoutStatusEmailArgs>(buildPayoutStatusEmail);
+
+// ── Payout clawback raised ──────────────────────────────────────────────────
+
+export interface ClawbackNoticeEmailArgs {
+  recipientUserIds: string[];
+  organization: boolean;
+  payoutId: string;
+  journalId: string;
+  amountPaise: Paise;
+  dashboardUrl: string;
+}
+
+function buildClawbackNoticeEmail(args: ClawbackNoticeEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const amountText = money(args.amountPaise, "INR");
+  const dashboardUrl = absolute(args.dashboardUrl);
+  return {
+    userIds: args.recipientUserIds,
+    spec: {
+      emailType: MONEY_EMAIL_TYPES.PAYOUT_CLAWBACK,
+      category: args.organization ? "orgBilling" : "payments",
+      from: SENDERS.finance,
+      entityRef: `clawback:${args.journalId}`,
+      traceRenderFailure: true,
+      subject: () => CLAWBACK_NOTICE_SUBJECT,
+      render: (r: EmailRecipient): ReactElement =>
+        ClawbackNoticeEmail({
+          recipientName: greet(r),
+          organization: args.organization,
+          amountText,
+          payoutId: args.payoutId,
+          dashboardUrl,
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
+/** Renders inside the clawback's transaction, which computes the amount; a render failure leaves a trace row. */
+export const stageClawbackNoticeEmail =
+  defineLifecycleStager<ClawbackNoticeEmailArgs>(buildClawbackNoticeEmail);
 
 // ── Dispute notice ──────────────────────────────────────────────────────────
 
@@ -626,6 +713,7 @@ function buildOrgBillingEmail(args: OrgBillingEmailArgs): {
       category: "orgBilling",
       from: SENDERS.finance,
       entityRef,
+      traceRenderFailure: true,
       subject: () => subject,
       render: (r: EmailRecipient): ReactElement =>
         OrgBillingReceiptEmail({
@@ -760,10 +848,8 @@ export const stageOrgOperationalEmail =
 
 // ── Referral bonus & welcome credits ────────────────────────────────────────
 
-export interface ReferralBonusEmailArgs {
+interface ReferralBonusEmailBase {
   userId: string;
-  referralId: string;
-  kind: ReferralBonusEmailKind;
   counterpartyName?: string;
   amountPaise: Paise;
   remainingPaise?: Paise;
@@ -772,12 +858,26 @@ export interface ReferralBonusEmailArgs {
   dashboardUrl?: string;
 }
 
+/** A reward is keyed by its referral; a redemption by the payment that used it. */
+export type ReferralBonusEmailArgs = ReferralBonusEmailBase &
+  (
+    | {
+        kind: Exclude<ReferralBonusEmailKind, "CREDITS_APPLIED">;
+        referralId: string;
+      }
+    | { kind: "CREDITS_APPLIED"; paymentId: string }
+  );
+
 function buildReferralBonusEmail(args: ReferralBonusEmailArgs): {
   userIds: string[];
   spec: RecipientEmailSpec;
 } {
   const currency = args.currency ?? "INR";
-  const amountText = money(args.amountPaise, currency);
+  // The welcome discount is a cap; checkout applies the exact amount.
+  const amountText =
+    args.kind === "WELCOME_BONUS"
+      ? `up to ${money(args.amountPaise, currency)}`
+      : money(args.amountPaise, currency);
   const remainingText =
     args.remainingPaise !== undefined && args.remainingPaise !== null
       ? money(args.remainingPaise, currency)
@@ -792,7 +892,10 @@ function buildReferralBonusEmail(args: ReferralBonusEmailArgs): {
       emailType: `REFERRAL_${args.kind}`,
       category: "payments",
       from: SENDERS.payments,
-      entityRef: `referral:${args.referralId}:${args.kind.toLowerCase()}`,
+      entityRef:
+        args.kind === "CREDITS_APPLIED"
+          ? `payment:${args.paymentId}:referral-credits-applied`
+          : `referral:${args.referralId}:${args.kind.toLowerCase()}`,
       subject: () => referralBonusSubject({ kind: args.kind, amountText }),
       render: (r: EmailRecipient): ReactElement =>
         ReferralBonusEmail({
@@ -811,3 +914,6 @@ function buildReferralBonusEmail(args: ReferralBonusEmailArgs): {
 
 export const stageReferralBonusEmail =
   defineLifecycleStager<ReferralBonusEmailArgs>(buildReferralBonusEmail);
+
+export const prepareReferralBonusEmail =
+  defineLifecyclePreparer<ReferralBonusEmailArgs>(buildReferralBonusEmail);

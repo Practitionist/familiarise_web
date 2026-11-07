@@ -107,6 +107,7 @@ Inbound (practitionist.com):
 
 - [ ] Development: run `npx tsx scripts/novu/clear-native-mutes.ts` (dry run, then `--apply`), then `npm run novu:sync -- --dry-run` followed by `npm run novu:sync`, to sync all 16 workflow families
 - [ ] Production: run the same sequence with `--env production` **in the same window as the production release promotion that carries the single-preference-owner change**, not earlier: the old production code still writes subscriber preferences, so an earlier Production sync would fight it
+- [ ] After the domain-notices change (decision 17) merges, run `npm run novu:sync` in Development, and again with `--env production` at the release that carries it, so `payout-clawback`, `org-payout-clawback` and the new referral copy reach the `payout`, `org-billing`, `referral` and `payment` families. Until a sync, those bells render without the new text.
 - [ ] Verify `npm run novu:check` (and `npm run novu:check -- --env production` after the production sync) exits `0` with zero drift. Novu's read API serves stale workflows for about three minutes after a sync, so a `novu:check` in that window reports false drift on random families; wait five minutes, then expect two clean runs in a row.
 - [ ] Enable HMAC encryption in Novu Dashboard → In-App Integration settings to pair with `computeSubscriberHash(subscriberId)`
 
@@ -178,7 +179,7 @@ The apex carries SPF `v=spf1 -all`, a null MX `0 .`, and `_dmarc` is `v=DMARC1; 
    - `npm run novu:sync`: Syncs `lib/novu/templates/` to Development (`--env production` writes Production, at the release promotion).
    - `npm run novu:check`: Verifies live Novu workflows match code manifests in CI.
 3. **Server-Side Preference Gating (Postgres is the only owner)**:
-   - **Stage and attempt gates (`stageBell`, `currentBellRecipients`)**: Filter out `EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, erased users and muted category columns before inserting into `NotificationOutbox`, and again at the first attempt, which freezes the allowed set.
+   - **Stage and attempt gates (`stageBell`, `currentBellRecipients`)**: Filter out `allNotifications: false`, `inAppEnabled: false`, erased users and muted category columns before inserting into `NotificationOutbox`, and again at the first attempt, which freezes the allowed set.
    - **Novu holds no preference state**: families sync always-on and read-only with no step conditions. In each environment: run `npx tsx scripts/novu/clear-native-mutes.ts` (dry run, then `--apply`; add `--env production` for Production) **first**, then `npm run novu:sync`. The sync makes the families read-only, after which Novu may refuse per-family mute resets; the script lists any such read-only refusals separately.
 
 ---
@@ -187,13 +188,14 @@ The apex carries SPF `v=spf1 -all`, a null MX `0 .`, and `_dmarc` is `v=DMARC1; 
 
 Sub-hourly latency-sensitive relays run on the phase-staggered Netlify scheduled function (`netlify/functions/cron-tick.mts`, `*/5 * * * *`), and so do the daily and weekly batch maintenance jobs: no GitHub Actions workflow schedules a registry job:
 
-| Job Target                    | Driver          | Cadence & Offset                                      | Batch / Timeout        | Purpose                                                           |
-| ----------------------------- | --------------- | ----------------------------------------------------- | ---------------------- | ----------------------------------------------------------------- |
-| `drain-notification-outbox`   | `cron-tick.mts` | Every **10m** at offset **`:05`**                     | `limit=100`, `24s` cap | Replays due `NotificationOutbox` rows (`notBefore <= now`)        |
-| `retry-failed-emails`         | `cron-tick.mts` | Every **15m** at offset **`:05`**                     | `limit=20`, `20s` cap  | Replays due `FailedEmail` & `FailedEmailBatch` with RFC 8058 hdrs |
-| `appointment-reminders`       | `cron-tick.mts` | Every **15m** at offset **`:10`**                     | `limit=25`, `20s` cap  | Dispatches pre-session email & in-app appointment reminders       |
-| `auto-complete-appointments`  | `cron-tick.mts` | Every **30m** at offset **`:15`**                     | `limit=25`, `24s` cap  | Auto-completes past sessions and triggers post-session flows      |
-| `prune-system-job-executions` | `cron-tick.mts` | Every **30m** at offset **`:25`**, 20:00 to 23:30 UTC | `limit=500`, `24s` cap | Scrubs `SENT` email HTML/text after 7d; prunes terminal rows      |
+| Job Target                    | Driver          | Cadence & Offset                                      | Batch / Timeout        | Purpose                                                            |
+| ----------------------------- | --------------- | ----------------------------------------------------- | ---------------------- | ------------------------------------------------------------------ |
+| `drain-notification-outbox`   | `cron-tick.mts` | Every **10m** at offset **`:05`**                     | `limit=100`, `24s` cap | Replays due `NotificationOutbox` rows (`notBefore <= now`)         |
+| `retry-failed-emails`         | `cron-tick.mts` | Every **15m** at offset **`:05`**                     | `limit=20`, `20s` cap  | Replays due `FailedEmail` & `FailedEmailBatch` with RFC 8058 hdrs  |
+| `novu-step-failure-probe`     | `cron-tick.mts` | Every **2h** at offset **`:10`**, 4 h window          | 10 pages, `20s` cap    | Dead-letters in-app steps that failed inside Novu after acceptance |
+| `appointment-reminders`       | `cron-tick.mts` | Every **15m** at offset **`:10`**                     | `limit=25`, `20s` cap  | Dispatches pre-session email & in-app appointment reminders        |
+| `auto-complete-appointments`  | `cron-tick.mts` | Every **30m** at offset **`:15`**                     | `limit=25`, `24s` cap  | Auto-completes past sessions and triggers post-session flows       |
+| `prune-system-job-executions` | `cron-tick.mts` | Every **30m** at offset **`:25`**, 20:00 to 23:30 UTC | `limit=500`, `24s` cap | Scrubs `SENT` email HTML/text after 7d; prunes terminal rows       |
 
 Every target routes through `/api/cleanup/[job]`, authenticates via `CRON_SECRET`, and acquires an atomic Postgres lease on `SystemJobExecution` (`withCronLock`).
 

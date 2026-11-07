@@ -15,10 +15,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
 import { ClassPlanProgram } from "@/lib/explore/programs";
-import { isUserEnrolled } from "@/lib/payments/utils/participants";
 import { useCurrency } from "@/hooks/useCurrency";
 import { formatInTimeZone } from "date-fns-tz";
-import { getClassCapacity } from "@/lib/events/capacity";
+import { eventCapacityFromCount } from "@/lib/events/capacity";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import type { BatchCard } from "@/lib/booking/batch-cards";
 import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
@@ -26,7 +25,8 @@ import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclos
 type ClientClassRegistrationProps = {
   readonly plan: ClassPlanProgram;
   maxParticipants?: number;
-  consultantUserId?: string;
+  /** Batches' appointments the signed-in viewer holds a seat on; read by the server. */
+  enrolledAppointmentIds: readonly string[];
   /** #1819 — the batch this card sells: the first joinable one, else the first. */
   batch?: BatchCard;
 };
@@ -34,7 +34,7 @@ type ClientClassRegistrationProps = {
 export function ClientClassRegistration({
   plan,
   maxParticipants,
-  consultantUserId,
+  enrolledAppointmentIds,
   batch,
 }: ClientClassRegistrationProps) {
   const { id: classId, price, classes } = plan;
@@ -54,22 +54,20 @@ export function ClientClassRegistration({
   }, []);
 
   const isLoggedIn = hasMounted && !!session?.user;
-  const userId = session?.user?.id;
 
-  // Enrolled in any batch of this listing (#1554: one wrapper per batch).
-  const appointment = batchClass?.appointment ?? null;
-  const isAlreadyEnrolled = userId
-    ? (classes ?? []).some((c) => isUserEnrolled(c.appointment ?? null, userId))
-    : false;
+  // Enrolled in any batch of this listing (one wrapper per batch).
+  const isAlreadyEnrolled =
+    isLoggedIn &&
+    (classes ?? []).some(
+      (c) =>
+        !!c.appointment && enrolledAppointmentIds.includes(c.appointment.id),
+    );
 
   // Capacity comes from the class instance when it sets one, else the plan.
-  const capacity = getClassCapacity({
-    classInstance: {
-      maxParticipants: batchClass?.maxParticipants ?? null,
-      appointment,
-    },
+  const capacity = eventCapacityFromCount({
+    instance: { maxParticipants: batchClass?.maxParticipants ?? null },
     plan: { maxParticipants: maxParticipants ?? plan.maxParticipants ?? 100 },
-    excludeUserIds: consultantUserId ? [consultantUserId] : [],
+    taken: batchClass?.appointment?._count?.participants ?? 0,
   });
   const isFull = capacity.isFull;
   // #1819 — a batch past its host's cutoff, or finished, is not for sale.

@@ -46,11 +46,20 @@ import {
   stampSessionEnds,
   type EndedSessions,
 } from "@/lib/auth/session-access-log";
-import { stageVerificationDecidedEmail } from "@/lib/email/senders/onboarding";
 import {
+  prepareVerificationDecidedEmail,
+  stageVerificationDecidedEmail,
+  type VerificationDecidedEmailArgs,
+} from "@/lib/email/senders/onboarding";
+import {
+  prepareAccountModerationEmail,
+  prepareModerationReportOutcomeEmail,
   stageAccountModerationEmail,
   stageModerationReportOutcomeEmail,
+  type AccountModerationEmailArgs,
+  type ModerationReportOutcomeEmailArgs,
 } from "@/lib/email/senders/people";
+import type { PreparedSpecEmails } from "@/lib/email/senders/shared";
 import {
   cancelFutureEngagementsForUser,
   type BulkCancelSummary,
@@ -195,20 +204,103 @@ async function stageReporterDispositionBell(
   });
 }
 
+function statementReasonFor(input: ModerationSideEffectInput): string {
+  return moderationStatementOfReasons({
+    actionType: input.actionType,
+    reportId: input.report.id,
+    reportReason: input.report.reason,
+  });
+}
+
+function targetNoticeArgs(
+  input: ModerationSideEffectInput,
+): AccountModerationEmailArgs | null {
+  const removed =
+    input.actionType === "CONTENT_REMOVED" ||
+    input.actionType === "REVIEW_REMOVED";
+  if (!removed && input.actionType !== "WARNING_ISSUED") return null;
+  return {
+    userId: input.report.targetUserId,
+    kind: removed ? "CONTENT_REMOVED" : "MODERATION_WARNING",
+    reason: statementReasonFor(input),
+    supportUrl: "/support",
+  };
+}
+
+function verificationNoticeArgs(
+  input: ModerationSideEffectInput,
+): VerificationDecidedEmailArgs | null {
+  if (input.actionType !== "PROFILE_UNVERIFIED") return null;
+  return {
+    userId: input.report.targetUserId,
+    verificationId: `moderation:${input.report.id}`,
+    status: "REJECTED",
+    reason: statementReasonFor(input),
+    dashboardUrl: goHref("expert", "settings"),
+  };
+}
+
+function reporterNoticeArgs(
+  input: ModerationSideEffectInput,
+): ModerationReportOutcomeEmailArgs | null {
+  if (!input.report.reportedById) return null;
+  return {
+    reporterUserId: input.report.reportedById,
+    reportId: input.report.id,
+    reference: formatReportReference(input.report.id),
+    ...reportOutcomeCopy(
+      input.actionType,
+      input.report.id,
+      input.report.reason,
+    ),
+    dashboardUrl: goHref("auto", "support/reports"),
+  };
+}
+
+/** Notices rendered before the moderation transaction; each stages only if its inputs still match. */
+export interface ModerationNoticeDrafts {
+  target?: PreparedSpecEmails | null;
+  verification?: PreparedSpecEmails | null;
+  reporter?: PreparedSpecEmails | null;
+}
+
+async function draft<TArgs>(
+  args: TArgs | null,
+  prepare: (args: TArgs) => Promise<PreparedSpecEmails>,
+): Promise<PreparedSpecEmails | null> {
+  return args ? prepare(args).catch(() => null) : null;
+}
+
+/** Renders the decision's email notices outside the transaction that applies it. */
+export async function prepareModerationNotices(
+  input: ModerationSideEffectInput,
+): Promise<ModerationNoticeDrafts> {
+  return {
+    target: await draft(targetNoticeArgs(input), prepareAccountModerationEmail),
+    verification: await draft(
+      verificationNoticeArgs(input),
+      prepareVerificationDecidedEmail,
+    ),
+    reporter: await draft(
+      reporterNoticeArgs(input),
+      prepareModerationReportOutcomeEmail,
+    ),
+  };
+}
+
 export async function applyTransactionalEffects(
   tx: Tx,
   input: ModerationSideEffectInput,
+  drafts: ModerationNoticeDrafts = {},
 ): Promise<TransactionalEffectResult> {
   const result = await applyActionEffects(tx, input);
   const stagedBells: StagedTrigger[] = [...(result.stagedBells ?? [])];
   const stagedEmails: StagedEmailBundleEntry[] = [
     ...(result.stagedEmails ?? []),
   ];
-  const statementReason = moderationStatementOfReasons({
-    actionType: input.actionType,
-    reportId: input.report.id,
-    reportReason: input.report.reason,
-  });
+  const statementReason = statementReasonFor(input);
+  const targetArgs = targetNoticeArgs(input);
+  const verificationArgs = verificationNoticeArgs(input);
 
   if (
     input.actionType === "CONTENT_REMOVED" ||
@@ -225,37 +317,26 @@ export async function applyTransactionalEffects(
       dedupeKey: `content-removed:${contentRemovedSuffix}`,
     });
     if (contentRemovedBell) stagedBells.push(contentRemovedBell);
-    const contentRemovedRows = await stageAccountModerationEmail(tx, {
-      userId: input.report.targetUserId,
-      kind: "CONTENT_REMOVED",
-      reason: statementReason,
-      supportUrl: "/support",
-    });
-    stagedEmails.push({
-      rows: contentRemovedRows,
-      emailType: "CONTENT_REMOVED_NOTICE",
-    });
-  } else if (input.actionType === "WARNING_ISSUED") {
-    const warningRows = await stageAccountModerationEmail(tx, {
-      userId: input.report.targetUserId,
-      kind: "MODERATION_WARNING",
-      reason: statementReason,
-      supportUrl: "/support",
-    });
-    stagedEmails.push({
-      rows: warningRows,
-      emailType: "MODERATION_WARNING",
-    });
-  } else if (input.actionType === "PROFILE_UNVERIFIED") {
-    const unverifiedEmail = await stageVerificationDecidedEmail(
-      {
-        userId: input.report.targetUserId,
-        verificationId: `moderation:${input.report.id}`,
-        status: "REJECTED",
-        reason: statementReason,
-        dashboardUrl: goHref("expert", "settings"),
-      },
+  }
+  if (targetArgs) {
+    const targetRows = await stageAccountModerationEmail(
       tx,
+      targetArgs,
+      drafts.target,
+    );
+    stagedEmails.push({
+      rows: targetRows,
+      emailType:
+        targetArgs.kind === "CONTENT_REMOVED"
+          ? "CONTENT_REMOVED_NOTICE"
+          : "MODERATION_WARNING",
+    });
+  }
+  if (verificationArgs) {
+    const unverifiedEmail = await stageVerificationDecidedEmail(
+      tx,
+      verificationArgs,
+      drafts.verification,
     );
     stagedEmails.push({
       rows: unverifiedEmail.list,
@@ -267,18 +348,13 @@ export async function applyTransactionalEffects(
   if (!reporterIsNotifiedExpert(input, result)) {
     const outcomeBell = await stageReporterDispositionBell(tx, input);
     if (outcomeBell) stagedBells.push(outcomeBell);
-    if (input.report.reportedById) {
-      const outcomeRows = await stageModerationReportOutcomeEmail(tx, {
-        reporterUserId: input.report.reportedById,
-        reportId: input.report.id,
-        reference: formatReportReference(input.report.id),
-        ...reportOutcomeCopy(
-          input.actionType,
-          input.report.id,
-          input.report.reason,
-        ),
-        dashboardUrl: goHref("auto", "support/reports"),
-      });
+    const reporterArgs = reporterNoticeArgs(input);
+    if (reporterArgs) {
+      const outcomeRows = await stageModerationReportOutcomeEmail(
+        tx,
+        reporterArgs,
+        drafts.reporter,
+      );
       stagedEmails.push({
         rows: outcomeRows,
         emailType: "MODERATION_REPORT_OUTCOME",
@@ -606,7 +682,6 @@ async function runCollaboratorRevocations(
         planType,
         planId,
         targetUserId,
-        { notify: false },
       );
       if (!success) failed.push(`${planType}:${planId}`);
     } catch (error) {

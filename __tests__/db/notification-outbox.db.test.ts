@@ -2,11 +2,12 @@
  * Notification outbox semantics the unit stubs only imitate, against real
  * Postgres:
  *  - the SQL audience filter (`bellAudience`) and the per-recipient JS rule
- *    agree on every routing mode, switch, category and missing relation;
+ *    agree on every switch, category and missing relation, operators included;
  *  - fan-out pages stage once per key (`createManyAndReturn` skip-duplicates);
  *  - a definitive partial bell response keeps the retryable remainder on the
  *    row and moves terminal refusals to one DEAD_LETTER sibling;
- *  - neither relay overwrites a row another attempt already settled.
+ *  - neither relay overwrites a row another attempt already settled;
+ *  - a Novu step failure found twice leaves one dead-letter sibling.
  */
 import { randomUUID } from "node:crypto";
 
@@ -21,7 +22,12 @@ jest.mock("../../lib/novu/client", () => ({
   }),
 }));
 
-import type { NotificationRoutingMode, Prisma } from "@prisma/client";
+jest.mock("../../lib/cron/with-cron-lock", () => ({
+  ...jest.requireActual("../../lib/cron/with-cron-lock"),
+  withCronLock: (_job: string, _opts: unknown, fn: () => unknown) => fn(),
+}));
+
+import type { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { NOVU_WORKFLOWS } from "../../lib/novu/workflows";
 import { bellAudience, currentBellRecipients } from "../../lib/novu/policy";
@@ -31,6 +37,7 @@ import {
   stagePages,
   type StagedTrigger,
 } from "../../lib/novu/outbox";
+import { probeNovuStepFailures } from "../../jobs/notifications/novu-step-failure-probe";
 import {
   runEmailRetryTick,
   type FailedEmailStore,
@@ -49,7 +56,7 @@ type Prefs = Partial<
 
 async function seedUser(opts: {
   prefs?: Prefs | null;
-  routing?: NotificationRoutingMode | null;
+  operator?: boolean;
   erased?: boolean;
 }): Promise<string> {
   const user = await prisma.user.create({
@@ -61,13 +68,7 @@ async function seedUser(opts: {
       ...(opts.prefs
         ? { notificationPreferences: { create: opts.prefs } }
         : {}),
-      ...(opts.routing
-        ? {
-            orgWorkspaceProfile: {
-              create: { notificationRoutingMode: opts.routing },
-            },
-          }
-        : {}),
+      ...(opts.operator ? { orgWorkspaceProfile: { create: {} } } : {}),
     },
     select: { id: true },
   });
@@ -86,10 +87,8 @@ describe("bell audience: SQL filter matches the per-recipient rule", () => {
       { prefs: { appointmentReminders: false } },
       { prefs: { paymentNotifications: false } },
       { erased: true },
-      { routing: "BELL_AND_EMAIL" },
-      { routing: "BELL_ONLY", prefs: { appointmentReminders: false } },
-      { routing: "EMAIL_ONLY" },
-      { routing: "NEITHER" },
+      { operator: true },
+      { operator: true, prefs: { inAppEnabled: false } },
     ];
     for (const shape of shapes) ids.push(await seedUser(shape));
   });
@@ -99,6 +98,7 @@ describe("bell audience: SQL filter matches the per-recipient rule", () => {
     ["appointments", NOVU_WORKFLOWS.APPOINTMENT_BOOKED],
     ["payments", NOVU_WORKFLOWS.PAYMENT_LINK],
     ["orgBilling", NOVU_WORKFLOWS.ORG_INVOICE_ISSUED],
+    ["required", NOVU_WORKFLOWS.ACCOUNT_SECURITY_NOTICE],
   ])("%s", async (_label, workflowId) => {
     const seeded = new Set(ids);
     const sql = (await bellAudience(prisma, workflowId, 1_000_000)) ?? [];
@@ -204,6 +204,50 @@ describe("bell relay settles", () => {
       select: { status: true },
     });
     expect(after.status).toBe("SENT");
+  });
+});
+
+describe("Novu step failure probe", () => {
+  it("records one dead-letter sibling however often the failure is read", async () => {
+    const [ok, failed] = [await seedUser({}), await seedUser({})];
+    const row = await stageMulti([ok, failed]);
+    await prisma.notificationOutbox.update({
+      where: { id: row.id },
+      data: { status: "SENT", recipients: [] },
+    });
+    const activity = {
+      hasMore: false,
+      data: [
+        {
+          transactionId: recipientTransactionId(row.transactionId, failed),
+          subscriber: { subscriberId: failed },
+          jobs: [{ type: "in_app", status: "failed", executionDetails: [] }],
+        },
+      ],
+    };
+    const fetchPage = async () => Response.json(activity);
+    process.env.NOVU_DEVELOPMENT_KEY = "test-key";
+
+    const first = await probeNovuStepFailures({ db: prisma, fetchPage });
+    const second = await probeNovuStepFailures({ db: prisma, fetchPage });
+
+    expect([first.inserted, second.inserted]).toEqual([1, 0]);
+    const siblings = await prisma.notificationOutbox.findMany({
+      where: {
+        transactionId: { startsWith: `${row.transactionId}:stepfailed:` },
+      },
+    });
+    expect(siblings).toHaveLength(1);
+    expect(siblings[0]).toMatchObject({
+      kind: "SINGLE",
+      status: "DEAD_LETTER",
+      recipients: [failed],
+      entityRef: row.entityRef,
+      lastError: expect.stringMatching(/^review:novu_step_failed: /),
+    });
+    await expect(
+      prisma.notificationOutbox.findUniqueOrThrow({ where: { id: row.id } }),
+    ).resolves.toMatchObject({ status: "SENT" });
   });
 });
 

@@ -182,7 +182,7 @@ A few additional surfaces are not in the org-scoped tree:
     one org's wallet and invoices. Read-only.
   - `/settings` — renders through `SettingsLayout` (`WORKSPACE_SETTINGS_SECTIONS` in `lib/dashboard/nav/workspace.ts`):
     - `/settings/account` — personal Account details, Sign-in & security, Privacy & data, and Consent (`<AccountSettings />`), reached from the avatar menu's "Account settings" entry.
-    - `/settings/landing`, `/settings/locale`, `/settings/notifications` — workspace-level preferences (default landing org, locale and currency, notification routing) persisted via `PATCH /api/org-workspace/[orgWorkspaceId]/settings`, reached from the avatar menu's "All organizations settings" entry.
+    - `/settings/landing`, `/settings/notifications`, `/settings/account` — the default landing org (persisted via `PATCH /api/org-workspace/[orgWorkspaceId]/settings`), the operator's personal notification panel (`PUT /api/novu/preferences`) and account security, reached from the avatar menu's "All organizations settings" entry.
   - The bare `/dashboard/org-workspace/[orgWorkspaceId]` URL redirects to
     `/home`.
   - `/create` — same `<CreateOrganizationWizard />` as

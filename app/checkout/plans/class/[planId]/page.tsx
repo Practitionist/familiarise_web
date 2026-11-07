@@ -85,12 +85,12 @@ export type CheckoutClassPlanData = Omit<ClassPlan, "price"> & {
         tags: PrismaTag[];
       })
     | null;
-  // #1554 — one wrapper per batch; the seat ids feed the capacity count.
+  // One wrapper per batch; `_count` is the seats taken, host excluded.
   classes: (PrismaClass & {
     appointment:
       | (Appointment & {
           occurrences: AppointmentOccurrence[];
-          participants: { userId: string }[];
+          _count: { participants: number };
         })
       | null;
   })[];
@@ -231,7 +231,6 @@ export default function ClassCheckoutPage({
     if (!plan) return null;
     const cards = deriveBatchCards(plan, plan.classes, new Date(), {
       timeZone: viewer.zone,
-      hostUserId: plan.consultantProfile?.userId,
     });
     const wanted = validatedSearchParams?.eventId;
     const pick = wanted
@@ -482,7 +481,6 @@ export default function ClassCheckoutPage({
         new Date(),
         {
           timeZone: viewer.zone,
-          hostUserId: planData.data.consultantProfile?.userId,
         },
       ).some((c) => c.canEnrol);
       if (!hasAvailable) {

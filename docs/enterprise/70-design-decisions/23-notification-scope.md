@@ -3,12 +3,14 @@ title: A notification inherits the org-ness of the record that triggered it
 band: 70-design-decisions
 audience: sde3
 status: live
-last-reviewed: 2026-11-06
+last-reviewed: 2026-11-07
 ---
 
 # ADR 23 — Notifications are scoped, routed and mutable per context
 
-> **Partly superseded on 2026-11-06** by [the single-preference-owner decision](../../decisions/2026-11-06-notification-single-preference-owner.md). The scope tag, the deep-link rule and the three organisation categories below still hold. What no longer holds is the mechanism that carried routing and categories to Novu: routing is **not** pushed onto the subscriber record as `data.routingMode`, Novu workflow conditions do **not** gate any step, and the subscriber record carries no name, email or preference data. Postgres (`NotificationPreference` and `OrgWorkspaceProfile.notificationRoutingMode`) is read by the server when a bell is staged and again at its first attempt (`lib/novu/policy.ts`), and Novu only delivers to the recipients the server already approved. The paragraphs below are corrected where they described the old mechanism.
+> **Partly superseded on 2026-11-06** by [the single-preference-owner decision](../../decisions/2026-11-06-notification-single-preference-owner.md). The scope tag, the deep-link rule and the three organisation categories below still hold. What no longer holds is the mechanism that carried routing and categories to Novu: routing is **not** pushed onto the subscriber record as `data.routingMode`, Novu workflow conditions do **not** gate any step, and the subscriber record carries no name, email or preference data. Postgres (`NotificationPreference`) is read by the server when a bell is staged and again at its first attempt (`lib/novu/policy.ts`), and Novu only delivers to the recipients the server already approved. The paragraphs below are corrected where they described the old mechanism.
+>
+> **The routing section is superseded on 2026-11-07** by decision 12 of the same record: workspace routing is removed. `OrgWorkspaceProfile` is one-to-one with the operator's own user, so the routing mode duplicated that person's In-App and Email switches. The personal switches are now the only channel control, operators included, and nothing reads `notificationRoutingMode`.
 
 ## Context
 
@@ -36,9 +38,9 @@ At the time of writing they surfaced on a Notifications tab in the organization 
 
 There is no console side to this any more. The categories are enforced by the server (`resolveRecipientBellPolicy` for bells, `loadEmailRecipients` for email), and the Novu families are written read-only with no step conditions by `npm run novu:sync`; see [50-operations/10-novu-console-conditions](../50-operations/10-novu-console-conditions.md) for what the sync enforces and how to check it.
 
-**`notificationRoutingMode` is honoured rather than deleted.** It is read from Postgres by the server: for a bell, `EMAIL_ONLY` and `NEITHER` drop the recipient; for an optional email, `BELL_ONLY` and `NEITHER` drop it. It is the account-wide channel gate, and it applies the same way to the category preferences. (The first version of this decision pushed it onto the Novu subscriber as `data.routingMode` for workflow conditions to read; that mirror was removed because the server check already made it redundant.) Deleting the field was the alternative, and was rejected because the control has been shown to operators and removing it would take away a choice they believe they have made.
+**Channels are the operator's personal switches (superseded routing section).** This decision first kept `notificationRoutingMode` and had the server honour it as an account-wide channel gate. On 2026-11-07 that was reversed: the workspace profile belongs to one user, so the mode and the personal In-App and Email switches gated the same channels for the same person. The server now reads only `NotificationPreference`, and the column waits, unread, for the next schema batch to drop it.
 
-**The organization trees mount the inbox the same way.** The personal dashboards called `useNovuSubscriberSync` and the organization ones did not, so a user onboarded straight into an organization by invitation never fetched the signed inbox hash from `/api/novu/subscriber`, and the inbox could not authenticate. The hook is now called by the shared `DashboardShell` and by `NotificationInbox`, so every tree has it. The hook no longer syncs a profile: the route only signs the user id (`lib/novu/inbox-auth.ts`), and Novu creates the subscriber on the first inbox session or trigger. The routing preference takes effect through the server-side policy, not through the subscriber record.
+**The organization trees mount the inbox the same way.** The personal dashboards called `useNovuSubscriberSync` and the organization ones did not, so a user onboarded straight into an organization by invitation never fetched the signed inbox hash from `/api/novu/subscriber`, and the inbox could not authenticate. The hook is now called by the shared `DashboardShell` and by `NotificationInbox`, so every tree has it. The hook no longer syncs a profile: the route only signs the user id (`lib/novu/inbox-auth.ts`), and Novu creates the subscriber on the first inbox session or trigger. Preferences take effect through the server-side policy, not through the subscriber record.
 
 ## Consequences
 
@@ -49,3 +51,7 @@ The `ORG_*` workflows do not carry a `NotificationScope`. They are already unamb
 ADR 20's boundary is unchanged and now has a test. The notification payload surface sat entirely outside the allowlist suite that pins the list helpers, even though `RecordingPayload.recordingUrl` puts a live media URL in a notification body. Nothing leaked, because the recipient list came from a participant resolver rather than a roster — but that is the "accident of implementation" ADR 20 exists to stop, and a future change widening that list would have leaked the URL with no test failing. `__tests__/security/novu-payload-allowlist.test.ts` now pins both halves: content-bearing payloads reach only participant-derived recipients, and the organization-roster dispatchers carry no content field.
 
 What this decision does not do is give an organization its own inbox. There is still one subscriber per human and one feed, now filterable. A per-organization subscriber, or Novu topics keyed by organization, would let an operator hand off notification duty without handing over an account; that is a larger change and nothing has yet asked for it.
+
+## Deprecated & Superseded Approaches
+
+- The workspace routing mode (`OrgWorkspaceProfile.notificationRoutingMode`, the `NotificationRoutingSection` radio group and `routingBlocks`) was removed on 2026-11-07, because it duplicated the operator's own channel switches. The column is unread until the next schema batch drops it.

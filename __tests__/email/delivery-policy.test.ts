@@ -15,10 +15,6 @@ function recipient() {
   return {
     email: "reader@example.com",
     erasedAt: null as Date | null,
-    orgWorkspaceProfile: {
-      notificationRoutingMode: "BELL_AND_EMAIL" as
-        "BELL_AND_EMAIL" | "BELL_ONLY" | "EMAIL_ONLY" | "NEITHER",
-    },
     notificationPreferences: {
       allNotifications: true,
       emailEnabled: true,
@@ -58,8 +54,11 @@ it("round-trips the policy through the typed columns", () => {
   ).toBeNull();
 });
 
-it("keeps direct-address mail free of account policy", async () => {
+it("keeps direct-address mail free of account policy but refuses an erased marker", async () => {
   expect(await emailPolicyRefusal(null, "reader@example.com", db)).toBeNull();
+  expect(await emailPolicyRefusal(null, "erased:0123456789abcdef", db)).toBe(
+    "recipient_erased",
+  );
   expect(findUnique).not.toHaveBeenCalled();
 });
 
@@ -75,26 +74,10 @@ it.each(["allNotifications", "emailEnabled", "appointmentReminders"] as const)(
   },
 );
 
-it.each(["BELL_ONLY", "NEITHER"] as const)(
-  "honours workspace %s while queued",
-  async (notificationRoutingMode) => {
-    findUnique.mockResolvedValue({
-      ...recipient(),
-      orgWorkspaceProfile: { notificationRoutingMode },
-    });
-    expect(await emailPolicyRefusal(policy, "reader@example.com", db)).toBe(
-      "preference_changed",
-    );
-  },
-);
-
-it("sends a required notice despite optional switches and routing", async () => {
+it("sends a required notice despite optional switches", async () => {
   const user = recipient();
   user.notificationPreferences.allNotifications = false;
-  findUnique.mockResolvedValue({
-    ...user,
-    orgWorkspaceProfile: { notificationRoutingMode: "NEITHER" },
-  });
+  findUnique.mockResolvedValue(user);
   expect(
     await emailPolicyRefusal(
       { ...policy, category: null },
