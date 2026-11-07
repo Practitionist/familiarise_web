@@ -16,6 +16,7 @@ import {
 import type { Prisma } from "@prisma/client";
 import {
   calendarLinks,
+  calendarSeatWhere,
   nextSessionAhead,
 } from "@/lib/appointments/calendar-links";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
@@ -119,14 +120,30 @@ async function deriveBookingState(
   };
 }
 
-/** The buyer's add-to-calendar links for the next confirmed session, if one is ahead. */
-function buyerCalendarLinks(payment: VerifyPayment, userId: string) {
+/** The buyer's add-to-calendar links for the next confirmed session, only while their own seat is paid. */
+async function buyerCalendarLinks(
+  payment: VerifyPayment,
+  derived: { bookingState: BookingState; moneyState: MoneyState } | null,
+  userId: string,
+) {
   const appointment = payment.appointment;
-  if (!appointment) return null;
+  if (
+    !appointment ||
+    derived?.bookingState !== "CONFIRMED" ||
+    derived.moneyState === "REFUND_PENDING" ||
+    derived.moneyState === "REFUNDED"
+  )
+    return null;
   const next = nextSessionAhead(
     appointment.occurrences.filter((o) => !o.isTentative),
   );
   if (!next) return null;
+  // A group event's sessions outlive one refunded seat, so the buyer's own seat decides.
+  const seat = await prisma.appointmentParticipant.findFirst({
+    where: { appointmentId: appointment.id, ...calendarSeatWhere(userId) },
+    select: { id: true },
+  });
+  if (!seat) return null;
   const title = planTitleOrSessionLabel(
     appointment.consultation?.consultationPlan?.title ??
       appointment.subscription?.subscriptionPlan?.title ??
@@ -289,10 +306,11 @@ export async function GET(req: NextRequest) {
     }
 
     const derived = await deriveBookingState(payment);
-    const calendar =
-      derived?.bookingState === "CONFIRMED"
-        ? buyerCalendarLinks(payment, session.user.id)
-        : null;
+    const calendar = await buyerCalendarLinks(
+      payment,
+      derived,
+      session.user.id,
+    );
 
     // Return success response with appointment details
     return NextResponse.json({

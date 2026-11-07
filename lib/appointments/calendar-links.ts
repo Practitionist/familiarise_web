@@ -1,7 +1,9 @@
 // One attendee's add-to-calendar links: a Google template URL and a signed .ics link whose
 // HMAC binds appointment, user and purpose; the route re-checks the paid seat on every read.
 
+import type { Prisma } from "@prisma/client";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import { paidParticipant } from "@/lib/booking/participants";
 import { getAppUrl } from "@/lib/url";
 import { canSignLinks, safeEquals, signToken } from "@/lib/waitlist/tokens";
 import { sessionEnd, stamp } from "./ics";
@@ -11,6 +13,13 @@ const PURPOSE = "calendar-ics";
 export interface CalendarLinks {
   googleUrl: string;
   icsUrl: string;
+}
+
+/** The attendee seat a calendar link stands for; the .ics route and the success page both require it. */
+export function calendarSeatWhere(
+  userId: string,
+): Prisma.AppointmentParticipantWhereInput {
+  return { ...paidParticipant(userId), role: "CONSULTEE" };
 }
 
 export interface CalendarSession {

@@ -4,10 +4,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { paidParticipant } from "@/lib/booking/participants";
 import {
   appointmentDashboardUrl,
   calendarDetails,
+  calendarSeatWhere,
   verifyCalendarToken,
 } from "@/lib/appointments/calendar-links";
 import { buildIcs } from "@/lib/appointments/ics";
@@ -33,7 +33,7 @@ async function attendeeCalendar(appointmentId: string, userId: string) {
     where: {
       id: appointmentId,
       deletedAt: null,
-      participants: { some: { ...paidParticipant(userId), role: "CONSULTEE" } },
+      participants: { some: calendarSeatWhere(userId) },
     },
     select: {
       appointmentType: true,

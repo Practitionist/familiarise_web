@@ -280,7 +280,7 @@ The compare-and-swap narrows to the status the caller read, so a trial accepted 
 | A bad token, a missing or deleted booking, or a seat that is no longer paid | 404 `Not found`, the same body for every case         |
 | More than 30 requests a minute from one IP (`calendarLimiter`)              | 429 with `Retry-After`                                |
 
-Every answer carries `Cache-Control: private, no-store`. A paid seat is a `CONSULTEE` participant row that `paidParticipant(userId)` admits, the same predicate the group-event room uses, so a refunded or cancelled seat stops serving the file at once. The file carries the title, each session's start and end in UTC, and the dashboard link (`/dashboard/go/auto/appointments/<id>`), never the video link and never another person's details. The route reads the client IP that middleware stamps, which the `/api/(.*)` matcher covers.
+Every answer carries `Cache-Control: private, no-store`. A paid seat is a `CONSULTEE` participant row that `paidParticipant(userId)` admits (`calendarSeatWhere`, which the checkout success page also checks before it offers the links), the same predicate the group-event room uses, so a refunded or cancelled seat stops serving the file at once. The file carries the title, each session's start and end in UTC, and the dashboard link (`/dashboard/go/auto/appointments/<id>`), never the video link and never another person's details. The route reads the client IP that middleware stamps, which the `/api/(.*)` matcher covers.
 
 ---
 
