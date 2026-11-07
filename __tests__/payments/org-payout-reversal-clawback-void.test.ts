@@ -128,6 +128,7 @@ const db = {
 };
 jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
   stageClawbackNotice: jest.fn(),
+  stageRaisedClawback: jest.fn(),
 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,

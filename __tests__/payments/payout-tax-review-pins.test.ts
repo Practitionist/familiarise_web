@@ -11,6 +11,7 @@ const mockPostLedgerTxn = jest
   .mockResolvedValue({ transactionId: "txn", created: true });
 jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
   stageClawbackNotice: jest.fn(),
+  stageRaisedClawback: jest.fn(),
 }));
 jest.mock("../../lib/payments/ledger/post", () => ({
   __esModule: true,

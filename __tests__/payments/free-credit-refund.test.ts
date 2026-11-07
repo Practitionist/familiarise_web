@@ -35,6 +35,7 @@ const mockFindDeduped = jest.fn(async (..._a: unknown[]) => null as unknown);
 const mockStampTranches = jest.fn(async (..._a: unknown[]) => 0);
 jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
   stageClawbackNotice: jest.fn(),
+  stageRaisedClawback: jest.fn(),
 }));
 jest.mock("../../lib/booking/subscription-cycle", () => ({
   stampTranchesOnCancel: (...a: unknown[]) => mockStampTranches(...a),

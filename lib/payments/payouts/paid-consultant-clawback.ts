@@ -3,7 +3,7 @@ import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { reportSentryError } from "@/lib/observability/report";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { prorate } from "@/lib/payments/utils/money";
-import { stageClawbackNotice } from "./clawback-notifications";
+import { stageRaisedClawback } from "./clawback-notifications";
 
 function consultantClawbackKey(
   refundId: string,
@@ -68,15 +68,11 @@ export async function postConsultantPayoutClawback(
     });
     throw err;
   }
-  if (posted.created) {
-    await stageClawbackNotice(tx, {
-      payee: { rail: "CONSULTANT", consultantProfileId },
-      payoutId: consultantPayoutId,
-      journalId: posted.transactionId,
-      event: "RAISED",
-      amountPaise,
-    });
-  }
+  await stageRaisedClawback(tx, posted, {
+    payee: { rail: "CONSULTANT", consultantProfileId },
+    payoutId: consultantPayoutId,
+    amountPaise,
+  });
 }
 
 /**

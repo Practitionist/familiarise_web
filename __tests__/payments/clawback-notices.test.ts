@@ -20,6 +20,21 @@ jest.mock("@/lib/payments/payouts/clawback-notifications", () => {
       mockStage(...args);
       return actual.stageClawbackNotice(...args);
     },
+    // Records the RAISED call it makes, so assertions see one staging shape.
+    stageRaisedClawback: (
+      db: unknown,
+      posted: { created: boolean; transactionId: string },
+      input: Record<string, unknown>,
+    ) => {
+      if (posted.created) {
+        mockStage(db, {
+          ...input,
+          journalId: posted.transactionId,
+          event: "RAISED",
+        });
+      }
+      return actual.stageRaisedClawback(db, posted, input);
+    },
   };
 });
 jest.mock("@/emails/payments/ClawbackNoticeEmail", () => ({

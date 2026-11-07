@@ -3,7 +3,7 @@ import {
   reportSentryMessage,
 } from "@/lib/observability/report";
 import type { Tx } from "@/lib/prisma";
-import { stageClawbackNotice } from "@/lib/payments/payouts/clawback-notifications";
+import { stageRaisedClawback } from "@/lib/payments/payouts/clawback-notifications";
 /**
  * Unified reversal engine (#776 §C / ARCH #4).
  *
@@ -375,15 +375,11 @@ export async function postPayoutClawback(
     });
     throw err;
   }
-  if (posted.created) {
-    await stageClawbackNotice(tx, {
-      payee: { rail: "ORG", organizationId },
-      payoutId,
-      journalId: posted.transactionId,
-      event: "RAISED",
-      amountPaise,
-    });
-  }
+  await stageRaisedClawback(tx, posted, {
+    payee: { rail: "ORG", organizationId },
+    payoutId,
+    amountPaise,
+  });
 }
 
 /** `clawback:<driver>:<payoutId>[:<orgEarningsId>]`: one org clawback journal per reversed share. */
@@ -518,15 +514,11 @@ export async function postConsultantPayoutClawback(
     });
     throw err;
   }
-  if (posted.created) {
-    await stageClawbackNotice(tx, {
-      payee: { rail: "CONSULTANT", consultantProfileId },
-      payoutId: consultantPayoutId,
-      journalId: posted.transactionId,
-      event: "RAISED",
-      amountPaise,
-    });
-  }
+  await stageRaisedClawback(tx, posted, {
+    payee: { rail: "CONSULTANT", consultantProfileId },
+    payoutId: consultantPayoutId,
+    amountPaise,
+  });
 }
 
 export {

@@ -21,6 +21,7 @@ const notifyPayoutProcessed = jest.fn().mockResolvedValue(undefined);
 
 jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
   stageClawbackNotice: jest.fn(),
+  stageRaisedClawback: jest.fn(),
 }));
 jest.mock("../../lib/payments/tax/tds-service", () => ({
   __esModule: true,

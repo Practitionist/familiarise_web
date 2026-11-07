@@ -71,3 +71,17 @@ export async function stageClawbackNotice(
     dashboardUrl,
   });
 }
+
+/** Stages the RAISED notice only when this call created the clawback journal. */
+export async function stageRaisedClawback(
+  db: PrismaLike,
+  posted: { created: boolean; transactionId: string },
+  input: { payee: ClawbackPayee; payoutId: string; amountPaise: number },
+): Promise<void> {
+  if (!posted.created) return;
+  await stageClawbackNotice(db, {
+    ...input,
+    journalId: posted.transactionId,
+    event: "RAISED",
+  });
+}
