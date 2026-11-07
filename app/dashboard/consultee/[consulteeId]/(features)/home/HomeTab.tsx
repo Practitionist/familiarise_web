@@ -40,13 +40,10 @@ import { isDeliberateEnd } from "@/lib/appointments/occurrences";
 import { noSessionLabel } from "@/lib/appointments/bucket";
 import {
   toOccurrenceVM,
+  type AppointmentKind,
   type NeedsActionReason,
 } from "@/lib/appointments/view-model";
-import {
-  formatForViewer,
-  formatInViewerZone,
-  type ViewerZone,
-} from "@/lib/time/viewer-zone";
+import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Section } from "@/components/dashboard/Section";
 import { Stat, StatRow } from "@/components/dashboard/Stat";
@@ -56,19 +53,11 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { deriveConsulteeActionItems } from "@/lib/dashboard/action-items";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
 import { WaitingTimesStrip } from "@/components/booking/WaitingTimesStrip";
-import {
-  appointmentStatusBadge,
-  eventStatusBadge,
-} from "@/lib/labels/session-labels";
-import {
-  eventUnionStatusBadge,
-  isCancelledLikeStatus,
-  isInactiveStatus,
-  isConfirmedStatus,
-} from "@/lib/appointments/status";
+import { isInactiveStatus, isConfirmedStatus } from "@/lib/appointments/status";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   REJOIN_GRACE_MS,
+  appointmentStatusChip,
   getOccurrenceJoinState,
   isDeadOccurrence,
   isOccurrenceOver,
@@ -88,21 +77,30 @@ import {
   processAllEvents,
   getUpcomingEvents,
   selectNextUp,
-  groupSlotsIntoSessions,
+  sessionsThisMonth,
 } from "./event-processor";
 
-// Webinars/classes carry WebinarStatus/ClassStatus; consultations and
-// subscriptions carry AppointmentStatus; trials carry TrialStatus.
-const processedEventBadge = (event: ProcessedEvent) => {
-  const normalizedStatus = event.status?.toUpperCase();
-  if (event.type === "webinar" || event.type === "class") {
-    return eventStatusBadge(normalizedStatus);
-  }
-  if (event.type === "trial") {
-    return eventUnionStatusBadge(normalizedStatus);
-  }
-  return appointmentStatusBadge(normalizedStatus);
+const KIND_OF: Record<ProcessedEvent["type"], AppointmentKind> = {
+  consultation: "CONSULTATION",
+  subscription: "SUBSCRIPTION",
+  webinar: "WEBINAR",
+  class: "CLASS",
+  trial: "TRIAL",
 };
+
+/** The shared Appointments chip; Home lists only bookings that can still happen. */
+function homeStatusChip(event: ProcessedEvent, now: Date) {
+  return appointmentStatusChip(
+    {
+      status: event.status.toUpperCase(),
+      kind: KIND_OF[event.type],
+      nextAt: event.startsAt,
+      bucket: event.needsActionReason ? "needsAction" : "upcoming",
+    },
+    "consultee",
+    now,
+  );
+}
 
 const NEXT_UP_LIMIT = 3;
 const RATE_PROMPT_LIMIT = 2;
@@ -304,11 +302,7 @@ function NextUpCard({
           <span className="text-[11px] font-medium text-muted-foreground">
             {TYPE_LABEL[event.type]}
           </span>
-          {isGroup && event.bookingStatus ? (
-            <StatusBadge label="Registered" tone="success" size="sm" />
-          ) : (
-            <StatusBadge {...processedEventBadge(event)} withDot size="sm" />
-          )}
+          <StatusBadge {...homeStatusChip(event, now)} withDot size="sm" />
         </div>
         {/* #1775 P-1 — the processor resolves the target: our pay page for a
             Razorpay order id (in-app), or a hosted https link (new tab). */}
@@ -351,27 +345,6 @@ function NextUpCard({
       </div>
     </div>
   );
-}
-
-/** Live sessions of this viewer-zone month, across bookings that still stand. */
-function sessionsThisMonth(
-  events: ProcessedEvent[],
-  zone: string,
-  now: Date,
-): number {
-  const monthKey = formatInViewerZone(now, zone, "yyyy-MM");
-  // Compared in the viewer's zone per slot, so a near-midnight session lands
-  // in the month it displays under.
-  return events
-    .filter((event) => !isCancelledLikeStatus(event.status))
-    .reduce(
-      (sum, event) =>
-        sum +
-        groupSlotsIntoSessions(event.slots).filter(
-          (s) => formatInViewerZone(s.startTime, zone, "yyyy-MM") === monthKey,
-        ).length,
-      0,
-    );
 }
 
 type WithProposals = {

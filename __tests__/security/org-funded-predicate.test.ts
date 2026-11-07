@@ -14,10 +14,8 @@
  * MANAGER+ in the org, and act-for-org let the org's OWNER cancel it (refunding
  * the member's card).
  *
- * The rail tuple is module-private in `org-sponsored-seats.ts` and a Prisma
- * `in` filter needs the values at build time, so the list carries its own
- * literal. That duplication is only safe while something pins the two together,
- * which is this file.
+ * Both read the one tuple in `lib/payments/org-funded.ts`; this file pins the
+ * list's WHERE clause to the predicate.
  */
 
 jest.mock("../../lib/prisma", () => ({
@@ -29,7 +27,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import prisma from "../../lib/prisma";
-import { isOrgFundedPaymentMethod } from "../../lib/data/org-sponsored-seats";
+import { isOrgFundedPaymentMethod } from "../../lib/payments/org-funded";
 import {
   isActForOrgBooking,
   isOrgFundedByOrg,

@@ -19,10 +19,10 @@ jest.mock("../../lib/prisma", () => ({
 import prisma from "../../lib/prisma";
 import {
   getOrgSponsoredGroupSeats,
-  isOrgFundedPaymentMethod,
   seatPayerOrganizationId,
   sponsoredSeatsWhere,
 } from "../../lib/data/org-sponsored-seats";
+import { isOrgFundedPaymentMethod } from "../../lib/payments/org-funded";
 
 const m = prisma as unknown as {
   appointmentParticipant: { count: jest.Mock; findMany: jest.Mock };
