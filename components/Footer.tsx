@@ -1,16 +1,15 @@
 "use client";
 
 import React, { useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { MessageSquare } from "lucide-react";
 
+import { BrandWordmark } from "@/components/brand/BrandWordmark";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { COMPANY_INFO } from "@/lib/company";
 import { isChromeHidden } from "@/lib/navigation/public-chrome";
-import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
 
 interface FooterLink {
   label: string;
@@ -214,14 +213,8 @@ const Footer: React.FC = () => {
           {/* Brand Column */}
           <div className="col-span-2 md:col-span-3 lg:col-span-2">
             <Link href="/" className="inline-block mb-6">
-              <div className="relative h-10 w-36">
-                <Image
-                  src={familiariseLogoWhite}
-                  alt="Familiarise"
-                  fill
-                  className="object-contain object-left"
-                  sizes="144px"
-                />
+              <div className="flex h-10 w-36 items-center">
+                <BrandWordmark size="md" tone="inverse" />
               </div>
             </Link>
             <p className="text-zinc-400 text-sm leading-relaxed max-w-xs">
