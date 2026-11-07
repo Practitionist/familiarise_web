@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import type { PreferenceCategory } from "@/lib/novu/templates/types";
 import { EMAIL_PREFERENCE_SELECT, isEmailAllowedForUser } from "./preferences";
 import { normaliseEmail } from "./suppression";
+import { isErasedRecipient } from "./erased-recipient";
 
 /** The account a message was addressed to; a null category is a required notice. */
 export interface EmailDeliveryPolicy {
@@ -59,12 +60,17 @@ export type EmailPolicyRefusal =
   | "recipient_changed"
   | "preference_changed";
 
+/** The `lastError` of a message whose recipient's account was erased. */
+export const RECIPIENT_ERASED_REFUSAL =
+  `policy:${"recipient_erased" satisfies EmailPolicyRefusal}` as const;
+
 /** Rereads the account now; a read failure throws so the caller leaves the row pending. */
 export async function emailPolicyRefusal(
   policy: EmailDeliveryPolicy | null,
   recipient: string,
   db: EmailPolicyReader,
 ): Promise<EmailPolicyRefusal | null> {
+  if (isErasedRecipient(recipient)) return "recipient_erased";
   if (!policy) return null;
   const user = await db.user.findUnique({
     where: { id: policy.userId },

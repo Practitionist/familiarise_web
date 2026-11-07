@@ -44,7 +44,6 @@
  * never throws into the cron wrapper.
  */
 
-import { z } from "zod";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import type {
   EmailSuppression,
@@ -58,6 +57,7 @@ import {
   type CreateEmailRequestOptions,
 } from "resend";
 import { DEFAULT_FROM_ADDRESS, EMAIL_BUDGET_MS } from "@/lib/email/config";
+import { batchMessagesSchema } from "@/lib/email/batch-payload";
 import {
   carriesCredential,
   resendErrorText,
@@ -535,23 +535,6 @@ export async function runEmailRetryTick(params: {
   }
   return runBody(undefined);
 }
-
-/** The stored newsletter batch, as `app/api/admin/waitlist/broadcast` wrote it. */
-const batchMessagesSchema = z
-  .array(
-    z
-      .object({
-        from: z.string().min(1),
-        to: z.string().min(1),
-        subject: z.string(),
-        html: z.string(),
-        text: z.string().optional(),
-        headers: z.record(z.string()).optional(),
-      })
-      .strict(),
-  )
-  .min(1)
-  .max(100);
 
 async function drainBatches(ctx: {
   prisma: FailedEmailStore;

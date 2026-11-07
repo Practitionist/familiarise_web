@@ -1,6 +1,5 @@
 import AnnouncementBar from "@/components/AnnouncementBar";
 import MaintenanceBanner from "@/components/banners/MaintenanceBanner";
-import CookieConsentBanner from "@/components/CookieConsent";
 import Footer from "@/components/Footer";
 import HeaderSpacer from "@/components/HeaderSpacer";
 import Navbar from "@/components/Navbar";
@@ -91,7 +90,6 @@ export default function RootLayout({
               <div className="flex-1 w-full">{children}</div>
               <Footer />
             </AnnouncementBarProvider>
-            <CookieConsentBanner />
           </MaintenanceProvider>
         </ReactQueryProvider>
       </body>

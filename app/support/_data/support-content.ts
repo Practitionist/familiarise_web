@@ -1337,8 +1337,9 @@ export const supportArticles: SupportArticle[] = [
     slug: "unsubscribe-cookies",
     category: "help",
     title: "How do I unsubscribe or manage cookies?",
-    excerpt: "Email unsubscribe, cookie categories, and what stays essential.",
-    updated: "September 2026",
+    excerpt:
+      "Email unsubscribe, the newsletter and marketing consent, and why there is no cookie banner.",
+    updated: "November 2026",
     contactCategory: "general",
     related: [
       "help/notification-preferences",
@@ -1352,9 +1353,15 @@ export const supportArticles: SupportArticle[] = [
         ],
       },
       {
+        heading: "Newsletter and marketing emails",
+        paragraphs: [
+          "Marketing emails and the newsletter follow one choice: Marketing communications in Settings › Account › Data consent & privacy rights. Giving that consent subscribes your account's email address to the newsletter without a confirmation email; withdrawing it unsubscribes you. The unsubscribe link in a newsletter stops it at once and also withdraws that consent for your account. The notification settings have no separate marketing switch.",
+        ],
+      },
+      {
         heading: "Cookies",
         paragraphs: [
-          "The cookie banner offers essential, analytics, marketing, and functional toggles. Essential cookies stay on — the site cannot sign you in without them — while the rest are your choice and can be changed anytime.",
+          "Familiarise uses only essential cookies, the ones that keep you signed in, protect forms and complete checkout, so there is no cookie banner and nothing to switch on or off. No analytics or advertising script runs on the site. If one is ever added, we will ask for your consent before it runs.",
         ],
       },
     ],

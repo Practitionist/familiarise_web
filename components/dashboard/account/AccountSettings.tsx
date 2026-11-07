@@ -7,11 +7,7 @@ import {
   PasswordSection,
   SessionsSection,
 } from "./SignInSecuritySection";
-import {
-  CookiePreferencesSection,
-  DeleteAccountSection,
-  GrievanceSection,
-} from "./PrivacySection";
+import { DeleteAccountSection, GrievanceSection } from "./PrivacySection";
 
 export interface AccountSettingsProps {
   /**
@@ -35,7 +31,6 @@ export function AccountSettings({
       <PasswordSection />
       <SessionsSection />
       <ConnectedAccountsSection returnHref={returnHref} />
-      <CookiePreferencesSection />
       <ConsentSection />
       <GrievanceSection />
       <DeleteAccountSection />
