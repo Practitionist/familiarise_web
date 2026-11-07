@@ -404,47 +404,12 @@ model NotificationPreference {
 | `/api/notifications/preferences` | GET    | Get user preferences   |
 | `/api/notifications/preferences` | PUT    | Update preferences     |
 | `/api/notifications/fcm-token`   | POST   | Register FCM token     |
-| `/api/webhooks/novu`             | POST   | Novu webhook handler   |
 
 > **Note:** Most notification operations (list, mark read, etc.) are handled client-side by Novu's React SDK - no custom API needed.
 
-### 6.2 Webhook Security
+### 6.2 Detecting Failed Steps
 
-```typescript
-// app/api/webhooks/novu/route.ts
-
-import { headers } from "next/headers";
-import crypto from "crypto";
-
-export async function POST(req: Request) {
-  const headersList = headers();
-  const signature = headersList.get("x-novu-signature");
-  const body = await req.text();
-
-  // Verify HMAC signature
-  const expectedSignature = crypto
-    .createHmac("sha256", process.env.NOVU_WEBHOOK_SECRET!)
-    .update(body)
-    .digest("hex");
-
-  if (signature !== expectedSignature) {
-    return Response.json({ error: "Invalid signature" }, { status: 401 });
-  }
-
-  const event = JSON.parse(body);
-
-  switch (event.type) {
-    case "notification.delivered":
-      // Analytics tracking
-      break;
-    case "notification.failed":
-      // Alert on failures
-      break;
-  }
-
-  return Response.json({ received: true });
-}
-```
+There is no inbound Novu webhook. Novu's outbound webhooks are Team and Enterprise only, and their `message.failed` event covers provider sends, not in-app steps. Instead, the `novu-step-failure-probe` ticker job (`jobs/notifications/novu-step-failure-probe.ts`) reads `GET /v1/notifications?channels=in_app` every 2 hours. It records each in-app step that failed inside Novu as a `review:novu_step_failed` dead letter beside its `NotificationOutbox` row.
 
 ---
 

@@ -187,13 +187,14 @@ The apex carries SPF `v=spf1 -all`, a null MX `0 .`, and `_dmarc` is `v=DMARC1; 
 
 Sub-hourly latency-sensitive relays run on the phase-staggered Netlify scheduled function (`netlify/functions/cron-tick.mts`, `*/5 * * * *`), and so do the daily and weekly batch maintenance jobs: no GitHub Actions workflow schedules a registry job:
 
-| Job Target                    | Driver          | Cadence & Offset                                      | Batch / Timeout        | Purpose                                                           |
-| ----------------------------- | --------------- | ----------------------------------------------------- | ---------------------- | ----------------------------------------------------------------- |
-| `drain-notification-outbox`   | `cron-tick.mts` | Every **10m** at offset **`:05`**                     | `limit=100`, `24s` cap | Replays due `NotificationOutbox` rows (`notBefore <= now`)        |
-| `retry-failed-emails`         | `cron-tick.mts` | Every **15m** at offset **`:05`**                     | `limit=20`, `20s` cap  | Replays due `FailedEmail` & `FailedEmailBatch` with RFC 8058 hdrs |
-| `appointment-reminders`       | `cron-tick.mts` | Every **15m** at offset **`:10`**                     | `limit=25`, `20s` cap  | Dispatches pre-session email & in-app appointment reminders       |
-| `auto-complete-appointments`  | `cron-tick.mts` | Every **30m** at offset **`:15`**                     | `limit=25`, `24s` cap  | Auto-completes past sessions and triggers post-session flows      |
-| `prune-system-job-executions` | `cron-tick.mts` | Every **30m** at offset **`:25`**, 20:00 to 23:30 UTC | `limit=500`, `24s` cap | Scrubs `SENT` email HTML/text after 7d; prunes terminal rows      |
+| Job Target                    | Driver          | Cadence & Offset                                      | Batch / Timeout        | Purpose                                                            |
+| ----------------------------- | --------------- | ----------------------------------------------------- | ---------------------- | ------------------------------------------------------------------ |
+| `drain-notification-outbox`   | `cron-tick.mts` | Every **10m** at offset **`:05`**                     | `limit=100`, `24s` cap | Replays due `NotificationOutbox` rows (`notBefore <= now`)         |
+| `retry-failed-emails`         | `cron-tick.mts` | Every **15m** at offset **`:05`**                     | `limit=20`, `20s` cap  | Replays due `FailedEmail` & `FailedEmailBatch` with RFC 8058 hdrs  |
+| `novu-step-failure-probe`     | `cron-tick.mts` | Every **2h** at offset **`:10`**, 4 h window          | 10 pages, `20s` cap    | Dead-letters in-app steps that failed inside Novu after acceptance |
+| `appointment-reminders`       | `cron-tick.mts` | Every **15m** at offset **`:10`**                     | `limit=25`, `20s` cap  | Dispatches pre-session email & in-app appointment reminders        |
+| `auto-complete-appointments`  | `cron-tick.mts` | Every **30m** at offset **`:15`**                     | `limit=25`, `24s` cap  | Auto-completes past sessions and triggers post-session flows       |
+| `prune-system-job-executions` | `cron-tick.mts` | Every **30m** at offset **`:25`**, 20:00 to 23:30 UTC | `limit=500`, `24s` cap | Scrubs `SENT` email HTML/text after 7d; prunes terminal rows       |
 
 Every target routes through `/api/cleanup/[job]`, authenticates via `CRON_SECRET`, and acquires an atomic Postgres lease on `SystemJobExecution` (`withCronLock`).
 
