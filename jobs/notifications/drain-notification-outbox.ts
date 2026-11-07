@@ -5,9 +5,10 @@
  * inline trigger attempt (status PENDING when that attempt timed out, failed
  * transiently or never ran; RETRY on any later scheduled attempt), whose
  * `nextRetryAt` is now or earlier and whose `notBefore` has passed. One tick
- * takes up to `MAX_BATCH` rows and re-triggers each through the same wire path
- * the inline attempt used, under the same `transactionId`, so a row the inline
- * path sent but could not mark is deduplicated by Novu instead of rung twice.
+ * takes up to `MAX_BATCH` rows, urgent workflows first, and re-triggers each
+ * through the same wire path the inline attempt used, with the same frozen
+ * recipients and Idempotency-Key, so a row the inline path sent but could not
+ * mark is deduplicated by Novu instead of rung twice.
  * Outcomes: SENT; RETRY on the shared backoff ladder (lib/retry/backoff.ts);
  * DEAD_LETTER after MAX_ATTEMPTS or on a terminal 4xx. The table is the queue
  * (ADR 27), as for FailedEmail and OutboundWebhookDelivery.
@@ -21,10 +22,50 @@ import { recordSystemError } from "@/lib/enterprise/system-events";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { runJob } from "@/lib/observability/job-sentry";
 import { postOpsChat } from "@/lib/observability/ops-chat";
+import {
+  DEAD_LETTER_BELL_WHERE,
+  isExpectedBellDeadLetter,
+} from "@/lib/backoffice/queue-predicates";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu/outbox";
+import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 
-const MAX_BATCH = 50;
+const MAX_BATCH = 100;
 export const DRAIN_CONCURRENCY = 5;
+/**
+ * No new wave starts past this. An attempt makes at most one bulk call (5 s
+ * timeout plus at most 5 s of SDK retries), so the last wave ends inside the
+ * 24 s target timeout.
+ */
+const WAVE_START_BUDGET_MS = 12_000;
+
+/** Security and money-failure bells drain ahead of routine ones. */
+export const URGENT_WORKFLOWS: readonly string[] = [
+  NOVU_WORKFLOWS.ACCOUNT_SECURITY_NOTICE,
+  NOVU_WORKFLOWS.ACCOUNT_SUSPENDED,
+  NOVU_WORKFLOWS.ACCOUNT_BANNED,
+  NOVU_WORKFLOWS.PAYMENT_FAILED,
+  NOVU_WORKFLOWS.REFUND_FAILED,
+  NOVU_WORKFLOWS.PAYOUT_FAILED,
+  NOVU_WORKFLOWS.ORG_PAYOUT_FAILED,
+  NOVU_WORKFLOWS.DISPUTE_CREATED,
+  NOVU_WORKFLOWS.COMPLIANCE_DEADLINE_ALERT,
+];
+
+const DUE_ROW_SELECT = {
+  id: true,
+  workflowId: true,
+  kind: true,
+  recipients: true,
+  payload: true,
+  transactionId: true,
+  attempts: true,
+  status: true,
+  notBefore: true,
+  firstAttemptAt: true,
+  entityRef: true,
+  lastError: true,
+  createdAt: true,
+} as const;
 
 export interface NotificationDrainResult {
   scanned: number;
@@ -104,22 +145,28 @@ export async function runNotificationDrainTick(params: {
       error?: string;
     }> = [];
 
-    const dueRows = await params.prisma.notificationOutbox.findMany({
-      where: outboxDueWhere(nowDate),
-      orderBy: [{ nextRetryAt: { sort: "asc", nulls: "first" } }],
-      take: params.maxBatch ?? MAX_BATCH,
-      select: {
-        id: true,
-        workflowId: true,
-        kind: true,
-        recipients: true,
-        payload: true,
-        transactionId: true,
-        attempts: true,
-        status: true,
-        createdAt: true,
-      },
-    });
+    const limit = params.maxBatch ?? MAX_BATCH;
+    const dueBatch = (
+      workflowId: Prisma.StringFilter<"NotificationOutbox">,
+      take: number,
+    ) =>
+      params.prisma.notificationOutbox.findMany({
+        where: { AND: [outboxDueWhere(nowDate), { workflowId }] },
+        orderBy: [{ nextRetryAt: { sort: "asc", nulls: "first" } }],
+        take,
+        select: DUE_ROW_SELECT,
+      });
+    const urgentRows = await dueBatch({ in: [...URGENT_WORKFLOWS] }, limit);
+    const dueRows =
+      urgentRows.length < limit
+        ? [
+            ...urgentRows,
+            ...(await dueBatch(
+              { notIn: [...URGENT_WORKFLOWS] },
+              limit - urgentRows.length,
+            )),
+          ]
+        : urgentRows;
 
     const recordOutcome = (
       row: StagedTrigger,
@@ -140,6 +187,7 @@ export async function runNotificationDrainTick(params: {
         result.sent += 1;
       } else if (outcome.outcome === "DEAD_LETTER") {
         result.deadLettered += 1;
+        if (isExpectedBellDeadLetter(outcome.deadLetterReason)) return true;
         tickFailures.push({
           id: row.id,
           workflowId: row.workflowId,
@@ -158,10 +206,21 @@ export async function runNotificationDrainTick(params: {
         result.errors.push(String(outcome.error));
         return false;
       }
-      return true;
+      if (outcome.terminalSplit) {
+        result.deadLettered += 1;
+        tickFailures.push({
+          id: row.id,
+          workflowId: row.workflowId,
+          outcome: "DEAD_LETTER",
+          error: outcome.terminalSplit,
+        });
+      }
+      // A 429 drains the shared token bucket; further waves would only spend retries.
+      return outcome.retryAfterMs === undefined;
     };
 
     if (dueRows.length > 0) {
+      const startedAt = Date.now();
       const firstRow = dueRows[0];
       const firstOutcome = await attempt(firstRow, {
         relay: true,
@@ -171,6 +230,7 @@ export async function runNotificationDrainTick(params: {
       if (recordOutcome(firstRow, firstOutcome)) {
         const rest = dueRows.slice(1);
         for (let i = 0; i < rest.length; i += DRAIN_CONCURRENCY) {
+          if (Date.now() - startedAt > WAVE_START_BUDGET_MS) break;
           const chunk = rest.slice(i, i + DRAIN_CONCURRENCY);
           const outcomes = await Promise.all(
             chunk.map((row) =>
@@ -179,32 +239,33 @@ export async function runNotificationDrainTick(params: {
           );
           let shouldContinue = true;
           for (let j = 0; j < chunk.length; j += 1) {
-            if (!recordOutcome(chunk[j], outcomes[j])) {
-              shouldContinue = false;
-              break;
-            }
+            if (!recordOutcome(chunk[j], outcomes[j])) shouldContinue = false;
           }
           if (!shouldContinue) break;
         }
       }
     }
 
+    // Expected skips are counted but never recorded as failures, so they never page.
+    const alertableDeadLetters = tickFailures.filter(
+      (f) => f.outcome === "DEAD_LETTER",
+    ).length;
     if (tickFailures.length > 0) {
       Sentry.captureException(
         new Error(
-          `Notification outbox drain encountered ${tickFailures.length} failure(s) (${result.deadLettered} dead-lettered, ${result.retried} retried)`,
+          `Notification outbox drain encountered ${tickFailures.length} failure(s) (${alertableDeadLetters} dead-lettered, ${result.retried} retried)`,
         ),
         {
-          level: result.deadLettered > 0 ? "error" : "warning",
+          level: alertableDeadLetters > 0 ? "error" : "warning",
           tags: {
             subsystem: "novu",
             op: "drain-outbox",
-            ...(result.deadLettered > 0 ? { outbox_dead_letter: "true" } : {}),
+            ...(alertableDeadLetters > 0 ? { outbox_dead_letter: "true" } : {}),
           },
           extra: {
             scanned: result.scanned,
             retried: result.retried,
-            deadLettered: result.deadLettered,
+            deadLettered: alertableDeadLetters,
             failures: tickFailures.slice(0, 10),
           },
         },
@@ -222,7 +283,7 @@ export async function runNotificationDrainTick(params: {
     Sentry.metrics?.count?.("notifications.outbox.retried", result.retried);
     Sentry.metrics?.count?.(
       "notifications.outbox.dead_lettered",
-      result.deadLettered,
+      alertableDeadLetters,
     );
 
     if (typeof params.prisma.notificationOutbox.count === "function") {
@@ -232,7 +293,7 @@ export async function runNotificationDrainTick(params: {
             where: { status: { in: ["PENDING", "RETRY"] } },
           }),
           params.prisma.notificationOutbox.count({
-            where: { status: "DEAD_LETTER" },
+            where: DEAD_LETTER_BELL_WHERE,
           }),
         ]);
         Sentry.metrics?.gauge?.("notifications.outbox.pending", pendingCount);
@@ -245,7 +306,7 @@ export async function runNotificationDrainTick(params: {
       }
     }
 
-    if (result.deadLettered > 0) {
+    if (alertableDeadLetters > 0) {
       const deadLetterWorkflows = [
         ...new Set(
           tickFailures
@@ -254,7 +315,7 @@ export async function runNotificationDrainTick(params: {
         ),
       ].join(", ");
       await postOpsChat(
-        `:rotating_light: Notification outbox dead-lettered ${result.deadLettered} row(s) (${deadLetterWorkflows || "unknown"})`,
+        `:rotating_light: Notification outbox dead-lettered ${alertableDeadLetters} row(s) (${deadLetterWorkflows || "unknown"})`,
       );
     }
 
@@ -272,7 +333,7 @@ export async function runNotificationDrainTick(params: {
 
 // Fail-closed like the email relay (#1230): a held or unavailable lock pages
 // rather than letting two replicas trigger every row twice; Novu's dedupe on
-// transactionId is the backstop, not the design.
+// the Idempotency-Key is the backstop, not the design.
 export async function drainNotificationOutbox(opts?: {
   limit?: number;
 }): Promise<NotificationDrainResult> {

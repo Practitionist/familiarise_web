@@ -28,6 +28,13 @@ jest.mock("next/headers", () => ({
   headers: async () => new Headers(),
 }));
 
+// This suite drives the gate, not the limiter; one user makes more calls here
+// than the per-user join limit allows in a minute.
+jest.mock("../../lib/rate-limit", () => ({
+  meetingJoinLimiter: {},
+  applyRateLimit: async () => null,
+}));
+
 jest.mock("../../actions/stream/chat/user.action", () => ({
   upsertUsersToStream: (...a: unknown[]) => mockUpsertUsersToStream(...a),
 }));

@@ -20,6 +20,7 @@ import { recordSynchronousEarnings } from "@/lib/payments/checkout/commit/ledger
 import { settleCheckoutLegs } from "@/lib/payments/checkout/commit/payment-legs";
 import { writeCheckoutPayment } from "@/lib/payments/checkout/commit/payment-row";
 import type { CheckoutCommitInput } from "@/lib/payments/checkout/commit/types";
+import { stageCreditsApplied } from "@/lib/referrals/referral-notify";
 
 /**
  * The booking transaction: Serializable, retried on P2034, with the slot grant
@@ -254,13 +255,24 @@ export async function commitCheckout(input: CheckoutCommitInput) {
             payment,
           });
         await recordSynchronousEarnings(tx, input, { payment, skipPayment });
+        // A gateway payment's notice waits for its capture; these rails never see one.
+        const creditNotices =
+          skipPayment && actualCreditsApplied > 0
+            ? await stageCreditsApplied(tx, {
+                userId,
+                paymentId: payment.id,
+                creditsUsedPaise: actualCreditsApplied,
+                remainingPaise: creditsRemainingAfter ?? 0,
+                appointmentType: validatedData.appointmentType,
+              })
+            : {};
 
         return {
           appointmentId: createdAppointment?.id,
           paymentId: payment.id,
           holdExpiresAt: payment.expiresAt,
           creditsApplied: actualCreditsApplied,
-          creditsRemainingAfter,
+          creditNotices,
           capNearBell,
           overageBell,
         };

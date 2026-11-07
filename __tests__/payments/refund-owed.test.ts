@@ -302,6 +302,8 @@ jest.mock("../../lib/email", () => ({
   stageRefundFailedEmail: (...a: unknown[]) =>
     mockSendRefundFailedEmail(...(a as [])),
   stageRefundProcessedEmail: jest.fn(async () => []),
+  prepareRefundFailedEmail: jest.fn(async () => null),
+  prepareRefundProcessedEmail: jest.fn(async () => null),
   EMAIL_BUDGET_MS: { JOB: 1, REQUEST: 1 },
   MONEY_EMAIL_TYPES: { REFUND_FAILED: "REFUND_FAILED" },
 }));
@@ -808,6 +810,7 @@ describe("a failed gateway attempt", () => {
     expect(mockSendRefundFailedEmail).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ amountPaise: 1_000 }),
+      null,
     );
     // Claimed silently, so a later success never sends a stale failure email.
     expect(mockRefunds[0].failedNotifiedAt).toBeInstanceOf(Date);

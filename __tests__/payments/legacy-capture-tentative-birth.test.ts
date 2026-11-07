@@ -20,6 +20,12 @@
  */
 
 const withSerializableRetry = jest.fn(async (fn: () => unknown) => fn());
+jest.mock("@/lib/referrals/referral-notify", () => ({
+  readCreditsApplied: jest.fn(async () => null),
+  prepareCreditsAppliedEmail: jest.fn(),
+  stageCreditsApplied: jest.fn(async () => ({})),
+  stageReferralReward: jest.fn(async () => ({})),
+}));
 jest.mock("../../lib/db/serializable-retry", () => ({
   __esModule: true,
   withSerializableRetry: (fn: () => unknown) => withSerializableRetry(fn),
@@ -123,6 +129,7 @@ jest.mock("../../lib/email", () => ({
   __esModule: true,
   sendPaymentSuccessEmail: jest.fn(),
   sendPaymentFailedEmail: jest.fn(),
+  stageRenderFailure: jest.fn(),
 }));
 jest.mock("../../lib/novu", () => ({
   __esModule: true,

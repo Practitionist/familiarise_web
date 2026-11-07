@@ -39,6 +39,9 @@ import {
   withdrawConsent,
 } from "@/lib/compliance/dpdp";
 import {
+  OFFERED_PURPOSE_CODES,
+  SIGNUP_PURPOSES,
+  TERMS_VERSION,
   normalizePurposeCode,
   type PurposeCode,
 } from "@/lib/compliance/purpose-codes";
@@ -131,7 +134,6 @@ const CreateBodySchema = z.object({
   purposeCodes: z.array(z.string().min(1).max(64)).min(1).max(20),
   language: LanguageSchema,
   consentManager: z.string().min(1).max(120).nullable().optional(),
-  version: z.coerce.number().int().min(1),
 });
 
 const QuerySchema = z.object({
@@ -213,8 +215,32 @@ export async function GET(
       : undefined;
 
   return NextResponse.json({
-    data: consents,
+    data: visibleToReader(consents, selfId),
     ...(withdrawalRequests && { withdrawalRequests }),
+  });
+}
+
+const ORG_RELIED_PURPOSES = new Set<string>(SIGNUP_PURPOSES);
+
+/**
+ * Another member's platform consent is shown only for the purposes the org
+ * relies on; their marketing choices are between them and Familiarise.
+ */
+function visibleToReader<
+  T extends {
+    userId: string | null;
+    dataFiduciary: string;
+    purposeCodes: string[];
+  },
+>(consents: T[], selfId: string): T[] {
+  return consents.flatMap((c) => {
+    if (c.userId === selfId || c.dataFiduciary !== PLATFORM_DATA_FIDUCIARY) {
+      return [c];
+    }
+    const purposeCodes = c.purposeCodes.filter((code) =>
+      ORG_RELIED_PURPOSES.has(normalizePurposeCode(code) ?? code),
+    );
+    return purposeCodes.length > 0 ? [{ ...c, purposeCodes }] : [];
   });
 }
 
@@ -271,6 +297,19 @@ export async function POST(
   const purposeCodes = Array.from(
     new Set(normalized.map((n) => n.code as PurposeCode)),
   );
+  const notOffered = purposeCodes.filter(
+    (code) => !OFFERED_PURPOSE_CODES.includes(code),
+  );
+  if (notOffered.length > 0) {
+    return NextResponse.json(
+      {
+        error: "Purpose not offered",
+        code: "PURPOSE_NOT_OFFERED",
+        detail: { notOffered },
+      },
+      { status: 400 },
+    );
+  }
 
   // Cross-org check: caller must be recording consent for an actual
   // member of this org.
@@ -293,7 +332,7 @@ export async function POST(
     purposeCodes,
     language: body.language,
     consentManager: body.consentManager ?? null,
-    version: body.version,
+    version: TERMS_VERSION,
   });
 
   const [consent] = await prisma.$transaction([
@@ -317,7 +356,7 @@ export async function POST(
           membershipId: member.id,
           purposeCodes,
           language: body.language,
-          version: body.version,
+          version: TERMS_VERSION,
           hash: draft.hash,
         },
       },

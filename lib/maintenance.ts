@@ -3,10 +3,6 @@
  */
 
 import { MaintenancePhase } from "@prisma/client";
-import {
-  notifyMaintenanceEnded,
-  notifyMaintenanceScheduled,
-} from "@/lib/novu/service";
 
 import prisma from "@/lib/prisma";
 import redis from "@/lib/redis";
@@ -111,29 +107,6 @@ export async function setMaintenanceState(
           betterstackIncidentId: config.betterstackIncidentId,
         },
       });
-    }
-    if (phase === MaintenancePhase.OFF && activeWindow) {
-      await notifyMaintenanceEnded(
-        { phase: "OFF", reason: "Maintenance completed" },
-        {
-          tx,
-          deferAttempt: true,
-          dedupeKey: `maintenance-ended:${activeWindow.id}`,
-        },
-      );
-    } else if (phase !== MaintenancePhase.OFF && !activeWindow && row) {
-      await notifyMaintenanceScheduled(
-        {
-          phase,
-          ...(config.reason ? { reason: config.reason } : {}),
-          ...(config.estimatedEnd ? { estimatedEnd: config.estimatedEnd } : {}),
-        },
-        {
-          tx,
-          deferAttempt: true,
-          dedupeKey: `maintenance-scheduled:${row.id}`,
-        },
-      );
     }
     const actor = config.startedBy ?? config.endedBy;
     if (actor && row) {

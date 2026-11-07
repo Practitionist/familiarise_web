@@ -3,11 +3,28 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
+const mockListIndexablePlans = jest.fn();
+jest.mock("@/lib/data/indexable-plans", () => ({
+  listIndexableEventPlanIds: (...args: unknown[]) =>
+    mockListIndexablePlans(...args),
+}));
+const mockReportSentryError = jest.fn();
+jest.mock("@/lib/observability/report", () => ({
+  reportSentryError: (...args: unknown[]) => mockReportSentryError(...args),
+}));
+
 import sitemap from "@/app/sitemap";
 import robots from "@/app/robots";
 import { metadata as blogMetadata } from "@/app/blog/layout";
 
-const entries = sitemap();
+let entries: Awaited<ReturnType<typeof sitemap>>;
+beforeAll(async () => {
+  mockListIndexablePlans.mockResolvedValue({
+    webinarPlanIds: ["wp-1", "wp-2"],
+    classPlanIds: ["cp-1"],
+  });
+  entries = await sitemap();
+});
 const pathnameOf = (url: string) => new URL(url).pathname;
 
 const segmentsOf = (pathname: string) =>
@@ -58,6 +75,28 @@ describe("sitemap", () => {
 
     const urls = entries.map((entry) => entry.url);
     expect(new Set(urls).size).toBe(urls.length);
+  });
+
+  it("lists the webinar and class plans on sale, each once", () => {
+    const pathnames = entries.map((entry) => pathnameOf(entry.url));
+    expect(
+      pathnames.filter((p) => p.startsWith("/explore/programs/plans/")),
+    ).toEqual([
+      "/explore/programs/plans/webinars/wp-1",
+      "/explore/programs/plans/webinars/wp-2",
+      "/explore/programs/plans/classes/cp-1",
+    ]);
+  });
+
+  it("keeps the static routes and reports once when the plan query fails", async () => {
+    mockListIndexablePlans.mockRejectedValueOnce(new Error("db down"));
+    const degraded = await sitemap();
+    const pathnames = degraded.map((entry) => pathnameOf(entry.url));
+    expect(pathnames).toContain("/explore/programs");
+    expect(
+      pathnames.some((p) => p.startsWith("/explore/programs/plans/")),
+    ).toBe(false);
+    expect(mockReportSentryError).toHaveBeenCalledTimes(1);
   });
 
   it("includes every public marketing and help route", () => {

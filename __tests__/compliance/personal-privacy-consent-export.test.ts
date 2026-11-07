@@ -44,6 +44,11 @@ jest.mock("../../lib/prisma", () => ({
     },
     user: {
       findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(async () => ({ email: "User@Example.com" })),
+    },
+    waitlist: {
+      upsert: jest.fn(),
+      updateMany: jest.fn(async () => ({ count: 1 })),
     },
     payment: {
       findMany: jest.fn(),
@@ -84,6 +89,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import prisma from "../../lib/prisma";
+import { TERMS_VERSION } from "../../lib/compliance/purpose-codes";
 import {
   GET as getConsent,
   POST as postConsent,
@@ -104,6 +110,7 @@ const mockPrisma = prisma as unknown as {
     updateMany: jest.Mock;
   };
   user: { findUnique: jest.Mock };
+  waitlist: { upsert: jest.Mock; updateMany: jest.Mock };
   payment: { findMany: jest.Mock };
   supportCase: { findMany: jest.Mock };
   membership: { findMany: jest.Mock };
@@ -143,44 +150,23 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
       expect(res.status).toBe(401);
     });
 
-    it("returns personal ConsentArtifact rows and preference flags on GET", async () => {
-      const now = new Date();
+    it("returns personal ConsentArtifact rows on GET", async () => {
       mockPrisma.consentArtifact.findMany.mockResolvedValueOnce([
         {
           id: "ca_1",
           dataFiduciary: "Familiarise",
-          purposeCodes: [
-            "PRIMARY_PROCESSING",
-            "SESSION_BOOKING",
-            "STREAM_DATA_PROCESSING",
-          ],
-          language: "en-IN",
-          version: 1,
-          grantedAt: now,
-          withdrawnAt: null,
-          auditRetainedUntil: new Date(now.getTime() + 86400_000),
+          purposeCodes: ["ANALYTICS"],
         },
       ]);
-      mockPrisma.notificationPreference.findUnique.mockResolvedValueOnce({
-        marketingEmails: true,
-      });
-      mockPrisma.cookiePreference.findUnique.mockResolvedValueOnce({
-        analytics: false,
-        marketing: true,
-      });
 
       const res = await getConsent();
       expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(body.data).toHaveLength(1);
-      expect(body.preferences).toEqual({
-        marketingEmails: true,
-        cookieAnalytics: false,
-        cookieMarketing: true,
+      expect(await res.json()).toEqual({
+        data: [expect.objectContaining({ id: "ca_1" })],
       });
     });
 
-    it("records optional MARKETING_COMMS consent and syncs NotificationPreference + CookiePreference on POST", async () => {
+    it("subscribes the account's address to the newsletter in the MARKETING_COMMS grant's transaction, without a confirmation email", async () => {
       mockPrisma.consentArtifact.create.mockImplementationOnce(
         async ({ data }: { data: Record<string, unknown> }) => ({
           id: "ca_mkt_1",
@@ -206,11 +192,41 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
             userId: "user_dpdp_1",
             dataFiduciary: "Familiarise",
             purposeCodes: ["MARKETING_COMMS"],
+            // The server stamps the current notice, whatever the client sends.
+            version: TERMS_VERSION,
           }),
         }),
       );
-      expect(mockPrisma.notificationPreference.upsert).toHaveBeenCalled();
-      expect(mockPrisma.cookiePreference.upsert).toHaveBeenCalled();
+      const fields = {
+        userId: "user_dpdp_1",
+        status: "SUBSCRIBED",
+        confirmedAt: expect.any(Date),
+        unsubscribedAt: null,
+      };
+      expect(mockPrisma.waitlist.upsert).toHaveBeenCalledWith({
+        where: { email: "user@example.com" },
+        create: expect.objectContaining({
+          email: "user@example.com",
+          ...fields,
+        }),
+        update: expect.objectContaining(fields),
+      });
+      expect(mockPrisma.notificationPreference.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.cookiePreference.upsert).not.toHaveBeenCalled();
+    });
+
+    it("refuses to grant ANALYTICS, which is not offered, and writes nothing", async () => {
+      const req = new NextRequest("http://localhost/api/user/privacy/consent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ purposeCodes: ["ANALYTICS"] }),
+      });
+
+      const res = await postConsent(req);
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("PURPOSE_NOT_OFFERED");
+      expect(mockPrisma.consentArtifact.create).not.toHaveBeenCalled();
+      expect(mockPrisma.waitlist.upsert).not.toHaveBeenCalled();
     });
 
     it("blocks direct withdrawal of core platform purpose PRIMARY_PROCESSING with 400 CORE_CONSENT_REQUIRES_ACCOUNT_CLOSURE", async () => {
@@ -226,7 +242,7 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
       expect(mockWithdrawConsent).not.toHaveBeenCalled();
     });
 
-    it("withdraws optional MARKETING_COMMS in 1 click and disables marketing preferences", async () => {
+    it("withdraws MARKETING_COMMS and unsubscribes the account's newsletter rows in one transaction", async () => {
       mockWithdrawConsent.mockResolvedValueOnce({ withdrawnCount: 1 });
 
       const req = new NextRequest(
@@ -236,16 +252,22 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
 
       const res = await deleteConsent(req);
       expect(res.status).toBe(200);
-      expect(mockWithdrawConsent).toHaveBeenCalledWith({
-        userId: "user_dpdp_1",
-        purposeCode: "MARKETING_COMMS",
-      });
-      expect(mockPrisma.notificationPreference.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { userId: "user_dpdp_1" },
-          data: { marketingEmails: false },
-        }),
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(mockWithdrawConsent).toHaveBeenCalledWith(
+        { userId: "user_dpdp_1", purposeCode: "MARKETING_COMMS" },
+        mockPrisma,
       );
+      expect(mockPrisma.waitlist.updateMany).toHaveBeenCalledWith({
+        where: {
+          OR: [{ userId: "user_dpdp_1" }, { email: "user@example.com" }],
+          status: { in: ["PENDING", "SUBSCRIBED"] },
+        },
+        data: { status: "UNSUBSCRIBED", unsubscribedAt: expect.any(Date) },
+      });
+      expect(
+        mockPrisma.notificationPreference.updateMany,
+      ).not.toHaveBeenCalled();
+      expect(mockPrisma.cookiePreference.updateMany).not.toHaveBeenCalled();
     });
   });
 

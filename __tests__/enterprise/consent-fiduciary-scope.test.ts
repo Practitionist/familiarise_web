@@ -56,6 +56,41 @@ describe("GET /api/organizations/[orgId]/consent", () => {
       expect(args.select.subjectPseudonymousId).toBeUndefined();
     },
   );
+
+  it("hides another member's platform marketing consent from operators, but not the operator's own", async () => {
+    const artifact = (
+      id: string,
+      userId: string,
+      dataFiduciary: string,
+      purposeCodes: string[],
+    ) => ({ id, userId, dataFiduciary, purposeCodes });
+    mockFindMany.mockResolvedValue([
+      artifact("a1", "user-x", "Familiarise", ["MARKETING_COMMS"]),
+      artifact("a2", "user-x", "Familiarise", [
+        "PRIMARY_PROCESSING",
+        "MARKETING_COMMS",
+      ]),
+      artifact("a3", "user-x", "org:org-A", ["MARKETING_COMMS"]),
+      artifact("a4", "user-op", "Familiarise", ["MARKETING_COMMS"]),
+    ]);
+
+    const res = await GET(
+      new NextRequest("https://app.test/api/organizations/org-A/consent"),
+      { params: Promise.resolve({ orgId: "org-A" }) },
+    );
+    const body = (await res.json()) as {
+      data: Array<{ id: string; purposeCodes: string[] }>;
+    };
+
+    expect(body.data).toEqual([
+      expect.objectContaining({
+        id: "a2",
+        purposeCodes: ["PRIMARY_PROCESSING"],
+      }),
+      expect.objectContaining({ id: "a3", purposeCodes: ["MARKETING_COMMS"] }),
+      expect.objectContaining({ id: "a4", purposeCodes: ["MARKETING_COMMS"] }),
+    ]);
+  });
 });
 
 describe("every org-route consentArtifact read names a fiduciary", () => {

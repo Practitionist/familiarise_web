@@ -18,6 +18,10 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { BREACH_REPORTING_DEADLINE_HOURS } from "@/lib/backoffice/queue-predicates";
+import {
+  EMAIL_REPLAY_EXPLANATIONS,
+  type EmailReplayRefusal,
+} from "@/lib/email/replay-policy";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import { GstRegisterDownload } from "./GstRegisterDownload";
 
@@ -279,6 +283,7 @@ interface FailedEmail {
   attempts: number;
   lastError: string | null;
   createdAt: string;
+  replayRefusal: EmailReplayRefusal | null;
 }
 
 const EMAIL_STATUSES = ["DEAD_LETTER", "RETRY", "PENDING", "SENT"];
@@ -356,8 +361,16 @@ function FailedEmailsTab() {
           }}
         />
       }
-      rowActions={(m) =>
-        m.status === "DEAD_LETTER" ? (
+      rowActions={(m) => {
+        if (m.status !== "DEAD_LETTER") return null;
+        if (m.replayRefusal) {
+          return (
+            <span className="max-w-xs text-xs text-muted-foreground">
+              {EMAIL_REPLAY_EXPLANATIONS[m.replayRefusal]}
+            </span>
+          );
+        }
+        return (
           <ConfirmDialog
             trigger={
               <Button size="sm" variant="outline">
@@ -367,13 +380,17 @@ function FailedEmailsTab() {
             title="Send this email again?"
             description={`"${m.subject}" to ${m.recipient}, exactly as it was rendered.`}
             confirmLabel="Replay"
-            onConfirm={async () => {
-              await postJson("/api/admin/failed-emails", { ids: [m.id] });
+            requireReason={{ label: "Reason for replay", minLength: 5 }}
+            onConfirm={async ({ reason }) => {
+              await postJson("/api/admin/failed-emails", {
+                ids: [m.id],
+                reason,
+              });
               invalidate("compliance-emails");
             }}
           />
-        ) : null
-      }
+        );
+      }}
       empty={
         <p className="py-10 text-center text-sm text-muted-foreground">
           No emails in this state.

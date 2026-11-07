@@ -7,7 +7,6 @@ import { scheduleAfter } from "@/lib/api/after-safe";
 import { AUTH_PROVIDERS } from "@/lib/auth-providers";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
-import { syncSubscriber } from "@/lib/novu/subscriber";
 import { notifyAccountSecurityNotice } from "@/lib/novu/service";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { goHref } from "@/lib/dashboard/go";
@@ -42,33 +41,15 @@ function reportAuthFailure(error: unknown, op: string): void {
   reportSentryError(error, { subsystem: "auth", op, level: "warning" });
 }
 
-/** Novu holds the address, so only proven (verified) users get a subscriber. */
-function syncVerifiedSubscriber(user: LifecycleUser): void {
-  const nameParts = (user.name || "User").split(" ");
-  void scheduleAfter(
-    () =>
-      syncSubscriber({
-        userId: user.id,
-        email: user.email,
-        firstName: nameParts[0],
-        lastName: nameParts.slice(1).join(" ") || undefined,
-      }).catch((error) => {
-        reportAuthFailure(error, "novu-subscriber-sync");
-      }),
-    "auth:novu-subscriber-sync",
-  );
-}
-
 /**
- * The first moment a person has proven their address: create their Novu
- * subscriber, stamp the sign-up DPDP consent (unless they never saw the
- * sign-up form) and send the welcome mail.
+ * The first moment a person has proven their address: stamp the sign-up
+ * DPDP consent (unless they never saw the sign-up form) and send the welcome
+ * mail.
  */
 export async function welcomeVerifiedUser(
   user: LifecycleUser,
   opts: { stampConsent: boolean },
 ): Promise<void> {
-  syncVerifiedSubscriber(user);
   if (opts.stampConsent) {
     // Fails open: ConsentSection lets the user grant it, and every consent
     // gate fails closed until they do.
@@ -136,10 +117,8 @@ export async function provisionNewUser(
       update: {},
     });
 
-    if (!user.emailVerified) return;
-    if (path === "/admin/create-user") {
-      syncVerifiedSubscriber(user);
-    } else if (path?.startsWith("/sso/")) {
+    if (!user.emailVerified || path === "/admin/create-user") return;
+    if (path?.startsWith("/sso/")) {
       // A refused SSO login deletes the user it just created (account hooks),
       // so greet only a user still present once the callback has answered.
       void scheduleAfter(async () => {

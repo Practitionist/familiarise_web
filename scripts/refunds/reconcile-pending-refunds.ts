@@ -36,6 +36,8 @@ import { attemptTrigger, type StagedTrigger } from "../../lib/novu/outbox";
 import {
   EMAIL_BUDGET_MS,
   MONEY_EMAIL_TYPES,
+  prepareRefundFailedEmail,
+  prepareRefundProcessedEmail,
   stageRefundFailedEmail,
   stageRefundProcessedEmail,
 } from "@/lib/email";
@@ -455,6 +457,15 @@ async function reconcilePendingRefundsUnlocked(
         // transactionId (lib/novu/outbox.ts) makes a re-drive safe.
         let bell: StagedTrigger | null = null;
         let emails: StagedRecipientEmail[] = [];
+        const receiptArgs = {
+          userId: refund.payment.userId,
+          paymentId: refund.payment.id,
+          amountPaise: refund.amountPaise,
+          currency: refund.currency,
+        };
+        const receipt = await prepareRefundProcessedEmail(receiptArgs).catch(
+          () => null,
+        );
         const claimed = await withSerializableRetry(() =>
           prisma.$transaction(
             async (tx) => {
@@ -491,12 +502,11 @@ async function reconcilePendingRefundsUnlocked(
                 { tx, entityRef: `payment:${refund.payment.id}` },
               );
               bell = notice?.staged ?? null;
-              emails = await stageRefundProcessedEmail(tx, {
-                userId: refund.payment.userId,
-                paymentId: refund.payment.id,
-                amountPaise: refund.amountPaise,
-                currency: refund.currency,
-              });
+              emails = await stageRefundProcessedEmail(
+                tx,
+                receiptArgs,
+                receipt,
+              );
               return true;
             },
             { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -701,6 +711,16 @@ async function bindGatewayRefundToPlaceholder(
 
   let bell: StagedTrigger | null = null;
   let emails: StagedRecipientEmail[] = [];
+  const receiptArgs = {
+    userId: cascade.userId,
+    paymentId: cascade.paymentId,
+    amountPaise: cascade.amountPaise,
+    currency: cascade.currency,
+  };
+  const receipt =
+    nextStatus === RefundStatus.SUCCEEDED
+      ? await prepareRefundProcessedEmail(receiptArgs).catch(() => null)
+      : null;
 
   try {
     await withSerializableRetry(() =>
@@ -743,12 +763,7 @@ async function bindGatewayRefundToPlaceholder(
             { tx, entityRef: `payment:${cascade.paymentId}` },
           );
           bell = notice?.staged ?? null;
-          emails = await stageRefundProcessedEmail(tx, {
-            userId: cascade.userId,
-            paymentId: cascade.paymentId,
-            amountPaise: cascade.amountPaise,
-            currency: cascade.currency,
-          });
+          emails = await stageRefundProcessedEmail(tx, receiptArgs, receipt);
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       ),
@@ -1051,6 +1066,15 @@ async function notifyFailedRefundsUnlocked(
       const failureReason =
         refund.failureReason ?? gatewayReason ?? REFUND_FAILED_DEFAULT_REASON;
 
+      const failedArgs = {
+        userId: refund.payment.userId,
+        paymentId: refund.paymentId,
+        amountPaise: refund.amountPaise,
+        currency: refund.currency,
+      };
+      const failedNotice = await prepareRefundFailedEmail(failedArgs).catch(
+        () => null,
+      );
       const staged = await prisma.$transaction(async (tx) => {
         const claim = await tx.refund.updateMany({
           where: {
@@ -1076,12 +1100,11 @@ async function notifyFailedRefundsUnlocked(
           },
           { tx, entityRef: `refund:${refund.id}` },
         );
-        const emails = await stageRefundFailedEmail(tx, {
-          userId: refund.payment.userId,
-          paymentId: refund.paymentId,
-          amountPaise: refund.amountPaise,
-          currency: refund.currency,
-        });
+        const emails = await stageRefundFailedEmail(
+          tx,
+          failedArgs,
+          failedNotice,
+        );
         return { bell: notice?.staged ?? null, emails };
       });
       if (!staged) continue;

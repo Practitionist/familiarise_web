@@ -19,7 +19,6 @@ import {
   STREAM_CONCURRENCY_LIMIT,
 } from "@/lib/stream/batch";
 import prisma from "@/lib/prisma";
-import { notifyMaintenanceStarted } from "@/lib/novu/service";
 import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
 
 const LIVE_SESSION_WINDOW_MS = 6 * 60 * 60 * 1000;
@@ -172,24 +171,6 @@ export async function drainActiveSessions(): Promise<DrainResult> {
     result.errors.push(
       "Offline setup has a remaining backlog; retry activation.",
     );
-
-  if (result.drained > 0) {
-    try {
-      await notifyMaintenanceStarted(
-        {
-          phase: "OFFLINE",
-          reason:
-            "Platform maintenance starting. Active calls may be interrupted.",
-        },
-        {
-          deferAttempt: true,
-          dedupeKey: `maintenance-started:${window.id}`,
-        },
-      );
-    } catch (err) {
-      result.errors.push(`Notification: ${messageOf(err)}`);
-    }
-  }
 
   if (result.errors.length)
     Sentry.captureException(new Error(result.errors[0]), {

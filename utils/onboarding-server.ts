@@ -22,6 +22,7 @@ import {
   AvailabilityContractError,
   weeklyZoneRefusal,
 } from "@/lib/scheduling/availability-contract";
+import type { ConsentProvenance } from "@/lib/waitlist/consent-link";
 import type { OnboardingData, ConsultantProfileCreateData } from "./onboarding";
 import type { VerificationDocumentRefSchema } from "./onboarding";
 import type { z } from "zod";
@@ -304,6 +305,7 @@ async function upsertConsulteeProfile(
 export async function addConsultantIdentity(
   userId: string,
   body: unknown,
+  provenance: ConsentProvenance,
 ): Promise<OnboardingResult> {
   const { validateOnboardingData } = await import("./onboarding");
   try {
@@ -362,7 +364,7 @@ export async function addConsultantIdentity(
             profileFkData.consultantProfileId,
           );
         }
-        await recordOnboardingConsent(tx, userId, validatedBody);
+        await recordOnboardingConsent(tx, userId, validatedBody, provenance);
         // CAS on the empty link: two tabs adding at once cannot both win.
         const linked = await tx.user.updateMany({
           where: { id: userId, consultantProfileId: null },
@@ -651,6 +653,7 @@ async function runOnboardingTransaction(
   userId: string,
   validatedBody: OnboardingData,
   body: unknown,
+  provenance: ConsentProvenance,
 ): Promise<OnboardingUser> {
   return prisma.$transaction(
     async (tx) => {
@@ -680,7 +683,7 @@ async function runOnboardingTransaction(
         await recomputeProfileCompletion(tx, profileFkData.consultantProfileId);
       }
 
-      await recordOnboardingConsent(tx, userId, validatedBody);
+      await recordOnboardingConsent(tx, userId, validatedBody, provenance);
 
       return tx.user.update({
         where: { id: userId },
@@ -807,6 +810,7 @@ async function maybeSubmitConsultantVerification(
 export async function processOnboardingData(
   userId: string,
   body: unknown,
+  provenance: ConsentProvenance,
 ): Promise<OnboardingResult> {
   const { validateOnboardingData } = await import("./onboarding");
 
@@ -824,7 +828,12 @@ export async function processOnboardingData(
 
     let updatedUser: OnboardingUser;
     try {
-      updatedUser = await runOnboardingTransaction(userId, validatedBody, body);
+      updatedUser = await runOnboardingTransaction(
+        userId,
+        validatedBody,
+        body,
+        provenance,
+      );
     } catch (error: unknown) {
       const recovered = await recoverIdempotentOnboarding(
         userId,

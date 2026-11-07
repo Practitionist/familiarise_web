@@ -14,6 +14,10 @@ import {
 } from "@/lib/payments/operations/reversal-engine";
 import { applyRefundCascade } from "../../lib/payments/operations/refund";
 
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(),
+  stageRaisedClawback: jest.fn(),
+}));
 jest.mock("../../lib/payments/operations/refund", () => ({
   applyRefundCascade: jest.fn().mockResolvedValue({
     legsReversed: 1,
@@ -107,7 +111,10 @@ describe("applyReversal — PAYOUT_CLAWBACK", () => {
       orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
       tDSRecord: { findFirst: jest.fn().mockResolvedValue(null) },
     };
-    mockPostLedgerTxn.mockResolvedValueOnce(undefined);
+    mockPostLedgerTxn.mockResolvedValueOnce({
+      transactionId: "txn",
+      created: true,
+    });
 
     await applyReversal(tx as never, {
       source: {
@@ -173,7 +180,10 @@ describe("applyReversal — PAYOUT_CLAWBACK", () => {
       },
       tdsAdjustment: { create: jest.fn().mockResolvedValue({}) },
     };
-    mockPostLedgerTxn.mockResolvedValueOnce(undefined);
+    mockPostLedgerTxn.mockResolvedValueOnce({
+      transactionId: "txn",
+      created: true,
+    });
 
     await applyReversal(tx as never, {
       source: {

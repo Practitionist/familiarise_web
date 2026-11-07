@@ -133,7 +133,7 @@ Do not write application reconcilers for the database-enforced rows (AGENTS.md ย
 ## How to verify
 
 - Unit and route tests: `npx jest __tests__/support` (plus `__tests__/backoffice/support-*`, `__tests__/compliance/support-*`). Most of these mock Prisma, so they prove the app checks, not the sidecar.
-- Database race tier: `__tests__/db/support/*.db.test.ts` (decision race, intake scope, problem cascade, refund claim, turn replay) runs only in the CI `db-guards` job against a disposable Postgres 17 with the sidecar applied (`jest -c jest.db.config.ts`). Its guard refuses any database that is not a local `/ci` database with `CI=true`.
+- Database race tier: `__tests__/db/support/*.db.test.ts` (decision race, intake scope, problem cascade, refund claim, turn replay) runs in the CI `db-guards` job, or locally per booking verification ยง11 (`.claude/skills/booking/references/verification.md`), against a disposable Postgres 17 with the sidecar applied (`jest -c jest.db.config.ts`). Its guard refuses any database that is not a local `/ci` database with `CI=true`.
 - Sidecar presence: `scripts/ci/check-db-sidecars.ts`; live drift, read-only: `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`.
 - No test yet exercises `support_recommendation_shape`, `support_case_attachment_shape`, the `earnings_hold_*` indexes or the chat-access trigger and CHECK at the database tier.
 

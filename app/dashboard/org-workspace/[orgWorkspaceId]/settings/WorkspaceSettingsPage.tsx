@@ -6,19 +6,17 @@ import {
 
 import { requireAuth } from "@/lib/auth-guard";
 import { getWorkspaceSettings } from "@/lib/data/org-workspace";
-import type { WorkspaceSettingsKey } from "@/lib/dashboard/nav/workspace";
 
 import { WorkspaceSettingsSection } from "./WorkspaceSettingsSection";
 
 /**
- * Server half of a workspace settings section: SSR-prefetches the settings
+ * Server half of the default-landing section: SSR-prefetches the settings
  * payload under ["org-workspace-settings", orgWorkspaceId] so the client's
  * useQuery hydrates from it. The layout's IDOR guard already ran.
  */
 export async function WorkspaceSettingsPage({
   orgWorkspaceId,
-  section,
-}: Readonly<{ orgWorkspaceId: string; section: WorkspaceSettingsKey }>) {
+}: Readonly<{ orgWorkspaceId: string }>) {
   const session = await requireAuth();
   const queryClient = new QueryClient();
   // Key MUST match WorkspaceSettingsSection's useQuery or hydration won't apply.
@@ -31,10 +29,7 @@ export async function WorkspaceSettingsPage({
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      <WorkspaceSettingsSection
-        orgWorkspaceId={orgWorkspaceId}
-        section={section}
-      />
+      <WorkspaceSettingsSection orgWorkspaceId={orgWorkspaceId} />
     </HydrationBoundary>
   );
 }

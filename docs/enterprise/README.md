@@ -188,7 +188,7 @@ This band is the on-call surface: every route, cron, alert, and go-live runbook.
 | 07  | [required-secrets](50-operations/07-required-secrets.md)                       | production and CI secret inventory                                                                               |
 | 08  | [capacity-ladder](50-operations/08-capacity-ladder.md)                         | infrastructure scaling thresholds                                                                                |
 | 09  | [load-gate-runbook](50-operations/09-load-gate-runbook.md)                     | k6 load gate verification                                                                                        |
-| 10  | [novu-console-conditions](50-operations/10-novu-console-conditions.md)         | Novu workflow step conditions                                                                                    |
+| 10  | [novu-console-conditions](50-operations/10-novu-console-conditions.md)         | where notification opt-outs are enforced (server-side; no Novu step conditions)                                  |
 | 11  | [load-test-plan](50-operations/11-load-test-plan.md)                           | staged 100 / 300 / 1,000 user load test, run only after the database split                                       |
 
 ### Scenarios — `60-scenarios-and-verdicts/`

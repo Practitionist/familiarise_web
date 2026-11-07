@@ -41,6 +41,7 @@ import {
   claimOnboardingCompletion,
   recordOnboardingConsent,
 } from "@/utils/onboarding-completion";
+import { consentProvenance } from "@/lib/waitlist/consent-link";
 
 // PROJECT is reserved in the Prisma enum for the v2 milestone workflow
 // (scoped project-billing engine), but not accepted at the API boundary
@@ -236,7 +237,12 @@ export async function POST(req: NextRequest) {
             "ALREADY_ONBOARDED",
           );
         }
-        await recordOnboardingConsent(tx, auth.session.user.id, onboarding);
+        await recordOnboardingConsent(
+          tx,
+          auth.session.user.id,
+          onboarding,
+          consentProvenance(req.headers),
+        );
       }
 
       const dupSlug = await tx.organization.findUnique({

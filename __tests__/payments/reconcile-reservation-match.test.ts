@@ -60,6 +60,8 @@ jest.mock("../../lib/email", () => ({
   },
   stageRefundFailedEmail: jest.fn().mockResolvedValue([]),
   stageRefundProcessedEmail: jest.fn().mockResolvedValue([]),
+  prepareRefundFailedEmail: jest.fn().mockResolvedValue(null),
+  prepareRefundProcessedEmail: jest.fn().mockResolvedValue(null),
 }));
 jest.mock("../../lib/email/send-to-recipients", () => ({
   attemptStaged: jest.fn(),
@@ -755,6 +757,7 @@ describe("bounded refund polling and durable failure notices", () => {
     expect(stageRefundFailedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ refund: refundTable }),
       expect.objectContaining({ paymentId: "pay_1" }),
+      null,
     );
     refundTable.updateMany.mockResolvedValue({ count: 1 });
   });

@@ -1,7 +1,8 @@
 /**
  * Bounded invoice dunning claims and notices, with gateway read-back before
  * config-enabled suspension. Every claim repeats its expected prior state and
- * stages its bell and email outbox rows in the same transaction.
+ * stages its bell and email outbox rows in the same transaction; the email
+ * renders before the claim opens.
  */
 
 import prisma, { type Tx } from "@/lib/prisma";
@@ -17,9 +18,12 @@ import {
   attemptStaged,
   EMAIL_BUDGET_MS,
   MONEY_EMAIL_TYPES,
+  prepareOrgInvoiceOverdueEmail,
   stageOrgInvoiceOverdueEmail,
+  type OrgInvoiceOverdueEmailArgs,
   type StagedRecipientEmail,
 } from "@/lib/email";
+import type { PreparedSpecEmails } from "@/lib/email/senders/shared";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -70,18 +74,61 @@ interface OverdueNotices {
   emails: StagedRecipientEmail[];
 }
 
+function overdueEmailArgs(
+  inv: OverdueInvoice,
+  roster: string[],
+  reminderStage: number,
+  now: Date,
+): OrgInvoiceOverdueEmailArgs {
+  return {
+    recipientUserIds: roster,
+    invoiceId: inv.id,
+    invoiceNumber: inv.invoiceNumber,
+    orgName: inv.organization.name,
+    totalPaise: inv.totalPaise,
+    currency: inv.displayCurrency,
+    dueDate: inv.dueDate,
+    daysLate: daysBetween(inv.dueDate, now),
+    reminderStage,
+    payUrl: overduePayUrl(inv),
+  };
+}
+
+function overduePayUrl(inv: OverdueInvoice): string {
+  return `${getAppUrl()}/dashboard/organization/${inv.organizationId}/billing`;
+}
+
+/** Renders the overdue email before the claim; null leaves the render to the claim itself. */
+async function prepareOverdueEmail(
+  inv: OverdueInvoice,
+  reminderStage: number,
+  now: Date,
+): Promise<PreparedSpecEmails | null> {
+  try {
+    const roster = await rosterForOrg(inv.organizationId, VISIBILITY_ROLES);
+    if (roster.length === 0) return null;
+    return await prepareOrgInvoiceOverdueEmail(
+      overdueEmailArgs(inv, roster, reminderStage, now),
+    );
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Stages the bell and email in the claim's `tx`, keyed per invoice and stage so
- * a replay cannot stage twice; a roster, read or render failure rolls the claim back.
+ * a replay cannot stage twice. A roster or read failure rolls the claim back; a
+ * render failure stages a `review:render_failed` row and the claim commits.
  */
 async function stageOverdueNotices(
   tx: Tx,
   inv: OverdueInvoice,
   reminderStage: number,
   now: Date,
+  pre: PreparedSpecEmails | null,
 ): Promise<OverdueNotices> {
   const daysLate = daysBetween(inv.dueDate, now);
-  const payUrl = `${getAppUrl()}/dashboard/organization/${inv.organizationId}/billing`;
+  const payUrl = overduePayUrl(inv);
   const bells = await notifyOrgInvoiceOverdue(
     inv.organizationId,
     {
@@ -103,18 +150,11 @@ async function stageOverdueNotices(
   const emails =
     roster.length === 0
       ? []
-      : await stageOrgInvoiceOverdueEmail(tx, {
-          recipientUserIds: roster,
-          invoiceId: inv.id,
-          invoiceNumber: inv.invoiceNumber,
-          orgName: inv.organization.name,
-          totalPaise: inv.totalPaise,
-          currency: inv.displayCurrency,
-          dueDate: inv.dueDate,
-          daysLate,
-          reminderStage,
-          payUrl,
-        });
+      : await stageOrgInvoiceOverdueEmail(
+          tx,
+          overdueEmailArgs(inv, roster, reminderStage, now),
+          pre,
+        );
   return { bells, emails };
 }
 
@@ -269,6 +309,7 @@ async function dunning(opts: {
   stats.scannedStage1 = newlyOverdue.length;
 
   for (const inv of newlyOverdue) {
+    const pre = await prepareOverdueEmail(inv, 0, now);
     // #1132 follow-up — transient P2034 aborts are retried by the house
     // helper; persistent failures skip this invoice so one bad row can't
     // kill the day's run.
@@ -299,7 +340,7 @@ async function dunning(opts: {
               },
             },
           });
-          return stageOverdueNotices(tx, inv, 0, now);
+          return stageOverdueNotices(tx, inv, 0, now, pre);
         },
         { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
       ),
@@ -348,6 +389,7 @@ async function dunning(opts: {
     // we read selected the row, so a concurrent reminder loses the race.
     const priorReminderAt = inv.lastDunningReminderAt;
     const nextStage = inv.dunningReminderCount + 1;
+    const pre = await prepareOverdueEmail(inv, nextStage, now);
 
     // #1132 follow-up — transient P2034 aborts are retried by the house
     // helper; persistent failures skip this invoice so one bad row can't
@@ -368,7 +410,7 @@ async function dunning(opts: {
             },
           });
           if (claim.count === 0) return null;
-          return stageOverdueNotices(tx, inv, nextStage, now);
+          return stageOverdueNotices(tx, inv, nextStage, now, pre);
         },
         { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
       ),
@@ -452,6 +494,7 @@ async function dunning(opts: {
       // #1132 follow-up — transient P2034 aborts are retried by the house
       // helper; persistent failures skip this invoice so one bad row can't
       // kill the day's run.
+      const pre = await prepareOverdueEmail(inv, MAX_REMINDERS + 1, now);
       const notices = await claim(inv, "stage-3 suspend", () =>
         prisma.$transaction(
           async (tx) => {
@@ -482,7 +525,7 @@ async function dunning(opts: {
                 },
               },
             });
-            return stageOverdueNotices(tx, inv, MAX_REMINDERS + 1, now);
+            return stageOverdueNotices(tx, inv, MAX_REMINDERS + 1, now, pre);
           },
           { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
         ),

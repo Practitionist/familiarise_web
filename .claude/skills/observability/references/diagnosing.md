@@ -118,7 +118,7 @@ An event that should be a warning is an error burns quota at 4,000× the rate of
 
 Go to `docs/observability/sentry/07-verifying-end-to-end.md` for the full procedure. In short:
 
-1. Verify against a real deploy, not `next dev` — dev skips the upload path, the release is a dirty tree, and the traffic lands in the production project. A deploy preview sends no error events (`isPreviewDeploy` drops them in `beforeSend`), so the rungs that need an event run on production after release.
+1. Verify against a real deploy, not `next dev` — dev skips the upload path, the release is a dirty tree, and the traffic lands in the production project. A deploy preview sends error events as environment `preview` (since 2026-11-05), so the rungs that need an event can run there; its frames are minified, so read mapped frames on production after release.
 2. Sign in as a real seeded user and **write down the cuid first**.
 3. Attach a transport spy from a **main-world `<script>`**. A DevTools-protocol evaluation runs in an isolated world where your injected `error` never reaches the page's listeners — indistinguishable from a broken SDK.
 4. Trigger a real error, not a synthetic one: the point is that the _server_ supplied the identity.

@@ -64,9 +64,9 @@ describe("QA wave 4 (backoffice)", () => {
     expect(read("components/dashboard/ContextSwitcher.tsx")).toContain(
       "const user = hydrated ? session?.user : undefined;",
     );
-    // Wave 5 F5 — the header bell waits for hydration like the switcher, and for the subscriber hash.
+    // The header bell waits for hydration like the switcher.
     expect(read("components/notifications/NotificationInbox.tsx")).toContain(
-      "if (!hydrated || !session?.user?.id || !NOVU_APP_ID || !authReady) {",
+      "if (!hydrated || !session?.user?.id || !NOVU_APP_ID) {",
     );
   });
 
