@@ -7,8 +7,12 @@ import {
   appointmentTypeLabel,
   planTitleOrSessionLabel,
 } from "@/lib/novu/humanize";
-import { attemptTrigger, type StagedTrigger } from "@/lib/novu/outbox";
-import { stageBell } from "@/lib/novu/stage-bell";
+import {
+  attemptTrigger,
+  stagePages,
+  type StagedTrigger,
+} from "@/lib/novu/outbox";
+import { resolveRecipientBellPolicy } from "@/lib/novu/policy";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import prisma from "@/lib/prisma";
 
@@ -24,12 +28,12 @@ const NAMED_PLAN = {
 } as const;
 
 /**
- * Claims the occurrence and stages its bell in one transaction, so only the
- * first admitted host join rings and a failed stage leaves the claim open.
+ * Claims the occurrence and stages its bell pages (one attempt's worth each) in one
+ * transaction, so only the first admitted host join rings and a failed stage leaves the claim open.
  */
 export async function stageHostLiveBell(
   occurrenceId: string,
-): Promise<StagedTrigger | null> {
+): Promise<StagedTrigger[]> {
   return prisma.$transaction(async (tx) => {
     const now = new Date();
     // Keyed on the occurrence alone: a rejoin, a reopened room or a second host claims nothing.
@@ -44,7 +48,7 @@ export async function stageHostLiveBell(
       },
       skipDuplicates: true,
     });
-    if (claim.count === 0) return null;
+    if (claim.count === 0) return [];
 
     const occurrence = await tx.appointmentOccurrence.findUnique({
       where: { id: occurrenceId },
@@ -68,7 +72,7 @@ export async function stageHostLiveBell(
       },
     });
     const appointment = occurrence?.appointment;
-    if (!appointment) return null;
+    if (!appointment) return [];
     const plan =
       appointment.consultation?.consultationPlan ??
       appointment.subscription?.subscriptionPlan ??
@@ -76,9 +80,15 @@ export async function stageHostLiveBell(
       appointment.class?.classPlan ??
       appointment.trial?.subscriptionPlan ??
       null;
-    return stageBell(tx, {
-      workflowId: NOVU_WORKFLOWS.SESSION_HOST_LIVE,
-      recipients: appointment.participants.map((p) => p.userId),
+    const workflowId = NOVU_WORKFLOWS.SESSION_HOST_LIVE;
+    const { allowedRecipients } = await resolveRecipientBellPolicy(
+      workflowId,
+      appointment.participants.map((p) => p.userId),
+      { tx },
+    );
+    return stagePages(tx, {
+      workflowId,
+      recipients: allowedRecipients,
       payload: {
         ...notificationScope(appointment.organizationId),
         appointmentType: appointmentTypeLabel(appointment.appointmentType),
@@ -95,8 +105,8 @@ export async function stageHostLiveBell(
   });
 }
 
-/** Stage, then attempt; meant for `scheduleAfter` from the join route. */
+/** Stage, then attempt every page; meant for `scheduleAfter` from the join route. */
 export async function announceHostLive(occurrenceId: string): Promise<void> {
-  const staged = await stageHostLiveBell(occurrenceId);
-  if (staged) await attemptTrigger(staged);
+  const pages = await stageHostLiveBell(occurrenceId);
+  await Promise.all(pages.map((page) => attemptTrigger(page)));
 }

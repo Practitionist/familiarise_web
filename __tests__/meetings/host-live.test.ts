@@ -2,33 +2,43 @@
  * @jest-environment node
  */
 
-// "Host is live": the first host join claims the occurrence and rings its paid seats once.
+// "Host is live": the first host join claims the occurrence and rings every paid seat once, page by page.
 
 const createMany = jest.fn();
 const findUnique = jest.fn();
+const createManyAndReturn = jest.fn(async ({ data }: { data: unknown[] }) =>
+  data.map((row, i) => ({ id: `row-${i}`, ...(row as object) })),
+);
 const tx = {
   idempotencyRecord: { createMany: (...a: unknown[]) => createMany(...a) },
   appointmentOccurrence: { findUnique: (...a: unknown[]) => findUnique(...a) },
+  notificationOutbox: { createManyAndReturn },
 };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: { $transaction: (fn: (t: typeof tx) => unknown) => fn(tx) },
 }));
-const stageBell = jest.fn(async () => ({ id: "row-1" }));
-jest.mock("../../lib/novu/stage-bell", () => ({
-  stageBell: (...a: unknown[]) => stageBell(...(a as [])),
+jest.mock("../../lib/novu/policy", () => ({
+  resolveRecipientBellPolicy: jest.fn(async (_w: string, ids: string[]) => ({
+    allowedRecipients: ids,
+  })),
 }));
-jest.mock("../../lib/novu/outbox", () => ({ attemptTrigger: jest.fn() }));
+const attemptTrigger = jest.fn();
+jest.mock("../../lib/novu/outbox", () => ({
+  ...jest.requireActual("../../lib/novu/outbox"),
+  attemptTrigger: (...a: unknown[]) => attemptTrigger(...a),
+}));
 
-import { stageHostLiveBell } from "../../lib/meetings/host-live";
+import { announceHostLive } from "../../lib/meetings/host-live";
 import { paidParticipant } from "../../lib/booking/participants";
 
+const seats = Array.from({ length: 150 }, (_, i) => ({ userId: `seat-${i}` }));
 findUnique.mockResolvedValue({
   appointment: {
     id: "appt-1",
     organizationId: null,
     appointmentType: "WEBINAR",
-    participants: [{ userId: "seat-1" }, { userId: "seat-2" }],
+    participants: seats,
     webinar: {
       webinarPlan: {
         title: "Deep work",
@@ -38,9 +48,9 @@ findUnique.mockResolvedValue({
   },
 });
 
-it("rings the paid seats on the first claim and nothing on a later join", async () => {
+it("rings all paid seats in attempt-sized pages on the first claim, and nothing on a later join", async () => {
   createMany.mockResolvedValueOnce({ count: 1 });
-  await expect(stageHostLiveBell("occ-1")).resolves.toEqual({ id: "row-1" });
+  await announceHostLive("occ-1");
 
   expect(createMany.mock.calls[0][0]).toMatchObject({
     data: { scope: "meeting.host-live", key: "occ-1" },
@@ -51,20 +61,19 @@ it("rings the paid seats on the first claim and nothing on a later join", async 
     ...paidParticipant(),
     role: "CONSULTEE",
   });
-  expect(stageBell).toHaveBeenCalledWith(
-    tx,
-    expect.objectContaining({
-      workflowId: "session-host-live",
-      recipients: ["seat-1", "seat-2"],
-      dedupeKey: "host-live:occ-1",
-      payload: expect.objectContaining({
-        consultantName: "Hannah",
-        planTitle: "Deep work",
-      }),
-    }),
+  const pages = createManyAndReturn.mock.calls[0][0].data as Array<{
+    workflowId: string;
+    recipients: string[];
+  }>;
+  expect(pages.map((p) => p.recipients.length)).toEqual([100, 50]);
+  expect(pages.flatMap((p) => p.recipients)).toEqual(
+    seats.map((s) => s.userId),
   );
+  expect(pages[0].workflowId).toBe("session-host-live");
+  expect(attemptTrigger).toHaveBeenCalledTimes(2);
 
   createMany.mockResolvedValueOnce({ count: 0 });
-  await expect(stageHostLiveBell("occ-1")).resolves.toBeNull();
-  expect(stageBell).toHaveBeenCalledTimes(1);
+  await announceHostLive("occ-1");
+  expect(createManyAndReturn).toHaveBeenCalledTimes(1);
+  expect(attemptTrigger).toHaveBeenCalledTimes(2);
 });
