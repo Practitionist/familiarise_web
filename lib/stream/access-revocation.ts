@@ -10,7 +10,7 @@ import { streamLogger } from "@/lib/stream-logger";
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { MAX_CALL_DURATION_MS } from "@/lib/meetings/duration-cap";
-import { liveParticipant } from "@/lib/booking/participants";
+import { liveParticipant, paidParticipant } from "@/lib/booking/participants";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   isDmChannelIdEligible,
@@ -221,9 +221,39 @@ export async function revokeEndedBookingChatAccess(
   await enqueueOrReport(dedupeTargets(retries), "booking.revokeChatAccess");
 }
 
-/** Stream caps one member update at 100 users. */
+/** Stream caps chat member updates at 100 users a request; calls stay inside the same bound. */
 const CALL_MEMBER_CHUNK = 100;
 const MAX_CALLS_PER_REVOCATION = 50;
+
+async function unendedCallIds(appointmentId: string): Promise<string[]> {
+  const occurrences = await prisma.appointmentOccurrence.findMany({
+    where: {
+      appointmentId,
+      endsAt: { gt: new Date(Date.now() - MAX_CALL_DURATION_MS) },
+      meeting: { is: { endedAt: null } },
+    },
+    select: { meeting: { select: { streamCallId: true } } },
+    take: MAX_CALLS_PER_REVOCATION,
+  });
+  return occurrences.flatMap((o) =>
+    o.meeting ? [o.meeting.streamCallId] : [],
+  );
+}
+
+/** Returns the users of the chunk whose removal did not land. */
+async function removeChunkFromCall(
+  callId: string,
+  chunk: string[],
+): Promise<string[]> {
+  try {
+    await getStreamVideoClient()
+      .video.call(STREAM_CALL_TYPE, toCallId(callId))
+      .updateCallMembers({ remove_members: chunk });
+    return [];
+  } catch (error) {
+    return isExpectedStreamError(error) ? [] : chunk;
+  }
+}
 
 /**
  * Drops the users from the appointment's unended calls: `call_member` alone lets
@@ -237,18 +267,7 @@ async function removeFromAppointmentCalls(
   if (!isStreamConfigured()) return [];
   let callIds: string[];
   try {
-    const occurrences = await prisma.appointmentOccurrence.findMany({
-      where: {
-        appointmentId,
-        endsAt: { gt: new Date(Date.now() - MAX_CALL_DURATION_MS) },
-        meeting: { is: { endedAt: null } },
-      },
-      select: { meeting: { select: { streamCallId: true } } },
-      take: MAX_CALLS_PER_REVOCATION,
-    });
-    callIds = occurrences.flatMap((o) =>
-      o.meeting ? [o.meeting.streamCallId] : [],
-    );
+    callIds = await unendedCallIds(appointmentId);
   } catch (error) {
     streamLogger.warn("Call membership lookup failed; queued for retry", {
       appointmentId,
@@ -257,17 +276,12 @@ async function removeFromAppointmentCalls(
     return userIds;
   }
   const failed = new Set<string>();
-  const video = getStreamVideoClient().video;
+  // Sequential on purpose: one revocation stays inside Stream's per-app rate limit.
   for (const callId of callIds) {
     for (let i = 0; i < userIds.length; i += CALL_MEMBER_CHUNK) {
       const chunk = userIds.slice(i, i + CALL_MEMBER_CHUNK);
-      try {
-        await video
-          .call(STREAM_CALL_TYPE, toCallId(callId))
-          .updateCallMembers({ remove_members: chunk });
-      } catch (error) {
-        if (isExpectedStreamError(error)) continue;
-        for (const userId of chunk) failed.add(userId);
+      for (const userId of await removeChunkFromCall(callId, chunk)) {
+        failed.add(userId);
       }
     }
   }
@@ -345,8 +359,19 @@ export async function redriveAccessRevocation(
 async function redriveCallMembershipRemoval(
   row: AccessRevocationRow,
 ): Promise<string | null> {
+  // The same seat rule as the join gate: a group room needs a paid seat, a 1:1 a live one.
+  const appointment = await prisma.appointment.findUnique({
+    where: { id: row.planId },
+    select: { webinarId: true, classId: true },
+  });
+  const isGroupEvent = Boolean(appointment?.webinarId || appointment?.classId);
   const readmitted = await prisma.appointmentParticipant.findFirst({
-    where: { appointmentId: row.planId, ...liveParticipant(row.userId) },
+    where: {
+      appointmentId: row.planId,
+      ...(isGroupEvent
+        ? paidParticipant(row.userId)
+        : liveParticipant(row.userId)),
+    },
     select: { id: true },
   });
   if (readmitted) return null;
