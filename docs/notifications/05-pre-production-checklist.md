@@ -107,6 +107,7 @@ Inbound (practitionist.com):
 
 - [ ] Development: run `npx tsx scripts/novu/clear-native-mutes.ts` (dry run, then `--apply`), then `npm run novu:sync -- --dry-run` followed by `npm run novu:sync`, to sync all 16 workflow families
 - [ ] Production: run the same sequence with `--env production` **in the same window as the production release promotion that carries the single-preference-owner change**, not earlier: the old production code still writes subscriber preferences, so an earlier Production sync would fight it
+- [ ] After the domain-notices change (decision 17) merges, run `npm run novu:sync` in Development, and again with `--env production` at the release that carries it, so `payout-clawback`, `org-payout-clawback` and the new referral copy reach the `payout`, `org-billing`, `referral` and `payment` families. Until a sync, those bells render without the new text.
 - [ ] Verify `npm run novu:check` (and `npm run novu:check -- --env production` after the production sync) exits `0` with zero drift. Novu's read API serves stale workflows for about three minutes after a sync, so a `novu:check` in that window reports false drift on random families; wait five minutes, then expect two clean runs in a row.
 - [ ] Enable HMAC encryption in Novu Dashboard → In-App Integration settings to pair with `computeSubscriberHash(subscriberId)`
 
