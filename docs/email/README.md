@@ -157,7 +157,7 @@ stateDiagram-v2
 
 ### Calendar Links in the Booked Email
 
-`APPOINTMENT_BOOKED` carries two add-to-calendar links for the attendee only, never for the host: a Google Calendar template URL and a signed link to `GET /api/calendar/[appointmentId]?u=&t=`, which serves an `.ics` with the title, the times and the dashboard link (`calendarLinks` in `lib/appointments/calendar-links.ts`). They are links, not attachments, because `deliver()` sends no attachments and the route re-checks the paid seat on every read. The token signs with the shared link secret (`signToken` in `lib/waitlist/tokens.ts`) under its own purpose label; when no secret is configured the links are left out and the email still sends. See [the attendee comms decision](../decisions/2026-11-07-attendee-comms.md).
+`APPOINTMENT_BOOKED` carries two add-to-calendar links for the attendee only, never for the host: a Google Calendar template URL and a signed link to `GET /api/calendar/[appointmentId]?u=&t=`, which serves an `.ics` with the title, the times and the dashboard link (`calendarLinks` in `lib/appointments/calendar-links.ts`). The Google link names the next session still ahead (`nextSessionAhead`, the same helper the checkout success page uses), so a late class enrolment never links a past session. They are links, not attachments, because `deliver()` sends no attachments and the route re-checks the paid seat on every read. The token signs with the shared link secret (`signToken` in `lib/waitlist/tokens.ts`) under its own purpose label; when no secret is configured the links are left out and the email still sends. See [the attendee comms decision](../decisions/2026-11-07-attendee-comms.md).
 
 ### Single-Use Credentials Are Never Stored or Replayed
 

@@ -14,8 +14,10 @@ import {
   type MoneyStateKind,
 } from "@/lib/dashboard/money-state";
 import type { Prisma } from "@prisma/client";
-import { calendarLinks } from "@/lib/appointments/calendar-links";
-import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import {
+  calendarLinks,
+  nextSessionAhead,
+} from "@/lib/appointments/calendar-links";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 
 /**
@@ -121,13 +123,9 @@ async function deriveBookingState(
 function buyerCalendarLinks(payment: VerifyPayment, userId: string) {
   const appointment = payment.appointment;
   if (!appointment) return null;
-  const now = Date.now();
-  const next = appointment.occurrences
-    .filter(
-      (o) =>
-        !o.isTentative && !isDeadOccurrence(o) && o.startsAt.getTime() > now,
-    )
-    .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime())[0];
+  const next = nextSessionAhead(
+    appointment.occurrences.filter((o) => !o.isTentative),
+  );
   if (!next) return null;
   const title = planTitleOrSessionLabel(
     appointment.consultation?.consultationPlan?.title ??

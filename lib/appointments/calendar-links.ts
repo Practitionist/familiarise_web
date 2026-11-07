@@ -1,6 +1,7 @@
 // One attendee's add-to-calendar links: a Google template URL and a signed .ics link whose
 // HMAC binds appointment, user and purpose; the route re-checks the paid seat on every read.
 
+import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import { getAppUrl } from "@/lib/url";
 import { canSignLinks, safeEquals, signToken } from "@/lib/waitlist/tokens";
 import { sessionEnd, stamp } from "./ics";
@@ -10,6 +11,31 @@ const PURPOSE = "calendar-ics";
 export interface CalendarLinks {
   googleUrl: string;
   icsUrl: string;
+}
+
+export interface CalendarSession {
+  startsAt: Date;
+  endsAt: Date | null;
+}
+
+/** The earliest live session still ahead of `now`: the one a single-event calendar link names. */
+export function nextSessionAhead(
+  sessions: ReadonlyArray<
+    CalendarSession & {
+      completionStatus?: string | null;
+      deletedAt?: Date | string | null;
+    }
+  >,
+  now: Date = new Date(),
+): CalendarSession | null {
+  const next = sessions
+    .filter((s) => !isDeadOccurrence(s) && s.startsAt.getTime() > now.getTime())
+    .reduce<CalendarSession | null>(
+      (best, s) =>
+        !best || s.startsAt.getTime() < best.startsAt.getTime() ? s : best,
+      null,
+    );
+  return next ? { startsAt: next.startsAt, endsAt: next.endsAt } : null;
 }
 
 /** The booking's dashboard page; the go resolver lands each viewer on their own side. */
