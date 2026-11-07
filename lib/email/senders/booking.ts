@@ -274,7 +274,7 @@ export const stageAppointmentRescheduledEmail =
 
 // ── Reminder ────────────────────────────────────────────────────────────────
 
-export type ReminderWindowLabel = "24h" | "1h";
+export type ReminderWindowLabel = "24h" | "1h" | "15m";
 
 /**
  * #1583 P1 — the `FailedEmail.emailType` the reminder twin stages under, and
@@ -304,6 +304,7 @@ export function legacyAppointmentReminderEntityRef(
 const WINDOW_WORDS: Record<ReminderWindowLabel, string> = {
   "24h": "tomorrow",
   "1h": "in about an hour",
+  "15m": "in a few minutes",
 };
 
 export interface AppointmentReminderEmailArgs {

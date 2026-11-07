@@ -89,7 +89,12 @@ import { withCronLock } from "../../lib/cron/with-cron-lock";
 import { CronLockUnavailableError } from "../../lib/cron/cron-lock-errors";
 import { sendAppointmentReminderEmail } from "../../lib/email";
 import { notifyAppointmentReminder } from "@/lib/novu/service";
-import { sendAppointmentReminders } from "@/scripts/appointments/send-appointment-reminders";
+import {
+  REMINDER_WINDOWS,
+  sendAppointmentReminders,
+} from "@/scripts/appointments/send-appointment-reminders";
+import { paidParticipant } from "@/lib/booking/participants";
+import { TARGET_EVERY_MINUTES } from "@/lib/cron/schedule";
 
 const bell = notifyAppointmentReminder as jest.Mock;
 const redisSet = (redis as unknown as { set: jest.Mock }).set;
@@ -122,25 +127,26 @@ it("sends the reminder without depending on Redis", async () => {
 
   expect(redisSet).not.toHaveBeenCalled();
   expect(redisDel).not.toHaveBeenCalled();
-  // The mocked cohort returns the slot for both windows, so the sweep rings
+  // The mocked cohort returns the slot for every window, so the sweep rings
   // once per window. What matters is that it rang at all, and that the run
   // counted the send instead of dropping it.
-  expect(bell).toHaveBeenCalledTimes(2);
+  expect(bell).toHaveBeenCalledTimes(3);
   expect(result.reminders1h).toBe(1);
   expect(result.reminders24h).toBe(1);
+  expect(result.reminders15m).toBe(1);
   expect(result.success).toBe(true);
 });
 
 it("skips the window whose email is already staged and still sends the other", async () => {
   // The dedupe key is per appointment AND window, so a staged 24h row
-  // suppresses exactly one of the two sends: the 1h window is still owed.
+  // suppresses exactly one send: the 1h and 15m windows are still owed.
   stagedEmails.findMany.mockResolvedValue([
     { entityRef: "appointment:appt-1:24h" },
   ]);
 
   await sendAppointmentReminders();
 
-  expect(bell).toHaveBeenCalledTimes(1);
+  expect(bell).toHaveBeenCalledTimes(2);
   expect(bell.mock.calls[0][0]).toEqual(
     expect.arrayContaining(["u-attendee", "u-host", "u-cohost"]),
   );
@@ -202,4 +208,25 @@ it("refuses overlapping runs without a database lease and retries after recovery
     reminders1h: 1,
     reminders24h: 1,
   });
+});
+
+it("reminds paid seats only, in windows the job's cadence always reaches", async () => {
+  await sendAppointmentReminders();
+
+  const { include } = slotFindMany.mock.calls[0][0] as {
+    include: { appointment: { include: { participants: { where: unknown } } } };
+  };
+  expect(include.appointment.include.participants.where).toEqual(
+    paidParticipant(),
+  );
+  // One cadence plus a tick up to a minute late; staged rows dedupe a second hit.
+  const cadenceMs =
+    (TARGET_EVERY_MINUTES["appointment-reminders"] ?? 5) * 60_000;
+  expect(REMINDER_WINDOWS.map((w) => w.label)).toEqual(["24h", "1h", "15m"]);
+  for (const w of REMINDER_WINDOWS) {
+    expect(w.maxMs - w.minMs).toBeGreaterThanOrEqual(cadenceMs + 60_000);
+  }
+  const [, oneHour, fifteen] = REMINDER_WINDOWS;
+  expect(fifteen.minMs).toBeGreaterThan(0);
+  expect(fifteen.maxMs).toBeLessThan(oneHour.minMs);
 });
