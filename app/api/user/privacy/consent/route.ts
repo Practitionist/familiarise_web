@@ -13,11 +13,11 @@
  *     `STREAM_DATA_PROCESSING`): Required to operate an active account and
  *     deliver bookings. Withdrawing core consent requires closing/erasing the
  *     account (`DELETE /api/user/[id]`).
- *   - Optional Purposes (`MARKETING_COMMS`, `ANALYTICS`): Granular 1-click
- *     grant/withdraw at any time without affecting core account access.
- *     `MARKETING_COMMS` is the only marketing control: its grant subscribes the
+ *   - Optional Purpose (`MARKETING_COMMS`): 1-click grant/withdraw at any time
+ *     without affecting core account access. It is the only marketing control: its grant subscribes the
  *     account's address to the newsletter and its withdrawal unsubscribes it,
- *     in the same transaction as the consent artifact.
+ *     in the same transaction as the consent artifact. A purpose outside
+ *     `OFFERED_PURPOSE_CODES` (`ANALYTICS`) cannot be granted, only withdrawn.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -25,16 +25,17 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { stampedClientIp } from "@/lib/request-ip";
 import { buildConsentArtifact, withdrawConsent } from "@/lib/compliance/dpdp";
 import {
   PURPOSE_CODES,
+  OFFERED_PURPOSE_CODES,
   SIGNUP_PURPOSES,
   TERMS_VERSION,
   normalizePurposeCode,
   type PurposeCode,
 } from "@/lib/compliance/purpose-codes";
 import {
+  consentProvenance,
   subscribeForMarketingConsent,
   unsubscribeForWithdrawnConsent,
 } from "@/lib/waitlist/consent-link";
@@ -107,6 +108,19 @@ export async function POST(req: NextRequest) {
   const purposeCodes = Array.from(
     new Set(normalized.map((n) => n.code as PurposeCode)),
   );
+  const notOffered = purposeCodes.filter(
+    (code) => !OFFERED_PURPOSE_CODES.includes(code),
+  );
+  if (notOffered.length > 0) {
+    return NextResponse.json(
+      {
+        error: "Purpose not offered",
+        code: "PURPOSE_NOT_OFFERED",
+        detail: { notOffered },
+      },
+      { status: 400 },
+    );
+  }
 
   const draft = buildConsentArtifact({
     userId,
@@ -129,8 +143,7 @@ export async function POST(req: NextRequest) {
           userId,
           email: user.email,
           now: draft.grantedAt,
-          ip: stampedClientIp(req.headers),
-          userAgent: req.headers.get("user-agent"),
+          provenance: consentProvenance(req.headers),
         });
       }
       return created;

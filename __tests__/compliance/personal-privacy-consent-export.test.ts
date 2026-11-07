@@ -215,17 +215,18 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
       expect(mockPrisma.cookiePreference.upsert).not.toHaveBeenCalled();
     });
 
-    it("leaves the newsletter alone when only ANALYTICS is granted", async () => {
-      mockPrisma.consentArtifact.create.mockResolvedValueOnce({ id: "ca_an" });
+    it("refuses to grant ANALYTICS, which is not offered, and writes nothing", async () => {
       const req = new NextRequest("http://localhost/api/user/privacy/consent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ purposeCodes: ["ANALYTICS"] }),
       });
 
-      expect((await postConsent(req)).status).toBe(201);
+      const res = await postConsent(req);
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("PURPOSE_NOT_OFFERED");
+      expect(mockPrisma.consentArtifact.create).not.toHaveBeenCalled();
       expect(mockPrisma.waitlist.upsert).not.toHaveBeenCalled();
-      expect(mockPrisma.cookiePreference.upsert).not.toHaveBeenCalled();
     });
 
     it("blocks direct withdrawal of core platform purpose PRIMARY_PROCESSING with 400 CORE_CONSENT_REQUIRES_ACCOUNT_CLOSURE", async () => {

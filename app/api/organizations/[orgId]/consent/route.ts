@@ -39,6 +39,7 @@ import {
   withdrawConsent,
 } from "@/lib/compliance/dpdp";
 import {
+  OFFERED_PURPOSE_CODES,
   TERMS_VERSION,
   normalizePurposeCode,
   type PurposeCode,
@@ -271,6 +272,19 @@ export async function POST(
   const purposeCodes = Array.from(
     new Set(normalized.map((n) => n.code as PurposeCode)),
   );
+  const notOffered = purposeCodes.filter(
+    (code) => !OFFERED_PURPOSE_CODES.includes(code),
+  );
+  if (notOffered.length > 0) {
+    return NextResponse.json(
+      {
+        error: "Purpose not offered",
+        code: "PURPOSE_NOT_OFFERED",
+        detail: { notOffered },
+      },
+      { status: 400 },
+    );
+  }
 
   // Cross-org check: caller must be recording consent for an actual
   // member of this org.

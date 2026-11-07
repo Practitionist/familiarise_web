@@ -26,7 +26,7 @@ export const PURPOSE_CODES = {
   STREAM_DATA_PROCESSING: "STREAM_DATA_PROCESSING",
   /** Marketing/promotional communications. */
   MARKETING_COMMS: "MARKETING_COMMS",
-  /** Product/usage analytics. */
+  /** Kept for stored artifacts; not offered until a real analytics tool exists. */
   ANALYTICS: "ANALYTICS",
   /** Booking/scheduling of consultation sessions. */
   SESSION_BOOKING: "SESSION_BOOKING",
@@ -61,6 +61,10 @@ export const SIGNUP_PURPOSES = [
 /** Every canonical code as a flat array (e.g. for zod enums, UI lists). */
 export const ALL_PURPOSE_CODES = Object.values(PURPOSE_CODES) as PurposeCode[];
 
+/** The purposes a person can grant today; `ANALYTICS` is not offered. */
+export const OFFERED_PURPOSE_CODES: readonly PurposeCode[] =
+  ALL_PURPOSE_CODES.filter((code) => code !== PURPOSE_CODES.ANALYTICS);
+
 /**
  * Human-readable labels + descriptions for the org consent dashboard. The
  * description doubles as the itemised purpose text DPDP Rule 3 requires the
@@ -90,8 +94,9 @@ export const PURPOSE_CODE_META: Record<
       "Send you marketing emails, including the Familiarise newsletter, about our products, offers and updates.",
   },
   [PURPOSE_CODES.ANALYTICS]: {
-    label: "Analytics",
-    description: "Use your usage data to measure and improve the product.",
+    label: "Analytics (not offered)",
+    description:
+      "Not in use: Familiarise runs no analytics, so this consent is no longer asked for.",
   },
 } as const;
 

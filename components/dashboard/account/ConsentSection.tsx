@@ -16,7 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useSession } from "@/lib/auth-client";
 import { DATA_CONSENT_ANCHOR } from "@/lib/dashboard/account-href";
 import {
-  ALL_PURPOSE_CODES,
+  OFFERED_PURPOSE_CODES,
   PURPOSE_CODE_META,
   SIGNUP_PURPOSES,
   normalizePurposeCode,
@@ -40,7 +40,6 @@ interface PersonalConsentResponse {
 
 const OPTIONAL_PERSONAL_PURPOSES: readonly PurposeCode[] = [
   "MARKETING_COMMS",
-  "ANALYTICS",
 ] as const;
 
 /** An operator's record that you asked this org to stop (#1527 decision 5). */
@@ -349,7 +348,7 @@ export function ConsentSection() {
                 </p>
               ) : (
                 <ul className="divide-y divide-border">
-                  {ALL_PURPOSE_CODES.map((code) => {
+                  {OFFERED_PURPOSE_CODES.map((code) => {
                     const meta = PURPOSE_CODE_META[code];
                     const isGranted = granted.has(code);
                     const request = isGranted ? requests.get(code) : undefined;
