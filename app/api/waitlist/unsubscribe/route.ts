@@ -111,7 +111,7 @@ function html(
   </head>
   <body style="margin:0;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',sans-serif">
     <div style="max-width:520px;margin:0 auto;padding:64px 20px">
-      <p translate="no" style="margin:0 0 24px;text-align:center;font-size:28px;font-weight:700;line-height:1.1;letter-spacing:-0.5px;color:${BRAND_COLOR_HEX}">${BRAND_NAME}</p>
+      <p translate="no" style="margin:0 0 24px;text-align:center;font-size:28px;font-weight:600;line-height:1.1;letter-spacing:-0.02em;color:${BRAND_COLOR_HEX}">${BRAND_NAME}</p>
       <div style="background:#fff;border-radius:8px;padding:32px">
         <h1 style="margin:0 0 12px;font-size:24px;color:#111">${title}</h1>
         <p style="margin:0 0 24px;font-size:16px;line-height:1.5;color:#444">${body}</p>

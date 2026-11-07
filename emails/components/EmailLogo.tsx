@@ -15,8 +15,8 @@ const wordmark = {
   textAlign: "center" as const,
   fontFamily: main.fontFamily,
   fontSize: "26px",
-  fontWeight: "700",
+  fontWeight: "600",
   lineHeight: "32px",
-  letterSpacing: "-0.5px",
+  letterSpacing: "-0.02em",
   color: BRAND_COLOR_HEX,
 };

@@ -1,11 +1,12 @@
 import { BRAND_NAME } from "@/lib/brand";
 import { cn } from "@/utils/tailwind";
 
+// Tracking tightens with size: -0.01em at 20px and below, -0.02em from 24px.
 const SIZE_CLASSES = {
-  sm: "text-xl",
-  md: "text-2xl",
-  lg: "text-3xl",
-  nav: "text-xl md:text-2xl",
+  sm: "text-xl tracking-[-0.01em]",
+  md: "text-2xl tracking-[-0.02em]",
+  lg: "text-3xl tracking-[-0.02em]",
+  nav: "text-xl tracking-[-0.01em] md:text-2xl md:tracking-[-0.02em]",
 } as const;
 
 const TONE_CLASSES = {
@@ -31,7 +32,7 @@ export function BrandWordmark({
     <span
       translate="no"
       className={cn(
-        "inline-block whitespace-nowrap font-display font-bold leading-none tracking-tight",
+        "inline-block whitespace-nowrap font-display font-semibold leading-none",
         SIZE_CLASSES[size],
         TONE_CLASSES[tone],
         className,
