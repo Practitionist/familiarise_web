@@ -43,6 +43,37 @@ function escapeText(value: string): string {
     .replaceAll(/\r?\n/g, String.raw`\n`);
 }
 
+const MAX_LINE_OCTETS = 75;
+
+/** UTF-8 octets of one code point; computed so the browser and the server agree without an encoder. */
+function utf8Octets(char: string): number {
+  const code = char.codePointAt(0) ?? 0;
+  if (code < 0x80) return 1;
+  if (code < 0x800) return 2;
+  return code < 0x10000 ? 3 : 4;
+}
+
+/** RFC 5545 §3.1: split a content line over 75 octets with CRLF + space, never inside a character. */
+function foldLine(line: string): string {
+  const parts: string[] = [];
+  let current = "";
+  let octets = 0;
+  for (const char of line) {
+    const size = utf8Octets(char);
+    // A continuation line spends one octet on its leading space.
+    const limit = parts.length === 0 ? MAX_LINE_OCTETS : MAX_LINE_OCTETS - 1;
+    if (octets + size > limit) {
+      parts.push(current);
+      current = "";
+      octets = 0;
+    }
+    current += char;
+    octets += size;
+  }
+  parts.push(current);
+  return parts.join("\r\n ");
+}
+
 export function buildIcs({
   title,
   description,
@@ -75,5 +106,5 @@ export function buildIcs({
   }
   lines.push("END:VCALENDAR");
   // RFC 5545 lines end in CRLF.
-  return `${lines.join("\r\n")}\r\n`;
+  return `${lines.map(foldLine).join("\r\n")}\r\n`;
 }
