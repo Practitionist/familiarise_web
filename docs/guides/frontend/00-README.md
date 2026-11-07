@@ -13,7 +13,8 @@ that is a gap this file should close.
 1. [01-server-data-and-validation.md](./01-server-data-and-validation.md) —
    **read this first.** The write path is the only boundary that counts.
 2. [02-theming-and-css-scope.md](./02-theming-and-css-scope.md) — dark tokens,
-   `:has()` scoping, and why we never mutate `<html>` from a route.
+   `:has()` scoping, why we never mutate `<html>` from a route, and the text
+   brand wordmark.
 3. [03-forms.md](./03-forms.md) — validation timing, wizard transitions, the
    double-advance bug class.
 4. [04-server-actions-vs-routes.md](./04-server-actions-vs-routes.md) — thin
