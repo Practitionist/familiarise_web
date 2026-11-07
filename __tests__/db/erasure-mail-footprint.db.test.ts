@@ -28,6 +28,7 @@ function queuedEmail(data: {
   status: "PENDING" | "RETRY" | "SENT" | "DEAD_LETTER";
   deliveryUserId?: string;
   lastError?: string;
+  entityRef?: string;
 }) {
   return prisma.failedEmail.create({
     data: {
@@ -83,7 +84,11 @@ describe("erasure mailing footprint", () => {
       recipient: email.toUpperCase(),
       status: "RETRY",
     });
-    const sent = await queuedEmail({ recipient: email, status: "SENT" });
+    const sent = await queuedEmail({
+      recipient: email,
+      status: "SENT",
+      entityRef: `waitlist:${email}`,
+    });
     const dead = await queuedEmail({
       recipient: email,
       status: "DEAD_LETTER",
@@ -107,6 +112,7 @@ describe("erasure mailing footprint", () => {
       waitlistDeleted: 2,
       emailsDeadLettered: 2,
       recipientsReplaced: 4,
+      entityRefsReplaced: 1,
       batchesNarrowed: 1,
       batchesDeadLettered: 2,
       settledBatchesScrubbed: 2,
@@ -127,6 +133,7 @@ describe("erasure mailing footprint", () => {
       select: {
         id: true,
         recipient: true,
+        entityRef: true,
         status: true,
         lastError: true,
         subject: true,
@@ -147,7 +154,11 @@ describe("erasure mailing footprint", () => {
         textBody: null,
       });
     }
-    expect(row(sent.id)).toMatchObject({ recipient: marker, status: "SENT" });
+    expect(row(sent.id)).toMatchObject({
+      recipient: marker,
+      entityRef: marker,
+      status: "SENT",
+    });
     expect(row(dead.id)).toMatchObject({
       recipient: marker,
       status: "DEAD_LETTER",

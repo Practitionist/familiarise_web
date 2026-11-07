@@ -23,6 +23,7 @@ export interface MailFootprintScrub {
   waitlistDeleted: number;
   emailsDeadLettered: number;
   recipientsReplaced: number;
+  entityRefsReplaced: number;
   batchesNarrowed: number;
   batchesDeadLettered: number;
   settledBatchesScrubbed: number;
@@ -60,15 +61,24 @@ export async function scrubMailFootprintTx(
     },
   });
   // Every row, settled ones included; the relay and the replay refuse the marker.
+  const marker = erasedRecipientMarker(email);
   const recipients = await tx.failedEmail.updateMany({
     where: theirs,
-    data: { recipient: erasedRecipientMarker(email) },
+    data: { recipient: marker },
+  });
+  // Newsletter confirm and welcome mail is anchored on the address itself.
+  const entityRefs = await tx.failedEmail.updateMany({
+    where: {
+      entityRef: { equals: `waitlist:${email}`, mode: "insensitive" },
+    },
+    data: { entityRef: marker },
   });
   const batches = await scrubBatches(tx, email);
   return {
     waitlistDeleted: waitlist.count,
     emailsDeadLettered: emails.count,
     recipientsReplaced: recipients.count,
+    entityRefsReplaced: entityRefs.count,
     ...batches,
   };
 }
