@@ -84,13 +84,19 @@ const SWITCH: Record<string, { table: string; cards: string }> = {
 };
 
 const INTERACTIVE =
-  "a,button,input,textarea,select,label,[role=checkbox],[role=menuitem]";
+  "a,button,input,textarea,select,label,[role=checkbox],[role=menuitem],[data-copyable]";
+
+/** A click on the row body activates the row, unless it hit a control or selection. */
+function shouldIgnoreRowClick(e: React.MouseEvent<HTMLElement>) {
+  const target = e.target as HTMLElement | null;
+  if (target?.closest(INTERACTIVE)) return true;
+  if (window.getSelection()?.toString()) return true;
+  return false;
+}
 
 /** A click on the row body follows the row's link, unless it hit a control. */
 function followRowLink(e: React.MouseEvent<HTMLElement>) {
-  const target = e.target as HTMLElement;
-  if (target.closest(INTERACTIVE)) return;
-  if (window.getSelection()?.toString()) return;
+  if (shouldIgnoreRowClick(e)) return;
   e.currentTarget.querySelector<HTMLAnchorElement>("a[data-row-link]")?.click();
 }
 
@@ -240,7 +246,11 @@ export function ResponsiveTable<T>({
     }
     if (onRowClick) {
       return {
-        onClick: () => onRowClick(row),
+        onClick: (e: React.MouseEvent<HTMLElement>) => {
+          // Selecting text to copy or clicking a control must not also activate the row.
+          if (shouldIgnoreRowClick(e)) return;
+          onRowClick(row);
+        },
         onKeyDown: (e: React.KeyboardEvent<HTMLElement>) =>
           onRowKey(e, () => onRowClick(row)),
         tabIndex: 0,
