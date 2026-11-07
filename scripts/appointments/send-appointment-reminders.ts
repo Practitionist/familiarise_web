@@ -769,7 +769,11 @@ export async function hasAppointmentReminderWork(
   if (outOfTime()) return true;
   const found = await db.appointmentOccurrence.findFirst({
     where: {
-      OR: REMINDER_WINDOWS.map(offsetWindowWhere),
+      OR: [
+        offsetWindowWhere(REMINDER_24H),
+        offsetWindowWhere(REMINDER_1H),
+        offsetWindowWhere(REMINDER_15M),
+      ],
     },
     select: { id: true },
   });
