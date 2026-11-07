@@ -120,6 +120,7 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "window-opened": "appointment",
   "appointment-rescheduled": "appointment",
   "appointment-reminder": "appointment",
+  "session-host-live": "appointment",
   "appointment-completed": "appointment",
   "new-booking-request": "appointment",
   "chat-unread-digest": "appointment",

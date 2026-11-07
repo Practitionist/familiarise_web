@@ -22,6 +22,8 @@ jest.mock("../../../../../utils/appointmentlock", () => ({
   CHECKOUT_WAIT_RETRY_CONFIG: { retryCount: 5 },
   CHECKOUT_LOCK_TTL_MS: {},
   EventFullError: class extends Error {},
+  EventCheckoutBusyError: class extends Error {},
+  ConsulteeBookingBusyError: class extends Error {},
   lockSlotBooking: jest.fn(async () => ({ key: "k" })),
   unlockSlotBooking: jest.fn(),
   lockEventCheckout: jest.fn(async () => ({ key: "k" })),

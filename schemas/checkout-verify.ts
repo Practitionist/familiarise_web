@@ -13,4 +13,8 @@ export const verifyResponseSchema = z.object({
   bookingState: z.enum(BOOKING_STATE_KINDS).optional(),
   /** A full refund on its way or done outranks the booking state. */
   moneyState: z.enum(MONEY_STATE_KINDS).optional(),
+  /** Add-to-calendar links, sent only for a confirmed booking with a session ahead. */
+  calendar: z
+    .object({ googleUrl: z.string().url(), icsUrl: z.string().url() })
+    .optional(),
 });

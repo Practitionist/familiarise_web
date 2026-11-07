@@ -58,6 +58,11 @@ jest.mock("@stream-io/video-react-sdk", () => ({
   },
 }));
 
+const pingHostLive = jest.fn();
+jest.mock("../../app/meetings/[id]/host-live-ping", () => ({
+  pingHostLive: (...a: unknown[]) => pingHostLive(...a),
+}));
+
 import MeetingSetup from "../../app/meetings/[id]/components/MeetingSetup";
 
 const SFU_PARTICIPANT_LIMIT_REACHED = 301;
@@ -78,6 +83,7 @@ beforeEach(() => {
   endedAt = undefined;
   call.state.endedAt = undefined;
   call.join.mockReset();
+  pingHostLive.mockReset();
 });
 
 describe("the lobby when the call ends while waiting", () => {
@@ -151,5 +157,36 @@ describe("a failed join from the lobby", () => {
     });
     expect(call.join).toHaveBeenCalledTimes(2);
     expect(screen.queryByTestId("join-failure-card")).toBeNull();
+  });
+});
+
+describe("the host-is-live ping", () => {
+  async function clickJoin() {
+    await act(async () => {
+      fireEvent.click(screen.getByText("Join now"));
+    });
+  }
+
+  it("fires once the host's call join resolves, never on the lobby load", async () => {
+    setup("host");
+    expect(pingHostLive).not.toHaveBeenCalled();
+
+    call.join.mockResolvedValueOnce(undefined);
+    await clickJoin();
+    expect(pingHostLive).toHaveBeenCalledTimes(1);
+    expect(pingHostLive).toHaveBeenCalledWith("c1");
+  });
+
+  it("stays silent when the host's join fails, and for an attendee", async () => {
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    call.join.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const host = setup("host");
+    await clickJoin();
+    host.unmount();
+
+    call.join.mockResolvedValueOnce(undefined);
+    setup("participant");
+    await clickJoin();
+    expect(pingHostLive).not.toHaveBeenCalled();
   });
 });

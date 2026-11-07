@@ -21,6 +21,7 @@ export const NOVU_WORKFLOWS = {
   WINDOW_OPENED: "window-opened",
   APPOINTMENT_RESCHEDULED: "appointment-rescheduled",
   APPOINTMENT_REMINDER: "appointment-reminder",
+  SESSION_HOST_LIVE: "session-host-live",
   APPOINTMENT_COMPLETED: "appointment-completed",
   CHAT_UNREAD_DIGEST: "chat-unread-digest",
 
@@ -190,6 +191,14 @@ export type AppointmentPartiallyScheduledInput = AppointmentPayloadInput & {
   placedSessions: number;
   requiredSessions: number;
   unplacedSessions: number;
+};
+
+/** Rung once per session to its paid seats when the host first joins through the app. */
+export type SessionHostLivePayload = NotificationScope & {
+  appointmentType: string;
+  planTitle: string;
+  consultantName: string;
+  dashboardUrl: string;
 };
 
 /** `summary` names counterparts and sessions only; it never carries message text. */

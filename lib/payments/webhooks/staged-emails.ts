@@ -10,6 +10,7 @@ import { AppointmentsType, type Prisma } from "@prisma/client";
 import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
+import { nextSessionAhead } from "@/lib/appointments/calendar-links";
 import { goHref } from "@/lib/dashboard/go";
 import {
   prepareAppointmentBookedEmail,
@@ -65,8 +66,8 @@ export type StagedOutboxEmail = {
 
 /**
  * Loads the appointment with plan, consultant user, organization name, and
- * earliest live occurrence inside Phase 1 so both staged emails and Phase 2
- * Novu notifications share a single query.
+ * live occurrences (earliest first) inside Phase 1 so both staged emails and
+ * Phase 2 Novu notifications share a single query.
  */
 export async function loadAppointmentForEmails(tx: Tx, appointmentId: string) {
   const appointment = await tx.appointment.findUnique({
@@ -76,8 +77,7 @@ export async function loadAppointmentForEmails(tx: Tx, appointmentId: string) {
       occurrences: {
         where: liveOccurrenceWhere,
         orderBy: { startsAt: "asc" },
-        take: 1,
-        select: { startsAt: true },
+        select: { startsAt: true, endsAt: true },
       },
       consultation: {
         include: {
@@ -323,6 +323,7 @@ function bookedEmailArgs(
     planTitle,
     appointmentType,
     startsAt,
+    calendarSession: nextSessionAhead(appointment.occurrences),
     dashboardUrl: notificationHref(appointment.organizationId, "appointments"),
   };
 }
