@@ -121,7 +121,7 @@
     "@faker-js/faker": "^10.6.0",
     "@next/bundle-analyzer": "^15.5.28",
     "@next/eslint-plugin-next": "^15.5.27",
-    "@testing-library/dom": "10.4.1",
+    "@testing-library/dom": "10.4.2",
     "@testing-library/jest-dom": "6.9.1",
     "@testing-library/react": "16.3.3",
     "@types/bad-words": "^4.0.0",
@@ -131,7 +131,7 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
-    "autoprefixer": "^10.6.1",
+    "autoprefixer": "^10.6.2",
     "chalk": "^5.6.2",
     "dotenv": "^17.4.2",
     "eslint": "^9.39.5",
@@ -146,14 +146,14 @@
     "jest-environment-jsdom": "^30.5.2",
     "liquidjs": "^10.30.0",
     "oauth2-mock-server": "9.3.0",
-    "postcss": "^8.5.30",
+    "postcss": "^8.5.32",
     "prettier": "^3.9.9",
     "prisma": "7.10.1",
     "tailwindcss": "^3.4.19",
     "tailwindcss-animate": "^1.0.7",
     "tsx": "4.23.15",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.71.2"
+    "typescript-eslint": "^8.72.1"
   },
   "overrides": {
     "better-call": {
