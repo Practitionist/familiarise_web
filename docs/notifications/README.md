@@ -19,6 +19,7 @@ graph TD
     subgraph "Relays on the ticker"
         R1["retry-failed-emails<br/>every 15 min at :05"]
         R2["drain-notification-outbox<br/>every 10 min at :05"]
+        R3["novu-step-failure-probe<br/>every 2 h at :10"]
     end
 
     A -->|"stage inside the transaction"| FE
@@ -28,6 +29,8 @@ graph TD
     FE --> R1 --> B["Resend (email)"]
     NO --> R2 --> C["Novu (in-app only)"]
     C --> D["Bell and inbox"]
+    C -.->|"activity feed: failed in-app steps"| R3
+    R3 -->|"review:novu_step_failed sibling"| NO
     B --> F["User mailbox"]
 ```
 

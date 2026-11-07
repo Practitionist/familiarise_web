@@ -103,7 +103,7 @@ Exempt from every maintenance phase: `/api/webhooks/`, `/api/stream/webhooks`, `
 Money jobs that were held resume on their own next slot, and webhook handlers that failed are re-driven by the stuck-event sweep, so nothing needs doing if you can wait for the ticker. To close the gap faster, run the jobs below by hand in this order, after confirming that core implements a bounded execution envelope, using `POST /api/cleanup/<slug>?limit=10` with `Authorization: Bearer $CRON_SECRET` (or from the admin system-jobs runner). The order follows dependency: first learn what the gateway knows, then repair bookings, then money owed.
 
 1. **Confirm the phase is `OFF`** and the health check answers healthy.
-2. **`sweep-stuck-webhook-events`** re-drives every Razorpay, Stream and Novu event that was received but not processed. Also read the Razorpay dashboard's webhook delivery log for the window and note any delivery that failed outright.
+2. **`sweep-stuck-webhook-events`** re-drives every Razorpay and Stream event that was received but not processed. Also read the Razorpay dashboard's webhook delivery log for the window and note any delivery that failed outright.
 3. **`reconcile-payment-status`** asks Razorpay about every `PENDING` payment, so a capture whose webhook was lost is confirmed through the single confirmer.
 4. **`reconcile-orphaned-confirmations`**, **`sweep-orphaned-topup-captures`** and **`reconcile-orphaned-payments`** repair captures that never became a booking or a wallet credit.
 5. **`sync-payment-earnings`** writes the earnings rows for captured payments that have none.

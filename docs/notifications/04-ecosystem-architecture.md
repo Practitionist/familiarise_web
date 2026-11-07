@@ -436,6 +436,7 @@ The two relays are the outbox halves of the design: every email and every Novu t
 | Novu client + service + workflows + subscriber | `lib/novu/*.ts`                                                                                        |
 | Novu templates as code and sync                | `lib/novu/templates/`, `scripts/novu/sync-workflows.ts` (`npm run novu:sync`, `npm run novu:check`)    |
 | Outbox relays on the ticker                    | `retry-failed-emails` (every 15 min at `:05`), `drain-notification-outbox` (every 10 min at `:05`)     |
+| Novu step-failure probe                        | `jobs/notifications/novu-step-failure-probe.ts` (every 2 h at `:10`, reads the last 4 h)               |
 | Novu inbox + bell icon + HMAC hook             | `components/notifications/NotificationInbox.tsx`, `hooks/useNovuSubscriberSync.ts`                     |
 | Notification Preferences Panel                 | `components/notifications/NotificationPreferencesPanel.tsx` (every role, operators included)           |
 | Preferences API                                | `app/api/novu/preferences/route.ts` (GET/PUT)                                                          |

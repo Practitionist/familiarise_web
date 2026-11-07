@@ -29,9 +29,6 @@ jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
 jest.mock("../../lib/stream/webhook-dispatch", () => ({
   processStreamEvent: jest.fn(),
 }));
-jest.mock("../../lib/webhooks/novu-handler", () => ({
-  processNovuWebhookPayload: jest.fn(),
-}));
 
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: jest.fn((_job: string, _opts: unknown, fn: () => unknown) =>
@@ -55,7 +52,6 @@ jest.mock("../../lib/observability/report", () => ({
 
 import prisma from "../../lib/prisma";
 import { reportSentryMessage } from "../../lib/observability/report";
-import { processNovuWebhookPayload } from "../../lib/webhooks/novu-handler";
 import { processRazorpayWebhookEvent } from "../../app/api/webhooks/razorpay-dispatch";
 import { sweepStuckWebhookEvents } from "../../scripts/cleanup/sweep-stuck-webhook-events";
 
@@ -66,7 +62,6 @@ const mockWe = {
   updateMany: prisma.webhookEvent.updateMany as jest.Mock,
 };
 const mockProcess = processRazorpayWebhookEvent as jest.Mock;
-const mockProcessNovu = processNovuWebhookPayload as jest.Mock;
 
 const stuckRow = (over: Record<string, unknown> = {}) => ({
   eventId: "payment.captured:pay_1",
@@ -118,7 +113,7 @@ describe("sweepStuckWebhookEvents", () => {
     expect(claim[0].data.receivedAt).toBeUndefined();
   });
 
-  it("re-drives a stuck event across razorpay, stream, and novu providers", async () => {
+  it("re-drives a stuck event across the razorpay and stream providers", async () => {
     mockWe.findMany.mockResolvedValue([stuckRow()]);
     mockProcess.mockResolvedValue(undefined);
     mockWe.findUnique.mockResolvedValue({ error: null, processed: true });
@@ -130,7 +125,7 @@ describe("sweepStuckWebhookEvents", () => {
 
     const where = mockWe.findMany.mock.calls[0][0].where;
     expect(where).toMatchObject({
-      provider: { in: ["razorpay", "stream", "novu"] },
+      provider: { in: ["razorpay", "stream"] },
     });
     expect(where.OR).toEqual([
       { processed: false, error: null },
@@ -149,30 +144,6 @@ describe("sweepStuckWebhookEvents", () => {
     expect(typeof env.created_at).toBe("number");
     expect(evType).toBe("payment.captured");
     expect(evId).toBe("payment.captured:pay_1");
-  });
-
-  it("re-drives a stuck Novu webhook event through processNovuWebhookPayload", async () => {
-    const novuRow = stuckRow({
-      eventId: "evt_novu_stuck_1",
-      eventType: "message.sent",
-      provider: "novu",
-      payload: {
-        id: "evt_novu_stuck_1",
-        type: "message.sent",
-        transactionId: "tx_1",
-      },
-    });
-    mockWe.findMany.mockResolvedValue([novuRow]);
-    mockProcessNovu.mockResolvedValue(undefined);
-    mockWe.findUnique.mockResolvedValue({ error: null, processed: true });
-
-    const r = await sweepStuckWebhookEvents({ staleMinutes: 6 });
-
-    expect(r).toMatchObject({ scanned: 1, recovered: 1, stillFailing: 0 });
-    expect(mockProcessNovu).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "message.sent", transactionId: "tx_1" }),
-      "evt_novu_stuck_1",
-    );
   });
 
   it("a re-drive that still errors counts as stillFailing, not recovered", async () => {

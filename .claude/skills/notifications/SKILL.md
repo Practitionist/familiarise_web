@@ -40,14 +40,16 @@ Every family redirects to `{{payload.href}}`, and `toWire` always sets it (the e
 | --------------------------- | --------------------------------------------------- | ----- | ------ |
 | `drain-notification-outbox` | every 10 min at offset `:05`                        | 100   | 24 s   |
 | `retry-failed-emails`       | every 15 min at offset `:05` (`:05, :20, :35, :50`) | 20    | 20 s   |
+| `novu-step-failure-probe`   | every 2 h at offset `:10`, over a 4 h window        | none  | 20 s   |
 
-Both are registered once in `lib/cron/cleanup-registry.ts` and run under `withCronLock`. A new row waits 60 s (`INLINE_ATTEMPT_LEASE_MS`) so the relay does not race the inline attempt. The relay is blocked while maintenance is `OFFLINE` (`blockingPhaseFor`, `lib/maintenance-cron.ts`). Production's job fleet is paused pre-launch; resume from the go-live skill.
+All three are registered once in `lib/cron/cleanup-registry.ts` and run under `withCronLock`; the two relays fail closed, and the probe fails open. A new row waits 60 s (`INLINE_ATTEMPT_LEASE_MS`) so the relay does not race the inline attempt. The relay is blocked while maintenance is `OFFLINE` (`blockingPhaseFor`, `lib/maintenance-cron.ts`). Production's job fleet is paused pre-launch; resume from the go-live skill.
 
 ## Settles are compare-and-set
 
 - Every status write on all three outbox tables is a conditional `updateMany` filtered on `PENDING`/`RETRY`: `UNSETTLED` (`lib/retry/provider-window.ts`) for email in `settleRow` (`lib/email/deliver.ts`), the relay (`jobs/email/retry-failed-emails.ts`) and `settleBatch` (`app/api/admin/waitlist/broadcast/route.ts`), and `ACTIVE_STATUSES` for bells (`lib/novu/outbox.ts`). A lost race matches no row, is skipped and is not counted. Never write a settle as read-then-update, and never overwrite `SENT`.
 - Novu honours the Idempotency-Key (measured 2026-11-07 in Development: two triggers, one notification). The terminal-split row id is `<transactionId>:terminal:<digest>`, a 16-hex-character sha256 prefix over the sorted refused recipients (`terminalSplitRow`, `lib/novu/outbox.ts`).
-- A Novu step failing after Novu accepted the trigger leaves the row `SENT` and is visible only in Novu's 24 h activity feed; closing that gap is a follow-up (decision 10), so do not treat `SENT` as proof a bell rendered.
+- A Novu step failing after Novu accepted the trigger leaves the row `SENT`, so `SENT` is not proof a bell rendered. `novu-step-failure-probe` (`jobs/notifications/novu-step-failure-probe.ts`) reads `GET /v1/notifications?channels=in_app` and adds one `SINGLE` `DEAD_LETTER` sibling, `<row>:stepfailed:<recipient hash>`, with `review:novu_step_failed: ...` for each failed in-app job whose transactionId `recipientTransactionId` reproduces. Never write to the parent, and never re-send it: Novu treats a repeated transactionId as a duplicate. A failure older than Novu's 24 h retention is lost (decision 16).
+- There is no Novu webhook. Outbound webhooks are Team and Enterprise only, and `message.failed` does not cover in-app steps; do not add a receiver back.
 - `firstAttemptAt` anchors the provider idempotency key (`stampFirstAttempt`). An automatic replay 23 h (`PROVIDER_REPLAY_WINDOW_MS`) or more after it dead-letters as `review:provider_acceptance_unknown`, because both Resend and Novu cache keys for 24 h.
 
 ## Dead-letter reasons (`lastError`)
