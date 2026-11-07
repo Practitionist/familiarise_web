@@ -6,7 +6,8 @@
  *  - fan-out pages stage once per key (`createManyAndReturn` skip-duplicates);
  *  - a definitive partial bell response keeps the retryable remainder on the
  *    row and moves terminal refusals to one DEAD_LETTER sibling;
- *  - neither relay overwrites a row another attempt already settled.
+ *  - neither relay overwrites a row another attempt already settled;
+ *  - a Novu step failure found twice leaves one dead-letter sibling.
  */
 import { randomUUID } from "node:crypto";
 
@@ -21,6 +22,11 @@ jest.mock("../../lib/novu/client", () => ({
   }),
 }));
 
+jest.mock("../../lib/cron/with-cron-lock", () => ({
+  ...jest.requireActual("../../lib/cron/with-cron-lock"),
+  withCronLock: (_job: string, _opts: unknown, fn: () => unknown) => fn(),
+}));
+
 import type { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { NOVU_WORKFLOWS } from "../../lib/novu/workflows";
@@ -31,6 +37,7 @@ import {
   stagePages,
   type StagedTrigger,
 } from "../../lib/novu/outbox";
+import { probeNovuStepFailures } from "../../jobs/notifications/novu-step-failure-probe";
 import {
   runEmailRetryTick,
   type FailedEmailStore,
@@ -197,6 +204,50 @@ describe("bell relay settles", () => {
       select: { status: true },
     });
     expect(after.status).toBe("SENT");
+  });
+});
+
+describe("Novu step failure probe", () => {
+  it("records one dead-letter sibling however often the failure is read", async () => {
+    const [ok, failed] = [await seedUser({}), await seedUser({})];
+    const row = await stageMulti([ok, failed]);
+    await prisma.notificationOutbox.update({
+      where: { id: row.id },
+      data: { status: "SENT", recipients: [] },
+    });
+    const activity = {
+      hasMore: false,
+      data: [
+        {
+          transactionId: recipientTransactionId(row.transactionId, failed),
+          subscriber: { subscriberId: failed },
+          jobs: [{ type: "in_app", status: "failed", executionDetails: [] }],
+        },
+      ],
+    };
+    const fetchPage = async () => Response.json(activity);
+    process.env.NOVU_DEVELOPMENT_KEY = "test-key";
+
+    const first = await probeNovuStepFailures({ db: prisma, fetchPage });
+    const second = await probeNovuStepFailures({ db: prisma, fetchPage });
+
+    expect([first.inserted, second.inserted]).toEqual([1, 0]);
+    const siblings = await prisma.notificationOutbox.findMany({
+      where: {
+        transactionId: { startsWith: `${row.transactionId}:stepfailed:` },
+      },
+    });
+    expect(siblings).toHaveLength(1);
+    expect(siblings[0]).toMatchObject({
+      kind: "SINGLE",
+      status: "DEAD_LETTER",
+      recipients: [failed],
+      entityRef: row.entityRef,
+      lastError: expect.stringMatching(/^review:novu_step_failed: /),
+    });
+    await expect(
+      prisma.notificationOutbox.findUniqueOrThrow({ where: { id: row.id } }),
+    ).resolves.toMatchObject({ status: "SENT" });
   });
 });
 

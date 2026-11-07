@@ -765,6 +765,41 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       }),
   },
 
+  // @cleanup-twin novu-step-failure-probe
+  "novu-step-failure-probe": {
+    meta: {
+      title: "Novu step failure probe",
+      description:
+        "Read Novu's activity feed for in-app steps that failed after acceptance and dead-letter them for review",
+      category: "Messaging",
+      manualRun: "inline",
+    },
+    idle: {
+      alwaysRun: "Reads a time window of Novu's activity feed; no local queue.",
+    },
+    build: () =>
+      cleanupRoute({
+        job: "novu-step-failure-probe",
+        run: async () => {
+          const { probeNovuStepFailures } =
+            await import("@/jobs/notifications/novu-step-failure-probe");
+          return probeNovuStepFailures();
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          pages: r.pages,
+          failedSteps: r.failedSteps,
+          inserted: r.inserted,
+          unmatched: r.unmatched,
+          truncated: r.truncated,
+          skipped: r.skipped,
+        }),
+        items: (r) => ({ processed: r.scanned }),
+        needsAttention: (r) => r.truncated,
+        failureMessage: "Novu step failure probe failed",
+      }),
+  },
+
   // @cleanup-twin dunning
   dunning: {
     meta: {
