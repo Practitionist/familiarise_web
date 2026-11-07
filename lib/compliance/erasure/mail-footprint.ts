@@ -66,10 +66,12 @@ export async function scrubMailFootprintTx(
     where: theirs,
     data: { recipient: marker },
   });
-  // Newsletter confirm and welcome mail is anchored on the address itself.
+  // Newsletter and contact-form mail is anchored on the address itself.
   const entityRefs = await tx.failedEmail.updateMany({
     where: {
-      entityRef: { equals: `waitlist:${email}`, mode: "insensitive" },
+      OR: ["waitlist", "contact"].map((kind) => ({
+        entityRef: { equals: `${kind}:${email}`, mode: "insensitive" as const },
+      })),
     },
     data: { entityRef: marker },
   });

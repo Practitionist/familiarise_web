@@ -94,6 +94,11 @@ describe("erasure mailing footprint", () => {
       status: "DEAD_LETTER",
       lastError: "review:provider_acceptance_unknown",
     });
+    const contact = await queuedEmail({
+      recipient: "support@familiarise.test",
+      status: "SENT",
+      entityRef: `contact:${email.toUpperCase()}`,
+    });
     const someoneElse = await queuedEmail({
       recipient: other,
       status: "PENDING",
@@ -112,7 +117,7 @@ describe("erasure mailing footprint", () => {
       waitlistDeleted: 2,
       emailsDeadLettered: 2,
       recipientsReplaced: 4,
-      entityRefsReplaced: 1,
+      entityRefsReplaced: 2,
       batchesNarrowed: 1,
       batchesDeadLettered: 2,
       settledBatchesScrubbed: 2,
@@ -127,7 +132,14 @@ describe("erasure mailing footprint", () => {
     const emails = await prisma.failedEmail.findMany({
       where: {
         id: {
-          in: [byUser.id, byAddress.id, sent.id, dead.id, someoneElse.id],
+          in: [
+            byUser.id,
+            byAddress.id,
+            sent.id,
+            dead.id,
+            contact.id,
+            someoneElse.id,
+          ],
         },
       },
       select: {
@@ -163,6 +175,11 @@ describe("erasure mailing footprint", () => {
       recipient: marker,
       status: "DEAD_LETTER",
       lastError: "review:provider_acceptance_unknown",
+    });
+    expect(row(contact.id)).toMatchObject({
+      recipient: "support@familiarise.test",
+      entityRef: marker,
+      status: "SENT",
     });
     expect(row(someoneElse.id)).toMatchObject({
       recipient: other,
