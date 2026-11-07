@@ -8,6 +8,7 @@ import {
   appointmentDashboardUrl,
   calendarDetails,
   calendarSeatWhere,
+  holdsCalendarSeat,
   verifyCalendarToken,
 } from "@/lib/appointments/calendar-links";
 import { buildIcs } from "@/lib/appointments/ics";
@@ -27,8 +28,9 @@ function notFound(): NextResponse {
   return new NextResponse("Not found", { status: 404, headers: NO_STORE });
 }
 
-/** The booking's upcoming confirmed sessions, or null unless `userId` holds a paid seat on it. */
+/** The booking's upcoming confirmed sessions, or null unless `userId` holds a paid, unrefunded seat on it. */
 async function attendeeCalendar(appointmentId: string, userId: string) {
+  if (!(await holdsCalendarSeat(prisma, appointmentId, userId))) return null;
   const appointment = await prisma.appointment.findFirst({
     where: {
       id: appointmentId,
