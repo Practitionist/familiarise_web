@@ -101,6 +101,13 @@ jest.mock("../../lib/email", () => ({
 jest.mock("../../lib/email/send-to-recipients", () => ({
   attemptStaged: (...a: unknown[]) => mockAttemptStagedEmails(...a),
 }));
+const mockRevokeRefundedSeatAccess = jest.fn(
+  async (_paymentId: string) => undefined,
+);
+jest.mock("../../lib/stream/access-revocation", () => ({
+  revokeRefundedSeatAccess: (paymentId: string) =>
+    mockRevokeRefundedSeatAccess(paymentId),
+}));
 
 import { refundBookingPayment } from "../../lib/payments/operations/booking-refund";
 import { isInternalFundedIntent } from "../../lib/payments/funding-rail";
@@ -186,6 +193,24 @@ describe("refundBookingPayment", () => {
       amountRefundedPaise: 50_000,
       rail: "GATEWAY",
     });
+    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith(PAYMENT_ID);
+  });
+
+  it("keeps a per-session refund's chat and call access", async () => {
+    mockPaymentFindUnique.mockResolvedValue({ paymentIntent: "pay_ABC" });
+    mockRefundPayment.mockResolvedValue({
+      refundId: "r1",
+      amountRefundedPaise: 10_000,
+    });
+
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      amountPaise: 10_000,
+      reason: "missed session",
+      keepSeat: true,
+    });
+
+    expect(mockRevokeRefundedSeatAccess).not.toHaveBeenCalled();
   });
 
   it("reverses an org-wallet booking in-ledger, never through the gateway", async () => {

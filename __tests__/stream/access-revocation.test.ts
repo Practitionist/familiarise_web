@@ -24,6 +24,7 @@ const mockRevocationPrisma = {
   },
   appointmentParticipant: {
     findFirst: jest.fn(async (): Promise<unknown> => null),
+    findMany: jest.fn(async (): Promise<unknown[]> => []),
   },
 };
 
@@ -293,6 +294,101 @@ describe("call membership on booking end", () => {
     await expect(redriveAccessRevocation(retryRow)).resolves.toBe(
       "Call membership removal failed",
     );
+  });
+});
+
+describe("access after a refund ends a seat", () => {
+  const oneToOneSeat = (status: string) => ({
+    userId: "client-1",
+    appointmentId: "appt-1",
+    appointment: {
+      webinarId: null,
+      classId: null,
+      organizationId: null,
+      webinar: null,
+      class: null,
+      consultation: {
+        status,
+        consultationPlan: {
+          organizationId: "org-1",
+          consultantProfile: { userId: "host-1" },
+        },
+      },
+      subscription: null,
+      trial: null,
+    },
+  });
+
+  beforeEach(() => {
+    mockRevocationUpdateCallMembers.mockResolvedValue({});
+    mockIsDmContextEligible.mockResolvedValue(false);
+    mockRevocationPrisma.appointmentParticipant.findFirst.mockResolvedValue(
+      null,
+    );
+    mockRevocationPrisma.appointmentOccurrence.findMany.mockResolvedValue([
+      { meeting: { streamCallId: "occurrence-o1" } },
+    ]);
+  });
+
+  it("removes a refunded 1:1 client from the DM and the call", async () => {
+    mockRevocationPrisma.appointmentParticipant.findMany.mockResolvedValue([
+      oneToOneSeat("SCHEDULED"),
+    ]);
+    const { revokeRefundedSeatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    await revokeRefundedSeatAccess("pay-1");
+
+    expect(
+      mockRevocationPrisma.appointmentParticipant.findMany,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { paymentId: "pay-1", status: "REFUNDED" },
+      }),
+    );
+    expect(mockIsDmContextEligible).toHaveBeenCalledWith(
+      "host-1",
+      "client-1",
+      "org-1",
+    );
+    expect(mockRemoveMembers).toHaveBeenCalledTimes(1);
+    expect(mockRevocationUpdateCallMembers).toHaveBeenCalledWith(
+      "default",
+      "occurrence-o1",
+      { remove_members: ["client-1"] },
+    );
+  });
+
+  it("leaves a cancelled booking and a still-live seat to their own paths", async () => {
+    mockRevocationPrisma.appointmentParticipant.findMany.mockResolvedValue([
+      oneToOneSeat("CANCELLED"),
+    ]);
+    const { revokeRefundedSeatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    await revokeRefundedSeatAccess("pay-1");
+
+    mockRevocationPrisma.appointmentParticipant.findMany.mockResolvedValue([
+      oneToOneSeat("SCHEDULED"),
+    ]);
+    mockRevocationPrisma.appointmentParticipant.findFirst.mockResolvedValue({
+      id: "seat-2",
+    });
+    await revokeRefundedSeatAccess("pay-1");
+
+    expect(mockRemoveMembers).not.toHaveBeenCalled();
+    expect(mockRevocationUpdateCallMembers).not.toHaveBeenCalled();
+  });
+
+  it("never throws when the lookup fails", async () => {
+    mockRevocationPrisma.appointmentParticipant.findMany.mockRejectedValue(
+      new Error("db down"),
+    );
+    const { revokeRefundedSeatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    await expect(revokeRefundedSeatAccess("pay-1")).resolves.toBeUndefined();
+    expect(mockReport).toHaveBeenCalledTimes(1);
   });
 });
 

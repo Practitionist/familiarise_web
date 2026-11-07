@@ -7,7 +7,7 @@ import {
   isStreamConfigured,
 } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
-import { getDmChannelId } from "@/lib/stream-utils";
+import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { MAX_CALL_DURATION_MS } from "@/lib/meetings/duration-cap";
 import { liveParticipant } from "@/lib/booking/participants";
@@ -514,4 +514,107 @@ export async function revokeEndedEventChatAccess(
     dmOrganizationId: context.organizationId,
     appointmentId: context.appointmentId,
   });
+}
+
+const refundedSeatPlanSelect = {
+  select: {
+    organizationId: true,
+    consultantProfile: { select: { userId: true } },
+  },
+} as const;
+
+/**
+ * After a refund ends a seat, removes the chat and call access the join gate no
+ * longer grants. Never throws: the refund has already committed.
+ */
+export async function revokeRefundedSeatAccess(
+  paymentId: string,
+): Promise<void> {
+  try {
+    const seats = await prisma.appointmentParticipant.findMany({
+      where: { paymentId, status: "REFUNDED" },
+      select: {
+        userId: true,
+        appointmentId: true,
+        appointment: {
+          select: {
+            webinarId: true,
+            classId: true,
+            organizationId: true,
+            webinar: { select: { status: true } },
+            class: { select: { status: true } },
+            consultation: {
+              select: {
+                status: true,
+                consultationPlan: refundedSeatPlanSelect,
+              },
+            },
+            subscription: {
+              select: {
+                status: true,
+                subscriptionPlan: refundedSeatPlanSelect,
+              },
+            },
+            trial: {
+              select: {
+                status: true,
+                consultantProfile: { select: { userId: true } },
+                subscriptionPlan: { select: { organizationId: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    for (const seat of seats) {
+      const stillLive = await prisma.appointmentParticipant.findFirst({
+        where: {
+          appointmentId: seat.appointmentId,
+          ...liveParticipant(seat.userId),
+        },
+        select: { id: true },
+      });
+      if (stillLive) continue;
+      const appt = seat.appointment;
+      const bookingStatus =
+        appt.webinar?.status ??
+        appt.class?.status ??
+        appt.consultation?.status ??
+        appt.subscription?.status ??
+        appt.trial?.status;
+      // The cancel route revokes a cancelled booking's access itself.
+      if (bookingStatus === "CANCELLED") continue;
+      if (appt.webinarId) {
+        await revokeEndedEventChatAccess("webinar", appt.webinarId, [
+          seat.userId,
+        ]);
+        continue;
+      }
+      if (appt.classId) {
+        await revokeEndedEventChatAccess("class", appt.classId, [seat.userId]);
+        continue;
+      }
+      const consultantUserId =
+        appt.consultation?.consultationPlan.consultantProfile.userId ??
+        appt.subscription?.subscriptionPlan.consultantProfile.userId ??
+        appt.trial?.consultantProfile.userId;
+      await revokeEndedBookingChatAccess({
+        userIds: [seat.userId],
+        dmCounterpartUserIds: consultantUserId ? [consultantUserId] : [],
+        dmOrganizationId: bookingOrgId({
+          consultationPlan: appt.consultation?.consultationPlan,
+          subscriptionPlan:
+            appt.subscription?.subscriptionPlan ?? appt.trial?.subscriptionPlan,
+          appointment: appt,
+        }),
+        appointmentId: seat.appointmentId,
+      });
+    }
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "stream",
+      op: "refund.revokeSeatAccess",
+      extra: { paymentId },
+    });
+  }
 }

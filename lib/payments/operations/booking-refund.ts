@@ -198,6 +198,19 @@ export type BookingRefundResult = {
 };
 
 export async function refundBookingPayment(
+  input: Parameters<typeof refundBookingPaymentOnRail>[0],
+): Promise<BookingRefundResult> {
+  const result = await refundBookingPaymentOnRail(input);
+  // After commit: the refunded seat loses the chat and call access the join gate no longer grants.
+  if (!input.keepSeat) {
+    const { revokeRefundedSeatAccess } =
+      await import("@/lib/stream/access-revocation");
+    await revokeRefundedSeatAccess(input.paymentId);
+  }
+  return result;
+}
+
+async function refundBookingPaymentOnRail(
   input: {
     paymentId: string;
     /** Defaults to the full remaining refundable balance. */
