@@ -2,7 +2,7 @@
 
 > Production readiness runbook for outbound email (`lib/email/`), Novu in-app feed notifications (`lib/novu/`), DMARC/SPF/DKIM alignment, scheduled outbox relays, and environment variables.
 
-**Last Updated**: 2026-10-11
+**Last Updated**: 2026-11-06
 **Live Domain**: `familiarisenow.com` (Netlify DNS)
 
 ---
@@ -12,6 +12,7 @@
 - [Sending Domains & DMARC Architecture](#sending-domains--dmarc-architecture)
 - [Service Free Tier Limits & Quotas](#service-free-tier-limits--quotas)
 - [Pre-Launch Checklist (Free Tier, \$0/month)](#pre-launch-checklist-free-tier-0month)
+  - [Step 7: Outbox Cutover Recount (no backfill)](#step-7-outbox-cutover-recount-no-backfill)
 - [DNS Setup for Resend & DMARC](#dns-setup-for-resend--dmarc)
 - [Novu Environment & Workflow Configuration](#novu-environment--workflow-configuration)
 - [Scheduled Outbox Drains & Sweep Cadences](#scheduled-outbox-drains--sweep-cadences)
@@ -71,16 +72,16 @@ Inbound (practitionist.com):
 
 | Feature                     | Free                                     | Pro (~\$25–30/mo) |
 | --------------------------- | ---------------------------------------- | ----------------- |
-| Events/month                | ~10,000                                  | 30,000            |
+| Workflow runs/month         | 10,000, one run per bell recipient       | Higher            |
 | In-app feed + WebSocket     | Yes (HMAC subscriber hash secured)       | Yes               |
 | Email channel               | Unused — all 16 families are in-app only | Unused            |
-| Activity feed retention     | 7 days                                   | 30 days           |
+| Activity feed retention     | 24 hours                                 | Longer            |
 | Subscribers                 | Unlimited                                | Unlimited         |
 | Active workflows per tenant | 20 (16 families deployed)                | 20 (100 on Team)  |
 
 **Development vs. Production Tenants:**
 
-- Novu's Development and Production environments are fully isolated tenants with distinct workflows, subscribers, and secret keys.
+- Novu's Development and Production environments are separate tenants with distinct workflows, subscribers, and secret keys, but the monthly workflow-run quota is counted across both, so Development testing spends the same 10,000 runs. Keep it small. The plan limits are recorded in `.claude/skills/billing-guardrails/references/novu.md`.
 - `lib/novu/secret-key.ts` selects `NOVU_PRODUCTION_KEY` when `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production` (Netlify production deploys, including the ticker-run crons) and `NOVU_DEVELOPMENT_KEY` everywhere else.
 - `/api/novu/subscriber` authenticates subscribers via deterministic HMAC-SHA256 hashes (`computeSubscriberHash(subscriberId)` in `lib/novu/subscriber.ts`).
 
@@ -104,8 +105,9 @@ Inbound (practitionist.com):
 
 ### Step 3: Novu Tenant Sync & Subscriber HMAC
 
-- [ ] Run `npm run novu:sync -- --dry-run` followed by `npm run novu:sync` to sync all 16 workflow families to Development, then promote to Production (`npm run novu:sync -- --env production`)
-- [ ] Verify `npm run novu:check` exits `0` with zero drift
+- [ ] Development: run `npx tsx scripts/novu/clear-native-mutes.ts` (dry run, then `--apply`), then `npm run novu:sync -- --dry-run` followed by `npm run novu:sync`, to sync all 16 workflow families
+- [ ] Production: run the same sequence with `--env production` **in the same window as the production release promotion that carries the single-preference-owner change**, not earlier: the old production code still writes subscriber preferences, so an earlier Production sync would fight it
+- [ ] Verify `npm run novu:check` (and `npm run novu:check -- --env production` after the production sync) exits `0` with zero drift. Novu's read API serves stale workflows for about three minutes after a sync, so a `novu:check` in that window reports false drift on random families; wait five minutes, then expect two clean runs in a row.
 - [ ] Enable HMAC encryption in Novu Dashboard → In-App Integration settings to pair with `computeSubscriberHash(subscriberId)`
 
 ### Step 4: Database Schema & SQL Sidecars
@@ -126,6 +128,30 @@ Inbound (practitionist.com):
 - [ ] Confirm lifecycle email footer link (`GET /api/notifications/unsubscribe`) renders confirmation UI without mutating DB, and one-click `POST` disables email while preserving in-app notifications
 - [ ] Confirm waitlist footer link (`GET /api/waitlist/unsubscribe`) renders confirmation form without mutating DB, and `POST` unsubscribes immediately
 - [ ] Trigger a test booking event and verify `flushNotificationsAfter` delivers both the Novu bell and Resend email
+
+### Step 7: Outbox Cutover Recount (no backfill)
+
+The earlier bell sender keyed a whole `NotificationOutbox` row by its `transactionId`; the current one keys each recipient's event by `<transactionId>:<recipient hash>` under generation-scoped Idempotency-Keys. A row the earlier sender attempted but never settled may already be accepted by Novu, so resending it under the new identities could ring it twice. The relay therefore dead-letters such a row as `review:legacy_delivery_format` and any `BROADCAST` row as `review:legacy_broadcast`. A row never attempted (`lastError` null) sends normally.
+
+No `firstAttemptAt` backfill is needed and none is planned: on 2026-11-06 the live database held zero `PENDING` or `RETRY` rows in `FailedEmail`, `FailedEmailBatch` and `NotificationOutbox`.
+
+- [ ] Skip the backfill. Immediately before the production release, recount read-only on the production database (an operator query, never an agent write):
+
+  ```sql
+  SELECT 'FailedEmail' AS tbl, status, count(*) FROM "FailedEmail"
+    WHERE status IN ('PENDING', 'RETRY') GROUP BY status
+  UNION ALL
+  SELECT 'FailedEmailBatch', status, count(*) FROM "FailedEmailBatch"
+    WHERE status IN ('PENDING', 'RETRY') GROUP BY status
+  UNION ALL
+  SELECT 'NotificationOutbox', status, count(*) FROM "NotificationOutbox"
+    WHERE status IN ('PENDING', 'RETRY') GROUP BY status;
+  ```
+
+- [ ] All three counts are zero: release. The cleanup PR then deletes `LEGACY_DELIVERY_FORMAT` and `LEGACY_BROADCAST` in `lib/novu/outbox.ts`, together with `scripts/novu/clear-native-mutes.ts` once both Novu environments are clean.
+- [ ] Otherwise, wait for the running relay to settle the rows (re-run the count after each 10-minute drain tick), or release and dispose of the dead letters:
+  - `review:legacy_delivery_format`: look the row's `transactionId` up in the Novu Activity Feed (the earlier sender used it verbatim; the feed keeps only 24 hours on Free). If Novu holds the event, it was delivered; leave the dead letter. If not, and the notice still matters, an operator resets the row to never-attempted (`status = 'PENDING'`, `attempts = 0`, `"lastError" = NULL`, `"nextRetryAt" = now()`) and the relay sends it under the current format.
+  - `review:legacy_broadcast`: leave the dead letter. Broadcasts no longer exist; re-post a still-relevant announcement with **Post to inbox**, which fans out through bell policy.
 
 ---
 
@@ -149,11 +175,11 @@ The apex carries SPF `v=spf1 -all`, a null MX `0 .`, and `_dmarc` is `v=DMARC1; 
 1. **In-App Only Topology**: All 16 Novu workflow families contain only an in-app step (`lib/novu/templates/`). Do not configure an email integration inside Novu.
 2. **Declarative Sync & Drift Guard**:
    - `npm run novu:sync -- --dry-run`: Previews workflow updates.
-   - `npm run novu:sync`: Syncs `lib/novu/templates/` to Development (`--env production` promotes to Production).
+   - `npm run novu:sync`: Syncs `lib/novu/templates/` to Development (`--env production` writes Production, at the release promotion).
    - `npm run novu:check`: Verifies live Novu workflows match code manifests in CI.
-3. **Dual-Layer Preference Gating**:
-   - **Pre-Stage Database Gate (`stageBell`)**: Filters out `EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, and muted category columns before inserting into `NotificationOutbox`, while calculating quiet-hours `notBefore`.
-   - **Subscriber Custom Data Gate (`buildSubscriberCustomData` & `updateSubscriberPreferences`)**: Upserts subscriber flags idempotently via `novu.subscribers.create(...)` and propagates DB errors fail-closed so transient outages never re-enable muted users.
+3. **Server-Side Preference Gating (Postgres is the only owner)**:
+   - **Stage and attempt gates (`stageBell`, `currentBellRecipients`)**: Filter out `allNotifications: false`, `inAppEnabled: false`, erased users and muted category columns before inserting into `NotificationOutbox`, and again at the first attempt, which freezes the allowed set.
+   - **Novu holds no preference state**: families sync always-on and read-only with no step conditions. In each environment: run `npx tsx scripts/novu/clear-native-mutes.ts` (dry run, then `--apply`; add `--env production` for Production) **first**, then `npm run novu:sync`. The sync makes the families read-only, after which Novu may refuse per-family mute resets; the script lists any such read-only refusals separately.
 
 ---
 
@@ -161,13 +187,14 @@ The apex carries SPF `v=spf1 -all`, a null MX `0 .`, and `_dmarc` is `v=DMARC1; 
 
 Sub-hourly latency-sensitive relays run on the phase-staggered Netlify scheduled function (`netlify/functions/cron-tick.mts`, `*/5 * * * *`), and so do the daily and weekly batch maintenance jobs: no GitHub Actions workflow schedules a registry job:
 
-| Job Target                    | Driver          | Cadence & Offset                                      | Batch / Timeout        | Purpose                                                           |
-| ----------------------------- | --------------- | ----------------------------------------------------- | ---------------------- | ----------------------------------------------------------------- |
-| `drain-notification-outbox`   | `cron-tick.mts` | Every **10m** at offset **`:05`**                     | `limit=20`, `20s` cap  | Replays due `NotificationOutbox` rows (`notBefore <= now`)        |
-| `retry-failed-emails`         | `cron-tick.mts` | Every **15m** at offset **`:00`**                     | `limit=20`, `20s` cap  | Replays due `FailedEmail` & `FailedEmailBatch` with RFC 8058 hdrs |
-| `appointment-reminders`       | `cron-tick.mts` | Every **15m** at offset **`:10`**                     | `limit=25`, `20s` cap  | Dispatches pre-session email & in-app appointment reminders       |
-| `auto-complete-appointments`  | `cron-tick.mts` | Every **30m** at offset **`:15`**                     | `limit=25`, `20s` cap  | Auto-completes past sessions and triggers post-session flows      |
-| `prune-system-job-executions` | `cron-tick.mts` | Every **30m** at offset **`:25`**, 20:00 to 23:30 UTC | `limit=500`, `24s` cap | Scrubs `SENT` email HTML/text after 7d; prunes terminal rows      |
+| Job Target                    | Driver          | Cadence & Offset                                      | Batch / Timeout        | Purpose                                                            |
+| ----------------------------- | --------------- | ----------------------------------------------------- | ---------------------- | ------------------------------------------------------------------ |
+| `drain-notification-outbox`   | `cron-tick.mts` | Every **10m** at offset **`:05`**                     | `limit=100`, `24s` cap | Replays due `NotificationOutbox` rows (`notBefore <= now`)         |
+| `retry-failed-emails`         | `cron-tick.mts` | Every **15m** at offset **`:05`**                     | `limit=20`, `20s` cap  | Replays due `FailedEmail` & `FailedEmailBatch` with RFC 8058 hdrs  |
+| `novu-step-failure-probe`     | `cron-tick.mts` | Every **2h** at offset **`:10`**, 4 h window          | 10 pages, `20s` cap    | Dead-letters in-app steps that failed inside Novu after acceptance |
+| `appointment-reminders`       | `cron-tick.mts` | Every **15m** at offset **`:10`**                     | `limit=25`, `20s` cap  | Dispatches pre-session email & in-app appointment reminders        |
+| `auto-complete-appointments`  | `cron-tick.mts` | Every **30m** at offset **`:15`**                     | `limit=25`, `24s` cap  | Auto-completes past sessions and triggers post-session flows       |
+| `prune-system-job-executions` | `cron-tick.mts` | Every **30m** at offset **`:25`**, 20:00 to 23:30 UTC | `limit=500`, `24s` cap | Scrubs `SENT` email HTML/text after 7d; prunes terminal rows       |
 
 Every target routes through `/api/cleanup/[job]`, authenticates via `CRON_SECRET`, and acquires an atomic Postgres lease on `SystemJobExecution` (`withCronLock`).
 
@@ -209,7 +236,7 @@ Rotate `RESEND_API_KEY` across all four locations in lockstep so no environment 
 ## When You'll Need to Upgrade
 
 - **Resend Free → Pro (\$20/mo)**: When daily volume regularly exceeds ~80 emails/day, newsletter broadcasts exceed 100 subscribers in a single blast, or native Resend open/click analytics are required.
-- **Novu Free → Pro (~\$25–30/mo)**: When monthly triggers exceed ~10,000 events/month or in-app feed history retention beyond 7 days is required.
+- **Novu Free → Pro (~\$25–30/mo)**: When monthly workflow runs (one per bell recipient, Development and Production together) pass about 60 % of the 10,000-run quota, or when activity history beyond the Free plan's 24 hours is required.
 - **Kit / Directus CMS**: Remain deferred post-launch (`lib/newsletter/convertkit.ts` and `app/api/webhooks/directus/route.ts`) until automated drip sequences or managed CMS publishing are prioritized.
 
 ---
@@ -233,7 +260,7 @@ _Kit free tier covers 10K subscribers. Creator (\$39/mo) is only needed for auto
 ## Deprecated & Superseded Approaches
 
 - **Sending From Unowned `@familiarise.com` & Unrouted Root Mailboxes**: Replaced by `mail.familiarisenow.com` and `news.familiarisenow.com` verified in Resend (`ap-northeast-1`), with the live `_dmarc` policy at `p=none`.
-- **Standalone Sub-Hourly GitHub Actions Workflows (`cron-notifications.yml`, `cron-auto-complete.yml`)**: Superseded by phase-staggered dispatch in `netlify/functions/cron-tick.mts` (`drain-notification-outbox` every 10m at `:05`, `retry-failed-emails` every 15m at `:00`, `appointment-reminders` every 15m at `:10`, `auto-complete-appointments` every 30m at `:15`), avoiding GitHub Actions sub-hourly scheduling lag and duplicate cron workflows.
+- **Standalone Sub-Hourly GitHub Actions Workflows (`cron-notifications.yml`, `cron-auto-complete.yml`)**: Superseded by phase-staggered dispatch in `netlify/functions/cron-tick.mts` (`drain-notification-outbox` every 10m at `:05`, `retry-failed-emails` every 15m at `:05`, `appointment-reminders` every 15m at `:10`, `auto-complete-appointments` every 30m at `:15`), avoiding GitHub Actions sub-hourly scheduling lag and duplicate cron workflows.
 - **Replaying 422 Invalid-Domain Sends Across Backoff**: Superseded by `terminalSendReason()` dead-lettering 422 validation errors immediately on attempt 1.
 - **Env-driven sender domains and contact addresses**: `EMAIL_TRANSACTIONAL_DOMAIN`, `EMAIL_NEWSLETTER_DOMAIN`, `NEXT_PUBLIC_SUPPORT_EMAIL`, `CONTACT_INBOX_ADDRESS`, `BILLING_EMAIL` and `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS` were replaced by constants in `lib/company.ts`. The footer and newsletters always print the registered-office postal line, and the broadcast route no longer refuses with 412 when it is missing. Remove any leftover copies from Netlify.
 - **Inbound forwarding via ImprovMX (planned, never configured)**: role addresses on `familiarisenow.com` were to be forwarded through ImprovMX MX records. The records were never created, and the apex now publishes a null MX; all inbound mail goes to `connect@practitionist.com`.

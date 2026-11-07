@@ -77,12 +77,14 @@ import { goHref } from "@/lib/dashboard/go";
 import {
   EMAIL_BUDGET_MS,
   MONEY_EMAIL_TYPES,
+  prepareRefundProcessedEmail,
   stageRefundProcessedEmail,
 } from "@/lib/email";
 import {
   attemptStaged as attemptStagedEmails,
   type StagedRecipientEmail,
 } from "@/lib/email/send-to-recipients";
+import type { PreparedSpecEmails } from "@/lib/email/senders/shared";
 import { applyReversal, clawBackCompletedOrgPayout } from "./reversal-engine";
 import {
   accumulatePaidConsultantClawback,
@@ -127,6 +129,18 @@ type StagedRefundNotice = {
   emails: StagedRecipientEmail[];
 };
 
+function refundReceiptArgs(
+  payment: { id: string; userId: string; currency: string },
+  amountPaise: number,
+) {
+  return {
+    userId: payment.userId,
+    paymentId: payment.id,
+    amountPaise,
+    currency: payment.currency,
+  };
+}
+
 async function stageRefundNotice(
   tx: Tx,
   payment: {
@@ -136,6 +150,7 @@ async function stageRefundNotice(
     currency: string;
   },
   amountPaise: number,
+  receipt?: PreparedSpecEmails | null,
 ): Promise<StagedRefundNotice> {
   const bell = await notifyRefundProcessed(
     payment.userId,
@@ -148,12 +163,11 @@ async function stageRefundNotice(
     },
     { tx, entityRef: `payment:${payment.id}` },
   );
-  const emails = await stageRefundProcessedEmail(tx, {
-    userId: payment.userId,
-    paymentId: payment.id,
-    amountPaise,
-    currency: payment.currency,
-  });
+  const emails = await stageRefundProcessedEmail(
+    tx,
+    refundReceiptArgs(payment, amountPaise),
+    receipt,
+  );
   return { bell: bell?.staged ?? null, emails };
 }
 
@@ -1154,6 +1168,13 @@ async function refundInternalFundedPayment(
 
   // Staged inside the tx, attempted after it; a retried attempt re-stages.
   let notice: StagedRefundNotice | null = null;
+  // An explicit amount is known up front, so its receipt renders before the transaction.
+  const receipt =
+    input.amountPaise === undefined
+      ? null
+      : await prepareRefundProcessedEmail(
+          refundReceiptArgs(payment, input.amountPaise),
+        ).catch(() => null);
   const result = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
@@ -1255,7 +1276,7 @@ async function refundInternalFundedPayment(
             "REFUNDED",
           );
         }
-        notice = await stageRefundNotice(tx, payment, requested);
+        notice = await stageRefundNotice(tx, payment, requested, receipt);
         return {
           refundId: refundRow.id,
           amountRefundedPaise: requested,

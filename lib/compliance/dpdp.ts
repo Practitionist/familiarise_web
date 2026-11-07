@@ -23,7 +23,8 @@
  *      - Purposes must be granular and drawn from the SINGLE canonical
  *        taxonomy in `lib/compliance/purpose-codes.ts` (PURPOSE_CODES):
  *        PRIMARY_PROCESSING, SESSION_BOOKING, STREAM_DATA_PROCESSING,
- *        MARKETING_COMMS, ANALYTICS. Do not introduce ad-hoc string literals.
+ *        MARKETING_COMMS (ANALYTICS is stored evidence only, never offered).
+ *        Do not introduce ad-hoc string literals.
  *      - Notice must be presented in English + any of the 22 Schedule VIII
  *        languages the user selects. Store language code on the artifact.
  *

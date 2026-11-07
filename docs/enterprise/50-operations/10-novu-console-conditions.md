@@ -1,45 +1,34 @@
 ---
-title: Novu console conditions for notification scoping
+title: Novu console conditions (superseded; none exist)
 band: 50-operations
 audience: operator
-status: live
-last-reviewed: 2026-07-30
+status: superseded
+last-reviewed: 2026-11-07
 ---
 
-# Novu console conditions runbook
+# Novu console conditions (superseded)
 
-[ADR 23](../70-design-decisions/23-notification-scope.md) made notifications carry their organization scope and made the organization preference categories writable. The application half of that is complete: every field below is written to the Novu subscriber record by `POST /api/novu/subscriber` and `PUT /api/novu/preferences`.
+> **Superseded.** No console conditions exist: Novu families carry no step conditions and no subscriber-editable preferences, and nothing in the console should be configured to filter bells. Preferences are enforced server-side (`lib/novu/policy.ts`); the design is in [the notification architecture](../../notifications/01-architecture.md). This page is kept only for the family-to-category map and the manual check below.
 
-The console half is now automated as well. [ADR 30](../70-design-decisions/30-novu-templates-as-code-and-workflow-families.md) moved the step conditions into `lib/novu/templates/conditions.ts`, and `npm run novu:sync` applies them per family — one `skip` rule per family's in-app step, derived from the family's `PreferenceCategory` — rather than an operator setting them by hand in the console. This document now describes what the sync writes, so that the reasoning behind the mapping stays legible without reverse-engineering the code.
+[ADR 23](../70-design-decisions/23-notification-scope.md) made notifications carry their organization scope and made the organization preference categories writable. Those preferences are enforced by the application, not by the Novu console: Novu workflows carry **no step conditions**, and nothing in the console should be configured to filter bells.
 
-## Where the flags come from
+## Where the opt-out is enforced
 
-Every flag is a key on the subscriber's `data` object. The two writers are `lib/novu/subscriber.ts` — `syncSubscriber` for the routing flags and `updateSubscriberPreferences` for the category flags. In the Novu step editor these are referenced as `subscriber.data.<key>`.
+Postgres is the only copy of notification preferences. `lib/novu/policy.ts` drops a recipient when `allNotifications` or `inAppEnabled` is off, or when the family's category switch is off. These personal switches are the only channel control, workspace operators included. It runs when the bell is staged and again at the first attempt, which freezes the allowed recipients so a retry resends exactly that set.
 
-| Key                     | Type    | Default          | Written from                                         |
-| ----------------------- | ------- | ---------------- | ---------------------------------------------------- |
-| `routingBell`           | boolean | `true`           | `OrgWorkspaceProfile.notificationRoutingMode`        |
-| `routingEmail`          | boolean | `true`           | `OrgWorkspaceProfile.notificationRoutingMode`        |
-| `routingMode`           | string  | `BELL_AND_EMAIL` | the same column, kept for readability in the console |
-| `categoryOrgBilling`    | boolean | `true`           | `NotificationPreference.orgBillingAlerts`            |
-| `categoryOrgMembership` | boolean | `true`           | `NotificationPreference.orgMembershipAlerts`         |
-| `categoryOrgProgram`    | boolean | `true`           | `NotificationPreference.orgProgramAlerts`            |
+`npm run novu:sync` writes every family with that empty condition set and with read-only, always-on subscriber preferences, so a subscriber cannot mute a family inside Novu either. `npm run novu:check` reports a leftover `skip` control or subscriber-editable preferences as drift.
 
-The seven pre-existing `category*` flags are unchanged and already wired; do not touch them.
+| Category switch (`NotificationPreference`) | Family           |
+| ------------------------------------------ | ---------------- |
+| `orgBillingAlerts`                         | `org-billing`    |
+| `orgMembershipAlerts`                      | `org-membership` |
+| `orgProgramAlerts`                         | `org-program`    |
 
-## Step one: the routing flag
+## The organization categories
 
-This gates the channel rather than the event, so the sync applies it to **every** family's in-app step, not only the organization ones.
+Each family maps to at most one category switch (`lib/novu/templates/families.ts`). The mapping follows the audience rather than the noun: an operator who wants invoices but not roster churn, and an expert who wants the reverse, are the two cases the split exists to serve.
 
-On each family's **In-App** step, `inAppSkipRule` in `lib/novu/templates/conditions.ts` writes the condition `subscriber.data.routingBell` **is not false**. The operator language changed from "is true" to "is not false" because a subscriber whose flag was never written resolves to `null` in Novu's JSON Logic, and `null == true` evaluates to false — which would have silenced a subscriber who had simply never touched the setting. `!= false` treats `null` the same as `true`, matching the flag's own permissive default.
-
-A subscriber who has never touched the setting is therefore unaffected. `syncSubscriber` writes `routingBell` as `true` for `BELL_AND_EMAIL` and `BELL_ONLY` and as `false` for `EMAIL_ONLY` and `NEITHER`, so only an operator who has explicitly chosen `EMAIL_ONLY` or `NEITHER` in their workspace settings has the bell suppressed — which is the behaviour the settings panel has been promising and now delivers.
-
-## Step two: the organization category flags
-
-Each family carries at most one category condition, applied by the same `inAppSkipRule` call to its in-app step. The mapping follows the audience rather than the noun: an operator who wants invoices but not roster churn, and an expert who wants the reverse, are the two cases the split exists to serve.
-
-### `categoryOrgBilling` — money in and money out
+### `orgBillingAlerts` — money in and money out
 
 | Workflow slug                  |
 | ------------------------------ |
@@ -56,7 +45,7 @@ Each family carries at most one category condition, applied by the same `inAppSk
 
 The two overage workflows sit here rather than under programs because both are addressed to the member who now owes money, not to the operator watching a cap.
 
-### `categoryOrgMembership` — who is in the organization
+### `orgMembershipAlerts` — who is in the organization
 
 | Workflow slug              |
 | -------------------------- |
@@ -67,7 +56,7 @@ The two overage workflows sit here rather than under programs because both are a
 
 The SSO workflow is membership rather than a category of its own: it concerns how people get into the organization. Revisit this if an organization asks for security alerts to be separately non-mutable.
 
-### `categoryOrgProgram` — entitlement and capacity
+### `orgProgramAlerts` — entitlement and capacity
 
 | Workflow slug                  |
 | ------------------------------ |
@@ -78,14 +67,17 @@ The SSO workflow is membership rather than a category of its own: it concerns ho
 
 `org-data-export-ready` is the loosest fit. It is operational rather than commercial, and it sits here because it is addressed to the same operator audience as the capacity warnings.
 
-## Step three: verify
+## Verify
 
-Two checks are enough to prove the wiring end to end.
+For a category, open your personal **Settings → Notifications**, turn **Billing & Payouts** off, and trigger an invoice event for an organization you belong to. Nothing should arrive. Turn it back on and repeat; the notification should arrive.
 
-For a category, open the organization dashboard, go to **Settings → Notifications**, turn **Billing & Payouts** off, and trigger an invoice event for that organization. Nothing should arrive. Turn it back on and repeat; the notification should arrive. If it arrives in both cases the condition is missing or is reading the wrong key.
-
-For routing, set **Notification routing** to `EMAIL_ONLY` in the cross-organization workspace settings, then trigger any organization event. An email should arrive and the bell should stay silent. Note that the routing flags come from `syncSubscriber`, which runs when a dashboard mounts — so sign out and back in, or reload a dashboard, after changing the setting.
+For a channel, turn **In-app notifications** off in the same panel (an operator uses Workspace settings › Notifications, which shows the same personal panel), then trigger any organization event. An email should arrive and the bell should stay silent. Both changes apply to the next notification; no reload is needed.
 
 ## What is deliberately not conditioned
 
 The `ORG_*` payloads do not carry a `NotificationScope`. They are unambiguous by construction — every one is an organization-lifecycle event and names its organization in the payload — so a scope discriminator would be redundant. The consequence, recorded in ADR 23, is that these notifications appear under the inbox's **All** tab but not under a specific organization's tab, which filters on `organizationId`. If an operator asks for organization-lifecycle events to file under their organization's tab, the fix is to add the scope to those payloads in code, not to add a console condition.
+
+## Deprecated & Superseded Approaches
+
+- **Step conditions over a subscriber mirror (removed)**: the sync used to write a `skip` rule on every in-app step over `subscriber.data.routingBell`, `masterEnabled`, `preferInApp` and `category*` flags that the app copied onto each Novu subscriber. The server already rechecked the same flags in Postgres before every trigger, so the conditions could only drop bells the server had approved. Remove any such condition found in a Novu environment by running `npm run novu:sync`.
+- **Workspace routing (removed 2026-11-07)**: `OrgWorkspaceProfile.notificationRoutingMode` dropped bells for `EMAIL_ONLY` and `NEITHER` on top of the personal switches. It duplicated the operator's own In-App switch, so the policy no longer reads it.

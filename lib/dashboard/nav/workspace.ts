@@ -11,8 +11,8 @@ export const WORKSPACE_SETTINGS_SECTIONS = [
   },
   {
     key: "notifications",
-    label: "Notification routing",
-    description: "Where notifications from your organizations reach you",
+    label: "Notifications",
+    description: "Which bells and emails reach you",
   },
   {
     key: "account",
@@ -88,7 +88,7 @@ export const WORKSPACE_PAGE_LABELS: Record<string, string> = {
   billing: "Spend",
   settings: "Workspace settings",
   landing: "Default landing organization",
-  notifications: "Notification routing",
+  notifications: "Notifications",
   account: "Account",
   support: "Help & support",
   evidence: "Evidence requests",

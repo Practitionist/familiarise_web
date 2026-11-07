@@ -12,14 +12,19 @@ import prisma, { type Tx } from "@/lib/prisma";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import { goHref } from "@/lib/dashboard/go";
 import {
+  prepareAppointmentBookedEmail,
   renderPaymentFailedEmail,
   renderPaymentSuccessEmail,
   stage as stageEmail,
   stageAppointmentBookedEmail,
+  stageRenderFailure,
+  type AppointmentBookedEmailArgs,
   type RenderedEmail,
   type StagedEmail,
   type StagedRecipientEmail,
 } from "@/lib/email";
+import { SENDERS } from "@/lib/email/config";
+import type { PreparedSpecEmails } from "@/lib/email/senders/shared";
 import {
   notifyAppointmentBooked,
   notifyPaymentSuccess,
@@ -268,23 +273,34 @@ export async function stagePaymentSuccessEmail(
     preRendered !== undefined
       ? preRendered
       : await preparePaymentSuccessEmail(payment, appointment, appointmentType);
-  if (!message) return null;
+  const entityRef = `payment:${payment.id}`;
+  if (!message) {
+    // The receipt is required: its render failure leaves a trace row, never a rollback.
+    if (payment.user.email) {
+      await stageRenderFailure(
+        tx,
+        { from: SENDERS.payments, to: payment.user.email },
+        "PAYMENT_SUCCESS",
+        entityRef,
+      );
+    }
+    return null;
+  }
 
   const staged = await stageEmail(message, "PAYMENT_SUCCESS", {
     tx,
-    entityRef: `payment:${payment.id}`,
+    entityRef,
   });
   return staged ? { staged, message } : null;
 }
 
-export async function stageBookedEmails(
-  tx: Tx,
+function bookedEmailArgs(
   payment: PaymentWithUser,
   appointment: AppointmentForEmails,
   appointmentType: string,
-): Promise<StagedRecipientEmail[]> {
+): AppointmentBookedEmailArgs | null {
   const startsAt = appointment.occurrences?.[0]?.startsAt;
-  if (!startsAt) return [];
+  if (!startsAt) return null;
   const plan = planForEmails(appointment);
   const planTitle =
     appointmentType === AppointmentsType.TRIAL
@@ -297,7 +313,7 @@ export async function stageBookedEmails(
   const collaboratorUserIds = collaborators
     .map((c) => c.consultantProfile.user.id)
     .filter((id): id is string => Boolean(id));
-  return stageAppointmentBookedEmail(tx, {
+  return {
     appointmentId: appointment.id,
     consulteeUserId: payment.userId,
     consultantUserId: plan?.consultantProfile?.user?.id ?? null,
@@ -308,7 +324,29 @@ export async function stageBookedEmails(
     appointmentType,
     startsAt,
     dashboardUrl: notificationHref(appointment.organizationId, "appointments"),
-  });
+  };
+}
+
+/** Renders the booked notices before the capture transaction opens. */
+export async function prepareBookedEmails(
+  payment: PaymentWithUser,
+  appointment: AppointmentForEmails,
+  appointmentType: string,
+): Promise<PreparedSpecEmails | null> {
+  const args = bookedEmailArgs(payment, appointment, appointmentType);
+  return args ? prepareAppointmentBookedEmail(args) : null;
+}
+
+/** Stages `pre` when the in-transaction booking still matches it, else renders here. */
+export async function stageBookedEmails(
+  tx: Tx,
+  payment: PaymentWithUser,
+  appointment: AppointmentForEmails,
+  appointmentType: string,
+  pre?: PreparedSpecEmails | null,
+): Promise<StagedRecipientEmail[]> {
+  const args = bookedEmailArgs(payment, appointment, appointmentType);
+  return args ? stageAppointmentBookedEmail(tx, args, pre) : [];
 }
 
 export interface PaymentFailedInput {

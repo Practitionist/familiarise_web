@@ -49,6 +49,10 @@ const CREDENTIAL_EMAIL_TYPES: ReadonlySet<string> = new Set([
 export const REDACTED_CREDENTIAL_BODY =
   "[redacted: this email carried a single-use credential]";
 
+/** Subject and body an erased recipient's queued email keeps; the message is never sent. */
+export const REDACTED_ERASED_BODY =
+  "[redacted: the recipient's account was erased]";
+
 export function carriesCredential(emailType: string): boolean {
   return CREDENTIAL_EMAIL_TYPES.has(emailType);
 }

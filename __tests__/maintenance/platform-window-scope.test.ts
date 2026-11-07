@@ -1,7 +1,3 @@
-jest.mock("../../lib/novu/service", () => ({
-  notifyMaintenanceEnded: jest.fn(),
-  notifyMaintenanceScheduled: jest.fn(),
-}));
 /**
  * @jest-environment node
  */

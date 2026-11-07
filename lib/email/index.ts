@@ -43,6 +43,7 @@ export {
   getResendClient,
   recordFailedEmail,
   stage,
+  stageRenderFailure,
   EmailNotConfiguredError,
   type DeliverOptions,
   type DeliverResult,

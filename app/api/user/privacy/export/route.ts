@@ -29,7 +29,10 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { resolveSentryUserId } from "@/lib/observability/identity";
-import { PURPOSE_CODE_META } from "@/lib/compliance/purpose-codes";
+import {
+  OFFERED_PURPOSE_CODES,
+  PURPOSE_CODE_META,
+} from "@/lib/compliance/purpose-codes";
 import { readSupportExport } from "@/lib/support/privacy-export";
 import { readSessionAccessLog } from "@/lib/auth/session-access-log";
 
@@ -371,12 +374,14 @@ export async function GET() {
           sessionAccessLogTruncated: sessionAccessLog.truncated,
         },
       },
-      processingActivities: PURPOSE_CODE_META,
+      processingActivities: Object.fromEntries(
+        OFFERED_PURPOSE_CODES.map((code) => [code, PURPOSE_CODE_META[code]]),
+      ),
       sharedWithDataProcessors,
       consentHistory: consents,
       statutoryRetentionAndRightsInfo: {
         optionalConsentWithdrawal:
-          "You may grant or withdraw optional consents (MARKETING_COMMS, ANALYTICS) at any time in Settings -> Account -> Data consent without affecting your core account.",
+          "You may grant or withdraw the optional marketing consent (MARKETING_COMMS), which also covers the Familiarise newsletter, at any time in Settings -> Account -> Data consent without affecting your core account.",
         coreConsentWithdrawalAndErasure:
           "Withdrawing core platform consent (PRIMARY_PROCESSING, SESSION_BOOKING, STREAM_DATA_PROCESSING) closes your account and scrubs your personal identifiers under DPDP §6(4)-(6) and §12.",
         statutoryTaxRetention:

@@ -2,11 +2,6 @@ import * as React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-// The limits module pulls next/server, which has no Request global under jsdom.
-jest.mock("../../lib/validation/limits", () => ({
-  MAX_TEXT_LENGTH: 5000,
-  MAX_TITLE_LENGTH: 200,
-}));
 jest.mock("../../hooks/use-media-query", () => ({
   useMediaQuery: () => true,
 }));
