@@ -44,7 +44,8 @@ export function eventPlanMetadata(
   kind: EventPlanKind,
 ): Metadata {
   const host = plan.consultantProfile?.user?.name;
-  const title = `${plan.title}${host ? ` with ${host}` : ""} — Familiarise`;
+  const withHost = host ? ` with ${host}` : "";
+  const title = `${plan.title}${withHost} — Familiarise`;
   const description = previewDescription(plan, kind);
   const path = eventPlanPath(kind, plan.id);
   return {
