@@ -30,7 +30,7 @@ At launch, before real users sign up, take these steps in order. They are listed
 4. Configure the dev app with `npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed`, with the dev keys in the shell.
 5. Refresh #2376 onto `dev`, mark it ready, and merge it.
 6. Rebuild previews, because `NEXT_PUBLIC_STREAM_API_KEY` is inlined at build.
-7. Clear the mock users and channels from the production app. The go-live identity purge (checklist 1.5) clears Razorpay ids only and does not touch Stream, and this app has only ever held mock accounts. Event channels created before chat membership required a paid seat can also hold unpaid `HELD` members, and the daily membership reconciler skips a channel when more than half of its members would go. Do this with the go-live data reset, or point production at a fresh app. The mechanism is not decided; `scripts/stream/stream-sync.ts` (`hardDeleteEligibleUsers`) and the event-channel retention purge are the existing deleters.
+7. Clear the mock users and channels from the production app. The go-live identity purge (checklist 1.5) clears Razorpay ids only and does not touch Stream, and this app has only ever held mock accounts. Event channels created before chat membership required a paid seat can also hold unpaid `HELD` members, and the daily membership reconciler skips a channel when more than half of its members would go. Do this with the go-live data reset, or point production at a fresh app. The mechanism is not decided; `scripts/stream/stream-sync.ts` (it hard-deletes eligible users in batches) and the `expire-event-channels` retention purge are the existing deleters.
 
 ## Deprecated & Superseded Approaches
 
