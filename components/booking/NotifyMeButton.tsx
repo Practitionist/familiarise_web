@@ -90,7 +90,7 @@ export function NotifyMeButton({
       ) : (
         <BellRing className="mr-1.5 h-4 w-4" />
       )}
-      {waiting ? "Leave the waitlist" : "Notify me when a seat opens"}
+      {waiting ? "You're on the list · Leave" : "Notify me when a seat opens"}
     </Button>
   );
 }

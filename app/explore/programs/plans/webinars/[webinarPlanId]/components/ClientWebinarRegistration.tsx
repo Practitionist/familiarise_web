@@ -88,8 +88,10 @@ export function ClientWebinarRegistration({
     taken: seatsTaken,
   });
   const isFull = capacity.isFull;
+  // A waiter keeps a way to leave after a seat opens and the card stops reading full.
+  const canJoin = isFull && waitlistEnabled && sessionStatus === "Upcoming";
   const notifyMe =
-    isFull && waitlistEnabled && sessionStatus === "Upcoming" && webinarId ? (
+    webinarId && (canJoin || isWaiting) ? (
       <NotifyMeButton
         kind="WEBINAR"
         eventId={webinarId}
@@ -305,7 +307,7 @@ export function ClientWebinarRegistration({
         )}
         <GroupSessionDisclosure className="mt-2" />
       </CardContent>
-      <CardFooter>
+      <CardFooter className="flex flex-col gap-2">
         {checkoutUrl && !buttonDisabled ? (
           <Button
             asChild
@@ -324,6 +326,7 @@ export function ClientWebinarRegistration({
             {buttonText}
           </Button>
         )}
+        {isWaiting && notifyMe}
       </CardFooter>
     </Card>
   );

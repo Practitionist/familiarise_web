@@ -83,17 +83,20 @@ export function ClientClassRegistration({
   });
   const isFull = capacity.isFull;
   const batchAppointmentId = batchClass?.appointment?.id;
-  const notifyMe =
+  const isWaiting =
+    !!batchAppointmentId && waitingAppointmentIds.includes(batchAppointmentId);
+  // A waiter keeps a way to leave after a seat opens and the card stops reading full.
+  const canJoin =
     isFull &&
     waitlistEnabled &&
     batch?.enrolment.state === "open" &&
-    batch.phase !== "completed" &&
-    batchClass &&
-    batchAppointmentId ? (
+    batch.phase !== "completed";
+  const notifyMe =
+    batchClass && batchAppointmentId && (canJoin || isWaiting) ? (
       <NotifyMeButton
         kind="CLASS"
         eventId={batchClass.id}
-        waiting={waitingAppointmentIds.includes(batchAppointmentId)}
+        waiting={isWaiting}
         signedIn={isLoggedIn}
       />
     ) : null;
@@ -130,6 +133,7 @@ export function ClientClassRegistration({
             when the instructor opens seats or schedules the next batch.
           </p>
         </CardContent>
+        {isWaiting && notifyMe && <CardFooter>{notifyMe}</CardFooter>}
       </Card>
     );
   }
@@ -266,7 +270,7 @@ export function ClientClassRegistration({
         />
         <GroupSessionDisclosure className="mt-2" />
       </CardContent>
-      <CardFooter>
+      <CardFooter className="flex flex-col gap-2">
         <Button
           asChild
           className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
@@ -275,6 +279,7 @@ export function ClientClassRegistration({
             Pay {formatPrice(payPaise)} & Register Now
           </Link>
         </Button>
+        {isWaiting && notifyMe}
       </CardFooter>
     </Card>
   );

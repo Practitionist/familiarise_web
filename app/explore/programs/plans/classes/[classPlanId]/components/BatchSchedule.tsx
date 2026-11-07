@@ -151,13 +151,17 @@ function BatchPanel({
     !!userId &&
     !!batch.appointment &&
     enrolledAppointmentIds.includes(batch.appointment.id);
+  const waiting =
+    !!batch.appointment && waitingAppointmentIds.includes(batch.appointment.id);
+  // A waiter keeps a way to leave after a seat opens and the card stops reading full.
   const canWait =
     !enrolled &&
-    card.isFull &&
-    card.enrolment.state === "open" &&
-    batch.status === "SCHEDULED" &&
-    plan.waitlistEnabled &&
-    !!batch.appointment;
+    !!batch.appointment &&
+    (waiting ||
+      (card.isFull &&
+        card.enrolment.state === "open" &&
+        card.phase !== "completed" &&
+        plan.waitlistEnabled));
   const href = userId
     ? checkoutUrl
     : `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`;
@@ -191,7 +195,7 @@ function BatchPanel({
           <NotifyMeButton
             kind="CLASS"
             eventId={card.classId}
-            waiting={waitingAppointmentIds.includes(batch.appointment.id)}
+            waiting={waiting}
             signedIn={!!userId}
             compact
           />
