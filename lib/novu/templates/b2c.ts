@@ -159,6 +159,18 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    workflowId: W.SESSION_HOST_LIVE,
+    name: "Host is live",
+    description:
+      "Paid seats, once per session, when the host first joins it through the app.",
+    category: "appointments",
+    inApp: {
+      subject: "Your host is live",
+      body: "{{payload.consultantName}} has joined your {{payload.appointmentType}} for {{payload.planTitle}}. Join now.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.APPOINTMENT_COMPLETED,
     name: "Appointment completed",
     description: "Both parties, when the auto-complete sweep closes a session.",
