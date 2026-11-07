@@ -28,8 +28,8 @@ All inbound webhook receivers (`/api/webhooks/*`) are **strictly exempt from edg
 ### Resend (`POST /api/webhooks/resend`)
 
 - Executes `EmailEvent` creation (`@unique` on `svixId`) and recipient side effects inside **one atomic Prisma `$transaction(tx)`** under `PG_POOL_MAX=1`:
-  - `email.bounced` (`Permanent`), `email.complained`, `email.suppressed`: upserts `EmailSuppression` and marks `Waitlist` (`BOUNCED` / `UNSUBSCRIBED`).
-  - `contact.deleted` & `contact.updated` (when `unsubscribed === true`): suppresses the recipient and marks `Waitlist` (`UNSUBSCRIBED`).
+  - `email.bounced` (`Permanent`), `email.complained`, `email.suppressed`: upserts `EmailSuppression` and marks `NewsletterSubscriber` (`BOUNCED` / `UNSUBSCRIBED`).
+  - `contact.deleted` & `contact.updated` (when `unsubscribed === true`): suppresses the recipient and marks `NewsletterSubscriber` (`UNSUBSCRIBED`).
   - `domain.updated` / `domain.deleted`: calls `recordSystemErrorSafe` after transaction commit if sending domain DNS verification degrades (`failed` / `not_started`) or is deleted.
 
 ---
@@ -51,5 +51,5 @@ All inbound webhook receivers (`/api/webhooks/*`) are **strictly exempt from edg
 ## Deprecated & Superseded Approaches
 
 - **Uncompressed-Assumption Parsing Without Gzip Support**: Superseded by `POST /api/stream/webhooks` decompressing gzip payloads before verifying `X-Signature` over raw UTF-8 text and deduplicating on `X-Webhook-Id`.
-- **Non-Atomic Resend Webhook Writes**: Superseded by single-transaction `EmailEvent` + `EmailSuppression` + `Waitlist` commits so database blips during maintenance return HTTP `500` instead of losing bounce suppressions.
+- **Non-Atomic Resend Webhook Writes**: Superseded by single-transaction `EmailEvent` + `EmailSuppression` + `NewsletterSubscriber` commits so database blips during maintenance return HTTP `500` instead of losing bounce suppressions.
 - **Inbound Novu webhook (`POST /api/webhooks/novu`, removed 2026-11-07)**: It never received an event, because `NOVU_WEBHOOK_SECRET` was never set. Novu's outbound webhooks are Team and Enterprise only, and `message.failed` does not cover in-app steps. Failed in-app steps are now read from Novu's activity feed by `novu-step-failure-probe` (decision 16 of `docs/decisions/2026-11-06-notification-single-preference-owner.md`). Delete any Novu receiver or `"novu"` provider arm that reappears.

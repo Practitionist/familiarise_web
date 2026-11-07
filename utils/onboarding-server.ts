@@ -22,7 +22,7 @@ import {
   AvailabilityContractError,
   weeklyZoneRefusal,
 } from "@/lib/scheduling/availability-contract";
-import type { ConsentProvenance } from "@/lib/waitlist/consent-link";
+import type { ConsentProvenance } from "@/lib/newsletter/consent-link";
 import type { OnboardingData, ConsultantProfileCreateData } from "./onboarding";
 import type { VerificationDocumentRefSchema } from "./onboarding";
 import type { z } from "zod";

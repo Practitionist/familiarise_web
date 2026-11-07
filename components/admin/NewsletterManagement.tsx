@@ -3,7 +3,7 @@
 /**
  * Backoffice newsletter subscriber management.
  *
- * Lists everyone on the waitlist (the marketing email list — nothing to do
+ * Lists every newsletter subscriber (the marketing email list — nothing to do
  * with event capacity), and gives the one surface that can send a broadcast.
  * Gated by the `waitlist.manage` backoffice surface.
  */
@@ -15,7 +15,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { WaitlistSource, WaitlistStatus } from "@prisma/client";
+import { NewsletterSource, NewsletterStatus } from "@prisma/client";
 import { format } from "date-fns";
 import { Download, Mail, Search, Send, Users } from "lucide-react";
 
@@ -40,7 +40,7 @@ import { useBackofficeCapability } from "@/components/dashboard/backoffice/Backo
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { waitlistStatusBadge } from "@/lib/labels/session-labels";
+import { newsletterStatusBadge } from "@/lib/labels/session-labels";
 import { useToast } from "@/components/ui/use-toast";
 
 const ALL = "all";
@@ -50,8 +50,8 @@ type Subscriber = {
   id: string;
   email: string;
   name: string | null;
-  status: WaitlistStatus;
-  source: WaitlistSource;
+  status: NewsletterStatus;
+  source: NewsletterSource;
   tags: string[];
   confirmedAt: string | null;
   unsubscribedAt: string | null;
@@ -63,7 +63,7 @@ type SubscribersResponse = {
   total: number;
   page: number;
   perPage: number;
-  stats: Record<WaitlistStatus, number>;
+  stats: Record<NewsletterStatus, number>;
 };
 
 type Filters = {
@@ -115,7 +115,7 @@ const COLUMNS: ResponsiveColumn<Subscriber>[] = [
     key: "status",
     header: "Status",
     cell: (row) => (
-      <StatusBadge {...waitlistStatusBadge(row.status)} withDot size="sm" />
+      <StatusBadge {...newsletterStatusBadge(row.status)} withDot size="sm" />
     ),
   },
   {
@@ -152,7 +152,7 @@ const COLUMNS: ResponsiveColumn<Subscriber>[] = [
   },
 ];
 
-export function WaitlistManagement() {
+export function NewsletterManagement() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -391,7 +391,7 @@ export function WaitlistManagement() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={ALL}>All statuses</SelectItem>
-                  {Object.values(WaitlistStatus).map((status) => (
+                  {Object.values(NewsletterStatus).map((status) => (
                     <SelectItem key={status} value={status}>
                       {humanize(status)}
                     </SelectItem>
@@ -410,7 +410,7 @@ export function WaitlistManagement() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={ALL}>All sources</SelectItem>
-                  {Object.values(WaitlistSource).map((source) => (
+                  {Object.values(NewsletterSource).map((source) => (
                     <SelectItem key={source} value={source}>
                       {humanize(source)}
                     </SelectItem>

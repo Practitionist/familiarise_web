@@ -6,17 +6,17 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import { WaitlistSource, WaitlistStatus } from "@prisma/client";
+import { NewsletterSource, NewsletterStatus } from "@prisma/client";
 import { z } from "zod";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import {
   exportSubscribersCsv,
   listSubscribers,
-} from "@/lib/waitlist/service";
+} from "@/lib/newsletter/service";
 
 const querySchema = z.object({
-  status: z.nativeEnum(WaitlistStatus).optional(),
-  source: z.nativeEnum(WaitlistSource).optional(),
+  status: z.nativeEnum(NewsletterStatus).optional(),
+  source: z.nativeEnum(NewsletterSource).optional(),
   search: z.string().trim().max(200).optional(),
   page: z.coerce.number().int().min(1).optional(),
   perPage: z.coerce.number().int().min(1).max(100).optional(),

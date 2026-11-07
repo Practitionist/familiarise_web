@@ -27,7 +27,7 @@ jest.mock("../../lib/prisma", () => {
     emailSuppression: {
       upsert: (...args: unknown[]) => mockSuppressionUpsert(...args),
     },
-    waitlist: {
+    newsletterSubscriber: {
       updateMany: (...args: unknown[]) => mockWaitlistUpdateMany(...args),
     },
   };

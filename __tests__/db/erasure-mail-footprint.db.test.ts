@@ -66,7 +66,7 @@ describe("erasure mailing footprint", () => {
     const email = `${userId}@db-tier.example.invalid`;
     const other = `${randomUUID()}@db-tier.example.invalid`;
 
-    await prisma.waitlist.createMany({
+    await prisma.newsletterSubscriber.createMany({
       data: [
         { email: `linked-${userId}@db-tier.example.invalid`, userId },
         { email, status: "SUBSCRIBED" },
@@ -126,7 +126,7 @@ describe("erasure mailing footprint", () => {
       settledBatchesScrubbed: 2,
     });
     expect(
-      await prisma.waitlist.findMany({
+      await prisma.newsletterSubscriber.findMany({
         where: { OR: [{ userId }, { email }, { email: other }] },
         select: { email: true },
       }),

@@ -37,6 +37,10 @@ import {
   stageNoticesForAppointmentHolds,
   stageNoticesForFreedWindows,
 } from "@/lib/booking/backup-interest";
+import {
+  expireEventWaitlist,
+  hasLapsedEventWaitlist,
+} from "@/lib/booking/event-waitlist";
 import { lapseApprovedRequest } from "@/lib/booking/lapse-approved-request";
 import {
   notifyConsulteeRequestExpired,
@@ -371,6 +375,8 @@ export async function hasStaleRequestWork(
   if (slot) return true;
   if (outOfTime()) return true;
   if (await hasLapsedBackupInterest(db, now)) return true;
+  if (outOfTime()) return true;
+  if (await hasLapsedEventWaitlist(db, now)) return true;
   if (outOfTime()) return true;
   return unallocatedObligationsRemain(undefined, db);
 }
@@ -2185,6 +2191,15 @@ async function expireStaleRequestsUnlocked(
       return 0;
     });
   console.log(`   Backup interest expired: ${backupInterestExpired}`);
+
+  // Notify-me rows on an ended event expire; settled rows past retention go.
+  const eventWaitlist = await expireEventWaitlist().catch((error: unknown) => {
+    allErrors.push(`Failed to expire the event waitlist: ${error}`);
+    return { expired: 0, purged: 0 };
+  });
+  console.log(
+    `   Event waitlist expired/purged: ${eventWaitlist.expired}/${eventWaitlist.purged}`,
+  );
 
   const totalPaymentPending =
     paymentPendingResult.consultationsExpired +

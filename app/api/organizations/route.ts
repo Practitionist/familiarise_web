@@ -41,7 +41,7 @@ import {
   claimOnboardingCompletion,
   recordOnboardingConsent,
 } from "@/utils/onboarding-completion";
-import { consentProvenance } from "@/lib/waitlist/consent-link";
+import { consentProvenance } from "@/lib/newsletter/consent-link";
 
 // PROJECT is reserved in the Prisma enum for the v2 milestone workflow
 // (scoped project-billing engine), but not accepted at the API boundary

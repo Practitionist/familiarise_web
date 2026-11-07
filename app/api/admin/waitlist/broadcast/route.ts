@@ -19,8 +19,8 @@ import { heldRecipientDomain } from "@/lib/email/delivery-guard";
 import { findSuppressed } from "@/lib/email/suppression";
 import prisma from "@/lib/prisma";
 import { stampFirstAttempt, UNSETTLED } from "@/lib/retry/provider-window";
-import { listSendableSubscribers } from "@/lib/waitlist/service";
-import { buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
+import { listSendableSubscribers } from "@/lib/newsletter/service";
+import { buildUnsubscribeUrl } from "@/lib/newsletter/tokens";
 
 const sendSchema = z.object({
   subject: z.string().trim().min(1, "Subject is required").max(200),

@@ -16,7 +16,7 @@ import {
 import type { Prisma } from "@prisma/client";
 import {
   calendarLinks,
-  calendarSeatWhere,
+  holdsCalendarSeat,
   nextSessionAhead,
 } from "@/lib/appointments/calendar-links";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
@@ -139,11 +139,7 @@ async function buyerCalendarLinks(
   );
   if (!next) return null;
   // A group event's sessions outlive one refunded seat, so the buyer's own seat decides.
-  const seat = await prisma.appointmentParticipant.findFirst({
-    where: { appointmentId: appointment.id, ...calendarSeatWhere(userId) },
-    select: { id: true },
-  });
-  if (!seat) return null;
+  if (!(await holdsCalendarSeat(prisma, appointment.id, userId))) return null;
   const title = planTitleOrSessionLabel(
     appointment.consultation?.consultationPlan?.title ??
       appointment.subscription?.subscriptionPlan?.title ??

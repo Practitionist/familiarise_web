@@ -30,7 +30,7 @@ const tx = {
     updateMany: jest.fn(),
     findUniqueOrThrow: jest.fn(async () => ({ email: "Invitee@Example.com" })),
   },
-  waitlist: { upsert: jest.fn() },
+  newsletterSubscriber: { upsert: jest.fn() },
 };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -147,7 +147,7 @@ describe("completeOnboardingGateAction", () => {
         "MARKETING_COMMS",
       ]),
     );
-    expect(tx.waitlist.upsert).toHaveBeenCalledWith(
+    expect(tx.newsletterSubscriber.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { email: "invitee@example.com" },
         update: expect.objectContaining({

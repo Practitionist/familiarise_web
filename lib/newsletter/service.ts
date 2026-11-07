@@ -8,7 +8,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import { Prisma, WaitlistSource, WaitlistStatus } from "@prisma/client";
+import { Prisma, NewsletterSource, NewsletterStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { withdrawConsent } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
@@ -21,12 +21,12 @@ import {
   verifyConfirmToken,
   verifyUnsubscribeToken,
 } from "./tokens";
-import { hashIp, normalizeWaitlistEmail } from "./consent-link";
+import { hashIp, normalizeNewsletterEmail } from "./consent-link";
 
 export type SubscribeInput = {
   email: string;
   name?: string | null;
-  source?: WaitlistSource;
+  source?: NewsletterSource;
   tags?: string[];
   userId?: string | null;
   /** Raw request IP — hashed before it touches the database. */
@@ -50,7 +50,7 @@ export type SubscribeResult =
 export async function subscribe(
   input: SubscribeInput,
 ): Promise<SubscribeResult> {
-  const email = normalizeWaitlistEmail(input.email);
+  const email = normalizeNewsletterEmail(input.email);
   const now = new Date();
 
   // Checked before the membership lookup, deliberately. If this ran after the
@@ -65,12 +65,12 @@ export async function subscribe(
     return { outcome: "CONFIRMATION_FAILED" };
   }
 
-  const existing = await prisma.waitlist.findUnique({
+  const existing = await prisma.newsletterSubscriber.findUnique({
     where: { email },
     select: { status: true },
   });
 
-  if (existing?.status === WaitlistStatus.SUBSCRIBED) {
+  if (existing?.status === NewsletterStatus.SUBSCRIBED) {
     return { outcome: "ALREADY_SUBSCRIBED" };
   }
 
@@ -79,19 +79,19 @@ export async function subscribe(
     consentUserAgent: input.userAgent?.slice(0, 500) ?? null,
   };
 
-  await prisma.waitlist.upsert({
+  await prisma.newsletterSubscriber.upsert({
     where: { email },
     create: {
       email,
       name: input.name ?? null,
-      status: WaitlistStatus.PENDING,
-      source: input.source ?? WaitlistSource.FOOTER,
+      status: NewsletterStatus.PENDING,
+      source: input.source ?? NewsletterSource.FOOTER,
       tags: input.tags ?? [],
       userId: input.userId ?? null,
       ...consent,
     },
     update: {
-      status: WaitlistStatus.PENDING,
+      status: NewsletterStatus.PENDING,
       unsubscribedAt: null,
       confirmedAt: null,
       // A re-signup from a different surface retags the row; the original
@@ -143,25 +143,25 @@ export async function confirmSubscription(params: {
   token: string;
   issuedAt: number;
 }): Promise<ConfirmResult> {
-  const email = normalizeWaitlistEmail(params.email);
+  const email = normalizeNewsletterEmail(params.email);
 
   if (!verifyConfirmToken(email, params.token, params.issuedAt)) {
     return { outcome: "INVALID" };
   }
 
-  const existing = await prisma.waitlist.findUnique({
+  const existing = await prisma.newsletterSubscriber.findUnique({
     where: { email },
     select: { status: true, name: true },
   });
   if (!existing) return { outcome: "INVALID" };
-  if (existing.status === WaitlistStatus.SUBSCRIBED) {
+  if (existing.status === NewsletterStatus.SUBSCRIBED) {
     return { outcome: "ALREADY_CONFIRMED" };
   }
 
-  await prisma.waitlist.update({
+  await prisma.newsletterSubscriber.update({
     where: { email },
     data: {
-      status: WaitlistStatus.SUBSCRIBED,
+      status: NewsletterStatus.SUBSCRIBED,
       confirmedAt: new Date(),
       unsubscribedAt: null,
     },
@@ -184,16 +184,16 @@ export async function unsubscribe(params: {
   email: string;
   token: string;
 }): Promise<{ ok: boolean }> {
-  const email = normalizeWaitlistEmail(params.email);
+  const email = normalizeNewsletterEmail(params.email);
 
   if (!verifyUnsubscribeToken(email, params.token)) {
     return { ok: false };
   }
 
-  await prisma.waitlist.updateMany({
-    where: { email, status: { not: WaitlistStatus.UNSUBSCRIBED } },
+  await prisma.newsletterSubscriber.updateMany({
+    where: { email, status: { not: NewsletterStatus.UNSUBSCRIBED } },
     data: {
-      status: WaitlistStatus.UNSUBSCRIBED,
+      status: NewsletterStatus.UNSUBSCRIBED,
       unsubscribedAt: new Date(),
     },
   });
@@ -204,7 +204,7 @@ export async function unsubscribe(params: {
 
 async function withdrawLinkedMarketingConsent(email: string): Promise<void> {
   try {
-    const row = await prisma.waitlist.findUnique({
+    const row = await prisma.newsletterSubscriber.findUnique({
       where: { email },
       select: { userId: true },
     });
@@ -229,14 +229,16 @@ async function withdrawLinkedMarketingConsent(email: string): Promise<void> {
 }
 
 export type SubscriberFilters = {
-  status?: WaitlistStatus;
-  source?: WaitlistSource;
+  status?: NewsletterStatus;
+  source?: NewsletterSource;
   search?: string;
   page?: number;
   perPage?: number;
 };
 
-function buildWhere(filters: SubscriberFilters): Prisma.WaitlistWhereInput {
+function buildWhere(
+  filters: SubscriberFilters,
+): Prisma.NewsletterSubscriberWhereInput {
   return {
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.source ? { source: filters.source } : {}),
@@ -261,7 +263,7 @@ export async function listSubscribers(filters: SubscriberFilters) {
   const where = buildWhere(filters);
 
   const [items, total, byStatus] = await prisma.$transaction([
-    prisma.waitlist.findMany({
+    prisma.newsletterSubscriber.findMany({
       where,
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * perPage,
@@ -278,24 +280,27 @@ export async function listSubscribers(filters: SubscriberFilters) {
         createdAt: true,
       },
     }),
-    prisma.waitlist.count({ where }),
-    prisma.waitlist.groupBy({ by: ["status"], _count: { _all: true } }),
+    prisma.newsletterSubscriber.count({ where }),
+    prisma.newsletterSubscriber.groupBy({
+      by: ["status"],
+      _count: { _all: true },
+    }),
   ]);
 
   const stats = Object.fromEntries(
-    Object.values(WaitlistStatus).map((status) => [
+    Object.values(NewsletterStatus).map((status) => [
       status,
       byStatus.find((row) => row.status === status)?._count._all ?? 0,
     ]),
-  ) as Record<WaitlistStatus, number>;
+  ) as Record<NewsletterStatus, number>;
 
   return { items, total, page, perPage, stats };
 }
 
 /** Addresses a broadcast may go to. */
 export async function listSendableSubscribers() {
-  return prisma.waitlist.findMany({
-    where: { status: WaitlistStatus.SUBSCRIBED },
+  return prisma.newsletterSubscriber.findMany({
+    where: { status: NewsletterStatus.SUBSCRIBED },
     select: { email: true, name: true },
     orderBy: { createdAt: "asc" },
   });
@@ -312,7 +317,7 @@ function csvCell(value: string | null | undefined = ""): string {
 export async function exportSubscribersCsv(
   filters: SubscriberFilters,
 ): Promise<string> {
-  const rows = await prisma.waitlist.findMany({
+  const rows = await prisma.newsletterSubscriber.findMany({
     where: buildWhere(filters),
     orderBy: { createdAt: "desc" },
     select: {

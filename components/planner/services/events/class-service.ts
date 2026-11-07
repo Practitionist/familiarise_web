@@ -219,6 +219,9 @@ export class ClassService {
       sessionDurationInHours: plan?.sessionDurationInHours,
       maxParticipants: plan?.maxParticipants ?? 1,
       certificateProvided: plan?.certificateProvided,
+      waitlistEnabled: plan?.waitlistEnabled,
+      // A cleared size reaches here undefined, which JSON drops; null resets it.
+      waitlistMax: plan?.waitlistMax ?? null,
       ...recordingFields,
       emailSupport: plan?.emailSupport,
       language: plan?.language ?? undefined,

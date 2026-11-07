@@ -24,7 +24,7 @@ jest.mock("../../lib/observability/ops-chat", () => ({
   postOpsChat: (...args: unknown[]) => mockPostOpsChat(...args),
 }));
 
-jest.mock("../../lib/waitlist/service", () => ({
+jest.mock("../../lib/newsletter/service", () => ({
   unsubscribe: (...args: unknown[]) => mockWaitlistUnsubscribe(...args),
 }));
 
@@ -38,7 +38,7 @@ import {
   listUnsubscribeHeaders,
   reconstructUnsubscribeHeaders,
 } from "@/lib/email/unsubscribe";
-import { buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
+import { buildUnsubscribeUrl } from "@/lib/newsletter/tokens";
 import {
   runEmailRetryTick,
   type FailedEmailStore,

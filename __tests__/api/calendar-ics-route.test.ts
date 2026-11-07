@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 
-// The signed .ics link: paid seat only, one 404 for every refusal, no video link.
+// The signed .ics link: a paid, unrefunded seat only, one 404 for every refusal, no video link.
 
 jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
@@ -11,15 +11,40 @@ jest.mock("../../lib/rate-limit", () => ({
   getClientIp: () => "203.0.113.7",
 }));
 const findFirst = jest.fn();
+const seats: Row[] = [];
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { appointment: { findFirst: (...a: unknown[]) => findFirst(...a) } },
+  default: {
+    appointment: { findFirst: (...a: unknown[]) => findFirst(...a) },
+    // Predicate-aware, so the seat query's paid-seat filter is really applied.
+    appointmentParticipant: {
+      findFirst: async ({ where }: { where: Where }) =>
+        seats.find((row) => matchesWhere(row, where)) ?? null,
+    },
+  },
 }));
 
 import { NextRequest } from "next/server";
 import { GET } from "../../app/api/calendar/[appointmentId]/route";
 import { calendarLinks } from "../../lib/appointments/calendar-links";
 import { paidParticipant } from "../../lib/booking/participants";
+import { matchesWhere, type Row, type Where } from "../fixtures/mem-db";
+
+function paidSeat(refunds: { amountPaise: number; status: string }[]) {
+  return {
+    appointmentId: "appt-1",
+    userId: "buyer",
+    role: "CONSULTEE",
+    status: "CONFIRMED",
+    paymentId: "pay-1",
+    payment: {
+      paymentStatus: "SUCCEEDED",
+      amount: 118_000,
+      paymentIntent: "order_1",
+      refunds,
+    },
+  };
+}
 
 const startsAt = new Date(Date.now() + 48 * 3600_000);
 const links = calendarLinks({
@@ -36,6 +61,7 @@ function get(url: string, appointmentId = "appt-1") {
 }
 
 beforeEach(() => {
+  seats.splice(0, seats.length, paidSeat([]));
   findFirst.mockReset();
   findFirst.mockResolvedValue({
     appointmentType: "WEBINAR",
@@ -78,4 +104,30 @@ it("answers a bad token, another booking and an unpaid seat with the same 404", 
     expect(res.headers.get("cache-control")).toBe("private, no-store");
     expect(await res.text()).toBe("Not found");
   }
+});
+
+it.each([
+  [
+    "a full refund still pending",
+    [{ amountPaise: 118_000, status: "PENDING" }],
+    404,
+  ],
+  [
+    "a completed full refund",
+    [{ amountPaise: 118_000, status: "SUCCEEDED" }],
+    404,
+  ],
+  ["a partial refund", [{ amountPaise: 50_000, status: "SUCCEEDED" }], 200],
+])("answers %s with %i", async (_label, refunds, status) => {
+  seats.splice(0, seats.length, paidSeat(refunds));
+  expect((await get(links!.icsUrl)).status).toBe(status);
+});
+
+it("keeps serving a genuinely free seat", async () => {
+  seats.splice(0, seats.length, {
+    ...paidSeat([]),
+    paymentId: null,
+    payment: null,
+  });
+  expect((await get(links!.icsUrl)).status).toBe(200);
 });

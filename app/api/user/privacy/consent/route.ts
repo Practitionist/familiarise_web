@@ -38,7 +38,7 @@ import {
   consentProvenance,
   subscribeForMarketingConsent,
   unsubscribeForWithdrawnConsent,
-} from "@/lib/waitlist/consent-link";
+} from "@/lib/newsletter/consent-link";
 
 const CORE_PLATFORM_PURPOSES: ReadonlySet<PurposeCode> = new Set(
   SIGNUP_PURPOSES,

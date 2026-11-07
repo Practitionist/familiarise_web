@@ -13,7 +13,7 @@ import { OrgInvitationEmail } from "@/emails/organizations/OrgInvitationEmail";
 import { ContactInquiryEmail } from "@/emails/contact/ContactInquiryEmail";
 import { WaitlistConfirmEmail } from "@/emails/waitlist/WaitlistConfirmEmail";
 import { WaitlistWelcomeEmail } from "@/emails/waitlist/WaitlistWelcomeEmail";
-import { buildConfirmUrl, buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
+import { buildConfirmUrl, buildUnsubscribeUrl } from "@/lib/newsletter/tokens";
 import { getAppUrl } from "@/lib/url";
 import { payLinkHref } from "@/lib/payments/pay-link-href";
 import { EMAIL_BUDGET_MS, SENDERS, contactInboxAddress } from "./config";

@@ -214,7 +214,7 @@ Every sending address is built on the `EMAIL_TRANSACTIONAL_DOMAIN` and `EMAIL_NE
 4. Novu Cloud deduplicates a resend on the `Idempotency-Key` header (derived from the row's `transactionId`, `firstAttemptAt`, recipients and payload) and runs the family's single in-app step, which pushes to the subscriber's WebSocket and appears in the bell.
 5. The app filters recipients by bell policy in Postgres when it stages the row and once more before the first attempt of each generation.
 
-**Events and families:** all 97 events and the 16 families that carry them are listed in [02-workflows-and-api.md](./02-workflows-and-api.md#workflow-families). They are not repeated here.
+**Events and families:** all 98 events and the 16 families that carry them are listed in [02-workflows-and-api.md](./02-workflows-and-api.md#workflow-families). They are not repeated here.
 
 **Delivery audit trail:** the `NotificationOutbox` row is the record of what was staged, sent, retried or dead-lettered, with its `lastError` reason. The Novu activity feed keeps only 24 hours on the Free plan, so it is not the audit trail.
 
@@ -251,9 +251,9 @@ Every sending address is built on the `EMAIL_TRANSACTIONAL_DOMAIN` and `EMAIL_NE
 **How it works:**
 
 ```
-Subscribe (double opt-in, see lib/waitlist/service.ts):
+Subscribe (double opt-in, see lib/newsletter/service.ts):
   User enters email on site → POST /api/waitlist
-    → upserts a Waitlist row with status PENDING (re-subscribe resets it)
+    → upserts a NewsletterSubscriber row with status PENDING (re-subscribe resets it)
     → sendWaitlistConfirmEmail() with an HMAC-signed, 48-hour confirm link
     → returns {success: true}
 
@@ -266,7 +266,7 @@ Confirm:
 Send:
   Admin calls POST /api/admin/waitlist/broadcast {subject, htmlBody, textBody?}
     → Auth check (ADMIN role only, requireAdminAuth())
-    → listSendableSubscribers() from lib/waitlist/service.ts
+    → listSendableSubscribers() from lib/newsletter/service.ts
     → findSuppressed() drops every address on EmailSuppression
     → For each batch of 100: a FailedEmailBatch row is upserted under the
       batch's idempotency key, then resend.batch.send() via getResendClient()
@@ -286,7 +286,7 @@ Unsubscribe:
     → Show HTML confirmation page
 ```
 
-**Database model:** the `Waitlist` model in `prisma/schema.prisma` (`email`, `name`, `status`, `source`, `tags`, `userId`, `confirmedAt`, `unsubscribedAt`, consent proof). There are no token columns because both links are stateless HMACs; the model comments in `prisma/schema.prisma` describe each field.
+**Database model:** the `NewsletterSubscriber` model in `prisma/schema.prisma`, stored in the `Waitlist` table (`email`, `name`, `status`, `source`, `tags`, `userId`, `confirmedAt`, `unsubscribedAt`, consent proof). There are no token columns because both links are stateless HMACs; the model comments in `prisma/schema.prisma` describe each field.
 
 ---
 
@@ -414,14 +414,14 @@ The two relays are the outbox halves of the design: every email and every Novu t
 
 ## Dashboard & Admin Features
 
-| Feature                      | Route                              | Who                                 | What It Does                                                |
-| ---------------------------- | ---------------------------------- | ----------------------------------- | ----------------------------------------------------------- |
-| **Notification Preferences** | Settings page                      | Admin, Staff, Consultant, Consultee | Channel and category switches + email quiet hours           |
-| **Bell Icon / Inbox**        | All dashboards                     | All roles                           | Novu in-app notifications, unread count, click-to-redirect  |
-| **Announcements**            | POST /api/announcements            | Admin                               | Create announcement; optional confirmed inbox fan-out       |
-| **Newsletter Send**          | POST /api/admin/waitlist/broadcast | Admin only                          | Send HTML email to every SUBSCRIBED Waitlist row via Resend |
-| **Newsletter Stats**         | (not built)                        | —                                   | Would show subscriber count, open rates                     |
-| **Verification Review**      | /dashboard/admin/verification      | Admin, Staff                        | Review applications → triggers verificationStatusChanged    |
+| Feature                      | Route                              | Who                                 | What It Does                                                            |
+| ---------------------------- | ---------------------------------- | ----------------------------------- | ----------------------------------------------------------------------- |
+| **Notification Preferences** | Settings page                      | Admin, Staff, Consultant, Consultee | Channel and category switches + email quiet hours                       |
+| **Bell Icon / Inbox**        | All dashboards                     | All roles                           | Novu in-app notifications, unread count, click-to-redirect              |
+| **Announcements**            | POST /api/announcements            | Admin                               | Create announcement; optional confirmed inbox fan-out                   |
+| **Newsletter Send**          | POST /api/admin/waitlist/broadcast | Admin only                          | Send HTML email to every SUBSCRIBED NewsletterSubscriber row via Resend |
+| **Newsletter Stats**         | (not built)                        | —                                   | Would show subscriber count, open rates                                 |
+| **Verification Review**      | /dashboard/admin/verification      | Admin, Staff                        | Review applications → triggers verificationStatusChanged                |
 
 ---
 
@@ -441,7 +441,7 @@ The two relays are the outbox halves of the design: every email and every Novu t
 | Notification Preferences Panel                 | `components/notifications/NotificationPreferencesPanel.tsx` (every role, operators included)           |
 | Preferences API                                | `app/api/novu/preferences/route.ts` (GET/PUT)                                                          |
 | Inbox HMAC API                                 | `app/api/novu/subscriber/route.ts` (POST)                                                              |
-| Waitlist double opt-in confirm/unsubscribe     | `lib/waitlist/tokens.ts`, `lib/waitlist/service.ts`                                                    |
+| Waitlist double opt-in confirm/unsubscribe     | `lib/newsletter/tokens.ts`, `lib/newsletter/service.ts`                                                |
 | Admin waitlist broadcast                       | `app/api/admin/waitlist/broadcast/route.ts`                                                            |
 | Appointment reminders and auto-complete        | `app/api/cleanup/appointment-reminders/route.ts`, `scripts/appointments/auto-complete-appointments.ts` |
 | Stream webhook                                 | `app/api/stream/webhooks/route.ts`                                                                     |
@@ -502,7 +502,7 @@ The two relays are the outbox halves of the design: every email and every Novu t
 
 ## Deprecated & Superseded Approaches
 
-- **Novu as a multi-channel orchestrator.** Earlier versions of this map showed a Novu email step, push channel and digest steps, a hand-built dashboard workflow per event, and a "Tier 1/2/3" list of 40 workflow ids. Novu is now in-app only, workflows are 16 families written from `lib/novu/templates/`, and there are 97 events. Delete any residual reference to a Novu email step or a per-event workflow.
+- **Novu as a multi-channel orchestrator.** Earlier versions of this map showed a Novu email step, push channel and digest steps, a hand-built dashboard workflow per event, and a "Tier 1/2/3" list of 40 workflow ids. Novu is now in-app only, workflows are 16 families written from `lib/novu/templates/`, and there are 98 events. Delete any residual reference to a Novu email step or a per-event workflow.
 - **Maintenance notifications.** The `maintenance-*` events were removed; see [the decision record](../decisions/2026-11-06-notification-single-preference-owner.md).
 - **Novu as the delivery audit trail.** The Novu activity feed (24 hours on Free) was once treated as the delivery log. `NotificationOutbox` is the audit trail now.
 - **Cron by GitHub Actions.** Earlier notes scheduled reminders, auto-complete and the relays from GitHub Actions or as an unbounded backstop. They run on the ticker, and no Actions workflow schedules a registry job.

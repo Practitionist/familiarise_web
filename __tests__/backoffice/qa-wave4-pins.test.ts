@@ -20,7 +20,7 @@ const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 
 describe("QA wave 4 (backoffice)", () => {
   it("B13 — the newsletter send form sits above the list and keeps its count", () => {
-    const src = read("components/admin/WaitlistManagement.tsx");
+    const src = read("components/admin/NewsletterManagement.tsx");
     expect(src.indexOf("Send a newsletter")).toBeGreaterThan(-1);
     expect(src.indexOf("Send a newsletter")).toBeLessThan(
       src.indexOf("{renderSubscriberTable()}"),

@@ -163,6 +163,8 @@ The paid 48-hour family shares one 16-second start budget across current expiry 
 
 **Nudges.** Paid `PENDING` subscriptions with no live confirmed sessions or open proposal receive their latest reached 12-, 24- or 36-hour stage from the capture clock. Bell and email have separate durable dedupe guards; `subscriptionNudgesSent` records the run's count.
 
+**Notify-me rows.** After the backup-interest arm, the job calls `expireEventWaitlist` (`lib/booking/event-waitlist.ts`). It marks `EXPIRED` every open `AppointmentWaitlist` row whose webinar or class is `COMPLETED` or `CANCELLED`, whose appointment is deleted, or that has no live session left in the future, and it deletes `EXPIRED` and `BOOKED` rows 30 days after their last change (`EVENT_WAITLIST_RETENTION_MS`, read from `updatedAt`). A whole-event cancel stages no notice, so this arm is what closes its rows, within one 15-minute tick. `hasLapsedEventWaitlist` joins the job's idle probe (`hasStaleRequestWork`), so an idle tick still costs no invocation when there is nothing to expire or purge. No new job is registered.
+
 ---
 
 ### f. Reconcile Slot Availability
