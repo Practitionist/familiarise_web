@@ -61,11 +61,8 @@ export const supportTurnLimiter = makeLimiter(60, "1 h", "rl:support-turn");
 /** 20 per hour — review composer writes */
 export const reviewWriteLimiter = makeLimiter(20, "1 h", "rl:review-write");
 /**
- * 1,500 per minute per IP — POST /api/meetings/[id]/join. An abuse backstop
- * only: a cohort of 200 behind one NAT makes about five calls each in the
- * minute the room opens (page load, three lobby auto-retries, the self-heal
- * retry), so 1,000, plus headroom. The real per-attendee limit is
- * `meetingJoinLimiter`.
+ * 1,500 per minute per IP — POST /api/meetings/[id]/join, an abuse backstop only:
+ * 200 attendees on one NAT make about 5 calls each as a room opens. See `meetingJoinLimiter`.
  */
 export const streamJoinLimiter = makeLimiter(1500, "1 m", "rl:stream-join");
 /** 10 per minute per user — POST /api/meetings/[id]/join (after authentication) */
