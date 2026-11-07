@@ -5,6 +5,12 @@
  * only be withdrawn, and the row's clock is the proposal's own expiry.
  */
 
+// The inbox reaches payout setup, whose clawback notices load the email stack (unloadable in jsdom).
+jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(),
+  stageRaisedClawback: jest.fn(),
+}));
+
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {

@@ -8,6 +8,12 @@
  */
 
 const mockPostLedgerTxn = jest.fn();
+jest.mock("@/lib/referrals/referral-notify", () => ({
+  readCreditsApplied: jest.fn(async () => null),
+  prepareCreditsAppliedEmail: jest.fn(),
+  stageCreditsApplied: jest.fn(async () => ({})),
+  stageReferralReward: jest.fn(async () => ({})),
+}));
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: (...a: unknown[]) => mockPostLedgerTxn(...a),
 }));

@@ -376,7 +376,6 @@ async function redriveCollaboratorRevocation(
     planType,
     row.planId,
     row.userId,
-    { notify: false },
   );
   return success ? null : "Collaborator Stream access not fully revoked";
 }

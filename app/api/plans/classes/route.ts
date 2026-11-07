@@ -1,5 +1,4 @@
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
 import { NextRequest, NextResponse } from "next/server";
 import { CollaboratorStatus, PlanEmailSupport, Prisma } from "@prisma/client";
 import {
@@ -26,32 +25,12 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const includeClasses = searchParams.get("include")?.includes("classes");
-    const includeRegistration =
-      searchParams.get("includeRegistration") === "true";
 
     const filters = parsePlanFilters(searchParams);
     const { sort, page, limit, skip } = filters;
     const where = buildPlanWhereClause(filters) as Prisma.ClassPlanWhereInput;
     const orderBy = buildPlanOrderBy(sort) as
       Prisma.ClassPlanOrderByWithRelationInput | undefined;
-
-    // Build classes include based on whether registration data is requested
-    let classesInclude: boolean | Record<string, unknown> = true;
-    if (includeRegistration) {
-      classesInclude = {
-        include: {
-          appointment: {
-            include: {
-              // #1554 — seat ids only; the explore card's enrolment check.
-              participants: {
-                where: liveParticipant(),
-                select: { userId: true },
-              },
-            },
-          },
-        },
-      };
-    }
 
     const includeOptions = {
       consultantProfile: { select: planConsultantSelect },
@@ -63,9 +42,7 @@ export async function GET(request: NextRequest) {
           consultantProfile: { select: planCollaboratorConsultantSelect },
         },
       },
-      ...((includeClasses || includeRegistration) && {
-        classes: classesInclude,
-      }),
+      ...(includeClasses && { classes: true }),
     };
 
     // For trending sort, use a two-step Prisma approach:

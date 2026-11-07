@@ -103,6 +103,19 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    workflowId: W.ORG_PAYOUT_CLAWBACK,
+    name: "Org payout adjustment",
+    description:
+      "Billing admins, when a refund or chargeback after a payout raises what the organisation owes back, or a payout deducts, releases or cancels it.",
+    category: "orgBilling",
+    inApp: {
+      subject:
+        "{% if payload.eventKind == 'RAISED' %}Payout adjustment{% elsif payload.eventKind == 'OFFSET_RESERVED' %}Adjustment deducted{% elsif payload.eventKind == 'OFFSET_RELEASED' %}Deduction released{% else %}Adjustment cancelled{% endif %}",
+      body: "{% if payload.eventKind == 'RAISED' %}A booking paid out earlier was refunded or lost to a chargeback, so {{payload.amount}} is owed back. It will be deducted from the organisation's next payouts; nothing is taken from a bank account.{% elsif payload.eventKind == 'OFFSET_RESERVED' %}{{payload.amount}} owed from an earlier adjustment is being deducted from a payout being prepared. If that payout does not complete, the deduction is released.{% elsif payload.eventKind == 'OFFSET_RELEASED' %}A payout did not complete, so its {{payload.amount}} deduction was released. The amount is still owed and comes off a later payout.{% else %}The bank returned a payout, so {{payload.amount}} still owed against it was cancelled to avoid deducting it twice.{% endif %}",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.ORG_MEMBER_OVERAGE_TIMED_OUT,
     name: "Member overage lapsed",
     description: "The member, when their side-charge window closes (#779).",

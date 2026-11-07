@@ -36,18 +36,14 @@ jest.mock("../../lib/stream/event-channel-service", () => ({
   checkEventChannelExists: jest.fn(async () => false),
   removeUserFromEventChannel: jest.fn(async () => ({ success: true })),
 }));
-jest.mock("../../lib/novu/service", () => ({
-  notifyCollaboratorInvited: jest.fn(),
-  notifyCollaboratorAccepted: jest.fn(),
-  notifyCollaboratorRemoved: jest.fn(async () => undefined),
-  notifyCollaboratorWithdrawn: jest.fn(async () => undefined),
+const mockStageBell = jest.fn(async (..._args: unknown[]) => null);
+const mockStageEmail = jest.fn(async (..._args: unknown[]) => []);
+jest.mock("../../lib/novu/stage-bell", () => ({
+  stageBell: (...args: unknown[]) => mockStageBell(...args),
 }));
 jest.mock("../../lib/email/senders/collaborators", () => ({
-  sendCollaboratorInvitedEmail: jest.fn(async () => undefined),
-  sendCollaboratorAcceptedEmail: jest.fn(async () => undefined),
-  sendCollaboratorDeclinedEmail: jest.fn(async () => undefined),
-  sendCollaboratorRemovedEmail: jest.fn(async () => undefined),
-  sendCollaboratorWithdrawnEmail: jest.fn(async () => undefined),
+  stageCollaboratorLifecycleEmail: (...args: unknown[]) =>
+    mockStageEmail(...args),
 }));
 jest.mock(
   "../../utils/organization-roles",
@@ -59,11 +55,16 @@ const row = {
   id: "c-1",
   consultantProfileId: "cp-collab",
   webinarPlanId: "plan-1",
+  classPlanId: null,
+  invitedById: null,
+  role: "CO_HOST",
+  revenueShareBps: 2000,
+  updatedAt: new Date("2026-11-07T00:00:00Z"),
   status: "ACCEPTED",
 };
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
+jest.mock("../../lib/prisma", () => {
+  const db: Record<string, unknown> = {
+    $transaction: jest.fn(async (run: (tx: unknown) => unknown) => run(db)),
     collaborator: {
       // Honour the ownership filter the withdraw path adds to the where.
       findFirst: jest.fn(
@@ -96,13 +97,10 @@ jest.mock("../../lib/prisma", () => ({
       findMany: jest.fn(async () => []),
     },
     appointmentOccurrence: { findMany: jest.fn(async () => []) },
-  },
-}));
+  };
+  return { __esModule: true, default: db };
+});
 
-import {
-  notifyCollaboratorRemoved,
-  notifyCollaboratorWithdrawn,
-} from "@/lib/novu/service";
 import prisma from "@/lib/prisma";
 import { removeCollaborator } from "@/lib/collaborators/service";
 
@@ -114,14 +112,27 @@ describe("collaborator self-withdraw", () => {
       withdrawnByProfileId: "cp-collab",
     });
     expect(result).toMatchObject({ status: "REMOVED", accessRevoked: true });
-    expect(notifyCollaboratorWithdrawn).toHaveBeenCalledWith(
-      "u-host",
+    // One WITHDRAWN notice to the host, staged in the removal's transaction.
+    expect(mockStageBell).toHaveBeenCalledTimes(1);
+    expect(mockStageBell).toHaveBeenCalledWith(
+      prisma,
       expect.objectContaining({
-        collaboratorName: "Collab",
-        planType: "webinar",
+        workflowId: "collaborator-withdrawn",
+        recipients: ["u-host"],
+        payload: expect.objectContaining({
+          collaboratorName: "Collab",
+          planType: "webinar",
+        }),
       }),
     );
-    expect(notifyCollaboratorRemoved).not.toHaveBeenCalled();
+    expect(mockStageEmail).toHaveBeenCalledTimes(1);
+    expect(mockStageEmail).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({
+        event: "WITHDRAWN",
+        recipientUserId: "u-host",
+      }),
+    );
     expect(prisma.appointmentParticipant.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         // #1846 SM-B9 — the caller's scope is the first AND arm.
@@ -162,7 +173,7 @@ describe("collaborator self-withdraw", () => {
     });
     expect(result).toBeNull();
     expect(prisma.collaborator.updateMany).not.toHaveBeenCalled();
-    expect(notifyCollaboratorWithdrawn).not.toHaveBeenCalled();
+    expect(mockStageBell).not.toHaveBeenCalled();
   });
 
   it("a lost race (row already REMOVED) writes nothing and tells nobody", async () => {
@@ -173,6 +184,6 @@ describe("collaborator self-withdraw", () => {
       withdrawnByProfileId: row.consultantProfileId,
     });
     expect(result).toBeNull();
-    expect(notifyCollaboratorWithdrawn).not.toHaveBeenCalled();
+    expect(mockStageBell).not.toHaveBeenCalled();
   });
 });

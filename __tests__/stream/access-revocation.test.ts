@@ -427,6 +427,22 @@ describe("event access predicate", () => {
     expect(users.map((u) => batched?.has(u))).toEqual(single);
     expect(single).toEqual([true, true, false]);
   });
+
+  it("asks for paid seats only, so an unpaid HELD seat is not a chat member", async () => {
+    mockRevocationPrisma.webinar.findFirst.mockClear();
+    mockRevocationPrisma.webinar.findFirst.mockImplementation(openableWebinar);
+    const { eventParticipantsAmong } =
+      await import("../../lib/stream/event-channel-service");
+    const { paidParticipant } = await import("../../lib/booking/participants");
+
+    await eventParticipantsAmong("webinar", "w1", ["attendee-keep"]);
+
+    const query = mockRevocationPrisma.webinar.findFirst.mock.calls[0][0];
+    expect(query.select.appointment.select.participants.where).toEqual({
+      ...paidParticipant(),
+      userId: { in: ["attendee-keep"] },
+    });
+  });
 });
 
 describe("daily membership reconciler", () => {

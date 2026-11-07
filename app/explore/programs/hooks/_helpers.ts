@@ -7,11 +7,8 @@ import type {
   ClassInstance,
   ProgramFilters,
   TopicWithCount,
+  WebinarInstance,
 } from "@/lib/explore/programs";
-
-interface WebinarWithAppointment {
-  appointment?: { participants?: { userId: string }[] } | null;
-}
 
 export interface ClassPlanApiItem {
   id: string;
@@ -21,7 +18,7 @@ export interface ClassPlanApiItem {
 
 export interface WebinarPlanApiItem {
   id: string;
-  webinars?: WebinarWithAppointment[];
+  webinars?: WebinarInstance[];
   imageUrl?: string | null;
 }
 

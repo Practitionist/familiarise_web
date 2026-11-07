@@ -13,8 +13,8 @@ type TClassSessionWithSchedule = PrismaClass & {
   appointment:
     | (PrismaAppointment & {
         occurrences: PrismaAppointmentOccurrence[];
-        // Seat ids only; the capacity gate counts these.
-        participants: { userId: string }[];
+        // Seats taken, host excluded; the payload never says who holds them.
+        _count: { participants: number };
       })
     | null;
 };

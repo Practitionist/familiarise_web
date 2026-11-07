@@ -1,111 +1,173 @@
 /**
  * @jest-environment node
  *
- * A card payment that spent referral credits bells "credits applied" when its
- * capture commits. Checkout bells only the payments that never see a
- * capture webhook; the webhook calls notifyCreditsAppliedForPaymentBestEffort
- * with the payment, which reads what checkout took from ReferralCreditUsage.
+ * Referral notices stage inside the transaction that moves the credit: the
+ * bell is policy-filtered and formatted, one row per payment or referral, and
+ * a credits-applied email rendered before the capture is staged, not re-rendered.
  */
 
-const mockUsageFindMany = jest.fn();
+const mockUsers = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: {
-    referralCreditUsage: {
-      findMany: (...args: unknown[]) => mockUsageFindMany(...args),
-    },
-  },
+  default: { user: { findMany: (...args: unknown[]) => mockUsers(...args) } },
 }));
-const mockNotifyCreditsApplied = jest.fn();
-jest.mock("../../lib/novu/service", () => ({
-  notifyReferralCreditsApplied: (...args: unknown[]) =>
-    mockNotifyCreditsApplied(...args),
+jest.mock("../../lib/novu/client", () => ({
+  isNovuConfigured: () => true,
+  getNovuClient: jest.fn(),
 }));
-const mockStageEmail = jest.fn();
-jest.mock("../../lib/email/senders/money", () => ({
-  stageReferralBonusEmail: (...args: unknown[]) => mockStageEmail(...args),
-}));
-jest.mock("../../lib/novu/stage-then-attempt", () => ({
-  flushNotificationsAfter: jest.fn().mockResolvedValue(undefined),
-}));
-jest.mock("../../lib/referrals/service", () => ({
-  getUserCredits: jest.fn().mockResolvedValue({ totalAvailable: 2500 }),
+const mockRender = jest.fn(async () => ({ html: "<p>x</p>", text: "x" }));
+jest.mock("../../lib/email/render", () => ({
+  renderEmail: (...args: unknown[]) => mockRender(...(args as [])),
 }));
 jest.mock("../../lib/url", () => ({ getAppUrl: () => "http://localhost" }));
 
-import { notifyCreditsAppliedForPaymentBestEffort } from "@/lib/referrals/referral-notify";
+import {
+  prepareCreditsAppliedEmail,
+  readCreditsApplied,
+  stageCreditsApplied,
+  stageReferralReward,
+} from "@/lib/referrals/referral-notify";
 
-const args = {
-  paymentId: "pay_1",
-  userId: "user_1",
-  appointmentType: "CONSULTATION",
+const people: Record<string, Record<string, unknown>> = {
+  buyer: { id: "buyer", email: "buyer@example.com", name: "Buyer" },
+  muted: {
+    id: "muted",
+    email: "muted@example.com",
+    name: "Muted",
+    notificationPreferences: {
+      allNotifications: true,
+      emailEnabled: true,
+      inAppEnabled: false,
+    },
+  },
 };
+const findPeople = async (q: { where: { id: { in: string[] } } }) =>
+  q.where.id.in.map((id) => people[id]).filter(Boolean);
+
+function makeTx() {
+  const bells: Record<string, unknown>[] = [];
+  const emails: Record<string, unknown>[] = [];
+  const tx = {
+    user: { findMany: jest.fn(findPeople) },
+    referralCreditUsage: {
+      findMany: jest.fn(async () => [
+        { originalAmount: 3000 },
+        { originalAmount: 1500 },
+      ]),
+    },
+    referralCredit: {
+      findMany: jest.fn(async () => [{ remainingAmount: 2500 }]),
+    },
+    notificationOutbox: {
+      upsert: jest.fn(
+        async (q: {
+          where: { transactionId: string };
+          create: Record<string, unknown>;
+        }) => {
+          const known = bells.find(
+            (b) => b.transactionId === q.where.transactionId,
+          );
+          if (!known) bells.push(q.create);
+          return { id: q.where.transactionId, ...(known ?? q.create) };
+        },
+      ),
+    },
+    failedEmail: {
+      create: jest.fn(async (q: { data: Record<string, unknown> }) => {
+        emails.push(q.data);
+        return { id: `fe_${emails.length}` };
+      }),
+    },
+    emailSuppression: { findUnique: jest.fn(async () => null) },
+  };
+  return { tx, bells, emails };
+}
 
 beforeEach(() => {
-  mockUsageFindMany.mockReset();
-  mockNotifyCreditsApplied.mockReset();
-  mockNotifyCreditsApplied.mockResolvedValue({ staged: null });
-  mockStageEmail.mockReset();
-  mockStageEmail.mockResolvedValue([]);
+  jest.clearAllMocks();
+  mockUsers.mockImplementation(findPeople);
+  process.env.EMAIL_DELIVERY_MODE = "live";
 });
 
-describe("notifyCreditsAppliedForPaymentBestEffort", () => {
-  it("bells the credits checkout took for the payment, summed across credits", async () => {
-    mockUsageFindMany.mockResolvedValue([
-      { originalAmount: BigInt(3000) },
-      { originalAmount: BigInt(1500) },
-    ]);
+it("capture: what checkout redeemed, rendered before the transaction and only staged inside it", async () => {
+  const { tx, bells, emails } = makeTx();
+  const applied = await readCreditsApplied(tx as never, {
+    userId: "buyer",
+    paymentId: "pay_1",
+    appointmentType: "CONSULTATION",
+  });
+  expect(applied).toMatchObject({
+    creditsUsedPaise: 4500,
+    remainingPaise: 2500,
+  });
+  const pre = await prepareCreditsAppliedEmail(applied!);
+  mockRender.mockClear();
 
-    await notifyCreditsAppliedForPaymentBestEffort(args);
+  await stageCreditsApplied(tx as never, applied!, pre);
+  await stageCreditsApplied(tx as never, applied!, pre);
 
-    expect(mockUsageFindMany).toHaveBeenCalledWith({
-      where: { paymentId: "pay_1" },
-      select: { originalAmount: true },
-    });
-    expect(mockNotifyCreditsApplied).toHaveBeenCalledTimes(1);
-    const [userId, payload] = mockNotifyCreditsApplied.mock.calls[0];
-    expect(userId).toBe("user_1");
-    expect(payload).toMatchObject({
-      creditsUsed: 4500,
-      remainingCredits: 2500,
-      appointmentType: "CONSULTATION",
-    });
-    expect(mockStageEmail).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        userId: "user_1",
-        kind: "CREDITS_APPLIED",
-        amountPaise: 4500,
+  expect(mockRender).not.toHaveBeenCalled();
+  expect(bells).toEqual([
+    expect.objectContaining({
+      workflowId: "referral-credits-applied",
+      recipients: ["buyer"],
+      entityRef: "payment:pay_1",
+      payload: expect.objectContaining({
+        creditsUsed: "₹45.00",
+        remainingCredits: "₹25.00",
       }),
-    );
+    }),
+  ]);
+  expect(emails[0]).toMatchObject({
+    emailType: "REFERRAL_CREDITS_APPLIED",
+    entityRef: "payment:pay_1:referral-credits-applied",
   });
+});
 
-  it("states what was applied, not what is left after a partial restore", async () => {
-    // `amount` is decremented by a partial refund; `originalAmount` never is.
-    mockUsageFindMany.mockResolvedValue([{ originalAmount: BigInt(3000) }]);
+it("a payment that redeemed nothing stages nothing", async () => {
+  const { tx } = makeTx();
+  tx.referralCreditUsage.findMany.mockResolvedValueOnce([]);
+  await expect(
+    readCreditsApplied(tx as never, {
+      userId: "buyer",
+      paymentId: "pay_2",
+      appointmentType: "CONSULTATION",
+    }),
+  ).resolves.toBeNull();
+});
 
-    await notifyCreditsAppliedForPaymentBestEffort(args);
+it("rewards: the bell is policy-filtered and keyed per referral; the email follows its own switch", async () => {
+  const { tx, bells, emails } = makeTx();
+  const reward = {
+    kind: "BONUS_EARNED" as const,
+    referralId: "ref_1",
+    counterpartyName: "Asha",
+    amountPaise: 20_000,
+  };
+  await stageReferralReward(tx as never, { ...reward, userId: "buyer" });
+  await stageReferralReward(tx as never, { ...reward, userId: "buyer" });
+  await stageReferralReward(tx as never, { ...reward, userId: "muted" });
 
-    expect(mockNotifyCreditsApplied.mock.calls[0][1].creditsUsed).toBe(3000);
+  expect(bells).toEqual([
+    expect.objectContaining({
+      workflowId: "referral-bonus-earned",
+      recipients: ["buyer"],
+      payload: expect.objectContaining({ bonusAmount: "₹200.00" }),
+    }),
+  ]);
+  expect(emails.map((e) => e.recipient)).toContain("muted@example.com");
+});
+
+it("welcome: states the discount as a cap", async () => {
+  const { tx, emails } = makeTx();
+  await stageReferralReward(tx as never, {
+    kind: "WELCOME_BONUS",
+    userId: "buyer",
+    referralId: "ref_2",
+    counterpartyName: "Asha",
+    amountPaise: 15_000,
   });
-
-  it("does nothing for a payment that spent no credits", async () => {
-    mockUsageFindMany.mockResolvedValue([]);
-
-    await notifyCreditsAppliedForPaymentBestEffort(args);
-
-    expect(mockNotifyCreditsApplied).not.toHaveBeenCalled();
-    expect(mockStageEmail).not.toHaveBeenCalled();
-  });
-
-  it("never throws when the credit read fails", async () => {
-    mockUsageFindMany.mockRejectedValue(new Error("db down"));
-    const log = jest.spyOn(console, "error").mockImplementation(() => {});
-
-    await expect(
-      notifyCreditsAppliedForPaymentBestEffort(args),
-    ).resolves.toBeUndefined();
-    expect(mockNotifyCreditsApplied).not.toHaveBeenCalled();
-    log.mockRestore();
+  expect(emails[0]).toMatchObject({
+    subject: "Welcome discount: up to ₹150.00 on an eligible first booking",
   });
 });
