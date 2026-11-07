@@ -1137,7 +1137,6 @@ export async function scrubUser(
         planType,
         planId,
         userId,
-        { notify: false },
       );
       if (!success) error = "Collaborator Stream access not fully revoked";
     } catch (caught) {

@@ -578,33 +578,15 @@ export type ReferralCreditsAppliedInput = Omit<
   | "appointmentTypeCode"
 > & { creditsUsed: number; remainingCredits: number };
 
-export type CollaboratorInvitedPayload = {
+/** Every collaborator lifecycle bell carries the same fields. */
+export type CollaboratorNoticePayload = {
   planTitle: string;
   planType: string;
+  collaboratorName: string;
+  ownerName: string;
   role: string;
   revenueSharePercentage: number;
-  ownerName: string;
   dashboardUrl: string;
-};
-
-export type CollaboratorAcceptedPayload = {
-  planTitle: string;
-  planType: string;
-  collaboratorName: string;
-  role: string;
-  dashboardUrl: string;
-};
-
-export type CollaboratorDeclinedPayload = CollaboratorAcceptedPayload;
-
-export type CollaboratorRemovedPayload = {
-  planTitle: string;
-  planType: string;
-  dashboardUrl: string;
-};
-
-export type CollaboratorWithdrawnPayload = CollaboratorRemovedPayload & {
-  collaboratorName: string;
 };
 
 // ============================================================================
@@ -850,14 +832,6 @@ export type AccountSecurityNoticePayload = {
   provider?: string;
   reason?: string;
   message?: string;
-  dashboardUrl: string;
-};
-
-export type CollaboratorInviteExpiredPayload = {
-  planTitle: string;
-  planType?: string;
-  collaboratorName?: string;
-  role?: string;
   dashboardUrl: string;
 };
 
