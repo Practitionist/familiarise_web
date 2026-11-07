@@ -18,6 +18,7 @@ import { companyPostalAddress } from "@/lib/email/config";
 import { heldRecipientDomain } from "@/lib/email/delivery-guard";
 import { findSuppressed } from "@/lib/email/suppression";
 import prisma from "@/lib/prisma";
+import { stampFirstAttempt, UNSETTLED } from "@/lib/retry/provider-window";
 import { listSendableSubscribers } from "@/lib/waitlist/service";
 import { buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
 
@@ -175,6 +176,8 @@ async function sendBatch(
     select: { id: true },
   });
   try {
+    // Anchors the replay window on this request, not on the relay's first try.
+    await stampFirstAttempt(prisma.failedEmailBatch, row.id, new Date());
     const result = await resend.batch.send(emails, {
       idempotencyKey,
     });
@@ -196,14 +199,17 @@ async function sendBatch(
   }
 }
 
-// Best-effort like deliver.ts's settleRow: the send outcome is decided, and a
-// row left PENDING only costs a replay that Resend's key deduplicates.
+// Best-effort and conditional like deliver.ts's settleRow: a row the relay
+// already settled is left alone, and a row left PENDING only costs a replay.
 async function settleBatch(
   id: string,
-  data: Prisma.FailedEmailBatchUpdateInput,
+  data: Prisma.FailedEmailBatchUpdateManyMutationInput,
 ): Promise<void> {
   try {
-    await prisma.failedEmailBatch.update({ where: { id }, data });
+    await prisma.failedEmailBatch.updateMany({
+      where: { id, status: UNSETTLED },
+      data,
+    });
   } catch (updateError) {
     console.error(
       "[admin/waitlist/broadcast] batch row update failed:",

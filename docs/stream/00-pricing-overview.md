@@ -23,12 +23,12 @@ Familiarise qualifies for Stream's [Maker Account](https://getstream.io/maker-ac
 
 ### What Maker Includes
 
-| Feature        | Hard Limit                        | Normal Paid Value |
-| -------------- | --------------------------------- | ----------------- |
-| Chat           | **2,000 MAU** (hard cap, pauses)  | $399/mo (10K MAU) |
-| Video          | 333,000 participant-minutes/month | $0.15–$9.60/1K PM |
-| Activity Feeds | 125,000 API calls/month           | $499/mo (Start)   |
-| AI Moderation  | $100 in credits                   | $2/1K msgs (PAYG) |
+| Feature        | Hard Limit                                                                                    | Normal Paid Value  |
+| -------------- | --------------------------------------------------------------------------------------------- | ------------------ |
+| Chat           | **2,000 MAU** (hard cap, pauses)                                                              | $399/mo (10K MAU)  |
+| Video          | $100 credit/month (about 66,667 HD or 333,333 audio-only PM), then pay-as-you-go; no hard cap | $0.30–$12.00/1K PM |
+| Activity Feeds | 125,000 API calls/month                                                                       | $499/mo (Start)    |
+| AI Moderation  | $100 in credits                                                                               | $2/1K msgs (PAYG)  |
 
 > The Chat 2K MAU cap is a **hard pause** — the service stops, it does not bill overages.
 
@@ -36,18 +36,9 @@ Familiarise qualifies for Stream's [Maker Account](https://getstream.io/maker-ac
 
 ## Video Pricing (Post-Maker)
 
-Rates per 1,000 participant-minutes (PM). 60fps = 2× the 30fps rate.
+The video rate card lives in one place: [`14-pricing-and-cost-model.md`](./14-pricing-and-cost-model.md), section 1.2 for Video Calls and section 2.1 for Live Streaming. It matches Stream's published [pricing guide](https://getstream.io/video/docs/api/pricing-guide/). At 30 fps the anchors are HD (720p) at $1.50 and Full HD (1080p) at $3.00 per 1,000 participant-minutes (PM), and 60 fps doubles every rate.
 
-| Quality        | 30fps rate  | 60fps rate   | Common use    |
-| -------------- | ----------- | ------------ | ------------- |
-| Audio Only     | $0.30/1K PM | $0.60/1K PM  | Voice calls   |
-| SD (360p)      | $1.50/1K PM | $3.00/1K PM  | Low-bandwidth |
-| HD (720p)      | $3.00/1K PM | $6.00/1K PM  | Consultations |
-| Full HD (1080) | $4.50/1K PM | $9.00/1K PM  | Webinars      |
-| 2K (1440p)     | $6.00/1K PM | $12.00/1K PM | Premium       |
-| 4K (2160p)     | $9.60/1K PM | $19.20/1K PM | Ultra         |
-
-**Live Streaming mode** rates are 67% of the Video Calls rates above for SD through 4K, and 40% for Audio Only.
+A participant is billed at the tier of the combined resolution of every video track they receive, not of what they send, and a participant with camera and microphone both off is metered at the cheaper livestream rates. Section 1.5 of the same document explains both rules and what they mean for a webinar with a shared screen.
 
 ### Recording Add-on (Video Calls only, unavailable at 2K/4K)
 
@@ -114,13 +105,13 @@ Set a **1,500 MAU alert** (75% of the 2K hard cap) in the Stream dashboard to ge
 
 ## SaaS Cost by Growth Stage (Stream portion only)
 
-| Stage               | MAU     | Stream cost/mo (pre-GST)  | Notes                         |
-| ------------------- | ------- | ------------------------- | ----------------------------- |
-| Launch–early (M1–6) | < 2K    | ₹0 (Maker)                | Video 333K PM included        |
-| Post-Maker          | 2K–10K  | ₹36,189 (Chat Start 10K)  | Annual pricing, +GST 18% RCM  |
-| Growth              | 10K–25K | ₹49,794 (Chat Start 25K)  | Annual pricing                |
-| Scale               | 25K+    | ₹67,934+ (Chat Start 50K) | Consider Elevate for features |
-| Enterprise          | 1M+     | Custom                    | Dedicated infrastructure      |
+| Stage               | MAU     | Stream cost/mo (pre-GST)  | Notes                            |
+| ------------------- | ------- | ------------------------- | -------------------------------- |
+| Launch–early (M1–6) | < 2K    | ₹0 (Maker)                | $100 video credit ≈ 66,667 HD PM |
+| Post-Maker          | 2K–10K  | ₹36,189 (Chat Start 10K)  | Annual pricing, +GST 18% RCM     |
+| Growth              | 10K–25K | ₹49,794 (Chat Start 25K)  | Annual pricing                   |
+| Scale               | 25K+    | ₹67,934+ (Chat Start 50K) | Consider Elevate for features    |
+| Enterprise          | 1M+     | Custom                    | Dedicated infrastructure         |
 
 > **GST note:** If GST-registered, add 18% IGST under RCM on all Stream.io payments. This is claimable as ITC.
 

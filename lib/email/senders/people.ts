@@ -36,6 +36,7 @@ import { SENDERS, supportEmail } from "../config";
 import {
   absolute,
   defineBudgetedEmailSender,
+  defineLifecyclePreparer,
   defineLifecycleStager,
   greet,
   whenText,
@@ -341,6 +342,11 @@ export const stageModerationReportOutcomeEmail =
     buildModerationReportOutcomeEmail,
   );
 
+export const prepareModerationReportOutcomeEmail =
+  defineLifecyclePreparer<ModerationReportOutcomeEmailArgs>(
+    buildModerationReportOutcomeEmail,
+  );
+
 export interface AccountModerationEmailArgs {
   userId: string;
   kind: AccountRestrictedEmailKind;
@@ -392,6 +398,11 @@ function buildAccountModerationEmail(args: AccountModerationEmailArgs): {
 
 export const stageAccountModerationEmail =
   defineLifecycleStager<AccountModerationEmailArgs>(
+    buildAccountModerationEmail,
+  );
+
+export const prepareAccountModerationEmail =
+  defineLifecyclePreparer<AccountModerationEmailArgs>(
     buildAccountModerationEmail,
   );
 

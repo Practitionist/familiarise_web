@@ -3,7 +3,7 @@ import {
   MAX_SHORT_FIELD_LENGTH,
   MAX_TEXT_LENGTH,
   MAX_TITLE_LENGTH,
-} from "@/lib/validation/limits";
+} from "@/lib/validation/input-limits";
 import { RatingCauseSchema } from "@/schemas/enums";
 
 // #831 — every user-typed string carries a .max()

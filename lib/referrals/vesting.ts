@@ -3,14 +3,14 @@ import type { AppointmentsType, Prisma } from "@prisma/client";
 import prisma, { type Tx, type PrismaLike } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { LONG_JOB_TTL_MS, withCronLock } from "@/lib/cron/with-cron-lock";
-import { goHref } from "@/lib/dashboard/go";
-import { stageReferralBonusEmail } from "@/lib/email/senders/money";
-import { notifyReferralBonusEarned } from "@/lib/novu/service";
-import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import {
+  flushNotificationsAfter,
+  type StagedNotificationBundle,
+} from "@/lib/novu/stage-then-attempt";
+import { stageReferralReward } from "./referral-notify";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { holdHoursFor } from "@/lib/payments/payouts/earnings-hold";
-import { getAppUrl } from "@/lib/url";
 import {
   firstLiveOccurrenceId,
   UNDELIVERED_OCCURRENCE_STATUSES,
@@ -387,11 +387,11 @@ async function vestConsumerReferral(
   cfg: ReferralProgramConfigRow,
   ready: { occurrenceId: string; deliveredBefore: Date; endsAt: Date },
   now: Date,
-  onVestedBonus?: (bonus: {
+  onVestedBonus: (bonus: {
     referrerUserId: string;
     refereeName: string;
     rewardPaise: number;
-  }) => void,
+  }) => Promise<void>,
 ): Promise<VestOutcome> {
   const referrerUserId = r.referralCode.userId;
   const credit = await tx.referralCredit.findFirst({
@@ -460,7 +460,7 @@ async function vestConsumerReferral(
       },
     ],
   });
-  onVestedBonus?.({
+  await onVestedBonus({
     referrerUserId,
     refereeName: r.referredUser.name || "Your referral",
     rewardPaise: reward,
@@ -548,14 +548,10 @@ export async function settleQualifyingReferral(
   now: Date = new Date(),
 ): Promise<VestOutcome> {
   try {
-    let vestedBonus: {
-      referrerUserId: string;
-      refereeName: string;
-      rewardPaise: number;
-    } | null = null;
+    let notices: StagedNotificationBundle = {};
 
     const txOutcome = await withSerializableRetry(() => {
-      vestedBonus = null;
+      notices = {};
       return prisma.$transaction(
         async (tx) => {
           const r = await tx.referral.findUnique({
@@ -589,75 +585,22 @@ export async function settleQualifyingReferral(
           if (state.kind === "wait" || !isProgramLive(cfg)) return "DEFERRED";
           return isExpertReferral
             ? vestExpertReferral(tx, r, cfg, state, now)
-            : vestConsumerReferral(tx, r, cfg, state, now, (bonus) => {
-                vestedBonus = bonus;
+            : vestConsumerReferral(tx, r, cfg, state, now, async (bonus) => {
+                notices = await stageReferralReward(tx, {
+                  kind: "BONUS_EARNED",
+                  userId: bonus.referrerUserId,
+                  referralId,
+                  counterpartyName: bonus.refereeName,
+                  amountPaise: bonus.rewardPaise,
+                });
               });
         },
         { isolationLevel: "Serializable", timeout: 15_000 },
       );
     });
 
-    if (txOutcome === "VESTED" && vestedBonus !== null) {
-      const bonus: {
-        referrerUserId: string;
-        refereeName: string;
-        rewardPaise: number;
-      } = vestedBonus;
-      if (bonus.rewardPaise > 0) {
-        try {
-          const dashboardUrl = `${getAppUrl()}${goHref("client", "payments")}`;
-          const [bell, bonusEmails] = await Promise.all([
-            notifyReferralBonusEarned(
-              bonus.referrerUserId,
-              {
-                refereeName: bonus.refereeName,
-                bonusAmountPaise: bonus.rewardPaise,
-                currency: "INR",
-                dashboardUrl,
-              },
-              { deferAttempt: true },
-            ).catch((err) => {
-              console.error(
-                "[vestReferral] Failed to stage referral bonus bell:",
-                err,
-              );
-              return null;
-            }),
-            stageReferralBonusEmail(prisma, {
-              userId: bonus.referrerUserId,
-              referralId,
-              kind: "BONUS_EARNED",
-              counterpartyName: bonus.refereeName,
-              amountPaise: bonus.rewardPaise,
-              currency: "INR",
-              dashboardUrl,
-            }).catch((err) => {
-              console.error(
-                "[vestReferral] Failed to stage referral bonus email:",
-                err,
-              );
-              return [];
-            }),
-          ]);
-          await flushNotificationsAfter(
-            {
-              bells: [bell?.staged],
-              emails: [
-                {
-                  list: bonusEmails,
-                  emailType: "REFERRAL_BONUS_EARNED",
-                },
-              ],
-            },
-            "referral.bonus_earned",
-          );
-        } catch (notifyErr) {
-          console.error(
-            "[vestReferral] post-commit notification failed:",
-            notifyErr,
-          );
-        }
-      }
+    if (txOutcome === "VESTED") {
+      await flushNotificationsAfter(notices, "referral.bonus_earned");
     }
 
     return txOutcome;

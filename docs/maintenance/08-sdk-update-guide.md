@@ -225,16 +225,16 @@ For every major dependency, this document covers: current version, what it's use
 
 ### Novu
 
-| Field                         | Value                                                                                                               |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| **Current Version**           | ^3.13.0 (`@novu/api`, `@novu/nextjs`; `@novu/react` transitive-only via `@novu/nextjs` — direct dep removed, #1804) |
-| **Used For**                  | Notification workflows: email, in-app, push notifications                                                           |
-| **Key Files**                 | `lib/novu.ts`, Novu provider setup, notification components                                                         |
-| **Minor Update**              | Needs Testing -- notification delivery changes                                                                      |
-| **Major Update**              | Needs Testing -- API or React component changes                                                                     |
-| **How to Test**               | 1. Trigger a test notification 2. Check in-app notification bell 3. Verify email delivery                           |
-| **Breaking Changes to Watch** | Workflow API, subscriber API, React component changes                                                               |
-| **Estimated Time**            | Minor: 30 min. Major: 2-4 hours.                                                                                    |
+| Field                         | Value                                                                                                                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Current Version**           | ^3.19.1 (`@novu/api`), ^3.19.2 (`@novu/nextjs`); `@novu/react` (3.19.2) comes in transitively through `@novu/nextjs`                                                      |
+| **Used For**                  | In-app notifications only (the bell inbox and workflow triggers); email goes through Resend                                                                               |
+| **Key Files**                 | `lib/novu/`, `components/notifications/`, `scripts/novu/`                                                                                                                 |
+| **Minor Update**              | Needs Testing -- notification delivery changes                                                                                                                            |
+| **Major Update**              | Needs Testing -- API or React component changes                                                                                                                           |
+| **How to Test**               | 1. Check the bell-header gear position 2. `npm run novu:check` (wait 5 minutes after a sync; two clean runs) 3. One bell end to end 4. `npx jest __tests__/notifications` |
+| **Breaking Changes to Watch** | Workflow API, subscriber API, React component changes                                                                                                                     |
+| **Estimated Time**            | Minor: 30 min. Major: 2-4 hours.                                                                                                                                          |
 
 ### Resend
 

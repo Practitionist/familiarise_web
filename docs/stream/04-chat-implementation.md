@@ -809,7 +809,7 @@ Chat is pull-only: Stream push providers are disabled, so nobody learns of a new
 
 - Stream user ids are our user ids. The handler skips `familiarise-support`, any id with no user row (which covers every synthetic user), and any user who is banned or erased.
 - Only `messaging` channels count, and the support user is never listed as a counterpart. A counterpart who has been erased is dropped, and a channel left with no live counterpart, or whose new messages are all system messages, produces no line.
-- The digest honours the `appointments` preference category, because chat is booking-scoped. The bell also honours `inAppEnabled`, workspace routing and quiet hours (`stageBell` with `deferrable: true`). The email honours `emailEnabled`, `allNotifications`, suppressions and the pre-launch delivery guard, because it is staged through `deliver()`'s outbox. Email has no quiet-hours concept in this repo, so the digest email is not deferred.
+- The digest honours the `appointments` preference category, because chat is booking-scoped. The bell also honours `inAppEnabled` (`stageBell`). The email honours `emailEnabled`, `allNotifications`, suppressions and the pre-launch delivery guard, because it is staged through `deliver()`'s outbox.
 
 ### What it says
 

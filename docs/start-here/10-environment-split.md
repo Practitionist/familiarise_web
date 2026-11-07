@@ -40,7 +40,7 @@ The table shows the current state, read from the Netlify environment variables a
 
 Some notes on the rows that surprise people:
 
-- **Stream is shared today, and that is a known gap.** Every Netlify context uses the production Stream key, so a chat message or a call started on a preview lands in the production Stream app. The fix is an open pull request titled "refuse the production Stream key outside production", which moves deploy previews and the branch deploy to a separate Familiarise-dev Stream app **(planned)**.
+- **Stream is shared on purpose until launch.** Every Netlify context uses the production Stream key, so a chat message or a call started on a preview lands in the production Stream app. Before launch every Stream user is a mock account, so the owner decided on 2026-11-06 to keep one app (`docs/decisions/2026-11-06-shared-stream-app-until-launch.md`). The split to a separate Familiarise-dev app, and the guard in the pull request titled "refuse the production Stream key outside production", is step 12 of the go-live sequence **(planned for launch)**.
 - **Razorpay is on test keys everywhere, production included.** Before launch the production site takes test cards only. The Razorpay client refuses a test key on production at boot unless `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION=true`, and that variable must be deleted when the live keys go in (`lib/payments/core/razorpay.ts`).
 - **Email is held for everyone outside the allowlist.** With `EMAIL_DELIVERY_MODE` unset, `lib/email/delivery-guard.ts` lets mail through only to `familiarisenow.com` addresses and the addresses in `EMAIL_ALLOWLIST`; anything else is stored as a dead letter with `held:pre-launch`. Production switches to `live` at launch ([email architecture](../email/README.md)).
 - **The branch deploy now has a captcha.** Until 2026-11-06 both Turnstile keys were unset there, so `turnstileCaptcha()` installed nothing and sign-up and password reset on `dev.familiarisenow.com` ran without a captcha, logging one `AUTH_CAPTCHA_DISABLED` line per cold start. The branch-deploy context now carries Cloudflare's always-pass test keys, which take effect from the next `dev` build.
@@ -100,7 +100,7 @@ The plan to give previews, the branch deploy and local checkouts their own Supab
 - The seed and the repair script would run against a dev database, so nobody would have to write to production to reset a QA account.
 - The load test, which would otherwise load production's connection pool, could run.
 
-The split moves only the database. Stream, Redis and the vendor keys each need their own change; the Stream one is the planned pull request in section 2.
+The split moves only the database. Stream, Redis and the vendor keys each need their own change; the Stream one is go-live step 12, described in section 2.
 
 ## 8. Glossary
 
@@ -111,7 +111,7 @@ The split moves only the database. Stream, Redis and the vendor keys each need t
 - **Exempt QA operator**: one of the four seeded operators allowed to sign in without TOTP off production.
 - **Fail closed**: when a setting is missing or wrong, the system refuses rather than allows.
 
-Related issues: #2530 (seeded TOTP operators), #2376 (the Stream key split).
+Related issues: #2530 (seeded TOTP operators), #2376 (the Stream key split, parked until launch by `docs/decisions/2026-11-06-shared-stream-app-until-launch.md`).
 
 ## Deprecated & Superseded Approaches
 

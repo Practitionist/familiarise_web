@@ -9,6 +9,9 @@
  * jointly break either.
  */
 
+jest.mock("@/lib/collaborators/notifications", () => ({
+  stageCollaboratorNotifications: jest.fn(async () => ({})),
+}));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/stream-client", () => ({
   getStreamChatClient: jest.fn(),

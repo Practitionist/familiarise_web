@@ -216,7 +216,7 @@ export function useMaintenanceGuard() {
 **Implementation Details**:
 
 1. Admin schedules maintenance: creates `MaintenanceWindow` with `scheduledAt` in the future
-2. 24 hours before: Send Novu notification to all users
+2. 24 hours before: Post an announcement with the opt-in inbox post (`postToInbox`); there are no maintenance bells (decision 4 in [the single-preference-owner record](../decisions/2026-11-06-notification-single-preference-owner.md))
 3. 1 hour before: Show banner "Scheduled maintenance in X minutes"
 4. At `scheduledAt`: Cron job activates the maintenance window (sets Redis keys)
 5. At `estimatedEnd`: Auto-deactivate (optional, with safety check)

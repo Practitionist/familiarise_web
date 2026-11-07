@@ -90,7 +90,7 @@ const FAMILY_DESCRIPTION: Record<FamilyId, string> = {
   feedback: "Product feedback to admins; reviews to consultants.",
   account: "Verification, security, moderation and applications. No opt-out.",
   collaborator: "Co-hosting invitations on a plan.",
-  platform: "Announcements, compliance and maintenance. No opt-out.",
+  platform: "Announcements and compliance. No opt-out.",
   "org-billing": "Invoices, contracts, wallet, payouts and member overages.",
   "org-membership": "Roster and single sign-on.",
   "org-program": "Entitlement, seats, capacity, renewals and exports.",
@@ -144,6 +144,7 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
 
   "payout-processed": "payout",
   "payout-failed": "payout",
+  "payout-clawback": "payout",
 
   "referral-bonus-earned": "referral",
   "referee-welcome-bonus": "referral",
@@ -187,9 +188,6 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "collaborator-invite-expired": "collaborator",
 
   "general-announcement": "platform",
-  "maintenance-scheduled": "platform",
-  "maintenance-started": "platform",
-  "maintenance-ended": "platform",
   "compliance-deadline-alert": "platform",
 
   "org-invoice-issued": "org-billing",
@@ -200,6 +198,7 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "org-payout-completed": "org-billing",
   "org-payout-failed": "org-billing",
   "org-payout-reversed": "org-billing",
+  "org-payout-clawback": "org-billing",
   "org-member-overage-timed-out": "org-billing",
   "org-program-overage-due": "org-billing",
   "org-contract-status-changed": "org-billing",

@@ -6,7 +6,10 @@ import {
 } from "@/lib/cron/pending-ages";
 import type { PendingAges } from "@/lib/observability/betterstack-telemetry";
 import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
-import { DEAD_LETTER_EMAIL_WHERE } from "@/lib/backoffice/queue-predicates";
+import {
+  DEAD_LETTER_BELL_WHERE,
+  DEAD_LETTER_EMAIL_WHERE,
+} from "@/lib/backoffice/queue-predicates";
 import {
   DUNNABLE_ORG_STATUSES,
   MAX_REMINDERS,
@@ -411,7 +414,7 @@ const SOURCES: readonly AttentionSource[] = [
     key: "emailRetries",
     label: "Emails overdue or dead-lettered",
     money: false,
-    note: "Dead letters are listed at any age; pre-launch holds are not.",
+    note: "Dead letters are listed at any age; holds and recipient refusals are not.",
     read: async (now, limitMs) => {
       const cutoff = before(now, limitMs);
       const where: Prisma.FailedEmailWhereInput = {
@@ -480,7 +483,7 @@ const SOURCES: readonly AttentionSource[] = [
             nextRetryAt: null,
             createdAt: { lte: cutoff },
           },
-          { status: "DEAD_LETTER" },
+          DEAD_LETTER_BELL_WHERE,
         ],
       };
       const { rows, total } = await windowOf(

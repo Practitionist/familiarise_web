@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Section } from "@/components/dashboard/Section";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
@@ -18,126 +17,6 @@ import { useToast } from "@/hooks/use-toast";
 import { useSession } from "@/lib/auth-client";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { fetchWithReauth } from "@/lib/auth/reauth-client";
-
-interface CookiePrefs {
-  analytics: boolean;
-  marketing: boolean;
-}
-
-/** Cookie consent. Essential is always on. */
-export function CookiePreferencesSection() {
-  const { toast } = useToast();
-  const [baseline, setBaseline] = useState<CookiePrefs>({
-    analytics: false,
-    marketing: false,
-  });
-  const [prefs, setPrefs] = useState<CookiePrefs>(baseline);
-  const [isSaving, setIsSaving] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const res = await fetch("/api/user/cookie-preferences").catch(() => null);
-      if (!res?.ok || cancelled) return;
-      const { data } = (await res.json()) as { data: CookiePrefs };
-      const loaded = { analytics: data.analytics, marketing: data.marketing };
-      setBaseline(loaded);
-      setPrefs(loaded);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setIsSaving(true);
-    try {
-      const res = await fetch("/api/user/cookie-preferences", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(prefs),
-      });
-      if (!res.ok) throw new Error("save failed");
-      setBaseline(prefs);
-      toast({ title: "Cookie preferences saved" });
-    } catch {
-      toast({
-        title: "Couldn't save your cookie preferences",
-        description: "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const rows = [
-    {
-      key: "essential",
-      label: "Essential",
-      hint: "Required for sign-in and checkout; always on.",
-    },
-    {
-      key: "analytics",
-      label: "Analytics",
-      hint: "Helps us see which pages are slow or confusing.",
-    },
-    {
-      key: "marketing",
-      label: "Marketing",
-      hint: "Personalised recommendations.",
-    },
-  ] as const;
-
-  return (
-    <Section
-      title="Cookies"
-      description="How this browser may use cookies."
-      variant="card"
-    >
-      <form onSubmit={submit} className="space-y-4">
-        <ul className="divide-y divide-border">
-          {rows.map((row) => (
-            <li
-              key={row.key}
-              className="flex items-center justify-between gap-4 py-3 first:pt-0"
-            >
-              <div>
-                <Label
-                  htmlFor={`cookie-${row.key}`}
-                  className="font-medium text-foreground"
-                >
-                  {row.label}
-                </Label>
-                <p className="text-sm text-muted-foreground">{row.hint}</p>
-              </div>
-              {row.key === "essential" ? (
-                <Switch id="cookie-essential" checked disabled />
-              ) : (
-                <Switch
-                  id={`cookie-${row.key}`}
-                  checked={prefs[row.key]}
-                  onCheckedChange={(checked) =>
-                    setPrefs((prev) => ({ ...prev, [row.key]: checked }))
-                  }
-                />
-              )}
-            </li>
-          ))}
-        </ul>
-        <SettingsSaveBar
-          isSaving={isSaving}
-          isDirty={
-            prefs.analytics !== baseline.analytics ||
-            prefs.marketing !== baseline.marketing
-          }
-          onReset={() => setPrefs(baseline)}
-        />
-      </form>
-    </Section>
-  );
-}
 
 // Mirrors the grievances route's schema (#701).
 const SUBJECT_MIN = 3;

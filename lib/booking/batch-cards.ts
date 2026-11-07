@@ -5,10 +5,7 @@
 
 import { formatInTimeZone } from "date-fns-tz";
 
-import {
-  effectiveMaxParticipants,
-  getClassCapacity,
-} from "@/lib/events/capacity";
+import { eventCapacityFromCount } from "@/lib/events/capacity";
 import { eventRefundWindowHours } from "@/lib/payments/operations/cancellation-policy";
 import {
   classEnrolmentFrom,
@@ -35,8 +32,7 @@ export interface BatchCardClass {
   deletedAt?: Date | string | null;
   appointment?: {
     occurrences: (EnrolmentSession & { endsAt: Date | string })[];
-    /** Either the live seats or their count; the seat list excludes the host. */
-    participants?: { userId: string }[];
+    /** Seats taken, host excluded; the public payload never lists who holds them. */
     _count?: { participants: number };
   } | null;
 }
@@ -81,18 +77,13 @@ function weekdayPattern(starts: Date[], perWeek: number, tz: string) {
     : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
 
-function seatsFor(cls: BatchCardClass, plan: BatchCardPlan, hostId?: string) {
-  if (cls.appointment?.participants) {
-    const cap = getClassCapacity({
-      classInstance: cls,
-      plan,
-      excludeUserIds: hostId ? [hostId] : [],
-    });
-    return { seatsLeft: cap.remaining, isFull: cap.isFull };
-  }
-  const max = effectiveMaxParticipants(cls, plan);
-  const taken = cls.appointment?._count?.participants ?? 0;
-  return { seatsLeft: Math.max(0, max - taken), isFull: taken >= max };
+function seatsFor(cls: BatchCardClass, plan: BatchCardPlan) {
+  const cap = eventCapacityFromCount({
+    instance: cls,
+    plan,
+    taken: cls.appointment?._count?.participants ?? 0,
+  });
+  return { seatsLeft: cap.remaining, isFull: cap.isFull };
 }
 
 function phaseOf(
@@ -125,7 +116,7 @@ export function deriveBatchCards(
   plan: BatchCardPlan,
   classes: BatchCardClass[],
   now: Date,
-  opts: { timeZone?: string; hostUserId?: string | null } = {},
+  opts: { timeZone?: string } = {},
 ): BatchCard[] {
   const tz = opts.timeZone ?? "UTC";
   const cards = classes
@@ -150,7 +141,7 @@ export function deriveBatchCards(
         sessions: cls.appointment?.occurrences ?? [],
         now,
       });
-      const seats = seatsFor(cls, plan, opts.hostUserId ?? undefined);
+      const seats = seatsFor(cls, plan);
       const nextAhead = starts.find((d) => d > now);
       const until = nextAhead
         ? new Date(

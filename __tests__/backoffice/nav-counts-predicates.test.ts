@@ -50,9 +50,19 @@ describe("nav badges reuse their page's predicate", () => {
   });
 
   it("the failed-emails tab opens on the badge's dead-letter state", () => {
+    // Holds and policy/suppression refusals are expected outcomes, not dead letters.
     expect(DEAD_LETTER_EMAIL_WHERE).toEqual({
       status: "DEAD_LETTER",
-      OR: [{ lastError: null }, { lastError: { not: "held:pre-launch" } }],
+      OR: [
+        { lastError: null },
+        {
+          lastError: { not: "held:pre-launch" },
+          NOT: [
+            { lastError: { startsWith: "policy:" } },
+            { lastError: { startsWith: "suppressed:" } },
+          ],
+        },
+      ],
     });
     expect(read("app/api/admin/failed-emails/route.ts")).toContain(
       "DEAD_LETTER_EMAIL_WHERE",

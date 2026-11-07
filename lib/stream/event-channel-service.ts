@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import type { StreamChat } from "stream-chat";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import { paidParticipant } from "@/lib/booking/participants";
 import {
   getStreamChatClient,
   isExpectedStreamError,
@@ -426,9 +426,10 @@ const groupEventPlanInclude = {
   },
 };
 
+// Chat membership follows a paid seat; an unpaid HELD one is not a member.
 const groupEventAppointmentInclude = {
   participants: {
-    where: liveParticipant(),
+    where: paidParticipant(),
     select: { userId: true },
   },
 };
@@ -609,7 +610,7 @@ const retentionOrgSelect = {
 
 /**
  * The subset of `userIds` with access to an openable, in-retention event's
- * channel: the host (profile not deleted), an ACCEPTED collaborator, or a live
+ * channel: the host (profile not deleted), an ACCEPTED collaborator, or a paid
  * seat on a live appointment. `isEventParticipant` is this for one user.
  * Null means the event is missing, not openable or past retention: closed to everyone.
  */
@@ -648,7 +649,7 @@ export async function eventParticipantsAmong(
         select: { occurrences: { where: { deletedAt: null } } },
       },
       participants: {
-        where: { ...liveParticipant(), userId: { in: ids } },
+        where: { ...paidParticipant(), userId: { in: ids } },
         select: { userId: true },
       },
     },

@@ -19,8 +19,8 @@ export type NovuWorkflowId =
   (typeof NOVU_WORKFLOWS)[keyof typeof NOVU_WORKFLOWS];
 
 /**
- * The opt-out switch a workflow honours, written to `subscriber.data` by
- * `lib/novu/subscriber.ts`. `null` is a system notice with no opt-out.
+ * The `NotificationPreference` switch a workflow honours, checked by the
+ * server before every trigger. `null` is a system notice with no category.
  */
 export type PreferenceCategory =
   | "appointments"
@@ -53,5 +53,10 @@ export type WorkflowTemplate = {
   /** Who receives it and why — read by the sync's dry-run and the dashboard. */
   description: string;
   category: PreferenceCategory | null;
+  /**
+   * A mandatory account, moderation or compliance notice: it rings even when
+   * the recipient has turned bells off, like a required email. Needs `category: null`.
+   */
+  required?: true;
   inApp: InAppTemplate;
 };

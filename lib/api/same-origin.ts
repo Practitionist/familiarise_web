@@ -27,16 +27,21 @@ function trustedOrigins(req: NextRequest): Set<string> {
   return new Set(origins.map(originOf).filter((o): o is string => o !== null));
 }
 
+/** True when the browser's Origin header names one of this site's own origins. */
+export function isSameOriginRequest(req: NextRequest): boolean {
+  const origin = req.headers.get("origin");
+  if (!origin) return false;
+  const normalized = originOf(origin);
+  return normalized !== null && trustedOrigins(req).has(normalized);
+}
+
 /**
  * True only for a JSON request this site's own page sent: a cross-site form
  * cannot send JSON without a CORS preflight, and its Origin names the other site.
  */
 export function isSameOriginJsonRequest(req: NextRequest): boolean {
-  const origin = req.headers.get("origin");
   const json = (req.headers.get("content-type") ?? "").startsWith(
     "application/json",
   );
-  if (!json || !origin) return false;
-  const normalized = originOf(origin);
-  return normalized !== null && trustedOrigins(req).has(normalized);
+  return json && isSameOriginRequest(req);
 }

@@ -47,11 +47,14 @@ import {
   defineLifecycleStager,
   greet,
   money,
+  prepareBuiltSpec,
   prepareSpecEmails,
+  stageBuiltSpec,
   stageSpecGuarded,
   stageSpecOncePerRecipient,
   whenText,
   type PreparedRecipientEmails,
+  type PreparedSpecEmails,
   type RecipientClaim,
   type RecipientEmailSpec,
 } from "./shared";
@@ -115,10 +118,7 @@ function bookedSpec(args: AppointmentBookedEmailArgs): RecipientEmailSpec {
   };
 }
 
-export async function stageAppointmentBookedEmail(
-  tx: Tx,
-  args: AppointmentBookedEmailArgs,
-): Promise<StagedRecipientEmail[]> {
+function buildBookedEmail(args: AppointmentBookedEmailArgs) {
   const userIds = Array.from(
     new Set(
       [
@@ -128,7 +128,22 @@ export async function stageAppointmentBookedEmail(
       ].filter((id): id is string => !!id),
     ),
   );
-  return stageSpecGuarded(bookedSpec(args), userIds, tx);
+  return { userIds, spec: bookedSpec(args) };
+}
+
+/** Renders the booked notices before the confirming transaction opens. */
+export function prepareAppointmentBookedEmail(
+  args: AppointmentBookedEmailArgs,
+): Promise<PreparedSpecEmails> {
+  return prepareBuiltSpec(buildBookedEmail, args);
+}
+
+export function stageAppointmentBookedEmail(
+  tx: Tx,
+  args: AppointmentBookedEmailArgs,
+  pre?: PreparedSpecEmails | null,
+): Promise<StagedRecipientEmail[]> {
+  return stageBuiltSpec(tx, buildBookedEmail, args, pre);
 }
 
 // ── Cancelled ───────────────────────────────────────────────────────────────

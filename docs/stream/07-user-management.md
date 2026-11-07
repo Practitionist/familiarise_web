@@ -367,7 +367,9 @@ On every page it already reads, the job also removes contact data that older
 upserts stored at Stream. `staleContactFields()` (`lib/stream/user-payload.ts`)
 names the fields in `STREAM_CONTACT_FIELDS` (today `email`) that a user still
 carries, and one `partialUpdateUsers` call per page unsets them. Users already
-deleted in Stream or queued for hard delete are skipped, a dry run only counts,
+deleted or deactivated in Stream, or queued for hard delete, are skipped
+(Stream refuses a partial update of a deactivated user and fails the whole
+call), a dry run only counts,
 and a clean roster produces no writes. This costs no extra Stream reads and also
 catches any future regression that stores a contact field again. See the
 [Stream user allowlist decision](../decisions/2026-11-05-stream-user-allowlist.md).

@@ -111,6 +111,21 @@ export function getClassCapacity(params: {
 }
 
 /**
+ * Capacity from a seat count the server already took (the host excluded, a
+ * lapsed hold not counted), for public payloads that must not carry the
+ * attendee list. The server gates keep using `getWebinarCapacity` and
+ * `getClassCapacity`, which read the live roster inside the lock.
+ */
+export function eventCapacityFromCount(params: {
+  instance: CapacityInstance | null | undefined;
+  plan: CapacityPlan | null | undefined;
+  taken: number;
+}): EventCapacity {
+  const { instance, plan, taken } = params;
+  return toCapacity(effectiveMaxParticipants(instance, plan), taken);
+}
+
+/**
  * A capacity call whose appointment was loaded WITHOUT `participants` counts
  * zero registrants and reports a sold-out event as open — the exact way the
  * old in-lock recheck died. Loud failure beats a silently-wrong count on a

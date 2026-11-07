@@ -25,12 +25,6 @@ import { checkActiveAppointments } from "@/app/api/user/consultants/utils/consul
 import { deleteSubscriber } from "@/lib/novu/subscriber";
 import { removeCollaboratorStanding } from "@/lib/collaborators/standing";
 import { revokeCollaboratorAccess } from "@/lib/collaborators/service";
-import { notifyCollaboratorWithdrawn } from "@/lib/novu/service";
-import { goHref } from "@/lib/dashboard/go";
-import { getAppUrl } from "@/lib/url";
-import { EMAIL_BUDGET_MS } from "@/lib/email";
-import { sendCollaboratorWithdrawnEmail } from "@/lib/email/senders/collaborators";
-import { scheduleAfter } from "@/lib/api/after-safe";
 import { requireFreshSession } from "@/lib/auth/step-up";
 import { supportRetainedHistoryCount } from "@/lib/support/erasure";
 import { purgeExpertSurfaces } from "@/lib/data/public-cache";
@@ -480,35 +474,7 @@ async function executeUserHardDeleteOrFallbackScrub(
   await stampSessionEnds(endedSessions, { forgetUser: true });
 
   for (const c of removedCollaborations) {
-    await revokeCollaboratorAccess(c.planType, c.planId, id, { notify: false });
-    if (c.hostUserId) {
-      const hostUserId = c.hostUserId;
-      const planTitle = c.planTitle ?? "Untitled offering";
-      const collaboratorName = c.collaboratorName ?? "A collaborator";
-      const dashboardUrl = `${getAppUrl()}${goHref("expert", "collaborations")}`;
-      scheduleAfter(async () => {
-        await notifyCollaboratorWithdrawn(hostUserId, {
-          collaboratorName,
-          planTitle,
-          planType: c.planType,
-          dashboardUrl,
-        }).catch((e) => Sentry.captureException(e));
-        await sendCollaboratorWithdrawnEmail(
-          {
-            recipientUserId: hostUserId,
-            actorName: collaboratorName,
-            collaboratorName,
-            planTitle,
-            planType: c.planType,
-            role: c.role ?? "CO_HOST",
-            revenueShareBps: c.revenueShareBps,
-            collaboratorId:
-              c.collaboratorId ?? `${c.planType}-${c.planId}-${id}`,
-          },
-          EMAIL_BUDGET_MS.REQUEST,
-        ).catch((e) => Sentry.captureException(e));
-      }, "user.delete.collaborator-withdrawn");
-    }
+    await revokeCollaboratorAccess(c.planType, c.planId, id);
   }
 
   const novuErased = await deleteSubscriber(id);

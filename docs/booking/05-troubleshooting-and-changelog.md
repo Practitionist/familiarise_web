@@ -226,7 +226,7 @@ The wave-5 train (#1319) reconciles the original booking and maintenance audit b
 - `BookingStatusHistory` is appended inside every CAS transition helper (ADR A12), giving reschedule and cancel disputes the audit trail they lacked. The from-status is read just before the compare-and-set and the imprecision that allows is documented in the ADR.
 - Ten booking models gain `deletedAt`, nine naive timestamp columns become `Timestamptz` (every column on `Trial` among them), seven redundant prefix indexes are dropped, `Appointment` gains an index on `(organizationId, deletedAt, createdAt)` for the org-scoped reads, and `cancelledBy` becomes a real foreign key on consultations and subscriptions.
 - The two phantom columns that exist only in the database are captured by a one-off script before the reset push drops them, and the STAGED sidecar block now sits at the true bottom of `check-constraints.sql` with a reset runbook in `docs/prisma/02-pre-mvp-reset-runbook.md`.
-- `npm run db:push` is push, then sidecars, then `db:assert-sidecars`; the assertion and the CI guard share one quote-aware parser that covers all three sidecar files, constraints, indexes and triggers alike.
+- `npm run db:push` is push, then sidecars, then `scripts/ci/check-db-sidecars.ts`; the assertion and the CI guard share one quote-aware parser that covers all three sidecar files, constraints, indexes and triggers alike.
 
 ### PR 3b — availability windows are merged, and validated as a union (`fix/availability-window-merge`, #1320)
 

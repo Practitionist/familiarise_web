@@ -64,6 +64,7 @@ export const NOVU_WORKFLOWS = {
   VERIFICATION_STATUS_CHANGED: "verification-status-changed",
   PAYOUT_PROCESSED: "payout-processed",
   PAYOUT_FAILED: "payout-failed",
+  PAYOUT_CLAWBACK: "payout-clawback",
 
   // Admin / System
   GENERAL_ANNOUNCEMENT: "general-announcement",
@@ -103,10 +104,7 @@ export const NOVU_WORKFLOWS = {
   COLLABORATOR_DECLINED: "collaborator-declined",
   COLLABORATOR_INVITE_EXPIRED: "collaborator-invite-expired",
 
-  // Maintenance & Platform Compliance
-  MAINTENANCE_SCHEDULED: "maintenance-scheduled",
-  MAINTENANCE_STARTED: "maintenance-started",
-  MAINTENANCE_ENDED: "maintenance-ended",
+  // Platform Compliance
   COMPLIANCE_DEADLINE_ALERT: "compliance-deadline-alert",
 
   // Enterprise (org-scoped events)
@@ -126,6 +124,7 @@ export const NOVU_WORKFLOWS = {
   ORG_PAYOUT_COMPLETED: "org-payout-completed",
   ORG_PAYOUT_FAILED: "org-payout-failed",
   ORG_PAYOUT_REVERSED: "org-payout-reversed",
+  ORG_PAYOUT_CLAWBACK: "org-payout-clawback",
   ORG_PROGRAM_EXHAUSTED: "org-program-exhausted",
   ORG_PROGRAM_CAP_NEAR: "org-program-cap-near",
   ORG_PROGRAM_OVERAGE_DUE: "org-program-overage-due",
@@ -477,6 +476,17 @@ export type PayoutInput = Omit<PayoutPayload, "amount" | "amountPaise"> & {
   amount: number;
 };
 
+/** A clawback journal's effect on what the payee owes back. */
+export type ClawbackNoticeEvent =
+  "RAISED" | "OFFSET_RESERVED" | "OFFSET_RELEASED" | "VOIDED";
+
+export type PayoutClawbackPayload = {
+  eventKind: ClawbackNoticeEvent;
+  amount: string;
+  payoutId: string;
+  dashboardUrl: string;
+};
+
 export type AnnouncementPayload = {
   title: string;
   content: string;
@@ -568,44 +578,16 @@ export type ReferralCreditsAppliedInput = Omit<
   | "appointmentTypeCode"
 > & { creditsUsed: number; remainingCredits: number };
 
-export type CollaboratorInvitedPayload = {
+/** Every collaborator lifecycle bell carries the same fields. */
+export type CollaboratorNoticePayload = {
   planTitle: string;
   planType: string;
+  collaboratorName: string;
+  ownerName: string;
   role: string;
   revenueSharePercentage: number;
-  ownerName: string;
   dashboardUrl: string;
 };
-
-export type CollaboratorAcceptedPayload = {
-  planTitle: string;
-  planType: string;
-  collaboratorName: string;
-  role: string;
-  dashboardUrl: string;
-};
-
-export type CollaboratorDeclinedPayload = CollaboratorAcceptedPayload;
-
-export type CollaboratorRemovedPayload = {
-  planTitle: string;
-  planType: string;
-  dashboardUrl: string;
-};
-
-export type CollaboratorWithdrawnPayload = CollaboratorRemovedPayload & {
-  collaboratorName: string;
-};
-
-export type MaintenancePayload = {
-  phase: string;
-  reason?: string;
-  estimatedEnd?: string;
-  estimatedEndIso?: string;
-  statusUrl?: string;
-};
-
-export type MaintenanceInput = Omit<MaintenancePayload, "estimatedEndIso">;
 
 // ============================================================================
 // Enterprise Payload Types
@@ -850,14 +832,6 @@ export type AccountSecurityNoticePayload = {
   provider?: string;
   reason?: string;
   message?: string;
-  dashboardUrl: string;
-};
-
-export type CollaboratorInviteExpiredPayload = {
-  planTitle: string;
-  planType?: string;
-  collaboratorName?: string;
-  role?: string;
   dashboardUrl: string;
 };
 
