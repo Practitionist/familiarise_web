@@ -1,8 +1,8 @@
 # TESTING PLAN — B2C/B2B Booking & Finance Hardening Train
 
 Audience: the consulting/QA team validating the PR-1 train (#835 wallet-refund
-audit, #849 cancel-pending-booking, #850 payout consolidation, #814/#821
-waitlist crons) plus regression coverage of the booking/payments core. Written
+audit, #849 cancel-pending-booking, #850 payout consolidation) plus
+regression coverage of the booking/payments core. Written
 to be executed by several testers (or test agents) **in parallel**, with the
 race scenarios deliberately requiring two actors on the same resource.
 
@@ -144,19 +144,7 @@ scripts:process-payouts` locally with RazorpayX test creds).
 | 4   | Org payouts PENDING                                  | advanced→PROCESSING only when `ENABLE_LIVE_PAYOUTS=true`; errors reported but don't block consultant disbursement                                                                                                                                                                                                                                          |
 | 5   | Env regression                                       | Razorpay API calls must succeed with `RAZORPAYX_KEY_SECRET` or `RAZORPAY_SECRET` resolved — the payouts client reads `RAZORPAYX_KEY_SECRET`, falling back to `RAZORPAY_SECRET`, and the job-level credential gate alone passing is NOT sufficient (handle-stuck/reconcile jobs gate on `RAZORPAY_SECRET`, which can pass while the client secret is empty) |
 
-### 2.4 Waitlist crons (#814/#821)
-
-`workflow_dispatch` on **Send Waitlist Reminders** and **Process Waitlist
-Expirations** (both have `dry_run` inputs).
-
-| #   | Scenario                                            | Assert                                                                                               |
-| --- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| 1   | Normal run                                          | exit 0; reminders stamped `reminderSentAt`; expirations move NOTIFIED→EXPIRED + notify next in queue |
-| 2   | Two overlapping runs (dispatch both within seconds) | second logs `⏭️` lock-held and exits **0** (not a failure issue)                                     |
-| 3   | Transient pooler timeout                            | `[connect-retry] … retrying` lines; run still green if retry succeeds                                |
-| 4   | Repeat run after success                            | no duplicate reminder emails (reminderSentAt filter)                                                 |
-
-### 2.5 Regression — checkout & webhooks (unchanged behavior to re-verify)
+### 2.4 Regression — checkout & webhooks (unchanged behavior to re-verify)
 
 | Route                                              | Cases                                                                                                                                  |
 | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
@@ -175,9 +163,9 @@ first (§1), then:
 | ----- | ----------------------------------------------------------- | ---------------- |
 | A     | cancel-pending happy paths + authz matrix (§2.1 #1-3, 7-10) | works alone      |
 | B     | **pairs with C** on shared payment ids                      | §4.1, §4.2 races |
-| C     | **pairs with B**; also webhook replay regression            | §4.1, §4.2, §2.5 |
+| C     | **pairs with B**; also webhook replay regression            | §4.1, §4.2, §2.4 |
 | D     | refunds + org audit (§2.2) + payout job (§2.3)              | money paths      |
-| E     | waitlist crons (§2.4) + last-seat enrollment storm (§4.3)   | crons + capacity |
+| E     | last-seat enrollment storm (§4.3)                           | capacity         |
 
 Every agent reports: scenario id, requests sent (method/path/params), response
 codes, DB assertion results, and a pass/fail verdict. Any 5xx, any double
@@ -242,19 +230,20 @@ Pick a seeded webinar with 1 remaining seat (or shrink capacity via Prisma).
 Fire N≥10 concurrent checkouts from different seeded consultees.
 
 **Invariants**: at most one enrollment wins the seat; losers get a clean
-4xx/waitlist path, never 5xx; `AppointmentOccurrence` user-join rows ≤ capacity;
-no duplicate Payment rows per user (idempotency keys).
+4xx answer, never 5xx: either the terminal `EVENT_SOLD_OUT` (409), or a
+retryable contention answer while another buyer holds the event lock.
+`/api/checkout` currently sends that contention answer as a 400 with
+`errorType: "AVAILABILITY_ERROR"`, no `retryAfter`, and the message "Another
+user is currently booking this slot", because the outer catch in
+`handleCheckout` (`lib/payments/checkout/orchestrate.ts`) rewrites the lock's
+`EVENT_CHECKOUT_BUSY` error before the route's 409 branch sees it. Retry each
+contention answer after a few seconds within a bounded window, staying under
+the per-user `checkoutLimiter`; every retry must end in the seat or
+`EVENT_SOLD_OUT`, and any request still busy at the deadline is reported
+separately rather than counted as a failure. `AppointmentOccurrence` user-join
+rows ≤ capacity; no duplicate Payment rows per user (idempotency keys).
 
-### 4.4 Waitlist-expire vs booking (Agent E)
-
-Arm a NOTIFIED waitlist entry with `expiresAt` in the past, then dispatch the
-expiration workflow while the notified user books the seat through checkout.
-
-**Invariant**: the seat is either booked by the notified user OR re-offered to
-the next in queue — never both; the entry ends in exactly one of
-BOOKED/EXPIRED.
-
-### 4.5 Checkout idempotency replay (Agent C)
+### 4.4 Checkout idempotency replay (Agent C)
 
 `POST /api/checkout` twice concurrently with the SAME `clientIdempotencyKey`.
 
@@ -298,3 +287,9 @@ One findings doc per run: scenario → verdict → evidence (response codes, SQL
 output). P0 = money wrong / double-booking / 5xx on the matrix. P1 = wrong
 status code / missing audit row / UX dead-end. P2 = polish. File P0/P1 as
 GitHub issues tagged `bug` + the relevant issue number from this train.
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Waitlist cron checks (retired).** Earlier versions of this plan exercised the "Send Waitlist Reminders" and "Process Waitlist Expirations" workflows and a NOTIFIED-versus-booking race. The queued event waitlist they covered no longer exists, so a full event is simply sold out and the last-seat storm in section 4.3 is the capacity check. Do not reintroduce those scenarios.

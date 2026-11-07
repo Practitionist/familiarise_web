@@ -170,6 +170,35 @@ Monthly cost in USD. Subtract $100 free credit for actual billed amount.
 
 **60 fps doubles every cost in both tables above.**
 
+### 1.5 How Stream decides the billed tier
+
+Stream's own pages describe the billed tier in two different ways, and both were read on 2026-11-07. The [pricing guide](https://getstream.io/video/docs/api/pricing-guide/) says "we calculate charges based on each user's total resolution of receiving tracks (aggregated resolution)", which is the tier that matches the combined resolution of every video track a participant receives at the same moment. The FAQ entry "How do you measure the video quality?" on the [pricing page](https://getstream.io/video/pricing/) says instead that "the quality is priced at the highest quality level the user is publishing or receiving".
+
+The two readings differ only for a participant who publishes video. Under the FAQ reading, a presenter who publishes a 720p camera is billed at HD at least, even while receiving only SD. An attendee who publishes nothing is billed at the received tier under either reading. This section follows the pricing guide's received-track rule, and nobody has yet checked against an invoice which reading Stream applies. The combined resolution is the sum of the pixels of all received tracks:
+
+| Combined pixels received | Tier billed     |
+| ------------------------ | --------------- |
+| up to 308K               | SD (480p)       |
+| up to 921,600            | HD (720p)       |
+| up to 2,073,600          | Full HD (1080p) |
+| up to 3,686,400          | 2K              |
+| up to 8,847,360          | 4K              |
+
+Three rules from the same guide decide what a webinar costs:
+
+1. A screen share is one more received track, and it does not use Dynascale, so it arrives at the resolution the sender publishes. Camera tracks, by contrast, are scaled down to what the viewer's screen can show.
+2. Stream's own example: a viewer who receives two HD tracks (2 × 1280 × 720 = 1,843,200 pixels) is billed at the Full HD rate.
+3. A participant whose camera and microphone are both off is metered as a livestream viewer, at the cheaper livestream rates in section 2.1, even inside a normal video call.
+
+Worked example (derived from those rules and this platform's defaults, not measured). Webinar attendees join muted with their cameras off, because `buildCallSettingsOverride` in `lib/meetings/room-ready.ts` applies the backstage and muted defaults to webinars and classes, so rule 3 applies to them. The default quality is a 720p camera and a 1080p screen share (`DEFAULT_VIDEO_CONFIG` in `lib/stream/video-quality.ts`; section 8.5). One hundred attendees watching for 90 minutes is 9,000 participant minutes:
+
+| What the attendee receives                                         | Combined pixels | Billed as a livestream viewer (rule 3)       | Billed at the call rates of section 1.2       |
+| ------------------------------------------------------------------ | --------------- | -------------------------------------------- | --------------------------------------------- |
+| The host's camera only (at most 720p, less after Dynascale)        | at most 921,600 | HD at most, $1.00 per 1,000: **up to $9.00** | HD at most, $1.50 per 1,000: **up to $13.50** |
+| The host's camera and a shared 1080p screen (2,073,600 + a camera) | above 2,073,600 | 2K, $4.00 per 1,000: **$36.00**              | 2K, $6.00 per 1,000: **$54.00**               |
+
+At ₹90.7 to the dollar those are about ₹816, ₹3,265, ₹1,224 and ₹4,898. The camera-only figures are ceilings: a camera that Dynascale scales down to SD (up to 308K pixels) bills at the SD rate, $0.50 per 1,000 as a livestream viewer, or $4.50. The practical reading is that a webinar with a shared screen costs roughly four times the camera-only ceiling, because any camera added to a 1080p share pushes the viewer past the Full HD threshold into 2K. A second presenter camera on top of that share adds up to 921,600 more pixels (3,916,800 in total), which passes the 2K ceiling of 3,686,400 and bills at the 4K tier ($12.00 per 1,000 at call rates, $8.00 as a livestream viewer) whenever Dynascale does not scale the cameras down. Three points are inferred from Stream's text and have not been checked against an invoice: that the livestream rate applies to a muted attendee at the combined tier, that an attendee promoted to the stage stops being a livestream viewer, and whether a presenter's own published camera also sets that presenter's tier, as the pricing page's FAQ says. Until a real month of usage is read from the Stream dashboard, treat the livestream column as the floor and the call-rate column as the ceiling.
+
 ---
 
 ## 2. Live Streaming Pricing
@@ -406,11 +435,11 @@ Must be explicitly applied for in the Stream dashboard. Availability is limited 
 
 ### 8.4 The 200-participant cap
 
-Webinars and classes are capped at 200 participants at launch ([ADR-07](./18-architecture-decision-records.md#adr-07-interactive-webrtc-with-a-200-participant-cap-not-hls-at-launch)), enforced when a plan is authored, when a seat is sold and by Stream `limits.max_participants` on the call. The cap exists so that the largest room Familiarise can sell has a known cost. At the HD rate used in 8.2 ($1.50 per 1,000 participant minutes), a full 200-attendee webinar of 90 minutes is 18,000 participant minutes, about $27 (roughly ₹2,450), and a full 200-student class of 60 minutes is 12,000 participant minutes, about $18 (roughly ₹1,630). Live Streaming with HLS (section 2.3) would cost more per viewer-minute and add 10 to 30 seconds of delay, which is why audiences above the cap are not routed to it. The cap can be lifted after a load test.
+Webinars and classes are capped at 200 participants at launch ([ADR-07](./18-architecture-decision-records.md#adr-07-interactive-webrtc-with-a-200-participant-cap-not-hls-at-launch)), enforced when a plan is authored and when a seat is sold. The call's Stream `limits.max_participants` is the capacity plus a headroom of 5 and exempts the owner and the `co_presenter` and `admin` roles (`lib/meetings/room-ready.ts`), so it is a backstop, not an exact 200. The cap exists so that the largest room Familiarise can sell has a known cost. At the HD rate used in 8.2 ($1.50 per 1,000 participant minutes), a full 200-attendee webinar of 90 minutes is 18,000 participant minutes, about $27 (roughly ₹2,450), and a full 200-student class of 60 minutes is 12,000 participant minutes, about $18 (roughly ₹1,630). Those figures count attendees only (the host and co-presenters add their own minutes) and use the plain HD call rate; section 1.5 shows how a shared screen moves a viewer to a higher tier and how muted attendees are metered at the livestream rates. Live Streaming with HLS (section 2.3) would cost more per viewer-minute and add 10 to 30 seconds of delay, which is why audiences above the cap are not routed to it. The cap can be lifted after a load test.
 
 ### 8.5 What 1080p costs
 
-Staff can raise call video, screen share and recording quality on the back-office Video quality page; the defaults are the cheapest sensible choice (720p calls, 720p recordings, 1080p screen share). Two charges move when quality rises. Received video is billed per participant-minute at the received resolution, so 1080p is $3.00 per 1,000 participant minutes against $1.50 at 720p. Recording is billed per call minute, so Full HD is $12 per 1,000 call-minutes against $6 for HD. A 60-minute consultation with two participants is 120 participant minutes, so it costs about $0.36 in received video at 1080p against $0.18 at 720p, and 60 call minutes cost about $0.72 to record at Full HD against $0.36 at HD; a month of 500 such sessions adds about $90 of video and $180 of recording. Screen share is encoded once and counts as received video, so its 1080p default costs far less than raising every camera. Stream recording tops out at 1440p and the page does not offer 4K.
+Staff can raise call video, screen share and recording quality on the back-office Video quality page; the defaults are the cheapest sensible choice (720p calls, 720p recordings, 1080p screen share). Two charges move when quality rises. Received video is billed per participant-minute at the received resolution (section 1.5 covers the FAQ's publishing-or-receiving reading), so 1080p is $3.00 per 1,000 participant minutes against $1.50 at 720p. Recording is billed per call minute, so Full HD is $12 per 1,000 call-minutes against $6 for HD. A 60-minute consultation with two participants is 120 participant minutes, so it costs about $0.36 in received video at 1080p against $0.18 at 720p, and 60 call minutes cost about $0.72 to record at Full HD against $0.36 at HD; a month of 500 such sessions adds about $90 of video and $180 of recording. Screen share is encoded once and counts as received video, so its 1080p default costs far less than raising every camera. Stream recording tops out at 1440p and the page does not offer 4K.
 
 ---
 
