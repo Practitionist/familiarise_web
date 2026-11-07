@@ -40,8 +40,8 @@ Outbound Transactional & Ops (@mail.familiarisenow.com):
   noreply@mail.familiarisenow.com        -- Automated system notifications
   system@mail.familiarisenow.com         -- Familiarise Ops alerts (Reply-To: connect@practitionist.com)
 
-Outbound Bulk / Waitlist (@news.familiarisenow.com):
-  newsletter@news.familiarisenow.com     -- Waitlist confirmation, welcome & broadcasts
+Outbound Bulk / Newsletter (@news.familiarisenow.com):
+  newsletter@news.familiarisenow.com     -- Newsletter confirmation, welcome & broadcasts
 
 Inbound (practitionist.com):
   connect@practitionist.com              -- The one live mailbox (SUPPORT_EMAIL): Reply-To, support, contact, billing, grievance and compliance alerts
@@ -65,8 +65,8 @@ Inbound (practitionist.com):
 **Operational notes on the 100/day free cap:**
 
 - Each booking triggers confirmation emails to active participants plus pre-session reminders.
-- Waitlist broadcasts count toward the daily limit and use `FailedEmailBatch` chunking with `EmailSuppression` pre-filtering.
-- Delivery events (`email.bounced`, `email.complained`, `email.suppressed`, `contact.*`, `domain.*`) stream continuously on the free tier via `POST /api/webhooks/resend` into `EmailEvent`, `EmailSuppression`, `Waitlist`, and `SystemEvent`.
+- Newsletter broadcasts count toward the daily limit and use `FailedEmailBatch` chunking with `EmailSuppression` pre-filtering.
+- Delivery events (`email.bounced`, `email.complained`, `email.suppressed`, `contact.*`, `domain.*`) stream continuously on the free tier via `POST /api/webhooks/resend` into `EmailEvent`, `EmailSuppression`, `NewsletterSubscriber`, and `SystemEvent`.
 
 ### Novu (In-App Feed Orchestration)
 

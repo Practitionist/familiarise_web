@@ -230,7 +230,7 @@ lib/email/
 
 ### Stateless RFC 8058 Unsubscribe & Link-Scanner Protection
 
-1. **Stateless Token Signing (`lib/email/unsubscribe.ts` & `lib/waitlist/tokens.ts`)**:
+1. **Stateless Token Signing (`lib/email/unsubscribe.ts` & `lib/newsletter/tokens.ts`)**:
    - Lifecycle unsubscribe URLs (`/api/notifications/unsubscribe?u=<userId>&t=<token>`) and waitlist unsubscribe URLs (`/api/waitlist/unsubscribe?email=<email>&token=<token>`) use timeless HMAC signatures under `WAITLIST_HMAC_SECRET` with distinct domain-separated purposes so tokens never expire in older emails and cannot be replayed across subsystems.
 2. **Stateless Retry Header Reconstruction (`reconstructUnsubscribeHeaders`)**:
    - Because `FailedEmail` stores rendered HTML/text without a separate JSON headers column, `reconstructUnsubscribeHeaders(row)` inspects the persisted message body during `runEmailRetryTick`.

@@ -272,7 +272,7 @@ The compare-and-swap narrows to the status the caller read, so a trial accepted 
 
 ## Calendar Endpoint
 
-`GET /api/calendar/[appointmentId]?u=<userId>&t=<token>` serves one attendee's `.ics` for a booking, and it is the only booking endpoint that takes no session. The link comes from `calendarLinks` (`lib/appointments/calendar-links.ts`), which the booked email and the checkout success page render beside a Google Calendar template URL. The token is an HMAC over the appointment id and the user id with the purpose label `calendar-ics`, signed with the shared link secret (`signToken` in `lib/waitlist/tokens.ts`).
+`GET /api/calendar/[appointmentId]?u=<userId>&t=<token>` serves one attendee's `.ics` for a booking, and it is the only booking endpoint that takes no session. The link comes from `calendarLinks` (`lib/appointments/calendar-links.ts`), which the booked email and the checkout success page render beside a Google Calendar template URL. The token is an HMAC over the appointment id and the user id with the purpose label `calendar-ics`, signed with the shared link secret (`signToken` in `lib/newsletter/tokens.ts`).
 
 | Case                                                                        | Answer                                                |
 | --------------------------------------------------------------------------- | ----------------------------------------------------- |
