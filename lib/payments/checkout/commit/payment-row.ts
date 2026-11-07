@@ -9,6 +9,7 @@ import {
 import { PaymentStatus } from "@prisma/client";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { markEventWaitlistBooked } from "@/lib/booking/event-waitlist";
 import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
 import {
   assertSeatRemintable,
@@ -248,6 +249,14 @@ export async function writeCheckoutPayment(
     }
     if (skipPayment) {
       await transitionParticipant(tx, participantWhere, "CONFIRMED");
+      if (isEventSeat) {
+        await markEventWaitlistBooked(
+          tx,
+          createdAppointment.id,
+          userId,
+          new Date(),
+        );
+      }
     }
   }
   return payment;

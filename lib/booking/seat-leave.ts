@@ -44,6 +44,7 @@ import {
   withAppointmentLock,
 } from "@/utils/appointmentlock";
 import { revokeEndedEventChatAccess } from "@/lib/stream/access-revocation";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { BookingRuleError } from "./booking-rule-error";
 import {
   occurrenceRefundsPaise,
@@ -51,6 +52,10 @@ import {
   seriesLedger,
   type SeatLedger,
 } from "./class-series";
+import {
+  finishSeatOpenedNotices,
+  stageSeatOpenedNotices,
+} from "./event-waitlist";
 import { liveParticipant, releaseParticipant } from "./participants";
 import { inRetimeFreeLeave } from "./retime-leave";
 
@@ -419,6 +424,8 @@ export async function leaveEventSeat(args: {
   });
   if (!eventAppointment) return null;
   const keyPrefix = args.exit ? "seat-exit" : "seat-leave";
+  // Outside the retry, so a retried transaction re-stages the same notice keys.
+  const now = new Date();
   const released = await withAppointmentLock(eventAppointment.id, (lock) =>
     withSerializableRetry(async () => {
       await renewAppointmentLock(lock);
@@ -476,7 +483,12 @@ export async function leaveEventSeat(args: {
               "seat",
             );
           }
-          return { seat, plan, payment, owed };
+          const seatOpened = await stageSeatOpenedNotices(
+            tx,
+            seat.appointmentId,
+            now,
+          );
+          return { seat, plan, payment, owed, seatOpened };
         },
         {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -487,6 +499,11 @@ export async function leaveEventSeat(args: {
     }),
   );
   if (!released) return null;
+  // Scheduled before the refund, so a refund failure cannot drop the notice.
+  await scheduleAfter(
+    () => finishSeatOpenedNotices(released.seatOpened),
+    "seat-leave.seat-opened",
+  );
 
   const refund = await refundRemovedAttendeeSeat({
     kind: args.kind,
