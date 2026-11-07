@@ -205,7 +205,8 @@ const RATE_LIMIT_RULES: RateRule[] = [
     skipLocalhost: true,
   },
   {
-    // Keyed by IP, NOT by user.
+    // IP backstop only: the session cannot be validated at the edge, so the
+    // per-user limit is applied by the join route after authentication.
     label: "stream: meeting join",
     match: (p, m) => m === "POST" && /^\/api\/meetings\/[^/]+\/join$/.test(p),
     limiter: streamJoinLimiter,

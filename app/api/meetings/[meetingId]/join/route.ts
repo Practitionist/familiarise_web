@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { guardMeetingRoute } from "@/lib/meetings/route-guard";
+import { meetingJoinLimiter } from "@/lib/rate-limit";
 import { isOneToManyAppointmentType } from "@/lib/meetings/room-ready";
 import {
   getStreamVideoClient,
@@ -77,7 +78,11 @@ export async function POST(
 ) {
   let meetingIdForLog: string | undefined;
   try {
-    const guard = await guardMeetingRoute(params, "admit to");
+    const guard = await guardMeetingRoute(
+      params,
+      "admit to",
+      meetingJoinLimiter,
+    );
     if (!guard.ok) return guard.response;
     const { userId, meetingId, access } = guard;
     meetingIdForLog = meetingId;

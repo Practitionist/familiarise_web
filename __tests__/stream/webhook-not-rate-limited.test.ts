@@ -32,10 +32,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 
-const middleware = readFileSync(
-  join(process.cwd(), "middleware.ts"),
-  "utf8",
-);
+const middleware = readFileSync(join(process.cwd(), "middleware.ts"), "utf8");
 
 /** The `stream: api` rule's match predicate, lifted from the source. */
 function streamApiMatches(pathname: string): boolean {
@@ -67,12 +64,12 @@ describe("the stream: api rate-limit rule", () => {
     expect(middleware).toContain('!p.startsWith("/api/stream/webhooks")');
   });
 
-  it("does not claim the join rule is keyed per user", () => {
+  it("does not claim the edge join rule is keyed per user", () => {
     // `applyEdgeRateLimits` falls back to the client IP when a rule supplies no
-    // `key`, and the join rule supplies none. The comment used to assert
-    // per-user keying, which the code cannot do — this middleware is
-    // cookie-presence only, with no DB hit and no JWT parsing.
+    // `key`, and the join rule supplies none. This middleware is
+    // cookie-presence only, with no DB hit and no JWT parsing, so it cannot
+    // key by user; the per-user limit lives in the join route.
     expect(middleware).not.toContain("keyed per user by the shared");
-    expect(middleware).toContain("Keyed by IP, NOT by user");
+    expect(middleware).toContain("IP backstop only");
   });
 });
