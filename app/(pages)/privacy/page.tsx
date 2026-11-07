@@ -486,13 +486,14 @@ export default function PrivacyPolicyPage() {
                   </strong>{" "}
                   Application error monitoring, distributed tracing, and
                   reliability diagnostics. Under DPDP Rule 6(1)(a)
-                  de-identification safeguards, Familiarise configures{" "}
-                  <code>sendDefaultPii: false</code> and never transmits your
-                  name, email, phone number, or unmasked page text to Sentry;
-                  events are tagged solely with a one-way salted HMAC-SHA256
-                  virtual token (<code>ust_&lt;24-hex-chars&gt;</code>) and
-                  retained for 30–90 days to help our support and engineering
-                  teams diagnose technical issues you report.
+                  de-identification safeguards, Familiarise does not send Sentry
+                  your name, email address, phone number, IP address, cookies,
+                  request or response headers, or the text of the pages you
+                  view, and Sentry records no session replays; events are tagged
+                  solely with a one-way salted HMAC-SHA256 virtual token (
+                  <code>ust_&lt;24-hex-chars&gt;</code>) and retained for 30–90
+                  days to help our support and engineering teams diagnose
+                  technical issues you report.
                 </li>
               </ul>
 
