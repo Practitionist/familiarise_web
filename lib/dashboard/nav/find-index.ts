@@ -68,12 +68,15 @@ const SYNONYMS: Record<string, string[]> = {
 };
 
 // A tree's own words replace the shared ones for that page: an organization
-// sponsors programs rather than selling webinars, and its Library holds only
-// session documents and recordings.
+// sponsors programs rather than selling webinars, its Library holds only
+// session documents and recordings, and a learner's credits live in Billing.
 const TREE_SYNONYMS: Record<string, Record<string, string[]>> = {
   organization: {
     programs: ["sponsorship", "sponsor", "seats"],
     library: ["purchases", "recordings", "documents", "downloads"],
+  },
+  consultee: {
+    payments: ["invoice", "receipts", "charges", "credits"],
   },
 };
 

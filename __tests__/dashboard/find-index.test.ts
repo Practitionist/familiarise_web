@@ -86,6 +86,13 @@ describe("Find index", () => {
     expect(hits("ebooks")).toEqual(["/dashboard/consultee/ce-1/library"]);
   });
 
+  it("a learner's credits find Billing, where the credit history lives", () => {
+    const index = buildFindIndex({ nav: buildConsulteeNav("ce-1") });
+    const hits = filterFind(index, "credits").map((e) => e.href);
+    expect(hits).toContain("/dashboard/consultee/ce-1/payments");
+    expect(hits).toContain("/dashboard/consultee/ce-1/referrals");
+  });
+
   it("the old words still find the renamed pages", () => {
     const nav = buildOrganizationNav({
       orgId: "org-1",
