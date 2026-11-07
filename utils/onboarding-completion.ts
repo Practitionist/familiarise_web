@@ -9,7 +9,7 @@ import {
 import {
   subscribeForMarketingConsent,
   type ConsentProvenance,
-} from "@/lib/waitlist/consent-link";
+} from "@/lib/newsletter/consent-link";
 import type { OnboardingConsent } from "./onboarding";
 
 /**

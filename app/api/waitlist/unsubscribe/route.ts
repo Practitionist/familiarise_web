@@ -13,7 +13,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import { unsubscribe } from "@/lib/waitlist/service";
+import { unsubscribe } from "@/lib/newsletter/service";
 import { getAppUrl } from "@/lib/url";
 
 export function GET(request: NextRequest): Response {

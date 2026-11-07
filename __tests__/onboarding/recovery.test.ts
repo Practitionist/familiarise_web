@@ -29,7 +29,7 @@ const tx = {
     update: jest.fn(),
     findUniqueOrThrow: jest.fn(async () => ({ email: "user@example.com" })),
   },
-  waitlist: { upsert: jest.fn() },
+  newsletterSubscriber: { upsert: jest.fn() },
   consulteeProfile: { upsert: jest.fn() },
 };
 jest.mock("../../lib/prisma", () => ({

@@ -17,7 +17,10 @@ import { UNSETTLED } from "@/lib/retry/provider-window";
 /** The provider may already hold the batch's key, so its other recipients need an operator. */
 export const ERASED_BATCH_REVIEW = "review:erased_recipient";
 
-type MailTx = Pick<Tx, "waitlist" | "failedEmail" | "failedEmailBatch">;
+type MailTx = Pick<
+  Tx,
+  "newsletterSubscriber" | "failedEmail" | "failedEmailBatch"
+>;
 
 export interface MailFootprintScrub {
   waitlistDeleted: number;
@@ -48,7 +51,7 @@ export async function scrubMailFootprintTx(
     OR: [{ deliveryUserId: input.userId }, { recipient: sameAddress }],
   };
 
-  const waitlist = await tx.waitlist.deleteMany({
+  const waitlist = await tx.newsletterSubscriber.deleteMany({
     where: { OR: [{ userId: input.userId }, { email: sameAddress }] },
   });
   const emails = await tx.failedEmail.updateMany({
@@ -113,7 +116,7 @@ async function scrubBatches(
     "batchesNarrowed" | "batchesDeadLettered" | "settledBatchesScrubbed"
   >
 > {
-  // Batch addresses come from `Waitlist.email`, which is stored normalised.
+  // Batch addresses come from `NewsletterSubscriber.email`, which is stored normalised.
   const rows = await tx.failedEmailBatch.findMany({
     where: { payload: { array_contains: [{ to: email }] } },
     select: { id: true, status: true, payload: true, firstAttemptAt: true },

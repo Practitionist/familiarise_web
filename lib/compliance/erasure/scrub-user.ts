@@ -20,11 +20,11 @@
  *   SessionAccessLog.userId → NULL; IP, user agent and times stay until the
  *   180-day prune (CERT-In Directions, a legal obligation under DPDP s.17).
  *
- *   Waitlist rows (by userId or address) → deleted. Queued FailedEmail rows
- *   → DEAD_LETTER `policy:recipient_erased`, subject and bodies redacted;
- *   every FailedEmail row's recipient → an `erased:` digest; every
- *   FailedEmailBatch loses the address. EmailSuppression stays so the address
- *   remains unmailable.
+ *   NewsletterSubscriber rows (by userId or address) → deleted. Queued
+ *   FailedEmail rows → DEAD_LETTER `policy:recipient_erased`, subject and
+ *   bodies redacted; every FailedEmail row's recipient → an `erased:` digest;
+ *   every FailedEmailBatch loses the address. EmailSuppression stays so the
+ *   address remains unmailable.
  *
  *   PayoutAccount holder name, bank name, last-4, IFSC and UPI id → NULL;
  *   the RazorpayX fund account and contact are deactivated, and the

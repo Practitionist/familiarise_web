@@ -5,7 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import { paidParticipant } from "@/lib/booking/participants";
 import { getAppUrl } from "@/lib/url";
-import { canSignLinks, safeEquals, signToken } from "@/lib/waitlist/tokens";
+import { canSignLinks, safeEquals, signToken } from "@/lib/newsletter/tokens";
 import { sessionEnd, stamp } from "./ics";
 
 const PURPOSE = "calendar-ics";

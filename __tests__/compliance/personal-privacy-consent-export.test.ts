@@ -46,7 +46,7 @@ jest.mock("../../lib/prisma", () => ({
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(async () => ({ email: "User@Example.com" })),
     },
-    waitlist: {
+    newsletterSubscriber: {
       upsert: jest.fn(),
       updateMany: jest.fn(async () => ({ count: 1 })),
     },
@@ -110,7 +110,7 @@ const mockPrisma = prisma as unknown as {
     updateMany: jest.Mock;
   };
   user: { findUnique: jest.Mock };
-  waitlist: { upsert: jest.Mock; updateMany: jest.Mock };
+  newsletterSubscriber: { upsert: jest.Mock; updateMany: jest.Mock };
   payment: { findMany: jest.Mock };
   supportCase: { findMany: jest.Mock };
   membership: { findMany: jest.Mock };
@@ -203,7 +203,7 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
         confirmedAt: expect.any(Date),
         unsubscribedAt: null,
       };
-      expect(mockPrisma.waitlist.upsert).toHaveBeenCalledWith({
+      expect(mockPrisma.newsletterSubscriber.upsert).toHaveBeenCalledWith({
         where: { email: "user@example.com" },
         create: expect.objectContaining({
           email: "user@example.com",
@@ -226,7 +226,7 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
       expect(res.status).toBe(400);
       expect((await res.json()).code).toBe("PURPOSE_NOT_OFFERED");
       expect(mockPrisma.consentArtifact.create).not.toHaveBeenCalled();
-      expect(mockPrisma.waitlist.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.newsletterSubscriber.upsert).not.toHaveBeenCalled();
     });
 
     it("blocks direct withdrawal of core platform purpose PRIMARY_PROCESSING with 400 CORE_CONSENT_REQUIRES_ACCOUNT_CLOSURE", async () => {
@@ -257,7 +257,7 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
         { userId: "user_dpdp_1", purposeCode: "MARKETING_COMMS" },
         mockPrisma,
       );
-      expect(mockPrisma.waitlist.updateMany).toHaveBeenCalledWith({
+      expect(mockPrisma.newsletterSubscriber.updateMany).toHaveBeenCalledWith({
         where: {
           OR: [{ userId: "user_dpdp_1" }, { email: "user@example.com" }],
           status: { in: ["PENDING", "SUBSCRIBED"] },

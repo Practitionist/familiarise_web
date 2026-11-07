@@ -2,7 +2,7 @@
 
 import { headers } from "next/headers";
 import prisma from "@/lib/prisma";
-import { consentProvenance } from "@/lib/waitlist/consent-link";
+import { consentProvenance } from "@/lib/newsletter/consent-link";
 import { getSession } from "@/lib/auth-server";
 import { applyRateLimit, onboardingSubmitLimiter } from "@/lib/rate-limit";
 import { OnboardingGateSchema } from "@/utils/onboarding";

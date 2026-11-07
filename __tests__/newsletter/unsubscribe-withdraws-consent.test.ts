@@ -16,7 +16,7 @@ const mockCaptureException = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    waitlist: {
+    newsletterSubscriber: {
       updateMany: (...args: unknown[]) => mockUpdateMany(...args),
       findUnique: (...args: unknown[]) => mockFindUnique(...args),
     },
@@ -34,13 +34,13 @@ jest.mock("@sentry/nextjs", () => ({
   captureException: (...args: unknown[]) => mockCaptureException(...args),
   captureMessage: jest.fn(),
 }));
-jest.mock("../../lib/waitlist/tokens", () => ({
+jest.mock("../../lib/newsletter/tokens", () => ({
   canSignLinks: () => true,
   verifyConfirmToken: jest.fn(),
   verifyUnsubscribeToken: () => true,
 }));
 
-import { unsubscribe } from "../../lib/waitlist/service";
+import { unsubscribe } from "../../lib/newsletter/service";
 
 const tx = { consentArtifact: {} };
 

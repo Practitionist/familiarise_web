@@ -43,7 +43,7 @@ import type {
   OccurrenceOutcome,
   ParticipantStatus,
   TrialStatus,
-  WaitlistStatus,
+  NewsletterStatus,
   WebinarStatus,
 } from "@prisma/client";
 import { humanizeEnum } from "@/lib/ui/tone";
@@ -259,10 +259,13 @@ export const slotStatusBadge = (
   status: OccurrenceCompletionStatus | string | null | undefined,
 ): StatusBadgeStyle => resolve(SLOT_STATUS_BADGE, status);
 
-// ───────────────────────────── WaitlistStatus ─────────────────────────────
+// ───────────────────────────── NewsletterStatus ─────────────────────────────
 // Newsletter subscription lifecycle, not event capacity.
 
-export const WAITLIST_STATUS_BADGE: Record<WaitlistStatus, StatusBadgeStyle> = {
+export const NEWSLETTER_STATUS_BADGE: Record<
+  NewsletterStatus,
+  StatusBadgeStyle
+> = {
   PENDING: {
     label: "Awaiting confirmation",
     className: "bg-amber-100 text-amber-900 border-amber-200",
@@ -285,9 +288,9 @@ export const WAITLIST_STATUS_BADGE: Record<WaitlistStatus, StatusBadgeStyle> = {
   },
 };
 
-export const waitlistStatusBadge = (
-  status: WaitlistStatus | string | null | undefined,
-): StatusBadgeStyle => resolve(WAITLIST_STATUS_BADGE, status);
+export const newsletterStatusBadge = (
+  status: NewsletterStatus | string | null | undefined,
+): StatusBadgeStyle => resolve(NEWSLETTER_STATUS_BADGE, status);
 
 // ───────────────────────────── DocumentReviewStatus ─────────────────────────────
 
@@ -367,9 +370,7 @@ export const recordingStatusBadge = (
 // exist against the payment).
 
 export type PaymentDisplayStatus =
-  | PaymentStatus
-  | "REFUNDED"
-  | "PARTIALLY_REFUNDED";
+  PaymentStatus | "REFUNDED" | "PARTIALLY_REFUNDED";
 
 export const PAYMENT_STATUS_BADGE: Record<
   PaymentDisplayStatus,

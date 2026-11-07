@@ -76,7 +76,7 @@ model User {
   rescheduleTimesProposed     RescheduleProposedTime[] @relation("ProposedTimeAuthor")
 
   // Newsletter signup, when the subscriber was signed in at the time.
-  waitlistSubscriptions Waitlist[]
+  newsletterSubscriptions NewsletterSubscriber[]
 
   // Platform feedback and support
   platformFeedback    PlatformFeedback[]
@@ -4719,17 +4719,15 @@ model Topic {
   updatedAt DateTime @updatedAt
 }
 
-// Newsletter / marketing email list. Named `Waitlist` because that is what the
-// signup is called end-user side ("join the waitlist"); it has nothing to do
-// with event capacity — a full webinar or class is simply sold out.
-model Waitlist {
+// Newsletter / marketing email list; the table name `Waitlist` is historical.
+model NewsletterSubscriber {
   id    String  @id @default(uuid())
   email String  @unique
   name  String?
 
-  status WaitlistStatus @default(PENDING)
-  source WaitlistSource @default(FOOTER)
-  tags   String[]       @default([])
+  status NewsletterStatus @default(PENDING)
+  source NewsletterSource @default(FOOTER)
+  tags   String[]         @default([])
 
   // Set when a signed-in user subscribes. SetNull so deleting the account does
   // not resurrect an address that had already been suppressed.
@@ -4750,22 +4748,27 @@ model Waitlist {
   @@index([status, createdAt])
   @@index([source])
   @@index([userId])
+  @@map("Waitlist")
 }
 
-enum WaitlistStatus {
+enum NewsletterStatus {
   PENDING // Signed up, confirmation email sent, not yet confirmed
   SUBSCRIBED
   UNSUBSCRIBED
   BOUNCED
+
+  @@map("WaitlistStatus")
 }
 
-enum WaitlistSource {
+enum NewsletterSource {
   LANDING_PAGE
   FOOTER
   BLOG
   USE_CASE_PAGE
   EVENT_SOLD_OUT
   IMPORT
+
+  @@map("WaitlistSource")
 }
 
 // #1778 — "Notify me if this time opens": a learner's interest in a 1:1 window

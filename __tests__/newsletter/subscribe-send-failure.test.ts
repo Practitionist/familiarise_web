@@ -20,7 +20,7 @@ const mockSendConfirm = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    waitlist: {
+    newsletterSubscriber: {
       findUnique: (...args: unknown[]) => mockFindUnique(...args),
       upsert: (...args: unknown[]) => mockUpsert(...args),
     },
@@ -42,13 +42,13 @@ jest.mock("@sentry/nextjs", () => ({
   captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
 
-jest.mock("../../lib/waitlist/tokens", () => ({
+jest.mock("../../lib/newsletter/tokens", () => ({
   canSignLinks: () => true,
   verifyConfirmToken: jest.fn(),
   verifyUnsubscribeToken: jest.fn(),
 }));
 
-import { subscribe } from "../../lib/waitlist/service";
+import { subscribe } from "../../lib/newsletter/service";
 
 const input = { email: "Reader@Example.com ", source: "FOOTER" as never };
 

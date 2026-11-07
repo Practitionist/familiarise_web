@@ -1,7 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
-import { consentProvenance } from "@/lib/waitlist/consent-link";
+import { consentProvenance } from "@/lib/newsletter/consent-link";
 import {
   addConsultantIdentity,
   processOnboardingData,

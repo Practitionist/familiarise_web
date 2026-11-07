@@ -2,7 +2,7 @@
  * Stateless unsubscribe links for lifecycle email.
  *
  * The token is an HMAC over the user id under the same secret the newsletter
- * links use (`lib/waitlist/tokens.ts`), bound to its own purpose so a
+ * links use (`lib/newsletter/tokens.ts`), bound to its own purpose so a
  * newsletter token cannot be replayed against an account and vice versa.
  * Timeless on purpose: a footer link in a year-old email must still work, and
  * RFC 8058 one-click depends on it.
@@ -18,7 +18,7 @@ import {
   canSignLinks,
   safeEquals,
   signToken,
-} from "@/lib/waitlist/tokens";
+} from "@/lib/newsletter/tokens";
 
 const PURPOSE = "email-unsubscribe";
 const NOTIFICATION_UNSUBSCRIBE_RE =

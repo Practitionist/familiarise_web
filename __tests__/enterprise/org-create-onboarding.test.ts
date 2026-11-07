@@ -36,7 +36,7 @@ const tx = {
     }),
     findUniqueOrThrow: jest.fn(async () => ({ email: "owner@example.com" })),
   },
-  waitlist: { upsert: jest.fn() },
+  newsletterSubscriber: { upsert: jest.fn() },
   organization: {
     findUnique: jest.fn(async () => null),
     create: jest.fn(async (args: { data: { id: string; name: string } }) => {

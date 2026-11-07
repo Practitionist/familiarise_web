@@ -96,7 +96,7 @@ describe("canSignLinks", () => {
     setNodeEnv("production");
     delete process.env.WAITLIST_HMAC_SECRET;
 
-    const { canSignLinks } = await import("../../lib/waitlist/tokens");
+    const { canSignLinks } = await import("../../lib/newsletter/tokens");
     expect(canSignLinks()).toBe(false);
   });
 
@@ -104,7 +104,7 @@ describe("canSignLinks", () => {
     setNodeEnv("production");
     process.env.WAITLIST_HMAC_SECRET = "test-secret-value";
 
-    const { canSignLinks } = await import("../../lib/waitlist/tokens");
+    const { canSignLinks } = await import("../../lib/newsletter/tokens");
     expect(canSignLinks()).toBe(true);
   });
 });

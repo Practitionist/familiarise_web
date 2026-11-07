@@ -5,7 +5,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { WaitlistStatus } from "@prisma/client";
+import { NewsletterStatus } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import { stampedClientIp } from "@/lib/request-ip";
 
@@ -17,14 +17,14 @@ export function hashIp(ip: string | null | undefined): string | null {
     .digest("hex");
 }
 
-export function normalizeWaitlistEmail(email: string): string {
+export function normalizeNewsletterEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
 /** Marks a row first created by an account's consent grant rather than a public sign-up form. */
 export const ACCOUNT_CONSENT_TAG = "account-consent";
 
-type WaitlistTx = Pick<Tx, "waitlist">;
+type NewsletterTx = Pick<Tx, "newsletterSubscriber">;
 
 /** The request a consent grant came from; the IP is the middleware-stamped one. */
 export interface ConsentProvenance {
@@ -46,7 +46,7 @@ export function consentProvenance(headers: {
  * artifact is the evidence, so no double-opt-in email is sent.
  */
 export async function subscribeForMarketingConsent(
-  tx: WaitlistTx,
+  tx: NewsletterTx,
   input: {
     userId: string;
     email: string;
@@ -54,16 +54,16 @@ export async function subscribeForMarketingConsent(
     provenance: ConsentProvenance;
   },
 ): Promise<void> {
-  const email = normalizeWaitlistEmail(input.email);
+  const email = normalizeNewsletterEmail(input.email);
   const fields = {
     userId: input.userId,
-    status: WaitlistStatus.SUBSCRIBED,
+    status: NewsletterStatus.SUBSCRIBED,
     confirmedAt: input.now,
     unsubscribedAt: null,
     consentIpHash: hashIp(input.provenance.ip),
     consentUserAgent: input.provenance.userAgent?.slice(0, 500) ?? null,
   };
-  await tx.waitlist.upsert({
+  await tx.newsletterSubscriber.upsert({
     where: { email },
     create: { email, tags: [ACCOUNT_CONSENT_TAG], ...fields },
     update: fields,
@@ -72,18 +72,18 @@ export async function subscribeForMarketingConsent(
 
 /** Unsubscribes the account's rows, by link or by address, in the withdrawal's transaction. */
 export async function unsubscribeForWithdrawnConsent(
-  tx: WaitlistTx,
+  tx: NewsletterTx,
   input: { userId: string; email: string; now: Date },
 ): Promise<number> {
-  const { count } = await tx.waitlist.updateMany({
+  const { count } = await tx.newsletterSubscriber.updateMany({
     where: {
       OR: [
         { userId: input.userId },
-        { email: normalizeWaitlistEmail(input.email) },
+        { email: normalizeNewsletterEmail(input.email) },
       ],
-      status: { in: [WaitlistStatus.PENDING, WaitlistStatus.SUBSCRIBED] },
+      status: { in: [NewsletterStatus.PENDING, NewsletterStatus.SUBSCRIBED] },
     },
-    data: { status: WaitlistStatus.UNSUBSCRIBED, unsubscribedAt: input.now },
+    data: { status: NewsletterStatus.UNSUBSCRIBED, unsubscribedAt: input.now },
   });
   return count;
 }
