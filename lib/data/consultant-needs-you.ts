@@ -1,5 +1,9 @@
 import "server-only";
 
+import {
+  LIVE_CLASS_COLLABORATOR,
+  LIVE_WEBINAR_COLLABORATOR,
+} from "@/lib/collaborators/live-plan";
 import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
@@ -10,6 +14,7 @@ import {
   missedAt,
 } from "@/lib/booking/misses";
 import { countRequestsToAnswer } from "@/lib/data/needs-you";
+import { countReviewsNeedingReply } from "@/lib/reviews-needs-reply";
 
 /**
  * #1527 §7.2 — the consultant Home's "Needs you" strip: only what is blocked
@@ -33,6 +38,10 @@ export interface ConsultantNeedsYou {
   }[];
   /** Learner uploads waiting on this consultant's review. */
   documentsAwaitingReview: number;
+  /** Collaboration invitations this consultant has not answered. */
+  collabInvites: number;
+  /** Live reviews with no reply from this consultant. */
+  reviewsToReply: number;
 }
 
 const DAY_MS = 86_400_000;
@@ -151,11 +160,22 @@ export async function readConsultantNeedsYou(
       appointment: personalOneToOne(consultantProfileId),
     },
   });
+  // Same live-plan predicate as the Collaborations page, so the count matches what Respond opens.
+  const collabInvites = await prisma.collaborator.count({
+    where: {
+      consultantProfileId,
+      status: "PENDING",
+      OR: [LIVE_WEBINAR_COLLABORATOR, LIVE_CLASS_COLLABORATOR],
+    },
+  });
+  const reviewsToReply = await countReviewsNeedingReply(consultantProfileId);
   return {
     requestsToAnswer,
     rescheduleReplies,
     owedMakeUps,
     documentsAwaitingReview,
+    collabInvites,
+    reviewsToReply,
   };
 }
 

@@ -9,7 +9,7 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { toneBadge } from "@/lib/dashboard/money-state";
 import { caseKeyOf } from "@/lib/support/case-key";
-import { paymentLegLabel } from "@/lib/labels/payment-leg-labels";
+import { formatFundingBreakdown } from "@/lib/appointments/payment-display";
 import { humanizeEnum, toneTextClass } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type { ConsulteePaymentDetail } from "@/lib/data/consultee-payment-detail";
@@ -45,15 +45,13 @@ function chargeFacts(detail: ConsulteePaymentDetail, money: Money) {
       label: detail.coPays.length > 1 ? `Your share ${i + 1}` : "Your share",
       value: formatCurrencyAmount(c.amountPaise, c.currency),
     })),
-    ...(detail.showAmount && detail.legs.length > 1
+    ...(detail.showAmount &&
+    row.status === "SUCCEEDED" &&
+    row.fundingBreakdown.length > 1
       ? [
           {
             label: "Paid with",
-            value: detail.legs
-              .map(
-                (l) => `${paymentLegLabel(l.source)} ${money(l.amountPaise)}`,
-              )
-              .join(" · "),
+            value: formatFundingBreakdown(row.fundingBreakdown, row.currency),
           },
         ]
       : []),

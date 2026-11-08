@@ -423,6 +423,8 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
       "ResizeObserver loop limit exceeded",
       "ResizeObserver loop completed with undelivered notifications",
       /Non-Error promise rejection captured/,
+      // A malformed client router-state header is not a server fault.
+      "The router state header was sent but could not be parsed",
     ],
 
     // Events whose top stack frame originates in an injected extension script

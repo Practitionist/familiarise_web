@@ -600,6 +600,12 @@ const BUSINESS_ERROR_ENTRIES = [
     httpStatus: 409,
     userMessage: "This plan isn't available to book right now.",
   },
+  // A non-marketplace plan bought outside the org that offers it.
+  {
+    code: "PLAN_NOT_AVAILABLE_TO_ORG",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 409,
+  },
   {
     code: "PAYMENT_LINK_FAILED",
     errorType: ErrorTypes.BOOKING_RULE,

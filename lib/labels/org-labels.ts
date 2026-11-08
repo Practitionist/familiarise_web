@@ -22,13 +22,20 @@
 
 import type {
   AppointmentsType,
+  ContractStatus,
+  ContractSupersessionReason,
+  CoveredPlanType,
   FundingSource,
   MemberRole,
   MemberStatus,
   OrgAuditCategory,
   OrgDirectoryType,
+  OrgInvoiceStatus,
   OrgSizeBucket,
   OrgStatus,
+  PayoutRecipient,
+  PayoutStatus,
+  PoStatus,
   ProgramStatus,
   ProgramType,
 } from "@prisma/client";
@@ -106,6 +113,13 @@ export const SESSION_TYPE_LABEL: Record<AppointmentsType, string> = {
   TRIAL: "Trial session",
 };
 
+export const COVERED_PLAN_TYPE_LABEL: Record<CoveredPlanType, string> = {
+  CONSULTATION: "Consultation",
+  CLASS: "Class",
+  WEBINAR: "Webinar",
+  SUBSCRIPTION: "Subscription",
+};
+
 export const ORG_AUDIT_CATEGORY_LABEL: Record<OrgAuditCategory, string> = {
   MEMBER: "Member",
   CONTRACT: "Contract",
@@ -119,6 +133,65 @@ export const ORG_AUDIT_CATEGORY_LABEL: Record<OrgAuditCategory, string> = {
   WEBHOOK: "Webhook",
   SYSTEM: "System",
 };
+
+// ───────────────────────────── Contract, PO, invoice, payout ─────────────────────────────
+
+export const CONTRACT_STATUS_LABEL: Record<ContractStatus, string> = {
+  DRAFT: "Draft",
+  ACTIVE: "Active",
+  EXPIRED: "Expired",
+  TERMINATED: "Terminated",
+};
+
+export const CONTRACT_SUPERSESSION_REASON_LABEL: Record<
+  ContractSupersessionReason,
+  string
+> = {
+  AMENDMENT: "Amendment",
+  RENEWAL: "Renewal",
+  TERMINATION_REPLACEMENT: "Replacement after termination",
+};
+
+export const PURCHASE_ORDER_STATUS_LABEL: Record<PoStatus, string> = {
+  ACTIVE: "Active",
+  CLOSED: "Closed",
+  CANCELLED: "Cancelled",
+};
+
+export const ORG_INVOICE_STATUS_LABEL: Record<OrgInvoiceStatus, string> = {
+  DRAFT: "Draft",
+  ISSUED: "Issued",
+  PAID: "Paid",
+  OVERDUE: "Overdue",
+  VOID: "Void",
+  CANCELLED: "Cancelled",
+  REFUNDED: "Refunded",
+};
+
+export const ORG_PAYOUT_STATUS_LABEL: Record<PayoutStatus, string> = {
+  PENDING: "Pending approval",
+  APPROVED: "Approved",
+  PROCESSING: "Processing",
+  COMPLETED: "Completed",
+  FAILED: "Failed",
+  CANCELLED: "Cancelled",
+  REVERSED: "Reversed",
+};
+
+export const PAYOUT_RECIPIENT_NAME: Record<PayoutRecipient, string> = {
+  SELF: "The expert",
+  ORGANIZATION: "The organisation",
+};
+
+/** A date as audit prose reads it: India time, "8 Nov 2026". */
+export function formatAuditDate(date: Date): string {
+  return date.toLocaleDateString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
 
 // ───────────────────────────── Program ─────────────────────────────
 
@@ -451,3 +524,25 @@ export function selectFallbackOrgMembership<T extends FallbackOrgCandidate>(
   }
   return best;
 }
+
+// ─────────────────── Org payout and invoice audit copy ───────────────────
+
+/** TDS sections in statutory spelling; the stored column is a free string. */
+const TDS_SECTION_LABEL: Record<string, string> = {
+  "194O": "Section 194-O",
+  "393-8(v)": "Section 393(1) Table Sl. 8(v)",
+  "194J": "Section 194J",
+  "194C": "Section 194C",
+  "195": "Section 195",
+};
+
+export function tdsSectionLabel(section: string | null | undefined): string {
+  if (!section) return "an unrecorded section";
+  return TDS_SECTION_LABEL[section] ?? `Section ${section}`;
+}
+
+/** How a voided org invoice is settled, as an audit sentence ending. */
+export const INVOICE_VOID_MODE_LABEL: Record<"REBILL" | "FORGIVE", string> = {
+  REBILL: "for re-billing",
+  FORGIVE: "and written off",
+};

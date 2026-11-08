@@ -10,7 +10,7 @@
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
 import { resolveEffectiveRateCard } from "@/lib/api/organizations/rate-card";
-import type { PayoutRecipient } from "@prisma/client";
+import type { CoveredPlanType, PayoutRecipient } from "@prisma/client";
 
 // #1270 — the shared HOST window (15 min), not the learner's 10. This surface
 // is the expert's own per-org view and used to hold a local 10-minute copy, so
@@ -25,6 +25,53 @@ function rateCardSource(
 ): "platformDefault" | "yours" | "orgDefault" {
   if (appliedId === null) return "platformDefault";
   return appliedId === overrideId ? "yours" : "orgDefault";
+}
+
+const SCOPED_CARD_TAKE = 20;
+
+/** Titles of the plans a plan-scoped card names, read within this org only. */
+async function scopedPlanTitles(
+  orgId: string,
+  cards: { planType: CoveredPlanType | null; planId: string | null }[],
+): Promise<Map<string, string>> {
+  const idsOf = (type: CoveredPlanType) =>
+    cards.flatMap((c) => (c.planType === type && c.planId ? [c.planId] : []));
+  const where = (ids: string[]) => ({
+    id: { in: ids },
+    organizationId: orgId,
+  });
+  const select = { id: true, title: true } as const;
+  const titles = new Map<string, string>();
+  const add = (rows: { id: string; title: string }[]) =>
+    rows.forEach((r) => titles.set(r.id, r.title));
+
+  const consultation = idsOf("CONSULTATION");
+  if (consultation.length > 0) {
+    add(
+      await prisma.consultationPlan.findMany({
+        where: where(consultation),
+        select,
+      }),
+    );
+  }
+  const subscription = idsOf("SUBSCRIPTION");
+  if (subscription.length > 0) {
+    add(
+      await prisma.subscriptionPlan.findMany({
+        where: where(subscription),
+        select,
+      }),
+    );
+  }
+  const webinar = idsOf("WEBINAR");
+  if (webinar.length > 0) {
+    add(await prisma.webinarPlan.findMany({ where: where(webinar), select }));
+  }
+  const klass = idsOf("CLASS");
+  if (klass.length > 0) {
+    add(await prisma.classPlan.findMany({ where: where(klass), select }));
+  }
+  return titles;
 }
 
 export async function getMyArrangementData(params: {
@@ -61,6 +108,80 @@ export async function getMyArrangementData(params: {
     effectiveFrom: appliedCard?.effectiveFrom ?? null,
     source: rateCardSource(resolved.rateCardId, rateCardOverrideId),
   };
+
+  // Read-only list of the narrower cards that can apply to this expert's
+  // bookings. A membership override outranks every scoped card in
+  // settlement, so none of them can apply while it does.
+  const overrideWins = rateCard.source === "yours";
+  const scopedCards = overrideWins
+    ? []
+    : await prisma.rateCard.findMany({
+        where: {
+          id: {
+            notIn: [resolved.rateCardId, rateCardOverrideId].filter(
+              (id): id is string => id !== null,
+            ),
+          },
+          effectiveFrom: { lte: now },
+          AND: [
+            { OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }] },
+            {
+              OR: [
+                {
+                  ownerOrgId: orgId,
+                  OR: [{ planType: { not: null } }, { planId: { not: null } }],
+                },
+                { ownerContract: { organizationId: orgId, status: "ACTIVE" } },
+              ],
+            },
+          ],
+        },
+        orderBy: { effectiveFrom: "desc" },
+        take: SCOPED_CARD_TAKE,
+        select: {
+          id: true,
+          planType: true,
+          planId: true,
+          platformBps: true,
+          orgBps: true,
+          consultantBps: true,
+          effectiveFrom: true,
+          ownerContract: { select: { effectiveFrom: true } },
+        },
+      });
+  const planTitles = await scopedPlanTitles(orgId, scopedCards);
+  const scopedRateCards = scopedCards.map((card) => {
+    const base = {
+      id: card.id,
+      platformBps: card.platformBps,
+      orgBps: card.orgBps,
+      consultantBps: card.consultantBps,
+    };
+    if (card.ownerContract) {
+      return {
+        ...base,
+        scope: "contract" as const,
+        contractEffectiveFrom: card.ownerContract.effectiveFrom,
+        planType: card.planType,
+        planTitle: card.planId ? (planTitles.get(card.planId) ?? null) : null,
+        planSpecific: card.planId !== null,
+      };
+    }
+    if (card.planId) {
+      return {
+        ...base,
+        scope: "plan" as const,
+        planType: card.planType,
+        planTitle: planTitles.get(card.planId) ?? null,
+      };
+    }
+    return {
+      ...base,
+      scope: "planType" as const,
+      planType: card.planType,
+      planTitle: null,
+    };
+  });
 
   const payoutAccount =
     payoutRecipient === "ORGANIZATION"
@@ -192,9 +313,7 @@ export async function getMyArrangementData(params: {
     : [];
 
   const upcomingSessions = hostedSessions
-    .filter(
-      (a) => a.occurrences.length > 0 && !a.consultation?.cancelledAt,
-    )
+    .filter((a) => a.occurrences.length > 0 && !a.consultation?.cancelledAt)
     .map((a) => {
       const slot = a.occurrences[0];
       const learner =
@@ -205,7 +324,9 @@ export async function getMyArrangementData(params: {
       const startMs = new Date(slot.startsAt).getTime();
       const endMs = new Date(slot.endsAt).getTime();
       const joinable =
-        !slot.isTentative && nowMs >= startMs - CONSULTANT_JOIN_WINDOW_MS && nowMs <= endMs;
+        !slot.isTentative &&
+        nowMs >= startMs - CONSULTANT_JOIN_WINDOW_MS &&
+        nowMs <= endMs;
       return {
         id: a.id,
         type: a.appointmentType,
@@ -221,5 +342,11 @@ export async function getMyArrangementData(params: {
     );
 
   // toPlain — rateCard/earnings rows carry an inspect symbol (see serialize.ts)
-  return toPlain({ rateCard, payoutAccount, earnings, upcomingSessions });
+  return toPlain({
+    rateCard,
+    scopedRateCards,
+    payoutAccount,
+    earnings,
+    upcomingSessions,
+  });
 }

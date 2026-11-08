@@ -67,6 +67,8 @@ const toIsoDate = (value: unknown): string | null | undefined => {
 export interface OfferingSaveContext {
   instanceId?: string;
   instanceStatus?: string | null;
+  /** False when the capacity equals what the editor loaded; the update then omits it. */
+  capacityEdited?: boolean;
 }
 
 export interface OfferingAdapter {
@@ -154,6 +156,16 @@ const eventStatus = (
   const status = values.status === "DRAFT" ? "DRAFT" : "SCHEDULED";
   const isUpdate = typeof values.id === "string" && values.id !== "";
   return !isUpdate || ctx?.instanceStatus === "DRAFT" ? { status } : {};
+};
+
+/** An update with an untouched capacity sends none, so a stale load cannot move it. */
+export const withoutUntouchedCapacity = (
+  values: Record<string, unknown>,
+  ctx: OfferingSaveContext | undefined,
+): Record<string, unknown> => {
+  if (ctx?.capacityEdited !== false) return values;
+  const { maxParticipants: _untouched, ...rest } = values;
+  return rest;
 };
 
 /** Copies carry no row ids, so saving one creates fresh plan children. */
@@ -293,7 +305,7 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
         {
           id: ctx?.instanceId,
           ...eventStatus(values, ctx),
-          webinarPlan: values,
+          webinarPlan: withoutUntouchedCapacity(values, ctx),
         } as never,
         (values.scheduledAt as string | Date | null) ?? null,
         consultantId,
@@ -344,7 +356,7 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
         {
           id: ctx?.instanceId,
           ...eventStatus(values, ctx),
-          classPlan: values,
+          classPlan: withoutUntouchedCapacity(values, ctx),
         } as never,
         consultantId,
         toIsoDate(values.schedulingStartDate),

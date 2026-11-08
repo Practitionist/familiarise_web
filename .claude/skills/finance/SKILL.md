@@ -20,6 +20,7 @@ This is the index for the finance domain: how money truth is written and proven 
 - Write money truth in one Serializable transaction per event; guard every status transition with CAS-in-WHERE.
 - Confirm gateway captures through the single confirmation pipeline, routed by `routeCapturedPayment`.
 - Let the deferred payment-leg trigger enforce the funding sum; exclude `REFERRAL_CREDIT`, which is already netted out of `Payment.amount`.
+- Show the payer's rail from the funding legs, never from `Payment.paymentMethod`, which is a fallback for a row with no legs only. Use `paymentRailLabel` and `paymentFundingBreakdown` in `lib/appointments/payment-display.ts`; do not add a second leg-wording map.
 - Treat the immutable double-entry journal as authoritative. Wallet balances are reconciled caches; account balances are journal aggregates.
 - Advance both scheduled and authenticated manual ledger audits through the same bounded `runReconcileLedgers` core and fail-closed lease. Continue idle checkpoints; authenticated manual calls can refresh a completed verdict on the same day. Never re-freeze historical findings on resume or label an incomplete report as drift. Evaluate exception expiry at save time, not the audit start. Each comparison uses one read-only Repeatable Read snapshot. Partial reports remain RUNNING; missing BOOKING findings and baselines pin paymentId. Freeze each wallet page immediately, release a frozen wallet the page finds back in sync, and deduplicate the fatal page by billing account. See `docs/finance/20-ledger/06-integrity-and-reconciliation.md` for operation and resumption.
 - Reserve refunds before any gateway call. Booking refunds use `refundBookingPayment`, `refundWholeEventPayments` or `refundRemovedAttendeeSeat`; wallet top-up refunds use `refundRemainingWalletBalance` or `bookTopUpRefund`. Support and incident paths enter through the booking refund door.
@@ -40,6 +41,16 @@ Detailed invariants and regime facts live in `references/doctrine.md`; verificat
 - Digital product earnings use `DIGITAL_PRODUCT` (168 h hold); the invoice SAC comes from `DIGITAL_PRODUCT_SAC_CODES` in `lib/payments/payouts/constants.ts` (998431 or 998439, pending CA sign-off).
 - Refund a digital product through the existing support and admin doors; the operator checks `firstDownloadedAt`, which no door enforces.
 - Recover a lost capture with `reconcile-standalone-purchases` or the buyer's `purchases/[purchaseId]/verify` route, both through `recoverStandaloneOrder`. Both read `FAILED` purchases under 7 days old, since a declined attempt's order can still capture; neither ever reads `REFUNDED`.
+
+## Referral credits
+
+The referral programme design, launch scope and fraud doctrine live in the `growth` skill (`.claude/skills/growth/SKILL.md`); this section keeps only the money rules.
+
+- Vest, void, hold and breakage live in `lib/referrals/vesting.ts`; every referral and credit move is a CAS on the prior status. A `PENDING` credit holds nothing in the ledger.
+- Reverse a credit's unused balance only through `reverseCreditBalance` (`lib/referrals/credit-reversal.ts`, key `referral-reverse:<creditId>`); the operator route and the lost-chargeback settlement share it. `settleLostDispute` calls `voidVestedReferralRewards` on its own transaction; the spent part is absorbed.
+- The shared-payer void compares `Payment.payerVpaHash` and `payerPhoneHash`, stamped once from the capture webhook by `recordPayerInstruments`; never store raw payer instruments and never call Razorpay from the vest job.
+- Review-hold thresholds and the budget are `ReferralProgramConfig` fields; their values are the owner's and live in Notion, never in code, comments or docs. A released `HELD` referral carries `reviewReleasedAt` so the rules skip it.
+- Referral request signals (`Referral.ipHash`) hash only the middleware-stamped IP (`stampedClientIp`), under a key derived from `BETTER_AUTH_SECRET` with its own label (`lib/referrals/signal-hash.ts`).
 
 ## Settlement, wallet and operator surfaces
 

@@ -19,6 +19,7 @@ import { FaqEditor } from "@/components/planner/components/form-fields/FaqEditor
 import { ContentItemsEditor } from "./ContentItemsEditor";
 import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
 import { OfferingEditor } from "./OfferingEditor";
+import { WaitingCountProvider } from "./waiting-count";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { invalidateOfferingQueries } from "@/components/planner/hooks/usePlanner";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
@@ -227,17 +228,26 @@ export function OfferingEditorContainer({
   // bookings stay; only new sales stop.
   const unpublishCanStrand =
     !onSave && !isEvent && status === "PUBLISHED" && !!planId;
+  const tracksWaiting = isEvent && !onSave && !!planId;
   const stats = useQuery({
     queryKey: offeringStatsQueryKey(consultantId),
     queryFn: fetchOfferingStats,
-    enabled: unpublishCanStrand,
+    enabled: unpublishCanStrand || tracksWaiting,
     staleTime: 60_000,
   });
-  const bookings = planId
-    ? (stats.data?.rows.find(
+  const statRow = planId
+    ? stats.data?.rows.find(
         (r) => `${r.planType}:${r.planId}` === offeringStatKey(type, planId),
-      )?.bookings ?? 0)
-    : 0;
+      )
+    : undefined;
+  const bookings = statRow?.bookings ?? 0;
+  // Unknown (null) while the stats read is pending or failed, never 0.
+  let planWaiting: number | null = 0;
+  if (tracksWaiting) {
+    planWaiting = stats.data ? (statRow?.waitingCount ?? 0) : null;
+  }
+  const instanceWaiting =
+    (saveCtx.instanceId && stats.data?.waitingByEvent[saveCtx.instanceId]) || 0;
   // #1527 review — an unresolved or failed stats read must not read as "0
   // bookings": that let an unpublish through with no confirmation while the
   // real count was simply unknown.
@@ -311,7 +321,13 @@ export function OfferingEditorContainer({
       if (onSave) {
         await onSave(payload, { publish });
       } else {
-        await adapter.save(payload, consultantId, saveCtx);
+        await adapter.save(payload, consultantId, {
+          ...saveCtx,
+          capacityEdited:
+            existingPlan?.maxParticipants === undefined ||
+            Number(values.maxParticipants) !==
+              Number(existingPlan.maxParticipants),
+        });
       }
       setPersistedStatus(publish ? "PUBLISHED" : "DRAFT");
       // Re-read before the image commit so a failed image still shows the saved status.
@@ -345,7 +361,9 @@ export function OfferingEditorContainer({
   };
 
   return (
-    <>
+    <WaitingCountProvider
+      value={{ plan: planWaiting, instance: instanceWaiting }}
+    >
       <OfferingEditor
         manifest={effectiveManifest}
         form={form}
@@ -444,6 +462,6 @@ export function OfferingEditorContainer({
           setPendingUnpublish(null);
         }}
       />
-    </>
+    </WaitingCountProvider>
   );
 }

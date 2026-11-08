@@ -46,6 +46,9 @@ jest.mock("@/lib/prisma", () => ({
   default: {
     webinar: { findUnique: (...a: unknown[]) => webinarFindUnique(...a) },
     class: { findUnique: (...a: unknown[]) => classFindUnique(...a) },
+    appointmentWaitlist: {
+      findMany: (...a: unknown[]) => waitlistFindMany(...a),
+    },
     $transaction: (fn: (t: typeof tx) => unknown) => fn(tx),
   },
 }));
@@ -66,11 +69,13 @@ jest.mock("@/lib/novu/stage-then-attempt", () => ({
 }));
 
 import {
-  EVENT_WAITLIST_RENOTIFY_COOLDOWN_MS,
   finishSeatOpenedNotices,
   joinEventWaitlist,
+  listEventWaitlist,
   stageSeatOpenedNotices,
 } from "@/lib/booking/event-waitlist";
+import { EventWaitlistListResponseSchema } from "@/schemas/interest";
+import { INTEREST_RENOTIFY_COOLDOWN_MS } from "@/lib/booking/interest/lifecycle";
 import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { stageEventSeatOpenedEmails } from "@/lib/email/senders/booking";
 import {
@@ -224,7 +229,7 @@ describe("stageSeatOpenedNotices", () => {
           {
             status: "NOTIFIED",
             notifiedAt: {
-              lt: new Date(NOW.getTime() - EVENT_WAITLIST_RENOTIFY_COOLDOWN_MS),
+              lt: new Date(NOW.getTime() - INTEREST_RENOTIFY_COOLDOWN_MS),
             },
           },
         ],
@@ -296,13 +301,11 @@ describe("stageSeatOpenedNotices", () => {
     const staged = await stageSeatOpenedNotices(tx as never, "appt-1", NOW);
     await finishSeatOpenedNotices(staged);
 
-    const bucket = Math.floor(
-      NOW.getTime() / EVENT_WAITLIST_RENOTIFY_COOLDOWN_MS,
-    );
+    const bucket = Math.floor(NOW.getTime() / INTEREST_RENOTIFY_COOLDOWN_MS);
     const claim = jest.mocked(stageEventSeatOpenedEmails).mock.calls[0][1];
     expect(claim.scope).toBe("event-waitlist.seat-opened");
     expect(claim.key("w-0")).toBe(`appt-1:${bucket}:w-0`);
-    expect(claim.ttlMs).toBe(2 * EVENT_WAITLIST_RENOTIFY_COOLDOWN_MS);
+    expect(claim.ttlMs).toBe(2 * INTEREST_RENOTIFY_COOLDOWN_MS);
   });
 });
 
@@ -528,5 +531,51 @@ describe("a running class with late join open counts as on sale", () => {
     expect(staged.email?.checkoutUrl).toBe(
       "/checkout/plans/class/plan-1?eventId=cls-1",
     );
+  });
+});
+
+describe("listEventWaitlist", () => {
+  it("lists the caller's open rows with the next session, checkout link and on-sale state", async () => {
+    const notifiedAt = new Date(NOW.getTime() - 3_600_000);
+    waitlistFindMany.mockResolvedValueOnce([
+      { status: "NOTIFIED", notifiedAt, appointment: eventRow({ seats: 1 }) },
+      {
+        status: "NOTIFIED",
+        notifiedAt,
+        appointment: eventRow({ seats: 2 }),
+      },
+      {
+        status: "WAITING",
+        notifiedAt: null,
+        appointment: eventRow({ status: "CANCELLED" }),
+      },
+    ]);
+    const rows = await listEventWaitlist("u-1", NOW);
+    expect(waitlistFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "u-1", status: { in: ["WAITING", "NOTIFIED"] } },
+      }),
+    );
+    expect(rows.map((r) => [r.status, r.seatAvailable])).toEqual([
+      ["NOTIFIED", true],
+      ["NOTIFIED", false],
+      ["WAITING", false],
+    ]);
+    expect(rows[0]).toMatchObject({
+      kind: "WEBINAR",
+      eventId: "web-1",
+      planId: "plan-1",
+      planTitle: "Deep work",
+      nextSessionAt: later,
+      checkoutHref: "/checkout/plans/webinar/plan-1?eventId=web-1",
+    });
+    const wire = EventWaitlistListResponseSchema.safeParse({
+      data: rows.map((r) => ({
+        ...r,
+        nextSessionAt: r.nextSessionAt?.toISOString() ?? null,
+        notifiedAt: r.notifiedAt?.toISOString() ?? null,
+      })),
+    });
+    expect(wire.success).toBe(true);
   });
 });

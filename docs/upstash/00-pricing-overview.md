@@ -67,13 +67,12 @@ Custom pricing. Includes:
 | BetterAuth `rateLimit` (`lib/auth/rate-limit.ts`) | `/api/auth/*` (e.g. `/sign-in/email` 30/15 min, default 100/min) | per path | IP + path | BetterAuth |
 | `searchLimiter` | GET `/api/user/consultants` | 60/min | IP | Edge |
 | `eligibilityLimiter` | GET `/api/trials/check-eligibility` | 20/min | IP | Edge |
-| `newsletterLimiter` | POST `/api/newsletter/subscribe` | 3/hr | IP | Edge |
+| `newsletterLimiter` | POST `/api/newsletter` | 3/hr | IP | Edge |
 | `availabilityLimiter` | GET `/api/scheduling/availability/[id]` | 30/min | IP | Edge |
 | `checkoutLimiter` | POST `/api/checkout` | 5/min | user ID | Handler |
 | `discountLimiter` | POST `/api/payments/discounts/validate` | 10/min | user ID | Handler |
 | `referralApplyLimiter` | POST `/api/referrals/apply` | 3/24 hr | user ID | Handler |
 | `spamLimiter` | Support tickets, feedbacks, reviews, reports | 5/hr | user ID | Handler |
-| `waitlistLimiter` | POST `/api/waitlist` | 5/hr | user ID | Handler |
 | `requestApprovalLimiter` | POST `/api/scheduling/request-for-approval` | 10/hr | user ID | Handler |
 
 ~2 Redis commands per `limit()` call.

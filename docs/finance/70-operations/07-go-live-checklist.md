@@ -146,22 +146,20 @@ Email and in-app notifications do not move money, but a wrong cutover silently d
 
 ### 4.2 Novu Production at the release promotion
 
-Run these in the same window as the production release that carries the single-preference-owner change, and not earlier: old production code still writes subscriber preferences, so an earlier sync would fight it. They run from a workstation with `NOVU_PRODUCTION_KEY` in the environment.
+**Done on 2026-11-08**, in the same window as the promotion of "Release 2026-11-08". The sync ran only after the release, because old production code still wrote subscriber preferences and an earlier sync would have fought it. Nothing here needs repeating before launch.
 
-1. `npx tsx scripts/novu/clear-native-mutes.ts --env production` (dry run). Read the list of stray native mutes.
-2. `npx tsx scripts/novu/clear-native-mutes.ts --env production --apply`.
-3. `npm run novu:sync -- --env production --dry-run`, then `npm run novu:sync -- --env production`.
-4. Five minutes after the sync, `npm run novu:check -- --env production` exits `0` with no drift on two runs in a row. Novu's read API serves stale workflows for about three minutes after a sync, so a `novu:check` in that window reports false drift on random families; wait five minutes, then expect two clean runs in a row.
+1. Stray native mutes: the dry run found 0 mutes across 86 subscribers, so there was nothing to apply.
+2. `npm run novu:sync -- --env production` applied all 16 families.
+3. `npm run novu:check -- --env production` was clean on two runs (08:29 and 08:34 UTC). Novu's read API serves stale workflows for about three minutes after a sync, so wait five minutes and expect two clean runs in a row after any future sync.
+4. Mirrored profile data: 24 of the 86 Production subscribers still carried the email, names, phone, avatar and `data` flags that the old mirror copied on; they were scrubbed and the follow-up dry run showed 0. Development was scrubbed on 2026-11-07 (333 of 712 subscribers).
+5. "Security HMAC encryption" is on for the Novu In-App integration in Production (Novu dashboard, Production, Integrations, Novu In-App), verified by behaviour: an inbox session with no `subscriberHash` or a wrong one gets 400 "Please provide a valid HMAC hash", and the correct hash gets 201.
+6. `novu-step-failure-probe` ran once and completed with 0 failed steps. It reads Production's activity feed with `NOVU_PRODUCTION_KEY`; there is no Novu webhook endpoint or `NOVU_WEBHOOK_SECRET` (decision 16 of the decision record). Until the production job fleet is resumed, only a manual run exercises it: System Jobs, or `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://familiarisenow.com/api/cleanup/novu-step-failure-probe`. A `skipped` run with `NOVU_PRODUCTION_KEY not configured` or a `401` from Novu means the key is missing or wrong.
 
-5. `npx tsx scripts/novu/scrub-subscriber-pii.ts --env production` (dry run), then the same with `--apply`, then a final dry run that reports `0 still carry mirrored data`. This clears the email, names, phone, avatar and `data` flags that the old mirror copied onto Production subscribers. Development was scrubbed on 2026-11-07 (333 of 712 subscribers).
-6. Confirm that "Security HMAC encryption" is on for the Novu In-App integration in Production (Novu dashboard → Production → Integrations → Novu In-App), then repeat the tampered-hash check on production: the inbox session must refuse a modified `subscriberHash` and another user's `subscriberId`.
-7. Run `novu-step-failure-probe` once from System Jobs, or with `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://familiarisenow.com/api/cleanup/novu-step-failure-probe`. The run must be `completed` with `pages` of at least 1, not `skipped` with `NOVU_PRODUCTION_KEY not configured`. A `401` from Novu fails the run, which means the key is wrong. Nothing is configured in the Novu dashboard for this: the probe reads Production's activity feed with `NOVU_PRODUCTION_KEY`, and there is no Novu webhook endpoint or `NOVU_WEBHOOK_SECRET` (decision 16 of the decision record). Until the production job fleet is resumed, only this manual run exercises it.
-
-**Proof:** the dry run in step 1 lists nothing to clear when repeated, and a test booking rings one bell for each recipient who has not opted out. Novu Free allows 10,000 workflow runs a month across Development and Production together, so keep Development testing small ([Novu billing reference](../../../.claude/skills/billing-guardrails/references/novu.md)).
+**Proof:** `npm run novu:check -- --env production` exits `0`, and a test booking rings one bell for each recipient who has not opted out. Novu Free allows 10,000 workflow runs a month across Development and Production together, so keep Development testing small ([Novu billing reference](../../../.claude/skills/billing-guardrails/references/novu.md)).
 
 ### 4.3 Outbox recount and legacy-guard cleanup
 
-On 2026-11-06 the live database held zero `PENDING` or `RETRY` rows in `FailedEmail`, `FailedEmailBatch` and `NotificationOutbox`, so no `firstAttemptAt` backfill is needed. Immediately before the production release, repeat the read-only count in [Step 7 of the notifications checklist](../../notifications/05-pre-production-checklist.md#step-7-outbox-cutover-recount-no-backfill). If all three read zero, a cleanup PR deletes the legacy cutover guards (`LEGACY_DELIVERY_FORMAT` and `LEGACY_BROADCAST` in `lib/novu/outbox.ts`), `scripts/novu/clear-native-mutes.ts` and `scripts/novu/scrub-subscriber-pii.ts`. If any row is present, follow Step 7 to settle or dispose of it first.
+**Done on 2026-11-08.** The read-only recount (Step 7 of [the notifications checklist](../../notifications/05-pre-production-checklist.md#step-7-outbox-cutover-recount-no-backfill)) found 0 `PENDING` or `RETRY` rows in `FailedEmail`, `FailedEmailBatch` and `NotificationOutbox`, so no `firstAttemptAt` backfill was needed and the cleanup PR deleted the legacy cutover guards from `lib/novu/outbox.ts` together with the two one-time Novu scripts. Sentry also holds two source-map artifact bundles (7,036 and 735 files) for release `f3e67afb6`.
 
 ## Part 5: GitHub plan and CI at launch
 
@@ -177,7 +175,7 @@ Owner steps in GitHub, from [the CI decision](../../decisions/2026-11-07-ci-befo
 | RazorpayX credentials, egress guard, live-key guard | `lib/payments/payouts/razorpay-payouts.ts`                                                                     |
 | Live-payout gate                                    | `lib/feature-flags.ts`, `lib/payments/payouts/payout-service.ts`, `lib/payments/payouts/org-payout-service.ts` |
 | Sandbox smoke                                       | `scripts/smoke/org-payout-sandbox-smoke.ts`                                                                    |
-| Novu sync, drift check and native-mute reset        | `scripts/novu/sync-workflows.ts`, `scripts/novu/clear-native-mutes.ts`                                         |
+| Novu sync and drift check                           | `scripts/novu/sync-workflows.ts`                                                                               |
 
 ## Related
 
@@ -190,3 +188,4 @@ Owner steps in GitHub, from [the CI decision](../../decisions/2026-11-07-ci-befo
 2. **Webhook secret rotation without a grace slot.** Both products now have a `_PREVIOUS` slot.
 3. **`RAZORPAY_KEY_SECRET` as the secret name.** `RAZORPAY_SECRET` is the only name any code reads; the legacy spelling is no longer accepted anywhere, including the `reconcile-payment-status` script.
 4. **A purge that clears `isVerified` on `OrganizationPayoutAccount`.** That table has `status`, not `isVerified`.
+5. **One-time Novu scripts.** The `clear-native-mutes` script (reset stray native mutes before the first read-only sync) and the `scrub-subscriber-pii` script (null mirrored profile data) ran on Production on 2026-11-08 and are deleted.

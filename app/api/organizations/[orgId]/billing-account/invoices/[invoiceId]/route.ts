@@ -12,6 +12,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionOrgInvoice } from "@/lib/enterprise/transitions";
+import { ORG_INVOICE_STATUS_LABEL } from "@/lib/labels/org-labels";
 import { invoiceOutstandingPaise } from "@/lib/payments/billing/org-invoice-settlement";
 
 const PatchBodySchema = z.object({ status: z.literal("CANCELLED") }).strict();
@@ -131,7 +132,7 @@ export async function PATCH(
           actorMembershipId: access.member.id,
           category: "INVOICE",
           action: AUDIT_ACTIONS.INVOICE.INVOICE_CANCELLED,
-          description: `Invoice ${current.invoiceNumber}: ${current.status} → CANCELLED`,
+          description: `Invoice ${current.invoiceNumber}: ${ORG_INVOICE_STATUS_LABEL[current.status]} → ${ORG_INVOICE_STATUS_LABEL.CANCELLED}`,
           details: {
             invoiceId,
             from: current.status,

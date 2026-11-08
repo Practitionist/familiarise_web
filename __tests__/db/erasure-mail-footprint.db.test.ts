@@ -51,7 +51,7 @@ function queuedBatch(
   return prisma.failedEmailBatch.create({
     data: {
       idempotencyKey: `DB_TIER_TEST/${randomUUID()}`,
-      emailType: "WAITLIST_BROADCAST",
+      emailType: "NEWSLETTER_BROADCAST",
       payload: to.map(message),
       firstAttemptAt,
       status,
@@ -88,7 +88,7 @@ describe("erasure mailing footprint", () => {
     const sent = await queuedEmail({
       recipient: email,
       status: "SENT",
-      entityRef: `waitlist:${email}`,
+      entityRef: `newsletter:${email}`,
     });
     const dead = await queuedEmail({
       recipient: email,
@@ -116,7 +116,8 @@ describe("erasure mailing footprint", () => {
     );
 
     expect(result).toEqual({
-      waitlistDeleted: 2,
+      newsletterDeleted: 2,
+      newsletterConsentWithdrawn: 0,
       emailsDeadLettered: 2,
       recipientsReplaced: 4,
       entityRefsReplaced: 2,

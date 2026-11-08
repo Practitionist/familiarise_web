@@ -9,6 +9,7 @@ import { BrandWordmark } from "@/components/brand/BrandWordmark";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { COMPANY_INFO } from "@/lib/company";
+import { NEWSLETTER_NOTICE } from "@/lib/newsletter/notice";
 import { isChromeHidden } from "@/lib/navigation/public-chrome";
 
 interface FooterLink {
@@ -94,7 +95,7 @@ const EXPERTISE_LINKS: FooterLink[] = [
 const Footer: React.FC = () => {
   const pathname = usePathname();
   const [email, setEmail] = useState("");
-  const [waitlistStatus, setWaitlistStatus] = useState<
+  const [newsletterStatus, setNewsletterStatus] = useState<
     "idle" | "loading" | "success" | "error"
   >("idle");
 
@@ -105,24 +106,20 @@ const Footer: React.FC = () => {
   // across Navbar/Footer/HeaderSpacer and had already drifted.
   if (isChromeHidden(pathname)) return null;
 
-  // The heading says "Stay in the loop" and the copy promises a weekly email,
-  // but the button still said "Join waitlist" — left over from the
-  // waitlist→newsletter rework. The endpoint is unchanged; only the label was
-  // stale.
   const subscribeButtonLabel = {
     idle: "Subscribe",
     loading: "Subscribing...",
     success: "Check your email",
     error: "Subscribe",
-  }[waitlistStatus];
+  }[newsletterStatus];
 
-  const handleWaitlistSubmit = async (e: React.FormEvent) => {
+  const handleNewsletterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || waitlistStatus === "loading") return;
+    if (!email || newsletterStatus === "loading") return;
 
-    setWaitlistStatus("loading");
+    setNewsletterStatus("loading");
     try {
-      const res = await fetch("/api/waitlist", {
+      const res = await fetch("/api/newsletter", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // Tagged by surface so the admin list can tell where signups come from.
@@ -130,9 +127,9 @@ const Footer: React.FC = () => {
       });
       if (!res.ok) throw new Error("Failed");
       setEmail("");
-      setWaitlistStatus("success");
+      setNewsletterStatus("success");
     } catch {
-      setWaitlistStatus("error");
+      setNewsletterStatus("error");
     }
   };
 
@@ -150,7 +147,7 @@ const Footer: React.FC = () => {
         </>
       )}
 
-      {/* Waitlist signup — every marketing page, merged with the footer */}
+      {/* Newsletter signup — every marketing page, merged with the footer */}
       <div className="relative z-10 border-b border-zinc-800">
         <div className="container mx-auto px-4 md:px-6 py-20 md:py-28">
           <div className="max-w-2xl mx-auto text-center">
@@ -161,13 +158,13 @@ const Footer: React.FC = () => {
               Stay in the <span className="silver-text">loop</span>
             </h2>
             <p className="text-lg text-zinc-400 mb-8">
-              Get learning tips and news about new classes, webinars and offers
-              delivered to your inbox weekly.
+              Product news and launch updates from Familiarise, straight to your
+              inbox.
             </p>
 
             <form
               className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto"
-              onSubmit={handleWaitlistSubmit}
+              onSubmit={handleNewsletterSubmit}
             >
               <Input
                 type="email"
@@ -180,7 +177,8 @@ const Footer: React.FC = () => {
                 type="submit"
                 size="lg"
                 disabled={
-                  waitlistStatus === "loading" || waitlistStatus === "success"
+                  newsletterStatus === "loading" ||
+                  newsletterStatus === "success"
                 }
                 className="h-14 bg-white text-zinc-900 hover:bg-zinc-200 px-8 rounded-xl font-medium shrink-0"
               >
@@ -188,14 +186,14 @@ const Footer: React.FC = () => {
               </Button>
             </form>
 
-            {waitlistStatus === "error" && (
+            {newsletterStatus === "error" && (
               <p className="text-sm text-red-400 mt-2">
                 Something went wrong. Please try again.
               </p>
             )}
 
             <p className="text-sm text-zinc-400 mt-4">
-              No spam, unsubscribe anytime.{" "}
+              {NEWSLETTER_NOTICE}{" "}
               <Link
                 href="/privacy"
                 className="underline hover:text-zinc-200 transition-colors"

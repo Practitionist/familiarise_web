@@ -7,6 +7,8 @@ description: Work on this repo's notification subsystem — in-app bells through
 
 Terse rules for agents. The human explanation is in `docs/notifications/` (start at `docs/notifications/README.md`); email specifics are in `docs/email/README.md`; the decision record is `docs/decisions/2026-11-06-notification-single-preference-owner.md`. Every rule names its enforcer. Grep before you assert any name.
 
+Newsletter broadcasts, announcements versus newsletter, the appointment waitlist notices and referral notices are product rules owned by the `growth` skill (`.claude/skills/growth/SKILL.md`); this skill keeps the delivery mechanics.
+
 ## The model
 
 - Postgres is the transactional outbox (`FailedEmail`, `FailedEmailBatch`, `NotificationOutbox`) and the **only** owner of notification preferences (`NotificationPreference`). Workspace routing is removed: `OrgWorkspaceProfile.notificationRoutingMode` is unread until the next schema batch drops it, so never read or write it.
@@ -48,7 +50,7 @@ All three are registered once in `lib/cron/cleanup-registry.ts` and run under `w
 
 ## Settles are compare-and-set
 
-- Every status write on all three outbox tables is a conditional `updateMany` filtered on `PENDING`/`RETRY`: `UNSETTLED` (`lib/retry/provider-window.ts`) for email in `settleRow` (`lib/email/deliver.ts`), the relay (`jobs/email/retry-failed-emails.ts`) and `settleBatch` (`app/api/admin/waitlist/broadcast/route.ts`), and `ACTIVE_STATUSES` for bells (`lib/novu/outbox.ts`). A lost race matches no row, is skipped and is not counted. Never write a settle as read-then-update, and never overwrite `SENT`.
+- Every status write on all three outbox tables is a conditional `updateMany` filtered on `PENDING`/`RETRY`: `UNSETTLED` (`lib/retry/provider-window.ts`) for email in `settleRow` (`lib/email/deliver.ts`), the relay (`jobs/email/retry-failed-emails.ts`) and `settleBatch` (`app/api/admin/newsletter/broadcast/route.ts`), and `ACTIVE_STATUSES` for bells (`lib/novu/outbox.ts`). A lost race matches no row, is skipped and is not counted. Never write a settle as read-then-update, and never overwrite `SENT`.
 - Novu honours the Idempotency-Key (measured 2026-11-07 in Development: two triggers, one notification). The terminal-split row id is `<transactionId>:terminal:<digest>`, a 16-hex-character sha256 prefix over the sorted refused recipients (`terminalSplitRow`, `lib/novu/outbox.ts`).
 - A Novu step failing after Novu accepted the trigger leaves the row `SENT`, so `SENT` is not proof a bell rendered. `novu-step-failure-probe` (`jobs/notifications/novu-step-failure-probe.ts`) reads `GET /v1/notifications?channels=in_app` and adds one `SINGLE` `DEAD_LETTER` sibling, `<row>:stepfailed:<recipient hash>`, with `review:novu_step_failed: ...` for each failed in-app job whose transactionId `recipientTransactionId` reproduces. Never write to the parent, and never re-send it: Novu treats a repeated transactionId as a duplicate. A failure older than Novu's 24 h retention is lost (decision 16).
 - There is no Novu webhook. Outbound webhooks are Team and Enterprise only, and `message.failed` does not cover in-app steps; do not add a receiver back.
@@ -57,7 +59,7 @@ All three are registered once in `lib/cron/cleanup-registry.ts` and run under `w
 ## Dead-letter reasons (`lastError`)
 
 - **Expected, never page, excluded from the ops digest and Needs attention:** `policy:` (a recipient opted out after staging, e.g. `policy:audience_revoked`), `suppressed:` (email address on `EmailSuppression`), `held:pre-launch` (the `EMAIL_DELIVERY_MODE` guard, `lib/email/held.ts`).
-- **Actionable:** every `review:` reason — `review:erased_recipient` (a queued newsletter batch the provider may have seen held an erased address), `review:provider_acceptance_unknown`, `review:render_failed` (a required email whose template threw; fix the template, never replay), `review:legacy_delivery_format`, `review:legacy_broadcast` (legacy cutover guards in `lib/novu/outbox.ts`, to be deleted after the production release), `review:batch_recipient_suppressed`. A terminal Novu refusal (`trigger_not_active`, workflow not found, `invalid_recipients`) splits into its own `DEAD_LETTER` row.
+- **Actionable:** every `review:` reason — `review:erased_recipient` (a queued newsletter batch the provider may have seen held an erased address), `review:provider_acceptance_unknown`, `review:render_failed` (a required email whose template threw; fix the template, never replay), `review:batch_recipient_suppressed`. A terminal Novu refusal (`trigger_not_active`, workflow not found, `invalid_recipients`) splits into its own `DEAD_LETTER` row.
 - Expected prefixes: `EXPECTED_REFUSAL_PREFIXES` (`lib/email/replay-policy.ts`), `EXPECTED_BELL_DEAD_LETTER_PREFIXES` (`lib/backoffice/queue-predicates.ts`).
 
 ## Quota math
@@ -78,7 +80,8 @@ Novu Free is 10,000 workflow runs a month, counted across Development **and** Pr
 - The panel shows only the switches `receivableSwitches` (`lib/notifications/receivable.ts`) returns for the viewer's role. A new category, or an event sent to a new audience, updates that map, its test and the role table in `docs/notifications/02-workflows-and-api.md`.
 - Panel saves are optimistic and share one mutation scope (serialized); never write a preference from a time input's `onChange`.
 - The bell-header gear is overlaid at offsets measured on `@novu/react` 3.19.2: the ⋯ row starts 10 px below the popover top and the gear sits 8 px left of ⋯ (`components/notifications/NotificationInbox.tsx`). Recheck both on any Novu SDK upgrade.
-- Both unsubscribe pages render bare, logo only: `/email/unsubscribe` is in `NO_CHROME_PREFIXES` (`lib/navigation/public-chrome.ts`) and the newsletter page is standalone HTML from `app/api/waitlist/unsubscribe/route.ts`.
+- The bell's unread count reaches assistive technology only through the trigger's `aria-label`, fed by `UnreadReporter` from `renderBell`; the badge itself is `aria-hidden` and `bg-red-600` for AA contrast. Keep the visible count and the label in step if the bell markup changes.
+- Both unsubscribe pages render bare, logo only: `/email/unsubscribe` is in `NO_CHROME_PREFIXES` (`lib/navigation/public-chrome.ts`) and the newsletter page is standalone HTML from `app/api/newsletter/unsubscribe/route.ts`.
 - Erasure: queued email for an erased user is dead-lettered `policy:recipient_erased` and redacted, and every stored `recipient` becomes an `erased:<digest>` marker that no send or replay accepts, inside the erasure transaction (`scrubMailFootprintTx`); bells are dropped at send time by `unerasedRecipients` / `currentBellRecipients`. `EmailSuppression` survives erasure.
 - The unsubscribe undo is `POST /api/notifications/resubscribe`, same-origin only (`isSameOriginRequest`), with no `GET`. Neither route's `GET` may ever write.
 
@@ -92,7 +95,7 @@ Novu Free is 10,000 workflow runs a month, counted across Development **and** Pr
 
 ## One-time operations (Novu)
 
-`scripts/novu/clear-native-mutes.ts` (dry run, then `--apply`, `--env production` for Production) clears stray native mutes **before** `npm run novu:sync` makes families read-only. `scripts/novu/scrub-subscriber-pii.ts` (same flags) nulls the email, names, phone, avatar and `data` that the old mirror copied onto subscribers. It prints counts and field names only. Development was scrubbed on 2026-11-07; Production runs at the release promotion. Previews built on older code can write the profile data back until they rebase. Both scripts are deleted after the Production run. Production steps are in the go-live skill and `docs/notifications/05-pre-production-checklist.md`.
+None are pending. The native-mute reset, the subscriber PII scrub, the Production sync, In-App HMAC and the outbox recount were all done on 2026-11-08 (go-live skill, step 13). A new Novu environment needs `npm run novu:sync -- --env <env>`, two clean `npm run novu:check -- --env <env>` runs five minutes apart, and In-App HMAC enabled on its in-app integration. The drift check does not read that setting, so verify HMAC by behaviour: an inbox session (`POST /v1/inbox/session`) with no `subscriberHash` or a wrong one must answer 400, and the correct `computeSubscriberHash` value 201.
 
 ## Vendor configuration is not in the code
 
@@ -100,8 +103,12 @@ Code audits and tests cannot see what is set in the Resend, Novu or Netlify dash
 
 ## Verify
 
-`npx jest __tests__/notifications __tests__/email/unsubscribe.test.ts` (outbox, preferences single owner and strict PUT, the settings panel, the role map, templates, sync, clear-native-mutes, unsubscribe and resubscribe) and `npx tsc --noEmit`. For a new event, `npm run novu:check` against Development (wait five minutes after a sync and require two clean runs).
+`npx jest __tests__/notifications __tests__/email/unsubscribe.test.ts` (outbox, preferences single owner and strict PUT, the settings panel, the role map, templates, sync, unsubscribe and resubscribe) and `npx tsc --noEmit`. For a new event, `npm run novu:check` against Development (wait five minutes after a sync and require two clean runs).
 
 `__tests__/db/notification-outbox.db.test.ts` runs against real Postgres (see the booking verification reference, §11) and pins policy SQL/JS parity, page dedupe, the terminal split and compare-and-set settles.
 
 Relay fault drills run locally, never on a preview: previews refuse every relay and job run (`JOB_RUN_PRODUCTION_ONLY`), because they share the production database. Run `runNotificationDrainTick` (`jobs/notifications/drain-notification-outbox.ts`) against the disposable `localhost:5432/ci` Postgres with `NOVU_DEVELOPMENT_KEY` only, never the shared database URL, and set dummy `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`, because `lib/redis.ts` throws at import without them.
+
+## Deprecated & Superseded Approaches
+
+- The `clear-native-mutes` script and the `scrub-subscriber-pii` script were one-time cleanups that ran on Production on 2026-11-08 and are deleted. The relay's legacy guards (`review:legacy_delivery_format`, `review:legacy_broadcast`) are deleted too; a row with a `lastError` but no `firstAttemptAt` is now simply sent. Nothing writes the `BROADCAST` outbox kind, though the enum value remains in the schema.

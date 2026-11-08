@@ -35,8 +35,8 @@ Each tree is built by a pure function, so the groups below are what the sidebar 
 - Calendar: Appointments, Availability
 - Sell: 1:1 & subscriptions (`sell/sessions`), Group programs (`sell/programs`)
 - Studio: Recordings (hosted sessions, `recordings`), Session documents (`documents`), Products (`products`)
-- Money: Earnings & payouts
-- Reputation & growth: Reviews, Invite & earn
+- Money: Earnings & payouts, Invite & earn
+- Reputation: Reviews
 - My library (its own top-level item)
 - Settings & help: Help & support, Settings
 - Pinned: View public page. Mobile tabs: Home, Requests, Appointments, Messages.
@@ -177,6 +177,8 @@ The public "Recordings Library" at `/explore/recordings` was folded into the Rep
 The consultant's single Offerings item (`offerings`, titled Offerings) held every kind behind a sub-tab bar (`OfferingsTabs`: My offerings, Digital products, Collaborations) and a type pill (All, 1:1, Subscriptions, Webinars, Classes). It was split into the Sell pages, Products and the Collaborations page, and its Business, Library, Grow and Operations groups became Inbox, Calendar, Sell, Studio, Reputation & growth and Settings & help. The Offerings list URLs (`offerings`, `offerings/products`, `offerings/collaborations`) and `planner` were deleted and answer 404; link to `sell/*`, `products` or `collaborations` instead.
 
 Sell briefly held four items: the two plan pages, Products (Digital products and Replays tabs) and Collaborations. Products moved to Studio at `products`, Collaborations to Inbox, and the Replays tab with `ReplaysPanel`, `HostedReplays` and `listHostedReplays()` was deleted. `sell/products` and `?tab=replays` on it answer 404 and are not redirected; link to `products` instead. The expert's home entry used to read "Today" and the booking-style Settings section "Booking requests"; they are Home and Booking mode.
+
+The consultant's Reputation & growth group (Reviews and Invite & earn) and its one-item Money group were regrouped: Invite & earn moved under Money, and the group now called Reputation holds Reviews alone. Do not restore the old group name.
 
 The organization's two collaboration pages, Plan collaborators (`collaborations`) and Collaborators (`collaborators`), merged into one Collaborations route, and its Programs page is titled Sponsorship programs with the `programs` route unchanged. The `collaborators` URL was deleted and answers 404.
 

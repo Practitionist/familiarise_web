@@ -17,6 +17,7 @@ import { UNVERIFIED_ORG_SEAT_CAP } from "@/lib/enterprise/governance";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
 
 export type SsoJitInput = {
   userId: string;
@@ -175,8 +176,8 @@ export async function provisionSsoMembership(
                 ? AUDIT_ACTIONS.MEMBER.INVITE_ACCEPTED
                 : AUDIT_ACTIONS.MEMBER.MEMBER_ADDED,
               description: invitationId
-                ? `Invitation accepted via SSO sign-in (${joinRole})`
-                : `Member joined via SSO auto-join (${joinRole})`,
+                ? `Invitation accepted via SSO sign-in (${MEMBER_ROLE_LABEL[joinRole]})`
+                : `Member joined via SSO auto-join (${MEMBER_ROLE_LABEL[joinRole]})`,
               details: {
                 userId,
                 providerId,

@@ -18,7 +18,11 @@ import { spendableCreditsWhere } from "@/lib/referrals/service";
 import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
 import { refundedPaise } from "@/lib/appointments/seat-payments";
 import { ORG_FUNDED_PAYMENT_METHODS } from "@/lib/payments/org-funded";
-import { isSponsoredPayment } from "@/lib/appointments/payment-display";
+import {
+  isSponsoredPayment,
+  paymentFundingBreakdown,
+  type FundingBreakdownEntry,
+} from "@/lib/appointments/payment-display";
 import { lifecycleOf, planOf } from "@/lib/appointments/presentation-input";
 import {
   requestHoldDeadline,
@@ -71,6 +75,8 @@ export interface ConsulteePaymentRow {
   receiptUrl: string | null;
   expiresAt: Stamp | null;
   createdAt: Stamp;
+  /** What each funding rail carried, read off the legs. */
+  fundingBreakdown: FundingBreakdownEntry[];
   presentation: PaymentRowInput;
 }
 
@@ -413,6 +419,7 @@ export function toRow(p: PaymentRecord): ConsulteePaymentRow {
     receiptUrl: p.receiptUrl,
     expiresAt: p.expiresAt,
     createdAt: p.createdAt,
+    fundingBreakdown: paymentFundingBreakdown(p.legs),
     presentation,
   };
 }

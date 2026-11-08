@@ -51,10 +51,10 @@ import {
 /**
  * Banner rendered across the org dashboard when `Organization.status !== ACTIVE`.
  * A newly created org sits in PENDING_VERIFICATION until a platform admin
- * runs the verify action. OWNER can still configure branding, draft programs,
- * and explore the product — but invitations, wallet top-ups, and contracts
- * are paused server-side. The banner explains why the write surfaces are
- * returning 409 ORG_NOT_VERIFIED.
+ * runs the verify action. The team can start: checkout accepts the org, with
+ * capped invitations and a starter credit limit on invoice-funded bookings.
+ * Wallet top-ups and invoice payments wait for verification (409
+ * ORG_NOT_VERIFIED server-side), as the Billing page shows.
  */
 function OrgStatusBanner({ status }: { status: OrgStatus }) {
   const copy: Record<
@@ -63,8 +63,7 @@ function OrgStatusBanner({ status }: { status: OrgStatus }) {
   > = {
     PENDING_VERIFICATION: {
       title: "Awaiting platform review",
-      // #1762-1 — checkout accepts unverified orgs; say what verification lifts.
-      body: "Your team can start now. Until an admin verifies your organization, invitations are capped and invoice-funded bookings carry a starter credit limit.",
+      body: "Your team can start now. Until an admin verifies your organization, invitations are capped, invoice-funded bookings carry a starter credit limit, and wallet top-ups and invoice payments wait for verification.",
       tone: "bg-amber-50 border-amber-200 text-amber-900",
     },
     SUSPENDED: {

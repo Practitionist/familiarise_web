@@ -14,13 +14,13 @@ Keep `prisma/seed.ts` and `prisma/seedFiles/` compiling against the current sche
 - **The seed entry point is `npm run db:seed`** (`npx tsx prisma/seed.ts`). There is **no** `prisma.seed` key in package.json, so `npx prisma db seed` fails — don't use it. Sizes: `db:seed:small` / `db:seed:medium` / `db:seed:large` (SEED_MODE, parsed in `prisma/seedFiles/config.ts`); edge-case data: `db:seed:validation`.
 - **No faker.** The suite uses its own helpers in `prisma/seedFiles/utils.ts` (random selection, date spreads, weighted choices) and quantity knobs in `config.ts`. Extend those; don't add a dependency.
 - **Never set human-readable primary keys** on `Appointment`, `Consultation`, `Subscription`, `Webinar`, or `Class` for rows that hit real allocate/validate APIs. Those routes validate UUID/CUID via `eventIdSchema` / `isEventIdFormat` — strings like `mock0801-appt-pending` or `appt-1` 400 on save. Always omit `id` and let Prisma generate `@default(uuid())` / `@default(cuid())`. Unit-test mocks that never call those routes may still use readable ids.
-- **Schema conventions** (if the task includes schema edits): enums are declared *below* the model(s) that use them; no backfill migrations (a pre-MVP DB reset is planned); comments are terse and explain *why*, referencing issues as `#N`.
+- **Schema conventions** (if the task includes schema edits): enums are declared _below_ the model(s) that use them; no backfill migrations (a pre-MVP DB reset is planned); comments are terse and explain _why_, referencing issues as `#N`.
 - **Don't renumber existing modules.** New models get a new file in the next number band; related sub-entities share the number with a letter suffix (`15a-`, `15b-`).
 
 ## Step 1 — Diff schema vs seeds
 
 1. Read `prisma/schema.prisma` — or better, `git diff` it against the last commit where seeds compiled — to list new/changed/removed models, fields, enums, and relations.
-2. Map the suite: `prisma/seed.ts` imports the numbered modules in dependency order (users → profiles/credentials → topics → plans → availability → appointments → engagement → payments → tickets → waitlists → sessions → refunds/disputes → payouts/earnings → referrals/collaborators → organizations/enterprise). The orchestrator's call order IS the FK dependency order — a new model slots in after everything it references.
+2. Map the suite: `prisma/seed.ts` imports the numbered modules in dependency order (users → profiles/credentials → topics → plans → availability → appointments → engagement → payments → tickets → newsletter subscribers → sessions → refunds/disputes → payouts/earnings → referrals/collaborators → organizations/enterprise). The orchestrator's call order IS the FK dependency order — a new model slots in after everything it references.
 3. Regenerate the client so types match the schema: `npx prisma generate`.
 
 ## Step 2 — Update the seed modules
@@ -28,6 +28,7 @@ Keep `prisma/seed.ts` and `prisma/seedFiles/` compiling against the current sche
 Per affected model, follow the established module shape: one `export async function createXxx(deps…)` per file, take parent entities as parameters, return created rows for downstream modules, log progress, scale counts off `config.ts`'s SEED_MODE.
 
 Data realism for this domain (vary, don't clone):
+
 - **People**: a handful of consultants across specializations/experience/ratings, more consultees, 1–2 admins; WEEKLY vs CUSTOM schedules.
 - **Offerings**: consultation/subscription/webinar/class plans across realistic price bands and durations.
 - **Bookings**: past + current + future; every AppointmentStatus represented; DIRECT_CHECKOUT and REQUEST_SUBMITTED sources.

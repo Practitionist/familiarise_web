@@ -30,6 +30,7 @@ import type { StagedTrigger } from "@/lib/novu";
 import { notifyOrgContractStatusChanged } from "@/lib/novu/org-workflows";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { getAppUrl } from "@/lib/url";
+import { CONTRACT_STATUS_LABEL } from "@/lib/labels/org-labels";
 
 // Term fields that lock once the contract leaves DRAFT or starts billing
 // (#777 §B). `autoRenew` is a safe forward-looking toggle — editable always.
@@ -294,7 +295,7 @@ export async function PATCH(
             actorMembershipId: access.member.id,
             category: "CONTRACT",
             action,
-            description: `Contract ${contractId}: ${current.status} → ${body.status}`,
+            description: `Contract status: ${CONTRACT_STATUS_LABEL[current.status]} → ${CONTRACT_STATUS_LABEL[body.status]}`,
             details: {
               contractId,
               from: current.status,
@@ -537,7 +538,7 @@ export async function DELETE(
           actorMembershipId: access.member.id,
           category: "CONTRACT",
           action: AUDIT_ACTIONS.CONTRACT.CONTRACT_TERMINATED,
-          description: `DRAFT contract ${contractId} deleted`,
+          description: "Draft contract deleted",
           details: { contractId },
         },
       });

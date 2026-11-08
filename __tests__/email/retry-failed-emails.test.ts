@@ -77,8 +77,8 @@ function makeBatchRow(
 ): FailedEmailBatch {
   return {
     id: "feb-1",
-    idempotencyKey: "WAITLIST_BROADCAST/abc",
-    emailType: "WAITLIST_BROADCAST",
+    idempotencyKey: "NEWSLETTER_BROADCAST/abc",
+    emailType: "NEWSLETTER_BROADCAST",
     payload: [{ from: "a@x", to: "b@y", subject: "s", html: "<p/>" }],
     status: "PENDING",
     attempts: 0,
@@ -518,7 +518,7 @@ describe("runEmailRetryTick — suppression and batch outbox (#1647)", () => {
 
     expect(batchSend).toHaveBeenCalledWith(
       batch.payload,
-      expect.objectContaining({ idempotencyKey: "WAITLIST_BROADCAST/abc" }),
+      expect.objectContaining({ idempotencyKey: "NEWSLETTER_BROADCAST/abc" }),
     );
     expect(result).toMatchObject({ batchesScanned: 1, batchesSent: 1 });
     expect(stub.batchUpdates[0].data).toMatchObject({
@@ -911,7 +911,7 @@ describe("runEmailRetryTick — batch replay safety", () => {
     ]);
     expect(t.batchSend).toHaveBeenCalledWith(
       [twoRecipients[0]],
-      expect.objectContaining({ idempotencyKey: "WAITLIST_BROADCAST/abc" }),
+      expect.objectContaining({ idempotencyKey: "NEWSLETTER_BROADCAST/abc" }),
     );
   });
 

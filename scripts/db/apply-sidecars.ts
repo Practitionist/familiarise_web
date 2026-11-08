@@ -3,6 +3,7 @@
  *   - `check-constraints.sql`     (--check-constraints)
  *   - `ledger-triggers.sql`       (--ledger-triggers)
  *   - `payment-legs-triggers.sql` (--payment-legs-triggers)
+ *   - `analytics-views.sql`       (--analytics-views)
  *
  * `prisma db push` / `prisma migrate` do NOT manage CHECK constraints,
  * partial unique indexes, or constraint triggers, so this must run after every
@@ -16,6 +17,7 @@
  *   --check-constraints
  *   --ledger-triggers
  *   --payment-legs-triggers
+ *   --analytics-views
  *   --dry-run
  */
 import { readFileSync } from "fs";
@@ -46,6 +48,11 @@ const SIDECAR_TARGETS: SidecarTarget[] = [
     flag: "--payment-legs-triggers",
     label: "payment-legs sum trigger",
     file: "payment-legs-triggers.sql",
+  },
+  {
+    flag: "--analytics-views",
+    label: "analytics views",
+    file: "analytics-views.sql",
   },
 ];
 

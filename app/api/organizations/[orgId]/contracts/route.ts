@@ -14,6 +14,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { formatAuditDate } from "@/lib/labels/org-labels";
 import { validateContractLicenseInput } from "@/lib/enterprise/contract-license-validation";
 import { computeCycleEnd } from "@/lib/enterprise/cycle-engine";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
@@ -286,7 +287,7 @@ export async function POST(
         actorMembershipId: access.member.id,
         category: "CONTRACT",
         action: AUDIT_ACTIONS.CONTRACT.CONTRACT_CREATED,
-        description: `Contract created, effective from ${body.effectiveFrom.toISOString()}`,
+        description: `Contract created, effective from ${formatAuditDate(body.effectiveFrom)}`,
         details: {
           contractId: created.id,
           billingAccountId: body.billingAccountId,

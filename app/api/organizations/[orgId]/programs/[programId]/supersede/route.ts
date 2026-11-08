@@ -526,7 +526,7 @@ async function executeProgramSupersedeTx(
       actorMembershipId,
       category: "PROGRAM",
       action: AUDIT_ACTIONS.PROGRAM.PROGRAM_SUPERSEDED,
-      description: `Program ${old.id} superseded by ${successor.id}`,
+      description: `Program "${old.name}" superseded by "${successor.name}"`,
       details: {
         programId: old.id,
         successorProgramId: successor.id,

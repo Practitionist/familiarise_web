@@ -48,12 +48,20 @@ export const gstRegisterDownloadLimiter = makeLimiter(
 );
 /** 10 per minute — admin pipeline mutations */
 export const adminMutationLimiter = makeLimiter(10, "1 m", "rl:admin-mutation");
-/** 3 per hour — POST /api/waitlist newsletter signup (IP-based) */
-export const waitlistLimiter = makeLimiter(3, "1 h", "rl:waitlist");
+/** 3 per hour — POST /api/newsletter signup (IP-based) */
+export const newsletterLimiter = makeLimiter(3, "1 h", "rl:newsletter");
 /** 30 per minute per IP — GET /api/calendar/[appointmentId], the signed .ics link */
 export const calendarLimiter = makeLimiter(30, "1 m", "rl:calendar");
 /** 3 per 24 hours — POST /api/referrals/apply */
 export const referralApplyLimiter = makeLimiter(3, "24 h", "rl:referral-apply");
+/** 5 per hour per user — POST /api/referrals/code/customize */
+export const referralCustomizeLimiter = makeLimiter(
+  5,
+  "1 h",
+  "rl:referral-customize",
+);
+/** 30 per hour per user — GET /api/referrals/expert-link */
+export const expertLinkLimiter = makeLimiter(30, "1 h", "rl:expert-link");
 /** 1 per 24 hours per appointment — POST /api/bookings/{consultations,subscriptions}/[id]/remind */
 export const remindLimiter = makeLimiter(1, "24 h", "rl:remind");
 /** 5 per hour — support-tickets, feedbacks, reviews, report */

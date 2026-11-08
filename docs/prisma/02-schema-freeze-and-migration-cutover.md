@@ -80,7 +80,7 @@ The owner marks each row in section 9 KEEP or DROP. Rows with a reader stay unle
 
 ### Step 2. Land the shape changes (the last `db push` window)
 
-Each approved drop, rename or type change goes through the existing guarded flow: the exact destructive statements from `npm run db:preflight -- --print` are added to `destructiveStatementsAllowed` in `prisma/sql/known-drift.json` with an owner and an expiry, the push is run once by a person, and the list is emptied again. Code that reads the old shape is changed in the same PR. This is the last time the repository uses `db push` against a database that holds data.
+Each approved drop, rename or type change goes through the existing guarded flow: the exact destructive statements from `npm run db:preflight -- --print` are added to `destructiveStatementsAllowed` in `prisma/sql/known-drift.json` with an owner and an expiry, the push is run once by a person, and the list is emptied again. Before that push the owner takes a manual `pg_dump` and restores it into a scratch container to prove it is usable, because the Free plan takes no automatic backups and an approved drop has no other way back. Code that reads the old shape is changed in the same PR. This is the last time the repository uses `db push` against a database that holds data.
 
 ### Step 3. Prove zero drift and stop the pushes
 
@@ -218,9 +218,9 @@ The full playbooks live in `.claude/skills/schema/references/expand-contract.md`
 
 ### 6.3 Concurrent index builds
 
-`CREATE INDEX CONCURRENTLY` cannot run inside a transaction block, and Prisma sends a multi-statement migration as one transaction, so a migration containing it fails. A single-statement migration is reported to work, but that is an implementation detail rather than a documented guarantee, so this repository does not rely on it.
+Since Prisma 7.4.0, `CREATE INDEX CONCURRENTLY` works inside a migration ([prisma-engines#5767](https://github.com/prisma/prisma-engines/pull/5767), [7.4.0 release notes](https://github.com/prisma/prisma/releases/tag/7.4.0)). A side effect is reported but unconfirmed ([orm#30640](https://github.com/prisma/orm/issues/30640)): each statement of a Postgres migration may commit on its own, so a half-failed migration would stay half-applied and be marked failed (`P3018`). The rehearsal in `.claude/skills/schema/references/runbook-cutover.md` decides this for the pinned 7.10.1. Until then, write migrations idempotently with one logical object per file.
 
-At the cutover the limitation does not bite. The sidecar files contain no `CONCURRENTLY` (checked: none of the three uses it), and `0_baseline` builds its indexes on empty tables. It matters only for a post-launch index on a large table. The recipe is:
+At the cutover the question does not bite. The sidecar files contain no `CONCURRENTLY` (checked: none of the three uses it), and `0_baseline` builds its indexes on empty tables. It matters only for a post-launch index on a large table. The recipe that does not depend on the rehearsal is:
 
 1. The migration contains a plain `CREATE INDEX IF NOT EXISTS "<name>" ...`. On a fresh or small database this is fast and correct.
 2. Before deploying that migration to production, a person builds the same index by hand with the same name: `CREATE INDEX CONCURRENTLY "<name>" ...`, via `psql` or `npx prisma db execute --file <file>`.

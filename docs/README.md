@@ -53,6 +53,7 @@ Platform-wide orientation and end-to-end cross-subsystem explainers.
 ### Dashboard
 
 - [information-architecture.md](./dashboard/information-architecture.md) - The dashboard glossary, the current navigation trees for every role, and the planned regrouping phases
+- [2026-11-08-dashboard-first-run-and-payment-legs.md](./decisions/2026-11-08-dashboard-first-run-and-payment-legs.md) - The expert first-run checklist, per-leg payment display with the legs as source of truth, the router-state header filter, the Reputation sidebar regroup and write-time audit descriptions
 
 ---
 
@@ -82,6 +83,26 @@ Booking system, slot allocation, validation, and scheduling logic for all 5 even
 - [01-booking-system-hld.md](./start-here/01-booking-system-hld.md) - Booking system high-level design: pipeline, allocation, concurrency layers, state machines, cron architecture
 - [02-money-system-hld.md](./start-here/02-money-system-hld.md) - Money system high-level design: pricing, capture, legs, ledger, earnings, payouts, refunds and policy decisions
 - [03-booking-and-money-machinery.md](./start-here/03-booking-and-money-machinery.md) - Worked guide with the seeded cast, entity model and end-to-end ledger examples
+
+---
+
+### Growth
+
+- [2026-11-08-growth-waitlist-newsletter-referrals.md](./decisions/2026-11-08-growth-waitlist-newsletter-referrals.md) - One vocabulary (newsletter, appointment waitlist, slot backup interest); notify-all kept, capacity normalised on the server, host demand counts, two tables with a shared interest module; the newsletter rename with no aliases, the table rename at release, link keys derived from the auth secret, one consent ledger, segmented broadcasts on Resend Pro; referral launch scope, fraud controls and chargeback voids; confidential figures kept in Notion
+
+---
+
+### Growth docs
+
+The subsystem documentation for the newsletter, announcements, the appointment waitlist, slot backup interest and referrals. The decision record is listed above under "Growth".
+
+- [README.md](./growth/README.md) - Index, the pull requests that carry the code, and the repository-versus-Notion rule
+- [00-overview.md](./growth/00-overview.md) - Growth as one subsystem: the three parts, what they share, the vocabulary, a context diagram and where things live
+- [01-appointment-waitlist-and-backup-interest.md](./growth/01-appointment-waitlist-and-backup-interest.md) - Why every waiter is told at once, the lifecycle, release paths, caps, capacity normalisation, host counts, My alerts, the `demand` view and a worked example
+- [02-newsletter-and-announcements.md](./growth/02-newsletter-and-announcements.md) - Double opt-in, the consent ledger, signed links, broadcast modes and segments, unsubscribe, the sending subdomains and announcements versus the newsletter
+- [03-referrals.md](./growth/03-referrals.md) - The three programmes and the launch scope, fraud controls, the review hold and the chargeback void
+- [04-market-research-india-first.md](./growth/04-market-research-india-first.md) - Cited findings that shaped the design, with an Unverified list
+- [05-roadmap.md](./growth/05-roadmap.md) - Shipped, owner go-live, post-launch, retention and handed-off items
 
 ---
 

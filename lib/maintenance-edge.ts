@@ -128,26 +128,6 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
   return state;
 }
 
-let isRefreshing = false;
-
-export function getMaintenanceStateCachedOnly(
-  waitUntil?: (promise: Promise<unknown>) => void,
-): MaintenanceState {
-  if (cachedState && Date.now() - cacheTimestamp < CACHE_TTL_MS) {
-    return cachedState;
-  }
-  if (!isRefreshing) {
-    isRefreshing = true;
-    const refresh = getMaintenanceState()
-      .catch(() => {})
-      .finally(() => {
-        isRefreshing = false;
-      });
-    waitUntil?.(refresh);
-  }
-  return cachedState ?? UNREADABLE_STATE;
-}
-
 export const HAS_FILE_EXTENSION = /\.\w{2,10}$/;
 
 export function isMaintenanceExempt(pathname: string): boolean {
@@ -180,7 +160,7 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/verification/resubmit",
   "/api/scheduling/request-for-approval",
   "/api/scheduling/availability",
-  "/api/waitlist",
+  "/api/newsletter",
   "/api/referrals",
   "/api/collaborations",
   "/api/payments/disputes",

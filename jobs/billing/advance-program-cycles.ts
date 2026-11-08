@@ -28,6 +28,7 @@
 import prisma from "@/lib/prisma";
 import type { PrismaLike } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { formatAuditDate } from "@/lib/labels/org-labels";
 import { releaseSeatsForClosedAssignments } from "@/lib/api/organizations/seat-count";
 import {
   decideCycleTransition,
@@ -123,7 +124,7 @@ async function closeProgramAssignmentInTx(
       targetMembershipId: null,
       category: "PROGRAM",
       action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNMENT_ROLLED,
-      description: `ProgramAssignment ${assignmentId} closed (${reason}); no successor`,
+      description: `Program assignment for "${programName}" closed with no successor`,
       details: {
         assignmentId,
         programId,
@@ -412,7 +413,7 @@ async function advanceProgramCycles(opts: {
                 targetMembershipId: null,
                 category: "PROGRAM",
                 action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNMENT_ROLLED,
-                description: `ProgramAssignment ${a.id} rolled to ${successor.id} (${successorStart.toISOString()} → ${successorEnd.toISOString()})`,
+                description: `Program assignment for "${a.program.name ?? "Program"}" rolled into the next period (${formatAuditDate(successorStart)} → ${formatAuditDate(successorEnd)})`,
                 details: {
                   assignmentId: a.id,
                   programId: a.programId,

@@ -35,6 +35,11 @@ import {
   readConsultantNeedsYou,
   readSessionsDelivered,
 } from "@/lib/data/consultant-needs-you";
+import {
+  FIRST_RUN_PROFILE_SELECT,
+  FIRST_RUN_USER_SELECT,
+  readFirstRunSteps,
+} from "@/lib/data/consultant-first-run";
 import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 
 // =============================================================================
@@ -384,9 +389,19 @@ export async function getConsultantDashboard(
       ratedClientsOneToOne: true,
       ratedEventsGroup: true,
       userId: true,
-      user: { select: { timezone: true, consulteeProfileId: true } },
+      ...FIRST_RUN_PROFILE_SELECT,
+      user: {
+        select: {
+          timezone: true,
+          consulteeProfileId: true,
+          ...FIRST_RUN_USER_SELECT,
+        },
+      },
     },
   });
+  const firstRunSteps = profile
+    ? readFirstRunSteps(profile, consultantProfileId)
+    : null;
   const zone = resolveViewerZone({ userTimezone: profile?.user.timezone });
   const { startOfToday, startOfMonth } = homeBoundaries(now, zone);
 
@@ -678,6 +693,7 @@ export async function getConsultantDashboard(
     },
     needsYou,
     sessionsDelivered,
+    ...(firstRunSteps ? { firstRun: { steps: firstRunSteps } } : {}),
     performanceSnapshot: {
       publishedRatingOneToOne: profile?.publishedRatingOneToOne ?? null,
       publishedRatingGroup: profile?.publishedRatingGroup ?? null,

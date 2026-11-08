@@ -92,6 +92,8 @@ export interface OrgAnalyticsPayload {
   programBreakdown: OrgProgramBreakdownRow[];
   wallet: {
     balancePaise: number;
+    /** The floor below which the wallet-low alert fires; null when unset. */
+    minBalancePaise: number | null;
     recent: Array<{ reason: string; count: number; deltaPaise: number }>;
   } | null;
   invoices: {
@@ -133,6 +135,7 @@ export async function getOrgAnalytics(
           id: true,
           fundingSource: true,
           walletBalance: true,
+          minBalancePaise: true,
           currency: true,
         },
       },
@@ -502,6 +505,7 @@ export async function getOrgAnalytics(
       org.billingAccount?.fundingSource === "WALLET"
         ? {
             balancePaise: org.billingAccount.walletBalance ?? 0,
+            minBalancePaise: org.billingAccount.minBalancePaise,
             recent: recentWallet.map((r) => ({
               reason: r.reason,
               count: Number(r.count),

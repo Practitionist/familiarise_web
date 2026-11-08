@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { MemberRole } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
 import {
   DomainVerificationRequiredError,
   UNVERIFIED_ORG_SEAT_CAP,
@@ -159,7 +160,7 @@ export async function issueInvitation(tx: Tx, input: IssueInvitationInput) {
       action: existing
         ? AUDIT_ACTIONS.MEMBER.INVITE_RESENT
         : AUDIT_ACTIONS.MEMBER.INVITE_SENT,
-      description: `${existing ? "Re-sent" : "Sent"} invite to ${email} as ${role}`,
+      description: `${existing ? "Re-sent" : "Sent"} invite to ${email} as ${MEMBER_ROLE_LABEL[role]}`,
       details: { email, role, expiresAt: expiresAt.toISOString() },
     },
   });

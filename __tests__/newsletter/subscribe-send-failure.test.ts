@@ -8,9 +8,8 @@
  * silently reporting success strands the subscriber at PENDING with no
  * confirmation link to click.
  *
- * Regression pin for the production incident where `WAITLIST_HMAC_SECRET` was
- * unset: `buildConfirmUrl` threw from outside the sender's try block, the
- * throw escaped `subscribe()`, and the route 500'd after the row was written.
+ * A signing failure inside `buildConfirmUrl` must come back as a failed send,
+ * never a throw out of `subscribe()` after the row was written.
  */
 
 const mockUpsert = jest.fn();
@@ -29,8 +28,8 @@ jest.mock("../../lib/prisma", () => ({
 
 jest.mock("../../lib/email", () => ({
   __esModule: true,
-  sendWaitlistConfirmEmail: (...args: unknown[]) => mockSendConfirm(...args),
-  sendWaitlistWelcomeEmail: jest.fn(),
+  sendNewsletterConfirmEmail: (...args: unknown[]) => mockSendConfirm(...args),
+  sendNewsletterWelcomeEmail: jest.fn(),
 }));
 
 const mockCaptureMessage = jest.fn();
@@ -42,8 +41,11 @@ jest.mock("@sentry/nextjs", () => ({
   captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
 
-jest.mock("../../lib/newsletter/tokens", () => ({
+jest.mock("../../lib/auth/link-signing", () => ({
   canSignLinks: () => true,
+  deriveAuthKey: () => Buffer.from("test-key"),
+}));
+jest.mock("../../lib/newsletter/tokens", () => ({
   verifyConfirmToken: jest.fn(),
   verifyUnsubscribeToken: jest.fn(),
 }));
@@ -70,10 +72,10 @@ describe("subscribe — confirmation send failure", () => {
 
     // Removing the reporting call must fail this test, not pass silently.
     expect(mockCaptureMessage).toHaveBeenCalledWith(
-      expect.stringContaining("waitlist confirmation email failed to send"),
+      expect.stringContaining("newsletter confirmation email failed to send"),
       expect.objectContaining({
         level: "warning",
-        tags: { subsystem: "waitlist" },
+        tags: { subsystem: "newsletter" },
       }),
     );
     // Neither the address nor a signed link may reach the report.
@@ -116,5 +118,51 @@ describe("subscribe — confirmation send failure", () => {
     });
     expect(mockUpsert).not.toHaveBeenCalled();
     expect(mockSendConfirm).not.toHaveBeenCalled();
+  });
+});
+
+describe("subscribe — linking the signed-in account", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFindUnique.mockResolvedValue(null);
+    mockUpsert.mockResolvedValue({});
+    mockSendConfirm.mockResolvedValue({ success: true, data: {} });
+  });
+
+  const linked = () => mockUpsert.mock.calls[0][0].create.userId;
+
+  it("links the session only when its verified email is the submitted one", async () => {
+    await subscribe({
+      ...input,
+      sessionUser: {
+        id: "u1",
+        email: "READER@example.com",
+        emailVerified: true,
+      },
+    });
+    expect(linked()).toBe("u1");
+  });
+
+  it("never links a session to another address, or an unverified one", async () => {
+    await subscribe({
+      ...input,
+      sessionUser: {
+        id: "u1",
+        email: "other@example.com",
+        emailVerified: true,
+      },
+    });
+    await subscribe({
+      ...input,
+      sessionUser: {
+        id: "u1",
+        email: "reader@example.com",
+        emailVerified: false,
+      },
+    });
+    expect(mockUpsert.mock.calls.map(([args]) => args.create.userId)).toEqual([
+      null,
+      null,
+    ]);
   });
 });

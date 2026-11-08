@@ -46,25 +46,21 @@ import {
   type EventSeatOpenedEmailArgs,
 } from "@/lib/email/senders/booking";
 import { BookingRuleError } from "./booking-rule-error";
+import {
+  INTEREST_RENOTIFY_COOLDOWN_MS,
+  OPEN_INTEREST,
+  notifiableInterest,
+  purgeSettledEventWaitlist,
+  purgeableEventWaitlistWhere,
+  renoticeBucket,
+} from "./interest/lifecycle";
 
 /** Open rows one learner may hold across events. */
 export const EVENT_WAITLIST_USER_CAP = 5;
-/** A notified waiter is eligible again after this; caps each waiter at two notices a day per event. */
-export const EVENT_WAITLIST_RENOTIFY_COOLDOWN_MS = 12 * 60 * 60_000;
-/** EXPIRED and BOOKED rows are deleted this long after their last change. */
-export const EVENT_WAITLIST_RETENTION_MS = 30 * 24 * 60 * 60_000;
 export const EVENT_SEAT_OPENED_CLAIM_SCOPE = "event-waitlist.seat-opened";
 
 export type EventWaitlistKind = "WEBINAR" | "CLASS";
 
-const OPEN: BackupInterestStatus[] = [
-  BackupInterestStatus.WAITING,
-  BackupInterestStatus.NOTIFIED,
-];
-const SETTLED: BackupInterestStatus[] = [
-  BackupInterestStatus.EXPIRED,
-  BackupInterestStatus.BOOKED,
-];
 const DEAD_SESSION: OccurrenceCompletionStatus[] = ["CANCELLED", "RESCHEDULED"];
 const HOST_COLLABORATOR: CollaboratorStatus[] = ["PENDING", "ACCEPTED"];
 
@@ -233,6 +229,30 @@ async function readEventById(
   return row ? classView(row, row.appointment) : null;
 }
 
+function appointmentEventSelect(now: Date) {
+  return {
+    ...rosterSelect(now),
+    webinar: {
+      select: { ...EVENT_FIELDS, webinarPlan: { select: PLAN_SELECT } },
+    },
+    class: {
+      select: { ...EVENT_FIELDS, classPlan: { select: CLASS_PLAN_SELECT } },
+    },
+  } satisfies Prisma.AppointmentSelect;
+}
+
+function viewOfAppointment(
+  row: Roster & {
+    webinar: Parameters<typeof webinarView>[0] | null;
+    class: Parameters<typeof classView>[0] | null;
+  },
+): EventView | null {
+  const { webinar, class: cls, ...roster } = row;
+  if (webinar) return webinarView(webinar, roster);
+  if (cls) return classView(cls, roster);
+  return null;
+}
+
 async function readEventByAppointment(
   tx: Pick<Tx, "appointment">,
   appointmentId: string,
@@ -240,21 +260,9 @@ async function readEventByAppointment(
 ): Promise<EventView | null> {
   const row = await tx.appointment.findUnique({
     where: { id: appointmentId },
-    select: {
-      ...rosterSelect(now),
-      webinar: {
-        select: { ...EVENT_FIELDS, webinarPlan: { select: PLAN_SELECT } },
-      },
-      class: {
-        select: { ...EVENT_FIELDS, classPlan: { select: CLASS_PLAN_SELECT } },
-      },
-    },
+    select: appointmentEventSelect(now),
   });
-  if (!row) return null;
-  const { webinar, class: cls, ...roster } = row;
-  if (webinar) return webinarView(webinar, roster);
-  if (cls) return classView(cls, roster);
-  return null;
+  return row ? viewOfAppointment(row) : null;
 }
 
 /** The next live session after `now`, if any. */
@@ -430,15 +438,15 @@ export async function joinEventWaitlist(args: {
           where: key,
           select: { status: true },
         });
-        if (existing && OPEN.includes(existing.status)) return existing;
-        const [onList, mine] = await Promise.all([
-          tx.appointmentWaitlist.count({
-            where: { appointmentId, status: { in: OPEN } },
-          }),
-          tx.appointmentWaitlist.count({
-            where: { userId: args.userId, status: { in: OPEN } },
-          }),
-        ]);
+        if (existing && OPEN_INTEREST.includes(existing.status))
+          return existing;
+        // One pg client per transaction: run its queries one after another.
+        const onList = await tx.appointmentWaitlist.count({
+          where: { appointmentId, status: { in: OPEN_INTEREST } },
+        });
+        const mine = await tx.appointmentWaitlist.count({
+          where: { userId: args.userId, status: { in: OPEN_INTEREST } },
+        });
         if (onList >= listCap(plan)) {
           throw new BookingRuleError(
             "WAITLIST_FULL",
@@ -481,13 +489,60 @@ export async function leaveEventWaitlist(
   const { count } = await prisma.appointmentWaitlist.updateMany({
     where: {
       userId,
-      status: { in: OPEN },
+      status: { in: OPEN_INTEREST },
       appointment:
         kind === "WEBINAR" ? { webinarId: eventId } : { classId: eventId },
     },
     data: { status: BackupInterestStatus.EXPIRED },
   });
   return count;
+}
+
+export interface EventWaitlistAlertRow {
+  kind: EventWaitlistKind;
+  eventId: string;
+  planId: string;
+  planTitle: string;
+  nextSessionAt: Date | null;
+  status: BackupInterestStatus;
+  notifiedAt: Date | null;
+  checkoutHref: string;
+  /** A seat can be bought right now: on sale by checkout's rule and at least one seat is free. */
+  seatAvailable: boolean;
+}
+
+/** The caller's open rows, oldest first, for the learner's "My alerts" list. */
+export async function listEventWaitlist(
+  userId: string,
+  now = new Date(),
+): Promise<EventWaitlistAlertRow[]> {
+  const rows = await prisma.appointmentWaitlist.findMany({
+    where: { userId, status: { in: OPEN_INTEREST } },
+    orderBy: { createdAt: "asc" },
+    take: EVENT_WAITLIST_USER_CAP,
+    select: {
+      status: true,
+      notifiedAt: true,
+      appointment: { select: appointmentEventSelect(now) },
+    },
+  });
+  return rows.flatMap((row) => {
+    const view = viewOfAppointment(row.appointment);
+    if (!view) return [];
+    return [
+      {
+        kind: view.kind,
+        eventId: view.eventId,
+        planId: view.plan.id,
+        planTitle: view.plan.title,
+        nextSessionAt: nextStart(view, now),
+        status: row.status,
+        notifiedAt: row.notifiedAt,
+        checkoutHref: eventCheckoutHref(view.kind, view.plan.id, view.eventId),
+        seatAvailable: onSale(view, now) && seatsRemaining(view) > 0,
+      },
+    ];
+  });
 }
 
 export interface StagedSeatOpened {
@@ -501,18 +556,7 @@ function notifiableWhere(
   appointmentId: string,
   now: Date,
 ): Prisma.AppointmentWaitlistWhereInput {
-  return {
-    appointmentId,
-    OR: [
-      { status: BackupInterestStatus.WAITING },
-      {
-        status: BackupInterestStatus.NOTIFIED,
-        notifiedAt: {
-          lt: new Date(now.getTime() - EVENT_WAITLIST_RENOTIFY_COOLDOWN_MS),
-        },
-      },
-    ],
-  };
+  return { appointmentId, ...notifiableInterest(now) };
 }
 
 /**
@@ -564,27 +608,25 @@ export async function stageSeatOpenedNotices(
   }
 
   const userIds = candidates.map((c) => c.userId);
-  const [priors, paidSeats, liveSeats] = await Promise.all([
-    findPriorSeatPayments(tx, appointmentId, userIds),
-    tx.appointmentParticipant.findMany({
-      where: {
-        appointmentId,
-        role: "CONSULTEE",
-        userId: { in: userIds },
-        ...paidParticipant(),
-      },
-      select: { userId: true },
-    }),
-    tx.appointmentParticipant.findMany({
-      where: {
-        appointmentId,
-        role: "CONSULTEE",
-        userId: { in: userIds },
-        ...liveParticipant(),
-      },
-      select: { userId: true },
-    }),
-  ]);
+  const priors = await findPriorSeatPayments(tx, appointmentId, userIds);
+  const paidSeats = await tx.appointmentParticipant.findMany({
+    where: {
+      appointmentId,
+      role: "CONSULTEE",
+      userId: { in: userIds },
+      ...paidParticipant(),
+    },
+    select: { userId: true },
+  });
+  const liveSeats = await tx.appointmentParticipant.findMany({
+    where: {
+      appointmentId,
+      role: "CONSULTEE",
+      userId: { in: userIds },
+      ...liveParticipant(),
+    },
+    select: { userId: true },
+  });
   const paid = new Set(paidSeats.map((s) => s.userId));
   const live = new Set(liveSeats.map((s) => s.userId));
   const seated = candidates.filter((c) => paid.has(c.userId));
@@ -598,7 +640,10 @@ export async function stageSeatOpenedNotices(
   // Backstop for a capture whose BOOKED hook did not run.
   if (seated.length > 0) {
     await tx.appointmentWaitlist.updateMany({
-      where: { id: { in: seated.map((c) => c.id) }, status: { in: OPEN } },
+      where: {
+        id: { in: seated.map((c) => c.id) },
+        status: { in: OPEN_INTEREST },
+      },
       data: { status: BackupInterestStatus.BOOKED, bookedAt: now },
     });
   }
@@ -613,9 +658,7 @@ export async function stageSeatOpenedNotices(
   if (notified.length === 0) return NOTHING;
 
   const recipients = notified.map((row) => row.userId);
-  const bucket = Math.floor(
-    now.getTime() / EVENT_WAITLIST_RENOTIFY_COOLDOWN_MS,
-  );
+  const bucket = renoticeBucket(now);
   const checkoutUrl = eventCheckoutHref(view.kind, plan.id, view.eventId);
   const workflowId = NOVU_WORKFLOWS.EVENT_SEAT_OPENED;
   const { allowedRecipients } = await resolveRecipientBellPolicy(
@@ -665,7 +708,7 @@ export async function finishSeatOpenedNotices(
   const rows = await stageEventSeatOpenedEmails(email, {
     scope: EVENT_SEAT_OPENED_CLAIM_SCOPE,
     key: (userId) => `${email.appointmentId}:${email.bucket}:${userId}`,
-    ttlMs: 2 * EVENT_WAITLIST_RENOTIFY_COOLDOWN_MS,
+    ttlMs: 2 * INTEREST_RENOTIFY_COOLDOWN_MS,
   });
   await flushNotificationsAfter(
     { emails: [{ rows, emailType: EVENT_SEAT_OPENED_EMAIL_TYPE }] },
@@ -681,7 +724,7 @@ export function markEventWaitlistBooked(
   now: Date,
 ) {
   return tx.appointmentWaitlist.updateMany({
-    where: { appointmentId, userId, status: { in: OPEN } },
+    where: { appointmentId, userId, status: { in: OPEN_INTEREST } },
     data: { status: BackupInterestStatus.BOOKED, bookedAt: now },
   });
 }
@@ -693,7 +736,7 @@ export function expireEventWaitlistForPlan(
   planId: string,
 ) {
   return tx.appointmentWaitlist.updateMany({
-    where: { planKind, planId, status: { in: OPEN } },
+    where: { planKind, planId, status: { in: OPEN_INTEREST } },
     data: { status: BackupInterestStatus.EXPIRED },
   });
 }
@@ -704,7 +747,7 @@ function lapsedEventWaitlistWhere(
 ): Prisma.AppointmentWaitlistWhereInput {
   const ended = { in: ["COMPLETED" as const, "CANCELLED" as const] };
   return {
-    status: { in: OPEN },
+    status: { in: OPEN_INTEREST },
     appointment: {
       OR: [
         { deletedAt: { not: null } },
@@ -724,15 +767,6 @@ function lapsedEventWaitlistWhere(
   };
 }
 
-function purgeableEventWaitlistWhere(
-  now: Date,
-): Prisma.AppointmentWaitlistWhereInput {
-  return {
-    status: { in: SETTLED },
-    updatedAt: { lt: new Date(now.getTime() - EVENT_WAITLIST_RETENTION_MS) },
-  };
-}
-
 export async function hasLapsedEventWaitlist(
   db: PrismaLike,
   now: Date,
@@ -748,14 +782,13 @@ export async function hasLapsedEventWaitlist(
 
 /** The stale-request arm: open rows on an ended event expire; settled rows past retention are deleted. */
 export async function expireEventWaitlist(
-  now = new Date(),
+  now: Date,
+  purgeLimit: number,
 ): Promise<{ expired: number; purged: number }> {
   const expired = await prisma.appointmentWaitlist.updateMany({
     where: lapsedEventWaitlistWhere(now),
     data: { status: BackupInterestStatus.EXPIRED },
   });
-  const purged = await prisma.appointmentWaitlist.deleteMany({
-    where: purgeableEventWaitlistWhere(now),
-  });
-  return { expired: expired.count, purged: purged.count };
+  const purged = await purgeSettledEventWaitlist(prisma, now, purgeLimit);
+  return { expired: expired.count, purged };
 }

@@ -32,7 +32,7 @@ import { createRescheduleProposals } from "./seedFiles/6c-create-reschedule-prop
 import { recomputeAllMenteesHelped } from "./seedFiles/6d-recompute-mentees-helped";
 
 // Phase 7: Engagement
-import { createWaitlistSubscribers } from "./seedFiles/7a-create-waitlist-subscribers";
+import { createNewsletterSubscribers } from "./seedFiles/7a-create-newsletter-subscribers";
 import { createConsultantReviews } from "./seedFiles/7b-create-consultant-reviews";
 
 // Phase 8: Payments
@@ -177,8 +177,8 @@ async function seed() {
 
     // Phase 7: Engagement data
     console.log("\n[Phase 7] Creating engagement data...");
-    console.log("Creating waitlist subscribers...");
-    await createWaitlistSubscribers();
+    console.log("Creating newsletter subscribers...");
+    await createNewsletterSubscribers();
 
     console.log("Creating consultant reviews...");
     await createConsultantReviews(consultants);

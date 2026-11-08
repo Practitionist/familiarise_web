@@ -1,4 +1,8 @@
 import * as Sentry from "@sentry/nextjs";
+import {
+  LIVE_CLASS_COLLABORATOR,
+  LIVE_WEBINAR_COLLABORATOR,
+} from "@/lib/collaborators/live-plan";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { OCCUPYING_OCCURRENCE_WHERE } from "@/utils/scheduling-engine/occupancyPolicy";
 import {
@@ -1261,9 +1265,8 @@ export async function getMyCollaborations(consultantProfileId: string) {
       prisma.collaborator.findMany({
         where: {
           consultantProfileId,
-          collaboratorType: "WEBINAR",
+          ...LIVE_WEBINAR_COLLABORATOR,
           status: { in: ["PENDING", "ACCEPTED"] },
-          webinarPlan: { archivedAt: null },
         },
         include: {
           webinarPlan: {
@@ -1333,9 +1336,8 @@ export async function getMyCollaborations(consultantProfileId: string) {
       prisma.collaborator.findMany({
         where: {
           consultantProfileId,
-          collaboratorType: "CLASS",
+          ...LIVE_CLASS_COLLABORATOR,
           status: { in: ["PENDING", "ACCEPTED"] },
-          classPlan: { archivedAt: null },
         },
         include: {
           classPlan: {

@@ -482,8 +482,9 @@ export const sortAppointmentsByStartTime = (
 export const getTodayAppointments = (
   appointments: TAppointment[],
   zone: string,
+  referenceDate: Date = new Date(),
 ): TAppointment[] => {
-  const todayKey = formatInViewerZone(new Date(), zone, "yyyy-MM-dd");
+  const todayKey = formatInViewerZone(referenceDate, zone, "yyyy-MM-dd");
 
   // First expand appointments with multiple slots (only for subscriptions and classes)
   const expandedAppointments = appointments.flatMap((appointment) => {

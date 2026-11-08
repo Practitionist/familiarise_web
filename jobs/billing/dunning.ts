@@ -8,6 +8,7 @@
 import prisma, { type Tx } from "@/lib/prisma";
 import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { formatAuditDate } from "@/lib/labels/org-labels";
 import {
   notifyOrgInvoiceOverdue,
   rosterForOrg,
@@ -331,7 +332,7 @@ async function dunning(opts: {
               targetMembershipId: null,
               category: "INVOICE",
               action: AUDIT_ACTIONS.INVOICE.INVOICE_OVERDUE,
-              description: `Invoice ${inv.invoiceNumber} marked OVERDUE (due ${inv.dueDate.toISOString()})`,
+              description: `Invoice ${inv.invoiceNumber} marked overdue (due ${formatAuditDate(inv.dueDate)})`,
               details: {
                 invoiceId: inv.id,
                 invoiceNumber: inv.invoiceNumber,

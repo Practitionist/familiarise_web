@@ -57,7 +57,9 @@ import {
   supportsDocuments,
 } from "@/lib/appointments/kind-capabilities";
 import {
+  formatFundingBreakdown,
   isSponsoredPayment,
+  paymentFundingBreakdown,
   paymentRailLabel,
   receiptHref,
   type PaymentDisplayLike,
@@ -354,6 +356,7 @@ export function AppointmentDetailClient({
   const pendingRow =
     payments.find((p) => p.paymentStatus === "PENDING") ?? null;
   const paidRow = payments.find((p) => p.paymentStatus === "SUCCEEDED") ?? null;
+  const paidBreakdown = paidRow ? paymentFundingBreakdown(paidRow.legs) : [];
   // Who funded THIS row. A seat on someone else's webinar is sponsored by the
   // attendee's own organisation, which is not the event's tag.
   const sponsorOf = (p: { organizationId: string | null }) =>
@@ -1103,11 +1106,24 @@ export function AppointmentDetailClient({
                       {moneyState.detail}
                     </p>
                   )}
+                  {paidRow &&
+                    paidBreakdown.length > 1 &&
+                    moneyState.state !== "SPONSORED" && (
+                      <p className="text-xs text-muted-foreground tabular-nums">
+                        Paid with{" "}
+                        {formatFundingBreakdown(
+                          paidBreakdown,
+                          paidRow.currency ?? "INR",
+                        )}
+                      </p>
+                    )}
                   {/* A CHARGE_MEMBER co-pay the viewer paid themselves keeps
                       its own line with its receipt (#775). */}
                   {payments
                     .flatMap((p) => p.childPayments)
-                    .filter((c) => c.userId === viewerId)
+                    .filter(
+                      (c) => c.userId === viewerId && !isSponsoredPayment(c),
+                    )
                     .map((c) => (
                       <MoneyLine key={c.id} payment={c} />
                     ))}

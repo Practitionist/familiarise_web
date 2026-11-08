@@ -74,7 +74,7 @@ export interface StagedEmail {
 export interface StageOptions {
   /** Stage inside the caller's transaction so a rollback takes the row too. */
   tx?: Pick<Tx, "failedEmail" | "emailSuppression">;
-  /** `payment:<id>`, `user:<id>`, `waitlist:<email>`, `contact:<email>`. */
+  /** `payment:<id>`, `user:<id>`, `newsletter:<email>`, `contact:<email>`. */
   entityRef?: string;
 }
 

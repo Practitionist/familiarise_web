@@ -16,6 +16,8 @@ import {
   postInvoiceVoidedJournal,
 } from "./org-invoice-journal";
 import { lockPayableInvoice } from "./org-invoice-settlement";
+import { INVOICE_VOID_MODE_LABEL } from "@/lib/labels/org-labels";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { transitionOverage } from "./overage-transitions";
 
 /**
@@ -116,7 +118,7 @@ export async function voidOrgInvoice(
       actorMembershipId: args.actorMembershipId,
       category: "INVOICE",
       action: AUDIT_ACTIONS.INVOICE.INVOICE_VOIDED,
-      description: `Invoice ${invoice.invoiceNumber}: ${invoice.status} → VOID (${mode})`,
+      description: `Invoice ${invoice.invoiceNumber} for ${formatCurrencyAmount(Number(invoice.totalPaise), "INR")} voided ${INVOICE_VOID_MODE_LABEL[mode]}`,
       details: { invoiceId, from: invoice.status, to: "VOID", mode },
     },
   });

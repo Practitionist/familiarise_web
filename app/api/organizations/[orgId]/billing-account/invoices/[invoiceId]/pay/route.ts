@@ -496,7 +496,8 @@ async function inspectStoredOrder(args: {
                   actorMembershipId: null,
                   category: "INVOICE",
                   action: AUDIT_ACTIONS.INVOICE.INVOICE_PAID,
-                  description: `Invoice paid while checking existing order ${orderId}`,
+                  description:
+                    "Invoice paid while checking an existing payment order",
                   details: {
                     invoiceId,
                     providerPaymentId: holding.paymentId,

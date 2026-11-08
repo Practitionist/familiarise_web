@@ -386,7 +386,7 @@ The evidence for each row:
 - **Quiet hours** are read only by `lib/booking/week-nudge.ts`, which walks consultant profiles, so the card shows only for a viewer with a consultant profile.
 - **Staff and admins** receive the operations bells in every family (`support-ticket-created`, `feedback-received`, `refund-requested`, `dispute-updated`), so they see everything.
 
-There is no marketing switch. Marketing email and the newsletter follow the account's DPDP `MARKETING_COMMS` consent, so the Categories card ends with a line linking to Settings › Account › Data consent & privacy rights (`accountSettingsHref(user, "account")` plus `#data-consent`). The strict PUT rejects `marketingEmails` with a 400. How the consent drives the `NewsletterSubscriber` row (table `Waitlist`) is in `docs/email/README.md`, "The newsletter follows marketing consent".
+There is no marketing switch. Marketing email and the newsletter follow the account's DPDP `MARKETING_COMMS` consent, so the Categories card ends with a line linking to Settings › Account › Data consent & privacy rights (`accountSettingsHref(user, "account")` plus `#data-consent`). The strict PUT rejects `marketingEmails` with a 400. How the consent drives the `NewsletterSubscriber` row is in `docs/email/README.md`, "The newsletter follows marketing consent".
 
 ### Erased users
 

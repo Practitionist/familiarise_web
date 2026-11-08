@@ -168,7 +168,7 @@ export async function PATCH(
           actorMembershipId: access.member.id,
           category: "PROGRAM",
           action: AUDIT_ACTIONS.PROGRAM.RATE_CARD_BUMPED,
-          description: `RateCard ${cardId} metadata updated`,
+          description: "Rate card metadata updated",
           details: {
             rateCardId: cardId,
             minGrossPaise: next.minGrossPaise,

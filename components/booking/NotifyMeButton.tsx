@@ -1,12 +1,11 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useMutation } from "@tanstack/react-query";
-import { BellOff, BellRing } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 
-import { Button } from "@/components/ui/button";
-import { useToast } from "@/hooks/use-toast";
+import { EVENT_WAITLIST_QUERY_KEY } from "@/lib/booking/interest/query-keys";
+
+import { assertOk, NotifyToggleButton } from "./NotifyToggleButton";
 
 export interface NotifyMeButtonProps {
   kind: "WEBINAR" | "CLASS";
@@ -29,68 +28,38 @@ export function NotifyMeButton({
   signedIn,
   compact = false,
 }: Readonly<NotifyMeButtonProps>) {
-  const look = compact
-    ? ({ size: "sm", className: undefined } as const)
-    : ({ size: "default", className: "w-full" } as const);
-  const { toast } = useToast();
   const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const toggle = useMutation({
-    mutationFn: async () => {
-      const res = await fetch("/api/scheduling/event-waitlist", {
-        method: waiting ? "DELETE" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, eventId }),
-      });
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(body.error ?? "Could not save that");
-    },
-    onSuccess: () => {
-      toast(
-        waiting
-          ? { title: "You left the waitlist" }
-          : {
-              title: "We'll tell you the moment a seat opens",
-              description:
-                "Nothing is held for you. We tell everyone waiting at once, at any hour, and the first to pay gets the seat.",
-            },
-      );
-      router.refresh();
-    },
-    onError: (error: Error) =>
-      toast({
-        title: "Not saved",
-        description: error.message,
-        variant: "destructive",
-      }),
-  });
-
-  if (!signedIn) {
-    const search = searchParams?.toString();
-    const returnTo = `${pathname}${search ? `?${search}` : ""}`;
-    return (
-      <Button asChild variant="outline" {...look}>
-        <Link href={`/auth/signin?callbackUrl=${encodeURIComponent(returnTo)}`}>
-          <BellRing className="mr-1.5 h-4 w-4" />
-          Sign in to be notified
-        </Link>
-      </Button>
-    );
-  }
+  const queryClient = useQueryClient();
   return (
-    <Button
-      variant="outline"
-      {...look}
-      disabled={toggle.isPending}
-      onClick={() => toggle.mutate()}
-    >
-      {waiting ? (
-        <BellOff className="mr-1.5 h-4 w-4" />
-      ) : (
-        <BellRing className="mr-1.5 h-4 w-4" />
-      )}
-      {waiting ? "You're on the list · Leave" : "Notify me when a seat opens"}
-    </Button>
+    <NotifyToggleButton
+      signedIn={signedIn}
+      active={waiting}
+      compact={compact}
+      labels={{
+        join: "Notify me when a seat opens",
+        leave: "You're on the list · Leave",
+        signIn: "Sign in to be notified",
+      }}
+      joinToast={{
+        title: "We'll tell you the moment a seat opens",
+        description:
+          "Nothing is held for you. We tell everyone waiting at once, at any hour, and the first to pay gets the seat.",
+      }}
+      leaveTitle="You left the waitlist"
+      request={async (leaving) => {
+        const res = await fetch("/api/scheduling/event-waitlist", {
+          method: leaving ? "DELETE" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind, eventId }),
+        });
+        await assertOk(res);
+      }}
+      onDone={() => {
+        void queryClient.invalidateQueries({
+          queryKey: EVENT_WAITLIST_QUERY_KEY,
+        });
+        router.refresh();
+      }}
+    />
   );
 }

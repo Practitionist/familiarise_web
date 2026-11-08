@@ -9,13 +9,14 @@
  * page binds the profile to the session first (requirePersonalProfileAccess).
  */
 
-import type { PaymentLegSource, Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import {
   deriveBookingPresentation,
   type MoneyState,
 } from "@/lib/dashboard/money-state";
 import {
+  isSponsoredPayment,
   payerSentence,
   paymentFunding,
   receiptHref,
@@ -64,8 +65,6 @@ export interface ConsulteePaymentDetail {
   receiptHref: string | null;
   invoicePdfHref: string | null;
   creditNotes: { id: string; number: string; issuedAt: Date; href: string }[];
-  /** What each funding rail carried, in the payer's words. */
-  legs: { source: PaymentLegSource; amountPaise: number }[];
   coPays: { id: string; amountPaise: number; currency: string }[];
 }
 
@@ -119,11 +118,14 @@ export async function readConsulteePaymentDetail(args: {
     { ...row.presentation, refunds, occurrences: [] },
     "CONSULTEE",
   );
-  const coPays = payment.childPayments.map((c) => ({
-    id: c.id,
-    amountPaise: Number(c.amount),
-    currency: c.currency,
-  }));
+  // A CHARGE_ORG overage child is the organisation's charge, never the member's share.
+  const coPays = payment.childPayments
+    .filter((c) => !isSponsoredPayment(c))
+    .map((c) => ({
+      id: c.id,
+      amountPaise: Number(c.amount),
+      currency: c.currency,
+    }));
 
   return toPlain({
     row,
@@ -164,10 +166,6 @@ export async function readConsulteePaymentDetail(args: {
       number: note.creditNoteNumber,
       issuedAt: note.issuedAt,
       href: `/api/payments/${payment.id}/credit-note/${note.id}/pdf`,
-    })),
-    legs: (payment.legs ?? []).map((leg) => ({
-      source: leg.source,
-      amountPaise: Number(leg.amountPaise),
     })),
     coPays,
   });

@@ -167,7 +167,8 @@ it("operators get an action item linking to those sessions", () => {
   const items = deriveActionCenter(
     {
       status: "ACTIVE",
-      walletLowBalancePaise: null,
+      walletBalancePaise: null,
+      walletMinBalancePaise: null,
       creditPoolMaxUtilizationPct: null,
       suspendedMemberUpcomingCount: 2,
     } as never,

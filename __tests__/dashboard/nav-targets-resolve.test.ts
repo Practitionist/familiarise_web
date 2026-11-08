@@ -129,6 +129,9 @@ describe("personal + workspace nav targets resolve", () => {
     expect(group("Sell")).toEqual(["sell/sessions", "sell/programs"]);
     expect(group("Inbox")).toEqual(["requests", "messages", "collaborations"]);
     expect(group("Studio")).toEqual(["recordings", "documents", "products"]);
+    expect(group("Money")).toEqual(["earnings", "referrals"]);
+    expect(group("Reputation")).toEqual(["reviews"]);
+    expect(nav.groups.map((g) => g.label)).not.toContain("Reputation & growth");
     expect(flattenNav(nav).find((i) => i.path === "home")?.name).toBe("Home");
     expect(flattenNav(nav).map((i) => i.path)).not.toContain("offerings");
     expect(nav.groups.every((g) => g.items.length <= 4)).toBe(true);

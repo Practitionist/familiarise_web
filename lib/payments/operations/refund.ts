@@ -88,6 +88,7 @@ import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import { allocateCycleClawback } from "@/lib/payments/payouts/earnings-reversal";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
@@ -1311,7 +1312,7 @@ export async function applyRefundCascade(
             actorMembershipId: null,
             category: "WALLET",
             action: AUDIT_ACTIONS.WALLET.WALLET_REFUND,
-            description: `Refund ${input.refundId}: ${reverse} paise credited back to org wallet`,
+            description: `Refund of ${formatCurrencyAmount(reverse, "INR")} credited back to the organisation wallet`,
             details: {
               paymentId: payment.id,
               refundId: input.refundId,
@@ -1710,7 +1711,7 @@ export async function applyRefundCascade(
         actorMembershipId: null,
         category: "INVOICE",
         action: AUDIT_ACTIONS.INVOICE.INVOICE_REFUNDED,
-        description: `Refund ${input.refundId} processed: ${input.amountPaise} paise`,
+        description: `Refund of ${formatCurrencyAmount(input.amountPaise, "INR")} processed`,
         details: {
           paymentId: payment.id,
           refundId: input.refundId,
