@@ -61,6 +61,7 @@ import { settleQualifyingReferral } from "@/lib/referrals/vesting";
 import { releaseHeldReferral, voidHeldReferral } from "@/lib/referrals/review";
 import { voidVestedReferralRewards } from "@/lib/referrals/credit-reversal";
 import { recordPayerInstruments } from "@/lib/payments/payer-instruments";
+import { clampPage } from "@/components/dashboard/backoffice/referrals/HeldReferralsPanel";
 
 const NOW = new Date("2026-11-08T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -383,5 +384,13 @@ describe("payer instruments at capture", () => {
     });
     expect(row.payerVpaHash).toEqual(expect.any(String));
     expect(row.payerPhoneHash).toBe(phone);
+  });
+});
+
+describe("held queue paging", () => {
+  it("steps back when deciding the last row empties the last page", () => {
+    expect(clampPage(3, 2)).toBe(2);
+    expect(clampPage(2, 0)).toBe(1);
+    expect(clampPage(1, 4)).toBe(1);
   });
 });

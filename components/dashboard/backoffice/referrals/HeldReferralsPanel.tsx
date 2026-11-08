@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Loader2, ShieldAlert, XCircle } from "lucide-react";
 
@@ -62,6 +62,11 @@ const HOLD_REASON_LABEL: Record<string, string> = {
 };
 
 const QUERY_KEY = "admin-held-referrals";
+
+/** The page to show once the page count is known: never past the last page, never below 1. */
+export function clampPage(page: number, totalPages: number): number {
+  return Math.max(1, Math.min(page, totalPages));
+}
 
 function partyLabel(p: Party): string {
   return p.email || p.name || p.id;
@@ -235,6 +240,13 @@ export function HeldReferralsPanel() {
   const rows = query.data?.data ?? [];
   const total = query.data?.total ?? 0;
   const totalPages = query.data?.totalPages ?? 1;
+
+  // Deciding the last row of the last page shrinks the page count under the current page.
+  useEffect(() => {
+    if (!query.data) return;
+    const clamped = clampPage(page, query.data.totalPages);
+    if (clamped !== page) setPage(clamped);
+  }, [page, query.data]);
 
   return (
     <>
