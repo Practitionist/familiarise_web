@@ -211,7 +211,7 @@ export function TrialBookingModal({
   if (!session?.user?.id) {
     return (
       <Dialog open={isOpen} onOpenChange={onClose}>
-        <DialogContent className="sm:max-w-[425px] z-[1002]">
+        <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Gift className="h-5 w-5 text-emerald-500" />
@@ -239,7 +239,7 @@ export function TrialBookingModal({
   if (isSuccess) {
     return (
       <Dialog open={isOpen} onOpenChange={onClose}>
-        <DialogContent className="sm:max-w-[425px] z-[1002]">
+        <DialogContent className="sm:max-w-[425px]">
           <div className="py-8 text-center">
             <div className="mx-auto w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mb-4">
               <CheckCircle className="h-8 w-8 text-emerald-600" />
@@ -259,7 +259,7 @@ export function TrialBookingModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[500px] z-[1002]">
+      <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Gift className="h-5 w-5 text-emerald-500" />
