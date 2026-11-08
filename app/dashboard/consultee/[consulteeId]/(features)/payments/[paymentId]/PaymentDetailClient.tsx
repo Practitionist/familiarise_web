@@ -56,7 +56,24 @@ function chargeFacts(detail: ConsulteePaymentDetail, money: Money) {
         ]
       : []),
     ...(row.discount
-      ? [{ label: "Discount", value: `Code ${row.discount.code}` }]
+      ? [
+          {
+            label: "Discount",
+            value:
+              detail.showAmount && row.discountBreakdown.codeDiscountPaise > 0
+                ? `Code ${row.discount.code} · \u2212${money(row.discountBreakdown.codeDiscountPaise)}`
+                : `Code ${row.discount.code}`,
+          },
+        ]
+      : []),
+    ...(detail.showAmount && row.discountBreakdown.welcomeDiscountPaise > 0
+      ? [
+          {
+            label: "Welcome discount",
+            value: `\u2212${money(row.discountBreakdown.welcomeDiscountPaise)}`,
+            hint: "Your referral welcome discount, taken off before GST",
+          },
+        ]
       : []),
     ...(row.refundedPaise > 0 && detail.showAmount
       ? [{ label: "Refunded", value: money(row.refundedPaise) }]

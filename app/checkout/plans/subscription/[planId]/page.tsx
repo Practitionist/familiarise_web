@@ -242,8 +242,8 @@ export default function SubscriptionCheckoutPage({
   }, [planData?.data, effectiveSearchParams?.schedulingPeriodStartsAt]);
 
   // Apply discount code
-  const handleApplyDiscount = async (code?: string) => {
-    const codeToApply = code || discountCodeInput;
+  const handleApplyDiscount = async () => {
+    const codeToApply = discountCodeInput;
     if (!codeToApply.trim()) {
       setDiscountError("Please enter a discount code");
       return;
@@ -733,7 +733,7 @@ export default function SubscriptionCheckoutPage({
             />
             <Button
               variant="outline"
-              onClick={() => handleApplyDiscount()}
+              onClick={handleApplyDiscount}
               disabled={isApplyingDiscount || !!appliedDiscount}
             >
               {isApplyingDiscount ? "Applying..." : "Apply"}
@@ -771,27 +771,6 @@ export default function SubscriptionCheckoutPage({
               </Button>
             </div>
           )}
-          <div className="grid gap-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="font-medium">SUB20</div>
-                <div className="text-sm text-muted-foreground">
-                  Get 20% off your subscription
-                </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <div className="text-muted-foreground">20% off</div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleApplyDiscount("SUB20")}
-                  disabled={isApplyingDiscount || !!appliedDiscount}
-                >
-                  Apply
-                </Button>
-              </div>
-            </div>
-          </div>
         </div>
         <Separator className="bg-border" />
         <ReferralCreditsBlock

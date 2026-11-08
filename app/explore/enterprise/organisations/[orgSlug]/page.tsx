@@ -19,6 +19,11 @@ import {
   ORG_SIZE_BUCKET_LABEL,
 } from "@/lib/labels/org-labels";
 import type { Metadata } from "next";
+import { isPlatformGstRegistered } from "@/lib/pdf/supplier";
+import {
+  buyerDisplayPricePaise,
+  buyerPriceNote,
+} from "@/lib/payments/pricing/display-price";
 import { fetchOrgBySlug } from "./org-reader";
 
 // ISR per orgSlug, not force-dynamic. The cache key is the org being viewed,
@@ -146,6 +151,7 @@ export default async function OrgProfilePage({
 }) {
   const { orgSlug } = await params;
   const org = await fetchOrgBySlug(orgSlug);
+  const gstRegistered = isPlatformGstRegistered();
 
   if (!org) notFound();
 
@@ -341,7 +347,18 @@ export default async function OrgProfilePage({
                         </Badge>
                         {plan.price > 0 && (
                           <span className="text-xs font-semibold text-muted-foreground">
-                            ₹{(plan.price / 100).toLocaleString("en-IN")}
+                            ₹
+                            {(
+                              buyerDisplayPricePaise(
+                                plan.price,
+                                gstRegistered,
+                              ) / 100
+                            ).toLocaleString("en-IN")}
+                            {buyerPriceNote(plan.price, gstRegistered) && (
+                              <span className="ml-1 font-normal">
+                                {buyerPriceNote(plan.price, gstRegistered)}
+                              </span>
+                            )}
                           </span>
                         )}
                       </div>

@@ -20,8 +20,10 @@ import { refundedPaise } from "@/lib/appointments/seat-payments";
 import { ORG_FUNDED_PAYMENT_METHODS } from "@/lib/payments/org-funded";
 import {
   isSponsoredPayment,
+  paymentDiscountBreakdown,
   paymentFundingBreakdown,
   type FundingBreakdownEntry,
+  type PaymentDiscountBreakdown,
 } from "@/lib/appointments/payment-display";
 import { lifecycleOf, planOf } from "@/lib/appointments/presentation-input";
 import {
@@ -63,6 +65,8 @@ export interface ConsulteePaymentRow {
   consultantName: string;
   organizationId: string | null;
   discount: { code: string; type: string; value: number } | null;
+  /** Paise each pre-tax discount took off the list price. */
+  discountBreakdown: PaymentDiscountBreakdown;
   refunds: ConsulteePaymentRefund[];
   /** Paise returned so far, counting only refunds that went through. */
   refundedPaise: number;
@@ -414,6 +418,10 @@ export function toRow(p: PaymentRecord): ConsulteePaymentRow {
           value: p.discountCode.discountValue,
         }
       : null,
+    discountBreakdown: paymentDiscountBreakdown({
+      ...p,
+      hasDiscountCode: p.discountCode !== null,
+    }),
     refunds: p.refunds,
     refundedPaise: refundedPaise(p),
     consumerInvoice: p.consumerInvoice,

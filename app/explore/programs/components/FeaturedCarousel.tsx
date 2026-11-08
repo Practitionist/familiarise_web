@@ -6,7 +6,7 @@ import { ArrowRight, Sparkles } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { CompanyLogo } from "@/components/ui/company-logo";
-import { useCurrency } from "@/hooks/useCurrency";
+import { BuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { isClassProgram, Program } from "@/lib/explore/programs";
 
 interface FeaturedCarouselProps {
@@ -32,7 +32,6 @@ function SkeletonSlide() {
 }
 
 function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
-  const { formatPrice } = useCurrency();
   const [currentIndex, setCurrentIndex] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -119,7 +118,7 @@ function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
             </p>
             <div className="flex items-center gap-4">
               <span className="text-2xl font-bold text-foreground">
-                {formatPrice(program.price)}
+                <BuyerPrice paise={program.price} />
               </span>
               {workExperiences.length > 0 && (
                 <div className="flex items-center gap-1.5">

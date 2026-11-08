@@ -132,6 +132,17 @@ The money subsystem: checkout and pricing, capture and webhooks, the double-entr
 
 ---
 
+### Pricing
+
+How the pricing levers combine on one order: the list price, discount codes, the welcome discount, referral credits, GST display and the platform fee. See [pricing/README.md](./pricing/README.md).
+
+- [pricing/00-overview.md](./pricing/00-overview.md) - Every lever as it exists today, with the code that implements it
+- [pricing/01-one-order-pipeline.md](./pricing/01-one-order-pipeline.md) - The five slots, the "never" rules and the worked ₹1,000 example
+- [pricing/02-coupons-and-early-bird.md](./pricing/02-coupons-and-early-bird.md) - Target design for host-funded coupons and the early-bird price
+- [pricing/03-roadmap.md](./pricing/03-roadmap.md) - Pricing items with priority and phase
+
+---
+
 ### Digital Products
 
 Standalone file sales: upload and verification, purchase and free claim, downloads, refunds and the R2 bucket setup.

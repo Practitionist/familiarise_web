@@ -3,15 +3,13 @@ import Link from "next/link";
 import { PlayCircle, Clock } from "lucide-react";
 import { listPublicReplayCards } from "@/lib/data/recordings-explore";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
-import { formatCurrencyAmount } from "@/utils/formatting";
-
-function formatPrice(paise: number): string {
-  return formatCurrencyAmount(paise, "INR");
-}
+import { buyerPriceLabelInr } from "@/lib/payments/pricing/display-price";
+import { isPlatformGstRegistered } from "@/lib/pdf/supplier";
 
 export async function ReplaysGrid() {
   // A failing read reaches the error boundary; the listing never degrades to empty.
   const items = await withBuildTimeRetry(() => listPublicReplayCards(48));
+  const gstRegistered = isPlatformGstRegistered();
 
   if (items.length === 0) {
     return (
@@ -64,7 +62,7 @@ export async function ReplaysGrid() {
                 {rec.planType}
               </span>
               <span className="font-semibold text-primary">
-                {formatPrice(rec.listPricePaise)}
+                {buyerPriceLabelInr(rec.listPricePaise, gstRegistered)}
               </span>
             </div>
             <h3 className="line-clamp-2 text-sm font-medium group-hover:text-primary transition-colors">

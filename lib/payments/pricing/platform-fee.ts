@@ -28,6 +28,28 @@ export async function readActiveFeeSchedule(
   );
 }
 
+/** Plain-language fee figures for public copy, from the schedule's basis points. */
+export function describeFeeRates(
+  schedule: Pick<ActiveFeeSchedule, "marketplaceBps" | "ownLinkBps">,
+): {
+  marketplaceFeePct: string;
+  ownLinkFeePct: string;
+  /** What an expert keeps: one figure when the rates match, else "80–90". */
+  keepPct: string;
+} {
+  const pct = (bps: number) => String(bps / 100);
+  const keeps = [schedule.marketplaceBps, schedule.ownLinkBps].map(
+    (bps) => 100 - bps / 100,
+  );
+  const low = Math.min(...keeps);
+  const high = Math.max(...keeps);
+  return {
+    marketplaceFeePct: pct(schedule.marketplaceBps),
+    ownLinkFeePct: pct(schedule.ownLinkBps),
+    keepPct: low === high ? String(low) : `${low}–${high}`,
+  };
+}
+
 export function feeBpsForSource(
   schedule: ActiveFeeSchedule,
   source: PaymentAttributionSource | null,

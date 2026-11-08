@@ -264,8 +264,8 @@ export default function ClassCheckoutPage({
       : { kind: "gateway" };
 
   // Apply discount code
-  const handleApplyDiscount = async (code?: string) => {
-    const codeToApply = code || discountCodeInput;
+  const handleApplyDiscount = async () => {
+    const codeToApply = discountCodeInput;
     if (!codeToApply.trim()) {
       setDiscountError("Please enter a discount code");
       return;
@@ -741,7 +741,7 @@ export default function ClassCheckoutPage({
             />
             <Button
               variant="outline"
-              onClick={() => handleApplyDiscount()}
+              onClick={handleApplyDiscount}
               disabled={isApplyingDiscount || !!appliedDiscount}
             >
               {isApplyingDiscount ? "Applying..." : "Apply"}
@@ -779,27 +779,6 @@ export default function ClassCheckoutPage({
               </Button>
             </div>
           )}
-          <div className="grid gap-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="font-medium">CLASS15</div>
-                <div className="text-sm text-muted-foreground">
-                  Get 15% off your class enrollment
-                </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <div className="text-muted-foreground">15% off</div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleApplyDiscount("CLASS15")}
-                  disabled={isApplyingDiscount || !!appliedDiscount}
-                >
-                  Apply
-                </Button>
-              </div>
-            </div>
-          </div>
         </div>
         <Separator className="bg-border" />
         <ReferralCreditsBlock

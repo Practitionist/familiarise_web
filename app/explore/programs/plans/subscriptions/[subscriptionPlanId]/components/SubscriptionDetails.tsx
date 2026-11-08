@@ -18,7 +18,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { PlanDetailBody } from "../../../components/PlanDetailBody";
 import { FeatureItem } from "../../../components/FeatureItem";
 import { planLevelLabel } from "@/lib/labels/plan-labels";
-import { useCurrency } from "@/hooks/useCurrency";
+import { BuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import type { getSubscriptionPlanDetail } from "@/lib/data/plan-details";
 
 type SubscriptionPlanDetail = NonNullable<
@@ -28,7 +28,6 @@ type SubscriptionPlanDetail = NonNullable<
 export function SubscriptionDetails({
   plan,
 }: Readonly<{ plan: SubscriptionPlanDetail }>) {
-  const { formatPrice } = useCurrency();
   const consultant = plan.consultantProfile;
   const mentorName = consultant?.user?.name ?? "This expert";
 
@@ -106,7 +105,7 @@ export function SubscriptionDetails({
               <CardContent className="p-6 space-y-5">
                 <div>
                   <p className="text-3xl font-bold text-foreground">
-                    {formatPrice(plan.price)}
+                    <BuyerPrice paise={plan.price} />
                   </p>
                   <p className="text-sm text-muted-foreground mt-1">
                     for {plan.durationInMonths} month

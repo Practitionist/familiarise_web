@@ -5,7 +5,7 @@ import { RegistrationBadge } from "@/components/ui/registration-badge";
 import { ArrowRight, Flame, Sparkles, Star } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useCurrency } from "@/hooks/useCurrency";
+import { BuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { isClassProgram, Program } from "@/lib/explore/programs";
 import { displayedScore, displayedScoreCount } from "@/lib/reviews-display";
@@ -143,7 +143,6 @@ function GridCard({
   program: Program;
   badge?: ProgramBadge;
 }) {
-  const { formatPrice } = useCurrency();
   const rating = getProgramRating(program);
   const ratingCount = getProgramRatingCount(program);
   const instructor = getProgramInstructor(program);
@@ -213,7 +212,7 @@ function GridCard({
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-4 border-t border-border">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             <div className="whitespace-nowrap text-xl font-bold text-foreground">
-              {formatPrice(program.price)}
+              <BuyerPrice paise={program.price} />
             </div>
             {rating !== null && (
               <div className="flex items-center gap-0.5">
@@ -241,7 +240,6 @@ function ListCard({
   program: Program;
   badge?: ProgramBadge;
 }) {
-  const { formatPrice } = useCurrency();
   const rating = getProgramRating(program);
   const ratingCount = getProgramRatingCount(program);
   const instructor = getProgramInstructor(program);
@@ -309,7 +307,7 @@ function ListCard({
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mt-4">
           <div className="flex items-center gap-2">
             <div className="whitespace-nowrap text-xl font-bold text-foreground">
-              {formatPrice(program.price)}
+              <BuyerPrice paise={program.price} />
             </div>
             {rating !== null && (
               <div className="flex items-center gap-0.5 ml-1">
@@ -339,7 +337,6 @@ function CarouselCard({
   program: Program;
   badge?: ProgramBadge;
 }) {
-  const { formatPrice } = useCurrency();
   const workExperiences = getInstructorWorkExperiences(program);
 
   return (
@@ -384,7 +381,7 @@ function CarouselCard({
         <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <div className="whitespace-nowrap text-lg font-bold text-foreground">
-              {formatPrice(program.price)}
+              <BuyerPrice paise={program.price} />
             </div>
             {workExperiences.length > 0 && (
               <div className="flex items-center gap-1">

@@ -36,6 +36,7 @@ Never write "waitlist" for the newsletter. Never reintroduce `/api/waitlist/*`, 
 13. **Fraud thresholds are configuration, not constants.** The hold rules are fields on `ReferralProgramConfig`; their values are kept in Notion. Never hard-code a threshold, a budget or a vendor cost.
 14. **A lost chargeback voids the unspent credit through `reverseCreditBalance`** in the dispute transaction (`settleLostDispute`). Do not add a negative balance.
 15. **Money columns are `BigInt` paise; credit and status writes are CAS-in-WHERE** (see `lib/payments/AGENTS.md`).
+16. **Stack levers by the one-order pipeline.** A referral welcome discount and a discount code never apply together (`deriveCheckoutAmount()` drops the welcome discount when a code is present), and credits are spent after tax under the same take-rate cap. Read `docs/pricing/01-one-order-pipeline.md` before changing a promo, a credit cap or a fee waiver.
 
 ## Confidentiality
 

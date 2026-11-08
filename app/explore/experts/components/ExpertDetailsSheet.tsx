@@ -26,7 +26,10 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { CompanyLogo } from "@/components/ui/company-logo";
-import { useCurrency } from "@/hooks/useCurrency";
+import {
+  BuyerPrice,
+  useBuyerPrice,
+} from "@/components/pricing/BuyerPriceProvider";
 import type { IConsultantCardData } from "@/types/consultant";
 
 interface ExpertDetailsSheetProps {
@@ -47,7 +50,7 @@ export default function ExpertDetailsSheet({
   consultant,
   onClose,
 }: Readonly<ExpertDetailsSheetProps>) {
-  const { formatPrice } = useCurrency();
+  const { formatBuyerPriceLabel } = useBuyerPrice();
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
   const profileHref = consultant ? `/explore/experts/${consultant.id}` : "#";
@@ -348,7 +351,7 @@ export default function ExpertDetailsSheet({
                   {cheapestOneOnOne ? (
                     <>
                       <span className="font-semibold text-foreground">
-                        {formatPrice(cheapestOneOnOne.price)}
+                        <BuyerPrice paise={cheapestOneOnOne.price} />
                       </span>{" "}
                       / {cheapestOneOnOne.durationInHours}h
                     </>
@@ -363,7 +366,7 @@ export default function ExpertDetailsSheet({
                   {cheapest ? (
                     <>
                       <span className="font-semibold text-foreground">
-                        {formatPrice(cheapest.price)}
+                        <BuyerPrice paise={cheapest.price} />
                       </span>{" "}
                       / {cheapest.durationInMonths} mo
                     </>
@@ -376,7 +379,7 @@ export default function ExpertDetailsSheet({
                 {trialPlan && (
                   <p className="border-t border-border pt-2 text-sm text-muted-foreground">
                     {trialPlan.trialPriceInPaise > 0
-                      ? `Trial available · ${formatPrice(trialPlan.trialPriceInPaise)}`
+                      ? `Trial available · ${formatBuyerPriceLabel(trialPlan.trialPriceInPaise)}`
                       : "Free intro call available"}
                   </p>
                 )}
@@ -401,7 +404,7 @@ export default function ExpertDetailsSheet({
                   >
                     <Link href={`${profileHref}?action=trial`}>
                       {trialPlan.trialPriceInPaise > 0
-                        ? `Trial · ${formatPrice(trialPlan.trialPriceInPaise)}`
+                        ? `Trial · ${formatBuyerPriceLabel(trialPlan.trialPriceInPaise)}`
                         : "Free intro call"}
                     </Link>
                   </Button>

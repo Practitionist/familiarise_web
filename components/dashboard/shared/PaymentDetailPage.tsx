@@ -16,6 +16,7 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { traceHref } from "@/lib/backoffice/entity-trace-types";
 import { disputeStatus } from "@/lib/labels/backoffice-labels";
+import { paymentDiscountBreakdown } from "@/lib/appointments/payment-display";
 import { gatewayLabel } from "@/lib/labels/money-labels";
 import {
   paymentStatusBadge,
@@ -124,6 +125,10 @@ export function PaymentDetailPage({
 
   const canRefund =
     can("refunds.manage") && payment.paymentStatus === "SUCCEEDED";
+  const discounts = paymentDiscountBreakdown({
+    ...payment,
+    hasDiscountCode: payment.discountCode !== null,
+  });
 
   return (
     <div className="space-y-6">
@@ -303,6 +308,19 @@ export function PaymentDetailPage({
                 <Label className="text-muted-foreground">Discount Code</Label>
                 <p className="font-medium text-foreground">
                   {payment.discountCode.code}
+                  {discounts.codeDiscountPaise > 0 &&
+                    ` \u00b7 \u2212${formatCurrencyAmount(discounts.codeDiscountPaise, payment.currency)}`}
+                </p>
+              </div>
+            )}
+
+            {discounts.welcomeDiscountPaise > 0 && (
+              <div>
+                <Label className="text-muted-foreground">
+                  Welcome discount
+                </Label>
+                <p className="font-medium text-foreground">
+                  {`\u2212${formatCurrencyAmount(discounts.welcomeDiscountPaise, payment.currency)}`}
                 </p>
               </div>
             )}

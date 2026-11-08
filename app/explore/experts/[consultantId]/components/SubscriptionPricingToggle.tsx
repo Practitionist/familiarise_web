@@ -21,6 +21,8 @@ import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { firstCycleWindow, lastInstantBefore } from "@/lib/booking/entitlement";
+import { useBuyerPrice } from "@/components/pricing/BuyerPriceProvider";
+import { buyerDisplayPricePaise } from "@/lib/payments/pricing/display-price";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { TrialBookingModal } from "./TrialBookingModal";
 
@@ -81,6 +83,7 @@ export default function SubscriptionPricingToggle({
 }: Readonly<SubscriptionPricingToggleProps>) {
   const { data: session } = useSession();
   const { toast } = useToast();
+  const { gstRegistered, noteFor } = useBuyerPrice();
   // Track the active plan by id so plans that share a duration (e.g. two
   // 3-month subscriptions) remain independently selectable and bookable.
   const [activeSubscriptionOption, setActiveSubscriptionOption] =
@@ -123,10 +126,13 @@ export default function SubscriptionPricingToggle({
   // already denominated in another currency.
   const trialCtaPrice = useMemo(() => {
     const paise = selectedPlanDetails?.trialPriceInPaise ?? 0;
-    return paise > 0
-      ? formatCurrencyAmount(paise, selectedPlanDetails?.priceCurrency ?? "INR")
-      : "Free";
-  }, [selectedPlanDetails]);
+    if (paise <= 0) return "Free";
+    const formatted = formatCurrencyAmount(
+      buyerDisplayPricePaise(paise, gstRegistered),
+      selectedPlanDetails?.priceCurrency ?? "INR",
+    );
+    return gstRegistered ? `${formatted} incl. GST` : formatted;
+  }, [selectedPlanDetails, gstRegistered]);
 
   // Check trial eligibility when plan changes
   useEffect(() => {
@@ -359,11 +365,14 @@ export default function SubscriptionPricingToggle({
                   two elements away. */}
                 <span className="text-5xl font-bold tracking-tight text-white">
                   {formatCurrencyAmount(
-                    option.price,
+                    buyerDisplayPricePaise(option.price, gstRegistered),
                     option.priceCurrency || "INR",
                   )}
                 </span>
-                <span className="text-zinc-500 text-sm mb-1.5">/ month</span>
+                <span className="text-zinc-500 text-sm mb-1.5">
+                  / month
+                  {noteFor(option.price) ? ` · ${noteFor(option.price)}` : ""}
+                </span>
               </div>
 
               {option.features && option.features.length > 0 && (

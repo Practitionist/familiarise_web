@@ -20,7 +20,12 @@ import {
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
+import { withBuildTimeRetry } from "@/lib/data/fail-open";
+import prisma from "@/lib/prisma";
+import {
+  describeFeeRates,
+  readActiveFeeSchedule,
+} from "@/lib/payments/pricing/platform-fee";
 
 export const metadata: Metadata = {
   title: "Become an Expert | Familiarise",
@@ -28,9 +33,9 @@ export const metadata: Metadata = {
     "Share your expertise on Familiarise. Set your own rates, keep the majority of every session, and get paid with tax handled for you.",
 };
 
-// Derived from the real split rather than hardcoded copy, so the page can't
-// drift away from what the payout pipeline actually pays.
-const EXPERT_SHARE_PERCENT = 100 - PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE;
+// The fee copy is read from the approved schedule, so it cannot drift from what
+// the payout pipeline pays; with no approved schedule both rates are the 20% fallback.
+export const revalidate = 3600;
 
 const STEPS = [
   {
@@ -114,7 +119,10 @@ const FAQ = [
   },
 ];
 
-export default function BecomeAnExpertPage() {
+export default async function BecomeAnExpertPage() {
+  const rates = describeFeeRates(
+    await withBuildTimeRetry(() => readActiveFeeSchedule(prisma)),
+  );
   return (
     <main className="min-h-screen bg-background">
       {/* Hero */}
@@ -217,19 +225,19 @@ export default function BecomeAnExpertPage() {
                 What you earn
               </Badge>
               <h2 className="text-fluid-3xl mb-4 font-bold tracking-tight text-foreground">
-                You keep {EXPERT_SHARE_PERCENT}% of every session
+                You keep {rates.keepPct}% of every session
               </h2>
               <p className="mb-6 leading-relaxed text-muted-foreground">
-                You set the price; Familiarise takes a{" "}
-                {PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE}% platform fee from
-                each completed booking and the rest is yours. There is no
-                listing fee and no subscription, so we only earn when you do.
+                You set the price. Familiarise takes {rates.marketplaceFeePct}%
+                when it brings you the learner, and {rates.ownLinkFeePct}% on
+                learners you bring with your own link. The rest is yours. There
+                is no listing fee and no subscription, so we only earn when you
+                do.
               </p>
               <p className="text-sm text-muted-foreground">
                 Experts who join through an agency or institution on Familiarise
-                keep the same {EXPERT_SHARE_PERCENT}% share; the hosting
-                organisation&apos;s cut comes out of the platform fee, not out
-                of your earnings.
+                keep the same share; the hosting organisation&apos;s cut comes
+                out of the platform fee, not out of your earnings.
               </p>
             </div>
 

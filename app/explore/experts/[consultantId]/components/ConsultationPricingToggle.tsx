@@ -42,7 +42,8 @@ import {
   stashPurchaseIntent,
 } from "@/utils/purchase-intent";
 import { useToast } from "@/hooks/use-toast";
-import { useCurrency } from "@/hooks/useCurrency";
+import { useBuyerPrice } from "@/components/pricing/BuyerPriceProvider";
+import { buyerDisplayPricePaise } from "@/lib/payments/pricing/display-price";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type { BookingMode } from "@prisma/client";
 import {
@@ -114,7 +115,7 @@ export default function ConsultationPricingToggle({
   const { data: session } = useSession();
   const router = useRouter();
   const { toast } = useToast();
-  const { formatPrice } = useCurrency();
+  const { gstRegistered, formatBuyerPrice, noteFor } = useBuyerPrice();
   const timezone = displayZone.zone;
   // The lead-time cut moves with the clock, not only with new data: a 304
   // poll keeps the data's identity, and a time crossing the 15-minute lead
@@ -484,10 +485,16 @@ export default function ConsultationPricingToggle({
                 <span className="text-5xl font-bold tracking-tight text-white">
                   {option.priceCurrency &&
                   option.priceCurrency.toUpperCase() !== "INR"
-                    ? formatCurrencyAmount(option.price, option.priceCurrency)
-                    : formatPrice(option.price)}
+                    ? formatCurrencyAmount(
+                        buyerDisplayPricePaise(option.price, gstRegistered),
+                        option.priceCurrency,
+                      )
+                    : formatBuyerPrice(option.price)}
                 </span>
-                <span className="text-zinc-500 text-sm mb-1.5">/ session</span>
+                <span className="text-zinc-500 text-sm mb-1.5">
+                  / session
+                  {noteFor(option.price) ? ` · ${noteFor(option.price)}` : ""}
+                </span>
               </div>
 
               {option.features && option.features.length > 0 && (

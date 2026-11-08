@@ -23,6 +23,11 @@ import {
   userMessageFrom,
 } from "@/lib/errors/client-refusal";
 import { z } from "zod";
+import { useBuyerPrice } from "@/components/pricing/BuyerPriceProvider";
+import {
+  buyerDisplayPricePaise,
+  withBuyerPriceNote,
+} from "@/lib/payments/pricing/display-price";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { FREE_TRIAL_LABEL } from "@/lib/appointments/trial-labels";
 import { Gift, Clock, Loader2, CheckCircle } from "lucide-react";
@@ -66,8 +71,16 @@ export function TrialBookingModal({
   trialCurrency = "INR",
 }: Readonly<TrialBookingModalProps>) {
   const isPaidTrial = trialPriceInPaise > 0;
+  const { gstRegistered } = useBuyerPrice();
   const priceLabel = isPaidTrial
-    ? formatCurrencyAmount(trialPriceInPaise, trialCurrency)
+    ? withBuyerPriceNote(
+        formatCurrencyAmount(
+          buyerDisplayPricePaise(trialPriceInPaise, gstRegistered),
+          trialCurrency,
+        ),
+        trialPriceInPaise,
+        gstRegistered,
+      )
     : FREE_TRIAL_LABEL;
   const { data: session } = useSession();
   const router = useRouter();

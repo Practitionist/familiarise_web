@@ -4,7 +4,7 @@ import Link from "next/link";
 import { formatInTimeZone } from "date-fns-tz";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useCurrency } from "@/hooks/useCurrency";
+import { useBuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { useSession } from "@/lib/auth-client";
 import { NotifyMeButton } from "@/components/booking/NotifyMeButton";
 import { useRefreshOnViewerChange } from "@/hooks/useRefreshOnViewerChange";
@@ -145,7 +145,7 @@ function BatchPanel({
   enrolledAppointmentIds: readonly string[];
   waitingAppointmentIds: readonly string[];
 }>) {
-  const { formatPrice } = useCurrency();
+  const { formatBuyerPriceLabel } = useBuyerPrice();
   const checkoutUrl = `/checkout/plans/class/${plan.id}?eventId=${card.classId}`;
   const enrolled =
     !!userId &&
@@ -171,7 +171,7 @@ function BatchPanel({
         <div className="space-y-1">
           <h3 className="font-medium text-foreground">{card.label}</h3>
           <p className="text-sm text-muted-foreground">
-            {enrolmentLine(card, formatPrice, (d) =>
+            {enrolmentLine(card, formatBuyerPriceLabel, (d) =>
               formatInTimeZone(d, zone, "EEE d MMM"),
             )}
           </p>
