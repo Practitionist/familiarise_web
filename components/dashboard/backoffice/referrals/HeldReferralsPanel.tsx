@@ -64,6 +64,17 @@ const HOLD_REASON_LABEL: Record<string, string> = {
 const QUERY_KEY = "admin-held-referrals";
 
 /** The page to show once the page count is known: never past the last page, never below 1. */
+/** The card title: never "0 held" when the queue could not be read. */
+export function headerCount(
+  loading: boolean,
+  failed: boolean,
+  total: number,
+): string {
+  if (loading) return "Loading…";
+  if (failed) return "Held for review";
+  return `${total} held for review`;
+}
+
 export function clampPage(page: number, totalPages: number): number {
   return Math.max(1, Math.min(page, totalPages));
 }
@@ -253,7 +264,7 @@ export function HeldReferralsPanel() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">
-            {query.isLoading ? "Loading…" : `${total} held for review`}
+            {headerCount(query.isLoading, query.error !== null, total)}
           </CardTitle>
           <CardDescription>
             Referrals whose sign-up signals matched a review rule. Nothing vests
@@ -270,7 +281,7 @@ export function HeldReferralsPanel() {
           {query.error && (
             <p className="text-sm text-red-600">{query.error.message}</p>
           )}
-          {!query.isLoading && rows.length === 0 && (
+          {!query.isLoading && !query.error && rows.length === 0 && (
             <div className="py-12 text-center text-muted-foreground">
               <ShieldAlert className="mx-auto mb-3 h-10 w-10 text-muted-foreground/40" />
               <p className="text-sm">No referrals are held for review.</p>
