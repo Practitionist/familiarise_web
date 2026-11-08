@@ -573,7 +573,7 @@ export default function ConsultationPricingToggle({
                               })}
                             </span>
                             <div className="flex items-center gap-1">
-                              {/* #1785 L-4 — back to the current month and today's date. */}
+                              {/* Back to the current month and today's date. */}
                               <Button
                                 type="button"
                                 variant="ghost"
