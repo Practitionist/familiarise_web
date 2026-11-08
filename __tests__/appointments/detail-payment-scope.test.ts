@@ -16,7 +16,9 @@ import {
   summarizeSeatPayments,
 } from "@/lib/appointments/seat-payments";
 import {
+  formatFundingBreakdown,
   paymentFunding,
+  paymentFundingBreakdown,
   paymentRailLabel,
   receiptHref,
   refundRailLine,
@@ -167,6 +169,112 @@ describe("payment display", () => {
       "organisation licence",
     );
     expect(paymentRailLabel({ ...row, paymentGateway: "CARD" })).toBeNull();
+  });
+
+  type LegCase = [string, string, number, [string, number][], string, string];
+  // Leg sets as their writers leave them; Payment.amount excludes REFERRAL_CREDIT.
+  it.each<LegCase>([
+    [
+      "card + referral credit",
+      "CARD",
+      80_000,
+      [
+        ["CARD", 80_000],
+        ["REFERRAL_CREDIT", 20_000],
+      ],
+      "Razorpay",
+      "₹800.00 card / UPI + ₹200.00 referral credit",
+    ],
+    [
+      "referral credit only",
+      "CREDITS",
+      0,
+      [["REFERRAL_CREDIT", 118_000]],
+      "referral credit",
+      "₹1,180.00 referral credit",
+    ],
+    [
+      "wallet",
+      "WALLET",
+      118_000,
+      [["WALLET", 118_000]],
+      "organisation wallet",
+      "₹1,180.00 organisation wallet",
+    ],
+    [
+      "invoice accrual",
+      "INVOICE",
+      118_000,
+      [["INVOICE_ACCRUAL", 118_000]],
+      "invoiced to the organisation",
+      "₹1,180.00 invoiced to the organisation",
+    ],
+    [
+      "licence",
+      "LICENSE",
+      118_000,
+      [["LICENSE", 0]],
+      "organisation licence",
+      "₹0.00 organisation licence",
+    ],
+    [
+      "CHARGE_ORG overage child",
+      "ENTERPRISE_INVOICE_ACCRUAL",
+      23_600,
+      [["OVERAGE_INVOICE_ACCRUAL", 23_600]],
+      "invoiced to the organisation",
+      "₹236.00 invoiced to the organisation",
+    ],
+    [
+      "carved invoice parent",
+      "INVOICE",
+      141_600,
+      [
+        ["INVOICE_ACCRUAL", 0],
+        ["OVERAGE_INVOICE_ACCRUAL", 141_600],
+      ],
+      "invoiced to the organisation",
+      "₹1,416.00 invoiced to the organisation",
+    ],
+    [
+      "refunded accrual",
+      "INVOICE",
+      118_000,
+      [
+        ["INVOICE_ACCRUAL", 118_000],
+        ["INVOICE_ACCRUAL_REVERSAL", -50_000],
+      ],
+      "invoiced to the organisation",
+      "₹1,180.00 invoiced to the organisation",
+    ],
+  ])(
+    "%s: rail, breakdown and the leg-sum identity",
+    (_, method, amount, legRows, rail, text) => {
+      const legs = legRows.map(([source, amountPaise]) => ({
+        source,
+        amountPaise,
+      }));
+      const breakdown = paymentFundingBreakdown(legs);
+      expect(paymentRailLabel({ ...row, paymentMethod: method, legs })).toBe(
+        rail,
+      );
+      expect(formatFundingBreakdown(breakdown, "INR")).toBe(text);
+      const licenceOnly = legs.every((l) => l.source === "LICENSE");
+      const funded = breakdown
+        .filter((e) => e.source !== "REFERRAL_CREDIT" && e.source !== "LICENSE")
+        .reduce((sum, e) => sum + e.amountPaise, 0);
+      expect(licenceOnly || funded === amount).toBe(true);
+    },
+  );
+
+  it("falls back to the method only for a row with no legs", () => {
+    expect(paymentFundingBreakdown([])).toEqual([]);
+    expect(paymentRailLabel({ ...row, paymentMethod: "INVOICE" })).toBe(
+      "invoiced to the organisation",
+    );
+    expect(paymentRailLabel({ ...row, paymentMethod: "CREDITS" })).toBe(
+      "credits",
+    );
   });
 
   it("links the tax invoice first, the gateway receipt second, nothing unpaid", () => {
