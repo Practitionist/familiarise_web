@@ -14,14 +14,14 @@ import {
 import { FormControl } from "@/components/ui/form";
 import { Switch } from "@/components/ui/switch";
 
-import { useWaitingCount } from "./waiting-count";
+import { useWaitingCounts } from "./waiting-count";
 
 /** Turning the waitlist off drops the open rows, so it asks first when anyone is waiting. */
 export function WaitlistSwitch({
   checked,
   onCheckedChange,
 }: Readonly<{ checked: boolean; onCheckedChange: (next: boolean) => void }>) {
-  const waiting = useWaitingCount();
+  const waiting = useWaitingCounts().plan;
   const [confirming, setConfirming] = useState(false);
   return (
     <>
@@ -29,7 +29,7 @@ export function WaitlistSwitch({
         <Switch
           checked={checked}
           onCheckedChange={(next) => {
-            if (!next && waiting > 0) setConfirming(true);
+            if (!next && (waiting === null || waiting > 0)) setConfirming(true);
             else onCheckedChange(next);
           }}
         />
@@ -39,9 +39,11 @@ export function WaitlistSwitch({
           <AlertDialogHeader>
             <AlertDialogTitle>Turn off the waitlist?</AlertDialogTitle>
             <AlertDialogDescription>
-              {waiting} {waiting === 1 ? "person" : "people"} waiting will no
-              longer be notified. Their entries are removed and are not restored
-              if you turn it back on.
+              {waiting === null
+                ? "Anyone waiting"
+                : `${waiting} ${waiting === 1 ? "person" : "people"} waiting`}{" "}
+              will no longer be notified. Their entries are removed and are not
+              restored if you turn it back on.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -140,15 +140,22 @@ async function readEventTallies(
   }
 }
 
-/** Open appointment-waitlist rows per group-event plan, keyed like the stats rows. */
-async function readWaitingByPlan(
+interface WaitingCounts {
+  /** Per plan, keyed like the stats rows. */
+  byPlan: Map<string, number>;
+  /** Per Webinar/Class instance id. */
+  byEvent: Map<string, number>;
+}
+
+/** Open appointment-waitlist rows per group-event plan and per instance. */
+async function readWaiting(
   webinarPlanIds: string[],
   classPlanIds: string[],
-): Promise<Map<string, number>> {
-  const waiting = new Map<string, number>();
+): Promise<WaitingCounts> {
+  const waiting: WaitingCounts = { byPlan: new Map(), byEvent: new Map() };
   if (webinarPlanIds.length === 0 && classPlanIds.length === 0) return waiting;
   const rows = await prisma.appointmentWaitlist.groupBy({
-    by: ["planKind", "planId"],
+    by: ["planKind", "planId", "appointmentId"],
     where: {
       status: { in: OPEN_INTEREST },
       OR: [
@@ -158,9 +165,24 @@ async function readWaitingByPlan(
     },
     _count: { _all: true },
   });
+  const appointments = await prisma.appointment.findMany({
+    where: { id: { in: rows.map((r) => r.appointmentId) } },
+    select: { id: true, webinarId: true, classId: true },
+  });
+  const eventOf = new Map(
+    appointments.map((a) => [a.id, a.webinarId ?? a.classId]),
+  );
   for (const r of rows) {
     const type = r.planKind === "CLASS" ? "class" : "webinar";
-    waiting.set(offeringStatKey(type, r.planId), r._count._all);
+    const key = offeringStatKey(type, r.planId);
+    waiting.byPlan.set(key, (waiting.byPlan.get(key) ?? 0) + r._count._all);
+    const eventId = eventOf.get(r.appointmentId);
+    if (eventId) {
+      waiting.byEvent.set(
+        eventId,
+        (waiting.byEvent.get(eventId) ?? 0) + r._count._all,
+      );
+    }
   }
   return waiting;
 }
@@ -355,7 +377,7 @@ export async function readOfferingStats(
   );
   await readEventTallies(ids(webinarPlans), ids(classPlans), tallies);
 
-  const waiting = await readWaitingByPlan(
+  const waiting = await readWaiting(
     hostedIds(webinarPlans),
     hostedIds(classPlans),
   );
@@ -383,7 +405,7 @@ export async function readOfferingStats(
           deletable.has(plan.id),
         orgGoverned: plan.organizationId !== null,
         archived: plan.archivedAt !== null,
-        waitingCount: waiting.get(key) ?? 0,
+        waitingCount: waiting.byPlan.get(key) ?? 0,
       };
     });
 
@@ -395,5 +417,6 @@ export async function readOfferingStats(
       ...toRows("class", classPlans),
     ],
     lifetimePaise: lifetime,
+    waitingByEvent: Object.fromEntries(waiting.byEvent),
   };
 }

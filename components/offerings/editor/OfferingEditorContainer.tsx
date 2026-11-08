@@ -228,10 +228,11 @@ export function OfferingEditorContainer({
   // bookings stay; only new sales stop.
   const unpublishCanStrand =
     !onSave && !isEvent && status === "PUBLISHED" && !!planId;
+  const tracksWaiting = isEvent && !onSave && !!planId;
   const stats = useQuery({
     queryKey: offeringStatsQueryKey(consultantId),
     queryFn: fetchOfferingStats,
-    enabled: unpublishCanStrand || (isEvent && !onSave && !!planId),
+    enabled: unpublishCanStrand || tracksWaiting,
     staleTime: 60_000,
   });
   const statRow = planId
@@ -240,7 +241,13 @@ export function OfferingEditorContainer({
       )
     : undefined;
   const bookings = statRow?.bookings ?? 0;
-  const waitingCount = statRow?.waitingCount ?? 0;
+  // Unknown (null) while the stats read is pending or failed, never 0.
+  let planWaiting: number | null = 0;
+  if (tracksWaiting) {
+    planWaiting = stats.data ? (statRow?.waitingCount ?? 0) : null;
+  }
+  const instanceWaiting =
+    (saveCtx.instanceId && stats.data?.waitingByEvent[saveCtx.instanceId]) || 0;
   // #1527 review — an unresolved or failed stats read must not read as "0
   // bookings": that let an unpublish through with no confirmation while the
   // real count was simply unknown.
@@ -348,7 +355,9 @@ export function OfferingEditorContainer({
   };
 
   return (
-    <WaitingCountProvider value={waitingCount}>
+    <WaitingCountProvider
+      value={{ plan: planWaiting, instance: instanceWaiting }}
+    >
       <OfferingEditor
         manifest={effectiveManifest}
         form={form}

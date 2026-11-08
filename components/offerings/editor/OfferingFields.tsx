@@ -45,7 +45,7 @@ import {
   type StagedPlanImage,
 } from "@/components/plans/PlanImageUploader";
 import type { FieldSpec } from "./manifest";
-import { useWaitingCount } from "./waiting-count";
+import { useWaitingCounts } from "./waiting-count";
 import { WaitlistSwitch } from "./WaitlistSwitch";
 
 /** Sections are a 6-column grid so halves and thirds both land cleanly. */
@@ -190,7 +190,7 @@ export function OfferingField<T extends FieldValues = FieldValues>({
   coverImage,
 }: Readonly<OfferingFieldProps<T>>) {
   const span = SPAN_CLASS[spec.span ?? 6];
-  const waiting = useWaitingCount();
+  const waiting = useWaitingCounts().instance;
   const { shownWhen } = spec;
   const shown = useWatch({
     control,

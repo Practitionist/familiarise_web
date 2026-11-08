@@ -30,9 +30,9 @@ function Harness() {
   );
 }
 
-function renderWith(waiting: number) {
+function renderWith(waiting: number | null) {
   render(
-    <WaitingCountProvider value={waiting}>
+    <WaitingCountProvider value={{ plan: waiting, instance: 0 }}>
       <Harness />
     </WaitingCountProvider>,
   );
@@ -64,4 +64,14 @@ it("turns it off once confirmed", () => {
   fireEvent.click(screen.getByRole("switch"));
   fireEvent.click(screen.getByText("Turn off"));
   expect(onChange).toHaveBeenCalledWith(false);
+});
+
+it("asks with generic copy while the count is unknown", () => {
+  renderWith(null);
+  fireEvent.click(screen.getByRole("switch"));
+  expect(screen.getByText("Turn off the waitlist?")).toBeTruthy();
+  expect(
+    screen.getByText(/Anyone waiting will no longer be notified/),
+  ).toBeTruthy();
+  expect(onChange).not.toHaveBeenCalled();
 });

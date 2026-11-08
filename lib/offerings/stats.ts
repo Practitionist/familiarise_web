@@ -30,6 +30,8 @@ export interface OfferingStats {
   rows: OfferingStat[];
   /** Every share this profile ever earned, net of refunds, collaborations included. */
   lifetimePaise: number;
+  /** Open appointment-waitlist rows per Webinar/Class instance id (hosts only). */
+  waitingByEvent: Record<string, number>;
 }
 
 export const offeringStatKey = (type: OfferingPlanType, planId: string) =>
