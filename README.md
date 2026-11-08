@@ -68,13 +68,31 @@ The platform is 27 subsystems in six areas. Each row links the documentation tha
 
 Large domains such as enterprise and finance contain several independently complex components. Finance spans checkout, the ledger, refunds, payouts, tax and operations, and enterprise spans identity, programs, wallets, invoicing and compliance, so read the folder's own README before assuming one page covers it.
 
-Confidential figures, such as referral budgets, fraud and hold thresholds, vendor costs, growth targets and detailed competitor research, are kept in the owner's Notion workspace (Familiarise / Growth & Marketing), and the docs point there instead of stating them.
-
 Vendors belong to the subsystem that depends on them:
 
 - **Notifications and email:** Novu (in-app and workflow notifications) and Resend (transactional email).
 - **Observability and incidents:** Sentry (errors and cron monitors) and Better Stack (uptime, heartbeats and Telemetry logs).
 - **Infrastructure, deployment and CI/CD:** Netlify and Vercel (hosting), DNS, Supabase (Postgres and storage) and Upstash (Redis).
+
+## Repo versus Notion
+
+Every fact has one canonical home, either this repository or the owner's Notion workspace ("Familiarise"). Two tests decide it:
+
+- **Repo test:** would an engineer or an agent need this to build, change or verify the system correctly? Then it belongs in the repo.
+- **Notion test:** would a competitor gain from reading it, or is it a number or plan the owner can change without a code change? Then it belongs in Notion.
+
+When both apply, split the fact. The mechanism goes in the repo, and the value or the reasoning goes in Notion. The other side links to the canonical home: a repo doc writes `value kept in Notion (Familiarise / <section>)`, and a Notion page links the repo doc for the mechanism. Notion holds no copies of repo docs. The documentation skill (`.claude/skills/documentation/SKILL.md`) is what documentation agents apply, and `docs/AGENTS.md` repeats the rule for anyone editing `docs/`.
+
+| Topic             | Repo                                                                                                                                                                                                                                        | Notion                                                                          |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Product decisions | Product rules that shape behaviour (for example notify-all waitlist; digital products vs sessions vs replays; refund and cancellation policy; trial rules; reward mechanics; attribution precedence) and decision records with alternatives | Strategic why (positioning, which competitor a choice counters)                 |
+| Compliance        | Everything implemented: DPDP consent, withdrawal and revocation, erasure, retention windows, grievance process, GST and TDS computation, invoice rules                                                                                      | CA advice, tax planning, entity structure, legal opinions                       |
+| Pricing           | The mechanism (fee schedule, how the take rate applies) and terms users see                                                                                                                                                                 | Rationale for the chosen levels, unit economics, price experiments              |
+| Fraud and abuse   | Which signals exist and what happens (hold, void)                                                                                                                                                                                           | Threshold values and detection tuning                                           |
+| Roadmap           | Engineering roadmap tied to issues (P labels, done-when)                                                                                                                                                                                    | Vision, horizons, launch sequencing                                             |
+| Strategy          | None                                                                                                                                                                                                                                        | Competition strategy, war rooms, moat, GTM playbook, positioning                |
+| Numbers           | Constants that are part of a rule (a 12-hour re-notice, a 30-day purge, caps users hit)                                                                                                                                                     | Budgets, targets, KPIs, vendor spend, salaries, hiring plans                    |
+| Research          | Cited public facts that justify a design, briefly                                                                                                                                                                                           | Competitor teardowns and screenshots, competitor revenue, live metric read-outs |
 
 ## High-level design (HLD)
 

@@ -185,6 +185,15 @@ so they are re-created empty as a stop-gap and the reconcile push waits for
 `dev` to be promoted to `prod`. The pre-#2041 recording-storage columns and the
 six orphan indexes ARE dead, and a push may remove them.
 
+## A schema change merged to `dev` reaches production immediately
+
+One Postgres project serves `dev`, previews and production, so a schema change
+is live for production the moment the owner pushes it, and under the planned
+migration workflow the moment a migration merges (`ci-migrations.md`). Only
+additive (expand) changes are acceptable at that point; anything destructive waits
+for the release that stopped using the object. Treat "merged to `dev`" and "live
+in production" as the same event for the database.
+
 ## The cutover to versioned migrations
 
 The current posture has an expiry date: it is coherent only while the data is
@@ -200,8 +209,10 @@ invariants or the overlap constraint. The three SQL files must be appended to
 the baseline migration, or committed as a migration that immediately follows it.
 
 The full ordered plan, including the freeze table it depends on, is
-`docs/prisma/02-schema-freeze-and-migration-cutover.md`. It is the file to open
-on launch day, not this one.
+`docs/prisma/02-schema-freeze-and-migration-cutover.md`. The operational
+checklist, with the owner-only steps and the rehearsal, is
+`references/runbook-cutover.md`. Those are the files to open on launch day, not
+this one.
 
 ## Related skills and documents
 
