@@ -58,7 +58,7 @@ the customer → the expert → companies → the back office → the money engi
 
 **Where:** lands on the **Consultee dashboard** after login.
 
-- **Dashboard tour:** upcoming & past sessions, payment/invoice history, the **waitlist**.
+- **Dashboard tour:** upcoming & past sessions, payment/invoice history, and the sessions the learner asked to be told about.
 - **Book a session:** Explore → an expert → pick a plan → the **request dialog** → choose
   a time on the **slot picker / heat-map**.
 - **Checkout:** show the payment screen — **Razorpay / Stripe**, a **discount code**,
@@ -133,7 +133,7 @@ Mostly visible through Admin → Payments/Invoices, Consultant → Earnings, and
 - **Live-ish freshness:** open the planner in two tabs; book a slot in one → the other
   refreshes on focus.
 - **Heat-map states:** show available vs booked vs partially-booked vs scheduling-period.
-- **Waitlist:** when a slot frees up, the next person is offered it.
+- **Notify me:** on a sold-out webinar or class (the appointment waitlist) or a 1:1 time someone else holds (slot backup interest), everyone who asked is told at once when it frees, and the first to pay gets it. Nothing is reserved and nobody is queued.
 - **Trial sessions**, and the **video meeting room** with recording.
 
 ---
@@ -146,7 +146,7 @@ Mostly visible through Admin → Payments/Invoices, Consultant → Earnings, and
 | Booking (consult/subscription/webinar/class/trial)                | Phases 2–3          | Consultee, Consultant |
 | Slot allocation (auto / manual / requested)                       | Phase 3 (Requests)  | Consultant            |
 | Heat-map / event planner                                          | Phases 3, 7         | Consultant            |
-| Reschedule / cancel / waitlist                                    | Phases 2, 3, 7      | Consultee, Consultant |
+| Reschedule / cancel / notify me                                   | Phases 2, 3, 7      | Consultee, Consultant |
 | Checkout & payments (Razorpay/Stripe, wallet, discounts, credits) | Phase 2             | Consultee             |
 | Earnings / payouts / TDS / UTR                                    | Phases 3, 6         | Consultant, Admin     |
 | Refunds / disputes / credit notes                                 | Phases 5, 6         | Admin                 |

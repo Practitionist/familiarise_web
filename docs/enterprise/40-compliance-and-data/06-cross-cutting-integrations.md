@@ -459,8 +459,9 @@ destinations after the ADR 19 consolidation are as follows. `/invitations`,
 were `?role=` queries against the endpoint the roster already read.
 `/integrations` split into the webhooks and data-export panels on
 `/settings`, alongside SSO; `/domain-claims` moved into `/settings/sso`. `/trials` folded into `/appointments`, a trial being
-an appointment. `/waitlist` is gone because the waitlist feature is being
-retired rather than relocated.
+an appointment. `/waitlist` is gone because the org never owned a waitlist:
+the queued event waitlist it showed was retired, and its notify-only
+replacement belongs to each learner, not to an org page.
 
 OrgWorkspace cross-org operator pages live separately at `/dashboard/org-workspace/*` — 6 pages (`/home`, `/activity`, `/billing`, `/settings`, `/support`, `/create`).
 
