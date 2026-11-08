@@ -39,7 +39,11 @@ export type ReferralVoidReason =
   | "REFERRER_YEARLY_CAP"
   | "KYC_NOT_COMPLETED"
   | "MISSING_CREDIT"
-  | "NO_EXPERT_PROFILE";
+  | "NO_EXPERT_PROFILE"
+  | "SHARED_PAYER"
+  | "REVIEW_REJECTED";
+
+export type ReferralHoldReason = "SAME_IP" | "SAME_DEVICE";
 
 export type VestOutcome =
   | "VESTED"
@@ -47,6 +51,7 @@ export type VestOutcome =
   | "REOPENED"
   | "DEFERRED"
   | "BUDGET_EXHAUSTED"
+  | "HELD"
   | "SKIPPED";
 
 /** A predicate re-checked in a CAS no longer held; the whole row rolls back and retries next run. */
@@ -85,6 +90,9 @@ const referralForVest = {
   referredUserId: true,
   qualifiedAt: true,
   referralCodeId: true,
+  ipHash: true,
+  userAgent: true,
+  reviewReleasedAt: true,
   referralCode: {
     select: {
       userId: true,
@@ -111,6 +119,8 @@ const referralForVest = {
       id: true,
       userId: true,
       appointmentId: true,
+      payerVpaHash: true,
+      payerPhoneHash: true,
       appointment: { select: { appointmentType: true } },
       refunds: { select: { status: true, metadata: true } },
       disputes: { select: { status: true } },
@@ -146,6 +156,67 @@ async function voidReferral(
     data: { state: "VOID", voidedAt: now },
   });
   return "VOIDED";
+}
+
+/** The qualifying payment was paid with a UPI address or phone the referrer has also paid with. */
+async function paidWithReferrerInstrument(
+  tx: Tx,
+  pay: NonNullable<VestReferral["qualifyingPayment"]>,
+  referrerUserId: string,
+): Promise<boolean> {
+  const shared: Prisma.PaymentWhereInput[] = [];
+  if (pay.payerVpaHash) shared.push({ payerVpaHash: pay.payerVpaHash });
+  if (pay.payerPhoneHash) shared.push({ payerPhoneHash: pay.payerPhoneHash });
+  if (shared.length === 0) return false;
+  const match = await tx.payment.findFirst({
+    where: { userId: referrerUserId, id: { not: pay.id }, OR: shared },
+    select: { id: true },
+  });
+  return match !== null;
+}
+
+/** The first review rule this referral trips, or null; released referrals are never held again. */
+async function reviewHoldReason(
+  tx: Tx,
+  r: VestReferral,
+  cfg: ReferralProgramConfigRow,
+  now: Date,
+): Promise<ReferralHoldReason | null> {
+  if (r.reviewReleasedAt || !r.ipHash) return null;
+  const signedUpAt =
+    cfg.holdWindowDays === null
+      ? undefined
+      : { gte: new Date(now.getTime() - cfg.holdWindowDays * DAY_MS) };
+  const sameIp: Prisma.ReferralWhereInput = {
+    referralCodeId: r.referralCodeId,
+    ipHash: r.ipHash,
+    signedUpAt,
+  };
+  if (cfg.holdSameIpReferrals !== null) {
+    const n = await tx.referral.count({ where: sameIp });
+    if (n >= cfg.holdSameIpReferrals) return "SAME_IP";
+  }
+  if (cfg.holdSameDeviceReferrals !== null && r.userAgent) {
+    const n = await tx.referral.count({
+      where: { ...sameIp, userAgent: r.userAgent },
+    });
+    if (n >= cfg.holdSameDeviceReferrals) return "SAME_DEVICE";
+  }
+  return null;
+}
+
+/** QUALIFYING -> HELD for an admin's review; the PENDING credit is left as it is. */
+async function holdReferral(
+  tx: Tx,
+  referralId: string,
+  reason: ReferralHoldReason,
+  now: Date,
+): Promise<VestOutcome> {
+  const moved = await tx.referral.updateMany({
+    where: { id: referralId, status: "QUALIFYING" },
+    data: { status: "HELD", heldAt: now, heldReason: reason },
+  });
+  return moved.count === 0 ? "SKIPPED" : "HELD";
 }
 
 /** A succeeded refund the buyer asked for, or one whose initiator was never recorded. */
@@ -582,7 +653,15 @@ export async function settleQualifyingReferral(
           ) {
             return voidReferral(tx, r.id, "SELF_DEALING", now);
           }
+          if (
+            pay &&
+            (await paidWithReferrerInstrument(tx, pay, referrerUserId))
+          ) {
+            return voidReferral(tx, r.id, "SHARED_PAYER", now);
+          }
           if (state.kind === "wait" || !isProgramLive(cfg)) return "DEFERRED";
+          const hold = await reviewHoldReason(tx, r, cfg, now);
+          if (hold) return holdReferral(tx, r.id, hold, now);
           return isExpertReferral
             ? vestExpertReferral(tx, r, cfg, state, now)
             : vestConsumerReferral(tx, r, cfg, state, now, async (bonus) => {
@@ -617,6 +696,7 @@ export interface VestRunResult {
   voided: number;
   deferred: number;
   budgetExhausted: number;
+  held: number;
   failed: number;
   failures: { referralId: string; error: string }[];
 }
@@ -659,6 +739,7 @@ export async function vestQualifyingReferrals(opts: {
     voided: 0,
     deferred: 0,
     budgetExhausted: 0,
+    held: 0,
     failed: 0,
     failures: [],
   };
@@ -672,6 +753,7 @@ export async function vestQualifyingReferrals(opts: {
       else if (outcome === "VOIDED" || outcome === "REOPENED") result.voided++;
       else if (outcome === "DEFERRED") result.deferred++;
       else if (outcome === "BUDGET_EXHAUSTED") result.budgetExhausted++;
+      else if (outcome === "HELD") result.held++;
       rotate = outcome === "DEFERRED" || outcome === "BUDGET_EXHAUSTED";
     } catch (err) {
       result.failed++;

@@ -21,6 +21,18 @@ export const razorpayNotesSchema = z
     return normalized;
   });
 
+/** Payer instrument fields; a malformed one reads as absent and never fails the event. */
+const payerInstrumentShape = {
+  vpa: z.string().nullable().optional().catch(undefined),
+  contact: z.string().nullable().optional().catch(undefined),
+  upi: z
+    .object({ vpa: z.string().nullable().optional() })
+    .passthrough()
+    .nullable()
+    .optional()
+    .catch(undefined),
+};
+
 export const razorpayPaymentEntitySchema = z
   .object({
     id: z.string(),
@@ -35,6 +47,7 @@ export const razorpayPaymentEntitySchema = z
     fee: z.number().int().nonnegative().nullable().optional(),
     /** GST on the fee, in paise. */
     tax: z.number().int().nonnegative().nullable().optional(),
+    ...payerInstrumentShape,
   })
   .passthrough();
 
@@ -196,6 +209,7 @@ const orderEventPayloadSchema = z.object({
           method: z.string().optional().catch(undefined),
           fee: z.number().int().nonnegative().nullable().optional(),
           tax: z.number().int().nonnegative().nullable().optional(),
+          ...payerInstrumentShape,
         })
         .passthrough(),
     })

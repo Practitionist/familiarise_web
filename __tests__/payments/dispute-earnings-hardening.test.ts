@@ -96,6 +96,11 @@ jest.mock("../../lib/novu/service", () => ({
 jest.mock("../../lib/referrals/service", () => ({
   reverseCreditsForPayment: jest.fn().mockResolvedValue(0),
 }));
+jest.mock("../../lib/referrals/credit-reversal", () => ({
+  voidVestedReferralRewards: jest
+    .fn()
+    .mockResolvedValue({ reversedPaise: 0, waiversRevoked: 0 }),
+}));
 jest.mock("../../lib/api/organizations/wallet", () => ({
   confirmTopUp: jest.fn(),
   walletCredit: jest.fn(),

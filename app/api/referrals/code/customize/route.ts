@@ -1,7 +1,13 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { getSession } from "@/lib/auth-server";
+import { applyRateLimit, referralCustomizeLimiter } from "@/lib/rate-limit";
 import { setCustomCode } from "@/lib/referrals/service";
+
+const customizeBodySchema = z.object({
+  customCode: z.string().trim().min(1).max(64),
+});
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,17 +16,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await req.json();
-    const { customCode } = body;
+    const rl = await applyRateLimit(referralCustomizeLimiter, session.user.id);
+    if (rl) return rl;
 
-    if (!customCode || typeof customCode !== "string") {
+    const body = customizeBodySchema.safeParse(
+      await req.json().catch(() => null),
+    );
+    if (!body.success) {
       return NextResponse.json(
         { error: "customCode is required" },
         { status: 400 },
       );
     }
 
-    const result = await setCustomCode(session.user.id, customCode);
+    const result = await setCustomCode(session.user.id, body.data.customCode);
 
     if (!result) {
       return NextResponse.json(
