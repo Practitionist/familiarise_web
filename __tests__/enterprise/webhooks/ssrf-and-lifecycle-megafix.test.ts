@@ -7,6 +7,9 @@ import path from "node:path";
 import * as Sentry from "@sentry/nextjs";
 
 // Digital product erasure has its own suite; these scrubs own no products.
+jest.mock("../../../lib/compliance/erasure/mail-footprint", () => ({
+  scrubMailFootprintTx: jest.fn(),
+}));
 jest.mock("../../../lib/digital-products/erasure", () => ({
   scrubDigitalProductsTx: jest.fn(async () => []),
   purgeErasedCreatorFiles: jest.fn(async () => []),
@@ -381,6 +384,12 @@ describe("Outbound webhook worker security, backoff, Sentry & OrgAuditLog", () =
       erasureRequest: { findFirst: jest.fn().mockResolvedValue(null) },
       session: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
       account: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      appointmentWaitlist: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      windowBackupInterest: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
       consentArtifact: zeroCount(),
       orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
       webhookEndpoint: {

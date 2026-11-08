@@ -69,7 +69,7 @@ async function applyRecipientEffects(
 
   if (type === "email.bounced" && data?.bounce?.type === "Permanent") {
     await suppressRecipientsInTx(tx, recipients, "HARD_BOUNCE", eventRowId);
-    await tx.waitlist.updateMany({
+    await tx.newsletterSubscriber.updateMany({
       where: {
         email: emailFilter,
         status: { in: ["PENDING", "SUBSCRIBED"] },
@@ -81,7 +81,7 @@ async function applyRecipientEffects(
 
   if (type === "email.complained") {
     await suppressRecipientsInTx(tx, recipients, "COMPLAINT", eventRowId);
-    await tx.waitlist.updateMany({
+    await tx.newsletterSubscriber.updateMany({
       where: {
         email: emailFilter,
         status: { in: ["PENDING", "SUBSCRIBED"] },
@@ -93,7 +93,7 @@ async function applyRecipientEffects(
 
   if (type === "email.suppressed") {
     await suppressRecipientsInTx(tx, recipients, "MANUAL", eventRowId);
-    await tx.waitlist.updateMany({
+    await tx.newsletterSubscriber.updateMany({
       where: {
         email: emailFilter,
         status: { in: ["PENDING", "SUBSCRIBED"] },
@@ -108,7 +108,7 @@ async function applyRecipientEffects(
     (type === "contact.updated" && data?.unsubscribed === true)
   ) {
     await suppressRecipientsInTx(tx, recipients, "MANUAL", eventRowId);
-    await tx.waitlist.updateMany({
+    await tx.newsletterSubscriber.updateMany({
       where: {
         email: emailFilter,
         status: { in: ["PENDING", "SUBSCRIBED"] },

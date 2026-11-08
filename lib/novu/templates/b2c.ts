@@ -136,6 +136,19 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    // Notify-only: every waiter is told at once and the first to pay gets the seat.
+    workflowId: W.EVENT_SEAT_OPENED,
+    name: "Event seat opened",
+    description:
+      "Learners waiting on a sold-out webinar or class, when a seat frees.",
+    category: "appointments",
+    inApp: {
+      subject: "A seat just opened",
+      body: "A seat opened in {{payload.planTitle}}. It may already be gone; first come, first served.",
+      redirect: "checkoutUrl",
+    },
+  },
+  {
     workflowId: W.APPOINTMENT_RESCHEDULED,
     name: "Appointment rescheduled",
     description:
@@ -155,6 +168,18 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     inApp: {
       subject: "Coming up",
       body: "Your {{payload.appointmentType}} for {{payload.planTitle}} is coming up — {{payload.dateTime}}.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.SESSION_HOST_LIVE,
+    name: "Host is live",
+    description:
+      "Paid seats, once per session, when the host first joins it through the app.",
+    category: "appointments",
+    inApp: {
+      subject: "Your host is live",
+      body: "{{payload.consultantName}} has joined your {{payload.appointmentType}} for {{payload.planTitle}}. Join now.",
       redirect: "dashboardUrl",
     },
   },
@@ -289,6 +314,19 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    workflowId: W.PAYOUT_CLAWBACK,
+    name: "Payout adjustment",
+    description:
+      "The consultant, when a refund or chargeback after a payout raises what they owe back, or a payout deducts, releases or cancels it.",
+    category: "payments",
+    inApp: {
+      subject:
+        "{% if payload.eventKind == 'RAISED' %}Payout adjustment{% elsif payload.eventKind == 'OFFSET_RESERVED' %}Adjustment deducted{% elsif payload.eventKind == 'OFFSET_RELEASED' %}Deduction released{% else %}Adjustment cancelled{% endif %}",
+      body: "{% if payload.eventKind == 'RAISED' %}A booking paid out earlier was refunded or lost to a chargeback, so {{payload.amount}} is owed back. It will be deducted from your next payouts; nothing is taken from a bank account.{% elsif payload.eventKind == 'OFFSET_RESERVED' %}{{payload.amount}} owed from an earlier adjustment is being deducted from a payout being prepared. If that payout does not complete, the deduction is released.{% elsif payload.eventKind == 'OFFSET_RELEASED' %}A payout did not complete, so its {{payload.amount}} deduction was released. The amount is still owed and comes off a later payout.{% else %}The bank returned a payout, so {{payload.amount}} still owed against it was cancelled to avoid deducting it twice.{% endif %}",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.DISPUTE_CREATED,
     name: "Dispute opened",
     description: "The consultant and ops, when a chargeback is raised.",
@@ -324,29 +362,30 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.REFERRAL_BONUS_EARNED,
     name: "Referral bonus earned",
-    description: "The referrer, when someone they invited completes signup.",
+    description: "The referrer, after an eligible referral reward vests.",
     category: "payments",
     inApp: {
       subject: "Referral bonus",
-      body: "{{payload.refereeName}} joined with your link — {{payload.bonusAmount}} in credits has been added to your account.",
+      body: "{{payload.refereeName}} qualified through your referral link — {{payload.bonusAmount}} in credits has been added to your account.",
       redirect: "dashboardUrl",
     },
   },
   {
     workflowId: W.REFEREE_WELCOME_BONUS,
-    name: "Welcome bonus",
-    description: "The new user who signed up through a referral.",
+    name: "Welcome discount",
+    description:
+      "The new user who signed up through a referral, with the first-booking discount cap.",
     category: "payments",
     inApp: {
-      subject: "Welcome bonus",
-      body: "Welcome! Your first-booking referral discount (up to {{payload.bonusAmount}}) from {{payload.referrerName}}'s referral is ready to use at checkout.",
+      subject: "Welcome discount",
+      body: "Through {{payload.referrerName}}'s referral, you may qualify for a first-booking discount of up to {{payload.bonusAmount}}. Checkout shows the exact discount.",
       redirect: "dashboardUrl",
     },
   },
   {
     workflowId: W.REFERRAL_CREDITS_APPLIED,
     name: "Credits applied",
-    description: "The payer, when referral credits reduce a checkout.",
+    description: "The payer, when a confirmed booking used referral credits.",
     category: "payments",
     inApp: {
       subject: "Credits applied",
@@ -585,6 +624,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     description:
       "The consultant. `status` is VERIFIED, REJECTED or NEEDS_INFO (a request for more information).",
     category: null,
+    required: true,
     inApp: {
       subject: "Verification update",
       body: "{% case payload.status %}{% when 'VERIFIED' %}Your profile is verified and now visible to clients.{% when 'REJECTED' %}Your profile verification was not approved.{% when 'NEEDS_INFO' %}The reviewer needs more information before your profile can be verified.{% else %}Your profile verification is pending review.{% endcase %}{% if payload.reason %} {{payload.reason}}{% endif %}",
@@ -596,6 +636,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     name: "Expert application",
     description: "Admins, when someone applies to become an expert.",
     category: null,
+    required: true,
     inApp: {
       subject: "New expert application",
       body: "{{payload.applicantName | default: 'An applicant'}}{% if payload.applicantEmail %} ({{payload.applicantEmail}}){% endif %} applied to become an expert.",
@@ -607,6 +648,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     name: "Moderation warning",
     description: "The reported user, after a staff warning (#693).",
     category: null,
+    required: true,
     inApp: {
       subject: "Warning",
       body: "You have received a warning from our moderation team{% if payload.reason %}: {{payload.reason}}{% endif %}. Further reports may lead to suspension.",
@@ -619,6 +661,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     description:
       "Mandatory account security notices for signup welcome, password changes, linked accounts, two-factor updates and account reinstatement.",
     category: null,
+    required: true,
     inApp: {
       subject:
         "{% case payload.kind %}{% when 'WELCOME' %}Welcome to Familiarise{% when 'PASSWORD_CHANGED' %}Password changed{% when 'ACCOUNT_LINKED' %}Account linked{% when 'TWO_FACTOR_ENABLED' %}Two-factor authentication enabled{% when 'TWO_FACTOR_DISABLED' %}Two-factor authentication turned off{% when 'PASSKEY_ADDED' %}Passkey added{% when 'PASSKEY_REMOVED' %}Passkey removed{% when 'SECURITY_UPDATE' %}Account security update{% when 'ACCOUNT_REINSTATED' %}Account reinstated{% else %}Account security update{% endcase %}",
@@ -631,6 +674,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     name: "Content removed",
     description: "The author, when moderation removes their content.",
     category: null,
+    required: true,
     inApp: {
       subject: "Your content was removed",
       body: "Your content was removed because it did not align with our community guidelines{% if payload.reason %}: {{payload.reason}}{% endif %}.",
@@ -642,6 +686,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     name: "Account suspended",
     description: "The suspended user.",
     category: null,
+    required: true,
     inApp: {
       subject: "Account suspended",
       body: `Your account is suspended until {{payload.suspendedUntil}}{% if payload.reason %}. Reason: {{payload.reason}}{% endif %}.${CANCELLED_COUNT}`,
@@ -653,6 +698,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     name: "Account closed",
     description: "The banned user.",
     category: null,
+    required: true,
     inApp: {
       subject: "Account closed",
       body: `Your account has been permanently closed{% if payload.reason %}. Reason: {{payload.reason}}{% endif %}.${CANCELLED_COUNT}`,
@@ -671,44 +717,12 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
-    workflowId: W.MAINTENANCE_SCHEDULED,
-    name: "Maintenance scheduled",
-    description: "Everyone, ahead of a maintenance window.",
-    category: null,
-    inApp: {
-      subject: "Scheduled maintenance",
-      body: "Maintenance is coming up{% if payload.estimatedEnd %}; we expect to be back by {{payload.estimatedEnd}}{% endif %}.{% if payload.reason %} {{payload.reason}}{% endif %}",
-      redirect: "statusUrl",
-    },
-  },
-  {
-    workflowId: W.MAINTENANCE_STARTED,
-    name: "Maintenance started",
-    description: "Everyone, as the window opens.",
-    category: null,
-    inApp: {
-      subject: "Under maintenance",
-      body: "Familiarise is under maintenance{% if payload.estimatedEnd %} and should be back by {{payload.estimatedEnd}}{% endif %}.{% if payload.reason %} {{payload.reason}}{% endif %}",
-      redirect: "statusUrl",
-    },
-  },
-  {
-    workflowId: W.MAINTENANCE_ENDED,
-    name: "Maintenance ended",
-    description: "Everyone, once the window closes.",
-    category: null,
-    inApp: {
-      subject: "Back online",
-      body: "Maintenance is finished — everything is back to normal.",
-      redirect: "statusUrl",
-    },
-  },
-  {
     workflowId: W.COMPLIANCE_DEADLINE_ALERT,
     name: "Compliance deadline alert",
     description:
       "Platform admins and operators ahead of a statutory compliance filing or action.",
     category: null,
+    required: true,
     inApp: {
       subject: "Compliance deadline approaching",
       body: "{{payload.title | default: 'A statutory compliance obligation'}} is due{% if payload.dueDate %} on {{payload.dueDate}}{% endif %}{% if payload.orgName %} for {{payload.orgName}}{% endif %}.",

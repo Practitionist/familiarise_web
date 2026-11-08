@@ -77,6 +77,8 @@ Booking system, slot allocation, validation, and scheduling logic for all 5 even
 - [research/README.md](./booking/research/README.md) - The 2026-11-03 V2A booking review (with appendices A to D) and V2B retention review, as dated research snapshots
 - [2026-11-03-booking-v2-direction.md](./decisions/2026-11-03-booking-v2-direction.md) - Booking v2 direction: the correctness fixes and multi-week Phase 0, fixed plan weeks plus Regular time, retention phase 1 and the attendance policy
 - [2026-11-04-booking-v2-train-b.md](./decisions/2026-11-04-booking-v2-train-b.md) - Booking v2 train B: Regular time, the rolling 4-week horizon, the plan-end choice, frozen plan terms, and earnings that wait for owed refunds
+- [2026-11-07-attendee-comms.md](./decisions/2026-11-07-attendee-comms.md) - Attendee comms: calendar links instead of attachments, a 15-minute reminder window, reminders to paid seats only, "host is live" after the host's call join, and event-lock contention kept a 409
+- [2026-11-07-event-seat-waitlist.md](./decisions/2026-11-07-event-seat-waitlist.md) - A notify-only list for sold-out webinars and classes: no reservation, a 12-hour re-notice cooldown, quiet hours not applied, the notice linking straight to checkout, the release paths that stage it, a best-effort email after commit, and erasure plus a 30-day purge
 - [01-booking-system-hld.md](./start-here/01-booking-system-hld.md) - Booking system high-level design: pipeline, allocation, concurrency layers, state machines, cron architecture
 - [02-money-system-hld.md](./start-here/02-money-system-hld.md) - Money system high-level design: pricing, capture, legs, ledger, earnings, payouts, refunds and policy decisions
 - [03-booking-and-money-machinery.md](./start-here/03-booking-and-money-machinery.md) - Worked guide with the seeded cast, entity model and end-to-end ledger examples
@@ -298,7 +300,7 @@ How errors, findings and job failures reach a human. The Sentry set records the 
 - [maintenance/16-job-machinery-and-portability.md](./maintenance/16-job-machinery-and-portability.md) - Job machinery line counts, what a host move removes, the Netlify-specific surface and portability as ports and adapters
 - [maintenance/experiments/2026-10-31-job-runtime/README.md](./maintenance/experiments/2026-10-31-job-runtime/README.md) - Index of the raw experiment reports, the method, the honesty labels, the dashboards to browse and the cleanup log
 - [2026-10-31-job-runtime-experiments.md](./decisions/2026-10-31-job-runtime-experiments.md) - Evidence and the launch runtime decision (ticker plus Background Functions, then a choice between Vercel `bom1` and a Mumbai VM)
-- [2026-11-01-dunning-atomic-notices.md](./decisions/2026-11-01-dunning-atomic-notices.md) - Every dunning stage stages its overdue bell and email inside the winning claim transaction; a roster or render failure rolls the claim back and counts as a failed run item
+- [2026-11-01-dunning-atomic-notices.md](./decisions/2026-11-01-dunning-atomic-notices.md) - Every dunning stage stages its overdue bell and email inside the winning claim transaction; a roster failure rolls the claim back and counts as a failed run item (a render failure no longer does, see the notification preference record, decision 15)
 - [2026-10-31-gpt-issue-triage.md](./decisions/2026-10-31-gpt-issue-triage.md) - Triage of the GPT-6.1 durable-jobs issues: org invoice rail off at launch, no second-scheduler pilot, fix order for the owner
 - [2026-10-26-launch-sweep-observability-and-money-holds.md](./decisions/2026-10-26-launch-sweep-observability-and-money-holds.md) - ADR-01 to ADR-12: money holds, invoice healing, tax identity, auth abuse controls, the three observability layers, ticker escalation and the Sentry quota posture
 - [2026-10-31-ci-on-github-hosted-with-cuts.md](./decisions/2026-10-31-ci-on-github-hosted-with-cuts.md) - CI stays on GitHub-hosted runners: the cuts applied, the roughly $15 a month hard-stop budget, the launch-pace target and the runner fallback
@@ -358,6 +360,8 @@ Prisma operations and migration documentation.
 - [00-schema-map.md](./prisma/00-schema-map.md) - Domain diagrams of the Prisma schema
 - [01-migrations-guide.md](./prisma/01-migrations-guide.md) - General-purpose Prisma Migrate reference
 - [02-schema-freeze-and-migration-cutover.md](./prisma/02-schema-freeze-and-migration-cutover.md) - Pre-launch shape freeze and the `db push` to versioned-migrations cutover plan
+- [2026-11-07-supabase-mcp-sql-approval-hook.md](./decisions/2026-11-07-supabase-mcp-sql-approval-hook.md) - Supabase MCP reads run freely; a PreToolUse hook stops every write for the owner's approval
+- [2026-11-02-agent-instruction-layout.md](./decisions/2026-11-02-agent-instruction-layout.md) - One shared root `AGENTS.md`, nested per-directory files, and the deterministic checks that replace prose bans
 
 ---
 

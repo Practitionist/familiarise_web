@@ -19,6 +19,12 @@ import {
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { cancelPaymentIntent } from "@/scripts/payments/cleanup-abandoned-payments";
+import {
+  finishSeatOpenedNotices,
+  stageSeatOpenedNotices,
+  type StagedSeatOpened,
+} from "@/lib/booking/event-waitlist";
+import { scheduleAfter } from "@/lib/api/after-safe";
 
 /**
  * #849 — user-initiated release of a tentative checkout hold.
@@ -56,6 +62,7 @@ interface TxOutcome {
   // not leave a stale value behind — a stale gatewayCancel would cancel a
   // gateway order this run did NOT expire.
   gatewayCancel: GatewayCancel | null;
+  seatOpened?: StagedSeatOpened | null;
 }
 
 const CANCEL_NOTE = "Cancelled by user during checkout";
@@ -107,7 +114,9 @@ export async function cancelPendingCheckout(args: {
   paymentId: string;
   userId: string;
 }): Promise<CancelPendingResult> {
-  const { outcome, gatewayCancel } = await withSerializableRetry(() =>
+  // Outside the retry, so a retried transaction re-stages the same notice keys.
+  const now = new Date();
+  const txOut = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx: Tx): Promise<TxOutcome> => {
         const payment = await tx.payment.findUnique({
@@ -192,9 +201,13 @@ export async function cancelPendingCheckout(args: {
         });
 
         let slotsReleased = 0;
+        let seatOpened: StagedSeatOpened | null = null;
         const appt = payment.appointment;
         if (appt) {
           slotsReleased = await releaseSlots(tx, appt, args.userId);
+          if ((appt.webinar || appt.class) && slotsReleased > 0) {
+            seatOpened = await stageSeatOpenedNotices(tx, appt.id, now);
+          }
 
           if (appt.consultation) {
             await transitionConsultationRequest(tx, {
@@ -224,6 +237,7 @@ export async function cancelPendingCheckout(args: {
 
         return {
           outcome: { ok: true, slotsReleased },
+          seatOpened,
           gatewayCancel: payment.isMockPayment
             ? null
             : {
@@ -238,6 +252,12 @@ export async function cancelPendingCheckout(args: {
         timeout: 15_000,
       },
     ),
+  );
+
+  const { outcome, gatewayCancel, seatOpened } = txOut;
+  await scheduleAfter(
+    () => finishSeatOpenedNotices(seatOpened),
+    "cancel-pending.seat-opened",
   );
 
   // Best-effort, post-commit: a failed gateway cancel never un-cancels the

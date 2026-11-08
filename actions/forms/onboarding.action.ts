@@ -1,5 +1,7 @@
 "use server";
 
+import { headers } from "next/headers";
+import { consentProvenance } from "@/lib/newsletter/consent-link";
 import {
   addConsultantIdentity,
   processOnboardingData,
@@ -61,7 +63,11 @@ export async function updateOnboardingInformationAction(
     };
   }
 
-  return processOnboardingData(userId, body);
+  return processOnboardingData(
+    userId,
+    body,
+    consentProvenance(await headers()),
+  );
 }
 // #endregion
 
@@ -111,7 +117,11 @@ export async function addConsultantIdentityAction(
       error: "Too many requests. Please try again later.",
     };
   }
-  return addConsultantIdentity(userId, body);
+  return addConsultantIdentity(
+    userId,
+    body,
+    consentProvenance(await headers()),
+  );
 }
 
 /**

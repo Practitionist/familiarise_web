@@ -408,7 +408,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
   "appointment-reminders": {
     meta: {
       title: "Appointment reminders",
-      description: "Send the 24-hour and 1-hour session reminders",
+      description: "Send the 24-hour, 1-hour and 15-minute session reminders",
       category: "Messaging",
       manualRun: "inline",
     },
@@ -435,8 +435,11 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         summarize: (r) => ({
           reminders24h: r.reminders24h,
           reminders1h: r.reminders1h,
+          reminders15m: r.reminders15m,
         }),
-        items: (r) => ({ processed: r.reminders24h + r.reminders1h }),
+        items: (r) => ({
+          processed: r.reminders24h + r.reminders1h + r.reminders15m,
+        }),
         failureMessage: "Failed to send appointment reminders",
       }),
   },
@@ -762,6 +765,41 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         status: (r) => (r.errors.length > 0 ? 500 : 200),
         unauthorizedMessage: "Provide a valid Bearer CRON_SECRET",
         failureMessage: "Notification outbox drain failed",
+      }),
+  },
+
+  // @cleanup-twin novu-step-failure-probe
+  "novu-step-failure-probe": {
+    meta: {
+      title: "Novu step failure probe",
+      description:
+        "Read Novu's activity feed for in-app steps that failed after acceptance and dead-letter them for review",
+      category: "Messaging",
+      manualRun: "inline",
+    },
+    idle: {
+      alwaysRun: "Reads a time window of Novu's activity feed; no local queue.",
+    },
+    build: () =>
+      cleanupRoute({
+        job: "novu-step-failure-probe",
+        run: async () => {
+          const { probeNovuStepFailures } =
+            await import("@/jobs/notifications/novu-step-failure-probe");
+          return probeNovuStepFailures();
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          pages: r.pages,
+          failedSteps: r.failedSteps,
+          inserted: r.inserted,
+          unmatched: r.unmatched,
+          truncated: r.truncated,
+          skipped: r.skipped,
+        }),
+        items: (r) => ({ processed: r.scanned }),
+        needsAttention: (r) => r.truncated,
+        failureMessage: "Novu step failure probe failed",
       }),
   },
 

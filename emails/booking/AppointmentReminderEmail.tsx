@@ -15,7 +15,7 @@ export interface AppointmentReminderEmailProps {
   appointmentType: string;
   /** Pre-formatted in the recipient's zone. */
   startsAtText: string;
-  /** "tomorrow" for the 24h window, "in about an hour" for the 1h one. */
+  /** "tomorrow", "in about an hour" or "in a few minutes", by reminder window. */
   windowLabel: string;
   /** Set only when the meeting route is known; switches the CTA to "Join session". */
   joinUrl?: string;

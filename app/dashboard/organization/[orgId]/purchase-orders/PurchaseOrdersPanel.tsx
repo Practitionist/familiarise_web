@@ -5,8 +5,9 @@
  *
  * Thin orchestrator: state for filters + dialog open/close, plus the list
  * query. UI primitives live in `./components/*`, helpers in `./utils/*`. The
- * Billing page shows this tab only for `purchaseOrders.read` + canSponsor +
- * requiresPO; the server stays authoritative.
+ * Billing page shows this tab for `purchaseOrders.read` on a sponsor org, so
+ * POs can be created before `requiresPO` is switched on (the flag only makes
+ * them mandatory on contracts and invoices); the server stays authoritative.
  */
 
 import { useMemo, useState } from "react";

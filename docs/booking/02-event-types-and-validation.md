@@ -138,13 +138,29 @@ and the plan's otherwise, which is what `effectiveMaxParticipants` in
 checkout gates, the explore pages, the planner cards, the participants screen —
 reads from that module, so there is one answer to "is this event full".
 
-A seat is taken by any user connected to one of the event's slots, whether or
-not their payment has settled. Registration connects the buyer to the event's
-shared session slots, so tentativeness is a property of the slot rather than of
-an individual registrant and cannot be filtered per person. An abandoned
-checkout releases its seat when `jobs/payments/cleanup-abandoned-payments.ts`
-disconnects the buyer, or immediately if they cancel the pending checkout
-themselves.
+A seat is a live `AppointmentParticipant` row with the `CONSULTEE` role, whether
+or not its payment has settled: a `HELD` seat holds its place for the checkout
+window, and an abandoned checkout releases it when
+`scripts/payments/cleanup-abandoned-payments.ts` flips the row to `CANCELLED`
+(or immediately, if the buyer cancels the pending checkout). The host's own row
+has another role, so it never takes a seat.
+
+Two readers count seats, and they read different things on purpose:
+
+- **The server gates** (checkout, the allocation lock, the revalidation) read
+  the roster inside the lock through `getWebinarCapacity` and `getClassCapacity`.
+- **Public payloads** (the plan detail routes, and the explore detail and
+  checkout pages built from them) carry a seat _count_ per event, taken with
+  `seatHoldingParticipant(now)` so a lapsed unpaid hold stops counting, and turn
+  it into capacity with `eventCapacityFromCount`. The plan list routes carry no
+  seat data. No public payload carries who holds the seats: those responses are
+  public and CDN-cached, so an attendee id in them would be readable by anyone.
+
+"Am I enrolled" is the viewer's own and is read on their own request. The
+explore detail pages are server components that look up the signed-in viewer's
+seats with `viewerSeatAppointmentIds` and pass the result down;
+the explore list asks `GET /api/participants/event-seats`, which answers
+`private, no-store` with only the caller's plan ids.
 
 The organizer edits capacity from the planner, which submits to
 `PATCH /api/bookings/{webinars,classes}/crud-with-plan`. Raising it simply
@@ -153,6 +169,33 @@ of people already registered is rejected with a 400 and a message naming the
 current count, and the check runs inside the update transaction so a booking
 cannot slip in between the check and the write. Nobody is ever removed from an
 event by a capacity change.
+
+---
+
+## Sharing
+
+A webinar or class plan page is built to be shared in a chat.
+
+- **Link-preview tags.** `generateMetadata` on both detail pages (through
+  `lib/seo/event-plan-share.ts`) sets the tab title, a description (the
+  subtitle, else the opening of the description), the canonical URL and the
+  Open Graph and Twitter tags. It runs behind the same `canViewPlanDetail`
+  gate as the page, so a hidden plan gets a generic title and `noindex`
+  instead of leaking its name.
+- **Preview image.** Each page's `opengraph-image` route draws a 1200x630 PNG
+  with `renderEventPlanShareImage`, about 20 to 50 KB, because WhatsApp drops
+  large images; a host-uploaded cover can be several MB. The image is drawn for
+  an anonymous visitor, so it names the plan only when anyone may see it. It
+  carries no price, date or seats left, because messaging apps cache a preview
+  for days. Responses are cacheable for five minutes.
+- **Search.** `app/sitemap.ts` lists the plans that are publicly discoverable
+  (`eventPlanDiscoverableWhere`), owned by a profile that is not erased and
+  still holding a session that has not finished (`lib/data/indexable-plans.ts`,
+  capped at 5,000 per kind). It is read at request time so a build never
+  queries the database, and a database failure leaves the static routes.
+- **No `Event` markup.** Google's Event structured-data documentation says
+  virtual-only events are not supported (checked 2026-11-01), so these pages
+  carry no schema.org `Event`.
 
 ---
 

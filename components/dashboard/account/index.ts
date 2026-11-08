@@ -6,8 +6,4 @@ export {
   PasswordSection,
   SessionsSection,
 } from "./SignInSecuritySection";
-export {
-  CookiePreferencesSection,
-  DeleteAccountSection,
-  GrievanceSection,
-} from "./PrivacySection";
+export { DeleteAccountSection, GrievanceSection } from "./PrivacySection";

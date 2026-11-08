@@ -17,7 +17,21 @@ jest.mock("../../lib/compliance/dpdp", () => ({
   ensureConsentPurposes: jest.fn(),
 }));
 
-const tx = { user: { updateMany: jest.fn() } };
+jest.mock("next/headers", () => ({
+  headers: async () =>
+    new Headers({
+      "x-familiarise-client-ip": "203.0.113.9",
+      "user-agent": "Jest browser",
+    }),
+}));
+
+const tx = {
+  user: {
+    updateMany: jest.fn(),
+    findUniqueOrThrow: jest.fn(async () => ({ email: "Invitee@Example.com" })),
+  },
+  newsletterSubscriber: { upsert: jest.fn() },
+};
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -132,6 +146,17 @@ describe("completeOnboardingGateAction", () => {
         "SESSION_BOOKING",
         "MARKETING_COMMS",
       ]),
+    );
+    expect(tx.newsletterSubscriber.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { email: "invitee@example.com" },
+        update: expect.objectContaining({
+          userId: USER.id,
+          status: "SUBSCRIBED",
+          consentIpHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+          consentUserAgent: "Jest browser",
+        }),
+      }),
     );
   });
 

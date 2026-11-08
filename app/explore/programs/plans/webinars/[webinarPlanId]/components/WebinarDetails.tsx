@@ -28,12 +28,21 @@ interface WebinarDetailsProps {
   readonly plan: TWebinarPlanData;
   readonly nextSession: Date | string | undefined;
   readonly webinarId?: string;
+  /** The signed-in viewer holds a seat on this webinar; read by the server. */
+  readonly isRegistered: boolean;
+  /** The viewer is on this webinar's notify-me list; read by the server. */
+  readonly isWaiting: boolean;
+  /** Who the server rendered for, so the client can refresh on a mismatch. */
+  readonly viewerUserId: string | null;
 }
 
 export function WebinarDetails({
   plan,
   nextSession,
   webinarId,
+  isRegistered,
+  isWaiting,
+  viewerUserId,
 }: WebinarDetailsProps) {
   const { formatPrice } = useCurrency();
   const [timeZone, setTimeZone] = useState("UTC");
@@ -306,12 +315,17 @@ export function WebinarDetails({
                   nextSession ? new Date(nextSession) : undefined
                 }
                 sessionStatus={sessionStatus}
-                appointment={plan.webinars?.[0]?.appointment}
+                isRegistered={isRegistered}
+                isWaiting={isWaiting}
+                viewerUserId={viewerUserId}
+                waitlistEnabled={plan.waitlistEnabled}
+                seatsTaken={
+                  plan.webinars?.[0]?.appointment?._count.participants ?? 0
+                }
                 maxParticipants={plan.maxParticipants ?? 100}
                 instanceMaxParticipants={
                   plan.webinars?.[0]?.maxParticipants ?? null
                 }
-                consultantUserId={plan.consultantProfile?.user?.id}
                 refundWindowHours={plan.refundWindowHours}
               />
             </div>

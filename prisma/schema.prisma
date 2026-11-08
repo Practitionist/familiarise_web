@@ -76,7 +76,7 @@ model User {
   rescheduleTimesProposed     RescheduleProposedTime[] @relation("ProposedTimeAuthor")
 
   // Newsletter signup, when the subscriber was signed in at the time.
-  waitlistSubscriptions Waitlist[]
+  newsletterSubscriptions NewsletterSubscriber[]
 
   // Platform feedback and support
   platformFeedback    PlatformFeedback[]
@@ -174,6 +174,7 @@ model User {
   verificationDocumentsUploaded  ProfileVerificationDocument[]    @relation("VerificationDocumentUploader")
   // #1778 — the held windows this user asked to hear about when they free.
   windowBackupInterests          WindowBackupInterest[]
+  eventWaitlists                 AppointmentWaitlist[]
   supportCasesRequested          SupportCase[]                    @relation("SupportCaseRequester")
   supportCasesSubmitted          SupportCase[]                    @relation("SupportCaseSubmitter")
   supportCasesAssigned           SupportCase[]                    @relation("SupportCaseAssignee")
@@ -949,6 +950,7 @@ enum SupportIssueType {
   OTHER
 }
 
+/// Unread: the cookie banner and its APIs are removed (essential cookies only); rows remain for the data export and the retention prune until the schema batch drops the model.
 model CookiePreference {
   id String @id @default(cuid())
 
@@ -1001,6 +1003,7 @@ model NotificationPreference {
   feedbackAlerts       Boolean @default(true)
   trialNotifications   Boolean @default(true)
   subscriptionAlerts   Boolean @default(true)
+  /// Unread: marketing follows the MARKETING_COMMS consent; kept only for the data export until the schema batch drops it.
   marketingEmails      Boolean @default(false)
 
   // Org category preferences (ADR 23). The seven categories above are all
@@ -3682,6 +3685,7 @@ model OrgWorkspaceProfile {
   // Operator preferences. Per-field docs: docs/enterprise/40-compliance-and-data/05-workspace-preferences.md.
   // Soft FK on default-landing org (plain String) so org deletes don't cascade here.
   defaultLandingOrganizationId String?
+  /// Unread: personal NotificationPreference switches gate every channel; slated for drop with the next schema batch.
   notificationRoutingMode      NotificationRoutingMode @default(BELL_AND_EMAIL)
   locale                       String? // BCP-47 (e.g. "en-IN")
   currencyDisplayCode          String? // ISO 4217 (e.g. "INR")
@@ -4417,6 +4421,9 @@ model WebinarPlan {
   price                           BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency                   Currency  @default(INR)
   certificateProvided             Boolean   @default(false)
+  waitlistEnabled                 Boolean   @default(true)
+  // null = MAX_GROUP_SESSION_PARTICIPANTS; the 200 ceiling is enforced in Zod.
+  waitlistMax                     Int?
   recordingEnabled                Boolean   @default(false) // Allow consultant to record sessions
   // Attendees see recordings of every run of this plan, not only the run they joined.
   shareRecordingsWithAllAttendees Boolean   @default(false)
@@ -4539,6 +4546,9 @@ model ClassPlan {
   price                        BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency                Currency         @default(INR)
   certificateProvided          Boolean          @default(false)
+  waitlistEnabled              Boolean          @default(true)
+  // null = MAX_GROUP_SESSION_PARTICIPANTS; the 200 ceiling is enforced in Zod.
+  waitlistMax                  Int?
   recordingEnabled             Boolean          @default(false) // Allow consultant to record sessions
   durationInMonths             Int              @default(1) // Duration in months
   // #1011 — was `meetingsPerWeek`. See SubscriptionPlan.sessionsPerWeek.
@@ -4716,17 +4726,15 @@ model Topic {
   updatedAt DateTime @updatedAt
 }
 
-// Newsletter / marketing email list. Named `Waitlist` because that is what the
-// signup is called end-user side ("join the waitlist"); it has nothing to do
-// with event capacity — a full webinar or class is simply sold out.
-model Waitlist {
+// Newsletter / marketing email list; the table name `Waitlist` is historical.
+model NewsletterSubscriber {
   id    String  @id @default(uuid())
   email String  @unique
   name  String?
 
-  status WaitlistStatus @default(PENDING)
-  source WaitlistSource @default(FOOTER)
-  tags   String[]       @default([])
+  status NewsletterStatus @default(PENDING)
+  source NewsletterSource @default(FOOTER)
+  tags   String[]         @default([])
 
   // Set when a signed-in user subscribes. SetNull so deleting the account does
   // not resurrect an address that had already been suppressed.
@@ -4747,22 +4755,27 @@ model Waitlist {
   @@index([status, createdAt])
   @@index([source])
   @@index([userId])
+  @@map("Waitlist")
 }
 
-enum WaitlistStatus {
+enum NewsletterStatus {
   PENDING // Signed up, confirmation email sent, not yet confirmed
   SUBSCRIBED
   UNSUBSCRIBED
   BOUNCED
+
+  @@map("WaitlistStatus")
 }
 
-enum WaitlistSource {
+enum NewsletterSource {
   LANDING_PAGE
   FOOTER
   BLOG
   USE_CASE_PAGE
   EVENT_SOLD_OUT
   IMPORT
+
+  @@map("WaitlistSource")
 }
 
 // #1778 — "Notify me if this time opens": a learner's interest in a 1:1 window
@@ -4788,6 +4801,33 @@ model WindowBackupInterest {
 
   @@unique([consultantProfileId, userId, windowStart])
   @@index([consultantProfileId, windowStart, status])
+  @@index([userId, status])
+}
+
+// Notify-only interest in a sold-out webinar or class seat; nothing is reserved.
+model AppointmentWaitlist {
+  id String @id @default(cuid())
+
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  appointmentId String
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  // WEBINAR or CLASS (sidecar CHECK); planId is the WebinarPlan or ClassPlan id.
+  planKind AppointmentsType
+  planId   String
+
+  status     BackupInterestStatus @default(WAITING)
+  createdAt  DateTime             @default(now()) @db.Timestamptz
+  // Drives the 30-day purge of EXPIRED and BOOKED rows.
+  updatedAt  DateTime             @updatedAt @db.Timestamptz
+  notifiedAt DateTime?            @db.Timestamptz
+  bookedAt   DateTime?            @db.Timestamptz
+
+  @@unique([appointmentId, userId])
+  @@index([appointmentId, status, createdAt])
+  @@index([planKind, planId, status])
   @@index([userId, status])
 }
 
@@ -4857,6 +4897,9 @@ model Appointment {
   // #1319 A9 / A12 — shadow-written participant edge + append-only status log.
   participants  AppointmentParticipant[]
   statusHistory BookingStatusHistory[]
+
+  // Notify-me rows for a sold-out webinar or class seat.
+  eventWaitlist AppointmentWaitlist[]
 
   // #674 personal-vs-org scope split — set at checkout for org-context bookings.
   organization   Organization? @relation("AppointmentByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
@@ -8092,6 +8135,13 @@ model FailedEmail {
   // #1654 — business anchor (`payment:<id>`, `user:<id>`, `waitlist:<email>`) for support and tracing.
   entityRef   String?
 
+  /// Account whose current preferences gate each attempt; null for direct-address mail.
+  deliveryUserId   String?
+  /// Preference category for that account; null with a user means a required notice.
+  deliveryCategory NotificationCategory?
+  /// Set once, immediately before the first provider call; anchors the idempotency window.
+  firstAttemptAt   DateTime?             @db.Timestamptz
+
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
@@ -8112,6 +8162,8 @@ model FailedEmailBatch {
   nextRetryAt    DateTime?           @db.Timestamptz
   lastError      String?             @db.Text
   sentAt         DateTime?           @db.Timestamptz
+  /// Set once, immediately before the first provider call; anchors the idempotency window.
+  firstAttemptAt DateTime?           @db.Timestamptz
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -8123,22 +8175,24 @@ model FailedEmailBatch {
 /// #1654 — the Novu trigger outbox: written where the business change commits, drained by
 /// the relay; `workflowId` is the EVENT id from lib/novu/workflows.ts (`toWire()` maps it to the family).
 model NotificationOutbox {
-  id            String                 @id @default(cuid())
-  workflowId    String
-  kind          NotificationOutboxKind
+  id             String                 @id @default(cuid())
+  workflowId     String
+  kind           NotificationOutboxKind
   // #1654 — subscriber ids; empty for BROADCAST.
-  recipients    String[]
-  payload       Json
+  recipients     String[]
+  payload        Json
   // #1654 — Novu's dedupe key, derived at stage time so a re-drained row cannot ring twice.
-  transactionId String                 @unique
-  entityRef     String?
+  transactionId  String                 @unique
+  entityRef      String?
   // #1654 — quiet-hours / zoned deferral: the relay skips the row until this instant.
-  notBefore     DateTime?              @db.Timestamptz
-  status        EmailDeliveryStatus    @default(PENDING)
-  attempts      Int                    @default(0)
-  nextRetryAt   DateTime?              @db.Timestamptz
-  lastError     String?                @db.Text
-  sentAt        DateTime?              @db.Timestamptz
+  notBefore      DateTime?              @db.Timestamptz
+  status         EmailDeliveryStatus    @default(PENDING)
+  attempts       Int                    @default(0)
+  nextRetryAt    DateTime?              @db.Timestamptz
+  lastError      String?                @db.Text
+  sentAt         DateTime?              @db.Timestamptz
+  /// Set once, immediately before the first provider call; anchors the idempotency window.
+  firstAttemptAt DateTime?              @db.Timestamptz
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -8148,6 +8202,19 @@ model NotificationOutbox {
   @@index([entityRef])
   // The support SLA sweep reads one workflow's recent rows, newest first.
   @@index([workflowId, createdAt])
+}
+
+/// Optional notification categories; each maps to one NotificationPreference switch.
+enum NotificationCategory {
+  appointments
+  payments
+  subscriptions
+  trials
+  support
+  feedback
+  orgBilling
+  orgMembership
+  orgProgram
 }
 
 enum NotificationOutboxKind {

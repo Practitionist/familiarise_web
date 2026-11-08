@@ -23,7 +23,8 @@ import prisma from "@/lib/prisma";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { purgeReviewSurfaces } from "@/lib/data/public-cache";
 import { applyRateLimit, reviewWriteLimiter } from "@/lib/rate-limit";
-import { MAX_TEXT_LENGTH, assertBodySize } from "@/lib/validation/limits";
+import { assertBodySize } from "@/lib/validation/limits";
+import { MAX_TEXT_LENGTH } from "@/lib/validation/input-limits";
 
 const ReplySchema = z.object({
   // Trimmed and bounded like every other user-typed string here (#831). Empty is

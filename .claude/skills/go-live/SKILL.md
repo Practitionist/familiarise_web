@@ -1,0 +1,55 @@
+---
+name: go-live
+description: The ordered launch sequence for taking this platform from sandbox to real money, as an index into the docs rather than a copy — resuming the paused scheduled-job fleet first, the pre-launch secret rotation, PLATFORM_GSTIN before the Razorpay live keys, EMAIL_DELIVERY_MODE=live, the one-time sandbox identity purge, the two live ₹1 tests, unpausing the eight paused Better Stack Telemetry alerts only after the data reset, the Better Stack responder seat, QuotaGuard static egress at the first live payout, the RazorpayX canary flip, splitting the Stream app so dev and previews stop using the production one, and the Novu Production sync with the outbox recount at the notification release; plus the traps (a standing config skip pages as soon as live keys exist, the fleet switch fails open, Netlify secrets are write-only, CRON_SECRET lives in three places) and how to verify each step. Use when the user says "go-live", "launch", "go to production", "cutover", "real money", "turn on live keys", "resume jobs", "pre-launch checklist", or is touching RAZORPAY live keys, ENABLE_LIVE_PAYOUTS, EMAIL_DELIVERY_MODE or ops:active_cron_platform.
+---
+
+# Go-live
+
+This skill is an index. The proof for each step lives in the linked docs, so open them rather than trusting a summary here. The full checklist is [the money go-live checklist](../../../docs/finance/70-operations/07-go-live-checklist.md); the README carries a [highlights version](../../../README.md#go-live-checklist-highlights). Never run a step yourself that moves real money or changes a live vendor setting. These are owner steps; prepare, explain and verify.
+
+## The ordered sequence
+
+Do these in order. Several only make sense after an earlier one.
+
+1. **Resume the job fleet first.** Delete the Upstash key `ops:active_cron_platform` or set it to `netlify`, confirm a new production `cron-tick` row, then unpause the Better Stack heartbeats and probe and re-enable the Sentry monitor and detector. Commands: [the pause decision](../../../docs/decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md#how-to-resume-go-live-or-any-time). The digest and freshness checks below need the fleet running.
+2. **Rotate the exposed secrets.** Follow [the secret rotation runbook](../../../docs/maintenance/19-secret-rotation-runbook.md), section 3.1 first.
+3. **Set `PLATFORM_GSTIN` before the live Razorpay keys.** [Checklist 1.2](../../../docs/finance/70-operations/07-go-live-checklist.md#12-keys-and-the-test-key-guard).
+4. **Make the daily ops digest read clean.** No config skips, no paused or muted monitor. [Checklist Part 3](../../../docs/finance/70-operations/07-go-live-checklist.md#part-3-the-daily-ops-digest-reads-clean).
+5. **Set `EMAIL_DELIVERY_MODE=live`.** Same Part 3. Any other value holds mail to outside domains (`lib/email/delivery-guard.ts`). First confirm the Resend domains and the webhook ([Checklist 4.1](../../../docs/finance/70-operations/07-go-live-checklist.md#41-resend-domains-and-webhook)).
+6. **Purge the sandbox identities, once.** [Checklist 1.5](../../../docs/finance/70-operations/07-go-live-checklist.md#15-clear-sandbox-identities-from-the-database). Never rerun it after a live key has minted any identity.
+7. **Switch to live keys and run the two live ₹1 tests**, a checkout and a full refund. [Checklist 1.2 and 1.6](../../../docs/finance/70-operations/07-go-live-checklist.md#16-proof-for-collection-two-live-1-tests). Delete `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION` in the same change.
+8. **Unpause the eight Better Stack Telemetry alerts** only after the go-live data reset and once every money gauge in the latest `cron-tick summary` event reads zero. [Checklist 2.1](../../../docs/finance/70-operations/07-go-live-checklist.md#21-pre-flip-checks) and [the Better Stack setup guide](../../../docs/maintenance/00-betterstack-setup.md).
+9. **Buy the responder seat** and the Telemetry bundle, then add phone and SMS to the four money backlog alerts. Same checklist 2.1 item.
+10. **Buy QuotaGuard static egress at the first live payout**, set `RAZORPAYX_EGRESS_PROXY_URL`, and allowlist its addresses in RazorpayX. Checklist 2.1, "Static egress".
+11. **Flip payouts with a canary.** Set `ENABLE_LIVE_PAYOUTS=true`, redeploy, pay one ₹1.00 verified payout, watch it reach `COMPLETED`, then release the rest. [Checklist 2.3](../../../docs/finance/70-operations/07-go-live-checklist.md#23-flip-canary-rollback).
+12. **Split the Stream app before real users arrive.** Create the Familiarise-dev app, put its four keys on the Netlify deploy-preview and branch-deploy contexts and in every local `.env`, run `npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed` against it, then refresh and merge #2376 and rebuild previews. Also clear the mock users and channels from the production app: the step 6 purge is Razorpay-only and leaves Stream untouched. [The shared-app decision](../../../docs/decisions/2026-11-06-shared-stream-app-until-launch.md#when-this-changes).
+13. **Notifications: Novu Production and the outbox recount, at the release promotion.** Run in the same window as the production release that carries the single-preference-owner change, which may come before launch; the number only keeps the list stable. In order: `npx tsx scripts/novu/clear-native-mutes.ts --env production` (dry run), the same with `--apply`, `npm run novu:sync -- --env production` (it also publishes the decision 17 clawback events and referral copy; Development is synced when that change merges), then five minutes later `npm run novu:check -- --env production` twice (Novu serves stale reads right after a sync), then `npx tsx scripts/novu/scrub-subscriber-pii.ts --env production` (dry run, `--apply`, then a dry run that reads 0). Confirm Production In-App HMAC is on, and repeat the tampered-hash check on production. Run `novu-step-failure-probe` once from System Jobs and expect `completed` with at least one page, not a `NOVU_PRODUCTION_KEY not configured` skip; there is no Novu webhook to register. Then recount `PENDING`/`RETRY` rows read-only and, if zero, delete the legacy guards, `scripts/novu/clear-native-mutes.ts` and `scripts/novu/scrub-subscriber-pii.ts`. Also check the vendor-side settings in checklist 4.1 (Resend webhook events, DMARC report record, Netlify secret flags); the code cannot show them. [Checklist 4.2 and 4.3](../../../docs/finance/70-operations/07-go-live-checklist.md#42-novu-production-at-the-release-promotion), [decision record](../../../docs/decisions/2026-11-06-notification-single-preference-owner.md).
+14. **Move GitHub to Team and require the slim check.** Org to Team with one seat, cancel the personal Pro once nothing personal depends on it, Indian credit card (debit only for a one-time "Pay now"), Actions budget about $15, require `Release checks` on `prod`. [Checklist Part 5](../../../docs/finance/70-operations/07-go-live-checklist.md#part-5-github-plan-and-ci-at-launch).
+
+## Traps
+
+- **A standing config skip pages once live keys exist.** A paging job that has skipped for more than 7 days makes `/api/health/jobs` answer 503 (`STANDING_CONFIG_SKIP`) as soon as `RAZORPAY_KEY_ID` is live. Clear skips (typically `PLATFORM_GSTIN`) before the keys go in.
+- **The fleet switch fails open.** If Upstash is unreachable or slow (over 1 s), that tick runs the jobs even while the key says paused. Do not read "no run" as proof of a pause, and do not rely on the pause to keep jobs off real data.
+- **Netlify secrets are write-only.** You cannot retrieve a value, only set a new one, so rotate rather than recover, and keep each value in the password manager.
+- **`CRON_SECRET` lives in three places:** Netlify, the Better Stack monitor header and the Sentry detector header. A rotation that misses one makes that monitor fail with 401. See rotation runbook section 7.
+- **Shared database.** Every context uses one Postgres, so a preview is not a sandbox. See [the environment split](../../../docs/start-here/10-environment-split.md).
+- **Email stays held until step 5**, even with live payment keys.
+- **A timed-out sidecar step leaves three uniques missing.** After `npm run db:push`, if `db:sidecars` fails with "Query read timeout" (`PG_QUERY_TIMEOUT_MS` defaults to 6000 ms), rerun `PG_QUERY_TIMEOUT_MS=60000 npx tsx -r dotenv/config scripts/db/apply-sidecars.ts --all && npx tsx -r dotenv/config scripts/ci/check-db-sidecars.ts` and confirm `appointment_feedback_level_key`, `consultant_earnings_occurrence_key` and `organization_earnings_split_key` exist (`.claude/skills/schema/references/this-repo.md`).
+- **Do not sync Novu Production early.** Old production code still writes subscriber preferences, so `novu:sync --env production` waits for step 13's release window. Development and Production runs share one 10,000-run Novu quota.
+
+## How to verify each step
+
+| Step              | Check                                                                                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fleet resumed     | A new production `cron-tick` row in `SystemJobExecution`; `/api/health/jobs` answers 200.                                                               |
+| Secrets rotated   | The per-credential "how to verify" in the rotation runbook.                                                                                             |
+| `PLATFORM_GSTIN`  | Run `heal-consumer-invoices` from System Jobs, expect `completed`; `/api/health/jobs` lists no `configSkips`.                                           |
+| Digest clean      | The latest ops digest email shows empty "Config skips" and no paused monitor.                                                                           |
+| Email live        | The digest's "Settings" line reads `EMAIL_DELIVERY_MODE: live`.                                                                                         |
+| Purge             | Stored `razorpayCustomerId`, contact and fund-account ids are null, and payout accounts show unverified until re-verified.                              |
+| Live ₹1 tests     | `Payment` is `SUCCEEDED`, the `Refund` becomes `SUCCEEDED` via `refund.processed`, and the ledger imbalance query in 1.6 returns `0`.                   |
+| Alerts unpaused   | Tick off each of the eight in checklist 2.1; the digest cannot see them.                                                                                |
+| Novu Production   | `npm run novu:check -- --env production` exits `0`; the dry run of `clear-native-mutes` lists nothing to clear; the three outbox recounts read zero.    |
+| Egress and canary | No `RAZORPAYX_EGRESS_NOT_CONFIGURED` refusal; the payout reaches `COMPLETED` through the live `payout.processed` webhook; `reconcile-ledgers` is clean. |
+
+For the environment variables involved, see [the README's environment section](../../../README.md#environment-variables) and `.env.sample`.

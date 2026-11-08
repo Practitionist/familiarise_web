@@ -6,12 +6,11 @@ import {
 } from "@tanstack/react-query";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { getOrgAnalytics, orgAnalyticsForRole } from "@/lib/data/org-analytics";
 import { getOrgActivityFeed } from "@/lib/data/org-activity";
 
 import { HomePageClient } from "./HomePageClient";
-
-const OPERATOR_ROLES = new Set(["OWNER", "MAINTAINER", "MANAGER"]);
 
 export default async function OrgHomePage({
   params,
@@ -29,13 +28,13 @@ export default async function OrgHomePage({
     redirect("/dashboard");
   }
 
-  // Only the operator home reads the analytics aggregate and activity feed,
-  // so only operators get them seeded.
+  // Only the operator home (the roles holding activity.read) reads the
+  // analytics aggregate and activity feed, so only they get them seeded.
   const access = await requireOrgAccess(orgId, {
     readOnly: true,
     permission: "operations.read",
   });
-  if (!access.error && OPERATOR_ROLES.has(access.member.role)) {
+  if (!access.error && hasOrgPermission(access.member.role, "activity.read")) {
     await Promise.allSettled([
       queryClient.prefetchQuery({
         queryKey: ["org-analytics", orgId],

@@ -118,4 +118,4 @@ The weekly `archive-webhook-events` job (`scripts/cleanup/archive-webhook-events
 2. **An unbounded per-event loop.** Replaced by the per-event 15-second deadline so one hung replay cannot exhaust the run or the single database connection.
 3. **A `status`, `attempts` or `last_error` column on webhook rows.** `WebhookEvent` has no such columns; the state is `processed`, `error`, `claimedAt` and `deferCount`.
 4. **Replaying by POSTing the original payload with a hand-built signature.** Use the sweep or the dashboard resend; the receiver dedupes on `eventId`.
-5. **Stripe webhook recovery.** Stripe was removed; the receivers are Razorpay, Stream, Novu and Resend only.
+5. **Stripe webhook recovery.** Stripe was removed; the receivers are Razorpay, Stream and Resend only.

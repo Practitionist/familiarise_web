@@ -34,7 +34,7 @@ jest.mock("../../lib/prisma", () => {
     appointmentOccurrence: {
       update: jest.fn(),
     },
-    waitlist: {
+    newsletterSubscriber: {
       updateMany: jest.fn(),
     },
   };

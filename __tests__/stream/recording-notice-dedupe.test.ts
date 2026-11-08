@@ -61,7 +61,6 @@ jest.mock("../../lib/email/send-to-recipients", () => ({
   }),
   stagePreparedEmails: (...args: unknown[]) => mockStagePrepared(...args),
   sendToRecipients: jest.fn(),
-  stageToRecipients: jest.fn(),
 }));
 
 import { stageDocumentAndRecordingEmailOnce } from "../../lib/email/senders/booking";

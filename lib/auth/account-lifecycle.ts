@@ -7,19 +7,14 @@ import { scheduleAfter } from "@/lib/api/after-safe";
 import { AUTH_PROVIDERS } from "@/lib/auth-providers";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
-import {
-  sendAccountLinkedEmail,
-  sendExistingAccountEmail,
-  sendPasswordChangedEmail,
-  sendVerificationEmail,
-  sendWelcomeEmail,
-} from "@/lib/email";
-import { syncSubscriber } from "@/lib/novu/subscriber";
 import { notifyAccountSecurityNotice } from "@/lib/novu/service";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { goHref } from "@/lib/dashboard/go";
 import { getAppUrl } from "@/lib/url";
 import { reportSentryError } from "@/lib/observability/report";
+
+/** Loaded on send so the email stack stays out of every route's auth graph. */
+const emailSenders = () => import("@/lib/email");
 
 /** How long an email verification code stays valid. */
 export const VERIFICATION_CODE_TTL_SECONDS = 10 * 60;
@@ -46,33 +41,15 @@ function reportAuthFailure(error: unknown, op: string): void {
   reportSentryError(error, { subsystem: "auth", op, level: "warning" });
 }
 
-/** Novu holds the address, so only proven (verified) users get a subscriber. */
-function syncVerifiedSubscriber(user: LifecycleUser): void {
-  const nameParts = (user.name || "User").split(" ");
-  void scheduleAfter(
-    () =>
-      syncSubscriber({
-        userId: user.id,
-        email: user.email,
-        firstName: nameParts[0],
-        lastName: nameParts.slice(1).join(" ") || undefined,
-      }).catch((error) => {
-        reportAuthFailure(error, "novu-subscriber-sync");
-      }),
-    "auth:novu-subscriber-sync",
-  );
-}
-
 /**
- * The first moment a person has proven their address: create their Novu
- * subscriber, stamp the sign-up DPDP consent (unless they never saw the
- * sign-up form) and send the welcome mail.
+ * The first moment a person has proven their address: stamp the sign-up
+ * DPDP consent (unless they never saw the sign-up form) and send the welcome
+ * mail.
  */
 export async function welcomeVerifiedUser(
   user: LifecycleUser,
   opts: { stampConsent: boolean },
 ): Promise<void> {
-  syncVerifiedSubscriber(user);
   if (opts.stampConsent) {
     // Fails open: ConsentSection lets the user grant it, and every consent
     // gate fails closed until they do.
@@ -87,13 +64,17 @@ export async function welcomeVerifiedUser(
   void scheduleAfter(async () => {
     try {
       const [, bellResults] = await Promise.all([
-        sendWelcomeEmail({
-          email: user.email,
-          name: user.name || "there",
-          userId: user.id,
-        }).catch((error) => {
-          reportAuthFailure(error, "welcome-email");
-        }),
+        emailSenders()
+          .then(({ sendWelcomeEmail }) =>
+            sendWelcomeEmail({
+              email: user.email,
+              name: user.name || "there",
+              userId: user.id,
+            }),
+          )
+          .catch((error) => {
+            reportAuthFailure(error, "welcome-email");
+          }),
         notifyAccountSecurityNotice(
           user.id,
           {
@@ -136,10 +117,8 @@ export async function provisionNewUser(
       update: {},
     });
 
-    if (!user.emailVerified) return;
-    if (path === "/admin/create-user") {
-      syncVerifiedSubscriber(user);
-    } else if (path?.startsWith("/sso/")) {
+    if (!user.emailVerified || path === "/admin/create-user") return;
+    if (path?.startsWith("/sso/")) {
       // A refused SSO login deletes the user it just created (account hooks),
       // so greet only a user still present once the callback has answered.
       void scheduleAfter(async () => {
@@ -167,13 +146,17 @@ export async function sendVerificationCode(
     select: { emailVerified: true },
   });
   if (!user || user.emailVerified) return;
-  await sendVerificationEmail({
-    email,
-    otp,
-    expiresInMinutes: VERIFICATION_CODE_TTL_SECONDS / 60,
-  }).catch((error) => {
-    reportAuthFailure(error, "verification-email");
-  });
+  await emailSenders()
+    .then(({ sendVerificationEmail }) =>
+      sendVerificationEmail({
+        email,
+        otp,
+        expiresInMinutes: VERIFICATION_CODE_TTL_SECONDS / 60,
+      }),
+    )
+    .catch((error) => {
+      reportAuthFailure(error, "verification-email");
+    });
 }
 
 /**
@@ -184,11 +167,13 @@ export async function sendVerificationCode(
 export async function notifyExistingAccountSignUp(
   user: LifecycleUser,
 ): Promise<void> {
-  await sendExistingAccountEmail({ email: user.email, userId: user.id }).catch(
-    (error) => {
+  await emailSenders()
+    .then(({ sendExistingAccountEmail }) =>
+      sendExistingAccountEmail({ email: user.email, userId: user.id }),
+    )
+    .catch((error) => {
       reportAuthFailure(error, "existing-account-email");
-    },
-  );
+    });
 }
 
 /**
@@ -236,13 +221,17 @@ export async function onPasswordChanged(
     void scheduleAfter(async () => {
       try {
         const [, bellResults] = await Promise.all([
-          sendPasswordChangedEmail({
-            email: user.email,
-            name: user.name || "there",
-            userId: user.id,
-          }).catch((error) => {
-            reportAuthFailure(error, "password-changed-email");
-          }),
+          emailSenders()
+            .then(({ sendPasswordChangedEmail }) =>
+              sendPasswordChangedEmail({
+                email: user.email,
+                name: user.name || "there",
+                userId: user.id,
+              }),
+            )
+            .catch((error) => {
+              reportAuthFailure(error, "password-changed-email");
+            }),
           notifyAccountSecurityNotice(
             user.id,
             {
@@ -308,14 +297,18 @@ export async function notifyAccountLinked(account: {
     void scheduleAfter(async () => {
       try {
         const [, bellResults] = await Promise.all([
-          sendAccountLinkedEmail({
-            email: user.email,
-            name: user.name || "there",
-            provider,
-            userId: account.userId,
-          }).catch((error) => {
-            reportAuthFailure(error, "account-linked-email");
-          }),
+          emailSenders()
+            .then(({ sendAccountLinkedEmail }) =>
+              sendAccountLinkedEmail({
+                email: user.email,
+                name: user.name || "there",
+                provider,
+                userId: account.userId,
+              }),
+            )
+            .catch((error) => {
+              reportAuthFailure(error, "account-linked-email");
+            }),
           notifyAccountSecurityNotice(
             account.userId,
             {

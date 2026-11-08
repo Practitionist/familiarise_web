@@ -5,6 +5,7 @@ import {
   DashboardContent,
   DashboardHeader,
 } from "@/components/dashboard/PageScaffold";
+import { LinkPendingLabel } from "@/components/ui/NavLink";
 import {
   sellPageHref,
   type SellPage,
@@ -64,7 +65,7 @@ export function SellPageShell<T extends SellTab>({
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
-                {tab.label}
+                <LinkPendingLabel>{tab.label}</LinkPendingLabel>
               </Link>
             );
           })}

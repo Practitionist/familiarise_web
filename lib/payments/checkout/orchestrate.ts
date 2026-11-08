@@ -19,6 +19,8 @@ import {
   unlockSlotInterval,
   CHECKOUT_LOCK_TTL_MS,
   ApprovalLock,
+  ConsulteeBookingBusyError,
+  EventCheckoutBusyError,
   type SlotBatchGrant,
 } from "@/utils/appointmentlock";
 import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
@@ -36,7 +38,7 @@ import {
 } from "@/lib/payments/constants";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { getExchangeRates } from "@/lib/currency";
-import { notifyCreditsAppliedBestEffort } from "@/lib/referrals/referral-notify";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { asWelcomeDiscountConflict } from "@/lib/referrals/attribution";
 import { WalletFrozenError } from "@/lib/payments/wallet-freeze";
 import { ProgramAssignmentLimitError } from "@/lib/api/organizations/program-helpers";
@@ -700,21 +702,10 @@ export async function handleCheckout(
       // Mock/zero-amount/org-sponsored payments never see a capture webhook,
       // so their post-commit follow-ups run here.
       if (isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment) {
-        // applyCreditsToPayment committed above, so this post-commit bell reads settled state.
-        if (result.creditsApplied > 0) {
-          await scheduleAfter(
-            () =>
-              notifyCreditsAppliedBestEffort({
-                userId,
-                creditsUsedPaise: result.creditsApplied,
-                remainingPaise: result.creditsRemainingAfter,
-                appointmentType: validatedData.appointmentType,
-              }).catch((bellErr) =>
-                console.error("[credits-applied-bell] failed:", bellErr),
-              ),
-            "checkout.credits-applied-bell",
-          );
-        }
+        await flushNotificationsAfter(
+          result.creditNotices,
+          "referral.credits_applied",
+        );
 
         // #1365 — these payments never see a capture webhook, so the tax
         // invoice has to be minted here too. Org-sponsored payments no-op
@@ -1009,8 +1000,11 @@ export async function handleCheckout(
         isKeyCollision ||
         error instanceof SlotTakenError,
     });
-    // Enhanced error handling with lock-specific errors
-    if (isLockContention) {
+    // Typed busy errors keep their 409 and retryAfter for the route and the client's retry.
+    const isTypedBusy =
+      error instanceof EventCheckoutBusyError ||
+      error instanceof ConsulteeBookingBusyError;
+    if (isLockContention && !isTypedBusy) {
       throw new Error(
         "Another user is currently booking this slot. Please wait a few seconds and try again.",
       );

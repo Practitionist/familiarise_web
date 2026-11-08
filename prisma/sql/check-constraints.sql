@@ -1548,3 +1548,30 @@ ALTER TABLE "DigitalProductAsset" ADD CONSTRAINT "digital_product_asset_size_cap
 CREATE UNIQUE INDEX IF NOT EXISTS "digital_product_asset_one_verified_per_lineage"
   ON "DigitalProductAsset" ("lineageId")
   WHERE "status" = 'VERIFIED';
+-- SPLIT
+-- Notify-me rows exist only for group events; NOTIFIED and BOOKED carry their timestamps.
+ALTER TABLE "AppointmentWaitlist" DROP CONSTRAINT IF EXISTS "appointment_waitlist_plan_kind_chk";
+-- SPLIT
+ALTER TABLE "AppointmentWaitlist" ADD CONSTRAINT "appointment_waitlist_plan_kind_chk"
+  CHECK ("planKind" IN ('WEBINAR', 'CLASS'));
+-- SPLIT
+ALTER TABLE "AppointmentWaitlist" DROP CONSTRAINT IF EXISTS "appointment_waitlist_notified_at_chk";
+-- SPLIT
+ALTER TABLE "AppointmentWaitlist" ADD CONSTRAINT "appointment_waitlist_notified_at_chk"
+  CHECK ("status" <> 'NOTIFIED' OR "notifiedAt" IS NOT NULL);
+-- SPLIT
+ALTER TABLE "AppointmentWaitlist" DROP CONSTRAINT IF EXISTS "appointment_waitlist_booked_at_chk";
+-- SPLIT
+ALTER TABLE "AppointmentWaitlist" ADD CONSTRAINT "appointment_waitlist_booked_at_chk"
+  CHECK ("status" <> 'BOOKED' OR "bookedAt" IS NOT NULL);
+-- SPLIT
+-- NULL means the 200-seat ceiling; the upper bound is enforced in Zod like maxParticipants.
+ALTER TABLE "WebinarPlan" DROP CONSTRAINT IF EXISTS "webinar_plan_waitlist_max_min";
+-- SPLIT
+ALTER TABLE "WebinarPlan" ADD CONSTRAINT "webinar_plan_waitlist_max_min"
+  CHECK ("waitlistMax" IS NULL OR "waitlistMax" >= 1);
+-- SPLIT
+ALTER TABLE "ClassPlan" DROP CONSTRAINT IF EXISTS "class_plan_waitlist_max_min";
+-- SPLIT
+ALTER TABLE "ClassPlan" ADD CONSTRAINT "class_plan_waitlist_max_min"
+  CHECK ("waitlistMax" IS NULL OR "waitlistMax" >= 1);

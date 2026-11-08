@@ -6,7 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useSession } from "@/lib/auth-client";
-import { isUserEnrolled } from "@/lib/payments/utils/participants";
+import { NotifyMeButton } from "@/components/booking/NotifyMeButton";
+import { useRefreshOnViewerChange } from "@/hooks/useRefreshOnViewerChange";
 import type { BatchCard } from "@/lib/booking/batch-cards";
 import {
   buildSessionsFromAppointment,
@@ -133,16 +134,34 @@ function BatchPanel({
   card,
   zone,
   userId,
+  enrolledAppointmentIds,
+  waitingAppointmentIds,
 }: Readonly<{
   plan: Plan;
   batch: Batch;
   card: BatchCard;
   zone: string;
   userId: string | undefined;
+  enrolledAppointmentIds: readonly string[];
+  waitingAppointmentIds: readonly string[];
 }>) {
   const { formatPrice } = useCurrency();
   const checkoutUrl = `/checkout/plans/class/${plan.id}?eventId=${card.classId}`;
-  const enrolled = !!userId && isUserEnrolled(batch.appointment, userId);
+  const enrolled =
+    !!userId &&
+    !!batch.appointment &&
+    enrolledAppointmentIds.includes(batch.appointment.id);
+  const waiting =
+    !!batch.appointment && waitingAppointmentIds.includes(batch.appointment.id);
+  // A waiter keeps a way to leave after a seat opens and the card stops reading full.
+  const canWait =
+    !enrolled &&
+    !!batch.appointment &&
+    (waiting ||
+      (card.isFull &&
+        card.enrolment.state === "open" &&
+        card.phase !== "completed" &&
+        plan.waitlistEnabled));
   const href = userId
     ? checkoutUrl
     : `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`;
@@ -171,14 +190,20 @@ function BatchPanel({
             </p>
           )}
         </div>
-        {enrolled ? (
-          <Badge variant="secondary">You are enrolled</Badge>
-        ) : (
-          card.canEnrol && (
-            <Button asChild size="sm">
-              <Link href={href}>Enrol in this batch</Link>
-            </Button>
-          )
+        {enrolled && <Badge variant="secondary">You are enrolled</Badge>}
+        {canWait && batch.appointment && (
+          <NotifyMeButton
+            kind="CLASS"
+            eventId={card.classId}
+            waiting={waiting}
+            signedIn={!!userId}
+            compact
+          />
+        )}
+        {!enrolled && card.canEnrol && (
+          <Button asChild size="sm">
+            <Link href={href}>Enrol in this batch</Link>
+          </Button>
         )}
       </div>
       <BatchSessions
@@ -195,7 +220,18 @@ export function BatchSchedule({
   plan,
   cards,
   zone,
-}: Readonly<{ plan: Plan; cards: BatchCard[]; zone: string }>) {
+  enrolledAppointmentIds,
+  waitingAppointmentIds,
+  viewerUserId,
+}: Readonly<{
+  plan: Plan;
+  cards: BatchCard[];
+  zone: string;
+  enrolledAppointmentIds: readonly string[];
+  waitingAppointmentIds: readonly string[];
+  viewerUserId: string | null;
+}>) {
+  useRefreshOnViewerChange(viewerUserId);
   const { data: session } = useSession();
   const userId = session?.user?.id;
   const byId = new Map(plan.classes.map((c) => [c.id, c]));
@@ -209,6 +245,8 @@ export function BatchSchedule({
         card={card}
         zone={zone}
         userId={userId}
+        enrolledAppointmentIds={enrolledAppointmentIds}
+        waitingAppointmentIds={waitingAppointmentIds}
       />
     ) : null;
   };

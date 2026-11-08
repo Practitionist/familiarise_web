@@ -61,7 +61,7 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
   [ErrorTypes.EVENT_FULL]: {
     title: "This Session Is Full",
     description:
-      "This session is full — pick another time or join the waitlist.",
+      "This session is full. Pick another time, or use Notify me on the event page to hear when a seat opens.",
   },
   [ErrorTypes.DUPLICATE_REGISTRATION]: {
     title: "Already Registered",
@@ -263,7 +263,7 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
   [ErrorTypes.EVENT_SOLD_OUT]: {
     title: "This Session Is Full",
     description:
-      "This session is full — pick another time or join the waitlist. Your card was not charged.",
+      "This session is full. Pick another time, or use Notify me on the event page to hear when a seat opens. Your card was not charged.",
   },
   // The two fail-closed lock refusals (CN-1, #1169 PR 1). Distinct from the
   // BUSY rows above on purpose: nobody holds the lock, the locking service

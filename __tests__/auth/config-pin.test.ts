@@ -9,7 +9,7 @@
 
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("../../lib/email", () => ({}));
-jest.mock("../../lib/novu/subscriber", () => ({ syncSubscriber: jest.fn() }));
+jest.mock("../../lib/novu/subscriber", () => ({ deleteSubscriber: jest.fn() }));
 jest.mock("@sentry/nextjs", () => {
   const actual = jest.requireActual("@sentry/nextjs");
   return {

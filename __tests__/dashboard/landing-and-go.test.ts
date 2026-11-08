@@ -103,10 +103,11 @@ describe("resolveGoHref", () => {
     expect(
       resolveGoHref("auto", ["payments"], { ...dual, role: "CONSULTANT" }),
     ).toBe("/dashboard/consultee/ce-1/payments");
-    // Sell, Collaborations and the editors exist only on the expert side.
+    // Sell, Products, Collaborations and the editors exist only on the expert side.
     const learnerFirst = { ...dual, role: "CONSULTEE" };
     for (const path of [
-      ["sell", "products"],
+      ["sell", "sessions"],
+      ["products"],
       ["collaborations"],
       ["offerings", "webinar", "new"],
     ]) {

@@ -4,8 +4,7 @@ import { motion } from "framer-motion";
 import { CalendarCheck } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { eventUnionStatusBadge } from "@/lib/appointments/status";
-import { getProximityLabel } from "@/lib/appointments/occurrences";
+import { appointmentStatusChip } from "@/lib/appointments/occurrences";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import {
@@ -63,7 +62,6 @@ export function NextUpHero({
   const anchorSession = vm.nextAt
     ? vm.occurrences.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
     : undefined;
-  const proximity = getProximityLabel(vm.nextAt);
 
   return (
     <motion.div
@@ -99,7 +97,11 @@ export function NextUpHero({
                 <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground shrink-0">
                   {KIND_LABEL[vm.kind]}
                 </span>
-                <StatusBadge {...eventUnionStatusBadge(vm.status)} withDot size="sm" />
+                <StatusBadge
+                  {...appointmentStatusChip(vm, adapter.role)}
+                  withDot
+                  size="sm"
+                />
               </div>
               <p className="text-sm text-muted-foreground mt-0.5 truncate">
                 with {vm.counterpart.name}
@@ -133,11 +135,6 @@ export function NextUpHero({
                     targetDate={vm.nextAt}
                     sessionEndDate={anchorSession?.endsAt ?? undefined}
                   />
-                  {proximity && (
-                    <span className="text-xs text-muted-foreground">
-                      {proximity}
-                    </span>
-                  )}
                 </div>
               )}
               <div className="mt-3">

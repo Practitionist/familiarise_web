@@ -23,9 +23,8 @@ import {
   type PersonVM,
 } from "./view-model";
 
-/* Structural inputs — mirror ScheduledTrial / UnscheduledClass /
- * UnscheduledWebinar from the consultant dashboard types without importing
- * from an app route (lib stays route-agnostic). */
+/* Structural inputs for the consultant list rows; lib stays route-agnostic
+ * and imports nothing from an app route. */
 
 export interface ConsultantTrialLike {
   id: string;

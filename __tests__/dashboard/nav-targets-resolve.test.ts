@@ -126,13 +126,10 @@ describe("personal + workspace nav targets resolve", () => {
     const nav = buildConsultantNav("cp-1");
     const group = (label: string) =>
       nav.groups.find((g) => g.label === label)?.items.map((i) => i.path);
-    expect(group("Sell")).toEqual([
-      "sell/sessions",
-      "sell/programs",
-      "sell/products",
-      "collaborations",
-    ]);
-    expect(group("Studio")).toEqual(["recordings", "documents"]);
+    expect(group("Sell")).toEqual(["sell/sessions", "sell/programs"]);
+    expect(group("Inbox")).toEqual(["requests", "messages", "collaborations"]);
+    expect(group("Studio")).toEqual(["recordings", "documents", "products"]);
+    expect(flattenNav(nav).find((i) => i.path === "home")?.name).toBe("Home");
     expect(flattenNav(nav).map((i) => i.path)).not.toContain("offerings");
     expect(nav.groups.every((g) => g.items.length <= 4)).toBe(true);
   });
@@ -282,7 +279,7 @@ describe("org nav role walk (#1527 matrix)", () => {
       "programs",
       "contracts",
       "catalog",
-      "collaborators",
+      "collaborations",
       "billing",
       "payouts",
       ...OPS,
@@ -294,7 +291,7 @@ describe("org nav role walk (#1527 matrix)", () => {
       "programs",
       "contracts",
       "catalog",
-      "collaborators",
+      "collaborations",
       "billing",
       "payouts",
       ...OPS,
@@ -316,7 +313,7 @@ describe("org nav role walk (#1527 matrix)", () => {
       ...BASE,
       "programs",
       "catalog",
-      "collaborators",
+      "collaborations",
       "billing",
       ...OPS,
       "audit",

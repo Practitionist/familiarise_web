@@ -108,7 +108,7 @@ export function PaymentDetailClient({
   // charge with no booking goes to the Platform tab's request form.
   const helpHref = row.appointmentId
     ? `${basePath}/support/requests/${caseKeyOf({ kind: "booking", id: row.appointmentId })}?intent=PAYMENT_STATUS`
-    : `${basePath}/support?view=platform`;
+    : `${basePath}/support?context=platform`;
 
   const facts = chargeFacts(detail, money);
   const taxDocsPending =

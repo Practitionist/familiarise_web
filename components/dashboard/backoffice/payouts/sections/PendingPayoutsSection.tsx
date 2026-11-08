@@ -84,6 +84,102 @@ async function rejectPayout(
   return response.json() as Promise<PayoutActionResult>;
 }
 
+const columns: ResponsiveColumn<Payout>[] = [
+  {
+    key: "consultant",
+    header: "Expert",
+    primary: true,
+    cell: (payout) => (
+      <div>
+        <p className="text-sm font-medium text-foreground">
+          {payout.consultantName}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {payout.consultantEmail}
+        </p>
+      </div>
+    ),
+  },
+  {
+    key: "payoutId",
+    header: "Payout ID",
+    cell: (payout) => (
+      <span
+        data-copyable=""
+        className="font-mono text-xs text-muted-foreground"
+        title={payout.id}
+      >
+        {payout.id.slice(-8).toUpperCase()}
+      </span>
+    ),
+  },
+  {
+    key: "amount",
+    header: "Amount",
+    cell: (payout) => (
+      <span className="text-sm font-semibold text-foreground">
+        {formatCurrencyAmount(payout.amount, payout.currency)}
+      </span>
+    ),
+  },
+  {
+    key: "method",
+    header: "Method",
+    cell: (payout) => (
+      <span className="text-sm text-muted-foreground">
+        {payoutMethodLabel(payout.method)}
+      </span>
+    ),
+  },
+  {
+    key: "earnings",
+    header: "Earnings",
+    cell: (payout) => (
+      <span className="text-sm text-muted-foreground">
+        {payout.earningsCount} earnings
+      </span>
+    ),
+  },
+  {
+    key: "dueBy",
+    header: "Due by (MSME)",
+    cell: (payout) => {
+      if (!payout.mustPayByDate) {
+        return <span className="text-sm text-muted-foreground">—</span>;
+      }
+      const due = new Date(payout.mustPayByDate);
+      const daysLeft = Math.ceil((due.getTime() - Date.now()) / 86_400_000);
+      // <5 days (or overdue) is the §43B(h) alert window — flag it red.
+      const urgent = daysLeft < 5;
+      return (
+        <span
+          className={
+            urgent
+              ? "text-sm font-semibold text-destructive"
+              : "text-sm text-muted-foreground"
+          }
+        >
+          {due.toLocaleDateString()}
+          {urgent && (
+            <span className="ml-1">
+              ({daysLeft < 0 ? "overdue" : `${daysLeft}d`})
+            </span>
+          )}
+        </span>
+      );
+    },
+  },
+  {
+    key: "date",
+    header: "Date",
+    cell: (payout) => (
+      <span className="text-sm text-muted-foreground">
+        {new Date(payout.createdAt).toLocaleDateString()}
+      </span>
+    ),
+  },
+];
+
 export default function PendingPayoutsSection() {
   // Staff read payouts, never decide one (#1527 capability context).
   const canManage = useBackofficeCapability().can("payouts.manage");
@@ -131,89 +227,6 @@ export default function PendingPayoutsSection() {
     setSelectedPayout(payout);
     setDialogType("reject");
   };
-
-  const columns: ResponsiveColumn<Payout>[] = [
-    {
-      key: "consultant",
-      header: "Expert",
-      primary: true,
-      cell: (payout) => (
-        <div>
-          <p className="text-sm font-medium text-foreground">
-            {payout.consultantName}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {payout.consultantEmail}
-          </p>
-        </div>
-      ),
-    },
-    {
-      key: "amount",
-      header: "Amount",
-      cell: (payout) => (
-        <span className="text-sm font-semibold text-foreground">
-          {formatCurrencyAmount(payout.amount, payout.currency)}
-        </span>
-      ),
-    },
-    {
-      key: "method",
-      header: "Method",
-      cell: (payout) => (
-        <span className="text-sm text-muted-foreground">
-          {payoutMethodLabel(payout.method)}
-        </span>
-      ),
-    },
-    {
-      key: "earnings",
-      header: "Earnings",
-      cell: (payout) => (
-        <span className="text-sm text-muted-foreground">
-          {payout.earningsCount} earnings
-        </span>
-      ),
-    },
-    {
-      key: "dueBy",
-      header: "Due by (MSME)",
-      cell: (payout) => {
-        if (!payout.mustPayByDate) {
-          return <span className="text-sm text-muted-foreground">—</span>;
-        }
-        const due = new Date(payout.mustPayByDate);
-        const daysLeft = Math.ceil((due.getTime() - Date.now()) / 86_400_000);
-        // <5 days (or overdue) is the §43B(h) alert window — flag it red.
-        const urgent = daysLeft < 5;
-        return (
-          <span
-            className={
-              urgent
-                ? "text-sm font-semibold text-destructive"
-                : "text-sm text-muted-foreground"
-            }
-          >
-            {due.toLocaleDateString()}
-            {urgent && (
-              <span className="ml-1">
-                ({daysLeft < 0 ? "overdue" : `${daysLeft}d`})
-              </span>
-            )}
-          </span>
-        );
-      },
-    },
-    {
-      key: "date",
-      header: "Date",
-      cell: (payout) => (
-        <span className="text-sm text-muted-foreground">
-          {new Date(payout.createdAt).toLocaleDateString()}
-        </span>
-      ),
-    },
-  ];
 
   const renderRowActions = (payout: Payout) => (
     <div className="flex gap-2">

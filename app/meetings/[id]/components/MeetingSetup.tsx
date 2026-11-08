@@ -47,6 +47,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { pingHostLive } from "../host-live-ping";
 import { toJoinFailure, type JoinFailure } from "../join-failure";
 import { ExitMeetingButton } from "./ExitMeetingButton";
 import { JoinFailureCard } from "./JoinFailureCard";
@@ -282,11 +283,13 @@ const MeetingSetup = ({
 
           case CallingState.IDLE:
             await call.join();
+            if (role === "host") pingHostLive(meetingId);
             setIsSetupComplete(true);
             return;
 
           default:
             await call.join();
+            if (role === "host") pingHostLive(meetingId);
             setIsSetupComplete(true);
             return;
         }

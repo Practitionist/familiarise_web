@@ -3,8 +3,10 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
+import { orgOwnedAppointmentWhere } from "@/lib/api/scope/list-appointments";
 import {
   LIBRARY_PAGE_SIZE,
+  everyoneLibraryQuery,
   type LibraryKind,
   type LibraryPage,
   type LibraryQuery,
@@ -82,7 +84,9 @@ function scopeWhere(
       OR: owner.side === "learner" ? learnerArms(userId) : hostArms(userId),
     };
   }
-  if (owner.everyone) return { organizationId: owner.orgId, deletedAt: null };
+  if (owner.everyone) {
+    return { ...orgOwnedAppointmentWhere(owner.orgId), deletedAt: null };
+  }
   return {
     organizationId: owner.orgId,
     deletedAt: null,
@@ -388,7 +392,11 @@ export async function readRecordingLibrary(args: {
   owner: LibraryOwner;
   query: LibraryQuery;
 }): Promise<LibraryPage<LibraryRecording>> {
-  const { userId, owner, query } = args;
+  const { userId, owner } = args;
+  const query =
+    owner.kind === "org" && owner.everyone
+      ? everyoneLibraryQuery(args.query)
+      : args.query;
   const learnerSide = owner.kind === "personal" && owner.side === "learner";
   const where = sessionsWhere(userId, owner, query);
   const skip = (query.page - 1) * LIBRARY_PAGE_SIZE;

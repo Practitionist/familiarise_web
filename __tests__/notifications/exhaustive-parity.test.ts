@@ -728,6 +728,7 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
           userId: "target-1",
           kind: "CONTENT_REMOVED",
         }),
+        undefined,
       );
       expect(mockStageModerationReportOutcomeEmail).toHaveBeenCalledWith(
         mockTx,
@@ -735,6 +736,7 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
           reporterUserId: "reporter-1",
           reportId: "rep-1",
         }),
+        undefined,
       );
 
       const bestEffort = await applyBestEffortEffects(

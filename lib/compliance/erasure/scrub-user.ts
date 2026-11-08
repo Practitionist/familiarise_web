@@ -20,6 +20,14 @@
  *   SessionAccessLog.userId → NULL; IP, user agent and times stay until the
  *   180-day prune (CERT-In Directions, a legal obligation under DPDP s.17).
  *
+ *   NewsletterSubscriber rows (by userId or address) → deleted. Queued
+ *   FailedEmail rows → DEAD_LETTER `policy:recipient_erased`, subject and
+ *   bodies redacted; every FailedEmail row's recipient → an `erased:` digest;
+ *   every FailedEmailBatch loses the address. EmailSuppression stays so the
+ *   address remains unmailable.
+ *
+ *   AppointmentWaitlist and WindowBackupInterest rows → deleted.
+ *
  *   PayoutAccount holder name, bank name, last-4, IFSC and UPI id → NULL;
  *   the RazorpayX fund account and contact are deactivated, and the
  *   buyer's Razorpay saved-card tokens are deleted (#1771 rows 1 and 5).
@@ -91,6 +99,7 @@ import {
   purgeErasedCreatorFiles,
   scrubDigitalProductsTx,
 } from "@/lib/digital-products/erasure";
+import { scrubMailFootprintTx } from "./mail-footprint";
 import {
   removeSupportAttachmentObjects,
   scrubSupportPiiTx,
@@ -802,6 +811,7 @@ export async function scrubUser(
     where: { id: userId },
     select: {
       id: true,
+      email: true,
       erasedAt: true,
       pseudonymousId: true,
       razorpayCustomerId: true,
@@ -958,6 +968,11 @@ export async function scrubUser(
     });
     supportAttachmentPathsToRemove = await scrubSupportPiiTx(tx, userId, now);
     archivedProducts = await scrubDigitalProductsTx(tx, userId, now);
+    // Matched by the pre-erasure address, which the user update above replaces.
+    await scrubMailFootprintTx(tx, { userId, email: existing.email });
+    // Users are scrubbed, not deleted, so the cascade on these never fires.
+    await tx.appointmentWaitlist.deleteMany({ where: { userId } });
+    await tx.windowBackupInterest.deleteMany({ where: { userId } });
 
     // #1580 — an erased consultant otherwise stays an ACCEPTED collaborator in
     // every split and roster; the same flip the moderation ban runs.
@@ -1127,7 +1142,6 @@ export async function scrubUser(
         planType,
         planId,
         userId,
-        { notify: false },
       );
       if (!success) error = "Collaborator Stream access not fully revoked";
     } catch (caught) {

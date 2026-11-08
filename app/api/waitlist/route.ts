@@ -7,16 +7,16 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import { WaitlistSource } from "@prisma/client";
+import { NewsletterSource } from "@prisma/client";
 import { z } from "zod";
 import { getSession } from "@/lib/auth-server";
 import { getClientIp } from "@/lib/rate-limit";
-import { subscribe } from "@/lib/waitlist/service";
+import { subscribe } from "@/lib/newsletter/service";
 
 const subscribeSchema = z.object({
   email: z.string().trim().email("Enter a valid email address").max(254),
   name: z.string().trim().max(120).optional(),
-  source: z.nativeEnum(WaitlistSource).optional(),
+  source: z.nativeEnum(NewsletterSource).optional(),
   tags: z.array(z.string().trim().max(40)).max(10).optional(),
 });
 

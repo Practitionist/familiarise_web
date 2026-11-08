@@ -101,12 +101,15 @@ export default function PrivacyPolicyPage() {
                   Device information (IP address, browser type, operating
                   system)
                 </li>
-                <li>Usage data (pages visited, time spent, click patterns)</li>
+                <li>
+                  Usage data needed to run the service (the pages you request
+                  and the actions you take, such as bookings)
+                </li>
                 <li>
                   Location information (approximate location based on IP
                   address)
                 </li>
-                <li>Cookies and similar tracking technologies</li>
+                <li>Essential cookies (see Section 6)</li>
               </ul>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
@@ -164,10 +167,9 @@ export default function PrivacyPolicyPage() {
                 3.3 Platform Improvement
               </h3>
               <ul>
-                <li>Analyze platform usage and performance</li>
+                <li>Find and fix errors and slow pages (see Sentry in 4.2)</li>
                 <li>Improve user experience and features</li>
                 <li>Develop new services and functionalities</li>
-                <li>Conduct research and analytics</li>
               </ul>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
@@ -303,15 +305,14 @@ export default function PrivacyPolicyPage() {
                     </tr>
                     <tr>
                       <td className="p-2 align-top">
-                        <strong>Marketing &amp; Product Analytics</strong>{" "}
-                        (promotional email preferences, product interaction
-                        telemetry)
+                        <strong>Marketing communications</strong> (your email
+                        address and newsletter subscription)
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Marketing &amp; Analytics</strong> {"("}
-                        <code>MARKETING_COMMS</code>, <code>ANALYTICS</code>
-                        {")"} — Send product updates/offers and measure feature
-                        usage.
+                        <strong>Marketing</strong> {"("}
+                        <code>MARKETING_COMMS</code>
+                        {")"} — Send the Familiarise newsletter and emails about
+                        our products, offers and updates.
                       </td>
                       <td className="p-2 align-top">
                         <strong>Optional</strong> — Until withdrawn via 1-click
@@ -442,7 +443,10 @@ export default function PrivacyPolicyPage() {
                 <li>Reviews and ratings are publicly visible</li>
               </ul>
 
-              <h3 className="text-xl font-semibold mt-4 mb-2">
+              <h3
+                id="data-processors"
+                className="text-xl font-semibold mt-4 mb-2"
+              >
                 4.2 With Service Providers (Data Processors)
               </h3>
               <p>
@@ -482,13 +486,15 @@ export default function PrivacyPolicyPage() {
                   </strong>{" "}
                   Application error monitoring, distributed tracing, and
                   reliability diagnostics. Under DPDP Rule 6(1)(a)
-                  de-identification safeguards, Familiarise configures{" "}
-                  <code>sendDefaultPii: false</code> and never transmits your
-                  name, email, phone number, or unmasked page text to Sentry;
-                  events are tagged solely with a one-way salted HMAC-SHA256
-                  virtual token (<code>ust_&lt;24-hex-chars&gt;</code>) and
-                  retained for 30–90 days to help our support and engineering
-                  teams diagnose technical issues you report.
+                  de-identification safeguards, Familiarise does not send Sentry
+                  your name, email address, phone number, IP address, cookies,
+                  request or response headers, or the text of the pages you
+                  view, and Sentry records no session replays. Where an event is
+                  linked to an account, it carries only a one-way salted
+                  HMAC-SHA256 virtual token (
+                  <code>ust_&lt;24-hex-chars&gt;</code>), never your identity.
+                  Events are retained for 30–90 days to help our support and
+                  engineering teams diagnose technical issues you report.
                 </li>
               </ul>
 
@@ -555,40 +561,49 @@ export default function PrivacyPolicyPage() {
                 6. Cookies and Tracking Technologies
               </h2>
               <p>
-                We use cookies and similar tracking technologies to enhance your
-                experience:
+                Familiarise uses only essential cookies: the cookies that keep
+                you signed in, protect your account and forms against forgery,
+                and complete checkout. The platform cannot work without them, so
+                they do not need your consent and there is no cookie banner.
               </p>
-
-              <h3 className="text-xl font-semibold mt-4 mb-2">
-                6.1 Types of Cookies
-              </h3>
+              <p>
+                We do not use analytics, advertising or other non-essential
+                cookies, and we do not load third-party tracking scripts. If we
+                ever add one, we will ask for your consent before it runs and
+                update this policy first.
+              </p>
+              <p>
+                To deliver features you use, the platform loads a few essential
+                third-party services. None of them sets cookies on our domain,
+                and none is used for advertising or tracking:
+              </p>
               <ul>
                 <li>
-                  <strong>Essential Cookies:</strong> Required for the platform
-                  to function properly
+                  <strong>Novu:</strong> the in-app notification inbox
                 </li>
                 <li>
-                  <strong>Functional Cookies:</strong> Remember your preferences
-                  and settings
+                  <strong>Stream:</strong> video calls and chat
                 </li>
                 <li>
-                  <strong>Analytics Cookies:</strong> Help us understand how you
-                  use our platform
+                  <strong>Razorpay:</strong> checkout
                 </li>
                 <li>
-                  <strong>Marketing Cookies:</strong> Track marketing campaign
-                  effectiveness
+                  <strong>Sentry:</strong> error monitoring, with its automatic
+                  collection of IP addresses, cookies, request headers and user
+                  details turned off, and no session replay
                 </li>
               </ul>
-
-              <h3 className="text-xl font-semibold mt-4 mb-2">
-                6.2 Cookie Management
-              </h3>
               <p>
-                You can control cookies through your browser settings. However,
-                disabling certain cookies may affect the functionality of our
-                platform. Most browsers allow you to refuse cookies or delete
-                existing cookies.
+                What each of these services receives is described in{" "}
+                <a href="#data-processors" className="underline">
+                  Section 4.2
+                </a>
+                .
+              </p>
+              <p>
+                You can delete or block cookies in your browser settings.
+                Blocking essential cookies will sign you out and stop bookings
+                and payments from working.
               </p>
 
               <Separator className="my-6" />
@@ -631,11 +646,22 @@ export default function PrivacyPolicyPage() {
               </h3>
               <ul>
                 <li>
-                  Opt-out of marketing emails by clicking "unsubscribe" in any
-                  email
+                  If you have an account, marketing emails and our newsletter
+                  follow your Marketing Communications consent (
+                  <code>MARKETING_COMMS</code>) in{" "}
+                  <strong>Settings &rarr; Account</strong> (&ldquo;Data
+                  consent&rdquo;). Giving it subscribes your account&apos;s
+                  email address to the newsletter; withdrawing it unsubscribes
+                  you.
                 </li>
                 <li>
-                  Manage notification preferences in your account settings
+                  The &ldquo;unsubscribe&rdquo; link in any newsletter stops it
+                  at once and also withdraws that consent for the linked
+                  account.
+                </li>
+                <li>
+                  Manage service notifications (bookings, payments, support) in
+                  your notification settings
                 </li>
                 <li>
                   Note: You will still receive essential transactional emails
@@ -667,10 +693,9 @@ export default function PrivacyPolicyPage() {
               </h3>
               <ul>
                 <li>
-                  <strong>Withdraw Optional Consents Anytime:</strong> You can
-                  grant or withdraw optional consents (Marketing Communications{" "}
-                  <code>MARKETING_COMMS</code> and Analytics{" "}
-                  <code>ANALYTICS</code>) with one click in{" "}
+                  <strong>Withdraw Optional Consent Anytime:</strong> You can
+                  grant or withdraw the optional Marketing Communications
+                  consent (<code>MARKETING_COMMS</code>) with one click in{" "}
                   <strong>Dashboard &rarr; Settings &rarr; Account</strong>{" "}
                   (&ldquo;Data consent&rdquo;) without affecting your core
                   account access.

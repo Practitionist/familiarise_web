@@ -75,7 +75,6 @@ export function JoinConsentGate({
         body: JSON.stringify({
           purposeCodes: JOIN_PURPOSES,
           language: "en-IN",
-          version: 1,
         }),
       });
       if (!res.ok) throw new Error("We couldn't save your consent. Try again.");

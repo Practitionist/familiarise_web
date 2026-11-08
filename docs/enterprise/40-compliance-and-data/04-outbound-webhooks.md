@@ -98,7 +98,7 @@ every receiver.
 | `payout.completed` | RazorpayX `payout.processed` webhook → status PAID                                                                                                                                  | `{ payoutId, totalPaise, currency, payoutReference, settledAt }`                                               |
 | `payout.failed`    | RazorpayX `payout.failed` OR `payout.reversed` webhook                                                                                                                              | `{ payoutId, reason, lastError }`                                                                              |
 | `contract.signed`  | Contract activation across `POST .../contracts` (`ACTIVE`), `PATCH .../contracts/[contractId]` (`DRAFT → ACTIVE`), `POST .../contracts/[contractId]/supersede`, and auto-renew cron | `{ contractId, billingAccountId, status, signedAt, effectiveFrom, effectiveTo, supersededContractId, reason }` |
-| `program.assigned` | `POST /api/organizations/[orgId]/programs/[programId]/assignments` and `POST .../auto-enroll` when a new seat is claimed                                                            | `{ programId, assignmentId, membershipId, periodStart, periodEnd, source? }`                                   |
+| `program.assigned` | `POST /api/organizations/[orgId]/programs/[programId]/assignments` when a new seat is claimed                                                                                       | `{ programId, assignmentId, membershipId, periodStart, periodEnd, source? }`                                   |
 
 ## Receiver contract
 

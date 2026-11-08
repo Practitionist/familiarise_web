@@ -14,6 +14,12 @@ import {
   type MoneyStateKind,
 } from "@/lib/dashboard/money-state";
 import type { Prisma } from "@prisma/client";
+import {
+  calendarLinks,
+  holdsCalendarSeat,
+  nextSessionAhead,
+} from "@/lib/appointments/calendar-links";
+import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 
 /**
  * #1586 P1-J07/J08 — what the buyer's booking actually is once the money is
@@ -112,6 +118,42 @@ async function deriveBookingState(
     bookingState: presentation.bookingState.state,
     moneyState: presentation.moneyState.state,
   };
+}
+
+/** The buyer's add-to-calendar links for the next confirmed session, only while their own seat is paid. */
+async function buyerCalendarLinks(
+  payment: VerifyPayment,
+  derived: { bookingState: BookingState; moneyState: MoneyState } | null,
+  userId: string,
+) {
+  const appointment = payment.appointment;
+  if (
+    !appointment ||
+    derived?.bookingState !== "CONFIRMED" ||
+    derived.moneyState === "REFUND_PENDING" ||
+    derived.moneyState === "REFUNDED"
+  )
+    return null;
+  const next = nextSessionAhead(
+    appointment.occurrences.filter((o) => !o.isTentative),
+  );
+  if (!next) return null;
+  // A group event's sessions outlive one refunded seat, so the buyer's own seat decides.
+  if (!(await holdsCalendarSeat(prisma, appointment.id, userId))) return null;
+  const title = planTitleOrSessionLabel(
+    appointment.consultation?.consultationPlan?.title ??
+      appointment.subscription?.subscriptionPlan?.title ??
+      appointment.webinar?.webinarPlan?.title ??
+      appointment.class?.classPlan?.title,
+    appointment.appointmentType,
+  );
+  return calendarLinks({
+    appointmentId: appointment.id,
+    userId,
+    title,
+    startsAt: next.startsAt,
+    endsAt: next.endsAt,
+  });
 }
 
 export async function GET(req: NextRequest) {
@@ -260,6 +302,11 @@ export async function GET(req: NextRequest) {
     }
 
     const derived = await deriveBookingState(payment);
+    const calendar = await buyerCalendarLinks(
+      payment,
+      derived,
+      session.user.id,
+    );
 
     // Return success response with appointment details
     return NextResponse.json({
@@ -268,6 +315,7 @@ export async function GET(req: NextRequest) {
       appointmentType,
       status: "SUCCEEDED",
       ...(derived ?? {}),
+      ...(calendar ? { calendar } : {}),
       message: "Payment verified successfully",
       appointment: payment.appointment
         ? {

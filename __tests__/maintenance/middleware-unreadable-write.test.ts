@@ -49,3 +49,21 @@ it("answers 503 to an RSC-flagged checkout write when the state is unreadable", 
   expect(res.headers.get("Retry-After")).toBe("30");
   expect(cachedOnly).not.toHaveBeenCalled();
 });
+
+it("refuses an anonymous notify-me write before it reaches the route", async () => {
+  fresh.mockResolvedValue(OFF);
+  cachedOnly.mockReturnValue(OFF);
+  const request = new NextRequest(
+    "http://localhost/api/scheduling/event-waitlist",
+    { method: "POST" },
+  );
+  const event = new NextFetchEvent({
+    request,
+    page: "/api/scheduling/event-waitlist",
+    context: { waitUntil: () => undefined },
+  });
+
+  const res = await middleware(request, event);
+
+  expect(res.status).toBe(401);
+});

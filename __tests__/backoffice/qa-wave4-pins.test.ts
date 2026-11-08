@@ -20,7 +20,7 @@ const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 
 describe("QA wave 4 (backoffice)", () => {
   it("B13 — the newsletter send form sits above the list and keeps its count", () => {
-    const src = read("components/admin/WaitlistManagement.tsx");
+    const src = read("components/admin/NewsletterManagement.tsx");
     expect(src.indexOf("Send a newsletter")).toBeGreaterThan(-1);
     expect(src.indexOf("Send a newsletter")).toBeLessThan(
       src.indexOf("{renderSubscriberTable()}"),
@@ -64,9 +64,9 @@ describe("QA wave 4 (backoffice)", () => {
     expect(read("components/dashboard/ContextSwitcher.tsx")).toContain(
       "const user = hydrated ? session?.user : undefined;",
     );
-    // Wave 5 F5 — the header bell waits for hydration like the switcher, and for the subscriber hash.
+    // The header bell waits for hydration like the switcher.
     expect(read("components/notifications/NotificationInbox.tsx")).toContain(
-      "if (!hydrated || !session?.user?.id || !NOVU_APP_ID || !authReady) {",
+      "if (!hydrated || !session?.user?.id || !NOVU_APP_ID) {",
     );
   });
 

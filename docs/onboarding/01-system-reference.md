@@ -178,11 +178,11 @@ path (§0); every consultee profile field is optional on the server.
 
 ### Organisation owner (ORG_WORKSPACE)
 
-| Step | Component                                                                          | What It Collects                                             |
-| ---- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| 0    | `PersonalInfoAndRoleForm`                                                          | Name, phone, DOB (18+), role=ORG_WORKSPACE                   |
-| 1    | `ConsulteeAgreementForm`                                                           | Terms + privacy (+ optional marketing)                       |
-| 2    | `CreateOrganizationWizard` ("Organisation setup", full-bleed, its own 5–6 screens) | Org info, billing / revenue split, branding, invites, review |
+| Step | Component                                                                          | What It Collects                                   |
+| ---- | ---------------------------------------------------------------------------------- | -------------------------------------------------- |
+| 0    | `PersonalInfoAndRoleForm`                                                          | Name, phone, DOB (18+), role=ORG_WORKSPACE         |
+| 1    | `ConsulteeAgreementForm`                                                           | Terms + privacy (+ optional marketing)             |
+| 2    | `CreateOrganizationWizard` ("Organisation setup", full-bleed, its own 4–5 screens) | Org info, billing / revenue split, invites, review |
 
 Nothing is written server-side until launch. The Review step sends
 `POST /api/organizations` with an `onboarding` block (`OrgOnboardingSchema`:

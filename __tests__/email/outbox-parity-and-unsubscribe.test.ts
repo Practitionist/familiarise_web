@@ -24,7 +24,7 @@ jest.mock("../../lib/observability/ops-chat", () => ({
   postOpsChat: (...args: unknown[]) => mockPostOpsChat(...args),
 }));
 
-jest.mock("../../lib/waitlist/service", () => ({
+jest.mock("../../lib/newsletter/service", () => ({
   unsubscribe: (...args: unknown[]) => mockWaitlistUnsubscribe(...args),
 }));
 
@@ -38,7 +38,7 @@ import {
   listUnsubscribeHeaders,
   reconstructUnsubscribeHeaders,
 } from "@/lib/email/unsubscribe";
-import { buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
+import { buildUnsubscribeUrl } from "@/lib/newsletter/tokens";
 import {
   runEmailRetryTick,
   type FailedEmailStore,
@@ -68,6 +68,9 @@ function makeFailedEmail(overrides: Partial<FailedEmail> = {}): FailedEmail {
     sentAt: null,
     resendId: null,
     entityRef: null,
+    deliveryUserId: null,
+    deliveryCategory: null,
+    firstAttemptAt: null,
     createdAt: new Date(T0 - 60_000),
     updatedAt: new Date(T0 - 60_000),
     ...overrides,
@@ -94,10 +97,42 @@ function makeFailedBatch(
     nextRetryAt: new Date(T0),
     lastError: null,
     sentAt: null,
+    firstAttemptAt: null,
     createdAt: new Date(T0 - 60_000),
     updatedAt: new Date(T0 - 60_000),
     ...overrides,
   };
+}
+
+/** The first-attempt CAS: writes only rows whose anchor is still unset. */
+function stampWhereUnset<T extends { id: string; firstAttemptAt: Date | null }>(
+  rows: T[],
+  args: { where?: { id?: unknown }; data: { firstAttemptAt?: unknown } },
+): { count: number } {
+  const row = rows.find((r) => r.id === args.where?.id);
+  if (!row || row.firstAttemptAt !== null) return { count: 0 };
+  row.firstAttemptAt = args.data.firstAttemptAt as Date;
+  return { count: 1 };
+}
+
+/** Mirrors the relay's SQL: a status-filtered write settles only an unsettled row. */
+function writeMany<
+  T extends { id: string; status: string; firstAttemptAt: Date | null },
+>(
+  rows: T[],
+  args: {
+    where?: { id?: unknown; status?: unknown };
+    data: Record<string, unknown>;
+  },
+): { count: number } {
+  if (!args.where?.status) return stampWhereUnset(rows, args);
+  const idx = rows.findIndex((r) => r.id === args.where?.id);
+  if (idx < 0) return { count: 0 };
+  if (rows[idx].status !== "PENDING" && rows[idx].status !== "RETRY") {
+    return { count: 0 };
+  }
+  rows[idx] = { ...rows[idx], ...(args.data as Partial<T>) };
+  return { count: 1 };
 }
 
 function isRowDue(
@@ -129,6 +164,7 @@ function createStatefulOutboxStore(initial: {
   const batches = [...(initial.batches ?? [])];
 
   const store: FailedEmailStore = {
+    user: { findUnique: jest.fn().mockResolvedValue(null) },
     failedEmail: {
       findMany: jest.fn(async (args: Prisma.FailedEmailFindManyArgs) => {
         const whereJson = JSON.stringify(args.where);
@@ -136,15 +172,9 @@ function createStatefulOutboxStore(initial: {
         const nowDate = lteMatch ? new Date(lteMatch[1]) : new Date(T0);
         return emails.filter((row) => isRowDue(row, nowDate));
       }),
-      update: jest.fn(async (args: Prisma.FailedEmailUpdateArgs) => {
-        const idx = emails.findIndex((r) => r.id === args.where.id);
-        const updated = {
-          ...(idx >= 0 ? emails[idx] : makeFailedEmail()),
-          ...(args.data as Partial<FailedEmail>),
-        };
-        if (idx >= 0) emails[idx] = updated;
-        return updated;
-      }),
+      updateMany: jest.fn(async (args: Prisma.FailedEmailUpdateManyArgs) =>
+        writeMany(emails, args),
+      ),
       count: jest.fn(
         async () =>
           emails.filter((r) => r.status === "PENDING" || r.status === "RETRY")
@@ -153,6 +183,7 @@ function createStatefulOutboxStore(initial: {
     },
     emailSuppression: {
       findMany: jest.fn().mockResolvedValue([]),
+      findUnique: jest.fn().mockResolvedValue(null),
     },
     failedEmailBatch: {
       findMany: jest.fn(async (args: Prisma.FailedEmailBatchFindManyArgs) => {
@@ -161,15 +192,9 @@ function createStatefulOutboxStore(initial: {
         const nowDate = lteMatch ? new Date(lteMatch[1]) : new Date(T0);
         return batches.filter((row) => isRowDue(row, nowDate));
       }),
-      update: jest.fn(async (args: Prisma.FailedEmailBatchUpdateArgs) => {
-        const idx = batches.findIndex((r) => r.id === args.where.id);
-        const updated = {
-          ...(idx >= 0 ? batches[idx] : makeFailedBatch()),
-          ...(args.data as Partial<FailedEmailBatch>),
-        };
-        if (idx >= 0) batches[idx] = updated;
-        return updated;
-      }),
+      updateMany: jest.fn(async (args: Prisma.FailedEmailBatchUpdateManyArgs) =>
+        writeMany(batches, args),
+      ),
     },
   };
 
@@ -444,7 +469,7 @@ describe("4. GET vs POST /api/waitlist/unsubscribe link-scanner safety", () => {
     expect(mockWaitlistUnsubscribe).not.toHaveBeenCalled();
 
     // RFC 8058 one-click POST immediately unsubscribes
-    mockWaitlistUnsubscribe.mockResolvedValue({ success: true });
+    mockWaitlistUnsubscribe.mockResolvedValue({ ok: true });
     const postRes = await postWaitlistUnsubscribe(
       new NextRequest(
         "https://familiarisenow.com/api/waitlist/unsubscribe?email=sub%40example.com&token=tok_xyz",
@@ -458,6 +483,20 @@ describe("4. GET vs POST /api/waitlist/unsubscribe link-scanner safety", () => {
       email: "sub@example.com",
       token: "tok_xyz",
     });
+  });
+
+  it("never answers unsubscribed when the write failed", async () => {
+    mockWaitlistUnsubscribe.mockRejectedValueOnce(new Error("db down"));
+    const res = await postWaitlistUnsubscribe(
+      new NextRequest(
+        "https://familiarisenow.com/api/waitlist/unsubscribe?email=sub%40example.com&token=tok_xyz",
+        { method: "POST", headers: { accept: "text/html" } },
+      ),
+    );
+    expect(res.status).toBe(500);
+    const page = await res.text();
+    expect(page).toContain("We could not unsubscribe you");
+    expect(page).not.toContain("You are unsubscribed");
   });
 });
 

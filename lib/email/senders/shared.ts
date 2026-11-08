@@ -12,7 +12,6 @@ import {
   prepareRecipientEmails,
   sendToRecipients,
   stagePreparedEmails,
-  stageToRecipients,
   type PreparedRecipientEmails,
   type SendToRecipientsResult,
   type StagedRecipientEmail,
@@ -35,6 +34,19 @@ export interface RecipientEmailSpec {
   entityRef: string;
   subject: (r: EmailRecipient) => string;
   render: (r: EmailRecipient) => ReactElement;
+  /** A required notice: a render failure stages a `review:render_failed` row in its place, not a Sentry event. */
+  traceRenderFailure?: boolean;
+}
+
+export type SpecBuild<TArgs> = (args: TArgs) => {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+};
+
+/** Messages rendered before a transaction, bound to the exact inputs that produced them. */
+export interface PreparedSpecEmails {
+  key: string;
+  prepared: PreparedRecipientEmails;
 }
 
 export interface StagedOnboardingEmail {
@@ -70,16 +82,60 @@ export function money(amountPaise: Paise, currency: string): string {
 export async function prepareSpecEmails(
   spec: RecipientEmailSpec,
   userIds: string[],
+  db?: StagingTx,
 ): Promise<PreparedRecipientEmails> {
-  const recipients = await loadEmailRecipients(userIds, spec.category);
-  return prepareRecipientEmails({
-    recipients,
-    emailType: spec.emailType,
-    from: spec.from ?? SENDERS.notifications,
-    subject: spec.subject,
-    render: spec.render,
-    entityRef: spec.entityRef,
-  });
+  const traced = spec.traceRenderFailure === true;
+  const recipients = await loadEmailRecipients(userIds, spec.category, db);
+  return prepareRecipientEmails(
+    {
+      recipients,
+      emailType: spec.emailType,
+      from: spec.from ?? SENDERS.notifications,
+      subject: spec.subject,
+      render: spec.render,
+      entityRef: spec.entityRef,
+    },
+    { reportToSentry: !traced, traceFailures: traced },
+  );
+}
+
+function inputKey(args: unknown): string {
+  return JSON.stringify(args, (_key, value: unknown) =>
+    typeof value === "bigint" ? value.toString() : value,
+  );
+}
+
+/** Renders `build(args)` outside any transaction, for `stageBuiltSpec` to stage inside one. */
+export async function prepareBuiltSpec<TArgs>(
+  build: SpecBuild<TArgs>,
+  args: TArgs,
+): Promise<PreparedSpecEmails> {
+  const { userIds, spec } = build(args);
+  return {
+    key: inputKey(args),
+    prepared: await prepareSpecEmails(spec, userIds),
+  };
+}
+
+/**
+ * Stages `pre` inside `tx` when it was rendered from these exact `args`;
+ * otherwise renders here, where a render failure stages nothing and never throws.
+ */
+export async function stageBuiltSpec<TArgs>(
+  tx: StagingTx,
+  build: SpecBuild<TArgs>,
+  args: TArgs,
+  pre?: PreparedSpecEmails | null,
+): Promise<StagedRecipientEmail[]> {
+  const { userIds, spec } = build(args);
+  if (
+    pre &&
+    pre.prepared.emailType === spec.emailType &&
+    pre.key === inputKey(args)
+  ) {
+    return stagePreparedEmails(tx, pre.prepared);
+  }
+  return stageSpecGuarded(spec, userIds, tx);
 }
 
 export async function sendSpecGuarded(
@@ -100,6 +156,7 @@ export async function sendSpecGuarded(
       entityRef: spec.entityRef,
       budgetMs,
       ...(deferAttempt ? { deferAttempt: true } : {}),
+      ...(spec.traceRenderFailure ? { traceFailures: true } : {}),
     });
   } catch (error) {
     Sentry.captureException(
@@ -111,51 +168,15 @@ export async function sendSpecGuarded(
   }
 }
 
+/** Renders and stages `spec` in `tx`; a render failure stages nothing (or its trace row) and never throws. */
 export async function stageSpecGuarded(
   spec: RecipientEmailSpec,
   userIds: string[],
   tx?: StagingTx,
 ): Promise<StagedRecipientEmail[]> {
   const db = tx ?? prisma;
-  const recipients = await loadEmailRecipients(userIds, spec.category, db);
-  return stageToRecipients({
-    tx: db,
-    recipients,
-    emailType: spec.emailType,
-    from: spec.from ?? SENDERS.notifications,
-    subject: spec.subject,
-    render: spec.render,
-    entityRef: spec.entityRef,
-  });
-}
-
-/**
- * Stages `spec` in `tx`; a render failure throws so the caller's claim rolls back.
- * No per-recipient Sentry: the caller retries every run and reports its failure count once.
- */
-export async function stageSpecRequired(
-  tx: StagingTx,
-  spec: RecipientEmailSpec,
-  userIds: string[],
-): Promise<StagedRecipientEmail[]> {
-  const recipients = await loadEmailRecipients(userIds, spec.category, tx);
-  const prepared = await prepareRecipientEmails(
-    {
-      recipients,
-      emailType: spec.emailType,
-      from: spec.from ?? SENDERS.notifications,
-      subject: spec.subject,
-      render: spec.render,
-      entityRef: spec.entityRef,
-    },
-    { reportToSentry: false },
-  );
-  if (prepared.failed > 0) {
-    throw new Error(
-      `${spec.emailType} render failed for ${prepared.failed} recipient(s)`,
-    );
-  }
-  return stagePreparedEmails(tx, prepared);
+  const prepared = await prepareSpecEmails(spec, userIds, db);
+  return stagePreparedEmails(db, prepared);
 }
 
 /** One `IdempotencyRecord` per (scope, key, recipient) makes a staged email at-most-once. */
@@ -278,11 +299,12 @@ function isPrismaLike(val: unknown): val is StagingTx {
 }
 
 export function defineLifecycleStager<TArgs extends object>(
-  build: (args: TArgs) => { userIds: string[]; spec: RecipientEmailSpec },
+  build: SpecBuild<TArgs>,
 ) {
   function stageEmail(
     tx: StagingTx,
     args: TArgs,
+    pre?: PreparedSpecEmails | null,
   ): Promise<StagedRecipientEmail[]>;
   function stageEmail(
     args: TArgs,
@@ -291,24 +313,31 @@ export function defineLifecycleStager<TArgs extends object>(
   async function stageEmail(
     first: StagingTx | TArgs,
     second?: TArgs | StagingTx,
+    pre?: PreparedSpecEmails | null,
   ): Promise<StagedRecipientEmail[]> {
     const isTxFirst =
       second !== undefined ? !isPrismaLike(second) : isPrismaLike(first);
-    const tx = isTxFirst
-      ? (first as StagingTx)
-      : isPrismaLike(second)
-        ? second
-        : undefined;
-    const args = (isTxFirst ? second : first) as TArgs;
-    const { userIds, spec } = build(args);
+    if (isTxFirst) {
+      return stageBuiltSpec(first as StagingTx, build, second as TArgs, pre);
+    }
+    const tx = isPrismaLike(second) ? second : undefined;
+    const { userIds, spec } = build(first as TArgs);
     return stageSpecGuarded(spec, userIds, tx);
   }
   return stageEmail;
 }
 
+/** The before-the-transaction half of a `defineLifecycleStager` stager. */
+export function defineLifecyclePreparer<TArgs extends object>(
+  build: SpecBuild<TArgs>,
+) {
+  return (args: TArgs): Promise<PreparedSpecEmails> =>
+    prepareBuiltSpec(build, args);
+}
+
 export function defineStagedEmailSender<TArgs extends object>(
   budgetMs: number,
-  build: (args: TArgs) => { userIds: string[]; spec: RecipientEmailSpec },
+  build: SpecBuild<TArgs>,
 ) {
   function stageEmail(
     args: TArgs,
@@ -317,10 +346,12 @@ export function defineStagedEmailSender<TArgs extends object>(
   function stageEmail(
     tx: StagingTx,
     args: TArgs,
+    pre?: PreparedSpecEmails | null,
   ): Promise<StagedOnboardingEmail>;
   async function stageEmail(
     first: TArgs | StagingTx,
     second?: StagingTx | TArgs,
+    pre?: PreparedSpecEmails | null,
   ): Promise<StagedOnboardingEmail> {
     const isTxFirst =
       second !== undefined ? !isPrismaLike(second) : isPrismaLike(first);
@@ -334,7 +365,9 @@ export function defineStagedEmailSender<TArgs extends object>(
     const run = async (): Promise<StagedOnboardingEmail> => ({
       emailType: spec.emailType,
       budgetMs,
-      list: await stageSpecGuarded(spec, userIds, tx),
+      list: tx
+        ? await stageBuiltSpec(tx, build, args, pre)
+        : await stageSpecGuarded(spec, userIds),
     });
     if (tx) return run();
     try {

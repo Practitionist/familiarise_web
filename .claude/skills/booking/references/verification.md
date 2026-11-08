@@ -81,7 +81,7 @@ booking change: `claude-code-review.yml` fires only on a `labeled` event, and
 `claude.yml` only when a comment or review body contains `@claude`.
 
 CI's `test-and-build` job is the gate: it passes only when the `checks` job
-(lint on changed files, `npm audit`, `prisma generate`, `npx tsc --noEmit`, the
+(lint on changed files, the `check-npm-audit.ts` advisory gate, `prisma generate`, `npx tsc --noEmit`, the
 money-column, auth-schema and workflow-hygiene guards, `jest --changedSince` on
 non-prod PRs, and the DB-sidecar guard plus the database tier
 `jest -c jest.db.config.ts` against a throwaway Postgres whenever `prisma/**`
@@ -159,8 +159,8 @@ its own procedure in `docs/prisma/README.md`. If a change needs
 new schema, say so and stop; do not push it to prove a test passes.
 
 Since #1322 merged, `db:push` on `dev` is push-then-sidecars-then-assert
-(`db:push:schema` = `prisma db push && npm run db:sidecars`, then
-`db:assert-sidecars`), so a push can no longer silently leave
+(`db:push:schema` = the preflight, `prisma db push` and `npm run db:sidecars`, then
+`scripts/ci/check-db-sidecars.ts`), so a push can no longer silently leave
 `occurrence_no_confirmed_overlap` and the money CHECK constraints behind. There is
 no sidecar-skipping push script any more, so `npm run db:push` is the only path.
 "Prisma schema is up to date" says nothing about the sidecars.
@@ -265,7 +265,9 @@ database named `ci`. Run it locally like this, and only like this:
 
 1. Start a local Postgres 16 or newer with the `btree_gist` extension available
    (the overlap constraint needs it), and create a **fresh, empty** database named
-   `ci`.
+   `ci` (macOS: `brew install postgresql@16`, start it with
+   `pg_ctl -D /opt/homebrew/var/postgresql@16 start`, then `createdb ci`;
+   `DATABASE_URL=postgresql://$USER@localhost:5432/ci`).
 2. From a worktree that has **no `.env`** (`next/jest` loads `.env`, and the main
    checkout's points at the shared database), pass both URLs inline and confirm
    they say `localhost` and `/ci` before running anything:
@@ -278,6 +280,13 @@ database named `ci`. Run it locally like this, and only like this:
    drop and re-create the throwaway database instead.
 4. Run `CI=true DATABASE_URL=postgresql://ci@localhost:<port>/ci npx jest -c jest.db.config.ts <paths>`,
    then stop the server and delete its data directory.
+
+Known failures: three booking suites, `seat-races`, `notice-floor-real-path` and
+`seat-hold-grace` under `__tests__/db/booking/`, fail under Jest with "A dynamic
+import callback was invoked without --experimental-vm-modules" while rendering
+emails. The cause is the email stack being loaded through `import()` (as in
+`lib/novu/stage-then-attempt.ts`), which Jest's VM cannot run without that flag.
+The production runtime is unaffected.
 
 Most booking suites in `__tests__/db/booking/` make two writers meet at a real
 conflict and assert exactly one commit, one typed refusal, and a raw-SQL
