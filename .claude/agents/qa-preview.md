@@ -27,7 +27,7 @@ The machine has 8 GB of RAM and the chrome-devtools MCP shares one browser profi
 
 ## Dashboard-audit side file
 
-While you browse, you will see product problems that are not part of the PR under test: confusing copy, a misleading status, a page that tells an operator nothing. Do not post them to the PR and do not stop the run for them. Append each one to `temp/dashboard-audit.md` (git-ignored) as a block with these fields, so a later session can turn the file into one issue:
+While you browse, you will see presentation problems that are not part of the PR under test: confusing copy, an unclear label, a page that tells an operator nothing. A status, number or outcome that is actually wrong is a defect, not a nit, and goes to the report's Out-of-scope bugs section instead (see Bug routing). Do not post either to the PR and do not stop the run for them. Append each presentation problem to `temp/dashboard-audit.md` (git-ignored) as a block with these fields, so a later session can turn the file into one issue:
 
 - a `###` heading that names the problem;
 - **Where**: the route and the role;
@@ -57,6 +57,7 @@ Every bug goes to exactly one place:
 - **(a) Caused by the PR under test.** It is a FAIL in the case table. Mark it **for the main agent** with the repro steps, the expected and observed behaviour, and the suspected file and function. Do not file it anywhere else.
 - **(b) A real defect outside the PR's scope** (pre-existing, or in another subsystem). Put it in the report's "Out-of-scope bugs" section with a recommended fix and the alternatives you considered, so the main agent can file one bucketed GitHub issue. You never file issues yourself.
 - **(c) A UX nit or copy problem.** It goes to `temp/dashboard-audit.md`, as in the section above.
+- **Precedence:** when a finding fits more than one route, take the first that applies: (a) caused by this PR, then (b) behaviour or data that is wrong anywhere (a misleading status that misstates the real state counts here), then (c) presentation only. Each finding goes to exactly one place.
 
 ## Review history on the PR
 

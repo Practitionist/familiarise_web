@@ -27,7 +27,7 @@ Facts that matter for budgeting:
 - Batch API requests are 50% off. Cache writes (5-minute) cost 1.25× input.
 - Every current model has a reliable knowledge cutoff of June 2026 and adaptive thinking. Fable 5.1 and Opus 5.5 keep adaptive thinking always on, so effort is the control for how much they reason and what a request costs.
 - Claude Mythos 5.1 is priced like Fable 5.1 but is limited-availability (verified organisations only), so do not plan a fleet around it.
-- Claude Code resolves the aliases `fable`, `opus`, `sonnet` and `haiku` to Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 on the Anthropic API. On other providers the aliases can resolve to older models, so pin a full ID such as `claude-opus-5-5` when the exact model matters.
+- Claude Code resolves the aliases `fable`, `opus`, `sonnet` and `haiku` to Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 on the Anthropic API. Each model needs a minimum Claude Code version: Fable 5.1 needs v2.1.257, Opus 5.5 v2.1.280, Sonnet 5.5 v2.1.284 and Haiku 5.5 v2.1.293 (run `claude update`). On older versions, and on other providers (Bedrock, Google Cloud, Claude Platform on AWS), the aliases can resolve to older models, so pin a full ID such as `claude-opus-5-5` when the exact model matters, and check the resolved model in `/model`.
 
 ## 2. Effort levels
 
@@ -112,12 +112,12 @@ a. **Plan mode.** Background subagents launched while the main session is in pla
 b. **One heavy command at a time.** When two or more agents build at once, run heavy commands (`tsc`, `jest`, `eslint`, `codex`) one at a time behind a shared mutex:
 
 ```bash
-until mkdir /tmp/fw-heavy.lock 2>/dev/null; do sleep 15; done; <cmd>; rmdir /tmp/fw-heavy.lock
+bash -c 'until mkdir /tmp/fw-heavy.lock 2>/dev/null; do sleep 15; done; trap "rmdir /tmp/fw-heavy.lock" EXIT; <cmd>'
 ```
 
 Always release the lock, even when the command fails: put the whole thing in one `bash -c` and use `trap 'rmdir /tmp/fw-heavy.lock' EXIT` as `.claude/skills/workflow/SKILL.md` does. After a killed run or a reboot, check for a stale `/tmp/fw-heavy.lock` (and `/tmp/fw-browser.lock`) and remove it before resuming agents.
 
-c. **Memory reaper.** On this 8 GB machine, Claude Code's low-memory reaper kills idle background shells, and a repo-wide `jest --changedSince` was killed that way. Prefer a targeted suite list: the tests the branch touched (`git diff --name-only origin/dev...HEAD -- '__tests__/*'`) plus the suites that import the changed modules. CI does not run everything on every PR: a PR into `dev` runs only `jest --changedSince` (`ci.yaml`), and the full sharded suite runs only on release runs (PRs into `prod`, pushes to `staging` or `prod`). So a change with wide reach (a shared helper, a fixture, a dependency bump) needs its importers run locally or it is first fully tested on the release PR.
+c. **Memory reaper.** On this 8 GB machine, Claude Code's low-memory reaper kills idle background shells, and a repo-wide `jest --changedSince` was killed that way. Prefer a targeted suite list: the tests the branch touched, committed or not (`git diff --name-only origin/dev -- '__tests__/*'` covers commits plus staged and unstaged edits; add `git ls-files --others --exclude-standard -- __tests__` for new untracked suites) plus the suites that import the changed modules. CI does not run everything on every PR: a PR into `dev` runs only `jest --changedSince` (`ci.yaml`), and the full sharded suite runs only on release runs (PRs into `prod`, pushes to `staging` or `prod`). So a change with wide reach (a shared helper, a fixture, a dependency bump) needs its importers run locally or it is first fully tested on the release PR.
 
 d. **Separate worktrees.** Parallel builders get separate worktrees and branches with disjoint file sets. Give them a rule for shared files, for example each builder adds its own block in a shared label file instead of editing common lines. The orchestrator merges the branches afterwards with `git merge --no-ff`. Symlink the main checkout's `node_modules` into each worktree (AGENTS.md section 3.1).
 
