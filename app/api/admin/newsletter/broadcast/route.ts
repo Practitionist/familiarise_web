@@ -61,15 +61,13 @@ async function resolveRecipients(
   skippedSuppressed: number;
   skippedHeld: number;
 }> {
+  const order = input.mode === "warmup" ? "recentFirst" : "stable";
   const candidates =
     input.mode === "test"
       ? [normaliseEmail(adminEmail)]
-      : (
-          await listSendableSubscribers(
-            input.audience,
-            input.mode === "warmup" ? "recentFirst" : "stable",
-          )
-        ).map((s) => s.email);
+      : (await listSendableSubscribers(input.audience, order)).map(
+          (s) => s.email,
+        );
   // A bounced or complaining address stays SUBSCRIBED only until the webhook settles it.
   const suppressed = await findSuppressed(candidates);
   const unsuppressed = candidates.filter((email) => !suppressed.has(email));

@@ -36,7 +36,7 @@ export function hashIp(ip: string | null | undefined): string | null {
  * lock, so a confirmation racing this transaction is seen, never a stale snapshot.
  * Lock order for every consent withdrawal: NewsletterSubscriber rows first, then ConsentArtifact rows.
  */
-export async function lockNewsletterRows(
+export function lockNewsletterRows(
   tx: Pick<Tx, "newsletterSubscriber">,
   where: Prisma.NewsletterSubscriberWhereInput,
   now: Date,

@@ -335,7 +335,7 @@ export function audienceWhere(
  * 100-recipient batch, and so its idempotency key, unchanged when new rows arrive;
  * `recentFirst` is for the warm-up only.
  */
-export async function listSendableSubscribers(
+export function listSendableSubscribers(
   audience: BroadcastAudience,
   order: "stable" | "recentFirst",
 ) {

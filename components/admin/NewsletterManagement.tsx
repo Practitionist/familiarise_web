@@ -279,6 +279,9 @@ export function NewsletterManagement() {
   const settled = settledSendable(preview);
   const sendable = settled ?? 0;
   const previewReady = settled !== null;
+  const sendAllLabel = previewReady
+    ? `Send to all matching (${sendable})`
+    : "Send to all matching";
   const overLimit = sendable > BROADCAST_AUDIENCE_LIMIT;
   const warmupCount = Math.min(warmupLimit, sendable);
   const messageReady = subject.trim() !== "" && htmlBody.trim() !== "";
@@ -534,9 +537,7 @@ export function NewsletterManagement() {
                       }
                     >
                       <Send className="mr-2 h-4 w-4" />
-                      {broadcast.isPending
-                        ? "Sending…"
-                        : `Send to all matching${previewReady ? ` (${sendable})` : ""}`}
+                      {broadcast.isPending ? "Sending…" : sendAllLabel}
                     </Button>
                   }
                   title={`Send to ${sendable} subscribers?`}
