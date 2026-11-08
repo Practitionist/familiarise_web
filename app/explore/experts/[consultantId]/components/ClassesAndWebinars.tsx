@@ -90,7 +90,10 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
     programs.length > RAIL_THRESHOLD ? (
       <ProgramRow programs={programs} />
     ) : (
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 sm:gap-6 lg:gap-8">
+      // Columns follow this section's own width, not the viewport: it sits in a
+      // column beside the pricing panel, so a viewport breakpoint (xl: 3) put
+      // three cards in a space that only fits two.
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] gap-5 sm:gap-6">
         {programs.map((program) => (
           <ProgramCard key={program.id} program={program} />
         ))}
@@ -148,7 +151,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                     type="button"
                     aria-pressed={activeTab === key}
                     onClick={() => setActiveTab(key)}
-                    className={`relative px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                    className={`relative px-3 py-2 text-sm font-medium rounded-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-4 ${
                       activeTab === key
                         ? "text-foreground"
                         : "text-muted-foreground hover:text-foreground"

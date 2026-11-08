@@ -128,17 +128,18 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
           {onNextWeek ? " Try the next week." : ""}
         </p>
       ) : (
-        // Seven columns need room: below ~42rem the grid scrolls sideways
-        // instead of squeezing the times.
-        <div className="overflow-x-auto">
-          <div className="min-w-[42rem]">
-            {/* Date headers */}
-            <div className="mb-3 grid grid-cols-7 gap-2 sm:gap-3">
-              {mergedDays.map(({ date }) => (
-                <div
-                  key={date.toISOString()}
-                  className="rounded-lg bg-muted px-2 py-2 text-center"
-                >
+        // One block per day: a row on phones (label left, times right) and a
+        // column of the seven-day week from md up, so no width needs a sideways
+        // scroll.
+        <div className="space-y-3 md:grid md:grid-cols-7 md:gap-3 md:space-y-0">
+          {mergedDays.map(({ date, slots: daySlots }) => {
+            const visibleSlots = isExpanded
+              ? daySlots
+              : daySlots.slice(0, VISIBLE_SLOT_COUNT);
+
+            return (
+              <div key={date.toISOString()} className="flex gap-3 md:block">
+                <div className="w-20 shrink-0 self-start rounded-lg bg-muted px-2 py-2 text-center md:mb-3 md:w-auto">
                   <div className="text-sm font-semibold text-foreground">
                     {date.toLocaleDateString(undefined, { weekday: "short" })}
                   </div>
@@ -146,91 +147,81 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                     {shortDate(date)}
                   </div>
                 </div>
-              ))}
-            </div>
 
-            {/* Slots grid */}
-            <div className="grid grid-cols-7 gap-2 sm:gap-3">
-              {mergedDays.map(({ date, slots: daySlots }) => {
-                const visibleSlots = isExpanded
-                  ? daySlots
-                  : daySlots.slice(0, VISIBLE_SLOT_COUNT);
+                <div className="grid min-w-0 flex-1 grid-cols-2 content-start gap-2 md:block md:space-y-2">
+                  {visibleSlots.length > 0 ? (
+                    visibleSlots.map((slot) => {
+                      const statusKey = overviewStatusKey(slot);
+                      const isFullyBooked = statusKey === "fullyBooked";
+                      const isPartiallyBooked = statusKey === "partiallyBooked";
+                      const bookedDate =
+                        isFullyBooked || isPartiallyBooked || slot.isAllocated
+                          ? getBookedSlotDate(slot)
+                          : "";
 
-                return (
-                  <div key={date.toISOString()} className="space-y-2">
-                    {visibleSlots.length > 0 ? (
-                      visibleSlots.map((slot) => {
-                        const statusKey = overviewStatusKey(slot);
-                        const isFullyBooked = statusKey === "fullyBooked";
-                        const isPartiallyBooked =
-                          statusKey === "partiallyBooked";
-                        const bookedDate =
-                          isFullyBooked || isPartiallyBooked || slot.isAllocated
-                            ? getBookedSlotDate(slot)
-                            : "";
-
-                        return (
-                          <div
-                            key={slot.id}
-                            className={cn(
-                              "relative flex min-h-[3.5rem] w-full flex-col items-center justify-center gap-1 overflow-hidden rounded-lg border px-1.5 py-2 text-xs",
-                              SLOT_STATUS_TOKENS[statusKey].className,
-                            )}
-                          >
-                            {/* Wraps only between start and end, never inside a time. */}
-                            <div className="flex flex-wrap justify-center gap-x-1 text-center text-[11px] font-medium leading-tight">
-                              <span className="whitespace-nowrap">
-                                {roundTime(slot.localStartTime)}
-                              </span>
-                              <span className="whitespace-nowrap">
-                                – {roundTime(slot.localEndTime)}
-                              </span>
-                            </div>
-
-                            {/* Status and date for booked/allocated slots */}
-                            {isFullyBooked && (
-                              <div className="text-center text-[10px] font-semibold leading-tight opacity-90">
-                                Booked
-                                <br />
-                                {bookedDate && `(${bookedDate})`}
-                              </div>
-                            )}
-                            {isPartiallyBooked && (
-                              <div className="text-center text-[10px] font-semibold leading-tight opacity-90">
-                                Partially
-                                <br />
-                                Booked {bookedDate && `(${bookedDate})`}
-                              </div>
-                            )}
-                            {slot.isAllocated && statusKey === "available" && (
-                              <div className="text-center text-[10px] font-semibold leading-tight opacity-90">
-                                Request
-                                <br />
-                                Approval {bookedDate && `(${bookedDate})`}
-                              </div>
-                            )}
-                            {(statusKey === "tooSoon" ||
-                              statusKey === "limitReached") && (
-                              <div className="text-center text-[10px] font-semibold leading-tight opacity-90">
-                                {SLOT_STATUS_TOKENS[statusKey].label}
-                              </div>
-                            )}
+                      return (
+                        <div
+                          key={slot.id}
+                          className={cn(
+                            "relative flex min-h-[3.5rem] w-full flex-col items-center justify-center gap-1 overflow-hidden rounded-lg border px-1.5 py-2 text-xs",
+                            SLOT_STATUS_TOKENS[statusKey].className,
+                          )}
+                        >
+                          {/* Wraps only between start and end, never inside a time. */}
+                          <div className="flex flex-wrap justify-center gap-x-1 text-center text-[11px] font-medium leading-tight">
+                            <span className="whitespace-nowrap">
+                              {roundTime(slot.localStartTime)}
+                            </span>
+                            <span className="whitespace-nowrap">
+                              – {roundTime(slot.localEndTime)}
+                            </span>
                           </div>
-                        );
-                      })
-                    ) : (
-                      // A quiet dash, not a box: five empty boxes in a row
-                      // outweighed the one open slot beside them.
-                      <div className="flex min-h-[3.5rem] items-center justify-center text-sm text-muted-foreground/60">
-                        <span className="sr-only">No times</span>
-                        <span aria-hidden="true">–</span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+
+                          {/* Status and date for booked/allocated slots */}
+                          {isFullyBooked && (
+                            <div className="text-center text-[10px] font-semibold leading-tight opacity-90">
+                              Booked
+                              <br />
+                              {bookedDate && `(${bookedDate})`}
+                            </div>
+                          )}
+                          {isPartiallyBooked && (
+                            <div className="text-center text-[10px] font-semibold leading-tight opacity-90">
+                              Partially
+                              <br />
+                              Booked {bookedDate && `(${bookedDate})`}
+                            </div>
+                          )}
+                          {slot.isAllocated && statusKey === "available" && (
+                            <div className="text-center text-[10px] font-semibold leading-tight opacity-90">
+                              Request
+                              <br />
+                              Approval {bookedDate && `(${bookedDate})`}
+                            </div>
+                          )}
+                          {(statusKey === "tooSoon" ||
+                            statusKey === "limitReached") && (
+                            <div className="text-center text-[10px] font-semibold leading-tight opacity-90">
+                              {SLOT_STATUS_TOKENS[statusKey].label}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    // Quiet text, not a box: five empty boxes in a row
+                    // outweighed the one open slot beside them.
+                    <div className="col-span-2 flex min-h-[3.25rem] items-center text-sm text-muted-foreground/60 md:min-h-[3.5rem] md:justify-center">
+                      <span className="text-xs md:sr-only">No times</span>
+                      <span aria-hidden="true" className="hidden md:inline">
+                        –
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 

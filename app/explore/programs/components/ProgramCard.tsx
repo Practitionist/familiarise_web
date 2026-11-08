@@ -208,9 +208,12 @@ function GridCard({
           </div>
         )}
 
-        <div className="flex items-center justify-between gap-3 pt-4 border-t border-border">
-          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
-            <div className="text-xl font-bold text-foreground">
+        {/* Wraps rather than shrinks: when the card is too narrow for price and
+            call to action side by side, the call to action drops to its own
+            line instead of overlapping the price. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-4 border-t border-border">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            <div className="whitespace-nowrap text-xl font-bold text-foreground">
               {formatPrice(program.price)}
             </div>
             {rating !== null && (
@@ -222,7 +225,7 @@ function GridCard({
               </div>
             )}
           </div>
-          <div className="flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-medium text-muted-foreground group-hover:text-foreground transition-colors">
+          <div className="flex items-center gap-1 whitespace-nowrap text-sm font-medium text-muted-foreground group-hover:text-foreground transition-colors">
             <span>View Details</span>
             <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
           </div>
