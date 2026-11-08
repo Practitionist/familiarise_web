@@ -321,7 +321,13 @@ export function OfferingEditorContainer({
       if (onSave) {
         await onSave(payload, { publish });
       } else {
-        await adapter.save(payload, consultantId, saveCtx);
+        await adapter.save(payload, consultantId, {
+          ...saveCtx,
+          capacityEdited:
+            existingPlan?.maxParticipants === undefined ||
+            Number(values.maxParticipants) !==
+              Number(existingPlan.maxParticipants),
+        });
       }
       setPersistedStatus(publish ? "PUBLISHED" : "DRAFT");
       // Re-read before the image commit so a failed image still shows the saved status.

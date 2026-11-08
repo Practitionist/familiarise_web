@@ -73,13 +73,13 @@ function webinar(maxParticipants: number | null) {
 
 const seated = Array.from({ length: 5 }, (_, i) => ({ userId: `u-${i}` }));
 
-function patch(maxParticipants: number) {
+function patch(maxParticipants?: number) {
   return PATCH({
     json: async () => ({
       id: "plan-1",
       webinarId: "web-1",
       title: "Renamed",
-      maxParticipants,
+      ...(maxParticipants === undefined ? {} : { maxParticipants }),
     }),
   } as unknown as Parameters<typeof PATCH>[0]);
 }
@@ -114,6 +114,14 @@ it("a title-only save leaves an unset override unset and stages nothing", async 
   given(null);
   expect((await patch(10)).status).toBe(200);
   expect(writtenCapacity()).toEqual([]);
+  expect(stageSeatOpenedNotices).not.toHaveBeenCalled();
+});
+
+it("a save without a capacity changes none and stages nothing, whatever the editor loaded", async () => {
+  given(null);
+  expect((await patch()).status).toBe(200);
+  expect(writtenCapacity()).toEqual([]);
+  expect(mockTx.appointment.findUnique).not.toHaveBeenCalled();
   expect(stageSeatOpenedNotices).not.toHaveBeenCalled();
 });
 
