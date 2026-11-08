@@ -56,7 +56,10 @@ jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/admin/newsletter/broadcast/route";
-import { BROADCAST_AUDIENCE_LIMIT } from "@/lib/newsletter/broadcast-audience";
+import {
+  BROADCAST_AUDIENCE_LIMIT,
+  settledSendable,
+} from "@/lib/newsletter/broadcast-audience";
 import { audienceWhere } from "@/lib/newsletter/service";
 
 const message = { subject: "Launch", htmlBody: "<p>Hello</p>" };
@@ -155,5 +158,22 @@ describe("newsletter broadcast audience", () => {
     expect(res.status).toBe(422);
     expect(await res.json()).toMatchObject({ code: "AUDIENCE_TOO_LARGE" });
     expect(mockBatchSend).not.toHaveBeenCalled();
+  });
+});
+
+describe("settledSendable", () => {
+  const settled = {
+    data: { sendable: 7 },
+    isPlaceholderData: false,
+    isFetching: false,
+    isError: false,
+  };
+
+  it("quotes only a settled, successful preview of the current filters", () => {
+    expect(settledSendable(settled)).toBe(7);
+    expect(settledSendable({ ...settled, isPlaceholderData: true })).toBeNull();
+    expect(settledSendable({ ...settled, isFetching: true })).toBeNull();
+    expect(settledSendable({ ...settled, isError: true })).toBeNull();
+    expect(settledSendable({ ...settled, data: undefined })).toBeNull();
   });
 });

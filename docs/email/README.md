@@ -196,7 +196,7 @@ All ops alerts set `Reply-To: connect@practitionist.com` (`SUPPORT_EMAIL` in `li
 
 The back-office Newsletter page (`components/admin/NewsletterManagement.tsx`, surface `newsletter.manage`; only an admin sends) posts to `POST /api/admin/newsletter/broadcast`. The body is Zod-validated and has one of four modes:
 
-- `preview` returns the audience's counts without sending: how many confirmed subscribers match, how many of those are suppressed or held by the pre-launch guard, and how many are sendable.
+- `preview` returns the audience's counts without sending (the page keeps every send button off until a preview of the current filters has settled successfully, and the confirmation quotes that count): how many confirmed subscribers match, how many of those are suppressed or held by the pre-launch guard, and how many are sendable.
 - `test` sends the message only to the calling admin's own address, through the same suppression check and pre-launch guard.
 - `warmup` with `limit` N sends to the N sendable subscribers who confirmed most recently (`confirmedAt` descending).
 - `all` sends to every sendable subscriber in the audience.

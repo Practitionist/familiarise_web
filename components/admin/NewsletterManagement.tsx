@@ -46,6 +46,7 @@ import { useToast } from "@/components/ui/use-toast";
 import {
   BROADCAST_AUDIENCE_LIMIT,
   BROADCAST_ROLES,
+  settledSendable,
   type BroadcastAudience,
 } from "@/lib/newsletter/broadcast-audience";
 
@@ -274,7 +275,10 @@ export function NewsletterManagement() {
     },
   });
 
-  const sendable = preview.data?.sendable ?? 0;
+  // Null while the count is stale, loading or failed; every send stays off until it settles.
+  const settled = settledSendable(preview);
+  const sendable = settled ?? 0;
+  const previewReady = settled !== null;
   const overLimit = sendable > BROADCAST_AUDIENCE_LIMIT;
   const warmupCount = Math.min(warmupLimit, sendable);
   const messageReady = subject.trim() !== "" && htmlBody.trim() !== "";
@@ -420,7 +424,7 @@ export function NewsletterManagement() {
               </div>
 
               <p className="text-sm text-muted-foreground">
-                {preview.data
+                {previewReady && preview.data
                   ? `${preview.data.sendable} sendable of ${preview.data.matching} confirmed subscribers matching (${preview.data.skippedSuppressed} suppressed, ${preview.data.skippedHeld} held before launch).`
                   : "Counting the audience…"}{" "}
                 An unsubscribe footer is appended automatically.
@@ -464,7 +468,9 @@ export function NewsletterManagement() {
               <div className="flex flex-wrap items-end gap-3">
                 <Button
                   variant="outline"
-                  disabled={broadcast.isPending || !messageReady}
+                  disabled={
+                    broadcast.isPending || !messageReady || !previewReady
+                  }
                   onClick={() => broadcast.mutate("test")}
                 >
                   <Mail className="mr-2 h-4 w-4" /> Send test to me
@@ -497,7 +503,10 @@ export function NewsletterManagement() {
                       <Button
                         variant="secondary"
                         disabled={
-                          broadcast.isPending || !messageReady || sendable === 0
+                          broadcast.isPending ||
+                          !messageReady ||
+                          !previewReady ||
+                          sendable === 0
                         }
                       >
                         Warm-up send (first {warmupCount})
@@ -519,6 +528,7 @@ export function NewsletterManagement() {
                       disabled={
                         broadcast.isPending ||
                         !messageReady ||
+                        !previewReady ||
                         sendable === 0 ||
                         overLimit
                       }
@@ -526,7 +536,7 @@ export function NewsletterManagement() {
                       <Send className="mr-2 h-4 w-4" />
                       {broadcast.isPending
                         ? "Sending…"
-                        : `Send to all matching (${sendable})`}
+                        : `Send to all matching${previewReady ? ` (${sendable})` : ""}`}
                     </Button>
                   }
                   title={`Send to ${sendable} subscribers?`}

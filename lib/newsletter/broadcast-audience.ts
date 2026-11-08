@@ -18,3 +18,16 @@ export const broadcastAudienceSchema = z
   .strict();
 
 export type BroadcastAudience = z.infer<typeof broadcastAudienceSchema>;
+
+/** The sendable count a send may quote: only from a settled, successful preview of the current filters. */
+export function settledSendable(preview: {
+  data?: { sendable: number };
+  isPlaceholderData: boolean;
+  isFetching: boolean;
+  isError: boolean;
+}): number | null {
+  if (preview.isPlaceholderData || preview.isFetching || preview.isError) {
+    return null;
+  }
+  return preview.data?.sendable ?? null;
+}
