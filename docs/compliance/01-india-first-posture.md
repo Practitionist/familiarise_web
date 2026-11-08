@@ -34,8 +34,9 @@ Consequences for how you work:
 
 | What                                                                                            | Date             | Source                                 |
 | ----------------------------------------------------------------------------------------------- | ---------------- | -------------------------------------- |
-| DPDP operative sections (ss.3-17, 19-33, penalties s.33) commence                               | **13 May 2027**  | G.S.R. 843(E), 13 Nov 2025             |
-| DPDP s.6(9) + Rules r.4 (Consent Managers) commence                                             | **13 Nov 2026**  | G.S.R. 843(E)                          |
+| DPDP ss.1(2), 2 and 18-26 (definitions and the Data Protection Board) commence                  | **13 Nov 2025**  | G.S.R. 843(E), 13 Nov 2025             |
+| DPDP ss.3-17 (except s.6(9)) and 27-33 (except s.27(1)(d)), including the penalties, commence   | **13 May 2027**  | G.S.R. 843(E), 13 Nov 2025             |
+| DPDP s.6(9), s.27(1)(d) and Rules r.4 (Consent Managers) commence                               | **13 Nov 2026**  | G.S.R. 843(E)                          |
 | IT Act s.43A + SPDI Rules 2011 repealed                                                         | **13 May 2027**  | G.S.R. 843(E) s.44(2)(a)               |
 | DPDP Rules 2025 notified; Rule 4 after one year, Rules 3, 5-16, 22 and 23 after eighteen months | **13 Nov 2025**  | G.S.R. 846(E)                          |
 | Consumer Protection (E-Commerce) Amendment Rules 2026 in force                                  | **1 Jan 2027**   | G.S.R. 789(E), CG-DL-E-10092026-276125 |
