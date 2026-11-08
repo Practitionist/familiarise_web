@@ -7188,6 +7188,8 @@ model ReferralCredit {
   vestedAt        DateTime?           @db.Timestamptz
   voidedAt        DateTime?           @db.Timestamptz
   configVersion   Int?
+  // The expired credit this one was restored from, so a clawback of the original reaches it.
+  sourceCreditId  String?
 
   user   User                  @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   usages ReferralCreditUsage[]
@@ -7201,6 +7203,7 @@ model ReferralCredit {
   @@index([expiresAt])
   @@index([userId, expiresAt])
   @@index([state, expiresAt])
+  @@index([sourceCreditId])
 }
 
 enum ReferralCreditState {

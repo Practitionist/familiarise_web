@@ -126,6 +126,34 @@ export async function reverseCreditBalance(
   };
 }
 
+/** The referrers' bonus credits plus every credit restored from them, however many generations. */
+async function bonusCreditLineage(
+  tx: Tx,
+  referrals: { id: string; referralCode: { userId: string } }[],
+): Promise<string[]> {
+  const roots = await tx.referralCredit.findMany({
+    where: {
+      source: "REFERRAL_BONUS",
+      OR: referrals.map((r) => ({
+        referralId: r.id,
+        userId: r.referralCode.userId,
+      })),
+    },
+    select: { id: true },
+  });
+  const lineage = roots.map((c) => c.id);
+  let frontier = [...lineage];
+  while (frontier.length > 0) {
+    const restored = await tx.referralCredit.findMany({
+      where: { sourceCreditId: { in: frontier } },
+      select: { id: true },
+    });
+    frontier = restored.map((c) => c.id);
+    lineage.push(...frontier);
+  }
+  return lineage;
+}
+
 /** Who a reversal made by the lost-chargeback settlement is stamped with. */
 export const CHARGEBACK_REVERSAL_ACTOR = "system:chargeback";
 
@@ -145,30 +173,19 @@ export async function voidVestedReferralRewards(
   if (referrals.length === 0) return { reversedPaise: 0, waiversRevoked: 0 };
 
   let reversedPaise = 0;
-  for (const referral of referrals) {
-    const credits = await tx.referralCredit.findMany({
-      where: {
-        referralId: referral.id,
-        userId: referral.referralCode.userId,
-        source: "REFERRAL_BONUS",
-        reversedAt: null,
-      },
-      select: { id: true },
+  for (const creditId of await bonusCreditLineage(tx, referrals)) {
+    const outcome = await reverseCreditBalance(tx, {
+      creditId,
+      reversedBy: CHARGEBACK_REVERSAL_ACTOR,
+      reason: `chargeback lost (dispute ${input.disputeId})`,
+      now: input.now,
+      retireEmpty: true,
     });
-    for (const credit of credits) {
-      const outcome = await reverseCreditBalance(tx, {
-        creditId: credit.id,
-        reversedBy: CHARGEBACK_REVERSAL_ACTOR,
-        reason: `chargeback lost (dispute ${input.disputeId})`,
-        now: input.now,
-        retireEmpty: true,
-      });
-      // A balance that moved underneath must not settle the dispute with the credit still live.
-      if (outcome.kind === "CHANGED") {
-        throw new Error(`REFERRAL_CREDIT_CHANGED: credit ${credit.id}`);
-      }
-      if (outcome.kind === "REVERSED") reversedPaise += outcome.reversedPaise;
+    // A balance that moved underneath must not settle the dispute with the credit still live.
+    if (outcome.kind === "CHANGED") {
+      throw new Error(`REFERRAL_CREDIT_CHANGED: credit ${creditId}`);
     }
+    if (outcome.kind === "REVERSED") reversedPaise += outcome.reversedPaise;
   }
   const waivers = await tx.consultantFeeWaiver.updateMany({
     where: {

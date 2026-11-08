@@ -266,34 +266,64 @@ describe("vest-time controls", () => {
 });
 
 describe("lost chargeback after vest", () => {
-  /** One vested credit whose CAS matches the row as stored. */
-  const arrangeCredit = (usedAmount: number) => {
-    const row = {
-      id: "cr-1",
-      amount: 30_000,
-      usedAmount,
-      remainingAmount: 30_000 - usedAmount,
-      state: "VESTED",
-      vestedAt: new Date(NOW.getTime() - 5 * DAY),
-      reversedAt: null as Date | null,
-    };
+  type CreditRow = {
+    id: string;
+    referralId: string | null;
+    sourceCreditId: string | null;
+    amount: number;
+    usedAmount: number;
+    remainingAmount: number;
+    state: string;
+    vestedAt: Date | null;
+    reversedAt: Date | null;
+  };
+  /** Credit rows whose reads and CAS writes behave like the table. */
+  const arrangeCredits = (rows: CreditRow[]) => {
     tx.referral.findMany.mockResolvedValue([
       { id: "ref-1", referralCode: { userId: "referrer" } },
     ]);
     tx.referralCredit.findMany.mockImplementation(async ({ where }) =>
-      row.reversedAt || where.referralId !== "ref-1" ? [] : [{ id: row.id }],
+      rows
+        .filter((r) =>
+          where.sourceCreditId
+            ? where.sourceCreditId.in.includes(r.sourceCreditId)
+            : where.OR.some(
+                (o: { referralId: string }) => o.referralId === r.referralId,
+              ),
+        )
+        .map((r) => ({ id: r.id })),
     );
-    tx.referralCredit.findUnique.mockImplementation(async () => ({ ...row }));
+    tx.referralCredit.findUnique.mockImplementation(async ({ where }) => {
+      const row = rows.find((r) => r.id === where.id);
+      return row && { ...row };
+    });
     tx.referralCredit.updateMany.mockImplementation(async ({ where, data }) => {
+      const row = rows.find((r) => r.id === where.id);
       const match =
+        !!row &&
         row.reversedAt === where.reversedAt &&
         row.state === where.state &&
         row.remainingAmount === where.remainingAmount;
-      if (match) Object.assign(row, data);
+      if (row && match) Object.assign(row, data);
       return { count: match ? 1 : 0 };
     });
-    return row;
+    return rows;
   };
+  /** One vested bonus credit. */
+  const arrangeCredit = (usedAmount: number) =>
+    arrangeCredits([
+      {
+        id: "cr-1",
+        referralId: "ref-1",
+        sourceCreditId: null,
+        amount: 30_000,
+        usedAmount,
+        remainingAmount: 30_000 - usedAmount,
+        state: "VESTED",
+        vestedAt: new Date(NOW.getTime() - 5 * DAY),
+        reversedAt: null,
+      },
+    ])[0];
   const settle = () =>
     voidVestedReferralRewards(T, {
       paymentId: "pay-1",
@@ -363,6 +393,43 @@ describe("lost chargeback after vest", () => {
     expect(await reverseCreditsForPayment("pay-unpaid", T)).toBe(30_000);
     expect(row).toMatchObject({ state: "VOID", remainingAmount: 30_000 });
     expect(mockPostLedgerTxn).not.toHaveBeenCalled();
+  });
+
+  it("reaches a credit restored from the spent, expired bonus", async () => {
+    const [root, child] = arrangeCredits([
+      {
+        id: "cr-1",
+        referralId: "ref-1",
+        sourceCreditId: null,
+        amount: 10_000,
+        usedAmount: 10_000,
+        remainingAmount: 0,
+        state: "EXPIRED",
+        vestedAt: new Date(NOW.getTime() - 120 * DAY),
+        reversedAt: null,
+      },
+      {
+        id: "cr-2",
+        referralId: null,
+        sourceCreditId: "cr-1",
+        amount: 20_000,
+        usedAmount: 0,
+        remainingAmount: 20_000,
+        state: "VESTED",
+        vestedAt: new Date(NOW.getTime() - DAY),
+        reversedAt: null,
+      },
+    ]);
+    expect(await settle()).toEqual({
+      reversedPaise: 20_000,
+      waiversRevoked: 0,
+    });
+    expect(root).toMatchObject({ state: "EXPIRED", reversedAt: NOW });
+    expect(child).toMatchObject({ state: "VOID", remainingAmount: 0 });
+    expect(mockPostLedgerTxn).toHaveBeenCalledTimes(1);
+    expect(mockPostLedgerTxn.mock.calls[0][1].idempotencyKey).toBe(
+      "referral-reverse:cr-2",
+    );
   });
 
   it("a replayed verdict is a no-op", async () => {

@@ -526,6 +526,7 @@ async function restoreUsageToCredit(
         vestedAt: credit.vestedAt ? now : null,
         expiresAt: floor,
         configVersion: credit.configVersion,
+        sourceCreditId: creditId,
         idempotencyKey: key,
         reason: `Restored from expired credit ${creditId} on refunded payment ${input.paymentId}`,
       },
