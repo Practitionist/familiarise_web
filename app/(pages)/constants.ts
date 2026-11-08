@@ -242,7 +242,7 @@ export function pricingFaqs(
     {
       question: "Do you offer discounts or promotional pricing?",
       answer:
-        "Individual experts may offer promotional pricing or discounts. These are shown on their profiles and during booking. We also occasionally run platform-wide promotions; subscribe to our newsletter to hear about them.",
+        "We occasionally run platform-wide promotions, and a discount code can be entered at checkout. Subscribe to our newsletter to hear about them.",
     },
     {
       question: "How are experts paid?",
