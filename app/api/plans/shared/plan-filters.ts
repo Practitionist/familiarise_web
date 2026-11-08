@@ -3,6 +3,7 @@ import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { Prisma, type OrgPlanVisibility } from "@prisma/client";
 import { MARKETPLACE_VISIBILITY } from "@/lib/api/plans/visibility";
+import { normaliseSearchTerm } from "@/lib/explore/programs";
 import { publicCacheHeaders } from "@/lib/api/cdn-cache";
 
 /** Every query key the webinar and class list routes read, so the CDN caches one entry per filter set. */
@@ -73,7 +74,7 @@ export function parsePlanFilters(
       parsedMin !== undefined && !isNaN(parsedMin) ? parsedMin : undefined,
     maxPrice:
       parsedMax !== undefined && !isNaN(parsedMax) ? parsedMax : undefined,
-    search: searchParams.get("search"),
+    search: normaliseSearchTerm(searchParams.get("search")) ?? null,
     // "all" is the UI's no-op sentinel, not a stored level value.
     level:
       searchParams.get("level") === "all" ? null : searchParams.get("level"),

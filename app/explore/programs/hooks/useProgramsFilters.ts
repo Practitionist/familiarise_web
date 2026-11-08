@@ -6,7 +6,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useDebouncedCallback } from "use-debounce";
 import { z } from "zod";
 
-import type { ProgramFilters, ProgramType } from "@/lib/explore/programs";
+import {
+  normaliseSearchTerm,
+  type ProgramFilters,
+  type ProgramType,
+} from "@/lib/explore/programs";
 
 const SEARCH_DEBOUNCE_MS = 300;
 const URL_SYNC_DEBOUNCE_MS = 300;
@@ -48,7 +52,7 @@ function filtersFromParams(params: URLSearchParams): ProgramFilters {
     sort: params.get("sort") ?? undefined,
     minPrice: minPrice !== null ? Number(minPrice) : undefined,
     maxPrice: maxPrice !== null ? Number(maxPrice) : undefined,
-    search: params.get("search") ?? undefined,
+    search: normaliseSearchTerm(params.get("search")),
     level: params.get("level") ?? undefined,
   };
 }
@@ -127,7 +131,9 @@ export function useProgramsFilters(): UseProgramsFiltersResult {
   }, []);
 
   const debouncedSetSearch = useDebouncedCallback((value: string) => {
-    setFilters((prev) => ({ ...prev, search: value || undefined }));
+    const search = normaliseSearchTerm(value);
+    // Same term, same query: keep the object so nothing downstream re-runs.
+    setFilters((prev) => (prev.search === search ? prev : { ...prev, search }));
   }, SEARCH_DEBOUNCE_MS);
 
   const onLocalSearchChange = useCallback(

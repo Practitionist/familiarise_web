@@ -14,6 +14,23 @@ import {
 
 export const ITEMS_PER_PAGE = 12;
 
+// A search this short matches nearly every plan, and the server answers it with
+// a scan, so it is not worth sending. The ceiling bounds what one request asks
+// the database to match.
+const SEARCH_MIN_CHARS = 2;
+const SEARCH_MAX_CHARS = 100;
+
+/** Trims, collapses whitespace and caps length; `undefined` when too short to search. */
+export function normaliseSearchTerm(
+  raw: string | null | undefined,
+): string | undefined {
+  const term = (raw ?? "")
+    .replace(/\s+/g, " ")
+    .slice(0, SEARCH_MAX_CHARS)
+    .trim();
+  return term.length >= SEARCH_MIN_CHARS ? term : undefined;
+}
+
 export type ProgramType = "all" | "class" | "webinar";
 
 // A public list never says who holds a seat. "Am I registered" is the viewer's

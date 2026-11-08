@@ -153,3 +153,63 @@ describe("useProgramsFilters view mode", () => {
     expect(result.current.viewMode).toBe("list");
   });
 });
+
+describe("useProgramsFilters search debounce", () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  const advance = (ms: number) =>
+    act(() => {
+      jest.advanceTimersByTime(ms);
+    });
+
+  it("mirrors keystrokes at once but queries only after typing pauses", () => {
+    const { result } = renderHook(() => useProgramsFilters());
+
+    for (const text of ["py", "pyt", "pyth", "pytho", "python"]) {
+      act(() => result.current.onLocalSearchChange(text));
+    }
+    // The input is responsive; the query has not changed yet.
+    expect(result.current.localSearchValue).toBe("python");
+    expect(result.current.filters.search).toBeUndefined();
+
+    advance(300);
+    expect(result.current.filters.search).toBe("python");
+  });
+
+  it("restarts the wait on every keystroke", () => {
+    const { result } = renderHook(() => useProgramsFilters());
+
+    act(() => result.current.onLocalSearchChange("py"));
+    advance(200);
+    act(() => result.current.onLocalSearchChange("pyt"));
+    advance(200);
+    expect(result.current.filters.search).toBeUndefined();
+
+    advance(100);
+    expect(result.current.filters.search).toBe("pyt");
+  });
+
+  it("does not query for a single character or stray spaces", () => {
+    const { result } = renderHook(() => useProgramsFilters());
+
+    act(() => result.current.onLocalSearchChange("p"));
+    advance(300);
+    expect(result.current.filters.search).toBeUndefined();
+
+    act(() => result.current.onLocalSearchChange("  py  "));
+    advance(300);
+    expect(result.current.filters.search).toBe("py");
+  });
+
+  it("keeps the same filters object when the term did not change", () => {
+    const { result } = renderHook(() => useProgramsFilters());
+    act(() => result.current.onLocalSearchChange("py"));
+    advance(300);
+    const before = result.current.filters;
+
+    act(() => result.current.onLocalSearchChange("py "));
+    advance(300);
+    expect(result.current.filters).toBe(before);
+  });
+});

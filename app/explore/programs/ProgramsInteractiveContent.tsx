@@ -102,10 +102,13 @@ export default function ProgramsInteractiveContent({
   // Data hooks. Curated and topics are pre-warmed via initialData for the
   // default `programType === "all"` query keys; tab switches still trigger
   // normal client fetches via the existing query-key plumbing.
-  const { programs, isLoading, hasMore, loadMore } = usePrograms(programType, {
-    userId,
-    filters,
-  });
+  const { programs, isLoading, isRefreshing, hasMore, loadMore } = usePrograms(
+    programType,
+    {
+      userId,
+      filters,
+    },
+  );
 
   const { programs: trendingPrograms, isLoading: trendingLoading } =
     useCuratedPrograms(
@@ -320,6 +323,7 @@ export default function ProgramsInteractiveContent({
             <ProgramResults
               programs={filteredAndSortedPrograms}
               isLoading={isLoading}
+              isRefreshing={isRefreshing}
               viewMode={viewMode}
               sentinelRef={sentinelRef}
               viewerOrgs={viewerOrgs}
