@@ -20,7 +20,7 @@ const waitlistRow = (over: Record<string, unknown> = {}) => ({
   status: "WAITING",
   notifiedAt: null,
   checkoutHref: "/checkout/plans/webinar/pl-1",
-  onSale: true,
+  seatAvailable: true,
   ...over,
 });
 const backupRow = (over: Record<string, unknown> = {}) => ({
@@ -88,7 +88,7 @@ it("lists both kinds and shows Book now only for notified rows", async () => {
 });
 
 it("does not offer a seat link when the event is off sale", async () => {
-  mockApi([waitlistRow({ status: "NOTIFIED", onSale: false })], []);
+  mockApi([waitlistRow({ status: "NOTIFIED", seatAvailable: false })], []);
   renderAlerts();
   expect(await screen.findByText(/Waiting for a seat/)).toBeTruthy();
   expect(screen.queryByText("Seat open — book now")).toBeNull();

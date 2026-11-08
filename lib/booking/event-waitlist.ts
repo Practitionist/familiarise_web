@@ -508,7 +508,8 @@ export interface EventWaitlistAlertRow {
   status: BackupInterestStatus;
   notifiedAt: Date | null;
   checkoutHref: string;
-  onSale: boolean;
+  /** A seat can be bought right now: on sale by checkout's rule and at least one seat is free. */
+  seatAvailable: boolean;
 }
 
 /** The caller's open rows, oldest first, for the learner's "My alerts" list. */
@@ -539,7 +540,7 @@ export async function listEventWaitlist(
         status: row.status,
         notifiedAt: row.notifiedAt,
         checkoutHref: eventCheckoutHref(view.kind, view.plan.id, view.eventId),
-        onSale: onSale(view, now),
+        seatAvailable: onSale(view, now) && seatsRemaining(view) > 0,
       },
     ];
   });

@@ -161,7 +161,7 @@ export function MyAlerts({ viewerZone }: Readonly<{ viewerZone: ViewerZone }>) {
       </p>
       <ul className="mt-3 divide-y divide-border">
         {waitlistRows.map((alert) => {
-          const seatOpen = alert.status === "NOTIFIED" && alert.onSale;
+          const seatOpen = alert.status === "NOTIFIED" && alert.seatAvailable;
           return (
             <li
               key={`${alert.kind}:${alert.eventId}`}

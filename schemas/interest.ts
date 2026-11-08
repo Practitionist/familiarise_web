@@ -11,8 +11,8 @@ export const EventWaitlistAlertSchema = z.object({
   status: z.enum(["WAITING", "NOTIFIED"]),
   notifiedAt: z.string().datetime().nullable(),
   checkoutHref: z.string(),
-  /** A seat can be bought now by checkout's rule; the row expires on the next sweep otherwise. */
-  onSale: z.boolean(),
+  /** A seat can be bought right now: on sale by checkout's rule and a seat is free. */
+  seatAvailable: z.boolean(),
 });
 export type EventWaitlistAlert = z.infer<typeof EventWaitlistAlertSchema>;
 

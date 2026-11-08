@@ -538,7 +538,12 @@ describe("listEventWaitlist", () => {
   it("lists the caller's open rows with the next session, checkout link and on-sale state", async () => {
     const notifiedAt = new Date(NOW.getTime() - 3_600_000);
     waitlistFindMany.mockResolvedValueOnce([
-      { status: "NOTIFIED", notifiedAt, appointment: eventRow({ seats: 2 }) },
+      { status: "NOTIFIED", notifiedAt, appointment: eventRow({ seats: 1 }) },
+      {
+        status: "NOTIFIED",
+        notifiedAt,
+        appointment: eventRow({ seats: 2 }),
+      },
       {
         status: "WAITING",
         notifiedAt: null,
@@ -551,8 +556,9 @@ describe("listEventWaitlist", () => {
         where: { userId: "u-1", status: { in: ["WAITING", "NOTIFIED"] } },
       }),
     );
-    expect(rows.map((r) => [r.status, r.onSale])).toEqual([
+    expect(rows.map((r) => [r.status, r.seatAvailable])).toEqual([
       ["NOTIFIED", true],
+      ["NOTIFIED", false],
       ["WAITING", false],
     ]);
     expect(rows[0]).toMatchObject({
