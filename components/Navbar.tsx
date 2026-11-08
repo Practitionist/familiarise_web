@@ -473,7 +473,7 @@ function DesktopNavItem({
     >
       <button
         ref={triggerRef}
-        className={`inline-flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+        className={`inline-flex items-center gap-1 px-2 xl:px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
           showDarkStyle
             ? "text-white hover:bg-white/10"
             : "text-foreground hover:bg-muted"
@@ -574,9 +574,10 @@ const Navbar = () => {
           top: `calc(var(--maintenance-banner-height, 0px) + ${isAnnouncementVisible ? "var(--announcement-bar-height, 0px)" : "0px"})`,
         }}
       >
-        {/* Same full-width gutters as the back/breadcrumb and tab bars below,
-            so the logo and account stay on the page edges at any zoom. */}
-        <div className="w-full px-4 md:px-8 lg:px-12">
+        {/* Full-width gutters, so the logo and account stay on the page edges at
+            any zoom. The widest gutter starts at xl, one step after the page
+            content's: the desktop bar is already tight between lg and xl. */}
+        <div className="w-full px-4 md:px-8 xl:px-12">
           <div
             className="flex justify-between items-center"
             style={{ height: "var(--navbar-height)" }}
@@ -597,7 +598,7 @@ const Navbar = () => {
                 <Link href="/dashboard">
                   <Button
                     variant="ghost"
-                    className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
+                    className={`font-medium lg:px-3 xl:px-4 ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
                   >
                     Dashboard
                   </Button>
@@ -616,7 +617,7 @@ const Navbar = () => {
               <Link href="/pricing">
                 <Button
                   variant="ghost"
-                  className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
+                  className={`font-medium lg:px-3 xl:px-4 ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
                 >
                   Pricing
                 </Button>
