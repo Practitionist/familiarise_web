@@ -44,6 +44,8 @@ Detailed invariants and regime facts live in `references/doctrine.md`; verificat
 
 ## Referral credits
 
+The referral programme design, launch scope and fraud doctrine live in the `growth` skill (`.claude/skills/growth/SKILL.md`); this section keeps only the money rules.
+
 - Vest, void, hold and breakage live in `lib/referrals/vesting.ts`; every referral and credit move is a CAS on the prior status. A `PENDING` credit holds nothing in the ledger.
 - Reverse a credit's unused balance only through `reverseCreditBalance` (`lib/referrals/credit-reversal.ts`, key `referral-reverse:<creditId>`); the operator route and the lost-chargeback settlement share it. `settleLostDispute` calls `voidVestedReferralRewards` on its own transaction; the spent part is absorbed.
 - The shared-payer void compares `Payment.payerVpaHash` and `payerPhoneHash`, stamped once from the capture webhook by `recordPayerInstruments`; never store raw payer instruments and never call Razorpay from the vest job.
