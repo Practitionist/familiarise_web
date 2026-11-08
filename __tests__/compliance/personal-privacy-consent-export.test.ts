@@ -31,6 +31,7 @@ jest.mock("../../lib/prisma", () => ({
     consentArtifact: {
       findMany: jest.fn(),
       create: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     notificationPreference: {
       findUnique: jest.fn(),
@@ -264,6 +265,14 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
         },
         data: { status: "UNSUBSCRIBED", unsubscribedAt: expect.any(Date) },
       });
+      // A sign-up made before the account existed holds a pseudonymous artifact.
+      expect(mockPrisma.consentArtifact.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            subjectPseudonymousId: expect.any(String),
+          }),
+        }),
+      );
       expect(
         mockPrisma.notificationPreference.updateMany,
       ).not.toHaveBeenCalled();

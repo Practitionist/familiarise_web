@@ -93,9 +93,12 @@ export async function subscribeForMarketingConsent(
   });
 }
 
-/** Unsubscribes the account's rows, by link or by address, in the withdrawal's transaction. */
+/**
+ * Unsubscribes the account's rows, by link or by address, and withdraws the address's
+ * pseudonymous newsletter consent in the withdrawal's transaction.
+ */
 export async function unsubscribeForWithdrawnConsent(
-  tx: NewsletterTx,
+  tx: Pick<Tx, "newsletterSubscriber" | "consentArtifact">,
   input: { userId: string; email: string; now: Date },
 ): Promise<number> {
   const { count } = await tx.newsletterSubscriber.updateMany({
@@ -108,6 +111,14 @@ export async function unsubscribeForWithdrawnConsent(
     },
     data: { status: NewsletterStatus.UNSUBSCRIBED, unsubscribedAt: input.now },
   });
+  await withdrawPseudonymousConsent(
+    {
+      subjectPseudonymousId: newsletterSubjectId(input.email),
+      purposeCode: PURPOSE_CODES.MARKETING_COMMS,
+      now: input.now,
+    },
+    tx,
+  );
   return count;
 }
 
