@@ -42,6 +42,14 @@ Detailed invariants and regime facts live in `references/doctrine.md`; verificat
 - Refund a digital product through the existing support and admin doors; the operator checks `firstDownloadedAt`, which no door enforces.
 - Recover a lost capture with `reconcile-standalone-purchases` or the buyer's `purchases/[purchaseId]/verify` route, both through `recoverStandaloneOrder`. Both read `FAILED` purchases under 7 days old, since a declined attempt's order can still capture; neither ever reads `REFUNDED`.
 
+## Referral credits
+
+- Vest, void, hold and breakage live in `lib/referrals/vesting.ts`; every referral and credit move is a CAS on the prior status. A `PENDING` credit holds nothing in the ledger.
+- Reverse a credit's unused balance only through `reverseCreditBalance` (`lib/referrals/credit-reversal.ts`, key `referral-reverse:<creditId>`); the operator route and the lost-chargeback settlement share it. `settleLostDispute` calls `voidVestedReferralRewards` on its own transaction; the spent part is absorbed.
+- The shared-payer void compares `Payment.payerVpaHash` and `payerPhoneHash`, stamped once from the capture webhook by `recordPayerInstruments`; never store raw payer instruments and never call Razorpay from the vest job.
+- Review-hold thresholds and the budget are `ReferralProgramConfig` fields; their values are the owner's and live in Notion, never in code, comments or docs. A released `HELD` referral carries `reviewReleasedAt` so the rules skip it.
+- Referral request signals (`Referral.ipHash`) hash only the middleware-stamped IP (`stampedClientIp`), under a key derived from `BETTER_AUTH_SECRET` with its own label (`lib/referrals/signal-hash.ts`).
+
 ## Settlement, wallet and operator surfaces
 
 - **Settlement recon.** Razorpay card money sits in the `GATEWAY_CLEARING` ledger account until it settles to `CASH`. `reconcile-gateway-settlements` (`jobs/reconcile/reconcile-gateway-settlements.ts`) matches Razorpay's settlement report into `GatewaySettlementLine` rows and books `GATEWAY_SETTLEMENT` (`GATEWAY_CLEARING` to `CASH`); the per-capture fee is booked by `lib/payments/ledger/gateway-fee.ts`. `reconcile-ledgers` does not check the clearing residual; read that job for it.

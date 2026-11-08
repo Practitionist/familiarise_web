@@ -8,7 +8,7 @@ A promotion may never cost more than the platform earns on the order it touches.
 
 ## 2. Programme economics at launch
 
-The default values below sit in `ReferralProgramConfig` and the active fee schedule. Operations can change any of them without a code change.
+The default values below sit in `ReferralProgramConfig` and the active fee schedule. Operations can change any of them without a code change. The launch budget (`monthlyBudgetPaise`) and the review-hold thresholds (`holdSameIpReferrals`, `holdSameDeviceReferrals`, `holdWindowDays`) are owner-set values kept in Notion (Familiarise / Growth & Marketing), not in this repository.
 
 | Item                                  | Default                                              | Where it is set                            |
 | ------------------------------------- | ---------------------------------------------------- | ------------------------------------------ |
@@ -50,6 +50,10 @@ Each guard below is a rule the code enforces. The right column says where, so th
 | New referees pause at 90 % of the month's budget.                                                             | `acceptsNewReferees`.                                                                                                                |
 | Per-code lifetime, yearly and weekly caps, and the expert-yearly cap.                                         | One conditional update on the `ReferralCode` counters, in `vestConsumerReferral` and `vestExpertReferral`.                           |
 | Expert referrals need a PAN and a verified default payout account.                                            | `vestExpertReferral`.                                                                                                                |
+| A referee cannot use the referrer's own mailbox or a disposable-mail domain.                                  | `normaliseEmail` and `isDisposableEmail` in `lib/referrals/email-signals.ts`, called from `applyReferralCode`.                       |
+| A friend who paid with the referrer's UPI address or phone does not vest a reward.                            | `paidWithReferrerInstrument` in `settleQualifyingReferral`, voiding with `SHARED_PAYER`.                                             |
+| Referrals whose request signals recur across one code wait for a person before they vest.                     | `reviewHoldReason` and `holdReferral` in `lib/referrals/vesting.ts`; the decisions in `lib/referrals/review.ts`.                     |
+| A lost chargeback after vest takes back the unspent credit.                                                   | `voidVestedReferralRewards` in `lib/referrals/credit-reversal.ts`, called from `settleLostDispute`.                                  |
 | A configuration or schedule edit never rewrites history.                                                      | Each referral and credit stores `configVersion`, and each payment stores the `platformFeeBps` it was charged.                        |
 
 The weekly cap defers a vest to a later week instead of voiding it. The lifetime and yearly caps void it, because waiting would not help.
@@ -62,7 +66,14 @@ Changing a rate is a two-person act because it reprices every later sale. The AD
 
 Expert waivers and own-link rates change only how a sale is split between the expert and the platform. GST remains on the full price and the withholding base for marketplace operators remains the gross amount.
 
-## 5. Owner decisions of 2026-10-05
+## 5. Owner decisions of 2026-11-08
+
+Two decisions hardened learner referral before it goes live.
+
+- Cheap fraud controls come first: email aliases are normalised and disposable domains refused at apply, a vest is voided when the friend and the referrer paid with the same UPI address or phone, the IP hash and user agent are stored on the referral, suspicious vests wait in a "held for review" state with an admin queue, and the code-customise and expert-link routes are rate limited. No paid device-fingerprinting vendor is added until abuse appears.
+- A lost chargeback after vest voids what is left of the referrer's credit through the existing reversal posting, and the platform absorbs any part already spent.
+
+## 6. Owner decisions of 2026-10-05
 
 These two decisions describe how a refunded first booking is treated. They are stated here as current behaviour.
 
@@ -76,9 +87,9 @@ When the buyer cancelled, the referral becomes `VOID` with reason `REFUNDED`, th
 
 When a refund caused by the expert or the platform restores credit that an order had used, the restored credit is valid for at least 30 more days. When the buyer cancelled, the credit keeps its original expiry, and a credit that has already expired is lost.
 
-This rule is being implemented alongside this documentation. At the head of this branch the restore code skips an already-expired credit in every case and never extends an expiry.
+`restoreUsageToCredit` in `lib/referrals/service.ts` implements this rule. It extends a live credit's expiry in place, and it moves value from an `EXPIRED` credit to a new `VESTED` credit rather than reviving the old row.
 
-## 6. Owner decisions of 2026-10-04
+## 7. Owner decisions of 2026-10-04
 
 These earlier decisions remain in force.
 
@@ -88,27 +99,27 @@ These earlier decisions remain in force.
 - Expert to expert is a platform-fee waiver for 3 delivered sessions on both sides for 90 days, with no cash reward.
 - Rewards are promotional credit for buyers and fee waivers for experts. There are no cash rewards, no contests and no organisation referrals at launch.
 
-## 7. Switching the programme on
+## 8. Switching the programme on
 
-The programme stays off until all three actions below are done. They are owner actions and need no code change.
+The programme stays off until both actions below are done. They are owner actions and need no code change.
 
-1. Set `monthlyBudgetPaise` with `PATCH /api/admin/referrals/config`, including a reason. For scale, a budget of ₹30,000 covers about 60 fully loaded consumer referrals, and each expert referral is charged ₹1,800 at vest.
+1. Set `monthlyBudgetPaise` with `PATCH /api/admin/referrals/config`, including a reason. Each expert referral is charged `expertReferralBudgetPaise` against it at vest.
 2. Approve the launch fee schedule, called `fee-schedule-launch`, with `POST /api/admin/fee-schedules/[scheduleId]/approve`. Without an approved schedule, both rails use the marketplace rate, so an expert's own-link sale is charged the 20 % take instead of 10 %.
-3. Add the `CRON_SECRET` secret to the GitHub repository so the monthly `expire-referral-credits` workflow can call its endpoint.
 
-## 8. Not built yet
+The review-hold thresholds are set through the same `PATCH` route. While they are null the hold rules are off and only the other controls apply.
 
-The following parts of the design are not in the code and are planned together as the second part of the referral work.
+## 9. Not built yet
 
-- A risk score computed at qualification from shared payment instrument, shared session address, account age and cycles in the referral graph, with a review queue that holds a referral before vest.
-- Normalising email aliases and blocking disposable domains.
-- A clawback that debits a referrer's remaining credit when a chargeback lands after the credit has vested.
+The following parts of the design are not in the code.
+
+- A weighted risk score that also uses account age and cycles in the referral graph. The review hold uses the request signals and the shared-payer void uses the payment instruments.
+- Comparing card payments for a shared payer. Razorpay exposes no card fingerprint that stays the same across customers.
 - Ops console reports for referrals by state, void rate by reason, budget burn, liability and breakage.
-- Novu notification families for applied, vested, voided and expiring-soon referrals.
+- Notices for a voided referral and for credit that is about to expire. The welcome, reward-earned and credits-applied notices exist.
 
 Several smaller gaps between the design and the code are worth knowing.
 
-- The design drops `Referral.organizationId`, the unused status values and the unused code columns. They are still in the schema.
+- The design drops `Referral.organizationId`, the unused status values and the unused code columns. They are still in the schema and are dropped in a later expand-and-contract step.
 - The design lets `ReferralCode.isActive` be switched off by a void cascade. No code writes it yet, so a code can be deactivated only by editing the row.
 - The design says referees who already hold a discounted order are honoured at 90 % of the budget. The code honours only orders already minted.
 - The design shows `EXPIRED` as a stored referral status. The code reports it only when the referral is read.

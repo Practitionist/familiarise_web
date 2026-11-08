@@ -19,7 +19,7 @@ A signed-in visitor to `/r/<code>` has the code applied by the route itself, sub
 
 For a new account, the single apply point is the onboarding page. When a session exists, it reads the stored code and calls `POST /api/referrals/apply`. The call is idempotent because `Referral.referredUserId` is unique. The stored code is cleared on success or on a 400, which means the code is invalid, already used by this account, or refused by a rule. A network failure, a 429 or a 5xx leaves the code in place so a later authenticated render can retry.
 
-Applying a code only creates the `Referral` row in `SIGNED_UP`. No credit and no discount exists yet. The apply step refuses an account that was created before the qualify window began, an account with an earlier paid booking, and any request while the programme takes no new referees, so an existing customer cannot be turned into a referee afterwards.
+Applying a code only creates the `Referral` row in `SIGNED_UP`. No credit and no discount exists yet. The apply step refuses an account that was created before the qualify window began, an account with an earlier paid booking, and any request while the programme takes no new referees, so an existing customer cannot be turned into a referee afterwards. It also refuses an account whose email is the referrer's own mailbox after normalisation, or sits on a disposable-mail domain, and it stores the request's IP hash and user agent for the review hold described in [01-architecture.md](./01-architecture.md#review-hold).
 
 ## 3. The expert link has no onboarding step
 
@@ -29,12 +29,15 @@ An expert's signed link needs no account at the moment of the click. The `fam_vi
 
 The table shows where the referral code is applied for each way of signing up.
 
-| Sign-up path          | Email verification                 | Session at signup        | Where the code is applied                             |
-| --------------------- | ---------------------------------- | ------------------------ | ----------------------------------------------------- |
-| Email and password    | Required, by link or one-time code | No, only after verifying | Onboarding, after verification and automatic sign-in. |
-| Google or other OAuth | Trusted from the provider          | Yes, after the redirect  | Onboarding, on the first authenticated landing.       |
-| Enterprise SSO        | Trusted from the identity provider | Yes, after the redirect  | Onboarding, on the first authenticated landing.       |
-| Already signed in     | Not applicable                     | Yes                      | The `/r/<code>` route, at once.                       |
+| Sign-up path          | Email verification                 | Session at signup        | Where the code is applied                                                                                                                                       |
+| --------------------- | ---------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Email and password    | Required, by link or one-time code | No, only after verifying | Onboarding, after verification and automatic sign-in.                                                                                                           |
+| Google or other OAuth | Trusted from the provider          | Yes, after the redirect  | Onboarding, on the first authenticated landing.                                                                                                                 |
+| Enterprise SSO        | Trusted from the identity provider | Yes, after the redirect  | Onboarding, on the first authenticated landing.                                                                                                                 |
+| Organisation invite   | Required for a new email account   | Yes, after verifying     | Onboarding: the accept route answers `ONBOARDING_REQUIRED`, and `/onboarding/gate` sends the new account to `/form/onboarding` before it returns to the invite. |
+| Already signed in     | Not applicable                     | Yes                      | The `/r/<code>` route, at once.                                                                                                                                 |
+
+Every new account passes through `OnboardingWizard` (`app/form/onboarding/OnboardingWizard.tsx`), which is the one place that reads the stored code. Both social sign-in buttons send a new account there through `newUserCallbackURL`, and the email verification page does the same for an account that has not finished onboarding.
 
 ## 5. Why capture does not weaken the anti-farming rules
 
