@@ -7,6 +7,8 @@ description: Work on this repo's notification subsystem — in-app bells through
 
 Terse rules for agents. The human explanation is in `docs/notifications/` (start at `docs/notifications/README.md`); email specifics are in `docs/email/README.md`; the decision record is `docs/decisions/2026-11-06-notification-single-preference-owner.md`. Every rule names its enforcer. Grep before you assert any name.
 
+Newsletter broadcasts, announcements versus newsletter, the appointment waitlist notices and referral notices are product rules owned by the `growth` skill (`.claude/skills/growth/SKILL.md`); this skill keeps the delivery mechanics.
+
 ## The model
 
 - Postgres is the transactional outbox (`FailedEmail`, `FailedEmailBatch`, `NotificationOutbox`) and the **only** owner of notification preferences (`NotificationPreference`). Workspace routing is removed: `OrgWorkspaceProfile.notificationRoutingMode` is unread until the next schema batch drops it, so never read or write it.

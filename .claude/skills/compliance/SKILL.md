@@ -10,6 +10,8 @@ permits, how it stops, and how it is proven to a regulator. The facts live in
 `docs/compliance/`; this skill holds the doctrine
 and the decision procedure.
 
+Marketing consent for the newsletter (one `MARKETING_COMMS` ledger for accounts and guests, the lock order and erasure) is described from the product side in the `growth` skill (`.claude/skills/growth/SKILL.md`).
+
 ## Standing instruction — India-first
 
 **The default legal frame is Indian law.** DPDP Act 2023 + DPDP Rules 2025, IT Act
