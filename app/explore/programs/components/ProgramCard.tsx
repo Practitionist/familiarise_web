@@ -208,13 +208,13 @@ function GridCard({
           </div>
         )}
 
-        <div className="flex items-center justify-between pt-4 border-t border-border">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between gap-3 pt-4 border-t border-border">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
             <div className="text-xl font-bold text-foreground">
               {formatPrice(program.price)}
             </div>
             {rating !== null && (
-              <div className="flex items-center gap-0.5 ml-1">
+              <div className="flex items-center gap-0.5">
                 <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                 <span className="text-xs font-medium text-muted-foreground">
                   {rating.toFixed(1)} ({ratingCount})
@@ -222,7 +222,7 @@ function GridCard({
               </div>
             )}
           </div>
-          <div className="flex items-center gap-1 text-sm font-medium text-muted-foreground group-hover:text-foreground transition-colors">
+          <div className="flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-medium text-muted-foreground group-hover:text-foreground transition-colors">
             <span>View Details</span>
             <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
           </div>

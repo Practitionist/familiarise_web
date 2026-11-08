@@ -128,11 +128,15 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                 <h2 className="text-lg font-semibold text-foreground">
                   Programs by this Expert
                 </h2>
-                <p className="text-sm text-muted-foreground">
-                  {classPlans.length} class{classPlans.length !== 1 ? "es" : ""}{" "}
-                  • {webinarPlans.length} webinar
-                  {webinarPlans.length !== 1 ? "s" : ""}
-                </p>
+                {/* The tabs already carry both counts; the subtitle only earns
+                    its place when there are no tabs to read them from. */}
+                {!(hasClasses && hasWebinars) && (
+                  <p className="text-sm text-muted-foreground">
+                    {hasClasses
+                      ? `${classPlans.length} class${classPlans.length === 1 ? "" : "es"}`
+                      : `${webinarPlans.length} webinar${webinarPlans.length === 1 ? "" : "s"}`}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -141,6 +145,8 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                 {tabs.map(({ key, label, icon: Icon, count }) => (
                   <button
                     key={key}
+                    type="button"
+                    aria-pressed={activeTab === key}
                     onClick={() => setActiveTab(key)}
                     className={`relative px-4 py-2 text-sm font-medium rounded-lg transition-all ${
                       activeTab === key
