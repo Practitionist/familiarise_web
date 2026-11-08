@@ -574,7 +574,9 @@ const Navbar = () => {
           top: `calc(var(--maintenance-banner-height, 0px) + ${isAnnouncementVisible ? "var(--announcement-bar-height, 0px)" : "0px"})`,
         }}
       >
-        <div className="container mx-auto px-4 md:px-6">
+        {/* Same full-width gutters as the back/breadcrumb and tab bars below,
+            so the logo and account stay on the page edges at any zoom. */}
+        <div className="w-full px-4 md:px-8 lg:px-12">
           <div
             className="flex justify-between items-center"
             style={{ height: "var(--navbar-height)" }}

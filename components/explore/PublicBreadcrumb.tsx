@@ -44,7 +44,7 @@ export function PlanBreadcrumb({
 }>) {
   const { consultantProfile } = plan;
   return (
-    <div className="container mx-auto px-4 pt-6">
+    <div className="w-full border-b border-border bg-card px-4 py-4 md:px-8 lg:px-12">
       <PublicBreadcrumb
         items={publicBreadcrumbItems(
           consultantProfile
