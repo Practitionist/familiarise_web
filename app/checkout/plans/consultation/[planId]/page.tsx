@@ -49,7 +49,11 @@ import { useHandleApiError } from "../../use-handle-api-error";
 import { isSlotStillOffered } from "@/app/explore/experts/[consultantId]/hooks/useAvailabilityWindow";
 import { useSlotJustTaken } from "@/app/explore/experts/[consultantId]/hooks/useSlotJustTaken";
 import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
-import { calculatePricing, formatPercentage } from "../../math";
+import {
+  calculatePricing,
+  formatPercentage,
+  appliedDiscountLabel,
+} from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import { useReferralPricing } from "../../useReferralPricing";
@@ -857,9 +861,13 @@ export default function ConsultationCheckoutPage({
                   {appliedDiscount.code}
                 </div>
                 <div className="text-sm text-green-600">
-                  {appliedDiscount.discountType === "PERCENTAGE"
-                    ? `${appliedDiscount.discountValue}% off`
-                    : `${formatPrice(appliedDiscount.discountValue)} off`}
+                  {appliedDiscountLabel(appliedDiscount, formatPrice).label}
+                  {appliedDiscountLabel(appliedDiscount, formatPrice)
+                    .limited && (
+                    <span className="block text-xs">
+                      Limited to the most this booking allows.
+                    </span>
+                  )}
                 </div>
               </div>
               <Button

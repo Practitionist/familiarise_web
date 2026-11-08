@@ -32,7 +32,11 @@ import {
   reportPaymentsError,
 } from "../../utils";
 import { useHandleApiError } from "../../use-handle-api-error";
-import { calculatePricing, formatPercentage } from "../../math";
+import {
+  calculatePricing,
+  formatPercentage,
+  appliedDiscountLabel,
+} from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
@@ -753,9 +757,13 @@ export default function ClassCheckoutPage({
                   {appliedDiscount.code}
                 </div>
                 <div className="text-sm text-green-600">
-                  {appliedDiscount.discountType === "PERCENTAGE"
-                    ? `${appliedDiscount.discountValue}% off`
-                    : `${formatPrice(appliedDiscount.discountValue)} off`}
+                  {appliedDiscountLabel(appliedDiscount, formatPrice).label}
+                  {appliedDiscountLabel(appliedDiscount, formatPrice)
+                    .limited && (
+                    <span className="block text-xs">
+                      Limited to the most this booking allows.
+                    </span>
+                  )}
                 </div>
               </div>
               <Button

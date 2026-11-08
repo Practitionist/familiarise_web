@@ -1,3 +1,4 @@
+import type { AppliedDiscount } from "@/types/checkout";
 /**
  * Checkout Math Utilities
  *
@@ -181,4 +182,30 @@ export function calculatePricing(
  */
 export function formatPercentage(rate: number): string {
   return `${(rate * 100).toFixed(0)}%`;
+}
+
+/**
+ * The applied-code chip text: the amount this booking actually takes off. The
+ * server caps a platform code at the profitability floor, so the code's face
+ * value can be larger than the discount.
+ */
+export function appliedDiscountLabel(
+  discount: AppliedDiscount,
+  formatPrice: (paise: number) => string,
+): { label: string; limited: boolean } {
+  if (discount.discountAmount !== undefined) {
+    const nominal =
+      discount.discountType === "FIXED_AMOUNT" ? discount.discountValue : null;
+    return {
+      label: `${formatPrice(discount.discountAmount)} off`,
+      limited: nominal !== null && discount.discountAmount < nominal,
+    };
+  }
+  return {
+    label:
+      discount.discountType === "PERCENTAGE"
+        ? `${discount.discountValue}% off`
+        : `${formatPrice(discount.discountValue)} off`,
+    limited: false,
+  };
 }
