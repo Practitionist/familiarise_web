@@ -77,6 +77,8 @@ jest.mock("../../lib/prisma", () => {
     appointmentOccurrence: { findMany: jest.fn() },
     consultantEarnings: { groupBy: jest.fn(), findMany: jest.fn() },
     organizationEarnings: { groupBy: jest.fn(), findMany: jest.fn() },
+    appointmentWaitlist: { groupBy: jest.fn(async () => []) },
+    appointment: { findMany: jest.fn(async () => []) },
   };
   return { __esModule: true, default: db };
 });
@@ -186,6 +188,7 @@ describe("collaborator security, seat counting, SFU revocation, and lifecycle sw
             consultantProfileId: "cp-host",
             organizationId: null,
             archivedAt: null,
+            collaborators: [],
           },
         ])
         .mockResolvedValueOnce([]);
@@ -203,6 +206,18 @@ describe("collaborator security, seat counting, SFU revocation, and lifecycle sw
       (prisma.organizationEarnings.groupBy as jest.Mock).mockResolvedValueOnce(
         [],
       );
+
+      (prisma.appointmentWaitlist.groupBy as jest.Mock).mockResolvedValueOnce([
+        {
+          planKind: "WEBINAR",
+          planId: "wp-1",
+          appointmentId: "appt-1",
+          _count: { _all: 4 },
+        },
+      ]);
+      (prisma.appointment.findMany as jest.Mock).mockResolvedValueOnce([
+        { id: "appt-1", webinarId: "w-1", classId: null },
+      ]);
 
       const stats = await readOfferingStats("cp-host");
 
@@ -224,8 +239,13 @@ describe("collaborator security, seat counting, SFU revocation, and lifecycle sw
         }),
       );
       expect(stats.rows).toContainEqual(
-        expect.objectContaining({ planId: "wp-1", bookings: 3 }),
+        expect.objectContaining({
+          planId: "wp-1",
+          bookings: 3,
+          waitingCount: 4,
+        }),
       );
+      expect(stats.waitingByEvent).toEqual({ "w-1": 4 });
     });
   });
 

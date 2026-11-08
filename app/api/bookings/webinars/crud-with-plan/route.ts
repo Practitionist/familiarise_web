@@ -40,6 +40,7 @@ import { countWebinarParticipants } from "@/lib/payments/utils/participants";
 import {
   CapacityBelowEnrollmentError,
   capacityBelowRegisteredMessage,
+  capacityOverrideFor,
   effectiveMaxParticipants,
 } from "@/lib/events/capacity";
 import {
@@ -793,8 +794,8 @@ export async function PATCH(request: NextRequest) {
                   if (price !== undefined) updateData.price = price;
                   if (priceCurrency !== undefined)
                     updateData.priceCurrency = priceCurrency;
-                  // Capacity is per instance. Only move the plan's default when the
-                  // caller is editing the plan itself rather than one of its webinars.
+                  // The editor shows a webinar's effective capacity, so an edit moves
+                  // that webinar's override; the plan's default moves only without one.
                   if (maxParticipants !== undefined && !webinarToUpdate)
                     updateData.maxParticipants = maxParticipants;
                   // #1780 row 2 — the window lives on the plan; seats snapshot it.
@@ -936,8 +937,15 @@ export async function PATCH(request: NextRequest) {
                           ),
                         );
                       }
-                      webinarUpdateData.maxParticipants = maxParticipants;
-                      // Only a real raise frees a seat; the editor re-sends the capacity on every save.
+                      // An override equal to the plan's default is stored as null, so an
+                      // untouched field never pins one; only a real raise frees a seat.
+                      const override = capacityOverrideFor(
+                        maxParticipants,
+                        existingPlan,
+                      );
+                      if (override !== updatedWebinar.maxParticipants) {
+                        webinarUpdateData.maxParticipants = override;
+                      }
                       capacityRaised =
                         maxParticipants >
                           effectiveMaxParticipants(

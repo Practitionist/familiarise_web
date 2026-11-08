@@ -293,4 +293,4 @@ GitHub issues tagged `bug` + the relevant issue number from this train.
 
 ## Deprecated & Superseded Approaches
 
-- **Waitlist cron checks (retired).** Earlier versions of this plan exercised the "Send Waitlist Reminders" and "Process Waitlist Expirations" workflows and a NOTIFIED-versus-booking race. The queued event waitlist they covered no longer exists, so a full event is simply sold out and the last-seat storm in section 4.3 is the capacity check. Do not reintroduce those scenarios.
+- **Waitlist cron checks (retired).** Earlier versions of this plan exercised the "Send Waitlist Reminders" and "Process Waitlist Expirations" workflows and a NOTIFIED-versus-booking race. The queued event waitlist they covered no longer exists. Its replacement, the notify-only appointment waitlist, reserves nothing and offers nobody a seat, so the last-seat storm in section 4.3 is still the capacity check and a notified waiter races every other buyer at checkout. Do not reintroduce the queue scenarios.

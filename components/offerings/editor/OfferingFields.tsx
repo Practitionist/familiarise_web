@@ -45,6 +45,8 @@ import {
   type StagedPlanImage,
 } from "@/components/plans/PlanImageUploader";
 import type { FieldSpec } from "./manifest";
+import { useWaitingCounts } from "./waiting-count";
+import { WaitlistSwitch } from "./WaitlistSwitch";
 
 /** Sections are a 6-column grid so halves and thirds both land cleanly. */
 const SPAN_CLASS: Record<NonNullable<FieldSpec["span"]>, string> = {
@@ -188,6 +190,7 @@ export function OfferingField<T extends FieldValues = FieldValues>({
   coverImage,
 }: Readonly<OfferingFieldProps<T>>) {
   const span = SPAN_CLASS[spec.span ?? 6];
+  const waiting = useWaitingCounts().instance;
   const { shownWhen } = spec;
   const shown = useWatch({
     control,
@@ -271,7 +274,15 @@ export function OfferingField<T extends FieldValues = FieldValues>({
             </FormLabel>
           )}
           {spec.kind === "select" && renderControl(spec, field, coverImage)}
-          {spec.kind === "switch" && (
+          {spec.name === "waitlistEnabled" && (
+            <div className="flex h-9 items-center">
+              <WaitlistSwitch
+                checked={!!field.value}
+                onCheckedChange={field.onChange}
+              />
+            </div>
+          )}
+          {spec.kind === "switch" && spec.name !== "waitlistEnabled" && (
             // A switch is inline, so it sat on the label's line; the h-9 row
             // stacks it under the label at the same height as its neighbours.
             <div className="flex h-9 items-center">
@@ -285,6 +296,11 @@ export function OfferingField<T extends FieldValues = FieldValues>({
           )}
           {spec.description && (
             <FormDescription>{spec.description}</FormDescription>
+          )}
+          {spec.name === "maxParticipants" && waiting > 0 && (
+            <FormDescription className="font-medium text-foreground">
+              {waiting} waiting — raising capacity notifies them.
+            </FormDescription>
           )}
           <FormMessage />
         </FormItem>

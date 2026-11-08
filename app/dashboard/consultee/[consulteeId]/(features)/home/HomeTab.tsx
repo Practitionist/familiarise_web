@@ -70,7 +70,7 @@ import {
 } from "@/lib/appointments/consultee-affordances";
 import type { ConsulteeMoneySummary } from "@/lib/data/consultee-payments";
 import type { LibraryDocument, LibraryPage } from "@/lib/library/library-query";
-import { WaitlistOfferBanner } from "../appointments/WaitlistOfferBanner";
+import { MyAlerts } from "@/components/appointments/consultee/MyAlerts";
 import { fetchPendingPayments } from "./PendingPaymentsWidget";
 import {
   type ProcessedEvent,
@@ -722,7 +722,7 @@ export default function HomeTab({
         description="What needs you, and what's next."
       />
 
-      <WaitlistOfferBanner viewerZone={viewerZone} />
+      <MyAlerts viewerZone={viewerZone} />
 
       <ActionRequiredPanel
         items={actionItems}
