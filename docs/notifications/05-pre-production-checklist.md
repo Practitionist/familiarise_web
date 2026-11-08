@@ -129,7 +129,7 @@ Done on 2026-11-08 for Production, in the window of the production release promo
 - [ ] Sign up with a real mailbox or Resend test address (`delivered@resend.dev`) — never `example.com` (immediately dead-lettered by `terminalSendReason` on attempt 1)
 - [ ] Confirm welcome email arrives with valid DKIM/SPF/DMARC pass headers
 - [ ] Confirm lifecycle email footer link (`GET /api/notifications/unsubscribe`) renders confirmation UI without mutating DB, and one-click `POST` disables email while preserving in-app notifications
-- [ ] Confirm waitlist footer link (`GET /api/waitlist/unsubscribe`) renders confirmation form without mutating DB, and `POST` unsubscribes immediately
+- [ ] Confirm newsletter footer link (`GET /api/newsletter/unsubscribe`) renders confirmation form without mutating DB, and `POST` unsubscribes immediately and withdraws the `MARKETING_COMMS` consent artifact
 - [ ] Trigger a test booking event and verify `flushNotificationsAfter` delivers both the Novu bell and Resend email
 
 ### Step 7: Outbox Cutover Recount (no backfill)
@@ -217,7 +217,7 @@ Set these in **Netlify Dashboard → Site → Environment Variables** (and match
 | `NOVU_PRODUCTION_KEY`       | Novu Production secret key                                                                  | Yes (Netlify production + GitHub Actions secrets)        |
 | `NEXT_PUBLIC_NOVU_APP_ID`   | Novu Application Identifier                                                                 | Yes                                                      |
 | `CRON_SECRET`               | `openssl rand -hex 32`                                                                      | Yes (Netlify + GitHub Actions secrets)                   |
-| `WAITLIST_HMAC_SECRET`      | `openssl rand -hex 32`                                                                      | Yes (signs stateless email & waitlist unsubscribe links) |
+| `BETTER_AUTH_SECRET`        | Already set for sign-in; it also derives the key that signs every emailed link              | Yes (rotating it voids newsletter and unsubscribe links) |
 
 ---
 

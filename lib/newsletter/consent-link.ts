@@ -15,7 +15,10 @@ import {
   withdrawConsent,
   withdrawPseudonymousConsent,
 } from "@/lib/compliance/dpdp";
-import { purposeCodeAliases, PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
+import {
+  purposeCodeAliases,
+  PURPOSE_CODES,
+} from "@/lib/compliance/purpose-codes";
 import type { Tx } from "@/lib/prisma";
 import { stampedClientIp } from "@/lib/request-ip";
 import { NEWSLETTER_NOTICE_VERSION } from "./notice";
@@ -157,7 +160,10 @@ export async function withdrawNewsletterConsent(
 ): Promise<void> {
   const purposeCode = PURPOSE_CODES.MARKETING_COMMS;
   if (input.userId) {
-    await withdrawConsent({ userId: input.userId, purposeCode, now: input.now }, tx);
+    await withdrawConsent(
+      { userId: input.userId, purposeCode, now: input.now },
+      tx,
+    );
   }
   await withdrawPseudonymousConsent(
     {

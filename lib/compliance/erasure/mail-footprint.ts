@@ -23,7 +23,10 @@ export const ERASED_BATCH_REVIEW = "review:erased_recipient";
 
 type MailTx = Pick<
   Tx,
-  "newsletterSubscriber" | "failedEmail" | "failedEmailBatch" | "consentArtifact"
+  | "newsletterSubscriber"
+  | "failedEmail"
+  | "failedEmailBatch"
+  | "consentArtifact"
 >;
 
 export interface MailFootprintScrub {

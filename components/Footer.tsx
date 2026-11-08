@@ -158,8 +158,8 @@ const Footer: React.FC = () => {
               Stay in the <span className="silver-text">loop</span>
             </h2>
             <p className="text-lg text-zinc-400 mb-8">
-              Product news and launch updates from Familiarise, straight to
-              your inbox.
+              Product news and launch updates from Familiarise, straight to your
+              inbox.
             </p>
 
             <form

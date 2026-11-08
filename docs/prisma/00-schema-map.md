@@ -1899,8 +1899,8 @@ Every enum in the schema and its values.
 | `RescheduleRequestStatus`      | PENDING_REVIEW, ACCEPTED, AUTO_ACCEPTED, DECLINED, WITHDRAWN, EXPIRED                                                                                                      |
 | `BookingSource`                | DIRECT_CHECKOUT, REQUEST_SUBMITTED                                                                                                                                         |
 | `TrialStatus`                  | PENDING, AWAITING_PAYMENT, SCHEDULED, COMPLETED, CONVERTED, CANCELLED, REJECTED                                                                                            |
-| `NewsletterStatus`             | PENDING, SUBSCRIBED, UNSUBSCRIBED, BOUNCED (newsletter list; Postgres type `WaitlistStatus`)                                                                               |
-| `NewsletterSource`             | LANDING_PAGE, FOOTER, BLOG, USE_CASE_PAGE, EVENT_SOLD_OUT, IMPORT (Postgres type `WaitlistSource`; `EVENT_SOLD_OUT` is unused)                                             |
+| `NewsletterStatus`             | PENDING, SUBSCRIBED, UNSUBSCRIBED, BOUNCED (the `NewsletterSubscriber` list)                                                                                               |
+| `NewsletterSource`             | LANDING_PAGE, FOOTER, BLOG, USE_CASE_PAGE, IMPORT                                                                                                                          |
 | `WebinarStatus`                | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED                                                                                                                               |
 | `ClassStatus`                  | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED                                                                                                                               |
 | `DayOfWeek`                    | MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY                                                                                                             |

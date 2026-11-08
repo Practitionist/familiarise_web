@@ -56,9 +56,9 @@ describe("link signing under the derived auth key", () => {
       .update("unsubscribe|a@b.test|0")
       .digest("hex");
 
-    expect(deriveAuthKey("familiarise/link-signing/v1")?.toString("hex")).not.toBe(
-      Buffer.from(SECRET).toString("hex"),
-    );
+    expect(
+      deriveAuthKey("familiarise/link-signing/v1")?.toString("hex"),
+    ).not.toBe(Buffer.from(SECRET).toString("hex"));
     expect(signToken("unsubscribe", "a@b.test", 0)).not.toBe(raw);
   });
 

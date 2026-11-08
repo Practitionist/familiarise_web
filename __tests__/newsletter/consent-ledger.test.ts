@@ -118,7 +118,10 @@ describe("the newsletter writes and withdraws one consent ledger", () => {
 
     expect(mockSubscriberUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ status: "SUBSCRIBED", userId: "user_1" }),
+        data: expect.objectContaining({
+          status: "SUBSCRIBED",
+          userId: "user_1",
+        }),
       }),
     );
     expect(artifacts).toEqual([expect.objectContaining({ userId: "user_1" })]);
