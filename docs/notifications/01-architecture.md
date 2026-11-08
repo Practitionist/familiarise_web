@@ -370,7 +370,7 @@ flowchart LR
 - **Removed Accidental Operational Asymmetries**:
   - **Post-Commit Fire-and-Forget vs. In-Tx SSR**: Replaced mixed staging with `prepareRecipientEmails` outside `tx`, atomic `stage()` + policy-aware `stageBell(tx, ...)` (`60s` inline lease) inside `tx`, and `flushNotificationsAfter` concurrent settlement.
   - **Required notices that rolled back their claim**: `stageSpecRequired` rendered the dunning email inside the claim and threw on a render failure, so a broken template rolled the claim back on every run. It is replaced by the pre-render and the `review:render_failed` trace row (decision 15); `stageToRecipients`, the render-inside-`tx` stager, is deleted.
-  - **24h Body-Hash Key Collisions & Stripped Retry Headers**: Replaced payload hashes with `<EMAIL_TYPE>/failed-email/<row.id>` keys, stateless `reconstructUnsubscribeHeaders(row)`, and confirmation-only `GET /api/waitlist/unsubscribe`.
+  - **24h Body-Hash Key Collisions & Stripped Retry Headers**: Replaced payload hashes with `<EMAIL_TYPE>/failed-email/<row.id>` keys, stateless `reconstructUnsubscribeHeaders(row)`, and a confirmation-only `GET` on the newsletter unsubscribe route (now `/api/newsletter/unsubscribe`).
 - **Intentionally Retained Vendor-Plane Split (Novu In-App vs. Direct Resend Email)**:
   - Outbound emails are **not** routed through Novu's email step so transactional notices never depend on a second vendor's multi-tenant queue availability, bypass Novu's 20-workflow plan cap across 45+ React Email templates, and preserve native `resend.batch.send` throughput and `EmailEvent` Svix telemetry.
 

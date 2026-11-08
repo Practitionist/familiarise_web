@@ -73,7 +73,7 @@ The Novu trigger outbox. A Novu trigger is one HTTPS call, and a function that f
 
 ## Settling a row
 
-Every settle of a row in all three tables is a conditional `updateMany` filtered on `status` being `PENDING` or `RETRY` (`UNSETTLED` in `lib/retry/provider-window.ts` for the email tables, `ACTIVE_STATUSES` in `lib/novu/outbox.ts` for bells). A writer that lost a race to another attempt matches no row, is skipped and is not counted, so nothing can overwrite `SENT`. The email paths are `settleRow` in `lib/email/deliver.ts`, the relay in `jobs/email/retry-failed-emails.ts` and `settleBatch` in `app/api/admin/waitlist/broadcast/route.ts`; the bell path is `settleRow` in `lib/novu/outbox.ts`.
+Every settle of a row in all three tables is a conditional `updateMany` filtered on `status` being `PENDING` or `RETRY` (`UNSETTLED` in `lib/retry/provider-window.ts` for the email tables, `ACTIVE_STATUSES` in `lib/novu/outbox.ts` for bells). A writer that lost a race to another attempt matches no row, is skipped and is not counted, so nothing can overwrite `SENT`. The email paths are `settleRow` in `lib/email/deliver.ts`, the relay in `jobs/email/retry-failed-emails.ts` and `settleBatch` in `app/api/admin/newsletter/broadcast/route.ts`; the bell path is `settleRow` in `lib/novu/outbox.ts`.
 
 ## Why `EmailDeliveryStatus` is shared
 
