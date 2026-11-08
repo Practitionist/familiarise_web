@@ -139,6 +139,18 @@ describe("newsletter broadcast audience", () => {
     expect(sentTo()).toEqual(["admin@familiarise.test"]);
   });
 
+  it("gives every test send its own batch key so a repeat test really sends", async () => {
+    const keys = () =>
+      mockBatchUpsert.mock.calls.map(([args]) => args.where.idempotencyKey);
+
+    await post({ mode: "test", ...message });
+    await post({ mode: "test", ...message });
+
+    const [first, second] = keys();
+    expect(first).toBeDefined();
+    expect(second).not.toBe(first);
+  });
+
   it("warms up with the most recently confirmed sendable subscribers", async () => {
     mockFindMany.mockResolvedValue(subscribers(6));
 

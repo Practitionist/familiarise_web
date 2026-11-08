@@ -13,7 +13,7 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import { getResendClient, SENDERS } from "@/lib/email";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { resendErrorText } from "@/lib/email/classify";
 import { companyPostalAddress } from "@/lib/email/config";
 import { heldRecipientDomain } from "@/lib/email/delivery-guard";
@@ -155,7 +155,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         buildMessage(email, input.subject, input.htmlBody, input.textBody),
       );
 
-      const outcome = await sendBatch(resend, emails);
+      const outcome = await sendBatch(
+        resend,
+        emails,
+        input.mode === "test" ? randomUUID() : "",
+      );
       if (outcome.ok) {
         sent += outcome.sent;
       } else {
@@ -224,10 +228,11 @@ function buildMessage(
 async function sendBatch(
   resend: NonNullable<ReturnType<typeof getResendClient>>,
   emails: BroadcastMessage[],
+  nonce: string,
 ): Promise<{ ok: true; sent: number } | { ok: false; error: string }> {
   // One key per batch request, derived from its content like the
   // single-send path, so an admin re-submit inside 24 h cannot double-send.
-  const idempotencyKey = batchIdempotencyKey(emails);
+  const idempotencyKey = batchIdempotencyKey(emails, nonce);
   const row = await prisma.failedEmailBatch.upsert({
     where: { idempotencyKey },
     create: {
@@ -305,13 +310,19 @@ function appendUnsubscribeFooter(html: string, unsubscribeUrl: string): string {
   return html + footer;
 }
 
-function batchIdempotencyKey(emails: BroadcastMessage[]): string {
+// A test send carries a per-request nonce so a repeat test really sends.
+function batchIdempotencyKey(
+  emails: BroadcastMessage[],
+  nonce: string,
+): string {
   // Every field Resend compares (to, subject, html, text) per recipient, in
   // code-point order — a text-only correction must not collide for 24 h (409).
   const payloads = emails
     .map((e) => JSON.stringify([e.to, e.subject, e.html, e.text ?? ""]))
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-  const digest = createHash("sha256").update(payloads.join("\n")).digest("hex");
+  const digest = createHash("sha256")
+    .update(nonce + payloads.join("\n"))
+    .digest("hex");
   return `NEWSLETTER_BROADCAST/${digest.slice(0, 48)}`;
 }
 
