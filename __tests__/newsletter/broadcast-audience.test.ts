@@ -9,6 +9,7 @@
  */
 
 const mockFindMany = jest.fn();
+const mockBatchUpsert = jest.fn();
 const mockBatchSend = jest.fn();
 const mockFindSuppressed = jest.fn();
 const mockHeld = jest.fn();
@@ -20,7 +21,7 @@ jest.mock("@/lib/prisma", () => ({
       findMany: (...args: unknown[]) => mockFindMany(...args),
     },
     failedEmailBatch: {
-      upsert: jest.fn().mockResolvedValue({ id: "batch_1" }),
+      upsert: (...args: unknown[]) => mockBatchUpsert(...args),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
   },
@@ -89,6 +90,7 @@ describe("newsletter broadcast audience", () => {
     jest.clearAllMocks();
     jest.spyOn(console, "log").mockImplementation(() => {});
     jest.spyOn(console, "info").mockImplementation(() => {});
+    mockBatchUpsert.mockResolvedValue({ id: "batch_1" });
     mockFindSuppressed.mockResolvedValue(new Set(["s1@example.com"]));
     mockHeld.mockImplementation((email: string) =>
       email === "s2@example.com" ? "example.com" : null,
@@ -146,6 +148,26 @@ describe("newsletter broadcast audience", () => {
       confirmedAt: { sort: "desc", nulls: "last" },
     });
     expect(sentTo()).toEqual(["s0@example.com", "s3@example.com"]);
+  });
+
+  it("keeps earlier batch keys when a retried send gains a new confirmation", async () => {
+    mockFindSuppressed.mockResolvedValue(new Set());
+    mockHeld.mockReturnValue(null);
+    const keys = () =>
+      mockBatchUpsert.mock.calls.map(([args]) => args.where.idempotencyKey);
+
+    mockFindMany.mockResolvedValue(subscribers(150));
+    await post({ mode: "all", ...message });
+    const first = keys();
+    mockBatchUpsert.mockClear();
+    mockFindMany.mockResolvedValue(subscribers(151));
+    await post({ mode: "all", ...message });
+
+    expect(mockFindMany.mock.calls[0][0].orderBy).toEqual([
+      { createdAt: "asc" },
+      { id: "asc" },
+    ]);
+    expect(keys()[0]).toBe(first[0]);
   });
 
   it("refuses an audience above the limit with a 422", async () => {

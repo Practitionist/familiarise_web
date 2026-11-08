@@ -64,7 +64,12 @@ async function resolveRecipients(
   const candidates =
     input.mode === "test"
       ? [normaliseEmail(adminEmail)]
-      : (await listSendableSubscribers(input.audience)).map((s) => s.email);
+      : (
+          await listSendableSubscribers(
+            input.audience,
+            input.mode === "warmup" ? "recentFirst" : "stable",
+          )
+        ).map((s) => s.email);
   // A bounced or complaining address stays SUBSCRIBED only until the webhook settles it.
   const suppressed = await findSuppressed(candidates);
   const unsuppressed = candidates.filter((email) => !suppressed.has(email));

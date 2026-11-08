@@ -332,12 +332,22 @@ export function audienceWhere(
   };
 }
 
-/** Addresses a broadcast audience may go to, most recently confirmed first. */
-export async function listSendableSubscribers(audience: BroadcastAudience) {
+/**
+ * Addresses a broadcast audience may go to. `stable` (signup order) keeps every earlier
+ * 100-recipient batch, and so its idempotency key, unchanged when new rows arrive;
+ * `recentFirst` is for the warm-up only.
+ */
+export async function listSendableSubscribers(
+  audience: BroadcastAudience,
+  order: "stable" | "recentFirst",
+) {
   return prisma.newsletterSubscriber.findMany({
     where: audienceWhere(audience),
     select: { email: true },
-    orderBy: [{ confirmedAt: { sort: "desc", nulls: "last" } }, { id: "asc" }],
+    orderBy:
+      order === "stable"
+        ? [{ createdAt: "asc" }, { id: "asc" }]
+        : [{ confirmedAt: { sort: "desc", nulls: "last" } }, { id: "asc" }],
   });
 }
 
