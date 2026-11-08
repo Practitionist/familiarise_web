@@ -43,7 +43,7 @@ const tx = {
     updateMany: jest.fn(),
   },
   user: { findUnique: jest.fn() },
-  payment: { count: jest.fn(), findFirst: jest.fn() },
+  payment: { count: jest.fn(), findFirst: jest.fn(), updateMany: jest.fn() },
   consultantFeeWaiver: { updateMany: jest.fn() },
 };
 jest.mock("../../lib/prisma", () => ({
@@ -60,6 +60,7 @@ import { applyReferralCode } from "@/lib/referrals/service";
 import { settleQualifyingReferral } from "@/lib/referrals/vesting";
 import { releaseHeldReferral, voidHeldReferral } from "@/lib/referrals/review";
 import { voidVestedReferralRewards } from "@/lib/referrals/credit-reversal";
+import { recordPayerInstruments } from "@/lib/payments/payer-instruments";
 
 const NOW = new Date("2026-11-08T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -358,5 +359,29 @@ describe("lost chargeback after vest", () => {
       where: { referralId: "ref-x", sessionsRemaining: { gt: 0 } },
       data: { sessionsRemaining: 0 },
     });
+  });
+});
+
+describe("payer instruments at capture", () => {
+  it("fills each hash independently and never overwrites a recorded one", async () => {
+    process.env.BETTER_AUTH_SECRET = "test-secret-at-least-16";
+    const row: Record<string, string | null> = {
+      payerVpaHash: null,
+      payerPhoneHash: null,
+    };
+    tx.payment.updateMany.mockImplementation(async ({ where, data }) => {
+      const free = Object.keys(data).every((k) => where[k] === null && !row[k]);
+      if (free) Object.assign(row, data);
+      return { count: free ? 1 : 0 };
+    });
+    await recordPayerInstruments(T, "pay_1", { contact: "+91 98765 43210" });
+    const phone = row.payerPhoneHash;
+    expect(phone).toEqual(expect.any(String));
+    await recordPayerInstruments(T, "pay_1", {
+      contact: "+91 90000 00000",
+      upi: { vpa: "friend@okaxis" },
+    });
+    expect(row.payerVpaHash).toEqual(expect.any(String));
+    expect(row.payerPhoneHash).toBe(phone);
   });
 });

@@ -18,16 +18,23 @@ export function payerInstrumentHashes(entity: PayerInstrumentFields): {
   };
 }
 
-/** Stamps the payer hashes once on the captured Payment; a replay or a second event is a no-op. */
+/** Fills each still-null payer hash on the captured Payment; a recorded hash is never overwritten. */
 export async function recordPayerInstruments(
   db: PrismaLike,
   gatewayPaymentId: string,
   entity: PayerInstrumentFields,
 ): Promise<void> {
-  const hashes = payerInstrumentHashes(entity);
-  if (!hashes.payerVpaHash && !hashes.payerPhoneHash) return;
-  await db.payment.updateMany({
-    where: { gatewayPaymentId, payerVpaHash: null, payerPhoneHash: null },
-    data: hashes,
-  });
+  const { payerVpaHash, payerPhoneHash } = payerInstrumentHashes(entity);
+  if (payerVpaHash) {
+    await db.payment.updateMany({
+      where: { gatewayPaymentId, payerVpaHash: null },
+      data: { payerVpaHash },
+    });
+  }
+  if (payerPhoneHash) {
+    await db.payment.updateMany({
+      where: { gatewayPaymentId, payerPhoneHash: null },
+      data: { payerPhoneHash },
+    });
+  }
 }
