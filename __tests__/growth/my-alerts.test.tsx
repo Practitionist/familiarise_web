@@ -123,3 +123,13 @@ it("Stop notifying me deletes the backup row by id", async () => {
     ),
   );
 });
+
+it("keeps a window that is under way but offers no Book now", async () => {
+  mockApi(
+    [],
+    [backupRow({ windowStart: future(-0.5), windowEnd: future(0.5) })],
+  );
+  renderAlerts();
+  expect(await screen.findByText("Stop notifying me")).toBeTruthy();
+  expect(screen.queryByText("Book now")).toBeNull();
+});

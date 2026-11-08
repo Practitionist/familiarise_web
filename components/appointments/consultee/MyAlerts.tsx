@@ -56,6 +56,18 @@ function windowText(entry: BackupInterestEntry, zone: ViewerZone): string {
     : `${startLabel} – ${formatForViewer(end, zone, "h:mm a")}`;
 }
 
+/** Checkout rejects a start in the past, so a window already under way cannot be booked. */
+function hasStarted(entry: BackupInterestEntry, nowMs: number): boolean {
+  return new Date(entry.windowStart).getTime() <= nowMs;
+}
+
+function backupStatusText(entry: BackupInterestEntry, nowMs: number): string {
+  if (hasStarted(entry, nowMs)) return " · This time has started";
+  return entry.status === "NOTIFIED"
+    ? " · This time opened"
+    : " · Waiting for this time to open";
+}
+
 function backupBookHref(entry: BackupInterestEntry): string {
   if (entry.planId && entry.planKind === "CONSULTATION") {
     const qs = new URLSearchParams({
@@ -208,13 +220,11 @@ export function MyAlerts({ viewerZone }: Readonly<{ viewerZone: ViewerZone }>) {
               </p>
               <p className="text-xs text-muted-foreground">
                 {windowText(entry, viewerZone)}
-                {entry.status === "NOTIFIED"
-                  ? " · This time opened"
-                  : " · Waiting for this time to open"}
+                {backupStatusText(entry, nowMs)}
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {entry.status === "NOTIFIED" && (
+              {entry.status === "NOTIFIED" && !hasStarted(entry, nowMs) && (
                 <Button size="sm" asChild>
                   <Link href={backupBookHref(entry)}>Book now</Link>
                 </Button>
