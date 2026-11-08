@@ -95,7 +95,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
 
   // Arrow keys, Home and End move between tabs and select as they go, the
   // pattern for tabs whose panels are already rendered or cheap to switch to.
-  const onTabKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
     const keys = tabs.map((t) => t.key);
     const current = keys.indexOf(activeTab);
     let next: number | null = null;
@@ -141,10 +141,10 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             {hasTabs && (
               // Switches between two panels on this page, so it is a tablist.
               // Only the selected tab is in the tab order; arrows move within.
+              // The key handler sits on the focusable tabs, not on the list.
               <div
                 role="tablist"
                 aria-label="Program type"
-                onKeyDown={onTabKeyDown}
                 className="flex bg-muted rounded-xl p-1"
               >
                 {tabs.map(({ key, label, icon: Icon, count }) => (
@@ -156,6 +156,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                     aria-selected={activeTab === key}
                     aria-controls={panelId(key)}
                     tabIndex={activeTab === key ? 0 : -1}
+                    onKeyDown={onTabKeyDown}
                     onClick={() => setActiveTab(key)}
                     className={`relative px-3 py-2 text-sm font-medium rounded-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-4 ${
                       activeTab === key
