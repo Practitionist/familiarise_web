@@ -440,14 +440,13 @@ export async function joinEventWaitlist(args: {
         });
         if (existing && OPEN_INTEREST.includes(existing.status))
           return existing;
-        const [onList, mine] = await Promise.all([
-          tx.appointmentWaitlist.count({
-            where: { appointmentId, status: { in: OPEN_INTEREST } },
-          }),
-          tx.appointmentWaitlist.count({
-            where: { userId: args.userId, status: { in: OPEN_INTEREST } },
-          }),
-        ]);
+        // One pg client per transaction: run its queries one after another.
+        const onList = await tx.appointmentWaitlist.count({
+          where: { appointmentId, status: { in: OPEN_INTEREST } },
+        });
+        const mine = await tx.appointmentWaitlist.count({
+          where: { userId: args.userId, status: { in: OPEN_INTEREST } },
+        });
         if (onList >= listCap(plan)) {
           throw new BookingRuleError(
             "WAITLIST_FULL",
@@ -609,27 +608,25 @@ export async function stageSeatOpenedNotices(
   }
 
   const userIds = candidates.map((c) => c.userId);
-  const [priors, paidSeats, liveSeats] = await Promise.all([
-    findPriorSeatPayments(tx, appointmentId, userIds),
-    tx.appointmentParticipant.findMany({
-      where: {
-        appointmentId,
-        role: "CONSULTEE",
-        userId: { in: userIds },
-        ...paidParticipant(),
-      },
-      select: { userId: true },
-    }),
-    tx.appointmentParticipant.findMany({
-      where: {
-        appointmentId,
-        role: "CONSULTEE",
-        userId: { in: userIds },
-        ...liveParticipant(),
-      },
-      select: { userId: true },
-    }),
-  ]);
+  const priors = await findPriorSeatPayments(tx, appointmentId, userIds);
+  const paidSeats = await tx.appointmentParticipant.findMany({
+    where: {
+      appointmentId,
+      role: "CONSULTEE",
+      userId: { in: userIds },
+      ...paidParticipant(),
+    },
+    select: { userId: true },
+  });
+  const liveSeats = await tx.appointmentParticipant.findMany({
+    where: {
+      appointmentId,
+      role: "CONSULTEE",
+      userId: { in: userIds },
+      ...liveParticipant(),
+    },
+    select: { userId: true },
+  });
   const paid = new Set(paidSeats.map((s) => s.userId));
   const live = new Set(liveSeats.map((s) => s.userId));
   const seated = candidates.filter((c) => paid.has(c.userId));
