@@ -87,7 +87,7 @@ Model resolution order for a subagent: the per-invocation `model` parameter (ali
 
 ## 5. Session-budget economics
 
-Every subagent draws on the same session usage pool, weighted by its model's cost. A Fable orchestrator that launches six Fable executors in parallel multiplies its own burn rate about sevenfold and hits the wall mid-write. Agents die after the expensive read phase and before the cheap write phase. Rules:
+Every subagent draws on the same session usage pool, weighted by its model's cost. A Fable orchestrator that launches six Fable executors in parallel multiplies its own burn rate about sevenfold and hits the wall mid-write. Agents die after the expensive read phase and before the cheap write phase. Depending on the plan and seat tier, Fable can also bill to usage credits instead of the included limits (the `/model` picker then marks it "Requires usage credits", and `-p` or Agent SDK runs bill without asking), so a Fable fleet can cost real money outside the shared pool. Rules:
 
 1. **Executors run on cheaper tiers than the orchestrator.** That is the point of the split.
 2. **Serialize when the pool is uncertain.** Two agents that finish beat six that die at 80%.
@@ -117,7 +117,7 @@ until mkdir /tmp/fw-heavy.lock 2>/dev/null; do sleep 15; done; <cmd>; rmdir /tmp
 
 Always release the lock, even when the command fails: put the whole thing in one `bash -c` and use `trap 'rmdir /tmp/fw-heavy.lock' EXIT` as `.claude/skills/workflow/SKILL.md` does. After a killed run or a reboot, check for a stale `/tmp/fw-heavy.lock` (and `/tmp/fw-browser.lock`) and remove it before resuming agents.
 
-c. **Memory reaper.** On this 8 GB machine, Claude Code's low-memory reaper kills idle background shells, and a repo-wide `jest --changedSince` was killed that way. Prefer a targeted suite list: the tests the branch touched (`git diff --name-only origin/dev...HEAD -- '__tests__/*'`) plus the suites that import the changed modules. Let CI run the broad tier.
+c. **Memory reaper.** On this 8 GB machine, Claude Code's low-memory reaper kills idle background shells, and a repo-wide `jest --changedSince` was killed that way. Prefer a targeted suite list: the tests the branch touched (`git diff --name-only origin/dev...HEAD -- '__tests__/*'`) plus the suites that import the changed modules. CI does not run everything on every PR: a PR into `dev` runs only `jest --changedSince` (`ci.yaml`), and the full sharded suite runs only on release runs (PRs into `prod`, pushes to `staging` or `prod`). So a change with wide reach (a shared helper, a fixture, a dependency bump) needs its importers run locally or it is first fully tested on the release PR.
 
 d. **Separate worktrees.** Parallel builders get separate worktrees and branches with disjoint file sets. Give them a rule for shared files, for example each builder adds its own block in a shared label file instead of editing common lines. The orchestrator merges the branches afterwards with `git merge --no-ff`. Symlink the main checkout's `node_modules` into each worktree (AGENTS.md section 3.1).
 
