@@ -58,7 +58,7 @@ The back-office Newsletter page (`components/admin/NewsletterManagement.tsx`, pe
 
 **The 2,000 refusal.** One request sends every batch itself, so it must fit in one function run. A send whose sendable audience is above `BROADCAST_AUDIENCE_LIMIT` (2,000) is refused with `422 AUDIENCE_TOO_LARGE`. The remedy is a narrower audience or a warm-up send.
 
-**Batches and keys.** Recipients are sent in batches of up to 100 through Resend's batch API. Each batch is a `FailedEmailBatch` row **before** the request goes out, with an idempotency key derived from its content (`NEWSLETTER_BROADCAST/<digest>`). A lost response or failed send is replayed by the relay under the same key. In `all` mode the audience is ordered by signup (`createdAt`, then `id`), so a re-sent broadcast that gained a new subscriber keeps every earlier batch, and its key, unchanged and appends the newcomer to the last one. Only `warmup` orders by confirmation time. A `test` send carries a one-time nonce so a repeat test really sends.
+**Batches and keys.** Recipients are sent in batches of up to 100 through Resend's batch API. Each batch is a `FailedEmailBatch` row **before** the request goes out, with an idempotency key derived from its content (`NEWSLETTER_BROADCAST/<digest>`). A lost response or failed send is replayed by the relay under the same key. In `all` mode the audience is ordered by signup (`createdAt`, then `id`), so a re-sent broadcast that gained a new subscriber keeps every earlier full batch, and its key, unchanged. The newcomer joins the last batch, and if that batch was partial its content and therefore its key change, so a re-send delivers the message again to everyone already in that batch. Only `warmup` orders by confirmation time. A `test` send carries a one-time nonce so a repeat test really sends.
 
 **What is skipped.** Before sending, the route drops addresses in `EmailSuppression` (a bounce or complaint not yet reflected in the subscriber status) and addresses the pre-launch guard holds (`heldRecipientDomain`). Both counts are returned.
 
@@ -82,7 +82,7 @@ Transactional email (receipts, security, bookings) is sent from `mail.familiaris
 
 ## Sending volume
 
-The Resend free plan stops at 100 emails a day, so a broadcast to more than that cannot run on it. The account moves to Resend Pro at go-live. The owner records that choice and its cost in Notion, not here. Gmail and Yahoo expect aligned SPF, DKIM and DMARC, a spam rate under 0.3 % and one-click unsubscribe from senders above 5,000 messages a day; the platform meets the technical parts today, and the volume threshold is far above the current list (see [the research page](./04-market-research-india-first.md#gmail-and-yahoo-bulk-sender-rules)).
+The Resend free plan stops at 100 emails a day, so a broadcast to more than that cannot run on it. At go-live the account moves to the owner-selected paid plan (recorded in Notion). Gmail expects SPF, DKIM, a DMARC policy aligned with the From domain, a spam rate under 0.3 % and one-click unsubscribe from senders above 5,000 messages a day. Yahoo asks the same of bulk senders but publishes no volume threshold, so the broadcast meets these rules on every send, whatever its size (see [the research page](./04-market-research-india-first.md#gmail-and-yahoo-bulk-sender-rules)).
 
 ## Announcements versus the newsletter
 
