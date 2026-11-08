@@ -57,8 +57,6 @@ export async function createReferralCodes() {
         data: {
           userId: user.id,
           code,
-          referrerReward: 50000, // 500 INR
-          refereeReward: 20000, // 200 INR
           isActive: true,
         },
       });

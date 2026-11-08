@@ -52,6 +52,10 @@ import {
 } from "@/lib/payments/core/razorpay";
 import prisma from "@/lib/prisma";
 import { postGatewayFee } from "@/lib/payments/ledger/gateway-fee";
+import {
+  recordPayerInstruments,
+  type PayerInstrumentFields,
+} from "@/lib/payments/payer-instruments";
 import { type WebhookClaim, permanentFailure } from "@/lib/webhooks/event-log";
 import { errorMessageOf, reportSentryError } from "@/lib/observability/report";
 import { z, ZodError } from "zod";
@@ -137,6 +141,8 @@ export async function routeCapturedPayment(params: {
   method?: string;
   /** Gateway fee (GST included) and its GST, from the webhook's payment entity only. */
   fee?: { feePaise: number; taxPaise: number };
+  /** The webhook payment entity's payer fields, hashed onto the Payment for the referral vest. */
+  payer?: PayerInstrumentFields;
 }): Promise<void> {
   await dispatchCapturedPayment(params);
   // Outside the capture transaction; the settlement job books it under the same key when absent.
@@ -145,6 +151,9 @@ export async function routeCapturedPayment(params: {
       gatewayPaymentId: params.gatewayPaymentId,
       ...params.fee,
     });
+  }
+  if (params.gatewayPaymentId && params.payer) {
+    await recordPayerInstruments(prisma, params.gatewayPaymentId, params.payer);
   }
 }
 
@@ -258,6 +267,7 @@ export async function processRazorpayWebhookEvent(
           gatewayPaymentId: capturedEntity.id,
           method: capturedEntity.method,
           fee: payloadFee(capturedEntity),
+          payer: capturedEntity,
         });
         break;
       }
@@ -272,6 +282,7 @@ export async function processRazorpayWebhookEvent(
           gatewayPaymentId: paidEntity?.id,
           method: paidEntity?.method,
           fee: paidEntity ? payloadFee(paidEntity) : undefined,
+          payer: paidEntity,
         });
         break;
       }

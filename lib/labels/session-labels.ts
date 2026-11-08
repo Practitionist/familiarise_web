@@ -594,6 +594,10 @@ export const REFERRAL_STATUS_BADGE: Record<ReferralStatus, StatusBadgeStyle> = {
     label: "Didn't qualify",
     className: "bg-zinc-100 text-zinc-500 border-zinc-200",
   },
+  HELD: {
+    label: "Held for review",
+    className: "bg-amber-100 text-amber-900 border-amber-200",
+  },
 };
 
 export const referralStatusBadge = (

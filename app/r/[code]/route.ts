@@ -12,6 +12,7 @@ import {
   applyReferralCode,
   validateReferralCode,
 } from "@/lib/referrals/service";
+import { referralRequestSignals } from "@/lib/referrals/signal-hash";
 
 const codeSchema = z
   .string()
@@ -47,7 +48,12 @@ export async function GET(
       .catch(() => false);
     if (!limited) {
       try {
-        applied = (await applyReferralCode(session.user.id, code)) !== null;
+        applied =
+          (await applyReferralCode(
+            session.user.id,
+            code,
+            referralRequestSignals(req.headers),
+          )) !== null;
       } catch (error) {
         reportSentryError(error, {
           subsystem: "referrals",

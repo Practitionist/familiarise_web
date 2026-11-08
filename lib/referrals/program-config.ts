@@ -26,6 +26,9 @@ const configSelect = {
   expertWaiverSessions: true,
   expertWaiverDays: true,
   expertReferralBudgetPaise: true,
+  holdSameIpReferrals: true,
+  holdSameDeviceReferrals: true,
+  holdWindowDays: true,
   version: true,
   updatedAt: true,
 } as const;
@@ -60,6 +63,9 @@ export function configSnapshot(cfg: {
   expertWaiverSessions: number;
   expertWaiverDays: number;
   expertReferralBudgetPaise: number;
+  holdSameIpReferrals: number | null;
+  holdSameDeviceReferrals: number | null;
+  holdWindowDays: number | null;
   version: number;
 }) {
   return {
@@ -79,6 +85,9 @@ export function configSnapshot(cfg: {
     expertWaiverSessions: cfg.expertWaiverSessions,
     expertWaiverDays: cfg.expertWaiverDays,
     expertReferralBudgetPaise: cfg.expertReferralBudgetPaise,
+    holdSameIpReferrals: cfg.holdSameIpReferrals,
+    holdSameDeviceReferrals: cfg.holdSameDeviceReferrals,
+    holdWindowDays: cfg.holdWindowDays,
     version: cfg.version,
   };
 }
@@ -169,5 +178,9 @@ export const referralProgramConfigPatchSchema = z
     expertWaiverSessions: z.number().int().min(0).max(100),
     expertWaiverDays: z.number().int().min(1).max(3650),
     expertReferralBudgetPaise: paise,
+    // Null switches a review-hold rule off.
+    holdSameIpReferrals: z.number().int().min(2).max(1_000).nullable(),
+    holdSameDeviceReferrals: z.number().int().min(2).max(1_000).nullable(),
+    holdWindowDays: z.number().int().min(1).max(3650).nullable(),
   })
   .partial();

@@ -40,8 +40,6 @@ interface ReferralCode {
   id: string;
   code: string;
   customCode: string | null;
-  referrerReward: number;
-  refereeReward: number;
   totalReferrals: number;
   successfulReferrals: number;
   totalEarned: number;

@@ -44,6 +44,7 @@ import {
   stageDisputeNoticeEmail,
 } from "@/lib/email/senders/money";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { voidVestedReferralRewards } from "@/lib/referrals/credit-reversal";
 import { toCurrencyEnum } from "@/lib/payments/validation/currency-guards";
 import { getAppUrl } from "@/lib/url";
 import { goHref } from "@/lib/dashboard/go";
@@ -1614,6 +1615,13 @@ export async function settleLostDispute(
   if (disputedPayment?.appointmentId === null) {
     await revokeStandaloneSaleEntitlement(tx, disputedPayment);
   }
+
+  // A referral this payment vested loses the reward it has not spent yet.
+  await voidVestedReferralRewards(tx, {
+    paymentId: dispute.paymentId,
+    disputeId,
+    now: new Date(),
+  });
 
   // The consumer invoice's own s.34 credit note; idempotent on
   // ConsumerCreditNote.disputeId, a no-op when none was issued.

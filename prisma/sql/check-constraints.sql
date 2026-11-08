@@ -966,6 +966,9 @@ ALTER TABLE "ReferralProgramConfig" ADD CONSTRAINT "referral_program_config_rang
     AND "expertWaiverSessions" >= 0
     AND "expertWaiverDays" > 0
     AND "expertReferralBudgetPaise" >= 0
+    AND ("holdSameIpReferrals" IS NULL OR "holdSameIpReferrals" >= 2)
+    AND ("holdSameDeviceReferrals" IS NULL OR "holdSameDeviceReferrals" >= 2)
+    AND ("holdWindowDays" IS NULL OR "holdWindowDays" > 0)
   );
 
 -- SPLIT

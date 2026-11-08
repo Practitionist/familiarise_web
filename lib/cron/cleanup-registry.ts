@@ -2984,6 +2984,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           voided: r.voided,
           deferred: r.deferred,
           budgetExhausted: r.budgetExhausted,
+          held: r.held,
           failed: r.failed,
         }),
         failureMessage: "Failed to vest referral credits",
