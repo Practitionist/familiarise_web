@@ -343,7 +343,7 @@ function CarouselCard({
   return (
     <Link
       href={planHref(program)}
-      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex-shrink-0 snap-start w-[80%] sm:w-[320px] md:w-[360px]"
+      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex-shrink-0 snap-start w-[clamp(15rem,calc((100%_-_2.5rem)/3.3),20rem)]"
       aria-label={`View details for ${program.title}`}
     >
       <div className="relative aspect-[16/10] overflow-hidden">
