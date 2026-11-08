@@ -44,7 +44,7 @@ The owner asked whether notifications should be decoupled behind a broker. They 
 
 ## Amendments
 
-On 2026-11-06 the maintenance events (`maintenance-scheduled`, `maintenance-started`, `maintenance-ended`) were deleted, so the `platform` family carries only `general-announcement` and `compliance-deadline-alert`, and the event count is 94 (`EVENT_FAMILY` in `lib/novu/templates/families.ts`). Decision 4 above is unchanged: families are always on, read-only and condition-free; the one-time reset of stray native mutes is `scripts/novu/clear-native-mutes.ts`, run before the sync. See [the decision record](../../decisions/2026-11-06-notification-single-preference-owner.md).
+On 2026-11-06 the maintenance events (`maintenance-scheduled`, `maintenance-started`, `maintenance-ended`) were deleted, so the `platform` family carries only `general-announcement` and `compliance-deadline-alert`, and the event count is 94 (`EVENT_FAMILY` in `lib/novu/templates/families.ts`). Decision 4 above is unchanged: families are always on, read-only and condition-free; the one-time reset of stray native mutes ran before the first read-only sync (Production on 2026-11-08, with 0 mutes found) and its script is deleted. See [the decision record](../../decisions/2026-11-06-notification-single-preference-owner.md).
 
 ## Relations
 
