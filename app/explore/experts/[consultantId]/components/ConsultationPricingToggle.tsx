@@ -10,6 +10,7 @@ import { CalendarIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -534,9 +535,12 @@ export default function ConsultationPricingToggle({
                     Book Now
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] max-h-[85vh] overflow-y-auto bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
-                  <DialogHeader className="p-6 lg:p-8 border-b border-zinc-800">
-                    <DialogTitle className="text-xl lg:text-2xl font-semibold">
+                {/* Centred, with a gutter on every side and never taller than the
+                    screen: the header and the checkout button stay put and only
+                    the middle scrolls. Width steps up with the screen. */}
+                <DialogContent className="flex max-h-[min(calc(100dvh-1.5rem),52rem)] w-[calc(100vw-1.5rem)] flex-col gap-0 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 p-0 text-white shadow-2xl sm:max-w-[640px] sm:rounded-2xl md:max-w-[880px] lg:max-w-[960px] xl:max-w-[1050px]">
+                  <DialogHeader className="shrink-0 border-b border-zinc-800 p-4 pr-12 sm:p-6 sm:pr-14 lg:p-8 lg:pr-14">
+                    <DialogTitle className="text-lg sm:text-xl lg:text-2xl font-semibold">
                       Book {option.title} Consultation
                     </DialogTitle>
                     <DialogDescription className="text-zinc-400 text-base">
@@ -552,135 +556,137 @@ export default function ConsultationPricingToggle({
                       className="pt-1 text-zinc-400 [&_button]:text-zinc-100"
                     />
                   </DialogHeader>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-10 p-6 lg:p-8">
-                    {/* Calendar Section */}
-                    <div>
-                      <h3 className="text-lg font-semibold mb-5 flex items-center text-white">
-                        <CalendarIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
-                        Select a Date
-                      </h3>
-                      <div className="bg-zinc-800/60 p-5 lg:p-6 rounded-xl border border-zinc-700/50">
-                        <div className="flex justify-between items-center mb-5">
-                          <span className="font-semibold text-white text-lg">
-                            {currentDate.toLocaleString("default", {
-                              month: "long",
-                              year: "numeric",
-                            })}
-                          </span>
-                          <div className="flex items-center gap-1">
-                            {/* #1785 L-4 — back to the current month and today's date. */}
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 px-3"
-                              onClick={handleBookNowClick}
-                            >
-                              Today
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="default"
-                              aria-label="Previous month"
-                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 w-9 text-lg"
-                              onClick={() =>
-                                setCurrentDate(
-                                  new Date(
-                                    currentDate.getFullYear(),
-                                    currentDate.getMonth() - 1,
-                                    1,
-                                  ),
-                                )
-                              }
-                            >
-                              &lt;
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="default"
-                              aria-label="Next month"
-                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 w-9 text-lg"
-                              onClick={() =>
-                                setCurrentDate(
-                                  new Date(
-                                    currentDate.getFullYear(),
-                                    currentDate.getMonth() + 1,
-                                    1,
-                                  ),
-                                )
-                              }
-                            >
-                              &gt;
-                            </Button>
+                  <DialogBody>
+                    <div className="grid grid-cols-1 gap-6 p-4 sm:p-6 md:grid-cols-2 md:gap-8 lg:gap-10 lg:p-8">
+                      {/* Calendar Section */}
+                      <div className="min-w-0">
+                        <h3 className="text-lg font-semibold mb-4 sm:mb-5 flex items-center text-white">
+                          <CalendarIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
+                          Select a Date
+                        </h3>
+                        <div className="bg-zinc-800/60 p-3 sm:p-5 lg:p-6 rounded-xl border border-zinc-700/50">
+                          <div className="flex flex-wrap justify-between items-center gap-2 mb-4 sm:mb-5">
+                            <span className="font-semibold text-white text-lg">
+                              {currentDate.toLocaleString("default", {
+                                month: "long",
+                                year: "numeric",
+                              })}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              {/* #1785 L-4 — back to the current month and today's date. */}
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 px-3"
+                                onClick={handleBookNowClick}
+                              >
+                                Today
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="default"
+                                aria-label="Previous month"
+                                className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 w-9 text-lg"
+                                onClick={() =>
+                                  setCurrentDate(
+                                    new Date(
+                                      currentDate.getFullYear(),
+                                      currentDate.getMonth() - 1,
+                                      1,
+                                    ),
+                                  )
+                                }
+                              >
+                                &lt;
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="default"
+                                aria-label="Next month"
+                                className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 w-9 text-lg"
+                                onClick={() =>
+                                  setCurrentDate(
+                                    new Date(
+                                      currentDate.getFullYear(),
+                                      currentDate.getMonth() + 1,
+                                      1,
+                                    ),
+                                  )
+                                }
+                              >
+                                &gt;
+                              </Button>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-7 gap-1 sm:gap-2 text-center text-sm sm:text-base font-medium text-zinc-400 mb-3">
+                            <div>Mo</div>
+                            <div>Tu</div>
+                            <div>We</div>
+                            <div>Th</div>
+                            <div>Fr</div>
+                            <div>Sa</div>
+                            <div>Su</div>
+                          </div>
+                          <div className="grid grid-cols-7 gap-1 sm:gap-2">
+                            {renderCalendar()}
                           </div>
                         </div>
-                        <div className="grid grid-cols-7 gap-3 text-center text-base font-medium text-zinc-400 mb-3">
-                          <div>Mo</div>
-                          <div>Tu</div>
-                          <div>We</div>
-                          <div>Th</div>
-                          <div>Fr</div>
-                          <div>Sa</div>
-                          <div>Su</div>
-                        </div>
-                        <div className="grid grid-cols-7 gap-2">
-                          {renderCalendar()}
-                        </div>
                       </div>
-                    </div>
 
-                    {/* Available Slots Section */}
-                    <div>
-                      <div className="flex items-center justify-between mb-5">
-                        <h3 className="text-lg font-semibold flex items-center text-white">
-                          <ClockIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
-                          Available {durationPhrase(selectedDuration)} times
-                        </h3>
-                        {onRefreshSlots && (
-                          <button
-                            type="button"
-                            className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-700/50 transition-colors"
-                            title="Refresh the available times"
-                            aria-label="Refresh the available times"
-                            onClick={async () => {
-                              setIsRefreshing(true);
-                              try {
-                                await onRefreshSlots();
-                              } finally {
-                                setIsRefreshing(false);
-                              }
-                            }}
-                            disabled={isRefreshing}
-                          >
-                            <RefreshCw
-                              className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
-                            />
-                          </button>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-1 gap-3 max-h-[350px] overflow-y-auto pr-2">
-                        <SlotList
-                          slots={availableSlots}
-                          selectedSlot={liveSelection}
-                          justTaken={justTakenSlot}
-                          onSelect={setSelectedSlot}
-                          bookingMode={
-                            consultantDetails.bookingMode ?? "INSTANT"
-                          }
-                        />
+                      {/* Available Slots Section */}
+                      <div className="min-w-0">
+                        <div className="flex items-center justify-between mb-4 sm:mb-5">
+                          <h3 className="text-lg font-semibold flex items-center text-white">
+                            <ClockIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
+                            Available {durationPhrase(selectedDuration)} times
+                          </h3>
+                          {onRefreshSlots && (
+                            <button
+                              type="button"
+                              className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-700/50 transition-colors"
+                              title="Refresh the available times"
+                              aria-label="Refresh the available times"
+                              onClick={async () => {
+                                setIsRefreshing(true);
+                                try {
+                                  await onRefreshSlots();
+                                } finally {
+                                  setIsRefreshing(false);
+                                }
+                              }}
+                              disabled={isRefreshing}
+                            >
+                              <RefreshCw
+                                className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
+                              />
+                            </button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-1 gap-3">
+                          <SlotList
+                            slots={availableSlots}
+                            selectedSlot={liveSelection}
+                            justTaken={justTakenSlot}
+                            onSelect={setSelectedSlot}
+                            bookingMode={
+                              consultantDetails.bookingMode ?? "INSTANT"
+                            }
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="bg-zinc-800/50 px-6 lg:px-8 py-5 flex flex-col items-end gap-2 rounded-b-2xl border-t border-zinc-800">
+                  </DialogBody>
+                  <div className="shrink-0 bg-zinc-800/50 px-4 sm:px-6 lg:px-8 py-4 sm:py-5 flex flex-col items-stretch sm:items-end gap-2 rounded-b-2xl border-t border-zinc-800">
                     {(paused || cta.hint) && (
                       <p className="text-xs text-zinc-400 text-right">
                         {paused ? CONSULTANT_PAUSED_HINT : cta.hint}
                       </p>
                     )}
                     <Button
-                      className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-8 h-12 text-base"
+                      className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-8 h-12 text-base w-full sm:w-auto"
                       onClick={
                         cta.action === "request"
                           ? handleRequestForApproval

@@ -83,6 +83,35 @@ describe("#726 — ORG_ONLY never reaches a public plan query", () => {
     expect(where.consultantProfileId).toBe("consultant-1");
   });
 
+  it("search matches title, description, expert name and topic, beside the gate", () => {
+    const where = buildPlanWhereClause({ ...NO_FILTERS, search: "python" });
+
+    expect(where.OR).toHaveLength(4);
+    expect(where.OR).toEqual(
+      expect.arrayContaining([
+        { title: { contains: "python", mode: "insensitive" } },
+        { description: { contains: "python", mode: "insensitive" } },
+        {
+          consultantProfile: {
+            user: { name: { contains: "python", mode: "insensitive" } },
+          },
+        },
+        {
+          topics: {
+            some: { name: { contains: "python", mode: "insensitive" } },
+          },
+        },
+      ]),
+    );
+    // The OR is a sibling of the gates, so a match can never widen them.
+    expect(where.visibility).toEqual({ in: PUBLIC_SET });
+    expect(where.archivedAt).toBeNull();
+  });
+
+  it("an empty search adds no OR", () => {
+    expect(buildPlanWhereClause(NO_FILTERS).OR).toBeUndefined();
+  });
+
   it("the shared visibility constant excludes ORG_ONLY", () => {
     expect(marketplaceVisibilityWhere().visibility.in).toEqual(PUBLIC_SET);
     expect(eventPlanDiscoverableWhere().visibility.in).toEqual(PUBLIC_SET);

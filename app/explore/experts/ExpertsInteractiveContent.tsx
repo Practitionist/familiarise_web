@@ -118,29 +118,14 @@ export default function ExpertsInteractiveContent({
 
   const resultSummary = useMemo(() => {
     const total = metadata?.consultantMetadata.totalConsultants;
-    // The global total is only honest when NO filter is active — affiliation
-    // tabs (and orgKind/orgSlug) don't emit chips, so they must be checked
-    // explicitly or an Independent-filtered list would claim the full count.
-    const isUnfiltered =
-      chips.length === 0 &&
-      !filters.search &&
-      !filters.affiliationType &&
-      !filters.orgKind &&
-      !filters.orgSlug;
+    // The global total is only honest when NO filter is active. Every filter,
+    // expert type included, emits a chip, so none of them can be missed here.
+    const isUnfiltered = chips.length === 0;
     if (typeof total === "number" && isUnfiltered) {
       return `${total} experts`;
     }
     return `${consultants.length}${hasMore ? "+" : ""} shown`;
-  }, [
-    metadata,
-    chips.length,
-    filters.search,
-    filters.affiliationType,
-    filters.orgKind,
-    filters.orgSlug,
-    consultants.length,
-    hasMore,
-  ]);
+  }, [metadata, chips.length, consultants.length, hasMore]);
 
   return (
     <section className="py-10 md:py-16">
@@ -160,10 +145,10 @@ export default function ExpertsInteractiveContent({
           ref={browseSectionRef}
           id="all-experts"
           // Deep-links must land below the fixed header AND the sticky filter
-          // bar (~3 rows); same banner-aware formula as the bar itself.
+          // bar (~2 rows); same banner-aware formula as the bar itself.
           style={{
             scrollMarginTop:
-              "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem) + 13rem)",
+              "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem) + 10rem)",
           }}
         >
           <SectionHeader
@@ -196,9 +181,9 @@ export default function ExpertsInteractiveContent({
             </div>
           </motion.div>
 
-          {/* Sticky settings navbar: search + sort + affiliation tabs +
-              org-kind sub-filter + chips. Advanced facets live in the
-              Filters sheet (no sidebar grid). */}
+          {/* Sticky settings navbar: search + sort + Filters button, with the
+              count and chips beneath. Every facet, expert type included, lives
+              in the Filters sheet (no sidebar grid). */}
           <StickyFilterBar
             metadata={metadata}
             filters={filters}

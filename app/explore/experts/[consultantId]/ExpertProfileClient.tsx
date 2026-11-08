@@ -332,7 +332,7 @@ export function ExpertProfileClient({
 
     for (let i = 0; i < adjustedFirstDay; i++) {
       days.push(
-        <div key={`empty-${i}`} className="w-10 h-10 lg:w-11 lg:h-11"></div>,
+        <div key={`empty-${i}`} className="aspect-square w-full"></div>,
       );
     }
 
@@ -366,7 +366,9 @@ export function ExpertProfileClient({
           aria-pressed={isSelected}
           aria-label={`${date.toLocaleDateString(undefined, { day: "numeric", month: "long" })}${isToday ? ", today" : ""}${bookable ? ", times available" : ""}`}
           className={cn(
-            "relative flex h-10 w-10 items-center justify-center rounded-full text-base transition-all duration-200 lg:h-11 lg:w-11",
+            // A fluid square, capped at the old 44px: seven fixed 40–44px cells
+            // do not fit a phone-width dialog, so they overflowed it.
+            "relative mx-auto flex aspect-square w-full max-w-[2.75rem] items-center justify-center rounded-full text-sm transition-all duration-200 sm:text-base",
             isSelected && "bg-white font-medium text-zinc-900 shadow-md",
             !isSelected &&
               bookable &&

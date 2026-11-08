@@ -42,18 +42,3 @@ export function BrandWordmark({
     </span>
   );
 }
-
-/** Badge-sized letter mark; decorative, so the caller names the brand in adjacent text. */
-export function BrandMark({ className }: Readonly<{ className?: string }>) {
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] bg-primary font-display text-[9px] font-bold leading-none text-primary-foreground",
-        className,
-      )}
-    >
-      {BRAND_NAME.charAt(0)}
-    </span>
-  );
-}

@@ -61,19 +61,6 @@ export function ClassDetails({
         />
         <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/60 to-transparent" />
 
-        {/* Back Navigation */}
-        <div className="absolute top-0 left-0 right-0 z-10">
-          <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 py-6">
-            <Link
-              href="/explore/programs"
-              className="inline-flex items-center gap-2 text-sm text-white/80 hover:text-white transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Programs
-            </Link>
-          </div>
-        </div>
-
         {/* Title Overlay */}
         <div className="absolute bottom-0 left-0 right-0 z-10">
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 pb-8">

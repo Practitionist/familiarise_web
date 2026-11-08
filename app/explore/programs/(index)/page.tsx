@@ -6,6 +6,7 @@ import {
   emptyOnTransientDbError,
   fallbackOnTransientDbError,
 } from "@/lib/data/fail-open";
+import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
 import { sortPlanLevels } from "@/lib/labels/plan-labels";
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
@@ -58,6 +59,7 @@ export default async function ExplorePrograms() {
     stats,
     viewerOrgs,
     levels,
+    languages,
   ] = await Promise.all([
     getCuratedPrograms("all", "trending", 8).catch(
       emptyOnTransientDbError("trending programs", { perRequest: true }),
@@ -86,6 +88,9 @@ export default async function ExplorePrograms() {
     getCachedProgramLevels().catch(
       emptyOnTransientDbError("program levels", { perRequest: true }),
     ),
+    getCachedProgramLanguages().catch(
+      emptyOnTransientDbError("program languages", { perRequest: true }),
+    ),
   ]);
 
   return (
@@ -96,6 +101,7 @@ export default async function ExplorePrograms() {
       initialStats={stats}
       viewerOrgs={viewerOrgs}
       availableLevels={levels}
+      availableLanguages={languages}
     />
   );
 }
@@ -166,5 +172,34 @@ const getCachedProgramLevels = unstable_cache(
     ]);
   },
   ["program-levels"],
+  { revalidate: 3600, tags: ["programs"] },
+);
+
+/** Every language a listed plan is taught in, so the dropdown never offers one
+ *  that returns nothing. Same discovery gates as the listing itself. */
+const getCachedProgramLanguages = unstable_cache(
+  async () => {
+    const where = eventPlanDiscoverableWhere();
+    const [classLanguages, webinarLanguages] = await Promise.all([
+      prisma.classPlan.findMany({
+        where,
+        select: { language: true },
+        distinct: ["language"],
+      }),
+      prisma.webinarPlan.findMany({
+        where,
+        select: { language: true },
+        distinct: ["language"],
+      }),
+    ]);
+    return [
+      ...new Set(
+        [...classLanguages, ...webinarLanguages]
+          .map((row) => row.language)
+          .filter(Boolean),
+      ),
+    ].sort((a, b) => a.localeCompare(b));
+  },
+  ["program-languages"],
   { revalidate: 3600, tags: ["programs"] },
 );

@@ -4,11 +4,20 @@ import { useSearchParams } from "next/navigation";
 import { replaceUrl } from "@/lib/navigation/history";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDebouncedCallback } from "use-debounce";
+import { z } from "zod";
 
-import type { ProgramFilters, ProgramType } from "@/lib/explore/programs";
+import {
+  normaliseSearchTerm,
+  type ProgramFilters,
+  type ProgramType,
+} from "@/lib/explore/programs";
 
 const SEARCH_DEBOUNCE_MS = 300;
 const URL_SYNC_DEBOUNCE_MS = 300;
+
+const VIEW_MODE_STORAGE_KEY = "programs-view-mode";
+const viewModeSchema = z.enum(["grid", "list"]);
+type ViewMode = z.infer<typeof viewModeSchema>;
 
 interface UseProgramsFiltersResult {
   programType: ProgramType;
@@ -24,9 +33,10 @@ interface UseProgramsFiltersResult {
   selectedLevel: string;
   setSelectedLevel: (level: string) => void;
 
-  // View preference (purely cosmetic, deliberately not in the URL)
-  viewMode: "grid" | "list";
-  setViewMode: (mode: "grid" | "list") => void;
+  // View preference: cosmetic, so it stays out of the URL and is remembered
+  // per browser instead. Starts as a list.
+  viewMode: ViewMode;
+  setViewMode: (mode: ViewMode) => void;
 
   clearAll: () => void;
 }
@@ -42,7 +52,7 @@ function filtersFromParams(params: URLSearchParams): ProgramFilters {
     sort: params.get("sort") ?? undefined,
     minPrice: minPrice !== null ? Number(minPrice) : undefined,
     maxPrice: maxPrice !== null ? Number(maxPrice) : undefined,
-    search: params.get("search") ?? undefined,
+    search: normaliseSearchTerm(params.get("search")),
     level: params.get("level") ?? undefined,
   };
 }
@@ -96,10 +106,34 @@ export function useProgramsFilters(): UseProgramsFiltersResult {
   const [localSearchValue, setLocalSearchValue] = useState(
     () => searchParams.get("search") ?? "",
   );
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
+
+  // Adopted after mount, never during render: the server and first client
+  // render both show the list, so hydration matches.
+  useEffect(() => {
+    try {
+      const saved = viewModeSchema.safeParse(
+        window.localStorage.getItem(VIEW_MODE_STORAGE_KEY),
+      );
+      if (saved.success) setViewMode(saved.data);
+    } catch {
+      // Storage can be blocked; the list default stands.
+    }
+  }, []);
+
+  const rememberViewMode = useCallback((mode: ViewMode) => {
+    setViewMode(mode);
+    try {
+      window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+    } catch {
+      // Not remembered, still applied for this visit.
+    }
+  }, []);
 
   const debouncedSetSearch = useDebouncedCallback((value: string) => {
-    setFilters((prev) => ({ ...prev, search: value || undefined }));
+    const search = normaliseSearchTerm(value);
+    // Same term, same query: keep the object so nothing downstream re-runs.
+    setFilters((prev) => (prev.search === search ? prev : { ...prev, search }));
   }, SEARCH_DEBOUNCE_MS);
 
   const onLocalSearchChange = useCallback(
@@ -164,7 +198,7 @@ export function useProgramsFilters(): UseProgramsFiltersResult {
     selectedLevel,
     setSelectedLevel,
     viewMode,
-    setViewMode,
+    setViewMode: rememberViewMode,
     clearAll,
   };
 }

@@ -4,6 +4,7 @@ import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -467,8 +468,10 @@ export default function SubscriptionPricingToggle({
 
       {/* Start-date dialog (#1766) */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[550px] lg:max-w-[650px] max-h-[90vh] overflow-y-auto bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl z-[1002] scrollbar-hide">
-          <DialogHeader className="p-6 border-b border-zinc-800">
+        {/* Same shell as the consultation booking dialog: centred, inside a
+            gutter, header and button fixed, only the middle scrolls. */}
+        <DialogContent className="flex max-h-[min(calc(100dvh-1.5rem),44rem)] w-[calc(100vw-1.5rem)] flex-col gap-0 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 p-0 text-white shadow-2xl sm:max-w-[550px] sm:rounded-2xl lg:max-w-[650px]">
+          <DialogHeader className="shrink-0 border-b border-zinc-800 p-4 pr-12 sm:p-6 sm:pr-14">
             <DialogTitle className="text-xl font-semibold">
               When do you want to start?
             </DialogTitle>
@@ -478,7 +481,7 @@ export default function SubscriptionPricingToggle({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="p-8 space-y-6">
+          <DialogBody className="space-y-6 p-4 sm:p-8">
             {/* Start Date */}
             <div className="space-y-2">
               <label className="text-sm font-medium flex items-center gap-2 text-zinc-400">
@@ -535,13 +538,13 @@ export default function SubscriptionPricingToggle({
                 Times shown in {zoneDisplayLabel(new Date(), timezone)}
               </p>
             </div>
-          </div>
+          </DialogBody>
 
-          <div className="bg-zinc-800/50 px-6 py-4 flex justify-center gap-3 rounded-b-2xl border-t border-zinc-800">
+          <div className="shrink-0 bg-zinc-800/50 px-4 sm:px-6 py-4 flex justify-center gap-3 rounded-b-2xl border-t border-zinc-800">
             <Button
               onClick={handleContinueToCheckout}
               disabled={!validation.valid}
-              className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-6"
+              className="w-full sm:w-auto bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-6"
             >
               Continue to Checkout
             </Button>

@@ -18,9 +18,25 @@ import {
   Star,
   Building2,
   Globe,
+  Users,
 } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useCurrency } from "@/hooks/useCurrency";
-import type { IExpertFilters, IExpertsMetaData } from "../utils";
+import type {
+  AffiliationType,
+  IExpertFilters,
+  IExpertsMetaData,
+} from "../utils";
+
+const EXPERT_TYPES: {
+  value: AffiliationType;
+  label: string;
+  countKey: "all" | "independent" | "agency";
+}[] = [
+  { value: null, label: "All experts", countKey: "all" },
+  { value: "independent", label: "Independent", countKey: "independent" },
+  { value: "agency", label: "Agency / Org", countKey: "agency" },
+];
 
 // Slider operates in paise (smallest currency unit) end-to-end so it
 // matches both the API filter contract and `useCurrency().formatPrice`,
@@ -58,7 +74,9 @@ function FilterPanelImpl({
     minRating,
     companies: selectedCompanies,
     language,
+    affiliationType,
   } = filters;
+  const affiliationCounts = metadata?.consultantMetadata.affiliationCounts;
 
   // Tag autocomplete state
   const [searchTerm, setSearchTerm] = useState("");
@@ -205,6 +223,48 @@ function FilterPanelImpl({
   return (
     <div>
       <div className="grid gap-6 grid-cols-1">
+        {/* Expert type: independent vs hosted by an agency or organisation */}
+        <div className="pb-6 border-b border-border last:border-b-0">
+          <div className="flex items-center gap-2 mb-4">
+            <Users className="w-4 h-4 text-muted-foreground" />
+            <span className="text-sm font-medium text-muted-foreground">
+              Expert type
+            </span>
+          </div>
+          <RadioGroup
+            aria-label="Expert type"
+            value={affiliationType ?? "all"}
+            onValueChange={(next) =>
+              updateFilters({
+                affiliationType:
+                  EXPERT_TYPES.find((t) => (t.value ?? "all") === next)
+                    ?.value ?? null,
+              })
+            }
+            className="gap-1"
+          >
+            {EXPERT_TYPES.map(({ value, label, countKey }) => {
+              const id = `expert-type-${value ?? "all"}`;
+              const count = affiliationCounts?.[countKey];
+              return (
+                <label
+                  key={id}
+                  htmlFor={id}
+                  className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-sm text-foreground hover:bg-muted"
+                >
+                  <RadioGroupItem id={id} value={value ?? "all"} />
+                  <span className="flex-1">{label}</span>
+                  {typeof count === "number" && (
+                    <span className="text-xs tabular-nums text-muted-foreground">
+                      {count}
+                    </span>
+                  )}
+                </label>
+              );
+            })}
+          </RadioGroup>
+        </div>
+
         {/* Domain & Subdomain */}
         <div className="pb-6 border-b border-border last:border-b-0">
           <div className="flex items-center gap-2 mb-4">

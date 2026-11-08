@@ -257,7 +257,12 @@ export function ConsultantAvailability({
       {/* This grid is a read-only overview — booking happens in the pricing
           panel — so the colours need explaining even more than the interactive
           ones do. */}
-      <SlotStatusLegend keys={BUYER_LEGEND_KEYS} className="mt-4" />
+      {/* Not sticky and no fill: this overview never scrolls under its key, and
+          the page's own background shows through behind it. */}
+      <SlotStatusLegend
+        keys={BUYER_LEGEND_KEYS}
+        className="static mt-4 justify-center bg-transparent"
+      />
     </div>
   );
 }

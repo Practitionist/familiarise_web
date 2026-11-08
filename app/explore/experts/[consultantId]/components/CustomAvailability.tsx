@@ -12,6 +12,7 @@ import {
 } from "../utils/mergeSlots";
 import type { PickerInterval } from "../types";
 import { SLOT_STATUS_TOKENS } from "@/lib/scheduling/interval-status-tokens";
+import { cn } from "@/utils/tailwind";
 
 interface DayWithSlots {
   date: Date;
@@ -27,6 +28,12 @@ interface CustomAvailabilityProps {
 }
 
 const VISIBLE_SLOT_COUNT = 5;
+
+const shortDate = (date: Date) =>
+  date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+const weekNavButton =
+  "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:text-muted-foreground/50 disabled:hover:bg-card";
 
 export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
   days,
@@ -60,6 +67,10 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
     }, 0);
   }, [mergedDays]);
 
+  const weekIsEmpty = mergedDays.every((day) => day.slots.length === 0);
+  const firstDay = mergedDays[0]?.date;
+  const lastDay = mergedDays[mergedDays.length - 1]?.date;
+
   // The date of a booked time, read in the display zone.
   const getBookedSlotDate = (slot: PickerInterval) => {
     if (!slot.startsAt) return "";
@@ -72,172 +83,171 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
   };
 
   return (
-    <div className="bg-gradient-to-br from-white via-gray-50/50 to-white rounded-2xl shadow-xl border border-gray-200/50 p-8 backdrop-blur-sm relative">
-      {/* Glossy overlay effect */}
-      <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-2xl pointer-events-none" />
-
-      <div className="relative">
-        <h3 className="text-2xl font-bold mb-6 text-center text-gray-800 bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent">
-          Custom Availability
-        </h3>
-
-        {/* Navigation and grid content */}
-        <div className="flex items-start gap-2">
-          {/* Left arrow */}
+    <section
+      aria-label="Custom availability"
+      className="rounded-2xl border border-border bg-card p-4 sm:p-6 md:p-8"
+    >
+      {/* The week and its arrows share one row, so the columns below keep the
+          card's full width instead of losing it to two side buttons. */}
+      <div className="mb-5 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Custom availability
+          </p>
+          {firstDay && lastDay && (
+            <h3 className="text-lg font-semibold text-foreground">
+              {shortDate(firstDay)} – {shortDate(lastDay)}
+            </h3>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={onPrevWeek}
             disabled={!onPrevWeek}
-            className={`flex-shrink-0 mt-2 p-2 rounded-xl border shadow-sm transition-all ${
-              onPrevWeek
-                ? "bg-gradient-to-b from-gray-100 to-gray-200/80 border-gray-300/50 text-gray-700 hover:from-gray-200 hover:to-gray-300/80 cursor-pointer"
-                : "bg-gray-50 border-gray-200/50 text-gray-300 cursor-not-allowed"
-            }`}
+            className={weekNavButton}
             aria-label="Previous week"
           >
-            <ChevronLeft className="w-5 h-5" />
+            <ChevronLeft className="h-5 w-5" />
           </button>
-
-          {/* Date headers and slots */}
-          <div className="flex-1 min-w-0">
-            {/* Date headers */}
-            <div className="grid grid-cols-7 gap-4 mb-6">
-              {mergedDays.map(({ date }) => (
-                <div key={date.toISOString()} className="text-center">
-                  <div className="bg-gradient-to-b from-gray-100 to-gray-200/80 px-3 py-2 rounded-xl border border-gray-300/50 shadow-sm">
-                    <div className="text-sm font-semibold text-gray-800">
-                      {date.toLocaleDateString(undefined, { weekday: "short" })}
-                    </div>
-                    <div className="text-xs text-gray-600 mt-1">
-                      {date.toLocaleDateString(undefined, {
-                        month: "short",
-                        day: "numeric",
-                      })}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Slots grid */}
-            <div className="grid grid-cols-7 gap-4">
-              {mergedDays.map(({ date, slots: daySlots }) => {
-                const visibleSlots = isExpanded
-                  ? daySlots
-                  : daySlots.slice(0, VISIBLE_SLOT_COUNT);
-
-                return (
-                  <div key={date.toISOString()} className="space-y-2">
-                    {visibleSlots.length > 0 ? (
-                      visibleSlots.map((slot) => {
-                        const statusKey = overviewStatusKey(slot);
-                        const isFullyBooked = statusKey === "fullyBooked";
-                        const isPartiallyBooked =
-                          statusKey === "partiallyBooked";
-                        const bookedDate =
-                          isFullyBooked || isPartiallyBooked || slot.isAllocated
-                            ? getBookedSlotDate(slot)
-                            : "";
-
-                        return (
-                          <div
-                            key={slot.id}
-                            className={`
-                              w-full min-h-[4.5rem] px-2 py-2 text-xs rounded-xl
-                              border shadow-lg backdrop-blur-sm relative overflow-hidden
-                              ${SLOT_STATUS_TOKENS[statusKey].className}
-                            `}
-                          >
-                            {/* Glossy overlay for buttons */}
-                            <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-xl pointer-events-none" />
-
-                            <div className="relative flex flex-col items-center justify-center h-full space-y-1">
-                              {/* Time range in one line */}
-                              <div className="font-medium leading-tight text-center text-[11px]">
-                                {roundTime(slot.localStartTime)} -{" "}
-                                {roundTime(slot.localEndTime)}
-                              </div>
-
-                              {/* Status and date for booked/allocated slots */}
-                              {isFullyBooked && (
-                                <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
-                                  Booked
-                                  <br />
-                                  {bookedDate && `(${bookedDate})`}
-                                </div>
-                              )}
-                              {isPartiallyBooked && (
-                                <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
-                                  Partially
-                                  <br />
-                                  Booked {bookedDate && `(${bookedDate})`}
-                                </div>
-                              )}
-                              {slot.isAllocated &&
-                                statusKey === "available" && (
-                                  <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
-                                    Request
-                                    <br />
-                                    Approval {bookedDate && `(${bookedDate})`}
-                                  </div>
-                                )}
-                              {(statusKey === "tooSoon" ||
-                                statusKey === "limitReached") && (
-                                <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
-                                  {SLOT_STATUS_TOKENS[statusKey].label}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <div className="min-h-[4.5rem] flex items-center justify-center text-xs text-muted-foreground/70 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-border shadow-sm">
-                        No times
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Single expand/collapse button for the entire week */}
-            {totalHidden > 0 && (
-              <div className="flex justify-center mt-4">
-                <button
-                  onClick={() => setIsExpanded((prev) => !prev)}
-                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 rounded-xl border border-emerald-200 transition-colors cursor-pointer shadow-sm"
-                >
-                  {isExpanded ? (
-                    <>
-                      <ChevronUp className="w-3.5 h-3.5" />
-                      Show less
-                    </>
-                  ) : (
-                    <>
-                      <ChevronDown className="w-3.5 h-3.5" />
-                      Show {totalHidden} more times
-                    </>
-                  )}
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Right arrow */}
           <button
+            type="button"
             onClick={onNextWeek}
             disabled={!onNextWeek}
-            className={`flex-shrink-0 mt-2 p-2 rounded-xl border shadow-sm transition-all ${
-              onNextWeek
-                ? "bg-gradient-to-b from-gray-100 to-gray-200/80 border-gray-300/50 text-gray-700 hover:from-gray-200 hover:to-gray-300/80 cursor-pointer"
-                : "bg-gray-50 border-gray-200/50 text-gray-300 cursor-not-allowed"
-            }`}
+            className={weekNavButton}
             aria-label="Next week"
           >
-            <ChevronRight className="w-5 h-5" />
+            <ChevronRight className="h-5 w-5" />
           </button>
         </div>
       </div>
-    </div>
+
+      {weekIsEmpty ? (
+        <p className="rounded-xl border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
+          No open times this week.
+          {onNextWeek ? " Try the next week." : ""}
+        </p>
+      ) : (
+        // One block per day: a row on phones (label left, times right) and a
+        // column of the seven-day week from md up, so no width needs a sideways
+        // scroll.
+        <div className="space-y-3 md:grid md:grid-cols-7 md:gap-3 md:space-y-0">
+          {mergedDays.map(({ date, slots: daySlots }) => {
+            const visibleSlots = isExpanded
+              ? daySlots
+              : daySlots.slice(0, VISIBLE_SLOT_COUNT);
+
+            return (
+              <div key={date.toISOString()} className="flex gap-3 md:block">
+                <div className="w-20 shrink-0 self-start rounded-lg bg-muted px-2 py-2 text-center md:mb-3 md:w-auto">
+                  <div className="text-sm font-semibold text-foreground">
+                    {date.toLocaleDateString(undefined, { weekday: "short" })}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {shortDate(date)}
+                  </div>
+                </div>
+
+                <div className="grid min-w-0 flex-1 grid-cols-2 content-start gap-2 md:block md:space-y-2">
+                  {visibleSlots.length > 0 ? (
+                    visibleSlots.map((slot) => {
+                      const statusKey = overviewStatusKey(slot);
+                      const isFullyBooked = statusKey === "fullyBooked";
+                      const isPartiallyBooked = statusKey === "partiallyBooked";
+                      const bookedDate =
+                        isFullyBooked || isPartiallyBooked || slot.isAllocated
+                          ? getBookedSlotDate(slot)
+                          : "";
+
+                      return (
+                        <div
+                          key={slot.id}
+                          className={cn(
+                            "relative flex min-h-[3.5rem] w-full flex-col items-center justify-center gap-1 overflow-hidden rounded-lg border px-1.5 py-2 text-xs",
+                            SLOT_STATUS_TOKENS[statusKey].className,
+                          )}
+                        >
+                          {/* Wraps only between start and end, never inside a time. */}
+                          <div className="flex flex-wrap justify-center gap-x-1 text-center text-[11px] font-medium leading-tight">
+                            <span className="whitespace-nowrap">
+                              {roundTime(slot.localStartTime)}
+                            </span>
+                            <span className="whitespace-nowrap">
+                              – {roundTime(slot.localEndTime)}
+                            </span>
+                          </div>
+
+                          {/* Status and date for booked/allocated slots */}
+                          {isFullyBooked && (
+                            <div className="text-center text-[10px] font-semibold leading-tight opacity-90">
+                              Booked
+                              <br />
+                              {bookedDate && `(${bookedDate})`}
+                            </div>
+                          )}
+                          {isPartiallyBooked && (
+                            <div className="text-center text-[10px] font-semibold leading-tight opacity-90">
+                              Partially
+                              <br />
+                              Booked {bookedDate && `(${bookedDate})`}
+                            </div>
+                          )}
+                          {slot.isAllocated && statusKey === "available" && (
+                            <div className="text-center text-[10px] font-semibold leading-tight opacity-90">
+                              Request
+                              <br />
+                              Approval {bookedDate && `(${bookedDate})`}
+                            </div>
+                          )}
+                          {(statusKey === "tooSoon" ||
+                            statusKey === "limitReached") && (
+                            <div className="text-center text-[10px] font-semibold leading-tight opacity-90">
+                              {SLOT_STATUS_TOKENS[statusKey].label}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    // Quiet text, not a box: five empty boxes in a row
+                    // outweighed the one open slot beside them.
+                    <div className="col-span-2 flex min-h-[3.25rem] items-center text-sm text-muted-foreground/60 md:min-h-[3.5rem] md:justify-center">
+                      <span className="text-xs md:sr-only">No times</span>
+                      <span aria-hidden="true" className="hidden md:inline">
+                        –
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Single expand/collapse button for the entire week */}
+      {!weekIsEmpty && totalHidden > 0 && (
+        <div className="mt-4 flex justify-center">
+          <button
+            type="button"
+            onClick={() => setIsExpanded((prev) => !prev)}
+            aria-expanded={isExpanded}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {isExpanded ? (
+              <>
+                <ChevronUp className="h-3.5 w-3.5" />
+                Show less
+              </>
+            ) : (
+              <>
+                <ChevronDown className="h-3.5 w-3.5" />
+                Show {totalHidden} more times
+              </>
+            )}
+          </button>
+        </div>
+      )}
+    </section>
   );
 };
