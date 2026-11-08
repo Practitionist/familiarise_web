@@ -6,8 +6,6 @@ export const CONSULTANTS_PER_PAGE = 10;
 
 export type AffiliationType = "independent" | "agency" | null;
 
-export type OrgKind = "AGENCY" | "ENTERPRISE" | "SOLO_PRACTICE";
-
 export interface IExpertFilters {
   domain: string | null;
   subdomain: string | null;
@@ -21,8 +19,6 @@ export interface IExpertFilters {
   companies: string[];
   language?: string;
   affiliationType: AffiliationType;
-  /** Sub-filter inside Agency/Org: staffing agency vs enterprise vs solo host. */
-  orgKind?: OrgKind | null;
   /** Drill-down to one host org's roster (by slug). */
   orgSlug?: string | null;
 }
@@ -40,7 +36,6 @@ export const DEFAULT_EXPERT_FILTERS: IExpertFilters = {
   companies: [],
   language: undefined,
   affiliationType: null,
-  orgKind: null,
   orgSlug: null,
 };
 
@@ -50,17 +45,11 @@ export interface IExpertsMetaData {
   tags: { id: string; name: string; domainId: string | null }[];
   consultantMetadata: {
     totalConsultants: number;
-    /** Per-tab counts for All / Independent / Agency-Org. */
+    /** Counts for the All / Independent / Agency-Org expert-type filter. */
     affiliationCounts?: {
       all: number;
       independent: number;
       agency: number;
-    };
-    /** Experts hosted per org kind (counts once per kind membership). */
-    orgKindCounts?: {
-      AGENCY: number;
-      ENTERPRISE: number;
-      SOLO_PRACTICE: number;
     };
     consultantsByDomain: {
       id: string;
@@ -135,12 +124,6 @@ const VALID_AFFILIATIONS: ReadonlySet<string> = new Set([
   "agency",
 ]);
 
-const VALID_ORG_KINDS: ReadonlySet<string> = new Set([
-  "AGENCY",
-  "ENTERPRISE",
-  "SOLO_PRACTICE",
-]);
-
 // Parse IExpertFilters from URL search params
 export function filtersFromSearchParams(
   params: ReadonlyURLSearchParams,
@@ -175,9 +158,6 @@ export function filtersFromSearchParams(
     affiliationType: VALID_AFFILIATIONS.has(params.get("affiliationType") ?? "")
       ? (params.get("affiliationType") as AffiliationType)
       : null,
-    orgKind: VALID_ORG_KINDS.has(params.get("orgKind") ?? "")
-      ? ((params.get("orgKind") as OrgKind) ?? null)
-      : null,
     orgSlug: params.get("orgSlug") || null,
   };
 }
@@ -202,7 +182,6 @@ export function filtersToSearchParams(filters: IExpertFilters): string {
   if (filters.language) params.set("language", filters.language);
   if (filters.affiliationType)
     params.set("affiliationType", filters.affiliationType);
-  if (filters.orgKind) params.set("orgKind", filters.orgKind);
   if (filters.orgSlug) params.set("orgSlug", filters.orgSlug);
   return params.toString();
 }

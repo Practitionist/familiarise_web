@@ -43,9 +43,10 @@ export function usePrograms(
     hasNextPage,
     isLoading,
     isFetchingNextPage,
+    isPlaceholderData,
   } = useInfiniteQuery({
     queryKey: ["programs", programType, filterStr],
-    queryFn: async ({ pageParam = 0 }) => {
+    queryFn: async ({ pageParam = 0, signal }) => {
       const requests = [];
 
       if (programType === "all" || programType === "class") {
@@ -60,7 +61,7 @@ export function usePrograms(
       }
 
       const responses = await Promise.all(
-        requests.map((url) => fetchPlans(url)),
+        requests.map((url) => fetchPlans(url, signal)),
       );
 
       let combinedPrograms: Program[] = [];
@@ -149,6 +150,12 @@ export function usePrograms(
       return hasMore ? pages.length : undefined;
     },
     initialPageParam: 0,
+    // Keep the last results on screen while a changed search or filter loads,
+    // instead of blanking the list on every keystroke burst. Not across a tab
+    // change: classes must not sit under the Webinars tab while it loads.
+    // Declared after `queryFn` so the page type is inferred from it.
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[1] === programType ? previousData : undefined,
     staleTime: 2 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     retry: 2,
@@ -175,7 +182,10 @@ export function usePrograms(
     programs,
     error,
     isLoading: isLoading || isFetchingNextPage,
-    hasMore: hasNextPage ?? false,
+    /** Showing the previous results while a changed search or filter loads. */
+    isRefreshing: isPlaceholderData,
+    // Paging belongs to the results on screen, not to the ones being replaced.
+    hasMore: !isPlaceholderData && (hasNextPage ?? false),
     loadMore: () => fetchNextPage(),
   };
 }

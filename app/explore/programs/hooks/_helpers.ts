@@ -56,8 +56,11 @@ export function buildFilterParams(filters: ProgramFilters): string {
   return str ? `&${str}` : "";
 }
 
-export const fetchPlans = (url: string): Promise<PlanApiResponse> =>
-  fetch(url).then((res) => res.json());
+/** `signal` lets React Query cancel a request the reader has already moved past. */
+export const fetchPlans = (
+  url: string,
+  signal?: AbortSignal,
+): Promise<PlanApiResponse> => fetch(url, { signal }).then((res) => res.json());
 
 export const fetchTopics = (url: string): Promise<TopicsApiResponse> =>
   fetch(url).then((res) => res.json());

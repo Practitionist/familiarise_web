@@ -13,7 +13,7 @@ interface ProgramRowProps {
 
 function SkeletonCard() {
   return (
-    <div className="flex-shrink-0 w-[320px] md:w-[360px] rounded-2xl border border-border overflow-hidden">
+    <div className="flex-shrink-0 w-[clamp(15rem,calc((100%_-_2.5rem)/3.3),20rem)] rounded-2xl border border-border overflow-hidden">
       <div className="aspect-[16/10] bg-muted animate-pulse" />
       <div className="p-4 space-y-3">
         <div className="h-5 bg-muted rounded animate-pulse w-3/4" />
@@ -29,7 +29,8 @@ function ProgramRowImpl({ programs, badge, isLoading }: ProgramRowProps) {
 
   const scroll = (direction: "left" | "right") => {
     if (!scrollRef.current) return;
-    const amount = 380;
+    // Most of a row per click, so it pages by what is actually on screen.
+    const amount = scrollRef.current.clientWidth * 0.8;
     scrollRef.current.scrollBy({
       left: direction === "left" ? -amount : amount,
       behavior: "smooth",
@@ -69,7 +70,7 @@ function ProgramRowImpl({ programs, badge, isLoading }: ProgramRowProps) {
       {/* Scrollable row */}
       <div
         ref={scrollRef}
-        className="flex gap-5 overflow-x-auto scrollbar-hide pb-2"
+        className="flex gap-5 overflow-x-auto scrollbar-hide snap-x snap-proximity pb-2"
         style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
       >
         {programs.map((program) => (

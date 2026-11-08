@@ -3,6 +3,7 @@ import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { Prisma, type OrgPlanVisibility } from "@prisma/client";
 import { MARKETPLACE_VISIBILITY } from "@/lib/api/plans/visibility";
+import { normaliseSearchTerm } from "@/lib/explore/programs";
 import { publicCacheHeaders } from "@/lib/api/cdn-cache";
 
 /** Every query key the webinar and class list routes read, so the CDN caches one entry per filter set. */
@@ -73,7 +74,7 @@ export function parsePlanFilters(
       parsedMin !== undefined && !isNaN(parsedMin) ? parsedMin : undefined,
     maxPrice:
       parsedMax !== undefined && !isNaN(parsedMax) ? parsedMax : undefined,
-    search: searchParams.get("search"),
+    search: normaliseSearchTerm(searchParams.get("search")) ?? null,
     // "all" is the UI's no-op sentinel, not a stored level value.
     level:
       searchParams.get("level") === "all" ? null : searchParams.get("level"),
@@ -82,6 +83,14 @@ export function parsePlanFilters(
     skip,
   };
 }
+
+type InsensitiveContains = { contains: string; mode: "insensitive" };
+
+type PlanSearchMatch =
+  | { title: InsensitiveContains }
+  | { description: InsensitiveContains }
+  | { consultantProfile: { user: { name: InsensitiveContains } } }
+  | { topics: { some: { name: InsensitiveContains } } };
 
 /**
  * Shared plan WHERE clause — structurally compatible with both
@@ -92,7 +101,8 @@ export interface PlanWhereClause {
   language?: string;
   level?: string;
   price?: { gte?: number; lte?: number };
-  title?: { contains: string; mode: "insensitive" };
+  /** Free-text search: a plan matches when any one of these does. */
+  OR?: PlanSearchMatch[];
   topics?: { some: { id: { in: string[] } } };
   consultantProfile?: { domainId: string };
   visibility?: { in: OrgPlanVisibility[] };
@@ -140,7 +150,18 @@ export function buildPlanWhereClause(
     where.price = price;
   }
   if (filters.search) {
-    where.title = { contains: filters.search, mode: "insensitive" };
+    // People search by what they want to learn or who teaches it, so the
+    // query matches the topic and the expert's name as well as the title.
+    const match: InsensitiveContains = {
+      contains: filters.search,
+      mode: "insensitive",
+    };
+    where.OR = [
+      { title: match },
+      { description: match },
+      { consultantProfile: { user: { name: match } } },
+      { topics: { some: { name: match } } },
+    ];
   }
   if (filters.topicIds) {
     const ids = filters.topicIds.split(",").filter(Boolean);

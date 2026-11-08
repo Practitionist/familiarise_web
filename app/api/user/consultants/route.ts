@@ -19,11 +19,10 @@ import { oneOnOnePlanDiscoverableWhere } from "@/lib/api/plans/visibility";
 const LIST_CACHE_HEADERS = {
   "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
   "Netlify-Vary":
-    "query=page|limit|sort|domain|subdomain|tags|experience|minPrice|maxPrice|minRating|companies|language|affiliationType|orgKind|orgSlug|search",
+    "query=page|limit|sort|domain|subdomain|tags|experience|minPrice|maxPrice|minRating|companies|language|affiliationType|orgSlug|search",
 };
 
 const VALID_AFFILIATIONS = new Set(["independent", "agency"]);
-const VALID_ORG_KINDS = new Set(["AGENCY", "ENTERPRISE", "SOLO_PRACTICE"]);
 
 // orgSlug is the only new filter taking an arbitrary caller string straight
 // into `slug:` and the Netlify-Vary cache key — unbounded values mean free
@@ -62,8 +61,6 @@ export async function GET(request: NextRequest) {
     const affiliationType = VALID_AFFILIATIONS.has(rawAffiliation ?? "")
       ? rawAffiliation
       : null;
-    const rawOrgKind = searchParams.get("orgKind");
-    const orgKind = VALID_ORG_KINDS.has(rawOrgKind ?? "") ? rawOrgKind : null;
     const orgSlug =
       ORG_SLUG.safeParse(searchParams.get("orgSlug") ?? "").data ?? null;
 
@@ -90,7 +87,6 @@ export async function GET(request: NextRequest) {
       companies.length === 0 &&
       !language &&
       !affiliationType &&
-      !orgKind &&
       !orgSlug &&
       !search;
 
@@ -181,26 +177,17 @@ export async function GET(request: NextRequest) {
     } else if (affiliationType === "agency") {
       conditions.push({ isIndependent: false });
     }
-    // Org-kind sub-filter inside Agency/Org (AGENCY vs ENTERPRISE vs SOLO_PRACTICE)
-    // + single-org drill-down. ONE shared memberships.some predicate so both
-    // constraints must hold on the SAME membership (two existentials would let
-    // different memberships satisfy each half). Mirrors orgMembershipInclude's
-    // public-org constraints so a filter can never surface experts via a
-    // private/suspended org whose badge link would 404 on
-    // /explore/enterprise/organisations/{slug}.
-    if (orgKind || orgSlug) {
+    // Single-org drill-down. Mirrors orgMembershipInclude's public-org
+    // constraints so a filter can never surface experts via a private/suspended
+    // org whose badge link would 404 on /explore/enterprise/organisations/{slug}.
+    if (orgSlug) {
       conditions.push({
         memberships: {
           some: {
             role: "EXPERT",
             status: "ACTIVE",
             organization: {
-              ...(orgKind
-                ? {
-                    kind: orgKind as "AGENCY" | "ENTERPRISE" | "SOLO_PRACTICE",
-                  }
-                : {}),
-              ...(orgSlug ? { slug: orgSlug } : {}),
+              slug: orgSlug,
               canHost: true,
               status: "ACTIVE",
               isPublic: true,
@@ -264,21 +251,6 @@ export async function GET(request: NextRequest) {
       },
     );
   } catch (error) {
-    // Pre-migration rollout: `?orgKind=` on a DB without Organization.kind
-    // raises P2022. Answer that exact case with an empty list (no-store),
-    // not a 500 — the disabled UI pills don't protect direct query-string
-    // callers. Scoped to P2022-with-orgKind only; every other defect still
-    // captures + surfaces below.
-    if (
-      VALID_ORG_KINDS.has(searchParams.get("orgKind") ?? "") &&
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2022"
-    ) {
-      return NextResponse.json(
-        { data: [], meta: { total: 0, page, limit, totalPages: 0 } },
-        { headers: { "Cache-Control": "no-store" } },
-      );
-    }
     // Cross-region pooler cold-connect timeouts (#932, FAMILIARISE_WEB-9) are a
     // known, tracked transient — degrade this public list to empty rather than a
     // 500 + captured error. Real defects still capture + surface. Mirrors the

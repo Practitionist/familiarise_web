@@ -31,6 +31,7 @@ import AdvancedFilters from "./components/AdvancedFilters";
 import FilterChips from "./components/FilterChips";
 import StaticTopRows from "./components/StaticTopRows";
 import ProgramResults from "./components/ProgramResults";
+import ResultsToolbar from "./components/ResultsToolbar";
 
 interface ProgramStats {
   publishedClassCount: number;
@@ -47,6 +48,8 @@ interface ProgramsInteractiveContentProps {
   viewerOrgs?: Record<string, string>;
   /** Every level in the catalog, read server-side — not just loaded rows. */
   availableLevels?: PlanLevel[];
+  /** Every language a listed plan is taught in, read server-side. */
+  availableLanguages?: string[];
 }
 
 // #1490 — there is no FALLBACK_STATS any more. It rendered "500+ Classes
@@ -67,6 +70,7 @@ export default function ProgramsInteractiveContent({
   initialStats,
   viewerOrgs = {},
   availableLevels = [],
+  availableLanguages = [],
 }: ProgramsInteractiveContentProps) {
   const { data: session } = useSession();
   const userId = session?.user?.id;
@@ -98,10 +102,13 @@ export default function ProgramsInteractiveContent({
   // Data hooks. Curated and topics are pre-warmed via initialData for the
   // default `programType === "all"` query keys; tab switches still trigger
   // normal client fetches via the existing query-key plumbing.
-  const { programs, isLoading, hasMore, loadMore } = usePrograms(programType, {
-    userId,
-    filters,
-  });
+  const { programs, isLoading, isRefreshing, hasMore, loadMore } = usePrograms(
+    programType,
+    {
+      userId,
+      filters,
+    },
+  );
 
   const { programs: trendingPrograms, isLoading: trendingLoading } =
     useCuratedPrograms(
@@ -287,8 +294,7 @@ export default function ProgramsInteractiveContent({
                 selectedLevel={selectedLevel}
                 onLevelChange={setSelectedLevel}
                 uniqueLevels={uniqueLevels}
-                viewMode={viewMode}
-                onViewModeChange={setViewMode}
+                languages={availableLanguages}
                 topics={topicsWithCount}
               />
             </motion.div>
@@ -304,9 +310,20 @@ export default function ProgramsInteractiveContent({
               </div>
             )}
 
+            <ResultsToolbar
+              count={filteredAndSortedPrograms.length}
+              hasMore={hasMore}
+              isLoading={isLoading}
+              sort={filters.sort}
+              onSortChange={(sort) => updateFilters({ sort })}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+            />
+
             <ProgramResults
               programs={filteredAndSortedPrograms}
               isLoading={isLoading}
+              isRefreshing={isRefreshing}
               viewMode={viewMode}
               sentinelRef={sentinelRef}
               viewerOrgs={viewerOrgs}

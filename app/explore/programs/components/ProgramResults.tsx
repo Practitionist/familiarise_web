@@ -9,6 +9,8 @@ import ProgramCard from "./ProgramCard";
 interface ProgramResultsProps {
   programs: Program[];
   isLoading: boolean;
+  /** The list shows the previous results while a changed search or filter loads. */
+  isRefreshing?: boolean;
   viewMode: "grid" | "list";
   sentinelRef: RefObject<HTMLDivElement>;
   /** #664 — viewer's ACTIVE org memberships as { orgId: orgName }. */
@@ -44,47 +46,61 @@ function EmptyState() {
 function ProgramResultsImpl({
   programs,
   isLoading,
+  isRefreshing = false,
   viewMode,
   sentinelRef,
   viewerOrgs,
 }: ProgramResultsProps) {
   return (
     <>
-      {viewMode === "grid" ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {programs.map((item, index) => (
-            <motion.div
-              key={item.id}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{
-                duration: 0.4,
-                delay: Math.min(index * 0.05, 0.6),
-              }}
-            >
-              <ProgramCard program={item} variant="grid" viewerOrgs={viewerOrgs} />
-            </motion.div>
-          ))}
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {programs.map((item, index) => (
-            <motion.div
-              key={item.id}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{
-                duration: 0.4,
-                delay: Math.min(index * 0.05, 0.6),
-              }}
-            >
-              <ProgramCard program={item} variant="list" viewerOrgs={viewerOrgs} />
-            </motion.div>
-          ))}
-        </div>
-      )}
+      <div
+        aria-busy={isRefreshing}
+        className={`transition-opacity ${isRefreshing ? "opacity-60" : ""}`}
+      >
+        {viewMode === "grid" ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {programs.map((item, index) => (
+              <motion.div
+                key={item.id}
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{
+                  duration: 0.4,
+                  delay: Math.min(index * 0.05, 0.6),
+                }}
+              >
+                <ProgramCard
+                  program={item}
+                  variant="grid"
+                  viewerOrgs={viewerOrgs}
+                />
+              </motion.div>
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {programs.map((item, index) => (
+              <motion.div
+                key={item.id}
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{
+                  duration: 0.4,
+                  delay: Math.min(index * 0.05, 0.6),
+                }}
+              >
+                <ProgramCard
+                  program={item}
+                  variant="list"
+                  viewerOrgs={viewerOrgs}
+                />
+              </motion.div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {programs.length === 0 && !isLoading && <EmptyState />}
 
