@@ -31,6 +31,7 @@ import AdvancedFilters from "./components/AdvancedFilters";
 import FilterChips from "./components/FilterChips";
 import StaticTopRows from "./components/StaticTopRows";
 import ProgramResults from "./components/ProgramResults";
+import ResultsToolbar from "./components/ResultsToolbar";
 
 interface ProgramStats {
   publishedClassCount: number;
@@ -47,6 +48,8 @@ interface ProgramsInteractiveContentProps {
   viewerOrgs?: Record<string, string>;
   /** Every level in the catalog, read server-side — not just loaded rows. */
   availableLevels?: PlanLevel[];
+  /** Every language a listed plan is taught in, read server-side. */
+  availableLanguages?: string[];
 }
 
 // #1490 — there is no FALLBACK_STATS any more. It rendered "500+ Classes
@@ -67,6 +70,7 @@ export default function ProgramsInteractiveContent({
   initialStats,
   viewerOrgs = {},
   availableLevels = [],
+  availableLanguages = [],
 }: ProgramsInteractiveContentProps) {
   const { data: session } = useSession();
   const userId = session?.user?.id;
@@ -287,8 +291,7 @@ export default function ProgramsInteractiveContent({
                 selectedLevel={selectedLevel}
                 onLevelChange={setSelectedLevel}
                 uniqueLevels={uniqueLevels}
-                viewMode={viewMode}
-                onViewModeChange={setViewMode}
+                languages={availableLanguages}
                 topics={topicsWithCount}
               />
             </motion.div>
@@ -303,6 +306,16 @@ export default function ProgramsInteractiveContent({
                 />
               </div>
             )}
+
+            <ResultsToolbar
+              count={filteredAndSortedPrograms.length}
+              hasMore={hasMore}
+              isLoading={isLoading}
+              sort={filters.sort}
+              onSortChange={(sort) => updateFilters({ sort })}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+            />
 
             <ProgramResults
               programs={filteredAndSortedPrograms}

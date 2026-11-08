@@ -250,10 +250,12 @@ function ListCard({
   return (
     <Link
       href={planHref(program)}
-      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex"
+      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex flex-col sm:flex-row"
       aria-label={`View details for ${program.title}`}
     >
-      <div className="relative w-48 md:w-64 flex-shrink-0">
+      {/* Stacked on phones: image beside text left the text column too narrow
+          for the price and the button. */}
+      <div className="relative aspect-[16/10] w-full flex-shrink-0 sm:aspect-auto sm:w-48 md:w-64">
         <Image
           src={program.imageUrl}
           alt={program.title}
@@ -267,7 +269,7 @@ function ListCard({
         </div>
       </div>
 
-      <div className="p-6 flex-1 flex flex-col justify-between min-w-0">
+      <div className="p-4 sm:p-6 flex-1 flex flex-col justify-between min-w-0">
         <div>
           <div className="flex items-start justify-between gap-4 mb-2">
             <h3 className="text-lg font-semibold text-foreground group-hover:text-muted-foreground transition-colors">
@@ -304,9 +306,9 @@ function ListCard({
           )}
         </div>
 
-        <div className="flex items-center justify-between mt-4">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mt-4">
           <div className="flex items-center gap-2">
-            <div className="text-xl font-bold text-foreground">
+            <div className="whitespace-nowrap text-xl font-bold text-foreground">
               {formatPrice(program.price)}
             </div>
             {rating !== null && (

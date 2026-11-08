@@ -83,6 +83,14 @@ export function parsePlanFilters(
   };
 }
 
+type InsensitiveContains = { contains: string; mode: "insensitive" };
+
+type PlanSearchMatch =
+  | { title: InsensitiveContains }
+  | { description: InsensitiveContains }
+  | { consultantProfile: { user: { name: InsensitiveContains } } }
+  | { topics: { some: { name: InsensitiveContains } } };
+
 /**
  * Shared plan WHERE clause — structurally compatible with both
  * Prisma.WebinarPlanWhereInput and Prisma.ClassPlanWhereInput.
@@ -92,7 +100,8 @@ export interface PlanWhereClause {
   language?: string;
   level?: string;
   price?: { gte?: number; lte?: number };
-  title?: { contains: string; mode: "insensitive" };
+  /** Free-text search: a plan matches when any one of these does. */
+  OR?: PlanSearchMatch[];
   topics?: { some: { id: { in: string[] } } };
   consultantProfile?: { domainId: string };
   visibility?: { in: OrgPlanVisibility[] };
@@ -140,7 +149,18 @@ export function buildPlanWhereClause(
     where.price = price;
   }
   if (filters.search) {
-    where.title = { contains: filters.search, mode: "insensitive" };
+    // People search by what they want to learn or who teaches it, so the
+    // query matches the topic and the expert's name as well as the title.
+    const match: InsensitiveContains = {
+      contains: filters.search,
+      mode: "insensitive",
+    };
+    where.OR = [
+      { title: match },
+      { description: match },
+      { consultantProfile: { user: { name: match } } },
+      { topics: { some: { name: match } } },
+    ];
   }
   if (filters.topicIds) {
     const ids = filters.topicIds.split(",").filter(Boolean);

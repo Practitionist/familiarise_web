@@ -2,10 +2,7 @@
 
 import { useCallback, useMemo } from "react";
 import type { ActiveFilter } from "../components/FilterChips";
-import type {
-  ProgramFilters,
-  TopicWithCount,
-} from "@/lib/explore/programs";
+import type { ProgramFilters, TopicWithCount } from "@/lib/explore/programs";
 
 /**
  * Structured chip key. Replaces the old `topic-${id}` string encoding so
@@ -16,7 +13,6 @@ type ProgramChipKey =
   | { kind: "topic"; id: string }
   | { kind: "language" }
   | { kind: "price" }
-  | { kind: "sort" }
   | { kind: "level" }
   | { kind: "search" };
 
@@ -43,7 +39,6 @@ function decodeChipKey(encoded: string): ProgramChipKey | null {
   switch (encoded) {
     case "language":
     case "price":
-    case "sort":
     case "level":
     case "search":
       return { kind: encoded };
@@ -51,15 +46,6 @@ function decodeChipKey(encoded: string): ProgramChipKey | null {
       return null;
   }
 }
-
-const SORT_LABELS: Record<string, string> = {
-  trending: "Most Popular",
-  newest: "Newest",
-  "price-asc": "Price Low-High",
-  "price-desc": "Price High-Low",
-  "title-asc": "Title A-Z",
-  "title-desc": "Title Z-A",
-};
 
 interface UseProgramFilterChipsArgs {
   filters: ProgramFilters;
@@ -133,14 +119,6 @@ export function useProgramFilterChips({
       });
     }
 
-    if (filters.sort) {
-      out.push({
-        key: encodeChipKey({ kind: "sort" }),
-        label: "Sort",
-        value: SORT_LABELS[filters.sort] || filters.sort,
-      });
-    }
-
     if (selectedLevel !== "all") {
       out.push({
         key: encodeChipKey({ kind: "level" }),
@@ -176,9 +154,6 @@ export function useProgramFilterChips({
           return;
         case "price":
           updateFilters({ minPrice: undefined, maxPrice: undefined });
-          return;
-        case "sort":
-          updateFilters({ sort: undefined });
           return;
         case "level":
           setSelectedLevel("all");
