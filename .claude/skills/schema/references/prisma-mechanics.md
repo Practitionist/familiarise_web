@@ -2,8 +2,11 @@
 
 This reference covers the machinery: which command does what, what the shadow
 database is for, how to adopt a database that already exists, and how to recover
-when a migration has already gone wrong. It assumes Prisma 7, and notes where
-Prisma 6 differs.
+when a migration has already gone wrong. It assumes Prisma 7 (this repository pins `prisma` and every `@prisma/*` package
+to exactly 7.10.1 in `package.json`; re-run the rehearsal in `runbook-cutover.md` on every bump), and notes where Prisma 6 differs. Cite `/docs/orm/v7/...` URLs
+for Prisma 7: the unversioned `prisma.io/docs/orm/prisma-migrate/...` pages now
+describe a newer `contract emit` / `db migrate` workflow that replaces Prisma 7's
+`migrate deploy`, so they do not describe the commands used here.
 
 ## The three commands, and which one destroys data
 
@@ -44,7 +47,12 @@ generation and seeding are now explicit steps.
 records each in the `_prisma_migrations` table. It does not compare the schema
 file to the database, so it will not warn about drift, and it does not require
 or create a shadow database. It takes an advisory lock so that two concurrent
-deploys cannot apply the same migration twice.
+deploys cannot apply the same migration twice. The lock wait is a fixed 10
+seconds and is not configurable; if the command times out, run it again
+([development and production workflows](https://www.prisma.io/docs/orm/v7/prisma-migrate/workflows/development-and-production)).
+A proposal for a non-blocking try-lock is open as
+[prisma-engines#5809](https://github.com/prisma/prisma-engines/issues/5809)
+(status as last checked; UNVERIFIED that it has not since merged).
 
 What it does not do is roll anything back. If a migration fails halfway, the
 statements before the failure may already be committed, the migration is marked
@@ -67,7 +75,7 @@ hand.
 
 ```ts
 // prisma.config.ts
-// Prisma 7 does not load .env for you here, so import it before reading process.env.
+// Prisma 7 does not load .env for you, so import it before reading process.env.
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
@@ -75,13 +83,19 @@ export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: { path: "prisma/migrations" },
   datasource: {
-    // The CLI needs a direct, non-pooled connection for DDL.
+    // Required. The CLI needs a direct or session-mode connection for DDL.
     url: process.env.DIRECT_URL,
-    // Only needed for migrate dev / migrate diff, never for migrate deploy.
+    // Optional. Only migrate dev and migrate diff against a datasource use it.
     shadowDatabaseUrl: process.env.SHADOW_DATABASE_URL,
   },
 });
 ```
+
+In the Prisma 7 config, `datasource.url` is required, `shadowDatabaseUrl` is
+optional, `directUrl` no longer exists and `.env` is not loaded automatically
+([config reference](https://www.prisma.io/docs/orm/reference/prisma-config-reference)).
+This repository's own `prisma.config.ts` falls back to a placeholder URL so that
+`prisma generate` works in CI with no database.
 
 ## Reviewing SQL before it runs
 
@@ -139,7 +153,11 @@ the _models_ in that file, while `--from-config-datasource` and
 `prisma.config.ts` points at. `--from-migrations` and `--to-migrations` take the
 migrations directory and mean "the state the history says we should be in".
 
-These are Prisma 7 names. Prisma 6 spelled the same two ideas
+These are Prisma 7 names. The Prisma 7 flags are `--from-empty`,
+`--to-schema`, `--from-migrations`, `--from-config-datasource` and
+`--exit-code`, which exits with code 2 when the diff is non-empty; `--from-url`
+and `--shadow-database-url` are removed
+([CLI reference](https://www.prisma.io/docs/orm/v7/reference/prisma-cli-reference)). Prisma 6 spelled the same two ideas
 `--from-schema-datamodel` and `--from-schema-datasource`, both taking a schema
 path; those, along with `--from-url` and `--to-url`, were removed in Prisma 7,
 so a command copied from an older article or answer will fail outright.
@@ -219,36 +237,48 @@ in a transaction breaks that guarantee — which is the next section.
 
 ## Concurrent index creation
 
-`CREATE INDEX CONCURRENTLY` cannot run inside a transaction block, and Prisma
-wraps multi-statement migrations in one, so a migration containing it fails with
-`cannot run inside a transaction block`. Prisma has no supported way to disable
-the transaction for a single migration.
+Since Prisma 7.4.0, `CREATE INDEX CONCURRENTLY` works inside a Postgres
+migration ([prisma-engines#5767](https://github.com/prisma/prisma-engines/pull/5767),
+[7.4.0 release notes](https://github.com/prisma/prisma/releases/tag/7.4.0),
+[the original request, orm#14456](https://github.com/prisma/orm/issues/14456)).
+The older advice that Prisma wraps every multi-statement migration in one
+transaction, and cannot disable that for a single migration, no longer holds on
+this repository's version.
 
-Community reports that a migration containing exactly one statement is not
-wrapped, and that isolating the concurrent index in its own migration therefore
-works, are widespread but rest on an implementation detail rather than a
-documented guarantee. The dependable approach is to keep the index out of the
-migration system: apply it with `prisma db execute` or `psql` as an explicit
-operational step, and record it in a checked-in SQL file so that a rebuilt
-database gets it too. In Prisma 7 `db execute` reads its connection from
-`prisma.config.ts`; the `--schema` and `--url` flags it accepted in Prisma 6
-were removed.
+The cost is a reported side effect, which is open and unconfirmed
+([orm#30640](https://github.com/prisma/orm/issues/30640)): from 7.4.0, each
+statement of a Postgres migration commits on its own. If that is right, a
+migration that fails halfway stays half-applied and is marked failed (`P3018`)
+instead of rolling back. Treat this as reported, not established, and let the
+rehearsal in `runbook-cutover.md` settle it for 7.10.1 by running a two-statement
+migration whose second statement fails.
 
-```sh
-npx prisma db execute --file prisma/sql/indexes/appointment-consultant-start.sql
-```
+What to do until the rehearsal says otherwise:
 
-A concurrent build that fails leaves an invalid index behind that slows writes
-without helping reads, so always verify afterwards with the `pg_index` query in
-`change-catalog.md`.
+- Write every migration idempotently (`IF NOT EXISTS`, `IF EXISTS`, `DROP ... IF
+EXISTS` before create) and put one logical object in each migration file, so
+  that a half-applied file is fixed by re-running or resolving it.
+- Prefer a plain `SET lock_timeout = '3s';` at the top of a migration and
+  `RESET lock_timeout;` at the end. `SET LOCAL` only lasts until the end of the
+  current transaction, so it may have no effect when statements are not inside
+  one (UNVERIFIED; the rehearsal decides).
+- A concurrent build that fails leaves an invalid index behind that slows writes
+  without helping reads, so always verify afterwards with the `pg_index` query in
+  `change-catalog.md`. A later `CREATE INDEX IF NOT EXISTS` skips the invalid
+  one silently, so drop the invalid index first.
+- If the rehearsal shows the concurrent statement still fails, fall back to
+  applying it by hand with `prisma db execute --file` (Prisma 7 reads the
+  connection from `prisma.config.ts`; the Prisma 6 `--schema` and `--url` flags
+  were removed) and keep the SQL in a checked-in file.
 
 ## Enum changes
 
-Adding a value to a PostgreSQL enum is cheap and takes no table lock. Before
-PostgreSQL 12 it could not run inside a transaction block, which produced the
-same class of failure as concurrent index creation; on PostgreSQL 12 and later
-it works inside a transaction as long as the new value is not used in the same
-transaction that added it.
+Adding a value to a PostgreSQL enum is cheap, but a value added by
+`ALTER TYPE ... ADD VALUE` inside a transaction cannot be used until that
+transaction commits, and there is no `DROP VALUE`
+([PostgreSQL 15 `ALTER TYPE`](https://www.postgresql.org/docs/15/sql-altertype.html)).
+The PostgreSQL documentation does not state which lock `ADD VALUE` takes, so
+any claim that it takes no table lock is UNVERIFIED; do not rely on it.
 
 Removing a value is genuinely hard, because PostgreSQL has no
 `ALTER TYPE ... DROP VALUE`. Removing one means creating a replacement type,
@@ -314,24 +344,28 @@ both; only the configuration surface moved.
 
 ## The error codes worth recognising
 
-These five account for most of the time lost to Prisma migration problems, and
+These six account for most of the time lost to Prisma migration problems, and
 each has a single correct response.
 
-| Code    | Meaning                                                     | Response                                                                        |
-| ------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `P3005` | The database is not empty and has no migration history.     | Baseline it, as described above. Do not reset.                                  |
-| `P3006` | A migration failed to apply cleanly to the shadow database. | Usually a hand-edited migration that is not replayable from empty. Fix the SQL. |
-| `P3009` | Failed migrations found in the target database.             | Recover with `migrate resolve`, as described above. Do not re-run `deploy`.     |
-| `P3014` | The shadow database could not be created.                   | Provide `shadowDatabaseUrl` pointing at a database created by hand.             |
-| `P1001` | Cannot reach the database server.                           | Almost always the pooled URL being used for DDL, or an IP allowlist.            |
+| Code    | Meaning                                                                                  | Response                                                                                             |
+| ------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `P3005` | The database is not empty and has no migration history.                                  | Baseline it, as described above. Do not reset.                                                       |
+| `P3006` | A migration failed to apply cleanly to the shadow database.                              | Usually a hand-edited migration that is not replayable from empty. Fix the SQL.                      |
+| `P3009` | Failed migrations found in the target database.                                          | Recover with `migrate resolve`, as described above. Do not re-run `deploy`.                          |
+| `P3018` | A migration failed to apply; the statements before the failure may already be committed. | Inspect what committed, finish or undo it by hand, then `migrate resolve`. See `runbook-cutover.md`. |
+| `P3014` | The shadow database could not be created.                                                | Provide `shadowDatabaseUrl` pointing at a database created by hand.                                  |
+| `P1001` | Cannot reach the database server.                                                        | Almost always the pooled URL being used for DDL, or an IP allowlist.                                 |
 
 ## Sources
 
+- [Development and production workflows (v7)](https://www.prisma.io/docs/orm/v7/prisma-migrate/workflows/development-and-production) — the 10-second advisory lock wait.
+- [Prisma CLI reference (v7)](https://www.prisma.io/docs/orm/v7/reference/prisma-cli-reference) and [config reference](https://www.prisma.io/docs/orm/reference/prisma-config-reference) — `migrate diff` flags and `prisma.config.ts`.
 - [prisma migrate deploy](https://www.prisma.io/docs/cli/migrate/deploy) and [prisma migrate resolve](https://www.prisma.io/docs/cli/migrate/resolve) — command semantics.
 - [Baselining a database](https://www.prisma.io/docs/orm/prisma-migrate/workflows/baselining) — the `0_init` and `migrate resolve --applied` procedure.
 - [Customizing migrations](https://www.prisma.io/docs/orm/prisma-migrate/workflows/customizing-migrations) — `--create-only` and editing generated SQL.
 - [prisma migrate diff](https://www.prisma.io/docs/cli/migrate/diff) — the datamodel versus datasource flag distinction.
 - [About the shadow database](https://www.prisma.io/docs/orm/prisma-migrate/understanding-prisma-migrate/shadow-database) — when it is created and when it is not.
 - [Patching and hotfixing](https://www.prisma.io/docs/orm/prisma-migrate/workflows/patching-and-hotfixing) — the failed-migration recovery paths.
-- [Support CREATE INDEX CONCURRENTLY](https://github.com/prisma/orm/issues/14456) and [Disable transactions for a single migration](https://github.com/prisma/prisma/discussions/10601) — the open limitation and the community workarounds.
+- [prisma-engines#5767](https://github.com/prisma/prisma-engines/pull/5767), [7.4.0 release](https://github.com/prisma/prisma/releases/tag/7.4.0), [orm#14456](https://github.com/prisma/orm/issues/14456) and [orm#30640](https://github.com/prisma/orm/issues/30640) — concurrent indexes in migrations and the reported per-statement commit.
+- [PostgreSQL 15 ALTER TYPE](https://www.postgresql.org/docs/15/sql-altertype.html) — enum `ADD VALUE` and the absence of `DROP VALUE`.
 - [Upgrade to Prisma ORM 7](https://www.prisma.io/docs/guides/upgrade-prisma-orm/v7) — the `prisma.config.ts` migration.

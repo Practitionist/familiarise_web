@@ -71,7 +71,17 @@ The most common mistake is explanation creeping into a how-to, or a reference ta
 - **Formatting:** run `npx prettier --write <changed files>` only, never `prettier --write .`. `prompts/` is Prettier-ignored.
 - **Verify in code, never from memory.** Open the code for every behavioural claim, and check vendor or legal facts against official docs (India-first sources for policy and regulation).
 
-## 6. Pre-PR checklist
+## 6. Repo versus Notion
+
+Decide where each fact lives before writing it. The owner decision (2026-11-08) and the full table are in the root `README.md`, section "Repo versus Notion". Apply it like this:
+
+1. **Repo test.** If an engineer or agent needs the fact to build, change or verify the system correctly, write it in the repo.
+2. **Notion test.** If a competitor would gain from reading it, or the owner can change it without a code change, keep it in Notion (the owner's "Familiarise" workspace) and write only a pointer.
+3. **Split the fact when both apply.** Document the mechanism and the configuration field name in the repo. Leave the value or the reasoning to Notion. Example: the repo says "a referral is held when it trips a rule on `ReferralProgramConfig`"; the threshold is "set by the owner; value kept in Notion (Familiarise / Growth & Marketing)".
+4. **De-duplicate.** Every fact has one canonical home and the other side links to it. Write "value kept in Notion (Familiarise / <section>)". Never paste a Notion page into a doc, and never restate a repo mechanism in Notion beyond a link. If you find the same fact in both, keep the canonical copy and replace the other with a link.
+5. **Stay in bounds without Notion access.** If you cannot tell which side a number belongs to, write the pointer and list it in your report as unverified. Public vendor plan limits with a source URL are allowed in the repo.
+
+## 7. Pre-PR checklist
 
 1. Run the drift check. Every backticked repo path in the changed docs must exist, and every relative link must resolve:
    ```bash
@@ -83,7 +93,7 @@ The most common mistake is explanation creeping into a how-to, or a reference ta
 4. Mermaid renders. Numbering is contiguous. The README indexes are updated.
 5. Run one CodeRabbit CLI round (`coderabbit review --committed --base dev --agent -c .coderabbit.yaml`) and check the Sonar gate (`sonar qg status -p Practitionist_familiarise_web --pull-request <n>`).
 
-### 6.1 The CI drift gate (owner decision, 2026-10-17)
+### 7.1 The CI drift gate (owner decision, 2026-10-17)
 
 A small CI script runs on every PR. Put it in `scripts/ci/`, next to `check-db-sidecars.ts`. It enforces three rules:
 

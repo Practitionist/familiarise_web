@@ -39,7 +39,7 @@ Never write "waitlist" for the newsletter. Never reintroduce `/api/waitlist/*`, 
 
 ## Confidentiality
 
-The repository holds mechanisms, invariants, configuration field names and on-screen terms. The owner's Notion workspace ("Familiarise / Growth & Marketing") holds the referral budget, fraud and hold thresholds, vendor costs and plan choices, growth targets, competitor research and conversion read-outs. Write "set by the owner; the value is kept in Notion (Familiarise / Growth & Marketing)" instead of the value. Vendor plan limits from a public pricing page are allowed.
+Growth follows the general repo-versus-Notion rule (root `README.md`, section "Repo versus Notion"; applied in `.claude/skills/documentation/SKILL.md`). For growth, the repository holds mechanisms, invariants, configuration field names and on-screen terms. The Notion section "Familiarise / Growth & Marketing" holds the referral budget, fraud and hold thresholds, vendor costs and plan choices, growth targets, competitor research and conversion read-outs. Write "set by the owner; the value is kept in Notion (Familiarise / Growth & Marketing)" instead of the value. Vendor plan limits from a public pricing page are allowed.
 
 ## Where things live
 
