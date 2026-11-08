@@ -426,6 +426,7 @@ const restorableCredit = {
     currency: true,
     source: true,
     configVersion: true,
+    reversedAt: true,
   },
 } as const;
 
@@ -438,6 +439,7 @@ type RestorableCredit = Pick<
   | "currency"
   | "source"
   | "configVersion"
+  | "reversedAt"
 >;
 
 /** True when the expert or the platform raised the refund row, not the buyer. */
@@ -485,6 +487,25 @@ async function restoreUsageToCredit(
   const { credit, creditId, give, now } = input;
   const key = `referral-restore:${input.usageId}:${input.restoredBefore + give}`;
   const floor = new Date(now.getTime() + SELLER_REFUND_VALIDITY_MS);
+
+  // A reversed credit stays reversed: the value lands on its non-spendable row and the liability
+  // is not raised again, so a restore can never undo an operator or chargeback reversal.
+  if (credit.reversedAt) {
+    const kept = await tx.referralCredit.updateMany({
+      where: {
+        id: creditId,
+        state: credit.state,
+        reversedAt: { not: null },
+        usedAmount: { gte: give },
+      },
+      data: {
+        usedAmount: { decrement: give },
+        remainingAmount: { increment: give },
+      },
+    });
+    if (kept.count !== 1) throw restoreRaced(creditId);
+    return;
+  }
 
   if (credit.state === "EXPIRED") {
     // The old row keeps its breakage and usage trail; amount and usedAmount shrink by what moved.

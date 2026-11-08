@@ -13,6 +13,7 @@ export type CreditReversal =
         state: ReferralCreditState;
       };
     }
+  | { kind: "RETIRED" }
   | { kind: "NOT_FOUND" }
   | { kind: "ALREADY_REVERSED" }
   | { kind: "NOT_REVERSIBLE"; state: ReferralCreditState }
@@ -26,7 +27,14 @@ export type CreditReversal =
  */
 export async function reverseCreditBalance(
   tx: Tx,
-  input: { creditId: string; reversedBy: string; reason: string; now: Date },
+  input: {
+    creditId: string;
+    reversedBy: string;
+    reason: string;
+    now: Date;
+    /** Also stamp a credit with nothing left to void (spent, reserved or expired), posting nothing. */
+    retireEmpty?: boolean;
+  },
 ): Promise<CreditReversal> {
   const { creditId, now } = input;
   const existing = await tx.referralCredit.findUnique({
@@ -42,6 +50,26 @@ export async function reverseCreditBalance(
   });
   if (!existing) return { kind: "NOT_FOUND" };
   if (existing.reversedAt !== null) return { kind: "ALREADY_REVERSED" };
+  const empty = existing.state === "EXPIRED" || existing.remainingAmount <= 0;
+  if (existing.state !== "VOID" && empty && input.retireEmpty) {
+    // The stamp makes a later restore of a reserved or spent balance land on a dead row.
+    const retired = await tx.referralCredit.updateMany({
+      where: {
+        id: creditId,
+        reversedAt: null,
+        state: existing.state,
+        usedAmount: existing.usedAmount,
+        remainingAmount: existing.remainingAmount,
+      },
+      data: {
+        reversedAt: now,
+        reversedBy: input.reversedBy,
+        reversedReason: input.reason,
+        ...(existing.state === "VESTED" && { state: "VOID", voidedAt: now }),
+      },
+    });
+    return retired.count === 1 ? { kind: "RETIRED" } : { kind: "CHANGED" };
+  }
   if (existing.state === "EXPIRED" || existing.state === "VOID") {
     return { kind: "NOT_REVERSIBLE", state: existing.state };
   }
@@ -133,6 +161,7 @@ export async function voidVestedReferralRewards(
         reversedBy: CHARGEBACK_REVERSAL_ACTOR,
         reason: `chargeback lost (dispute ${input.disputeId})`,
         now: input.now,
+        retireEmpty: true,
       });
       // A balance that moved underneath must not settle the dispute with the credit still live.
       if (outcome.kind === "CHANGED") {

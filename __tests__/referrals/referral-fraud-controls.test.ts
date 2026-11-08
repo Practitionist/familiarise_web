@@ -46,6 +46,7 @@ const tx = {
   user: { findUnique: jest.fn() },
   payment: { count: jest.fn(), findFirst: jest.fn(), updateMany: jest.fn() },
   consultantFeeWaiver: { updateMany: jest.fn() },
+  referralCreditUsage: { findMany: jest.fn(), delete: jest.fn() },
 };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -57,7 +58,10 @@ import {
   isDisposableEmail,
   normaliseEmail,
 } from "@/lib/referrals/email-signals";
-import { applyReferralCode } from "@/lib/referrals/service";
+import {
+  applyReferralCode,
+  reverseCreditsForPayment,
+} from "@/lib/referrals/service";
 import { settleQualifyingReferral } from "@/lib/referrals/vesting";
 import { releaseHeldReferral, voidHeldReferral } from "@/lib/referrals/review";
 import { voidVestedReferralRewards } from "@/lib/referrals/credit-reversal";
@@ -331,6 +335,35 @@ describe("lost chargeback after vest", () => {
       ]);
     },
   );
+
+  it("retires a fully reserved credit, so the failed checkout's restore stays dead", async () => {
+    const row = arrangeCredit(30_000);
+    expect(await settle()).toEqual({ reversedPaise: 0, waiversRevoked: 0 });
+    expect(row).toMatchObject({ state: "VOID", reversedAt: NOW });
+    expect(mockPostLedgerTxn).not.toHaveBeenCalled();
+
+    tx.referralCreditUsage.findMany.mockResolvedValue([
+      {
+        id: "use-1",
+        creditId: "cr-1",
+        amount: 30_000,
+        originalAmount: 30_000,
+        restoredAmount: 0,
+        credit: { ...row, expiresAt: null },
+      },
+    ]);
+    tx.referralCredit.updateMany.mockImplementation(async ({ where, data }) => {
+      const match = row.reversedAt !== null && row.state === where.state;
+      if (match) {
+        row.usedAmount -= data.usedAmount.decrement;
+        row.remainingAmount += data.remainingAmount.increment;
+      }
+      return { count: match ? 1 : 0 };
+    });
+    expect(await reverseCreditsForPayment("pay-unpaid", T)).toBe(30_000);
+    expect(row).toMatchObject({ state: "VOID", remainingAmount: 30_000 });
+    expect(mockPostLedgerTxn).not.toHaveBeenCalled();
+  });
 
   it("a replayed verdict is a no-op", async () => {
     arrangeCredit(0);

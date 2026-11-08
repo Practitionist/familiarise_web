@@ -50,6 +50,7 @@ export const POST = withOpsAction(
             409,
           );
         case "NO_REMAINING_BALANCE":
+        case "RETIRED":
           throw new OpsRefusal(
             "NO_REMAINING_BALANCE",
             "This referral credit has no unused balance left to reverse.",
