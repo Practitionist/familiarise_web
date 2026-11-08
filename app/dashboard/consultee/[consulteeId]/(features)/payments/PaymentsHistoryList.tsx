@@ -161,7 +161,8 @@ function HistoryRow({
           with {payment.consultantName}
         </p>
         <p className="mt-1 text-sm text-foreground">{moneyState.line}</p>
-        {payment.fundingBreakdown.length > 1 &&
+        {payment.status === "SUCCEEDED" &&
+          payment.fundingBreakdown.length > 1 &&
           moneyState.state !== "SPONSORED" && (
             <p className="text-xs text-muted-foreground">
               Paid with{" "}

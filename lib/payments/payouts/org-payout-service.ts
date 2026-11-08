@@ -1580,7 +1580,7 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
             actorMembershipId: null,
             category: "PAYOUT",
             action: AUDIT_ACTIONS.PAYOUT.PAYOUT_COMPLETED,
-            description: `Payout of ${formatNotificationMoney(payout.netPayoutPaise, payout.currency)} completed`,
+            description: `Payout of ${formatNotificationMoney(payout.amountPaise, payout.currency)} completed`,
             details: {
               payoutId,
               netPayoutPaise: payout.netPayoutPaise,

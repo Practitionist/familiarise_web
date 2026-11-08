@@ -106,6 +106,13 @@ describe("PaymentsHistoryList", () => {
           legs: [{ source: "WALLET" }],
           sponsorOrgName: "Wipro Limited",
         }),
+        row("pending-split", {
+          status: "PENDING",
+          fundingBreakdown: paymentFundingBreakdown([
+            { source: "CARD", amountPaise: 80_000 },
+            { source: "REFERRAL_CREDIT", amountPaise: 20_000 },
+          ]),
+        }),
         row("split", {
           fundingBreakdown: paymentFundingBreakdown([
             { source: "CARD", amountPaise: 80_000 },
@@ -135,6 +142,7 @@ describe("PaymentsHistoryList", () => {
       "Paid with ₹800.00 card / UPI + ₹200.00 referral credit",
     );
     expect(rowHtml("paid")).not.toContain("Paid with");
+    expect(rowHtml("pending-split")).not.toContain("Paid with");
   });
 
   it("never shows a raw enum", () => {

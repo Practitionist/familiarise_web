@@ -45,7 +45,9 @@ function chargeFacts(detail: ConsulteePaymentDetail, money: Money) {
       label: detail.coPays.length > 1 ? `Your share ${i + 1}` : "Your share",
       value: formatCurrencyAmount(c.amountPaise, c.currency),
     })),
-    ...(detail.showAmount && row.fundingBreakdown.length > 1
+    ...(detail.showAmount &&
+    row.status === "SUCCEEDED" &&
+    row.fundingBreakdown.length > 1
       ? [
           {
             label: "Paid with",
