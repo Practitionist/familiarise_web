@@ -53,6 +53,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { HeldReferralsPanel } from "./HeldReferralsPanel";
 
 const CREDIT_SOURCES = [
   "REFERRAL_BONUS",
@@ -2351,7 +2352,9 @@ export function ReferralCreditsPageClient() {
   const searchParams = useSearchParams();
   const rawTab = searchParams?.get("tab");
   const [activeTab, setActiveTab] = useState(
-    rawTab === "waivers" || rawTab === "config" ? rawTab : "credits",
+    rawTab === "waivers" || rawTab === "config" || rawTab === "held"
+      ? rawTab
+      : "credits",
   );
   const [issueOpen, setIssueOpen] = useState(false);
   const [grantOpen, setGrantOpen] = useState(false);
@@ -2398,6 +2401,12 @@ export function ReferralCreditsPageClient() {
                   onGrantOpenChange={setGrantOpen}
                 />
               ),
+            },
+            {
+              value: "held",
+              label: "Held for review",
+              show: canManage,
+              content: <HeldReferralsPanel />,
             },
             {
               value: "config",

@@ -18,7 +18,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export type SidecarObjectKind = "constraint" | "index" | "trigger";
+export type SidecarObjectKind = "constraint" | "index" | "trigger" | "view";
 
 export interface SidecarObject {
   kind: SidecarObjectKind;
@@ -102,6 +102,7 @@ const INDEX_RE =
 const UNIQUE_INDEX_RE =
   /CREATE\s+UNIQUE\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"?([A-Za-z0-9_]+)"?/gi;
 const TRIGGER_RE = /CREATE\s+(?:CONSTRAINT\s+)?TRIGGER\s+(\w+)/gi;
+const VIEW_RE = /CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+"?([A-Za-z0-9_]+)"?/gi;
 
 /** Every declared object in one sidecar file's text. */
 export function parseSidecarSql(sql: string, source: string): SidecarObject[] {
@@ -116,6 +117,9 @@ export function parseSidecarSql(sql: string, source: string): SidecarObject[] {
   for (const m of active.matchAll(TRIGGER_RE)) {
     out.push({ kind: "trigger", name: m[1], source });
   }
+  for (const m of active.matchAll(VIEW_RE)) {
+    out.push({ kind: "view", name: m[1], source });
+  }
   return out;
 }
 
@@ -124,6 +128,7 @@ export const SIDECAR_FILES = [
   "check-constraints.sql",
   "ledger-triggers.sql",
   "payment-legs-triggers.sql",
+  "analytics-views.sql",
 ] as const;
 
 /** Every declared object across the sidecar files in `dir`. */

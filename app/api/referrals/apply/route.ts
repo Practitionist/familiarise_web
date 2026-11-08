@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { applyReferralCode } from "@/lib/referrals/service";
 import { referralApplyLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { referralRequestSignals } from "@/lib/referrals/signal-hash";
 import { z } from "zod";
 
 const applyBodySchema = z.object({ code: z.string().trim().min(1).max(64) });
@@ -26,7 +27,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const referral = await applyReferralCode(session.user.id, body.data.code);
+    const referral = await applyReferralCode(
+      session.user.id,
+      body.data.code,
+      referralRequestSignals(req.headers),
+    );
 
     if (!referral) {
       return NextResponse.json(

@@ -162,6 +162,7 @@ jest.mock("../../lib/prisma", () => {
     platformIncident: { findMany: jest.fn().mockResolvedValue([]) },
     windowBackupInterest: {
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      findMany: jest.fn().mockResolvedValue([]),
     },
     notificationOutbox: {
       upsert: jest.fn(async () => ({})),

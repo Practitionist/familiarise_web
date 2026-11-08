@@ -232,7 +232,6 @@ export class WebinarService {
       price: priceToPaise(plan?.price),
       priceCurrency: plan?.priceCurrency,
       durationInHours: plan?.durationInHours ?? 1,
-      maxParticipants: plan?.maxParticipants ?? 1,
       certificateProvided: plan?.certificateProvided,
       waitlistEnabled: plan?.waitlistEnabled,
       // A cleared size reaches here undefined, which JSON drops; null resets it.
@@ -254,12 +253,16 @@ export class WebinarService {
     if (isUpdate) {
       return {
         ...basePayload,
+        // Absent unless the host edited it, so a stale form never moves capacity.
+        ...(plan?.maxParticipants !== undefined
+          ? { maxParticipants: plan.maxParticipants }
+          : {}),
         id: planId,
         webinarId: webinarId || undefined,
       };
     }
 
-    return basePayload;
+    return { ...basePayload, maxParticipants: plan?.maxParticipants ?? 1 };
   }
 
   /**

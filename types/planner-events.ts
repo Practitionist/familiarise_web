@@ -100,11 +100,15 @@ export type SubscriptionPlanEvent = {
 export type PlannerWebinarEvent = WebinarEvent & {
   collaboratorRole: string;
   isCollaborated: boolean;
+  /** Open appointment-waitlist rows on this event (host view; a count, never names). */
+  waitingCount?: number;
 };
 
 export type PlannerClassEvent = ClassEvent & {
   collaboratorRole: string;
   isCollaborated: boolean;
+  /** Open appointment-waitlist rows on this event (host view; a count, never names). */
+  waitingCount?: number;
 };
 
 // Update base Event type to be a union

@@ -133,7 +133,7 @@ it("sums the tiles, shows the hold date and the sponsor, and never a raw enum", 
         consultantId="c_1"
         data={data}
         now={NOW}
-        stats={{ rows: [], lifetimePaise: 0 }}
+        stats={{ rows: [], lifetimePaise: 0, waitingByEvent: {} }}
       />
       <EarningsActivity consultantId="cp-1" data={data} now={NOW} />
     </>,

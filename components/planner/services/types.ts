@@ -87,14 +87,24 @@ export interface ClassContentInput {
 }
 
 // Update payload types extend create types with optional id fields
-export interface UpdateClassPayload extends CreateClassPayload {
+/** An update sends the capacity only when the host changed it. */
+export interface UpdateClassPayload extends Omit<
+  CreateClassPayload,
+  "maxParticipants"
+> {
   id: string;
   classId?: string;
+  maxParticipants?: number;
 }
 
-export interface UpdateWebinarPayload extends CreateWebinarPayload {
+/** An update sends the capacity only when the host changed it. */
+export interface UpdateWebinarPayload extends Omit<
+  CreateWebinarPayload,
+  "maxParticipants"
+> {
   id: string;
   webinarId?: string;
+  maxParticipants?: number;
 }
 
 // Union types for request bodies
