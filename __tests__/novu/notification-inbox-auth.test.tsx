@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 
 const mockSync = jest.fn();
 const mockRefetch = jest.fn();
+let mockUnread = 0;
 
 jest.mock("@novu/nextjs", () => ({
   Inbox: ({
@@ -16,7 +17,11 @@ jest.mock("@novu/nextjs", () => ({
       {children}
     </div>
   ),
-  Bell: () => <span />,
+  Bell: ({
+    renderBell,
+  }: {
+    renderBell?: (unread: { total: number }) => React.ReactNode;
+  }) => <span>{renderBell?.({ total: mockUnread })}</span>,
   InboxContent: () => <div />,
 }));
 jest.mock("../../lib/auth-client", () => ({
@@ -39,6 +44,10 @@ beforeAll(async () => {
   process.env.NEXT_PUBLIC_NOVU_APP_ID = "novu-app";
   ({ NotificationInbox } =
     await import("../../components/notifications/NotificationInbox"));
+});
+
+beforeEach(() => {
+  mockUnread = 0;
 });
 
 afterAll(() => {
@@ -93,5 +102,36 @@ describe("NotificationInbox signed sessions", () => {
     expect(
       screen.getByRole("button", { name: "Loading notifications" }),
     ).toBeDisabled();
+  });
+
+  it("names the trigger with the unread count and hides the badge from assistive tech", () => {
+    mockSync.mockReturnValue({
+      status: "success",
+      data: { success: true, subscriberHash: "a".repeat(64) },
+    });
+    mockUnread = 3;
+
+    render(<NotificationInbox />);
+
+    const trigger = screen.getByRole("button", {
+      name: "Notifications, 3 unread",
+    });
+    expect(trigger.querySelector("span[aria-hidden='true']")?.textContent).toBe(
+      "3",
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("keeps the plain name when nothing is unread", () => {
+    mockSync.mockReturnValue({
+      status: "success",
+      data: { success: true, subscriberHash: "a".repeat(64) },
+    });
+
+    render(<NotificationInbox />);
+
+    expect(
+      screen.getByRole("button", { name: "Notifications" }),
+    ).toBeInTheDocument();
   });
 });

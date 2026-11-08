@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Bell, Inbox, InboxContent } from "@novu/nextjs";
 import { Bell as BellIcon, Settings } from "lucide-react";
@@ -24,6 +24,17 @@ type OrgMembershipLite = {
   organizationName: string;
 };
 
+/** Hands Novu's unread count (known only inside `renderBell`) to the trigger's name. */
+function UnreadReporter({
+  count,
+  onChange,
+}: Readonly<{ count: number; onChange: (count: number) => void }>) {
+  useEffect(() => {
+    onChange(count);
+  }, [count, onChange]);
+  return null;
+}
+
 export function NotificationInbox() {
   const router = useRouter();
   const { data: session } = useSession();
@@ -34,6 +45,7 @@ export function NotificationInbox() {
   } = useNovuSubscriberSync();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const [unread, setUnread] = useState(0);
   const hydrated = useHydrated();
 
   const { ready: authReady, subscriberHash } = resolveInboxAuth(
@@ -199,7 +211,9 @@ export function NotificationInbox() {
         <PopoverTrigger asChild>
           <button
             type="button"
-            aria-label="Notifications"
+            aria-label={
+              unread > 0 ? `Notifications, ${unread} unread` : "Notifications"
+            }
             aria-haspopup="dialog"
             className="relative inline-flex h-9 w-9 items-center justify-center rounded-md text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
           >
@@ -209,11 +223,11 @@ export function NotificationInbox() {
                 return (
                   <span className="relative flex items-center justify-center">
                     <BellIcon className="h-5 w-5" />
+                    <UnreadReporter count={count} onChange={setUnread} />
                     {count > 0 && (
                       <span
-                        role="status"
-                        aria-label={`${count} unread notifications`}
-                        className="absolute -top-2 -right-2 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white"
+                        aria-hidden="true"
+                        className="absolute -top-2 -right-2 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[10px] font-bold text-white"
                       >
                         {count > 99 ? "99+" : count}
                       </span>

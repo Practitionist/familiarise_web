@@ -462,8 +462,14 @@ export function LibraryBrowser({
   } else if (groups.length === 0 && !data?.purchased?.length) {
     body = empty;
   } else {
+    const sectionTitle = docs ? "Documents by session" : "Recordings";
     body = (
-      <div className="space-y-3">
+      <section className="space-y-3" aria-label={sectionTitle}>
+        {groups.length > 0 && (
+          <h2 className="text-sm font-semibold text-foreground">
+            {sectionTitle}
+          </h2>
+        )}
         {groups.map((group) =>
           !docs && group.timeline ? (
             <RecordingTimelineCard
@@ -497,7 +503,7 @@ export function LibraryBrowser({
             />
           ),
         )}
-      </div>
+      </section>
     );
   }
 

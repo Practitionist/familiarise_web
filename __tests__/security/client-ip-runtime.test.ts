@@ -15,7 +15,6 @@ jest.mock("../../lib/rate-limit", () => ({
 }));
 
 import { NextRequest } from "next/server";
-import { NextFetchEvent } from "next/dist/server/web/spec-extension/fetch-event";
 import {
   CLIENT_IP_HEADER,
   edgeClientIp,
@@ -60,12 +59,7 @@ it.each(["/api/auth/request-password-reset", "/api/x/a.json", "/pricing"])(
     const request = new NextRequest(`http://localhost${path}`, {
       headers: forged,
     });
-    const event = new NextFetchEvent({
-      request,
-      page: path,
-      context: { waitUntil: () => undefined },
-    });
-    const res = await middleware(request, event);
+    const res = await middleware(request);
     expect(res.headers.get(`x-middleware-request-${CLIENT_IP_HEADER}`)).toBe(
       "203.0.113.10",
     );
