@@ -1,5 +1,5 @@
 /**
- * GET /api/admin/waitlist — newsletter subscriber list for the backoffice.
+ * GET /api/admin/newsletter — newsletter subscriber list for the backoffice.
  *
  * `?format=csv` returns the same filtered set as a download.
  */
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest): Promise<Response> {
       return new Response(csv, {
         headers: {
           "Content-Type": "text/csv; charset=utf-8",
-          "Content-Disposition": 'attachment; filename="waitlist.csv"',
+          "Content-Disposition": 'attachment; filename="newsletter.csv"',
         },
       });
     }
@@ -55,9 +55,9 @@ export async function GET(request: NextRequest): Promise<Response> {
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "waitlist" } },
+      { tags: { subsystem: "newsletter" } },
     );
-    console.error("[admin/waitlist]", error);
+    console.error("[admin/newsletter]", error);
     return NextResponse.json(
       { error: "Failed to load subscribers" },
       { status: 500 },

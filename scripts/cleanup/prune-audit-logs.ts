@@ -48,7 +48,7 @@ const OPS_SURFACE_WINDOW: Record<BackofficeSurface, "money" | "other"> = {
   "supportChat.intervene": "other",
   "engineering.escalate": "other",
   "appointments.manage": "other",
-  "waitlist.manage": "other",
+  "newsletter.manage": "other",
   "leads.manage": "other",
   "users.read": "other",
   "users.verify": "other",

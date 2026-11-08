@@ -192,7 +192,7 @@ export function scrubSentryEvent<T extends Sentry.Event = ErrorEvent>(
     if (event.request.data !== undefined) {
       event.request.data = redactByKey(event.request.data, 0);
     }
-    // Invite, reset and waitlist links carry their token in the query string.
+    // Invite, reset and newsletter links carry their token in the query string.
     if (typeof event.request.url === "string") {
       event.request.url = stripSensitiveQueryParams(event.request.url);
     }

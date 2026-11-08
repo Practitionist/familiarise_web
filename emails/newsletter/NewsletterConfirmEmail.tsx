@@ -1,8 +1,8 @@
 import {
+  Button,
   Container,
   Head,
   Html,
-  Link,
   Preview,
   Section,
   Text,
@@ -12,41 +12,42 @@ import { getAppUrl } from "@/lib/url";
 import { EmailFooter } from "@/emails/components/EmailFooter";
 import { EmailLogo } from "@/emails/components/EmailLogo";
 
-interface WaitlistWelcomeEmailProps {
+interface NewsletterConfirmEmailProps {
   name?: string | null;
-  unsubscribeLink: string;
+  confirmLink: string;
 }
 
-export const WaitlistWelcomeEmail = ({
+export const NewsletterConfirmEmail = ({
   name,
-  unsubscribeLink = `${getAppUrl()}/api/waitlist/unsubscribe`,
-}: WaitlistWelcomeEmailProps) => {
+  confirmLink = `${getAppUrl()}/api/newsletter/confirm`,
+}: NewsletterConfirmEmailProps) => {
   return (
     <Html>
       <Head />
-      <Preview>You are on the Familiarise waitlist</Preview>
+      <Preview>Confirm your Familiarise newsletter subscription</Preview>
       <Section style={main}>
         <Container style={container}>
           <EmailLogo />
           <Section style={content}>
-            <Text style={heading}>You are on the list</Text>
+            <Text style={heading}>One click to confirm</Text>
             <Text style={paragraph}>Hi{name ? ` ${name}` : ""},</Text>
             <Text style={paragraph}>
-              Thanks for confirming. You will hear from us when there is
-              something genuinely worth your attention — new experts joining the
-              platform, programs opening up, and the occasional note on what we
-              are building. No noise.
+              You asked to subscribe to the Familiarise newsletter. Confirm that
+              this is your email address and we will send you product news and
+              launch updates. Every email has an unsubscribe link.
             </Text>
+            <Section style={buttonContainer}>
+              <Button style={button} href={confirmLink}>
+                Confirm subscription
+              </Button>
+            </Section>
             <Text style={paragraph}>
-              In the meantime, you can browse who is already on Familiarise.
-            </Text>
-            <Text style={paragraph}>
-              <Link href={`${getAppUrl()}/explore/experts`} style={inlineLink}>
-                Explore experts
-              </Link>
+              This link is valid for the next 48 hours. If you did not sign up,
+              you can safely ignore this email — we will not add you to anything
+              until you click.
             </Text>
           </Section>
-          <EmailFooter unsubscribeLink={unsubscribeLink} />
+          <EmailFooter />
         </Container>
       </Section>
     </Html>
@@ -87,8 +88,19 @@ const paragraph = {
   margin: "0 0 20px",
 };
 
-const inlineLink = {
-  color: "#000",
+const buttonContainer = {
+  textAlign: "center" as const,
+  margin: "30px 0",
+};
+
+const button = {
+  backgroundColor: "#000000",
+  borderRadius: "5px",
+  color: "#fff",
   fontSize: "16px",
-  textDecoration: "underline",
+  fontWeight: "normal",
+  textDecoration: "none",
+  textAlign: "center" as const,
+  display: "block",
+  padding: "12px 20px",
 };

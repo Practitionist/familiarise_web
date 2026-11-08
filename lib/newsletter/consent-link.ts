@@ -1,19 +1,39 @@
 /**
- * The newsletter (`Waitlist`) follows the account's DPDP `MARKETING_COMMS`
- * consent: a grant subscribes the account's address, a withdrawal unsubscribes
- * it, and the newsletter's own unsubscribe withdraws the linked consent.
+ * The newsletter follows the DPDP `MARKETING_COMMS` consent ledger: an account
+ * grant subscribes the account's address, a confirmed sign-up writes an artifact
+ * (for the account, or a pseudonymous subject), and every unsubscribe withdraws it.
  */
 
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { NewsletterStatus } from "@prisma/client";
+import { deriveAuthKey } from "@/lib/auth/link-signing";
+import {
+  buildConsentArtifact,
+  buildPseudonymousConsentArtifact,
+  checkConsent,
+  PLATFORM_DATA_FIDUCIARY,
+  withdrawConsent,
+  withdrawPseudonymousConsent,
+} from "@/lib/compliance/dpdp";
+import { purposeCodeAliases, PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import type { Tx } from "@/lib/prisma";
 import { stampedClientIp } from "@/lib/request-ip";
+import { NEWSLETTER_NOTICE_VERSION } from "./notice";
 
-/** Salted with the HMAC secret so the digest is not reversible from the v4 space. */
+/** Keyed under its own label so the digest is not reversible from the v4 space; null without a key. */
 export function hashIp(ip: string | null | undefined): string | null {
   if (!ip) return null;
-  return createHash("sha256")
-    .update(`${process.env.WAITLIST_HMAC_SECRET ?? "waitlist"}|${ip}`)
+  const key = deriveAuthKey("familiarise/consent-ip-salt/v1");
+  if (!key) return null;
+  return createHmac("sha256", key).update(ip).digest("hex");
+}
+
+/** The consent subject for an address with no account; never stores the address itself. */
+export function newsletterSubjectId(email: string): string {
+  const key = deriveAuthKey("familiarise/newsletter-subject/v1");
+  if (!key) throw new Error("BETTER_AUTH_SECRET is not set");
+  return createHmac("sha256", key)
+    .update(normalizeNewsletterEmail(email))
     .digest("hex");
 }
 
@@ -86,4 +106,65 @@ export async function unsubscribeForWithdrawnConsent(
     data: { status: NewsletterStatus.UNSUBSCRIBED, unsubscribedAt: input.now },
   });
   return count;
+}
+
+/**
+ * Records `MARKETING_COMMS` consent for a confirmed sign-up, on the account when
+ * one is linked and on the address's pseudonymous subject otherwise; a live grant is reused.
+ */
+export async function recordNewsletterConsent(
+  tx: Tx,
+  input: { email: string; userId: string | null; now: Date },
+): Promise<void> {
+  const grant = {
+    dataFiduciary: PLATFORM_DATA_FIDUCIARY,
+    purposeCodes: [PURPOSE_CODES.MARKETING_COMMS],
+    language: "en-IN",
+    consentManager: null,
+    version: NEWSLETTER_NOTICE_VERSION,
+    grantedAt: input.now,
+  };
+  if (input.userId) {
+    const purposeCode = PURPOSE_CODES.MARKETING_COMMS;
+    if (await checkConsent({ userId: input.userId, purposeCode }, tx)) return;
+    await tx.consentArtifact.create({
+      data: buildConsentArtifact({ userId: input.userId, ...grant }),
+    });
+    return;
+  }
+  const subjectPseudonymousId = newsletterSubjectId(input.email);
+  const live = await tx.consentArtifact.findFirst({
+    where: {
+      subjectPseudonymousId,
+      purposeCodes: {
+        hasSome: purposeCodeAliases(PURPOSE_CODES.MARKETING_COMMS),
+      },
+      withdrawnAt: null,
+      auditRetainedUntil: { gt: input.now },
+    },
+    select: { id: true },
+  });
+  if (live) return;
+  await tx.consentArtifact.create({
+    data: buildPseudonymousConsentArtifact({ subjectPseudonymousId, ...grant }),
+  });
+}
+
+/** Withdraws the address's `MARKETING_COMMS` consent: the linked account's and its pseudonymous subject's. */
+export async function withdrawNewsletterConsent(
+  tx: Tx,
+  input: { email: string; userId: string | null; now: Date },
+): Promise<void> {
+  const purposeCode = PURPOSE_CODES.MARKETING_COMMS;
+  if (input.userId) {
+    await withdrawConsent({ userId: input.userId, purposeCode, now: input.now }, tx);
+  }
+  await withdrawPseudonymousConsent(
+    {
+      subjectPseudonymousId: newsletterSubjectId(input.email),
+      purposeCode,
+      now: input.now,
+    },
+    tx,
+  );
 }

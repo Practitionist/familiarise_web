@@ -7,7 +7,7 @@ import {
 } from "@/lib/email/deliver";
 import { DEFAULT_FROM_ADDRESS } from "@/lib/email/config";
 import { getAppUrl } from "@/lib/url";
-import { canSignLinks, safeEquals, signToken } from "@/lib/newsletter/tokens";
+import { canSignLinks, safeEquals, signToken } from "@/lib/auth/link-signing";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { isPresenterAuthoredMessage } from "@/lib/support/case-message-actor";
 

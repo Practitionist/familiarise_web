@@ -244,11 +244,10 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           surface: "announcements.manage",
         },
         {
-          // #1527 — renamed from Waitlist; the URL stays `waitlist`.
           name: "Newsletter",
           icon: ListChecks,
-          path: "waitlist",
-          surface: "waitlist.manage",
+          path: "newsletter",
+          surface: "newsletter.manage",
         },
       ],
     },

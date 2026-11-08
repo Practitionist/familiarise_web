@@ -79,7 +79,7 @@ export const DEFAULT_FROM_ADDRESS: string = SENDERS.onboarding;
 // bounds how long the caller's request waits. Shared with the Novu side.
 export const EMAIL_BUDGET_MS = {
   AUTH: 8_000,
-  CONTACT_AND_WAITLIST: 5_000,
+  CONTACT_AND_NEWSLETTER: 5_000,
   WEBHOOK: 3_000,
   JOB: 10_000,
   REQUEST: 5_000,

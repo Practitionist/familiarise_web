@@ -1,5 +1,5 @@
 /**
- * POST /api/waitlist — public newsletter signup.
+ * POST /api/newsletter — public newsletter signup.
  *
  * Double opt-in: this only creates a PENDING row and sends a confirmation
  * email. Rate limited to 3/hr per IP in middleware.
@@ -65,9 +65,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "waitlist" } },
+      { tags: { subsystem: "newsletter" } },
     );
-    console.error("[waitlist/subscribe]", error);
+    console.error("[newsletter/subscribe]", error);
     return NextResponse.json(
       { error: "Could not sign you up right now. Please try again." },
       { status: 500 },

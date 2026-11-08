@@ -62,7 +62,7 @@ export interface VolumeConfig {
     resolved: number;
   };
   // Phase 7: Engagement
-  waitlistSubscribers: number;
+  newsletterSubscribers: number;
   reviewsPercentage: number; // % of consultants that get reviews
   // Phase 8: Payments
   discountCodes: number;
@@ -126,7 +126,7 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
       openSubscription: 2,
       resolved: 3,
     },
-    waitlistSubscribers: 50,
+    newsletterSubscribers: 50,
     reviewsPercentage: 60,
     discountCodes: 5,
     payments: 100,
@@ -180,7 +180,7 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
       openSubscription: 5,
       resolved: 8,
     },
-    waitlistSubscribers: 150,
+    newsletterSubscribers: 150,
     reviewsPercentage: 75,
     discountCodes: 15,
     payments: 500,
@@ -234,7 +234,7 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
       openSubscription: 12,
       resolved: 20,
     },
-    waitlistSubscribers: 400,
+    newsletterSubscribers: 400,
     reviewsPercentage: 85,
     discountCodes: 30,
     payments: 1200,

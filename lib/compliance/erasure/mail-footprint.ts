@@ -1,17 +1,21 @@
 /**
  * The erased user's mailing footprint, scrubbed inside the erasure
- * transaction: newsletter rows are deleted, queued email is dead-lettered and
- * redacted, and every stored copy of the address is replaced or removed.
- * `EmailSuppression` is kept so the address stays unmailable.
+ * transaction: newsletter rows are deleted, the address's pseudonymous newsletter
+ * consent is withdrawn (kept as audit evidence like account consent), queued email
+ * is dead-lettered and redacted, and every stored copy of the address is replaced
+ * or removed. `EmailSuppression` is kept so the address stays unmailable.
  */
 
 import { createHash } from "node:crypto";
 import type { Tx } from "@/lib/prisma";
+import { withdrawPseudonymousConsent } from "@/lib/compliance/dpdp";
+import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import { batchMessagesSchema } from "@/lib/email/batch-payload";
 import { REDACTED_ERASED_BODY } from "@/lib/email/classify";
 import { RECIPIENT_ERASED_REFUSAL } from "@/lib/email/delivery-policy";
 import { ERASED_RECIPIENT_PREFIX } from "@/lib/email/erased-recipient";
 import { normaliseEmail } from "@/lib/email/suppression";
+import { newsletterSubjectId } from "@/lib/newsletter/consent-link";
 import { UNSETTLED } from "@/lib/retry/provider-window";
 
 /** The provider may already hold the batch's key, so its other recipients need an operator. */
@@ -19,11 +23,12 @@ export const ERASED_BATCH_REVIEW = "review:erased_recipient";
 
 type MailTx = Pick<
   Tx,
-  "newsletterSubscriber" | "failedEmail" | "failedEmailBatch"
+  "newsletterSubscriber" | "failedEmail" | "failedEmailBatch" | "consentArtifact"
 >;
 
 export interface MailFootprintScrub {
-  waitlistDeleted: number;
+  newsletterDeleted: number;
+  newsletterConsentWithdrawn: number;
   emailsDeadLettered: number;
   recipientsReplaced: number;
   entityRefsReplaced: number;
@@ -51,9 +56,16 @@ export async function scrubMailFootprintTx(
     OR: [{ deliveryUserId: input.userId }, { recipient: sameAddress }],
   };
 
-  const waitlist = await tx.newsletterSubscriber.deleteMany({
+  const newsletter = await tx.newsletterSubscriber.deleteMany({
     where: { OR: [{ userId: input.userId }, { email: sameAddress }] },
   });
+  const consent = await withdrawPseudonymousConsent(
+    {
+      subjectPseudonymousId: newsletterSubjectId(email),
+      purposeCode: PURPOSE_CODES.MARKETING_COMMS,
+    },
+    tx,
+  );
   const emails = await tx.failedEmail.updateMany({
     where: { status: UNSETTLED, ...theirs },
     data: {
@@ -74,7 +86,7 @@ export async function scrubMailFootprintTx(
   // body is about the person, so it is redacted too.
   const entityRefs = await tx.failedEmail.updateMany({
     where: {
-      OR: ["waitlist", "contact"].map((kind) => ({
+      OR: ["newsletter", "contact"].map((kind) => ({
         entityRef: { equals: `${kind}:${email}`, mode: "insensitive" as const },
       })),
     },
@@ -92,7 +104,8 @@ export async function scrubMailFootprintTx(
   });
   const batches = await scrubBatches(tx, email);
   return {
-    waitlistDeleted: waitlist.count,
+    newsletterDeleted: newsletter.count,
+    newsletterConsentWithdrawn: consent.withdrawnCount,
     emailsDeadLettered: emails.count,
     recipientsReplaced: recipients.count,
     entityRefsReplaced: entityRefs.count,

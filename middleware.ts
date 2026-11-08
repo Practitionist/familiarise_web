@@ -14,7 +14,7 @@ import {
   sessionMgmtLimiter,
   searchLimiter,
   eligibilityLimiter,
-  waitlistLimiter,
+  newsletterLimiter,
   availabilityLimiter,
   availabilityGridLimiter,
   orgWalletTopUpLimiter,
@@ -237,9 +237,9 @@ const RATE_LIMIT_RULES: RateRule[] = [
     skipLocalhost: false,
   },
   {
-    label: "public: waitlist signup",
-    match: (p, m) => m === "POST" && p === "/api/waitlist",
-    limiter: waitlistLimiter,
+    label: "public: newsletter signup",
+    match: (p, m) => m === "POST" && p === "/api/newsletter",
+    limiter: newsletterLimiter,
     skipLocalhost: false,
   },
   {

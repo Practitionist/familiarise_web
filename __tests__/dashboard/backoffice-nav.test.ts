@@ -79,7 +79,7 @@ describe("BACKOFFICE_PERMISSIONS", () => {
       "feedback.manage",
       "moderation.manage",
       "appointments.manage",
-      "waitlist.manage",
+      "newsletter.manage",
       "users.read",
       "users.verify",
     ] as BackofficeSurface[]) {
@@ -127,7 +127,7 @@ describe("buildBackofficeNav", () => {
       "feedback",
       "moderation",
       "appointments",
-      "waitlist",
+      "newsletter",
       "leads",
       "users",
       // Each money section is its own item at its /money/<key> URL.

@@ -47,7 +47,7 @@ export type BackofficeSurface =
   | "engineering.escalate"
   // Operations — booking-side triage and user verification.
   | "appointments.manage"
-  | "waitlist.manage"
+  | "newsletter.manage"
   | "leads.manage"
   | "users.read"
   | "users.verify"
@@ -127,7 +127,7 @@ export const BACKOFFICE_PERMISSIONS: Record<
   // `users.moderate` (ban / role change / delete) is the one exception:
   // irreversible and account-destroying, so admin-only.
   "appointments.manage": OPERATORS,
-  "waitlist.manage": OPERATORS,
+  "newsletter.manage": OPERATORS,
   // #1230 wave-4c — enterprise sales pipeline triage. Admin-only (#1527
   // §17b): staff are support (#1771), and the merged tree would otherwise
   // hand them a working Leads page.

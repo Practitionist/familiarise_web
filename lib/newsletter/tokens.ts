@@ -11,46 +11,12 @@
  * work, and RFC 8058 one-click depends on it.
  */
 
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { safeEquals, signToken } from "@/lib/auth/link-signing";
 import { getAppUrl } from "@/lib/url";
 
 export const CONFIRM_TOKEN_TTL_MS = 48 * 60 * 60 * 1000;
 
 type TokenPurpose = "confirm" | "unsubscribe";
-
-/**
- * Deliberately no fallback to RESEND_API_KEY: sharing the secret meant that
- * rotating the Resend key silently invalidated every unsubscribe link ever
- * sent. In development an unset secret falls back to a fixed string so the
- * flow is testable without configuring anything.
- */
-function getHmacSecret(): string {
-  const secret = process.env.WAITLIST_HMAC_SECRET;
-  if (secret) return secret;
-
-  if (process.env.NODE_ENV !== "production") {
-    return "dev-waitlist-hmac-secret";
-  }
-  throw new Error(
-    "WAITLIST_HMAC_SECRET is not configured. Newsletter confirm and unsubscribe links cannot be signed.",
-  );
-}
-
-/**
- * #1653 — the one HMAC every stateless link on the platform signs with, so
- * `lib/email/unsubscribe.ts` shares the secret and the purpose binding
- * instead of adding a second env var. The subject is signed as given; the
- * newsletter's `sign()` lowercases the email before calling this.
- */
-export function signToken(
-  purpose: string,
-  subject: string,
-  issuedAt: number,
-): string {
-  return createHmac("sha256", getHmacSecret())
-    .update(`${purpose}|${subject}|${issuedAt}`)
-    .digest("hex");
-}
 
 function sign(purpose: TokenPurpose, email: string, issuedAt: number): string {
   return signToken(purpose, email.toLowerCase(), issuedAt);
@@ -84,42 +50,16 @@ export function verifyConfirmToken(
   return safeEquals(token, () => generateConfirmToken(email, issuedAt));
 }
 
-export function safeEquals(token: string, expected: () => string): boolean {
-  try {
-    const want = expected();
-    if (token.length !== want.length) return false;
-    return timingSafeEqual(Buffer.from(token), Buffer.from(want));
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Whether links can be signed at all, without throwing.
- *
- * Callers use this to fail the same way for every address. Deciding late —
- * after a membership lookup has already short-circuited — makes the failure
- * depend on membership, which turns the response into an oracle.
- */
-export function canSignLinks(): boolean {
-  try {
-    getHmacSecret();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export function buildConfirmUrl(email: string, issuedAt: number): string {
   const token = generateConfirmToken(email, issuedAt);
-  return `${getAppUrl()}/api/waitlist/confirm?email=${encodeURIComponent(
+  return `${getAppUrl()}/api/newsletter/confirm?email=${encodeURIComponent(
     email,
   )}&issued=${issuedAt}&token=${token}`;
 }
 
 export function buildUnsubscribeUrl(email: string): string {
   const token = generateUnsubscribeToken(email);
-  return `${getAppUrl()}/api/waitlist/unsubscribe?email=${encodeURIComponent(
+  return `${getAppUrl()}/api/newsletter/unsubscribe?email=${encodeURIComponent(
     email,
   )}&token=${token}`;
 }
