@@ -36,7 +36,9 @@ export interface OrgActivationSnapshot {
   pendingOverageCount: number;
   pendingOveragePaise: number;
   stuckPayoutCount: number;
-  walletLowBalancePaise: number | null; // null = not a wallet org
+  walletBalancePaise: number | null; // null = not a wallet org
+  /** BillingAccount.minBalancePaise; null = no floor configured, so no alert. */
+  walletMinBalancePaise: number | null;
   creditPoolMaxUtilizationPct: number | null;
   /** #1744 — live programmes still set to the refused CHARGE_MEMBER. */
   memberBilledOverageProgramNames?: string[];
@@ -61,9 +63,6 @@ export interface ActionItem {
   ctaLabel: string;
   ctaHref: string;
 }
-
-/** Below this the wallet is "low" — surfaced before bookings start failing. */
-const WALLET_LOW_BALANCE_PAISE = 1_000_00; // ₹1,000
 
 /**
  * The activation checklist — capability-aware. A SPONSOR org's path runs
@@ -249,9 +248,11 @@ export function deriveActionCenter(
     });
   }
 
+  // Same predicate as the wallet-low bell cron: strictly below the floor.
   if (
-    s.walletLowBalancePaise !== null &&
-    s.walletLowBalancePaise < WALLET_LOW_BALANCE_PAISE
+    s.walletBalancePaise !== null &&
+    s.walletMinBalancePaise !== null &&
+    s.walletBalancePaise < s.walletMinBalancePaise
   ) {
     items.push({
       key: "wallet-low",

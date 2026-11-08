@@ -42,10 +42,13 @@ function makeEmptyLine(): LineItem {
  */
 export function InvoiceComposer({
   orgId,
+  paymentTermsDays,
   open,
   onOpenChange,
 }: Readonly<{
   orgId: string;
+  /** The org's own terms; an unset due date falls this many days after today. */
+  paymentTermsDays: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }>) {
@@ -93,10 +96,11 @@ export function InvoiceComposer({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items,
-          // Default due date: 60 days from today (NET-60) if not supplied.
           dueDate:
             dueDate ||
-            new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),
+            new Date(
+              Date.now() + paymentTermsDays * 24 * 60 * 60 * 1000,
+            ).toISOString(),
           issueImmediately: true,
           reason: reason.trim(),
         }),

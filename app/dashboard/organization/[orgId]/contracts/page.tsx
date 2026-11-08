@@ -1069,16 +1069,18 @@ function SupersedeContractDialog({
 // programs / subscription riding on it.
 // ---------------------------------------------------------------------------
 
-// LICENSE contracts pay the flat fee upfront, so net-X payment terms don't
-// apply — render "Prepaid" rather than a misleading NET-0 or em-dash.
+// LICENSE contracts pay the flat fee upfront and WALLET orgs pre-fund, so net-X
+// terms don't apply — render "Prepaid" rather than a misleading NET-0 or em-dash.
 function fmtPaymentTerms(
   c: Pick<ContractItem, "paymentTermsDays" | "billingAccount">,
 ): string {
-  if (c.billingAccount?.fundingSource === "LICENSE") return "Prepaid";
+  const funding = c.billingAccount?.fundingSource;
+  if (funding === "LICENSE" || funding === "WALLET") return "Prepaid";
   return `NET-${c.paymentTermsDays}`;
 }
 
 function formatContractTermsCell(c: ContractItem): string {
+  if (c.billingAccount?.fundingSource === "WALLET") return "Prepaid";
   if (c.billingAccount?.fundingSource !== "LICENSE") {
     return `NET-${c.paymentTermsDays}`;
   }

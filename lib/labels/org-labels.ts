@@ -22,6 +22,7 @@
 
 import type {
   AppointmentsType,
+  CoveredPlanType,
   FundingSource,
   MemberRole,
   MemberStatus,
@@ -104,6 +105,13 @@ export const SESSION_TYPE_LABEL: Record<AppointmentsType, string> = {
   WEBINAR: "Webinar",
   CLASS: "Class",
   TRIAL: "Trial session",
+};
+
+export const COVERED_PLAN_TYPE_LABEL: Record<CoveredPlanType, string> = {
+  CONSULTATION: "Consultation",
+  CLASS: "Class",
+  WEBINAR: "Webinar",
+  SUBSCRIPTION: "Subscription",
 };
 
 export const ORG_AUDIT_CATEGORY_LABEL: Record<OrgAuditCategory, string> = {

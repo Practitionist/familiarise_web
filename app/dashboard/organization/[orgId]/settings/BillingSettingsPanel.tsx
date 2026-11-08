@@ -184,7 +184,6 @@ export function BillingSettingsPanel({ orgId }: Readonly<{ orgId: string }>) {
           onChange={(e) => setPaymentTermsDays(e.target.value)}
         />
         <p className="text-xs text-muted-foreground">
-          India default is NET-60.{" "}
           {termsApply
             ? "Applies to invoices raised against this organization."
             : "This organization pre-funds or pays a flat fee, so invoice terms do not currently apply."}

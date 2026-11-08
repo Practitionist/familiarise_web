@@ -44,7 +44,7 @@ interface OrgAnalytics {
   };
   members: { total: number; active: number };
   programs: { total: number; active: number; activeAssignments: number };
-  wallet: { balancePaise: number } | null;
+  wallet: { balancePaise: number; minBalancePaise: number | null } | null;
   invoices: {
     outstandingCount: number;
     outstandingPaise: number;
@@ -105,7 +105,8 @@ function toActivationSnapshot(data: OrgAnalytics): OrgActivationSnapshot {
     pendingOverageCount: data.activation.pendingOverageCount,
     pendingOveragePaise: data.activation.pendingOveragePaise,
     stuckPayoutCount: data.activation.stuckPayoutCount,
-    walletLowBalancePaise: data.wallet ? data.wallet.balancePaise : null,
+    walletBalancePaise: data.wallet ? data.wallet.balancePaise : null,
+    walletMinBalancePaise: data.wallet ? data.wallet.minBalancePaise : null,
     creditPoolMaxUtilizationPct: data.activation.creditPoolMaxUtilizationPct,
     memberBilledOverageProgramNames:
       data.activation.memberBilledOverageProgramNames,
