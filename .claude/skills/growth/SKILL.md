@@ -5,7 +5,7 @@ description: Work on this repo's growth subsystem — the newsletter (Newsletter
 
 # Growth
 
-Terse rules for agents. The human explanation is in `docs/growth/` (start at `docs/growth/README.md`). The owner's decisions are `docs/decisions/2026-11-08-growth-waitlist-newsletter-referrals.md`. Domain detail stays in `docs/email/`, `docs/notifications/`, `docs/booking/`, `docs/referrals/` and `docs/finance/20-ledger/07-referral-credits.md`; link to it, never copy it.
+Terse rules for agents. The human explanation is in `docs/growth/` (start at `docs/growth/README.md`). The owner's decisions are `docs/decisions/2026-11-08-growth-waitlist-newsletter-referrals.md` (it lands with #2655). Domain detail stays in `docs/email/`, `docs/notifications/`, `docs/booking/`, `docs/referrals/` and `docs/finance/20-ledger/07-referral-credits.md`; link to it, never copy it.
 
 ## Vocabulary
 

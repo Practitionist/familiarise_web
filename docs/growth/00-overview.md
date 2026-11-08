@@ -9,7 +9,7 @@ last-reviewed: 2026-11-08
 
 Growth is three small features that share four pieces of machinery. This page explains what the features are, what they share, why the shared parts are shared, and where to find the code. It does not repeat the detail of each feature; the numbered pages that follow do that.
 
-Behaviour that is not on `dev` yet carries the tag of the pull request that brings it (`#2655`, `#2656` or `#2657`; see [the index](./README.md#which-pull-request-carries-which-code)). The decision record for all of this is [2026-11-08-growth-waitlist-newsletter-referrals.md](../decisions/2026-11-08-growth-waitlist-newsletter-referrals.md), which lists the owner's 19 decisions.
+Behaviour that is not on `dev` yet carries the tag of the pull request that brings it (`#2655`, `#2656` or `#2657`; see [the index](./README.md#which-pull-request-carries-which-code)). The decision record for all of this is [2026-11-08-growth-waitlist-newsletter-referrals.md](../decisions/2026-11-08-growth-waitlist-newsletter-referrals.md), which lists the owner's 19 decisions. **(arrives with #2655)**
 
 ## The three parts
 

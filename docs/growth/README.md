@@ -7,7 +7,7 @@ last-reviewed: 2026-11-08
 
 # Growth
 
-Growth is the set of features that bring people to Familiarise and bring them back: the newsletter and announcements, the appointment waitlist and slot backup interest, and referrals. This folder is the subsystem documentation. The agent playbook is the [growth skill](../../.claude/skills/growth/SKILL.md), and the owner's decisions are in [the growth decision record](../decisions/2026-11-08-growth-waitlist-newsletter-referrals.md).
+Growth is the set of features that bring people to Familiarise and bring them back: the newsletter and announcements, the appointment waitlist and slot backup interest, and referrals. This folder is the subsystem documentation. The agent playbook is the [growth skill](../../.claude/skills/growth/SKILL.md), and the owner's decisions are in [the growth decision record](../decisions/2026-11-08-growth-waitlist-newsletter-referrals.md), which lands with #2655 "Growth: rename the newsletter list, derive link keys, one consent ledger, segmented broadcasts".
 
 ## Which pull request carries which code
 

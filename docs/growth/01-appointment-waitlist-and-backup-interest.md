@@ -7,7 +7,7 @@ last-reviewed: 2026-11-08
 
 # The Appointment Waitlist and Slot Backup Interest
 
-This page explains how a learner asks to be told when a seat or a time opens up, why the platform tells everyone at once, and what keeps the two lists tidy. The rules for the sold-out gate itself are in [the 2026-11-07 decision](../decisions/2026-11-07-event-seat-waitlist.md); the owner's 2026-11-08 additions are in [the growth decision record](../decisions/2026-11-08-growth-waitlist-newsletter-referrals.md). Behaviour not yet on `dev` carries the tag of the pull request that brings it (see [the index](./README.md#which-pull-request-carries-which-code)).
+This page explains how a learner asks to be told when a seat or a time opens up, why the platform tells everyone at once, and what keeps the two lists tidy. The rules for the sold-out gate itself are in [the 2026-11-07 decision](../decisions/2026-11-07-event-seat-waitlist.md); the owner's 2026-11-08 additions are in [the growth decision record](../decisions/2026-11-08-growth-waitlist-newsletter-referrals.md) **(arrives with #2655)**. Behaviour not yet on `dev` carries the tag of the pull request that brings it (see [the index](./README.md#which-pull-request-carries-which-code)).
 
 ## The two lists
 
@@ -103,7 +103,7 @@ A host sees how many people are waiting, never who. **(after #2656)**
 
 ## The `demand` view
 
-`demand` is a read-only SQL view over both tables, defined in `prisma/sql/analytics-views.sql`. It has one row per interest row with `kind` (`EVENT` or `WINDOW`), `planKind`, `planId`, `consultantProfileId`, `status`, `createdAt`, `notifiedAt` and `bookedAt`, and no user id or email. Analytics and ranking can therefore read demand without touching personal data. The view is created with `security_invoker`, and its privileges are revoked from the `anon` and `authenticated` roles, so it is not reachable through the Supabase data API. The owner creates it with `npm run db:sidecars`. Nothing in the app reads it yet; the host demand dashboard is a [post-launch item](./05-roadmap.md). **(after #2656)**
+`demand` is a read-only SQL view over both tables, defined in `prisma/sql/analytics-views.sql`. It has one row per interest row with `kind` (`EVENT` or `WINDOW`), `planKind`, `planId`, `consultantProfileId`, `status`, `createdAt`, `notifiedAt` and `bookedAt`, and no user id or email. It excludes direct learner identifiers, but it is not anonymous: `consultantProfileId` identifies the expert, so treat the view as personal data about experts. The view is created with `security_invoker`, and its privileges are revoked from the `anon` and `authenticated` roles, so it is not reachable through the Supabase data API. The owner creates it with `npm run db:sidecars`. Nothing in the app reads it yet; the host demand dashboard is a [post-launch item](./05-roadmap.md). **(after #2656)**
 
 ## Erasure
 
@@ -128,7 +128,7 @@ If nobody had paid, the rows would have turned `EXPIRED` after the session ended
 
 - **A notice email fails after the commit.** The bell is already in the Postgres outbox and the relay retries it. The email is best-effort and keyed per waiter and bucket, so a retry cannot send twice.
 - **Two releases race.** The compare-and-set matches rows only once, so one of them notifies and the other finds nothing.
-- **The stale-requests job is down.** Open rows on ended events stay open and settled rows stay past 30 days. Nothing user-visible breaks, because every list read filters on open rows and a live event.
+- **The stale-requests job is down.** Open rows on ended events stay open and settled rows stay past 30 days. The open rows still count toward the learner's cap of five (`EVENT_WAITLIST_USER_CAP` counts every open row, ended or not), so a learner can be refused a new join with `EVENT_WAITLIST_CAP` until they leave an ended entry in "My alerts" or the job runs again. Restoring the job expires and then purges those rows.
 
 ## Related issues
 
@@ -136,8 +136,9 @@ If nobody had paid, the rows would have turned `EXPIRED` after the session ended
 
 ## Deprecated & Superseded Approaches
 
-- **A `Waitlist` meaning the sold-out queue.** The word meant two things: the pre-launch email list and this queue. The queue is the **appointment waitlist**; the email list is the **newsletter**.
-- **The sold-out toast's `EVENT_SOLD_OUT` capture.** It captured an email into the newsletter instead of queueing the learner. Delete any reader of that source.
-- **The per-event capacity pin.** Writing the plan's capacity onto every event. Replaced by `capacityOverrideFor`.
-- **The `WaitlistOfferBanner`.** One banner for one offer, replaced by "My alerts".
+- **A `Waitlist` meaning the sold-out queue.** The word meant two things: the pre-launch email list and this queue. The newsletter table itself was called `"Waitlist"` in Postgres, next to `AppointmentWaitlist`. The queue is now the **appointment waitlist** and the email list is the **newsletter**.
+- **The sold-out toast's `EVENT_SOLD_OUT` capture.** A sold-out event once offered a newsletter signup instead of queueing the learner. The appointment waitlist replaced it on 2026-11-07, and the `EVENT_SOLD_OUT` source value is dropped with the newsletter rename. Delete any reader of that source.
+- **The per-event capacity pin.** The plan editor wrote the plan's capacity onto every event it saved, which pinned an override that later plan edits could no longer reach. `capacityOverrideFor` replaced it.
+- **Demand visible only on the participants page.** A host could see how many people were waiting only on one event's participants page, not where capacity is decided. The "N waiting" counts on the planner, the offering cards and the capacity field replaced it.
+- **The `WaitlistOfferBanner`.** A banner on the learner's Appointments and Home tabs that listed only slot backup interest, so appointment-waitlist rows had no learner-facing list. "My alerts" replaced it with one list of both.
 - **Per-feature purge code.** The backup interest list had no purge and no re-notice. Both tables now share `lib/booking/interest/lifecycle.ts`; do not add a second lifecycle module.
