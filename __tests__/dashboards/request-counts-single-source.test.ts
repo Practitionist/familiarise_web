@@ -22,6 +22,8 @@ jest.mock("../../lib/prisma", () => ({
     rescheduleRequest: { findMany: jest.fn() },
     appointmentOccurrence: { findMany: jest.fn() },
     appointmentDocument: { count: jest.fn() },
+    collaborator: { count: jest.fn() },
+    consultantReview: { count: jest.fn() },
   },
 }));
 
@@ -48,6 +50,8 @@ beforeEach(() => {
   m.rescheduleRequest.findMany.mockResolvedValue([]);
   m.appointmentOccurrence.findMany.mockResolvedValue([]);
   m.appointmentDocument.count.mockResolvedValue(0);
+  m.collaborator.count.mockResolvedValue(0);
+  m.consultantReview.count.mockResolvedValue(0);
   (requireApiAuth as jest.Mock).mockResolvedValue({
     session: {
       user: { id: "u-1", role: "CONSULTANT", consultantProfileId: "cp-1" },

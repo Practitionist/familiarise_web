@@ -10,6 +10,7 @@ import {
   missedAt,
 } from "@/lib/booking/misses";
 import { countRequestsToAnswer } from "@/lib/data/needs-you";
+import { countReviewsNeedingReply } from "@/lib/reviews-needs-reply";
 
 /**
  * #1527 §7.2 — the consultant Home's "Needs you" strip: only what is blocked
@@ -33,6 +34,10 @@ export interface ConsultantNeedsYou {
   }[];
   /** Learner uploads waiting on this consultant's review. */
   documentsAwaitingReview: number;
+  /** Collaboration invitations this consultant has not answered. */
+  collabInvites: number;
+  /** Live reviews with no reply from this consultant. */
+  reviewsToReply: number;
 }
 
 const DAY_MS = 86_400_000;
@@ -151,11 +156,17 @@ export async function readConsultantNeedsYou(
       appointment: personalOneToOne(consultantProfileId),
     },
   });
+  const collabInvites = await prisma.collaborator.count({
+    where: { consultantProfileId, status: "PENDING" },
+  });
+  const reviewsToReply = await countReviewsNeedingReply(consultantProfileId);
   return {
     requestsToAnswer,
     rescheduleReplies,
     owedMakeUps,
     documentsAwaitingReview,
+    collabInvites,
+    reviewsToReply,
   };
 }
 

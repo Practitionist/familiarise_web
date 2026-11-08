@@ -196,6 +196,63 @@ describe("deriveConsultantActionItems", () => {
       "documents-review",
     ]);
   });
+
+  it("adds a collaboration-invite row that links to Collaborations", () => {
+    const [item] = deriveConsultantActionItems({
+      pendingApprovals: 0,
+      collabInvites: 2,
+      upcomingSessions: [],
+      basePath: CONSULTANT_BASE,
+    });
+    expect(item).toMatchObject({
+      key: "collab-invites",
+      severity: "info",
+      title: "2 collaboration invites to answer",
+      ctaHref: `${CONSULTANT_BASE}/collaborations`,
+    });
+  });
+
+  it("adds a review-reply row that opens the Needs reply tab", () => {
+    const [item] = deriveConsultantActionItems({
+      pendingApprovals: 0,
+      reviewsToReply: 1,
+      upcomingSessions: [],
+      basePath: CONSULTANT_BASE,
+    });
+    expect(item).toMatchObject({
+      key: "reviews-reply",
+      severity: "info",
+      title: "1 review awaits your reply",
+      ctaHref: `${CONSULTANT_BASE}/reviews?tab=needs-reply`,
+    });
+  });
+
+  it("keeps both new rows info-level, after the warning rows", () => {
+    const items = deriveConsultantActionItems({
+      pendingApprovals: 1,
+      collabInvites: 1,
+      reviewsToReply: 3,
+      upcomingSessions: [],
+      basePath: CONSULTANT_BASE,
+    });
+    expect(items.map((i) => [i.key, i.severity])).toEqual([
+      ["pending-requests", "warning"],
+      ["collab-invites", "info"],
+      ["reviews-reply", "info"],
+    ]);
+  });
+
+  it("omits both rows at zero", () => {
+    expect(
+      deriveConsultantActionItems({
+        pendingApprovals: 0,
+        collabInvites: 0,
+        reviewsToReply: 0,
+        upcomingSessions: [],
+        basePath: CONSULTANT_BASE,
+      }),
+    ).toEqual([]);
+  });
 });
 
 describe("deriveConsulteeActionItems", () => {
