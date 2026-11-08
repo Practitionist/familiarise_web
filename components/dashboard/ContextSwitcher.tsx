@@ -282,11 +282,9 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          // Expanded, the name starts with the visible identity (label in name) and ends with the action.
+          // Expanded, the visible text plus a hidden action phrase is the name; icon-only and loading states need a label.
           aria-label={
-            collapsed || !identityKnown
-              ? "Switch dashboard"
-              : `${[trigger.name, trigger.label].filter(Boolean).join(", ")}: switch dashboard`
+            collapsed || !identityKnown ? "Switch dashboard" : undefined
           }
           disabled={!user}
           aria-busy={!user}
@@ -323,6 +321,7 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
                   ) : (
                     !user && <Skeleton className="mt-1 h-3 w-14" />
                   )}
+                  <span className="sr-only">, switch dashboard</span>
                 </div>
                 {/* Invisible, not absent, until the session hydrates: the
                     name column keeps its width, so nothing shifts. */}

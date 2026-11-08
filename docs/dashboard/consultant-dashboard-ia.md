@@ -38,7 +38,7 @@ Home (`HomeTab.tsx`) renders two things above the stats. The first is the "Get s
 | Complete your profile       | Every profile field scores: description, headline, experience, domain detail, work history and an image           | `settings/profile`      |
 | Set your weekly hours       | Availability rows exist for the schedule type the expert runs (weekly or custom)                                  | `availability`          |
 | Publish your first offering | A discoverable 1:1, subscription, webinar or class plan, or a `PUBLISHED` digital product; a draft does not count | `sell/sessions`         |
-| Add your payout account     | `payoutRequirements()` is not blocked and asks for nothing except a GSTIN, which is only ever due later           | `settings/get-paid`     |
+| Finish payout setup         | `payoutRequirements()` is not blocked and asks for nothing except a GSTIN, which is only ever due later           | `settings/get-paid`     |
 
 `getConsultantDashboard()` computes the steps from the inputs of its own profile read (`FIRST_RUN_PROFILE_SELECT` in `lib/data/consultant-first-run.ts`), so a fully set-up expert pays no extra query, and `readFirstRunSteps()` returns `null` once every step is done. The profile step reuses the weights in `lib/profiles/profile-completion.ts` minus the availability, plan and verification weights, which are their own steps; see [the onboarding reference](../onboarding/01-system-reference.md).
 

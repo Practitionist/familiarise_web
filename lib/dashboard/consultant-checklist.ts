@@ -98,7 +98,7 @@ export function deriveConsultantChecklist(
     },
     {
       key: "payout",
-      label: "Add your payout account",
+      label: "Finish payout setup (bank account, PAN and tax details)",
       done: payoutAccountReady(s.payout),
       href: `${base}/settings/get-paid`,
     },
