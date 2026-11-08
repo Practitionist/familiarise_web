@@ -232,6 +232,25 @@ describe("POST /api/webhooks/resend", () => {
     );
   });
 
+  it("withdraws the consent of an already BOUNCED row on a complaint", async () => {
+    const payload = event("email.complained");
+    mockVerify.mockReturnValue(payload);
+    mockNewsletterFindMany.mockResolvedValue([
+      { email: "reader@example.com", userId: null, consentSubjectId: "subj_1" },
+    ]);
+
+    await POST(request(payload));
+
+    expect(mockNewsletterFindMany.mock.calls[0][0].where).not.toHaveProperty(
+      "status",
+    );
+    expect(mockConsentUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ subjectPseudonymousId: "subj_1" }),
+      }),
+    );
+  });
+
   it("handles email.suppressed pre-send suppression events", async () => {
     const suppressed = event("email.suppressed", {
       to: ["Blocked@Example.com"],

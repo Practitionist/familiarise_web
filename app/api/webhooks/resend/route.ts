@@ -56,22 +56,20 @@ async function suppressRecipientsInTx(
   }
 }
 
-/** A complaint or a vendor-side unsubscribe is a withdrawal: the rows flip and their consent is withdrawn. */
+/** A complaint or a vendor-side unsubscribe is a withdrawal: live rows flip and every matching row's consent is withdrawn. */
 async function unsubscribeNewsletterRows(
   tx: Tx,
   emailFilter: string | { in: string[] },
 ): Promise<void> {
+  // Every matching row, BOUNCED included, loses its consent; only live rows change status.
   const rows = await tx.newsletterSubscriber.findMany({
-    where: { email: emailFilter, status: { in: ["PENDING", "SUBSCRIBED"] } },
+    where: { email: emailFilter },
     select: { email: true, userId: true, consentSubjectId: true },
   });
   if (rows.length === 0) return;
   const now = new Date();
   await tx.newsletterSubscriber.updateMany({
-    where: {
-      email: { in: rows.map((row) => row.email) },
-      status: { in: ["PENDING", "SUBSCRIBED"] },
-    },
+    where: { email: emailFilter, status: { in: ["PENDING", "SUBSCRIBED"] } },
     data: { status: "UNSUBSCRIBED", unsubscribedAt: now },
   });
   for (const row of rows) {
