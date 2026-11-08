@@ -247,6 +247,10 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     description:
       "Your checkout is still being prepared. Try again in a moment — your card was not charged.",
   },
+  [ErrorTypes.DISCOUNT_NOT_APPLICABLE]: {
+    title: "Discount Code Not Valid Here",
+    description: null,
+  },
   [ErrorTypes.GST_REGISTRATION_REQUIRED]: {
     title: "Organisation Billing Not Available Yet",
     description: null,

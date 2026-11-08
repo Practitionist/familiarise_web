@@ -14,6 +14,7 @@ import {
   platformFundedCapPaise,
 } from "@/lib/payments/pricing/platform-funded-cap";
 import { prorate } from "@/lib/payments/utils/money";
+import { consumeFeeWaiver } from "@/lib/payments/pricing/platform-fee";
 import {
   assertOrgBillingAvailable,
   currentGstRegime,
@@ -30,6 +31,8 @@ const RAILS = [
   { name: "marketplace", platformBps: 2000, orgBps: 0, fundsPromo: true },
   { name: "own-link", platformBps: 1000, orgBps: 0, fundsPromo: true },
   { name: "host-org", platformBps: 1000, orgBps: 1000, fundsPromo: false },
+  // A live waiver zeroes the fee at capture, so the take funds nothing.
+  { name: "fee-waiver", platformBps: 0, orgBps: 0, fundsPromo: false },
 ] as const;
 
 const MODIFIERS = ["none", "percent-code", "fixed-code", "welcome"] as const;
@@ -88,8 +91,14 @@ describe("pricing levers invariants", () => {
       const platformNet =
         d.amount - d.taxAmount - shares.expert - shares.org - gatewayPaise;
 
-      expect(platformNet).toBeGreaterThanOrEqual(0);
       expect(shares).toEqual(settle(list));
+      // A take that cannot fund promo carries none; checkout refuses a code on a zero cap.
+      const promoSpend = d.discountPaise + d.creditsApplied;
+      expect(rail.fundsPromo ? 0 : d.platformFundedCapPaise + promoSpend).toBe(
+        0,
+      );
+      // A waived order keeps no fee, so its margin is the gateway's cut by design.
+      expect(rail.platformBps > 0 ? platformNet : 0).toBeGreaterThanOrEqual(0);
       expect(d.amount).toBe(d.taxedAmount - d.creditsApplied);
       expect(d.discountedAmount).toBe(list - d.discountPaise);
       expect(d.discountPaise + d.creditsApplied).toBeLessThanOrEqual(
@@ -119,6 +128,53 @@ describe("pricing levers invariants", () => {
         gstRegistered: regime === "REGISTERED",
       });
       expect(Math.abs(preview.total - d.amount)).toBeLessThanOrEqual(1);
+    },
+  );
+
+  it.each([
+    [
+      "a code that took something off",
+      { discountCodeId: "dc_1", amount: 97_686 },
+      false,
+    ],
+    [
+      "a code that took nothing off",
+      { discountCodeId: "dc_1", amount: 118_000 },
+      true,
+    ],
+    [
+      "a welcome discount",
+      { welcomeDiscountPaise: 17_215, amount: 97_686 },
+      false,
+    ],
+    [
+      "a referral credit leg",
+      { legs: [{ amountPaise: 5_000 }], amount: 113_000 },
+      false,
+    ],
+    ["no promo", { amount: 118_000 }, true],
+  ])(
+    "spends a fee waiver at capture only without promo: %s",
+    async (_name, row, spends) => {
+      const updateMany = jest.fn(async () => ({ count: 1 }));
+      const tx = {
+        consultantFeeWaiver: {
+          findFirst: async () => ({ id: "w_1" }),
+          updateMany,
+        },
+        payment: {
+          findUnique: async () => ({
+            originalAmount: 100_000,
+            taxAmount: 18_000,
+            discountCodeId: null,
+            welcomeDiscountPaise: null,
+            legs: [],
+            ...row,
+          }),
+        },
+      } as unknown as Parameters<typeof consumeFeeWaiver>[0];
+      expect(await consumeFeeWaiver(tx, "cp_1", "pay_1")).toBe(spends);
+      expect(updateMany).toHaveBeenCalledTimes(spends ? 1 : 0);
     },
   );
 

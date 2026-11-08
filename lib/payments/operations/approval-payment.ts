@@ -509,6 +509,7 @@ export async function createApprovalPaymentIntent(
         amount,
         originalAmount,
         taxAmount,
+        gstRegime,
         currency,
         reason,
       });

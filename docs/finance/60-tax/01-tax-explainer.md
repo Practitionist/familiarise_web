@@ -61,14 +61,14 @@ If the platform pays a micro or small enterprise late, the platform cannot deduc
 
 ## Where each piece lives
 
-| Tax                    | What it is applied to         | When                                | Code                                             |
-| ---------------------- | ----------------------------- | ----------------------------------- | ------------------------------------------------ |
-| GST                    | The buyer's payment           | Checkout, then invoice              | `lib/payments/tax/`, `lib/compliance/gst.ts`     |
-| GST registration alarm | The financial year's sales    | Four times a day while unregistered | `lib/compliance/gst-turnover.ts`                 |
-| TDS                    | The expert's or org's payout  | When the payout is sent             | `lib/payments/payouts/consultant-tds.ts`         |
-| MSME deadline          | The payout                    | When the payout is created          | `lib/compliance/msme.ts`                         |
-| Monthly GST register   | Every invoice and credit note | The 2nd of each month               | `jobs/compliance/gst-outward-register-export.ts` |
-| Quarterly TDS draft    | The quarter's TDS records     | The 5th after each quarter closes   | `jobs/compliance/tds-26q-draft-export.ts`        |
+| Tax                    | What it is applied to         | When                                         | Code                                             |
+| ---------------------- | ----------------------------- | -------------------------------------------- | ------------------------------------------------ |
+| GST                    | The buyer's payment           | Checkout, then invoice                       | `lib/payments/tax/`, `lib/compliance/gst.ts`     |
+| GST registration alarm | The financial year's sales    | Daily, in the ops digest, while unregistered | `lib/compliance/gst-turnover.ts`                 |
+| TDS                    | The expert's or org's payout  | When the payout is sent                      | `lib/payments/payouts/consultant-tds.ts`         |
+| MSME deadline          | The payout                    | When the payout is created                   | `lib/compliance/msme.ts`                         |
+| Monthly GST register   | Every invoice and credit note | The 2nd of each month                        | `jobs/compliance/gst-outward-register-export.ts` |
+| Quarterly TDS draft    | The quarter's TDS records     | The 5th after each quarter closes            | `jobs/compliance/tds-26q-draft-export.ts`        |
 
 ## Where in code
 

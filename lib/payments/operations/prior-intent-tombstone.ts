@@ -1,6 +1,7 @@
 import {
   PaymentStatus,
   type Currency,
+  type GstRegime,
   type PaymentGateway,
 } from "@prisma/client";
 
@@ -17,6 +18,8 @@ export type PriorIntent = {
   taxAmount: number;
   currency: Currency;
   paymentGateway: PaymentGateway;
+  /** Copied so a late capture on the tombstone keeps the regime it was priced under. */
+  gstRegime: GstRegime | null;
 };
 
 /**
@@ -33,6 +36,7 @@ export async function tombstonePriorIntent(
       amount: prior.amount,
       originalAmount: prior.originalAmount,
       taxAmount: prior.taxAmount,
+      gstRegime: prior.gstRegime,
       currency: prior.currency,
       paymentMethod: "CARD",
       paymentIntent: prior.paymentIntent,

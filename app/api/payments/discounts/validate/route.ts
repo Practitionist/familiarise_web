@@ -39,6 +39,8 @@ interface DiscountCodeResponse {
   discountAmount?: number; // Calculated discount amount
   maxDiscount?: number | null;
   message?: string;
+  /** Set on a typed refusal, e.g. DISCOUNT_NOT_APPLICABLE. */
+  errorCode?: string;
 }
 
 /** The platform-funded cap checkout applies to this buyer's order with this expert. */
@@ -184,18 +186,30 @@ export async function POST(request: NextRequest) {
     // One discount arithmetic, shared with checkout, held to the same profitability floor.
     let discountAmount: number | undefined;
     if (amount && amount > 0 && consultantProfileId) {
+      const cap = await promoCapFor(
+        request,
+        session.user.id,
+        consultantProfileId,
+        amount,
+      );
+      // Checkout refuses the same code with DISCOUNT_NOT_APPLICABLE.
+      if (cap === 0) {
+        return NextResponse.json<DiscountCodeResponse>(
+          {
+            valid: false,
+            errorCode: "DISCOUNT_NOT_APPLICABLE",
+            message: "This code can't be used on this expert's sessions.",
+          },
+          { status: 409 },
+        );
+      }
       discountAmount = Math.min(
         computeDiscountPaise(amount, {
           discountType: discountCode.discountType,
           discountValue: discountCode.discountValue,
           maxDiscount: discountCode.maxDiscount,
         }),
-        await promoCapFor(
-          request,
-          session.user.id,
-          consultantProfileId,
-          amount,
-        ),
+        cap,
       );
     }
 

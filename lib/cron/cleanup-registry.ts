@@ -1187,7 +1187,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Heal consumer invoices",
       description:
-        "Mint missing consumer tax invoices for captured, unrefunded payments; while GST-unregistered, alarm on financial-year turnover",
+        "Mint missing consumer tax invoices for captured, unrefunded payments",
       category: "Billing",
       manualRun: "inline",
     },

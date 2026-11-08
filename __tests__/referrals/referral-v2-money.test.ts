@@ -34,7 +34,11 @@ const tx = {
   platformFeeSchedule: { findFirst: jest.fn() },
   consultantFeeWaiver: { findFirst: jest.fn(), updateMany: jest.fn() },
   expertCustomerRelationship: { findUnique: jest.fn() },
-  payment: { updateMany: jest.fn(), findFirst: jest.fn() },
+  payment: {
+    updateMany: jest.fn(),
+    findFirst: jest.fn(),
+    findUnique: jest.fn(),
+  },
 };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -118,6 +122,7 @@ beforeEach(() => {
   tx.referralCode.updateMany.mockResolvedValue({ count: 1 });
   tx.payment.updateMany.mockResolvedValue({ count: 1 });
   tx.payment.findFirst.mockResolvedValue(null);
+  tx.payment.findUnique.mockResolvedValue(null);
   tx.platformFeeSchedule.findFirst.mockResolvedValue({
     id: "fs-1",
     marketplaceBps: 2000,

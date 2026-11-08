@@ -36,7 +36,7 @@ The regime is read from the environment on every pricing call, so a change takes
 | Checkout preview                | `GET /api/checkout/context` sends `gstRegistered: false`; `calculatePricing` shows 0 % so the quoted total equals the charge                                                                          | `gstRegistered: true`; the preview adds 18 %                                                                            |
 | Payment row                     | `Payment.gstRegime = UNREGISTERED`                                                                                                                                                                    | `Payment.gstRegime = REGISTERED`                                                                                        |
 | Buyer document                  | The gateway receipt; the payment page says no GST was charged                                                                                                                                         | A numbered consumer tax invoice and credit notes ([GST invoices and credit notes](02-gst-invoices-and-credit-notes.md)) |
-| Invoice minting and healing     | `mintConsumerInvoice` declines; `heal-consumer-invoices` mints nothing and runs the turnover alarm instead                                                                                            | Mints and heals as usual                                                                                                |
+| Invoice minting and healing     | `mintConsumerInvoice` declines; `heal-consumer-invoices` mints nothing; the daily ops digest runs the turnover alarm                                                                                  | Mints and heals as usual                                                                                                |
 | Organisation rails              | Checkout on `WALLET`, `INVOICE` or `LICENSE` funding and a wallet top-up refuse with `GST_REGISTRATION_REQUIRED` (403); `createOrgInvoice` refuses; the invoice rollup and subscription invoices skip | Available                                                                                                               |
 | Personal (member-paid) checkout | Available                                                                                                                                                                                             | Available                                                                                                               |
 
@@ -57,9 +57,9 @@ The pending-checkout page re-derives the total under the current regime (`lib/da
 
 ## 4. The turnover alarm
 
-While unregistered, every `heal-consumer-invoices` run (four times a day on the ticker) calls `checkGstRegistrationTurnover` (`lib/compliance/gst-turnover.ts`). It sums the current Indian financial year's succeeded, non-mock payments created since 1 April IST: the amount charged, plus referral credits, less any GST, less succeeded refunds on those payments. When that reaches `GST_TURNOVER_ALARM_PAISE` (₹15,00,000) it sends one Sentry warning per run, fingerprinted so every run groups into one issue, naming the ₹20,00,000 threshold and the duty to apply within 30 days of crossing it. The run's result carries the figure as `turnover`, which the System Jobs page shows.
+While unregistered, the daily ops digest (`ops-digest`, once a day at 09:20 IST on the ticker) calls `checkGstRegistrationTurnover` (`lib/compliance/gst-turnover.ts`) from its "GST registration" section. It sums the current Indian financial year's succeeded, non-mock payments created since 1 April IST: the amount charged, plus referral credits, less any GST, less succeeded refunds on those payments. When that reaches `GST_TURNOVER_ALARM_PAISE` (₹15,00,000) it sends one Sentry warning, fingerprinted so every day groups into one issue, naming the ₹20,00,000 threshold and the duty to apply within 30 days of crossing it; the digest email lists the same line as a new item. Below the alarm the section shows the figure as a note. Running on the once-daily digest keeps the alarm to at most one Sentry event a day against the shared 5,000-event monthly quota.
 
-**Worked example.** By 10 January 2027 the platform has captured ₹15,40,000 of payments and ₹60,000 of referral credits in the financial year that began on 1 April 2026, and refunded ₹80,000 of them. The alarm reads 15,40,000 + 60,000 − 80,000 = ₹15,20,000, which is above ₹15,00,000, so the next run raises the warning. At the current pace the platform crosses ₹20 lakh within weeks, which leaves time for the roughly seven working days a registration takes.
+**Worked example.** By 10 January 2027 the platform has captured ₹15,40,000 of payments and ₹60,000 of referral credits in the financial year that began on 1 April 2026, and refunded ₹80,000 of them. The alarm reads 15,40,000 + 60,000 − 80,000 = ₹15,20,000, which is above ₹15,00,000, so the next morning's digest raises the warning. At the current pace the platform crosses ₹20 lakh within weeks, which leaves time for the roughly seven working days a registration takes.
 
 One Postgres database serves dev and prod, so test-mode payments that are not flagged as mock also count. The alarm errs early, never late.
 
@@ -74,21 +74,21 @@ One Postgres database serves dev and prod, so test-mode payments that are not fl
 
 ## Invariants
 
-| Rule                                                | Enforcer                                                                                                      | Test                                                                 |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| No GST is charged while unregistered                | `determineTax` with `gstRegistered: false`                                                                    | `__tests__/payments/pricing-levers-invariants.test.ts`               |
-| A malformed GSTIN never prices at 0 %               | `currentGstRegime` throws `GST_CONFIG_INVALID`                                                                | `__tests__/payments/pricing-levers-invariants.test.ts`               |
-| The preview equals the charge in both regimes       | `calculatePricing` reads `gstRegistered` from the checkout context                                            | `__tests__/payments/pricing-levers-invariants.test.ts`               |
-| An unregistered sale never gets a tax invoice       | `CONSUMER_INVOICEABLE_PAYMENT_WHERE` and `mintConsumerInvoice`                                                | None yet; review any change to the filter                            |
-| Organisation billing waits for registration         | `assertOrgBillingAvailable`, `createOrgInvoice`, `rollupOrgInvoiceAccruals`, `generate-subscription-invoices` | `__tests__/payments/pricing-levers-invariants.test.ts` (the refusal) |
-| The turnover alarm reports once per run at ₹15 lakh | `checkGstRegistrationTurnover`                                                                                | `__tests__/payments/consumer-invoice-healer.test.ts`                 |
+| Rule                                                       | Enforcer                                                                                                      | Test                                                                 |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| No GST is charged while unregistered                       | `determineTax` with `gstRegistered: false`                                                                    | `__tests__/payments/pricing-levers-invariants.test.ts`               |
+| A malformed GSTIN never prices at 0 %                      | `currentGstRegime` throws `GST_CONFIG_INVALID`                                                                | `__tests__/payments/pricing-levers-invariants.test.ts`               |
+| The preview equals the charge in both regimes              | `calculatePricing` reads `gstRegistered` from the checkout context                                            | `__tests__/payments/pricing-levers-invariants.test.ts`               |
+| An unregistered sale never gets a tax invoice              | `CONSUMER_INVOICEABLE_PAYMENT_WHERE` and `mintConsumerInvoice`                                                | `__tests__/payments/gst-unregistered-invoicing.test.ts`              |
+| Organisation billing waits for registration                | `assertOrgBillingAvailable`, `createOrgInvoice`, `rollupOrgInvoiceAccruals`, `generate-subscription-invoices` | `__tests__/payments/pricing-levers-invariants.test.ts` (the refusal) |
+| The turnover alarm reports once a day at most, at ₹15 lakh | `checkGstRegistrationTurnover` in the `ops-digest` job                                                        | `__tests__/payments/gst-unregistered-invoicing.test.ts`              |
 
 ## Where in code
 
 - `lib/pdf/supplier.ts`: `isPlatformGstRegistered`, `getPlatformSupplier`, `platformSupplierForJob`.
 - `lib/payments/tax/gst-regime.ts`: `currentGstRegime`, `assertOrgBillingAvailable` and the two refusal codes.
 - `lib/payments/tax/tax-engine.ts`: `determineTax`.
-- `lib/compliance/gst-turnover.ts`: the turnover alarm and its constants.
+- `lib/compliance/gst-turnover.ts`: the turnover alarm and its constants; `lib/observability/ops-digest.ts` runs it.
 - `lib/payments/billing/consumer-invoice.ts` and `consumer-invoice-healer.ts`.
 
 ## Related

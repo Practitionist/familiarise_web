@@ -527,6 +527,16 @@ export async function calculateAmountAndValidate(
       resolveAvailableCreditsPaise: async () =>
         (await getUserCredits(userId, tx)).totalAvailable,
     });
+    // A code on an order whose take cannot fund promo (a fee waiver, a host org) is refused,
+    // before commit, so no redemption is spent.
+    if (appliedDiscount && derived.platformFundedCapPaise === 0) {
+      throw Object.assign(
+        new Error(
+          `Discount code refused: no platform-funded promo on this order (promoFeeBps=${attribution.promoFeeBps})`,
+        ),
+        { httpStatus: 409, code: "DISCOUNT_NOT_APPLICABLE" },
+      );
+    }
     // Original plan price before any discounts/credits, used for consultant
     // earnings — discounts are platform-funded, not consultant-funded.
     const { originalAmount, taxAmount, creditsApplied, isInternational } =

@@ -125,6 +125,8 @@ export const ErrorTypes = {
   SEAT_HOLD_LAPSED: "SEAT_HOLD_LAPSED",
   // A replay of a seat checkout whose order is still being minted; 409 + retryAfter.
   CHECKOUT_IN_PROGRESS: "CHECKOUT_IN_PROGRESS",
+  // A platform code on an order whose take cannot fund promo (fee waiver, host org).
+  DISCOUNT_NOT_APPLICABLE: "DISCOUNT_NOT_APPLICABLE_ERROR",
   // Organisation-funded rails while the platform is not GST-registered.
   GST_REGISTRATION_REQUIRED: "GST_REGISTRATION_REQUIRED_ERROR",
   // PLATFORM_GSTIN set but unusable: pricing refuses instead of charging 0% GST.
@@ -621,6 +623,13 @@ const BUSINESS_ERROR_ENTRIES = [
     httpStatus: 409,
     userMessage:
       "Your seat was held for a while, but payment didn't open in time. Your card was not charged — start checkout again.",
+  },
+  {
+    code: "DISCOUNT_NOT_APPLICABLE",
+    errorType: ErrorTypes.DISCOUNT_NOT_APPLICABLE,
+    httpStatus: 409,
+    userMessage:
+      "This code can't be used on this expert's sessions. Remove it and try again — your card was not charged.",
   },
   {
     code: "GST_REGISTRATION_REQUIRED",

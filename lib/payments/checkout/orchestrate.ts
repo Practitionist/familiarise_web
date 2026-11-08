@@ -101,6 +101,7 @@ export const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<BusinessErrorCode> =
     "ALREADY_RENEWED",
     "INVALID_RENEWAL_SOURCE",
     "WELCOME_DISCOUNT_IN_USE",
+    "DISCOUNT_NOT_APPLICABLE",
     "PAYMENT_ALREADY_EXISTS",
     "SEAT_REBUY_UNSUPPORTED",
     "ALREADY_REGISTERED",
@@ -903,6 +904,7 @@ export async function handleCheckout(
           amount,
           originalAmount,
           taxAmount,
+          gstRegime: priced.gstRegime,
           currency,
           reason: dbError instanceof Error ? dbError.message : String(dbError),
         });

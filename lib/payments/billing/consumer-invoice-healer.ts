@@ -1,7 +1,7 @@
 /**
  * Mints the consumer tax invoice for SUCCEEDED payments the capture path left
  * un-invoiced (a crash after commit), within a bounded lookback. While the
- * platform is unregistered it mints nothing and runs the GST turnover alarm.
+ * platform is unregistered it mints nothing.
  */
 
 import { randomUUID } from "node:crypto";
@@ -20,10 +20,6 @@ import {
   mintConsumerInvoice,
 } from "@/lib/payments/billing/consumer-invoice";
 import { platformSupplierForJob } from "@/lib/pdf/supplier";
-import {
-  checkGstRegistrationTurnover,
-  type GstTurnoverCheck,
-} from "@/lib/compliance/gst-turnover";
 
 /** Payments created before this lookback are not healed automatically. */
 export const CONSUMER_INVOICE_LOOKBACK_DAYS = 90;
@@ -38,8 +34,6 @@ export interface HealConsumerInvoicesResult {
   declined: number;
   failed: number;
   skipped?: ConfigSkip;
-  /** Unregistered runs only: the financial-year turnover the alarm read. */
-  turnover?: GstTurnoverCheck;
 }
 
 /**
@@ -52,12 +46,11 @@ export async function healConsumerInvoices(opts: {
   now?: Date;
   pivot?: string;
 }): Promise<HealConsumerInvoicesResult> {
-  // An unset GSTIN skips minting and checks turnover; a malformed or wrong-state one throws.
+  // An unset GSTIN skips before any row is read; a malformed or wrong-state one throws.
   if (!platformSupplierForJob()) {
     const skipped: ConfigSkip = "PLATFORM_GSTIN not configured";
     reportConfigSkip("heal-consumer-invoices", skipped);
-    const turnover = await checkGstRegistrationTurnover(opts.now);
-    return { scanned: 0, minted: 0, declined: 0, failed: 0, skipped, turnover };
+    return { scanned: 0, minted: 0, declined: 0, failed: 0, skipped };
   }
   // Fail-closed: every mint takes a number from the gapless Rule 46 series.
   return withCronLock(

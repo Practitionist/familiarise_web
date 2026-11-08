@@ -1,13 +1,13 @@
 /**
- * The GST registration alarm for the unregistered regime. As principal
- * supplier every sale is the platform's own turnover, so the alarm reads the
- * current financial year's captured payments, net of refunds, and reports once
- * per run when they near the CGST s.22 threshold.
+ * The GST registration alarm for the unregistered regime, run by the daily ops
+ * digest. As principal supplier every sale is the platform's own turnover, so
+ * it reads the current financial year's captured payments, net of refunds, and
+ * reports once when they near the CGST s.22 threshold.
  */
 
 import type { Prisma } from "@prisma/client";
 
-import prisma from "@/lib/prisma";
+import type { Db } from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { istFinancialYearStart } from "@/lib/compliance/ist-period";
@@ -37,24 +37,24 @@ function financialYearPaymentWhere(financialYearStart: Date) {
 
 /** The current financial year's turnover; one Sentry message when it crosses the alarm. */
 export async function checkGstRegistrationTurnover(
+  db: Db,
   now: Date = new Date(),
 ): Promise<GstTurnoverCheck> {
   const financialYearStart = istFinancialYearStart(now);
   const paymentWhere = financialYearPaymentWhere(financialYearStart);
-  const [charged, credits, refunded] = await Promise.all([
-    prisma.payment.aggregate({
-      where: paymentWhere,
-      _sum: { amount: true, taxAmount: true },
-    }),
-    prisma.paymentLeg.aggregate({
-      where: { source: "REFERRAL_CREDIT", payment: paymentWhere },
-      _sum: { amountPaise: true },
-    }),
-    prisma.refund.aggregate({
-      where: { status: "SUCCEEDED", payment: paymentWhere },
-      _sum: { amountPaise: true },
-    }),
-  ]);
+  // PG_POOL_MAX=1: one statement at a time.
+  const charged = await db.payment.aggregate({
+    where: paymentWhere,
+    _sum: { amount: true, taxAmount: true },
+  });
+  const credits = await db.paymentLeg.aggregate({
+    where: { source: "REFERRAL_CREDIT", payment: paymentWhere },
+    _sum: { amountPaise: true },
+  });
+  const refunded = await db.refund.aggregate({
+    where: { status: "SUCCEEDED", payment: paymentWhere },
+    _sum: { amountPaise: true },
+  });
   const turnoverPaise =
     sumPaise(charged._sum.amount) -
     sumPaise(charged._sum.taxAmount) +

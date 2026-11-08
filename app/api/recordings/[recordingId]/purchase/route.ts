@@ -9,6 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { isRefusal } from "@/lib/errors/refusal";
 import type { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
@@ -379,6 +380,13 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
     ) {
       return NextResponse.json(
         { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
+    // A set but unusable PLATFORM_GSTIN refuses pricing with a typed 503.
+    if (isRefusal(error)) {
+      return NextResponse.json(
+        { error: error.userMessage, code: error.code },
         { status: error.httpStatus },
       );
     }
