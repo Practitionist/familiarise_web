@@ -65,7 +65,8 @@ inactivity, offers 500 MB of database storage, and takes no automatic backups.
 The Pro plan keeps seven daily backups
 ([pricing](https://supabase.com/pricing),
 [backups](https://supabase.com/docs/guides/platform/backups)). Take a manual
-`pg_dump` before the first production migration while the project is on Free.
+`pg_dump`, and prove it restores, before the last guarded `db push` of the
+cutover and before the first production migration while the project is on Free.
 These figures are public plan terms and may have changed; re-check them on the
 pricing page before relying on them.
 

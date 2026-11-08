@@ -34,6 +34,9 @@ migration files.
      exits 0, meaning the migrations produce exactly the schema file. The command
      exits 2 when the diff is non-empty
      ([CLI reference](https://www.prisma.io/docs/orm/v7/reference/prisma-cli-reference)).
+     Because it reads a migrations directory, it needs a shadow database: set
+     `shadowDatabaseUrl` in `prisma.config.ts` to a scratch database in CI
+     ([shadow database](https://www.prisma.io/docs/orm/v7/prisma-migrate/understanding-prisma-migrate/shadow-database)).
 
    The check is planned and does not exist yet; it belongs in `scripts/ci/` next
    to `check-db-sidecars.ts`.

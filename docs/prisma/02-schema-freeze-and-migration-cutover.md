@@ -80,7 +80,7 @@ The owner marks each row in section 9 KEEP or DROP. Rows with a reader stay unle
 
 ### Step 2. Land the shape changes (the last `db push` window)
 
-Each approved drop, rename or type change goes through the existing guarded flow: the exact destructive statements from `npm run db:preflight -- --print` are added to `destructiveStatementsAllowed` in `prisma/sql/known-drift.json` with an owner and an expiry, the push is run once by a person, and the list is emptied again. Code that reads the old shape is changed in the same PR. This is the last time the repository uses `db push` against a database that holds data.
+Each approved drop, rename or type change goes through the existing guarded flow: the exact destructive statements from `npm run db:preflight -- --print` are added to `destructiveStatementsAllowed` in `prisma/sql/known-drift.json` with an owner and an expiry, the push is run once by a person, and the list is emptied again. Before that push the owner takes a manual `pg_dump` and restores it into a scratch container to prove it is usable, because the Free plan takes no automatic backups and an approved drop has no other way back. Code that reads the old shape is changed in the same PR. This is the last time the repository uses `db push` against a database that holds data.
 
 ### Step 3. Prove zero drift and stop the pushes
 

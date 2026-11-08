@@ -25,14 +25,41 @@ is **(planned)**. The cutover step that adds it is in `runbook-cutover.md`.
 1. Check out the repository.
 2. `npm ci --ignore-scripts`, so no dependency install script runs with the
    database secret in the environment.
-3. pgfence, a static analyser for risky Postgres migrations:
-   `npx @flvmnt/pgfence analyze --ci --max-risk medium prisma/migrations/**/migration.sql`
-   ([Prisma guide](https://www.prisma.io/docs/guides/integrations/pgfence)). It is
-   third-party, so pin its exact version.
-4. `npx prisma migrate status`, to stop early on a failed or unexpected history.
-5. `npx prisma migrate deploy`. If it times out on the 10-second advisory lock
+3. `npx prisma migrate status`, to find the pending migrations and to stop early
+   on a failed or diverged history. Prisma 7 exits 1 when migrations are pending
+   as well as when one failed, the history diverged or the database is
+   unreachable ([CLI reference](https://www.prisma.io/docs/orm/v7/reference/prisma-cli-reference)),
+   so the exit code alone cannot gate the job. Exit 0 means nothing is pending
+   and the run stops successfully. Exit 1 continues only when the output reports
+   unapplied migrations and nothing else; any other exit 1 fails the run. The
+   exact output strings are UNVERIFIED and are pinned in the rehearsal
+   (`runbook-cutover.md`).
+4. The contract gate (below) compares the pending folders with the dispatch
+   input.
+5. pgfence, a static analyser for risky Postgres migrations
+   ([Prisma guide](https://www.prisma.io/docs/guides/integrations/pgfence)), runs
+   on the pending folders from step 3 only, never on the whole history, so an
+   already-applied high-risk migration cannot block later runs. Each pending
+   folder is analysed with
+   `npx @flvmnt/pgfence analyze --ci --max-risk medium <folder>/migration.sql`,
+   except the `_contract` folder whose name was typed into the dispatch input,
+   which is analysed with `--max-risk high`. pgfence classifies `DROP COLUMN` as
+   high risk ([pgfence](https://github.com/flvmnt/pgfence)), so this lets a
+   reviewed drop through while a critical-risk statement still fails. That a
+   high result passes at `--max-risk high` is UNVERIFIED; confirm it in the
+   rehearsal. It is third-party, so pin its exact version.
+6. `npx prisma migrate deploy`. If it times out on the 10-second advisory lock
    wait, the run fails and a human re-runs it.
-6. `npx tsx scripts/ci/check-db-sidecars.ts`, the post-deploy catalog assertion.
+7. `npx prisma migrate status` again, which must now exit 0: nothing pending,
+   nothing failed, no divergence.
+8. `npx tsx scripts/ci/check-db-sidecars.ts`, the post-deploy catalog assertion.
+
+pgfence also supports an inline `-- pgfence-ignore: <ruleId>` comment that
+suppresses one rule for the next statement only
+([pgfence](https://github.com/flvmnt/pgfence)). Use it only for a reviewed false
+positive, with a comment beside it saying why, and never in place of the
+`_contract` path, because an ignore stays in the file and hides the risk from
+every later report.
 
 ## On failure
 
@@ -58,8 +85,8 @@ migration is built from what Free does offer:
   input that must match, applies it. Dispatch requires write access to the
   repository, and that is the approval.
 
-Enforcer: the first step of the job compares pending folders with the typed input
-and exits non-zero on any mismatch. This check is planned with the workflow.
+Enforcer: step 4 of the job compares the pending folders from step 3 with the
+typed input and exits non-zero on any mismatch. This check is planned with the workflow.
 
 ## One database serves dev and prod
 
@@ -92,6 +119,7 @@ Option 1 needs no Netlify change, which is why the runbook prefers it.
 ## Sources
 
 - [Concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency) and [environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
-- [pgfence with Prisma](https://www.prisma.io/docs/guides/integrations/pgfence).
+- [pgfence with Prisma](https://www.prisma.io/docs/guides/integrations/pgfence) and [the pgfence repository](https://github.com/flvmnt/pgfence) — risk levels, `--max-risk` and inline ignores.
+- [Prisma CLI reference (v7)](https://www.prisma.io/docs/orm/v7/reference/prisma-cli-reference) — `migrate status` exit codes.
 - [Patching and hotfixing (v7)](https://www.prisma.io/docs/orm/v7/prisma-migrate/workflows/patching-and-hotfixing).
 - [Netlify deploy overview](https://docs.netlify.com/deploy/deploy-overview/).

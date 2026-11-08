@@ -12,36 +12,46 @@ operational order.
 
 1. **Sign the freeze table. [O]** The owner accepts or rejects each drop, rename
    and type change in `docs/prisma/02-schema-freeze-and-migration-cutover.md`.
-2. **Land the shape changes with the last guarded `db push`. [O]** Run
+2. **Take a manual dump and prove it restores, before any shape change. [O]**
+   On the Free plan there are no automatic backups (`supabase.md`), and the
+   freeze table can approve drops and type changes, so the push in step 3 has no
+   other way back. Confirm the plan, run `pg_dump`, and restore the dump into a
+   scratch container to prove it is usable.
+3. **Land the shape changes with the last guarded `db push`. [O]** Run
    `npm run db:push` once, through its preflight, so the live database matches the
    frozen `prisma/schema.prisma`.
-3. **Push freeze and zero-drift proof. [O]** Stop all pushes. Run
+4. **Push freeze and zero-drift proof. [O]** Stop all pushes. Run
    `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`
    and `npx tsx scripts/ci/check-db-live-drift.ts`; the only differences allowed
    are the reviewed sidecar entries in `prisma/sql/known-drift.json`.
-4. **Rehearse in a scratch container.** Never against the shared database.
-   - Build a database from the migration history alone (steps 6 onward, run
-     locally) and catalog-diff it against a restore of the live database.
+5. **Rehearse in a scratch container.** Never against the shared database.
+   - Build a database from the migration history alone (steps 7 onward, run
+     locally) and catalog-diff it against a fresh restore of the live
+     database taken after step 3.
    - Atomicity test: apply a migration whose second statement fails and record
      whether the first statement stayed committed. This settles the reported
-     per-statement commit (`prisma-mechanics.md`).
+     per-statement commit (`prisma-mechanics.md`). Then repeat it with the two
+     statements wrapped in `BEGIN;` and `COMMIT;` and confirm the first is rolled
+     back, which is what the constraint replacements in
+     `sidecars-as-migrations.md` rely on.
    - `SET` versus `SET LOCAL` test: apply a migration that sets `lock_timeout`
      each way and read the setting from a second statement in the same file.
    - Partial-index test: declare one partial unique index in the schema and see
      whether `migrate diff` stays clean (`sidecars-as-migrations.md`).
    - `@ignore` test: see how Migrate treats an `@ignore`d column
      (`expand-contract.md`).
-5. **Pin the Prisma version and add the guards.** `prisma` and every `@prisma/*`
+   - CI gate test: record the `migrate status` output for a pending-only history
+     and for a failed one, and confirm that pgfence passes a `DROP COLUMN` at
+     `--max-risk high` and fails it at `--max-risk medium` (`ci-migrations.md`).
+6. **Pin the Prisma version and add the guards.** `prisma` and every `@prisma/*`
    package are already pinned exactly to 7.10.1 in `package.json`. Add pgfence
    (`ci-migrations.md`) and the linear-history check (`conflicts.md`). Re-run this
    rehearsal on every Prisma bump.
-6. **Generate `0_baseline` plus `migration_lock.toml`, and fold the sidecars into
+7. **Generate `0_baseline` plus `migration_lock.toml`, and fold the sidecars into
    an idempotent migration.** Baseline with `migrate diff --from-empty --to-schema`
    (`prisma-mechanics.md`). Add one migration per sidecar object group after it
    (`sidecars-as-migrations.md`), each idempotent, so a rebuilt database has the
    money invariants and the overlap constraint.
-7. **Confirm the plan and backups, and take a manual dump. [O]** On the Free plan
-   there are no automatic backups, so run `pg_dump` first (`supabase.md`).
 8. **`prisma migrate resolve --applied 0_baseline` on live, then
    `prisma migrate status`. [O]** The baseline must be marked applied, not run.
    Do the same for each sidecar migration whose objects already exist.

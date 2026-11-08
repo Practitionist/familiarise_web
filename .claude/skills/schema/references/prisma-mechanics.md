@@ -66,8 +66,13 @@ Prisma needs a second, throwaway database to work out what SQL a schema change
 implies and to detect whether the real database has drifted from the migration
 history. It creates it, replays every migration into it, diffs, and drops it.
 
-The shadow database is used by `prisma migrate dev` and `prisma migrate diff`
-against a live datasource. It is never used by `prisma migrate deploy`, which is
+The shadow database is used by `prisma migrate dev`, and by `prisma migrate diff`
+whenever either side is `--from-migrations` or `--to-migrations`, even when the
+other side is a schema file
+([shadow database](https://www.prisma.io/docs/orm/v7/prisma-migrate/understanding-prisma-migrate/shadow-database)).
+The linear-history check in `conflicts.md` diffs `--from-migrations` against the
+schema file, so it needs `shadowDatabaseUrl` in `prisma.config.ts` pointing at a
+scratch database, never the shared one. It is never used by `prisma migrate deploy`, which is
 why a production deploy needs no elevated database privileges and no second
 database. When the connection user cannot create databases — which is normal on
 a managed provider — point `shadowDatabaseUrl` at a second database created by
@@ -85,7 +90,8 @@ export default defineConfig({
   datasource: {
     // Required. The CLI needs a direct or session-mode connection for DDL.
     url: process.env.DIRECT_URL,
-    // Optional. Only migrate dev and migrate diff against a datasource use it.
+    // Optional. Used by migrate dev and by migrate diff with --from/--to-migrations;
+    // point it at a scratch database, never the url above.
     shadowDatabaseUrl: process.env.SHADOW_DATABASE_URL,
   },
 });
@@ -364,7 +370,7 @@ each has a single correct response.
 - [Baselining a database](https://www.prisma.io/docs/orm/prisma-migrate/workflows/baselining) — the `0_init` and `migrate resolve --applied` procedure.
 - [Customizing migrations](https://www.prisma.io/docs/orm/prisma-migrate/workflows/customizing-migrations) — `--create-only` and editing generated SQL.
 - [prisma migrate diff](https://www.prisma.io/docs/cli/migrate/diff) — the datamodel versus datasource flag distinction.
-- [About the shadow database](https://www.prisma.io/docs/orm/prisma-migrate/understanding-prisma-migrate/shadow-database) — when it is created and when it is not.
+- [About the shadow database](https://www.prisma.io/docs/orm/prisma-migrate/understanding-prisma-migrate/shadow-database) and [its v7 page](https://www.prisma.io/docs/orm/v7/prisma-migrate/understanding-prisma-migrate/shadow-database) — when it is created and when it is not, including `migrate diff` with a migrations directory.
 - [Patching and hotfixing](https://www.prisma.io/docs/orm/prisma-migrate/workflows/patching-and-hotfixing) — the failed-migration recovery paths.
 - [prisma-engines#5767](https://github.com/prisma/prisma-engines/pull/5767), [7.4.0 release](https://github.com/prisma/prisma/releases/tag/7.4.0), [orm#14456](https://github.com/prisma/orm/issues/14456) and [orm#30640](https://github.com/prisma/orm/issues/30640) — concurrent indexes in migrations and the reported per-statement commit.
 - [PostgreSQL 15 ALTER TYPE](https://www.postgresql.org/docs/15/sql-altertype.html) — enum `ADD VALUE` and the absence of `DROP VALUE`.

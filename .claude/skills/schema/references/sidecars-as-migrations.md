@@ -8,12 +8,30 @@ says how. The migration mechanics are in `prisma-mechanics.md`.
 
 ## Rules
 
-1. **Every change is a new, idempotent migration.** Never edit an applied one.
-   For a constraint: `ALTER TABLE ... DROP CONSTRAINT IF EXISTS "<name>"`, then
-   `ADD CONSTRAINT`. For a constraint that must validate existing rows: add it
-   `NOT VALID` first, then `VALIDATE CONSTRAINT` (the repo already does this for
-   `occurrence_confirmed_requires_consultant_chk`). For a trigger: `DROP TRIGGER
-IF EXISTS`, then `CREATE TRIGGER`. For a function: `CREATE OR REPLACE`.
+1. **Every change is a new, idempotent migration, and a replacement is atomic.**
+   Never edit an applied one. Because Prisma 7.10.1 is reported to commit each
+   statement on its own (`prisma-mechanics.md`, concurrent index section), a
+   `DROP` followed by its replacement must sit inside an explicit `BEGIN;` and
+   `COMMIT;` in the migration file. Otherwise a failed `ADD CONSTRAINT` or
+   `CREATE TRIGGER` leaves the guard absent, and concurrent writes can pass in the
+   gap between the two statements. Prisma's 2022 Migrate announcement describes
+   the explicit `BEGIN;` and `COMMIT;` opt-in for PostgreSQL
+   ([Migrate DX primitives](https://www.prisma.io/blog/prisma-migrate-dx-primitives)),
+   and the rehearsal in `runbook-cutover.md` must confirm it on the pinned
+   version.
+   - Constraint: `ALTER TABLE ... DROP CONSTRAINT IF EXISTS "<name>"`, then
+     `ADD CONSTRAINT`, both inside the transaction. For a constraint that must
+     validate existing rows, add it `NOT VALID` inside the transaction, then
+     `VALIDATE CONSTRAINT` after `COMMIT` (the repo already does this for
+     `occurrence_confirmed_requires_consultant_chk`).
+   - Constraint trigger (`ledger_txn_balanced`, `payment_legs_sum_to_amount` and
+     the other money backstops): `DROP TRIGGER IF EXISTS`, then
+     `CREATE CONSTRAINT TRIGGER`, inside the transaction, because PostgreSQL does
+     not support `OR REPLACE` for constraint triggers.
+   - Ordinary trigger: `CREATE OR REPLACE TRIGGER`, which replaces it in one
+     statement with no gap
+     ([CREATE TRIGGER](https://www.postgresql.org/docs/current/sql-createtrigger.html)).
+   - Function: `CREATE OR REPLACE FUNCTION`.
 2. **One object per file.** The reported per-statement commit
    (`prisma-mechanics.md`, concurrent index section) means a failed multi-object
    file can leave some objects applied. One object per migration makes a failure
@@ -55,4 +73,5 @@ parser to read migrations. That decision is open and is part of the cutover work
 ## Sources
 
 - [Views](https://www.prisma.io/docs/orm/v7/prisma-schema/data-model/views) and [unsupported database features](https://www.prisma.io/docs/orm/v7/prisma-migrate/workflows/unsupported-database-features).
+- [Migrate DX primitives](https://www.prisma.io/blog/prisma-migrate-dx-primitives) — explicit `BEGIN;` and `COMMIT;` on PostgreSQL, and [CREATE TRIGGER](https://www.postgresql.org/docs/current/sql-createtrigger.html) — `OR REPLACE` and its constraint-trigger limit.
 - [Prisma config reference](https://www.prisma.io/docs/orm/reference/prisma-config-reference) — `tables.external`, `enums.external`.
