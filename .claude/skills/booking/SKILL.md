@@ -10,6 +10,8 @@ every rule here is non-negotiable and has been violated at least once, each
 violation costing real money or real bookings — the issue numbers are the
 receipts. The four references carry the detail for a specific concern.
 
+The appointment waitlist ("Notify me") and slot backup interest share one lifecycle (`lib/booking/interest/lifecycle.ts`); their product rules, vocabulary and roadmap are in the `growth` skill (`.claude/skills/growth/SKILL.md`).
+
 | Reference                      | Purpose                                                                                                                                                                      | Read it when                                                                                                         |
 | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `references/availability.md`   | How published availability becomes bookable slots — weekly vs custom rows, the 30-minute atom, union coverage, the grid endpoint, the three allocation modes.                | Touching availability rows, the booking calendar grid, slot generation, or conflict detection.                       |
