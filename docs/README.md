@@ -53,6 +53,7 @@ Platform-wide orientation and end-to-end cross-subsystem explainers.
 ### Dashboard
 
 - [information-architecture.md](./dashboard/information-architecture.md) - The dashboard glossary, the current navigation trees for every role, and the planned regrouping phases
+- [2026-11-08-dashboard-first-run-and-payment-legs.md](./decisions/2026-11-08-dashboard-first-run-and-payment-legs.md) - The expert first-run checklist, per-leg payment display with the legs as source of truth, the router-state header filter, the Reputation sidebar regroup and write-time audit descriptions
 
 ---
 

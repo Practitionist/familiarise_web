@@ -318,7 +318,9 @@ payload → an `OrgActivationSnapshot`, and runs two **pure** derivations from
   (`critical` / `warning` / `info`) for conditions that need action _now_:
   overdue invoices, credit-pool cap ≥ 80%,
   contract expiring within 30 days, pending overages, **stuck payouts**, low
-  wallet (< ₹1,000 `WALLET_LOW_BALANCE_PAISE`). Only conditions whose backing
+  wallet (balance strictly below the organisation's own floor,
+  `BillingAccount.minBalancePaise`; no floor means no banner, the same test as
+  the `wallet-low-balance` job). Only conditions whose backing
   data exists today render. Pending verification and suspension are not
   repeated here: the dashboard shell's status banner owns them on every page.
 - **`deriveActivationChecklist(snapshot, orgId)`** → the Getting-Started steps,
