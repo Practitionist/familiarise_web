@@ -20,7 +20,7 @@ This page lists the findings that shaped the growth design, each with its source
 
 ## DPDP
 
-The Digital Personal Data Protection Rules were notified on 14 November 2025. Most substantive rules apply 18 months later (about 13 to 14 May 2027), and consent-manager registration comes later. Sources: [SCC Online](https://www.scconline.com/blog/post/2025/12/26/digital-personal-data-protection-rules-2025-key-highlights/) and [AZB & Partners](https://www.azbpartners.com/bank/indias-digital-personal-data-protection-act-phased-rollout-and-key-compliance-milestones/).
+The Digital Personal Data Protection Rules, 2025 (G.S.R. 846(E)) were published in the Gazette on 13 November 2025 ([Gazette of India](https://egazette.gov.in/WriteReadData/2025/267650.pdf), rule 1). Rules 1, 2 and 17 to 21 apply from that date. Consent-manager registration (rule 4) applies one year later, from 13 November 2026. The substantive duties (rules 3, 5 to 16, 22 and 23, including the consent-notice rule, rule 3) apply 18 months after publication, from 13 May 2027. Secondary commentary: [SCC Online](https://www.scconline.com/blog/post/2025/12/26/digital-personal-data-protection-rules-2025-key-highlights/) and [AZB & Partners](https://www.azbpartners.com/bank/indias-digital-personal-data-protection-act-phased-rollout-and-key-compliance-milestones/).
 
 - A consent notice must be clear, standalone and purpose-specific, with withdrawal and grievance channels. Withdrawal must be as easy as giving consent ([TCSA](https://www.tcsa.in/frameworks/dpdp/consent-management)). **Effect:** the newsletter notice states one purpose, every email carries an unsubscribe link, and a withdrawal writes a withdrawn consent record.
 - No source found requires double opt-in. It is kept as best practice and as evidence. See Unverified.
@@ -28,23 +28,15 @@ The Digital Personal Data Protection Rules were notified on 14 November 2025. Mo
 
 ## Gmail and Yahoo bulk-sender rules
 
-From February 2024, senders above 5,000 messages a day to Gmail or Yahoo must authenticate with SPF, DKIM and an aligned DMARC policy, keep the spam rate under 0.3 %, and support one-click unsubscribe per RFC 8058 with the `List-Unsubscribe` and `List-Unsubscribe-Post` headers ([Google Workspace help](https://support.google.com/a/answer/81126)). **Effect:** the broadcast always sets both headers, and the unsubscribe `POST` needs no login.
+From 1 February 2024, Gmail requires senders of more than 5,000 messages a day to Gmail accounts to authenticate with SPF and DKIM, publish a DMARC policy aligned with the From domain, keep the spam rate reported in Postmaster Tools under 0.3 %, and support one-click unsubscribe ([Google Workspace help](https://support.google.com/a/answer/81126)). Yahoo asks bulk senders for SPF, DKIM, a passing DMARC policy of at least `p=none`, a spam rate under 0.3 % and a one-click `List-Unsubscribe` header, preferably the RFC 8058 `POST` method, honoured within two days; it publishes no numeric volume threshold for who counts as a bulk sender ([Yahoo Sender Hub](https://senders.yahooinc.com/best-practices/)). **Effect:** the broadcast always sets both headers, and the unsubscribe `POST` needs no login.
 
 ## Resend
 
-From the [Resend pricing page](https://resend.com/pricing): the Free plan allows 3,000 emails a month and 100 a day. Pro starts at 50,000 a month with no daily cap. Marketing (Contacts and Broadcasts) is priced by contacts. A dedicated IP comes only on the Scale plan. **Effect:** the free plan cannot send a broadcast to more than 100 people a day, so the account moves to Pro at go-live. Our cost and plan choice are in Notion.
+From the [Resend pricing page](https://resend.com/pricing): the free plan allows 3,000 emails a month and 100 a day, and a paid plan removes the daily cap. Marketing (Contacts and Broadcasts) is priced by contacts. **Effect:** the free plan cannot send a broadcast to more than 100 people a day, so at go-live the account moves to the owner-selected paid plan (recorded in Notion).
 
 ## Indian referral programmes
 
-| Programme               | Mechanism                                                                                                                | Source                                                                                                |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| Zerodha                 | 10 % of the referee's brokerage plus points; the referee gets perks.                                                     | [Zerodha Z-Connect](https://zerodha.com/z-connect/business-updates/zerodhas-referral-program-is-back) |
-| Upstox                  | Activation within 7 days, rewards after activation, a monthly cap, and self or circular referral banned with forfeiture. | [Upstox](https://upstox.com/refer-and-earn/)                                                          |
-| Groww 915               | Referrer only, paid on onboarding.                                                                                       | [Groww terms](https://groww.in/p/915-referral-terms-and-conditions)                                   |
-| Unacademy               | Two-sided; the friend gets 5 % off.                                                                                      | [Unacademy help](https://unacademy.com/helpcenter/category/81000193487/article/81000383213)           |
-| **US fallback.** Airbnb | Travel credit after a qualifying stay.                                                                                   | [The Points Guy](https://thepointsguy.com/news/tips-refer-airbnb-users-for-credit)                    |
-
-The pattern across them is that a reward vests on an event that is hard to fake, such as a paid transaction, with caps and forfeiture terms. **Effect:** the learner reward vests after a delivered, paid session, with a monthly budget, per-code and yearly caps, and a void on self-dealing.
+The Indian programmes reviewed ([Zerodha](https://zerodha.com/z-connect/business-updates/zerodhas-referral-program-is-back), [Upstox](https://upstox.com/refer-and-earn/), [Groww](https://groww.in/p/915-referral-terms-and-conditions) and [Unacademy](https://unacademy.com/helpcenter/category/81000193487/article/81000383213), with [Airbnb](https://thepointsguy.com/news/tips-refer-airbnb-users-for-credit) as a US fallback) share one pattern: a reward vests on an event that is hard to fake, such as a paid transaction or an activated account, with caps and forfeiture terms for self or circular referral. The per-programme detail is kept in Notion. **Effect:** the learner reward vests after a delivered, paid session, with a monthly budget, per-code and yearly caps, and a void on self-dealing.
 
 ## Referral fraud in India
 
@@ -54,7 +46,7 @@ Device-farm clusters are the common attack. One vendor analysis of 70 million us
 
 These are flags for the taxes session, not conclusions.
 
-- Section 194R: 10 % tax deducted at source on business perquisites above ₹20,000 a year, with sales discounts excluded ([Income Tax India](https://www.incometaxindia.gov.in/w/tds-on-benefit-or-perquisite-arising-from-business-or-profession)).
+- Section 393(1) Table Sl. 8(iv) of the Income-tax Act, 2025 (the old section 194R), for transactions from 1 April 2026: 10 % tax deducted at source on business perquisites above ₹20,000 a year, with sales discounts excluded ([Income Tax India](https://www.incometaxindia.gov.in/w/tds-on-benefit-or-perquisite-arising-from-business-or-profession)).
 - CGST section 15(3): a discount given before or at the time of supply and shown on the invoice reduces the taxable value. **Effect:** the friend's welcome discount is shown on the invoice.
 - How a referral reward is classified is unverified.
 
@@ -63,7 +55,7 @@ These are flags for the taxes session, not conclusions.
 - That double opt-in is not legally required for email marketing in India. No source was found that requires it; the absence of a source is not proof.
 - That TRAI's TCCCPR excludes email. This is an inference from its scope (telecom messages).
 - The referral mechanics of CRED, Topmate and PhonePe. No official page was found.
-- How a referral reward is classified under 194R and GST.
+- How a referral reward is classified under section 393(1) Table Sl. 8(iv) and GST.
 - That no Indian ticketing platform has a waitlist. Only that none publishes how it works.
 
 ## Deprecated & Superseded Approaches

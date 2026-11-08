@@ -54,7 +54,7 @@ Notices that tell a referrer their referral was voided or that credit expires so
 
 ## Handed to the taxes session
 
-Whether the credit and the welcome discount carry GST (a discount shown on the invoice before supply may reduce the taxable value), and whether TDS under section 194R applies to expert rewards and fee waivers, are open tax questions. They are in [the research page](./04-market-research-india-first.md#tax-flags) and the [roadmap](./05-roadmap.md), not decided here.
+Whether the credit and the welcome discount carry GST (a discount shown on the invoice before supply may reduce the taxable value), and whether TDS under section 393(1) Table Sl. 8(iv) of the Income-tax Act, 2025 (the old section 194R) applies to expert rewards and fee waivers, are open tax questions. They are in [the research page](./04-market-research-india-first.md#tax-flags) and the [roadmap](./05-roadmap.md), not decided here.
 
 ## Where in code
 

@@ -28,7 +28,7 @@ This table lists every growth item: what shipped, what the owner does at go-live
 | --- | --------------------------------------------------------------------------------------------------------- | -------- | ---------- | ---------- | -------------------------------------------------------------------------------- |
 | 9   | Run the `RENAME` script and `npm run db:push` immediately before promoting the release that carries #2655 | BS       | pre-launch | owner step | Newsletter writes succeed on production.                                         |
 | 10  | Delete `WAITLIST_HMAC_SECRET` from Netlify after the deploy                                               | BS       | pre-launch | owner step | The variable is gone and the site still signs links.                             |
-| 11  | Move Resend to Pro                                                                                        | BS       | pre-launch | owner step | The account is on Pro; the plan choice is recorded in Notion.                    |
+| 11  | Move Resend to the owner-selected paid plan (recorded in Notion)                                          | BS       | pre-launch | owner step | The account is on the plan recorded in Notion.                                   |
 | 12  | Set `EMAIL_DELIVERY_MODE=live`                                                                            | BS       | pre-launch | owner step | A non-allowlisted test address receives mail.                                    |
 | 13  | Set the referral budget and the hold thresholds from Notion (`PATCH /api/admin/referrals/config`)         | BS       | pre-launch | owner step | `ReferralProgramConfig` has a non-zero budget and the hold fields are set.       |
 | 14  | Approve the launch fee schedule (`fee-schedule-launch`)                                                   | BS       | pre-launch | owner step | `POST /api/admin/fee-schedules/[scheduleId]/approve` has run by a second person. |
@@ -53,11 +53,11 @@ This table lists every growth item: what shipped, what the owner does at go-live
 
 ## Handed to the taxes session
 
-| #   | Item                                                           | Priority | Phase      | Status      | Done when                                                              |
-| --- | -------------------------------------------------------------- | -------- | ---------- | ----------- | ---------------------------------------------------------------------- |
-| 23  | GST on referral credits and welcome discounts                  | P1       | pre-launch | handed over | The taxes session decides and the invoice shows the answer.            |
-| 24  | Section 194R on expert rewards and fee waivers                 | P1       | pre-launch | handed over | The taxes session decides whether and how tax is deducted.             |
-| 25  | How long consent artifacts are kept against an erasure request | P1       | pre-launch | handed over | The retention period and its legal basis are written in the DPDP page. |
+| #   | Item                                                                  | Priority | Phase      | Status      | Done when                                                              |
+| --- | --------------------------------------------------------------------- | -------- | ---------- | ----------- | ---------------------------------------------------------------------- |
+| 23  | GST on referral credits and welcome discounts                         | P1       | pre-launch | handed over | The taxes session decides and the invoice shows the answer.            |
+| 24  | Section 393(1) Sl. 8(iv) (old 194R) on expert rewards and fee waivers | P1       | pre-launch | handed over | The taxes session decides whether and how tax is deducted.             |
+| 25  | How long consent artifacts are kept against an erasure request        | P1       | pre-launch | handed over | The retention period and its legal basis are written in the DPDP page. |
 
 ## Last phase
 
