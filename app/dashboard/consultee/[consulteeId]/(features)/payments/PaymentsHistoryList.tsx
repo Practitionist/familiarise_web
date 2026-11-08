@@ -7,7 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { receiptHref } from "@/lib/appointments/payment-display";
+import {
+  formatFundingBreakdown,
+  receiptHref,
+} from "@/lib/appointments/payment-display";
 import {
   derivePaymentPresentation,
   toneBadge,
@@ -158,6 +161,17 @@ function HistoryRow({
           with {payment.consultantName}
         </p>
         <p className="mt-1 text-sm text-foreground">{moneyState.line}</p>
+        {payment.status === "SUCCEEDED" &&
+          payment.fundingBreakdown.length > 1 &&
+          moneyState.state !== "SPONSORED" && (
+            <p className="text-xs text-muted-foreground">
+              Paid with{" "}
+              {formatFundingBreakdown(
+                payment.fundingBreakdown,
+                payment.currency,
+              )}
+            </p>
+          )}
         {moneyState.detail && (
           <p className="text-xs text-muted-foreground">{moneyState.detail}</p>
         )}

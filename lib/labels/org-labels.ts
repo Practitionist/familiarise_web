@@ -524,3 +524,25 @@ export function selectFallbackOrgMembership<T extends FallbackOrgCandidate>(
   }
   return best;
 }
+
+// ─────────────────── Org payout and invoice audit copy ───────────────────
+
+/** TDS sections in statutory spelling; the stored column is a free string. */
+const TDS_SECTION_LABEL: Record<string, string> = {
+  "194O": "Section 194-O",
+  "393-8(v)": "Section 393(1) Table Sl. 8(v)",
+  "194J": "Section 194J",
+  "194C": "Section 194C",
+  "195": "Section 195",
+};
+
+export function tdsSectionLabel(section: string | null | undefined): string {
+  if (!section) return "an unrecorded section";
+  return TDS_SECTION_LABEL[section] ?? `Section ${section}`;
+}
+
+/** How a voided org invoice is settled, as an audit sentence ending. */
+export const INVOICE_VOID_MODE_LABEL: Record<"REBILL" | "FORGIVE", string> = {
+  REBILL: "for re-billing",
+  FORGIVE: "and written off",
+};
