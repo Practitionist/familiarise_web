@@ -127,6 +127,23 @@ describe("the newsletter writes and withdraws one consent ledger", () => {
     expect(artifacts).toEqual([expect.objectContaining({ userId: "user_1" })]);
   });
 
+  it("ignores a stored account that does not own the confirmed address", async () => {
+    mockSubscriberFind.mockResolvedValue({
+      status: "PENDING",
+      name: null,
+      userId: "someone_else",
+    });
+
+    await confirm();
+
+    expect(mockSubscriberUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ userId: null }),
+      }),
+    );
+    expect(artifacts[0].userId).toBeUndefined();
+  });
+
   it("writes nothing for an address already subscribed", async () => {
     mockSubscriberFind.mockResolvedValue({ status: "SUBSCRIBED", name: null });
 

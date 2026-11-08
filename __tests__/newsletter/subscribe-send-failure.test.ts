@@ -120,3 +120,49 @@ describe("subscribe — confirmation send failure", () => {
     expect(mockSendConfirm).not.toHaveBeenCalled();
   });
 });
+
+describe("subscribe — linking the signed-in account", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFindUnique.mockResolvedValue(null);
+    mockUpsert.mockResolvedValue({});
+    mockSendConfirm.mockResolvedValue({ success: true, data: {} });
+  });
+
+  const linked = () => mockUpsert.mock.calls[0][0].create.userId;
+
+  it("links the session only when its verified email is the submitted one", async () => {
+    await subscribe({
+      ...input,
+      sessionUser: {
+        id: "u1",
+        email: "READER@example.com",
+        emailVerified: true,
+      },
+    });
+    expect(linked()).toBe("u1");
+  });
+
+  it("never links a session to another address, or an unverified one", async () => {
+    await subscribe({
+      ...input,
+      sessionUser: {
+        id: "u1",
+        email: "other@example.com",
+        emailVerified: true,
+      },
+    });
+    await subscribe({
+      ...input,
+      sessionUser: {
+        id: "u1",
+        email: "reader@example.com",
+        emailVerified: false,
+      },
+    });
+    expect(mockUpsert.mock.calls.map(([args]) => args.create.userId)).toEqual([
+      null,
+      null,
+    ]);
+  });
+});

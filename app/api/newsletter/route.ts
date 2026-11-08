@@ -32,13 +32,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Link the row to the account when one is signed in — but never require
-    // a session; the footer form is public.
+    // A session links the row only when its verified email is the submitted one;
+    // the footer form is public and never requires a session.
     const session = await getSession().catch(() => null);
 
     const result = await subscribe({
       ...parsed.data,
-      userId: session?.user?.id ?? null,
+      sessionUser: session?.user ?? null,
       ip: getClientIp(request),
       userAgent: request.headers.get("user-agent"),
     });

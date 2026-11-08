@@ -29,7 +29,8 @@ export type SubscribeInput = {
   name?: string | null;
   source?: NewsletterSource;
   tags?: string[];
-  userId?: string | null;
+  /** The signed-in account; the row is linked only when it owns the submitted address. */
+  sessionUser?: { id: string; email: string; emailVerified: boolean } | null;
   /** Raw request IP — hashed before it touches the database. */
   ip?: string | null;
   userAgent?: string | null;
@@ -53,6 +54,11 @@ export async function subscribe(
 ): Promise<SubscribeResult> {
   const email = normalizeNewsletterEmail(input.email);
   const now = new Date();
+  const owner = input.sessionUser;
+  const userId =
+    owner?.emailVerified && normalizeNewsletterEmail(owner.email) === email
+      ? owner.id
+      : null;
 
   // Checked before the membership lookup, deliberately. If this ran after the
   // ALREADY_SUBSCRIBED short-circuit, a signing outage would answer 200 for
@@ -88,7 +94,7 @@ export async function subscribe(
       status: NewsletterStatus.PENDING,
       source: input.source ?? NewsletterSource.FOOTER,
       tags: input.tags ?? [],
-      userId: input.userId ?? null,
+      userId,
       ...consent,
     },
     update: {
@@ -99,7 +105,7 @@ export async function subscribe(
       // source is not worth preserving once someone opts in again.
       ...(input.source ? { source: input.source } : {}),
       ...(input.name ? { name: input.name } : {}),
-      ...(input.userId ? { userId: input.userId } : {}),
+      ...(userId ? { userId } : {}),
       ...consent,
     },
   });
@@ -158,21 +164,20 @@ export async function confirmSubscription(params: {
   const result = await prisma.$transaction(async (tx) => {
     const existing = await tx.newsletterSubscriber.findUnique({
       where: { email },
-      select: { status: true, name: true, userId: true },
+      select: { status: true, name: true },
     });
     if (!existing) return { outcome: "INVALID" } as const;
     if (existing.status === NewsletterStatus.SUBSCRIBED) {
       return { outcome: "ALREADY_CONFIRMED" } as const;
     }
+    // The account that owns the confirmed address, never a stored id that may not.
     const userId =
-      existing.userId ??
       (
         await tx.user.findUnique({
           where: { email },
           select: { id: true },
         })
-      )?.id ??
-      null;
+      )?.id ?? null;
     const { count } = await tx.newsletterSubscriber.updateMany({
       where: { email, status: { not: NewsletterStatus.SUBSCRIBED } },
       data: {
