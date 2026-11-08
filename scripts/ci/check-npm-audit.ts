@@ -4,9 +4,9 @@
  * expired entry fails like any other advisory, so an exception cannot outlive
  * its review.
  *
- * Usage: tsx scripts/ci/check-npm-audit.ts
+ * Usage: npm audit --omit=dev --json > audit.json; tsx scripts/ci/check-npm-audit.ts audit.json
  */
-import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { z } from "zod";
 
 type Allowance = { id: string; until: string; reason: string };
@@ -74,23 +74,12 @@ export function blockingFindings(
   return { blocking, expired };
 }
 
-function runAudit(): unknown {
-  try {
-    return JSON.parse(
-      execFileSync("npm", ["audit", "--omit=dev", "--json"], {
-        encoding: "utf8",
-      }),
-    );
-  } catch (error) {
-    // npm audit exits 1 whenever it finds anything; the JSON is still on stdout.
-    const stdout = z.object({ stdout: z.string() }).safeParse(error);
-    if (!stdout.success || stdout.data.stdout.trim() === "") throw error;
-    return JSON.parse(stdout.data.stdout);
-  }
-}
-
-function main() {
-  const report = AuditReport.parse(runAudit());
+function main(reportPath: string | undefined) {
+  if (!reportPath)
+    throw new Error("usage: check-npm-audit.ts <npm-audit.json>");
+  const report = AuditReport.parse(
+    JSON.parse(readFileSync(reportPath, "utf8")),
+  );
   const today = new Date().toISOString().slice(0, 10);
   const { blocking, expired } = blockingFindings(report, today);
   for (const a of expired) {
@@ -107,4 +96,4 @@ function main() {
   process.exit(1);
 }
 
-if (process.argv[1]?.endsWith("check-npm-audit.ts")) main();
+if (process.argv[1]?.endsWith("check-npm-audit.ts")) main(process.argv[2]);

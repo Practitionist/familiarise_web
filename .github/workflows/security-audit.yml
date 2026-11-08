@@ -36,7 +36,10 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Run production supply-chain security audit
-        run: node_modules/.bin/tsx scripts/ci/check-npm-audit.ts
+        # npm audit exits non-zero on any finding; the gate decides from its JSON.
+        run: |
+          npm audit --omit=dev --json > /tmp/npm-audit.json || true
+          node_modules/.bin/tsx scripts/ci/check-npm-audit.ts /tmp/npm-audit.json
 
       - name: Notify ops on failure
         if: failure()
