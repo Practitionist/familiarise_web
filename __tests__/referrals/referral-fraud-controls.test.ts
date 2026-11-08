@@ -25,6 +25,7 @@ const tx = {
   referral: {
     findUnique: jest.fn(),
     findFirst: jest.fn(),
+    findMany: jest.fn(),
     updateMany: jest.fn(),
     count: jest.fn(),
     create: jest.fn(),
@@ -272,12 +273,11 @@ describe("lost chargeback after vest", () => {
       vestedAt: new Date(NOW.getTime() - 5 * DAY),
       reversedAt: null as Date | null,
     };
-    tx.referral.findFirst.mockResolvedValue({
-      id: "ref-1",
-      referralCode: { userId: "referrer" },
-    });
-    tx.referralCredit.findMany.mockImplementation(async () =>
-      row.reversedAt ? [] : [{ id: row.id }],
+    tx.referral.findMany.mockResolvedValue([
+      { id: "ref-1", referralCode: { userId: "referrer" } },
+    ]);
+    tx.referralCredit.findMany.mockImplementation(async ({ where }) =>
+      row.reversedAt || where.referralId !== "ref-1" ? [] : [{ id: row.id }],
     );
     tx.referralCredit.findUnique.mockImplementation(async () => ({ ...row }));
     tx.referralCredit.updateMany.mockImplementation(async ({ where, data }) => {
@@ -341,23 +341,30 @@ describe("lost chargeback after vest", () => {
   });
 
   it("leaves a payment that vested no referral untouched", async () => {
-    tx.referral.findFirst.mockResolvedValue(null);
+    tx.referral.findMany.mockResolvedValue([]);
     expect(await settle()).toEqual({ reversedPaise: 0, waiversRevoked: 0 });
     expect(tx.referralCredit.findMany).not.toHaveBeenCalled();
     expect(tx.consultantFeeWaiver.updateMany).not.toHaveBeenCalled();
     expect(mockPostLedgerTxn).not.toHaveBeenCalled();
   });
 
-  it("ends the unused fee-waiver sessions of a vested expert referral", async () => {
-    tx.referral.findFirst.mockResolvedValue({
-      id: "ref-x",
-      referralCode: { userId: "expert-a" },
-    });
-    tx.referralCredit.findMany.mockResolvedValue([]);
+  it("settles a learner and an expert referral that share the payment", async () => {
+    const row = arrangeCredit(0);
+    tx.referral.findMany.mockResolvedValue([
+      { id: "ref-1", referralCode: { userId: "referrer" } },
+      { id: "ref-x", referralCode: { userId: "expert-a" } },
+    ]);
     tx.consultantFeeWaiver.updateMany.mockResolvedValue({ count: 2 });
-    expect(await settle()).toEqual({ reversedPaise: 0, waiversRevoked: 2 });
+    expect(await settle()).toEqual({
+      reversedPaise: 30_000,
+      waiversRevoked: 2,
+    });
+    expect(row.state).toBe("VOID");
     expect(tx.consultantFeeWaiver.updateMany).toHaveBeenCalledWith({
-      where: { referralId: "ref-x", sessionsRemaining: { gt: 0 } },
+      where: {
+        referralId: { in: ["ref-1", "ref-x"] },
+        sessionsRemaining: { gt: 0 },
+      },
       data: { sessionsRemaining: 0 },
     });
   });
