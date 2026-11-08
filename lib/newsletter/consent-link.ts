@@ -5,7 +5,7 @@
  */
 
 import { createHmac } from "node:crypto";
-import { NewsletterStatus } from "@prisma/client";
+import { NewsletterStatus, type Prisma } from "@prisma/client";
 import { deriveAuthKey } from "@/lib/auth/link-signing";
 import {
   buildConsentArtifact,
@@ -29,6 +29,22 @@ export function hashIp(ip: string | null | undefined): string | null {
   const key = deriveAuthKey("familiarise/consent-ip-salt/v1");
   if (!key) return null;
   return createHmac("sha256", key).update(ip).digest("hex");
+}
+
+/**
+ * Row-locks the matching subscribers and returns their linkage as committed after the
+ * lock, so a confirmation racing this transaction is seen, never a stale snapshot.
+ */
+export async function lockNewsletterRows(
+  tx: Pick<Tx, "newsletterSubscriber">,
+  where: Prisma.NewsletterSubscriberWhereInput,
+  now: Date,
+) {
+  return tx.newsletterSubscriber.updateManyAndReturn({
+    where,
+    data: { updatedAt: now },
+    select: { email: true, userId: true, consentSubjectId: true },
+  });
 }
 
 /** The consent subject for an address with no account; never stores the address itself. */

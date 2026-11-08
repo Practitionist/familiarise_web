@@ -13,7 +13,7 @@ const mockVerify = jest.fn();
 const mockEventCreate = jest.fn();
 const mockSuppressionUpsert = jest.fn();
 const mockNewsletterUpdateMany = jest.fn();
-const mockNewsletterFindMany = jest.fn();
+const mockNewsletterLock = jest.fn();
 const mockConsentUpdateMany = jest.fn();
 const mockRecordSystemErrorSafe = jest.fn();
 
@@ -31,7 +31,7 @@ jest.mock("../../lib/prisma", () => {
     },
     newsletterSubscriber: {
       updateMany: (...args: unknown[]) => mockNewsletterUpdateMany(...args),
-      findMany: (...args: unknown[]) => mockNewsletterFindMany(...args),
+      updateManyAndReturn: (...args: unknown[]) => mockNewsletterLock(...args),
     },
     consentArtifact: {
       findMany: async () => [],
@@ -96,7 +96,7 @@ beforeEach(() => {
   mockEventCreate.mockResolvedValue({ id: "ev-1" });
   mockSuppressionUpsert.mockResolvedValue({});
   mockNewsletterUpdateMany.mockResolvedValue({ count: 1 });
-  mockNewsletterFindMany.mockResolvedValue([]);
+  mockNewsletterLock.mockResolvedValue([]);
   mockConsentUpdateMany.mockResolvedValue({ count: 1 });
   mockRecordSystemErrorSafe.mockResolvedValue(undefined);
 });
@@ -209,7 +209,7 @@ describe("POST /api/webhooks/resend", () => {
   it("suppresses a complaint as COMPLAINT, unsubscribes the row and withdraws its consent", async () => {
     const payload = event("email.complained");
     mockVerify.mockReturnValue(payload);
-    mockNewsletterFindMany.mockResolvedValue([
+    mockNewsletterLock.mockResolvedValue([
       { email: "reader@example.com", userId: null },
     ]);
 
@@ -235,19 +235,41 @@ describe("POST /api/webhooks/resend", () => {
   it("withdraws the consent of an already BOUNCED row on a complaint", async () => {
     const payload = event("email.complained");
     mockVerify.mockReturnValue(payload);
-    mockNewsletterFindMany.mockResolvedValue([
+    mockNewsletterLock.mockResolvedValue([
       { email: "reader@example.com", userId: null, consentSubjectId: "subj_1" },
     ]);
 
     await POST(request(payload));
 
-    expect(mockNewsletterFindMany.mock.calls[0][0].where).not.toHaveProperty(
+    expect(mockNewsletterLock.mock.calls[0][0].where).not.toHaveProperty(
       "status",
     );
     expect(mockConsentUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ subjectPseudonymousId: "subj_1" }),
       }),
+    );
+  });
+
+  it("withdraws with the linkage read after the row lock, before any consent write", async () => {
+    const payload = event("email.complained");
+    mockVerify.mockReturnValue(payload);
+    mockNewsletterLock.mockResolvedValue([
+      { email: "reader@example.com", userId: "user_1", consentSubjectId: null },
+    ]);
+
+    await POST(request(payload));
+
+    expect(mockNewsletterLock.mock.calls[0][0]).toMatchObject({
+      data: { updatedAt: expect.any(Date) },
+    });
+    expect(mockConsentUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ userId: "user_1" }),
+      }),
+    );
+    expect(mockNewsletterLock.mock.invocationCallOrder[0]).toBeLessThan(
+      mockConsentUpdateMany.mock.invocationCallOrder[0],
     );
   });
 
@@ -285,7 +307,7 @@ describe("POST /api/webhooks/resend", () => {
       data: { email: "Unsub@Example.com", unsubscribed: true },
     };
     mockVerify.mockReturnValue(contactUnsub);
-    mockNewsletterFindMany.mockResolvedValue([
+    mockNewsletterLock.mockResolvedValue([
       { email: "unsub@example.com", userId: null },
     ]);
     const resContact = await POST(request(contactUnsub));

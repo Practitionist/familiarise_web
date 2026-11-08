@@ -12,7 +12,10 @@ import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { suppressRecipient } from "@/lib/email/suppression";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
-import { withdrawNewsletterConsent } from "@/lib/newsletter/consent-link";
+import {
+  lockNewsletterRows,
+  withdrawNewsletterConsent,
+} from "@/lib/newsletter/consent-link";
 import { toInputJson } from "@/lib/webhooks/event-log";
 import {
   MAX_WEBHOOK_BODY_BYTES,
@@ -62,12 +65,9 @@ async function unsubscribeNewsletterRows(
   emailFilter: string | { in: string[] },
 ): Promise<void> {
   // Every matching row, BOUNCED included, loses its consent; only live rows change status.
-  const rows = await tx.newsletterSubscriber.findMany({
-    where: { email: emailFilter },
-    select: { email: true, userId: true, consentSubjectId: true },
-  });
-  if (rows.length === 0) return;
   const now = new Date();
+  const rows = await lockNewsletterRows(tx, { email: emailFilter }, now);
+  if (rows.length === 0) return;
   await tx.newsletterSubscriber.updateMany({
     where: { email: emailFilter, status: { in: ["PENDING", "SUBSCRIBED"] } },
     data: { status: "UNSUBSCRIBED", unsubscribedAt: now },
