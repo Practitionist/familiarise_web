@@ -86,6 +86,20 @@ Booking system, slot allocation, validation, and scheduling logic for all 5 even
 
 ---
 
+### Growth docs
+
+The subsystem documentation for the newsletter, announcements, the appointment waitlist, slot backup interest and referrals. The decision record is listed above under "Growth".
+
+- [README.md](./growth/README.md) - Index, the pull requests that carry the code, and the repository-versus-Notion rule
+- [00-overview.md](./growth/00-overview.md) - Growth as one subsystem: the three parts, what they share, the vocabulary, a context diagram and where things live
+- [01-appointment-waitlist-and-backup-interest.md](./growth/01-appointment-waitlist-and-backup-interest.md) - Why every waiter is told at once, the lifecycle, release paths, caps, capacity normalisation, host counts, My alerts, the `demand` view and a worked example
+- [02-newsletter-and-announcements.md](./growth/02-newsletter-and-announcements.md) - Double opt-in, the consent ledger, signed links, broadcast modes and segments, unsubscribe, the sending subdomains and announcements versus the newsletter
+- [03-referrals.md](./growth/03-referrals.md) - The three programmes and the launch scope, fraud controls, the review hold and the chargeback void
+- [04-market-research-india-first.md](./growth/04-market-research-india-first.md) - Cited findings that shaped the design, with an Unverified list
+- [05-roadmap.md](./growth/05-roadmap.md) - Shipped, owner go-live, post-launch, retention and handed-off items
+
+---
+
 ### Calendar
 
 Calendar display, synchronization, and UI components.
