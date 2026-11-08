@@ -73,15 +73,21 @@ What a restore is worth depends on who caused the refund, read from the refund r
 - If the expert or the platform caused it, the restored credit is valid for at least 30 more days, even if its original expiry has passed.
 - If the buyer cancelled, the credit keeps its original expiry, and if that has already passed the credit is lost.
 
-A live credit has its `expiresAt` extended in place by a conditional update. An `EXPIRED` credit is never revived: its row shrinks by the restored amount, and a new `VESTED` credit carries the value with a 30-day expiry and the vest journal when the original was vested. A failed checkout's restore follows the buyer rule.
+A live credit has its `expiresAt` extended in place by a conditional update. An `EXPIRED` credit is never revived: its row shrinks by the restored amount, and a new `VESTED` credit carries the value with a 30-day expiry, the vest journal when the original was vested, and `sourceCreditId` pointing at the original. A failed checkout's restore follows the buyer rule.
 
 ## 6. A lost chargeback after vest
 
 A chargeback that the platform loses on the friend's qualifying payment means the reward was earned on money that came back. `settleLostDispute` (`app/api/webhooks/utils.ts`) calls `voidVestedReferralRewards` (`lib/referrals/credit-reversal.ts`) in the same transaction as the dispute verdict, so the webhook and the reconcile-disputes poll both apply it.
 
-If the payment qualified a `VESTED` referral, the referrer's `REFERRAL_BONUS` credit goes through `reverseCreditBalance`, the same service the operator reversal route uses. One conditional update on the credit's state and balance sets `amount` to `usedAmount`, `remainingAmount` to 0, the state to `VOID` and the reversal stamps (`reversedBy` is `system:chargeback`, `reversedReason` names the dispute). The unspent balance leaves the liability under `referral-reverse:<creditId>`. The spent part is absorbed: the purchases it paid for stand, and the platform keeps that part as a promotion cost.
+For every `VESTED` referral the payment qualified (a learner's and an expert's referral can share one payment), the referrer's `REFERRAL_BONUS` credit, and every credit restored from it, goes through `reverseCreditBalance`, the same service the operator reversal route uses. One conditional update on the credit's state and balance sets `amount` to `usedAmount`, `remainingAmount` to 0, the state to `VOID` and the reversal stamps (`reversedBy` is `system:chargeback`, `reversedReason` names the dispute). The unspent balance leaves the liability under `referral-reverse:<creditId>`. The spent part is absorbed: the purchases it paid for stand, and the platform keeps that part as a promotion cost.
 
-For example, a ₹300 credit (30,000 paise) of which ₹120 was spent is voided for 18,000 paise: `Dr REFERRAL_CREDIT_LIABILITY 18,000 / Cr PLATFORM_PROMO 18,000`. The credit row ends at `amount = usedAmount = 12,000`, `remainingAmount = 0`. A second delivery of the same verdict finds `reversedAt` set and posts nothing. A credit whose balance moved during the settlement aborts the transaction, so the webhook event is retried later rather than settled with the credit still live.
+For example, a ₹300 credit (30,000 paise) of which ₹120 was spent is voided for 18,000 paise: `Dr REFERRAL_CREDIT_LIABILITY 18,000 / Cr PLATFORM_PROMO 18,000`. The credit row ends at `amount = usedAmount = 12,000`, `remainingAmount = 0`. A second delivery of the same verdict finds `reversedAt` set and posts nothing.
+
+Three cases keep the clawback from being undone later.
+
+- A credit with nothing left to void, because it is spent, reserved by an unpaid checkout or `EXPIRED`, is still stamped as reversed by the same conditional update, and a `VESTED` one moves to `VOID`. Nothing is posted, because no liability remains on it.
+- A restore that targets a reversed credit, such as the failed checkout that had reserved the bonus, puts the value back on that row by a conditional update. The row is `VOID` or `EXPIRED`, so the value is recorded there but is never spendable, and the liability is not raised again.
+- A credit restored from an `EXPIRED` one records it in `sourceCreditId`. The settlement follows that chain through every generation, so the value a seller-caused refund moved to a new credit is reversed with its origin. A credit whose balance moved during the settlement aborts the transaction, so the webhook event is retried later rather than settled with the credit still live.
 
 ## 7. Expiry and breakage
 

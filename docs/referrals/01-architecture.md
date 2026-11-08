@@ -121,7 +121,7 @@ A held referral is listed under "Held for review" in the referrals back office. 
 
 ### Chargeback after vest
 
-When a dispute on a payment settles `LOST` or `CHARGE_REFUNDED` (or `CLOSED` with an amount deducted), `settleLostDispute` calls `voidVestedReferralRewards` in the same transaction. If that payment qualified a `VESTED` referral, the referrer's `REFERRAL_BONUS` credit loses its unspent balance through the operator reversal (`reverseCreditBalance`, journal key `referral-reverse:<creditId>`), and any part already spent is absorbed by the platform. The referral itself stays `VESTED`. For an expert referral, every fee waiver of that referral with sessions left is set to zero sessions. A replayed verdict finds the credit already reversed and the waivers already at zero, so it changes nothing.
+When a dispute on a payment settles `LOST` or `CHARGE_REFUNDED` (or `CLOSED` with an amount deducted), `settleLostDispute` calls `voidVestedReferralRewards` in the same transaction. For every `VESTED` referral that payment qualified, the referrer's `REFERRAL_BONUS` credit, and any credit restored from it (`sourceCreditId`), loses its unspent balance through the operator reversal (`reverseCreditBalance`, journal key `referral-reverse:<creditId>`), and any part already spent is absorbed by the platform. A credit with nothing left, because it is spent, reserved by an unpaid checkout or expired, is stamped as reversed anyway, so a later restore lands on a non-spendable row. The referral itself stays `VESTED`. For an expert referral, every fee waiver of that referral with sessions left is set to zero sessions. A replayed verdict finds the credit already reversed and the waivers already at zero, so it changes nothing.
 
 ## 5. Fee waivers
 
