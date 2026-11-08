@@ -5,11 +5,15 @@ import { RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { CompanyDetails } from "../CompanyDetails";
 import { COMPANY_INFO } from "@/lib/company";
+import { isPlatformGstRegistered } from "@/lib/pdf/supplier";
 import { PAGE_META, POLICY_DATES, getMailtoLink } from "../constants";
 import {
   REFUND_POLICY_COPY,
   REFUND_TIMING_BY_RAIL,
 } from "@/lib/payments/operations/refund-policy-copy";
+
+// The GST example follows PLATFORM_GSTIN; hourly regeneration picks up a registration.
+export const revalidate = 3600;
 
 export const metadata: Metadata = {
   title: `${PAGE_META.refund.title} | Familiarise`,
@@ -17,6 +21,7 @@ export const metadata: Metadata = {
 };
 
 export default function RefundPolicyPage() {
+  const gstRegistered = isPlatformGstRegistered();
   return (
     <section className="w-full">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -399,8 +404,9 @@ export default function RefundPolicyPage() {
                   gateway's charges from your refund
                 </li>
                 <li>
-                  Your refund is the percentage of the amount you paid, GST
-                  included, that the cancellation terms of your booking allow
+                  Your refund is the percentage of the amount you paid,
+                  including any GST, that the cancellation terms of your booking
+                  allow
                 </li>
                 <li>
                   The refund amount is shown before you confirm a cancellation,
@@ -409,9 +415,10 @@ export default function RefundPolicyPage() {
               </ul>
               <div className="bg-muted p-4 rounded-lg mt-4">
                 <p className="text-sm">
-                  <strong>Example:</strong> If you paid ₹1,180 for a
-                  consultation (₹1,000 plus 18% GST), a 100% refund returns
-                  ₹1,180 and a 50% refund returns ₹590.
+                  <strong>Example:</strong>{" "}
+                  {gstRegistered
+                    ? "If you paid ₹1,180 for a consultation (₹1,000 plus 18% GST), a 100% refund returns ₹1,180 and a 50% refund returns ₹590."
+                    : "If you paid ₹1,000 for a consultation, a 100% refund returns ₹1,000 and a 50% refund returns ₹500."}
                 </p>
               </div>
 

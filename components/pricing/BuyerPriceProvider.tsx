@@ -27,6 +27,11 @@ export function BuyerPriceProvider({
   );
 }
 
+/** Whether the platform is GST-registered, for copy that names GST. */
+export function useGstRegistered(): boolean {
+  return useContext(BuyerPriceContext);
+}
+
 /** Formats a plan's list price (INR paise) the way a buyer should see it. */
 export function useBuyerPrice() {
   const gstRegistered = useContext(BuyerPriceContext);

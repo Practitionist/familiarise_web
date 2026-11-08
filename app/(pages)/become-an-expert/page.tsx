@@ -21,6 +21,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
+import { isPlatformGstRegistered } from "@/lib/pdf/supplier";
 import prisma from "@/lib/prisma";
 import {
   describeFeeRates,
@@ -64,7 +65,7 @@ const STEPS = [
   },
 ];
 
-const REQUIREMENTS = [
+const requirements = (gstRegistered: boolean) => [
   {
     icon: BadgeCheck,
     title: "Demonstrable expertise",
@@ -74,8 +75,9 @@ const REQUIREMENTS = [
   {
     icon: FileCheck,
     title: "Identity and tax details",
-    description:
-      "PAN and the tax information we need to deduct TDS correctly and issue compliant invoices on your behalf.",
+    description: gstRegistered
+      ? "PAN and the tax information we need to deduct TDS correctly and issue compliant invoices on your behalf."
+      : "PAN and the tax information we need to deduct TDS correctly and keep your tax records.",
   },
   {
     icon: Landmark,
@@ -91,7 +93,7 @@ const REQUIREMENTS = [
   },
 ];
 
-const FAQ = [
+const faq = (gstRegistered: boolean) => [
   {
     question: "How much does it cost to join?",
     answer:
@@ -104,8 +106,9 @@ const FAQ = [
   },
   {
     question: "What happens about tax?",
-    answer:
-      "TDS is deducted at the applicable rate and recorded against your PAN, and GST-compliant invoices are generated for each booking. You'll find the records in your dashboard when you need them for filing.",
+    answer: gstRegistered
+      ? "TDS is deducted at the applicable rate and recorded against your PAN, and GST-compliant invoices are generated for each booking. You'll find the records in your dashboard when you need them for filing."
+      : "TDS is deducted at the applicable rate and recorded against your PAN, and a receipt is issued for each booking. You'll find the records in your dashboard when you need them for filing.",
   },
   {
     question: "Do I have to commit to a fixed number of hours?",
@@ -120,6 +123,7 @@ const FAQ = [
 ];
 
 export default async function BecomeAnExpertPage() {
+  const gstRegistered = isPlatformGstRegistered();
   const rates = describeFeeRates(
     await withBuildTimeRetry(() => readActiveFeeSchedule(prisma)),
   );
@@ -261,8 +265,9 @@ export default async function BecomeAnExpertPage() {
                     Tax handled for you
                   </h3>
                   <p className="text-sm leading-relaxed text-muted-foreground">
-                    TDS is deducted at the applicable rate against your PAN and
-                    GST-compliant invoices are generated automatically.
+                    {gstRegistered
+                      ? "TDS is deducted at the applicable rate against your PAN and GST-compliant invoices are generated automatically."
+                      : "TDS is deducted at the applicable rate against your PAN and a receipt is generated automatically for each booking."}
                   </p>
                 </div>
               </div>
@@ -296,7 +301,7 @@ export default async function BecomeAnExpertPage() {
           </div>
 
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-            {REQUIREMENTS.map((item) => {
+            {requirements(gstRegistered).map((item) => {
               const Icon = item.icon;
               return (
                 <div
@@ -334,7 +339,7 @@ export default async function BecomeAnExpertPage() {
           </div>
 
           <Accordion type="single" collapsible className="w-full">
-            {FAQ.map((item) => (
+            {faq(gstRegistered).map((item) => (
               <AccordionItem key={item.question} value={item.question}>
                 <AccordionTrigger className="text-left font-medium text-foreground">
                   {item.question}
