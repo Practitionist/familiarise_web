@@ -81,7 +81,7 @@ booking change: `claude-code-review.yml` fires only on a `labeled` event, and
 `claude.yml` only when a comment or review body contains `@claude`.
 
 CI's `test-and-build` job is the gate: it passes only when the `checks` job
-(lint on changed files, `npm audit`, `prisma generate`, `npx tsc --noEmit`, the
+(lint on changed files, the `check-npm-audit.ts` advisory gate, `prisma generate`, `npx tsc --noEmit`, the
 money-column, auth-schema and workflow-hygiene guards, `jest --changedSince` on
 non-prod PRs, and the DB-sidecar guard plus the database tier
 `jest -c jest.db.config.ts` against a throwaway Postgres whenever `prisma/**`

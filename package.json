@@ -50,9 +50,9 @@
     "cron:coverage": "tsx scripts/maintenance/check-job-coverage.ts"
   },
   "dependencies": {
-    "@better-auth/core": "1.7.14",
-    "@better-auth/passkey": "1.7.14",
-    "@better-auth/sso": "1.7.14",
+    "@better-auth/core": "1.7.18",
+    "@better-auth/passkey": "1.7.18",
+    "@better-auth/sso": "1.7.18",
     "@hookform/resolvers": "^5.9.1",
     "@novu/api": "^3.19.1",
     "@novu/nextjs": "^3.19.2",
@@ -88,7 +88,7 @@
     "@upstash/redis": "^1.39.0",
     "bad-words": "^4.1.5",
     "bcrypt": "^6.0.0",
-    "better-auth": "1.7.14",
+    "better-auth": "1.7.18",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
