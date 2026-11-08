@@ -35,15 +35,15 @@ This table lists every growth item: what shipped, what the owner does at go-live
 
 ## Post-launch, open
 
-| #   | Item                                                     | Priority | Phase       | Status                                        | Done when                                                                                           |
-| --- | -------------------------------------------------------- | -------- | ----------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| 15  | Host demand dashboard over the `demand` view             | P2       | post-launch | open, no issue yet                            | A host sees demand by plan and period with no names.                                                |
-| 16  | Voided and expiring-soon referral notices                | P2       | post-launch | open, no issue yet                            | A voided referral and a credit near expiry each send a notice.                                      |
-| 17  | Ordered offer waves for the appointment waitlist         | P3       | post-launch | open, only if data shows lost races           | The monthly read-out shows waiters losing races and a wave is a `take` on the same compare-and-set. |
-| 18  | Move the newsletter to Resend Broadcasts                 | P3       | post-launch | open, only if the list outgrows our send path | Erasure, consent and suppression are reconciled across both stores.                                 |
-| 19  | The campaign outbox, #2508 "Newsletter system design v1" | P3       | post-launch | open, #2508                                   | A list above 2,000 is sendable across several runs.                                                 |
-| 20  | Re-engagement email                                      | P3       | post-launch | open, no issue yet                            | Inactive subscribers receive one gated nudge.                                                       |
-| 21  | Vendor device fingerprinting for referrals               | defer    | post-launch | deferred until abuse appears                  | Held-queue data shows abuse the cheap controls miss.                                                |
+| #   | Item                                                     | Priority | Phase       | Status                                     | Done when                                                                                           |
+| --- | -------------------------------------------------------- | -------- | ----------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| 15  | Host demand dashboard over the `demand` view             | P2       | post-launch | open, #2658                                | A host sees demand by plan and period with no names.                                                |
+| 16  | Voided and expiring-soon referral notices                | P2       | post-launch | open, #2660                                | A voided referral and a credit near expiry each send a notice.                                      |
+| 17  | Ordered offer waves for the appointment waitlist         | P3       | post-launch | open, #2658, only if data shows lost races | The monthly read-out shows waiters losing races and a wave is a `take` on the same compare-and-set. |
+| 18  | Move the newsletter to Resend Broadcasts                 | P3       | post-launch | open, #2659, if the list outgrows our path | Erasure, consent and suppression are reconciled across both stores.                                 |
+| 19  | The campaign outbox, #2508 "Newsletter system design v1" | P3       | post-launch | open, #2508                                | A list above 2,000 is sendable across several runs.                                                 |
+| 20  | Re-engagement email                                      | P3       | post-launch | open, #2659                                | Inactive subscribers receive one gated nudge.                                                       |
+| 21  | Vendor device fingerprinting for referrals               | defer    | post-launch | deferred until abuse appears, #2660        | Held-queue data shows abuse the cheap controls miss.                                                |
 
 ## Retention
 
