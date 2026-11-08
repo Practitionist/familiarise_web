@@ -4,7 +4,7 @@
  * expired entry fails like any other advisory, so an exception cannot outlive
  * its review.
  *
- * Usage: npm audit --omit=dev --json > audit.json; tsx scripts/ci/check-npm-audit.ts audit.json
+ * Usage: { npm audit --omit=dev --json || true; } | tsx scripts/ci/check-npm-audit.ts
  */
 import { readFileSync } from "node:fs";
 import { z } from "zod";
@@ -74,12 +74,9 @@ export function blockingFindings(
   return { blocking, expired };
 }
 
-function main(reportPath: string | undefined) {
-  if (!reportPath)
-    throw new Error("usage: check-npm-audit.ts <npm-audit.json>");
-  const report = AuditReport.parse(
-    JSON.parse(readFileSync(reportPath, "utf8")),
-  );
+function main() {
+  // The audit report arrives on stdin (fd 0).
+  const report = AuditReport.parse(JSON.parse(readFileSync(0, "utf8")));
   const today = new Date().toISOString().slice(0, 10);
   const { blocking, expired } = blockingFindings(report, today);
   for (const a of expired) {
@@ -96,4 +93,4 @@ function main(reportPath: string | undefined) {
   process.exit(1);
 }
 
-if (process.argv[1]?.endsWith("check-npm-audit.ts")) main(process.argv[2]);
+if (process.argv[1]?.endsWith("check-npm-audit.ts")) main();

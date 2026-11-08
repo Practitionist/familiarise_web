@@ -257,9 +257,7 @@ jobs:
       - name: Supply-chain security audit
         # Fail CI on a high or critical production advisory; the script's dated allowlist holds the only exceptions.
         # npm audit exits non-zero on any finding; the gate decides from its JSON.
-        run: |
-          npm audit --omit=dev --json > /tmp/npm-audit.json || true
-          node_modules/.bin/tsx scripts/ci/check-npm-audit.ts /tmp/npm-audit.json
+        run: "{ npm audit --omit=dev --json || true; } | node_modules/.bin/tsx scripts/ci/check-npm-audit.ts"
 
       - name: Runner resources
         # Private-repo ubuntu-latest is ~2 vCPU / ~7 GB. Printed so a future
