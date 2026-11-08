@@ -6153,6 +6153,9 @@ model Payment {
   refundOwedAttempts          Int                          @default(0)
   // The sweep's next drive after a failed one (backoff); null = due now.
   refundOwedNextAt            DateTime?
+  // HMACs of the payer's UPI address and phone from the capture webhook; never the raw values.
+  payerVpaHash                String?                      @db.VarChar(64)
+  payerPhoneHash              String?                      @db.VarChar(64)
   // Referrals this payment qualified (at most one in practice).
   qualifyingReferrals         Referral[]                   @relation("ReferralQualifyingPayment")
   firstPaymentOfRelationships ExpertCustomerRelationship[]
@@ -7133,6 +7136,13 @@ model Referral {
   vestedAt               DateTime?              @db.Timestamptz
   // ReferralProgramConfig.version the referral was applied under.
   configVersion          Int?
+  // Apply-time request signals: HMAC of the client IP and the truncated user agent.
+  ipHash                 String?                @db.VarChar(64)
+  userAgent              String?                @db.VarChar(256)
+  // Review hold: set on QUALIFYING -> HELD; a release stamps reviewReleasedAt so the rules skip it.
+  heldAt                 DateTime?              @db.Timestamptz
+  heldReason             String?
+  reviewReleasedAt       DateTime?              @db.Timestamptz
   attributedPayments     Payment[]              @relation("PaymentAttributionReferral")
   feeWaivers             ConsultantFeeWaiver[]
 
@@ -7178,21 +7188,22 @@ model ReferralCredit {
   vestedAt        DateTime?           @db.Timestamptz
   voidedAt        DateTime?           @db.Timestamptz
   configVersion   Int?
+  // The expired credit this one was restored from, so a clawback of the original reaches it.
+  sourceCreditId  String?
 
   user   User                  @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   usages ReferralCreditUsage[]
 
   createdAt DateTime @default(now())
 
-  // Prevents duplicate credit rows for the same referral event.
-  // Note: PostgreSQL does NOT enforce this constraint when referralId IS NULL
-  // (NULL != NULL in unique indexes), so PROMOTION/MANUAL/COMPENSATION sources
-  // rely on the Serializable transaction in processQualifyingAction() for deduplication.
+  // One credit per referral event. NULL referralIds never collide, so admin-issued
+  // credits deduplicate on idempotencyKey instead.
   @@unique([userId, referralId, source])
   @@index([userId])
   @@index([expiresAt])
   @@index([userId, expiresAt])
   @@index([state, expiresAt])
+  @@index([sourceCreditId])
 }
 
 enum ReferralCreditState {
@@ -7243,6 +7254,11 @@ model ReferralProgramConfig {
   expertWaiverDays          Int      @default(90)
   // Budget charged when an expert referral vests: the expected forgone take on its waived sessions.
   expertReferralBudgetPaise BigInt   @default(180000)
+  // Review-hold rules, off while null: referrals of one code sharing an IP hash (or IP hash and
+  // user agent) at or above the count, within holdWindowDays of signup when that is set.
+  holdSameIpReferrals       Int?
+  holdSameDeviceReferrals   Int?
+  holdWindowDays            Int?
   version                   Int      @default(1)
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
@@ -7333,6 +7349,7 @@ enum ReferralStatus {
   QUALIFYING // first paid marketplace capture seen; waiting on delivery + refund window
   VESTED // reward released
   VOID // disqualified; see voidReason
+  HELD // QUALIFYING with suspicious signals; waits for an ADMIN release or void
 }
 
 enum CreditSource {

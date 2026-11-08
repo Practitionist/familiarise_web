@@ -21,13 +21,15 @@ Redis for rate limits and locks, and GitHub Actions for the cron fleet.
 Connection-pool arithmetic says roughly ten pooled connections serve a
 thousand active users for an OLTP workload like ours, well inside the Pro
 tier's pooler limits. The asterisk is documented in our own incident
-history: the waitlist crons hit ETIMEDOUT at effectively zero user load
-(#821, #814) because background jobs collided on the pooler (#709). The
-first thing that breaks at this scale is not user traffic — it is our own
-cron fleet stampeding the pooler. The #476 cron locks remove the collision
-overlap; the residual actions are setting `connect_timeout=30` and
-`pool_timeout=30` on the pooled connection string and re-running the
-waitlist jobs to confirm.
+history: the cron jobs of the since-retired queued event waitlist hit
+ETIMEDOUT at effectively zero user load (#821, #814) because background jobs
+collided on the pooler (#709). The first thing that breaks at this scale is
+not user traffic — it is our own cron fleet stampeding the pooler. The #476
+cron locks remove the collision overlap; the residual actions are setting
+`connect_timeout=30` and `pool_timeout=30` on the pooled connection string
+and re-running the scheduled jobs to confirm. The notify-only lists that
+replaced that waitlist have no job of their own; they ride the
+`expire-stale-requests` run.
 
 ## Around 10,000 concurrent users — Netlify's function concurrency breaks first (~$110/month)
 

@@ -20,13 +20,15 @@ const PLAN_PATH: Record<OfferingType, (id: string) => string> = {
   consultation: (id) => `/api/plans/consultations/${id}`,
   // The author also learns how many live buyers keep their current terms.
   subscription: (id) => `/api/plans/subscriptions/${id}?include=activeClients`,
-  webinar: (id) => `/api/plans/webinars/${id}`,
-  class: (id) => `/api/plans/classes/${id}`,
+  // The host-only editor reads: the public plan GET is CDN-cached.
+  webinar: (id) => `/api/plans/webinars/${id}/editor`,
+  class: (id) => `/api/plans/classes/${id}/editor`,
 };
 
 interface InstanceRow {
   id?: string;
   status?: string | null;
+  maxParticipants?: number | null;
   schedulingPeriodStartsAt?: string | Date | null;
   appointment?: {
     occurrences?: Array<{ startsAt?: string | Date | null }>;
@@ -43,6 +45,17 @@ function pickInstance(
   instanceId: string | null,
 ): InstanceRow | undefined {
   return rows?.find((row) => row.id === instanceId) ?? rows?.[0];
+}
+
+/** The form edits the instance's effective capacity: its override, else the plan's. */
+function withEffectiveCapacity(
+  plan: Record<string, unknown>,
+  instance: InstanceRow | undefined,
+): Record<string, unknown> {
+  const override = instance?.maxParticipants;
+  return typeof override === "number"
+    ? { ...plan, maxParticipants: override }
+    : plan;
 }
 
 /**
@@ -75,7 +88,7 @@ export function wrapPlanAsEvent(
       id,
       instanceId: webinar?.id,
       instanceStatus: webinar?.status ?? null,
-      webinarPlan: { ...plan, scheduledAt },
+      webinarPlan: { ...withEffectiveCapacity(plan, webinar), scheduledAt },
     };
   }
   const cls = pickInstance(
@@ -87,7 +100,7 @@ export function wrapPlanAsEvent(
     id,
     instanceId: cls?.id,
     instanceStatus: cls?.status ?? null,
-    classPlan: plan,
+    classPlan: withEffectiveCapacity(plan, cls),
     schedulingPeriodStartsAt: cls?.schedulingPeriodStartsAt ?? null,
   };
 }
@@ -106,19 +119,28 @@ export function useOfferingEvent(
   return useQuery({
     queryKey: ["offering-edit", type, offeringId, instanceId],
     enabled: !!OFFERING_MANIFESTS[type] && !!offeringId,
-    queryFn: async () => {
-      const response = await fetch(PLAN_PATH[type](offeringId ?? ""));
-      if (response.status === 404) return null;
-      if (!response.ok) {
-        throw new Error(`Failed to load ${type} plan (${response.status})`);
-      }
-      const body = (await response.json()) as {
-        data?: Record<string, unknown>;
-      };
-      if (!body.data) return null;
-      return wrapPlanAsEvent(type, body.data, instanceId);
-    },
+    queryFn: () => loadOfferingEvent(type, offeringId ?? "", instanceId),
   });
+}
+
+/** One uncached read of the offering, wrapped for the editor; null when it is not there. */
+export async function loadOfferingEvent(
+  type: OfferingType,
+  offeringId: string,
+  instanceId: string | null,
+): Promise<Record<string, unknown> | null> {
+  const response = await fetch(PLAN_PATH[type](offeringId), {
+    cache: "no-store",
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(`Failed to load ${type} plan (${response.status})`);
+  }
+  const body = (await response.json()) as {
+    data?: Record<string, unknown>;
+  };
+  if (!body.data) return null;
+  return wrapPlanAsEvent(type, body.data, instanceId);
 }
 
 const ownedAssetSchema = z.object({

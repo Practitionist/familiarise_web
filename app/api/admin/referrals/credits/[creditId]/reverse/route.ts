@@ -1,23 +1,11 @@
 /**
- * POST /api/admin/referrals/credits/[creditId]/reverse
- *
- * #1839 — Reverse unused referral credit balance (Admin-only via `withOpsAction`).
- *
- * Enforces:
- * - `referrals.manage` surface permission + mandatory audit reason (`opsReasonSchema`)
- * - Credit must exist, must not already be reversed (`reversedAt === null`),
- *   and must have `remainingAmount > 0` (otherwise 409 Conflict).
- * - Satisfies the DB CHECK constraint `referral_credit_balance_consistent`
- *   (`remainingAmount = amount - usedAmount`, all >= 0) by setting
- *   `amount = credit.usedAmount` and `remainingAmount = 0`, preserving
- *   `usedAmount` as the exact sum of `ReferralCreditUsage` rows.
- * - Stamps `reversedAt`, `reversedBy`, and `reversedReason`, and writes an
- *   atomic `OpsActionLog` row in the same transaction.
+ * POST /api/admin/referrals/credits/[creditId]/reverse — ADMIN voids a credit's unused balance
+ * with a reason, through `reverseCreditBalance`, and the audit row in the same transaction.
  */
 
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
-import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import { reverseCreditBalance } from "@/lib/referrals/credit-reversal";
 
 export const POST = withOpsAction(
   "referrals.manage",
@@ -35,92 +23,47 @@ export const POST = withOpsAction(
         );
       }
 
-      const existing = await tx.referralCredit.findUnique({
-        where: { id: creditId },
-      });
-      if (!existing) {
-        throw new OpsRefusal(
-          "CREDIT_NOT_FOUND",
-          "Referral credit not found.",
-          404,
-        );
-      }
-
-      if (existing.reversedAt !== null) {
-        throw new OpsRefusal(
-          "CREDIT_ALREADY_REVERSED",
-          "This referral credit has already been reversed.",
-          409,
-        );
-      }
-
-      if (existing.state === "EXPIRED" || existing.state === "VOID") {
-        throw new OpsRefusal(
-          "CREDIT_NOT_REVERSIBLE",
-          `This referral credit is ${existing.state.toLowerCase()} and holds nothing to reverse.`,
-          409,
-        );
-      }
-
-      const remainingPaise = Number(existing.remainingAmount);
-      const usedPaise = Number(existing.usedAmount);
-      const originalAmountPaise = Number(existing.amount);
-
-      if (remainingPaise <= 0) {
-        throw new OpsRefusal(
-          "NO_REMAINING_BALANCE",
-          "This referral credit has no unused balance left to reverse.",
-          409,
-        );
-      }
-
       const now = new Date();
-      const cas = await tx.referralCredit.updateMany({
-        where: {
-          id: creditId,
-          reversedAt: null,
-          state: existing.state,
-          usedAmount: existing.usedAmount,
-          remainingAmount: existing.remainingAmount,
-        },
-        data: {
-          // Preserve usedAmount = sum(usages) while zeroing remainingAmount so
-          // the DB CHECK constraint `remainingAmount = amount - usedAmount` holds.
-          amount: usedPaise,
-          remainingAmount: 0,
-          reversedAt: now,
-          reversedBy: ctx.actor.userId,
-          reversedReason: ctx.body.reason,
-          state: "VOID",
-          voidedAt: now,
-        },
+      const outcome = await reverseCreditBalance(tx, {
+        creditId,
+        reversedBy: ctx.actor.userId,
+        reason: ctx.body.reason,
+        now,
       });
-      if (cas.count !== 1) {
-        throw new OpsRefusal(
-          "CREDIT_CHANGED",
-          "Credit was modified or reversed concurrently; refresh and retry.",
-          409,
-        );
-      }
-      // A VESTED credit with vestedAt set sits in the liability; reversing it releases that balance.
-      if (cas.count === 1 && existing.vestedAt && existing.state === "VESTED") {
-        await postLedgerTxn(tx, {
-          idempotencyKey: `referral-reverse:${creditId}`,
-          kind: "REFERRAL_CREDIT",
-          description: `Referral credit ${creditId} reversed by ops`,
-          postings: [
-            {
-              account: { kind: "REFERRAL_CREDIT_LIABILITY" },
-              direction: "DEBIT",
-              amountPaise: remainingPaise,
-            },
-            {
-              account: { kind: "PLATFORM_PROMO" },
-              direction: "CREDIT",
-              amountPaise: remainingPaise,
-            },
-          ],
-        });
+      switch (outcome.kind) {
+        case "NOT_FOUND":
+          throw new OpsRefusal(
+            "CREDIT_NOT_FOUND",
+            "Referral credit not found.",
+            404,
+          );
+        case "ALREADY_REVERSED":
+          throw new OpsRefusal(
+            "CREDIT_ALREADY_REVERSED",
+            "This referral credit has already been reversed.",
+            409,
+          );
+        case "NOT_REVERSIBLE":
+          throw new OpsRefusal(
+            "CREDIT_NOT_REVERSIBLE",
+            `This referral credit is ${outcome.state.toLowerCase()} and holds nothing to reverse.`,
+            409,
+          );
+        case "NO_REMAINING_BALANCE":
+        case "RETIRED":
+          throw new OpsRefusal(
+            "NO_REMAINING_BALANCE",
+            "This referral credit has no unused balance left to reverse.",
+            409,
+          );
+        case "CHANGED":
+          throw new OpsRefusal(
+            "CREDIT_CHANGED",
+            "Credit was modified or reversed concurrently; refresh and retry.",
+            409,
+          );
+        case "REVERSED":
+          break;
       }
 
       const updated = await tx.referralCredit.findUniqueOrThrow({
@@ -147,23 +90,24 @@ export const POST = withOpsAction(
         },
       });
 
+      const { before, reversedPaise } = outcome;
       return {
         target: { kind: "ReferralCredit", id: creditId },
         response: {
           credit: updated,
-          reversedAmountPaise: remainingPaise,
+          reversedAmountPaise: reversedPaise,
         },
         before: {
-          amountPaise: originalAmountPaise,
-          usedAmountPaise: usedPaise,
-          remainingAmountPaise: remainingPaise,
+          amountPaise: before.amountPaise,
+          usedAmountPaise: before.usedPaise,
+          remainingAmountPaise: reversedPaise,
           reversedAt: null,
         },
         after: {
-          amountPaise: usedPaise,
-          usedAmountPaise: usedPaise,
+          amountPaise: before.usedPaise,
+          usedAmountPaise: before.usedPaise,
           remainingAmountPaise: 0,
-          reversedAmountPaise: remainingPaise,
+          reversedAmountPaise: reversedPaise,
           reversedAt: now.toISOString(),
           reversedBy: ctx.actor.userId,
           reversedReason: ctx.body.reason,

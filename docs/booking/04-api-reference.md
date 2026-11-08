@@ -284,9 +284,17 @@ Every answer carries `Cache-Control: private, no-store`. A paid seat is a `CONSU
 
 ---
 
+## Offering Editor Reads
+
+`GET /api/plans/webinars/{id}/editor` and `GET /api/plans/classes/{id}/editor` return the same plan detail as the public plan GET, for the offering editor only. The caller must be signed in and be the plan's owner or an ACCEPTED co-host; anyone else, like a missing plan, gets 404. Every answer carries `Cache-Control: private, no-store`, while the public GET keeps its shared cache (`s-maxage=60, stale-while-revalidate=300`), so the editor never starts a save from a copy up to six minutes old.
+
+---
+
 ## Notify-me Endpoint
 
-`POST /api/scheduling/event-waitlist` joins and `DELETE /api/scheduling/event-waitlist` leaves the notify-me list of a sold-out webinar or class (`app/api/scheduling/event-waitlist/route.ts`). Both take the body `{ "kind": "WEBINAR" | "CLASS", "eventId": "<id>" }`. There is no `GET`: the plan pages read the viewer's state on the server. The middleware already requires a session for everything under `/api/scheduling/`, the route is limited per user by `eventMutationLimiter`, and every answer carries `Cache-Control: no-store`.
+`POST /api/scheduling/event-waitlist` joins and `DELETE /api/scheduling/event-waitlist` leaves the notify-me list of a sold-out webinar or class (`app/api/scheduling/event-waitlist/route.ts`). Both take the body `{ "kind": "WEBINAR" | "CLASS", "eventId": "<id>" }`. `GET /api/scheduling/event-waitlist` lists the caller's own open rows for the learner's alerts list; the plan pages still read the viewer's state on the server. The middleware already requires a session for everything under `/api/scheduling/`, `POST` and `DELETE` are limited per user by `eventMutationLimiter`, `GET` carries no limiter, because it is a small read: the event-waitlist list holds at most five open rows per learner (`EVENT_WAITLIST_USER_CAP`), and the backup-interest list it mirrors holds at most three (`BACKUP_INTEREST_CAP`), and every answer carries `Cache-Control: no-store`.
+
+`GET` answers 200 with `{ data: Alert[] }`, oldest row first, validated by `EventWaitlistListResponseSchema` (`schemas/interest.ts`). Each alert carries `kind`, `eventId`, `planId`, `planTitle`, `nextSessionAt` (ISO, or null when no live session is left), `status` (`WAITING` or `NOTIFIED`), `notifiedAt` (ISO or null), `checkoutHref` (the same link the notice carries) and `seatAvailable` (whether checkout would sell a seat right now: the event is on sale and at least one seat is free, so it turns false again if another buyer takes the reopened seat; a row stays open, showing `seatAvailable: false`, while its event is not on sale but has not ended, for example an archived plan or a running class past its late-join cut-off; the stale-request sweep expires it only once the event is completed or cancelled, its appointment is deleted, or no live session is left). For example, Priya waiting on Hannah's webinar after a notice gets `{ "kind": "WEBINAR", "eventId": "web-1", "planId": "plan-1", "planTitle": "Deep work", "nextSessionAt": "2026-11-12T04:30:00.000Z", "status": "NOTIFIED", "notifiedAt": "2026-11-10T06:00:00.000Z", "checkoutHref": "/checkout/plans/webinar/plan-1?eventId=web-1", "seatAvailable": true }`.
 
 | Case                                                                       | Answer                                                                         |
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
