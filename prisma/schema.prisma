@@ -4726,7 +4726,7 @@ model Topic {
   updatedAt DateTime @updatedAt
 }
 
-// Newsletter / marketing email list; the table name `Waitlist` is historical.
+// Newsletter subscribers: the marketing email list.
 model NewsletterSubscriber {
   id    String  @id @default(uuid())
   email String  @unique
@@ -4747,6 +4747,8 @@ model NewsletterSubscriber {
   // Consent proof under DPDP. The IP is hashed, never stored raw.
   consentIpHash    String?
   consentUserAgent String?
+  // Pseudonymous ConsentArtifact subject written at confirm; read back so a key rotation cannot orphan it.
+  consentSubjectId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4755,7 +4757,6 @@ model NewsletterSubscriber {
   @@index([status, createdAt])
   @@index([source])
   @@index([userId])
-  @@map("Waitlist")
 }
 
 enum NewsletterStatus {
@@ -4763,8 +4764,6 @@ enum NewsletterStatus {
   SUBSCRIBED
   UNSUBSCRIBED
   BOUNCED
-
-  @@map("WaitlistStatus")
 }
 
 enum NewsletterSource {
@@ -4772,10 +4771,7 @@ enum NewsletterSource {
   FOOTER
   BLOG
   USE_CASE_PAGE
-  EVENT_SOLD_OUT
   IMPORT
-
-  @@map("WaitlistSource")
 }
 
 // #1778 — "Notify me if this time opens": a learner's interest in a 1:1 window
@@ -8149,7 +8145,7 @@ model FailedEmail {
   sentAt      DateTime?           @db.Timestamptz
   // #1654 — provider id once SENT, so support can trace a message to Resend's log.
   resendId    String?
-  // #1654 — business anchor (`payment:<id>`, `user:<id>`, `waitlist:<email>`) for support and tracing.
+  // Business anchor (`payment:<id>`, `user:<id>`, `newsletter:<email>`) for support and tracing.
   entityRef   String?
 
   /// Account whose current preferences gate each attempt; null for direct-address mail.

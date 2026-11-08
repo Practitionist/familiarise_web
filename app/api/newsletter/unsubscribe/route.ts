@@ -14,6 +14,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { BRAND_COLOR_HEX, BRAND_NAME } from "@/lib/brand";
+import { goHref } from "@/lib/dashboard/go";
 import { unsubscribe } from "@/lib/newsletter/service";
 import { getAppUrl } from "@/lib/url";
 
@@ -25,19 +26,20 @@ export function GET(request: NextRequest): Response {
   if (!email || !token) {
     return html(
       "Link incomplete",
-      "That unsubscribe link is missing information. Reply to any of our emails and we will remove you by hand.",
+      `That unsubscribe link is missing information. ${SETTINGS_FALLBACK}`,
       400,
+      SETTINGS_ACTION,
     );
   }
 
-  const actionUrl = `${getAppUrl()}/api/waitlist/unsubscribe?email=${encodeURIComponent(
+  const actionUrl = `${getAppUrl()}/api/newsletter/unsubscribe?email=${encodeURIComponent(
     email,
   )}&token=${encodeURIComponent(token)}`;
   return html(
     "Confirm unsubscribe",
     "Click below to stop receiving newsletters from Familiarise.",
     200,
-    actionUrl,
+    { post: actionUrl },
   );
 }
 
@@ -56,15 +58,20 @@ export async function POST(request: NextRequest): Promise<Response> {
       outcome = "failed";
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "waitlist" } },
+        { tags: { subsystem: "newsletter" } },
       );
-      console.error("[waitlist/unsubscribe:one-click]", error);
+      console.error("[newsletter/unsubscribe:one-click]", error);
     }
   }
 
   const page = OUTCOME_PAGES[outcome];
   if (request.headers.get("accept")?.includes("text/html")) {
-    return html(page.title, page.body, page.status);
+    return html(
+      page.title,
+      page.body,
+      page.status,
+      outcome === "invalid" ? SETTINGS_ACTION : undefined,
+    );
   }
 
   return NextResponse.json(
@@ -72,6 +79,15 @@ export async function POST(request: NextRequest): Promise<Response> {
     { status: page.status },
   );
 }
+
+/** Signing keys rotate with the auth secret, so an old link can stop verifying. */
+const SETTINGS_FALLBACK =
+  "If you have an account, sign in and turn off marketing email in your account settings. Otherwise reply to any of our emails and we will remove you by hand.";
+
+const SETTINGS_ACTION = {
+  href: goHref("auto", "settings/account"),
+  label: "Open account settings",
+};
 
 const OUTCOME_PAGES = {
   unsubscribed: {
@@ -82,7 +98,7 @@ const OUTCOME_PAGES = {
   invalid: {
     status: 400,
     title: "This link is not valid",
-    body: "That unsubscribe link is incomplete or has been changed. Reply to any of our emails and we will remove you by hand.",
+    body: `That unsubscribe link is incomplete, has been changed or has expired. ${SETTINGS_FALLBACK}`,
   },
   failed: {
     status: 500,
@@ -95,11 +111,16 @@ function html(
   title: string,
   body: string,
   status: number,
-  postActionUrl?: string,
+  action?: { post: string } | { href: string; label: string },
 ): Response {
-  const cta = postActionUrl
-    ? `<form method="post" action="${postActionUrl}" style="margin:0"><button type="submit" style="cursor:pointer;border:0;background:#000;color:#fff;padding:12px 20px;border-radius:5px;font-size:15px">Unsubscribe</button></form>`
-    : `<a href="${getAppUrl()}" style="display:inline-block;background:#000;color:#fff;padding:12px 20px;border-radius:5px;text-decoration:none;font-size:15px">Go to Familiarise</a>`;
+  const link = (href: string, label: string) =>
+    `<a href="${href}" style="display:inline-block;background:#000;color:#fff;padding:12px 20px;border-radius:5px;text-decoration:none;font-size:15px">${label}</a>`;
+  let cta = link(getAppUrl(), "Go to Familiarise");
+  if (action && "post" in action) {
+    cta = `<form method="post" action="${action.post}" style="margin:0"><button type="submit" style="cursor:pointer;border:0;background:#000;color:#fff;padding:12px 20px;border-radius:5px;font-size:15px">Unsubscribe</button></form>`;
+  } else if (action) {
+    cta = link(`${getAppUrl()}${action.href}`, action.label);
+  }
   return new Response(
     `<!DOCTYPE html>
 <html lang="en">

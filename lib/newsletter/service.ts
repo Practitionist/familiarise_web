@@ -10,25 +10,29 @@
 import * as Sentry from "@sentry/nextjs";
 import { Prisma, NewsletterSource, NewsletterStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { withdrawConsent } from "@/lib/compliance/dpdp";
-import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
+import { canSignLinks } from "@/lib/auth/link-signing";
 import {
-  sendWaitlistConfirmEmail,
-  sendWaitlistWelcomeEmail,
+  sendNewsletterConfirmEmail,
+  sendNewsletterWelcomeEmail,
 } from "@/lib/email";
+import type { BroadcastAudience } from "./broadcast-audience";
+import { verifyConfirmToken, verifyUnsubscribeToken } from "./tokens";
 import {
-  canSignLinks,
-  verifyConfirmToken,
-  verifyUnsubscribeToken,
-} from "./tokens";
-import { hashIp, normalizeNewsletterEmail } from "./consent-link";
+  hashIp,
+  lockNewsletterRows,
+  newsletterSubjectId,
+  normalizeNewsletterEmail,
+  recordNewsletterConsent,
+  withdrawNewsletterConsent,
+} from "./consent-link";
 
 export type SubscribeInput = {
   email: string;
   name?: string | null;
   source?: NewsletterSource;
   tags?: string[];
-  userId?: string | null;
+  /** The signed-in account; the row is linked only when it owns the submitted address. */
+  sessionUser?: { id: string; email: string; emailVerified: boolean } | null;
   /** Raw request IP — hashed before it touches the database. */
   ip?: string | null;
   userAgent?: string | null;
@@ -52,15 +56,20 @@ export async function subscribe(
 ): Promise<SubscribeResult> {
   const email = normalizeNewsletterEmail(input.email);
   const now = new Date();
+  const owner = input.sessionUser;
+  const userId =
+    owner?.emailVerified && normalizeNewsletterEmail(owner.email) === email
+      ? owner.id
+      : null;
 
   // Checked before the membership lookup, deliberately. If this ran after the
   // ALREADY_SUBSCRIBED short-circuit, a signing outage would answer 200 for
   // subscribed addresses and fail for everyone else — letting a caller probe
   // membership by status code. Config health must not depend on the address.
   if (!canSignLinks()) {
-    Sentry.captureMessage("waitlist signing key unavailable", {
+    Sentry.captureMessage("newsletter signing key unavailable", {
       level: "error",
-      tags: { subsystem: "waitlist" },
+      tags: { subsystem: "newsletter" },
     });
     return { outcome: "CONFIRMATION_FAILED" };
   }
@@ -87,7 +96,7 @@ export async function subscribe(
       status: NewsletterStatus.PENDING,
       source: input.source ?? NewsletterSource.FOOTER,
       tags: input.tags ?? [],
-      userId: input.userId ?? null,
+      userId,
       ...consent,
     },
     update: {
@@ -98,12 +107,12 @@ export async function subscribe(
       // source is not worth preserving once someone opts in again.
       ...(input.source ? { source: input.source } : {}),
       ...(input.name ? { name: input.name } : {}),
-      ...(input.userId ? { userId: input.userId } : {}),
+      ...(userId ? { userId } : {}),
       ...consent,
     },
   });
 
-  const sent = await sendWaitlistConfirmEmail({
+  const sent = await sendNewsletterConfirmEmail({
     email,
     name: input.name ?? null,
     issuedAt: now.getTime(),
@@ -119,12 +128,12 @@ export async function subscribe(
     if (reason instanceof Error) {
       Sentry.captureException(reason, {
         level: "warning",
-        tags: { subsystem: "waitlist" },
+        tags: { subsystem: "newsletter" },
       });
     } else {
       Sentry.captureMessage(
-        `waitlist confirmation email failed to send: ${String(reason)}`,
-        { level: "warning", tags: { subsystem: "waitlist" } },
+        `newsletter confirmation email failed to send: ${String(reason)}`,
+        { level: "warning", tags: { subsystem: "newsletter" } },
       );
     }
     return { outcome: "CONFIRMATION_FAILED" };
@@ -138,6 +147,10 @@ export type ConfirmResult =
   | { outcome: "ALREADY_CONFIRMED" }
   | { outcome: "INVALID" };
 
+/**
+ * Confirms a sign-up and records its `MARKETING_COMMS` consent in one
+ * transaction; a matching account is linked to the row and the artifact.
+ */
 export async function confirmSubscription(params: {
   email: string;
   token: string;
@@ -149,26 +162,43 @@ export async function confirmSubscription(params: {
     return { outcome: "INVALID" };
   }
 
-  const existing = await prisma.newsletterSubscriber.findUnique({
-    where: { email },
-    select: { status: true, name: true },
+  const now = new Date();
+  const result = await prisma.$transaction(async (tx) => {
+    const existing = await tx.newsletterSubscriber.findUnique({
+      where: { email },
+      select: { status: true, name: true, consentSubjectId: true },
+    });
+    if (!existing) return { outcome: "INVALID" } as const;
+    if (existing.status === NewsletterStatus.SUBSCRIBED) {
+      return { outcome: "ALREADY_CONFIRMED" } as const;
+    }
+    // Kept once written, so a later key rotation still finds the artifact.
+    const subjectId = existing.consentSubjectId ?? newsletterSubjectId(email);
+    // The account that owns the confirmed address, never a stored id that may not.
+    const userId =
+      (
+        await tx.user.findUnique({
+          where: { email },
+          select: { id: true },
+        })
+      )?.id ?? null;
+    const { count } = await tx.newsletterSubscriber.updateMany({
+      where: { email, status: { not: NewsletterStatus.SUBSCRIBED } },
+      data: {
+        status: NewsletterStatus.SUBSCRIBED,
+        confirmedAt: now,
+        unsubscribedAt: null,
+        userId,
+        consentSubjectId: subjectId,
+      },
+    });
+    if (count === 0) return { outcome: "ALREADY_CONFIRMED" } as const;
+    await recordNewsletterConsent(tx, { email, userId, subjectId, now });
+    return { outcome: "CONFIRMED", name: existing.name } as const;
   });
-  if (!existing) return { outcome: "INVALID" };
-  if (existing.status === NewsletterStatus.SUBSCRIBED) {
-    return { outcome: "ALREADY_CONFIRMED" };
-  }
 
-  await prisma.newsletterSubscriber.update({
-    where: { email },
-    data: {
-      status: NewsletterStatus.SUBSCRIBED,
-      confirmedAt: new Date(),
-      unsubscribedAt: null,
-    },
-  });
-
-  await sendWaitlistWelcomeEmail({ email, name: existing.name });
-
+  if (result.outcome !== "CONFIRMED") return result;
+  await sendNewsletterWelcomeEmail({ email, name: result.name });
   return { outcome: "CONFIRMED" };
 }
 
@@ -176,9 +206,7 @@ export async function confirmSubscription(params: {
  * Always reports success for a valid token. An unsubscribe endpoint that
  * distinguished "you were on the list" from "you were not" would leak
  * membership to anyone holding a valid token for a guessed address.
- *
- * The unsubscribe commits first; withdrawing a linked account's marketing
- * consent is a separate, best-effort transaction that never undoes it.
+ * The status change and the consent withdrawal commit together.
  */
 export async function unsubscribe(params: {
   email: string;
@@ -190,42 +218,21 @@ export async function unsubscribe(params: {
     return { ok: false };
   }
 
-  await prisma.newsletterSubscriber.updateMany({
-    where: { email, status: { not: NewsletterStatus.UNSUBSCRIBED } },
-    data: {
-      status: NewsletterStatus.UNSUBSCRIBED,
-      unsubscribedAt: new Date(),
-    },
-  });
-
-  await withdrawLinkedMarketingConsent(email);
-  return { ok: true };
-}
-
-async function withdrawLinkedMarketingConsent(email: string): Promise<void> {
-  try {
-    const row = await prisma.newsletterSubscriber.findUnique({
-      where: { email },
-      select: { userId: true },
+  const now = new Date();
+  await prisma.$transaction(async (tx) => {
+    const [row] = await lockNewsletterRows(tx, { email }, now);
+    await tx.newsletterSubscriber.updateMany({
+      where: { email, status: { not: NewsletterStatus.UNSUBSCRIBED } },
+      data: { status: NewsletterStatus.UNSUBSCRIBED, unsubscribedAt: now },
     });
-    const userId = row?.userId;
-    if (!userId) return;
-    await prisma.$transaction((tx) =>
-      withdrawConsent(
-        { userId, purposeCode: PURPOSE_CODES.MARKETING_COMMS },
-        tx,
-      ),
-    );
-  } catch (error) {
-    console.error("[waitlist] marketing consent withdrawal failed:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      {
-        level: "warning",
-        tags: { subsystem: "waitlist", op: "unsubscribe.withdrawConsent" },
-      },
-    );
-  }
+    await withdrawNewsletterConsent(tx, {
+      email,
+      userId: row?.userId ?? null,
+      subjectId: row?.consentSubjectId ?? null,
+      now,
+    });
+  });
+  return { ok: true };
 }
 
 export type SubscriberFilters = {
@@ -297,12 +304,48 @@ export async function listSubscribers(filters: SubscriberFilters) {
   return { items, total, page, perPage, stats };
 }
 
-/** Addresses a broadcast may go to. */
-export async function listSendableSubscribers() {
+function roleWhere(
+  role: BroadcastAudience["role"],
+): Prisma.NewsletterSubscriberWhereInput {
+  switch (role) {
+    case "EXPERT":
+      return { user: { is: { consultantProfile: { isNot: null } } } };
+    case "LEARNER":
+      return { user: { is: { consultantProfile: { is: null } } } };
+    case "NO_ACCOUNT":
+      return { userId: null };
+    default:
+      return {};
+  }
+}
+
+export function audienceWhere(
+  audience: BroadcastAudience,
+): Prisma.NewsletterSubscriberWhereInput {
+  return {
+    status: NewsletterStatus.SUBSCRIBED,
+    ...(audience.sources?.length ? { source: { in: audience.sources } } : {}),
+    ...(audience.tags?.length ? { tags: { hasSome: audience.tags } } : {}),
+    ...roleWhere(audience.role),
+  };
+}
+
+/**
+ * Addresses a broadcast audience may go to. `stable` (signup order) keeps every earlier
+ * 100-recipient batch, and so its idempotency key, unchanged when new rows arrive;
+ * `recentFirst` is for the warm-up only.
+ */
+export function listSendableSubscribers(
+  audience: BroadcastAudience,
+  order: "stable" | "recentFirst",
+) {
   return prisma.newsletterSubscriber.findMany({
-    where: { status: NewsletterStatus.SUBSCRIBED },
-    select: { email: true, name: true },
-    orderBy: { createdAt: "asc" },
+    where: audienceWhere(audience),
+    select: { email: true },
+    orderBy:
+      order === "stable"
+        ? [{ createdAt: "asc" }, { id: "asc" }]
+        : [{ confirmedAt: { sort: "desc", nulls: "last" } }, { id: "asc" }],
   });
 }
 

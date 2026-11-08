@@ -39,7 +39,7 @@ flowchart TB
         subgraph P1_TEMPLATES["React Email templates (emails/, 52 + 3 shared)"]
             P1_T1["emails/auth/\nWelcomeEmail\nPasswordResetEmail\nVerificationEmail\nAccountLinkedEmail"]
             P1_T2["emails/payments/\nPaymentLinkEmail\nPaymentSuccessEmail\nPaymentFailedEmail"]
-            P1_T3["emails/waitlist/\nConfirm | Welcome"]
+            P1_T3["emails/newsletter/\nConfirm | Welcome"]
             P1_T4["emails/organizations/\nOrgInvitationEmail"]
         end
         P1_RENDER["renderEmail()\nreact-email → {html, text}"]
@@ -71,11 +71,11 @@ flowchart TB
 
     subgraph PIPE3["PIPELINE 3: Newsletter — LIVE (interim)"]
         direction TB
-        P3_SUB["POST /api/waitlist\nUpserts a PENDING row, sends the confirm email"]
-        P3_CONFIRM["GET /api/waitlist/confirm\nHMAC-signed, 48h link\nPENDING → SUBSCRIBED, sends welcome"]
-        P3_UNSUB["GET|POST /api/waitlist/unsubscribe\nHMAC-signed, timeless token\nRFC 8058 one-click"]
-        P3_SEND["POST /api/admin/waitlist/broadcast\nAdmin-only, Resend batch API\n100/call, auto-appends\nunsubscribe footer + headers"]
-        P3_DB[("Waitlist table\nemail, name, status, source, tags\nconfirmedAt, unsubscribedAt")]
+        P3_SUB["POST /api/newsletter\nUpserts a PENDING row, sends the confirm email"]
+        P3_CONFIRM["GET /api/newsletter/confirm\nHMAC-signed, 48h link\nPENDING → SUBSCRIBED + consent artifact, sends welcome"]
+        P3_UNSUB["GET|POST /api/newsletter/unsubscribe\nHMAC-signed, timeless token\nRFC 8058 one-click, withdraws consent"]
+        P3_SEND["POST /api/admin/newsletter/broadcast\nAdmin-only, audience filter, preview,\ntest and warm-up modes, 2,000 cap\n100/call, auto-appends\nunsubscribe footer + headers"]
+        P3_DB[("NewsletterSubscriber table\nemail, name, status, source, tags\nconfirmedAt, unsubscribedAt")]
     end
 
     subgraph STUBS["DEFERRED — STUBS"]
@@ -103,7 +103,7 @@ flowchart TB
         D_CONSULTANT["Consultant Settings\nHas NotificationPreferencesPanel"]
         D_CONSULTEE["Consultee Settings\nHas NotificationPreferencesPanel"]
         D_ANNOUNCE["Admin: POST /api/announcements\nCreates announcement record\n+ opt-in postToInbox:\nstagePages() per 100 eligible users"]
-        D_NL_SEND["Admin: Newsletter Send UI\nPOST /api/admin/waitlist/broadcast"]
+        D_NL_SEND["Admin: Newsletter Send UI\nPOST /api/admin/newsletter/broadcast"]
     end
 
     subgraph DELIVERY["DELIVERY"]
@@ -252,41 +252,45 @@ Every sending address is built on the `EMAIL_TRANSACTIONAL_DOMAIN` and `EMAIL_NE
 
 ```
 Subscribe (double opt-in, see lib/newsletter/service.ts):
-  User enters email on site → POST /api/waitlist
+  User enters email on site → POST /api/newsletter
     → upserts a NewsletterSubscriber row with status PENDING (re-subscribe resets it)
-    → sendWaitlistConfirmEmail() with an HMAC-signed, 48-hour confirm link
+    → sendNewsletterConfirmEmail() with an HMAC-signed, 48-hour confirm link
     → returns {success: true}
 
 Confirm:
-  User clicks link → GET /api/waitlist/confirm?email=...&token=...&issuedAt=...
+  User clicks link → GET /api/newsletter/confirm?email=...&token=...&issued=...
     → verifyConfirmToken() (signature + TTL)
-    → status PENDING → SUBSCRIBED, confirmedAt = now()
-    → sendWaitlistWelcomeEmail() with the unsubscribe link
+    → one transaction: status PENDING → SUBSCRIBED, confirmedAt = now(), the
+      matching account linked, and a MARKETING_COMMS ConsentArtifact written
+      (on the account, or on a pseudonymous subject) unless one is live
+    → sendNewsletterWelcomeEmail() with the unsubscribe link
 
 Send:
-  Admin calls POST /api/admin/waitlist/broadcast {subject, htmlBody, textBody?}
+  Admin calls POST /api/admin/newsletter/broadcast
+      {mode: preview | test | warmup | all, audience?, limit?, subject, htmlBody, textBody?}
     → Auth check (ADMIN role only, requireAdminAuth())
-    → listSendableSubscribers() from lib/newsletter/service.ts
-    → findSuppressed() drops every address on EmailSuppression
+    → test: the admin's own address; otherwise listSendableSubscribers(audience)
+      from lib/newsletter/service.ts, most recently confirmed first
+    → findSuppressed() drops every address on EmailSuppression and
+      heldRecipientDomain() drops every address the pre-launch guard holds
+    → preview returns the counts; warmup keeps the first `limit`; more than
+      2,000 sendable recipients answers 422 AUDIENCE_TOO_LARGE
     → For each batch of 100: a FailedEmailBatch row is upserted under the
       batch's idempotency key, then resend.batch.send() via getResendClient()
       from lib/email; a failed send leaves the row PENDING for the relay
     → Each email gets: unsubscribe footer + List-Unsubscribe header
-    → Returns {sent, failed, total, skippedSuppressed}
-
-  There is no `/api/admin/newsletter/send` route; the broadcast endpoint lives
-  under `/api/admin/waitlist/broadcast` because the send list and the double
-  opt-in confirmation share the Waitlist table.
+    → Returns {sent, failed, total, skippedSuppressed, skippedHeld}
 
 Unsubscribe:
-  User clicks link → GET /api/waitlist/unsubscribe?email=...&token=...
-  Mail client one-click → POST /api/waitlist/unsubscribe (RFC 8058)
+  User clicks link → GET /api/newsletter/unsubscribe?email=...&token=...
+  Mail client one-click → POST /api/newsletter/unsubscribe (RFC 8058)
     → verifyUnsubscribeToken() (HMAC-SHA256, never expires)
-    → status → UNSUBSCRIBED, unsubscribedAt = now()
+    → one transaction: status → UNSUBSCRIBED, unsubscribedAt = now(), and the
+      address's MARKETING_COMMS consent withdrawn
     → Show HTML confirmation page
 ```
 
-**Database model:** the `NewsletterSubscriber` model in `prisma/schema.prisma`, stored in the `Waitlist` table (`email`, `name`, `status`, `source`, `tags`, `userId`, `confirmedAt`, `unsubscribedAt`, consent proof). There are no token columns because both links are stateless HMACs; the model comments in `prisma/schema.prisma` describe each field.
+**Database model:** the `NewsletterSubscriber` model in `prisma/schema.prisma`, stored in the `NewsletterSubscriber` table (`email`, `name`, `status`, `source`, `tags`, `userId`, `confirmedAt`, `unsubscribedAt`, consent proof). There are no token columns because both links are stateless HMACs; the model comments in `prisma/schema.prisma` describe each field.
 
 ---
 
@@ -414,14 +418,14 @@ The two relays are the outbox halves of the design: every email and every Novu t
 
 ## Dashboard & Admin Features
 
-| Feature                      | Route                              | Who                                 | What It Does                                                            |
-| ---------------------------- | ---------------------------------- | ----------------------------------- | ----------------------------------------------------------------------- |
-| **Notification Preferences** | Settings page                      | Admin, Staff, Consultant, Consultee | Channel and category switches + email quiet hours                       |
-| **Bell Icon / Inbox**        | All dashboards                     | All roles                           | Novu in-app notifications, unread count, click-to-redirect              |
-| **Announcements**            | POST /api/announcements            | Admin                               | Create announcement; optional confirmed inbox fan-out                   |
-| **Newsletter Send**          | POST /api/admin/waitlist/broadcast | Admin only                          | Send HTML email to every SUBSCRIBED NewsletterSubscriber row via Resend |
-| **Newsletter Stats**         | (not built)                        | —                                   | Would show subscriber count, open rates                                 |
-| **Verification Review**      | /dashboard/admin/verification      | Admin, Staff                        | Review applications → triggers verificationStatusChanged                |
+| Feature                      | Route                                | Who                                 | What It Does                                                         |
+| ---------------------------- | ------------------------------------ | ----------------------------------- | -------------------------------------------------------------------- |
+| **Notification Preferences** | Settings page                        | Admin, Staff, Consultant, Consultee | Channel and category switches + email quiet hours                    |
+| **Bell Icon / Inbox**        | All dashboards                       | All roles                           | Novu in-app notifications, unread count, click-to-redirect           |
+| **Announcements**            | POST /api/announcements              | Admin                               | Create announcement; optional confirmed inbox fan-out                |
+| **Newsletter Send**          | POST /api/admin/newsletter/broadcast | Admin only                          | Send HTML email to a filtered audience of SUBSCRIBED rows via Resend |
+| **Newsletter Stats**         | (not built)                          | —                                   | Would show subscriber count, open rates                              |
+| **Verification Review**      | /dashboard/admin/verification        | Admin, Staff                        | Review applications → triggers verificationStatusChanged             |
 
 ---
 
@@ -441,8 +445,8 @@ The two relays are the outbox halves of the design: every email and every Novu t
 | Notification Preferences Panel                 | `components/notifications/NotificationPreferencesPanel.tsx` (every role, operators included)           |
 | Preferences API                                | `app/api/novu/preferences/route.ts` (GET/PUT)                                                          |
 | Inbox HMAC API                                 | `app/api/novu/subscriber/route.ts` (POST)                                                              |
-| Waitlist double opt-in confirm/unsubscribe     | `lib/newsletter/tokens.ts`, `lib/newsletter/service.ts`                                                |
-| Admin waitlist broadcast                       | `app/api/admin/waitlist/broadcast/route.ts`                                                            |
+| Newsletter double opt-in confirm/unsubscribe   | `lib/newsletter/tokens.ts`, `lib/newsletter/service.ts`, `lib/auth/link-signing.ts`                    |
+| Admin newsletter broadcast                     | `app/api/admin/newsletter/broadcast/route.ts`                                                          |
 | Appointment reminders and auto-complete        | `app/api/cleanup/appointment-reminders/route.ts`, `scripts/appointments/auto-complete-appointments.ts` |
 | Stream webhook                                 | `app/api/stream/webhooks/route.ts`                                                                     |
 | Announcements + opt-in inbox fan-out           | `app/api/announcements/route.ts`                                                                       |
@@ -476,17 +480,17 @@ The two relays are the outbox halves of the design: every email and every Novu t
 
 ## Environment Variables
 
-| Variable                  | Required | Used By                                                                              |
-| ------------------------- | -------- | ------------------------------------------------------------------------------------ |
-| `RESEND_API_KEY`          | Yes      | Resend direct emails, waitlist broadcast                                             |
-| `RESEND_WEBHOOK_SECRET`   | Yes      | Signature verification in `/api/webhooks/resend`; production context only            |
-| `NOVU_DEVELOPMENT_KEY`    | Yes      | Novu server-side SDK, Development environment (local, previews)                      |
-| `NOVU_PRODUCTION_KEY`     | Yes      | Novu server-side SDK, Production environment (production only)                       |
-| `NEXT_PUBLIC_NOVU_APP_ID` | Yes      | Novu React SDK (client-side)                                                         |
-| `NEXT_PUBLIC_APP_URL`     | Yes      | Email link URLs, unsubscribe URLs                                                    |
-| `CRON_SECRET`             | Yes      | Auth for cron job endpoints                                                          |
-| `WAITLIST_HMAC_SECRET`    | Yes      | Waitlist confirm/unsubscribe token signing; there is no fallback to `RESEND_API_KEY` |
-| `STREAM_WEBHOOK_SECRET`   | Yes      | Stream webhook signature verification                                                |
+| Variable                  | Required | Used By                                                                             |
+| ------------------------- | -------- | ----------------------------------------------------------------------------------- |
+| `RESEND_API_KEY`          | Yes      | Resend direct emails, newsletter broadcast                                          |
+| `RESEND_WEBHOOK_SECRET`   | Yes      | Signature verification in `/api/webhooks/resend`; production context only           |
+| `NOVU_DEVELOPMENT_KEY`    | Yes      | Novu server-side SDK, Development environment (local, previews)                     |
+| `NOVU_PRODUCTION_KEY`     | Yes      | Novu server-side SDK, Production environment (production only)                      |
+| `NEXT_PUBLIC_NOVU_APP_ID` | Yes      | Novu React SDK (client-side)                                                        |
+| `NEXT_PUBLIC_APP_URL`     | Yes      | Email link URLs, unsubscribe URLs                                                   |
+| `CRON_SECRET`             | Yes      | Auth for cron job endpoints                                                         |
+| `BETTER_AUTH_SECRET`      | Yes      | Also derives the key that signs newsletter, unsubscribe, calendar and support links |
+| `STREAM_WEBHOOK_SECRET`   | Yes      | Stream webhook signature verification                                               |
 
 ---
 

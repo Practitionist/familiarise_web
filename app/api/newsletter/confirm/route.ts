@@ -1,5 +1,5 @@
 /**
- * GET /api/waitlist/confirm — double opt-in landing.
+ * GET /api/newsletter/confirm — double opt-in landing.
  *
  * Clicked from an email client, so it answers with a small self-contained HTML
  * page rather than JSON. Mirrors the unsubscribe route's shape.
@@ -49,22 +49,22 @@ export async function GET(request: NextRequest): Promise<Response> {
     if (result.outcome === "ALREADY_CONFIRMED") {
       return page(
         "Already confirmed",
-        "You are already on the list. Nothing more to do.",
+        "You are already subscribed to the newsletter. Nothing more to do.",
         200,
       );
     }
 
     return page(
-      "You are on the list",
-      "Thanks for confirming. We will be in touch when there is something worth reading.",
+      "You are subscribed",
+      "Thanks for confirming. We will email you product news and launch updates; every email has an unsubscribe link.",
       200,
     );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "waitlist" } },
+      { tags: { subsystem: "newsletter" } },
     );
-    console.error("[waitlist/confirm]", error);
+    console.error("[newsletter/confirm]", error);
     return page(
       "Something went wrong",
       "We could not confirm your subscription right now. Please try the link again in a moment.",

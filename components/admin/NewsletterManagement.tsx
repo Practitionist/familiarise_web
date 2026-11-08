@@ -3,9 +3,9 @@
 /**
  * Backoffice newsletter subscriber management.
  *
- * Lists every newsletter subscriber (the marketing email list — nothing to do
- * with event capacity), and gives the one surface that can send a broadcast.
- * Gated by the `waitlist.manage` backoffice surface.
+ * Lists every newsletter subscriber and is the one surface that sends a
+ * broadcast: an audience filter with a count preview, a test send to the admin,
+ * a warm-up send and a send to all matching. Gated by `newsletter.manage`.
  */
 
 import { useState } from "react";
@@ -24,6 +24,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -42,6 +43,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { newsletterStatusBadge } from "@/lib/labels/session-labels";
 import { useToast } from "@/components/ui/use-toast";
+import {
+  BROADCAST_AUDIENCE_LIMIT,
+  BROADCAST_ROLES,
+  settledSendable,
+  type BroadcastAudience,
+} from "@/lib/newsletter/broadcast-audience";
 
 const ALL = "all";
 const PER_PAGE = 50;
@@ -86,12 +93,56 @@ function toQuery(filters: Filters): URLSearchParams {
 async function fetchSubscribers(
   filters: Filters,
 ): Promise<SubscribersResponse> {
-  const response = await fetch(`/api/admin/waitlist?${toQuery(filters)}`);
+  const response = await fetch(`/api/admin/newsletter?${toQuery(filters)}`);
   if (!response.ok) throw new Error("Failed to load subscribers");
   return response.json();
 }
 
-/** Human label for an enum member: EVENT_SOLD_OUT → Event sold out. */
+type AudiencePreview = {
+  matching: number;
+  sendable: number;
+  skippedSuppressed: number;
+  skippedHeld: number;
+  limit: number;
+};
+
+type SendMode = "test" | "warmup" | "all";
+
+const ROLE_LABELS: Record<(typeof BROADCAST_ROLES)[number], string> = {
+  LEARNER: "Learners (account, not an expert)",
+  EXPERT: "Experts",
+  NO_ACCOUNT: "No account",
+};
+
+async function postBroadcast<T>(body: unknown): Promise<T> {
+  const response = await fetch("/api/admin/newsletter/broadcast", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error ?? "Failed to send");
+  return payload as T;
+}
+
+function toAudience(
+  sources: NewsletterSource[],
+  tags: string,
+  role: string,
+): BroadcastAudience {
+  const tagList = tags
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+  const chosenRole = BROADCAST_ROLES.find((value) => value === role);
+  return {
+    ...(sources.length > 0 ? { sources } : {}),
+    ...(tagList.length > 0 ? { tags: tagList } : {}),
+    ...(chosenRole ? { role: chosenRole } : {}),
+  };
+}
+
+/** Human label for an enum member: USE_CASE_PAGE → Use case page. */
 function humanize(value: string): string {
   const lower = value.toLowerCase().replaceAll("_", " ");
   return lower.charAt(0).toUpperCase() + lower.slice(1);
@@ -167,41 +218,73 @@ export function NewsletterManagement() {
 
   const [subject, setSubject] = useState("");
   const [htmlBody, setHtmlBody] = useState("");
+  const [audienceSources, setAudienceSources] = useState<NewsletterSource[]>(
+    [],
+  );
+  const [audienceTags, setAudienceTags] = useState("");
+  // Applied on blur so the count preview does not refetch per keystroke.
+  const [tagsDraft, setTagsDraft] = useState("");
+  const [audienceRole, setAudienceRole] = useState(ALL);
+  const [warmupLimit, setWarmupLimit] = useState(50);
+  const audience = toAudience(audienceSources, audienceTags, audienceRole);
   // #1527 — staff triage the list; only admin sends (the route 403s otherwise).
   const canSend = useBackofficeCapability().can("newsletter.send");
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["admin-waitlist", filters],
+    queryKey: ["admin-newsletter", filters],
     queryFn: () => fetchSubscribers(filters),
-    // #1527 QA B13 — paging or filtering must not drop `stats`, which carries
-    // the audience count the send button and its dialog depend on.
+    // Paging or filtering must not blank the stat cards while the next page loads.
+    placeholderData: keepPreviousData,
+  });
+
+  const preview = useQuery({
+    queryKey: ["admin-newsletter-audience", audience],
+    queryFn: () =>
+      postBroadcast<AudiencePreview>({ mode: "preview", audience }),
+    enabled: canSend,
     placeholderData: keepPreviousData,
   });
 
   const broadcast = useMutation({
-    mutationFn: async () => {
-      const response = await fetch("/api/admin/waitlist/broadcast", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject, htmlBody }),
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload.error ?? "Failed to send");
-      }
-      return payload as { sent: number; failed: number; total: number };
-    },
-    onSuccess: (result) => {
+    mutationFn: (mode: SendMode) =>
+      postBroadcast<{ sent: number; failed: number; total: number }>({
+        mode,
+        subject,
+        htmlBody,
+        ...(mode === "test" ? {} : { audience }),
+        ...(mode === "warmup" ? { limit: warmupLimit } : {}),
+      }),
+    onSuccess: (result, mode) => {
       toast({
-        title: "Newsletter sent",
-        description: `${result.sent} delivered, ${result.failed} failed, ${result.total} on the list.`,
+        title: mode === "test" ? "Test sent to you" : "Newsletter sent",
+        description: `${result.sent} delivered, ${result.failed} failed, ${result.total} addressed.`,
       });
+      if (mode === "test") return;
       setSubject("");
       setHtmlBody("");
-      queryClient.invalidateQueries({ queryKey: ["admin-waitlist"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-newsletter"] });
     },
-    // A failure is shown inside the confirm dialog, which stays open.
+    onError: (failure, mode) => {
+      // Dialog sends show their failure inside the dialog, which stays open.
+      if (mode !== "test") return;
+      toast({
+        title: "Test not sent",
+        description: failure.message,
+        variant: "destructive",
+      });
+    },
   });
+
+  // Null while the count is stale, loading or failed; every send stays off until it settles.
+  const settled = settledSendable(preview);
+  const sendable = settled ?? 0;
+  const previewReady = settled !== null;
+  const sendAllLabel = previewReady
+    ? `Send to all matching (${sendable})`
+    : "Send to all matching";
+  const overLimit = sendable > BROADCAST_AUDIENCE_LIMIT;
+  const warmupCount = Math.min(warmupLimit, sendable);
+  const messageReady = subject.trim() !== "" && htmlBody.trim() !== "";
 
   const stats = data?.stats;
   const items = data?.items ?? [];
@@ -249,7 +332,7 @@ export function NewsletterManagement() {
         subtitle="Everyone signed up for the Familiarise newsletter"
         actions={
           <Button variant="outline" size="sm" asChild>
-            <a href={`/api/admin/waitlist?${toQuery(filters)}&format=csv`}>
+            <a href={`/api/admin/newsletter?${toQuery(filters)}&format=csv`}>
               <Download className="mr-2 h-4 w-4" /> Export CSV
             </a>
           </Button>
@@ -285,15 +368,80 @@ export function NewsletterManagement() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Sources</Label>
+                  <div className="space-y-1.5">
+                    {Object.values(NewsletterSource).map((source) => (
+                      <label
+                        key={source}
+                        className="flex items-center gap-2 text-sm"
+                      >
+                        <Checkbox
+                          checked={audienceSources.includes(source)}
+                          onCheckedChange={(checked) =>
+                            setAudienceSources((prev) =>
+                              checked === true
+                                ? [...prev, source]
+                                : prev.filter((value) => value !== source),
+                            )
+                          }
+                        />
+                        {humanize(source)}
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    None ticked means every source.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="newsletter-role">Who</Label>
+                  <Select value={audienceRole} onValueChange={setAudienceRole}>
+                    <SelectTrigger id="newsletter-role">
+                      <SelectValue placeholder="Everyone" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>Everyone</SelectItem>
+                      {BROADCAST_ROLES.map((role) => (
+                        <SelectItem key={role} value={role}>
+                          {ROLE_LABELS[role]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="newsletter-tags">Tags</Label>
+                  <Input
+                    id="newsletter-tags"
+                    value={tagsDraft}
+                    onChange={(event) => setTagsDraft(event.target.value)}
+                    onBlur={() => setAudienceTags(tagsDraft)}
+                    placeholder="beta, india"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Comma separated; a subscriber with any of them matches.
+                  </p>
+                </div>
+              </div>
+
               <p className="text-sm text-muted-foreground">
-                Goes to every confirmed subscriber
-                {stats ? ` (${stats.SUBSCRIBED} right now)` : ""}. An
-                unsubscribe footer is appended automatically.
+                {previewReady && preview.data
+                  ? `${preview.data.sendable} sendable of ${preview.data.matching} confirmed subscribers matching (${preview.data.skippedSuppressed} suppressed, ${preview.data.skippedHeld} held before launch).`
+                  : "Counting the audience…"}{" "}
+                An unsubscribe footer is appended automatically.
               </p>
-              {!stats && error && (
+              {overLimit && (
                 <p className="text-sm text-destructive">
-                  The subscriber count did not load, so sending stays off until
-                  it does.
+                  This audience is above {BROADCAST_AUDIENCE_LIMIT} recipients,
+                  the most one broadcast sends. Narrow it or use a warm-up send.
+                </p>
+              )}
+              {preview.error && (
+                <p className="text-sm text-destructive">
+                  The audience count did not load, so sending stays off until it
+                  does.
                 </p>
               )}
 
@@ -320,28 +468,86 @@ export function NewsletterManagement() {
                 />
               </div>
 
-              {/* #1527 Q10 — a mass send is confirmed with its audience size. */}
-              <ConfirmDialog
-                trigger={
-                  <Button
-                    disabled={
-                      broadcast.isPending ||
-                      !subject.trim() ||
-                      !htmlBody.trim() ||
-                      (stats?.SUBSCRIBED ?? 0) === 0
+              <div className="flex flex-wrap items-end gap-3">
+                <Button
+                  variant="outline"
+                  disabled={
+                    broadcast.isPending || !messageReady || !previewReady
+                  }
+                  onClick={() => broadcast.mutate("test")}
+                >
+                  <Mail className="mr-2 h-4 w-4" /> Send test to me
+                </Button>
+
+                <div className="flex items-end gap-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="newsletter-warmup" className="text-xs">
+                      Warm-up size
+                    </Label>
+                    <Input
+                      id="newsletter-warmup"
+                      type="number"
+                      min={1}
+                      max={BROADCAST_AUDIENCE_LIMIT}
+                      value={warmupLimit}
+                      onChange={(event) =>
+                        setWarmupLimit(
+                          Math.min(
+                            BROADCAST_AUDIENCE_LIMIT,
+                            Math.max(1, Number(event.target.value) || 1),
+                          ),
+                        )
+                      }
+                      className="w-24"
+                    />
+                  </div>
+                  <ConfirmDialog
+                    trigger={
+                      <Button
+                        variant="secondary"
+                        disabled={
+                          broadcast.isPending ||
+                          !messageReady ||
+                          !previewReady ||
+                          sendable === 0
+                        }
+                      >
+                        Warm-up send (first {warmupCount})
+                      </Button>
                     }
-                  >
-                    <Send className="mr-2 h-4 w-4" />
-                    {broadcast.isPending ? "Sending…" : "Send to subscribers"}
-                  </Button>
-                }
-                title={`Send to ${stats?.SUBSCRIBED ?? 0} subscribers?`}
-                description={`"${subject.trim()}" goes out now to every confirmed subscriber. An email cannot be recalled.`}
-                confirmLabel="Send newsletter"
-                onConfirm={async () => {
-                  await broadcast.mutateAsync();
-                }}
-              />
+                    title={`Send to the ${warmupCount} most recently confirmed?`}
+                    description={`"${subject.trim()}" goes out now to the ${warmupCount} subscribers in this audience who confirmed most recently. An email cannot be recalled.`}
+                    confirmLabel="Send warm-up"
+                    onConfirm={async () => {
+                      await broadcast.mutateAsync("warmup");
+                    }}
+                  />
+                </div>
+
+                {/* A mass send is confirmed with its audience size. */}
+                <ConfirmDialog
+                  trigger={
+                    <Button
+                      disabled={
+                        broadcast.isPending ||
+                        !messageReady ||
+                        !previewReady ||
+                        sendable === 0 ||
+                        overLimit
+                      }
+                    >
+                      <Send className="mr-2 h-4 w-4" />
+                      {broadcast.isPending ? "Sending…" : sendAllLabel}
+                    </Button>
+                  }
+                  title={`Send to ${sendable} subscribers?`}
+                  description={`"${subject.trim()}" goes out now to every sendable subscriber in this audience. An email cannot be recalled.`}
+                  confirmLabel="Send newsletter"
+                  onConfirm={async () => {
+                    await broadcast.mutateAsync("all");
+                  }}
+                />
+              </div>
             </CardContent>
           </Card>
         )}

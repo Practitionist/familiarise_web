@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-/** The stored newsletter batch, as `app/api/admin/waitlist/broadcast` writes it. */
+/** The stored newsletter batch, as `app/api/admin/newsletter/broadcast` writes it. */
 export const batchMessagesSchema = z
   .array(
     z

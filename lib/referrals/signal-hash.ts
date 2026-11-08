@@ -1,9 +1,7 @@
 import { createHmac } from "node:crypto";
-import { z } from "zod";
 
+import { deriveAuthKey } from "@/lib/auth/link-signing";
 import { stampedClientIp } from "@/lib/request-ip";
-
-const secretSchema = z.string().min(16);
 
 /** Longest user agent kept on a referral; the column is VarChar(256). */
 export const USER_AGENT_MAX = 256;
@@ -12,11 +10,7 @@ export type SignalKind = "ip" | "vpa" | "phone";
 
 /** A key bound to referral fraud signals, derived from the auth secret; null when it is unusable. */
 function signalKey(): Buffer | null {
-  const secret = secretSchema.safeParse(process.env.BETTER_AUTH_SECRET);
-  if (!secret.success) return null;
-  return createHmac("sha256", secret.data)
-    .update("familiarise/referral-signal-key/v1")
-    .digest();
+  return deriveAuthKey("familiarise/referral-signal-key/v1");
 }
 
 /** The value in the form two equal instruments share, or null when there is nothing to compare. */

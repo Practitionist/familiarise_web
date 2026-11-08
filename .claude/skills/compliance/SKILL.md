@@ -10,6 +10,8 @@ permits, how it stops, and how it is proven to a regulator. The facts live in
 `docs/compliance/`; this skill holds the doctrine
 and the decision procedure.
 
+Marketing consent for the newsletter (one `MARKETING_COMMS` ledger for accounts and guests, the lock order and erasure) is described from the product side in the `growth` skill (`.claude/skills/growth/SKILL.md`).
+
 ## Standing instruction — India-first
 
 **The default legal frame is Indian law.** DPDP Act 2023 + DPDP Rules 2025, IT Act
@@ -116,7 +118,7 @@ obvious from the compliance side alone. `/finance` and `/enterprise` own it.
 - Every marketing grant records `consentProvenance(headers)` (`lib/newsletter/consent-link.ts`): the middleware-stamped IP via `lib/request-ip.ts` and the user agent.
 - Look consent up by purpose (`purposeCodeAliases`), never by a notice `version`. Grants stamp `TERMS_VERSION` on the server (currently 3); bump it when any purpose text in `PURPOSE_CODE_META` changes, and render purpose text only from `PURPOSE_CODE_META`.
 - `NotificationPreference.marketingEmails` and `CookiePreference` are unread; never add a reader or writer. There is no cookie banner: the site sets essential cookies only. Adding any non-essential script needs a consent prompt and a privacy-policy update first.
-- Erasure's mail scrub is `scrubMailFootprintTx` (`lib/compliance/erasure/mail-footprint.ts`), inside the `scrubUser` transaction: `NewsletterSubscriber` rows deleted, queued `FailedEmail` dead-lettered `policy:recipient_erased` and redacted, `recipient` on every `FailedEmail` row (settled too) and the `waitlist:<address>` / `contact:<address>` `entityRef` replaced by an `erased:<digest>` marker that `emailPolicyRefusal` and `emailReplayRefusal` refuse, the address removed from every batch (`review:erased_recipient` when a queued batch's key may have been seen). `EmailSuppression` is kept on purpose so the address stays unmailable. Bells are dropped at send time (`unerasedRecipients`). Proof: `__tests__/db/erasure-mail-footprint.db.test.ts`.
+- Erasure's mail scrub is `scrubMailFootprintTx` (`lib/compliance/erasure/mail-footprint.ts`), inside the `scrubUser` transaction: `NewsletterSubscriber` rows deleted and the address's pseudonymous `MARKETING_COMMS` artifact withdrawn, queued `FailedEmail` dead-lettered `policy:recipient_erased` and redacted, `recipient` on every `FailedEmail` row (settled too) and the `newsletter:<address>` / `contact:<address>` `entityRef` replaced by an `erased:<digest>` marker that `emailPolicyRefusal` and `emailReplayRefusal` refuse, the address removed from every batch (`review:erased_recipient` when a queued batch's key may have been seen). `EmailSuppression` is kept on purpose so the address stays unmailable. Bells are dropped at send time (`unerasedRecipients`). Proof: `__tests__/db/erasure-mail-footprint.db.test.ts`.
 - Erasure also deletes the user's `AppointmentWaitlist` (notify-me) and `WindowBackupInterest` rows inside the `scrubUser` transaction; the stale-requests job deletes settled `AppointmentWaitlist` rows 30 days after their last change.
 
 For how the breach and MSME alert emails are routed and guarded, see [docs/email/README.md](../../../docs/email/README.md).

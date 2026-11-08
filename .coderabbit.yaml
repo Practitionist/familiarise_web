@@ -117,10 +117,10 @@ reviews:
         Unknown or delayed attendance is not proof of absence or grounds for an
         automatic refund/payout. Preserve reconnect, room-end and revocation
         semantics across provider webhooks, app state and background retries.
-    - path: "{lib/{email,novu,waitlist}/**,app/api/{notifications,novu,waitlist}/**,components/notifications/**,hooks/useNovuSubscriberSync.ts,emails/**,__tests__/{email,notifications,waitlist}/**}"
+    - path: "{lib/{email,novu,newsletter}/**,app/api/{notifications,novu,newsletter}/**,components/notifications/**,hooks/useNovuSubscriberSync.ts,emails/**,__tests__/{email,notifications,newsletter}/**}"
       instructions: |
         Every email goes through deliver(), or heldRecipientDomain() for the
-        waitlist broadcast, so EMAIL_DELIVERY_MODE sees every recipient. Preserve
+        newsletter broadcast, so EMAIL_DELIVERY_MODE sees every recipient. Preserve
         FailedEmail/NotificationOutbox staging with the business transaction and
         idempotent post-commit delivery. Check recipient/workspace identity,
         preferences, quiet hours and timezone boundaries. Retryable failures must

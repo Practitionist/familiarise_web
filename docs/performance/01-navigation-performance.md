@@ -140,7 +140,7 @@ The indexes added in this round, tracked under [#696](https://github.com/) and [
 | Index              | Columns                               | Why                                                                                                        |
 | ------------------ | ------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `Payment`          | `(userId, organizationId, createdAt)` | Supports the org-scoped, time-ordered payment reads on the dashboard-home routes.                          |
-| `Waitlist`         | `(userId, status)`                    | Supports the per-user, status-filtered waitlist lookups.                                                   |
+| `Waitlist`         | `(userId, status)`                    | Supported the retired queued event waitlist; dropped with that table.                                      |
 | `ConsultantReview` | `(consultantProfileId)`               | Fixes the explore "trending" sort, which ordered by `reviews._count` and was performing a full-table scan. |
 
 The `Consultation` and `Subscription` `(planId, status)` indexes were considered and intentionally skipped as redundant: a superset index on `(planId, status, requestedAt)` already exists, and Postgres can satisfy a `(planId, status)` lookup from the leading columns of that index, so adding the shorter index would only duplicate maintenance cost.

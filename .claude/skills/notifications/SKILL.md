@@ -7,6 +7,8 @@ description: Work on this repo's notification subsystem — in-app bells through
 
 Terse rules for agents. The human explanation is in `docs/notifications/` (start at `docs/notifications/README.md`); email specifics are in `docs/email/README.md`; the decision record is `docs/decisions/2026-11-06-notification-single-preference-owner.md`. Every rule names its enforcer. Grep before you assert any name.
 
+Newsletter broadcasts, announcements versus newsletter, the appointment waitlist notices and referral notices are product rules owned by the `growth` skill (`.claude/skills/growth/SKILL.md`); this skill keeps the delivery mechanics.
+
 ## The model
 
 - Postgres is the transactional outbox (`FailedEmail`, `FailedEmailBatch`, `NotificationOutbox`) and the **only** owner of notification preferences (`NotificationPreference`). Workspace routing is removed: `OrgWorkspaceProfile.notificationRoutingMode` is unread until the next schema batch drops it, so never read or write it.
@@ -48,7 +50,7 @@ All three are registered once in `lib/cron/cleanup-registry.ts` and run under `w
 
 ## Settles are compare-and-set
 
-- Every status write on all three outbox tables is a conditional `updateMany` filtered on `PENDING`/`RETRY`: `UNSETTLED` (`lib/retry/provider-window.ts`) for email in `settleRow` (`lib/email/deliver.ts`), the relay (`jobs/email/retry-failed-emails.ts`) and `settleBatch` (`app/api/admin/waitlist/broadcast/route.ts`), and `ACTIVE_STATUSES` for bells (`lib/novu/outbox.ts`). A lost race matches no row, is skipped and is not counted. Never write a settle as read-then-update, and never overwrite `SENT`.
+- Every status write on all three outbox tables is a conditional `updateMany` filtered on `PENDING`/`RETRY`: `UNSETTLED` (`lib/retry/provider-window.ts`) for email in `settleRow` (`lib/email/deliver.ts`), the relay (`jobs/email/retry-failed-emails.ts`) and `settleBatch` (`app/api/admin/newsletter/broadcast/route.ts`), and `ACTIVE_STATUSES` for bells (`lib/novu/outbox.ts`). A lost race matches no row, is skipped and is not counted. Never write a settle as read-then-update, and never overwrite `SENT`.
 - Novu honours the Idempotency-Key (measured 2026-11-07 in Development: two triggers, one notification). The terminal-split row id is `<transactionId>:terminal:<digest>`, a 16-hex-character sha256 prefix over the sorted refused recipients (`terminalSplitRow`, `lib/novu/outbox.ts`).
 - A Novu step failing after Novu accepted the trigger leaves the row `SENT`, so `SENT` is not proof a bell rendered. `novu-step-failure-probe` (`jobs/notifications/novu-step-failure-probe.ts`) reads `GET /v1/notifications?channels=in_app` and adds one `SINGLE` `DEAD_LETTER` sibling, `<row>:stepfailed:<recipient hash>`, with `review:novu_step_failed: ...` for each failed in-app job whose transactionId `recipientTransactionId` reproduces. Never write to the parent, and never re-send it: Novu treats a repeated transactionId as a duplicate. A failure older than Novu's 24 h retention is lost (decision 16).
 - There is no Novu webhook. Outbound webhooks are Team and Enterprise only, and `message.failed` does not cover in-app steps; do not add a receiver back.
@@ -79,7 +81,7 @@ Novu Free is 10,000 workflow runs a month, counted across Development **and** Pr
 - Panel saves are optimistic and share one mutation scope (serialized); never write a preference from a time input's `onChange`.
 - The bell-header gear is overlaid at offsets measured on `@novu/react` 3.19.2: the ⋯ row starts 10 px below the popover top and the gear sits 8 px left of ⋯ (`components/notifications/NotificationInbox.tsx`). Recheck both on any Novu SDK upgrade.
 - The bell's unread count reaches assistive technology only through the trigger's `aria-label`, fed by `UnreadReporter` from `renderBell`; the badge itself is `aria-hidden` and `bg-red-600` for AA contrast. Keep the visible count and the label in step if the bell markup changes.
-- Both unsubscribe pages render bare, logo only: `/email/unsubscribe` is in `NO_CHROME_PREFIXES` (`lib/navigation/public-chrome.ts`) and the newsletter page is standalone HTML from `app/api/waitlist/unsubscribe/route.ts`.
+- Both unsubscribe pages render bare, logo only: `/email/unsubscribe` is in `NO_CHROME_PREFIXES` (`lib/navigation/public-chrome.ts`) and the newsletter page is standalone HTML from `app/api/newsletter/unsubscribe/route.ts`.
 - Erasure: queued email for an erased user is dead-lettered `policy:recipient_erased` and redacted, and every stored `recipient` becomes an `erased:<digest>` marker that no send or replay accepts, inside the erasure transaction (`scrubMailFootprintTx`); bells are dropped at send time by `unerasedRecipients` / `currentBellRecipients`. `EmailSuppression` survives erasure.
 - The unsubscribe undo is `POST /api/notifications/resubscribe`, same-origin only (`isSameOriginRequest`), with no `GET`. Neither route's `GET` may ever write.
 

@@ -7,7 +7,7 @@ import { isFullyRefundedPurchase } from "@/lib/payments/utils/refund-balance";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import { paidParticipant } from "@/lib/booking/participants";
 import { getAppUrl } from "@/lib/url";
-import { canSignLinks, safeEquals, signToken } from "@/lib/newsletter/tokens";
+import { canSignLinks, safeEquals, signToken } from "@/lib/auth/link-signing";
 import { sessionEnd, stamp } from "./ics";
 
 const PURPOSE = "calendar-ics";

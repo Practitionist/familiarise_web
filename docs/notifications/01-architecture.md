@@ -128,7 +128,7 @@ To guarantee atomicity with domain writes while strictly respecting `PG_POOL_MAX
      - **Definitive response**: accepted recipients leave the row and the generation ends: `firstAttemptAt` and `lastError` return to null, so the next attempt rechecks policy and sends under a new key (Novu caches error responses for 24 h, so a reused key would replay the refusal). Retryable refusals (`error`, or a status the client does not know) stay. Terminal refusals (`trigger_not_active`, `invalid_recipients`, workflow not found, ...) move, in the same transaction, to their own `DEAD_LETTER` row (`<transactionId>:terminal:<digest>`, same workflow and payload; the digest is the first 16 hex characters of a sha256 over the sorted refused recipients, from `terminalSplitRow` in `lib/novu/outbox.ts`), so they stay in Needs attention after the rest succeed. These writes require the anchor the sent key was built on. A duplicate `transactionId` counts as delivered. The row is `SENT` when nothing is left and nothing was refused, and `DEAD_LETTER` when only terminal refusals are left. A row over 100 recipients sends its next 100 as a new generation on the following attempt without spending a retry.
      - `firstAttemptAt` older than 23 h dead-letters the row as `review:provider_acceptance_unknown` (Novu's idempotency cache lasts 24 h). Every status write is conditional on `PENDING`/`RETRY`, so nothing overwrites `SENT`.
    - **Step failures after acceptance.** A Novu in-app step can still fail _after_ Novu accepted the trigger; the empty-redirect failure was one, now prevented by `FALLBACK_HREF` (`lib/novu/templates/index.ts`). The parent row stays `SENT`, because the step already ran in Novu and Novu never re-runs a transactionId. The `novu-step-failure-probe` job (`jobs/notifications/novu-step-failure-probe.ts`) reads Novu's activity feed every 2 hours over a 4-hour window, inside the 24 hours that Free keeps it. For each failed in-app job whose per-recipient transactionId maps back to a row, it inserts one `SINGLE` `DEAD_LETTER` sibling (`<row>:stepfailed:<recipient hash>`) with `lastError` `review:novu_step_failed: <detail> (<code> at <paths>)`. Needs attention and the ops digest count it (decision 16 of `docs/decisions/2026-11-06-notification-single-preference-owner.md`). A failure older than 24 hours, for example one from a stretch when the ticker was down, is gone from Novu and cannot be recovered.
-   - **Email settles are conditional too.** Every status write on `FailedEmail` and `FailedEmailBatch` is an `updateMany` filtered on `status: UNSETTLED` (`PENDING` or `RETRY`, from `lib/retry/provider-window.ts`): `settleRow` in `lib/email/deliver.ts`, the relay in `jobs/email/retry-failed-emails.ts` and `settleBatch` in `app/api/admin/waitlist/broadcast/route.ts`. A writer that lost a race to another attempt matches no row, is skipped and is not counted, so a late writer cannot overwrite `SENT`.
+   - **Email settles are conditional too.** Every status write on `FailedEmail` and `FailedEmailBatch` is an `updateMany` filtered on `status: UNSETTLED` (`PENDING` or `RETRY`, from `lib/retry/provider-window.ts`): `settleRow` in `lib/email/deliver.ts`, the relay in `jobs/email/retry-failed-emails.ts` and `settleBatch` in `app/api/admin/newsletter/broadcast/route.ts`. A writer that lost a race to another attempt matches no row, is skipped and is not counted, so a late writer cannot overwrite `SENT`.
      - The `firstAttemptAt` anchor is claimed with a conditional update before any Novu request and is reset together with `lastError`, so a row with an error but no anchor was never sent and goes out normally.
 3. **Phase 2 — Post-Commit Concurrent Dispatch via `flushNotificationsAfter`**:
    - After `$transaction` commits, `flushNotificationsAfter({ bells, emails }, op)` (`lib/novu/stage-then-attempt.ts`) schedules wire delivery through `scheduleAfter` (`lib/api/after-safe.ts`).
@@ -219,25 +219,25 @@ lib/email/
 
 ### Inline Send Budgets (`EMAIL_BUDGET_MS`)
 
-| Budget                 | Timeout (ms) | Callers                                                                 |
-| ---------------------- | ------------ | ----------------------------------------------------------------------- |
-| `AUTH`                 | `8,000`      | Auth hooks (welcome, verification code, password reset, account linked) |
-| `CONTACT_AND_WAITLIST` | `5,000`      | Contact inquiry form and waitlist double opt-in / welcome               |
-| `WEBHOOK`              | `3,000`      | Payment & capture webhook inline email sends                            |
-| `JOB`                  | `10,000`     | Background cron jobs and `runEmailRetryTick` relay sends                |
-| `REQUEST`              | `5,000`      | Interactive API routes dispatching lifecycle emails inline              |
-| `LIFECYCLE`            | `5,000`      | Default budget for `flushNotificationsAfter` email bundles              |
+| Budget                   | Timeout (ms) | Callers                                                                 |
+| ------------------------ | ------------ | ----------------------------------------------------------------------- |
+| `AUTH`                   | `8,000`      | Auth hooks (welcome, verification code, password reset, account linked) |
+| `CONTACT_AND_NEWSLETTER` | `5,000`      | Contact inquiry form and newsletter double opt-in / welcome             |
+| `WEBHOOK`                | `3,000`      | Payment & capture webhook inline email sends                            |
+| `JOB`                    | `10,000`     | Background cron jobs and `runEmailRetryTick` relay sends                |
+| `REQUEST`                | `5,000`      | Interactive API routes dispatching lifecycle emails inline              |
+| `LIFECYCLE`              | `5,000`      | Default budget for `flushNotificationsAfter` email bundles              |
 
 ### Stateless RFC 8058 Unsubscribe & Link-Scanner Protection
 
-1. **Stateless Token Signing (`lib/email/unsubscribe.ts` & `lib/newsletter/tokens.ts`)**:
-   - Lifecycle unsubscribe URLs (`/api/notifications/unsubscribe?u=<userId>&t=<token>`) and waitlist unsubscribe URLs (`/api/waitlist/unsubscribe?email=<email>&token=<token>`) use timeless HMAC signatures under `WAITLIST_HMAC_SECRET` with distinct domain-separated purposes so tokens never expire in older emails and cannot be replayed across subsystems.
+1. **Stateless Token Signing (`lib/auth/link-signing.ts`, used by `lib/email/unsubscribe.ts` and `lib/newsletter/tokens.ts`)**:
+   - Lifecycle unsubscribe URLs (`/api/notifications/unsubscribe?u=<userId>&t=<token>`) and newsletter unsubscribe URLs (`/api/newsletter/unsubscribe?email=<email>&token=<token>`) use timeless HMAC signatures under one link key derived from `BETTER_AUTH_SECRET`, with distinct purposes so tokens never expire in older emails and cannot be replayed across subsystems. Rotating `BETTER_AUTH_SECRET` voids every link already sent.
 2. **Stateless Retry Header Reconstruction (`reconstructUnsubscribeHeaders`)**:
    - Because `FailedEmail` stores rendered HTML/text without a separate JSON headers column, `reconstructUnsubscribeHeaders(row)` inspects the persisted message body during `runEmailRetryTick`.
-   - If the body contains `/api/notifications/unsubscribe?u=...`, it rebuilds `List-Unsubscribe` + `List-Unsubscribe-Post: List-Unsubscribe=One-Click` for that user ID; if it contains `/api/waitlist/unsubscribe`, it rebuilds the waitlist one-click headers for `row.recipient`; if `category === null` (mandatory account notices such as suspension/ban), it returns `undefined`.
+   - If the body contains `/api/notifications/unsubscribe?u=...`, it rebuilds `List-Unsubscribe` + `List-Unsubscribe-Post: List-Unsubscribe=One-Click` for that user ID; if it contains `/api/newsletter/unsubscribe`, it rebuilds the newsletter one-click headers for `row.recipient`; if `category === null` (mandatory account notices such as suspension/ban), it returns `undefined`.
 3. **Link-Scanner Safe `GET` vs. One-Click `POST`**:
    - **Lifecycle (`/api/notifications/unsubscribe`)**: `GET` performs zero DB writes and returns a `303` redirect to `/email/unsubscribe`; `POST` verifies the HMAC token, sets `emailEnabled: false` on `NotificationPreference` (leaving in-app notifications untouched), and makes no vendor call.
-   - **Waitlist (`/api/waitlist/unsubscribe`)**: `GET` performs zero DB writes and renders a self-contained HTML confirmation page with a `<form method="post">`; `POST` executes immediate one-click opt-out (`unsubscribe({ email, token })`), preventing corporate mail link scanners from silently unsubscribing users on prefetch.
+   - **Newsletter (`/api/newsletter/unsubscribe`)**: `GET` performs zero DB writes and renders a self-contained HTML confirmation page with a `<form method="post">`; `POST` executes immediate one-click opt-out (`unsubscribe({ email, token })`), preventing corporate mail link scanners from silently unsubscribing users on prefetch.
 
 ### Sending Domains & DMARC Alignment
 
@@ -370,7 +370,7 @@ flowchart LR
 - **Removed Accidental Operational Asymmetries**:
   - **Post-Commit Fire-and-Forget vs. In-Tx SSR**: Replaced mixed staging with `prepareRecipientEmails` outside `tx`, atomic `stage()` + policy-aware `stageBell(tx, ...)` (`60s` inline lease) inside `tx`, and `flushNotificationsAfter` concurrent settlement.
   - **Required notices that rolled back their claim**: `stageSpecRequired` rendered the dunning email inside the claim and threw on a render failure, so a broken template rolled the claim back on every run. It is replaced by the pre-render and the `review:render_failed` trace row (decision 15); `stageToRecipients`, the render-inside-`tx` stager, is deleted.
-  - **24h Body-Hash Key Collisions & Stripped Retry Headers**: Replaced payload hashes with `<EMAIL_TYPE>/failed-email/<row.id>` keys, stateless `reconstructUnsubscribeHeaders(row)`, and confirmation-only `GET /api/waitlist/unsubscribe`.
+  - **24h Body-Hash Key Collisions & Stripped Retry Headers**: Replaced payload hashes with `<EMAIL_TYPE>/failed-email/<row.id>` keys, stateless `reconstructUnsubscribeHeaders(row)`, and a confirmation-only `GET` on the newsletter unsubscribe route (now `/api/newsletter/unsubscribe`).
 - **Intentionally Retained Vendor-Plane Split (Novu In-App vs. Direct Resend Email)**:
   - Outbound emails are **not** routed through Novu's email step so transactional notices never depend on a second vendor's multi-tenant queue availability, bypass Novu's 20-workflow plan cap across 45+ React Email templates, and preserve native `resend.batch.send` throughput and `EmailEvent` Svix telemetry.
 

@@ -86,6 +86,12 @@ Booking system, slot allocation, validation, and scheduling logic for all 5 even
 
 ---
 
+### Growth
+
+- [2026-11-08-growth-waitlist-newsletter-referrals.md](./decisions/2026-11-08-growth-waitlist-newsletter-referrals.md) - One vocabulary (newsletter, appointment waitlist, slot backup interest); notify-all kept, capacity normalised on the server, host demand counts, two tables with a shared interest module; the newsletter rename with no aliases, the table rename at release, link keys derived from the auth secret, one consent ledger, segmented broadcasts on Resend Pro; referral launch scope, fraud controls and chargeback voids; confidential figures kept in Notion
+
+---
+
 ### Growth docs
 
 The subsystem documentation for the newsletter, announcements, the appointment waitlist, slot backup interest and referrals. The decision record is listed above under "Growth".

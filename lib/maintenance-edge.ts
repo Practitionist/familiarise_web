@@ -160,7 +160,7 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/verification/resubmit",
   "/api/scheduling/request-for-approval",
   "/api/scheduling/availability",
-  "/api/waitlist",
+  "/api/newsletter",
   "/api/referrals",
   "/api/collaborations",
   "/api/payments/disputes",

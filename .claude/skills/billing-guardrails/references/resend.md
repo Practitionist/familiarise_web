@@ -6,13 +6,13 @@ The repo assumes the Free plan until launch (`docs/notifications/05-pre-producti
 
 ## 2. What causes surprise bills or outages
 
-- The Free plan blocks rather than bills: after 100 emails in a day, further sends fail; a waitlist broadcast or a booking surge hits this first.
+- The Free plan blocks rather than bills: after 100 emails in a day, further sends fail; a newsletter broadcast or a booking surge hits this first.
 - Sends that bounce or complain hurt domain reputation; suppression lists prevent repeat sends.
 - Retries after a transient failure count as separate sends if the first actually went out.
 
 ## 3. Exposure in this repo
 
-- Every send goes through `deliver()` (`lib/email/deliver.ts`), or for the waitlist broadcast through `heldRecipientDomain()` (`lib/email/delivery-guard.ts`). Until `EMAIL_DELIVERY_MODE` is `live`, non-allowlisted recipients are dead-lettered with `held:pre-launch`, so QA and seed data cannot spend quota.
+- Every send goes through `deliver()` (`lib/email/deliver.ts`), or for the newsletter broadcast through `heldRecipientDomain()` (`lib/email/delivery-guard.ts`), so QA and seed data cannot spend quota until `EMAIL_DELIVERY_MODE` is `live`. `deliver()` dead-letters a non-allowlisted recipient with `held:pre-launch`; the broadcast drops it before sending, logs `email.held_pre_launch` and reports it as `skippedHeld`, with no `FailedEmail` row.
 - Failed sends are retried by the `retry-failed-emails` ticker target every 15 minutes with 20 rows per run, paced for the provider; `FailedEmail`, `FailedEmailBatch` and `EmailSuppression` carry idempotency and suppression.
 - The ingest-canary and Sentry-quota alerts also send through Resend, so a capped Resend silences the alarm that reports a Sentry outage. The alert fails open.
 

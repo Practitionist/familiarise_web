@@ -66,7 +66,7 @@ The registrar only holds the registration and the nameserver delegation. For `fa
 | `send.<sub>`                      | TXT     | `v=spf1 include:amazonses.com ~all`                            | SPF for the envelope sender.                                                              |
 | `rsend.<sub>`                     | CNAME   | `send.forge.rmta.net`                                          | Resend tracking host.                                                                     |
 
-`<sub>` is `mail` (transactional) or `news` (newsletter and waitlist). Both are verified in Resend region `ap-northeast-1` with sending on and receiving off, and all four records per subdomain are live.
+`<sub>` is `mail` (transactional) or `news` (newsletter). Both are verified in Resend region `ap-northeast-1` with sending on and receiving off, and all four records per subdomain are live.
 
 Because `familiarisenow.com` has no mailbox, every human-facing address resolves to `connect@practitionist.com` through `SUPPORT_EMAIL` in `lib/company.ts`. The `practitionist.com` apex `A` record points at Netlify's load balancer `75.2.60.5`. Its mail records are `secureserver.net` MX, SPF `include:secureserver.net -all`, and a DMARC record at `p=none` with no `rua`.
 

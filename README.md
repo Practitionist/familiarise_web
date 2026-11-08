@@ -155,7 +155,7 @@ Every deploy context shares one database, so a deploy preview is new code pointe
 
 ### Authentication (Better Auth, OAuth and Turnstile)
 
-- **`BETTER_AUTH_SECRET`** (secret): generate it with `openssl rand -base64 32` and use a different value per environment. `BETTER_AUTH_SECRETS` is only used while rotating it. `NEXT_PUBLIC_APP_URL` and `BETTER_AUTH_URL` are the public origin, `http://localhost:3000` locally and `https://familiarisenow.com` in production. `BETTER_AUTH_TRUSTED_ORIGINS` lists extra origins of our own, such as deploy-preview URLs.
+- **`BETTER_AUTH_SECRET`** (secret): generate it with `openssl rand -base64 32` and use a different value per environment. It also derives the key that signs emailed links (newsletter confirm and unsubscribe, account unsubscribe, calendar and support links), so rotating it voids every such link already sent. `BETTER_AUTH_SECRETS` is only used while rotating it. `NEXT_PUBLIC_APP_URL` and `BETTER_AUTH_URL` are the public origin, `http://localhost:3000` locally and `https://familiarisenow.com` in production. `BETTER_AUTH_TRUSTED_ORIGINS` lists extra origins of our own, such as deploy-preview URLs.
 - **`GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`:** from a GitHub OAuth app and a Google Cloud OAuth client. A provider's button appears only when both of its values are set, and the callback URL must match the origin you run on. Ids are public, secrets are not.
 - **`NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`:** from the Cloudflare Turnstile dashboard. Locally, keep Cloudflare's always-pass test keys that `.env.sample` ships. Production refuses a test key. Set both or neither.
 - **`AUTH_CONFIG_ENCRYPTION_KEY`** (secret): encrypts the single sign-on configuration an organisation registers. Generate it with `openssl rand -hex 32`. It is a different key from `PAN_ENCRYPTION_KEY` so that rotating one never rewrites the other. See [`docs/authentication/`](docs/authentication/README.md).
@@ -186,7 +186,6 @@ Every deploy context shares one database, so a deploy preview is new code pointe
 
 - **`RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET`:** from the Resend dashboard. The webhook signing secret is shown on the webhook you create for `/api/webhooks/resend`. See [`docs/email/README.md`](docs/email/README.md).
 - **`EMAIL_DELIVERY_MODE` and `EMAIL_ALLOWLIST`:** the pre-launch guard. Unset or `allowlist` sends only to our own domain and the allowlist; `live` sends to everyone. Production stays on allowlist until launch.
-- **`WAITLIST_HMAC_SECRET`** (secret): generate it yourself. It signs confirm and unsubscribe links with no fallback, so rotating it breaks every link already sent. Treat it as long-lived.
 - **`NOVU_DEVELOPMENT_KEY` and `NOVU_PRODUCTION_KEY`:** secret keys from the Novu dashboard, one per Novu environment. Production reads the production key and every other context reads the development key. **`NEXT_PUBLIC_NOVU_APP_ID`** is the public application identifier. See [`docs/notifications/`](docs/notifications/01-architecture.md).
 
 ### Storage (Cloudflare R2 and Supabase Storage)

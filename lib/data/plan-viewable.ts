@@ -35,7 +35,7 @@ export async function canViewPlanDetail(
   session?: Awaited<ReturnType<typeof getSession>> | null,
 ): Promise<boolean> {
   // A session-lookup failure is treated as anonymous by design (matches
-  // app/api/waitlist/route.ts's identical fallback) — captured for
+  // app/api/newsletter/route.ts's identical fallback) — captured for
   // visibility only; the anonymous-fallback outcome itself is unchanged.
   const resolvedSession =
     session !== undefined
