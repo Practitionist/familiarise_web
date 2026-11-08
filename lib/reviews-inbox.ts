@@ -4,6 +4,10 @@ import type { Prisma, ReviewTrack } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import { getConsultantReviewTracks } from "@/lib/data/consultant-detail";
+import {
+  NEEDS_REPLY_WHERE,
+  countReviewsNeedingReply,
+} from "@/lib/reviews-needs-reply";
 import type { TReviewTrackPresence } from "@/types/review";
 
 /**
@@ -48,14 +52,6 @@ export interface OwnReviewsPage {
     needsReply: number;
   };
 }
-
-/** A live review with no live reply that the consultant may still write. */
-export const NEEDS_REPLY_WHERE = {
-  OR: [
-    { replyBody: null },
-    { replyDeletedAt: { not: null }, replyRemovedBy: "AUTHOR" },
-  ],
-} satisfies Prisma.ConsultantReviewWhereInput;
 
 const ROW_SELECT = {
   id: true,
@@ -107,7 +103,7 @@ export function toOwnReviewRow(r: ReviewRecord): OwnReviewRow {
   const replyLive = r.replyBody !== null && r.replyDeletedAt === null;
   const isOrgSponsored = Boolean(
     r.appointment?.organizationId ||
-    r.appointment?.payment?.some((p) => p.organizationId != null),
+    r.appointment?.payment?.some((p) => Boolean(p.organizationId)),
   );
   return {
     id: r.id,
@@ -179,9 +175,7 @@ export async function readOwnReviews(args: {
     },
   });
   const tracks = await getConsultantReviewTracks(args.consultantProfileId);
-  const needsReply = await prisma.consultantReview.count({
-    where: { ...base, ...NEEDS_REPLY_WHERE },
-  });
+  const needsReply = await countReviewsNeedingReply(args.consultantProfileId);
   result.summary = {
     publishedRatingOneToOne: profile?.publishedRatingOneToOne ?? null,
     publishedRatingGroup: profile?.publishedRatingGroup ?? null,

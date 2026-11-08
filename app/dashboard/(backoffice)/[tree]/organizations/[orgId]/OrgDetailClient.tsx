@@ -168,6 +168,7 @@ export function OrgDetailClient({ org }: Readonly<{ org: OrgDetail }>) {
       {org.billingAccount && (
         <InvoiceComposer
           orgId={org.id}
+          paymentTermsDays={org.paymentTermsDays}
           open={composerOpen}
           onOpenChange={setComposerOpen}
         />

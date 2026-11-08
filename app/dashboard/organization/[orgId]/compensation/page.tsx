@@ -32,6 +32,7 @@ import { EmptyState } from "@/components/dashboard/EmptyState";
 import { Section } from "@/components/dashboard/Section";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { humanizeEnum } from "@/lib/ui/tone";
+import { COVERED_PLAN_TYPE_LABEL } from "@/lib/labels/org-labels";
 import { AWAITING_ORG_LABEL } from "@/lib/dashboard/hold-copy";
 
 import { OrgScopedEarnings } from "./OrgScopedEarnings";
@@ -108,13 +109,18 @@ export default async function MyArrangementPage({
 
   const member = access.member;
 
-  const { rateCard, payoutAccount, earnings, upcomingSessions } =
-    await getMyArrangementData({
-      orgId,
-      payoutRecipient: member.payoutRecipient,
-      consultantProfileId: member.consultantProfileId,
-      rateCardOverrideId: member.rateCardOverrideId,
-    });
+  const {
+    rateCard,
+    scopedRateCards,
+    payoutAccount,
+    earnings,
+    upcomingSessions,
+  } = await getMyArrangementData({
+    orgId,
+    payoutRecipient: member.payoutRecipient,
+    consultantProfileId: member.consultantProfileId,
+    rateCardOverrideId: member.rateCardOverrideId,
+  });
 
   // #1166 ORG-7 — the personal appointments page is personal-pinned (ADR 19)
   // and structurally ignores ?orgScope=, so deep-linking there could never
@@ -325,6 +331,32 @@ export default async function MyArrangementPage({
           </p>
         </section>
 
+        {scopedRateCards.length > 0 && (
+          <section className="rounded-lg border bg-card p-5">
+            <h2 className="font-medium">Other splits that can apply</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {access.org.name} has also set splits for a contract, a type of
+              plan or a single plan. The split used for a booking depends on its
+              scope; the split above applies when none of these does.
+            </p>
+            <ul className="mt-3 divide-y text-sm">
+              {scopedRateCards.map((card) => (
+                <li
+                  key={card.id}
+                  className="flex flex-wrap items-center justify-between gap-2 py-2"
+                >
+                  <span>{scopedCardLabel(card)}</span>
+                  <span className="text-xs text-muted-foreground">
+                    Platform {bpsPercent(card.platformBps)} · Organisation{" "}
+                    {bpsPercent(card.orgBps)} · Your share{" "}
+                    {bpsPercent(card.consultantBps)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         {/* Recent earnings */}
         {earnings.length > 0 && (
           <section>
@@ -438,6 +470,41 @@ export default async function MyArrangementPage({
       </DashboardContent>
     </>
   );
+}
+
+type ScopedRateCard = Awaited<
+  ReturnType<typeof getMyArrangementData>
+>["scopedRateCards"][number];
+
+const bpsPercent = (bps: number) =>
+  `${(bps / 100).toFixed(bps % 100 === 0 ? 0 : 1)}%`;
+
+function planScopeLabel(
+  planType: ScopedRateCard["planType"],
+  planSpecific: boolean,
+  planTitle: string | null,
+): string {
+  const type = planType ? COVERED_PLAN_TYPE_LABEL[planType] : "";
+  if (planSpecific) return `${type} plan: ${planTitle ?? "a specific plan"}`;
+  return `All ${type.toLowerCase()} plans`;
+}
+
+function scopedCardLabel(card: ScopedRateCard): string {
+  if (card.scope === "contract") {
+    const contract = `Contract effective ${card.contractEffectiveFrom.toLocaleDateString(
+      "en-IN",
+      {
+        timeZone: "Asia/Kolkata",
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      },
+    )}`;
+    return card.planType || card.planSpecific
+      ? `${contract}, ${planScopeLabel(card.planType, card.planSpecific, card.planTitle)}`
+      : contract;
+  }
+  return planScopeLabel(card.planType, card.scope === "plan", card.planTitle);
 }
 
 function SplitCard({

@@ -35,7 +35,8 @@ const fresh: OrgActivationSnapshot = {
   pendingOverageCount: 0,
   pendingOveragePaise: 0,
   stuckPayoutCount: 0,
-  walletLowBalancePaise: null,
+  walletBalancePaise: null,
+  walletMinBalancePaise: null,
   creditPoolMaxUtilizationPct: null,
 };
 
@@ -108,7 +109,8 @@ describe("deriveActionCenter", () => {
         contractExpiringSoonCount: 1,
         pendingOverageCount: 3,
         stuckPayoutCount: 4,
-        walletLowBalancePaise: 50_00,
+        walletBalancePaise: 50_00,
+        walletMinBalancePaise: 100_00,
       },
       ORG,
     ).map((a) => a.key);
@@ -139,5 +141,29 @@ describe("deriveActionCenter", () => {
       ORG,
     ).find((a) => a.key === "past-due-invoices");
     expect(item?.severity).toBe("critical");
+  });
+
+  describe("wallet-low banner", () => {
+    const keysFor = (walletBalancePaise: number | null, min: number | null) =>
+      deriveActionCenter(
+        {
+          ...fresh,
+          status: "ACTIVE",
+          walletBalancePaise,
+          walletMinBalancePaise: min,
+        },
+        ORG,
+      ).map((a) => a.key);
+
+    it("fires only when strictly below the configured floor, like the bell cron", () => {
+      expect(keysFor(99_99, 100_00)).toContain("wallet-low");
+      expect(keysFor(100_00, 100_00)).not.toContain("wallet-low");
+      expect(keysFor(500_00, 100_00)).not.toContain("wallet-low");
+    });
+
+    it("stays quiet with no floor configured or for a non-wallet org", () => {
+      expect(keysFor(0, null)).not.toContain("wallet-low");
+      expect(keysFor(null, null)).not.toContain("wallet-low");
+    });
   });
 });

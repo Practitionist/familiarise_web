@@ -8,23 +8,41 @@ This page records how the consultant (Expert) dashboard is organised, and why. T
 
 The consultant dashboard now shares one `DashboardShell` with every other dashboard tree (personal, organization, workspace and back office), rather than carrying its own chrome. The shell's sidebar begins with the `ContextSwitcher`, which lets a signed-in person move between their Expert dashboard, their Learner dashboard (if they have also bought a session), every organization they belong to, and — for admins and staff — the back office. Below the switcher, the sidebar is a static, unfiltered list of groups, because every surface on a personal dashboard belongs to the one person who owns it. `buildConsultantNav()` in `lib/dashboard/nav/consultant.ts` builds it as:
 
-| Group               | Entries                                                                 |
-| ------------------- | ----------------------------------------------------------------------- |
-| (none)              | Home                                                                    |
-| Inbox               | Booking requests (count badge), Messages (unread badge), Collaborations |
-| Calendar            | Appointments, Availability                                              |
-| Sell                | 1:1 & subscriptions, Group programs                                     |
-| Studio              | Recordings, Session documents, Products                                 |
-| Money               | Earnings & payouts                                                      |
-| Reputation & growth | Reviews, Invite & earn                                                  |
-| (none)              | My library                                                              |
-| Settings & help     | Help & support, Settings                                                |
+| Group           | Entries                                                                 |
+| --------------- | ----------------------------------------------------------------------- |
+| (none)          | Home                                                                    |
+| Inbox           | Booking requests (count badge), Messages (unread badge), Collaborations |
+| Calendar        | Appointments, Availability                                              |
+| Sell            | 1:1 & subscriptions, Group programs                                     |
+| Studio          | Recordings, Session documents, Products                                 |
+| Money           | Earnings & payouts, Invite & earn                                       |
+| Reputation      | Reviews                                                                 |
+| (none)          | My library                                                              |
+| Settings & help | Help & support, Settings                                                |
+
+Money holds Invite & earn (`referrals`) next to Earnings & payouts, because referral credit is money the expert earns or spends. Reputation holds Reviews alone.
 
 Sell holds the two plan pages the expert prices and schedules: `sell/sessions` (Consultations, Subscriptions) and `sell/programs` (Webinars, Classes), each with a "+ New" type picker (see [Dashboard information architecture](information-architecture.md#sell)). Studio holds what the expert made: hosted Recordings, Session documents and `products` (Digital products, a single list with one "New digital product" action). Collaborations sits in Inbox because it is a queue of invitations to answer first and a list of co-hosted plans second; its page has a plain header with no "+ New" menu. Offering cards copy the expert's signed personal share link (`?via=<token>` / `?ref=<code>`, locking the 10% own-link platform fee), display subscription cadence and topic/module counts, and hydrate full plan metadata (`deliverables`, `prerequisite`, `material`, `sessionDurationInHours`) in the edit drawer alongside a net take-home preview. Earnings surfaces active `ConsultantFeeWaiver` banners, `Own link (10%)` and `Fee waived` badges on ledger rows, a Tax & TDS (`Form 16A`) quarterly summary with 1-click FY CSV export, and Own-Link vs Marketplace revenue split + repeat learner rate on the Analytics tab. Reviews is a dedicated destination where an expert filters by track (`1:1` vs `Group`) or star rating, replies to learners, reports abusive reviews, and shares sanitised review cards or session milestones to LinkedIn/X. Two rules shape this list: a sidebar entry must be a distinct destination, and a daily work surface is not a preference, which is why Availability stays in Calendar rather than moving into Settings.
 
 Settings & help contains **Help & support** and **Settings** in the sidebar. Help & support has separate pages for Support requests, Evidence requests, Reports & appeals, and Product feedback. Request details retain the dashboard shell and a context panel; the shared secondary menu is hidden on detail routes. Product feedback is separate from support conversations, session ratings, and public Reviews. Settings also remains in the avatar menu as a shortcut. The header Help menu links to the same destinations and the public Help Center. The pinned header action is "View public page".
 
 The mobile tab strip carries four tabs plus **Menu**: Home, Requests, Appointments, Messages. Menu opens a sheet with the switcher, the full nav, Settings and Sign out — Availability, Earnings and everything else not in the four tabs is reached from there, replacing the old five-tab strip that left Messages, the planner and Availability unreachable on a phone.
+
+## Home: the setup checklist and the Needs-you rows
+
+Home (`HomeTab.tsx`) renders two things above the stats. The first is the "Get started" checklist (`SetupChecklist`, the same component the organization Home uses). It shows while any of five steps is open and disappears when all five are done; there is no dismiss control and nothing is stored, so a step that regresses reappears by itself. `deriveConsultantChecklist()` in `lib/dashboard/consultant-checklist.ts` decides each step:
+
+| Step                        | Done when                                                                                                         | Links to                |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| Get your profile verified   | `verificationStatus` is `VERIFIED`                                                                                | `settings/verification` |
+| Complete your profile       | Every profile field scores: description, headline, experience, domain detail, work history and an image           | `settings/profile`      |
+| Set your weekly hours       | Availability rows exist for the schedule type the expert runs (weekly or custom)                                  | `availability`          |
+| Publish your first offering | A discoverable 1:1, subscription, webinar or class plan, or a `PUBLISHED` digital product; a draft does not count | `sell/sessions`         |
+| Finish payout setup         | `payoutRequirements()` is not blocked and asks for nothing except a GSTIN, which is only ever due later           | `settings/get-paid`     |
+
+`getConsultantDashboard()` computes the steps from the inputs of its own profile read (`FIRST_RUN_PROFILE_SELECT` in `lib/data/consultant-first-run.ts`), so a fully set-up expert pays no extra query, and `readFirstRunSteps()` returns `null` once every step is done. The profile step reuses the weights in `lib/profiles/profile-completion.ts` minus the availability, plan and verification weights, which are their own steps; see [the onboarding reference](../onboarding/01-system-reference.md).
+
+The second is the Needs-you panel (`ActionRequiredPanel`), whose rows come from `deriveConsultantActionItems()` in `lib/dashboard/action-items.ts`. Two rows are new and both are severity `info`: `collab-invites`, the count of pending invitations on live (unarchived) webinar and class plans, links to `collaborations` and uses the same `LIVE_WEBINAR_COLLABORATOR`/`LIVE_CLASS_COLLABORATOR` predicates (`lib/collaborators/live-plan.ts`) that page lists with; `reviews-reply`, the count of live reviews with no reply from the expert, links to `reviews?tab=needs-reply`. The review count uses `NEEDS_REPLY_WHERE` in `lib/reviews-needs-reply.ts`, the same predicate the Reviews inbox filters with.
 
 ## Documents and Recordings pages
 
@@ -66,6 +84,7 @@ The consultee (Learner) Settings hub also uses `SettingsLayout`: its sections ar
 
 | Concern                                   | File                                                                                                                |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Home checklist and Needs-you rows         | `lib/dashboard/consultant-checklist.ts`, `lib/data/consultant-first-run.ts`, `lib/dashboard/action-items.ts`        |
 | Sidebar groups, mobile tabs, crumb labels | `lib/dashboard/nav/consultant.ts`, `app/dashboard/consultant/[consultantId]/ConsultantDashboardLayout.tsx`          |
 | Shared shell, switcher, header menus      | `components/dashboard/DashboardShell.tsx`, `components/dashboard/ContextSwitcher.tsx`                               |
 | Availability page                         | `app/dashboard/consultant/[consultantId]/(features)/availability/page.tsx`                                          |
@@ -85,4 +104,5 @@ The consultee (Learner) Settings hub also uses `SettingsLayout`: its sections ar
 - **One Offerings item.** Offerings (`offerings`) held every plan kind, digital products and Collaborations behind a sub-tab bar and a type pill, inside a Business group. Superseded by the Sell pages and the Studio group; the old URLs answer 404.
 - **Products and Collaborations under Sell.** Sell once held four items: the two plan pages, Products (Digital products and a Replays tab) and Collaborations. Products moved to Studio at `products`, because a file the expert made is Studio's subject, and Collaborations moved to Inbox. The Replays tab, `ReplaysPanel`, `HostedReplays`, `listHostedReplays()` and the Recordings page's "Sell as replay" button were deleted; replay sales are closed, and the public `/explore/products?tab=replays` grid is unchanged. `sell/products` and `sell/products?tab=replays` answer 404 with no redirect.
 - **"Today" and "Booking requests" settings.** The home entry was called Today although the page is not limited to today (its route is still `home`), and the Settings section for how people book was called "Booking requests", the same words as the Inbox page. They are now Home and Booking mode.
+- **"Reputation & growth" and a one-item Money group.** Reviews and Invite & earn once shared a group called Reputation & growth, with Money holding only Earnings & payouts. Invite & earn moved under Money and the group is now called Reputation, with Reviews alone. Do not restore the old group name.
 - **Redirect claims.** Earlier versions of this page said the old `purchases` URL, the `settings?tab=availability` deep link and the Offerings URLs redirect. No redirect exists for any of them (see [the decision](../decisions/2026-11-03-dashboard-ia-drop-legacy-redirects.md)); they answer 404.

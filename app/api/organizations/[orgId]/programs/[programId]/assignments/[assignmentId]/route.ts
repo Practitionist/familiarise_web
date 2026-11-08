@@ -192,7 +192,7 @@ async function cancelAssignment(
       targetMembershipId: current.membershipId,
       category: "PROGRAM",
       action: AUDIT_ACTIONS.PROGRAM.PROGRAM_UNASSIGNED,
-      description: `Program assignment cancelled early for program ${programId}`,
+      description: "Program assignment cancelled early",
       details: { programId, assignmentId, cancelledEarly: true },
     },
   });
@@ -308,7 +308,7 @@ async function editAssignmentPeriod(
       targetMembershipId: current.membershipId,
       category: "PROGRAM",
       action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNMENT_UPDATED,
-      description: `Program assignment period updated for program ${programId}`,
+      description: "Program assignment period updated",
       details: {
         programId,
         assignmentId,
@@ -503,7 +503,7 @@ export async function DELETE(
           targetMembershipId: current.membershipId,
           category: "PROGRAM",
           action: AUDIT_ACTIONS.PROGRAM.PROGRAM_UNASSIGNED,
-          description: `Unassigned ${current.membershipId} from program ${programId}`,
+          description: "Member unassigned from a program",
           details: { programId, assignmentId },
         },
       });

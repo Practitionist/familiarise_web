@@ -1,4 +1,5 @@
 import type { ConsultantNeedsYou } from "@/lib/data/consultant-needs-you";
+import type { ActivationStep } from "@/lib/enterprise/org-activation";
 import { TAppointment } from "@/types/appointment";
 
 /**
@@ -68,4 +69,6 @@ export interface TConsultantDashboardResponse {
   needsYou?: ConsultantNeedsYou;
   /** Home's This month card and milestone line. */
   sessionsDelivered?: { thisMonth: number; lifetime: number };
+  /** Home's setup checklist; absent once every step is done. */
+  firstRun?: { steps: ActivationStep[] };
 }

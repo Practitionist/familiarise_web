@@ -104,7 +104,7 @@ function OrgCard({ row }: Readonly<{ row: OrgMembershipRow }>) {
     funding === "WALLET" &&
     walletBalance !== null &&
     minBalancePaise !== null &&
-    walletBalance <= minBalancePaise;
+    walletBalance < minBalancePaise;
   return (
     // The bare org route lands each role on its own page.
     <Link

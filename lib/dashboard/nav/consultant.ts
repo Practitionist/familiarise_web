@@ -79,14 +79,14 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
       },
       {
         label: "Money",
-        items: [{ name: "Earnings & payouts", icon: Wallet, path: "earnings" }],
-      },
-      {
-        label: "Reputation & growth",
         items: [
-          { name: "Reviews", icon: Star, path: "reviews" },
+          { name: "Earnings & payouts", icon: Wallet, path: "earnings" },
           { name: "Invite & earn", icon: Gift, path: "referrals" },
         ],
+      },
+      {
+        label: "Reputation",
+        items: [{ name: "Reviews", icon: Star, path: "reviews" }],
       },
       // The expert as a buyer: purchases, plus attended sessions when they
       // also hold a learner profile.

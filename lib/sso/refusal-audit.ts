@@ -4,6 +4,11 @@ import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 export type SsoRefusalCode = "SSO_REQUIRED" | "SSO_EMAIL_DOMAIN_MISMATCH";
 
+const REFUSAL_REASON: Record<SsoRefusalCode, string> = {
+  SSO_REQUIRED: "single sign-on is required",
+  SSO_EMAIL_DOMAIN_MISMATCH: "email domain does not match the provider",
+};
+
 const DEDUPE_WINDOW_MS = 60 * 60 * 1000;
 
 /**
@@ -36,7 +41,7 @@ export async function recordSsoRefusal(input: {
         organizationId: input.organizationId,
         category: "SETTINGS",
         action: AUDIT_ACTIONS.SETTINGS.SSO_SIGN_IN_REFUSED,
-        description: `Sign-in refused for ${email} (${input.code})`,
+        description: `Sign-in refused for ${email} (${REFUSAL_REASON[input.code]})`,
         details: { email, code: input.code, path: input.path ?? null },
       },
     });

@@ -20,6 +20,7 @@ import { getProgramLockState } from "@/lib/enterprise/config-lock";
 import { assertMergedOverageConfigValid } from "@/lib/enterprise/reachable-paths";
 import { releaseSeatsForClosedAssignments } from "@/lib/api/organizations/seat-count";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { PROGRAM_STATUS_LABEL } from "@/lib/labels/org-labels";
 
 const ProgramStatusSchema = z.enum([
   "ACTIVE",
@@ -310,7 +311,7 @@ async function applyProgramPatch(
               : body.status === "CANCELLED"
                 ? AUDIT_ACTIONS.PROGRAM.PROGRAM_CANCELLED
                 : AUDIT_ACTIONS.PROGRAM.PROGRAM_EXPIRED,
-        description: `Program ${programId}: ${current.status} → ${body.status}`,
+        description: `Program "${current.name}": ${PROGRAM_STATUS_LABEL[current.status]} → ${PROGRAM_STATUS_LABEL[body.status]}`,
         details: {
           programId,
           from: current.status,
@@ -398,7 +399,7 @@ async function applyProgramPatch(
         actorMembershipId,
         category: "PROGRAM",
         action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ARCHIVED,
-        description: `Program ${programId} ${body.archived ? "archived" : "unarchived"}`,
+        description: `Program "${current.name}" ${body.archived ? "archived" : "unarchived"}`,
         details: { programId, archived: body.archived },
       },
     });
@@ -540,7 +541,7 @@ export async function DELETE(
               actorMembershipId: access.member.id,
               category: "PROGRAM",
               action: AUDIT_ACTIONS.PROGRAM.PROGRAM_DELETED,
-              description: `Program ${programId} deleted (no assignments)`,
+              description: `Program "${current.name}" deleted (no assignments)`,
               details: { programId },
             },
           });

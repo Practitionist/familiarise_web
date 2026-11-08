@@ -15,7 +15,10 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { checkConsent } from "@/lib/compliance/dpdp";
-import { normalizePurposeCode } from "@/lib/compliance/purpose-codes";
+import {
+  PURPOSE_CODE_META,
+  normalizePurposeCode,
+} from "@/lib/compliance/purpose-codes";
 
 const BodySchema = z.object({
   userId: z.string().min(1).max(128),
@@ -90,7 +93,7 @@ export async function POST(
       action: AUDIT_ACTIONS.CONSENT.CONSENT_WITHDRAWAL_REQUESTED,
       // PII hygiene as CONSENT_GRANTED: the membership FK is the pivot and
       // the free-text reason stays in `details`.
-      description: `Consent withdrawal requested (purpose=${purposeCode}) for member ${member.id}`,
+      description: `Consent withdrawal requested (${PURPOSE_CODE_META[purposeCode].label})`,
       details: {
         membershipId: member.id,
         purposeCode,

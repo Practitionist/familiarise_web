@@ -22,6 +22,8 @@ jest.mock("../../lib/prisma", () => ({
     rescheduleRequest: { findMany: jest.fn() },
     appointmentOccurrence: { findMany: jest.fn() },
     appointmentDocument: { count: jest.fn() },
+    collaborator: { count: jest.fn() },
+    consultantReview: { count: jest.fn() },
   },
 }));
 
@@ -48,6 +50,8 @@ beforeEach(() => {
   m.rescheduleRequest.findMany.mockResolvedValue([]);
   m.appointmentOccurrence.findMany.mockResolvedValue([]);
   m.appointmentDocument.count.mockResolvedValue(0);
+  m.collaborator.count.mockResolvedValue(0);
+  m.consultantReview.count.mockResolvedValue(0);
   (requireApiAuth as jest.Mock).mockResolvedValue({
     session: {
       user: { id: "u-1", role: "CONSULTANT", consultantProfileId: "cp-1" },
@@ -74,6 +78,20 @@ describe("one requests-to-answer number", () => {
     const personal = summary.contexts.find((c) => c.organizationId === null);
     // Trials count here too: NeedsYou once said 5 beside a badge of 6.
     expect(personal?.pendingRequests).toBe(count);
+  });
+
+  it("counts only invitations on live webinar and class plans, as the Collaborations page lists them", async () => {
+    await readConsultantNeedsYou("cp-1");
+    expect(m.collaborator.count).toHaveBeenCalledWith({
+      where: {
+        consultantProfileId: "cp-1",
+        status: "PENDING",
+        OR: [
+          { collaboratorType: "WEBINAR", webinarPlan: { archivedAt: null } },
+          { collaboratorType: "CLASS", classPlan: { archivedAt: null } },
+        ],
+      },
+    });
   });
 
   it("every subscription count reads live rows only", async () => {

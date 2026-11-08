@@ -47,6 +47,7 @@ import {
 } from "../../utils/appointmentHelpers";
 
 import { ActionRequiredPanel } from "@/components/dashboard/ActionRequiredPanel";
+import { SetupChecklist } from "@/components/dashboard/SetupChecklist";
 import { deriveConsultantActionItems } from "@/lib/dashboard/action-items";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import {
@@ -94,6 +95,8 @@ interface HomeTabProps {
   /** #1527 — the Needs you strip's own reads; absent when that read failed. */
   needsYou?: TConsultantDashboardResponse["needsYou"];
   sessionsDelivered?: TConsultantDashboardResponse["sessionsDelivered"];
+  /** The setup checklist; absent once every step is done. */
+  firstRun?: TConsultantDashboardResponse["firstRun"];
   /** Read-only metric on the requests card; absent on older payloads. #1703 */
   responseRate?: TConsultantDashboardResponse["responseRate"];
   /** From the RSC page, so server and client format one wall clock. #1703 */
@@ -128,6 +131,7 @@ export function HomeTab({
   payoutSetup,
   needsYou,
   sessionsDelivered,
+  firstRun,
   responseRate,
   viewerZone,
   performanceSnapshot,
@@ -161,7 +165,7 @@ export function HomeTab({
 
   const allTodayAppointments = useMemo(
     () =>
-      getTodayAppointments(expandedAppointments, viewerZone.zone).filter(
+      getTodayAppointments(expandedAppointments, viewerZone.zone, now).filter(
         (appointment) => getAppointmentStatus(appointment) !== "Completed",
       ),
     [expandedAppointments, viewerZone.zone, now],
@@ -214,6 +218,8 @@ export function HomeTab({
         documentsAwaitingReview: needsYou?.documentsAwaitingReview ?? 0,
         rescheduleReplies: needsYou?.rescheduleReplies ?? [],
         owedMakeUps: needsYou?.owedMakeUps ?? [],
+        collabInvites: needsYou?.collabInvites ?? 0,
+        reviewsToReply: needsYou?.reviewsToReply ?? 0,
         upcomingSessions: allUpcomingAppointments.flatMap((a) =>
           (a.occurrences ?? []).map((slot) => ({
             id: slot.id,
@@ -244,6 +250,8 @@ export function HomeTab({
           animate="visible"
           className="space-y-6"
         >
+          {firstRun && <SetupChecklist steps={firstRun.steps} />}
+
           {/* What's actually blocked on this consultant, above everything
               else. Renders nothing when the queue is clear. */}
           <ActionRequiredPanel

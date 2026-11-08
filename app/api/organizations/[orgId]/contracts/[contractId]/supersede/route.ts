@@ -32,6 +32,7 @@ import type { StagedTrigger } from "@/lib/novu";
 import { notifyOrgContractStatusChanged } from "@/lib/novu/org-workflows";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { getAppUrl } from "@/lib/url";
+import { CONTRACT_SUPERSESSION_REASON_LABEL } from "@/lib/labels/org-labels";
 
 const BodySchema = z
   .object({
@@ -353,7 +354,7 @@ export async function POST(
           actorMembershipId: access.member.id,
           category: "CONTRACT",
           action: AUDIT_ACTIONS.CONTRACT.CONTRACT_SUPERSEDED,
-          description: `Contract ${old.id} superseded by ${successor.id} (${body.reason})`,
+          description: `Contract superseded by a new contract (${CONTRACT_SUPERSESSION_REASON_LABEL[body.reason]})`,
           details: {
             contractId: old.id,
             successorContractId: successor.id,

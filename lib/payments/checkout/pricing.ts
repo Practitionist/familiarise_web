@@ -8,8 +8,10 @@ import { firstCycleWindow } from "@/lib/booking/entitlement";
 import {
   type Currency,
   type OfferingPlanStatus,
+  type OrgPlanVisibility,
   PaymentStatus,
 } from "@prisma/client";
+import { Refusal } from "@/lib/errors/refusal";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
@@ -101,8 +103,8 @@ export async function calculateAmountAndValidate(
     const assertPlanPurchasable = (
       p: {
         archivedAt: Date | null;
-        visibility: string;
-        organizationId?: string | null;
+        visibility: OrgPlanVisibility;
+        organizationId: string | null;
         status?: OfferingPlanStatus | null;
         consultantProfile: {
           verificationStatus: string;
@@ -143,15 +145,23 @@ export async function calculateAmountAndValidate(
       if (p.archivedAt) {
         throw new Error(`${label} is no longer available`);
       }
-      if (
-        !MARKETPLACE_VISIBILITY.includes(
-          p.visibility as (typeof MARKETPLACE_VISIBILITY)[number],
-        ) &&
-        (!validatedData.organizationId ||
-          (p.organizationId &&
-            p.organizationId !== validatedData.organizationId))
-      ) {
-        throw new Error(`${label} is not available`);
+      // A non-marketplace plan sells only to its own org's sponsored buyers; a
+      // plan whose org was cleared (onDelete: SetNull) sells to no sponsor.
+      const sameOrg =
+        !!p.organizationId &&
+        !!validatedData.organizationId &&
+        p.organizationId === validatedData.organizationId;
+      if (!MARKETPLACE_VISIBILITY.includes(p.visibility) && !sameOrg) {
+        throw new Refusal({
+          code: "PLAN_NOT_AVAILABLE_TO_ORG",
+          httpStatus: 409,
+          userMessage: `${label} is only available to members of the organisation that offers it.`,
+          context: {
+            visibility: p.visibility,
+            planOrganizationId: p.organizationId,
+            buyerOrganizationId: validatedData.organizationId ?? null,
+          },
+        });
       }
     };
 

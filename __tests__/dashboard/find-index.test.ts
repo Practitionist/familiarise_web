@@ -138,5 +138,8 @@ describe("Find index", () => {
     expect(hits("replays")).not.toContain(`${base}/products`);
     expect(hits("referrals")).toEqual([`${base}/referrals`]);
     expect(hits("ratings")).toEqual([`${base}/reviews`]);
+    const groupOf = (q: string) => filterFind(expert, q).map((e) => e.group);
+    expect(groupOf("referrals")).toEqual(["Money"]);
+    expect(groupOf("ratings")).toEqual(["Reputation"]);
   });
 });

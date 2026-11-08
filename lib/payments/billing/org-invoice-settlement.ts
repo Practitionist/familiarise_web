@@ -7,6 +7,7 @@ import { Prisma } from "@prisma/client";
 
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 import { EMAIL_BUDGET_MS } from "@/lib/email/config";
@@ -506,7 +507,7 @@ export async function recordBankTransferReceipt(
       actorMembershipId: args.actorMembershipId,
       category: "INVOICE",
       action: AUDIT_ACTIONS.INVOICE.INVOICE_RECEIPT_RECORDED,
-      description: `Bank transfer ${utr} of ${amountPaise} paise recorded against invoice ${invoice.invoiceNumber}`,
+      description: `Bank transfer ${utr} of ${formatCurrencyAmount(amountPaise, "INR")} recorded against invoice ${invoice.invoiceNumber}`,
       details: { invoiceId, receiptId, utr, amountPaise },
     },
   });

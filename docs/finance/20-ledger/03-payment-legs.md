@@ -140,12 +140,22 @@ If the booking passes the programme's cap and the programme charges the member f
 
 When a payment's legs sum to more than its amount, the cascade leaves `REFERRAL_CREDIT` out of the proportional split so the funding that was actually paid is what is returned.
 
+## 6. How the legs are shown to the payer
+
+The legs are the source of truth for which rail paid. `Payment.paymentMethod` is read only for a row that has no legs. Two functions in `lib/appointments/payment-display.ts` do the work, and pages must call them instead of reading the method:
+
+- `paymentRailLabel` gives the short "via …" wording. A self-paid row names the gateway, and an organisation or credit row names its lead leg.
+- `paymentFundingBreakdown` returns one entry per rail in a fixed order (card, referral credit, wallet, invoiced, licence). It merges `INVOICE_ACCRUAL` and `OVERAGE_INVOICE_ACCRUAL` into one "invoiced to the organisation" entry, drops every `*_REVERSAL` leg because refunds have their own lines, and drops zero-value legs. The learner's payment list and payment detail page show it as "Paid with …" only when the payment is `SUCCEEDED` and more than one rail remains.
+
+In the example in section 4, Charlotte Brown's payment reads "₹1,724 card / UPI + ₹400 referral credit". The card entry is worded "card / UPI" because `CARD` is recorded for every gateway charge, UPI included. The referral credit entry is shown even though it is outside the sum identity, since it is part of what paid for the booking.
+
 ## Where in code
 
 - `prisma/schema.prisma`: `PaymentLeg`, `PaymentLegSource`.
 - `prisma/sql/payment-legs-triggers.sql`: `assert_payment_legs_ok` and the three triggers.
 - `lib/payments/payment-legs.ts`: `sourceRefKindFor`, `makeLeg`.
 - `lib/payments/checkout/commit/payment-legs.ts`, `org-utilization.ts`: the checkout writers.
+- `lib/appointments/payment-display.ts`: `paymentRailLabel`, `paymentFundingBreakdown`, `formatFundingBreakdown`.
 
 ## Related
 
@@ -154,4 +164,4 @@ When a payment's legs sum to more than its amount, the cascade leaves `REFERRAL_
 
 ## Deprecated & Superseded Approaches
 
-An earlier definition of the identity summed every non-reversal leg including `REFERRAL_CREDIT`. Because `Payment.amount` already excludes the credit, the trigger rejected every checkout that spent credit, so the identity was narrowed and the credit leg kept for the journal; delete any checker or doc that adds the credit leg back into the sum. A refund once edited the original accrual leg; it now nets through a negative sibling. `WalletEntry` no longer records wallet movement: the authoritative movement is the journal's `Dr WALLET` line, and the cache write is `walletDebit`. `lib/payments/payment-legs.ts` describes the `CARD` `sourceRef` as a gateway payment id and mentions Stripe and a `WalletEntry` row; the code stores the order id and neither of those exists. A TypeScript twin of the trigger (`checkPaymentLegsSumToAmount` and its throwing sibling) once logged drift warn-only after checkout; it was deleted because the trigger already makes drift uncommittable, so recreate neither.
+An earlier definition of the identity summed every non-reversal leg including `REFERRAL_CREDIT`. Because `Payment.amount` already excludes the credit, the trigger rejected every checkout that spent credit, so the identity was narrowed and the credit leg kept for the journal; delete any checker or doc that adds the credit leg back into the sum. A refund once edited the original accrual leg; it now nets through a negative sibling. `WalletEntry` no longer records wallet movement: the authoritative movement is the journal's `Dr WALLET` line, and the cache write is `walletDebit`. `lib/payments/payment-legs.ts` describes the `CARD` `sourceRef` as a gateway payment id and mentions Stripe and a `WalletEntry` row; the code stores the order id and neither of those exists. A TypeScript twin of the trigger (`checkPaymentLegsSumToAmount` and its throwing sibling) once logged drift warn-only after checkout; it was deleted because the trigger already makes drift uncommittable, so recreate neither. A separate map of leg wording (the former payment-leg-labels module) and a `legs` field on the consultee payment detail read were deleted; the display has one vocabulary, in `payment-display.ts`.

@@ -1,9 +1,8 @@
 import { getSessionCookie } from "better-auth/cookies";
-import { NextRequest, NextResponse, NextFetchEvent } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import {
   getMaintenanceState,
-  getMaintenanceStateCachedOnly,
   isMaintenanceExempt,
   validateBypass,
   isWriteBlockedInDegraded,
@@ -287,10 +286,7 @@ async function applyEdgeRateLimits(
   return null;
 }
 
-export async function middleware(
-  req: NextRequest,
-  event: NextFetchEvent,
-): Promise<NextResponse> {
+export async function middleware(req: NextRequest): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
   const clientIp = edgeClientIp(req.headers);
   const forwarded = forwardedHeaders(req, clientIp);
@@ -303,14 +299,7 @@ export async function middleware(
     return NextResponse.next({ request: { headers: forwarded } });
   }
 
-  const isSubNavigation =
-    req.headers.get("Next-Router-Prefetch") === "1" ||
-    req.headers.get("RSC") === "1";
-  // Only a read may answer from the cache; a write always awaits the fresh state.
-  const maintenanceState =
-    isSubNavigation && req.method === "GET"
-      ? getMaintenanceStateCachedOnly(event.waitUntil.bind(event))
-      : await getMaintenanceState();
+  const maintenanceState = await getMaintenanceState();
   const maintenance = handleMaintenance(
     req,
     pathname,

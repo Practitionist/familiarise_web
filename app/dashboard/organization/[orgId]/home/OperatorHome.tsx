@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Check } from "lucide-react";
 import type { FundingSource, OrgStatus } from "@prisma/client";
 
 import {
@@ -14,11 +13,11 @@ import {
 import { canOpenOrgPage } from "@/lib/dashboard/nav/organization";
 import { ActionRequiredPanel } from "@/components/dashboard/ActionRequiredPanel";
 import { Section } from "@/components/dashboard/Section";
+import { SetupChecklist } from "@/components/dashboard/SetupChecklist";
 import { Stat, StatRow, StatSkeleton } from "@/components/dashboard/Stat";
 import { ErrorState } from "@/components/dashboard/ErrorState";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { useOrgRole } from "../useOrgRole";
 
@@ -45,7 +44,7 @@ interface OrgAnalytics {
   };
   members: { total: number; active: number };
   programs: { total: number; active: number; activeAssignments: number };
-  wallet: { balancePaise: number } | null;
+  wallet: { balancePaise: number; minBalancePaise: number | null } | null;
   invoices: {
     outstandingCount: number;
     outstandingPaise: number;
@@ -106,7 +105,8 @@ function toActivationSnapshot(data: OrgAnalytics): OrgActivationSnapshot {
     pendingOverageCount: data.activation.pendingOverageCount,
     pendingOveragePaise: data.activation.pendingOveragePaise,
     stuckPayoutCount: data.activation.stuckPayoutCount,
-    walletLowBalancePaise: data.wallet ? data.wallet.balancePaise : null,
+    walletBalancePaise: data.wallet ? data.wallet.balancePaise : null,
+    walletMinBalancePaise: data.wallet ? data.wallet.minBalancePaise : null,
     creditPoolMaxUtilizationPct: data.activation.creditPoolMaxUtilizationPct,
     memberBilledOverageProgramNames:
       data.activation.memberBilledOverageProgramNames,
@@ -119,45 +119,6 @@ const SEVERITY_ORDER: Record<ActionItem["severity"], number> = {
   warning: 1,
   info: 2,
 };
-
-function Checklist({
-  steps,
-}: Readonly<{ steps: ReturnType<typeof deriveActivationChecklist> }>) {
-  const done = steps.filter((s) => s.done).length;
-  return (
-    <Section
-      title={`Get started — ${done} of ${steps.length} done`}
-      variant="card"
-    >
-      <Progress value={(done / steps.length) * 100} className="mb-4 h-2" />
-      <ul className="space-y-1">
-        {steps.map((step) => (
-          <li key={step.key}>
-            <Link
-              href={step.href}
-              className="flex items-center gap-3 rounded-lg p-2 text-sm transition-colors hover:bg-muted"
-            >
-              <span
-                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${
-                  step.done ? "border-green-600 bg-green-600" : "border-border"
-                }`}
-              >
-                {step.done && <Check className="h-3 w-3 text-white" />}
-              </span>
-              <span
-                className={
-                  step.done ? "text-muted-foreground line-through" : ""
-                }
-              >
-                {step.label}
-              </span>
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </Section>
-  );
-}
 
 /**
  * OWNER / MAINTAINER / MANAGER overview: the action centre and checklist,
@@ -323,7 +284,7 @@ export function OperatorHome({ orgId }: Readonly<{ orgId: string }>) {
   return (
     <>
       <ActionRequiredPanel items={actionItems} heading="Action required" />
-      {showChecklist && <Checklist steps={checklist} />}
+      {showChecklist && <SetupChecklist steps={checklist} />}
       {figures}
       {quickActions.length > 0 && (
         <div className="flex flex-wrap gap-2">

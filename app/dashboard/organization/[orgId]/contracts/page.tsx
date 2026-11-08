@@ -331,10 +331,15 @@ function fmtSubscription(sub: {
 // Create dialog
 // ---------------------------------------------------------------------------
 
+// LICENSE pays upfront and WALLET pre-funds, so only invoiced contracts carry NET terms.
+const paymentTermsApply = (fundingSource?: string | null) =>
+  fundingSource !== "LICENSE" && fundingSource !== "WALLET";
+
 type ContractFinancialDraft = {
   effectiveFrom: string;
   effectiveTo: string;
   isLicense: boolean;
+  termsApply: boolean;
   paymentTermsDays: string;
   autoRenew: boolean;
   licenseModel: "FLAT_FEE" | "PER_SEAT";
@@ -423,7 +428,7 @@ function buildContractFinancialPayload(
   const { fromDate, toDate } = windowResult;
 
   let terms: number | undefined;
-  if (!draft.isLicense) {
+  if (draft.termsApply) {
     const parsed = Number.parseInt(draft.paymentTermsDays, 10);
     if (!Number.isFinite(parsed) || parsed < 1 || parsed > 120) {
       return { error: "Payment terms must be between 1 and 120 days." };
@@ -468,6 +473,7 @@ function ContractFinancialTermsFields({
   effectiveTo,
   onEffectiveToChange,
   isLicense,
+  termsApply,
   paymentTermsDays,
   onPaymentTermsDaysChange,
   licenseModel,
@@ -488,6 +494,7 @@ function ContractFinancialTermsFields({
   effectiveTo: string;
   onEffectiveToChange: (v: string) => void;
   isLicense: boolean;
+  termsApply: boolean;
   paymentTermsDays: string;
   onPaymentTermsDaysChange: (v: string) => void;
   licenseModel: "FLAT_FEE" | "PER_SEAT";
@@ -529,7 +536,7 @@ function ContractFinancialTermsFields({
         </div>
       </div>
 
-      {!isLicense && (
+      {termsApply && (
         <div className="space-y-1.5">
           <Label htmlFor={`${idPrefix}-payment-terms`}>
             Payment terms (days) *
@@ -715,6 +722,7 @@ function CreateContractDialog({
       effectiveFrom,
       effectiveTo,
       isLicense: fundingSource === "LICENSE",
+      termsApply: paymentTermsApply(fundingSource),
       paymentTermsDays,
       autoRenew,
       licenseModel,
@@ -754,6 +762,7 @@ function CreateContractDialog({
             effectiveTo={effectiveTo}
             onEffectiveToChange={setEffectiveTo}
             isLicense={fundingSource === "LICENSE"}
+            termsApply={paymentTermsApply(fundingSource)}
             paymentTermsDays={paymentTermsDays}
             onPaymentTermsDaysChange={setPaymentTermsDays}
             licenseModel={licenseModel}
@@ -837,6 +846,7 @@ function SupersedeContractDialog({
 }>) {
   const queryClient = useQueryClient();
   const isLicense = contract.billingAccount?.fundingSource === "LICENSE";
+  const termsApply = paymentTermsApply(contract.billingAccount?.fundingSource);
   const today = new Date().toISOString().slice(0, 10);
 
   const [reason, setReason] = useState<"AMENDMENT" | "RENEWAL">("AMENDMENT");
@@ -936,6 +946,7 @@ function SupersedeContractDialog({
       effectiveFrom,
       effectiveTo,
       isLicense,
+      termsApply,
       paymentTermsDays,
       autoRenew,
       licenseModel,
@@ -1027,6 +1038,7 @@ function SupersedeContractDialog({
             effectiveTo={effectiveTo}
             onEffectiveToChange={setEffectiveTo}
             isLicense={isLicense}
+            termsApply={termsApply}
             paymentTermsDays={paymentTermsDays}
             onPaymentTermsDaysChange={setPaymentTermsDays}
             licenseModel={licenseModel}
@@ -1069,16 +1081,18 @@ function SupersedeContractDialog({
 // programs / subscription riding on it.
 // ---------------------------------------------------------------------------
 
-// LICENSE contracts pay the flat fee upfront, so net-X payment terms don't
-// apply — render "Prepaid" rather than a misleading NET-0 or em-dash.
+// LICENSE contracts pay the flat fee upfront and WALLET orgs pre-fund, so net-X
+// terms don't apply — render "Prepaid" rather than a misleading NET-0 or em-dash.
 function fmtPaymentTerms(
   c: Pick<ContractItem, "paymentTermsDays" | "billingAccount">,
 ): string {
-  if (c.billingAccount?.fundingSource === "LICENSE") return "Prepaid";
-  return `NET-${c.paymentTermsDays}`;
+  return paymentTermsApply(c.billingAccount?.fundingSource)
+    ? `NET-${c.paymentTermsDays}`
+    : "Prepaid";
 }
 
 function formatContractTermsCell(c: ContractItem): string {
+  if (c.billingAccount?.fundingSource === "WALLET") return "Prepaid";
   if (c.billingAccount?.fundingSource !== "LICENSE") {
     return `NET-${c.paymentTermsDays}`;
   }
@@ -1244,7 +1258,7 @@ function EditContractDialog({
   });
   const c = detail.data?.contract;
   const locked = c?.locked ?? true; // fail-safe: lock until we know
-  const isLicense = c?.billingAccount?.fundingSource === "LICENSE";
+  const termsApply = paymentTermsApply(c?.billingAccount?.fundingSource);
 
   const [autoRenew, setAutoRenew] = useState(false);
   const [effectiveFrom, setEffectiveFrom] = useState("");
@@ -1302,8 +1316,8 @@ function EditContractDialog({
       }
       body.effectiveFrom = fromDate.toISOString();
       body.effectiveTo = toDate ? toDate.toISOString() : null;
-      // LICENSE terms are prepaid — don't send paymentTermsDays for them.
-      if (!isLicense) {
+      // Prepaid funding carries no NET terms, so none are sent.
+      if (termsApply) {
         const parsed = Number.parseInt(paymentTermsDays, 10);
         if (!Number.isFinite(parsed) || parsed < 1 || parsed > 120) {
           setError("Payment terms must be between 1 and 120 days.");
@@ -1366,7 +1380,7 @@ function EditContractDialog({
               </div>
             </div>
 
-            {!isLicense && (
+            {termsApply && (
               <div className="space-y-1.5">
                 <Label htmlFor="edit-payment-terms">
                   Payment terms (days)

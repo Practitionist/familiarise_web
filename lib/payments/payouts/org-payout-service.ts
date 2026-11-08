@@ -52,6 +52,7 @@ import {
   notifyOrgPayoutFailed,
 } from "@/lib/novu/org-workflows";
 import { formatNotificationMoney } from "@/lib/novu/humanize";
+import { tdsSectionLabel } from "@/lib/labels/org-labels";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import { sendOrgPayoutFailedEmail } from "@/lib/email";
 import { EMAIL_BUDGET_MS } from "@/lib/email/config";
@@ -516,7 +517,7 @@ export async function createOrgPayoutBatch(
                 actorMembershipId: opts.actorMembershipId ?? null,
                 category: "PAYOUT",
                 action: AUDIT_ACTIONS.PAYOUT.PAYOUT_INITIATED,
-                description: `Payout batch created: ${readyEarnings.length} earnings, ${amountAfterTds} paise ${first.currency} (after ${tds.tdsAmountPaise} paise TDS ${tds.tdsSection})`,
+                description: `Payout batch created: ${readyEarnings.length} ${readyEarnings.length === 1 ? "earning" : "earnings"}, ${formatNotificationMoney(amountAfterTds, first.currency)} after ${formatNotificationMoney(tds.tdsAmountPaise, first.currency)} TDS under ${tdsSectionLabel(tds.tdsSection)}`,
                 details: {
                   payoutId: created.id,
                   earningsCount: readyEarnings.length,
@@ -749,7 +750,8 @@ async function checkOrgPayoutShortfallBeforeDisbursement(
       actorMembershipId: null,
       category: "PAYOUT",
       action: AUDIT_ACTIONS.PAYOUT.PAYOUT_FAILED,
-      description: `Payout ${payout.id} failed before disbursement due to post-batch refund shortfall`,
+      description:
+        "Payout failed before disbursement: refunds after batching left it short",
       details: {
         payoutId: payout.id,
         owedPaise,
@@ -844,7 +846,7 @@ export async function processOrgPayout(payoutId: string): Promise<{
               actorMembershipId: null,
               category: "PAYOUT",
               action: AUDIT_ACTIONS.PAYOUT.PAYOUT_PROCESSED,
-              description: `Payout ${payoutId} moved to PROCESSING`,
+              description: `Payout of ${formatNotificationMoney(payout.amountPaise, payout.currency)} is processing`,
               details: {
                 payoutId,
                 amountPaise: payout.amountPaise,
@@ -1049,7 +1051,7 @@ async function markPayoutFailedFromSubmission(
         actorMembershipId: null,
         category: "PAYOUT",
         action: AUDIT_ACTIONS.PAYOUT.PAYOUT_FAILED,
-        description: `Payout ${payoutId} submission rejected by gateway (4xx)`,
+        description: "Payout submission rejected by the payment provider",
         details: { payoutId, reason: reason.slice(0, 500) },
       },
     });
@@ -1578,7 +1580,7 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
             actorMembershipId: null,
             category: "PAYOUT",
             action: AUDIT_ACTIONS.PAYOUT.PAYOUT_COMPLETED,
-            description: `Payout ${payoutId} moved PROCESSING → COMPLETED`,
+            description: `Payout of ${formatNotificationMoney(payout.amountPaise, payout.currency)} completed`,
             details: {
               payoutId,
               netPayoutPaise: payout.netPayoutPaise,
@@ -1815,8 +1817,8 @@ async function markOrgPayoutFailedInternal(
                 : AUDIT_ACTIONS.PAYOUT.PAYOUT_FAILED,
             description:
               kind === "REVERSED"
-                ? `Payout ${payoutId} reversed by gateway: ${reason.slice(0, 200)}`
-                : `Payout ${payoutId} failed at gateway: ${reason.slice(0, 200)}`,
+                ? `Payout reversed by the payment provider: ${reason.slice(0, 200)}`
+                : `Payout failed at the payment provider: ${reason.slice(0, 200)}`,
             details: { payoutId, kind, reason: reason.slice(0, 500) },
           },
         });
@@ -1999,7 +2001,7 @@ export async function markOrgPayoutReversed(
               actorMembershipId: null,
               category: "PAYOUT",
               action: AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED,
-              description: `Payout ${payoutId} reversed by bank after completion: ${reason.slice(0, 200)}`,
+              description: `Payout reversed by the bank after completion: ${reason.slice(0, 200)}`,
               details: {
                 payoutId,
                 kind: "REVERSED",
@@ -2119,7 +2121,7 @@ export async function markOrgPayoutReversed(
             actorMembershipId: null,
             category: "PAYOUT",
             action: AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED,
-            description: `Payout ${payoutId} reversed prior to completion: ${reason.slice(0, 200)}`,
+            description: `Payout reversed before completion: ${reason.slice(0, 200)}`,
             details: {
               payoutId,
               kind: "REVERSED",

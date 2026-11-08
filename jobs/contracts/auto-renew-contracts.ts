@@ -27,6 +27,7 @@
 import prisma from "@/lib/prisma";
 import type { PrismaLike } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { formatAuditDate } from "@/lib/labels/org-labels";
 import { Prisma } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { createRunFailureReporter } from "@/lib/observability/run-failures";
@@ -277,7 +278,7 @@ async function autoRenewContracts(opts: {
                 targetMembershipId: null,
                 category: "CONTRACT",
                 action: AUDIT_ACTIONS.CONTRACT.CONTRACT_AUTO_RENEWED,
-                description: `Contract ${c.id} auto-renewed to ${successor.id} (${oldTo.toISOString()} → ${newTo.toISOString()})`,
+                description: `Contract auto-renewed (${formatAuditDate(oldTo)} → ${formatAuditDate(newTo)})`,
                 details: {
                   contractId: c.id,
                   successorContractId: successor.id,

@@ -53,6 +53,10 @@ import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { getAppUrl } from "@/lib/url";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
+import {
+  MEMBER_ROLE_LABEL,
+  MEMBER_STATUS_LABEL,
+} from "@/lib/labels/org-labels";
 
 // Mirror the full Prisma MemberRole enum. The earlier hand-rolled list
 // omitted BILLING_ADMIN — invitable but un-PATCH-able
@@ -229,7 +233,7 @@ async function auditMemberChange(
         ...base,
         category: "MEMBER",
         action: AUDIT_ACTIONS.MEMBER.ROLE_CHANGE,
-        description: `Role: ${current.role} → ${patch.role}`,
+        description: `Role: ${MEMBER_ROLE_LABEL[current.role]} → ${MEMBER_ROLE_LABEL[patch.role ?? current.role]}`,
         details,
       },
     });
@@ -240,7 +244,7 @@ async function auditMemberChange(
         ...base,
         category: "MEMBER",
         action: AUDIT_ACTIONS.MEMBER.STATUS_CHANGE,
-        description: `Status: ${current.status} → ${patch.status}`,
+        description: `Status: ${MEMBER_STATUS_LABEL[current.status]} → ${MEMBER_STATUS_LABEL[patch.status ?? current.status]}`,
         details,
       },
     });
