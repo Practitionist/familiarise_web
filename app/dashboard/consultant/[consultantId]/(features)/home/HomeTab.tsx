@@ -165,7 +165,7 @@ export function HomeTab({
 
   const allTodayAppointments = useMemo(
     () =>
-      getTodayAppointments(expandedAppointments, viewerZone.zone).filter(
+      getTodayAppointments(expandedAppointments, viewerZone.zone, now).filter(
         (appointment) => getAppointmentStatus(appointment) !== "Completed",
       ),
     [expandedAppointments, viewerZone.zone, now],

@@ -282,10 +282,11 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          // Expanded, the visible name and context are the accessible name; only
-          // the icon-only and loading states need a label of their own.
+          // Expanded, the name starts with the visible identity (label in name) and ends with the action.
           aria-label={
-            collapsed || !identityKnown ? "Switch dashboard" : undefined
+            collapsed || !identityKnown
+              ? "Switch dashboard"
+              : `${[trigger.name, trigger.label].filter(Boolean).join(", ")}: switch dashboard`
           }
           disabled={!user}
           aria-busy={!user}

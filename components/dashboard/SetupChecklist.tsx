@@ -36,6 +36,9 @@ export function SetupChecklist({
                 }
               >
                 {step.label}
+                <span className="sr-only">
+                  {step.done ? " (done)" : " (to do)"}
+                </span>
               </span>
             </Link>
           </li>

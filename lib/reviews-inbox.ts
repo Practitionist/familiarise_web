@@ -103,7 +103,7 @@ export function toOwnReviewRow(r: ReviewRecord): OwnReviewRow {
   const replyLive = r.replyBody !== null && r.replyDeletedAt === null;
   const isOrgSponsored = Boolean(
     r.appointment?.organizationId ||
-    r.appointment?.payment?.some((p) => p.organizationId != null),
+    r.appointment?.payment?.some((p) => Boolean(p.organizationId)),
   );
   return {
     id: r.id,
