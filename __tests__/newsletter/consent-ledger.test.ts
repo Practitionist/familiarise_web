@@ -82,11 +82,8 @@ const confirm = () =>
   confirmSubscription({ email: "Reader@Example.com", token: "t", issuedAt: 1 });
 
 describe("the newsletter writes and withdraws one consent ledger", () => {
-  beforeAll(() => {
-    process.env.BETTER_AUTH_SECRET = "test-auth-secret-at-least-32-chars";
-  });
-
   beforeEach(() => {
+    process.env.BETTER_AUTH_SECRET = "test-auth-secret-at-least-32-chars";
     artifacts.length = 0;
     jest.clearAllMocks();
     mockSubscriberFind.mockResolvedValue({
@@ -159,6 +156,21 @@ describe("the newsletter writes and withdraws one consent ledger", () => {
     await expect(
       unsubscribe({ email: "reader@example.com", token: "t" }),
     ).resolves.toEqual({ ok: true });
+    expect(artifacts[0].withdrawnAt).toBeInstanceOf(Date);
+  });
+
+  it("withdraws the stored subject after the auth secret rotates", async () => {
+    await confirm();
+    const stored = mockSubscriberUpdate.mock.calls[0][0].data.consentSubjectId;
+    expect(stored).toBe(artifacts[0].subjectPseudonymousId);
+
+    process.env.BETTER_AUTH_SECRET = "a-rotated-auth-secret-of-enough-length";
+    mockSubscriberFind.mockResolvedValue({
+      userId: null,
+      consentSubjectId: stored,
+    });
+    await unsubscribe({ email: "reader@example.com", token: "t" });
+
     expect(artifacts[0].withdrawnAt).toBeInstanceOf(Date);
   });
 });

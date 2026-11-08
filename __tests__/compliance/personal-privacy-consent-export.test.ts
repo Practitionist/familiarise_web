@@ -50,6 +50,7 @@ jest.mock("../../lib/prisma", () => ({
     newsletterSubscriber: {
       upsert: jest.fn(),
       updateMany: jest.fn(async () => ({ count: 1 })),
+      findMany: jest.fn(async () => []),
     },
     payment: {
       findMany: jest.fn(),

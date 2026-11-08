@@ -19,6 +19,7 @@ import type { BroadcastAudience } from "./broadcast-audience";
 import { verifyConfirmToken, verifyUnsubscribeToken } from "./tokens";
 import {
   hashIp,
+  newsletterSubjectId,
   normalizeNewsletterEmail,
   recordNewsletterConsent,
   withdrawNewsletterConsent,
@@ -164,12 +165,14 @@ export async function confirmSubscription(params: {
   const result = await prisma.$transaction(async (tx) => {
     const existing = await tx.newsletterSubscriber.findUnique({
       where: { email },
-      select: { status: true, name: true },
+      select: { status: true, name: true, consentSubjectId: true },
     });
     if (!existing) return { outcome: "INVALID" } as const;
     if (existing.status === NewsletterStatus.SUBSCRIBED) {
       return { outcome: "ALREADY_CONFIRMED" } as const;
     }
+    // Kept once written, so a later key rotation still finds the artifact.
+    const subjectId = existing.consentSubjectId ?? newsletterSubjectId(email);
     // The account that owns the confirmed address, never a stored id that may not.
     const userId =
       (
@@ -185,10 +188,11 @@ export async function confirmSubscription(params: {
         confirmedAt: now,
         unsubscribedAt: null,
         userId,
+        consentSubjectId: subjectId,
       },
     });
     if (count === 0) return { outcome: "ALREADY_CONFIRMED" } as const;
-    await recordNewsletterConsent(tx, { email, userId, now });
+    await recordNewsletterConsent(tx, { email, userId, subjectId, now });
     return { outcome: "CONFIRMED", name: existing.name } as const;
   });
 
@@ -221,11 +225,12 @@ export async function unsubscribe(params: {
     });
     const row = await tx.newsletterSubscriber.findUnique({
       where: { email },
-      select: { userId: true },
+      select: { userId: true, consentSubjectId: true },
     });
     await withdrawNewsletterConsent(tx, {
       email,
       userId: row?.userId ?? null,
+      subjectId: row?.consentSubjectId ?? null,
       now,
     });
   });

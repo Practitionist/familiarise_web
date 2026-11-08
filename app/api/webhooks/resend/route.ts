@@ -63,7 +63,7 @@ async function unsubscribeNewsletterRows(
 ): Promise<void> {
   const rows = await tx.newsletterSubscriber.findMany({
     where: { email: emailFilter, status: { in: ["PENDING", "SUBSCRIBED"] } },
-    select: { email: true, userId: true },
+    select: { email: true, userId: true, consentSubjectId: true },
   });
   if (rows.length === 0) return;
   const now = new Date();
@@ -78,6 +78,7 @@ async function unsubscribeNewsletterRows(
     await withdrawNewsletterConsent(tx, {
       email: row.email,
       userId: row.userId,
+      subjectId: row.consentSubjectId,
       now,
     });
   }

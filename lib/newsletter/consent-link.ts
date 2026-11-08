@@ -101,24 +101,28 @@ export async function unsubscribeForWithdrawnConsent(
   tx: Pick<Tx, "newsletterSubscriber" | "consentArtifact">,
   input: { userId: string; email: string; now: Date },
 ): Promise<number> {
+  const where = {
+    OR: [
+      { userId: input.userId },
+      { email: normalizeNewsletterEmail(input.email) },
+    ],
+  };
+  const rows = await tx.newsletterSubscriber.findMany({
+    where,
+    select: { consentSubjectId: true },
+  });
   const { count } = await tx.newsletterSubscriber.updateMany({
     where: {
-      OR: [
-        { userId: input.userId },
-        { email: normalizeNewsletterEmail(input.email) },
-      ],
+      ...where,
       status: { in: [NewsletterStatus.PENDING, NewsletterStatus.SUBSCRIBED] },
     },
     data: { status: NewsletterStatus.UNSUBSCRIBED, unsubscribedAt: input.now },
   });
-  await withdrawPseudonymousConsent(
-    {
-      subjectPseudonymousId: newsletterSubjectId(input.email),
-      purposeCode: PURPOSE_CODES.MARKETING_COMMS,
-      now: input.now,
-    },
-    tx,
-  );
+  await withdrawNewsletterSubjects(tx, {
+    email: input.email,
+    subjectIds: rows.map((row) => row.consentSubjectId),
+    now: input.now,
+  });
   return count;
 }
 
@@ -128,7 +132,12 @@ export async function unsubscribeForWithdrawnConsent(
  */
 export async function recordNewsletterConsent(
   tx: Tx,
-  input: { email: string; userId: string | null; now: Date },
+  input: {
+    email: string;
+    userId: string | null;
+    subjectId: string;
+    now: Date;
+  },
 ): Promise<void> {
   const grant = {
     dataFiduciary: PLATFORM_DATA_FIDUCIARY,
@@ -146,7 +155,7 @@ export async function recordNewsletterConsent(
     });
     return;
   }
-  const subjectPseudonymousId = newsletterSubjectId(input.email);
+  const subjectPseudonymousId = input.subjectId;
   const live = await tx.consentArtifact.findFirst({
     where: {
       subjectPseudonymousId,
@@ -164,24 +173,57 @@ export async function recordNewsletterConsent(
   });
 }
 
+/**
+ * Withdraws the pseudonymous `MARKETING_COMMS` consent of each stored subject id,
+ * recomputing it from the address only when no row stored one.
+ */
+export async function withdrawNewsletterSubjects(
+  tx: Pick<Tx, "consentArtifact">,
+  input: { email: string; subjectIds: (string | null)[]; now: Date },
+): Promise<number> {
+  const stored = [
+    ...new Set(input.subjectIds.filter((id): id is string => !!id)),
+  ];
+  const subjects =
+    stored.length > 0 ? stored : [newsletterSubjectId(input.email)];
+  let withdrawn = 0;
+  for (const subjectPseudonymousId of subjects) {
+    const { withdrawnCount } = await withdrawPseudonymousConsent(
+      {
+        subjectPseudonymousId,
+        purposeCode: PURPOSE_CODES.MARKETING_COMMS,
+        now: input.now,
+      },
+      tx,
+    );
+    withdrawn += withdrawnCount;
+  }
+  return withdrawn;
+}
+
 /** Withdraws the address's `MARKETING_COMMS` consent: the linked account's and its pseudonymous subject's. */
 export async function withdrawNewsletterConsent(
   tx: Tx,
-  input: { email: string; userId: string | null; now: Date },
+  input: {
+    email: string;
+    userId: string | null;
+    subjectId: string | null;
+    now: Date;
+  },
 ): Promise<void> {
-  const purposeCode = PURPOSE_CODES.MARKETING_COMMS;
   if (input.userId) {
     await withdrawConsent(
-      { userId: input.userId, purposeCode, now: input.now },
+      {
+        userId: input.userId,
+        purposeCode: PURPOSE_CODES.MARKETING_COMMS,
+        now: input.now,
+      },
       tx,
     );
   }
-  await withdrawPseudonymousConsent(
-    {
-      subjectPseudonymousId: newsletterSubjectId(input.email),
-      purposeCode,
-      now: input.now,
-    },
-    tx,
-  );
+  await withdrawNewsletterSubjects(tx, {
+    email: input.email,
+    subjectIds: [input.subjectId],
+    now: input.now,
+  });
 }

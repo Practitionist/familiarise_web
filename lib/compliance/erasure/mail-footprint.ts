@@ -8,14 +8,12 @@
 
 import { createHash } from "node:crypto";
 import type { Tx } from "@/lib/prisma";
-import { withdrawPseudonymousConsent } from "@/lib/compliance/dpdp";
-import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import { batchMessagesSchema } from "@/lib/email/batch-payload";
 import { REDACTED_ERASED_BODY } from "@/lib/email/classify";
 import { RECIPIENT_ERASED_REFUSAL } from "@/lib/email/delivery-policy";
 import { ERASED_RECIPIENT_PREFIX } from "@/lib/email/erased-recipient";
 import { normaliseEmail } from "@/lib/email/suppression";
-import { newsletterSubjectId } from "@/lib/newsletter/consent-link";
+import { withdrawNewsletterSubjects } from "@/lib/newsletter/consent-link";
 import { UNSETTLED } from "@/lib/retry/provider-window";
 
 /** The provider may already hold the batch's key, so its other recipients need an operator. */
@@ -59,16 +57,21 @@ export async function scrubMailFootprintTx(
     OR: [{ deliveryUserId: input.userId }, { recipient: sameAddress }],
   };
 
-  const newsletter = await tx.newsletterSubscriber.deleteMany({
-    where: { OR: [{ userId: input.userId }, { email: sameAddress }] },
+  const newsletterRows = {
+    OR: [{ userId: input.userId }, { email: sameAddress }],
+  };
+  const subjects = await tx.newsletterSubscriber.findMany({
+    where: newsletterRows,
+    select: { consentSubjectId: true },
   });
-  const consent = await withdrawPseudonymousConsent(
-    {
-      subjectPseudonymousId: newsletterSubjectId(email),
-      purposeCode: PURPOSE_CODES.MARKETING_COMMS,
-    },
-    tx,
-  );
+  const consentWithdrawn = await withdrawNewsletterSubjects(tx, {
+    email,
+    subjectIds: subjects.map((row) => row.consentSubjectId),
+    now: new Date(),
+  });
+  const newsletter = await tx.newsletterSubscriber.deleteMany({
+    where: newsletterRows,
+  });
   const emails = await tx.failedEmail.updateMany({
     where: { status: UNSETTLED, ...theirs },
     data: {
@@ -108,7 +111,7 @@ export async function scrubMailFootprintTx(
   const batches = await scrubBatches(tx, email);
   return {
     newsletterDeleted: newsletter.count,
-    newsletterConsentWithdrawn: consent.withdrawnCount,
+    newsletterConsentWithdrawn: consentWithdrawn,
     emailsDeadLettered: emails.count,
     recipientsReplaced: recipients.count,
     entityRefsReplaced: entityRefs.count,
