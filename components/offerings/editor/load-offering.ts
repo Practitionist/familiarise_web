@@ -27,6 +27,7 @@ const PLAN_PATH: Record<OfferingType, (id: string) => string> = {
 interface InstanceRow {
   id?: string;
   status?: string | null;
+  maxParticipants?: number | null;
   schedulingPeriodStartsAt?: string | Date | null;
   appointment?: {
     occurrences?: Array<{ startsAt?: string | Date | null }>;
@@ -43,6 +44,17 @@ function pickInstance(
   instanceId: string | null,
 ): InstanceRow | undefined {
   return rows?.find((row) => row.id === instanceId) ?? rows?.[0];
+}
+
+/** The form edits the instance's effective capacity: its override, else the plan's. */
+function withEffectiveCapacity(
+  plan: Record<string, unknown>,
+  instance: InstanceRow | undefined,
+): Record<string, unknown> {
+  const override = instance?.maxParticipants;
+  return typeof override === "number"
+    ? { ...plan, maxParticipants: override }
+    : plan;
 }
 
 /**
@@ -75,7 +87,7 @@ export function wrapPlanAsEvent(
       id,
       instanceId: webinar?.id,
       instanceStatus: webinar?.status ?? null,
-      webinarPlan: { ...plan, scheduledAt },
+      webinarPlan: { ...withEffectiveCapacity(plan, webinar), scheduledAt },
     };
   }
   const cls = pickInstance(
@@ -87,7 +99,7 @@ export function wrapPlanAsEvent(
     id,
     instanceId: cls?.id,
     instanceStatus: cls?.status ?? null,
-    classPlan: plan,
+    classPlan: withEffectiveCapacity(plan, cls),
     schedulingPeriodStartsAt: cls?.schedulingPeriodStartsAt ?? null,
   };
 }

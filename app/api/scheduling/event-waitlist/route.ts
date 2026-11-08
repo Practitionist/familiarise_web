@@ -6,7 +6,9 @@ import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
   joinEventWaitlist,
   leaveEventWaitlist,
+  listEventWaitlist,
 } from "@/lib/booking/event-waitlist";
+import { EventWaitlistListResponseSchema } from "@/schemas/interest";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { reportSentryError } from "@/lib/observability/report";
@@ -15,8 +17,7 @@ import { isRefusal } from "@/lib/errors/refusal";
 
 /**
  * "Notify me" on a sold-out webinar or class. POST joins (idempotent), DELETE
- * leaves; nothing here reserves a seat. The plan pages read the viewer's state
- * server-side, so there is no GET.
+ * leaves, GET lists the caller's open rows; nothing here reserves a seat.
  */
 
 const BodySchema = z.object({
@@ -86,5 +87,23 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ left: left > 0 }, { headers: NO_STORE });
   } catch (error) {
     return answer(error, "event-waitlist-leave");
+  }
+}
+
+export async function GET() {
+  const auth = await requireApiAuth();
+  if (auth.error) return auth.error;
+  try {
+    const rows = await listEventWaitlist(auth.session.user.id);
+    const body = EventWaitlistListResponseSchema.parse({
+      data: rows.map((row) => ({
+        ...row,
+        nextSessionAt: row.nextSessionAt?.toISOString() ?? null,
+        notifiedAt: row.notifiedAt?.toISOString() ?? null,
+      })),
+    });
+    return NextResponse.json(body, { headers: NO_STORE });
+  } catch (error) {
+    return answer(error, "event-waitlist-list");
   }
 }

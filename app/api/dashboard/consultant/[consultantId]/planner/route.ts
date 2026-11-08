@@ -11,6 +11,7 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { resolveOrgScope, scopeToPlanHostWhere } from "@/lib/api/scope/parse";
+import { OPEN_INTEREST } from "@/lib/booking/interest/lifecycle";
 
 // =============================================================================
 // Prisma Query Types - Derived from actual query shape for type safety
@@ -131,6 +132,8 @@ type WebinarEvent = PlannerWebinar & {
   type: "webinar";
   collaboratorRole: string;
   isCollaborated: boolean;
+  /** Open appointment-waitlist rows on this event; a count, never names. */
+  waitingCount: number;
 };
 type ClassEvent = PlannerClass & {
   type: "class";
@@ -140,6 +143,8 @@ type ClassEvent = PlannerClass & {
   // affordance, so a class whose sessions fall outside that day arrives with
   // zero slots here; the card's date comes from this field instead.
   firstSessionAt: string | null;
+  /** Open appointment-waitlist rows on this batch; a count, never names. */
+  waitingCount: number;
 };
 
 interface PlannerData {
@@ -177,6 +182,22 @@ function countWebinarParticipants(
     counts[webinar.id] = uniqueUserIds.size;
   }
   return counts;
+}
+
+/** Open appointment-waitlist rows per appointment, in one grouped read. */
+async function getWaitingCounts(
+  appointmentIds: string[],
+): Promise<Map<string, number>> {
+  if (appointmentIds.length === 0) return new Map();
+  const rows = await prisma.appointmentWaitlist.groupBy({
+    by: ["appointmentId"],
+    where: {
+      appointmentId: { in: appointmentIds },
+      status: { in: OPEN_INTEREST },
+    },
+    _count: { _all: true },
+  });
+  return new Map(rows.map((r) => [r.appointmentId, r._count._all]));
 }
 
 /**
@@ -375,12 +396,14 @@ export async function GET(
         type: "webinar" as const,
         collaboratorRole: "HOST",
         isCollaborated: false,
+        waitingCount: 0,
       })),
       ...uniqueCollabWebinars.map((w) => ({
         ...transformNestedPlanTopics(w, "webinarPlan"),
         type: "webinar" as const,
         collaboratorRole: webinarRoleMap[w.webinarPlanId] || "COLLABORATOR",
         isCollaborated: true,
+        waitingCount: 0,
       })),
     ];
 
@@ -391,6 +414,7 @@ export async function GET(
         collaboratorRole: "HOST",
         isCollaborated: false,
         firstSessionAt: null,
+        waitingCount: 0,
       })),
       ...uniqueCollabClasses.map((c) => ({
         ...transformNestedPlanTopics(c, "classPlan"),
@@ -398,6 +422,7 @@ export async function GET(
         collaboratorRole: classRoleMap[c.classPlanId] || "COLLABORATOR",
         isCollaborated: true,
         firstSessionAt: null,
+        waitingCount: 0,
       })),
     ];
 
@@ -445,6 +470,17 @@ export async function GET(
       ...countWebinarParticipants(webinars, consultantUser?.userId),
       ...(await getClassParticipantCounts(classIds, consultantUser?.userId)),
     };
+
+    const waitingCounts = await getWaitingCounts(
+      [...webinars, ...classes].flatMap((e) =>
+        e.appointment ? [e.appointment.id] : [],
+      ),
+    );
+    for (const event of [...webinars, ...classes]) {
+      if (event.appointment) {
+        event.waitingCount = waitingCounts.get(event.appointment.id) ?? 0;
+      }
+    }
 
     const plannerData: PlannerData = {
       webinars,

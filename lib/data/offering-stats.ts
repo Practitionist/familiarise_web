@@ -6,6 +6,7 @@ import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { UNTOUCHED_PLAN } from "@/lib/offerings/delete-guard";
+import { OPEN_INTEREST } from "@/lib/booking/interest/lifecycle";
 import {
   offeringStatKey,
   type OfferingPlanType,
@@ -42,6 +43,16 @@ const PLAN_HEAD = {
   organizationId: true,
   archivedAt: true,
 } as const;
+
+/** Group-event plan head plus whether the viewer is one of its ACCEPTED co-hosts. */
+const eventPlanHead = (consultantProfileId: string) =>
+  ({
+    ...PLAN_HEAD,
+    collaborators: {
+      where: { consultantProfileId, status: "ACCEPTED" },
+      select: { id: true },
+    },
+  }) as const;
 
 type Tally = { bookings: number };
 const emptyTally = (): Tally => ({ bookings: 0 });
@@ -127,6 +138,31 @@ async function readEventTallies(
       add(key, c.appointment?._count);
     }
   }
+}
+
+/** Open appointment-waitlist rows per group-event plan, keyed like the stats rows. */
+async function readWaitingByPlan(
+  webinarPlanIds: string[],
+  classPlanIds: string[],
+): Promise<Map<string, number>> {
+  const waiting = new Map<string, number>();
+  if (webinarPlanIds.length === 0 && classPlanIds.length === 0) return waiting;
+  const rows = await prisma.appointmentWaitlist.groupBy({
+    by: ["planKind", "planId"],
+    where: {
+      status: { in: OPEN_INTEREST },
+      OR: [
+        { planKind: "WEBINAR", planId: { in: webinarPlanIds } },
+        { planKind: "CLASS", planId: { in: classPlanIds } },
+      ],
+    },
+    _count: { _all: true },
+  });
+  for (const r of rows) {
+    const type = r.planKind === "CLASS" ? "class" : "webinar";
+    waiting.set(offeringStatKey(type, r.planId), r._count._all);
+  }
+  return waiting;
 }
 
 /**
@@ -270,7 +306,7 @@ export async function readOfferingStats(
           : []),
       ],
     },
-    select: PLAN_HEAD,
+    select: eventPlanHead(consultantProfileId),
   });
   const classPlans = await prisma.classPlan.findMany({
     where: {
@@ -291,10 +327,21 @@ export async function readOfferingStats(
           : []),
       ],
     },
-    select: PLAN_HEAD,
+    select: eventPlanHead(consultantProfileId),
   });
 
   const ids = (plans: PlanHead[]) => plans.map((p) => p.id);
+  // The waiting count is the host's and the ACCEPTED co-hosts' only.
+  const hostedIds = (
+    plans: (PlanHead & { collaborators: { id: string }[] })[],
+  ) =>
+    plans
+      .filter(
+        (p) =>
+          p.consultantProfileId === consultantProfileId ||
+          p.collaborators.length > 0,
+      )
+      .map((p) => p.id);
   const ownedIds = (plans: PlanHead[]) =>
     plans
       .filter((p) => p.consultantProfileId === consultantProfileId)
@@ -307,6 +354,11 @@ export async function readOfferingStats(
     tallies,
   );
   await readEventTallies(ids(webinarPlans), ids(classPlans), tallies);
+
+  const waiting = await readWaitingByPlan(
+    hostedIds(webinarPlans),
+    hostedIds(classPlans),
+  );
 
   const deletable = await readDeletablePlanIds({
     consultation: ownedIds(consultationPlans),
@@ -331,6 +383,7 @@ export async function readOfferingStats(
           deletable.has(plan.id),
         orgGoverned: plan.organizationId !== null,
         archived: plan.archivedAt !== null,
+        waitingCount: waiting.get(key) ?? 0,
       };
     });
 

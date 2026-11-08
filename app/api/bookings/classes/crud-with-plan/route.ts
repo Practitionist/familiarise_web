@@ -34,6 +34,7 @@ import { countWebinarParticipants } from "@/lib/payments/utils/participants";
 import {
   CapacityBelowEnrollmentError,
   capacityBelowRegisteredMessage,
+  capacityOverrideFor,
   effectiveMaxParticipants,
 } from "@/lib/events/capacity";
 
@@ -838,8 +839,8 @@ export async function PATCH(request: NextRequest) {
                     updateData.totalHours =
                       updateData.totalSessions * finalSessionDurationInHours;
                   }
-                  // Capacity is per instance. Only move the plan's default when the
-                  // caller is editing the plan itself rather than one of its classes.
+                  // The editor shows a batch's effective capacity, so an edit moves
+                  // that batch's override; the plan's default moves only without one.
                   if (maxParticipants !== undefined && !classToUpdate)
                     updateData.maxParticipants = maxParticipants;
                   // #1780 row 2 — the window lives on the plan; seats snapshot it.
@@ -932,7 +933,7 @@ export async function PATCH(request: NextRequest) {
                       status?: ClassStatus;
                       schedulingPeriodStartsAt?: Date | null;
                       schedulingPeriodEndsAt?: Date | null;
-                      maxParticipants?: number;
+                      maxParticipants?: number | null;
                     } = {};
 
                     // Publishing DRAFT -> SCHEDULED is the only status edge an edit may
@@ -977,8 +978,15 @@ export async function PATCH(request: NextRequest) {
                           ),
                         );
                       }
-                      classUpdateData.maxParticipants = maxParticipants;
-                      // Only a real raise frees a seat; the editor re-sends the capacity on every save.
+                      // An override equal to the plan's default is stored as null, so an
+                      // untouched field never pins one; only a real raise frees a seat.
+                      const override = capacityOverrideFor(
+                        maxParticipants,
+                        existingPlan,
+                      );
+                      if (override !== updatedClass.maxParticipants) {
+                        classUpdateData.maxParticipants = override;
+                      }
                       const priorCapacity = effectiveMaxParticipants(
                         updatedClass,
                         existingPlan,

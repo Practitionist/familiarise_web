@@ -2183,17 +2183,23 @@ async function expireStaleRequestsUnlocked(
   const paymentPendingResult = await expirePaymentPendingRequests(limits);
   allErrors.push(...paymentPendingResult.errors);
 
-  // #1778 — backup interest in a window that has passed can never be booked.
-  const backupInterestExpired = await expireBackupInterest()
-    .then((r) => r.count)
-    .catch((error: unknown) => {
-      allErrors.push(`Failed to expire backup interest: ${error}`);
-      return 0;
-    });
-  console.log(`   Backup interest expired: ${backupInterestExpired}`);
+  // Interest rows that can no longer be booked expire; settled rows past retention go.
+  const interestAt = new Date();
+  const backupInterest = await expireBackupInterest(
+    interestAt,
+    limits.maxRequests,
+  ).catch((error: unknown) => {
+    allErrors.push(`Failed to expire backup interest: ${error}`);
+    return { expired: 0, purged: 0 };
+  });
+  console.log(
+    `   Backup interest expired/purged: ${backupInterest.expired}/${backupInterest.purged}`,
+  );
 
-  // Notify-me rows on an ended event expire; settled rows past retention go.
-  const eventWaitlist = await expireEventWaitlist().catch((error: unknown) => {
+  const eventWaitlist = await expireEventWaitlist(
+    interestAt,
+    limits.maxRequests,
+  ).catch((error: unknown) => {
     allErrors.push(`Failed to expire the event waitlist: ${error}`);
     return { expired: 0, purged: 0 };
   });

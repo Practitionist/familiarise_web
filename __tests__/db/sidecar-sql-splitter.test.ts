@@ -28,6 +28,7 @@ const SIDECAR_FILES = [
   "ledger-triggers.sql",
   "payment-legs-triggers.sql",
   "check-constraints.sql",
+  "analytics-views.sql",
 ];
 
 const readSidecar = (name: string) =>
@@ -71,6 +72,7 @@ describe("sidecar SQL splitter", () => {
       "payment-legs-triggers.sql":
         /CREATE CONSTRAINT TRIGGER payment_legs_sum_to_amount/,
       "check-constraints.sql": /ADD CONSTRAINT/,
+      "analytics-views.sql": /CREATE OR REPLACE VIEW "demand"/,
     };
     for (const [name, pattern] of Object.entries(byFile)) {
       const statements = splitSqlStatements(readSidecar(name));
@@ -141,10 +143,13 @@ describe("sidecar SQL splitter", () => {
     it.each([
       ["CRLF", "-- a\r\n"],
       ["several CRLF comment lines", "-- a\r\n-- b\r\n"],
-    ])("drops %s comment-only chunks that the old regex would have run", (_n, i) => {
-      expect(legacyIsOnlyComments(i)).toBe(false);
-      expect(isOnlyComments(i)).toBe(true);
-    });
+    ])(
+      "drops %s comment-only chunks that the old regex would have run",
+      (_n, i) => {
+        expect(legacyIsOnlyComments(i)).toBe(false);
+        expect(isOnlyComments(i)).toBe(true);
+      },
+    );
 
     // The actual defect, and the reason this is worth a change rather than just
     // a comment: splitting on "\n" alone, a terminator that is NOT "\n" leaves

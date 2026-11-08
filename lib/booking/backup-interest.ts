@@ -1,13 +1,10 @@
 /**
- * #1778 — "Notify me if this time opens": a learner's backup interest in a
- * 1:1 window someone else holds.
- *
- * Notify-only by design: nothing is reserved and the lock/CAS machinery is
- * untouched, so when a held window is released every WAITING learner is told
- * at once and the first to book gets it. Rows are staged by the release paths
- * (decline, cancel, withdraw, the lapse sweep, the dead-hold reclaim and
- * checkout's superseded holds) inside their own transaction, and drained by
- * the outbox relays after the commit (ADR 27).
+ * Slot backup interest, "Notify me if this time opens": a learner's interest
+ * in a 1:1 window someone else holds. Notify-only: nothing is reserved, so
+ * when a held window is released every eligible learner is told at once and
+ * the first to book gets it. Rows are staged by the release paths inside their
+ * own transaction and drained by the outbox relays after the commit. The
+ * lifecycle (cooldown, retention) is shared with the appointment waitlist.
  */
 
 import { AppointmentsType, BackupInterestStatus, Prisma } from "@prisma/client";
@@ -23,14 +20,16 @@ import {
   type StagedRecipientEmail,
 } from "@/lib/email/senders/booking";
 import { BookingRuleError } from "./booking-rule-error";
+import {
+  OPEN_INTEREST,
+  notifiableInterest,
+  purgeSettledBackupInterest,
+  purgeableBackupInterestWhere,
+  renoticeBucket,
+} from "./interest/lifecycle";
 
 /** A learner may wait on at most this many windows at once. */
 export const BACKUP_INTEREST_CAP = 3;
-
-const OPEN: BackupInterestStatus[] = [
-  BackupInterestStatus.WAITING,
-  BackupInterestStatus.NOTIFIED,
-];
 
 export interface BackupWindow {
   consultantProfileId: string;
@@ -47,7 +46,7 @@ const overlapping = (
   windowEnd: { gt: w.windowStart },
 });
 
-/** F-2 — register (idempotent on the window), capped at three WAITING rows. */
+/** Register (idempotent on the window), capped at three open rows. */
 export async function registerBackupInterest(args: {
   userId: string;
   consultantProfileId: string;
@@ -78,11 +77,11 @@ export async function registerBackupInterest(args: {
         where: key,
         select: { id: true, status: true },
       });
-      if (existing?.status === BackupInterestStatus.WAITING) return existing;
-      const waiting = await tx.windowBackupInterest.count({
-        where: { userId: args.userId, status: BackupInterestStatus.WAITING },
+      if (existing && OPEN_INTEREST.includes(existing.status)) return existing;
+      const open = await tx.windowBackupInterest.count({
+        where: { userId: args.userId, status: { in: OPEN_INTEREST } },
       });
-      if (waiting >= BACKUP_INTEREST_CAP) {
+      if (open >= BACKUP_INTEREST_CAP) {
         throw new BookingRuleError(
           "BACKUP_INTEREST_CAP",
           `You can wait on at most ${BACKUP_INTEREST_CAP} times at once — withdraw one to add another.`,
@@ -114,7 +113,7 @@ export async function registerBackupInterest(args: {
 /** F-2 — the learner withdraws; only their own open row moves. */
 export function withdrawBackupInterest(userId: string, id: string) {
   return prisma.windowBackupInterest.updateMany({
-    where: { id, userId, status: { in: OPEN } },
+    where: { id, userId, status: { in: OPEN_INTEREST } },
     data: { status: BackupInterestStatus.EXPIRED },
   });
 }
@@ -122,7 +121,11 @@ export function withdrawBackupInterest(userId: string, id: string) {
 /** F-2 — the learner's own open rows, soonest window first. */
 export function listBackupInterest(userId: string) {
   return prisma.windowBackupInterest.findMany({
-    where: { userId, status: { in: OPEN }, windowEnd: { gt: new Date() } },
+    where: {
+      userId,
+      status: { in: OPEN_INTEREST },
+      windowEnd: { gt: new Date() },
+    },
     orderBy: { windowStart: "asc" },
     select: {
       id: true,
@@ -177,18 +180,25 @@ export async function flushBackupInterestNotices(
 }
 
 /**
- * F-3 — a held window was released: every WAITING row overlapping it flips to
- * NOTIFIED (the status in the WHERE) and a bell and an email are staged per
- * row, keyed on the row, so a second call stages nothing. Run it inside the
- * releasing transaction; flush the returned bundle after the commit.
+ * A held window was released: every eligible row overlapping it whose window
+ * has not started flips to NOTIFIED, and a bell and an email are staged per
+ * row. The claim repeats the status and cooldown test in its WHERE and the
+ * bell is keyed on the row and cooldown bucket, so a row hears at most once
+ * per 12 hours. Run it inside the releasing transaction; flush after commit.
  */
 export async function stageBackupInterestNotices(
   tx: Tx,
   window: BackupWindow,
   now = new Date(),
 ): Promise<StagedBackupInterestNotices> {
+  const notifiable = notifiableInterest(now);
+  const bucket = renoticeBucket(now);
   const rows = await tx.windowBackupInterest.findMany({
-    where: { ...overlapping(window), status: BackupInterestStatus.WAITING },
+    where: {
+      ...overlapping(window),
+      ...notifiable,
+      AND: [{ windowStart: { gt: now } }],
+    },
     select: {
       id: true,
       userId: true,
@@ -204,7 +214,7 @@ export async function stageBackupInterestNotices(
   const emails: StagedRecipientEmail[] = [];
   for (const row of rows) {
     const claimed = await tx.windowBackupInterest.updateMany({
-      where: { id: row.id, status: BackupInterestStatus.WAITING },
+      where: { id: row.id, ...notifiable },
       data: { status: BackupInterestStatus.NOTIFIED, notifiedAt: now },
     });
     if (claimed.count === 0) continue;
@@ -226,7 +236,7 @@ export async function stageBackupInterestNotices(
         ),
         dashboardUrl: href,
       },
-      dedupeKey: `window-opened:${row.id}`,
+      dedupeKey: `window-opened:${row.id}:${bucket}`,
     });
     if (bell) bells.push(bell);
     emails.push(
@@ -242,7 +252,7 @@ export async function stageBackupInterestNotices(
   return { bells, emails };
 }
 
-/** F-4 — the booking user's own overlapping row is BOOKED; nobody else's. */
+/** The booking user's own overlapping row is BOOKED; nobody else's. */
 export function markBackupInterestBooked(
   tx: Pick<Tx, "windowBackupInterest">,
   userId: string,
@@ -250,7 +260,7 @@ export function markBackupInterestBooked(
   now = new Date(),
 ) {
   return tx.windowBackupInterest.updateMany({
-    where: { ...overlapping(window), userId, status: { in: OPEN } },
+    where: { ...overlapping(window), userId, status: { in: OPEN_INTEREST } },
     data: { status: BackupInterestStatus.BOOKED, bookedAt: now },
   });
 }
@@ -259,7 +269,7 @@ export function markBackupInterestBooked(
 function lapsedBackupInterestWhere(now: Date) {
   return {
     windowEnd: { lt: now },
-    status: { in: OPEN },
+    status: { in: OPEN_INTEREST },
   } satisfies Prisma.WindowBackupInterestWhereInput;
 }
 
@@ -268,18 +278,25 @@ export async function hasLapsedBackupInterest(
   now: Date,
 ): Promise<boolean> {
   const row = await db.windowBackupInterest.findFirst({
-    where: lapsedBackupInterestWhere(now),
+    where: {
+      OR: [lapsedBackupInterestWhere(now), purgeableBackupInterestWhere(now)],
+    },
     select: { id: true },
   });
   return row !== null;
 }
 
-/** F-4 — rows whose window has passed are EXPIRED (the stale-request sweep). */
-export async function expireBackupInterest(now = new Date()) {
-  return prisma.windowBackupInterest.updateMany({
+/** The stale-request arm: open rows whose window has passed expire; settled rows past retention are deleted. */
+export async function expireBackupInterest(
+  now: Date,
+  purgeLimit: number,
+): Promise<{ expired: number; purged: number }> {
+  const expired = await prisma.windowBackupInterest.updateMany({
     where: lapsedBackupInterestWhere(now),
     data: { status: BackupInterestStatus.EXPIRED },
   });
+  const purged = await purgeSettledBackupInterest(prisma, now, purgeLimit);
+  return { expired: expired.count, purged };
 }
 
 /**

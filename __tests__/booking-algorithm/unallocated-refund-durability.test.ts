@@ -196,7 +196,10 @@ jest.mock("../../lib/prisma", () => {
       findMany: jest.fn(async () => []),
       updateManyAndReturn: jest.fn(async () => []),
     },
-    windowBackupInterest: { updateMany: jest.fn(async () => ({ count: 0 })) },
+    windowBackupInterest: {
+      updateMany: jest.fn(async () => ({ count: 0 })),
+      findMany: jest.fn(async () => []),
+    },
     $queryRaw: jest.fn(async (query: Prisma.Sql) => {
       const limit = query.values.at(-1);
       if (
