@@ -77,6 +77,7 @@ const newUser = {
 const onboarding = {
   name: "Ada Owner",
   dateOfBirth: "1990-06-15",
+  adultConfirmed: true,
   termsAccepted: true,
   privacyAccepted: true,
 };

@@ -62,6 +62,7 @@ const USER = {
 
 const validGate = (overrides: Record<string, unknown> = {}) => ({
   dateOfBirth: "1990-06-15",
+  adultConfirmed: true,
   termsAccepted: true,
   privacyAccepted: true,
   ...overrides,
@@ -86,6 +87,14 @@ describe("completeOnboardingGateAction", () => {
       validGate({ dateOfBirth: minor.toISOString().slice(0, 10) }),
     );
     expect(result).toMatchObject({ success: false, field: "dateOfBirth" });
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses a missing 18+ confirmation even with an adult date of birth", async () => {
+    const result = await completeOnboardingGateAction(
+      validGate({ adultConfirmed: false }),
+    );
+    expect(result).toMatchObject({ success: false, field: "adultConfirmed" });
     expect(mockTransaction).not.toHaveBeenCalled();
   });
 

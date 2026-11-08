@@ -114,6 +114,17 @@ The end write is an `INSERT ... ON CONFLICT ("sessionId") DO UPDATE ... WHERE "e
 
 Invoices, credit notes, the ledger, `Payment`, `Refund` and TDS records are never pruned. They are the books (Companies Act s.128(5), CGST Act s.36, Income-tax Rules 2026 Rule 46) and Razorpay's terms, clause 2.18, treat transaction records as ten-year records. `ConsentArtifact` rows are held 7 years (`auditRetainedUntil`) and the consent sweeper only counts them.
 
+### 9. Fraud signals (added 2026-11-09)
+
+The hashed request and payer signals used for fraud review had no clock. The owner decided they expire, inside the existing `prune-audit-logs` job rather than a new one (a fifth ticker target would breach `MAX_TARGETS_PER_TICK`, and the job already runs once a day with bounded pages):
+
+| Data                                             | Window                                                                                                                                                                                                 | Driver                             | Enforced by                                     |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------- | ----------------------------------------------- |
+| `Referral.ipHash`, `Referral.userAgent`          | 180 days after the referral is terminal (`VESTED` by `vestedAt`; `VOID` and the legacy `REWARDED`, `EXPIRED`, `FRAUDULENT` by `updatedAt`, since they record no timestamp); also nulled by `scrubUser` | Review evidence only; minimisation | `prune-audit-logs` (`referralSignalPruneWhere`) |
+| `Payment.payerVpaHash`, `Payment.payerPhoneHash` | 2 years after `capturedAt` (`createdAt` when null); kept through erasure until then                                                                                                                    | Self-referral and chargeback basis | `prune-audit-logs` (`paymentSignalPruneWhere`)  |
+
+The `Payment` row itself is still never pruned; only these two columns are cleared. The constants and predicates live in `lib/compliance/signal-retention.ts`.
+
 ## Citations
 
 - DPDP Act 2023, s.8(7) and s.17(1)(a): <https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf>

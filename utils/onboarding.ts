@@ -7,7 +7,10 @@ import {
   AchievementType,
 } from "@prisma/client";
 import { experienceValidation } from "@/schemas/shared";
-import { DateOfBirthSchema } from "@/lib/compliance/age";
+import {
+  AdultConfirmationSchema,
+  DateOfBirthSchema,
+} from "@/lib/compliance/age";
 import { MAX_OUTSTANDING_UPLOADS } from "@/lib/verification/documents";
 import {
   WeeklySlotSchema,
@@ -206,6 +209,7 @@ export const OnboardingBaseSchema = z.object({
  * the server stamps the timestamps and `TERMS_VERSION`.
  */
 export const OnboardingConsentSchema = z.object({
+  adultConfirmed: AdultConfirmationSchema,
   termsAccepted: z.literal(true, {
     errorMap: () => ({ message: "Accept the terms of service to continue" }),
   }),
@@ -295,6 +299,7 @@ const sharedFormFields = PersonalInfoAndRoleFormSchema.extend({
   onboardingCompleted: z.boolean().default(false),
   emailVerified: z.date().optional(),
   image: z.string().optional(),
+  adultConfirmed: z.boolean().optional(),
   termsAccepted: z.boolean().optional(),
   privacyAccepted: z.boolean().optional(),
   marketingConsent: z.boolean().optional(),
@@ -363,7 +368,8 @@ export const OnboardingFormDataSchema = z.discriminatedUnion("role", [
 
 export type OnboardingData = z.infer<typeof OnboardingDataSchema>;
 type WithConsentBooleans<T> = T extends unknown
-  ? Omit<T, "termsAccepted" | "privacyAccepted"> & {
+  ? Omit<T, "adultConfirmed" | "termsAccepted" | "privacyAccepted"> & {
+      adultConfirmed: boolean;
       termsAccepted: boolean;
       privacyAccepted: boolean;
     }
@@ -416,6 +422,7 @@ function pickUserFields(formData: OnboardingFormData) {
     verificationNotes: formData.verificationNotes,
     verificationDocuments: formData.verificationDocuments,
     // Wrong values are refused by OnboardingConsentSchema on the server.
+    adultConfirmed: formData.adultConfirmed === true,
     termsAccepted: formData.termsAccepted === true,
     privacyAccepted: formData.privacyAccepted === true,
     marketingConsent: formData.marketingConsent === true,
@@ -529,6 +536,7 @@ export function transformOrgOnboardingForm(
       ? { timezone: formData.timezone.trim() }
       : {}),
     dateOfBirth: formData.dateOfBirth,
+    adultConfirmed: formData.adultConfirmed === true,
     termsAccepted: formData.termsAccepted === true,
     privacyAccepted: formData.privacyAccepted === true,
     marketingConsent: formData.marketingConsent === true,

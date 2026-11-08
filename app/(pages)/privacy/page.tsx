@@ -4,6 +4,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Shield } from "lucide-react";
 import { MESSAGE_REVIEW_ARTICLE_HREF } from "@/lib/compliance/purpose-codes";
+import {
+  PAYER_SIGNAL_RETENTION_YEARS,
+  REFERRAL_SIGNAL_RETENTION_DAYS,
+} from "@/lib/compliance/signal-retention";
+import { RECORDING_RETENTION_SCHEDULE } from "@/lib/stream/recording-retention-schedule";
 import { CompanyDetails } from "../CompanyDetails";
 import { COMPANY_INFO } from "@/lib/company";
 import {
@@ -75,6 +80,7 @@ export default function PrivacyPolicyPage() {
               <ul>
                 <li>
                   Register for an account (name, email address, phone number)
+                  and confirm your age (date of birth)
                 </li>
                 <li>
                   Complete your profile (professional details, expertise,
@@ -347,6 +353,67 @@ export default function PrivacyPolicyPage() {
                         the security-log period above.
                       </td>
                     </tr>
+                    <tr>
+                      <td className="p-2 align-top">
+                        <strong>Session recordings</strong> (the audio and video
+                        of a recorded session, and its preview clip)
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Video &amp; Chat</strong> {"("}
+                        <code>STREAM_DATA_PROCESSING</code>
+                        {")"} — Let participants replay a session they took part
+                        in, and settle disputes about it.
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Fixed period</strong> — One-on-one sessions and
+                        trials: {RECORDING_RETENTION_SCHEDULE.oneToOneDays} days
+                        after the session. Subscriptions:{" "}
+                        {RECORDING_RETENTION_SCHEDULE.subscriptionDays} days
+                        after the subscription ends. Webinars and classes:{" "}
+                        {RECORDING_RETENTION_SCHEDULE.groupDays} days after the
+                        session or the class&rsquo;s last session. A recording
+                        its host has published for sale, or that someone has
+                        bought, is kept while it is on sale or the purchase is
+                        live. An organisation that sponsors a session can set a
+                        shorter period. Your own one-on-one recordings are
+                        deleted when you erase your account.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-2 align-top">
+                        <strong>Fraud-prevention signals</strong> (a one-way
+                        hash of the IP address and the browser string recorded
+                        when a referral code is used, and one-way hashes of the
+                        UPI address and phone number a payment was made with)
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Support, Safety &amp; Fraud Prevention</strong>{" "}
+                        — Detect self-referral and repeat abuse of referral
+                        rewards, and support chargeback review.
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Fixed period</strong> — Referral signals are
+                        cleared {REFERRAL_SIGNAL_RETENTION_DAYS} days after the
+                        referral ends, or when you erase your account. Payment
+                        hashes are cleared {PAYER_SIGNAL_RETENTION_YEARS} years
+                        after the payment, and stay through account erasure
+                        until then.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-2 align-top">
+                        <strong>Consent records</strong> (which purposes you
+                        agreed to, the notice version, and when)
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Proof of consent</strong> — Show what you agreed
+                        to and when you withdrew it (DPDP &sect;6).
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Proof record</strong> — Kept for at least 7
+                        years after the consent is given or withdrawn.
+                      </td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -456,8 +523,9 @@ export default function PrivacyPolicyPage() {
               </p>
               <ul>
                 <li>
-                  <strong>Razorpay / Stripe:</strong> Payment processing,
-                  refunds, consultant payouts, and transaction management
+                  <strong>Razorpay and RazorpayX:</strong> Payment processing,
+                  refunds and consultant payouts. Razorpay handles your card and
+                  UPI details; we do not store them.
                 </li>
                 <li>
                   <strong>GetStream.io:</strong> Video conferencing and
@@ -466,18 +534,57 @@ export default function PrivacyPolicyPage() {
                   {")"}
                 </li>
                 <li>
-                  <strong>
-                    Cloud Database &amp; Storage (Supabase / Neon):
-                  </strong>{" "}
-                  Encrypted database hosting, verification document storage, and
-                  backups
+                  <strong>Supabase:</strong> Our database (hosted in Mumbai,
+                  India) and file storage for verification documents and preview
+                  clips, including backups
+                </li>
+                <li>
+                  <strong>Cloudflare R2:</strong> Storage for full session
+                  recordings and for the files experts sell as digital products
+                </li>
+                <li>
+                  <strong>Cloudflare Turnstile:</strong> A bot check on sign-up,
+                  password-reset and code-resend forms. It sends Cloudflare
+                  information about your browser and connection.
+                </li>
+                <li>
+                  <strong>Netlify:</strong> Hosting and content delivery. Our
+                  application runs on Netlify&rsquo;s servers in Singapore and
+                  sees the technical details of each request, such as your IP
+                  address.
+                </li>
+                <li>
+                  <strong>Upstash:</strong> Request rate limits and short-lived
+                  locks that stop abuse and double bookings, keyed by IP address
+                  or account identifier and expiring when the limit window ends
                 </li>
                 <li>
                   <strong>
                     Email &amp; Notification Providers (Resend / Novu):
                   </strong>{" "}
-                  Transactional booking notifications and consented marketing
-                  emails
+                  Transactional booking notifications, the in-app inbox and
+                  consented marketing emails
+                </li>
+                <li>
+                  <strong>Better Stack:</strong> Uptime checks of our site and
+                  operational logs of our background jobs. These logs carry
+                  identifiers only, never names or email addresses.
+                </li>
+                <li>
+                  <strong>logo.dev:</strong> Company logos shown next to
+                  employers and institutions on profiles. It receives only the
+                  company&rsquo;s web domain.
+                </li>
+                <li>
+                  <strong>Have I Been Pwned:</strong> When you choose a
+                  password, we check it against known breaches by sending only
+                  the first five characters of its SHA-1 hash, never the
+                  password.
+                </li>
+                <li>
+                  <strong>Google and GitHub:</strong> Only if you choose to sign
+                  in with them. They tell us your name, email address and
+                  profile photo.
                 </li>
                 <li>
                   <strong>
@@ -586,6 +693,10 @@ export default function PrivacyPolicyPage() {
                 </li>
                 <li>
                   <strong>Razorpay:</strong> checkout
+                </li>
+                <li>
+                  <strong>Cloudflare Turnstile:</strong> the bot check on
+                  sign-up, password-reset and code-resend forms
                 </li>
                 <li>
                   <strong>Sentry:</strong> error monitoring, with its automatic
@@ -787,14 +898,19 @@ export default function PrivacyPolicyPage() {
                 8. Children's Privacy
               </h2>
               <p>
-                Under the Digital Personal Data Protection Act, 2023, a child is
-                anyone who has not completed eighteen years of age. Our services
-                are not intended for children, and we do not knowingly collect
-                personal information from anyone under 18. We ask for your date
-                of birth during onboarding solely to confirm that you are not a
-                child — a purpose expressly permitted by Part B, item 6 of the
-                Fourth Schedule to the Digital Personal Data Protection Rules,
-                2025.
+                Familiarise is for adults. You must be at least 18 years old to
+                use it. Under the Digital Personal Data Protection Act, 2023, a
+                child is anyone who has not completed eighteen years of age, and
+                we do not knowingly collect personal information from anyone
+                under 18.
+              </p>
+              <p>
+                During onboarding we ask for your date of birth and for your
+                confirmation that you are 18 or older, and we refuse an account
+                for a date of birth under 18. We collect the date of birth only
+                to confirm that you are not a child, a purpose permitted by Part
+                B, item 6 of the Fourth Schedule to the Digital Personal Data
+                Protection Rules, 2025.
               </p>
               <p>
                 If you are a parent or guardian and believe your child has
@@ -808,11 +924,13 @@ export default function PrivacyPolicyPage() {
                 9. International Data Transfers
               </h2>
               <p>
-                Your information may be transferred to and processed in
-                countries other than your country of residence. These countries
-                may have different data protection laws. We ensure that
-                appropriate safeguards are in place to protect your information
-                in accordance with this Privacy Policy.
+                Our database is hosted in Mumbai, India, and our application
+                runs on servers in Singapore. Error monitoring data goes to
+                Sentry in the United States, and some other providers in Section
+                4.2 may process data in other countries. These countries may
+                have different data protection laws. We ensure that appropriate
+                safeguards are in place to protect your information in
+                accordance with this Privacy Policy.
               </p>
 
               <Separator className="my-6" />

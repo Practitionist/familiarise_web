@@ -76,8 +76,8 @@ const TermsAndPrivacyAgreement: React.FC<TermsAndPrivacyAgreementProps> = ({
           ), <strong>session scheduling</strong> (<code>SESSION_BOOKING</code>),
           and <strong>live video &amp; chat</strong> via GetStream.io (
           <code>STREAM_DATA_PROCESSING</code>), as well as payment/payout
-          settlement via Razorpay/Stripe. For platform security and support
-          diagnostics (DPDP &sect;8(5) &amp; Rule 6), error traces use a one-way
+          settlement via Razorpay. For platform security and support diagnostics
+          (DPDP &sect;8(5) &amp; Rule 6), error traces use a one-way
           pseudonymous token (<code>ust_&lt;hash&gt;</code>) with no raw PII
           sent to Sentry.
         </p>

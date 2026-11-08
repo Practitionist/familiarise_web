@@ -46,12 +46,9 @@
  *    downstream processing must stop within a commercially reasonable
  *    timeframe (48 hours recommended).
  *
- * 5. Children (under 18):
- *      - Verifiable parental consent required (no free-text "I'm a parent"
- *        checkbox).
- *      - Suggested flow: Aadhaar-based parent verification via DigiLocker.
- *      - Schema addition: `User.dpdpStatus: UNDER_18 | ADULT |
- *        GUARDIAN_VERIFIED` (deferred; add if targeting students).
+ * 5. Children (under 18): not served. Onboarding refuses an under-18 date of
+ *    birth server-side (`lib/compliance/age.ts`), so there is no
+ *    parental-consent flow and no minor status on `User`.
  *
  * 6. Significant Data Fiduciary (SDF):
  *      - There is NO user-count trigger. An earlier version of this comment

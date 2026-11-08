@@ -57,6 +57,7 @@ const consulteeBody = (overrides: Record<string, unknown> = {}) => ({
   email: "ada@example.com",
   dateOfBirth: "1990-06-15",
   consulteeProfile: { create: {} },
+  adultConfirmed: true,
   termsAccepted: true,
   privacyAccepted: true,
   ...overrides,
@@ -133,6 +134,36 @@ describe("processOnboardingData claim-first CAS", () => {
       success: false,
       code: "VALIDATION",
       field: "termsAccepted",
+    });
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses a payload without the 18+ confirmation, routed to the personal step", async () => {
+    const result = await processOnboardingData(
+      USER_ID,
+      consulteeBody({ adultConfirmed: false }),
+      PROVENANCE,
+    );
+    expect(result).toMatchObject({
+      success: false,
+      code: "VALIDATION",
+      field: "adultConfirmed",
+    });
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses an under-18 date of birth before opening a transaction", async () => {
+    const minor = new Date();
+    minor.setUTCFullYear(minor.getUTCFullYear() - 16);
+    const result = await processOnboardingData(
+      USER_ID,
+      consulteeBody({ dateOfBirth: minor.toISOString().slice(0, 10) }),
+      PROVENANCE,
+    );
+    expect(result).toMatchObject({
+      success: false,
+      code: "VALIDATION",
+      field: "dateOfBirth",
     });
     expect(mockTransaction).not.toHaveBeenCalled();
   });
