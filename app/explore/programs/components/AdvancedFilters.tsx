@@ -63,20 +63,22 @@ function AdvancedFiltersImpl({
 
   const selectedTopicIds = filters.topicIds ?? [];
 
-  const currentPriceRange = (() => {
-    if (filters.minPrice === undefined && filters.maxPrice === undefined)
-      return "all";
-    const min = filters.minPrice ?? 0;
-    return filters.maxPrice === undefined
-      ? `${min}-`
-      : `${min}-${filters.maxPrice}`;
-  })();
+  const priceFilterActive =
+    filters.minPrice !== undefined || filters.maxPrice !== undefined;
+  const activeBand = PRICE_BANDS.find(
+    (b) => b.min === (filters.minPrice ?? 0) && b.max === filters.maxPrice,
+  );
+  // A range that is no band (an old bookmark, a hand-edited URL) still filters,
+  // so it is shown as selected rather than as "Any price".
+  const currentPriceRange = !priceFilterActive
+    ? "all"
+    : (activeBand?.value ?? "custom");
 
-  const priceLabel = (band: (typeof PRICE_BANDS)[number]) => {
-    if (band.max === 0) return "Free";
-    if (band.min === 0) return `Under ${formatPrice(band.max)}`;
-    if (band.max === undefined) return `${formatPrice(band.min)}+`;
-    return `${formatPrice(band.min)} – ${formatPrice(band.max)}`;
+  const rangeLabel = (min: number, max: number | undefined) => {
+    if (max === 0) return "Free";
+    if (min === 0 && max !== undefined) return `Under ${formatPrice(max)}`;
+    if (max === undefined) return `${formatPrice(min)}+`;
+    return `${formatPrice(min)} – ${formatPrice(max)}`;
   };
 
   const handlePriceChange = (value: string) => {
@@ -157,11 +159,8 @@ function AdvancedFiltersImpl({
                 onChange={(e) => setTopicQuery(e.target.value)}
                 className="h-9 rounded-lg border-border bg-card"
               />
-              <div
-                role="group"
-                aria-label="Topics"
-                className="mt-2 max-h-60 overflow-auto"
-              >
+              <fieldset className="mt-2 max-h-60 min-w-0 overflow-auto">
+                <legend className="sr-only">Topics</legend>
                 {visibleTopics.map((topic) => (
                   <label
                     key={topic.id}
@@ -182,7 +181,7 @@ function AdvancedFiltersImpl({
                     No topics match.
                   </p>
                 )}
-              </div>
+              </fieldset>
             </PopoverContent>
           </Popover>
         </div>
@@ -197,9 +196,14 @@ function AdvancedFiltersImpl({
               <SelectItem value="all">Any price</SelectItem>
               {PRICE_BANDS.map((band) => (
                 <SelectItem key={band.value} value={band.value}>
-                  {priceLabel(band)}
+                  {rangeLabel(band.min, band.max)}
                 </SelectItem>
               ))}
+              {currentPriceRange === "custom" && (
+                <SelectItem value="custom">
+                  {rangeLabel(filters.minPrice ?? 0, filters.maxPrice)}
+                </SelectItem>
+              )}
             </SelectContent>
           </Select>
         </div>

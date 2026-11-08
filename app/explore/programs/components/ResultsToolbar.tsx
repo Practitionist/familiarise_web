@@ -39,6 +39,16 @@ const VIEW_OPTIONS = [
   { mode: "grid" as const, label: "Grid view", Icon: LayoutGrid },
 ];
 
+function resultsSummary(
+  count: number,
+  hasMore: boolean,
+  isLoading: boolean,
+): string {
+  if (isLoading && count === 0) return "Loading programs…";
+  const noun = count === 1 && !hasMore ? "program" : "programs";
+  return `${count}${hasMore ? "+" : ""} ${noun}`;
+}
+
 /** What sits directly above the results: how many, in what order, shown how. */
 function ResultsToolbarImpl({
   count,
@@ -48,17 +58,12 @@ function ResultsToolbarImpl({
   onSortChange,
   viewMode,
   onViewModeChange,
-}: ResultsToolbarProps) {
-  const summary =
-    isLoading && count === 0
-      ? "Loading programs…"
-      : `${count}${hasMore ? "+" : ""} ${count === 1 && !hasMore ? "program" : "programs"}`;
-
+}: Readonly<ResultsToolbarProps>) {
   return (
     <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-      <p role="status" className="text-sm text-muted-foreground">
-        {summary}
-      </p>
+      <output className="text-sm text-muted-foreground">
+        {resultsSummary(count, hasMore, isLoading)}
+      </output>
 
       <div className="flex items-center gap-2">
         <Select
@@ -81,7 +86,8 @@ function ResultsToolbarImpl({
           </SelectContent>
         </Select>
 
-        <div role="group" aria-label="Layout" className="flex gap-1">
+        <fieldset className="flex min-w-0 gap-1">
+          <legend className="sr-only">Layout</legend>
           {VIEW_OPTIONS.map(({ mode, label, Icon }) => (
             <Button
               key={mode}
@@ -96,7 +102,7 @@ function ResultsToolbarImpl({
               <Icon className="h-4 w-4" />
             </Button>
           ))}
-        </div>
+        </fieldset>
       </div>
     </div>
   );

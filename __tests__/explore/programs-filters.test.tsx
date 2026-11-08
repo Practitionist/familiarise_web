@@ -100,6 +100,18 @@ describe("AdvancedFilters", () => {
     renderFilters({ filters: { minPrice: 50_000, maxPrice: 200_000 } });
     expect(screen.getByText("₹500 – ₹2,000")).toBeInTheDocument();
   });
+
+  it("shows a range that is no band as selected, not as 'Any price'", () => {
+    // An old rupee-scale bookmark or a hand-edited URL still filters.
+    renderFilters({ filters: { minPrice: 100, maxPrice: 500 } });
+    expect(screen.getByText("₹1 – ₹5")).toBeInTheDocument();
+    expect(screen.queryByText("Any price")).toBeNull();
+  });
+
+  it("shows 'Any price' only when no price filter is active", () => {
+    renderFilters();
+    expect(screen.getByText("Any price")).toBeInTheDocument();
+  });
 });
 
 describe("ResultsToolbar", () => {
@@ -116,6 +128,14 @@ describe("ResultsToolbar", () => {
   it("counts what is loaded, with a plus while more is coming", () => {
     render(<ResultsToolbar {...base} />);
     expect(screen.getByRole("status")).toHaveTextContent("24+ programs");
+  });
+
+  it("groups the layout buttons under a name", () => {
+    render(<ResultsToolbar {...base} />);
+    const group = screen.getByRole("group", { name: "Layout" });
+    expect(group).toContainElement(
+      screen.getByRole("button", { name: "Grid view" }),
+    );
   });
 
   it("marks the current layout and switches on click", () => {

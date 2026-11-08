@@ -106,7 +106,7 @@ export function useProgramsFilters(): UseProgramsFiltersResult {
   const [localSearchValue, setLocalSearchValue] = useState(
     () => searchParams.get("search") ?? "",
   );
-  const [viewMode, setViewModeState] = useState<ViewMode>("list");
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
 
   // Adopted after mount, never during render: the server and first client
   // render both show the list, so hydration matches.
@@ -115,14 +115,14 @@ export function useProgramsFilters(): UseProgramsFiltersResult {
       const saved = viewModeSchema.safeParse(
         window.localStorage.getItem(VIEW_MODE_STORAGE_KEY),
       );
-      if (saved.success) setViewModeState(saved.data);
+      if (saved.success) setViewMode(saved.data);
     } catch {
       // Storage can be blocked; the list default stands.
     }
   }, []);
 
-  const setViewMode = useCallback((mode: ViewMode) => {
-    setViewModeState(mode);
+  const rememberViewMode = useCallback((mode: ViewMode) => {
+    setViewMode(mode);
     try {
       window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
     } catch {
@@ -198,7 +198,7 @@ export function useProgramsFilters(): UseProgramsFiltersResult {
     selectedLevel,
     setSelectedLevel,
     viewMode,
-    setViewMode,
+    setViewMode: rememberViewMode,
     clearAll,
   };
 }

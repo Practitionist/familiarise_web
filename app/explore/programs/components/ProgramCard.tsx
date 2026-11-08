@@ -261,7 +261,7 @@ function ListCard({
           alt={program.title}
           fill
           className="object-cover"
-          sizes="256px"
+          sizes="(max-width: 639px) 100vw, (max-width: 767px) 192px, 256px"
         />
         <div className="absolute top-3 left-3 flex gap-2">
           <TypeBadge type={program.type} />
@@ -379,9 +379,11 @@ function CarouselCard({
         <p className="text-sm text-muted-foreground line-clamp-1 mb-3">
           {program.description}
         </p>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="text-lg font-bold text-foreground">
+        {/* Wraps at the card's 15rem minimum, where a long price, two logos and
+            "View" no longer fit one row inside the overflow-hidden card. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <div className="whitespace-nowrap text-lg font-bold text-foreground">
               {formatPrice(program.price)}
             </div>
             {workExperiences.length > 0 && (
