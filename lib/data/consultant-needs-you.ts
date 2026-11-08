@@ -1,5 +1,9 @@
 import "server-only";
 
+import {
+  LIVE_CLASS_COLLABORATOR,
+  LIVE_WEBINAR_COLLABORATOR,
+} from "@/lib/collaborators/live-plan";
 import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
@@ -156,8 +160,13 @@ export async function readConsultantNeedsYou(
       appointment: personalOneToOne(consultantProfileId),
     },
   });
+  // Same live-plan predicate as the Collaborations page, so the count matches what Respond opens.
   const collabInvites = await prisma.collaborator.count({
-    where: { consultantProfileId, status: "PENDING" },
+    where: {
+      consultantProfileId,
+      status: "PENDING",
+      OR: [LIVE_WEBINAR_COLLABORATOR, LIVE_CLASS_COLLABORATOR],
+    },
   });
   const reviewsToReply = await countReviewsNeedingReply(consultantProfileId);
   return {

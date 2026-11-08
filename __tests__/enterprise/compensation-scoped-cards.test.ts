@@ -107,3 +107,69 @@ it("reads only this org's live narrower cards, never the applied or override car
   );
   expect(m.consultationPlan.findMany).not.toHaveBeenCalled();
 });
+
+it("lists no scoped card while the expert's membership override wins, and skips the read", async () => {
+  m.rateCard.findFirst.mockResolvedValue({
+    id: "override-1",
+    platformBps: 500,
+    orgBps: 500,
+    consultantBps: 9000,
+  });
+  m.rateCard.findMany.mockResolvedValue([
+    {
+      id: "t1",
+      planType: "CLASS",
+      planId: null,
+      ...bps,
+      effectiveFrom: new Date(),
+      ownerContract: null,
+    },
+  ]);
+
+  const { rateCard, scopedRateCards } = await read();
+
+  expect(rateCard).toMatchObject({ source: "yours", consultantBps: 9000 });
+  expect(scopedRateCards).toEqual([]);
+  expect(m.rateCard.findMany).not.toHaveBeenCalled();
+});
+
+it("keeps the plan scope of contract-owned cards so two of them stay distinguishable", async () => {
+  m.webinarPlan.findMany.mockResolvedValue([
+    { id: "web-1", title: "Intro webinar" },
+  ]);
+  m.rateCard.findMany.mockResolvedValue([
+    {
+      id: "c-class",
+      planType: "CLASS",
+      planId: null,
+      ...bps,
+      effectiveFrom: new Date(),
+      ownerContract: { effectiveFrom: new Date("2026-01-01") },
+    },
+    {
+      id: "c-web",
+      planType: "WEBINAR",
+      planId: "web-1",
+      ...bps,
+      effectiveFrom: new Date(),
+      ownerContract: { effectiveFrom: new Date("2026-01-01") },
+    },
+  ]);
+
+  const { scopedRateCards } = await read();
+
+  expect(scopedRateCards).toEqual([
+    expect.objectContaining({
+      scope: "contract",
+      planType: "CLASS",
+      planSpecific: false,
+      planTitle: null,
+    }),
+    expect.objectContaining({
+      scope: "contract",
+      planType: "WEBINAR",
+      planSpecific: true,
+      planTitle: "Intro webinar",
+    }),
+  ]);
+});

@@ -479,9 +479,19 @@ type ScopedRateCard = Awaited<
 const bpsPercent = (bps: number) =>
   `${(bps / 100).toFixed(bps % 100 === 0 ? 0 : 1)}%`;
 
+function planScopeLabel(
+  planType: ScopedRateCard["planType"],
+  planSpecific: boolean,
+  planTitle: string | null,
+): string {
+  const type = planType ? COVERED_PLAN_TYPE_LABEL[planType] : "";
+  if (planSpecific) return `${type} plan: ${planTitle ?? "a specific plan"}`;
+  return `All ${type.toLowerCase()} plans`;
+}
+
 function scopedCardLabel(card: ScopedRateCard): string {
   if (card.scope === "contract") {
-    return `Contract effective ${card.contractEffectiveFrom.toLocaleDateString(
+    const contract = `Contract effective ${card.contractEffectiveFrom.toLocaleDateString(
       "en-IN",
       {
         timeZone: "Asia/Kolkata",
@@ -490,12 +500,11 @@ function scopedCardLabel(card: ScopedRateCard): string {
         year: "numeric",
       },
     )}`;
+    return card.planType || card.planSpecific
+      ? `${contract}, ${planScopeLabel(card.planType, card.planSpecific, card.planTitle)}`
+      : contract;
   }
-  const type = card.planType ? COVERED_PLAN_TYPE_LABEL[card.planType] : "";
-  if (card.scope === "plan") {
-    return `${type} plan: ${card.planTitle ?? "a specific plan"}`;
-  }
-  return `All ${type.toLowerCase()} plans`;
+  return planScopeLabel(card.planType, card.scope === "plan", card.planTitle);
 }
 
 function SplitCard({

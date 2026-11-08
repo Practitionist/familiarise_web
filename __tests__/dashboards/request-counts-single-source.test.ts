@@ -80,6 +80,20 @@ describe("one requests-to-answer number", () => {
     expect(personal?.pendingRequests).toBe(count);
   });
 
+  it("counts only invitations on live webinar and class plans, as the Collaborations page lists them", async () => {
+    await readConsultantNeedsYou("cp-1");
+    expect(m.collaborator.count).toHaveBeenCalledWith({
+      where: {
+        consultantProfileId: "cp-1",
+        status: "PENDING",
+        OR: [
+          { collaboratorType: "WEBINAR", webinarPlan: { archivedAt: null } },
+          { collaboratorType: "CLASS", classPlan: { archivedAt: null } },
+        ],
+      },
+    });
+  });
+
   it("every subscription count reads live rows only", async () => {
     await getNeedsYouSummary("u-1", "cp-1");
     for (const [{ where }] of m.subscription.count.mock.calls) {

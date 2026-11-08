@@ -110,42 +110,45 @@ export async function getMyArrangementData(params: {
   };
 
   // Read-only list of the narrower cards that can apply to this expert's
-  // bookings: this org's plan-type and plan cards, and its contracts' cards.
-  // The split that governs a booking depends on which scope matches it.
-  const scopedCards = await prisma.rateCard.findMany({
-    where: {
-      id: {
-        notIn: [resolved.rateCardId, rateCardOverrideId].filter(
-          (id): id is string => id !== null,
-        ),
-      },
-      effectiveFrom: { lte: now },
-      AND: [
-        { OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }] },
-        {
-          OR: [
+  // bookings. A membership override outranks every scoped card in
+  // settlement, so none of them can apply while it does.
+  const overrideWins = rateCard.source === "yours";
+  const scopedCards = overrideWins
+    ? []
+    : await prisma.rateCard.findMany({
+        where: {
+          id: {
+            notIn: [resolved.rateCardId, rateCardOverrideId].filter(
+              (id): id is string => id !== null,
+            ),
+          },
+          effectiveFrom: { lte: now },
+          AND: [
+            { OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }] },
             {
-              ownerOrgId: orgId,
-              OR: [{ planType: { not: null } }, { planId: { not: null } }],
+              OR: [
+                {
+                  ownerOrgId: orgId,
+                  OR: [{ planType: { not: null } }, { planId: { not: null } }],
+                },
+                { ownerContract: { organizationId: orgId, status: "ACTIVE" } },
+              ],
             },
-            { ownerContract: { organizationId: orgId, status: "ACTIVE" } },
           ],
         },
-      ],
-    },
-    orderBy: { effectiveFrom: "desc" },
-    take: SCOPED_CARD_TAKE,
-    select: {
-      id: true,
-      planType: true,
-      planId: true,
-      platformBps: true,
-      orgBps: true,
-      consultantBps: true,
-      effectiveFrom: true,
-      ownerContract: { select: { effectiveFrom: true } },
-    },
-  });
+        orderBy: { effectiveFrom: "desc" },
+        take: SCOPED_CARD_TAKE,
+        select: {
+          id: true,
+          planType: true,
+          planId: true,
+          platformBps: true,
+          orgBps: true,
+          consultantBps: true,
+          effectiveFrom: true,
+          ownerContract: { select: { effectiveFrom: true } },
+        },
+      });
   const planTitles = await scopedPlanTitles(orgId, scopedCards);
   const scopedRateCards = scopedCards.map((card) => {
     const base = {
@@ -159,6 +162,9 @@ export async function getMyArrangementData(params: {
         ...base,
         scope: "contract" as const,
         contractEffectiveFrom: card.ownerContract.effectiveFrom,
+        planType: card.planType,
+        planTitle: card.planId ? (planTitles.get(card.planId) ?? null) : null,
+        planSpecific: card.planId !== null,
       };
     }
     if (card.planId) {
@@ -169,7 +175,12 @@ export async function getMyArrangementData(params: {
         planTitle: planTitles.get(card.planId) ?? null,
       };
     }
-    return { ...base, scope: "planType" as const, planType: card.planType };
+    return {
+      ...base,
+      scope: "planType" as const,
+      planType: card.planType,
+      planTitle: null,
+    };
   });
 
   const payoutAccount =
