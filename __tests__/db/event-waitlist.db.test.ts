@@ -7,8 +7,9 @@ import prisma from "../../lib/prisma";
 import { seedUser } from "./seed";
 
 async function seedWaitlist(waiters: number) {
+  // TRIAL needs no parent row under appointment_parent_matches_type; no waitlist check reads the type.
   const appointment = await prisma.appointment.create({
-    data: { appointmentType: "WEBINAR" },
+    data: { appointmentType: "TRIAL" },
     select: { id: true },
   });
   const users = await Promise.all(

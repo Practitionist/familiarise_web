@@ -1,5 +1,5 @@
 /**
- * #1527 — the Billing page's URL filter keys and react-query key, in a
+ * The Billing page's URL filter keys and react-query key, in a
  * directive-free module so the RSC page can seed the exact key the client
  * component reads (a "use client" export is only a reference on the server).
  */
