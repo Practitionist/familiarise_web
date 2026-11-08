@@ -23,16 +23,21 @@ export const paiseNote = z
   .transform(Number)
   .pipe(z.number().int().nonnegative().safe());
 
+/** The GST regime the order was priced under; orders minted before the note carry none. */
+export const gstRegimeNote = z.enum(["REGISTERED", "UNREGISTERED"]);
+
 const chargeSplitSchema = z.object({
   originalAmountPaise: paiseNote,
   taxAmountPaise: paiseNote,
   buyerCountry: z.string().length(2),
+  gstRegime: gstRegimeNote.optional(),
 });
 
 export interface StandaloneCharge {
   originalAmount: number;
   taxAmount: number;
   buyerCountry: string | null;
+  gstRegime: z.infer<typeof gstRegimeNote> | null;
 }
 
 /**
@@ -55,13 +60,19 @@ export function resolveStandaloneCharge(
       originalAmount: parsed.data.originalAmountPaise,
       taxAmount: parsed.data.taxAmountPaise,
       buyerCountry: parsed.data.buyerCountry.toUpperCase(),
+      gstRegime: parsed.data.gstRegime ?? null,
     };
   }
   Sentry.captureMessage(
     `[${rail}] order notes missing or invalid tax split: ${orderId}`,
     { level: "error", tags: { subsystem: "payments" } },
   );
-  return { originalAmount: chargedPaise, taxAmount: 0, buyerCountry: null };
+  return {
+    originalAmount: chargedPaise,
+    taxAmount: 0,
+    buyerCountry: null,
+    gstRegime: null,
+  };
 }
 
 const razorpayMethodSchema = z.string().regex(/^[a-z_]{1,32}$/);
@@ -220,6 +231,7 @@ export async function stageCaptureRefund(
       amount: input.chargedPaise,
       originalAmount: input.charge.originalAmount,
       taxAmount: input.charge.taxAmount,
+      gstRegime: input.charge.gstRegime,
       currency: "INR",
       paymentMethod: gatewayPaymentMethod(input.method),
       paymentIntent: input.paymentIntent,

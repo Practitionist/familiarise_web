@@ -60,6 +60,7 @@ export async function writeCheckoutPayment(
     attributionReferralId,
     platformFeeBps,
     welcomeDiscountPaise,
+    gstRegime,
   } = input.priced;
   const { createdAppointment, bookedPlan, skipPayment } = carried;
 
@@ -141,6 +142,7 @@ export async function writeCheckoutPayment(
     platformFeeBps,
     welcomeDiscountPaise:
       welcomeDiscountPaise > 0 ? welcomeDiscountPaise : null,
+    gstRegime,
   };
 
   // Group events share one appointment, so a re-buy re-mints the buyer's dead row in place.

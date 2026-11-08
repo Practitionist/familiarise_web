@@ -6,16 +6,30 @@ import { DiscountType } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { discountLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { computeDiscountPaise } from "@/lib/payments/pricing/derive-checkout-amount";
+import { platformFundedCapPaise } from "@/lib/payments/pricing/platform-funded-cap";
 import { validateDiscountCurrency } from "@/lib/payments/validation/currency-guards";
+import { currentGstRegime } from "@/lib/payments/tax/gst-regime";
+import { resolveCheckoutAttribution } from "@/lib/referrals/attribution";
+import {
+  EXPERT_VIA_COOKIE,
+  parseViaToken,
+} from "@/lib/referrals/attribution-token-shape";
 
 // CodeRabbit on #1753 — the preview shares checkout's arithmetic, so it also
 // refuses the inputs checkout would: a non-integer or negative amount, a
 // non-string currency. Zero is allowed (a free plan previews a zero discount).
-const validateDiscountRequestSchema = z.object({
-  code: z.string().min(1, "Discount code is required"),
-  amount: z.number().int().nonnegative().safe().optional(),
-  currency: z.string().trim().toUpperCase().optional().default("INR"),
-});
+const validateDiscountRequestSchema = z
+  .object({
+    code: z.string().min(1, "Discount code is required"),
+    amount: z.number().int().nonnegative().safe().optional(),
+    currency: z.string().trim().toUpperCase().optional().default("INR"),
+    /** The plan's expert, whose take caps the code exactly as checkout does. */
+    consultantProfileId: z.string().min(1).max(64).optional(),
+  })
+  .refine((body) => !body.amount || body.consultantProfileId, {
+    message: "consultantProfileId is required to price a discount",
+    path: ["consultantProfileId"],
+  });
 
 interface DiscountCodeResponse {
   valid: boolean;
@@ -25,6 +39,32 @@ interface DiscountCodeResponse {
   discountAmount?: number; // Calculated discount amount
   maxDiscount?: number | null;
   message?: string;
+}
+
+/** The platform-funded cap checkout applies to this buyer's order with this expert. */
+async function promoCapFor(
+  request: NextRequest,
+  buyerUserId: string,
+  consultantProfileId: string,
+  listPaise: number,
+): Promise<number> {
+  const consultant = await prisma.consultantProfile.findUnique({
+    where: { id: consultantProfileId },
+    select: { id: true, userId: true },
+  });
+  const attribution = await resolveCheckoutAttribution(prisma, {
+    buyerUserId,
+    consultantProfileId: consultant?.id ?? null,
+    consultantUserId: consultant?.userId ?? null,
+    viaToken: parseViaToken(request.cookies.get(EXPERT_VIA_COOKIE)?.value),
+    orgFunded: false,
+    hasDiscountCode: true,
+  });
+  return platformFundedCapPaise({
+    listPaise,
+    platformFeeBps: attribution.promoFeeBps,
+    gstRegistered: currentGstRegime() === "REGISTERED",
+  });
 }
 
 /**
@@ -59,7 +99,12 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    const { code, amount, currency: planCurrency } = parsed.data;
+    const {
+      code,
+      amount,
+      currency: planCurrency,
+      consultantProfileId,
+    } = parsed.data;
 
     const discountCode = await prisma.discountCode.findUnique({
       where: { code: code.toUpperCase().trim() },
@@ -136,14 +181,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // #1584 P1-FX04c — one discount arithmetic, shared with checkout.
+    // One discount arithmetic, shared with checkout, held to the same profitability floor.
     let discountAmount: number | undefined;
-    if (amount && amount > 0) {
-      discountAmount = computeDiscountPaise(amount, {
-        discountType: discountCode.discountType,
-        discountValue: discountCode.discountValue,
-        maxDiscount: discountCode.maxDiscount,
-      });
+    if (amount && amount > 0 && consultantProfileId) {
+      discountAmount = Math.min(
+        computeDiscountPaise(amount, {
+          discountType: discountCode.discountType,
+          discountValue: discountCode.discountValue,
+          maxDiscount: discountCode.maxDiscount,
+        }),
+        await promoCapFor(
+          request,
+          session.user.id,
+          consultantProfileId,
+          amount,
+        ),
+      );
     }
 
     return NextResponse.json<DiscountCodeResponse>({

@@ -12,6 +12,9 @@
  * and broke the leg-sum invariant). Only the surcharge is genuinely-additional.
  */
 
+// Priced and invoiced as a GST-registered platform (Haryana, the registered office).
+process.env.PLATFORM_GSTIN = "06AAFCF1234Q1ZN";
+
 import { recordOverageAtCheckout } from "@/lib/payments/billing/overage-settlement";
 import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
 import { txDouble } from "../fixtures/tx-double";

@@ -3,18 +3,18 @@ title: Tax on the platform, in plain language
 type: explanation
 audience: founders, product and support staff, and engineers new to Indian tax on a marketplace
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-09
 ---
 
 # Tax on the platform, in plain language
 
-Three different taxes touch a booking on Familiarise. They are charged on different money, at different moments, by different parts of the code. This page explains what each one is and what the platform does about it, without assuming any tax background. The pages that follow state the exact rules as the code implements them: [GST invoices and credit notes](02-gst-invoices-and-credit-notes.md), [TDS rules and returns](03-tds-rules-and-returns.md), and [MSME, statutory exports and the calendar](04-msme-statutory-exports-and-calendar.md).
+Three different taxes touch a booking on Familiarise. They are charged on different money, at different moments, by different parts of the code. This page explains what each one is and what the platform does about it, without assuming any tax background. The pages that follow state the exact rules as the code implements them: [GST invoices and credit notes](02-gst-invoices-and-credit-notes.md), [TDS rules and returns](03-tds-rules-and-returns.md), [MSME, statutory exports and the calendar](04-msme-statutory-exports-and-calendar.md), and [GST registration and the tax regime](05-gst-registration-and-tax-regime.md).
 
 ## A booking, followed through
 
-Priya books a one-hour consultation with Hannah, priced at ₹1,000, on Monday 2026-10-12 at 10:00 IST.
+Priya books a one-hour consultation with Hannah, priced at ₹1,000, on Monday 2026-10-12 at 10:00 IST, after the platform has registered for GST.
 
-1. **Priya pays ₹1,180.** That is the ₹1,000 price plus GST at 18 percent, ₹180 (118,000 paise in total). The ₹180 is not the platform's money. It is collected for the government.
+1. **Priya pays ₹1,180.** That is the ₹1,000 price plus GST at 18 percent, ₹180 (118,000 paise in total). The ₹180 is not the platform's money. It is collected for the government. Before the platform registers, Priya pays ₹1,000 and no GST at all (see "Registered or not" below).
 2. **The platform keeps a fee.** At a 20 percent marketplace fee, ₹200 of the ₹1,000 is the platform's revenue and ₹800 is Hannah's earning.
 3. **A week later Hannah is paid.** Before sending her ₹800, the platform may withhold a small amount of income tax on her behalf and pay it to the government. For this session that amount is either nothing or ₹1, depending on how much Hannah has already earned this year.
 
@@ -24,7 +24,11 @@ The first of those is GST, the second is revenue, and the third is TDS.
 
 GST is a tax on the sale of a service. The buyer pays it, and the seller collects it and passes it to the government. On Familiarise the platform is treated as the seller of the session to the learner, the principal supplier, so the platform issues the invoice, charges the 18 percent and prepares the data for the returns that its accountant files. The expert is the platform's supplier for the underlying work. This is the platform's chosen model and is recorded in ADR 26 (`docs/enterprise/70-design-decisions/26-gst-principal-model.md`).
 
-What the code does about GST:
+### Registered or not
+
+The platform charges GST only once it is registered. Registration is compulsory once its turnover in a financial year passes ₹20 lakh (CGST section 22), and a business that is not registered may not collect any amount as tax (section 32). Because the platform is the principal supplier, that turnover is the full value of every sale, not only its fee. One setting decides the regime: while `PLATFORM_GSTIN` is unset the platform charges 0 percent, gives a receipt rather than a tax invoice, and refuses organisation-funded billing; once a valid GSTIN is set it charges 18 percent and issues tax invoices. Each payment remembers the regime it was sold under, so an order taken before registration never gets a tax invoice later. An alarm fires at ₹15 lakh of turnover so that registration, which takes about seven working days, is done before ₹20 lakh. [GST registration and the tax regime](05-gst-registration-and-tax-regime.md) has the details and the switch-over runbook.
+
+What the code does about GST once registered:
 
 - It charges 18 percent on the discounted price at checkout. The default SAC code is 999293 (commercial training and coaching), which every tax invoice carries; the checkout tax result names 999294 for webinars and classes, but that code is not written onto a document.
 - It splits the tax into the right parts. If the buyer's state is the platform's own state, the 18 percent is two halves, 9 percent for the central government (CGST) and 9 percent for the state (SGST). If the buyer is in another state, it is 18 percent IGST. If the buyer's state is not known, a personal buyer is treated as in the platform's own state.
@@ -57,13 +61,14 @@ If the platform pays a micro or small enterprise late, the platform cannot deduc
 
 ## Where each piece lives
 
-| Tax                  | What it is applied to         | When                              | Code                                             |
-| -------------------- | ----------------------------- | --------------------------------- | ------------------------------------------------ |
-| GST                  | The buyer's payment           | Checkout, then invoice            | `lib/payments/tax/`, `lib/compliance/gst.ts`     |
-| TDS                  | The expert's or org's payout  | When the payout is sent           | `lib/payments/payouts/consultant-tds.ts`         |
-| MSME deadline        | The payout                    | When the payout is created        | `lib/compliance/msme.ts`                         |
-| Monthly GST register | Every invoice and credit note | The 2nd of each month             | `jobs/compliance/gst-outward-register-export.ts` |
-| Quarterly TDS draft  | The quarter's TDS records     | The 5th after each quarter closes | `jobs/compliance/tds-26q-draft-export.ts`        |
+| Tax                    | What it is applied to         | When                                | Code                                             |
+| ---------------------- | ----------------------------- | ----------------------------------- | ------------------------------------------------ |
+| GST                    | The buyer's payment           | Checkout, then invoice              | `lib/payments/tax/`, `lib/compliance/gst.ts`     |
+| GST registration alarm | The financial year's sales    | Four times a day while unregistered | `lib/compliance/gst-turnover.ts`                 |
+| TDS                    | The expert's or org's payout  | When the payout is sent             | `lib/payments/payouts/consultant-tds.ts`         |
+| MSME deadline          | The payout                    | When the payout is created          | `lib/compliance/msme.ts`                         |
+| Monthly GST register   | Every invoice and credit note | The 2nd of each month               | `jobs/compliance/gst-outward-register-export.ts` |
+| Quarterly TDS draft    | The quarter's TDS records     | The 5th after each quarter closes   | `jobs/compliance/tds-26q-draft-export.ts`        |
 
 ## Where in code
 
@@ -80,3 +85,4 @@ If the platform pays a micro or small enterprise late, the platform cannot deduc
 
 - **The facilitator framing with GST TCS.** Older tax notes describe the platform as a facilitator that collects 0.5 percent TCS and files a monthly GSTR-8. The principal-supplier decision replaced that, and no TCS code exists. Do not build a GSTR-8 builder.
 - **"Consultant TDS is 10 percent above ₹50,000."** That is section 194J and was how earlier documents described consultant tax. The platform withholds under 194-O.
+- **"Every domestic order carries 18 percent GST."** Checkout used to charge 18 percent whether or not the platform was registered. It now charges GST only while `PLATFORM_GSTIN` holds a valid GSTIN.

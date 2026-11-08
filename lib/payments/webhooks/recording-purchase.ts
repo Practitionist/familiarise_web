@@ -22,6 +22,7 @@ import {
   AUTO_REFUND_MARKERS,
   cardLeg,
   gatewayPaymentMethod,
+  gstRegimeNote,
   paiseNote,
   refundStagedCapture,
   resolveStandaloneCharge,
@@ -41,6 +42,7 @@ export const replayChargeNotesSchema = z.object({
   originalAmountPaise: paiseNote,
   taxAmountPaise: paiseNote,
   buyerCountry: z.string().length(2),
+  gstRegime: gstRegimeNote,
 });
 const replayBuyerSchema = replayChargeNotesSchema.pick({ userId: true });
 
@@ -304,6 +306,7 @@ async function settleReplaySale(
             amount: chargedPaise,
             originalAmount: charge.originalAmount,
             taxAmount: charge.taxAmount,
+            gstRegime: charge.gstRegime,
             ...(charge.buyerCountry
               ? {
                   buyerCountry: charge.buyerCountry,
@@ -325,6 +328,7 @@ async function settleReplaySale(
           amount: chargedPaise,
           originalAmount: charge.originalAmount,
           taxAmount: charge.taxAmount,
+          gstRegime: charge.gstRegime,
           ...(charge.buyerCountry
             ? {
                 buyerCountry: charge.buyerCountry,

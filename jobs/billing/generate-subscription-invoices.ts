@@ -34,6 +34,8 @@ import { postInvoiceIssuedJournal } from "@/lib/payments/billing/org-invoice-jou
 import { notifyIssuedOrgInvoice } from "@/lib/payments/billing/create-org-invoice";
 import { drawCoveringPurchaseOrder } from "@/lib/payments/billing/purchase-order-draw";
 import { supplierStateCode } from "@/lib/payments/billing/consumer-invoice";
+import { reportConfigSkip } from "@/lib/cron/config-skip";
+import { platformSupplierForJob } from "@/lib/pdf/supplier";
 import { BILLABLE_ORG_STATUSES } from "@/lib/enterprise/org-status";
 import { notifyOrgLicenseRenewalUpcoming } from "@/lib/novu/org-workflows";
 import { sendOrgOperationalEmail } from "@/lib/email/senders/money";
@@ -138,8 +140,21 @@ async function generateSubscriptionInvoices(opts: {
   let attempted = 0;
   let visited = 0;
 
-  // #1447 — GSTIN-first supplier state, resolved once; a GSTIN/env mismatch
-  // throws here so no invoice in the run is issued under an ambiguous state.
+  // No GST invoice while unregistered; a malformed or wrong-state GSTIN throws
+  // here so no invoice in the run is issued under an ambiguous state.
+  if (!platformSupplierForJob()) {
+    reportConfigSkip(
+      "generate-subscription-invoices",
+      "PLATFORM_GSTIN not configured",
+    );
+    return {
+      generated: 0,
+      skipped: 0,
+      failed: 0,
+      remindersSent,
+      remaining: dueSubs.length,
+    };
+  }
   const supplierState = supplierStateCode();
 
   for (const sub of dueSubs) {

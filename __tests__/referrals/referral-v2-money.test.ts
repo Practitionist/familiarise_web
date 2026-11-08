@@ -240,8 +240,10 @@ describe("redemption cap", () => {
     const derived = await deriveCheckoutAmount({
       basePaise: 150_000,
       buyerCountry: "IN",
+      gstRegime: "REGISTERED",
       useReferralCredits: true,
       creditCapBps: 1000,
+      promoFeeBps: 2000,
       resolveAvailableCreditsPaise: () => 30_000,
     });
     expect(derived.creditsApplied).toBe(15_000);

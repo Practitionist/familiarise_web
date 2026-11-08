@@ -6,6 +6,7 @@
  */
 
 import { MIN_CREDIT_REDEMPTION_PAISE } from "@/lib/referrals/constants";
+import { platformFundedCapPaise } from "@/lib/payments/pricing/platform-funded-cap";
 import {
   computeWelcomeDiscountPaise,
   creditCapPaise,
@@ -19,6 +20,8 @@ export interface PricingConfig {
   taxRate?: number; // Override tax rate (0.18 = 18%)
   isInternational?: boolean; // Legacy signal; zero-rating now keys off exportZeroRated
   exportZeroRated?: boolean; // Server-decided (#1230): international AND valid platform LUT
+  /** Server-decided from PLATFORM_GSTIN; false charges no GST. Absent reads as registered. */
+  gstRegistered?: boolean;
   discountPercent?: number; // Applied discount percentage (0.10 = 10%)
   discountAmount?: number; // Fixed discount amount
   creditsApplied?: number; // Referral credits applied (same unit as baseAmount, typically paise)
@@ -26,6 +29,8 @@ export interface PricingConfig {
   welcomeDiscount?: WelcomeDiscount | null;
   /** Promo may cover at most this many bps of the list price; absent means no credits. */
   creditCapBps?: number;
+  /** The take that funds platform promo (`ReferralPricing.promoFeeBps`); absent leaves the server-capped code as sent. */
+  promoFeeBps?: number;
 }
 
 export interface PricingBreakdown {
@@ -107,14 +112,24 @@ export function calculatePricing(
   // country comparison; the checkout context ships `exportZeroRated` so the
   // client preview cannot diverge from determineTax/gst.ts.
   const taxRate =
-    config.exportZeroRated === true ? 0 : (config.taxRate ?? DEFAULT_TAX_RATE);
+    config.exportZeroRated === true || config.gstRegistered === false
+      ? 0
+      : (config.taxRate ?? DEFAULT_TAX_RATE);
   const discountPercent = config.discountPercent ?? 0;
 
   const subtotal = calculateSubtotal(baseAmount);
-  const codeDiscount = calculateDiscount(
-    subtotal,
-    discountPercent,
-    config.discountAmount,
+  // The same profitability floor the server charges under.
+  const promoCap =
+    config.promoFeeBps === undefined
+      ? Number.POSITIVE_INFINITY
+      : platformFundedCapPaise({
+          listPaise: Math.round(subtotal),
+          platformFeeBps: config.promoFeeBps,
+          gstRegistered: config.gstRegistered !== false,
+        });
+  const codeDiscount = Math.min(
+    calculateDiscount(subtotal, discountPercent, config.discountAmount),
+    promoCap,
   );
   const welcome = codeDiscount > 0 ? null : config.welcomeDiscount;
 
@@ -131,14 +146,19 @@ export function calculatePricing(
         ? Math.min(
             config.creditsApplied ?? 0,
             totalBeforeCredits,
-            creditCapPaise(subtotal, config.creditCapBps ?? 0, welcomePaise),
+            creditCapPaise(
+              subtotal,
+              config.creditCapBps ?? 0,
+              welcomePaise,
+              promoCap - discountAmount,
+            ),
           )
         : 0;
     const total = Math.round((totalBeforeCredits - creditsApplied) * 100) / 100;
     return { discountAmount, taxAmount, creditsApplied, total };
   };
 
-  const welcomePaise = computeWelcomeDiscountPaise(subtotal, welcome);
+  const welcomePaise = computeWelcomeDiscountPaise(subtotal, welcome, promoCap);
   const withWelcome = price(welcomePaise);
   const { discountAmount, taxAmount, creditsApplied, total } =
     welcomePaise > 0 && !keepsWelcomeDiscount(welcome, withWelcome.total)

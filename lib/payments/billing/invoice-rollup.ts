@@ -34,6 +34,7 @@ import { reportSentryError } from "@/lib/observability/report";
 import { getAppUrl } from "@/lib/url";
 import { generateOrgInvoiceNumber } from "./invoice-numbering";
 import { supplierStateCode } from "./consumer-invoice";
+import { platformSupplierForJob } from "@/lib/pdf/supplier";
 import { transitionOverage } from "./overage-transitions";
 import { drawCoveringPurchaseOrder } from "./purchase-order-draw";
 import { prorate } from "@/lib/payments/utils/money";
@@ -48,6 +49,8 @@ export interface RollupResult {
   heldForPo?: boolean;
   /** Set when a domestic org has no GST state, so nothing was billed. */
   skippedNoGstState?: boolean;
+  /** Set while the platform is not GST-registered: no GST invoice is issued. */
+  skippedUnregistered?: boolean;
 }
 
 const EMPTY: RollupResult = {
@@ -109,7 +112,8 @@ export async function rollupOrgInvoiceAccruals(params: {
   // an accrual is still unbilled, so anything left here is settled history.
   if (org.status === "DEACTIVATED" || org.deletedAt) return EMPTY;
 
-  // #1447 — GSTIN-first supplier state; a mismatch throws before any tx opens.
+  // Unregistered skips; a set but malformed or wrong-state GSTIN throws before any tx opens.
+  if (!platformSupplierForJob()) return { ...EMPTY, skippedUnregistered: true };
   const supplierState = supplierStateCode();
 
   // A domestic B2B invoice needs the buyer's state to pick its tax head.

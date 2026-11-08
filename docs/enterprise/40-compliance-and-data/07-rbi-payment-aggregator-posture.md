@@ -53,10 +53,11 @@ the Route eligibility questions never arise because Route is not used.
 
 One deliberate caveat on the tax sentence above: **withholding on consultant
 payouts is its own classification question and is NOT settled by
-supplier-of-record status.** The consultant rail runs `TDS_ENGINE=LEGACY`,
-which today preserves only the ₹50,000 threshold — the payout path records
-section `194O` on its TDSRecords regardless, so do **not** request a 194J
-payment code for it. `TdsRate.paymentCode` remains null and the return
+supplier-of-record status.** The consultant rail applies 194-O semantics by
+default (`TDS_ENGINE` unset reads as `194O` in `resolveDueTds`,
+`lib/payments/payouts/consultant-tds.ts`); `TDS_ENGINE=LEGACY` would restore
+only the old ₹50,000 threshold. Either way the payout path records section
+`194O` on its TDSRecords, so do **not** request a 194J payment code for it. `TdsRate.paymentCode` remains null and the return
 exporter carries no payment-code mapping until the CBDT schema is final.
 The retirement decision (194J → 194-O semantics) stays conditional on a
 written CA sign-off (#738). Under the Income Tax Act 2025 renumbering

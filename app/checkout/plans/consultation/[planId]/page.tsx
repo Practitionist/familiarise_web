@@ -341,6 +341,7 @@ export default function ConsultationCheckoutPage({
         body: JSON.stringify({
           code: codeToApply,
           amount: eventData?.data?.price || 0,
+          consultantProfileId: eventData?.data?.consultantProfile?.id,
         }),
       });
 
@@ -610,8 +611,10 @@ export default function ConsultationCheckoutPage({
           ? null
           : referralPricing?.welcomeDiscount,
       creditCapBps: referralPricing?.creditCapBps,
+      promoFeeBps: referralPricing?.promoFeeBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
+      gstRegistered: checkoutTaxContext.gstRegistered,
     });
   }, [
     referralPricing,
@@ -622,6 +625,7 @@ export default function ConsultationCheckoutPage({
     availableCredits,
     checkoutTaxContext.isInternational,
     checkoutTaxContext.exportZeroRated,
+    checkoutTaxContext.gstRegistered,
   ]);
 
   // Periodic staleness check: warn user if their slot is about to expire

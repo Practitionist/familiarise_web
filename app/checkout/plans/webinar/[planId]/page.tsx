@@ -263,6 +263,7 @@ export default function WebinarCheckoutPage({
         body: JSON.stringify({
           code: codeToApply,
           amount: planData?.data?.price || 0,
+          consultantProfileId: planData?.data?.consultantProfile?.id,
         }),
       });
 
@@ -518,8 +519,10 @@ export default function WebinarCheckoutPage({
           ? null
           : referralPricing?.welcomeDiscount,
       creditCapBps: referralPricing?.creditCapBps,
+      promoFeeBps: referralPricing?.promoFeeBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
+      gstRegistered: checkoutTaxContext.gstRegistered,
     });
   }, [
     referralPricing,
@@ -530,6 +533,7 @@ export default function WebinarCheckoutPage({
     availableCredits,
     checkoutTaxContext.isInternational,
     checkoutTaxContext.exportZeroRated,
+    checkoutTaxContext.gstRegistered,
   ]);
 
   // Periodic staleness check: detect if webinar has ended or been cancelled

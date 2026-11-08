@@ -2,6 +2,9 @@
  * @jest-environment node
  */
 
+// Priced and invoiced as a GST-registered platform (Haryana, the registered office).
+process.env.PLATFORM_GSTIN = "06AAFCF1234Q1ZN";
+
 jest.mock("../../lib/enterprise/outbound-webhooks/dispatch", () => ({
   dispatchWebhookEvent: jest.fn(),
 }));

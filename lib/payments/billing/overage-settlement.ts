@@ -20,6 +20,7 @@ import {
   computeOverageForBooking,
   surchargeTaxPaise,
 } from "@/lib/payments/billing/overage";
+import { currentGstRegime } from "@/lib/payments/tax/gst-regime";
 import { walletCredit, walletDebit } from "@/lib/api/organizations/wallet";
 import { orgBuyerCountry } from "@/lib/compliance/gst";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
@@ -519,6 +520,7 @@ async function recordMemberOverageCharge(
       amount: chargedPaise,
       originalAmount: effectiveMarginalPaise,
       taxAmount: taxPaise,
+      gstRegime: currentGstRegime(),
       // The member's tax invoice places the supply exactly as the booking's.
       buyerCountry: ctx.buyerCountry,
       isInternational: ctx.isInternational,
@@ -641,6 +643,7 @@ async function mintChildOverageAccrualPayment(
       amount,
       originalAmount: accrualPaise,
       taxAmount: taxPaise,
+      gstRegime: currentGstRegime(),
       currency,
       paymentMethod: "ENTERPRISE_INVOICE_ACCRUAL",
       paymentIntent: `overage_accrual_${globalThis.crypto.randomUUID()}`,

@@ -12,6 +12,7 @@ import {
   type CheckoutDiscountInput,
 } from "@/lib/payments/pricing/derive-checkout-amount";
 import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
+import { currentGstRegime } from "@/lib/payments/tax/gst-regime";
 import { getUserCredits } from "@/lib/referrals/service";
 
 export interface PendingCheckout {
@@ -48,6 +49,8 @@ interface QuoteFreshnessInput {
   amount: number;
   originalAmount: number;
   buyerCountry: string | null;
+  /** The held order's take that funded promo: 0 on a host-org sale. */
+  promoFeeBps: number;
   welcomeDiscountPaise: number | null;
   userId: string;
   appointmentType: Parameters<typeof appointmentTypeToServiceType>[0] | null;
@@ -134,11 +137,13 @@ async function resolveQuoteFreshness(input: QuoteFreshnessInput): Promise<{
   const rederived = await deriveCheckoutAmount({
     basePaise: input.originalAmount,
     buyerCountry: input.buyerCountry ?? "IN",
+    gstRegime: currentGstRegime(),
     serviceType: input.appointmentType
       ? appointmentTypeToServiceType(input.appointmentType)
       : "CONSULTING",
     discount: coupon.liveDiscount,
     welcomeDiscount: null,
+    promoFeeBps: input.promoFeeBps,
   });
   const currentTotalPaise = rederived.amount;
   if (currentTotalPaise !== input.amount) {
@@ -168,6 +173,8 @@ export async function readPendingCheckout(args: {
       taxAmount: true,
       currency: true,
       buyerCountry: true,
+      platformFeeBps: true,
+      hostOrganizationId: true,
       welcomeDiscountPaise: true,
       expiresAt: true,
       appointmentId: true,
@@ -237,6 +244,7 @@ export async function readPendingCheckout(args: {
     amount: payment.amount,
     originalAmount: payment.originalAmount,
     buyerCountry: payment.buyerCountry,
+    promoFeeBps: payment.hostOrganizationId ? 0 : (payment.platformFeeBps ?? 0),
     welcomeDiscountPaise: payment.welcomeDiscountPaise,
     userId: payment.user.id,
     appointmentType: a?.appointmentType ?? null,

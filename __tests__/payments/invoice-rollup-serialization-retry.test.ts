@@ -17,6 +17,9 @@
  * believed, and an exhausted retry is reported rather than swallowed.
  */
 
+// Priced and invoiced as a GST-registered platform (Haryana, the registered office).
+process.env.PLATFORM_GSTIN = "06AAFCF1234Q1ZN";
+
 const mockTransaction = jest.fn();
 const mockOrgFindUnique = jest.fn();
 const mockOrgCandidates = jest.fn();

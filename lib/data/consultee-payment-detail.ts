@@ -62,6 +62,8 @@ export interface ConsulteePaymentDetail {
   refunds: RefundDetail[];
   /** False while PLATFORM_GSTIN is unset: the PDF routes answer 503 then. */
   taxDocumentsAvailable: boolean;
+  /** Priced while the platform was not GST-registered: no GST, never a tax invoice. */
+  gstUnregistered: boolean;
   receiptHref: string | null;
   invoicePdfHref: string | null;
   creditNotes: { id: string; number: string; issuedAt: Date; href: string }[];
@@ -147,6 +149,7 @@ export async function readConsulteePaymentDetail(args: {
       gatewayRefundId: r.refundId,
     })),
     taxDocumentsAvailable: getPlatformSupplier() !== null,
+    gstUnregistered: payment.gstRegime === "UNREGISTERED",
     refundTimeline: presentation.timeline
       .filter((step) => step.kind)
       .map((step) => ({

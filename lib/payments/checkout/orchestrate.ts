@@ -72,6 +72,10 @@ import {
   resolveOrgFunding,
 } from "@/lib/payments/checkout/org-funding";
 import { commitCheckout } from "@/lib/payments/checkout/commit";
+import {
+  assertOrgBillingAvailable,
+  currentGstRegime,
+} from "@/lib/payments/tax/gst-regime";
 import { dispatchProgramBell } from "@/lib/payments/checkout/program-bell";
 
 export const REFERRAL_CREDITS_DROPPED_NOTICE =
@@ -152,6 +156,11 @@ export async function handleCheckout(
     referralCreditsDropped,
   } = orgFunding;
   let { billingAccountId, fundingSource, creditEffectiveLimit } = orgFunding;
+
+  // The rail cannot change under the lock (revalidateInsideLock refuses), so this gate holds.
+  if (fundingSource && fundingSource !== "PERSONAL") {
+    assertOrgBillingAvailable(currentGstRegime());
+  }
 
   // A buyer-paid domestic supply gets a consumer tax invoice, which must carry
   // the buyer's state; org rails bill on the org series and exports have none.

@@ -10,6 +10,9 @@
  * live purchase in its transaction, refusing one a refund revoked first.
  */
 
+// Priced and invoiced as a GST-registered platform (Haryana, the registered office).
+process.env.PLATFORM_GSTIN = "06AAFCF1234Q1ZN";
+
 jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
   captureMessage: jest.fn(),

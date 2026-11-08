@@ -16,6 +16,10 @@ import prisma from "@/lib/prisma";
 import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
 import { validatePlanCurrency } from "@/lib/payments/validation/currency-guards";
 import { deriveCheckoutAmount } from "@/lib/payments/pricing/derive-checkout-amount";
+import {
+  currentGstRegime,
+  type GstRegime,
+} from "@/lib/payments/tax/gst-regime";
 import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
 import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
 import { tombstoneAbortedGatewayOrder } from "@/lib/payments/checkout/gateway-intent";
@@ -360,6 +364,7 @@ export async function createApprovalPaymentIntent(
       originalAmount,
       taxAmount,
       isInternational,
+      gstRegime,
       currency,
       plan,
     } = await calculateAmount(params, buyerCountry);
@@ -402,7 +407,8 @@ export async function createApprovalPaymentIntent(
         existingPayment.originalAmount !== originalAmount ||
         existingPayment.taxAmount !== taxAmount ||
         existingPayment.isInternational !== isInternational ||
-        existingPayment.buyerCountry !== buyerCountry
+        existingPayment.buyerCountry !== buyerCountry ||
+        (existingPayment.gstRegime ?? gstRegime) !== gstRegime
       ) {
         // #1583 C-P0-01 — a live row frozen at a different pricing state (a
         // pre-tax mint, or the same total under another tax classification)
@@ -445,6 +451,7 @@ export async function createApprovalPaymentIntent(
       taxAmount,
       buyerCountry,
       isInternational,
+      gstRegime,
       currency,
     };
 
@@ -576,6 +583,7 @@ interface PreMintFields {
   taxAmount: number;
   buyerCountry: string;
   isInternational: boolean;
+  gstRegime: GstRegime;
   currency: Currency;
   preMintIntent: string;
   holdExpiresAt: Date;
@@ -601,6 +609,7 @@ async function createPreMintRow(
         taxAmount: fields.taxAmount,
         buyerCountry: fields.buyerCountry,
         isInternational: fields.isInternational,
+        gstRegime: fields.gstRegime,
         consumerStateCode: fields.consumerStateCode,
         currency: fields.currency,
         description: fields.description,
@@ -667,6 +676,7 @@ async function claimRowForRemint(
         taxAmount: fields.taxAmount,
         buyerCountry: fields.buyerCountry,
         isInternational: fields.isInternational,
+        gstRegime: fields.gstRegime,
         // A buyer now abroad has no Indian place of supply, so a state from an earlier mint is dropped.
         ...(fields.buyerCountry === "IN" ? {} : { consumerStateCode: null }),
         currency: fields.currency,
@@ -774,6 +784,7 @@ interface ApprovalAmount {
   originalAmount: number;
   taxAmount: number;
   isInternational: boolean;
+  gstRegime: GstRegime;
   currency: Currency;
   plan: { title: string };
 }
@@ -793,10 +804,9 @@ function planPricePaise(value: bigint | number, label: string): number {
 }
 
 /**
- * #1583 C-P0-01 — the pay-link charges the same tax as checkout by calling the
- * one price derivation (`deriveCheckoutAmount`). No discount code and no
- * referral credits ride a pay-link (owner decision Q3), so those inputs are
- * deliberately absent.
+ * The pay-link charges the same tax as checkout through the one price
+ * derivation (`deriveCheckoutAmount`). No discount code and no referral credits
+ * ride a pay-link, so those inputs are deliberately absent.
  */
 async function priceWithTax(
   basePaise: number,
@@ -805,12 +815,13 @@ async function priceWithTax(
 ): Promise<
   Pick<
     ApprovalAmount,
-    "amount" | "originalAmount" | "taxAmount" | "isInternational"
+    "amount" | "originalAmount" | "taxAmount" | "isInternational" | "gstRegime"
   >
 > {
   const derived = await deriveCheckoutAmount({
     basePaise,
     buyerCountry,
+    gstRegime: currentGstRegime(),
     // A trial is a taster of a subscription plan, so it is taxed as one.
     serviceType: appointmentTypeToServiceType(
       appointmentType === "TRIAL" ? "SUBSCRIPTION" : appointmentType,
@@ -821,6 +832,7 @@ async function priceWithTax(
     originalAmount: derived.originalAmount,
     taxAmount: derived.taxAmount,
     isInternational: derived.isInternational,
+    gstRegime: derived.gstRegime,
   };
 }
 
@@ -1011,6 +1023,7 @@ export interface ExistingApprovalPayment {
   isInternational: boolean;
   /** Place of supply on the invoice; two countries can carry one tax figure. */
   buyerCountry: string | null;
+  gstRegime: GstRegime | null;
   currency: Currency;
   expiresAt: Date | null;
   /**
@@ -1064,6 +1077,7 @@ const EXISTING_PAYMENT_SELECT = {
   taxAmount: true,
   isInternational: true,
   buyerCountry: true,
+  gstRegime: true,
   currency: true,
   expiresAt: true,
 } as const;
@@ -1160,6 +1174,7 @@ export async function findExistingLivePayment(params: {
       taxAmount: payment.taxAmount,
       isInternational: payment.isInternational,
       buyerCountry: payment.buyerCountry,
+      gstRegime: payment.gstRegime,
       currency: payment.currency,
       expiresAt: payment.expiresAt,
       requestIsPayable:
@@ -1198,6 +1213,7 @@ export async function findExistingLivePayment(params: {
           taxAmount: payment.taxAmount,
           isInternational: payment.isInternational,
           buyerCountry: payment.buyerCountry,
+          gstRegime: payment.gstRegime,
           currency: payment.currency,
           expiresAt: payment.expiresAt,
           requestIsPayable:

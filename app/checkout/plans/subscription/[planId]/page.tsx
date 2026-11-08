@@ -253,6 +253,7 @@ export default function SubscriptionCheckoutPage({
         body: JSON.stringify({
           code: codeToApply,
           amount: planData?.data?.price || 0,
+          consultantProfileId: planData?.data?.consultantProfile?.id,
         }),
       });
 
@@ -478,8 +479,10 @@ export default function SubscriptionCheckoutPage({
           ? null
           : referralPricing?.welcomeDiscount,
       creditCapBps: referralPricing?.creditCapBps,
+      promoFeeBps: referralPricing?.promoFeeBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
+      gstRegistered: checkoutTaxContext.gstRegistered,
     });
   }, [
     referralPricing,
@@ -490,6 +493,7 @@ export default function SubscriptionCheckoutPage({
     availableCredits,
     checkoutTaxContext.isInternational,
     checkoutTaxContext.exportZeroRated,
+    checkoutTaxContext.gstRegistered,
   ]);
 
   // Periodic staleness check: warn once the first cycle has elapsed.

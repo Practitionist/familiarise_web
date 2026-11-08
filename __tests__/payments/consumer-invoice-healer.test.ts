@@ -2,12 +2,13 @@
  * @jest-environment node
  */
 
-// Invariant: an un-invoiced SUCCEEDED consumer payment is minted by a bounded, rotating slice, and a missing GSTIN is one config skip.
+// Invariant: an un-invoiced SUCCEEDED consumer payment is minted by a bounded, rotating slice; a missing GSTIN is one config skip plus the turnover alarm.
 
 const mockSupplier = jest.fn();
 const mockMint = jest.fn();
 const mockFindMany = jest.fn();
 const mockCapture = jest.fn();
+const mockAggregate = jest.fn();
 
 jest.mock("@/lib/pdf/supplier", () => ({
   ...jest.requireActual("@/lib/pdf/supplier"),
@@ -28,7 +29,12 @@ jest.mock("@/lib/observability/report", () => ({
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
   default: {
-    payment: { findMany: (...a: unknown[]) => mockFindMany(...a) },
+    payment: {
+      findMany: (...a: unknown[]) => mockFindMany(...a),
+      aggregate: () => mockAggregate("payment"),
+    },
+    paymentLeg: { aggregate: () => mockAggregate("credits") },
+    refund: { aggregate: () => mockAggregate("refunds") },
     $transaction: (fn: (tx: unknown) => unknown) => fn({}),
   },
 }));
@@ -44,13 +50,34 @@ beforeEach(() => {
   mockSupplier.mockReturnValue({ gstin: "29ABCDE1234F1Z5" });
 });
 
-it("skips without reading payments when PLATFORM_GSTIN is unset", async () => {
+it("mints nothing while unregistered and alarms once at ₹15 lakh of FY turnover", async () => {
   mockSupplier.mockReturnValue(null);
   jest.spyOn(console, "warn").mockImplementation(() => {});
-  const result = await healConsumerInvoices({ limit: 25, now });
-  expect(result.skipped).toBe("PLATFORM_GSTIN not configured");
+  const sums = (amount: number) => (kind: string) =>
+    kind === "payment"
+      ? { _sum: { amount, taxAmount: 0 } }
+      : kind === "credits"
+        ? { _sum: { amountPaise: 6_000_000 } }
+        : { _sum: { amountPaise: 8_000_000 } };
+
+  mockAggregate.mockImplementation(sums(100_000_000));
+  const quiet = await healConsumerInvoices({ limit: 25, now });
+  expect(quiet.skipped).toBe("PLATFORM_GSTIN not configured");
+  expect(quiet.turnover).toMatchObject({
+    turnoverPaise: 98_000_000,
+    alarmed: false,
+  });
   expect(mockFindMany).not.toHaveBeenCalled();
   expect(mockCapture).not.toHaveBeenCalled();
+
+  mockAggregate.mockImplementation(sums(154_000_000));
+  const loud = await healConsumerInvoices({ limit: 25, now });
+  expect(loud.turnover).toMatchObject({
+    turnoverPaise: 152_000_000,
+    alarmed: true,
+  });
+  expect(mockCapture).toHaveBeenCalledTimes(1);
+  expect(String(mockCapture.mock.calls[0][0])).toMatch(/₹20,00,000/);
 });
 
 it("mints from the pivot, wraps around, and treats a lost mint race as done", async () => {

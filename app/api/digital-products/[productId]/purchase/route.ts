@@ -104,6 +104,7 @@ export async function POST(_request: Request, { params }: RouteParams) {
           originalAmountPaise: String(derived.originalAmount),
           taxAmountPaise: String(derived.taxAmount),
           buyerCountry,
+          gstRegime: derived.gstRegime,
         };
         const order = await createRazorpayOrder({
           amount: derived.amount,

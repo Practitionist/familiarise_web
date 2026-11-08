@@ -275,6 +275,7 @@ export default function ClassCheckoutPage({
         body: JSON.stringify({
           code: codeToApply,
           amount: batchPricePaise,
+          consultantProfileId: planData?.data?.consultantProfile?.id,
         }),
       });
 
@@ -455,8 +456,10 @@ export default function ClassCheckoutPage({
           ? null
           : referralPricing?.welcomeDiscount,
       creditCapBps: referralPricing?.creditCapBps,
+      promoFeeBps: referralPricing?.promoFeeBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
+      gstRegistered: checkoutTaxContext.gstRegistered,
     });
   }, [
     referralPricing,
@@ -467,6 +470,7 @@ export default function ClassCheckoutPage({
     availableCredits,
     checkoutTaxContext.isInternational,
     checkoutTaxContext.exportZeroRated,
+    checkoutTaxContext.gstRegistered,
   ]);
 
   // Periodic staleness check: detect if all class sessions have ended or been cancelled

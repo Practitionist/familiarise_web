@@ -47,6 +47,14 @@ export function nextMonthStart(monthStart: Date): Date {
   );
 }
 
+/** The instant that begins the Indian financial year (1 April, IST) containing `now`. */
+export function istFinancialYearStart(now: Date = new Date()): Date {
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  const year =
+    ist.getUTCMonth() >= 3 ? ist.getUTCFullYear() : ist.getUTCFullYear() - 1;
+  return new Date(Date.UTC(year, 3, 1) - IST_OFFSET_MS);
+}
+
 /** The instant that begins the IST calendar month named by `YYYY-MM`. */
 export function istMonthStart(period: string): Date {
   const [year, month] = period.split("-").map(Number);

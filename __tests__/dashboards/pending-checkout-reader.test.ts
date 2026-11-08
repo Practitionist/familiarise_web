@@ -7,6 +7,9 @@
  * payment never comes back, and the select names only rendered columns.
  */
 
+// Priced and invoiced as a GST-registered platform (Haryana, the registered office).
+process.env.PLATFORM_GSTIN = "06AAFCF1234Q1ZN";
+
 type Where = { id: string; userId: string };
 const getUserCreditsMock = jest.fn(async () => ({ totalAvailable: 0 }));
 jest.mock("../../lib/referrals/service", () => ({
@@ -23,6 +26,8 @@ const makeRow = (overrides: Record<string, unknown>) => ({
   taxAmount: 1800,
   currency: "INR",
   buyerCountry: "IN",
+  platformFeeBps: 2000,
+  hostOrganizationId: null,
   welcomeDiscountPaise: null,
   expiresAt: null,
   appointmentId: "apt-1",
@@ -38,13 +43,13 @@ const ROWS: Array<Record<string, unknown>> = [
   makeRow({}),
   makeRow({
     id: "pay-single-use-coupon",
-    amount: 9440,
-    taxAmount: 1440,
+    amount: 10620,
+    taxAmount: 1620,
     appointmentId: "apt-2",
     discountCode: {
       code: "SOLO20",
       discountType: "PERCENTAGE",
-      discountValue: 20,
+      discountValue: 10,
       maxDiscount: null,
       isActive: true,
       expiresAt: null,
@@ -54,13 +59,13 @@ const ROWS: Array<Record<string, unknown>> = [
   }),
   makeRow({
     id: "pay-exhausted-coupon",
-    amount: 9440,
-    taxAmount: 1440,
+    amount: 10620,
+    taxAmount: 1620,
     appointmentId: "apt-3",
     discountCode: {
       code: "OVERBOOKED",
       discountType: "PERCENTAGE",
-      discountValue: 20,
+      discountValue: 10,
       maxDiscount: null,
       isActive: true,
       expiresAt: null,
@@ -133,8 +138,8 @@ it("does not self-exhaust a single-use coupon reserved on the current PENDING pa
   expect(out).toMatchObject({
     paymentId: "pay-single-use-coupon",
     discountCode: "SOLO20",
-    totalPaise: 9440,
-    currentTotalPaise: 9440,
+    totalPaise: 10620,
+    currentTotalPaise: 10620,
     quoteStaleReason: null,
   });
 });

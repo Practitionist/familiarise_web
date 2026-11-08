@@ -247,6 +247,14 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     description:
       "Your checkout is still being prepared. Try again in a moment — your card was not charged.",
   },
+  [ErrorTypes.GST_REGISTRATION_REQUIRED]: {
+    title: "Organisation Billing Not Available Yet",
+    description: null,
+  },
+  [ErrorTypes.GST_CONFIG_INVALID]: {
+    title: "Checkout Temporarily Unavailable",
+    description: null,
+  },
   [ErrorTypes.SEAT_HOLD_LAPSED]: {
     title: "Your Seat Hold Ended",
     description:

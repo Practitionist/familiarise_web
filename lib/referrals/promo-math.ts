@@ -1,8 +1,8 @@
 /**
  * Referral promo math shared by the checkout server, the price preview and the routes that
- * feed it. Client-safe: no Prisma, no server imports. Every promo on an order (welcome
- * discount plus credits) stays within `creditCapBps` of the list price, which never exceeds
- * that order's take rate.
+ * feed it. Client-safe: no Prisma, no server imports. The welcome discount plus credits stay
+ * within `creditCapBps` of the list price, and all platform-funded promo on an order stays
+ * within `platformFundedCapPaise` (lib/payments/pricing/platform-funded-cap.ts).
  */
 import { z } from "zod";
 
@@ -22,6 +22,8 @@ export type WelcomeDiscount = z.infer<typeof welcomeDiscountSchema>;
 export const referralPricingSchema = z.object({
   welcomeDiscount: welcomeDiscountSchema.nullable(),
   creditCapBps: bps,
+  /** The take that can fund platform promo on this order; 0 on a fee-waiver or host-org order. */
+  promoFeeBps: bps,
 });
 
 export type ReferralPricing = z.infer<typeof referralPricingSchema>;
@@ -39,24 +41,35 @@ export const referralTermsSchema = z.object({
 
 export type ReferralTerms = z.infer<typeof referralTermsSchema>;
 
-/** Pre-tax welcome discount: `min(round(list × bps / 10 000), maxPaise, list)`. */
+/** Pre-tax welcome discount: `min(round(list × bps / 10 000), maxPaise, list, platform-funded cap)`. */
 export function computeWelcomeDiscountPaise(
   listPaise: number,
   welcome: WelcomeDiscount | null | undefined,
+  platformFundedCapPaise: number,
 ): number {
   if (!welcome || welcome.bps <= 0) return 0;
   const raw = Math.round((listPaise * welcome.bps) / 10_000);
-  return Math.min(raw, welcome.maxPaise, listPaise);
+  return Math.max(
+    0,
+    Math.min(raw, welcome.maxPaise, listPaise, platformFundedCapPaise),
+  );
 }
 
-/** Credits an order may still spend: `floor(list × capBps / 10 000)` less the welcome discount. */
+/**
+ * Credits an order may still spend: `floor(list × capBps / 10 000)` less the welcome
+ * discount, and never more than the platform-funded cap the discounts left over.
+ */
 export function creditCapPaise(
   listPaise: number,
   capBps: number,
   welcomeDiscountPaise: number,
+  platformFundedLeftPaise: number,
 ): number {
   const cap = Math.floor((listPaise * Math.max(0, capBps)) / 10_000);
-  return Math.max(0, cap - welcomeDiscountPaise);
+  return Math.max(
+    0,
+    Math.min(cap - welcomeDiscountPaise, platformFundedLeftPaise),
+  );
 }
 
 /** Whether the welcome discount survives: the cash left after credits must clear its floor. */

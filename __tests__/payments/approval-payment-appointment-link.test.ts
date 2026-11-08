@@ -23,6 +23,9 @@
  *     contract, so a revert fails loudly).
  */
 
+// Priced and invoiced as a GST-registered platform (Haryana, the registered office).
+process.env.PLATFORM_GSTIN = "06AAFCF1234Q1ZN";
+
 import fs from "fs";
 import path from "path";
 import {
@@ -803,6 +806,7 @@ describe("approval pay-links charge the same tax as checkout (#1583 C-P0-01)", (
     const derived = await deriveCheckoutAmount({
       basePaise: 0,
       buyerCountry: "IN",
+      gstRegime: "REGISTERED",
     });
     expect(derived).toMatchObject({
       amount: 0,

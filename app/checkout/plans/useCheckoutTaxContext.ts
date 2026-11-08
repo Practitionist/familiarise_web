@@ -7,6 +7,8 @@ type CheckoutTaxContext = {
   isInternational: boolean;
   /** Server-decided (#1230): international AND a valid platform LUT exists. */
   exportZeroRated: boolean;
+  /** Server-decided from PLATFORM_GSTIN; false while the platform charges no GST. */
+  gstRegistered: boolean;
   /** #1365 — remembered GST billing state, used to pre-fill the picker. */
   billingStateCode: string | null;
   /**
@@ -23,6 +25,7 @@ const DEFAULT_CONTEXT: CheckoutTaxContext = {
   buyerCountry: "IN",
   isInternational: false,
   exportZeroRated: false,
+  gstRegistered: true,
   billingStateCode: null,
   referralCreditsPaise: null,
   referralCreditsLoaded: false,
