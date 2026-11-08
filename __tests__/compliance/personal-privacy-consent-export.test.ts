@@ -99,7 +99,11 @@ import {
 import { GET as getExport } from "../../app/api/user/privacy/export/route";
 
 const mockPrisma = prisma as unknown as {
-  consentArtifact: { findMany: jest.Mock; create: jest.Mock };
+  consentArtifact: {
+    findMany: jest.Mock;
+    create: jest.Mock;
+    updateMany: jest.Mock;
+  };
   notificationPreference: {
     findUnique: jest.Mock;
     upsert: jest.Mock;
