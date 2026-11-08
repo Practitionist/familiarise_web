@@ -13,7 +13,10 @@ import { REDACTED_ERASED_BODY } from "@/lib/email/classify";
 import { RECIPIENT_ERASED_REFUSAL } from "@/lib/email/delivery-policy";
 import { ERASED_RECIPIENT_PREFIX } from "@/lib/email/erased-recipient";
 import { normaliseEmail } from "@/lib/email/suppression";
-import { withdrawNewsletterSubjects } from "@/lib/newsletter/consent-link";
+import {
+  lockNewsletterRows,
+  withdrawNewsletterSubjects,
+} from "@/lib/newsletter/consent-link";
 import { UNSETTLED } from "@/lib/retry/provider-window";
 
 /** The provider may already hold the batch's key, so its other recipients need an operator. */
@@ -60,17 +63,15 @@ export async function scrubMailFootprintTx(
   const newsletterRows = {
     OR: [{ userId: input.userId }, { email: sameAddress }],
   };
-  const subjects = await tx.newsletterSubscriber.findMany({
+  const now = new Date();
+  const subjects = await lockNewsletterRows(tx, newsletterRows, now);
+  const newsletter = await tx.newsletterSubscriber.deleteMany({
     where: newsletterRows,
-    select: { consentSubjectId: true },
   });
   const consentWithdrawn = await withdrawNewsletterSubjects(tx, {
     email,
     subjectIds: subjects.map((row) => row.consentSubjectId),
-    now: new Date(),
-  });
-  const newsletter = await tx.newsletterSubscriber.deleteMany({
-    where: newsletterRows,
+    now,
   });
   const emails = await tx.failedEmail.updateMany({
     where: { status: UNSETTLED, ...theirs },

@@ -34,6 +34,7 @@ export function hashIp(ip: string | null | undefined): string | null {
 /**
  * Row-locks the matching subscribers and returns their linkage as committed after the
  * lock, so a confirmation racing this transaction is seen, never a stale snapshot.
+ * Lock order for every consent withdrawal: NewsletterSubscriber rows first, then ConsentArtifact rows.
  */
 export async function lockNewsletterRows(
   tx: Pick<Tx, "newsletterSubscriber">,
@@ -123,10 +124,7 @@ export async function unsubscribeForWithdrawnConsent(
       { email: normalizeNewsletterEmail(input.email) },
     ],
   };
-  const rows = await tx.newsletterSubscriber.findMany({
-    where,
-    select: { consentSubjectId: true },
-  });
+  const rows = await lockNewsletterRows(tx, where, input.now);
   const { count } = await tx.newsletterSubscriber.updateMany({
     where: {
       ...where,

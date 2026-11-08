@@ -50,7 +50,7 @@ jest.mock("../../lib/prisma", () => ({
     newsletterSubscriber: {
       upsert: jest.fn(),
       updateMany: jest.fn(async () => ({ count: 1 })),
-      findMany: jest.fn(async () => []),
+      updateManyAndReturn: jest.fn(async () => []),
     },
     payment: {
       findMany: jest.fn(),
@@ -116,7 +116,11 @@ const mockPrisma = prisma as unknown as {
     updateMany: jest.Mock;
   };
   user: { findUnique: jest.Mock };
-  newsletterSubscriber: { upsert: jest.Mock; updateMany: jest.Mock };
+  newsletterSubscriber: {
+    upsert: jest.Mock;
+    updateMany: jest.Mock;
+    updateManyAndReturn: jest.Mock;
+  };
   payment: { findMany: jest.Mock };
   supportCase: { findMany: jest.Mock };
   membership: { findMany: jest.Mock };
@@ -270,6 +274,11 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
         },
         data: { status: "UNSUBSCRIBED", unsubscribedAt: expect.any(Date) },
       });
+      // Subscriber rows are locked before any consent artifact is written.
+      expect(
+        mockPrisma.newsletterSubscriber.updateManyAndReturn.mock
+          .invocationCallOrder[0],
+      ).toBeLessThan(mockWithdrawConsent.mock.invocationCallOrder[0]);
       // A sign-up made before the account existed holds a pseudonymous artifact.
       expect(mockPrisma.consentArtifact.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({

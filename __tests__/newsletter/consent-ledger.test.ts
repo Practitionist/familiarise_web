@@ -30,10 +30,16 @@ const matches = (row: Artifact, where: Where) =>
 const mockSubscriberFind = jest.fn();
 const mockSubscriberUpdate = jest.fn();
 const mockUserFind = jest.fn();
+const mockSubscriberLock = jest.fn();
+const lockOrder: string[] = [];
 const tx = {
   newsletterSubscriber: {
     findUnique: (...args: unknown[]) => mockSubscriberFind(...args),
     updateMany: (...args: unknown[]) => mockSubscriberUpdate(...args),
+    updateManyAndReturn: (...args: unknown[]) => {
+      lockOrder.push("subscriber");
+      return mockSubscriberLock(...args);
+    },
   },
   user: { findUnique: (...args: unknown[]) => mockUserFind(...args) },
   consentArtifact: {
@@ -51,6 +57,7 @@ const tx = {
       where: Where;
       data: Partial<Artifact>;
     }) => {
+      lockOrder.push("artifact");
       const hit = artifacts.filter((row) => matches(row, where));
       hit.forEach((row) => Object.assign(row, data));
       return { count: hit.length };
@@ -149,14 +156,19 @@ describe("the newsletter writes and withdraws one consent ledger", () => {
     expect(artifacts).toHaveLength(0);
   });
 
-  it("withdraws the artifact on unsubscribe, in the same transaction", async () => {
+  it("withdraws the artifact on unsubscribe, locking the subscriber row first", async () => {
     await confirm();
-    mockSubscriberFind.mockResolvedValue({ userId: null });
+    mockSubscriberLock.mockResolvedValue([
+      { userId: null, consentSubjectId: null },
+    ]);
+    lockOrder.length = 0;
 
     await expect(
       unsubscribe({ email: "reader@example.com", token: "t" }),
     ).resolves.toEqual({ ok: true });
     expect(artifacts[0].withdrawnAt).toBeInstanceOf(Date);
+    expect(lockOrder[0]).toBe("subscriber");
+    expect(lockOrder).toContain("artifact");
   });
 
   it("withdraws the stored subject after the auth secret rotates", async () => {
@@ -165,10 +177,9 @@ describe("the newsletter writes and withdraws one consent ledger", () => {
     expect(stored).toBe(artifacts[0].subjectPseudonymousId);
 
     process.env.BETTER_AUTH_SECRET = "a-rotated-auth-secret-of-enough-length";
-    mockSubscriberFind.mockResolvedValue({
-      userId: null,
-      consentSubjectId: stored,
-    });
+    mockSubscriberLock.mockResolvedValue([
+      { userId: null, consentSubjectId: stored },
+    ]);
     await unsubscribe({ email: "reader@example.com", token: "t" });
 
     expect(artifacts[0].withdrawnAt).toBeInstanceOf(Date);

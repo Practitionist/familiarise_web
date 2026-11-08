@@ -19,6 +19,7 @@ import type { BroadcastAudience } from "./broadcast-audience";
 import { verifyConfirmToken, verifyUnsubscribeToken } from "./tokens";
 import {
   hashIp,
+  lockNewsletterRows,
   newsletterSubjectId,
   normalizeNewsletterEmail,
   recordNewsletterConsent,
@@ -219,13 +220,10 @@ export async function unsubscribe(params: {
 
   const now = new Date();
   await prisma.$transaction(async (tx) => {
+    const [row] = await lockNewsletterRows(tx, { email }, now);
     await tx.newsletterSubscriber.updateMany({
       where: { email, status: { not: NewsletterStatus.UNSUBSCRIBED } },
       data: { status: NewsletterStatus.UNSUBSCRIBED, unsubscribedAt: now },
-    });
-    const row = await tx.newsletterSubscriber.findUnique({
-      where: { email },
-      select: { userId: true, consentSubjectId: true },
     });
     await withdrawNewsletterConsent(tx, {
       email,
