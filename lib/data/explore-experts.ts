@@ -132,7 +132,7 @@ export const orgMembershipInclude = {
           // (getCuratedExperts prerenders /explore/experts) where the column
           // may not exist yet — selecting it fails the build with P2022.
           // Re-add once the column is live; toConsultantCard already reads it
-          // defensively. See orgKindCounts below for the same reason.
+          // defensively.
           brandingProfile: { select: { logo: true } },
         },
       },
@@ -297,7 +297,6 @@ export async function fetchExpertsMetadata() {
           totalConsultants,
           independentCount,
           agencyCount,
-          orgKindCounts,
           ratedProfiles,
           completedSessions,
         ] = await Promise.all([
@@ -318,69 +317,6 @@ export async function fetchExpertsMetadata() {
               isIndependent: false,
             },
           }),
-          // Experts hosted by each org kind (verified, non-deleted). An expert
-          // with memberships in two kinds counts once per kind — the tabs use
-          // the independent/agency counts above; this powers the org-kind
-          // sub-filter inside Agency/Org.
-          //
-          // Fail-soft to zeros: this metadata runs at BUILD time (prerender of
-          // /explore/experts) where the `kind` column may not exist yet (P2022)
-          // because the column lands via db push after merge. A zeroed breakdown
-          // only hides the sub-filter counts — never the experts themselves.
-          (async () => {
-            try {
-              const rows = await prisma.membership.groupBy({
-                by: ["organizationId"],
-                where: {
-                  role: "EXPERT",
-                  status: "ACTIVE",
-                  consultantProfile: {
-                    verificationStatus: "VERIFIED",
-                    deletedAt: null,
-                    isIndependent: false,
-                  },
-                  organization: {
-                    canHost: true,
-                    status: "ACTIVE",
-                    isPublic: true,
-                    deletedAt: null,
-                    kind: { not: null },
-                  },
-                },
-                _count: { organizationId: true },
-              });
-              if (rows.length === 0)
-                return { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
-              const orgIds = rows.map((r) => r.organizationId);
-              const orgs = await prisma.organization.findMany({
-                where: { id: { in: orgIds } },
-                select: { id: true, kind: true },
-              });
-              const kindOf = new Map(orgs.map((o) => [o.id, o.kind]));
-              const out = { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
-              for (const row of rows) {
-                const kind = kindOf.get(row.organizationId);
-                if (kind && kind in out) {
-                  // _count.organizationId = experts hosted by this org.
-                  out[kind as keyof typeof out] += row._count.organizationId;
-                }
-              }
-              return out;
-            } catch (error) {
-              // Fail-soft ONLY on the missing-column case (P2022): the column
-              // lands via db push after merge. Anything else (notably transient
-              // pooler failures) must throw so the build retry and error
-              // paths run — and a swallowed transient must never become a
-              // "successful" zero-count cached for 300s.
-              if (
-                error instanceof Prisma.PrismaClientKnownRequestError &&
-                error.code === "P2022"
-              ) {
-                return { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
-              }
-              throw error;
-            }
-          })(),
           // #1485 / #1300 — the PUBLISHED 1:1 score, never the raw `rating`
           // mean (which defaults to 0 on every unreviewed profile). NULL below the
           // publication gate, so filtering it out leaves publishable scores only;
@@ -415,7 +351,6 @@ export async function fetchExpertsMetadata() {
             independent: independentCount,
             agency: agencyCount,
           },
-          orgKindCounts,
           consultantsByDomain: domainsWithSubs.map((d) => ({
             id: d.id,
             name: d.name,
@@ -542,11 +477,9 @@ export const getRecentReviews = (limit: number = 6) =>
 // Next takes the minimum of the segment interval and every data cache entry read
 // during the render, so the old 120 was silently capping that page's ISR window.
 export type CuratedAffiliation = "independent" | "agency" | null;
-export type CuratedOrgKind = "AGENCY" | "ENTERPRISE" | "SOLO_PRACTICE" | null;
 
 export function affiliationWhere(
   affiliationType: CuratedAffiliation,
-  orgKind?: CuratedOrgKind | null,
   orgSlug?: string | null,
 ): Prisma.ConsultantProfileWhereInput {
   const conditions: Prisma.ConsultantProfileWhereInput[] = [];
@@ -554,18 +487,16 @@ export function affiliationWhere(
     conditions.push({ isIndependent: true });
   else if (affiliationType === "agency")
     conditions.push({ isIndependent: false });
-  // Single shared memberships.some so orgKind + orgSlug must hold on the SAME
-  // membership (see the API route for why two existentials are wrong), with
-  // the same public-org constraints as orgMembershipInclude.
-  if (orgKind || orgSlug) {
+  // Single-org drill-down, with the same public-org constraints as
+  // orgMembershipInclude.
+  if (orgSlug) {
     conditions.push({
       memberships: {
         some: {
           role: "EXPERT",
           status: "ACTIVE",
           organization: {
-            ...(orgKind ? { kind: orgKind } : {}),
-            ...(orgSlug ? { slug: orgSlug } : {}),
+            slug: orgSlug,
             canHost: true,
             status: "ACTIVE",
             isPublic: true,
@@ -583,14 +514,13 @@ export const getCuratedExperts = unstable_cache(
     sort: "rating" | "trending" | "newest",
     limit: number = 8,
     affiliationType: CuratedAffiliation = null,
-    orgKind: CuratedOrgKind = null,
   ) => {
     const rows = await prisma.consultantProfile.findMany({
       // #781 §B — soft-deleted profiles leave public surfaces
       where: {
         AND: [
           { verificationStatus: "VERIFIED", deletedAt: null },
-          affiliationWhere(affiliationType, orgKind),
+          affiliationWhere(affiliationType),
         ],
       },
       relationLoadStrategy: "join",
@@ -619,12 +549,11 @@ export const getDefaultConsultantsPage = unstable_cache(
     sort: string,
     limit: number,
     affiliationType: CuratedAffiliation = null,
-    orgKind: CuratedOrgKind = null,
   ) => {
     const where: Prisma.ConsultantProfileWhereInput = {
       AND: [
         { verificationStatus: "VERIFIED", deletedAt: null },
-        affiliationWhere(affiliationType, orgKind),
+        affiliationWhere(affiliationType),
       ],
     };
     const [rows, total] = await Promise.all([
