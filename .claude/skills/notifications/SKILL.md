@@ -57,7 +57,7 @@ All three are registered once in `lib/cron/cleanup-registry.ts` and run under `w
 ## Dead-letter reasons (`lastError`)
 
 - **Expected, never page, excluded from the ops digest and Needs attention:** `policy:` (a recipient opted out after staging, e.g. `policy:audience_revoked`), `suppressed:` (email address on `EmailSuppression`), `held:pre-launch` (the `EMAIL_DELIVERY_MODE` guard, `lib/email/held.ts`).
-- **Actionable:** every `review:` reason — `review:erased_recipient` (a queued newsletter batch the provider may have seen held an erased address), `review:provider_acceptance_unknown`, `review:render_failed` (a required email whose template threw; fix the template, never replay), `review:legacy_delivery_format`, `review:legacy_broadcast` (legacy cutover guards in `lib/novu/outbox.ts`, to be deleted after the production release), `review:batch_recipient_suppressed`. A terminal Novu refusal (`trigger_not_active`, workflow not found, `invalid_recipients`) splits into its own `DEAD_LETTER` row.
+- **Actionable:** every `review:` reason — `review:erased_recipient` (a queued newsletter batch the provider may have seen held an erased address), `review:provider_acceptance_unknown`, `review:render_failed` (a required email whose template threw; fix the template, never replay), `review:batch_recipient_suppressed`. A terminal Novu refusal (`trigger_not_active`, workflow not found, `invalid_recipients`) splits into its own `DEAD_LETTER` row.
 - Expected prefixes: `EXPECTED_REFUSAL_PREFIXES` (`lib/email/replay-policy.ts`), `EXPECTED_BELL_DEAD_LETTER_PREFIXES` (`lib/backoffice/queue-predicates.ts`).
 
 ## Quota math
@@ -92,7 +92,7 @@ Novu Free is 10,000 workflow runs a month, counted across Development **and** Pr
 
 ## One-time operations (Novu)
 
-`scripts/novu/clear-native-mutes.ts` (dry run, then `--apply`, `--env production` for Production) clears stray native mutes **before** `npm run novu:sync` makes families read-only. `scripts/novu/scrub-subscriber-pii.ts` (same flags) nulls the email, names, phone, avatar and `data` that the old mirror copied onto subscribers. It prints counts and field names only. Development was scrubbed on 2026-11-07; Production runs at the release promotion. Previews built on older code can write the profile data back until they rebase. Both scripts are deleted after the Production run. Production steps are in the go-live skill and `docs/notifications/05-pre-production-checklist.md`.
+None are pending. The native-mute reset, the subscriber PII scrub, the Production sync, In-App HMAC and the outbox recount were all done on 2026-11-08 (go-live skill, step 13). A new environment only needs `npm run novu:sync -- --env <env>` and two clean `npm run novu:check` runs.
 
 ## Vendor configuration is not in the code
 
@@ -100,8 +100,12 @@ Code audits and tests cannot see what is set in the Resend, Novu or Netlify dash
 
 ## Verify
 
-`npx jest __tests__/notifications __tests__/email/unsubscribe.test.ts` (outbox, preferences single owner and strict PUT, the settings panel, the role map, templates, sync, clear-native-mutes, unsubscribe and resubscribe) and `npx tsc --noEmit`. For a new event, `npm run novu:check` against Development (wait five minutes after a sync and require two clean runs).
+`npx jest __tests__/notifications __tests__/email/unsubscribe.test.ts` (outbox, preferences single owner and strict PUT, the settings panel, the role map, templates, sync, unsubscribe and resubscribe) and `npx tsc --noEmit`. For a new event, `npm run novu:check` against Development (wait five minutes after a sync and require two clean runs).
 
 `__tests__/db/notification-outbox.db.test.ts` runs against real Postgres (see the booking verification reference, §11) and pins policy SQL/JS parity, page dedupe, the terminal split and compare-and-set settles.
 
 Relay fault drills run locally, never on a preview: previews refuse every relay and job run (`JOB_RUN_PRODUCTION_ONLY`), because they share the production database. Run `runNotificationDrainTick` (`jobs/notifications/drain-notification-outbox.ts`) against the disposable `localhost:5432/ci` Postgres with `NOVU_DEVELOPMENT_KEY` only, never the shared database URL, and set dummy `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`, because `lib/redis.ts` throws at import without them.
+
+## Deprecated & Superseded Approaches
+
+- The `clear-native-mutes` script and the `scrub-subscriber-pii` script were one-time cleanups that ran on Production on 2026-11-08 and are deleted. The relay's legacy guards (`review:legacy_delivery_format`, `review:legacy_broadcast`) are deleted too; a row with a `lastError` but no `firstAttemptAt` is now simply sent. Nothing writes the `BROADCAST` outbox kind, though the enum value remains in the schema.
