@@ -19,6 +19,7 @@ import { FaqEditor } from "@/components/planner/components/form-fields/FaqEditor
 import { ContentItemsEditor } from "./ContentItemsEditor";
 import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
 import { OfferingEditor } from "./OfferingEditor";
+import { WaitingCountProvider } from "./waiting-count";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { invalidateOfferingQueries } from "@/components/planner/hooks/usePlanner";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
@@ -230,14 +231,16 @@ export function OfferingEditorContainer({
   const stats = useQuery({
     queryKey: offeringStatsQueryKey(consultantId),
     queryFn: fetchOfferingStats,
-    enabled: unpublishCanStrand,
+    enabled: unpublishCanStrand || (isEvent && !onSave && !!planId),
     staleTime: 60_000,
   });
-  const bookings = planId
-    ? (stats.data?.rows.find(
+  const statRow = planId
+    ? stats.data?.rows.find(
         (r) => `${r.planType}:${r.planId}` === offeringStatKey(type, planId),
-      )?.bookings ?? 0)
-    : 0;
+      )
+    : undefined;
+  const bookings = statRow?.bookings ?? 0;
+  const waitingCount = statRow?.waitingCount ?? 0;
   // #1527 review — an unresolved or failed stats read must not read as "0
   // bookings": that let an unpublish through with no confirmation while the
   // real count was simply unknown.
@@ -345,7 +348,7 @@ export function OfferingEditorContainer({
   };
 
   return (
-    <>
+    <WaitingCountProvider value={waitingCount}>
       <OfferingEditor
         manifest={effectiveManifest}
         form={form}
@@ -444,6 +447,6 @@ export function OfferingEditorContainer({
           setPendingUnpublish(null);
         }}
       />
-    </>
+    </WaitingCountProvider>
   );
 }

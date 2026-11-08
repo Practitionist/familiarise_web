@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
+import { WaitingCountBadge } from "@/components/booking/WaitingCountBadge";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import {
@@ -200,6 +201,7 @@ export function OfferingCard({
                 size="sm"
               />
             )}
+            <WaitingCountBadge count={row.waitingCount} />
             {row.isCollaborated && row.collaboratorRole && (
               <StatusBadge
                 label={

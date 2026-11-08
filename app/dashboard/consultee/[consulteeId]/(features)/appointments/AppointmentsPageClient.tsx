@@ -13,7 +13,7 @@ import { mapConsulteeEvents } from "@/lib/appointments/map-consultee";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import { useConsulteeAppointmentsAdapter } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { IncidentRemedyBanner } from "@/components/appointments/consultee/IncidentRemedyBanner";
-import { WaitlistOfferBanner } from "./WaitlistOfferBanner";
+import { MyAlerts } from "@/components/appointments/consultee/MyAlerts";
 
 export default function AppointmentsPageClient({
   consulteeId,
@@ -40,7 +40,7 @@ export default function AppointmentsPageClient({
         title="Appointments"
         description="Your consultations, subscriptions, webinars, and classes"
       />
-      <WaitlistOfferBanner viewerZone={viewerZone} />
+      <MyAlerts viewerZone={viewerZone} />
       <IncidentRemedyBanner consulteeId={consulteeId} zone={viewerZone.zone} />
       <div>
         {isLoading && !eventsData ? (

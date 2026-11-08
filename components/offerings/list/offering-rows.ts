@@ -73,6 +73,8 @@ export interface OfferingRow {
   batch: { index: number; total: number } | null;
   trialEnabled: boolean;
   trialIsFree: boolean;
+  /** Open appointment-waitlist rows on this event; 0 for 1:1 and subscription plans. */
+  waitingCount: number;
   event: Event;
 }
 
@@ -150,6 +152,7 @@ function consultationRow(event: ConsultationPlanEvent): OfferingRow {
     batch: null,
     trialEnabled: false,
     trialIsFree: false,
+    waitingCount: 0,
     event,
   };
 }
@@ -194,6 +197,7 @@ function subscriptionRow(event: SubscriptionPlanEvent): OfferingRow {
     batch: null,
     trialEnabled,
     trialIsFree: trialEnabled && (plan.trialPriceInPaise ?? 0) === 0,
+    waitingCount: 0,
     event,
   };
 }
@@ -240,6 +244,7 @@ function webinarRow(
     batch: null,
     trialEnabled: false,
     trialIsFree: false,
+    waitingCount: event.waitingCount ?? 0,
     event,
   };
 }
@@ -311,6 +316,7 @@ function classRows(
       batch: batch && batch.total > 1 ? batch : null,
       trialEnabled: false,
       trialIsFree: false,
+      waitingCount: event.waitingCount ?? 0,
       event,
     };
   });
