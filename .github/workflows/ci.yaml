@@ -255,9 +255,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Supply-chain security audit
-        # Fail CI when any production dependency has a high or critical advisory
-        # so vulnerable transitive packages cannot ship to prod.
-        run: npm audit --omit=dev --audit-level=high
+        # Fail CI on a high or critical production advisory; the script's dated allowlist holds the only exceptions.
+        run: node_modules/.bin/tsx scripts/ci/check-npm-audit.ts
 
       - name: Runner resources
         # Private-repo ubuntu-latest is ~2 vCPU / ~7 GB. Printed so a future
