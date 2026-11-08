@@ -171,7 +171,8 @@ export async function writeCheckoutPayment(
       data: {
         ...paymentData,
         gatewayPaymentId: null,
-        capturedAt: null,
+        // A seat confirmed here is sold now; the row's createdAt is the lapsed attempt's.
+        capturedAt: skipPayment ? new Date() : null,
         deletedAt: null,
         description: null,
         receiptUrl: null,

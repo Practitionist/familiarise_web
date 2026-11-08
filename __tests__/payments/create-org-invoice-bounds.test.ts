@@ -2,8 +2,7 @@
  * @jest-environment node
  */
 
-// Priced and invoiced as a GST-registered platform (Haryana, the registered office).
-process.env.PLATFORM_GSTIN = "06AAFCF1234Q1ZN";
+import { runAsRegisteredPlatform } from "../fixtures/gst-registered";
 
 jest.mock("../../lib/enterprise/outbound-webhooks/dispatch", () => ({
   dispatchWebhookEvent: jest.fn(),
@@ -104,3 +103,6 @@ describe("createOrgInvoice total overflow", () => {
     expect(mockGenerateNumber).not.toHaveBeenCalled();
   });
 });
+
+// Priced and invoiced as a GST-registered platform.
+runAsRegisteredPlatform();

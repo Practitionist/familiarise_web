@@ -28,6 +28,7 @@ import {
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
 import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
+import { TaxContextGate } from "@/app/checkout/components/TaxContextGate";
 import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
 import {
   BillingStateSelect,
@@ -927,29 +928,38 @@ export default function ConsultationCheckoutPage({
                   <div>-{formatPrice(pricing.discountAmount)}</div>
                 </div>
               )}
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
-              {pricing.creditsApplied > 0 && (
-                <div className="flex items-center justify-between text-foreground">
-                  <div>Referral Credits</div>
-                  <div>-{formatPrice(pricing.creditsApplied)}</div>
+              <TaxContextGate
+                status={checkoutTaxContext.taxContextStatus}
+                onRetry={checkoutTaxContext.retryTaxContext}
+              >
+                <div className="flex items-center justify-between">
+                  <div>Tax ({formatPercentage(pricing.taxRate)})</div>
+                  <div>{formatPrice(pricing.taxAmount)}</div>
                 </div>
+                {pricing.creditsApplied > 0 && (
+                  <div className="flex items-center justify-between text-foreground">
+                    <div>Referral Credits</div>
+                    <div>-{formatPrice(pricing.creditsApplied)}</div>
+                  </div>
+                )}
+                <Separator className="bg-border" />
+                <div className="flex items-center justify-between font-semibold">
+                  <div>Total</div>
+                  <div>{formatPrice(pricing.total)}</div>
+                </div>
+              </TaxContextGate>
+              {checkoutTaxContext.taxContextStatus === "loaded" && (
+                <FxEstimateNote
+                  totalPaise={pricing.total}
+                  organizationId={selectedOrganizationId}
+                />
               )}
-              <Separator className="bg-border" />
-              <div className="flex items-center justify-between font-semibold">
-                <div>Total</div>
-                <div>{formatPrice(pricing.total)}</div>
-              </div>
-              <FxEstimateNote
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
-              />
-              <EmiHint
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
-              />
+              {checkoutTaxContext.taxContextStatus === "loaded" && (
+                <EmiHint
+                  totalPaise={pricing.total}
+                  organizationId={selectedOrganizationId}
+                />
+              )}
               {selectedOrgFundingSource === "LICENSE" && (
                 <p className="text-xs text-emerald-600">
                   Programme license coverage (if entitled) is verified and

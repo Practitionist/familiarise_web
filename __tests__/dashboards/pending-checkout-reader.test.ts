@@ -7,8 +7,7 @@
  * payment never comes back, and the select names only rendered columns.
  */
 
-// Priced and invoiced as a GST-registered platform (Haryana, the registered office).
-process.env.PLATFORM_GSTIN = "06AAFCF1234Q1ZN";
+import { runAsRegisteredPlatform } from "../fixtures/gst-registered";
 
 type Where = { id: string; userId: string };
 const getUserCreditsMock = jest.fn(async () => ({ totalAvailable: 0 }));
@@ -197,3 +196,6 @@ it("never returns another user's payment", async () => {
   expect(call.select).not.toHaveProperty("paymentIntent");
   expect(call.select).not.toHaveProperty("gatewayPaymentId");
 });
+
+// Priced and invoiced as a GST-registered platform.
+runAsRegisteredPlatform();

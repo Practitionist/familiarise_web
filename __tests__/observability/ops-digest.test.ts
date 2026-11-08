@@ -114,8 +114,8 @@ const mockDb = {
   payment: {
     aggregate: jest.fn(async () => ({ _sum: { amount: 0, taxAmount: 0 } })),
   },
-  paymentLeg: {
-    aggregate: jest.fn(async () => ({ _sum: { amountPaise: 0 } })),
+  referralCreditUsage: {
+    aggregate: jest.fn(async () => ({ _sum: { amount: 0 } })),
   },
   refund: { aggregate: jest.fn(async () => ({ _sum: { amountPaise: 0 } })) },
 };

@@ -1,6 +1,7 @@
 /**
  * @jest-environment node
  */
+import { runAsRegisteredPlatform } from "../fixtures/gst-registered";
 import {
   invoiceRefundDebits,
   postInvoiceIssuedJournal,
@@ -150,3 +151,6 @@ describe("org invoice issue journal", () => {
     }
   });
 });
+
+// Org-funded rails and GST on surcharges exist only for a GST-registered platform.
+runAsRegisteredPlatform();

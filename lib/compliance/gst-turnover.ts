@@ -20,18 +20,24 @@ export const GST_TURNOVER_ALARM_PAISE = 150_000_000;
 
 export interface GstTurnoverCheck {
   financialYearStart: Date;
-  /** Captured value (charged plus referral credits, less GST) net of succeeded refunds. */
+  /** Charged less GST and succeeded refunds, plus referral credits still spent after restores. */
   turnoverPaise: number;
   alarmed: boolean;
 }
 
-/** Real (non-mock) succeeded payments captured in the current financial year. */
+/**
+ * Real (non-mock) succeeded payments sold in the current financial year: by capture
+ * time, else creation time for rails confirmed at checkout. A re-mint resets capturedAt.
+ */
 function financialYearPaymentWhere(financialYearStart: Date) {
   return {
     paymentStatus: "SUCCEEDED",
     deletedAt: null,
     isMockPayment: false,
-    createdAt: { gte: financialYearStart },
+    OR: [
+      { capturedAt: { gte: financialYearStart } },
+      { capturedAt: null, createdAt: { gte: financialYearStart } },
+    ],
   } satisfies Prisma.PaymentWhereInput;
 }
 
@@ -47,9 +53,10 @@ export async function checkGstRegistrationTurnover(
     where: paymentWhere,
     _sum: { amount: true, taxAmount: true },
   });
-  const credits = await db.paymentLeg.aggregate({
-    where: { source: "REFERRAL_CREDIT", payment: paymentWhere },
-    _sum: { amountPaise: true },
+  // Usage rows shrink, or go, as a refund restores credit; the credit leg does not.
+  const credits = await db.referralCreditUsage.aggregate({
+    where: { payment: paymentWhere },
+    _sum: { amount: true },
   });
   const refunded = await db.refund.aggregate({
     where: { status: "SUCCEEDED", payment: paymentWhere },
@@ -58,7 +65,7 @@ export async function checkGstRegistrationTurnover(
   const turnoverPaise =
     sumPaise(charged._sum.amount) -
     sumPaise(charged._sum.taxAmount) +
-    sumPaise(credits._sum.amountPaise) -
+    sumPaise(credits._sum.amount) -
     sumPaise(refunded._sum.amountPaise);
   const alarmed = turnoverPaise >= GST_TURNOVER_ALARM_PAISE;
   if (alarmed) {

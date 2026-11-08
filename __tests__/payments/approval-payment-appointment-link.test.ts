@@ -23,8 +23,7 @@
  *     contract, so a revert fails loudly).
  */
 
-// Priced and invoiced as a GST-registered platform (Haryana, the registered office).
-process.env.PLATFORM_GSTIN = "06AAFCF1234Q1ZN";
+import { runAsRegisteredPlatform } from "../fixtures/gst-registered";
 
 import fs from "fs";
 import path from "path";
@@ -962,3 +961,6 @@ it("types the exists and already-paid refusals with their codes", () => {
   expect(new ApprovalPaymentExistsError().code).toBe("PAYMENT_ALREADY_EXISTS");
   expect(new ApprovalAlreadyPaidError().code).toBe("ALREADY_PAID");
 });
+
+// Priced and invoiced as a GST-registered platform.
+runAsRegisteredPlatform();
