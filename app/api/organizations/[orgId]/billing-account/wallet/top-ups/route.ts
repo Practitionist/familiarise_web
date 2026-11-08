@@ -38,7 +38,7 @@ import { Prisma } from "@prisma/client";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
 import { PaymentError } from "@/lib/payments/core/types";
-import { isRefusal } from "@/lib/errors/refusal";
+import { refusalJson } from "@/lib/errors/refusal-json";
 import {
   assertOrgBillingAvailable,
   currentGstRegime,
@@ -149,11 +149,9 @@ export async function POST(
   try {
     assertOrgBillingAvailable(currentGstRegime());
   } catch (error) {
-    if (!isRefusal(error)) throw error;
-    return NextResponse.json(
-      { error: error.userMessage, code: error.code },
-      { status: error.httpStatus },
-    );
+    const refused = refusalJson(error);
+    if (!refused) throw error;
+    return refused;
   }
 
   // Idempotent by client key: a replay reuses the minted order, or completes a

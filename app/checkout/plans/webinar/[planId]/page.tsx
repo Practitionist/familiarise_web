@@ -46,9 +46,10 @@ import {
   CancellationPolicyNote,
   type PurchaseFunding,
 } from "@/components/booking/CancellationPolicyNote";
-import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
-import { TaxContextGate } from "@/app/checkout/components/TaxContextGate";
-import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
+import {
+  CheckoutTotalNotes,
+  CheckoutTotals,
+} from "../../components/CheckoutTotals";
 import {
   BillingStateSelect,
   useBillingState,
@@ -883,26 +884,11 @@ export default function WebinarCheckoutPage({
                   <div>-{formatPrice(pricing.discountAmount)}</div>
                 </div>
               )}
-              <TaxContextGate
-                status={checkoutTaxContext.taxContextStatus}
-                onRetry={checkoutTaxContext.retryTaxContext}
-              >
-                <div className="flex items-center justify-between">
-                  <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                  <div>{formatPrice(pricing.taxAmount)}</div>
-                </div>
-                {pricing.creditsApplied > 0 && (
-                  <div className="flex items-center justify-between text-foreground">
-                    <div>Referral Credits</div>
-                    <div>-{formatPrice(pricing.creditsApplied)}</div>
-                  </div>
-                )}
-                <Separator className="bg-border" />
-                <div className="flex items-center justify-between font-semibold">
-                  <div>Total</div>
-                  <div>{formatPrice(pricing.total)}</div>
-                </div>
-              </TaxContextGate>
+              <CheckoutTotals
+                pricing={pricing}
+                formatPrice={formatPrice}
+                taxContext={checkoutTaxContext}
+              />
               {/* #1780 D-6 — the host's free-cancellation window. */}
               <FreeCancellationLine
                 startsAt={nextSession?.startsAt}
@@ -920,18 +906,11 @@ export default function WebinarCheckoutPage({
                 viewerZone={viewer}
                 className="border-t border-border pt-3 text-xs text-muted-foreground"
               />
-              {checkoutTaxContext.taxContextStatus === "loaded" && (
-                <FxEstimateNote
-                  totalPaise={pricing.total}
-                  organizationId={selectedOrganizationId}
-                />
-              )}
-              {checkoutTaxContext.taxContextStatus === "loaded" && (
-                <EmiHint
-                  totalPaise={pricing.total}
-                  organizationId={selectedOrganizationId}
-                />
-              )}
+              <CheckoutTotalNotes
+                totalPaise={pricing.total}
+                organizationId={selectedOrganizationId}
+                taxContextStatus={checkoutTaxContext.taxContextStatus}
+              />
             </div>
           </CardContent>
         </Card>

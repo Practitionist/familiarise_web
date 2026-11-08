@@ -40,7 +40,7 @@ The regime is read from the environment on every pricing call, so a change takes
 | Organisation rails              | Checkout on `WALLET`, `INVOICE` or `LICENSE` funding and a wallet top-up refuse with `GST_REGISTRATION_REQUIRED` (403); `createOrgInvoice` refuses; the invoice rollup and subscription invoices skip | Available                                                                                                               |
 | Personal (member-paid) checkout | Available                                                                                                                                                                                             | Available                                                                                                               |
 
-The checkout pages show tax and the total only once that context has loaded (`taxContextStatus` from `useCheckoutTaxContext`, rendered through `TaxContextGate`), because their defaults cannot know the regime; a failed load shows a retry instead of a guessed 18 %.
+The checkout pages show tax and the total only once that context has loaded (`taxContextStatus` from `useCheckoutTaxContext`, rendered by `CheckoutTotals` in `app/checkout/plans/components/CheckoutTotals.tsx`), because their defaults cannot know the regime; a failed load shows a retry instead of a guessed 18 %.
 
 ### Where the regime is stamped
 

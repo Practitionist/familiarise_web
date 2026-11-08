@@ -3,7 +3,7 @@
  * Razorpay order for one paid digital product. The capture settles it through
  * handleDigitalProductPurchaseSuccess, idempotent per gatewayOrderId.
  */
-import { isRefusal } from "@/lib/errors/refusal";
+import { refusalJson } from "@/lib/errors/refusal-json";
 import { NextResponse } from "next/server";
 import type { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -170,12 +170,8 @@ export async function POST(_request: Request, { params }: RouteParams) {
       );
     }
     // A set but unusable PLATFORM_GSTIN refuses pricing with a typed 503.
-    if (isRefusal(error)) {
-      return NextResponse.json(
-        { error: error.userMessage, code: error.code },
-        { status: error.httpStatus },
-      );
-    }
+    const refused = refusalJson(error);
+    if (refused) return refused;
     console.error("Error creating digital product purchase:", error);
     return NextResponse.json(
       { error: "Failed to start purchase" },
