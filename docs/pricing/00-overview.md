@@ -83,7 +83,7 @@ When an expert sells under a hosting organisation, the split is set by the organ
 - An early-bird price with a real deadline **(planned)**.
 - Codes on digital products and replays **(planned)**.
 - One shared profitability cap over codes, the welcome discount and credits, and the `GATEWAY_COST_BPS` constant it uses **(planned)**. Today the welcome discount and credits are capped by the order's take rate and codes are not capped.
-- A struck-through "was" price, and the 30-day prior-price record that would have to back it **(planned, with early-bird)**.
+- A struck-through "was" price, and the 30-day offered-price history (the lowest price offered, not charged) that would have to back it **(planned, with early-bird)**.
 - Country-based pricing, a cart, pay-what-you-want and order bumps. These are deliberately not built.
 
 ## Where in code

@@ -32,7 +32,7 @@ This is the opposite of a platform code, whose base stays the list price. The tw
 
 - **A coupon model that names its owner.** It extends or sits beside `DiscountCode` with an owner (the expert's `ConsultantProfile` or a host `Organization`), the plans it covers, a percentage ceiling, a validity window and a use limit. It is created by the owner of the plan, not by SQL.
 - **A `DiscountCodeUse` row per use.** One row per redemption, written in the payment transaction, replaces the bare `currentUses` counter as the audit trail and as the source for the counter. A row is voided, not deleted, when a pending payment ends unpaid (the job `returnDiscountUse()` does today for the counter).
-- **A per-buyer limit.** A unique constraint on the coupon and the buyer, enforced by the database rather than by a read in application code, so two concurrent checkouts cannot both succeed.
+- **A per-buyer limit.** A partial unique index on the coupon and the buyer over live uses only (a `WHERE` on the non-voided state, kept in `prisma/sql/` as a sidecar), enforced by the database rather than by a read in application code. Two concurrent checkouts cannot both succeed, and a use voided when its payment ends unpaid frees the slot while its audit row stays.
 
 ### Validation
 
@@ -50,9 +50,9 @@ A webinar or class plan may carry **one** optional early-bird price and **one** 
 
 ### The prior-price rule
 
-From 1 January 2027 the E-Commerce (Amendment) Rules 2026 (G.S.R. 789(E)) apply to consumer-facing sellers. They require that a price shown as reduced also shows the price it was reduced from, and that this prior price be one actually charged in the preceding 30 days; and they require a dark-pattern self-audit and a displayed certificate. The compliance docs in `docs/compliance/` hold the legal detail. The consequences for pricing are:
+From 1 January 2027 the E-Commerce (Amendment) Rules 2026 (G.S.R. 789(E)) apply to consumer-facing sellers. They require that a price shown as reduced also shows a prior price, defined as the lowest price at which the service was offered in the 30 days before the reduction was announced ([PIB, 2026](https://www.pib.gov.in/PressReleasePage.aspx?PRID=2308759&lang=2&reg=48)); and they require a dark-pattern self-audit and a displayed certificate. The compliance docs in `docs/compliance/` hold the legal detail. The consequences for pricing are:
 
-1. A "was" or struck-through price is shown only when the plan has charged that price within the preceding 30 days. This needs a price-history record per plan, which does not exist yet.
+1. A "was" or struck-through price shows the lowest price at which the plan was offered in the preceding 30 days, whether or not anyone bought at it. This needs an offered-price history per plan (every price change with its effective time), which does not exist yet.
 2. An early-bird price is therefore stated as "early-bird price until <date>", with the later price named, and never as a discount from an invented higher number.
 3. **No fake countdowns and no fake scarcity.** A timer, a "3 seats left" label or a "price rises soon" notice appears only when it reflects a real deadline or a real seat count read from the database.
 

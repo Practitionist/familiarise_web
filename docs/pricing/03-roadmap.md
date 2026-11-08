@@ -24,14 +24,14 @@ Every pricing item with its priority and phase. Priority runs P0 (blocks launch)
 
 ## Post-launch
 
-| #   | Item                                                                            | Priority | Phase       | Status     | Done when                                                                              |
-| --- | ------------------------------------------------------------------------------- | -------- | ----------- | ---------- | -------------------------------------------------------------------------------------- |
-| 9   | Host-funded coupons with fee, expert share and TDS on the net price             | P2       | post-launch | open issue | The pipeline page's variant D reproduces in a test.                                    |
-| 10  | A `DiscountCodeUse` audit row and a per-buyer limit enforced by the database    | P2       | post-launch | open issue | A second redemption by the same buyer fails on the constraint, not on a read.          |
-| 11  | One early-bird price and a real deadline per webinar or class plan              | P2       | post-launch | open issue | An order minted after the deadline is charged the list price.                          |
-| 12  | Discount codes on digital products and replays                                  | P2       | post-launch | open issue | A code applied to a digital product reduces the charge in the preview and at the mint. |
-| 13  | Post-sale discounts as credit notes on organisation invoices (section 15(3)(b)) | P3       | post-launch | open issue | A post-sale discount produces a credit note that reduces the taxable value.            |
-| 14  | Subscription duration tiers                                                     | P3       | post-launch | open issue | A longer subscription term lists a lower per-month price from one plan.                |
+| #   | Item                                                                            | Priority | Phase       | Status     | Done when                                                                                                  |
+| --- | ------------------------------------------------------------------------------- | -------- | ----------- | ---------- | ---------------------------------------------------------------------------------------------------------- |
+| 9   | Host-funded coupons with fee, expert share and TDS on the net price             | P2       | post-launch | open issue | The pipeline page's variant D reproduces in a test.                                                        |
+| 10  | A `DiscountCodeUse` audit row and a per-buyer limit enforced by the database    | P2       | post-launch | open issue | A second live redemption by the same buyer fails on the partial unique index; a voided use frees the slot. |
+| 11  | One early-bird price and a real deadline per webinar or class plan              | P2       | post-launch | open issue | An order minted after the deadline is charged the list price.                                              |
+| 12  | Discount codes on digital products and replays                                  | P2       | post-launch | open issue | A code applied to a digital product reduces the charge in the preview and at the mint.                     |
+| 13  | Post-sale discounts as credit notes on organisation invoices (section 15(3)(b)) | P3       | post-launch | open issue | A post-sale discount produces a credit note that reduces the taxable value.                                |
+| 14  | Subscription duration tiers                                                     | P3       | post-launch | open issue | A longer subscription term lists a lower per-month price from one plan.                                    |
 
 ## Deferred and not planned
 
