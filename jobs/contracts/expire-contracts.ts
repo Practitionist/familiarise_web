@@ -27,6 +27,7 @@ import type { PrismaLike } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { formatAuditDate } from "@/lib/labels/org-labels";
 import { closeContractSeats } from "@/lib/api/organizations/seat-count";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { EMAIL_BUDGET_MS } from "@/lib/email/config";
@@ -240,7 +241,7 @@ async function expireContracts(opts: {
               targetMembershipId: null,
               category: "CONTRACT",
               action: AUDIT_ACTIONS.CONTRACT.CONTRACT_EXPIRED,
-              description: `Contract ${c.id} auto-expired (effectiveTo=${c.effectiveTo?.toISOString()})`,
+              description: `Contract auto-expired${c.effectiveTo ? ` (ended ${formatAuditDate(c.effectiveTo)})` : ""}`,
               details: {
                 contractId: c.id,
                 effectiveTo: c.effectiveTo?.toISOString() ?? null,

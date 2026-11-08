@@ -14,6 +14,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { canCallerAssignRole } from "@/lib/enterprise/invitations";
+import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
 import {
   assertActorMayManage,
   MembershipGuardError,
@@ -113,7 +114,7 @@ export async function DELETE(
           actorMembershipId: access.member.id,
           category: "MEMBER",
           action: AUDIT_ACTIONS.MEMBER.INVITE_REVOKED,
-          description: `Revoked invitation ${invitationId}`,
+          description: `Revoked a pending ${MEMBER_ROLE_LABEL[existing.role]} invitation`,
           details: { invitationId },
         },
       });

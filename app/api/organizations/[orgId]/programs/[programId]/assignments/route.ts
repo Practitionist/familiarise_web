@@ -202,7 +202,7 @@ async function assignSingleMembershipInTx(
       targetMembershipId: singleMembershipId,
       category: "PROGRAM",
       action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNED,
-      description: `Assigned membership ${singleMembershipId} to program ${programId}`,
+      description: `Assigned a member to program "${programName}"`,
       details: {
         programId,
         membershipId: singleMembershipId,
@@ -303,7 +303,7 @@ async function assignBulkMembershipsInTx(
       targetMembershipId,
       category: "PROGRAM" as const,
       action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNED,
-      description: `Assigned membership ${targetMembershipId} to program ${programId}`,
+      description: "Assigned a member to a program",
       details: {
         programId,
         membershipId: targetMembershipId,

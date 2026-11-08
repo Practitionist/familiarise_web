@@ -74,6 +74,7 @@ import {
 } from "@/lib/payments/operations/reversal-engine";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
@@ -185,7 +186,7 @@ export async function handleOrgPaymentSuccess(
               actorMembershipId: null,
               category: "WALLET",
               action: AUDIT_ACTIONS.WALLET.WALLET_TOPUP,
-              description: `Top-up amount mismatch for order ${walletEntryOrderId}: notes=${paise}p gateway=${gatewayAmountPaise}p`,
+              description: `Top-up amount mismatch: ${formatCurrencyAmount(paise, "INR")} expected, ${formatCurrencyAmount(gatewayAmountPaise, "INR")} charged`,
               details: {
                 walletEntryOrderId,
                 providerPaymentId: razorpayPaymentId,
@@ -398,7 +399,7 @@ export async function handleOrgPaymentFailure(
             actorMembershipId: null,
             category: "WALLET",
             action: AUDIT_ACTIONS.WALLET.WALLET_TOPUP,
-            description: `Top-up failed at gateway: order ${walletEntryOrderId}`,
+            description: "Top-up failed at gateway",
             details: {
               walletEntryOrderId,
               providerPaymentId: providerPaymentId ?? null,
@@ -431,7 +432,7 @@ export async function handleOrgPaymentFailure(
             actorMembershipId: null,
             category: "INVOICE",
             action: AUDIT_ACTIONS.INVOICE.INVOICE_PAYMENT_INITIATED,
-            description: `Invoice ${invoiceId} payment failed at gateway`,
+            description: "Invoice payment failed at gateway",
             details: {
               invoiceId,
               providerPaymentId: providerPaymentId ?? null,
@@ -663,7 +664,7 @@ export async function handleRefundCreated(
                     actorMembershipId: null,
                     category: "INVOICE",
                     action: AUDIT_ACTIONS.INVOICE.INVOICE_REFUNDED,
-                    description: `Invoice ${invoice.invoiceNumber} refunded (${refundId}, ${amount} ${currency})`,
+                    description: `Invoice ${invoice.invoiceNumber} refunded (${formatCurrencyAmount(amount, currency)})`,
                     details: {
                       invoiceId: invoice.id,
                       refundId,
@@ -1988,7 +1989,7 @@ async function applyOrgChargeback(
       actorMembershipId: null,
       category: "INVOICE",
       action: AUDIT_ACTIONS.INVOICE.INVOICE_REFUNDED,
-      description: `Chargeback ${disputeId} settled: ${amountPaise} paise ${
+      description: `Chargeback settled: ${formatCurrencyAmount(amountPaise, "INR")} ${
         recoveredFromWallet ? "debited from wallet" : "booked as receivable"
       }`,
       details: {

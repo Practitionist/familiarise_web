@@ -40,6 +40,7 @@ import {
 } from "@/lib/compliance/dpdp";
 import {
   OFFERED_PURPOSE_CODES,
+  PURPOSE_CODE_META,
   SIGNUP_PURPOSES,
   TERMS_VERSION,
   normalizePurposeCode,
@@ -351,7 +352,7 @@ export async function POST(
         // column already connects this log back to the exact member, and
         // `details` is a structured JSON blob that auditors can pivot on
         // without splashing the id in free text.
-        description: `Consent granted for member ${member.id}`,
+        description: "Consent granted",
         details: {
           membershipId: member.id,
           purposeCodes,
@@ -461,7 +462,7 @@ export async function DELETE(
             action: AUDIT_ACTIONS.CONSENT.CONSENT_WITHDRAWN,
             // Same PII-hygiene rule as CONSENT_GRANTED: no raw userId
             // in the description; the membership FK is the pivot.
-            description: `Consent withdrawn (purpose=${purposeCode}) for member ${member.id}`,
+            description: `Consent withdrawn (${PURPOSE_CODE_META[purposeCode].label})`,
             details: {
               membershipId: member.id,
               purposeCode,

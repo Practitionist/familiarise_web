@@ -21,6 +21,7 @@ import {
   overageConfigRefusals,
 } from "@/lib/enterprise/reachable-paths";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { PROGRAM_TYPE_LABEL } from "@/lib/labels/org-labels";
 
 const CoveredPlanTypeSchema = z.enum([
   "CONSULTATION",
@@ -505,7 +506,7 @@ export async function POST(
         actorMembershipId: access.member.id,
         category: "PROGRAM",
         action: AUDIT_ACTIONS.PROGRAM.PROGRAM_CREATED,
-        description: `Program ${created.name} (${created.type}) created under contract ${body.contractId}`,
+        description: `Program "${created.name}" (${PROGRAM_TYPE_LABEL[created.type]}) created`,
         details: {
           programId: created.id,
           contractId: body.contractId,

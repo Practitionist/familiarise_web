@@ -118,7 +118,7 @@ export async function GET(
       actorMembershipId: access.member.id,
       category: "SYSTEM",
       action: AUDIT_ACTIONS.SYSTEM.DATA_EXPORT_DOWNLOAD_REQUESTED,
-      description: `Requested a signed URL for export bundle ${exportId}`,
+      description: "Requested a signed download link for a data export",
       details: {
         exportId,
         fileSizeBytes: job.fileSizeBytes?.toString() ?? null,

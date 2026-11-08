@@ -22,14 +22,20 @@
 
 import type {
   AppointmentsType,
+  ContractStatus,
+  ContractSupersessionReason,
   CoveredPlanType,
   FundingSource,
   MemberRole,
   MemberStatus,
   OrgAuditCategory,
   OrgDirectoryType,
+  OrgInvoiceStatus,
   OrgSizeBucket,
   OrgStatus,
+  PayoutRecipient,
+  PayoutStatus,
+  PoStatus,
   ProgramStatus,
   ProgramType,
 } from "@prisma/client";
@@ -127,6 +133,65 @@ export const ORG_AUDIT_CATEGORY_LABEL: Record<OrgAuditCategory, string> = {
   WEBHOOK: "Webhook",
   SYSTEM: "System",
 };
+
+// ───────────────────────────── Contract, PO, invoice, payout ─────────────────────────────
+
+export const CONTRACT_STATUS_LABEL: Record<ContractStatus, string> = {
+  DRAFT: "Draft",
+  ACTIVE: "Active",
+  EXPIRED: "Expired",
+  TERMINATED: "Terminated",
+};
+
+export const CONTRACT_SUPERSESSION_REASON_LABEL: Record<
+  ContractSupersessionReason,
+  string
+> = {
+  AMENDMENT: "Amendment",
+  RENEWAL: "Renewal",
+  TERMINATION_REPLACEMENT: "Replacement after termination",
+};
+
+export const PURCHASE_ORDER_STATUS_LABEL: Record<PoStatus, string> = {
+  ACTIVE: "Active",
+  CLOSED: "Closed",
+  CANCELLED: "Cancelled",
+};
+
+export const ORG_INVOICE_STATUS_LABEL: Record<OrgInvoiceStatus, string> = {
+  DRAFT: "Draft",
+  ISSUED: "Issued",
+  PAID: "Paid",
+  OVERDUE: "Overdue",
+  VOID: "Void",
+  CANCELLED: "Cancelled",
+  REFUNDED: "Refunded",
+};
+
+export const ORG_PAYOUT_STATUS_LABEL: Record<PayoutStatus, string> = {
+  PENDING: "Pending approval",
+  APPROVED: "Approved",
+  PROCESSING: "Processing",
+  COMPLETED: "Completed",
+  FAILED: "Failed",
+  CANCELLED: "Cancelled",
+  REVERSED: "Reversed",
+};
+
+export const PAYOUT_RECIPIENT_NAME: Record<PayoutRecipient, string> = {
+  SELF: "The expert",
+  ORGANIZATION: "The organisation",
+};
+
+/** A date as audit prose reads it: India time, "8 Nov 2026". */
+export function formatAuditDate(date: Date): string {
+  return date.toLocaleDateString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
 
 // ───────────────────────────── Program ─────────────────────────────
 
