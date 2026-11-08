@@ -69,7 +69,7 @@ function ProgramRowImpl({ programs, badge, isLoading }: ProgramRowProps) {
       {/* Scrollable row */}
       <div
         ref={scrollRef}
-        className="flex gap-5 overflow-x-auto scrollbar-hide pb-2"
+        className="flex gap-5 overflow-x-auto scrollbar-hide snap-x snap-proximity pb-2"
         style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
       >
         {programs.map((program) => (

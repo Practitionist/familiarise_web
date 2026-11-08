@@ -5,7 +5,6 @@ import { GraduationCap, BookOpen, Video } from "lucide-react";
 import React, { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
-import ProgramCard from "@/app/explore/programs/components/ProgramCard";
 import ProgramRow from "@/app/explore/programs/components/ProgramRow";
 import {
   generateProgramImageUrl,
@@ -23,16 +22,6 @@ interface ClassesAndWebinarsProps {
   enrolledClassPlanIds?: Set<string>;
   registeredWebinarPlanIds?: Set<string>;
 }
-
-/**
- * Past this many items a tab body switches from a grid to a horizontal rail.
- *
- * The grid used to render EVERY plan with no cap, so a consultant with fifteen
- * classes pushed reviews and availability several screens down. A rail keeps
- * the section a fixed height whatever the count; below the threshold a grid
- * still reads better than a rail with dead space beside it.
- */
-const RAIL_THRESHOLD = 3;
 
 export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
   classPlans,
@@ -83,22 +72,6 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
   if (!hasContent) {
     return null;
   }
-
-  const renderPrograms = (
-    programs: (ClassPlanProgram | WebinarPlanProgram)[],
-  ) =>
-    programs.length > RAIL_THRESHOLD ? (
-      <ProgramRow programs={programs} />
-    ) : (
-      // Columns follow this section's own width, not the viewport: it sits in a
-      // column beside the pricing panel, so a viewport breakpoint (xl: 3) put
-      // three cards in a space that only fits two.
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] gap-5 sm:gap-6">
-        {programs.map((program) => (
-          <ProgramCard key={program.id} program={program} />
-        ))}
-      </div>
-    );
 
   const tabs = [
     {
@@ -190,7 +163,9 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                 exit={{ opacity: 0, x: 20 }}
                 transition={{ duration: 0.3 }}
               >
-                {renderPrograms(classPrograms)}
+                {/* One horizontal row at any count: the section keeps a fixed
+                    height however many programs there are. */}
+                <ProgramRow programs={classPrograms} />
               </motion.div>
             )}
 
@@ -202,7 +177,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                 exit={{ opacity: 0, x: 20 }}
                 transition={{ duration: 0.3 }}
               >
-                {renderPrograms(webinarPrograms)}
+                <ProgramRow programs={webinarPrograms} />
               </motion.div>
             )}
 

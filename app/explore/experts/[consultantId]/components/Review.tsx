@@ -1,6 +1,5 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { TPublicConsultantReview } from "@/types/review";
-import { BrandMark } from "@/components/brand/BrandWordmark";
 
 import { StarIcon } from "lucide-react";
 import React from "react";
@@ -86,12 +85,6 @@ const Review: React.FC<Readonly<TPublicConsultantReview>> = ({
             </p>
           </div>
         )}
-        <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-border">
-          <BrandMark />
-          <span className="text-[10px] text-muted-foreground/70">
-            Reviewed on Familiarise
-          </span>
-        </div>
       </div>
     </div>
   );
