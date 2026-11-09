@@ -10,6 +10,8 @@ export interface PricingOption {
   duration: string;
   durationInHours?: number; // For consultation plans
   durationInMonths?: number; // For subscription plans
+  durationInWeeks?: number | null; // Weeks plans, when set
+
   totalHours?: number; // Total hours of service included
   totalSessions?: number; // Total number of sessions
   sessionsPerWeek?: number; // Calls per week for subscriptions

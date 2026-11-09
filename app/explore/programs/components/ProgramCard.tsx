@@ -12,7 +12,7 @@ import { programFacts } from "@/lib/explore/program-facts";
 import { displayedScore, displayedScoreCount } from "@/lib/reviews-display";
 
 type ProgramCardVariant = "grid" | "list" | "carousel";
-export type ProgramBadge = "featured" | "trending" | "new";
+export type ProgramBadge = "trending" | "new";
 
 interface ProgramCardProps {
   program: Program;
@@ -25,13 +25,8 @@ const badgeConfig: Record<
   ProgramBadge,
   { label: string; icon: React.ReactNode; className: string }
 > = {
-  featured: {
-    label: "Familiarise Pick",
-    icon: <Sparkles className="w-3 h-3" />,
-    className: "bg-primary text-primary-foreground",
-  },
   trending: {
-    label: "Trending",
+    label: "Most booked",
     icon: <Flame className="w-3 h-3" />,
     className: "bg-background/90 text-foreground border border-border",
   },

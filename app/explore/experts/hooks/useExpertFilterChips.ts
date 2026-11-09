@@ -81,7 +81,7 @@ const SORT_LABELS: Record<string, string> = {
   nameDesc: "Name (Z-A)",
   reviewCount: "Most Reviews",
   rating: "Highest Rating",
-  trending: "Trending",
+  trending: "Recently reviewed",
   newest: "Newest",
 };
 

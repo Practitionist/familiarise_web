@@ -175,6 +175,7 @@ export function ExpertPricing({
           priceCurrency: plan.priceCurrency || "INR",
           duration: `${plan.durationInMonths}`,
           durationInMonths: plan.durationInMonths,
+          durationInWeeks: plan.durationInWeeks,
           totalHours: plan.totalHours,
           totalSessions: plan.totalSessions,
           sessionsPerWeek: plan.sessionsPerWeek,

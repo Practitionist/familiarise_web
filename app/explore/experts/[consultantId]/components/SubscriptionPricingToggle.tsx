@@ -1,6 +1,7 @@
 "use client";
 
 import * as Sentry from "@sentry/nextjs";
+import { planDurationText } from "@/lib/offerings/plan-length-copy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -370,7 +371,7 @@ export default function SubscriptionPricingToggle({
                   )}
                 </span>
                 <span className="text-zinc-500 text-sm mb-1.5">
-                  / month
+                  for {planDurationText(option)}
                   {noteFor(option.price) ? ` · ${noteFor(option.price)}` : ""}
                 </span>
               </div>

@@ -35,10 +35,10 @@ function StaticTopRowsImpl({
 }: StaticTopRowsProps) {
   return (
     <>
-      {/* Trending Now */}
+      {/* Most booked this month */}
       <div className="mb-14">
         <SectionHeader
-          title="Trending Now"
+          title="Most booked this month"
           icon={<Flame className="w-5 h-5 text-white" />}
           seeAllHref="/explore/programs?sort=trending"
         />

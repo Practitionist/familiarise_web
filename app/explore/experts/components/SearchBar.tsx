@@ -108,7 +108,7 @@ function SearchBarImpl({
             <SelectItem value="nameDesc">Name (Z-A)</SelectItem>
             <SelectItem value="reviewCount">Most Reviews</SelectItem>
             <SelectItem value="rating">Highest Rating</SelectItem>
-            <SelectItem value="trending">Trending</SelectItem>
+            <SelectItem value="trending">Recently reviewed</SelectItem>
             <SelectItem value="newest">Newest</SelectItem>
           </SelectContent>
         </Select>
