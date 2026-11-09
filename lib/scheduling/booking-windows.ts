@@ -6,6 +6,7 @@
  */
 import type { DayOfWeek } from "@prisma/client";
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
+import { byCodeUnit } from "@/lib/scheduling/code-unit-order";
 import type { TIntervalTiming } from "@/types/slots";
 import {
   breakDownSlotsPreservingStatus,
@@ -139,7 +140,7 @@ export function nextAvailableWindow(
   nowMs: number,
   leadMs: number = MINIMUM_BOOKING_LEAD_TIME_MS,
 ): SlotWithStatus | null {
-  for (const key of Object.keys(days).sort()) {
+  for (const key of Object.keys(days).sort(byCodeUnit)) {
     const windows = windowsForDay(
       days[key],
       durationInHours,
@@ -148,10 +149,12 @@ export function nextAvailableWindow(
       leadMs,
     ).filter(isBookableWindow);
     if (windows.length > 0) {
-      return windows.reduce((earliest, w) =>
-        new Date(w.startsAt).getTime() < new Date(earliest.startsAt).getTime()
-          ? w
-          : earliest,
+      return windows.reduce(
+        (earliest, w) =>
+          new Date(w.startsAt).getTime() < new Date(earliest.startsAt).getTime()
+            ? w
+            : earliest,
+        windows[0],
       );
     }
   }

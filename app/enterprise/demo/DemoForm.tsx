@@ -33,6 +33,62 @@ const EMPTY = {
 const SELECT_CLASS =
   "w-full px-3 py-2 border border-border rounded-md bg-background";
 
+function Field({
+  id,
+  label,
+  required,
+  error,
+  children,
+}: Readonly<{
+  id: string;
+  label: string;
+  required?: boolean;
+  error?: string;
+  children: React.ReactNode;
+}>) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>
+        {label} {required && <span className="text-red-500">*</span>}
+      </Label>
+      {children}
+      {error && <p className="text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+function SelectField({
+  id,
+  label,
+  value,
+  onChange,
+  options,
+}: Readonly<{
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: readonly { value: string; label: string }[];
+}>) {
+  return (
+    <Field id={id} label={label}>
+      <select
+        id={id}
+        className={SELECT_CLASS}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">Select one</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+}
+
 export function DemoForm({
   initialUseCase,
 }: Readonly<{ initialUseCase: DemoUseCase | "" }>) {
@@ -125,146 +181,92 @@ export function DemoForm({
   }
 
   const sending = status === "sending";
+  const text = (
+    key: "firstName" | "lastName" | "email" | "phone" | "companyName",
+    id: string,
+    type: "text" | "email" | "tel" = "text",
+    required = false,
+  ) => (
+    <Input
+      id={id}
+      name={key}
+      type={type}
+      value={values[key]}
+      onChange={(e) => set(key)(e.target.value)}
+      aria-invalid={!!err(key)}
+      required={required}
+    />
+  );
 
   return (
     <form className="space-y-4" onSubmit={handleSubmit} noValidate>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="demo-first-name">
-            First name <span className="text-red-500">*</span>
-          </Label>
-          <Input
-            id="demo-first-name"
-            name="firstName"
-            value={values.firstName}
-            onChange={(e) => set("firstName")(e.target.value)}
-            aria-invalid={!!err("firstName")}
-            required
-          />
-          {err("firstName") && (
-            <p className="text-xs text-red-600">{err("firstName")}</p>
-          )}
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="demo-last-name">
-            Last name <span className="text-red-500">*</span>
-          </Label>
-          <Input
-            id="demo-last-name"
-            name="lastName"
-            value={values.lastName}
-            onChange={(e) => set("lastName")(e.target.value)}
-            aria-invalid={!!err("lastName")}
-            required
-          />
-          {err("lastName") && (
-            <p className="text-xs text-red-600">{err("lastName")}</p>
-          )}
-        </div>
+        <Field
+          id="demo-first-name"
+          label="First name"
+          required
+          error={err("firstName")}
+        >
+          {text("firstName", "demo-first-name", "text", true)}
+        </Field>
+        <Field
+          id="demo-last-name"
+          label="Last name"
+          required
+          error={err("lastName")}
+        >
+          {text("lastName", "demo-last-name", "text", true)}
+        </Field>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="demo-email">
-            Work email <span className="text-red-500">*</span>
-          </Label>
-          <Input
-            id="demo-email"
-            name="email"
-            type="email"
-            value={values.email}
-            onChange={(e) => set("email")(e.target.value)}
-            aria-invalid={!!err("email")}
-            required
-          />
-          {err("email") && (
-            <p className="text-xs text-red-600">{err("email")}</p>
-          )}
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="demo-phone">Phone (optional)</Label>
-          <Input
-            id="demo-phone"
-            name="phone"
-            type="tel"
-            value={values.phone}
-            onChange={(e) => set("phone")(e.target.value)}
-          />
-        </div>
+        <Field id="demo-email" label="Work email" required error={err("email")}>
+          {text("email", "demo-email", "email", true)}
+        </Field>
+        <Field id="demo-phone" label="Phone (optional)">
+          {text("phone", "demo-phone", "tel")}
+        </Field>
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="demo-company">
-          Company or institution <span className="text-red-500">*</span>
-        </Label>
-        <Input
-          id="demo-company"
-          name="companyName"
-          value={values.companyName}
-          onChange={(e) => set("companyName")(e.target.value)}
-          aria-invalid={!!err("companyName")}
-          required
-        />
-        {err("companyName") && (
-          <p className="text-xs text-red-600">{err("companyName")}</p>
-        )}
-      </div>
+      <Field
+        id="demo-company"
+        label="Company or institution"
+        required
+        error={err("companyName")}
+      >
+        {text("companyName", "demo-company", "text", true)}
+      </Field>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="demo-use-case">Interested in</Label>
-          <select
-            id="demo-use-case"
-            className={SELECT_CLASS}
-            value={values.useCase}
-            onChange={(e) => set("useCase")(e.target.value)}
-          >
-            <option value="">Select one</option>
-            {DEMO_USE_CASES.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="demo-team-size">Team size</Label>
-          <select
-            id="demo-team-size"
-            className={SELECT_CLASS}
-            value={values.teamSize}
-            onChange={(e) => set("teamSize")(e.target.value)}
-          >
-            <option value="">Select one</option>
-            {DEMO_TEAM_SIZES.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="demo-budget">Annual budget</Label>
-          <select
-            id="demo-budget"
-            className={SELECT_CLASS}
-            value={values.budgetBand}
-            onChange={(e) => set("budgetBand")(e.target.value)}
-          >
-            <option value="">Select one</option>
-            {DEMO_BUDGET_BANDS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        <SelectField
+          id="demo-use-case"
+          label="Interested in"
+          value={values.useCase}
+          onChange={set("useCase")}
+          options={DEMO_USE_CASES}
+        />
+        <SelectField
+          id="demo-team-size"
+          label="Team size"
+          value={values.teamSize}
+          onChange={set("teamSize")}
+          options={DEMO_TEAM_SIZES}
+        />
+        <SelectField
+          id="demo-budget"
+          label="Annual budget"
+          value={values.budgetBand}
+          onChange={set("budgetBand")}
+          options={DEMO_BUDGET_BANDS}
+        />
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="demo-message">
-          What are you trying to solve? <span className="text-red-500">*</span>
-        </Label>
+      <Field
+        id="demo-message"
+        label="What are you trying to solve?"
+        required
+        error={err("message")}
+      >
         <Textarea
           id="demo-message"
           name="message"
@@ -274,10 +276,7 @@ export function DemoForm({
           aria-invalid={!!err("message")}
           required
         />
-        {err("message") && (
-          <p className="text-xs text-red-600">{err("message")}</p>
-        )}
-      </div>
+      </Field>
 
       {/* Honeypot: hidden from people, irresistible to bots. */}
       <div aria-hidden className="hidden">
