@@ -16,7 +16,7 @@ Functions, Supabase Postgres behind the Supavisor pooler (Prisma uses the
 pooled `DATABASE_URL`; `DIRECT_URL` is reserved for migrations), Upstash
 Redis for rate limits and locks, and GitHub Actions for the cron fleet.
 
-## Around 1,000 concurrent users — fine, with one asterisk (~$45/month)
+## Around 1,000 concurrent users — fine, with one asterisk
 
 Connection-pool arithmetic says roughly ten pooled connections serve a
 thousand active users for an OLTP workload like ours, well inside the Pro
@@ -31,7 +31,7 @@ and re-running the scheduled jobs to confirm. The notify-only lists that
 replaced that waitlist have no job of their own; they ride the
 `expire-stale-requests` run.
 
-## Around 10,000 concurrent users — Netlify's function concurrency breaks first (~$110/month)
+## Around 10,000 concurrent users — Netlify's function concurrency breaks first
 
 Netlify allows 125 concurrent function invocations per site by default. A
 checkout in this codebase is expensive — a Serializable transaction plus a
@@ -53,8 +53,8 @@ undersized by an order of magnitude, and realtime subsystems hit their
 ceilings. The required moves are persistent compute (Railway, Render, or
 EC2), a real job queue (BullMQ needs persistent workers, which is exactly
 why it is wrong for us today and right after leaving serverless), a larger
-Supabase tier with read replicas, and a CDN-fronted read path — roughly
-$800 to $1,200 per month at entry. The migration is two to four weeks of
+Supabase tier with read replicas, and a CDN-fronted read path. The projected monthly spend at
+each rung: value kept in Notion (Familiarise / Finance and Pricing). The migration is two to four weeks of
 work when the traffic justifies it; pre-building it now would cost months.
 The one cheap pre-commitment we make today is keeping all background work
 behind the existing job-entry abstraction so the GitHub-Actions-to-queue

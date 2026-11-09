@@ -1,25 +1,25 @@
 # Stream.io — Pricing Overview
 
-Quick-reference pricing guide for Stream.io (Video + Chat + Feeds). All data verified April 23, 2026 via live pricing calculator and Maker Account page.
+Quick-reference public price schedule for Stream.io (Video + Chat + Feeds), as published on [Stream's pricing page](https://getstream.io/pricing/) and verified April 23, 2026 via the live pricing calculator and the Maker Account page. Which tier Familiarise runs, and what it costs per month, is not here: value kept in Notion (Familiarise / Finance and Pricing).
 
 For full rate tables and permutation matrices, see [`14-pricing-and-cost-model.md`](./14-pricing-and-cost-model.md).
 For Enterprise plans, SLA tiers, AI Moderation, and the Maker-to-paid transition roadmap, see [`15-enterprise-and-maker-account.md`](./15-enterprise-and-maker-account.md).
 
 ---
 
-## Current Status: Maker Account (Free)
+## The Maker Account (Free)
 
-Familiarise qualifies for Stream's [Maker Account](https://getstream.io/maker-account/) — a zero-cost tier for early-stage products.
+Stream's [Maker Account](https://getstream.io/maker-account/) is a zero-cost tier for early-stage products. Which tier Familiarise is on, and whether it still qualifies: value kept in Notion (Familiarise / Finance and Pricing).
 
 ### Eligibility (ALL three must hold simultaneously)
 
-| Requirement            | Familiarise Status     | Holds? |
-| ---------------------- | ---------------------- | ------ |
-| ≤ 5 team members       | 2 (founder + 1 intern) | Yes    |
-| < $10K monthly revenue | $0 (pre-revenue)       | Yes    |
-| < $100K in funding     | $0 (bootstrapped)      | Yes    |
+| Requirement            | Condition   |
+| ---------------------- | ----------- |
+| Team size              | ≤ 5 members |
+| Monthly revenue        | < $10K      |
+| Funding raised to date | < $100K     |
 
-> **Critical:** The `< $100K in funding` condition is easy to miss. Any seed round — even a small angel cheque — likely triggers the cliff.
+> **Critical:** The `< $100K in funding` condition is easy to miss. Any seed round, even a small angel cheque, likely loses eligibility.
 
 ### What Maker Includes
 
@@ -64,17 +64,17 @@ A participant is billed at the tier of the combined resolution of every video tr
 
 ## Chat Pricing (Post-Maker)
 
-Pricing as of April 2026. Annual = 2 months free.
+Pricing as of April 2026 in US dollars. Annual = 2 months free.
 
-| Plan       | MAU     | Annual/mo | Monthly/mo | Annual (INR @₹90.7) | Monthly (INR) |
-| ---------- | ------- | --------- | ---------- | ------------------- | ------------- |
-| Start      | 10K     | $399      | $499       | ₹36,189             | ₹45,259       |
-| Start      | 25K     | $549      | $699       | ₹49,794             | ₹63,399       |
-| Start      | 50K     | $749      | $949       | ₹67,934             | ₹86,074       |
-| Elevate    | 10K     | $499      | $599       | ₹45,259             | ₹54,329       |
-| Elevate    | 25K     | $649      | $799       | ₹58,864             | ₹72,469       |
-| Elevate    | 50K     | $899      | $1,099     | ₹81,539             | ₹99,679       |
-| Enterprise | 1M+ MAU | Custom    | —          | —                   | —             |
+| Plan       | MAU     | Annual/mo | Monthly/mo |
+| ---------- | ------- | --------- | ---------- |
+| Start      | 10K     | $399      | $499       |
+| Start      | 25K     | $549      | $699       |
+| Start      | 50K     | $749      | $949       |
+| Elevate    | 10K     | $499      | $599       |
+| Elevate    | 25K     | $649      | $799       |
+| Elevate    | 50K     | $899      | $1,099     |
+| Enterprise | 1M+ MAU | Custom    | —          |
 
 **Start vs Elevate:** Elevate adds push notifications, message search, content translation, message pinning, advanced moderation (shadow ban, bounce).
 
@@ -84,34 +84,18 @@ Pricing as of April 2026. Annual = 2 months free.
 
 | Plan    | Price (Annual) | Price (Monthly) |
 | ------- | -------------- | --------------- |
-| Start   | $499/mo        | $599/mo         |
-| Elevate | $899/mo        | $999/mo         |
+| Start   | $499/mo        | $599/mo         |     |
+| Elevate | $899/mo        | $999/mo         |     |
 
 ---
 
 ## The Cost Cliff
 
-| Trigger                      | Stream cost before | Stream cost after       | Net jump        |
-| ---------------------------- | ------------------ | ----------------------- | --------------- |
-| Any one Maker condition lost | ₹0/month           | ₹36,189/mo (Chat Start) | **+₹36,189/mo** |
-
-This is the single largest SaaS cost increase in the Familiarise stack. Budget for it before crossing ₹8.5L/month GMV or taking any outside funding.
+Losing any one Maker condition ends the free tier, and Chat then starts at the Start plan price in the Chat table above. The projected rupee cost, the stage-by-stage budget and the GMV level at which to plan for it: value kept in Notion (Familiarise / Finance and Pricing).
 
 ### Monitoring
 
 Set a **1,500 MAU alert** (75% of the 2K hard cap) in the Stream dashboard to get advance warning before the Chat service pauses.
-
----
-
-## SaaS Cost by Growth Stage (Stream portion only)
-
-| Stage               | MAU     | Stream cost/mo (pre-GST)  | Notes                            |
-| ------------------- | ------- | ------------------------- | -------------------------------- |
-| Launch–early (M1–6) | < 2K    | ₹0 (Maker)                | $100 video credit ≈ 66,667 HD PM |
-| Post-Maker          | 2K–10K  | ₹36,189 (Chat Start 10K)  | Annual pricing, +GST 18% RCM     |
-| Growth              | 10K–25K | ₹49,794 (Chat Start 25K)  | Annual pricing                   |
-| Scale               | 25K+    | ₹67,934+ (Chat Start 50K) | Consider Elevate for features    |
-| Enterprise          | 1M+     | Custom                    | Dedicated infrastructure         |
 
 > **GST note:** If GST-registered, add 18% IGST under RCM on all Stream.io payments. This is claimable as ITC.
 
