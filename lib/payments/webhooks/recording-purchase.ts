@@ -26,6 +26,7 @@ import {
   paiseNote,
   refundStagedCapture,
   resolveStandaloneCharge,
+  settleOrderPayment,
   stageCaptureRefund as stageStandaloneCaptureRefund,
   type CaptureOutcome,
   type StageRefundInput,
@@ -300,25 +301,21 @@ async function settleReplaySale(
             },
           });
         }
-        return tx.payment.update({
-          where: { id: orderPayment.id },
-          data: {
-            amount: chargedPaise,
-            originalAmount: charge.originalAmount,
-            taxAmount: charge.taxAmount,
-            gstRegime: charge.gstRegime,
-            ...(charge.buyerCountry
-              ? {
-                  buyerCountry: charge.buyerCountry,
-                  isInternational: charge.buyerCountry !== "IN",
-                }
-              : {}),
-            paymentMethod,
-            paymentStatus: "SUCCEEDED",
-            capturedAt: new Date(),
-            description: `${REPLAY_SALE_PREFIX} recording ${input.recordingId}`,
-            ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
-          },
+        return settleOrderPayment(tx, orderPayment, {
+          amount: chargedPaise,
+          originalAmount: charge.originalAmount,
+          taxAmount: charge.taxAmount,
+          gstRegime: charge.gstRegime,
+          ...(charge.buyerCountry
+            ? {
+                buyerCountry: charge.buyerCountry,
+                isInternational: charge.buyerCountry !== "IN",
+              }
+            : {}),
+          paymentMethod,
+          capturedAt: new Date(),
+          description: `${REPLAY_SALE_PREFIX} recording ${input.recordingId}`,
+          ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
         });
       })()
     : await tx.payment.create({
