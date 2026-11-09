@@ -10,7 +10,9 @@ import { DashboardRouteError } from "@/components/dashboard/DashboardRouteError"
 
 const refresh = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
-jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
+jest.mock("@/lib/observability/client-capture", () => ({
+  captureClientException: jest.fn(),
+}));
 jest.mock("../../components/dashboard/ErrorState", () => ({
   ErrorState: ({ digest }: { digest?: string }) => <div>card {digest}</div>,
 }));

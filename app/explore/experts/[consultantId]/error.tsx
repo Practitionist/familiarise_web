@@ -1,6 +1,6 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
+import { captureClientException } from "@/lib/observability/client-capture";
 import { useEffect } from "react";
 import Link from "next/link";
 
@@ -24,7 +24,7 @@ export default function ExpertProfileError({
   // the common path, not the rare one. Only report errors that originated on the
   // client, which have no digest.
   useEffect(() => {
-    if (!error.digest) Sentry.captureException(error);
+    if (!error.digest) captureClientException(error);
   }, [error]);
 
   return (
