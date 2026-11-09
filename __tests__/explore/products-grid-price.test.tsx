@@ -5,10 +5,19 @@ import { render, screen } from "@testing-library/react";
 
 const mockList = jest.fn();
 jest.mock("@/lib/data/digital-products-public", () => ({
-  listPublicDigitalProducts: (n: number) => mockList(n),
+  listPublicDigitalProducts: (query: unknown) => mockList(query),
 }));
 
 import { ProductsGrid } from "@/components/explore/ProductsGrid";
+import { parseProductsQuery } from "@/lib/explore/products-query";
+
+const QUERY = parseProductsQuery({});
+const page = (items: ReturnType<typeof card>[]) => ({
+  items,
+  total: items.length,
+  page: 1,
+  perPage: 24,
+});
 
 const card = (id: string, pricePaise: number) => ({
   id,
@@ -31,16 +40,16 @@ describe("ProductsGrid price", () => {
 
   it("shows the plain price while unregistered and Free as Free", async () => {
     delete process.env.PLATFORM_GSTIN;
-    mockList.mockResolvedValue([card("a", 50000), card("b", 0)]);
-    render(await ProductsGrid());
+    mockList.mockResolvedValue(page([card("a", 50000), card("b", 0)]));
+    render(await ProductsGrid({ query: QUERY }));
     expect(screen.getByText("₹500.00")).toBeTruthy();
     expect(screen.getByText("Free")).toBeTruthy();
   });
 
   it("shows the all-in price with a GST note once registered", async () => {
     process.env.PLATFORM_GSTIN = "06AAFCF1234Q1ZN";
-    mockList.mockResolvedValue([card("a", 50000), card("b", 0)]);
-    render(await ProductsGrid());
+    mockList.mockResolvedValue(page([card("a", 50000), card("b", 0)]));
+    render(await ProductsGrid({ query: QUERY }));
     expect(screen.getByText("₹590.00 incl. GST")).toBeTruthy();
     expect(screen.getByText("Free")).toBeTruthy();
   });

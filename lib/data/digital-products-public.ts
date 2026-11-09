@@ -7,6 +7,10 @@ import prisma from "@/lib/prisma";
 import { digitalProductDiscoverableWhere } from "@/lib/api/plans/visibility";
 import { PUBLIC_PRODUCTS_TAG } from "@/lib/digital-products/constants";
 import { lineageDisplayNames } from "@/lib/digital-products/lineage";
+import {
+  PRODUCTS_PER_PAGE,
+  type ProductsQuery,
+} from "@/lib/explore/products-query";
 
 /**
  * Public digital product reads for the product page and the expert profile.
@@ -75,15 +79,50 @@ export interface PublicProductListItem extends PublicProductCard {
 }
 
 /** The marketplace listing: products on sale, newest first. Purged by `purgeDigitalProductSurfaces`. */
-export const listPublicDigitalProducts = unstable_cache(
-  async (perPage: number): Promise<PublicProductListItem[]> => {
-    const rows = await prisma.digitalProduct.findMany({
-      where: {
-        ...digitalProductDiscoverableWhere(),
-        consultantProfile: { deletedAt: null },
-      },
-      orderBy: [{ publishedAt: "desc" }, { id: "asc" }],
-      take: perPage,
+export interface PublicProductsPage {
+  items: PublicProductListItem[];
+  total: number;
+  page: number;
+  perPage: number;
+}
+
+function productOrder(
+  sort: ProductsQuery["sort"],
+): Prisma.DigitalProductOrderByWithRelationInput[] {
+  if (sort === "price-asc") return [{ pricePaise: "asc" }, { id: "asc" }];
+  if (sort === "price-desc") return [{ pricePaise: "desc" }, { id: "asc" }];
+  return [{ publishedAt: "desc" }, { id: "asc" }];
+}
+
+async function fetchPublicProductsPage(
+  query: ProductsQuery,
+): Promise<PublicProductsPage> {
+  const where: Prisma.DigitalProductWhereInput = {
+    ...digitalProductDiscoverableWhere(),
+    consultantProfile: { deletedAt: null },
+    ...(query.category ? { category: query.category } : {}),
+    ...(query.price === "free" ? { pricePaise: 0 } : {}),
+    ...(query.price === "paid" ? { pricePaise: { gt: 0 } } : {}),
+    ...(query.q
+      ? {
+          OR: [
+            { title: { contains: query.q, mode: "insensitive" } },
+            { subtitle: { contains: query.q, mode: "insensitive" } },
+            {
+              consultantProfile: {
+                user: { name: { contains: query.q, mode: "insensitive" } },
+              },
+            },
+          ],
+        }
+      : {}),
+  };
+  const [rows, total] = await Promise.all([
+    prisma.digitalProduct.findMany({
+      where,
+      orderBy: productOrder(query.sort),
+      take: PRODUCTS_PER_PAGE,
+      skip: (query.page - 1) * PRODUCTS_PER_PAGE,
       select: {
         id: true,
         slug: true,
@@ -97,19 +136,36 @@ export const listPublicDigitalProducts = unstable_cache(
           select: { id: true, user: { select: { name: true } } },
         },
       },
-    });
-    return rows.map(({ _count, consultantProfile, ...row }) => ({
+    }),
+    prisma.digitalProduct.count({ where }),
+  ]);
+  return {
+    items: rows.map(({ _count, consultantProfile, ...row }) => ({
       ...row,
       fileCount: _count.assets,
       creator: {
         consultantProfileId: consultantProfile.id,
         name: consultantProfile.user.name,
       },
-    }));
-  },
-  ["public-digital-products"],
+    })),
+    total,
+    page: query.page,
+    perPage: PRODUCTS_PER_PAGE,
+  };
+}
+
+const cachedProductsPage = unstable_cache(
+  fetchPublicProductsPage,
+  ["public-digital-products-page"],
   { revalidate: 300, tags: [PUBLIC_PRODUCTS_TAG] },
 );
+
+/** Free-text searches are not cached: every distinct term would be its own entry. */
+export function listPublicDigitalProducts(
+  query: ProductsQuery,
+): Promise<PublicProductsPage> {
+  return query.q ? fetchPublicProductsPage(query) : cachedProductsPage(query);
+}
 
 const PRODUCT_PAGE_SELECT = {
   id: true,
