@@ -23,6 +23,8 @@
  *     contract, so a revert fails loudly).
  */
 
+import { runAsRegisteredPlatform } from "../fixtures/gst-registered";
+
 import fs from "fs";
 import path from "path";
 import {
@@ -803,6 +805,7 @@ describe("approval pay-links charge the same tax as checkout (#1583 C-P0-01)", (
     const derived = await deriveCheckoutAmount({
       basePaise: 0,
       buyerCountry: "IN",
+      gstRegime: "REGISTERED",
     });
     expect(derived).toMatchObject({
       amount: 0,
@@ -958,3 +961,6 @@ it("types the exists and already-paid refusals with their codes", () => {
   expect(new ApprovalPaymentExistsError().code).toBe("PAYMENT_ALREADY_EXISTS");
   expect(new ApprovalAlreadyPaidError().code).toBe("ALREADY_PAID");
 });
+
+// Priced and invoiced as a GST-registered platform.
+runAsRegisteredPlatform();

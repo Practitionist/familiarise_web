@@ -39,6 +39,8 @@ export interface CheckoutAttribution {
   welcomeDiscount: WelcomeDiscount | null;
   /** Promo may cover at most this share of the list price: min(programme cap, take rate). */
   creditCapBps: number;
+  /** The take that funds platform promo (codes, welcome, credits); 0 when the take cannot. */
+  promoFeeBps: number;
 }
 
 export interface AttributionInput {
@@ -132,8 +134,8 @@ async function takeCannotFundPromo(
 
 /**
  * Who brought this sale and what follows from it: the take rate, the referee's
- * welcome discount (first marketplace purchase only, never with a discount code) and
- * the promo cap. Promo never exceeds the order's take.
+ * welcome discount (first marketplace purchase only, never with a discount code), the
+ * credit cap and the take that funds the profitability floor. Promo never exceeds the take.
  */
 export async function resolveCheckoutAttribution(
   db: PrismaLike,
@@ -157,6 +159,7 @@ export async function resolveCheckoutAttribution(
       platformFeeBps,
       welcomeDiscount: null,
       creditCapBps: 0,
+      promoFeeBps: 0,
     };
   }
   const welcomeBps = Math.min(cfg?.discountBps ?? 0, platformFeeBps);
@@ -177,5 +180,6 @@ export async function resolveCheckoutAttribution(
       cfg?.redemptionCapBps ?? platformFeeBps,
       platformFeeBps,
     ),
+    promoFeeBps: platformFeeBps,
   };
 }

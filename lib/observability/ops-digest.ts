@@ -39,6 +39,10 @@ import {
   type ReleaseLag,
 } from "@/lib/observability/release-lag";
 import { razorpayKeyMode } from "@/lib/payments/core/razorpay-key-mode";
+import {
+  checkGstRegistrationTurnover,
+  GST_TURNOVER_ALARM_PAISE,
+} from "@/lib/compliance/gst-turnover";
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -591,6 +595,29 @@ function settingsSection(): SectionBody {
   };
 }
 
+const rupees = (paise: number) =>
+  `₹${Math.floor(paise / 100).toLocaleString("en-IN")}`;
+
+/** Unregistered only: the daily GST registration turnover alarm (one Sentry event a day at most). */
+async function gstRegistrationSection(db: Db, now: Date): Promise<SectionBody> {
+  if (isSet("PLATFORM_GSTIN")) {
+    return { items: [], notes: ["Registered: PLATFORM_GSTIN is set."] };
+  }
+  const check = await checkGstRegistrationTurnover(db, now);
+  const line = `Unregistered; financial-year turnover ${rupees(check.turnoverPaise)} against the ${rupees(GST_TURNOVER_ALARM_PAISE)} alarm.`;
+  return check.alarmed
+    ? {
+        items: [
+          {
+            text: `${line} Register for GST before ₹20,00,000 and set PLATFORM_GSTIN.`,
+            isNew: true,
+          },
+        ],
+        notes: [],
+      }
+    : { items: [], notes: [line] };
+}
+
 function releaseLagSection(lag: ReleaseLag, now: Date): SectionBody {
   if (lag.status === "unknown") {
     return { items: [], notes: [`Unknown: ${lag.reason}.`] };
@@ -772,6 +799,7 @@ export async function runOpsDigest(
     await read("Sentry ingest", () => canarySection(db, environment, now));
     await read("Better Stack", async () => bodyOf(await betterStack));
     await read("Upstash", async () => bodyOf(await upstash));
+    await read("GST registration", () => gstRegistrationSection(db, now));
     await read("Release lag", async () => {
       releaseLag = await lag;
       return releaseLagSection(releaseLag, now);

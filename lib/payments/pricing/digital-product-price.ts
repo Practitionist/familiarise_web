@@ -4,6 +4,7 @@ import {
   type DerivedCheckoutAmount,
 } from "@/lib/payments/pricing/derive-checkout-amount";
 import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
+import { currentGstRegime } from "@/lib/payments/tax/gst-regime";
 
 /**
  * What this buyer is charged for one digital product sale, from the country
@@ -23,6 +24,7 @@ export async function deriveDigitalProductChargeForBuyer(params: {
   const derived = await deriveCheckoutAmount({
     basePaise: params.pricePaise,
     buyerCountry,
+    gstRegime: currentGstRegime(),
   });
   return { buyerCountry, derived };
 }

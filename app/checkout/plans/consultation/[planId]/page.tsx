@@ -27,8 +27,10 @@ import {
 } from "@/lib/payments/constants";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
-import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
-import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
+import {
+  CheckoutTotalNotes,
+  CheckoutTotals,
+} from "../../components/CheckoutTotals";
 import {
   BillingStateSelect,
   useBillingState,
@@ -47,7 +49,11 @@ import { useHandleApiError } from "../../use-handle-api-error";
 import { isSlotStillOffered } from "@/app/explore/experts/[consultantId]/hooks/useAvailabilityWindow";
 import { useSlotJustTaken } from "@/app/explore/experts/[consultantId]/hooks/useSlotJustTaken";
 import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
-import { calculatePricing, formatPercentage } from "../../math";
+import {
+  calculatePricing,
+  formatPercentage,
+  appliedDiscountLabel,
+} from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import { useReferralPricing } from "../../useReferralPricing";
@@ -341,6 +347,7 @@ export default function ConsultationCheckoutPage({
         body: JSON.stringify({
           code: codeToApply,
           amount: eventData?.data?.price || 0,
+          consultantProfileId: eventData?.data?.consultantProfile?.id,
         }),
       });
 
@@ -610,8 +617,10 @@ export default function ConsultationCheckoutPage({
           ? null
           : referralPricing?.welcomeDiscount,
       creditCapBps: referralPricing?.creditCapBps,
+      promoFeeBps: referralPricing?.promoFeeBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
+      gstRegistered: checkoutTaxContext.gstRegistered,
     });
   }, [
     referralPricing,
@@ -622,6 +631,7 @@ export default function ConsultationCheckoutPage({
     availableCredits,
     checkoutTaxContext.isInternational,
     checkoutTaxContext.exportZeroRated,
+    checkoutTaxContext.gstRegistered,
   ]);
 
   // Periodic staleness check: warn user if their slot is about to expire
@@ -851,9 +861,13 @@ export default function ConsultationCheckoutPage({
                   {appliedDiscount.code}
                 </div>
                 <div className="text-sm text-green-600">
-                  {appliedDiscount.discountType === "PERCENTAGE"
-                    ? `${appliedDiscount.discountValue}% off`
-                    : `${formatPrice(appliedDiscount.discountValue)} off`}
+                  {appliedDiscountLabel(appliedDiscount, formatPrice).label}
+                  {appliedDiscountLabel(appliedDiscount, formatPrice)
+                    .limited && (
+                    <span className="block text-xs">
+                      Limited to the most this booking allows.
+                    </span>
+                  )}
                 </div>
               </div>
               <Button
@@ -923,28 +937,15 @@ export default function ConsultationCheckoutPage({
                   <div>-{formatPrice(pricing.discountAmount)}</div>
                 </div>
               )}
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
-              {pricing.creditsApplied > 0 && (
-                <div className="flex items-center justify-between text-foreground">
-                  <div>Referral Credits</div>
-                  <div>-{formatPrice(pricing.creditsApplied)}</div>
-                </div>
-              )}
-              <Separator className="bg-border" />
-              <div className="flex items-center justify-between font-semibold">
-                <div>Total</div>
-                <div>{formatPrice(pricing.total)}</div>
-              </div>
-              <FxEstimateNote
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
+              <CheckoutTotals
+                pricing={pricing}
+                formatPrice={formatPrice}
+                taxContext={checkoutTaxContext}
               />
-              <EmiHint
+              <CheckoutTotalNotes
                 totalPaise={pricing.total}
                 organizationId={selectedOrganizationId}
+                taxContextStatus={checkoutTaxContext.taxContextStatus}
               />
               {selectedOrgFundingSource === "LICENSE" && (
                 <p className="text-xs text-emerald-600">

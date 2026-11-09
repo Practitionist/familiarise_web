@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type CheckoutTaxContext = {
   buyerCountry: string;
   isInternational: boolean;
   /** Server-decided (#1230): international AND a valid platform LUT exists. */
   exportZeroRated: boolean;
+  /** Server-decided from PLATFORM_GSTIN; false while the platform charges no GST. */
+  gstRegistered: boolean;
   /** #1365 — remembered GST billing state, used to pre-fill the picker. */
   billingStateCode: string | null;
   /**
@@ -17,20 +19,25 @@ type CheckoutTaxContext = {
    */
   referralCreditsPaise: number | null;
   referralCreditsLoaded: boolean;
+  /** Tax and total are shown only once "loaded": the defaults cannot know the GST regime. */
+  taxContextStatus: "loading" | "loaded" | "failed";
 };
 
 const DEFAULT_CONTEXT: CheckoutTaxContext = {
   buyerCountry: "IN",
   isInternational: false,
   exportZeroRated: false,
+  gstRegistered: true,
   billingStateCode: null,
   referralCreditsPaise: null,
   referralCreditsLoaded: false,
+  taxContextStatus: "loading",
 };
 
 export function useCheckoutTaxContext() {
   const [taxContext, setTaxContext] =
     useState<CheckoutTaxContext>(DEFAULT_CONTEXT);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,11 +57,12 @@ export function useCheckoutTaxContext() {
           setTaxContext({
             ...data,
             referralCreditsLoaded: true,
+            taxContextStatus: "loaded",
           });
         }
       } catch {
         if (!cancelled) {
-          setTaxContext(DEFAULT_CONTEXT);
+          setTaxContext({ ...DEFAULT_CONTEXT, taxContextStatus: "failed" });
         }
       }
     }
@@ -64,7 +72,15 @@ export function useCheckoutTaxContext() {
     return () => {
       cancelled = true;
     };
+  }, [attempt]);
+
+  const retryTaxContext = useCallback(() => {
+    setTaxContext(DEFAULT_CONTEXT);
+    setAttempt((n) => n + 1);
   }, []);
 
-  return taxContext;
+  return useMemo(
+    () => ({ ...taxContext, retryTaxContext }),
+    [taxContext, retryTaxContext],
+  );
 }

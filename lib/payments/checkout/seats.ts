@@ -60,6 +60,7 @@ const PRIOR_SEAT_PAYMENT_SELECT = {
   amount: true,
   originalAmount: true,
   taxAmount: true,
+  gstRegime: true,
   currency: true,
   paymentGateway: true,
   paymentStatus: true,

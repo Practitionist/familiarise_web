@@ -27,8 +27,10 @@ import {
 } from "@/schemas/checkout";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
-import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
-import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
+import {
+  CheckoutTotalNotes,
+  CheckoutTotals,
+} from "../../components/CheckoutTotals";
 import {
   BillingStateSelect,
   useBillingState,
@@ -42,7 +44,11 @@ import { useQuery } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import { createRazorpayCheckoutHandlers, paymentGateways } from "../../utils";
 import { useHandleApiError } from "../../use-handle-api-error";
-import { calculatePricing, formatPercentage } from "../../math";
+import {
+  calculatePricing,
+  formatPercentage,
+  appliedDiscountLabel,
+} from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import { useReferralPricing } from "../../useReferralPricing";
@@ -253,6 +259,7 @@ export default function SubscriptionCheckoutPage({
         body: JSON.stringify({
           code: codeToApply,
           amount: planData?.data?.price || 0,
+          consultantProfileId: planData?.data?.consultantProfile?.id,
         }),
       });
 
@@ -478,8 +485,10 @@ export default function SubscriptionCheckoutPage({
           ? null
           : referralPricing?.welcomeDiscount,
       creditCapBps: referralPricing?.creditCapBps,
+      promoFeeBps: referralPricing?.promoFeeBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
+      gstRegistered: checkoutTaxContext.gstRegistered,
     });
   }, [
     referralPricing,
@@ -490,6 +499,7 @@ export default function SubscriptionCheckoutPage({
     availableCredits,
     checkoutTaxContext.isInternational,
     checkoutTaxContext.exportZeroRated,
+    checkoutTaxContext.gstRegistered,
   ]);
 
   // Periodic staleness check: warn once the first cycle has elapsed.
@@ -739,9 +749,13 @@ export default function SubscriptionCheckoutPage({
                   {appliedDiscount.code}
                 </div>
                 <div className="text-sm text-green-600">
-                  {appliedDiscount.discountType === "PERCENTAGE"
-                    ? `${appliedDiscount.discountValue}% off`
-                    : `${formatPrice(appliedDiscount.discountValue)} off`}
+                  {appliedDiscountLabel(appliedDiscount, formatPrice).label}
+                  {appliedDiscountLabel(appliedDiscount, formatPrice)
+                    .limited && (
+                    <span className="block text-xs">
+                      Limited to the most this booking allows.
+                    </span>
+                  )}
                 </div>
               </div>
               <Button
@@ -852,35 +866,25 @@ export default function SubscriptionCheckoutPage({
                   <div>-{formatPrice(pricing.discountAmount)}</div>
                 </div>
               )}
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
-              {pricing.creditsApplied > 0 && (
-                <div className="flex items-center justify-between text-foreground">
-                  <div>Referral Credits</div>
-                  <div>-{formatPrice(pricing.creditsApplied)}</div>
-                </div>
-              )}
-              <Separator className="bg-border" />
-              <div className="flex items-center justify-between font-semibold">
-                <div>Total</div>
-                <div>{formatPrice(pricing.total)}</div>
-              </div>
-              {/* #1775 C-6 — plans are paid at purchase; the 48 h promise. */}
-              <p className="text-xs text-muted-foreground">
-                You pay {formatPrice(pricing.total)} now ·{" "}
-                {planData?.data?.consultantProfile?.user?.name ?? "Your expert"}{" "}
-                schedules your first week within 48 h or you&apos;re refunded in
-                full.
-              </p>
-              <FxEstimateNote
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
+              <CheckoutTotals
+                pricing={pricing}
+                formatPrice={formatPrice}
+                taxContext={checkoutTaxContext}
               />
-              <EmiHint
+              {/* #1775 C-6 — plans are paid at purchase; the 48 h promise. */}
+              {checkoutTaxContext.taxContextStatus === "loaded" && (
+                <p className="text-xs text-muted-foreground">
+                  You pay {formatPrice(pricing.total)} now ·{" "}
+                  {planData?.data?.consultantProfile?.user?.name ??
+                    "Your expert"}{" "}
+                  schedules your first week within 48 h or you&apos;re refunded
+                  in full.
+                </p>
+              )}
+              <CheckoutTotalNotes
                 totalPaise={pricing.total}
                 organizationId={selectedOrganizationId}
+                taxContextStatus={checkoutTaxContext.taxContextStatus}
               />
               {/* #1863 — the notice ladder, at purchase. The 48 h promise above
                   is about the expert not scheduling; this is about the buyer

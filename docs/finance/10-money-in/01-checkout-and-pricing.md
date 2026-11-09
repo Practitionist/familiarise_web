@@ -3,7 +3,7 @@ title: Checkout and pricing
 type: explanation
 audience: engineers changing checkout, pricing or booking holds
 status: live
-last-reviewed: 2026-11-05
+last-reviewed: 2026-11-09
 ---
 
 # Checkout and pricing
@@ -45,41 +45,54 @@ The gateway order is created inside the lock but outside the database transactio
 
 ## 2. How the amount is derived
 
-`deriveCheckoutAmount` (`lib/payments/pricing/derive-checkout-amount.ts`) is a pure function. The order of its four stages is fixed, and the checkout page, the price preview and the server all call it, so a displayed price cannot drift from a charged one (`__tests__/payments/checkout-price-parity.test.ts`).
+`deriveCheckoutAmount` (`lib/payments/pricing/derive-checkout-amount.ts`) is a pure function. The order of its four stages is fixed. The server, the pay-links, replays and digital products call it, and the checkout preview's `calculatePricing` (`app/checkout/plans/math.ts`) applies the same stages and the same caps, so a displayed price cannot drift from a charged one (`__tests__/payments/checkout-price-parity.test.ts`, `__tests__/payments/pricing-levers-invariants.test.ts`).
 
 ```mermaid
 flowchart LR
-  A["List price<br/>plan.price (or pro-rated class base)"] --> B["Discount<br/>code, else welcome discount"]
-  B --> C["GST 18 % on the discounted base<br/>determineTax"]
+  A["List price<br/>plan.price (or pro-rated class base)"] --> B["One pre-tax discount<br/>code, else welcome discount"]
+  B --> C["GST on the discounted base<br/>18 %, or 0 % while unregistered"]
   C --> D["Referral credits against the<br/>tax-inclusive total"]
   D --> E["Payment.amount<br/>what the gateway charges"]
 ```
 
-1. **Discount.** A `DiscountCode` is re-validated against the database on the server. A `PERCENTAGE` code takes `round(list × value / 100)` capped by `maxDiscount`; a `FIXED_AMOUNT` code never takes more than the list price. With no code, the referee's welcome discount applies (`computeWelcomeDiscountPaise`, `lib/referrals/promo-math.ts`) and is dropped again if the cash left after it falls under its floor (`keepsWelcomeDiscount`).
-2. **GST.** `determineTax` (`lib/payments/tax/tax-engine.ts`) charges 18 % to every domestic buyer on the discounted base. An overseas buyer is zero-rated only while a platform Letter of Undertaking is valid for the financial year (`hasValidPlatformLut`); without one the sale is taxed at 18 % IGST. Buyer country is the profile country if it is a two-letter code, else `cf-ipcountry`, else India. `Accept-Language` is deliberately not used, because it once zero-rated Indian sales as exports.
-3. **Referral credits.** Credits apply only when the tax-inclusive total is at least `MIN_CREDIT_REDEMPTION_PAISE` (₹500, 50,000 paise), and the amount is the smallest of the available balance, the total, and `floor(list × creditCapBps / 10,000)` less any welcome discount (`creditCapPaise`). `creditCapBps` is the smaller of the programme's redemption cap (20 % by default) and the sale's take rate, and it is zero while the expert's fee waiver means the take cannot fund a promotion (`lib/referrals/attribution.ts`).
+1. **Discount.** A `DiscountCode` is re-validated against the database on the server. A `PERCENTAGE` code takes `round(list × value / 100)` capped by `maxDiscount`; a `FIXED_AMOUNT` code never takes more than the list price; either is then held to the profitability floor below. With no code, the referee's welcome discount applies (`computeWelcomeDiscountPaise`, `lib/referrals/promo-math.ts`), held to the same floor, and is dropped again if the cash left after it falls under its floor (`keepsWelcomeDiscount`). A code always suppresses the welcome discount, so an order carries at most one pre-tax modifier.
+2. **GST.** `determineTax` (`lib/payments/tax/tax-engine.ts`) charges nothing while the platform is not GST-registered (`PLATFORM_GSTIN` unset; [the tax regime](../60-tax/05-gst-registration-and-tax-regime.md)), and once registered charges 18 % to every domestic buyer on the discounted base. The regime is stamped on `Payment.gstRegime`. An overseas buyer is zero-rated only while a platform Letter of Undertaking is valid for the financial year (`hasValidPlatformLut`); without one the sale is taxed at 18 % IGST. Buyer country is the profile country if it is a two-letter code, else `cf-ipcountry`, else India. `Accept-Language` is deliberately not used, because it once zero-rated Indian sales as exports.
+3. **Referral credits.** Credits apply only when the tax-inclusive total is at least `MIN_CREDIT_REDEMPTION_PAISE` (₹500, 50,000 paise), and the amount is the smallest of the available balance, the total, `floor(list × creditCapBps / 10,000)` less any welcome discount, and what the profitability floor has left after the discount (`creditCapPaise`). `creditCapBps` is the smaller of the programme's redemption cap (20 % by default) and the sale's take rate, and it is zero while a fee waiver or a host organisation means the take cannot fund a promotion (`lib/referrals/attribution.ts`).
 4. **Floor.** An amount between ₹0.01 and ₹0.99 is refused, because Razorpay's minimum order is ₹1 (100 paise). An amount of exactly zero (a ₹0 plan, a full discount, or credits covering the total) takes the free path described in section 5. Only a ₹0-priced plan moves no money at all: it posts no booking journal, mints no tax invoice and qualifies no referral reward (a completed trial still converts). A full discount still journals its `DISCOUNT` line and a credit-funded order its `PLATFORM_PROMO` line, because their list price is positive.
+
+### The profitability floor
+
+Everything the platform funds on one order (a platform discount code, the welcome discount and referral credits together) is held to one cap, `platformFundedCapPaise` (`lib/payments/pricing/platform-funded-cap.ts`):
+
+`cap = max(0, floor(list × promoFeeBps / 10,000) − ceil(ceiling × GATEWAY_COST_BPS / 10,000))`
+
+The first term is the platform fee as settlement computes it. `GATEWAY_COST_BPS` is 236, Razorpay's 2 % plus 18 % GST on that fee, charged on `ceiling`, the largest amount the order can charge: the list price plus 18 % while registered, or the list price while unregistered. `promoFeeBps` comes from `resolveCheckoutAttribution` and is the order's take that can fund promotion: the marketplace or own-link rate, or 0 on a fee-waiver or host-organisation order. Because the order never charges more than `ceiling`, promotion never pushes the platform's margin after the gateway below zero. The cap limits promotional spend only: a fee-waiver order keeps no fee and carries no promotion, so its margin is the gateway's cut, negative by design. When the cap is zero (a fee-waiver or host-organisation order, or a list price too small to cover the gateway), a discount code is refused with 409 `DISCOUNT_NOT_APPLICABLE` ("This code can't be used on this expert's sessions") before commit, so no redemption is spent; the discount preview route refuses it the same way. The programme's own `discountBps`, `discountMaxPaise` and `redemptionCapBps` still apply as additional limits.
+
+The discount preview route, `POST /api/payments/discounts/validate`, takes the plan's `consultantProfileId` with the amount and returns the capped amount, and the checkout pages pass `promoFeeBps` from `GET /api/checkout/referral-pricing` into `calculatePricing`, so the preview applies the same floor the charge does.
 
 ### Worked example
 
-Charlotte Brown, an independent marketplace consultee, books Hannah Anderson's consultation, listed at ₹2,000, with a 10 % discount code and ₹500 of vested referral credit. The seeded fee schedule (`prisma/seedFiles/13a-create-referral-codes.ts`) is 2,000 bps marketplace and 1,000 bps own link, and Charlotte reaches Hannah through the marketplace.
+Charlotte Brown, an independent marketplace consultee, books Hannah Anderson's consultation, listed at ₹2,000, with a 10 % discount code and ₹500 of vested referral credit, after the platform has registered for GST. The seeded fee schedule (`prisma/seedFiles/13a-create-referral-codes.ts`) is 2,000 bps marketplace and 1,000 bps own link, and Charlotte reaches Hannah through the marketplace.
 
-| Step                                   |   Paise |    Rupees |
-| -------------------------------------- | ------: | --------: |
-| List price (`Payment.originalAmount`)  | 200,000 | ₹2,000.00 |
-| Discount, 10 %                         |  20,000 |   ₹200.00 |
-| Discounted base                        | 180,000 | ₹1,800.00 |
-| GST 18 % (`Payment.taxAmount`)         |  32,400 |   ₹324.00 |
-| Tax-inclusive total                    | 212,400 | ₹2,124.00 |
-| Credit cap: 20 % of list               |  40,000 |   ₹400.00 |
-| Credits applied (balance 50,000)       |  40,000 |   ₹400.00 |
-| Charged to the card (`Payment.amount`) | 172,400 | ₹1,724.00 |
+| Step                                                  |   Paise |    Rupees |
+| ----------------------------------------------------- | ------: | --------: |
+| List price (`Payment.originalAmount`)                 | 200,000 | ₹2,000.00 |
+| Platform fee, 20 % of list                            |  40,000 |   ₹400.00 |
+| Gateway estimate, 2.36 % of ₹2,360 rounded up         |   5,570 |    ₹55.70 |
+| Profitability floor                                   |  34,430 |   ₹344.30 |
+| Discount, 10 %                                        |  20,000 |   ₹200.00 |
+| Discounted base                                       | 180,000 | ₹1,800.00 |
+| GST 18 % (`Payment.taxAmount`)                        |  32,400 |   ₹324.00 |
+| Tax-inclusive total                                   | 212,400 | ₹2,124.00 |
+| Credit cap: 20 % of list, and what the floor has left |  14,430 |   ₹144.30 |
+| Credits applied (balance 50,000)                      |  14,430 |   ₹144.30 |
+| Charged to the card (`Payment.amount`)                | 197,970 | ₹1,979.70 |
 
-The checkout transaction writes a `CARD` leg of 172,400 and a `REFERRAL_CREDIT` leg of 40,000. When the capture is confirmed, the booking journal debits `GATEWAY_CLEARING` 172,400, `PLATFORM_PROMO` 40,000 and `DISCOUNT` 20,000, and credits `PLATFORM_FEE` 40,000 (20 % of the list price), `CONSULTANT_PAYABLE` 160,000 and `GST_PAYABLE` 32,400; both sides total 232,400 paise. Section 5 of [postings](../20-ledger/04-postings.md) walks through the same booking line by line.
+The credits stop at 14,430 because the code already spent 20,000 of the 34,430 floor; the programme's own 20 % cap alone would have allowed 40,000. The checkout transaction writes a `CARD` leg of 197,970 and a `REFERRAL_CREDIT` leg of 14,430. When the capture is confirmed, the booking journal debits `GATEWAY_CLEARING` 197,970, `PLATFORM_PROMO` 14,430 and `DISCOUNT` 20,000, and credits `PLATFORM_FEE` 40,000 (20 % of the list price), `CONSULTANT_PAYABLE` 160,000 and `GST_PAYABLE` 32,400; both sides total 232,400 paise. The platform keeps 40,000 − 20,000 − 14,430 = 5,570 before the gateway's actual 4,673 (2.36 % of ₹1,979.70, rounded up). Section 5 of [postings](../20-ledger/04-postings.md) walks through the journal shape line by line.
 
 ### The platform fee is not a flat 20 %
 
-The fee on a business-to-consumer sale is `grossAmount × bps / 10,000`, where `grossAmount` is `Payment.originalAmount`, so discounts are funded by the platform and never reduce the consultant's share. The bps come from `readActiveFeeSchedule` (`lib/payments/pricing/platform-fee.ts`): the latest `PlatformFeeSchedule` that has an approver and an `effectiveFrom` in the past, using `marketplaceBps` for a marketplace sale and `ownLinkBps` for a sale through an expert's own link (`fam_via` cookie). A live `ConsultantFeeWaiver` makes the fee zero unless the order carries platform-funded promotion. Twenty percent (`PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE`) is only the fallback when no approved schedule exists. A new schedule needs a second administrator (`feeScheduleApprovalRefusal`); a sole administrator may approve their own schedule only after 24 hours. Bookings funded by an organisation use a rate card instead; see [rate cards and overage](../50-b2b/03-rate-cards-and-overage.md).
+The fee on a business-to-consumer sale is `grossAmount × bps / 10,000`, where `grossAmount` is `Payment.originalAmount`, so discounts are funded by the platform, never reduce the consultant's share, and are capped by the profitability floor above. The bps come from `readActiveFeeSchedule` (`lib/payments/pricing/platform-fee.ts`): the latest `PlatformFeeSchedule` that has an approver and an `effectiveFrom` in the past, using `marketplaceBps` for a marketplace sale and `ownLinkBps` for a sale through an expert's own link (`fam_via` cookie). A live `ConsultantFeeWaiver` makes the fee zero unless the order carries platform-funded promotion: a welcome discount, a `REFERRAL_CREDIT` leg, or a discount code that took something off the list price (`carriesPromo` in `consumeFeeWaiver`), so a waiver granted after checkout never leaves the platform funding a code from a zero fee. Twenty percent (`PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE`) is only the fallback when no approved schedule exists. A new schedule needs a second administrator (`feeScheduleApprovalRefusal`); a sole administrator may approve their own schedule only after 24 hours. Bookings funded by an organisation use a rate card instead; see [rate cards and overage](../50-b2b/03-rate-cards-and-overage.md).
 
 ## 3. Locks, TTLs and the transaction
 
@@ -130,21 +143,22 @@ These payments never see a capture webhook, so checkout also mints the consumer 
 
 ## 7. Invariants
 
-| Rule                                             | Enforcer                                                         | Test                                                                | Repair                                  |
-| ------------------------------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------- |
-| Payment, legs and hold commit together           | One Serializable transaction in `commitCheckout`                 | `__tests__/payments/checkout-pool-1-nesting.test.ts`                | None needed; the transaction rolls back |
-| Funding legs sum to `Payment.amount`             | `payment_legs_sum_to_amount` trigger                             | `__tests__/payments/dispute-payout-block.test.ts` (source contract) | None; uncommittable                     |
-| One order per logical attempt                    | `clientIdempotencyKey` unique, `findReusablePendingOrderPayment` | `__tests__/payments/checkout-open-order-reuse.test.ts`              | `abandoned-payments` expires leftovers  |
-| A 1:1 slot is held by one buyer                  | Redis slot lock plus `occurrence_no_confirmed_overlap`           | `__tests__/payments/checkout-lock-ttl.test.ts`                      | `cleanup-tentative-occurrences`         |
-| Only INR is charged                              | `assertInrSettlement`; `payment_currency_inr` CHECK              | `__tests__/payments/currency-and-tax-gates.test.ts`                 | None; refused at the boundary           |
-| Status moves only from the expected prior status | CAS-in-WHERE on every `Payment` update                           | `__tests__/payments/cancel-pending-checkout.test.ts`                | `reconcile-payment-status`              |
+| Rule                                                  | Enforcer                                                         | Test                                                                | Repair                                  |
+| ----------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------- |
+| Payment, legs and hold commit together                | One Serializable transaction in `commitCheckout`                 | `__tests__/payments/checkout-pool-1-nesting.test.ts`                | None needed; the transaction rolls back |
+| Funding legs sum to `Payment.amount`                  | `payment_legs_sum_to_amount` trigger                             | `__tests__/payments/dispute-payout-block.test.ts` (source contract) | None; uncommittable                     |
+| One order per logical attempt                         | `clientIdempotencyKey` unique, `findReusablePendingOrderPayment` | `__tests__/payments/checkout-open-order-reuse.test.ts`              | `abandoned-payments` expires leftovers  |
+| A 1:1 slot is held by one buyer                       | Redis slot lock plus `occurrence_no_confirmed_overlap`           | `__tests__/payments/checkout-lock-ttl.test.ts`                      | `cleanup-tentative-occurrences`         |
+| Only INR is charged                                   | `assertInrSettlement`; `payment_currency_inr` CHECK              | `__tests__/payments/currency-and-tax-gates.test.ts`                 | None; refused at the boundary           |
+| Status moves only from the expected prior status      | CAS-in-WHERE on every `Payment` update                           | `__tests__/payments/cancel-pending-checkout.test.ts`                | `reconcile-payment-status`              |
+| Platform-funded promo never makes an order lose money | `platformFundedCapPaise` in `deriveCheckoutAmount`               | `__tests__/payments/pricing-levers-invariants.test.ts`              | None; the cap applies at pricing        |
 
 ## Where in code
 
 - `app/api/checkout/route.ts`: the route, rate limit and replay.
 - `lib/payments/checkout/orchestrate.ts`: `handleCheckout`.
 - `lib/payments/checkout/commit/`: `commitCheckout` and its four steps.
-- `lib/payments/pricing/derive-checkout-amount.ts` and `platform-fee.ts`.
+- `lib/payments/pricing/derive-checkout-amount.ts`, `platform-funded-cap.ts` and `platform-fee.ts`.
 - `lib/payments/checkout/order-reuse.ts`, `self-hold.ts`, `seats.ts`.
 - `lib/payments/operations/cancel-pending.ts`, `checkout-replay.ts`, `approval-payment.ts`.
 
@@ -156,4 +170,4 @@ These payments never see a capture webhook, so checkout also mints the consumer 
 
 ## Deprecated & Superseded Approaches
 
-Older checkout documents described a Stripe checkout session, a `SKIP_PAYMENT` environment flag, a flat 20 % marketplace fee, an appointment created by the webhook after payment, a class lock TTL of 300 seconds, and a cap of three concurrent attempts per slot. None of these exists: Razorpay is the only gateway, the appointment is created in the checkout transaction, the class TTL is 600 seconds, and the live hold itself is the cap on attempts per slot. Older documents named a local cleanup script, a GitHub Actions workflow and a `vercel.json` cron as the scheduler of the abandoned-payment sweep; today the Netlify ticker runs it. Delete any reference to those artifacts.
+Discount codes used to be uncapped, and the welcome discount and credits were held only by the programme configuration; the profitability floor now caps all three together. Older checkout documents described a Stripe checkout session, a `SKIP_PAYMENT` environment flag, a flat 20 % marketplace fee, an appointment created by the webhook after payment, a class lock TTL of 300 seconds, and a cap of three concurrent attempts per slot. None of these exists: Razorpay is the only gateway, the appointment is created in the checkout transaction, the class TTL is 600 seconds, and the live hold itself is the cap on attempts per slot. Older documents named a local cleanup script, a GitHub Actions workflow and a `vercel.json` cron as the scheduler of the abandoned-payment sweep; today the Netlify ticker runs it. Delete any reference to those artifacts.

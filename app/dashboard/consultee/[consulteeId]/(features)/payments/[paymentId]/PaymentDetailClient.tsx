@@ -110,6 +110,7 @@ export function PaymentDetailClient({
 
   const facts = chargeFacts(detail, money);
   const taxDocsPending =
+    !detail.gstUnregistered &&
     !detail.taxDocumentsAvailable &&
     (detail.invoicePdfHref !== null ||
       detail.creditNotes.length > 0 ||
@@ -209,8 +210,15 @@ export function PaymentDetailClient({
             is ready.
           </p>
         )}
+        {detail.gstUnregistered && row.status === "SUCCEEDED" && (
+          <p className="mb-2 text-sm text-muted-foreground">
+            No GST was charged on this payment, so it has a receipt rather than
+            a tax invoice.
+          </p>
+        )}
         {documents.length === 0 ? (
-          !taxDocsPending && (
+          !taxDocsPending &&
+          !detail.gstUnregistered && (
             <p className="text-sm text-muted-foreground">
               No documents for this charge yet. A tax invoice is issued once a
               payment goes through.

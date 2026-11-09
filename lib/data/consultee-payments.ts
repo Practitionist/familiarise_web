@@ -244,6 +244,7 @@ export function paymentRowSelect(userId: string) {
   return {
     ...BUYER_PAYMENT_DISPLAY_SELECT,
     organizationId: true,
+    gstRegime: true,
     organization: { select: { name: true } },
     discountCode: { select: DISCOUNT_CODE_SUMMARY_SELECT },
     // #775 — the CHARGE_MEMBER co-pay a sponsored member paid themselves.

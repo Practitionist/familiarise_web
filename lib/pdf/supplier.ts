@@ -66,6 +66,11 @@ export function getPlatformSupplier(): PlatformSupplier | null {
   };
 }
 
+/** True when PLATFORM_GSTIN is a valid GSTIN from the registered office's state: the platform charges GST. */
+export function isPlatformGstRegistered(): boolean {
+  return getPlatformSupplier() !== null;
+}
+
 /**
  * The supplier for a GST job: null while PLATFORM_GSTIN is unset (pre-registration,
  * a config skip); throws when it is set but malformed or from another state.

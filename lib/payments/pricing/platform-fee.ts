@@ -47,19 +47,33 @@ export function liveFeeWaiverWhere(
   };
 }
 
-/** True when the order carries platform-funded promo (welcome discount or a credit leg). */
+/**
+ * True when the order carries platform-funded promo: a welcome discount, a credit leg, or a
+ * code that took something off the list price (list + GST − charged − credits).
+ */
 async function carriesPromo(tx: Tx, paymentId: string): Promise<boolean> {
-  const promo = await tx.payment.findFirst({
-    where: {
-      id: paymentId,
-      OR: [
-        { welcomeDiscountPaise: { gt: 0 } },
-        { legs: { some: { source: "REFERRAL_CREDIT" } } },
-      ],
+  const payment = await tx.payment.findUnique({
+    where: { id: paymentId },
+    select: {
+      amount: true,
+      originalAmount: true,
+      taxAmount: true,
+      discountCodeId: true,
+      welcomeDiscountPaise: true,
+      legs: {
+        where: { source: "REFERRAL_CREDIT" },
+        select: { amountPaise: true },
+      },
     },
-    select: { id: true },
   });
-  return promo !== null;
+  if (!payment) return false;
+  if ((payment.welcomeDiscountPaise ?? 0) > 0 || payment.legs.length > 0) {
+    return true;
+  }
+  return (
+    payment.discountCodeId !== null &&
+    payment.originalAmount + payment.taxAmount - payment.amount > 0
+  );
 }
 
 /**

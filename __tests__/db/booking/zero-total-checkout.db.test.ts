@@ -1,11 +1,14 @@
 /**
- * A full discount with no credits: the order never reaches the gateway, the
- * booking is confirmed at birth on the no-gateway rail and keeps its discount
- * use, and cancelling it settles cleanly with no money to move.
+ * A platform code never makes a paid order free: the profitability floor caps
+ * a 100% code and the rest goes through the gateway. Only a ₹0 plan takes the
+ * no-gateway rail, and cancelling that booking settles with no money to move.
  */
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import prisma from "../../../lib/prisma";
+import { readActiveFeeSchedule } from "../../../lib/payments/pricing/platform-fee";
+import { platformFundedCapPaise } from "../../../lib/payments/pricing/platform-funded-cap";
+import { currentGstRegime } from "../../../lib/payments/tax/gst-regime";
 import { futureAt, seedHost } from "./harness";
 import {
   consultationCheckout,
@@ -51,7 +54,14 @@ jest.mock("../../../lib/stream/access-revocation", () => ({
 import { handleCheckout } from "../../../lib/payments/checkout";
 import { POST as cancel } from "../../../app/api/appointments/[appointmentId]/cancel/route";
 
-it("a 100% discount books on the no-gateway rail and cancels cleanly", async () => {
+const gateway = () =>
+  jest.requireMock("../../../lib/payments/index") as {
+    createPaymentIntent: jest.Mock;
+  };
+
+beforeEach(() => jest.clearAllMocks());
+
+it("a 100% platform code is capped by the floor and the rest is charged through the gateway", async () => {
   const host = await seedHost();
   await publishEveryHour(host);
   const plan = await seedConsultationPlan(host, "Comp consultation");
@@ -74,20 +84,55 @@ it("a 100% discount books on the no-gateway rail and cancels cleanly", async () 
     buyer.userId,
   );
 
-  const gateway = jest.requireMock("../../../lib/payments/index") as {
-    createPaymentIntent: jest.Mock;
-  };
-  expect(gateway.createPaymentIntent).not.toHaveBeenCalled();
+  const payment = await prisma.payment.findFirstOrThrow({
+    where: { userId: buyer.userId },
+  });
+  const cap = platformFundedCapPaise({
+    listPaise: 100_000,
+    platformFeeBps: (await readActiveFeeSchedule(prisma)).marketplaceBps,
+    gstRegistered: currentGstRegime() === "REGISTERED",
+  });
+  const charged = Number(payment.amount);
+  expect(cap).toBeGreaterThan(0);
+  expect(
+    Number(payment.originalAmount) - (charged - Number(payment.taxAmount)),
+  ).toBe(cap);
+  expect(charged).toBeGreaterThan(0);
+  expect(payment.paymentStatus).toBe("PENDING");
+  expect(gateway().createPaymentIntent).toHaveBeenCalledWith(
+    expect.objectContaining({ amount: charged }),
+  );
+  expect(
+    (await prisma.discountCode.findUniqueOrThrow({ where: { id: code.id } }))
+      .currentUses,
+  ).toBe(1);
+});
+
+it("a ₹0 plan books on the no-gateway rail and cancels cleanly", async () => {
+  const host = await seedHost();
+  await publishEveryHour(host);
+  const plan = await prisma.consultationPlan.create({
+    data: {
+      title: "Free consultation",
+      price: BigInt(0),
+      consultantProfileId: host.consultantProfileId,
+      durationInHours: 1,
+    },
+  });
+  const buyer = await seedBuyer();
+
+  await handleCheckout(
+    consultationCheckout(plan.id, futureAt(6, 10), `free-${randomUUID()}`),
+    buyer.userId,
+  );
+
+  expect(gateway().createPaymentIntent).not.toHaveBeenCalled();
   const payment = await prisma.payment.findFirstOrThrow({
     where: { userId: buyer.userId },
   });
   expect(payment.paymentStatus).toBe("SUCCEEDED");
   expect(Number(payment.amount)).toBe(0);
   expect(payment.paymentIntent.startsWith("free_")).toBe(true);
-  expect(
-    (await prisma.discountCode.findUniqueOrThrow({ where: { id: code.id } }))
-      .currentUses,
-  ).toBe(1);
 
   sessionUser.current = {
     id: buyer.userId,
@@ -108,9 +153,4 @@ it("a 100% discount books on the no-gateway rail and cancels cleanly", async () 
     { params: Promise.resolve({ appointmentId: payment.appointmentId! }) },
   );
   expect(res.status).toBe(200);
-  // A paid booking keeps its use, refunded or not.
-  expect(
-    (await prisma.discountCode.findUniqueOrThrow({ where: { id: code.id } }))
-      .currentUses,
-  ).toBe(1);
 });

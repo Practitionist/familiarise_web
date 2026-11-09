@@ -1,6 +1,7 @@
 /**
  * Mints the consumer tax invoice for SUCCEEDED payments the capture path left
- * un-invoiced (a missing GSTIN, a crash after commit), within a bounded lookback.
+ * un-invoiced (a crash after commit), within a bounded lookback. While the
+ * platform is unregistered it mints nothing.
  */
 
 import { randomUUID } from "node:crypto";

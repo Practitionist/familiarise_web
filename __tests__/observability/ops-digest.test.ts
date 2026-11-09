@@ -111,6 +111,13 @@ const mockDb = {
   emailEvent: {
     aggregate: jest.fn(async () => ({ _max: { receivedAt: null } })),
   },
+  payment: {
+    aggregate: jest.fn(async () => ({ _sum: { amount: 0, taxAmount: 0 } })),
+  },
+  referralCreditUsage: {
+    aggregate: jest.fn(async () => ({ _sum: { amount: 0 } })),
+  },
+  refund: { aggregate: jest.fn(async () => ({ _sum: { amountPaise: 0 } })) },
 };
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,

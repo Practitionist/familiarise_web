@@ -32,7 +32,11 @@ import {
   reportPaymentsError,
 } from "../../utils";
 import { useHandleApiError } from "../../use-handle-api-error";
-import { calculatePricing, formatPercentage } from "../../math";
+import {
+  calculatePricing,
+  formatPercentage,
+  appliedDiscountLabel,
+} from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
@@ -41,8 +45,10 @@ import {
   CancellationPolicyNote,
   type PurchaseFunding,
 } from "@/components/booking/CancellationPolicyNote";
-import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
-import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
+import {
+  CheckoutTotalNotes,
+  CheckoutTotals,
+} from "../../components/CheckoutTotals";
 import {
   BillingStateSelect,
   useBillingState,
@@ -275,6 +281,7 @@ export default function ClassCheckoutPage({
         body: JSON.stringify({
           code: codeToApply,
           amount: batchPricePaise,
+          consultantProfileId: planData?.data?.consultantProfile?.id,
         }),
       });
 
@@ -455,8 +462,10 @@ export default function ClassCheckoutPage({
           ? null
           : referralPricing?.welcomeDiscount,
       creditCapBps: referralPricing?.creditCapBps,
+      promoFeeBps: referralPricing?.promoFeeBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
+      gstRegistered: checkoutTaxContext.gstRegistered,
     });
   }, [
     referralPricing,
@@ -467,6 +476,7 @@ export default function ClassCheckoutPage({
     availableCredits,
     checkoutTaxContext.isInternational,
     checkoutTaxContext.exportZeroRated,
+    checkoutTaxContext.gstRegistered,
   ]);
 
   // Periodic staleness check: detect if all class sessions have ended or been cancelled
@@ -747,9 +757,13 @@ export default function ClassCheckoutPage({
                   {appliedDiscount.code}
                 </div>
                 <div className="text-sm text-green-600">
-                  {appliedDiscount.discountType === "PERCENTAGE"
-                    ? `${appliedDiscount.discountValue}% off`
-                    : `${formatPrice(appliedDiscount.discountValue)} off`}
+                  {appliedDiscountLabel(appliedDiscount, formatPrice).label}
+                  {appliedDiscountLabel(appliedDiscount, formatPrice)
+                    .limited && (
+                    <span className="block text-xs">
+                      Limited to the most this booking allows.
+                    </span>
+                  )}
                 </div>
               </div>
               <Button
@@ -851,21 +865,11 @@ export default function ClassCheckoutPage({
                   <div>-{formatPrice(pricing.discountAmount)}</div>
                 </div>
               )}
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
-              {pricing.creditsApplied > 0 && (
-                <div className="flex items-center justify-between text-foreground">
-                  <div>Referral Credits</div>
-                  <div>-{formatPrice(pricing.creditsApplied)}</div>
-                </div>
-              )}
-              <Separator className="bg-border" />
-              <div className="flex items-center justify-between font-semibold">
-                <div>Total</div>
-                <div>{formatPrice(pricing.total)}</div>
-              </div>
+              <CheckoutTotals
+                pricing={pricing}
+                formatPrice={formatPrice}
+                taxContext={checkoutTaxContext}
+              />
               {/* #1780 D-6 — the host's free-cancellation window. */}
               <FreeCancellationLine
                 startsAt={nextClassSession?.startsAt}
@@ -885,13 +889,10 @@ export default function ClassCheckoutPage({
                 viewerZone={viewer}
                 className="border-t border-border pt-3 text-xs text-muted-foreground"
               />
-              <FxEstimateNote
+              <CheckoutTotalNotes
                 totalPaise={pricing.total}
                 organizationId={selectedOrganizationId}
-              />
-              <EmiHint
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
+                taxContextStatus={checkoutTaxContext.taxContextStatus}
               />
             </div>
           </CardContent>

@@ -85,6 +85,7 @@ This folder documents the money subsystem: how a rupee gets in, how it is record
 - [02-gst-invoices-and-credit-notes.md](60-tax/02-gst-invoices-and-credit-notes.md)
 - [03-tds-rules-and-returns.md](60-tax/03-tds-rules-and-returns.md)
 - [04-msme-statutory-exports-and-calendar.md](60-tax/04-msme-statutory-exports-and-calendar.md)
+- [05-gst-registration-and-tax-regime.md](60-tax/05-gst-registration-and-tax-regime.md)
 
 ### 70-operations
 
