@@ -31,6 +31,45 @@ export const COMPANY_INFO = {
   grievanceOfficerName: "",
 } as const;
 
+/** The signed record behind /compliance-certificate. Dates are ISO `YYYY-MM-DD`. */
+export interface DarkPatternAudit {
+  signatoryName: string;
+  signatoryDesignation: string;
+  signedOn: string;
+  periodFrom: string;
+  periodTo: string;
+  nextDueOn: string;
+  /** One or two plain sentences on what was found and what is still open at signing. */
+  outcomeSummary: string;
+}
+
+/**
+ * Empty until the director signs the annual dark-pattern self-audit
+ * (docs/compliance/06-dark-pattern-self-audit.md). Filling the signatory, the date, the
+ * period, the next due date and the outcome publishes the certificate page.
+ */
+export const DARK_PATTERN_AUDIT: DarkPatternAudit = {
+  signatoryName: "",
+  signatoryDesignation: "",
+  signedOn: "",
+  periodFrom: "",
+  periodTo: "",
+  nextDueOn: "",
+  outcomeSummary: "",
+};
+
+/** The certificate is public only once a named signatory has signed on a date and the audit period, due date and outcome are filled. */
+export function isDarkPatternAuditSigned(audit: DarkPatternAudit): boolean {
+  return [
+    audit.signatoryName,
+    audit.signedOn,
+    audit.periodFrom,
+    audit.periodTo,
+    audit.nextDueOn,
+    audit.outcomeSummary,
+  ].every((field) => field.trim() !== "");
+}
+
 /** Where /contactus inquiries are delivered. */
 export const CONTACT_INBOX_ADDRESS = SUPPORT_EMAIL;
 /** Supplier contact printed on tax invoices and credit notes. */

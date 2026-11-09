@@ -167,7 +167,7 @@ export function stageExternalIntakeReceiptTx(
         input.caseId,
         input.to,
         input.reference,
-        "We received your grievance. We email our responses only after this address is confirmed.",
+        "We received your grievance. We email our responses, and a copy of your complaint as we recorded it, only after this address is confirmed.",
       ),
     ),
     "SUPPORT_TICKET_RECEIVED",
@@ -210,8 +210,9 @@ export type ConfirmExternalEmailOutcome =
   "VERIFIED" | "ALREADY_VERIFIED" | "INVALID";
 
 /**
- * Records the confirmation once and sends the staff replies and decisions that
- * were withheld while the address was unconfirmed.
+ * Records the confirmation once, sends the complainant a copy of the complaint
+ * as recorded, and sends the staff replies and decisions that were withheld
+ * while the address was unconfirmed.
  */
 export function confirmExternalRequesterEmail(input: {
   caseId: string;
@@ -226,6 +227,8 @@ export function confirmExternalRequesterEmail(input: {
           select: {
             id: true,
             referenceNumber: true,
+            title: true,
+            description: true,
             externalRequesterEmail: true,
           },
         });
@@ -299,6 +302,20 @@ export function confirmExternalRequesterEmail(input: {
             "SUPPORT_TICKET_RESPONSE",
             { tx, entityRef: `case-verified:${supportCase.id}` },
           );
+        await stageEmail(
+          render(
+            email,
+            `Your grievance as recorded — ${supportCase.referenceNumber}`,
+            [
+              `Reference: ${supportCase.referenceNumber}`,
+              "This is a copy of your complaint exactly as we recorded it.",
+              supportCase.title,
+              supportCase.description,
+            ].join("\n\n"),
+          ),
+          "SUPPORT_TICKET_RECEIVED",
+          { tx, entityRef: `case-complaint-copy:${supportCase.id}` },
+        );
         return "VERIFIED";
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },

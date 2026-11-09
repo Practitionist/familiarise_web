@@ -6,7 +6,7 @@
 
 ### Subject Line Options:
 
-1. Stop Losing 20-30% to Platform Fees
+1. How much did you pay in platform fees last year?
 2. Keep More of What You Earn - Free Consulting Platform Launch
 3. Finally: A Consulting Platform That Doesn't Nickel and Dime You
 
@@ -18,7 +18,7 @@ Hi [Consultant Name],
 
 Quick question: How much did you pay in platform fees last year?
 
-If you're like most consultants we've talked to, you're losing **20-30% of your revenue** to platforms that take a cut of every booking.
+Many platforms take a cut of every booking, and the fees add up.
 
 **We're building Familiarise to change that.**
 
@@ -41,7 +41,7 @@ We're in our launch phase and offering **free access** to consultants who join n
 - Payment processing built-in
 - Get in early while it's completely free
 
-**The math is simple:** Even if you only book a few sessions a month, keeping that 20-30% adds up. And you'll have input into how we build features that actually help you make more money.
+**The math is simple:** Even if you only book a few sessions a month, keeping your revenue adds up. And you'll have input into how we build features that actually help you make more money.
 
 Ready to keep more of what you earn?
 

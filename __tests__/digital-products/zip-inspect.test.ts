@@ -546,3 +546,49 @@ it("inflates bit-3 DEFLATE entries and requires each stream to end at its centra
   expect(result).toMatchObject({ ok: false, problem: "DEEP_SCAN_TOO_LARGE" });
   expect(reads).toBe(2);
 });
+
+it("refuses macros and embedded OLE or ActiveX objects in a document container only", async () => {
+  const doc = [{ name: "[Content_Types].xml" }, { name: "word/document.xml" }];
+  await expect(inspect(buildZip(doc), false)).resolves.toMatchObject({
+    ok: true,
+  });
+  // A chart's workbook and printer settings are ordinary parts of a clean document.
+  await expect(
+    inspect(
+      buildZip([
+        ...doc,
+        { name: "word/embeddings/Microsoft_Excel_Sheet1.xlsx" },
+        { name: "word/printerSettings/printerSettings1.bin" },
+      ]),
+      false,
+    ),
+  ).resolves.toMatchObject({ ok: true });
+
+  const cases: Array<[string, string]> = [
+    ["word/vbaProject.bin", "OFFICE_MACRO"],
+    ["xl/VBAPROJECT.BIN", "OFFICE_MACRO"],
+    ["ppt/vbaProject.bin.", "OFFICE_MACRO"],
+    ["xl/macrosheets/sheet1.xml", "OFFICE_MACRO"],
+    ["word/vbaData.xml", "OFFICE_MACRO"],
+    ["word/embeddings/oleObject1.bin", "EMBEDDED_OBJECT"],
+    ["xl/embeddings/package.bin", "EMBEDDED_OBJECT"],
+    ["word/activeX/activeX1.bin", "EMBEDDED_OBJECT"],
+  ];
+  for (const [name, problem] of cases) {
+    await expect(
+      inspect(buildZip([...doc, { name }]), false),
+    ).resolves.toMatchObject({ ok: false, problem });
+  }
+
+  // A plain ZIP product keeps the entry-type rules instead.
+  await expect(
+    inspect(buildZip([{ name: "word/vbaProject.bin" }]), true),
+  ).resolves.toMatchObject({ ok: true });
+  expect(describeRejectReason("ZIP_OFFICE_MACRO")).toMatchObject({
+    code: "ZIP_OFFICE_MACRO",
+    message: ASSET_REJECT_MESSAGES.ZIP_OFFICE_MACRO,
+  });
+  expect(
+    describeRejectReason("ZIP_EMBEDDED_OBJECT:oleObject1.bin"),
+  ).toMatchObject({ code: "ZIP_EMBEDDED_OBJECT" });
+});

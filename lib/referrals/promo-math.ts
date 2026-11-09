@@ -41,6 +41,21 @@ export const referralTermsSchema = z.object({
 
 export type ReferralTerms = z.infer<typeof referralTermsSchema>;
 
+/** What a referred friend is promised, including the payable-after-discount floor and that a low-priced session can earn less. */
+export function welcomeOfferText(
+  terms: Pick<
+    ReferralTerms,
+    "discountPercent" | "discountMaxPaise" | "minOrderPaise"
+  >,
+  formatAmount: (paise: number) => string,
+): string {
+  const floor =
+    terms.minOrderPaise > 0
+      ? `, if you still pay at least ${formatAmount(terms.minOrderPaise)} after the discount`
+      : "";
+  return `${terms.discountPercent}% off your first booking, up to ${formatAmount(terms.discountMaxPaise)}${floor}, and it may be lower on low-priced sessions`;
+}
+
 /** Pre-tax welcome discount: `min(round(list × bps / 10 000), maxPaise, list, platform-funded cap)`. */
 export function computeWelcomeDiscountPaise(
   listPaise: number,

@@ -709,7 +709,7 @@ export function PlanCheckoutShell({
               {pricing.discountAmount > 0 && (
                 <div className="flex items-center justify-between text-green-600">
                   <div>
-                    Discount{" "}
+                    {appliedDiscount ? "Discount" : "Welcome discount"}{" "}
                     {pricing.discountPercent > 0 &&
                       `(${formatPercentage(pricing.discountPercent)})`}
                   </div>
