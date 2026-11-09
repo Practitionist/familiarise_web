@@ -1,4 +1,4 @@
-# 07 — Dark-pattern self-audit record
+# 06 — Dark-pattern self-audit record
 
 > **Status:** DRAFT. It becomes the signed record only after the director signs it and the browser walk in section 8 is done. Until then `/compliance-certificate` returns 404.
 > **Audience:** the director who signs, compliance operators, and engineers who change pricing, checkout, ranking or consent.

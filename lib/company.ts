@@ -45,7 +45,7 @@ export interface DarkPatternAudit {
 
 /**
  * Empty until the director signs the annual dark-pattern self-audit
- * (docs/compliance/07-dark-pattern-self-audit.md). Filling the signatory and
+ * (docs/compliance/06-dark-pattern-self-audit.md). Filling the signatory and
  * the signing date publishes the certificate page.
  */
 export const DARK_PATTERN_AUDIT: DarkPatternAudit = {
