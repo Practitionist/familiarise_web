@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,12 +41,25 @@ export function DemoForm({
   const [formError, setFormError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
-  const set = (key: keyof typeof EMPTY) => (value: string) =>
+  const inFlight = useRef(false);
+
+  const set = (key: keyof typeof EMPTY) => (value: string) => {
     setValues((v) => ({ ...v, [key]: value }));
+    // Editing a field answers its error: stale red text would say it is still wrong.
+    setFieldErrors((prev) => {
+      if (!prev[key]) return prev;
+      const { [key]: _cleared, ...rest } = prev;
+      return rest;
+    });
+    setFormError(null);
+  };
   const err = (k: string) => fieldErrors[k]?.[0];
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    // The button only disables after a re-render; a double Enter gets here first.
+    if (inFlight.current) return;
+    inFlight.current = true;
     setStatus("sending");
     setFormError(null);
     setFieldErrors({});
@@ -93,6 +106,8 @@ export function DemoForm({
         "We could not reach the server. Check your connection and try again.",
       );
       setStatus("idle");
+    } finally {
+      inFlight.current = false;
     }
   }
 

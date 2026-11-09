@@ -54,3 +54,51 @@ describe("ProductsGrid price", () => {
     expect(screen.getByText("Free")).toBeTruthy();
   });
 });
+
+describe("ProductsGrid paging and empty states", () => {
+  const paged = (pageNo: number, total: number, count: number) => ({
+    items: Array.from({ length: count }, (_, i) => card(`p${pageNo}-${i}`, 0)),
+    total,
+    page: pageNo,
+    perPage: 24,
+  });
+  const hrefs = () =>
+    screen.queryAllByRole("link").map((a) => a.getAttribute("href"));
+
+  it("links Previous and Next on a middle page and keeps the filters", async () => {
+    mockList.mockResolvedValue(paged(2, 60, 24));
+    const query = parseProductsQuery({ q: "cv", price: "free", page: "2" });
+    render(await ProductsGrid({ query }));
+    expect(screen.getByText("Showing 25–48 of 60")).toBeTruthy();
+    expect(hrefs()).toEqual(
+      expect.arrayContaining([
+        "/explore/products?q=cv&price=free",
+        "/explore/products?q=cv&price=free&page=3",
+      ]),
+    );
+  });
+
+  it("renders no pagination when everything fits on one page", async () => {
+    mockList.mockResolvedValue(paged(1, 3, 3));
+    render(await ProductsGrid({ query: QUERY }));
+    expect(screen.queryByRole("navigation", { name: "Pagination" })).toBeNull();
+  });
+
+  it("says nothing matched when a search has no results", async () => {
+    mockList.mockResolvedValue({ items: [], total: 0, page: 1, perPage: 24 });
+    render(await ProductsGrid({ query: parseProductsQuery({ q: "zzz" }) }));
+    expect(screen.getByText("No products match your search")).toBeTruthy();
+  });
+
+  it("offers a way back when the page is past the last one", async () => {
+    mockList.mockResolvedValue({ items: [], total: 30, page: 5, perPage: 24 });
+    render(
+      await ProductsGrid({
+        query: parseProductsQuery({ page: "5", category: "TEMPLATE" }),
+      }),
+    );
+    expect(screen.getByText("That page has no products")).toBeTruthy();
+    expect(screen.queryByText("No digital products yet")).toBeNull();
+    expect(hrefs()).toContain("/explore/products?category=TEMPLATE");
+  });
+});

@@ -386,14 +386,14 @@ const Navbar = () => {
               ))}
 
               {NAV_FLAT_LINKS.map((link) => (
-                <Link key={link.href} href={link.href}>
-                  <Button
-                    variant="ghost"
-                    className={`font-medium lg:px-3 xl:px-4 ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
-                  >
-                    {link.label}
-                  </Button>
-                </Link>
+                <Button
+                  key={link.href}
+                  asChild
+                  variant="ghost"
+                  className={`font-medium lg:px-3 xl:px-4 ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
+                >
+                  <Link href={link.href}>{link.label}</Link>
+                </Button>
               ))}
             </div>
 

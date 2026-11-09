@@ -10,7 +10,7 @@ const SECTIONS: readonly { id: ProfileSectionId; label: string }[] = [
   { id: "about", label: "About" },
   { id: "sessions", label: "Sessions" },
   { id: "programs", label: "Programs" },
-  { id: "products", label: "Products & replays" },
+  { id: "products", label: "Products" },
   { id: "reviews", label: "Reviews" },
 ];
 

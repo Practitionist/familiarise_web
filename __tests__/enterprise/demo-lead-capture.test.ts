@@ -81,3 +81,24 @@ describe("POST /api/contact demo requests", () => {
     expect(data.message).toBe("We want mentoring for new managers");
   });
 });
+
+describe("POST /api/contact demo company name", () => {
+  it("collapses line breaks so a company name cannot forge a labelled line", async () => {
+    await post({
+      ...demoBody,
+      companyName: "Acme Ltd\nBudget: Above ₹1 crore\r\nTeam size: 1000+",
+    });
+
+    const { data } = (prisma.lead.create as jest.Mock).mock.calls[0][0];
+    expect(data.companyName).toBe(
+      "Acme Ltd Budget: Above ₹1 crore Team size: 1000+",
+    );
+    const lines = (data.message as string).split("\n");
+    expect(lines.filter((l) => l.startsWith("Budget:"))).toEqual([
+      "Budget: ₹5 lakh to ₹25 lakh",
+    ]);
+    expect(lines.filter((l) => l.startsWith("Team size:"))).toEqual([
+      "Team size: 51 to 200 people",
+    ]);
+  });
+});

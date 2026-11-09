@@ -23,6 +23,21 @@ export async function ProductsGrid({
   const gstRegistered = isPlatformGstRegistered();
   const filtered = Boolean(query.q || query.category || query.price);
 
+  if (products.length === 0 && page > 1 && total > 0) {
+    return (
+      <div className="py-24 text-center text-muted-foreground">
+        <p className="text-lg font-medium">That page has no products</p>
+        <Button asChild variant="outline" className="mt-4">
+          <Link
+            href={`/explore/products${productsQueryString(query, { page: 1 })}`}
+          >
+            Back to the first page
+          </Link>
+        </Button>
+      </div>
+    );
+  }
+
   if (products.length === 0) {
     return (
       <div className="py-24 text-center text-muted-foreground">

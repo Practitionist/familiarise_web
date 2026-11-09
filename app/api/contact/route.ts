@@ -54,7 +54,14 @@ const ContactBodySchema = z.object({
     .optional()
     .or(z.literal("")),
   // Sent only by the /enterprise/demo form.
-  companyName: z.string().trim().max(200).optional(),
+  // One line only: a newline here would let a submitter forge the labelled
+  // lines appended to the lead message.
+  companyName: z
+    .string()
+    .trim()
+    .max(200)
+    .transform((v) => v.replace(/\s+/g, " "))
+    .optional(),
   useCase: z.enum(DEMO_USE_CASE_VALUES).optional(),
   teamSize: z.enum(DEMO_TEAM_SIZE_VALUES).optional(),
   budgetBand: z.enum(DEMO_BUDGET_BAND_VALUES).optional(),
