@@ -8,6 +8,7 @@ import {
   ADMIN_REFUND_SELECT,
   CONSUMER_INVOICE_SUMMARY_SELECT,
   DISCOUNT_CODE_SUMMARY_SELECT,
+  FUNDING_LEG_SUMMARY_SELECT,
 } from "@/lib/data/payments-select";
 
 interface RouteParams {
@@ -62,6 +63,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           select: ADMIN_DISPUTE_SELECT,
         },
         consumerInvoice: { select: CONSUMER_INVOICE_SUMMARY_SELECT },
+        legs: { select: FUNDING_LEG_SUMMARY_SELECT },
         digitalProductPurchase: {
           select: ADMIN_DIGITAL_PRODUCT_PURCHASE_SELECT,
         },

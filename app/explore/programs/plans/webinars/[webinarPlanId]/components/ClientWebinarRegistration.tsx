@@ -14,7 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
-import { useCurrency } from "@/hooks/useCurrency";
+import { useBuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { formatInTimeZone } from "date-fns-tz";
 import { eventCapacityFromCount } from "@/lib/events/capacity";
 import type { TSessionStatus } from "../types";
@@ -68,7 +68,7 @@ export function ClientWebinarRegistration({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { formatPrice } = useCurrency();
+  const { formatBuyerPriceLabel } = useBuyerPrice();
   useRefreshOnViewerChange(viewerUserId);
 
   // Defer auth + timezone until after hydration to avoid mismatch
@@ -159,7 +159,7 @@ export function ClientWebinarRegistration({
   }
 
   // Logic for buttonText and buttonDisabled
-  let buttonText = `Pay ${formatPrice(price)} & Register Now`;
+  let buttonText = `Pay ${formatBuyerPriceLabel(price)} & Register Now`;
   let buttonDisabled = false;
 
   if (sessionStatus === "Completed") {

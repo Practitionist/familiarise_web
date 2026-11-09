@@ -66,6 +66,7 @@ function row(
     consultantName: "Asha Rao",
     organizationId: null,
     discount: null,
+    discountBreakdown: { codeDiscountPaise: 0, welcomeDiscountPaise: 0 },
     refunds,
     refundedPaise: 0,
     consumerInvoice: null,

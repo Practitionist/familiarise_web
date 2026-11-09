@@ -4,9 +4,11 @@ import { FileText } from "lucide-react";
 import { listPublicDigitalProducts } from "@/lib/data/digital-products-public";
 import { DIGITAL_PRODUCT_CATEGORY_LABEL } from "@/lib/digital-products/constants";
 import { productPriceLabel } from "@/lib/digital-products/price-label";
+import { isPlatformGstRegistered } from "@/lib/pdf/supplier";
 
 export async function ProductsGrid() {
   const products = await listPublicDigitalProducts(48);
+  const gstRegistered = isPlatformGstRegistered();
 
   if (products.length === 0) {
     return (
@@ -50,7 +52,7 @@ export async function ProductsGrid() {
                   {DIGITAL_PRODUCT_CATEGORY_LABEL[product.category]}
                 </span>
                 <span className="font-semibold text-primary">
-                  {productPriceLabel(product.pricePaise)}
+                  {productPriceLabel(product.pricePaise, gstRegistered)}
                 </span>
               </div>
               <h3 className="line-clamp-2 text-sm font-medium transition-colors group-hover:text-primary">

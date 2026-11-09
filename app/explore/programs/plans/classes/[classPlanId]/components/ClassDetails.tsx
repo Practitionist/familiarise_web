@@ -13,7 +13,7 @@ import { deriveBatchCards } from "@/lib/booking/batch-cards";
 import { formatRole } from "@/components/collaborators/format";
 import { BatchSchedule } from "./BatchSchedule";
 import { ClientClassRegistration } from "./ClientClassRegistration";
-import { useCurrency } from "@/hooks/useCurrency";
+import { BuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
 import type { TClassPlanDetailsData } from "../types";
@@ -34,7 +34,6 @@ export function ClassDetails({
   waitingAppointmentIds,
   viewerUserId,
 }: ClassDetailsProps) {
-  const { formatPrice } = useCurrency();
   const [userTimeZone, setUserTimeZone] = useState("UTC");
   useEffect(() => {
     setUserTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
@@ -70,7 +69,7 @@ export function ClassDetails({
             </h1>
             <div className="flex items-center gap-4 text-white/80">
               <span className="text-2xl md:text-3xl font-bold text-white">
-                {formatPrice(plan.price)}
+                <BuyerPrice paise={plan.price} noteClassName="text-white/70" />
               </span>
               <span className="text-white/60">•</span>
               <span>{plan.durationInMonths} months</span>

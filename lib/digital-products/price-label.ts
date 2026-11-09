@@ -1,8 +1,11 @@
-import { formatCurrencyAmount } from "@/utils/formatting";
+import { buyerPriceLabelInr } from "@/lib/payments/pricing/display-price";
 
-/** Listing cards are viewer-agnostic, so the amount is before GST; the product page shows the buyer's total. */
-export function productPriceLabel(pricePaise: number): string {
+/** Listing cards show the all-in price once the platform is GST-registered. */
+export function productPriceLabel(
+  pricePaise: number,
+  gstRegistered: boolean,
+): string {
   return pricePaise === 0
     ? "Free"
-    : `${formatCurrencyAmount(pricePaise, "INR")} + GST`;
+    : buyerPriceLabelInr(pricePaise, gstRegistered);
 }

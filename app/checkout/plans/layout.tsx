@@ -12,7 +12,7 @@ export default function CheckoutLayout({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.5 }}
-      className="grid min-h-screen w-full overflow-hidden lg:grid-cols-[60%_40%]"
+      className="grid min-h-screen w-full grid-cols-[minmax(0,1fr)] overflow-hidden lg:grid-cols-[60%_40%]"
     >
       {children}
     </motion.div>

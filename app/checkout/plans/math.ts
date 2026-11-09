@@ -194,10 +194,15 @@ export function formatPercentage(rate: number): string {
 export function appliedDiscountLabel(
   discount: AppliedDiscount,
   formatPrice: (paise: number) => string,
+  listPricePaise?: number,
 ): { label: string; limited: boolean } {
   if (discount.discountAmount !== undefined) {
     const nominal =
-      discount.discountType === "FIXED_AMOUNT" ? discount.discountValue : null;
+      discount.discountType === "FIXED_AMOUNT"
+        ? discount.discountValue
+        : listPricePaise === undefined
+          ? null
+          : Math.round((listPricePaise * discount.discountValue) / 100);
     return {
       label: `${formatPrice(discount.discountAmount)} off`,
       limited: nominal !== null && discount.discountAmount < nominal,

@@ -119,6 +119,11 @@ export function PriceField<T extends FieldValues = FieldValues>({
 
       {description && <FormDescription>{description}</FormDescription>}
 
+      <p className="text-xs text-muted-foreground">
+        Your price excl. GST. Buyers see the all-in price once Familiarise is
+        GST-registered.
+      </p>
+
       {!isOrgCatalog && (
         <p className="text-xs text-muted-foreground">
           {formatFeeHint(feeSchedule, numericPrice, currencyCode)}

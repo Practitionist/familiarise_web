@@ -39,4 +39,19 @@ describe("appliedDiscountLabel", () => {
       ),
     ).toEqual({ label: "10% off", limited: false });
   });
+
+  it("notes a percentage code the floor held below its face value", () => {
+    expect(
+      appliedDiscountLabel(
+        {
+          code: "BIG",
+          discountType: "PERCENTAGE",
+          discountValue: 37,
+          discountAmount: 34_577,
+        },
+        fmt,
+        196_021,
+      ),
+    ).toEqual({ label: "₹345.77 off", limited: true });
+  });
 });

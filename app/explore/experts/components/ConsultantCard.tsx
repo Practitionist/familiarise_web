@@ -18,7 +18,10 @@ import {
   BadgeCheck,
   Building2,
 } from "lucide-react";
-import { useCurrency } from "@/hooks/useCurrency";
+import {
+  BuyerPrice,
+  useBuyerPrice,
+} from "@/components/pricing/BuyerPriceProvider";
 
 interface ConsultantCardProps {
   consultant: IConsultantCardData;
@@ -89,13 +92,7 @@ const isMeaningfulText = (
   return !/^(none|n\/?a|na|null|nil|tbd|-+|\.+)$/i.test(trimmed);
 };
 
-const SubscriptionPlanCard = ({
-  plan,
-  formatPrice,
-}: {
-  plan: SubscriptionPlanCardData;
-  formatPrice: (amountINR: number) => string;
-}) => {
+const SubscriptionPlanCard = ({ plan }: { plan: SubscriptionPlanCardData }) => {
   const formatDuration = (months: number) => {
     switch (months) {
       case 1:
@@ -115,7 +112,7 @@ const SubscriptionPlanCard = ({
     <div className="bg-card rounded-xl p-5 border border-border">
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
         <div className="text-2xl sm:text-3xl font-bold text-foreground">
-          {formatPrice(plan.price)}
+          <BuyerPrice paise={plan.price} />
         </div>
         <div className="text-xs sm:text-sm text-muted-foreground font-medium bg-muted px-2 sm:px-3 py-1 rounded-full whitespace-nowrap">
           {formatDuration(plan.durationInMonths)}
@@ -163,7 +160,7 @@ export const ConsultantCard = memo(function ConsultantCard({
   metadata: _metadata,
   onSelect,
 }: Readonly<ConsultantCardProps>) {
-  const { formatPrice } = useCurrency();
+  const { formatBuyerPriceLabel } = useBuyerPrice();
   const profileHref = `/explore/experts/${consultant.id}`;
 
   const sortedPlans =
@@ -427,10 +424,7 @@ export const ConsultantCard = memo(function ConsultantCard({
                     key={`${consultant.id}-tab-content-${plan.id}`}
                     value={plan.id}
                   >
-                    <SubscriptionPlanCard
-                      plan={plan}
-                      formatPrice={formatPrice}
-                    />
+                    <SubscriptionPlanCard plan={plan} />
                   </TabsContent>
                 ))}
               </Tabs>
@@ -466,7 +460,7 @@ export const ConsultantCard = memo(function ConsultantCard({
                 >
                   <Link href={`${profileHref}?action=trial`}>
                     {trialOffer.priceInPaise > 0
-                      ? `Trial · ${formatPrice(trialOffer.priceInPaise)}`
+                      ? `Trial · ${formatBuyerPriceLabel(trialOffer.priceInPaise)}`
                       : "Free intro call"}
                   </Link>
                 </Button>

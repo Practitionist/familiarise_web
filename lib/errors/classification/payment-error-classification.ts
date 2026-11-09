@@ -76,6 +76,8 @@ export const ErrorTypes = {
   CREDIT_SHORTFALL: "CREDIT_SHORTFALL_ERROR",
   DISCOUNT_CURRENCY_MISMATCH: "DISCOUNT_CURRENCY_MISMATCH_ERROR",
   DISCOUNT_EXHAUSTED: "DISCOUNT_EXHAUSTED_ERROR",
+  // A code that is unknown, switched off or expired when checkout re-validates it.
+  DISCOUNT_CODE_INVALID: "DISCOUNT_CODE_INVALID_ERROR",
   // Literal-equality rule as WALLET_FROZEN: the checkout modal hands this
   // string straight to the toast map as `code` when verify answers non-2xx.
   VERIFICATION_FAILED: "VERIFICATION_FAILED",
@@ -514,6 +516,13 @@ const BUSINESS_ERROR_ENTRIES = [
     httpStatus: 400,
     userMessage:
       "This discount code is for a different currency and cannot be applied to this plan.",
+  },
+  {
+    code: "DISCOUNT_CODE_INVALID",
+    errorType: ErrorTypes.DISCOUNT_CODE_INVALID,
+    httpStatus: 400,
+    userMessage:
+      "That discount code is not valid for this purchase. Remove it and try again — your card was not charged.",
   },
   {
     code: "DISCOUNT_EXHAUSTED",

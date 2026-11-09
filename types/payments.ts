@@ -71,6 +71,12 @@ export interface PaymentDetailDispute {
 export interface PaymentDetail {
   id: string;
   amount: number;
+  originalAmount: number;
+  taxAmount: number;
+  /** Pre-tax referral welcome discount; null when the order had none. */
+  welcomeDiscountPaise: number | null;
+  /** Funding legs, so the referral-credit share can be told from the code discount. */
+  legs: { source: string; amountPaise: number }[];
   currency: string;
   description: string | null;
   receiptUrl: string | null;

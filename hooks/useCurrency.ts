@@ -159,6 +159,24 @@ export function useCurrency() {
     [convert, currency, symbol],
   );
 
+  // The gateway charges exact paise, so a rupee amount that is not whole shows
+  // its paise; a converted estimate keeps the rounded figure.
+  const formatPriceExact = useCallback(
+    (amountInPaise: number): string => {
+      const paise = Math.round(amountInPaise);
+      if (currency !== "INR" || paise % 100 === 0) {
+        return formatPrice(amountInPaise);
+      }
+      return new Intl.NumberFormat(CURRENCY_LOCALE_MAP.INR ?? "en-IN", {
+        style: "currency",
+        currency: "INR",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(paise / 100);
+    },
+    [currency, formatPrice],
+  );
+
   const setCurrency = useCallback(
     (code: string) => {
       setPreferredCurrency(code);
@@ -175,6 +193,7 @@ export function useCurrency() {
     isEstimate,
     convert,
     formatPrice,
+    formatPriceExact,
     setCurrency,
     isLoading: !isINR && isLoading,
   };
