@@ -140,8 +140,10 @@ export async function GET(request: NextRequest) {
     // Both bounds must hold on the same buyer-visible plan, and either rail
     // (1:1 session or mentorship) qualifies the expert.
     const priceRange: { gte?: number; lte?: number } = {};
-    if (minPrice !== undefined && !isNaN(minPrice)) priceRange.gte = minPrice;
-    if (maxPrice !== undefined && !isNaN(maxPrice)) priceRange.lte = maxPrice;
+    if (minPrice !== undefined && !Number.isNaN(minPrice))
+      priceRange.gte = minPrice;
+    if (maxPrice !== undefined && !Number.isNaN(maxPrice))
+      priceRange.lte = maxPrice;
     if (priceRange.gte !== undefined || priceRange.lte !== undefined) {
       const planInRange = {
         some: { price: priceRange, ...oneOnOnePlanDiscoverableWhere() },

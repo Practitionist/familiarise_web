@@ -42,7 +42,8 @@ export async function generateMetadata({
   if (!found) return { robots: { index: false } };
   const { domain, count } = found;
   const title = `${domain.name} experts and mentors | Familiarise`;
-  const description = `Book a session with ${count > 0 ? `${count} verified` : "verified"} ${domain.name.toLowerCase()} experts. Compare ratings, experience and prices.`;
+  const who = count > 0 ? `${count} verified` : "verified";
+  const description = `Book a session with ${who} ${domain.name.toLowerCase()} experts. Compare ratings, experience and prices.`;
   return {
     title,
     description,
@@ -60,6 +61,11 @@ export default async function ExpertsByFieldPage({
   const { domain, count, domains } = found;
   const experts = await getTopExpertsInDomain(domain.id, 12);
   const others = domains.filter((d) => d.id !== domain.id);
+  const noun = count === 1 ? "expert" : "experts";
+  const countSentence =
+    count > 0
+      ? `${count} verified ${noun} in ${domain.name.toLowerCase()}. `
+      : "";
 
   const itemList = {
     "@context": "https://schema.org",
@@ -95,9 +101,7 @@ export default async function ExpertsByFieldPage({
             {domain.name} experts and mentors
           </h1>
           <p className="text-muted-foreground">
-            {count > 0
-              ? `${count} verified ${count === 1 ? "expert" : "experts"} in ${domain.name.toLowerCase()}. `
-              : ""}
+            {countSentence}
             Compare ratings, experience and prices, then book a session.
           </p>
           <Button asChild>

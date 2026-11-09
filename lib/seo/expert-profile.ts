@@ -41,7 +41,8 @@ function expertSummary(expert: ExpertSeoInput): string {
 export function expertProfileMetadata(expert: ExpertSeoInput): Metadata {
   const name = expert.user.name ?? "Expert";
   const focus = expert.headline ?? expert.domain?.name;
-  const title = `${focus ? `${name}, ${focus}` : name} | Familiarise`;
+  const heading = focus ? `${name}, ${focus}` : name;
+  const title = `${heading} | Familiarise`;
   const description = expertSummary(expert);
   const image = expertImage(expert);
   return {

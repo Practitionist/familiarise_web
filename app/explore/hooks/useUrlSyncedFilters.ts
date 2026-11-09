@@ -101,7 +101,8 @@ export function useUrlSyncedFilters<T>({
         if (value) params.set(name, value);
       }
       const fullQs = params.toString();
-      const target = `${basePath}${fullQs ? `?${fullQs}` : ""}${hash}`;
+      const query = fullQs ? `?${fullQs}` : "";
+      const target = `${basePath}${query}${hash}`;
       const current = window.location.pathname + window.location.search + hash;
       if (target !== current) {
         pendingWrittenQs.current = qs;

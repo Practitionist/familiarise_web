@@ -89,7 +89,8 @@ function messageWithDemoDetails(data: ContactBody): string {
   add("Team size", label(DEMO_TEAM_SIZES, data.teamSize));
   add("Budget", label(DEMO_BUDGET_BANDS, data.budgetBand));
   if (lines.length === 0) return data.message;
-  return `${data.message}\n\n${lines.map(([k, v]) => `${k}: ${v}`).join("\n")}`;
+  const details = lines.map((line) => line.join(": ")).join("\n");
+  return `${data.message}\n\n${details}`;
 }
 
 async function recordContactLeadIfApplicable(data: ContactBody): Promise<void> {

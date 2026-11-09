@@ -15,7 +15,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import { differenceInCalendarDays } from "date-fns";
-import { formatInTimeZone } from "date-fns-tz";
 import { useSession } from "@/lib/auth-client";
 import { AboutSection } from "./components/AboutSection";
 import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
@@ -40,7 +39,7 @@ import {
   useAvailabilityWindow,
 } from "@/lib/scheduling/use-availability-window";
 import { dayState, isSelectableDay } from "./day-state";
-import { nextAvailableWindow } from "@/lib/scheduling/booking-windows";
+import { useNextAvailableLabel } from "./use-next-available";
 import { zonedWeekWindow } from "./utils/time";
 import { cn } from "@/utils/tailwind";
 
@@ -149,54 +148,15 @@ export function ExpertProfileClient({
     consulteeUserId,
   });
 
-  // "Next available" reads this month, and next month only when this one has
-  // nothing left. Both share cache entries with the calendar's own month read.
-  const thisMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-  const thisMonthQuery = useAvailabilityMonth({
+  const nextAvailableLabel = useNextAvailableLabel({
     consultantId: consultantDetails?.id,
-    monthStart: thisMonthStart,
-    timezone: zoneReady ? timezone : null,
+    today,
+    now,
+    timezone,
+    zoneReady,
     consulteeUserId,
+    durationInHours: selectedDuration,
   });
-  const nowMs = now.getTime();
-  const nextInThisMonth = useMemo(
-    () =>
-      thisMonthQuery.data
-        ? nextAvailableWindow(
-            thisMonthQuery.data,
-            selectedDuration,
-            timezone,
-            nowMs,
-          )
-        : null,
-    [thisMonthQuery.data, selectedDuration, timezone, nowMs],
-  );
-  const nextMonthQuery = useAvailabilityMonth({
-    consultantId: consultantDetails?.id,
-    monthStart: new Date(today.getFullYear(), today.getMonth() + 1, 1),
-    timezone:
-      zoneReady && thisMonthQuery.isSuccess && !nextInThisMonth
-        ? timezone
-        : null,
-    consulteeUserId,
-  });
-  const nextAvailable =
-    nextInThisMonth ??
-    (nextMonthQuery.data
-      ? nextAvailableWindow(
-          nextMonthQuery.data,
-          selectedDuration,
-          timezone,
-          nowMs,
-        )
-      : null);
-  const nextAvailableLabel = nextAvailable
-    ? formatInTimeZone(
-        new Date(nextAvailable.startsAt),
-        timezone,
-        "EEE d MMM, h:mm a zzz",
-      )
-    : null;
 
   const selectedDateKey =
     selectedDate && zoneReady ? calendarDateKey(selectedDate) : null;

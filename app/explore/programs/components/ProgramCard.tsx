@@ -137,7 +137,7 @@ function planHref(program: Program): string {
     : `/explore/programs/plans/webinars/${program.id}`;
 }
 
-function FactsRow({ program }: { program: Program }) {
+function FactsRow({ program }: Readonly<{ program: Program }>) {
   const { facts, includes } = programFacts(program, new Date());
   return (
     <div className="mb-3 space-y-1.5">

@@ -5,7 +5,9 @@ export function domainSlug(name: string): string {
     .toLowerCase()
     .replace(/&/g, "and")
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+    .split("-")
+    .filter(Boolean)
+    .join("-");
 }
 
 export function domainPath(name: string): string {

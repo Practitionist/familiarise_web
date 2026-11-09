@@ -65,4 +65,12 @@ describe("domain slugs", () => {
     expect(findDomainBySlug(domains, "creative-arts")).toBe(domains[0]);
     expect(findDomainBySlug(domains, "nope")).toBeUndefined();
   });
+
+  it("trims stray separators and stays fast on long runs of them", () => {
+    expect(domainSlug("  --Data & AI--  ")).toBe("data-and-ai");
+    expect(domainSlug("!!!")).toBe("");
+    const started = Date.now();
+    expect(domainSlug(`${"-".repeat(50_000)}x`)).toBe("x");
+    expect(Date.now() - started).toBeLessThan(200);
+  });
 });
