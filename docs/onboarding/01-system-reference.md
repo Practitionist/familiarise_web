@@ -377,7 +377,8 @@ Uses `VerificationDocumentUpload` component (drag & drop, progress, status badge
 ### 3.6 Agreement Forms
 
 `ConsulteeAgreementForm` (consultee and org owner) and `TermsAndPrivacyAgreement`
-(consultant) collect:
+(consultant) both render `DataProtectionNotice` and `SignupConsentCheckboxes`
+(`components/compliance/`) and collect:
 
 - `termsAccepted` (checkbox, required)
 - `privacyAccepted` (checkbox, required)
@@ -1124,7 +1125,7 @@ whole design.
 | `app/form/onboarding/components/ConsultantAgreementAndVerificationStep.tsx` | Step 3 — verification (deferrable) + terms       |
 | `app/form/onboarding/components/ConsultantReviewForm.tsx`                   | Step 4 — review                                  |
 | `app/form/onboarding/components/ConsulteeAgreementForm.tsx`                 | Step 1 — terms + submit (final consultee screen) |
-| `app/form/onboarding/components/TermsAndPrivacyAgreement.tsx`               | Shared terms/privacy/marketing checkboxes        |
+| `app/form/onboarding/components/TermsAndPrivacyAgreement.tsx`               | Notice + terms/privacy/marketing checkboxes      |
 | `components/onboarding/OnboardingGateForm.tsx`                              | Gate form (DOB + consent)                        |
 | `components/verification/ConsultantVerificationForm.tsx`                    | Settings → Verification form (dashboard only)    |
 

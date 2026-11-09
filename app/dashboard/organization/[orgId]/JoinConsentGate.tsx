@@ -94,7 +94,7 @@ export function JoinConsentGate({
           <AlertDialogTitle>Before you start with {orgName}</AlertDialogTitle>
           <AlertDialogDescription>
             {orgName} added you through your company sign-in. To use
-            Familiarise, we need your consent to process your data for these
+            Familiarise, we need your consent to use your information for these
             purposes. You can withdraw it at any time in Account › Data consent.
           </AlertDialogDescription>
         </AlertDialogHeader>
