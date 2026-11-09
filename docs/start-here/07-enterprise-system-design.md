@@ -2349,7 +2349,7 @@ Avoid an undocumented “run this script directly” recovery step where the cor
 
 All transactional sends flow through `lib/email/deliver.ts`, honoring the pre-launch delivery guard, suppressions, sender policy, and failure persistence. `FailedEmail` stores the already-rendered subject/body and recipient so retry is a verbatim resend; single-use credentials are stored redacted and are not replayed. `FailedEmailBatch` stores a serialized batch with an idempotency key. `EmailEvent.svixId` is unique for Resend event replay, while `EmailSuppression` records hard bounce, complaint, or manual suppressions.
 
-The email retry worker is invoked by the shared ticker. It moves rows through pending/retry/sent/dead-letter behavior and emits counts for operations. Dead letters require operator review/replay rather than endless retries. The root email invariant requires every recipient to pass through `deliver()` or the explicit waitlist batch guard.
+The email retry worker is invoked by the shared ticker. It moves rows through pending/retry/sent/dead-letter behavior and emits counts for operations. Dead letters require operator review/replay rather than endless retries. The root email invariant requires every recipient to pass through `deliver()` or the explicit newsletter batch guard.
 
 Privacy consequence: retry rows contain contact and message content. Include them in the data inventory and define how erase requests cancel, redact, or retain already queued notices. Retain enough to deliver necessary service/erasure notices, but prevent a stale row from sending marketing after consent withdrawal or erasure.
 

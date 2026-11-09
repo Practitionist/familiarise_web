@@ -18,7 +18,13 @@ import { spendableCreditsWhere } from "@/lib/referrals/service";
 import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
 import { refundedPaise } from "@/lib/appointments/seat-payments";
 import { ORG_FUNDED_PAYMENT_METHODS } from "@/lib/payments/org-funded";
-import { isSponsoredPayment } from "@/lib/appointments/payment-display";
+import {
+  isSponsoredPayment,
+  paymentDiscountBreakdown,
+  paymentFundingBreakdown,
+  type FundingBreakdownEntry,
+  type PaymentDiscountBreakdown,
+} from "@/lib/appointments/payment-display";
 import { lifecycleOf, planOf } from "@/lib/appointments/presentation-input";
 import {
   requestHoldDeadline,
@@ -59,6 +65,8 @@ export interface ConsulteePaymentRow {
   consultantName: string;
   organizationId: string | null;
   discount: { code: string; type: string; value: number } | null;
+  /** Paise each pre-tax discount took off the list price. */
+  discountBreakdown: PaymentDiscountBreakdown;
   refunds: ConsulteePaymentRefund[];
   /** Paise returned so far, counting only refunds that went through. */
   refundedPaise: number;
@@ -71,6 +79,8 @@ export interface ConsulteePaymentRow {
   receiptUrl: string | null;
   expiresAt: Stamp | null;
   createdAt: Stamp;
+  /** What each funding rail carried, read off the legs. */
+  fundingBreakdown: FundingBreakdownEntry[];
   presentation: PaymentRowInput;
 }
 
@@ -238,6 +248,7 @@ export function paymentRowSelect(userId: string) {
   return {
     ...BUYER_PAYMENT_DISPLAY_SELECT,
     organizationId: true,
+    gstRegime: true,
     organization: { select: { name: true } },
     discountCode: { select: DISCOUNT_CODE_SUMMARY_SELECT },
     // #775 — the CHARGE_MEMBER co-pay a sponsored member paid themselves.
@@ -407,12 +418,17 @@ export function toRow(p: PaymentRecord): ConsulteePaymentRow {
           value: p.discountCode.discountValue,
         }
       : null,
+    discountBreakdown: paymentDiscountBreakdown({
+      ...p,
+      hasDiscountCode: p.discountCode !== null,
+    }),
     refunds: p.refunds,
     refundedPaise: refundedPaise(p),
     consumerInvoice: p.consumerInvoice,
     receiptUrl: p.receiptUrl,
     expiresAt: p.expiresAt,
     createdAt: p.createdAt,
+    fundingBreakdown: paymentFundingBreakdown(p.legs),
     presentation,
   };
 }

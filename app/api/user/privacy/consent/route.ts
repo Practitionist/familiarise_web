@@ -38,7 +38,7 @@ import {
   consentProvenance,
   subscribeForMarketingConsent,
   unsubscribeForWithdrawnConsent,
-} from "@/lib/waitlist/consent-link";
+} from "@/lib/newsletter/consent-link";
 
 const CORE_PLATFORM_PURPOSES: ReadonlySet<PurposeCode> = new Set(
   SIGNUP_PURPOSES,
@@ -205,7 +205,7 @@ export async function DELETE(req: NextRequest) {
 
   try {
     const { withdrawnCount } = await prisma.$transaction(async (tx) => {
-      const result = await withdrawConsent({ userId, purposeCode }, tx);
+      // Newsletter rows are locked before any consent artifact (see lockNewsletterRows).
       if (purposeCode === PURPOSE_CODES.MARKETING_COMMS) {
         const user = await tx.user.findUniqueOrThrow({
           where: { id: userId },
@@ -217,7 +217,7 @@ export async function DELETE(req: NextRequest) {
           now: new Date(),
         });
       }
-      return result;
+      return withdrawConsent({ userId, purposeCode }, tx);
     });
 
     return NextResponse.json({ withdrawnCount, purposeCode });

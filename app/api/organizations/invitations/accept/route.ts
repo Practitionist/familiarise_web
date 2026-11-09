@@ -18,6 +18,7 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 import { checkConsent, ensureConsentPurposes } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES, SIGNUP_PURPOSES } from "@/lib/compliance/purpose-codes";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
 import { isOnboardingBlocked } from "@/lib/enterprise/org-status";
 import { transitionMembership } from "@/lib/enterprise/transitions";
 import {
@@ -358,7 +359,7 @@ export async function POST(req: NextRequest) {
           targetMembershipId: created.id,
           category: "MEMBER",
           action: AUDIT_ACTIONS.MEMBER.INVITE_ACCEPTED,
-          description: `User ${userId} accepted invitation to join as ${normalizedRole}`,
+          description: `Accepted the invitation to join as ${MEMBER_ROLE_LABEL[normalizedRole]}`,
           details: {
             invitationId: inv.id,
             role: normalizedRole,
@@ -401,7 +402,7 @@ export async function POST(req: NextRequest) {
           userId,
           {
             kind: "WELCOME",
-            message: `You joined ${org.name} as ${normalizedRole}.`,
+            message: `You joined ${org.name} as ${MEMBER_ROLE_LABEL[normalizedRole]}.`,
             dashboardUrl: `${origin}/dashboard/organization/${inv.organizationId}/home`,
           },
           { tx },

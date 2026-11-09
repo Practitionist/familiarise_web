@@ -2,10 +2,9 @@
 
 import { ClassPlan, WebinarPlan } from "@prisma/client";
 import { GraduationCap, BookOpen, Video } from "lucide-react";
-import React, { useMemo, useState } from "react";
+import React, { useId, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
-import ProgramCard from "@/app/explore/programs/components/ProgramCard";
 import ProgramRow from "@/app/explore/programs/components/ProgramRow";
 import {
   generateProgramImageUrl,
@@ -24,16 +23,6 @@ interface ClassesAndWebinarsProps {
   registeredWebinarPlanIds?: Set<string>;
 }
 
-/**
- * Past this many items a tab body switches from a grid to a horizontal rail.
- *
- * The grid used to render EVERY plan with no cap, so a consultant with fifteen
- * classes pushed reviews and availability several screens down. A rail keeps
- * the section a fixed height whatever the count; below the threshold a grid
- * still reads better than a rail with dead space beside it.
- */
-const RAIL_THRESHOLD = 3;
-
 export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
   classPlans,
   webinarPlans,
@@ -41,10 +30,15 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
   registeredWebinarPlanIds = new Set(),
 }) => {
   const [activeTab, setActiveTab] = useState<"classes" | "webinars">("classes");
+  const idBase = useId();
 
   const hasClasses = classPlans.length > 0;
   const hasWebinars = webinarPlans.length > 0;
   const hasContent = hasClasses || hasWebinars;
+  // Tabs exist only when there are two kinds to switch between.
+  const hasTabs = hasClasses && hasWebinars;
+  const tabId = (key: "classes" | "webinars") => `${idBase}-tab-${key}`;
+  const panelId = (key: "classes" | "webinars") => `${idBase}-panel-${key}`;
 
   // Adapt the profile page's plan rows to the `Program` shape ProgramCard
   // consumes, so the card, its badges, price formatting and deep links stay
@@ -84,35 +78,43 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
     return null;
   }
 
-  const renderPrograms = (
-    programs: (ClassPlanProgram | WebinarPlanProgram)[],
-  ) =>
-    programs.length > RAIL_THRESHOLD ? (
-      <ProgramRow programs={programs} />
-    ) : (
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 sm:gap-6 lg:gap-8">
-        {programs.map((program) => (
-          <ProgramCard key={program.id} program={program} />
-        ))}
-      </div>
-    );
-
   const tabs = [
     {
       key: "classes" as const,
       label: "Classes",
       icon: BookOpen,
       count: classPlans.length,
-      show: hasClasses,
     },
     {
       key: "webinars" as const,
       label: "Webinars",
       icon: Video,
       count: webinarPlans.length,
-      show: hasWebinars,
     },
   ];
+
+  // Arrow keys, Home and End move between tabs and select as they go, the
+  // pattern for tabs whose panels are already rendered or cheap to switch to.
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    const keys = tabs.map((t) => t.key);
+    const current = keys.indexOf(activeTab);
+    let next: number | null = null;
+    if (event.key === "ArrowRight") next = (current + 1) % keys.length;
+    else if (event.key === "ArrowLeft")
+      next = (current - 1 + keys.length) % keys.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = keys.length - 1;
+    if (next === null) return;
+    event.preventDefault();
+    setActiveTab(keys[next]);
+    document.getElementById(tabId(keys[next]))?.focus();
+  };
+
+  // One ternary, not a nested pair: the subtitle for a profile with a single kind.
+  const single = hasClasses
+    ? { count: classPlans.length, one: "class", many: "classes" }
+    : { count: webinarPlans.length, one: "webinar", many: "webinars" };
+  const subtitle = `${single.count} ${single.count === 1 ? single.one : single.many}`;
 
   return (
     <div>
@@ -128,21 +130,35 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                 <h2 className="text-lg font-semibold text-foreground">
                   Programs by this Expert
                 </h2>
-                <p className="text-sm text-muted-foreground">
-                  {classPlans.length} class{classPlans.length !== 1 ? "es" : ""}{" "}
-                  • {webinarPlans.length} webinar
-                  {webinarPlans.length !== 1 ? "s" : ""}
-                </p>
+                {/* The tabs already carry both counts; the subtitle only earns
+                    its place when there are no tabs to read them from. */}
+                {!hasTabs && (
+                  <p className="text-sm text-muted-foreground">{subtitle}</p>
+                )}
               </div>
             </div>
 
-            {hasClasses && hasWebinars && (
-              <div className="flex bg-muted rounded-xl p-1">
+            {hasTabs && (
+              // Switches between two panels on this page, so it is a tablist.
+              // Only the selected tab is in the tab order; arrows move within.
+              // The key handler sits on the focusable tabs, not on the list.
+              <div
+                role="tablist"
+                aria-label="Program type"
+                className="flex bg-muted rounded-xl p-1"
+              >
                 {tabs.map(({ key, label, icon: Icon, count }) => (
                   <button
                     key={key}
+                    id={tabId(key)}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === key}
+                    aria-controls={panelId(key)}
+                    tabIndex={activeTab === key ? 0 : -1}
+                    onKeyDown={onTabKeyDown}
                     onClick={() => setActiveTab(key)}
-                    className={`relative px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                    className={`relative px-3 py-2 text-sm font-medium rounded-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-4 ${
                       activeTab === key
                         ? "text-foreground"
                         : "text-muted-foreground hover:text-foreground"
@@ -176,24 +192,36 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             {activeTab === "classes" && hasClasses && (
               <motion.div
                 key="classes"
+                {...(hasTabs && {
+                  role: "tabpanel",
+                  id: panelId("classes"),
+                  "aria-labelledby": tabId("classes"),
+                })}
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 20 }}
                 transition={{ duration: 0.3 }}
               >
-                {renderPrograms(classPrograms)}
+                {/* One horizontal row at any count: the section keeps a fixed
+                    height however many programs there are. */}
+                <ProgramRow programs={classPrograms} />
               </motion.div>
             )}
 
             {activeTab === "webinars" && hasWebinars && (
               <motion.div
                 key="webinars"
+                {...(hasTabs && {
+                  role: "tabpanel",
+                  id: panelId("webinars"),
+                  "aria-labelledby": tabId("webinars"),
+                })}
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 20 }}
                 transition={{ duration: 0.3 }}
               >
-                {renderPrograms(webinarPrograms)}
+                <ProgramRow programs={webinarPrograms} />
               </motion.div>
             )}
 

@@ -27,7 +27,7 @@ The machine has 8 GB of RAM and the chrome-devtools MCP shares one browser profi
 
 ## Dashboard-audit side file
 
-While you browse, you will see product problems that are not part of the PR under test: confusing copy, a misleading status, a page that tells an operator nothing. Do not post them to the PR and do not stop the run for them. Append each one to `temp/dashboard-audit.md` (git-ignored) as a block with these fields, so a later session can turn the file into one issue:
+While you browse, you will see presentation problems that are not part of the PR under test: confusing copy, an unclear label, a page that tells an operator nothing. A status, number or outcome that is actually wrong is a defect, not a nit, and goes to the report's Out-of-scope bugs section instead (see Bug routing). Do not post either to the PR and do not stop the run for them. Append each presentation problem to `temp/dashboard-audit.md` (git-ignored) as a block with these fields, so a later session can turn the file into one issue:
 
 - a `###` heading that names the problem;
 - **Where**: the route and the role;
@@ -36,3 +36,32 @@ While you browse, you will see product problems that are not part of the PR unde
 - **Proposed fix**: one concrete change;
 - **Severity**: P1, P2 or P3;
 - **Screenshot**: the `temp/qa-shots/` path.
+
+## Design-quality verdict
+
+For every page a case touches, give one verdict: **SHIP**, **POLISH** or **REWORK**. Judge it at 1440 px first, because the product is desktop-first, and check the mobile width last. Check each page against this list and give concrete reasons, never a bare adjective:
+
+- **Hierarchy.** The page has a visual hierarchy and one clear primary action.
+- **Spacing and tokens.** Spacing and alignment match the neighbouring pages and the design tokens (compare with a sibling page in the same tab).
+- **Copy.** The copy is specific to the product. There is no generic filler, lorem ipsum or "AI slop" phrasing, and every label is in human words, never a raw enum, a cuid or an amount in paise.
+- **States.** Empty, loading and error states are real, not blank or a spinner that never ends.
+- **Accessibility.** Text meets WCAG AA contrast, and every control's visible label is part of its accessible name (label-in-name).
+- **Responsive.** The layout holds at 1440 px, then at a mobile width.
+
+Verdicts: **SHIP** means no blocking issue. **POLISH** means shippable, with named fixes that can follow. **REWORK** means the page fails the checklist badly enough that it should not ship as is, and it needs a screenshot. Put every verdict in a table in the report with the columns Page (route and role), Verdict, Reasons, Screenshot.
+
+## Bug routing
+
+Every bug goes to exactly one place:
+
+- **(a) Caused by the PR under test.** It is a FAIL in the case table. Mark it **for the main agent** with the repro steps, the expected and observed behaviour, and the suspected file and function. Do not file it anywhere else.
+- **(b) A real defect outside the PR's scope** (pre-existing, or in another subsystem). Put it in the report's "Out-of-scope bugs" section with a recommended fix and the alternatives you considered, so the main agent can file one bucketed GitHub issue. You never file issues yourself.
+- **(c) A UX nit or copy problem.** It goes to `temp/dashboard-audit.md`, as in the section above.
+- **Precedence:** when a finding fits more than one route, take the first that applies: (a) caused by this PR, then (b) behaviour or data that is wrong anywhere (a misleading status that misstates the real state counts here), then (c) presentation only. Each finding goes to exactly one place.
+
+## Review history on the PR
+
+The main agent, not you, posts the result to the PR. After a run it posts the report's case table as a PR comment that includes the commit under test, the screenshot links on `qa-artifacts` and the cleanup list. A re-run is a new comment titled "QA round N" that links the previous round and lists which earlier FAILs now pass.
+
+- End the report with a ready-to-paste `## PR comment` section, so the main agent can post it verbatim. It holds the title ("QA round N"), the commit under test, the case table, the design-verdict table, the screenshot links in the `?raw=true` form above, the cleanup list, and for a re-run the link to the previous round and the FAILs that now pass.
+- Never put claude.ai session links in anything meant for GitHub, including the `## PR comment` section and the Out-of-scope bugs text.

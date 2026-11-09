@@ -140,8 +140,8 @@ function ConsentPreflightNotice({
     <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm">
       <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
       <span className="text-blue-900">
-        You have not given session-booking consent yet. Your organization cannot
-        book or pay for a session on your behalf until you give it in{" "}
+        Your organisation needs your permission to book or pay for sessions on
+        your behalf. You can give it in{" "}
         {consentHref ? (
           <Link href={consentHref} className="font-medium underline">
             Settings › Account › Data consent
@@ -276,7 +276,8 @@ export function OrgPayerSelector({
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
           <div className="space-y-0.5 leading-relaxed">
             <p className="font-medium">
-              Personal Card + Reimbursement Tracking ({selectedMembership.organizationName})
+              Personal Card + Reimbursement Tracking (
+              {selectedMembership.organizationName})
             </p>
             <p className="text-amber-900">
               You pay 100% with your personal card or UPI at checkout. Your

@@ -31,6 +31,7 @@ jest.mock("../../lib/prisma", () => ({
     consentArtifact: {
       findMany: jest.fn(),
       create: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     notificationPreference: {
       findUnique: jest.fn(),
@@ -46,9 +47,10 @@ jest.mock("../../lib/prisma", () => ({
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(async () => ({ email: "User@Example.com" })),
     },
-    waitlist: {
+    newsletterSubscriber: {
       upsert: jest.fn(),
       updateMany: jest.fn(async () => ({ count: 1 })),
+      updateManyAndReturn: jest.fn(async () => []),
     },
     payment: {
       findMany: jest.fn(),
@@ -98,7 +100,11 @@ import {
 import { GET as getExport } from "../../app/api/user/privacy/export/route";
 
 const mockPrisma = prisma as unknown as {
-  consentArtifact: { findMany: jest.Mock; create: jest.Mock };
+  consentArtifact: {
+    findMany: jest.Mock;
+    create: jest.Mock;
+    updateMany: jest.Mock;
+  };
   notificationPreference: {
     findUnique: jest.Mock;
     upsert: jest.Mock;
@@ -110,7 +116,11 @@ const mockPrisma = prisma as unknown as {
     updateMany: jest.Mock;
   };
   user: { findUnique: jest.Mock };
-  waitlist: { upsert: jest.Mock; updateMany: jest.Mock };
+  newsletterSubscriber: {
+    upsert: jest.Mock;
+    updateMany: jest.Mock;
+    updateManyAndReturn: jest.Mock;
+  };
   payment: { findMany: jest.Mock };
   supportCase: { findMany: jest.Mock };
   membership: { findMany: jest.Mock };
@@ -203,7 +213,7 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
         confirmedAt: expect.any(Date),
         unsubscribedAt: null,
       };
-      expect(mockPrisma.waitlist.upsert).toHaveBeenCalledWith({
+      expect(mockPrisma.newsletterSubscriber.upsert).toHaveBeenCalledWith({
         where: { email: "user@example.com" },
         create: expect.objectContaining({
           email: "user@example.com",
@@ -226,7 +236,7 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
       expect(res.status).toBe(400);
       expect((await res.json()).code).toBe("PURPOSE_NOT_OFFERED");
       expect(mockPrisma.consentArtifact.create).not.toHaveBeenCalled();
-      expect(mockPrisma.waitlist.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.newsletterSubscriber.upsert).not.toHaveBeenCalled();
     });
 
     it("blocks direct withdrawal of core platform purpose PRIMARY_PROCESSING with 400 CORE_CONSENT_REQUIRES_ACCOUNT_CLOSURE", async () => {
@@ -257,13 +267,26 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
         { userId: "user_dpdp_1", purposeCode: "MARKETING_COMMS" },
         mockPrisma,
       );
-      expect(mockPrisma.waitlist.updateMany).toHaveBeenCalledWith({
+      expect(mockPrisma.newsletterSubscriber.updateMany).toHaveBeenCalledWith({
         where: {
           OR: [{ userId: "user_dpdp_1" }, { email: "user@example.com" }],
           status: { in: ["PENDING", "SUBSCRIBED"] },
         },
         data: { status: "UNSUBSCRIBED", unsubscribedAt: expect.any(Date) },
       });
+      // Subscriber rows are locked before any consent artifact is written.
+      expect(
+        mockPrisma.newsletterSubscriber.updateManyAndReturn.mock
+          .invocationCallOrder[0],
+      ).toBeLessThan(mockWithdrawConsent.mock.invocationCallOrder[0]);
+      // A sign-up made before the account existed holds a pseudonymous artifact.
+      expect(mockPrisma.consentArtifact.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            subjectPseudonymousId: expect.any(String),
+          }),
+        }),
+      );
       expect(
         mockPrisma.notificationPreference.updateMany,
       ).not.toHaveBeenCalled();

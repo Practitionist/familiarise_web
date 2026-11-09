@@ -23,7 +23,11 @@
 
 import prisma from "@/lib/prisma";
 import * as Sentry from "@sentry/nextjs";
-import { reportConfigSkip, type ConfigSkip } from "@/lib/cron/config-skip";
+import {
+  GST_UNREGISTERED_SKIP,
+  reportConfigSkip,
+  type ConfigSkip,
+} from "@/lib/cron/config-skip";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   buildOutwardRegister,
@@ -315,7 +319,7 @@ export async function runGstOutwardRegisterExport(opts: {
   // Without a supplier no consumer invoice can be minted, so a register would
   // understate B2C supplies: an unset GSTIN skips, an unusable one throws.
   if (!platformSupplierForJob()) {
-    const skipped: ConfigSkip = "PLATFORM_GSTIN not configured";
+    const skipped = GST_UNREGISTERED_SKIP;
     reportConfigSkip("gst-outward-register-export", skipped);
     return {
       success: true,

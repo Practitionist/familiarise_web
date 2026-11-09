@@ -1,0 +1,39 @@
+# ADR: The expert first-run checklist, per-leg payment display and the dashboard clean-up
+
+- **Status**: Accepted (owner decisions, 2026-11-08)
+- **Date**: 2026-11-08
+- **Author**: Platform engineering
+- **Related**: [Consultant dashboard information architecture](../dashboard/consultant-dashboard-ia.md), [Dashboard information architecture](../dashboard/information-architecture.md), [Payment legs](../finance/20-ledger/03-payment-legs.md), [Onboarding system reference](../onboarding/01-system-reference.md), issues #2642 and #2650
+
+## Context
+
+A newly verified expert landed on a Home page that said nothing about what to do next, while an organisation owner already had a "Get started" card. The learner's payment page named a rail from `Payment.paymentMethod` even when the legs said something different, and a payment funded half by card and half by referral credit read as a plain card payment. The sidebar kept a two-item "Reputation & growth" group that mixed a reputation page with a referral programme. The organisation Home's wallet-low banner used a fixed ₹1,000 while the bell cron used the organisation's own floor. A malformed client router-state header made the server answer 500 and filled Sentry with an error that is not a server fault.
+
+## Decision
+
+1. **A malformed router-state header is filtered in Sentry; the dead middleware branch is deleted (#2642).** Next 15.5 strips the flight headers and `_rsc` before `middleware.ts` runs, so the `Next-Router-Prefetch` and `RSC` test in the middleware could never be true. The fix is an `ignoreErrors` entry in `sentry.shared.config.ts` for "The router state header was sent but could not be parsed", plus deleting the `isSubNavigation` branch and `getMaintenanceStateCachedOnly` from `lib/maintenance-edge.ts`. `middleware()` therefore takes only the request, because nothing needs `event.waitUntil` any more, and every request awaits `getMaintenanceState()`. The request still answers 500; it just no longer creates an issue.
+2. **The legs are the source of truth for the rail; `paymentMethod` is only a fallback.** `paymentRailLabel` and `paymentFundingBreakdown` in `lib/appointments/payment-display.ts` read `PaymentLeg` rows. `Payment.paymentMethod` is consulted only for a row that has no legs. The breakdown merges the two accrual legs (`INVOICE_ACCRUAL` and `OVERAGE_INVOICE_ACCRUAL` both read "invoiced to the organisation"), drops `*_REVERSAL` legs because refunds have their own lines, and drops zero-value legs. A card leg reads "card / UPI", because the row records `CARD` for every gateway charge and UPI is included. The payment list and the payment detail page show it only when the payment is `SUCCEEDED` and more than one rail is left. Charlotte Brown's ₹1,724 payment with ₹400 of referral credit therefore reads "Paid with ₹1,724 card / UPI + ₹400 referral credit". The separate leg-wording map in `lib/labels` was deleted so there is one vocabulary.
+3. **A CHARGE_ORG overage child is not the member's co-pay.** `readConsulteePaymentDetail` drops sponsored child payments (`isSponsoredPayment`) from `coPays`, so "Your share" appears only for a charge the member really pays. Only `CHARGE_MEMBER` side-charges remain.
+4. **A plan bought outside its own organisation is refused with a typed 409.** `calculateAmountAndValidate` throws a `Refusal` with code `PLAN_NOT_AVAILABLE_TO_ORG`, which is registered in `lib/errors/classification/payment-error-classification.ts` with HTTP status 409. A non-marketplace plan sells only to sponsored buyers of the same organisation, and a plan whose organisation was cleared sells to nobody.
+5. **The checklist counts published offerings only and hides itself when all five steps are done.** `deriveConsultantChecklist` in `lib/dashboard/consultant-checklist.ts` returns five steps: verification, profile fields, weekly hours, a published offering, and a payout account. A draft plan does not count. A GSTIN is only ever "eventually due", so it never holds the payout step open (`payoutAccountReady`). There is no dismiss control and no schema change: the list is derived on every load and `readFirstRunSteps` returns `null` once every step is done. The Home card is the same `SetupChecklist` component the organisation Home uses.
+6. **Two new Needs-you rows.** `deriveConsultantActionItems` adds `collab-invites` (pending `Collaborator` rows, linking to Collaborations) and `reviews-reply` (live reviews with no live reply, linking to `reviews?tab=needs-reply`). Both are severity `info`. The reply predicate `NEEDS_REPLY_WHERE` moved to `lib/reviews-needs-reply.ts` so the Home count and the reviews inbox share one definition.
+7. **The Compensation page lists scoped rate cards; deleting the flag is tracked separately.** `getMyArrangementData` returns up to 20 `scopedRateCards`: the organisation's plan-type and plan cards, and the cards of its active contracts. The page shows them read-only under "Other splits that can apply". A contract-owned card keeps its plan-type or plan scope in the label, so two cards on one contract stay distinguishable. When the expert has a membership override, the list is empty, because `resolveEffectiveRateCard` returns the override before any contract or plan card and none of them can apply. Retiring the underlying flag is tracked in #2650 "#1762 close-out".
+8. **The wallet-low banner reads the organisation's own floor.** `deriveActionCenter` compares `walletBalancePaise` with `walletMinBalancePaise` (`BillingAccount.minBalancePaise`) using the same strict "below" test as the `wallet-low-balance` job. A wallet with no floor shows no banner. The fixed `WALLET_LOW_BALANCE_PAISE` constant is gone.
+9. **Sidebar.** "Invite & earn" moves under Money, and "Reputation & growth" becomes "Reputation" with Reviews alone. The sidebar is still a static list built by `buildConsultantNav`, and no route or gate changed.
+10. **Audit descriptions are written at write time from the label maps.** Organisation audit lines now use maps in `lib/labels/org-labels.ts` (contract, purchase-order, invoice and payout statuses, the payout recipient, plan types, funding sources) instead of raw enums, ids and paise. There is deliberately no render-time formatter for old rows: the existing audit rows are seed data, and the project follows its no-backfill posture before launch.
+
+## Alternatives considered
+
+| Alternative                                          | Why it lost                                                                                                           |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Keep the `isSubNavigation` branch                    | Next 15.5 never lets those headers reach the middleware, so the branch and its cache helper were dead code.           |
+| One "Paid with" line from `paymentMethod`            | It cannot express a split such as card plus referral credit, and it disagrees with the legs the ledger is built from. |
+| A dismissable checklist stored on the profile        | It needs a new column and a way to un-dismiss. Deriving the list means a step that regresses reappears by itself.     |
+| Counting draft plans as a first offering             | A draft is invisible to learners, so it does not do what the step promises.                                           |
+| A render-time formatter that rewrites old audit rows | The old rows are seed data. A formatter would be permanent code for data that will be reset.                          |
+
+## Consequences
+
+- A fully set-up expert pays no extra query for the checklist: its inputs ride the profile read in `getConsultantDashboard`.
+- The completion score and the checklist overlap but differ; see the onboarding reference, section 11.
+- Old audit rows keep their raw enum text until the seed data is reset.

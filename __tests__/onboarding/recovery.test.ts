@@ -29,7 +29,7 @@ const tx = {
     update: jest.fn(),
     findUniqueOrThrow: jest.fn(async () => ({ email: "user@example.com" })),
   },
-  waitlist: { upsert: jest.fn() },
+  newsletterSubscriber: { upsert: jest.fn() },
   consulteeProfile: { upsert: jest.fn() },
 };
 jest.mock("../../lib/prisma", () => ({
@@ -116,6 +116,7 @@ describe("processOnboardingData claim-first CAS", () => {
     expect(claim.data.role).toBe("CONSULTEE");
     expect(claim.data.termsAcceptedAt).toBeInstanceOf(Date);
     expect(claim.data.privacyAcceptedAt).toBeInstanceOf(Date);
+    expect(claim.data.adultConfirmedAt).toBeInstanceOf(Date);
     expect(mockEnsureConsent).toHaveBeenCalledWith(
       tx,
       USER_ID,
@@ -133,6 +134,22 @@ describe("processOnboardingData claim-first CAS", () => {
       success: false,
       code: "VALIDATION",
       field: "termsAccepted",
+    });
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses an under-18 date of birth before opening a transaction", async () => {
+    const minor = new Date();
+    minor.setUTCFullYear(minor.getUTCFullYear() - 16);
+    const result = await processOnboardingData(
+      USER_ID,
+      consulteeBody({ dateOfBirth: minor.toISOString().slice(0, 10) }),
+      PROVENANCE,
+    );
+    expect(result).toMatchObject({
+      success: false,
+      code: "VALIDATION",
+      field: "dateOfBirth",
     });
     expect(mockTransaction).not.toHaveBeenCalled();
   });

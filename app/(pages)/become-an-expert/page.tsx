@@ -20,7 +20,13 @@ import {
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
+import { withBuildTimeRetry } from "@/lib/data/fail-open";
+import { isPlatformGstRegistered } from "@/lib/pdf/supplier";
+import prisma from "@/lib/prisma";
+import {
+  describeFeeRates,
+  readActiveFeeSchedule,
+} from "@/lib/payments/pricing/platform-fee";
 
 export const metadata: Metadata = {
   title: "Become an Expert | Familiarise",
@@ -28,9 +34,9 @@ export const metadata: Metadata = {
     "Share your expertise on Familiarise. Set your own rates, keep the majority of every session, and get paid with tax handled for you.",
 };
 
-// Derived from the real split rather than hardcoded copy, so the page can't
-// drift away from what the payout pipeline actually pays.
-const EXPERT_SHARE_PERCENT = 100 - PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE;
+// The fee copy is read from the approved schedule, so it cannot drift from what
+// the payout pipeline pays; with no approved schedule both rates are the 20% fallback.
+export const revalidate = 3600;
 
 const STEPS = [
   {
@@ -59,7 +65,7 @@ const STEPS = [
   },
 ];
 
-const REQUIREMENTS = [
+const requirements = (gstRegistered: boolean) => [
   {
     icon: BadgeCheck,
     title: "Demonstrable expertise",
@@ -69,8 +75,9 @@ const REQUIREMENTS = [
   {
     icon: FileCheck,
     title: "Identity and tax details",
-    description:
-      "PAN and the tax information we need to deduct TDS correctly and issue compliant invoices on your behalf.",
+    description: gstRegistered
+      ? "PAN and the tax information we need to deduct TDS correctly and issue compliant invoices on your behalf."
+      : "PAN and the tax information we need to deduct TDS correctly and keep your tax records.",
   },
   {
     icon: Landmark,
@@ -86,7 +93,7 @@ const REQUIREMENTS = [
   },
 ];
 
-const FAQ = [
+const faq = (gstRegistered: boolean) => [
   {
     question: "How much does it cost to join?",
     answer:
@@ -99,8 +106,9 @@ const FAQ = [
   },
   {
     question: "What happens about tax?",
-    answer:
-      "TDS is deducted at the applicable rate and recorded against your PAN, and GST-compliant invoices are generated for each booking. You'll find the records in your dashboard when you need them for filing.",
+    answer: gstRegistered
+      ? "TDS is deducted at the applicable rate and recorded against your PAN, and GST-compliant invoices are generated for each booking. You'll find the records in your dashboard when you need them for filing."
+      : "TDS is deducted at the applicable rate and recorded against your PAN, and a receipt is issued for each booking. You'll find the records in your dashboard when you need them for filing.",
   },
   {
     question: "Do I have to commit to a fixed number of hours?",
@@ -114,7 +122,11 @@ const FAQ = [
   },
 ];
 
-export default function BecomeAnExpertPage() {
+export default async function BecomeAnExpertPage() {
+  const gstRegistered = isPlatformGstRegistered();
+  const rates = describeFeeRates(
+    await withBuildTimeRetry(() => readActiveFeeSchedule(prisma)),
+  );
   return (
     <main className="min-h-screen bg-background">
       {/* Hero */}
@@ -217,19 +229,19 @@ export default function BecomeAnExpertPage() {
                 What you earn
               </Badge>
               <h2 className="text-fluid-3xl mb-4 font-bold tracking-tight text-foreground">
-                You keep {EXPERT_SHARE_PERCENT}% of every session
+                You keep {rates.keepPct}% of every session
               </h2>
               <p className="mb-6 leading-relaxed text-muted-foreground">
-                You set the price; Familiarise takes a{" "}
-                {PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE}% platform fee from
-                each completed booking and the rest is yours. There is no
-                listing fee and no subscription, so we only earn when you do.
+                You set the price. Familiarise takes {rates.marketplaceFeePct}%
+                when it brings you the learner, and {rates.ownLinkFeePct}% on
+                learners you bring with your own link. The rest is yours. There
+                is no listing fee and no subscription, so we only earn when you
+                do.
               </p>
               <p className="text-sm text-muted-foreground">
                 Experts who join through an agency or institution on Familiarise
-                keep the same {EXPERT_SHARE_PERCENT}% share; the hosting
-                organisation&apos;s cut comes out of the platform fee, not out
-                of your earnings.
+                keep the same share; the hosting organisation&apos;s cut comes
+                out of the platform fee, not out of your earnings.
               </p>
             </div>
 
@@ -253,8 +265,9 @@ export default function BecomeAnExpertPage() {
                     Tax handled for you
                   </h3>
                   <p className="text-sm leading-relaxed text-muted-foreground">
-                    TDS is deducted at the applicable rate against your PAN and
-                    GST-compliant invoices are generated automatically.
+                    {gstRegistered
+                      ? "TDS is deducted at the applicable rate against your PAN and GST-compliant invoices are generated automatically."
+                      : "TDS is deducted at the applicable rate against your PAN and a receipt is generated automatically for each booking."}
                   </p>
                 </div>
               </div>
@@ -288,7 +301,7 @@ export default function BecomeAnExpertPage() {
           </div>
 
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-            {REQUIREMENTS.map((item) => {
+            {requirements(gstRegistered).map((item) => {
               const Icon = item.icon;
               return (
                 <div
@@ -326,7 +339,7 @@ export default function BecomeAnExpertPage() {
           </div>
 
           <Accordion type="single" collapsible className="w-full">
-            {FAQ.map((item) => (
+            {faq(gstRegistered).map((item) => (
               <AccordionItem key={item.question} value={item.question}>
                 <AccordionTrigger className="text-left font-medium text-foreground">
                   {item.question}

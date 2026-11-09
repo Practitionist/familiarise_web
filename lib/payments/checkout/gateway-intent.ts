@@ -3,7 +3,12 @@
 
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
-import { type Currency, PaymentGateway, PaymentStatus } from "@prisma/client";
+import {
+  type Currency,
+  type GstRegime,
+  PaymentGateway,
+  PaymentStatus,
+} from "@prisma/client";
 
 /**
  * Manages payment intent creation and cleanup with proper error handling
@@ -22,6 +27,7 @@ export async function tombstoneAbortedGatewayOrder(input: {
   amount: number;
   originalAmount: number;
   taxAmount: number;
+  gstRegime: GstRegime;
   currency: Currency;
   reason: string;
 }): Promise<boolean> {
@@ -31,6 +37,7 @@ export async function tombstoneAbortedGatewayOrder(input: {
         amount: input.amount,
         originalAmount: input.originalAmount,
         taxAmount: input.taxAmount,
+        gstRegime: input.gstRegime,
         currency: input.currency,
         paymentMethod: "CARD",
         paymentIntent: input.paymentIntent,

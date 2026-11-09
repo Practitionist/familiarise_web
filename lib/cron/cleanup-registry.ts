@@ -1370,7 +1370,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Prune audit logs",
       description:
-        "Remove organisation and console audit rows (8 years money, 2 years other), booking history 3 years after a terminal booking and ledger reports past 2 years",
+        "Remove organisation and console audit rows (8 years money, 2 years other), booking history 3 years after a terminal booking and ledger reports past 2 years; null referral request signals 180 days after a terminal referral and payer hashes 2 years after capture",
       category: "Cleanup",
       manualRun: "inline",
     },
@@ -1393,7 +1393,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             r.opsActionsDeleted2y +
             r.opsProposalsDeleted +
             r.bookingHistoryDeleted +
-            r.ledgerReportsDeleted,
+            r.ledgerReportsDeleted +
+            r.referralSignalsNulled +
+            r.payerSignalsNulled,
           errors: r.errors.length,
         }),
         failureMessage: "Audit prune failed",
@@ -1437,6 +1439,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           emailEventsPruned: r.emailEventsPruned,
           dataExportJobsPruned: r.dataExportJobsPruned,
           cookiePreferencesPruned: r.cookiePreferencesPruned,
+          unconfirmedNewsletterPruned: r.unconfirmedNewsletterPruned,
           meetingPresencePruned: r.meetingPresencePruned,
           meetingAttendancePruned: r.meetingAttendancePruned,
           hasMore: r.hasMore,
@@ -1451,6 +1454,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             r.emailEventsPruned +
             r.dataExportJobsPruned +
             r.cookiePreferencesPruned +
+            r.unconfirmedNewsletterPruned +
             r.meetingPresencePruned +
             r.meetingAttendancePruned,
         }),
@@ -2984,6 +2988,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           voided: r.voided,
           deferred: r.deferred,
           budgetExhausted: r.budgetExhausted,
+          held: r.held,
           failed: r.failed,
         }),
         failureMessage: "Failed to vest referral credits",

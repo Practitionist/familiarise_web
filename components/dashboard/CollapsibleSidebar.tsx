@@ -254,7 +254,7 @@ export function SidebarNavGroups({
         {groups.map((group, gi) => (
           <div key={group.label ?? `__group_${gi}`}>
             {!collapsed && group.label && (
-              <p className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+              <p className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                 {group.label}
               </p>
             )}

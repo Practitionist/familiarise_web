@@ -14,6 +14,7 @@ import {
   RELEASED_PARTICIPANT_STATUSES,
 } from "@/lib/booking/participants";
 import { markBackupInterestBooked } from "@/lib/booking/backup-interest";
+import { markEventWaitlistBooked } from "@/lib/booking/event-waitlist";
 import prisma, { type Tx } from "@/lib/prisma";
 import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
 import { orderNotesPaymentIdSchema } from "@/schemas/webhooks/razorpay";
@@ -1703,7 +1704,7 @@ export async function handlePaymentFailure(
         currency: payment.currency,
         consultantName,
         appointmentType,
-        failureReason: payment.description || "Payment could not be processed",
+        failureReason: failureReason ?? "",
         retryUrl: `${getAppUrl()}${goHref("client", "payments")}`,
       },
       { tx, entityRef: `payment:${payment.id}` },
@@ -1809,6 +1810,12 @@ async function confirmSeatAfterCapture(
     await transitionParticipant(tx, args.casWhere, "CANCELLED");
   }
   if ((await transitionParticipant(tx, args.casWhere, "CONFIRMED")) > 0) {
+    await markEventWaitlistBooked(
+      tx,
+      args.appointmentId,
+      args.userId,
+      new Date(),
+    );
     return { kind: "confirmed" };
   }
   const fresh = await tx.appointmentParticipant.findFirst({

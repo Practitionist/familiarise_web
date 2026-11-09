@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import {
@@ -12,6 +13,11 @@ import {
   showsReliabilityNotice,
   strikeWindowStart,
 } from "@/lib/booking/expert-reliability-rules";
+import { JsonLd } from "@/components/seo/JsonLd";
+import {
+  expertProfileJsonLd,
+  expertProfileMetadata,
+} from "@/lib/seo/expert-profile";
 import { ExpertProfileClient } from "./ExpertProfileClient";
 import { ConsultantSkeletonLoader } from "./components/ConsultantSkeletonLoader";
 
@@ -42,6 +48,18 @@ export function generateStaticParams() {
 
 type Params = Promise<{ consultantId: string }>;
 
+const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+
+// getConsultantDetail is React.cache, so this and the page body share one read.
+export async function generateMetadata({
+  params,
+}: Readonly<{ params: Params }>): Promise<Metadata> {
+  const { consultantId } = await params;
+  const consultant = await getConsultantDetail(consultantId).catch(() => null);
+  if (!consultant?.user) return { robots: { index: false } };
+  return expertProfileMetadata(consultant);
+}
+
 export default async function ExpertProfile({
   params,
 }: Readonly<{ params: Params }>) {
@@ -71,6 +89,7 @@ export default async function ExpertProfile({
 
   return (
     <Suspense fallback={<ConsultantSkeletonLoader />}>
+      <JsonLd data={expertProfileJsonLd(consultant, BASE_URL)} />
       <ExpertProfileClient
         consultantDetails={consultant}
         userDetails={consultant.user as TUserWithProfessionalBackground}

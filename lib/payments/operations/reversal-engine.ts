@@ -39,6 +39,7 @@ import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { ORG_CLAWBACK_KEY_PREFIX } from "@/lib/payments/payouts/clawback-recovery";
 import { recordOrgTdsReversal } from "@/lib/payments/tax/tds-service";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 
 type ReversalSource =
@@ -200,11 +201,12 @@ async function reversePayoutClawback(
       actorMembershipId: null,
       category: "PAYOUT",
       action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-      description: `Payout clawback: ${clawbackPaise} paise from payout ${orgPayoutId} (${input.reason})`,
+      description: `Payout clawback: ${formatCurrencyAmount(clawbackPaise, "INR")} recovered from an organisation payout`,
       details: {
         refundId: input.refundId,
         orgEarningsId,
         orgPayoutId,
+        reason: input.reason,
         amountPaise: input.amountPaise,
         clawbackAmountPaise: clawbackPaise,
         initiatedByUserId: input.initiatedByUserId ?? null,
@@ -298,7 +300,7 @@ export async function clawBackCompletedOrgPayout(
       actorMembershipId: null,
       category: "PAYOUT",
       action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-      description: `${input.label}: ${clawbackPaise} paise from payout ${orgPayout.id}`,
+      description: `${input.label}: ${formatCurrencyAmount(clawbackPaise, "INR")} recovered from an organisation payout`,
       details: {
         paymentId: input.paymentId,
         refundId: input.refundId,

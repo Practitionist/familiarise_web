@@ -88,16 +88,21 @@ async function main(): Promise<void> {
     ).map((r) => r.tgname),
   );
 
-  const missing: Expected[] = [];
-  for (const e of expected) {
-    const present =
-      e.kind === "constraint"
-        ? constraints.has(e.name)
-        : e.kind === "index"
-          ? indexes.has(e.name)
-          : triggers.has(e.name);
-    if (!present) missing.push(e);
-  }
+  const views = new Set(
+    (
+      await prisma.$queryRaw<{ viewname: string }[]>`
+        SELECT viewname FROM pg_views WHERE schemaname = 'public'
+      `
+    ).map((r) => r.viewname),
+  );
+
+  const catalog: Record<Expected["kind"], Set<string>> = {
+    constraint: constraints,
+    index: indexes,
+    trigger: triggers,
+    view: views,
+  };
+  const missing = expected.filter((e) => !catalog[e.kind].has(e.name));
 
   if (missing.length > 0) {
     console.error(
@@ -121,7 +126,8 @@ async function main(): Promise<void> {
     `check-db-sidecars: ok (${expected.length} sidecar objects present — ` +
       `${expected.filter((e) => e.kind === "constraint").length} constraints, ` +
       `${expected.filter((e) => e.kind === "index").length} indexes, ` +
-      `${expected.filter((e) => e.kind === "trigger").length} triggers)`,
+      `${expected.filter((e) => e.kind === "trigger").length} triggers, ` +
+      `${expected.filter((e) => e.kind === "view").length} views)`,
   );
 }
 

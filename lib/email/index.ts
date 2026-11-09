@@ -11,9 +11,9 @@ import { PaymentSuccessEmail } from "@/emails/payments/PaymentSuccessEmail";
 import { PaymentFailedEmail } from "@/emails/payments/PaymentFailedEmail";
 import { OrgInvitationEmail } from "@/emails/organizations/OrgInvitationEmail";
 import { ContactInquiryEmail } from "@/emails/contact/ContactInquiryEmail";
-import { WaitlistConfirmEmail } from "@/emails/waitlist/WaitlistConfirmEmail";
-import { WaitlistWelcomeEmail } from "@/emails/waitlist/WaitlistWelcomeEmail";
-import { buildConfirmUrl, buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
+import { NewsletterConfirmEmail } from "@/emails/newsletter/NewsletterConfirmEmail";
+import { NewsletterWelcomeEmail } from "@/emails/newsletter/NewsletterWelcomeEmail";
+import { buildConfirmUrl, buildUnsubscribeUrl } from "@/lib/newsletter/tokens";
 import { getAppUrl } from "@/lib/url";
 import { payLinkHref } from "@/lib/payments/pay-link-href";
 import { EMAIL_BUDGET_MS, SENDERS, contactInboxAddress } from "./config";
@@ -545,9 +545,9 @@ export async function stageOrgInvitationEmail(
   );
 }
 
-// ── Waitlist & Contact Senders ──────────────────────────────────────────────
+// ── Newsletter & Contact Senders ────────────────────────────────────────────
 
-export async function sendWaitlistConfirmEmail(
+export async function sendNewsletterConfirmEmail(
   {
     email,
     name,
@@ -563,29 +563,29 @@ export async function sendWaitlistConfirmEmail(
   try {
     confirmLink = buildConfirmUrl(email, issuedAt);
   } catch (error) {
-    console.error("Failed to sign waitlist confirmation link:", error);
+    console.error("Failed to sign newsletter confirmation link:", error);
     return { success: false as const, error };
   }
   if (process.env.NODE_ENV === "development") {
-    console.log(`[waitlist-confirm] ${email} -> ${confirmLink}`);
+    console.log(`[newsletter-confirm] ${email} -> ${confirmLink}`);
   }
   return send(
-    "WAITLIST_CONFIRM",
-    WaitlistConfirmEmail({ name, confirmLink }),
+    "NEWSLETTER_CONFIRM",
+    NewsletterConfirmEmail({ name, confirmLink }),
     {
       from: SENDERS.newsletter,
       to: email,
-      subject: "Confirm your Familiarise subscription",
+      subject: "Confirm your Familiarise newsletter subscription",
     },
     {
-      entityRef: `waitlist:${email}`,
-      budgetMs: EMAIL_BUDGET_MS.CONTACT_AND_WAITLIST,
+      entityRef: `newsletter:${email}`,
+      budgetMs: EMAIL_BUDGET_MS.CONTACT_AND_NEWSLETTER,
       ...opts,
     },
   );
 }
 
-export async function sendWaitlistWelcomeEmail(
+export async function sendNewsletterWelcomeEmail(
   { email, name }: { email: string; name?: string | null },
   opts: SendOptions = {},
 ) {
@@ -593,20 +593,20 @@ export async function sendWaitlistWelcomeEmail(
   try {
     unsubscribeLink = buildUnsubscribeUrl(email);
   } catch (error) {
-    console.error("Failed to sign waitlist unsubscribe link:", error);
+    console.error("Failed to sign newsletter unsubscribe link:", error);
     return { success: false as const, error };
   }
   return send(
-    "WAITLIST_WELCOME",
-    WaitlistWelcomeEmail({ name, unsubscribeLink }),
+    "NEWSLETTER_WELCOME",
+    NewsletterWelcomeEmail({ name, unsubscribeLink }),
     {
       from: SENDERS.newsletter,
       to: email,
-      subject: "You are on the Familiarise waitlist",
+      subject: "Welcome to the Familiarise newsletter",
     },
     {
-      entityRef: `waitlist:${email}`,
-      budgetMs: EMAIL_BUDGET_MS.CONTACT_AND_WAITLIST,
+      entityRef: `newsletter:${email}`,
+      budgetMs: EMAIL_BUDGET_MS.CONTACT_AND_NEWSLETTER,
       ...opts,
     },
   );
@@ -658,7 +658,7 @@ export async function sendContactInquiryEmail(
       entityRef: referenceNumber
         ? `grievance:${referenceNumber}`
         : `contact:${email}`,
-      budgetMs: EMAIL_BUDGET_MS.CONTACT_AND_WAITLIST,
+      budgetMs: EMAIL_BUDGET_MS.CONTACT_AND_NEWSLETTER,
       ...opts,
     },
   );

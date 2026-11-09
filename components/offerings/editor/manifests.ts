@@ -248,6 +248,29 @@ const maxParticipantsField: FieldSpec = {
   span: 2,
 };
 
+/** The sold-out "Notify me" list: on by default, capped at the room's ceiling. */
+const waitlistFields: FieldSpec[] = [
+  {
+    name: "waitlistEnabled",
+    kind: "switch",
+    label: "Take a waitlist when sold out",
+    description:
+      "Learners can ask to be notified. When a seat frees, everyone waiting hears at once and the first to pay gets it.",
+    span: 3,
+  },
+  {
+    name: "waitlistMax",
+    kind: "number",
+    label: "Waitlist size",
+    min: 1,
+    max: MAX_GROUP_SESSION_PARTICIPANTS,
+    step: 1,
+    description: `Leave empty for up to ${MAX_GROUP_SESSION_PARTICIPANTS} people.`,
+    span: 3,
+    shownWhen: "waitlistEnabled",
+  },
+];
+
 /**
  * Subscription has no 30-minute-step refine on this column (ClassPlan does,
  * #1071), so the copy differs and stays a parameter rather than a shared
@@ -406,7 +429,12 @@ export const WEBINAR_MANIFEST: OfferingManifest = {
       id: "pricing",
       title: "Pricing & capacity",
       icon: IndianRupee,
-      fields: [priceField(2), durationHoursField(2), maxParticipantsField],
+      fields: [
+        priceField(2),
+        durationHoursField(2),
+        maxParticipantsField,
+        ...waitlistFields,
+      ],
     },
     contentSection("webinar"),
     extrasSection(true, [
@@ -462,6 +490,7 @@ export const CLASS_MANIFEST: OfferingManifest = {
         // was a one-hour-session class regardless of what its plan said.
         sessionDurationField("Hours per session, in 30-minute steps, up to 4."),
         supportLevelField,
+        ...waitlistFields,
       ],
     },
     contentSection("class"),

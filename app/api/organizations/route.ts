@@ -34,6 +34,7 @@ import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
 import { attemptOnboardingEmail, stageOrgCreatedEmail } from "@/lib/email";
 import { notifyOrgCreated } from "@/lib/novu/org-workflows";
 import { attemptTrigger } from "@/lib/novu";
+import { reportSentryError } from "@/lib/observability/report";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { OrgOnboardingSchema } from "@/utils/onboarding";
 import { SelfServiceFundingSourceSchema } from "@/lib/labels/org-labels";
@@ -41,7 +42,7 @@ import {
   claimOnboardingCompletion,
   recordOnboardingConsent,
 } from "@/utils/onboarding-completion";
-import { consentProvenance } from "@/lib/waitlist/consent-link";
+import { consentProvenance } from "@/lib/newsletter/consent-link";
 
 // PROJECT is reserved in the Prisma enum for the v2 milestone workflow
 // (scoped project-billing engine), but not accepted at the API boundary
@@ -136,6 +137,9 @@ const CreateBodySchema = z
     message: "At least one of canSponsor or canHost must be true",
   });
 
+const ORG_SAVE_FAILED_COPY =
+  "We couldn't save your organisation. Nothing was created. Please try again.";
+
 function slugify(name: string): string {
   return name
     .toLowerCase()
@@ -163,7 +167,10 @@ export async function POST(req: NextRequest) {
   const parsed = CreateBodySchema.safeParse(raw);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Invalid body", detail: parsed.error.flatten() },
+      {
+        error: "Some details look wrong. Please check the form and try again.",
+        detail: parsed.error.flatten(),
+      },
       { status: 400 },
     );
   }
@@ -210,7 +217,9 @@ export async function POST(req: NextRequest) {
   const desiredSlug = body.slug ?? slugify(body.name);
   if (!SLUG_REGEX.test(desiredSlug)) {
     return NextResponse.json(
-      { error: "Generated slug is invalid — pass `slug` explicitly." },
+      {
+        error: "Choose a web address using only letters, numbers and hyphens.",
+      },
       { status: 400 },
     );
   }
@@ -251,7 +260,7 @@ export async function POST(req: NextRequest) {
       });
       if (dupSlug) {
         throw new HttpError(
-          `Slug '${desiredSlug}' is already taken`,
+          "That web address is already taken. Choose another one.",
           409,
           "SLUG_TAKEN",
         );
@@ -271,7 +280,7 @@ export async function POST(req: NextRequest) {
       // typed 400 rather than a half-functional org.
       if (body.canHost && !isHostOrgsEnabled()) {
         throw new HttpError(
-          "Host-capable orgs are gated by ENABLE_HOST_ORGS. Contact ops to flip the flag for your tenant.",
+          "Hosting sessions isn't available for your organisation yet. Please contact support to switch it on.",
           400,
           "HOST_ORGS_GATED",
         );
@@ -458,9 +467,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2) Prisma known request errors — map the common ones onto useful
-    //    HTTP statuses so the client can branch (especially P2034, where
-    //    a retry is the right answer).
+    // 2) Prisma known request errors. Only P2002 and P2034 are expected
+    //    conditions; the rest are reported once. The response never carries
+    //    the database message.
     if (err instanceof Prisma.PrismaClientKnownRequestError) {
       switch (err.code) {
         case "P2002": {
@@ -480,78 +489,51 @@ export async function POST(req: NextRequest) {
           }
           return NextResponse.json(
             {
-              error: "Conflict — a unique constraint was violated",
+              error:
+                "An organisation with these details already exists. Change the name or web address and try again.",
               code: "P2002",
-              detail: { target: err.meta?.target ?? null },
             },
             { status: 409 },
           );
         }
-        case "P2003":
-          return NextResponse.json(
-            {
-              error: "Database foreign-key violation",
-              code: "P2003",
-              detail: { field: err.meta?.field_name ?? null },
-            },
-            { status: 500 },
-          );
-        case "P2025":
-          return NextResponse.json(
-            {
-              error: err.message,
-              code: "P2025",
-            },
-            { status: 404 },
-          );
         case "P2034":
           return NextResponse.json(
             {
-              error: "Transaction conflict — please retry",
+              error:
+                "We were busy and couldn't save your organisation. Nothing was created. Please try again.",
               code: "P2034",
             },
             { status: 503 },
           );
-        default:
+        case "P2025":
+          reportSentryError(err, { subsystem: "orgs" });
           return NextResponse.json(
-            {
-              error: "Database error",
-              code: err.code,
-              ...(process.env.NODE_ENV !== "production"
-                ? { message: err.message }
-                : {}),
-            },
+            { error: ORG_SAVE_FAILED_COPY, code: "P2025" },
+            { status: 404 },
+          );
+        default:
+          reportSentryError(err, { subsystem: "orgs" });
+          return NextResponse.json(
+            { error: ORG_SAVE_FAILED_COPY, code: err.code },
             { status: 500 },
           );
       }
     }
 
-    // 3) Prisma client-side validation (wrong types, unknown columns).
-    //    These mean *we* sent a malformed query — return 400 so the
-    //    client sees a different bucket than a runtime DB error.
+    // 3) Prisma client-side validation (wrong types, unknown columns): our
+    //    bug, not the user's.
     if (err instanceof Prisma.PrismaClientValidationError) {
+      reportSentryError(err, { subsystem: "orgs" });
       return NextResponse.json(
-        {
-          error: "Invalid query for Prisma client",
-          code: "PRISMA_VALIDATION",
-          ...(process.env.NODE_ENV !== "production"
-            ? { message: err.message }
-            : {}),
-        },
+        { error: ORG_SAVE_FAILED_COPY, code: "PRISMA_VALIDATION" },
         { status: 400 },
       );
     }
 
-    // 4) Genuine unknown — still return JSON so the client doesn't see an
-    //    empty body. In production the message is suppressed.
+    // 4) Genuine unknown: still JSON so the client never sees an empty body.
+    reportSentryError(err, { subsystem: "orgs" });
     return NextResponse.json(
-      {
-        error: "Internal server error",
-        code: "INTERNAL",
-        ...(process.env.NODE_ENV !== "production"
-          ? { message: err instanceof Error ? err.message : String(err) }
-          : {}),
-      },
+      { error: ORG_SAVE_FAILED_COPY, code: "INTERNAL" },
       { status: 500 },
     );
   }

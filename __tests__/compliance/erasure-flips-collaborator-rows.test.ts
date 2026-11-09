@@ -77,6 +77,9 @@ const tx = {
   sessionAccessLog: { updateMany: jest.fn(async () => ({ count: 2 })) },
   $queryRaw: jest.fn(async () => [{ ready: true }]),
   account: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+  appointmentWaitlist: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+  windowBackupInterest: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+  referral: { updateMany: jest.fn(async () => ({ count: 1 })) },
   // #1593 — the outbox: the request being processed and the rows the scrub
   // writes for it inside the transaction.
   erasureRequest: { findFirst: jest.fn(async () => ({ id: "er-1" })) },
@@ -128,6 +131,15 @@ describe("DPDP erasure flips collaborator rows", () => {
     });
   });
 
+  it("nulls the referred user's referral request signals and leaves the payer hashes", async () => {
+    await scrubUser(db as never, "u1");
+
+    expect(tx.referral.updateMany).toHaveBeenCalledWith({
+      where: { referredUserId: "u1" },
+      data: { ipHash: null, userAgent: null },
+    });
+  });
+
   it("stamps the access log after commit, and a throwing stamp leaves the erasure done", async () => {
     tx.session.findMany.mockResolvedValueOnce([
       {
@@ -149,6 +161,12 @@ describe("DPDP erasure flips collaborator rows", () => {
     expect(tx.session.deleteMany).toHaveBeenCalledWith({
       where: { userId: "u1" },
     });
+    // Both notify-me tables: the account is scrubbed, so no cascade fires.
+    for (const table of [tx.appointmentWaitlist, tx.windowBackupInterest]) {
+      expect(table.deleteMany).toHaveBeenCalledWith({
+        where: { userId: "u1" },
+      });
+    }
     expect(mockLogDb.$executeRaw).toHaveBeenCalledTimes(1);
     expect(mockLogDb.$executeRaw.mock.invocationCallOrder[0]).toBeGreaterThan(
       db.$transaction.mock.invocationCallOrder[0],

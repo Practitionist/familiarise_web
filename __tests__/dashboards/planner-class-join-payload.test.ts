@@ -51,6 +51,7 @@ jest.mock("../../lib/prisma", () => ({
     consultantProfile: { findUnique: jest.fn() },
     membership: { findMany: jest.fn() },
     appointmentOccurrence: { groupBy: jest.fn() },
+    appointmentWaitlist: { groupBy: jest.fn(async () => []) },
   },
 }));
 
@@ -61,6 +62,7 @@ const db = prisma as unknown as {
   consultantProfile: { findUnique: jest.Mock };
   membership: { findMany: jest.Mock };
   appointmentOccurrence: { groupBy: jest.Mock };
+  appointmentWaitlist: { groupBy: jest.Mock };
 };
 const mockedAuth = requireApiAuth as unknown as jest.Mock;
 
@@ -413,6 +415,9 @@ describe("the planner payload carries what a class join reads", () => {
     // The slot select carries no roster, so the count must not have silently
     // moved onto the trimmed rows.
     seedClass(liveSitting());
+    db.appointmentWaitlist.groupBy.mockResolvedValueOnce([
+      { appointmentId: "appt-class", _count: { _all: 2 } },
+    ]);
 
     const res = await GET(
       new Request(
@@ -423,6 +428,7 @@ describe("the planner payload carries what a class join reads", () => {
     const body = await res.json();
 
     expect(body.data.participantCounts["class-1"]).toBe(1);
+    expect(body.data.classes[0].waitingCount).toBe(2);
   });
 });
 

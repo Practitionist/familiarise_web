@@ -20,6 +20,7 @@
  */
 import type { OverageBehavior, ProgramType } from "@prisma/client";
 import { determineTax } from "@/lib/payments/tax/tax-engine";
+import { currentGstRegime } from "@/lib/payments/tax/gst-regime";
 import { prorate } from "@/lib/payments/utils/money";
 
 /**
@@ -32,8 +33,11 @@ export function surchargeTaxPaise(
   buyerCountry: string,
 ): number {
   if (surchargePaise <= 0) return 0;
-  return determineTax({ baseAmountPaise: surchargePaise, buyerCountry })
-    .taxAmount;
+  return determineTax({
+    baseAmountPaise: surchargePaise,
+    buyerCountry,
+    gstRegistered: currentGstRegime() === "REGISTERED",
+  }).taxAmount;
 }
 
 export interface OverageInput {

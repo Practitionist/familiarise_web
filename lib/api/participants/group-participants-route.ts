@@ -220,16 +220,26 @@ export async function handleGroupParticipantsGet(
     }
 
     const participants = deduplicateParticipants(loaded.appointment);
-    const seatPayments = await readSeatPayments(
-      loaded.appointment ? [loaded.appointment.id] : [],
-      participants.map((u) => u.id),
-    );
+    const appointmentId = loaded.appointment?.id;
+    const [seatPayments, waitingCount] = await Promise.all([
+      readSeatPayments(
+        appointmentId ? [appointmentId] : [],
+        participants.map((u) => u.id),
+      ),
+      // A count only: the host never sees who is waiting.
+      appointmentId
+        ? prisma.appointmentWaitlist.count({
+            where: { appointmentId, status: { in: ["WAITING", "NOTIFIED"] } },
+          })
+        : Promise.resolve(0),
+    ]);
 
     return NextResponse.json({
       [loaded.key]: loaded.event,
       participants,
       collaborators: loaded.collaborators,
       seatPayments,
+      waitingCount,
     });
   } catch (error) {
     Sentry.captureException(

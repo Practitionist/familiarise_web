@@ -68,8 +68,15 @@ function CheckoutFailureContent() {
             Payment Failed
           </h1>
           <p className="text-muted-foreground">
-            We couldn&apos;t process your payment. Don&apos;t worry, no charges
-            were made.
+            We couldn&apos;t confirm your payment. If any amount was deducted,
+            it will be refunded automatically or shown as confirmed in{" "}
+            <Link
+              href="/dashboard/go/auto/payments"
+              className="text-foreground font-medium underline"
+            >
+              Billing
+            </Link>
+            .
           </p>
         </div>
 
@@ -144,11 +151,22 @@ function CheckoutFailureContent() {
           <ul className="text-sm text-background/70 space-y-2">
             <li className="flex items-start gap-2">
               <span className="text-background/50">•</span>
-              No charges were made to your payment method
+              <span>
+                Check{" "}
+                <Link
+                  href="/dashboard/go/auto/payments"
+                  className="text-background underline"
+                >
+                  Billing
+                </Link>{" "}
+                before paying again, so you are not charged twice
+              </span>
             </li>
             <li className="flex items-start gap-2">
               <span className="text-background/50">•</span>
-              Your booking slot is still available for a limited time
+              Your slot is held only while your payment window is open. Once it
+              ends without a payment, the slot is released and someone else can
+              book it
             </li>
             <li className="flex items-start gap-2">
               <span className="text-background/50">•</span>

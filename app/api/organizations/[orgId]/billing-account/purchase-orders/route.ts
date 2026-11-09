@@ -20,6 +20,7 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { formatCurrencyAmount } from "@/utils/formatting";
 
 // #1396 — the `Currency` enum stays on the column (ADR 15 keeps the type), but
 // this API refuses to write anything except INR. Nothing downstream compares a
@@ -124,9 +125,7 @@ export async function POST(
           actorMembershipId: access.member.id,
           category: "INVOICE",
           action: AUDIT_ACTIONS.INVOICE.PURCHASE_ORDER_CREATED,
-          description: `PO ${body.poNumber} created (${body.currency} ${(
-            body.totalAmountPaise / 100
-          ).toLocaleString()})`,
+          description: `PO ${body.poNumber} created (${formatCurrencyAmount(body.totalAmountPaise, body.currency)})`,
           details: {
             purchaseOrderId: created.id,
             poNumber: body.poNumber,

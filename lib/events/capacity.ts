@@ -56,6 +56,14 @@ export function effectiveMaxParticipants(
   return plan?.maxParticipants ?? 0;
 }
 
+/** The instance override a capacity edit stores: null when the value equals the plan's default. */
+export function capacityOverrideFor(
+  submitted: number,
+  plan: CapacityPlan,
+): number | null {
+  return submitted === plan.maxParticipants ? null : submitted;
+}
+
 function toCapacity(max: number, registered: number): EventCapacity {
   return {
     max,

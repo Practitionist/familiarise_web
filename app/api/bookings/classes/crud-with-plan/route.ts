@@ -3,6 +3,13 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { refuseForeignProfileReassignment } from "@/lib/api/plans/profile-reassignment";
 import { recordParticipants } from "@/lib/booking/participants";
+import {
+  expireEventWaitlistForPlan,
+  finishSeatOpenedNotices,
+  stageSeatOpenedNotices,
+  type StagedSeatOpened,
+} from "@/lib/booking/event-waitlist";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import {
   curriculumCreateNested,
@@ -27,6 +34,8 @@ import { countWebinarParticipants } from "@/lib/payments/utils/participants";
 import {
   CapacityBelowEnrollmentError,
   capacityBelowRegisteredMessage,
+  capacityOverrideFor,
+  effectiveMaxParticipants,
 } from "@/lib/events/capacity";
 
 import { getSession } from "@/lib/auth-server";
@@ -200,6 +209,8 @@ export async function POST(request: NextRequest) {
       consultantProfileId,
       topics: topicNames,
       certificateProvided,
+      waitlistEnabled,
+      waitlistMax,
       recordingEnabled,
       sessionsPerWeek,
       emailSupport,
@@ -330,6 +341,8 @@ export async function POST(request: NextRequest) {
                   whatsIncluded,
                   faqs: faqCreateNested(faqs),
                   certificateProvided,
+                  waitlistEnabled,
+                  waitlistMax,
                   recordingEnabled,
                   sessionsPerWeek,
                   sessionDurationInHours,
@@ -592,6 +605,8 @@ export async function PATCH(request: NextRequest) {
       price,
       priceCurrency,
       certificateProvided,
+      waitlistEnabled,
+      waitlistMax,
       sessionsPerWeek,
       emailSupport,
       maxParticipants,
@@ -729,6 +744,8 @@ export async function PATCH(request: NextRequest) {
       batchWindows.length > 0 && ownerForBatch
         ? [ownerForBatch, ...(await acceptedCohostProfileIds("CLASS", id))]
         : [];
+    // Outside the retry, so a retried transaction re-stages the same notice keys.
+    const seatOpenedAt = new Date();
     const result = await withEventCheckoutLock(
       classToUpdate
         ? { appointmentType: "CLASS", eventId: classToUpdate.id }
@@ -785,6 +802,10 @@ export async function PATCH(request: NextRequest) {
                     updateData.priceCurrency = priceCurrency;
                   if (certificateProvided !== undefined)
                     updateData.certificateProvided = certificateProvided;
+                  if (waitlistEnabled !== undefined)
+                    updateData.waitlistEnabled = waitlistEnabled;
+                  if (waitlistMax !== undefined)
+                    updateData.waitlistMax = waitlistMax;
                   if (recordingEnabled !== undefined)
                     updateData.recordingEnabled = recordingEnabled;
                   if (sessionsPerWeek !== undefined)
@@ -818,8 +839,8 @@ export async function PATCH(request: NextRequest) {
                     updateData.totalHours =
                       updateData.totalSessions * finalSessionDurationInHours;
                   }
-                  // Capacity is per instance. Only move the plan's default when the
-                  // caller is editing the plan itself rather than one of its classes.
+                  // The editor shows a batch's effective capacity, so an edit moves
+                  // that batch's override; the plan's default moves only without one.
                   if (maxParticipants !== undefined && !classToUpdate)
                     updateData.maxParticipants = maxParticipants;
                   // #1780 row 2 — the window lives on the plan; seats snapshot it.
@@ -897,15 +918,22 @@ export async function PATCH(request: NextRequest) {
                     contentsCount: updatedClassPlan.classContents.length,
                   });
 
+                  // Switching the list off closes it silently, in this transaction.
+                  if (waitlistEnabled === false) {
+                    await expireEventWaitlistForPlan(tx, "CLASS", id);
+                  }
+
                   // Update the class instance if it exists and relevant fields are provided
                   let updatedClass = classToUpdate;
+                  let seatOpened: StagedSeatOpened | null = null;
+                  let raisedOnAppointment: string | null = null;
                   if (updatedClass) {
                     // Prepare update data for the Class instance, handling optional validated fields
                     const classUpdateData: {
                       status?: ClassStatus;
                       schedulingPeriodStartsAt?: Date | null;
                       schedulingPeriodEndsAt?: Date | null;
-                      maxParticipants?: number;
+                      maxParticipants?: number | null;
                     } = {};
 
                     // Publishing DRAFT -> SCHEDULED is the only status edge an edit may
@@ -950,7 +978,26 @@ export async function PATCH(request: NextRequest) {
                           ),
                         );
                       }
-                      classUpdateData.maxParticipants = maxParticipants;
+                      // An override equal to the plan's default is stored as null, so an
+                      // untouched field never pins one; only a real raise frees a seat.
+                      const override = capacityOverrideFor(
+                        maxParticipants,
+                        existingPlan,
+                      );
+                      if (override !== updatedClass.maxParticipants) {
+                        classUpdateData.maxParticipants = override;
+                      }
+                      const priorCapacity = effectiveMaxParticipants(
+                        updatedClass,
+                        existingPlan,
+                      );
+                      if (
+                        classAppointment &&
+                        maxParticipants > priorCapacity &&
+                        maxParticipants > enrolledCount
+                      ) {
+                        raisedOnAppointment = classAppointment.id;
+                      }
                     }
 
                     // Handle startDate: update if provided, set to null if explicitly null, otherwise leave unchanged
@@ -1162,12 +1209,21 @@ export async function PATCH(request: NextRequest) {
                         },
                       });
                     }
+                    // The notice guards decide whether the new capacity frees anything.
+                    if (raisedOnAppointment) {
+                      seatOpened = await stageSeatOpenedNotices(
+                        tx,
+                        raisedOnAppointment,
+                        seatOpenedAt,
+                      );
+                    }
                   }
 
                   // Return the results
                   return {
                     classPlan: updatedClassPlan,
                     class: updatedClass,
+                    seatOpened,
                   };
                 },
                 {
@@ -1182,6 +1238,10 @@ export async function PATCH(request: NextRequest) {
 
     console.log(
       "Update transaction completed successfully. Returning updated class data.",
+    );
+    await scheduleAfter(
+      () => finishSeatOpenedNotices(result.seatOpened),
+      "class-update.seat-opened",
     );
 
     // Return the appropriate response based on whether we had a class instance

@@ -38,7 +38,6 @@ export function useConsultants(filters: IExpertFilters) {
     companies,
     language,
     affiliationType,
-    orgKind,
     orgSlug,
   } = filters;
 
@@ -57,7 +56,6 @@ export function useConsultants(filters: IExpertFilters) {
         ...(minRating !== undefined && { minRating: String(minRating) }),
         ...(language && { language }),
         ...(affiliationType && { affiliationType }),
-        ...(orgKind && { orgKind }),
         ...(orgSlug && { orgSlug }),
       });
       // Repeated params (not comma-joined) so a literal comma in a tag/company
@@ -80,7 +78,6 @@ export function useConsultants(filters: IExpertFilters) {
       companies,
       language,
       affiliationType,
-      orgKind,
       orgSlug,
     ],
   );
@@ -109,16 +106,13 @@ export function useConsultants(filters: IExpertFilters) {
       companies,
       language,
       affiliationType,
-      orgKind,
       orgSlug,
     ],
     queryFn: ({ pageParam = 0 }) => fetchConsultantsData(getKey(pageParam)),
-    getNextPageParam: (lastPage, pages) => {
-      if (lastPage?.data?.length === CONSULTANTS_PER_PAGE) {
-        return pages.length;
-      }
-      return undefined;
-    },
+    getNextPageParam: (lastPage, pages) =>
+      pages.length < (lastPage?.meta?.totalPages ?? 0)
+        ? pages.length
+        : undefined,
     initialPageParam: 0,
     placeholderData: keepPreviousData,
     staleTime: 2 * 60 * 1000,

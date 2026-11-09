@@ -236,6 +236,14 @@ function makeTx() {
 
 let tx: ReturnType<typeof makeTx>;
 
+// The notify-me hooks are pinned by their own suites; here they stage nothing.
+jest.mock("@/lib/booking/event-waitlist", () => ({
+  stageSeatOpenedNotices: jest.fn(async () => ({ pages: [], email: null })),
+  finishSeatOpenedNotices: jest.fn(async () => undefined),
+  markEventWaitlistBooked: jest.fn(async () => ({ count: 0 })),
+  expireEventWaitlist: jest.fn(async () => ({ expired: 0, purged: 0 })),
+  hasLapsedEventWaitlist: jest.fn(async () => false),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {

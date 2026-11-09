@@ -37,6 +37,7 @@ import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile"
 import type { PrismaLike } from "@/lib/prisma";
 import type { PayoutRecipient } from "@prisma/client";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { PAYOUT_RECIPIENT_NAME } from "@/lib/labels/org-labels";
 
 export type RoleEffectInput = {
   userId: string;
@@ -237,7 +238,7 @@ export async function auditPayoutRecipientChange(
       targetMembershipId: args.targetMembershipId,
       category: "PAYOUT",
       action: AUDIT_ACTIONS.PAYOUT.PAYOUT_RECIPIENT_CHANGED,
-      description: `Payout recipient: ${args.from} → ${args.to}`,
+      description: `Payout recipient: ${PAYOUT_RECIPIENT_NAME[args.from]} → ${PAYOUT_RECIPIENT_NAME[args.to]}`,
       details: {
         from: args.from,
         to: args.to,

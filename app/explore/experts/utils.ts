@@ -1,12 +1,10 @@
 import type { IConsultantCardData } from "@/types/consultant";
 import { SortOption } from "./components/SearchBar";
-import { ReadonlyURLSearchParams } from "next/navigation";
+import type { ReadonlyParams } from "@/lib/explore/filter-codec";
 
 export const CONSULTANTS_PER_PAGE = 10;
 
 export type AffiliationType = "independent" | "agency" | null;
-
-export type OrgKind = "AGENCY" | "ENTERPRISE" | "SOLO_PRACTICE";
 
 export interface IExpertFilters {
   domain: string | null;
@@ -21,8 +19,6 @@ export interface IExpertFilters {
   companies: string[];
   language?: string;
   affiliationType: AffiliationType;
-  /** Sub-filter inside Agency/Org: staffing agency vs enterprise vs solo host. */
-  orgKind?: OrgKind | null;
   /** Drill-down to one host org's roster (by slug). */
   orgSlug?: string | null;
 }
@@ -33,14 +29,13 @@ export const DEFAULT_EXPERT_FILTERS: IExpertFilters = {
   tags: [],
   experience: 0,
   search: "",
-  sort: "nameAsc",
+  sort: "recommended",
   minPrice: undefined,
   maxPrice: undefined,
   minRating: undefined,
   companies: [],
   language: undefined,
   affiliationType: null,
-  orgKind: null,
   orgSlug: null,
 };
 
@@ -50,17 +45,11 @@ export interface IExpertsMetaData {
   tags: { id: string; name: string; domainId: string | null }[];
   consultantMetadata: {
     totalConsultants: number;
-    /** Per-tab counts for All / Independent / Agency-Org. */
+    /** Counts for the All / Independent / Agency-Org expert-type filter. */
     affiliationCounts?: {
       all: number;
       independent: number;
       agency: number;
-    };
-    /** Experts hosted per org kind (counts once per kind membership). */
-    orgKindCounts?: {
-      AGENCY: number;
-      ENTERPRISE: number;
-      SOLO_PRACTICE: number;
     };
     consultantsByDomain: {
       id: string;
@@ -78,6 +67,33 @@ export interface IExpertsMetaData {
   };
   availableLanguages: string[];
   availableCompanies: string[];
+}
+
+/**
+ * Links written by hand (`?domain=Technology`) name a domain or specialty
+ * instead of carrying its id. Returns the id-form patch for any such value so
+ * the field select and the filter chip can find it; null when nothing needs
+ * rewriting.
+ */
+export function resolveTaxonomyFilters(
+  filters: Pick<IExpertFilters, "domain" | "subdomain">,
+  metadata: Pick<IExpertsMetaData, "domains" | "subdomains">,
+): Partial<Pick<IExpertFilters, "domain" | "subdomain">> | null {
+  const patch: Partial<Pick<IExpertFilters, "domain" | "subdomain">> = {};
+  const byName = (items: { id: string; name: string }[], value: string) => {
+    if (items.some((item) => item.id === value)) return null;
+    const wanted = value.trim().toLowerCase();
+    return items.find((item) => item.name.toLowerCase() === wanted)?.id ?? null;
+  };
+  if (filters.domain) {
+    const id = byName(metadata.domains, filters.domain);
+    if (id) patch.domain = id;
+  }
+  if (filters.subdomain) {
+    const id = byName(metadata.subdomains, filters.subdomain);
+    if (id) patch.subdomain = id;
+  }
+  return Object.keys(patch).length > 0 ? patch : null;
 }
 
 export interface IConsultantsByDomain {
@@ -122,6 +138,7 @@ function parseIntegerParam(raw: string | null): number | undefined {
 }
 
 const VALID_SORT_OPTIONS: ReadonlySet<SortOption> = new Set<SortOption>([
+  "recommended",
   "nameAsc",
   "nameDesc",
   "reviewCount",
@@ -135,21 +152,15 @@ const VALID_AFFILIATIONS: ReadonlySet<string> = new Set([
   "agency",
 ]);
 
-const VALID_ORG_KINDS: ReadonlySet<string> = new Set([
-  "AGENCY",
-  "ENTERPRISE",
-  "SOLO_PRACTICE",
-]);
-
 // Parse IExpertFilters from URL search params
 export function filtersFromSearchParams(
-  params: ReadonlyURLSearchParams,
+  params: ReadonlyParams,
 ): IExpertFilters {
   const rawSort = params.get("sort");
   const sort: SortOption =
     rawSort && VALID_SORT_OPTIONS.has(rawSort as SortOption)
       ? (rawSort as SortOption)
-      : "nameAsc";
+      : "recommended";
 
   return {
     domain: params.get("domain"),
@@ -175,9 +186,6 @@ export function filtersFromSearchParams(
     affiliationType: VALID_AFFILIATIONS.has(params.get("affiliationType") ?? "")
       ? (params.get("affiliationType") as AffiliationType)
       : null,
-    orgKind: VALID_ORG_KINDS.has(params.get("orgKind") ?? "")
-      ? ((params.get("orgKind") as OrgKind) ?? null)
-      : null,
     orgSlug: params.get("orgSlug") || null,
   };
 }
@@ -191,7 +199,7 @@ export function filtersToSearchParams(filters: IExpertFilters): string {
   if (filters.experience > 0)
     params.set("experience", String(filters.experience));
   if (filters.search) params.set("search", filters.search);
-  if (filters.sort !== "nameAsc") params.set("sort", filters.sort);
+  if (filters.sort !== "recommended") params.set("sort", filters.sort);
   if (filters.minPrice !== undefined)
     params.set("minPrice", String(filters.minPrice));
   if (filters.maxPrice !== undefined)
@@ -202,7 +210,6 @@ export function filtersToSearchParams(filters: IExpertFilters): string {
   if (filters.language) params.set("language", filters.language);
   if (filters.affiliationType)
     params.set("affiliationType", filters.affiliationType);
-  if (filters.orgKind) params.set("orgKind", filters.orgKind);
   if (filters.orgSlug) params.set("orgSlug", filters.orgSlug);
   return params.toString();
 }

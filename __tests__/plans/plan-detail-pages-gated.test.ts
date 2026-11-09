@@ -44,9 +44,12 @@ jest.mock("../../lib/data/plan-details", () => ({
 }));
 
 const mockViewerSeatAppointmentIds = jest.fn(async () => [] as string[]);
+const mockViewerWaitlistAppointmentIds = jest.fn(async () => [] as string[]);
 jest.mock("../../lib/data/viewer-seats", () => ({
   viewerSeatAppointmentIds: (...a: unknown[]) =>
     mockViewerSeatAppointmentIds(...(a as [])),
+  viewerWaitlistAppointmentIds: (...a: unknown[]) =>
+    mockViewerWaitlistAppointmentIds(...(a as [])),
 }));
 
 // The page modules import their presentational components, which drag in the
@@ -186,6 +189,7 @@ describe("event detail pages hand down only the viewer's own seat", () => {
       webinars: [{ id: "w1", appointment: { id: "appt-1", occurrences: [] } }],
     });
     mockViewerSeatAppointmentIds.mockResolvedValue(["appt-1"]);
+    mockViewerWaitlistAppointmentIds.mockResolvedValue(["appt-1"]);
     const Page = (
       await import("../../app/explore/programs/plans/webinars/[webinarPlanId]/page")
     ).default;
@@ -198,6 +202,8 @@ describe("event detail pages hand down only the viewer's own seat", () => {
       "appt-1",
     ]);
     expect(propOf(element, "isRegistered")).toBe(true);
+    expect(propOf(element, "isWaiting")).toBe(true);
+    expect(propOf(element, "viewerUserId")).toBe("user-1");
   });
 
   it("class page asks about the signed-in viewer across the batches", async () => {

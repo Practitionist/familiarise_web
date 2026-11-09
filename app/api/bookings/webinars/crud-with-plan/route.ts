@@ -14,6 +14,13 @@ import {
 } from "@/lib/booking/host-slot-batch";
 import prisma from "@/lib/prisma";
 import { recordParticipants } from "@/lib/booking/participants";
+import {
+  expireEventWaitlistForPlan,
+  finishSeatOpenedNotices,
+  stageSeatOpenedNotices,
+  type StagedSeatOpened,
+} from "@/lib/booking/event-waitlist";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import { refuseForeignProfileReassignment } from "@/lib/api/plans/profile-reassignment";
 import { faqCreateNested, faqReplaceNested } from "@/lib/api/plans/content";
@@ -33,6 +40,8 @@ import { countWebinarParticipants } from "@/lib/payments/utils/participants";
 import {
   CapacityBelowEnrollmentError,
   capacityBelowRegisteredMessage,
+  capacityOverrideFor,
+  effectiveMaxParticipants,
 } from "@/lib/events/capacity";
 import {
   assertCollaboratorsAvailable,
@@ -187,6 +196,8 @@ export async function POST(request: NextRequest) {
       scheduledAt,
       status,
       certificateProvided,
+      waitlistEnabled,
+      waitlistMax,
       recordingEnabled,
       shareRecordingsWithAllAttendees,
     } = validatedData;
@@ -312,6 +323,8 @@ export async function POST(request: NextRequest) {
                   whatsIncluded,
                   faqs: faqCreateNested(faqs),
                   certificateProvided,
+                  waitlistEnabled,
+                  waitlistMax,
                   recordingEnabled,
                   shareRecordingsWithAllAttendees,
                   consultantProfile: { connect: { id: consultantProfileId } },
@@ -562,6 +575,8 @@ export async function PATCH(request: NextRequest) {
       scheduledAt,
       priceCurrency,
       certificateProvided,
+      waitlistEnabled,
+      waitlistMax,
       recordingEnabled,
       shareRecordingsWithAllAttendees,
     } = validatedData;
@@ -744,6 +759,8 @@ export async function PATCH(request: NextRequest) {
         ? [ownerForBatch, ...(await acceptedCohostProfileIds("WEBINAR", id))]
         : [];
 
+    // Outside the retry, so a retried transaction re-stages the same notice keys.
+    const seatOpenedAt = new Date();
     // Update webinar plan and related data in a transaction
     const result = await withEventCheckoutLock(
       webinarToUpdate
@@ -777,8 +794,8 @@ export async function PATCH(request: NextRequest) {
                   if (price !== undefined) updateData.price = price;
                   if (priceCurrency !== undefined)
                     updateData.priceCurrency = priceCurrency;
-                  // Capacity is per instance. Only move the plan's default when the
-                  // caller is editing the plan itself rather than one of its webinars.
+                  // The editor shows a webinar's effective capacity, so an edit moves
+                  // that webinar's override; the plan's default moves only without one.
                   if (maxParticipants !== undefined && !webinarToUpdate)
                     updateData.maxParticipants = maxParticipants;
                   // #1780 row 2 — the window lives on the plan; seats snapshot it.
@@ -792,6 +809,10 @@ export async function PATCH(request: NextRequest) {
                     updateData.materialProvided = materialProvided;
                   if (certificateProvided !== undefined)
                     updateData.certificateProvided = certificateProvided;
+                  if (waitlistEnabled !== undefined)
+                    updateData.waitlistEnabled = waitlistEnabled;
+                  if (waitlistMax !== undefined)
+                    updateData.waitlistMax = waitlistMax;
                   if (recordingEnabled !== undefined)
                     updateData.recordingEnabled = recordingEnabled;
                   if (shareRecordingsWithAllAttendees !== undefined)
@@ -855,8 +876,15 @@ export async function PATCH(request: NextRequest) {
                     });
                   }
 
+                  // Switching the list off closes it silently, in this transaction.
+                  if (waitlistEnabled === false) {
+                    await expireEventWaitlistForPlan(tx, "WEBINAR", id);
+                  }
+
                   // Update the webinar instance status if provided in the validated data
                   let updatedWebinar = webinarToUpdate;
+                  let seatOpened: StagedSeatOpened | null = null;
+                  let capacityRaised = false;
                   if (updatedWebinar) {
                     const webinarUpdateData: Prisma.WebinarUpdateInput = {};
 
@@ -909,7 +937,21 @@ export async function PATCH(request: NextRequest) {
                           ),
                         );
                       }
-                      webinarUpdateData.maxParticipants = maxParticipants;
+                      // An override equal to the plan's default is stored as null, so an
+                      // untouched field never pins one; only a real raise frees a seat.
+                      const override = capacityOverrideFor(
+                        maxParticipants,
+                        existingPlan,
+                      );
+                      if (override !== updatedWebinar.maxParticipants) {
+                        webinarUpdateData.maxParticipants = override;
+                      }
+                      capacityRaised =
+                        maxParticipants >
+                          effectiveMaxParticipants(
+                            updatedWebinar,
+                            existingPlan,
+                          ) && maxParticipants > enrolledCount;
                     }
 
                     if (Object.keys(webinarUpdateData).length > 0) {
@@ -1170,6 +1212,15 @@ export async function PATCH(request: NextRequest) {
                       }
                     }
 
+                    // The notice guards decide whether the new capacity frees anything.
+                    if (capacityRaised && updatedWebinar.appointment) {
+                      seatOpened = await stageSeatOpenedNotices(
+                        tx,
+                        updatedWebinar.appointment.id,
+                        seatOpenedAt,
+                      );
+                    }
+
                     // Retrieve the fully updated webinar after all changes
                     updatedWebinar = await tx.webinar.findUnique({
                       where: { id: updatedWebinar.id },
@@ -1193,6 +1244,7 @@ export async function PATCH(request: NextRequest) {
                   return {
                     webinarPlan: updatedWebinarPlan,
                     webinar: updatedWebinar,
+                    seatOpened,
                   };
                 },
                 {
@@ -1207,6 +1259,10 @@ export async function PATCH(request: NextRequest) {
 
     console.log(
       "Update transaction completed successfully. Returning updated webinar data.",
+    );
+    await scheduleAfter(
+      () => finishSeatOpenedNotices(result.seatOpened),
+      "webinar-update.seat-opened",
     );
 
     // Transform topics to strings in response

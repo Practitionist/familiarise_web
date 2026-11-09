@@ -43,6 +43,7 @@ import {
 } from "@/lib/enterprise/transitions";
 import { requireFreshSession } from "@/lib/auth/step-up";
 import { orgPayoutNeedsPlatformApproval } from "@/lib/payments/payouts/payout-requirements";
+import { ORG_PAYOUT_STATUS_LABEL } from "@/lib/labels/org-labels";
 
 const PatchStatusSchema = z.enum(["APPROVED", "CANCELLED"]);
 
@@ -298,7 +299,8 @@ export async function PATCH(
             actorMembershipId: access.member.id,
             category: "PAYOUT",
             action: AUDIT_ACTIONS.PAYOUT.PAYOUT_STATUS_OVERRIDDEN,
-            description: `Payout ${payoutId}: approved by the organisation, awaiting platform co-approval`,
+            description:
+              "Payout approved by the organisation, awaiting platform co-approval",
             details: {
               payoutId,
               from: current.status,
@@ -331,7 +333,7 @@ export async function PATCH(
               body.status === "CANCELLED"
                 ? AUDIT_ACTIONS.PAYOUT.PAYOUT_CANCELLED
                 : AUDIT_ACTIONS.PAYOUT.PAYOUT_STATUS_OVERRIDDEN,
-            description: `Payout ${payoutId}: ${current.status} → ${body.status}`,
+            description: `Payout status: ${ORG_PAYOUT_STATUS_LABEL[current.status]} → ${ORG_PAYOUT_STATUS_LABEL[body.status]}`,
             details: {
               payoutId,
               from: current.status,

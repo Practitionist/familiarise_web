@@ -5,7 +5,10 @@ import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getSession } from "@/lib/auth-server";
 import { reportSentryError } from "@/lib/observability/report";
 import { getClassPlanDetail } from "@/lib/data/plan-details";
-import { viewerSeatAppointmentIds } from "@/lib/data/viewer-seats";
+import {
+  viewerSeatAppointmentIds,
+  viewerWaitlistAppointmentIds,
+} from "@/lib/data/viewer-seats";
 import {
   eventPlanMetadata,
   hiddenEventPlanMetadata,
@@ -67,10 +70,14 @@ export default async function ClassDetailsPage({
     imageUrl: generateProgramImageUrl(classPlan.imageUrl),
   };
 
-  const enrolledAppointmentIds = await viewerSeatAppointmentIds(
-    session?.user?.id,
-    classPlan.classes.flatMap((c) => (c.appointment ? [c.appointment.id] : [])),
+  const viewerUserId = session?.user?.id ?? null;
+  const batchAppointmentIds = classPlan.classes.flatMap((c) =>
+    c.appointment ? [c.appointment.id] : [],
   );
+  const [enrolledAppointmentIds, waitingAppointmentIds] = await Promise.all([
+    viewerSeatAppointmentIds(viewerUserId, batchAppointmentIds),
+    viewerWaitlistAppointmentIds(viewerUserId, batchAppointmentIds),
+  ]);
 
   return (
     <>
@@ -78,6 +85,8 @@ export default async function ClassDetailsPage({
       <ClassDetails
         plan={planWithDefaults}
         enrolledAppointmentIds={enrolledAppointmentIds}
+        waitingAppointmentIds={waitingAppointmentIds}
+        viewerUserId={viewerUserId}
       />
     </>
   );

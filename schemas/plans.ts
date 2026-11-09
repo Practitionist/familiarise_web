@@ -428,9 +428,25 @@ const BaseEventPlanSchema = z.object({
   ...planPositioningShape,
 });
 
+// The sold-out "Notify me" list; null caps it at MAX_GROUP_SESSION_PARTICIPANTS.
+const waitlistShape = {
+  waitlistEnabled: z.boolean().default(true),
+  waitlistMax: z
+    .number()
+    .int("The waitlist size must be a whole number")
+    .min(1, "The waitlist must hold at least one person")
+    .max(
+      MAX_GROUP_SESSION_PARTICIPANTS,
+      `The waitlist cannot hold more than ${MAX_GROUP_SESSION_PARTICIPANTS} people`,
+    )
+    .nullable()
+    .optional(),
+};
+
 // Webinar specific schema
 export const WebinarPlanSchema = BaseEventPlanSchema.extend({
   certificateProvided: z.boolean().default(false),
+  ...waitlistShape,
   ...recordingShape,
   shareRecordingsWithAllAttendees: z.boolean().default(false),
   durationInHours: z
@@ -480,6 +496,7 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
     )
     .default(1),
   certificateProvided: z.boolean().default(false),
+  ...waitlistShape,
   ...recordingShape,
   sessionsPerWeek: z
     .number()

@@ -9,14 +9,17 @@ import { BrandWordmark } from "@/components/brand/BrandWordmark";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { COMPANY_INFO } from "@/lib/company";
+import { NEWSLETTER_NOTICE } from "@/lib/newsletter/notice";
 import { isChromeHidden } from "@/lib/navigation/public-chrome";
+import { EXPLORE_FIELDS } from "@/lib/navigation/public-nav";
+import { domainPath } from "@/lib/explore/domain-slug";
 
 interface FooterLink {
   label: string;
   href: string;
 }
 
-// Mirrors the Navbar's IA (Explore / Solutions / Enterprise / Company / Legal).
+// Follows the Navbar's IA (Explore / Solutions / For business) and adds the pages the bar leaves out (Company / Legal).
 // Users who miss something in the nav look for it in the footer, so the two
 // disagreeing costs clicks.
 const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
@@ -24,9 +27,10 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
     heading: "Explore",
     links: [
       { label: "Find experts", href: "/explore/experts" },
-      { label: "Programs", href: "/explore/programs" },
+      { label: "Classes & webinars", href: "/explore/programs" },
+      { label: "Digital products", href: "/explore/products" },
       {
-        label: "Organisations",
+        label: "Partner organisations",
         href: "/explore/enterprise/organisations",
       },
     ],
@@ -41,7 +45,7 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
     ],
   },
   {
-    heading: "Enterprise",
+    heading: "For business",
     links: [
       { label: "Overview", href: "/enterprise" },
       { label: "Team training", href: "/enterprise/team-training" },
@@ -49,7 +53,10 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
         label: "Corporate mentorship",
         href: "/enterprise/corporate-mentorship",
       },
-      { label: "Talk to sales", href: "/contactus" },
+      { label: "For institutions", href: "/enterprise/institutions" },
+      { label: "How funding works", href: "/enterprise/funding" },
+      { label: "Security", href: "/enterprise/security" },
+      { label: "Book a demo", href: "/enterprise/demo" },
     ],
   },
   {
@@ -58,8 +65,9 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
       { label: "About", href: "/about" },
       { label: "Help Center", href: "/support" },
       { label: "Contact", href: "/contactus" },
-      { label: "Pricing", href: "/pricing" },
+      { label: "Pricing & fees", href: "/pricing" },
       { label: "How it works", href: "/#how-it-works" },
+      { label: "How we rank", href: "/how-we-rank" },
       { label: "Become an expert", href: "/become-an-expert" },
     ],
   },
@@ -76,25 +84,15 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
 
 // Internal-linking band. A marketplace's value is its long-tail catalog, so
 // these deep links are worth more here than another column of company pages.
-const EXPERTISE_LINKS: FooterLink[] = [
-  { label: "Technology", href: "/explore/experts?domain=Technology" },
-  { label: "Business", href: "/explore/experts?domain=Business" },
-  {
-    label: "Creative Arts",
-    href: `/explore/experts?domain=${encodeURIComponent("Creative Arts")}`,
-  },
-  { label: "Education", href: "/explore/experts?domain=Education" },
-  { label: "Health", href: "/explore/experts?domain=Health" },
-  {
-    label: "Personal Development",
-    href: `/explore/experts?domain=${encodeURIComponent("Personal Development")}`,
-  },
-];
+const EXPERTISE_LINKS: FooterLink[] = EXPLORE_FIELDS.map((name) => ({
+  label: name,
+  href: domainPath(name),
+}));
 
 const Footer: React.FC = () => {
   const pathname = usePathname();
   const [email, setEmail] = useState("");
-  const [waitlistStatus, setWaitlistStatus] = useState<
+  const [newsletterStatus, setNewsletterStatus] = useState<
     "idle" | "loading" | "success" | "error"
   >("idle");
 
@@ -105,24 +103,20 @@ const Footer: React.FC = () => {
   // across Navbar/Footer/HeaderSpacer and had already drifted.
   if (isChromeHidden(pathname)) return null;
 
-  // The heading says "Stay in the loop" and the copy promises a weekly email,
-  // but the button still said "Join waitlist" — left over from the
-  // waitlist→newsletter rework. The endpoint is unchanged; only the label was
-  // stale.
   const subscribeButtonLabel = {
     idle: "Subscribe",
     loading: "Subscribing...",
     success: "Check your email",
     error: "Subscribe",
-  }[waitlistStatus];
+  }[newsletterStatus];
 
-  const handleWaitlistSubmit = async (e: React.FormEvent) => {
+  const handleNewsletterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || waitlistStatus === "loading") return;
+    if (!email || newsletterStatus === "loading") return;
 
-    setWaitlistStatus("loading");
+    setNewsletterStatus("loading");
     try {
-      const res = await fetch("/api/waitlist", {
+      const res = await fetch("/api/newsletter", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // Tagged by surface so the admin list can tell where signups come from.
@@ -130,9 +124,9 @@ const Footer: React.FC = () => {
       });
       if (!res.ok) throw new Error("Failed");
       setEmail("");
-      setWaitlistStatus("success");
+      setNewsletterStatus("success");
     } catch {
-      setWaitlistStatus("error");
+      setNewsletterStatus("error");
     }
   };
 
@@ -150,7 +144,7 @@ const Footer: React.FC = () => {
         </>
       )}
 
-      {/* Waitlist signup — every marketing page, merged with the footer */}
+      {/* Newsletter signup — every marketing page, merged with the footer */}
       <div className="relative z-10 border-b border-zinc-800">
         <div className="container mx-auto px-4 md:px-6 py-20 md:py-28">
           <div className="max-w-2xl mx-auto text-center">
@@ -161,13 +155,13 @@ const Footer: React.FC = () => {
               Stay in the <span className="silver-text">loop</span>
             </h2>
             <p className="text-lg text-zinc-400 mb-8">
-              Get learning tips and news about new classes, webinars and offers
-              delivered to your inbox weekly.
+              Product news and launch updates from Familiarise, straight to your
+              inbox.
             </p>
 
             <form
               className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto"
-              onSubmit={handleWaitlistSubmit}
+              onSubmit={handleNewsletterSubmit}
             >
               <Input
                 type="email"
@@ -180,7 +174,8 @@ const Footer: React.FC = () => {
                 type="submit"
                 size="lg"
                 disabled={
-                  waitlistStatus === "loading" || waitlistStatus === "success"
+                  newsletterStatus === "loading" ||
+                  newsletterStatus === "success"
                 }
                 className="h-14 bg-white text-zinc-900 hover:bg-zinc-200 px-8 rounded-xl font-medium shrink-0"
               >
@@ -188,14 +183,14 @@ const Footer: React.FC = () => {
               </Button>
             </form>
 
-            {waitlistStatus === "error" && (
+            {newsletterStatus === "error" && (
               <p className="text-sm text-red-400 mt-2">
                 Something went wrong. Please try again.
               </p>
             )}
 
             <p className="text-sm text-zinc-400 mt-4">
-              No spam, unsubscribe anytime.{" "}
+              {NEWSLETTER_NOTICE}{" "}
               <Link
                 href="/privacy"
                 className="underline hover:text-zinc-200 transition-colors"

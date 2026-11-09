@@ -1,6 +1,7 @@
 /**
  * Booking lifecycle emails: booked, cancelled, rescheduled, reminder,
- * new request, unscheduled nudge, trial scheduled, and window opened.
+ * new request, unscheduled nudge, trial scheduled, window opened and event
+ * seat opened.
  */
 
 import UnplacedWeeksEmail from "@/emails/booking/UnplacedWeeksEmail";
@@ -21,6 +22,7 @@ import ClassSessionEmail, {
   classSessionSubject,
   type ClassSessionEmailKind,
 } from "@/emails/booking/ClassSessionEmail";
+import EventSeatOpenedEmail from "@/emails/booking/EventSeatOpenedEmail";
 import DocumentAndRecordingEmail, {
   documentAndRecordingSubject,
   type DocumentAndRecordingEmailKind,
@@ -670,6 +672,48 @@ export async function stageWindowOpenedEmail(
     },
     [args.userId],
     tx,
+  );
+}
+
+// ── Event seat opened ───────────────────────────────────────────────────────
+
+export const EVENT_SEAT_OPENED_EMAIL_TYPE = "EVENT_SEAT_OPENED";
+
+export interface EventSeatOpenedEmailArgs {
+  appointmentId: string;
+  /** The cooldown window this notice belongs to; part of the per-recipient claim key. */
+  bucket: number;
+  userIds: string[];
+  planTitle: string;
+  kind: "WEBINAR" | "CLASS";
+  startsAt: Date | null;
+  checkoutUrl: string;
+}
+
+/** Renders outside any transaction and stages once per recipient under `claim`; never call it inside `tx`. */
+export function stageEventSeatOpenedEmails(
+  args: EventSeatOpenedEmailArgs,
+  claim: RecipientClaim,
+): Promise<StagedRecipientEmail[]> {
+  const startsAt = args.startsAt;
+  return stageSpecOncePerRecipient(
+    {
+      emailType: EVENT_SEAT_OPENED_EMAIL_TYPE,
+      category: "appointments",
+      entityRef: `appointment:${args.appointmentId}`,
+      subject: () => `A seat just opened in ${args.planTitle}`,
+      render: (r) =>
+        React.createElement(EventSeatOpenedEmail, {
+          recipientName: greet(r),
+          planTitle: args.planTitle,
+          eventLabel: args.kind === "CLASS" ? "class" : "webinar",
+          startsText: startsAt ? whenText(startsAt, r.zone) : null,
+          checkoutUrl: absolute(args.checkoutUrl),
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+    args.userIds,
+    claim,
   );
 }
 

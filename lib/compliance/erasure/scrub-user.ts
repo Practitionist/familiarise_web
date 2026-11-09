@@ -20,11 +20,14 @@
  *   SessionAccessLog.userId → NULL; IP, user agent and times stay until the
  *   180-day prune (CERT-In Directions, a legal obligation under DPDP s.17).
  *
- *   Waitlist rows (by userId or address) → deleted. Queued FailedEmail rows
- *   → DEAD_LETTER `policy:recipient_erased`, subject and bodies redacted;
- *   every FailedEmail row's recipient → an `erased:` digest; every
- *   FailedEmailBatch loses the address. EmailSuppression stays so the address
- *   remains unmailable.
+ *   NewsletterSubscriber rows (by userId or address) → deleted. Queued
+ *   FailedEmail rows → DEAD_LETTER `policy:recipient_erased`, subject and
+ *   bodies redacted; every FailedEmail row's recipient → an `erased:` digest;
+ *   every FailedEmailBatch loses the address. EmailSuppression stays so the
+ *   address remains unmailable.
+ *
+ *   AppointmentWaitlist and WindowBackupInterest rows → deleted.
+ *   Referral.ipHash and userAgent of the referred user → NULL.
  *
  *   PayoutAccount holder name, bank name, last-4, IFSC and UPI id → NULL;
  *   the RazorpayX fund account and contact are deactivated, and the
@@ -33,7 +36,8 @@
  * What survives intact (per Indian IT Act §44AA / §92 retention rules
  * and per the financial-records carve-out in DPDP §12):
  *
- *   Payment*, OrganizationInvoice, OrganizationPayout,
+ *   Payment* (payerVpaHash and payerPhoneHash too, until their two-year
+ *   window), OrganizationInvoice, OrganizationPayout,
  *   WalletEntry, FundingLedgerEntry, SettlementLedgerEntry, Refund,
  *   ConsultantPayout, TDSRecord, and the PayoutAccount rzp ids those rows
  *   reference. Two retention clocks govern them: Income-tax Rule 6F(5)
@@ -98,6 +102,7 @@ import {
   scrubDigitalProductsTx,
 } from "@/lib/digital-products/erasure";
 import { scrubMailFootprintTx } from "./mail-footprint";
+import { NULLED_REFERRAL_SIGNALS } from "@/lib/compliance/signal-retention";
 import {
   removeSupportAttachmentObjects,
   scrubSupportPiiTx,
@@ -968,6 +973,14 @@ export async function scrubUser(
     archivedProducts = await scrubDigitalProductsTx(tx, userId, now);
     // Matched by the pre-erasure address, which the user update above replaces.
     await scrubMailFootprintTx(tx, { userId, email: existing.email });
+    // Users are scrubbed, not deleted, so the cascade on these never fires.
+    await tx.appointmentWaitlist.deleteMany({ where: { userId } });
+    await tx.windowBackupInterest.deleteMany({ where: { userId } });
+    // The referred user's apply-time IP hash and user agent; payer hashes stay for their two-year window.
+    await tx.referral.updateMany({
+      where: { referredUserId: userId },
+      data: NULLED_REFERRAL_SIGNALS,
+    });
 
     // #1580 — an erased consultant otherwise stays an ACCEPTED collaborator in
     // every split and roster; the same flip the moderation ban runs.

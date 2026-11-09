@@ -8,8 +8,10 @@ import { firstCycleWindow } from "@/lib/booking/entitlement";
 import {
   type Currency,
   type OfferingPlanStatus,
+  type OrgPlanVisibility,
   PaymentStatus,
 } from "@prisma/client";
+import { Refusal } from "@/lib/errors/refusal";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
@@ -20,6 +22,7 @@ import {
   type CheckoutDiscountInput,
 } from "@/lib/payments/pricing/derive-checkout-amount";
 import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
+import { currentGstRegime } from "@/lib/payments/tax/gst-regime";
 import {
   validatePlanCurrency,
   validateDiscountCurrency,
@@ -63,6 +66,8 @@ export async function calculateAmountAndValidate(
   /** The signed own-link cookie and whether an org funds this booking; null for neither. */
   referral: { viaToken: string | null; orgFunded: boolean } | null = null,
 ) {
+  // Refuses before any read when PLATFORM_GSTIN is set but unusable.
+  const gstRegime = currentGstRegime();
   return await prisma.$transaction(async (tx) => {
     let amount = 0;
     let plan;
@@ -101,8 +106,8 @@ export async function calculateAmountAndValidate(
     const assertPlanPurchasable = (
       p: {
         archivedAt: Date | null;
-        visibility: string;
-        organizationId?: string | null;
+        visibility: OrgPlanVisibility;
+        organizationId: string | null;
         status?: OfferingPlanStatus | null;
         consultantProfile: {
           verificationStatus: string;
@@ -143,15 +148,23 @@ export async function calculateAmountAndValidate(
       if (p.archivedAt) {
         throw new Error(`${label} is no longer available`);
       }
-      if (
-        !MARKETPLACE_VISIBILITY.includes(
-          p.visibility as (typeof MARKETPLACE_VISIBILITY)[number],
-        ) &&
-        (!validatedData.organizationId ||
-          (p.organizationId &&
-            p.organizationId !== validatedData.organizationId))
-      ) {
-        throw new Error(`${label} is not available`);
+      // A non-marketplace plan sells only to its own org's sponsored buyers; a
+      // plan whose org was cleared (onDelete: SetNull) sells to no sponsor.
+      const sameOrg =
+        !!p.organizationId &&
+        !!validatedData.organizationId &&
+        p.organizationId === validatedData.organizationId;
+      if (!MARKETPLACE_VISIBILITY.includes(p.visibility) && !sameOrg) {
+        throw new Refusal({
+          code: "PLAN_NOT_AVAILABLE_TO_ORG",
+          httpStatus: 409,
+          userMessage: `${label} is only available to members of the organisation that offers it.`,
+          context: {
+            visibility: p.visibility,
+            planOrganizationId: p.organizationId,
+            buyerOrganizationId: validatedData.organizationId ?? null,
+          },
+        });
       }
     };
 
@@ -504,14 +517,26 @@ export async function calculateAmountAndValidate(
     const derived = await deriveCheckoutAmount({
       basePaise: amount,
       buyerCountry,
+      gstRegime,
       serviceType: appointmentTypeToServiceType(validatedData.appointmentType),
       discount: appliedDiscount,
       welcomeDiscount: attribution.welcomeDiscount,
       creditCapBps: attribution.creditCapBps,
+      promoFeeBps: attribution.promoFeeBps,
       useReferralCredits: validatedData.useReferralCredits === true,
       resolveAvailableCreditsPaise: async () =>
         (await getUserCredits(userId, tx)).totalAvailable,
     });
+    // A code on an order whose take cannot fund promo (a fee waiver, a host org) is refused,
+    // before commit, so no redemption is spent.
+    if (appliedDiscount && derived.platformFundedCapPaise === 0) {
+      throw Object.assign(
+        new Error(
+          `Discount code refused: no platform-funded promo on this order (promoFeeBps=${attribution.promoFeeBps})`,
+        ),
+        { httpStatus: 409, code: "DISCOUNT_NOT_APPLICABLE" },
+      );
+    }
     // Original plan price before any discounts/credits, used for consultant
     // earnings — discounts are platform-funded, not consultant-funded.
     const { originalAmount, taxAmount, creditsApplied, isInternational } =
@@ -548,6 +573,7 @@ export async function calculateAmountAndValidate(
       attributionReferralId: attribution.referralId,
       platformFeeBps: attribution.platformFeeBps,
       welcomeDiscountPaise: derived.welcomeDiscountPaise,
+      gstRegime,
     };
   });
 }

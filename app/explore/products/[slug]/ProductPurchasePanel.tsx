@@ -262,6 +262,7 @@ export function ProductPurchasePanel({
           description:
             error.description?.trim() ||
             "You can try again or choose another payment method.",
+          variant: "destructive",
         });
         // One event per checkout, grouped by the gateway's code.
         if (reported) return;

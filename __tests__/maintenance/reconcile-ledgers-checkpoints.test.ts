@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { runAsRegisteredPlatform } from "../fixtures/gst-registered";
 
 const held = new Set<string>();
 jest.mock("../../lib/cron/with-cron-lock", () => ({
@@ -553,3 +554,6 @@ test("an exception expiring during a multi-day audit cannot excuse its final ver
     );
   }
 });
+
+// Overage surcharges carry GST only for a GST-registered platform.
+runAsRegisteredPlatform();

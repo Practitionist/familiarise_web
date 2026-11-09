@@ -1,17 +1,21 @@
 /**
  * POST /api/webhooks/resend
  *
- * Resend Svix webhook receiver. Persists `EmailEvent` and recipient suppression / waitlist
- * state transitions atomically inside a single transaction.
+ * Resend Svix webhook receiver. Persists `EmailEvent`, recipient suppression,
+ * newsletter status and consent withdrawal atomically inside a single transaction.
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
-import prisma, { type PrismaLike } from "@/lib/prisma";
+import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { suppressRecipient } from "@/lib/email/suppression";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import {
+  lockNewsletterRows,
+  withdrawNewsletterConsent,
+} from "@/lib/newsletter/consent-link";
 import { toInputJson } from "@/lib/webhooks/event-log";
 import {
   MAX_WEBHOOK_BODY_BYTES,
@@ -55,8 +59,31 @@ async function suppressRecipientsInTx(
   }
 }
 
+/** A complaint or a vendor-side unsubscribe is a withdrawal: live rows flip and every matching row's consent is withdrawn. */
+async function unsubscribeNewsletterRows(
+  tx: Tx,
+  emailFilter: string | { in: string[] },
+): Promise<void> {
+  // Every matching row, BOUNCED included, loses its consent; only live rows change status.
+  const now = new Date();
+  const rows = await lockNewsletterRows(tx, { email: emailFilter }, now);
+  if (rows.length === 0) return;
+  await tx.newsletterSubscriber.updateMany({
+    where: { email: emailFilter, status: { in: ["PENDING", "SUBSCRIBED"] } },
+    data: { status: "UNSUBSCRIBED", unsubscribedAt: now },
+  });
+  for (const row of rows) {
+    await withdrawNewsletterConsent(tx, {
+      email: row.email,
+      userId: row.userId,
+      subjectId: row.consentSubjectId,
+      now,
+    });
+  }
+}
+
 async function applyRecipientEffects(
-  tx: PrismaLike,
+  tx: Tx,
   eventRowId: string,
   type: string,
   data: ResendWebhookEvent["data"],
@@ -69,7 +96,7 @@ async function applyRecipientEffects(
 
   if (type === "email.bounced" && data?.bounce?.type === "Permanent") {
     await suppressRecipientsInTx(tx, recipients, "HARD_BOUNCE", eventRowId);
-    await tx.waitlist.updateMany({
+    await tx.newsletterSubscriber.updateMany({
       where: {
         email: emailFilter,
         status: { in: ["PENDING", "SUBSCRIBED"] },
@@ -81,19 +108,13 @@ async function applyRecipientEffects(
 
   if (type === "email.complained") {
     await suppressRecipientsInTx(tx, recipients, "COMPLAINT", eventRowId);
-    await tx.waitlist.updateMany({
-      where: {
-        email: emailFilter,
-        status: { in: ["PENDING", "SUBSCRIBED"] },
-      },
-      data: { status: "UNSUBSCRIBED", unsubscribedAt: new Date() },
-    });
+    await unsubscribeNewsletterRows(tx, emailFilter);
     return;
   }
 
   if (type === "email.suppressed") {
     await suppressRecipientsInTx(tx, recipients, "MANUAL", eventRowId);
-    await tx.waitlist.updateMany({
+    await tx.newsletterSubscriber.updateMany({
       where: {
         email: emailFilter,
         status: { in: ["PENDING", "SUBSCRIBED"] },
@@ -108,13 +129,7 @@ async function applyRecipientEffects(
     (type === "contact.updated" && data?.unsubscribed === true)
   ) {
     await suppressRecipientsInTx(tx, recipients, "MANUAL", eventRowId);
-    await tx.waitlist.updateMany({
-      where: {
-        email: emailFilter,
-        status: { in: ["PENDING", "SUBSCRIBED"] },
-      },
-      data: { status: "UNSUBSCRIBED", unsubscribedAt: new Date() },
-    });
+    await unsubscribeNewsletterRows(tx, emailFilter);
   }
 }
 

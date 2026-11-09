@@ -20,7 +20,7 @@ type ChipKey =
   | { kind: "language" }
   | { kind: "search" }
   | { kind: "sort" }
-  | { kind: "orgKind" }
+  | { kind: "affiliation" }
   | { kind: "orgSlug" };
 
 /**
@@ -68,7 +68,7 @@ function decodeChipKey(encoded: string): ChipKey | null {
     case "language":
     case "search":
     case "sort":
-    case "orgKind":
+    case "affiliation":
     case "orgSlug":
       return { kind: encoded };
     default:
@@ -77,12 +77,18 @@ function decodeChipKey(encoded: string): ChipKey | null {
 }
 
 const SORT_LABELS: Record<string, string> = {
+  nameAsc: "Name (A-Z)",
   nameDesc: "Name (Z-A)",
   reviewCount: "Most Reviews",
   rating: "Highest Rating",
-  trending: "Trending",
+  trending: "Recently reviewed",
   newest: "Newest",
 };
+
+const AFFILIATION_LABELS = {
+  independent: "Independent",
+  agency: "Agency / Org",
+} as const;
 
 interface UseExpertFilterChipsResult {
   chips: ActiveFilter[];
@@ -188,7 +194,7 @@ export function useExpertFilterChips(
       });
     }
 
-    if (filters.sort !== "nameAsc") {
+    if (filters.sort !== "recommended") {
       out.push({
         key: encodeChipKey({ kind: "sort" }),
         label: "Sort",
@@ -196,16 +202,11 @@ export function useExpertFilterChips(
       });
     }
 
-    if (filters.orgKind) {
-      const labels: Record<string, string> = {
-        AGENCY: "Agency",
-        ENTERPRISE: "Enterprise",
-        SOLO_PRACTICE: "Solo practice",
-      };
+    if (filters.affiliationType) {
       out.push({
-        key: encodeChipKey({ kind: "orgKind" }),
-        label: "Org type",
-        value: labels[filters.orgKind] ?? filters.orgKind,
+        key: encodeChipKey({ kind: "affiliation" }),
+        label: "Type",
+        value: AFFILIATION_LABELS[filters.affiliationType],
       });
     }
 
@@ -258,10 +259,10 @@ export function useExpertFilterChips(
           updateFilters({ search: "" });
           return;
         case "sort":
-          updateFilters({ sort: "nameAsc" });
+          updateFilters({ sort: "recommended" });
           return;
-        case "orgKind":
-          updateFilters({ orgKind: null });
+        case "affiliation":
+          updateFilters({ affiliationType: null });
           return;
         case "orgSlug":
           updateFilters({ orgSlug: null });

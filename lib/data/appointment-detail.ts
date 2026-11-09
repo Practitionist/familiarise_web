@@ -166,13 +166,16 @@ export async function readAppointmentDetail(appointmentId: string) {
           // Which rail funded the row (lib/appointments/payment-display.ts):
           // an org-funded booking shows its sponsor and no amount.
           organizationId: true,
-          legs: { select: { source: true } },
+          legs: { select: { source: true, amountPaise: true } },
           // #775 — a CHARGE_MEMBER overage side-charge is the one co-pay a
           // sponsored member pays themselves; it hangs off the booking
           // payment with no appointmentId of its own.
           childPayments: {
             where: { deletedAt: null },
-            select: paymentDisplaySelect,
+            select: {
+              ...paymentDisplaySelect,
+              legs: { select: { source: true } },
+            },
           },
         },
       },

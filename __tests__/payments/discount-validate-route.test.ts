@@ -24,12 +24,20 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     discountCode: { findUnique: (...a: unknown[]) => findUnique(...a) },
+    consultantProfile: {
+      findUnique: async () => ({ id: "cp_1", userId: "expert_1" }),
+    },
   },
+}));
+jest.mock("../../lib/referrals/attribution", () => ({
+  resolveCheckoutAttribution: async () => ({ promoFeeBps: 1000 }),
 }));
 
 import { NextRequest } from "next/server";
 import { POST } from "../../app/api/payments/discounts/validate/route";
 import { computeDiscountPaise } from "../../lib/payments/pricing/derive-checkout-amount";
+import { platformFundedCapPaise } from "../../lib/payments/pricing/platform-funded-cap";
+import { runAsUnregisteredPlatform } from "../fixtures/gst-registered";
 
 function post(body: Record<string, unknown>) {
   return POST(
@@ -53,6 +61,8 @@ const base = {
 beforeEach(() => jest.clearAllMocks());
 
 describe("discount preview shares checkout's arithmetic and guard", () => {
+  runAsUnregisteredPlatform();
+
   it("previews the same paise computeDiscountPaise derives for a capped PERCENTAGE code", async () => {
     const code = {
       ...base,
@@ -62,19 +72,32 @@ describe("discount preview shares checkout's arithmetic and guard", () => {
     };
     findUnique.mockResolvedValue(code);
 
-    const res = await post({ code: "save25", amount: 118_000 });
+    const res = await post({
+      code: "save25",
+      amount: 118_000,
+      consultantProfileId: "cp_1",
+    });
     const body = await res.json();
 
     expect(res.status).toBe(200);
     expect(body.valid).toBe(true);
-    expect(body.discountAmount).toBe(
+    // The code's own 20,000 cap is above the floor checkout applies (unregistered, 10 % take):
+    // 10 % of 118,000 less ceil(3.54 % of 118,000) = 11,800 − 4,178.
+    expect(
       computeDiscountPaise(118_000, {
         discountType: "PERCENTAGE",
         discountValue: 25,
         maxDiscount: 20_000,
       }),
+    ).toBe(20_000);
+    expect(body.discountAmount).toBe(
+      platformFundedCapPaise({
+        listPaise: 118_000,
+        platformFeeBps: 1000,
+        gstRegistered: false,
+      }),
     );
-    expect(body.discountAmount).toBe(20_000);
+    expect(body.discountAmount).toBe(7_622);
   });
 
   it("previews a FIXED_AMOUNT code in another currency as invalid", async () => {
@@ -96,6 +119,7 @@ describe("discount preview shares checkout's arithmetic and guard", () => {
     findUnique.mockResolvedValue(base);
 
     expect((await post({ code: "save25", amount: -1 })).status).toBe(400);
+    expect((await post({ code: "save25", amount: 500 })).status).toBe(400);
     const zero = await post({ code: "save25", amount: 0 });
     expect(zero.status).toBe(200);
     expect((await zero.json()).discountAmount ?? 0).toBe(0);

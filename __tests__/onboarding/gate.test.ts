@@ -30,7 +30,7 @@ const tx = {
     updateMany: jest.fn(),
     findUniqueOrThrow: jest.fn(async () => ({ email: "Invitee@Example.com" })),
   },
-  waitlist: { upsert: jest.fn() },
+  newsletterSubscriber: { upsert: jest.fn() },
 };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -87,6 +87,16 @@ describe("completeOnboardingGateAction", () => {
     );
     expect(result).toMatchObject({ success: false, field: "dateOfBirth" });
     expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it("ignores a client-sent adultConfirmed: the date of birth is the only age ask", async () => {
+    const result = await completeOnboardingGateAction(
+      validGate({ adultConfirmed: false }),
+    );
+    expect(result).toEqual({ success: true });
+    const claim = tx.user.updateMany.mock.calls[0][0];
+    expect(claim.data.adultConfirmedAt).toBeInstanceOf(Date);
+    expect(claim.data).not.toHaveProperty("adultConfirmed");
   });
 
   it("refuses missing consent", async () => {
@@ -147,7 +157,7 @@ describe("completeOnboardingGateAction", () => {
         "MARKETING_COMMS",
       ]),
     );
-    expect(tx.waitlist.upsert).toHaveBeenCalledWith(
+    expect(tx.newsletterSubscriber.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { email: "invitee@example.com" },
         update: expect.objectContaining({

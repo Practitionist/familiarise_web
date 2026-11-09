@@ -53,6 +53,7 @@ Platform-wide orientation and end-to-end cross-subsystem explainers.
 ### Dashboard
 
 - [information-architecture.md](./dashboard/information-architecture.md) - The dashboard glossary, the current navigation trees for every role, and the planned regrouping phases
+- [2026-11-08-dashboard-first-run-and-payment-legs.md](./decisions/2026-11-08-dashboard-first-run-and-payment-legs.md) - The expert first-run checklist, per-leg payment display with the legs as source of truth, the router-state header filter, the Reputation sidebar regroup and write-time audit descriptions
 
 ---
 
@@ -78,9 +79,30 @@ Booking system, slot allocation, validation, and scheduling logic for all 5 even
 - [2026-11-03-booking-v2-direction.md](./decisions/2026-11-03-booking-v2-direction.md) - Booking v2 direction: the correctness fixes and multi-week Phase 0, fixed plan weeks plus Regular time, retention phase 1 and the attendance policy
 - [2026-11-04-booking-v2-train-b.md](./decisions/2026-11-04-booking-v2-train-b.md) - Booking v2 train B: Regular time, the rolling 4-week horizon, the plan-end choice, frozen plan terms, and earnings that wait for owed refunds
 - [2026-11-07-attendee-comms.md](./decisions/2026-11-07-attendee-comms.md) - Attendee comms: calendar links instead of attachments, a 15-minute reminder window, reminders to paid seats only, "host is live" after the host's call join, and event-lock contention kept a 409
+- [2026-11-07-event-seat-waitlist.md](./decisions/2026-11-07-event-seat-waitlist.md) - A notify-only list for sold-out webinars and classes: no reservation, a 12-hour re-notice cooldown, quiet hours not applied, the notice linking straight to checkout, the release paths that stage it, a best-effort email after commit, and erasure plus a 30-day purge
 - [01-booking-system-hld.md](./start-here/01-booking-system-hld.md) - Booking system high-level design: pipeline, allocation, concurrency layers, state machines, cron architecture
 - [02-money-system-hld.md](./start-here/02-money-system-hld.md) - Money system high-level design: pricing, capture, legs, ledger, earnings, payouts, refunds and policy decisions
 - [03-booking-and-money-machinery.md](./start-here/03-booking-and-money-machinery.md) - Worked guide with the seeded cast, entity model and end-to-end ledger examples
+
+---
+
+### Growth
+
+- [2026-11-08-growth-waitlist-newsletter-referrals.md](./decisions/2026-11-08-growth-waitlist-newsletter-referrals.md) - One vocabulary (newsletter, appointment waitlist, slot backup interest); notify-all kept, capacity normalised on the server, host demand counts, two tables with a shared interest module; the newsletter rename with no aliases, the table rename at release, link keys derived from the auth secret, one consent ledger, segmented broadcasts on Resend Pro; referral launch scope, fraud controls and chargeback voids; confidential figures kept in Notion
+
+---
+
+### Growth docs
+
+The subsystem documentation for the newsletter, announcements, the appointment waitlist, slot backup interest and referrals. The decision record is listed above under "Growth".
+
+- [README.md](./growth/README.md) - Index, the pull requests that carry the code, and the repository-versus-Notion rule
+- [00-overview.md](./growth/00-overview.md) - Growth as one subsystem: the three parts, what they share, the vocabulary, a context diagram and where things live
+- [01-appointment-waitlist-and-backup-interest.md](./growth/01-appointment-waitlist-and-backup-interest.md) - Why every waiter is told at once, the lifecycle, release paths, caps, capacity normalisation, host counts, My alerts, the `demand` view and a worked example
+- [02-newsletter-and-announcements.md](./growth/02-newsletter-and-announcements.md) - Double opt-in, the consent ledger, signed links, broadcast modes and segments, unsubscribe, the sending subdomains and announcements versus the newsletter
+- [03-referrals.md](./growth/03-referrals.md) - The three programmes and the launch scope, fraud controls, the review hold and the chargeback void
+- [04-market-research-india-first.md](./growth/04-market-research-india-first.md) - Cited findings that shaped the design, with an Unverified list
+- [05-roadmap.md](./growth/05-roadmap.md) - Shipped, owner go-live, post-launch, retention and handed-off items
 
 ---
 
@@ -105,6 +127,19 @@ The money subsystem: checkout and pricing, capture and webhooks, the double-entr
 - [finance/00-overview/01-money-map.md](./finance/00-overview/01-money-map.md) - Diagram-first system map
 - [finance/70-operations/05-money-runbooks.md](./finance/70-operations/05-money-runbooks.md) - Symptom-first money runbooks
 - [finance/90-decisions/README.md](./finance/90-decisions/README.md) - The money ADRs and the gateway decision
+- [finance/60-tax/05-gst-registration-and-tax-regime.md](./finance/60-tax/05-gst-registration-and-tax-regime.md) - The registered and unregistered GST regimes, the `Payment.gstRegime` stamp, the ₹15 lakh turnover alarm and the switch-over runbook
+- [2026-11-09-tax-compliance-and-pricing-levers.md](./decisions/2026-11-09-tax-compliance-and-pricing-levers.md) - Launch unregistered under the s.22 threshold with the regime from `PLATFORM_GSTIN`; one order pipeline; the profitability floor on every platform-funded lever; the roadmap and cited sources
+
+---
+
+### Pricing
+
+How the pricing levers combine on one order: the list price, discount codes, the welcome discount, referral credits, GST display and the platform fee. See [pricing/README.md](./pricing/README.md).
+
+- [pricing/00-overview.md](./pricing/00-overview.md) - Every lever as it exists today, with the code that implements it
+- [pricing/01-one-order-pipeline.md](./pricing/01-one-order-pipeline.md) - The five slots, the "never" rules and the worked ₹1,000 example
+- [pricing/02-coupons-and-early-bird.md](./pricing/02-coupons-and-early-bird.md) - Target design for host-funded coupons and the early-bird price
+- [pricing/03-roadmap.md](./pricing/03-roadmap.md) - Pricing items with priority and phase
 
 ---
 

@@ -90,7 +90,8 @@ const FAMILY_DESCRIPTION: Record<FamilyId, string> = {
   feedback: "Product feedback to admins; reviews to consultants.",
   account: "Verification, security, moderation and applications. No opt-out.",
   collaborator: "Co-hosting invitations on a plan.",
-  platform: "Announcements and compliance. No opt-out.",
+  platform:
+    "Announcements and compliance alerts. Announcements follow the in-app switches; only required workflows are forced.",
   "org-billing": "Invoices, contracts, wallet, payouts and member overages.",
   "org-membership": "Roster and single sign-on.",
   "org-program": "Entitlement, seats, capacity, renewals and exports.",
@@ -118,6 +119,7 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "session-no-show": "appointment",
   "session-missed-recording": "appointment",
   "window-opened": "appointment",
+  "event-seat-opened": "appointment",
   "appointment-rescheduled": "appointment",
   "appointment-reminder": "appointment",
   "session-host-live": "appointment",

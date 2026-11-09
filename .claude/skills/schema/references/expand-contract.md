@@ -327,6 +327,68 @@ Always finish with the verification query. A backfill that reports success
 without a count of remaining rows has not been verified, and the cut-over is the
 worst place to discover that a writer was missed.
 
+## The Prisma Client contract rule
+
+Prisma Client selects every scalar column of a model by default. A column dropped
+from the database while a deployed client still lists it in its `SELECT` fails
+every read of that model with `P2022` (the column does not exist). So the order
+for removing a column is fixed:
+
+1. **Stop writing** it, in a release of its own.
+2. **Mark it `@ignore`** in `prisma/schema.prisma`, so the regenerated client no
+   longer selects it. Whether `@ignore` changes what Migrate generates for the
+   column is UNVERIFIED; the rehearsal in `runbook-cutover.md` verifies it before
+   this step is relied on.
+3. **Deploy and drain**: wait until no instance (and no queued job) running the
+   previous client is left.
+4. **Drop** the column in a contract migration (`_contract` folder suffix,
+   `ci-migrations.md`).
+
+Other contract rules:
+
+- **Rename** with `@map` during the expand phase: give the field its new name in
+  the schema and `@map` it to the old column, so no database change is needed
+  until the contract step.
+- **Remove an enum value** only when no row holds it and no code writes it; then
+  recreate the type under an `ACCESS EXCLUSIVE` lock, as in `prisma-mechanics.md`.
+  Postgres has no `DROP VALUE`.
+- **Make a column `NOT NULL`** on a populated table with `ADD CONSTRAINT ... CHECK
+("col" IS NOT NULL) NOT VALID`, then `VALIDATE CONSTRAINT`, then `SET NOT NULL`
+  (Postgres 12 and later uses the validated check to skip the scan), then drop the
+  check ([PostgreSQL 15 `ALTER TABLE`](https://www.postgresql.org/docs/15/sql-altertable.html)).
+
+### Worked example: this repository's Referral contract **(planned)**
+
+The candidates for removal are `ReferralCode.referrerReward` and
+`ReferralCode.refereeReward` (both nullable `BigInt?` in `prisma/schema.prisma`)
+and some `ReferralStatus` values. Verify each with grep before acting; here is
+what the grep showed when this was written.
+
+- The two columns are no longer written: `prisma/seedFiles/13a-create-referral-codes.ts`
+  creates a `ReferralCode` with only `userId`, `code` and `isActive`, and the
+  `referralCode.create`/`update` calls in `lib/referrals/service.ts` do not set
+  them. They are still **declared** in three places that must change in release 1:
+  the `ReferralCodeRow` type in `lib/referrals/service.ts`, the `referralCode`
+  entry in `lib/prisma-extensions.ts`, and the money-column name pattern in
+  `scripts/ci/check-money-columns.ts`.
+- The enum values `QUALIFIED`, `REWARDED` and `FRAUDULENT` are **not unused**.
+  `REFERRAL_STATUS_BADGE` in `lib/labels/session-labels.ts` is a
+  `Record<ReferralStatus, ...>`, so every value needs an entry. `QUALIFIED_STATUSES`
+  and `REWARDED_STATUSES` in `components/dashboard/shared/ReferralsPage.tsx` use
+  `QUALIFIED` and `REWARDED`, and the seed `prisma/seedFiles/13a-create-referral-codes.ts`
+  creates referrals with those two. Removing any of the three values is a
+  code-and-data change, not a clean-up. Only remove one after a read-only row
+  count shows zero rows and the references above are gone.
+
+The four releases:
+
+| Release | What ships                                                                                                                                              |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R1      | Code stops reading and writing the two columns (type, extension and CI pattern updated). The owner runs a read-only count of rows per `ReferralStatus`. |
+| R2      | `@ignore` both columns in `prisma/schema.prisma`, then deploy and drain.                                                                                |
+| R3      | The dispatched contract migration: drop both columns, and recreate the enum only if the counts allow removing a value.                                  |
+| R4      | Clean up and confirm `prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code` exits 0.                    |
+
 ## When to reach for a tool instead
 
 The manual sequence is the right default for a schema with normal traffic, and
@@ -346,6 +408,7 @@ reference are cheaper than the tool.
 
 ## Sources
 
+- [PostgreSQL 15 ALTER TABLE](https://www.postgresql.org/docs/15/sql-altertable.html) — `NOT VALID`, `VALIDATE CONSTRAINT` and `SET NOT NULL`.
 - [How to migrate data with Prisma ORM using the expand and contract pattern](https://www.prisma.io/docs/guides/data-migration) — Prisma's own guide, including the single-transaction backfill this reference argues against for production.
 - [Implementation Guidance for Expand and Contract Pattern using Prisma Migrate](https://github.com/prisma/prisma/discussions/21927) — a Prisma maintainer confirming that a field rename requires three production deployments, and the role of `@ignore`.
 - [Online migrations at scale](https://stripe.com/blog/online-migrations) — Stripe's four-phase dual-write, backfill, shadow-read and cut-over method.

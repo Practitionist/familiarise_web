@@ -20,8 +20,9 @@ import {
 import { formatInTimeZone } from "date-fns-tz";
 import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
-import { useCurrency } from "@/hooks/useCurrency";
+import { BuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
+import { formatRole } from "@/components/collaborators/format";
 import type { TWebinarPlanData, TSessionStatus } from "../types";
 
 interface WebinarDetailsProps {
@@ -30,6 +31,10 @@ interface WebinarDetailsProps {
   readonly webinarId?: string;
   /** The signed-in viewer holds a seat on this webinar; read by the server. */
   readonly isRegistered: boolean;
+  /** The viewer is on this webinar's notify-me list; read by the server. */
+  readonly isWaiting: boolean;
+  /** Who the server rendered for, so the client can refresh on a mismatch. */
+  readonly viewerUserId: string | null;
 }
 
 export function WebinarDetails({
@@ -37,8 +42,9 @@ export function WebinarDetails({
   nextSession,
   webinarId,
   isRegistered,
+  isWaiting,
+  viewerUserId,
 }: WebinarDetailsProps) {
-  const { formatPrice } = useCurrency();
   const [timeZone, setTimeZone] = useState("UTC");
   useEffect(() => {
     setTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
@@ -107,19 +113,6 @@ export function WebinarDetails({
         />
         <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/60 to-transparent" />
 
-        {/* Back Navigation */}
-        <div className="absolute top-0 left-0 right-0 z-10">
-          <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 py-6">
-            <Link
-              href="/explore/programs"
-              className="inline-flex items-center gap-2 text-sm text-white/80 hover:text-white transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Programs
-            </Link>
-          </div>
-        </div>
-
         {/* Title Overlay */}
         <div className="absolute bottom-0 left-0 right-0 z-10">
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 pb-8">
@@ -134,7 +127,7 @@ export function WebinarDetails({
             </h1>
             <div className="flex items-center gap-4 text-white/80">
               <span className="text-2xl md:text-3xl font-bold text-white">
-                {formatPrice(plan.price)}
+                <BuyerPrice paise={plan.price} noteClassName="text-white/70" />
               </span>
               <span className="text-white/60">•</span>
               <span>{plan.durationInHours} hours</span>
@@ -177,8 +170,8 @@ export function WebinarDetails({
               />
               <FeatureItem
                 icon={<Video className="h-5 w-5" />}
-                label="Platform"
-                value={plan.materialProvided ?? "Zoom"}
+                label="Format"
+                value="Live online"
               />
               <FeatureItem
                 icon={<Globe className="h-5 w-5" />}
@@ -290,7 +283,7 @@ export function WebinarDetails({
                             {collab.consultantProfile.user.name}
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            {collab.role.replace(/_/g, " ")}
+                            {formatRole(collab.role)}
                           </p>
                         </div>
                       </Link>
@@ -310,6 +303,9 @@ export function WebinarDetails({
                 }
                 sessionStatus={sessionStatus}
                 isRegistered={isRegistered}
+                isWaiting={isWaiting}
+                viewerUserId={viewerUserId}
+                waitlistEnabled={plan.waitlistEnabled}
                 seatsTaken={
                   plan.webinars?.[0]?.appointment?._count.participants ?? 0
                 }

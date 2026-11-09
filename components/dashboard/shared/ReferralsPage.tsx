@@ -30,6 +30,7 @@ import { useToast } from "@/hooks/use-toast";
 import { WhatsAppIcon } from "@/components/icons/WhatsAppIcon";
 import {
   referralTermsSchema,
+  welcomeOfferText,
   type ReferralTerms,
 } from "@/lib/referrals/promo-math";
 import type { ReferralStatus } from "@prisma/client";
@@ -40,8 +41,6 @@ interface ReferralCode {
   id: string;
   code: string;
   customCode: string | null;
-  referrerReward: number;
-  refereeReward: number;
   totalReferrals: number;
   successfulReferrals: number;
   totalEarned: number;
@@ -233,9 +232,7 @@ export function ReferralsPage({
   const code = codeData?.data;
   const terms = codeData?.terms ?? null;
   const feeWaivers = codeData?.feeWaivers ?? [];
-  const friendOffer = terms
-    ? `${terms.discountPercent}% off your first booking, up to ${formatAmount(terms.discountMaxPaise)}`
-    : null;
+  const friendOffer = terms ? welcomeOfferText(terms, formatAmount) : null;
   const referrals = referralsData?.data ?? [];
   const credits = creditsData?.data;
   const totalReferred = referrals.length;

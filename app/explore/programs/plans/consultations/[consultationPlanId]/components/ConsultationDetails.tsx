@@ -3,13 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { motion } from "framer-motion";
-import {
-  ArrowLeft,
-  CalendarDays,
-  Clock,
-  GraduationCap,
-  Globe,
-} from "lucide-react";
+import { CalendarDays, Clock, GraduationCap, Globe } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { PlanDetailBody } from "../../../components/PlanDetailBody";
 import { FeatureItem } from "../../../components/FeatureItem";
 import { planLevelLabel } from "@/lib/labels/plan-labels";
-import { useCurrency } from "@/hooks/useCurrency";
+import { BuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import type { getConsultationPlanDetail } from "@/lib/data/plan-details";
 
 type ConsultationPlanDetail = NonNullable<
@@ -27,21 +21,12 @@ type ConsultationPlanDetail = NonNullable<
 export function ConsultationDetails({
   plan,
 }: Readonly<{ plan: ConsultationPlanDetail }>) {
-  const { formatPrice } = useCurrency();
   const consultant = plan.consultantProfile;
   const expertName = consultant?.user?.name ?? "This expert";
 
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <Link
-          href="/explore/experts"
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to experts
-        </Link>
-
         <div className="mb-8">
           <Badge className="bg-muted text-muted-foreground mb-3">
             1:1 consultation
@@ -111,7 +96,7 @@ export function ConsultationDetails({
               <CardContent className="p-6 space-y-5">
                 <div>
                   <p className="text-3xl font-bold text-foreground">
-                    {formatPrice(plan.price)}
+                    <BuyerPrice paise={plan.price} />
                   </p>
                   <p className="text-sm text-muted-foreground mt-1">
                     for one {plan.durationInHours}-hour session

@@ -19,7 +19,7 @@ interface StaticTopRowsProps {
 
 /**
  * The "above the fold" rows that depend only on RSC-fetched static data:
- * Trending Experts, Newly Joined, and Browse by Domain.
+ * Recently reviewed experts, Newly Joined, and Browse by Domain.
  *
  * Receives only static props (data + stable callbacks) so the parent
  * memoizes this and filter state changes never re-render any of it.
@@ -33,10 +33,10 @@ function StaticTopRowsImpl({
 }: StaticTopRowsProps) {
   return (
     <>
-      {/* Trending Experts Row */}
+      {/* Recently reviewed experts row */}
       <div className="mb-14">
         <SectionHeader
-          title="Trending Experts"
+          title="Recently reviewed experts"
           icon={<Flame className="w-5 h-5 text-white" />}
           onSeeAllClick={() => onSeeAllSort("trending")}
         />

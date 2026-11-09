@@ -98,15 +98,13 @@ tokens. It is set at weight 600, one step lighter than the bold headings so it
 does not read as one, with tracking of -0.01em at 20px and below and -0.02em
 from 24px up. It has four sizes (`sm`, `md`, `lg`, and the responsive `nav` used by the
 header) and two tones: `default` reads the tokens, and `inverse` is fixed white
-for the dark hero, the footer and the mobile drawer. `BrandMark` in the same file
-is the decorative square letter mark for badge-sized slots, such as the "on
-Familiarise" line on program cards and reviews. Each call site keeps the box
+for the dark hero, the footer and the mobile drawer. Each call site keeps the box
 size the old image had, so swapping the mark does not move the layout.
 
 The name and its hex colour live in `lib/brand.ts`. Surfaces that cannot read
 CSS variables use those constants directly: the shared email header
 `emails/components/EmailLogo.tsx` (inline styles, system font stack, no image
-request) and the bare HTML page from `app/api/waitlist/unsubscribe/route.ts`.
+request) and the bare HTML page from `app/api/newsletter/unsubscribe/route.ts`.
 The favicon is `app/icon.svg`, a white "F" on the brand colour, which Next.js
 serves through its file convention. `app/favicon.ico` (16, 32 and 48 px) and the
 full-bleed 180 px `app/apple-icon.png` are rendered from that SVG, so browsers

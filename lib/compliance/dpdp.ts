@@ -46,12 +46,9 @@
  *    downstream processing must stop within a commercially reasonable
  *    timeframe (48 hours recommended).
  *
- * 5. Children (under 18):
- *      - Verifiable parental consent required (no free-text "I'm a parent"
- *        checkbox).
- *      - Suggested flow: Aadhaar-based parent verification via DigiLocker.
- *      - Schema addition: `User.dpdpStatus: UNDER_18 | ADULT |
- *        GUARDIAN_VERIFIED` (deferred; add if targeting students).
+ * 5. Children (under 18): not served. Onboarding refuses an under-18 date of
+ *    birth server-side (`lib/compliance/age.ts`), so there is no
+ *    parental-consent flow and no minor status on `User`.
  *
  * 6. Significant Data Fiduciary (SDF):
  *      - There is NO user-count trigger. An earlier version of this comment
@@ -90,6 +87,7 @@
  */
 
 import { createHash } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   SIGNUP_PURPOSES,
@@ -184,11 +182,31 @@ function addYears(from: Date, years: number): Date {
 export function buildConsentArtifact(
   input: ConsentGrantInput,
 ): ConsentArtifactDraft {
+  return sealArtifact({ userId: input.userId }, input);
+}
+
+/** A grant from a person with no account, keyed on a pseudonymous subject id instead of a user. */
+export function buildPseudonymousConsentArtifact(
+  input: Omit<ConsentGrantInput, "userId"> & { subjectPseudonymousId: string },
+): Omit<ConsentArtifactDraft, "userId"> & { subjectPseudonymousId: string } {
+  return sealArtifact(
+    { subjectPseudonymousId: input.subjectPseudonymousId },
+    input,
+  );
+}
+
+function sealArtifact<
+  S extends { userId: string } | { subjectPseudonymousId: string },
+>(
+  subject: S,
+  input: Omit<ConsentGrantInput, "userId">,
+): S & Omit<ConsentArtifactDraft, "userId"> {
   const grantedAt = input.grantedAt ?? new Date();
   const auditRetainedUntil = addYears(grantedAt, CONSENT_AUDIT_RETENTION_YEARS);
 
+  // The subject key leads the payload, so account-grant hashes keep their historical shape.
   const payload = JSON.stringify({
-    userId: input.userId,
+    ...subject,
     dataFiduciary: input.dataFiduciary,
     purposeCodes: [...input.purposeCodes].sort(),
     version: input.version,
@@ -197,7 +215,7 @@ export function buildConsentArtifact(
   const hash = createHash("sha256").update(payload).digest("hex");
 
   return {
-    userId: input.userId,
+    ...subject,
     dataFiduciary: input.dataFiduciary,
     purposeCodes: input.purposeCodes,
     language: input.language,
@@ -381,40 +399,7 @@ export async function withdrawConsent(
       }
     : { userId, withdrawnAt: null };
 
-  const floor = addYears(now, CONSENT_AUDIT_RETENTION_YEARS);
-  const existingRows = await db.consentArtifact.findMany?.({
-    where,
-    select: { auditRetainedUntil: true },
-  });
-  const monotonicRetainedUntil = Array.isArray(existingRows)
-    ? existingRows.reduce(
-        (max, row) =>
-          row.auditRetainedUntil instanceof Date &&
-          row.auditRetainedUntil.getTime() > max.getTime()
-            ? row.auditRetainedUntil
-            : max,
-        floor,
-      )
-    : floor;
-
-  const { count } = await db.consentArtifact.updateMany({
-    where,
-    data: {
-      withdrawnAt: now,
-      // The audit clock restarts at the withdrawal and is monotonic (never
-      // shortened if an existing row already has a later deadline). Without
-      // this the row's `auditRetainedUntil` keeps running from `grantedAt`, so
-      // an artifact granted six years ago and withdrawn today becomes deletable
-      // immediately — and the consent-retention sweeper would delete the only
-      // record that the user ever withdrew. That destroys the evidence of the
-      // withdrawal itself, which is the thing an audit asks for.
-      //
-      // The org consent dashboard already told users retention runs "7 years
-      // from grant or withdrawal" (app/dashboard/organization/[orgId]/consent/
-      // page.tsx). This is the code that makes that sentence true.
-      auditRetainedUntil: monotonicRetainedUntil,
-    },
-  });
+  const count = await withdrawMatching(db, where, now);
 
   // A Stream roster built in the next five minutes would otherwise still admit
   // the user from the sync cache (#1580).
@@ -450,4 +435,58 @@ export async function withdrawConsent(
   }
 
   return { withdrawnCount: count };
+}
+
+/**
+ * Withdraws a pseudonymous subject's live artifacts for one purpose, with the
+ * same monotonic seven-year audit clock as an account withdrawal.
+ */
+export async function withdrawPseudonymousConsent(
+  params: {
+    subjectPseudonymousId: string;
+    purposeCode: PurposeCode;
+    now?: Date;
+  },
+  db: Pick<Tx, "consentArtifact"> = prisma,
+): Promise<{ withdrawnCount: number }> {
+  const count = await withdrawMatching(
+    db,
+    {
+      subjectPseudonymousId: params.subjectPseudonymousId,
+      withdrawnAt: null,
+      purposeCodes: { hasSome: purposeCodeAliases(params.purposeCode) },
+    },
+    params.now ?? new Date(),
+  );
+  return { withdrawnCount: count };
+}
+
+async function withdrawMatching(
+  db: Pick<Tx, "consentArtifact">,
+  where: Prisma.ConsentArtifactWhereInput,
+  now: Date,
+): Promise<number> {
+  const floor = addYears(now, CONSENT_AUDIT_RETENTION_YEARS);
+  const existingRows = await db.consentArtifact.findMany?.({
+    where,
+    select: { auditRetainedUntil: true },
+  });
+  const monotonicRetainedUntil = Array.isArray(existingRows)
+    ? existingRows.reduce(
+        (max, row) =>
+          row.auditRetainedUntil instanceof Date &&
+          row.auditRetainedUntil.getTime() > max.getTime()
+            ? row.auditRetainedUntil
+            : max,
+        floor,
+      )
+    : floor;
+
+  // The audit clock restarts at the withdrawal and never shortens, so the
+  // retention sweeper can never delete the record of the withdrawal itself.
+  const { count } = await db.consentArtifact.updateMany({
+    where,
+    data: { withdrawnAt: now, auditRetainedUntil: monotonicRetainedUntil },
+  });
+  return count;
 }

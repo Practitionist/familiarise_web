@@ -1,9 +1,11 @@
 "use client";
 
 import * as Sentry from "@sentry/nextjs";
+import { planDurationText } from "@/lib/offerings/plan-length-copy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -20,6 +22,8 @@ import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { firstCycleWindow, lastInstantBefore } from "@/lib/booking/entitlement";
+import { useBuyerPrice } from "@/components/pricing/BuyerPriceProvider";
+import { buyerDisplayPricePaise } from "@/lib/payments/pricing/display-price";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { TrialBookingModal } from "./TrialBookingModal";
 
@@ -80,6 +84,7 @@ export default function SubscriptionPricingToggle({
 }: Readonly<SubscriptionPricingToggleProps>) {
   const { data: session } = useSession();
   const { toast } = useToast();
+  const { gstRegistered, noteFor } = useBuyerPrice();
   // Track the active plan by id so plans that share a duration (e.g. two
   // 3-month subscriptions) remain independently selectable and bookable.
   const [activeSubscriptionOption, setActiveSubscriptionOption] =
@@ -122,10 +127,13 @@ export default function SubscriptionPricingToggle({
   // already denominated in another currency.
   const trialCtaPrice = useMemo(() => {
     const paise = selectedPlanDetails?.trialPriceInPaise ?? 0;
-    return paise > 0
-      ? formatCurrencyAmount(paise, selectedPlanDetails?.priceCurrency ?? "INR")
-      : "Free";
-  }, [selectedPlanDetails]);
+    if (paise <= 0) return "Free";
+    const formatted = formatCurrencyAmount(
+      buyerDisplayPricePaise(paise, gstRegistered),
+      selectedPlanDetails?.priceCurrency ?? "INR",
+    );
+    return gstRegistered ? `${formatted} incl. GST` : formatted;
+  }, [selectedPlanDetails, gstRegistered]);
 
   // Check trial eligibility when plan changes
   useEffect(() => {
@@ -279,7 +287,7 @@ export default function SubscriptionPricingToggle({
   if (subscriptionOptions.length === 0) {
     return (
       <div className="w-full p-8 text-center text-zinc-400">
-        <p>No subscription plans available at the moment.</p>
+        <p>No mentorship plans available at the moment.</p>
       </div>
     );
   }
@@ -358,11 +366,14 @@ export default function SubscriptionPricingToggle({
                   two elements away. */}
                 <span className="text-5xl font-bold tracking-tight text-white">
                   {formatCurrencyAmount(
-                    option.price,
+                    buyerDisplayPricePaise(option.price, gstRegistered),
                     option.priceCurrency || "INR",
                   )}
                 </span>
-                <span className="text-zinc-500 text-sm mb-1.5">/ month</span>
+                <span className="text-zinc-500 text-sm mb-1.5">
+                  for {planDurationText(option)}
+                  {noteFor(option.price) ? ` · ${noteFor(option.price)}` : ""}
+                </span>
               </div>
 
               {option.features && option.features.length > 0 && (
@@ -457,7 +468,7 @@ export default function SubscriptionPricingToggle({
                   className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-xl h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
                   onClick={handleChoosePlan}
                 >
-                  Subscribe
+                  Start mentorship
                 </Button>
               </div>
             </motion.div>
@@ -467,8 +478,10 @@ export default function SubscriptionPricingToggle({
 
       {/* Start-date dialog (#1766) */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[550px] lg:max-w-[650px] max-h-[90vh] overflow-y-auto bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl z-[1002] scrollbar-hide">
-          <DialogHeader className="p-6 border-b border-zinc-800">
+        {/* Same shell as the consultation booking dialog: centred, inside a
+            gutter, header and button fixed, only the middle scrolls. */}
+        <DialogContent className="flex max-h-[min(calc(100dvh-1.5rem),44rem)] w-[calc(100vw-1.5rem)] flex-col gap-0 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 p-0 text-white shadow-2xl sm:max-w-[550px] sm:rounded-2xl lg:max-w-[650px]">
+          <DialogHeader className="shrink-0 border-b border-zinc-800 p-4 pr-12 sm:p-6 sm:pr-14">
             <DialogTitle className="text-xl font-semibold">
               When do you want to start?
             </DialogTitle>
@@ -478,7 +491,7 @@ export default function SubscriptionPricingToggle({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="p-8 space-y-6">
+          <DialogBody className="space-y-6 p-4 sm:p-8">
             {/* Start Date */}
             <div className="space-y-2">
               <label className="text-sm font-medium flex items-center gap-2 text-zinc-400">
@@ -535,13 +548,13 @@ export default function SubscriptionPricingToggle({
                 Times shown in {zoneDisplayLabel(new Date(), timezone)}
               </p>
             </div>
-          </div>
+          </DialogBody>
 
-          <div className="bg-zinc-800/50 px-6 py-4 flex justify-center gap-3 rounded-b-2xl border-t border-zinc-800">
+          <div className="shrink-0 bg-zinc-800/50 px-4 sm:px-6 py-4 flex justify-center gap-3 rounded-b-2xl border-t border-zinc-800">
             <Button
               onClick={handleContinueToCheckout}
               disabled={!validation.valid}
-              className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-6"
+              className="w-full sm:w-auto bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-6"
             >
               Continue to Checkout
             </Button>

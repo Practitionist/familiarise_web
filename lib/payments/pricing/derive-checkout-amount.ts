@@ -2,13 +2,10 @@
  * Checkout amount derivation — the single order of operations.
  *
  * The amount a buyer is charged is the product of four stages applied in a
- * fixed order: the plan's list price, then the discount, then tax on the
- * discounted base, then referral credits against the tax-inclusive total.
- * That sequence used to live inline inside `calculateAmountAndValidate`'s
- * Prisma transaction, which meant nothing outside a live database could
- * observe it and the parity suite had to transcribe it by hand (#1319). It
- * lives here now so the server, and any test that wants to compare the server
- * against what the checkout page renders, read the same code.
+ * fixed order: the plan's list price, then at most one pre-tax discount (a
+ * code or the welcome discount), then tax on the discounted base, then
+ * referral credits against the tax-inclusive total. Every platform-funded
+ * stage together stays within `platformFundedCapPaise`.
  *
  * Everything in this module is a pure function of its arguments. The one
  * concession is `resolveAvailableCreditsPaise`: the caller supplies it and it
@@ -22,6 +19,8 @@ import {
   type ServiceType,
   type TaxDetermination,
 } from "@/lib/payments/tax/tax-engine";
+import type { GstRegime } from "@/lib/payments/tax/gst-regime";
+import { platformFundedCapPaise } from "@/lib/payments/pricing/platform-funded-cap";
 import { MIN_CREDIT_REDEMPTION_PAISE } from "@/lib/referrals/constants";
 import { prorate } from "@/lib/payments/utils/money";
 import {
@@ -45,6 +44,8 @@ export interface DeriveCheckoutAmountInput {
   basePaise: number;
   /** ISO-3166 alpha-2 of the buyer; decides the tax jurisdiction. */
   buyerCountry: string;
+  /** From `currentGstRegime()`; UNREGISTERED charges no GST. */
+  gstRegime: GstRegime;
   serviceType?: ServiceType;
   /** Already re-validated against the database by the caller, or null. */
   discount?: CheckoutDiscountInput | null;
@@ -52,6 +53,8 @@ export interface DeriveCheckoutAmountInput {
   welcomeDiscount?: WelcomeDiscount | null;
   /** Promo (welcome discount plus credits) may cover at most this many bps of the list price; absent means no credits. */
   creditCapBps?: number;
+  /** The take that funds platform promo (`CheckoutAttribution.promoFeeBps`); absent means no platform-funded promo. */
+  promoFeeBps?: number;
   /** Whether the buyer asked to spend referral credits on this order. */
   useReferralCredits?: boolean;
   /**
@@ -79,6 +82,9 @@ export interface DerivedCheckoutAmount {
   /** What the buyer is charged. */
   amount: number;
   isInternational: boolean;
+  gstRegime: GstRegime;
+  /** The profitability floor this order's platform-funded promo was held to. */
+  platformFundedCapPaise: number;
   tax: TaxDetermination;
 }
 
@@ -126,10 +132,8 @@ export function computeDiscountPaise(
 }
 
 /**
- * Whether an order of `taxedAmount` paise may spend referral credits.
- *
- * #880 — credits redeem only at or above the floor, so a credit can never
- * exceed the value of the booking it discounts.
+ * Whether an order of `taxedAmount` paise may spend referral credits: only at
+ * or above the floor, so a credit never exceeds the value of the booking.
  */
 export function isCreditRedemptionEligible(taxedAmount: number): boolean {
   return taxedAmount >= MIN_CREDIT_REDEMPTION_PAISE;
@@ -144,9 +148,15 @@ export async function deriveCheckoutAmount(
   input: DeriveCheckoutAmountInput,
 ): Promise<DerivedCheckoutAmount> {
   const originalAmount = input.basePaise;
-  const codeDiscountPaise = computeDiscountPaise(
-    originalAmount,
-    input.discount,
+  const gstRegistered = input.gstRegime === "REGISTERED";
+  const promoCapPaise = platformFundedCapPaise({
+    listPaise: originalAmount,
+    platformFeeBps: input.promoFeeBps ?? 0,
+    gstRegistered,
+  });
+  const codeDiscountPaise = Math.min(
+    computeDiscountPaise(originalAmount, input.discount),
+    promoCapPaise,
   );
   const isInternational = input.buyerCountry !== "IN";
 
@@ -163,6 +173,7 @@ export async function deriveCheckoutAmount(
       baseAmountPaise: discountedAmount,
       buyerCountry: input.buyerCountry,
       serviceType: input.serviceType ?? "CONSULTING",
+      gstRegistered,
     });
     const taxedAmount = discountedAmount + tax.taxAmount;
     let creditsApplied = 0;
@@ -180,6 +191,7 @@ export async function deriveCheckoutAmount(
             originalAmount,
             input.creditCapBps ?? 0,
             welcomeDiscountPaise,
+            promoCapPaise - discountPaise,
           ),
         );
       }
@@ -196,12 +208,18 @@ export async function deriveCheckoutAmount(
       creditsApplied,
       amount: taxedAmount - creditsApplied,
       isInternational,
+      gstRegime: input.gstRegime,
+      platformFundedCapPaise: promoCapPaise,
       tax,
     };
   };
 
   const welcome = input.discount ? null : input.welcomeDiscount;
-  const welcomePaise = computeWelcomeDiscountPaise(originalAmount, welcome);
+  const welcomePaise = computeWelcomeDiscountPaise(
+    originalAmount,
+    welcome,
+    promoCapPaise,
+  );
   if (welcomePaise === 0) return price(0);
   const withWelcome = await price(welcomePaise);
   return keepsWelcomeDiscount(welcome, withWelcome.amount)

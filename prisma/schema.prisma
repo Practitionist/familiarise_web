@@ -41,6 +41,8 @@ model User {
   // Consent timestamps
   termsAcceptedAt   DateTime?
   privacyAcceptedAt DateTime?
+  /// Server time the user confirmed they are 18 or older when completing onboarding.
+  adultConfirmedAt  DateTime?
 
   // Professional background (consolidated from profile level)
   workExperiences WorkExperience[]
@@ -76,7 +78,7 @@ model User {
   rescheduleTimesProposed     RescheduleProposedTime[] @relation("ProposedTimeAuthor")
 
   // Newsletter signup, when the subscriber was signed in at the time.
-  waitlistSubscriptions Waitlist[]
+  newsletterSubscriptions NewsletterSubscriber[]
 
   // Platform feedback and support
   platformFeedback    PlatformFeedback[]
@@ -174,6 +176,7 @@ model User {
   verificationDocumentsUploaded  ProfileVerificationDocument[]    @relation("VerificationDocumentUploader")
   // #1778 — the held windows this user asked to hear about when they free.
   windowBackupInterests          WindowBackupInterest[]
+  eventWaitlists                 AppointmentWaitlist[]
   supportCasesRequested          SupportCase[]                    @relation("SupportCaseRequester")
   supportCasesSubmitted          SupportCase[]                    @relation("SupportCaseSubmitter")
   supportCasesAssigned           SupportCase[]                    @relation("SupportCaseAssignee")
@@ -4420,6 +4423,9 @@ model WebinarPlan {
   price                           BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency                   Currency  @default(INR)
   certificateProvided             Boolean   @default(false)
+  waitlistEnabled                 Boolean   @default(true)
+  // null = MAX_GROUP_SESSION_PARTICIPANTS; the 200 ceiling is enforced in Zod.
+  waitlistMax                     Int?
   recordingEnabled                Boolean   @default(false) // Allow consultant to record sessions
   // Attendees see recordings of every run of this plan, not only the run they joined.
   shareRecordingsWithAllAttendees Boolean   @default(false)
@@ -4542,6 +4548,9 @@ model ClassPlan {
   price                        BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency                Currency         @default(INR)
   certificateProvided          Boolean          @default(false)
+  waitlistEnabled              Boolean          @default(true)
+  // null = MAX_GROUP_SESSION_PARTICIPANTS; the 200 ceiling is enforced in Zod.
+  waitlistMax                  Int?
   recordingEnabled             Boolean          @default(false) // Allow consultant to record sessions
   durationInMonths             Int              @default(1) // Duration in months
   // #1011 — was `meetingsPerWeek`. See SubscriptionPlan.sessionsPerWeek.
@@ -4719,17 +4728,15 @@ model Topic {
   updatedAt DateTime @updatedAt
 }
 
-// Newsletter / marketing email list. Named `Waitlist` because that is what the
-// signup is called end-user side ("join the waitlist"); it has nothing to do
-// with event capacity — a full webinar or class is simply sold out.
-model Waitlist {
+// Newsletter subscribers: the marketing email list.
+model NewsletterSubscriber {
   id    String  @id @default(uuid())
   email String  @unique
   name  String?
 
-  status WaitlistStatus @default(PENDING)
-  source WaitlistSource @default(FOOTER)
-  tags   String[]       @default([])
+  status NewsletterStatus @default(PENDING)
+  source NewsletterSource @default(FOOTER)
+  tags   String[]         @default([])
 
   // Set when a signed-in user subscribes. SetNull so deleting the account does
   // not resurrect an address that had already been suppressed.
@@ -4742,6 +4749,8 @@ model Waitlist {
   // Consent proof under DPDP. The IP is hashed, never stored raw.
   consentIpHash    String?
   consentUserAgent String?
+  // Pseudonymous ConsentArtifact subject written at confirm; read back so a key rotation cannot orphan it.
+  consentSubjectId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4752,19 +4761,18 @@ model Waitlist {
   @@index([userId])
 }
 
-enum WaitlistStatus {
+enum NewsletterStatus {
   PENDING // Signed up, confirmation email sent, not yet confirmed
   SUBSCRIBED
   UNSUBSCRIBED
   BOUNCED
 }
 
-enum WaitlistSource {
+enum NewsletterSource {
   LANDING_PAGE
   FOOTER
   BLOG
   USE_CASE_PAGE
-  EVENT_SOLD_OUT
   IMPORT
 }
 
@@ -4791,6 +4799,33 @@ model WindowBackupInterest {
 
   @@unique([consultantProfileId, userId, windowStart])
   @@index([consultantProfileId, windowStart, status])
+  @@index([userId, status])
+}
+
+// Notify-only interest in a sold-out webinar or class seat; nothing is reserved.
+model AppointmentWaitlist {
+  id String @id @default(cuid())
+
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  appointmentId String
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  // WEBINAR or CLASS (sidecar CHECK); planId is the WebinarPlan or ClassPlan id.
+  planKind AppointmentsType
+  planId   String
+
+  status     BackupInterestStatus @default(WAITING)
+  createdAt  DateTime             @default(now()) @db.Timestamptz
+  // Drives the 30-day purge of EXPIRED and BOOKED rows.
+  updatedAt  DateTime             @updatedAt @db.Timestamptz
+  notifiedAt DateTime?            @db.Timestamptz
+  bookedAt   DateTime?            @db.Timestamptz
+
+  @@unique([appointmentId, userId])
+  @@index([appointmentId, status, createdAt])
+  @@index([planKind, planId, status])
   @@index([userId, status])
 }
 
@@ -4860,6 +4895,9 @@ model Appointment {
   // #1319 A9 / A12 — shadow-written participant edge + append-only status log.
   participants  AppointmentParticipant[]
   statusHistory BookingStatusHistory[]
+
+  // Notify-me rows for a sold-out webinar or class seat.
+  eventWaitlist AppointmentWaitlist[]
 
   // #674 personal-vs-org scope split — set at checkout for org-context bookings.
   organization   Organization? @relation("AppointmentByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
@@ -6099,6 +6137,8 @@ model Payment {
   attributionReferral         Referral?                    @relation("PaymentAttributionReferral", fields: [attributionReferralId], references: [id], onDelete: SetNull)
   // Platform fee actually charged on this sale, in basis points (0 under a fee waiver).
   platformFeeBps              Int?
+  // GST regime the order was priced under; UNREGISTERED orders carry no GST and get no tax invoice.
+  gstRegime                   GstRegime?
   // Pre-tax referee welcome discount; non-null only on discounted orders (one live per buyer).
   welcomeDiscountPaise        BigInt?
   // Set when an expert or platform cancellation returned this order's referral to SIGNED_UP:
@@ -6113,6 +6153,9 @@ model Payment {
   refundOwedAttempts          Int                          @default(0)
   // The sweep's next drive after a failed one (backoff); null = due now.
   refundOwedNextAt            DateTime?
+  // HMACs of the payer's UPI address and phone from the capture webhook; never the raw values.
+  payerVpaHash                String?                      @db.VarChar(64)
+  payerPhoneHash              String?                      @db.VarChar(64)
   // Referrals this payment qualified (at most one in practice).
   qualifyingReferrals         Referral[]                   @relation("ReferralQualifyingPayment")
   firstPaymentOfRelationships ExpertCustomerRelationship[]
@@ -6207,6 +6250,12 @@ model Payment {
   @@index([billingAccountId])
   @@index([attributionReferralId])
   @@index([paymentStatus, lastReconciledAt, id])
+}
+
+// Null on orders priced before the regime was stamped.
+enum GstRegime {
+  REGISTERED
+  UNREGISTERED
 }
 
 enum PaymentAttributionSource {
@@ -7093,6 +7142,13 @@ model Referral {
   vestedAt               DateTime?              @db.Timestamptz
   // ReferralProgramConfig.version the referral was applied under.
   configVersion          Int?
+  // Apply-time request signals: HMAC of the client IP and the truncated user agent.
+  ipHash                 String?                @db.VarChar(64)
+  userAgent              String?                @db.VarChar(256)
+  // Review hold: set on QUALIFYING -> HELD; a release stamps reviewReleasedAt so the rules skip it.
+  heldAt                 DateTime?              @db.Timestamptz
+  heldReason             String?
+  reviewReleasedAt       DateTime?              @db.Timestamptz
   attributedPayments     Payment[]              @relation("PaymentAttributionReferral")
   feeWaivers             ConsultantFeeWaiver[]
 
@@ -7138,21 +7194,22 @@ model ReferralCredit {
   vestedAt        DateTime?           @db.Timestamptz
   voidedAt        DateTime?           @db.Timestamptz
   configVersion   Int?
+  // The expired credit this one was restored from, so a clawback of the original reaches it.
+  sourceCreditId  String?
 
   user   User                  @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   usages ReferralCreditUsage[]
 
   createdAt DateTime @default(now())
 
-  // Prevents duplicate credit rows for the same referral event.
-  // Note: PostgreSQL does NOT enforce this constraint when referralId IS NULL
-  // (NULL != NULL in unique indexes), so PROMOTION/MANUAL/COMPENSATION sources
-  // rely on the Serializable transaction in processQualifyingAction() for deduplication.
+  // One credit per referral event. NULL referralIds never collide, so admin-issued
+  // credits deduplicate on idempotencyKey instead.
   @@unique([userId, referralId, source])
   @@index([userId])
   @@index([expiresAt])
   @@index([userId, expiresAt])
   @@index([state, expiresAt])
+  @@index([sourceCreditId])
 }
 
 enum ReferralCreditState {
@@ -7203,6 +7260,11 @@ model ReferralProgramConfig {
   expertWaiverDays          Int      @default(90)
   // Budget charged when an expert referral vests: the expected forgone take on its waived sessions.
   expertReferralBudgetPaise BigInt   @default(180000)
+  // Review-hold rules, off while null: referrals of one code sharing an IP hash (or IP hash and
+  // user agent) at or above the count, within holdWindowDays of signup when that is set.
+  holdSameIpReferrals       Int?
+  holdSameDeviceReferrals   Int?
+  holdWindowDays            Int?
   version                   Int      @default(1)
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
@@ -7293,6 +7355,7 @@ enum ReferralStatus {
   QUALIFYING // first paid marketplace capture seen; waiting on delivery + refund window
   VESTED // reward released
   VOID // disqualified; see voidReason
+  HELD // QUALIFYING with suspicious signals; waits for an ADMIN release or void
 }
 
 enum CreditSource {
@@ -8092,7 +8155,7 @@ model FailedEmail {
   sentAt      DateTime?           @db.Timestamptz
   // #1654 — provider id once SENT, so support can trace a message to Resend's log.
   resendId    String?
-  // #1654 — business anchor (`payment:<id>`, `user:<id>`, `waitlist:<email>`) for support and tracing.
+  // Business anchor (`payment:<id>`, `user:<id>`, `newsletter:<email>`) for support and tracing.
   entityRef   String?
 
   /// Account whose current preferences gate each attempt; null for direct-address mail.

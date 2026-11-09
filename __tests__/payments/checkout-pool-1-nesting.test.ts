@@ -166,7 +166,7 @@ describe("#1421 checkout does not starve the single-connection pool", () => {
     );
 
     await expect(validateInsideTransaction()).rejects.toThrow(
-      /withdrawn session-delivery consent/,
+      /isn't taking bookings right now/,
     );
     expect(mockGlobalTouches).toEqual([]);
   });

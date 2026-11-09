@@ -25,9 +25,8 @@ import type {
 
 /**
  * `BookingHistoryEntity` values read as SQL enums; these are the operator's
- * words for the same seven lifecycles. Unknown keys fall through to the raw
- * value rather than rendering blank, so a new enum member is legible on the
- * day it ships rather than the day someone edits this map.
+ * words for the same seven lifecycles. An unknown key reads "Booking" rather
+ * than printing the raw enum.
  */
 const ENTITY_LABEL: Record<string, string> = {
   CONSULTATION: "Consultation",
@@ -40,7 +39,7 @@ const ENTITY_LABEL: Record<string, string> = {
 };
 
 function entityLabel(entity: string): string {
-  return ENTITY_LABEL[entity] ?? entity.replace(/_/g, " ").toLowerCase();
+  return ENTITY_LABEL[entity] ?? "Booking";
 }
 
 function relativeTime(iso: string): string {

@@ -32,8 +32,12 @@ jobs:
           node-version: "22"
           cache: "npm"
 
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
       - name: Run production supply-chain security audit
-        run: npm audit --omit=dev --audit-level=high
+        # npm audit exits non-zero on any finding; the gate decides from its JSON.
+        run: "{ npm audit --omit=dev --json || true; } | node_modules/.bin/tsx scripts/ci/check-npm-audit.ts"
 
       - name: Notify ops on failure
         if: failure()

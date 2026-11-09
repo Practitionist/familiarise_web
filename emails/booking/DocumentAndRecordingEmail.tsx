@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Button, Section, Text } from "react-email";
 import { EmailLayout } from "@/emails/components/EmailLayout";
+import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
 import {
   button,
   buttonContainer,
@@ -93,7 +94,9 @@ export function DocumentAndRecordingEmail({
             <>
               {" "}
               to{" "}
-              <strong>{reviewStatus.toLowerCase().replace(/_/g, " ")}</strong>
+              <strong>
+                {documentReviewStatusBadge(reviewStatus).label.toLowerCase()}
+              </strong>
             </>
           ) : null}
           .

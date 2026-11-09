@@ -2,18 +2,18 @@
 
 exports[`humanizeOrgError snapshot of the full mapping table 1`] = `
 {
-  "DOMAIN_NOT_OWNED": "Your organization hasn't claimed this email domain yet. Add it under Settings → SSO → Domains and verify before registering a provider.",
-  "DOMAIN_NOT_VERIFIED": "The domain claim is pending DNS verification. Finish the TXT-record step under Settings → SSO → Domains.",
-  "EXPERT_REQUIRES_CANHOST": "Expert can only be assigned on host-capable organizations. Enable hosting under Settings → Capabilities first.",
-  "HOST_ORGS_GATED": "Host-capable organizations are not yet enabled on this tenant. Contact ops at connect@practitionist.com to flip ENABLE_HOST_ORGS for your account.",
-  "LEARNER_REQUIRES_CANSPONSOR": "Learner can only be assigned on sponsor-capable organizations. Enable sponsorship under Settings → Capabilities first.",
-  "NOT_A_CONSULTANT": "This account has no expert profile yet. Set one up first — it takes a few minutes — then accept the invitation again.",
-  "NOT_A_CONSULTEE": "This user does not have a learner profile on Familiarise yet. They need to sign up or complete onboarding before they can be added to an organization as a Learner.",
-  "ORG_NOT_VERIFIED": "Your organization is awaiting platform review. This action will be available once a Familiarise admin verifies your account — this usually takes 1–2 business days.",
+  "DOMAIN_NOT_OWNED": "Your organisation hasn't added this email domain yet. Add it under Settings → SSO → Domains and verify it before setting up a sign-in provider.",
+  "DOMAIN_NOT_VERIFIED": "This domain still needs to be verified. Add the verification record shown under Settings → SSO → Domains at your domain provider, then choose Verify.",
+  "EXPERT_REQUIRES_CANHOST": "Experts can only be added to organisations that host sessions. Turn on hosting under Settings → Capabilities first.",
+  "HOST_ORGS_GATED": "Hosting sessions isn't available for your organisation yet. Please contact us at connect@practitionist.com to switch it on.",
+  "LEARNER_REQUIRES_CANSPONSOR": "Learners can only be added to organisations that sponsor sessions. Turn on sponsorship under Settings → Capabilities first.",
+  "NOT_A_CONSULTANT": "This account has no expert profile yet. Set one up first, which takes a few minutes, then accept the invitation again.",
+  "NOT_A_CONSULTEE": "This person doesn't have a learner profile on Familiarise yet. They need to sign up or finish setting up their account before they can be added as a Learner.",
+  "ORG_NOT_VERIFIED": "Your organisation is awaiting review. This will be available once our team verifies your account, which usually takes 1–2 business days.",
   "PO_BALANCE_EXCEEDED": "This purchase order doesn't have enough remaining budget for the invoice. Reduce the invoice total or add a new PO.",
   "PO_BALANCE_INSUFFICIENT": "This purchase order doesn't have enough remaining budget for the invoice. Reduce the invoice total or add a new PO.",
-  "ROLE_TRANSITION_BLOCKED": "Members cannot switch between Learner and Expert roles. Remove the member and re-invite them with the new role instead.",
-  "SSO_PROVIDER_MISCONFIGURED": "Your SSO provider's configuration could not be read. Delete and re-add the provider, or contact your IT admin.",
-  "USER_NOT_FOUND": "No user account found with that email. They need to sign up at Familiarise first, or use the Invitations page to send them an invite.",
+  "ROLE_TRANSITION_BLOCKED": "Members can't switch between Learner and Expert roles. Remove the member and invite them again with the new role.",
+  "SSO_PROVIDER_MISCONFIGURED": "We couldn't read your sign-in provider's settings. Delete and re-add the provider, or ask your IT admin for help.",
+  "USER_NOT_FOUND": "We couldn't find an account with that email. They need to sign up at Familiarise first, or you can send them an invitation from the Invitations page.",
 }
 `;

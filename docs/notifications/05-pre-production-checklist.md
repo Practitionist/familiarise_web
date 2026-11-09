@@ -40,8 +40,8 @@ Outbound Transactional & Ops (@mail.familiarisenow.com):
   noreply@mail.familiarisenow.com        -- Automated system notifications
   system@mail.familiarisenow.com         -- Familiarise Ops alerts (Reply-To: connect@practitionist.com)
 
-Outbound Bulk / Waitlist (@news.familiarisenow.com):
-  newsletter@news.familiarisenow.com     -- Waitlist confirmation, welcome & broadcasts
+Outbound Bulk / Newsletter (@news.familiarisenow.com):
+  newsletter@news.familiarisenow.com     -- Newsletter confirmation, welcome & broadcasts
 
 Inbound (practitionist.com):
   connect@practitionist.com              -- The one live mailbox (SUPPORT_EMAIL): Reply-To, support, contact, billing, grievance and compliance alerts
@@ -65,8 +65,8 @@ Inbound (practitionist.com):
 **Operational notes on the 100/day free cap:**
 
 - Each booking triggers confirmation emails to active participants plus pre-session reminders.
-- Waitlist broadcasts count toward the daily limit and use `FailedEmailBatch` chunking with `EmailSuppression` pre-filtering.
-- Delivery events (`email.bounced`, `email.complained`, `email.suppressed`, `contact.*`, `domain.*`) stream continuously on the free tier via `POST /api/webhooks/resend` into `EmailEvent`, `EmailSuppression`, `Waitlist`, and `SystemEvent`.
+- Newsletter broadcasts count toward the daily limit and use `FailedEmailBatch` chunking with `EmailSuppression` pre-filtering.
+- Delivery events (`email.bounced`, `email.complained`, `email.suppressed`, `contact.*`, `domain.*`) stream continuously on the free tier via `POST /api/webhooks/resend` into `EmailEvent`, `EmailSuppression`, `NewsletterSubscriber`, and `SystemEvent`.
 
 ### Novu (In-App Feed Orchestration)
 
@@ -105,11 +105,13 @@ Inbound (practitionist.com):
 
 ### Step 3: Novu Tenant Sync & Subscriber HMAC
 
-- [ ] Development: run `npx tsx scripts/novu/clear-native-mutes.ts` (dry run, then `--apply`), then `npm run novu:sync -- --dry-run` followed by `npm run novu:sync`, to sync all 16 workflow families
-- [ ] Production: run the same sequence with `--env production` **in the same window as the production release promotion that carries the single-preference-owner change**, not earlier: the old production code still writes subscriber preferences, so an earlier Production sync would fight it
-- [ ] After the domain-notices change (decision 17) merges, run `npm run novu:sync` in Development, and again with `--env production` at the release that carries it, so `payout-clawback`, `org-payout-clawback` and the new referral copy reach the `payout`, `org-billing`, `referral` and `payment` families. Until a sync, those bells render without the new text.
-- [ ] Verify `npm run novu:check` (and `npm run novu:check -- --env production` after the production sync) exits `0` with zero drift. Novu's read API serves stale workflows for about three minutes after a sync, so a `novu:check` in that window reports false drift on random families; wait five minutes, then expect two clean runs in a row.
-- [ ] Enable HMAC encryption in Novu Dashboard → In-App Integration settings to pair with `computeSubscriberHash(subscriberId)`
+Done on 2026-11-08 for Production, in the window of the production release promotion that carried the single-preference-owner change (an earlier Production sync would have fought the old production code, which still wrote subscriber preferences).
+
+- [x] Development: `npm run novu:sync -- --dry-run` followed by `npm run novu:sync`, to sync all 16 workflow families
+- [x] Production: the same sequence with `--env production`; all 16 families applied on 2026-11-08. The native-mute reset found 0 mutes across 86 subscribers, and the profile-data scrub cleared 24 of 86 subscribers, with a follow-up dry run of 0
+- [x] After the domain-notices change (decision 17), `npm run novu:sync` ran in Development and, at the release, with `--env production`, so `payout-clawback`, `org-payout-clawback` and the new referral copy reached the `payout`, `org-billing`, `referral` and `payment` families
+- [x] `npm run novu:check -- --env production` exited `0` with zero drift on two runs (08:29 and 08:34 UTC). Novu's read API serves stale workflows for about three minutes after a sync, so wait five minutes and expect two clean runs in a row after any future sync.
+- [x] HMAC encryption is enabled on the Production In-App integration (Novu Dashboard, In-App Integration settings) to pair with `computeSubscriberHash(subscriberId)`, and verified by behaviour on 2026-11-08: an inbox session with no hash or a wrong hash gets 400 "Please provide a valid HMAC hash", and the correct hash gets 201
 
 ### Step 4: Database Schema & SQL Sidecars
 
@@ -127,16 +129,16 @@ Inbound (practitionist.com):
 - [ ] Sign up with a real mailbox or Resend test address (`delivered@resend.dev`) — never `example.com` (immediately dead-lettered by `terminalSendReason` on attempt 1)
 - [ ] Confirm welcome email arrives with valid DKIM/SPF/DMARC pass headers
 - [ ] Confirm lifecycle email footer link (`GET /api/notifications/unsubscribe`) renders confirmation UI without mutating DB, and one-click `POST` disables email while preserving in-app notifications
-- [ ] Confirm waitlist footer link (`GET /api/waitlist/unsubscribe`) renders confirmation form without mutating DB, and `POST` unsubscribes immediately
+- [ ] Confirm newsletter footer link (`GET /api/newsletter/unsubscribe`) renders confirmation form without mutating DB, and `POST` unsubscribes immediately and withdraws the `MARKETING_COMMS` consent artifact
 - [ ] Trigger a test booking event and verify `flushNotificationsAfter` delivers both the Novu bell and Resend email
 
 ### Step 7: Outbox Cutover Recount (no backfill)
 
-The earlier bell sender keyed a whole `NotificationOutbox` row by its `transactionId`; the current one keys each recipient's event by `<transactionId>:<recipient hash>` under generation-scoped Idempotency-Keys. A row the earlier sender attempted but never settled may already be accepted by Novu, so resending it under the new identities could ring it twice. The relay therefore dead-letters such a row as `review:legacy_delivery_format` and any `BROADCAST` row as `review:legacy_broadcast`. A row never attempted (`lastError` null) sends normally.
+Done on 2026-11-08. The earlier bell sender keyed a whole `NotificationOutbox` row by its `transactionId`; the current one keys each recipient's event by `<transactionId>:<recipient hash>` under generation-scoped Idempotency-Keys. A row the earlier sender had attempted but never settled might already have been accepted by Novu, so the relay carried two temporary dead-letter guards (`review:legacy_delivery_format` and `review:legacy_broadcast`) until the recount proved no such row existed. They are now deleted. The current relay claims the `firstAttemptAt` anchor with a conditional update before any Novu request and resets it together with `lastError`, so a row with an error but no anchor was never sent and sends normally.
 
-No `firstAttemptAt` backfill is needed and none is planned: on 2026-11-06 the live database held zero `PENDING` or `RETRY` rows in `FailedEmail`, `FailedEmailBatch` and `NotificationOutbox`.
+No `firstAttemptAt` backfill was needed: on 2026-11-06 and again on 2026-11-08 the live database held zero `PENDING` or `RETRY` rows in `FailedEmail`, `FailedEmailBatch` and `NotificationOutbox`.
 
-- [ ] Skip the backfill. Immediately before the production release, recount read-only on the production database (an operator query, never an agent write):
+- [x] Recount read-only on the production database (an operator query, never an agent write); keep it for any future cutover:
 
   ```sql
   SELECT 'FailedEmail' AS tbl, status, count(*) FROM "FailedEmail"
@@ -149,10 +151,7 @@ No `firstAttemptAt` backfill is needed and none is planned: on 2026-11-06 the li
     WHERE status IN ('PENDING', 'RETRY') GROUP BY status;
   ```
 
-- [ ] All three counts are zero: release. The cleanup PR then deletes `LEGACY_DELIVERY_FORMAT` and `LEGACY_BROADCAST` in `lib/novu/outbox.ts`, together with `scripts/novu/clear-native-mutes.ts` once both Novu environments are clean.
-- [ ] Otherwise, wait for the running relay to settle the rows (re-run the count after each 10-minute drain tick), or release and dispose of the dead letters:
-  - `review:legacy_delivery_format`: look the row's `transactionId` up in the Novu Activity Feed (the earlier sender used it verbatim; the feed keeps only 24 hours on Free). If Novu holds the event, it was delivered; leave the dead letter. If not, and the notice still matters, an operator resets the row to never-attempted (`status = 'PENDING'`, `attempts = 0`, `"lastError" = NULL`, `"nextRetryAt" = now()`) and the relay sends it under the current format.
-  - `review:legacy_broadcast`: leave the dead letter. Broadcasts no longer exist; re-post a still-relevant announcement with **Post to inbox**, which fans out through bell policy.
+- [x] All three counts were zero, so the release went ahead and the cleanup PR deleted `LEGACY_DELIVERY_FORMAT` and `LEGACY_BROADCAST` in `lib/novu/outbox.ts`, the `clear-native-mutes` script and the `scrub-subscriber-pii` script.
 
 ---
 
@@ -180,7 +179,7 @@ The apex carries SPF `v=spf1 -all`, a null MX `0 .`, and `_dmarc` is `v=DMARC1; 
    - `npm run novu:check`: Verifies live Novu workflows match code manifests in CI.
 3. **Server-Side Preference Gating (Postgres is the only owner)**:
    - **Stage and attempt gates (`stageBell`, `currentBellRecipients`)**: Filter out `allNotifications: false`, `inAppEnabled: false`, erased users and muted category columns before inserting into `NotificationOutbox`, and again at the first attempt, which freezes the allowed set.
-   - **Novu holds no preference state**: families sync always-on and read-only with no step conditions. In each environment: run `npx tsx scripts/novu/clear-native-mutes.ts` (dry run, then `--apply`; add `--env production` for Production) **first**, then `npm run novu:sync`. The sync makes the families read-only, after which Novu may refuse per-family mute resets; the script lists any such read-only refusals separately.
+   - **Novu holds no preference state**: families sync always-on and read-only with no step conditions. The sync makes the families read-only. Native mutes saved on Novu's old preference page were reset once per environment before that (see Deprecated & Superseded Approaches); Production had none.
 
 ---
 
@@ -218,7 +217,7 @@ Set these in **Netlify Dashboard → Site → Environment Variables** (and match
 | `NOVU_PRODUCTION_KEY`       | Novu Production secret key                                                                  | Yes (Netlify production + GitHub Actions secrets)        |
 | `NEXT_PUBLIC_NOVU_APP_ID`   | Novu Application Identifier                                                                 | Yes                                                      |
 | `CRON_SECRET`               | `openssl rand -hex 32`                                                                      | Yes (Netlify + GitHub Actions secrets)                   |
-| `WAITLIST_HMAC_SECRET`      | `openssl rand -hex 32`                                                                      | Yes (signs stateless email & waitlist unsubscribe links) |
+| `BETTER_AUTH_SECRET`        | Already set for sign-in; it also derives the key that signs every emailed link              | Yes (rotating it voids newsletter and unsubscribe links) |
 
 ---
 
@@ -266,3 +265,4 @@ _Kit free tier covers 10K subscribers. Creator (\$39/mo) is only needed for auto
 - **Env-driven sender domains and contact addresses**: `EMAIL_TRANSACTIONAL_DOMAIN`, `EMAIL_NEWSLETTER_DOMAIN`, `NEXT_PUBLIC_SUPPORT_EMAIL`, `CONTACT_INBOX_ADDRESS`, `BILLING_EMAIL` and `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS` were replaced by constants in `lib/company.ts`. The footer and newsletters always print the registered-office postal line, and the broadcast route no longer refuses with 412 when it is missing. Remove any leftover copies from Netlify.
 - **Inbound forwarding via ImprovMX (planned, never configured)**: role addresses on `familiarisenow.com` were to be forwarded through ImprovMX MX records. The records were never created, and the apex now publishes a null MX; all inbound mail goes to `connect@practitionist.com`.
 - **Personal-inbox DMARC reports and an unpublished root SPF**: replaced on 2026-10-28 by the live records above.
+- **One-time Novu cutover tools (deleted 2026-11-08)**: the `clear-native-mutes` script reset stray native mutes before the first read-only sync, and the `scrub-subscriber-pii` script nulled the profile data the old mirror copied onto subscribers. The relay's `review:legacy_delivery_format` and `review:legacy_broadcast` dead letters guarded rows attempted under the earlier row-wide Novu identity. All three ran their course once the Production recount read zero; the dead-letter reasons no longer exist.

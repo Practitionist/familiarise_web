@@ -1,4 +1,4 @@
-/** The support and digital product models `scrubUser` touches, answering as for a user with no history. */
+/** The support, digital product, waitlist and referral models `scrubUser` touches, answering as for a user with no history. */
 export function supportScrubModels() {
   const none = () => jest.fn(async () => ({ count: 0 }));
   return {
@@ -17,5 +17,8 @@ export function supportScrubModels() {
     digitalProductDownload: { deleteMany: none() },
     digitalProductPurchase: { deleteMany: none() },
     digitalProductReport: { updateMany: none() },
+    appointmentWaitlist: { deleteMany: none() },
+    windowBackupInterest: { deleteMany: none() },
+    referral: { updateMany: none() },
   };
 }

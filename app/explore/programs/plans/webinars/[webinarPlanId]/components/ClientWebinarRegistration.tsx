@@ -14,12 +14,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
-import { useCurrency } from "@/hooks/useCurrency";
+import { useBuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { formatInTimeZone } from "date-fns-tz";
 import { eventCapacityFromCount } from "@/lib/events/capacity";
 import type { TSessionStatus } from "../types";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
+import { NotifyMeButton } from "@/components/booking/NotifyMeButton";
+import { useRefreshOnViewerChange } from "@/hooks/useRefreshOnViewerChange";
 
 type ClientWebinarRegistrationProps = {
   webinarPlanId: string; // The WebinarPlan ID (for URL path)
@@ -30,6 +32,12 @@ type ClientWebinarRegistrationProps = {
   sessionStatus: TSessionStatus;
   /** The signed-in viewer holds a seat; read by the server, never the shared payload. */
   isRegistered: boolean;
+  /** The viewer is on the notify-me list; read by the server. */
+  isWaiting: boolean;
+  /** Who the server rendered for. */
+  viewerUserId: string | null;
+  /** The host takes a notify-me list when the session sells out. */
+  waitlistEnabled: boolean;
   /** Seats taken, host excluded. */
   seatsTaken: number;
   /** Plan default; the instance may override it. */
@@ -48,6 +56,9 @@ export function ClientWebinarRegistration({
   nextSessionDate,
   sessionStatus,
   isRegistered,
+  isWaiting,
+  viewerUserId,
+  waitlistEnabled,
   seatsTaken,
   maxParticipants = 100,
   instanceMaxParticipants,
@@ -57,7 +68,8 @@ export function ClientWebinarRegistration({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { formatPrice } = useCurrency();
+  const { formatBuyerPriceLabel } = useBuyerPrice();
+  useRefreshOnViewerChange(viewerUserId);
 
   // Defer auth + timezone until after hydration to avoid mismatch
   const [hasMounted, setHasMounted] = useState(false);
@@ -76,6 +88,17 @@ export function ClientWebinarRegistration({
     taken: seatsTaken,
   });
   const isFull = capacity.isFull;
+  // A waiter keeps a way to leave after a seat opens and the card stops reading full.
+  const canJoin = isFull && waitlistEnabled && sessionStatus === "Upcoming";
+  const notifyMe =
+    webinarId && (canJoin || isWaiting) ? (
+      <NotifyMeButton
+        kind="WEBINAR"
+        eventId={webinarId}
+        waiting={isWaiting}
+        signedIn={isLoggedIn}
+      />
+    ) : null;
 
   // Only checkout-able when the session is upcoming, a webinar instance
   // exists, and there's still room — a sold-out webinar falls back to the
@@ -136,7 +159,7 @@ export function ClientWebinarRegistration({
   }
 
   // Logic for buttonText and buttonDisabled
-  let buttonText = `Pay ${formatPrice(price)} & Register Now`;
+  let buttonText = `Pay ${formatBuyerPriceLabel(price)} & Register Now`;
   let buttonDisabled = false;
 
   if (sessionStatus === "Completed") {
@@ -195,13 +218,15 @@ export function ClientWebinarRegistration({
               Please sign in to register for this webinar.
             </p>
           )}
-          <Button
-            onClick={handleRegistration} // This redirects to sign-in
-            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
-            disabled={signInButtonDisabled}
-          >
-            {signInButtonText}
-          </Button>
+          {notifyMe ?? (
+            <Button
+              onClick={handleRegistration} // This redirects to sign-in
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+              disabled={signInButtonDisabled}
+            >
+              {signInButtonText}
+            </Button>
+          )}
         </CardContent>
       </Card>
     );
@@ -232,8 +257,8 @@ export function ClientWebinarRegistration({
     );
   }
 
-  // Sold out — registration is simply closed. The host can reopen it by
-  // raising the capacity on this webinar.
+  // Sold out: registration is closed, and the notify-me list (when the host
+  // takes one) tells every waiter at once when a seat frees.
   if (isFull && isLoggedIn && !isAlreadyRegistered) {
     return (
       <Card>
@@ -251,14 +276,17 @@ export function ClientWebinarRegistration({
             Sold out — all {capacity.max} seats taken
           </Badge>
           <p className="text-sm text-muted-foreground">
-            Registration for this session is closed. Check back in case the host
-            opens more seats, or browse the other sessions on this plan.
+            {notifyMe
+              ? "Registration for this session is closed. Ask to be notified and we will tell you the moment a seat opens; the first to pay gets it."
+              : "Registration for this session is closed. Check back in case the host opens more seats, or browse the other sessions on this plan."}
           </p>
         </CardContent>
         <CardFooter>
-          <Button className="w-full" disabled>
-            Sold out
-          </Button>
+          {notifyMe ?? (
+            <Button className="w-full" disabled>
+              Sold out
+            </Button>
+          )}
         </CardFooter>
       </Card>
     );
@@ -279,7 +307,7 @@ export function ClientWebinarRegistration({
         )}
         <GroupSessionDisclosure className="mt-2" />
       </CardContent>
-      <CardFooter>
+      <CardFooter className="flex flex-col gap-2">
         {checkoutUrl && !buttonDisabled ? (
           <Button
             asChild
@@ -298,6 +326,7 @@ export function ClientWebinarRegistration({
             {buttonText}
           </Button>
         )}
+        {isWaiting && notifyMe}
       </CardFooter>
     </Card>
   );

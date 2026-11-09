@@ -25,6 +25,8 @@ jest.mock("../../lib/prisma", () => ({
     rescheduleRequest: { findMany: jest.fn() },
     appointmentDocument: { count: jest.fn() },
     bookingStatusHistory: { findMany: jest.fn() },
+    collaborator: { count: jest.fn() },
+    consultantReview: { count: jest.fn() },
   },
 }));
 
@@ -43,8 +45,33 @@ describe("consultant Home read shape", () => {
       publishedRatingGroup: null,
       ratedClientsOneToOne: 12,
       ratedEventsGroup: 0,
-      user: { timezone: "Asia/Kolkata" },
+      description: null,
+      headline: null,
+      experience: null,
+      verificationStatus: "PENDING_VERIFICATION",
+      scheduleType: "WEEKLY",
+      taxInfo: null,
+      payoutAccounts: [],
+      _count: {
+        subDomains: 0,
+        tags: 0,
+        availabilityWindowsWeekly: 0,
+        availabilityWindowsCustom: 0,
+        consultationPlans: 0,
+        subscriptionPlans: 0,
+        webinarPlans: 0,
+        classPlans: 0,
+        digitalProducts: 0,
+      },
+      user: {
+        timezone: "Asia/Kolkata",
+        image: null,
+        profileDisplayImage: null,
+        _count: { workExperiences: 0 },
+      },
     });
+    m.collaborator.count.mockResolvedValue(0);
+    m.consultantReview.count.mockResolvedValue(0);
     slotFindMany.mockResolvedValue([]);
     apptFindMany.mockResolvedValue([]);
     m.appointmentOccurrence.count.mockResolvedValue(0);
@@ -132,5 +159,19 @@ describe("consultant Home read shape", () => {
       ratedClientsOneToOne: 12,
       ratedEventsGroup: 0,
     });
+  });
+
+  it("derives the setup checklist from the one profile read, not extra reads", async () => {
+    const { firstRun } = await getConsultantDashboard("cp-1", NOW);
+
+    expect(m.consultantProfile.findUnique).toHaveBeenCalledTimes(1);
+    expect(firstRun?.steps.map((step) => step.key)).toEqual([
+      "verify",
+      "profile",
+      "hours",
+      "offering",
+      "payout",
+    ]);
+    expect(firstRun?.steps.some((step) => step.done)).toBe(false);
   });
 });

@@ -18,6 +18,14 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionPurchaseOrder } from "@/lib/enterprise/transitions";
+import { PURCHASE_ORDER_STATUS_LABEL } from "@/lib/labels/org-labels";
+
+const PO_FIELD_LABEL = {
+  poDate: "PO date",
+  validUntil: "valid-until date",
+  totalAmountPaise: "total amount",
+  remainingAmountPaise: "remaining amount",
+} as const;
 
 const PoStatusSchema = z.enum(["ACTIVE", "CLOSED", "CANCELLED"]);
 
@@ -196,7 +204,7 @@ export async function PATCH(
               body.status === "CLOSED"
                 ? AUDIT_ACTIONS.INVOICE.PURCHASE_ORDER_CLOSED
                 : AUDIT_ACTIONS.INVOICE.PURCHASE_ORDER_CANCELLED,
-            description: `PurchaseOrder ${poId}: ${current.status} → ${body.status}`,
+            description: `Purchase order ${current.poNumber}: ${PURCHASE_ORDER_STATUS_LABEL[current.status]} → ${PURCHASE_ORDER_STATUS_LABEL[body.status]}`,
             details: { poId, from: current.status, to: body.status },
           },
         });
@@ -232,7 +240,7 @@ export async function PATCH(
             actorMembershipId,
             category: "INVOICE",
             action: AUDIT_ACTIONS.INVOICE.PURCHASE_ORDER_UPDATED,
-            description: `PurchaseOrder ${current.poNumber} updated: ${changed.join(", ")}`,
+            description: `Purchase order ${current.poNumber} updated: ${changed.map((field) => PO_FIELD_LABEL[field]).join(", ")}`,
             details: {
               poId,
               from: auditValues(current, changed),
@@ -290,7 +298,7 @@ export async function DELETE(
           actorMembershipId,
           category: "INVOICE",
           action: AUDIT_ACTIONS.INVOICE.PURCHASE_ORDER_DELETED,
-          description: `PurchaseOrder ${current.poNumber} deleted`,
+          description: `Purchase order ${current.poNumber} deleted`,
           details: {
             poId,
             poNumber: current.poNumber,

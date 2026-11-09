@@ -9,6 +9,7 @@ import {
 import { PaymentStatus } from "@prisma/client";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { markEventWaitlistBooked } from "@/lib/booking/event-waitlist";
 import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
 import {
   assertSeatRemintable,
@@ -59,6 +60,7 @@ export async function writeCheckoutPayment(
     attributionReferralId,
     platformFeeBps,
     welcomeDiscountPaise,
+    gstRegime,
   } = input.priced;
   const { createdAppointment, bookedPlan, skipPayment } = carried;
 
@@ -140,6 +142,7 @@ export async function writeCheckoutPayment(
     platformFeeBps,
     welcomeDiscountPaise:
       welcomeDiscountPaise > 0 ? welcomeDiscountPaise : null,
+    gstRegime,
   };
 
   // Group events share one appointment, so a re-buy re-mints the buyer's dead row in place.
@@ -168,7 +171,8 @@ export async function writeCheckoutPayment(
       data: {
         ...paymentData,
         gatewayPaymentId: null,
-        capturedAt: null,
+        // A seat confirmed here is sold now; the row's createdAt is the lapsed attempt's.
+        capturedAt: skipPayment ? new Date() : null,
         deletedAt: null,
         description: null,
         receiptUrl: null,
@@ -248,6 +252,14 @@ export async function writeCheckoutPayment(
     }
     if (skipPayment) {
       await transitionParticipant(tx, participantWhere, "CONFIRMED");
+      if (isEventSeat) {
+        await markEventWaitlistBooked(
+          tx,
+          createdAppointment.id,
+          userId,
+          new Date(),
+        );
+      }
     }
   }
   return payment;

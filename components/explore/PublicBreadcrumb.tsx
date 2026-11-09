@@ -27,9 +27,8 @@ export function publicBreadcrumbItems(
 
 function itemClass(isLast: boolean, isRoot: boolean): string {
   if (isLast) return "flex min-w-0 items-center truncate text-foreground";
-  const width = isRoot
-    ? "hidden shrink-0 sm:flex"
-    : "max-w-[45%] sm:max-w-[16rem]";
+  // The root stays on phones: it is the only direct route back to the list.
+  const width = isRoot ? "shrink-0" : "max-w-[45%] sm:max-w-[16rem]";
   return `flex min-w-0 items-center gap-1.5 ${width}`;
 }
 
@@ -44,7 +43,7 @@ export function PlanBreadcrumb({
 }>) {
   const { consultantProfile } = plan;
   return (
-    <div className="container mx-auto px-4 pt-6">
+    <div className="w-full border-b border-border bg-card px-4 py-4 md:px-8 lg:px-12">
       <PublicBreadcrumb
         items={publicBreadcrumbItems(
           consultantProfile

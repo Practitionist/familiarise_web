@@ -20,7 +20,6 @@ import { AboutSection } from "./components/AboutSection";
 import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
 import { DigitalProductsSection } from "./components/DigitalProductsSection";
 import type { PublicProductCard } from "@/lib/data/digital-products-public";
-import { ConsultantAvailability } from "./components/ConsultantAvailability";
 import { ExperienceSection } from "./components/ExperienceSection";
 import { ExpertPricing } from "./components/ExpertPricing";
 import { ProfileHeader } from "./components/ProfileHeader";
@@ -40,6 +39,7 @@ import {
   useAvailabilityWindow,
 } from "@/lib/scheduling/use-availability-window";
 import { dayState, isSelectableDay } from "./day-state";
+import { useNextAvailableLabel } from "./use-next-available";
 import { zonedWeekWindow } from "./utils/time";
 import { cn } from "@/utils/tailwind";
 
@@ -117,10 +117,7 @@ export function ExpertProfileClient({
   // bypasses the browser cache once.
   const bypassCacheOnce = useRef(searchParams.get("conflict") === "1");
 
-  // Pricing-day slots share the overview's week-window query: the week
-  // containing the selected day uses the same `zonedWeekWindow` bounds as
-  // ConsultantAvailability's weekOffset, so an overlapping reader joins the
-  // single in-flight request instead of firing its own 1-day compute. Day
+  // The week containing the selected day is read once per week window; day
   // clicks inside a loaded week cost zero requests (staleTime 30s).
   // Calendar dates (local fields) on both sides: today is today in the
   // display zone, and seven calendar days are a week across DST.
@@ -149,6 +146,16 @@ export function ExpertProfileClient({
     monthStart: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1),
     timezone: zoneReady ? timezone : null,
     consulteeUserId,
+  });
+
+  const nextAvailableLabel = useNextAvailableLabel({
+    consultantId: consultantDetails?.id,
+    today,
+    now,
+    timezone,
+    zoneReady,
+    consulteeUserId,
+    durationInHours: selectedDuration,
   });
 
   const selectedDateKey =
@@ -332,7 +339,7 @@ export function ExpertProfileClient({
 
     for (let i = 0; i < adjustedFirstDay; i++) {
       days.push(
-        <div key={`empty-${i}`} className="w-10 h-10 lg:w-11 lg:h-11"></div>,
+        <div key={`empty-${i}`} className="aspect-square w-full"></div>,
       );
     }
 
@@ -366,7 +373,9 @@ export function ExpertProfileClient({
           aria-pressed={isSelected}
           aria-label={`${date.toLocaleDateString(undefined, { day: "numeric", month: "long" })}${isToday ? ", today" : ""}${bookable ? ", times available" : ""}`}
           className={cn(
-            "relative flex h-10 w-10 items-center justify-center rounded-full text-base transition-all duration-200 lg:h-11 lg:w-11",
+            // A fluid square, capped at the old 44px: seven fixed 40–44px cells
+            // do not fit a phone-width dialog, so they overflowed it.
+            "relative mx-auto flex aspect-square w-full max-w-[2.75rem] items-center justify-center rounded-full text-sm transition-all duration-200 sm:text-base",
             isSelected && "bg-white font-medium text-zinc-900 shadow-md",
             !isSelected &&
               bookable &&
@@ -483,18 +492,6 @@ export function ExpertProfileClient({
                 education={userDetails.education || []}
                 certifications={userDetails.certifications || []}
               />
-
-              {/* Gated on zone resolution: firing before the session and the
-                  device zone are known would compute the week in a fallback
-                  zone and then again in the real one. */}
-              {zoneReady ? (
-                <ConsultantAvailability
-                  consultantDetails={consultantDetails}
-                  displayZone={displayZone}
-                  consulteeUserId={consulteeUserId}
-                  bypassRef={bypassCacheOnce}
-                />
-              ) : null}
             </div>
           </motion.div>
 
@@ -528,6 +525,7 @@ export function ExpertProfileClient({
               autoOpenTrial={autoOpenTrial}
               onRefreshSlots={refreshSlots}
               onDurationChange={setSelectedDuration}
+              nextAvailableLabel={nextAvailableLabel}
             />
           </motion.div>
         </div>

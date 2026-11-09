@@ -24,6 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useGstRegistered } from "@/components/pricing/BuyerPriceProvider";
 import { useSession } from "@/lib/auth-client";
 import { GST_STATE_OPTIONS } from "@/lib/compliance/state-codes";
 import { BUYER_STATE_REQUIRED_MESSAGE } from "@/schemas/checkout";
@@ -49,9 +50,12 @@ export function BillingStateSelect({
   error,
   disabled,
 }: Readonly<BillingStateSelectProps>) {
+  const gstRegistered = useGstRegistered();
   return (
     <div className="grid gap-2">
-      <Label htmlFor="billing-state">Billing state (for GST)</Label>
+      <Label htmlFor="billing-state">
+        {gstRegistered ? "Billing state (for GST)" : "Billing state"}
+      </Label>
       <Select
         value={value ?? (required ? "" : NOT_SPECIFIED)}
         onValueChange={(next) => onChange(next === NOT_SPECIFIED ? null : next)}
@@ -84,7 +88,9 @@ export function BillingStateSelect({
       ) : (
         <p id="billing-state-help" className="text-xs text-muted-foreground">
           {required
-            ? "Needed for your GST invoice."
+            ? gstRegistered
+              ? "Needed for your GST invoice."
+              : "Needed for your receipt and tax records."
             : "Optional for this booking."}
         </p>
       )}

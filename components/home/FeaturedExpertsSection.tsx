@@ -109,7 +109,7 @@ export function FeaturedExpertsSection({
               variant="secondary"
               className="mb-4 bg-secondary text-secondary-foreground hover:bg-secondary border-0"
             >
-              Featured Experts
+              Highest rated experts
             </Badge>
             <h2 className="text-fluid-4xl font-bold text-foreground mb-2 tracking-tight">
               Learn from{" "}

@@ -11,6 +11,12 @@ import {
   recordSystemEvent,
 } from "@/lib/enterprise/system-events";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import {
+  GST_UNREGISTERED_SKIP,
+  reportConfigSkip,
+  type ConfigSkip,
+} from "@/lib/cron/config-skip";
+import { platformSupplierForJob } from "@/lib/pdf/supplier";
 
 export interface SettleInvoiceAccrualsResult {
   orgsProcessed: number;
@@ -18,6 +24,8 @@ export interface SettleInvoiceAccrualsResult {
   failed: number;
   /** Lower bound from the extra organization peek, not a full backlog count. */
   remaining: number;
+  /** Set while the platform is not GST-registered: one config skip per run, no rollup. */
+  skipped?: ConfigSkip;
 }
 
 interface RollupGaps {
@@ -123,6 +131,18 @@ export async function settleInvoiceAccruals(
     });
     return { orgsProcessed: 0, invoicesCreated: 0, failed: 0, remaining: 0 };
   }
+  // No GST invoice while unregistered; a malformed or wrong-state GSTIN throws here.
+  if (!platformSupplierForJob()) {
+    const skipped = GST_UNREGISTERED_SKIP;
+    reportConfigSkip("settle-invoice-accruals", skipped);
+    return {
+      orgsProcessed: 0,
+      invoicesCreated: 0,
+      failed: 0,
+      remaining: 0,
+      skipped,
+    };
+  }
 
   const limit = z.number().int().min(1).max(500).default(10).parse(opts.limit);
   const rows = await prisma.organization.findMany({
@@ -133,6 +153,7 @@ export async function settleInvoiceAccruals(
         some: {
           billableToOrgInvoiceId: null,
           paymentStatus: "SUCCEEDED",
+          gstRegime: "REGISTERED",
           ...(opts.windowStart ? { createdAt: { lt: opts.windowStart } } : {}),
           legs: {
             some: {

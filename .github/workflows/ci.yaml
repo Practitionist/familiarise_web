@@ -255,9 +255,9 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Supply-chain security audit
-        # Fail CI when any production dependency has a high or critical advisory
-        # so vulnerable transitive packages cannot ship to prod.
-        run: npm audit --omit=dev --audit-level=high
+        # Fail CI on a high or critical production advisory; the script's dated allowlist holds the only exceptions.
+        # npm audit exits non-zero on any finding; the gate decides from its JSON.
+        run: "{ npm audit --omit=dev --json || true; } | node_modules/.bin/tsx scripts/ci/check-npm-audit.ts"
 
       - name: Runner resources
         # Private-repo ubuntu-latest is ~2 vCPU / ~7 GB. Printed so a future
@@ -275,12 +275,11 @@ jobs:
             tsc-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
 
       - name: TypeScript Check
-        # tsc's peak for this project sits at Node's RAM-derived default heap
-        # (~2 GB on this runner), so without a flag it exits 134. 4 GB leaves
-        # the OS headroom on a ~7 GB VM; tsc is the only thing running here.
+        # A cold tsc (lockfile change, cache miss) exceeds 4 GB and exits 134; 6 GB
+        # matches release-checks and leaves the OS headroom on a ~7 GB VM.
         run: npx tsc --noEmit
         env:
-          NODE_OPTIONS: --max-old-space-size=4096
+          NODE_OPTIONS: --max-old-space-size=6144
 
       - name: Money-column guard
         # No money column may be declared Int (int4 overflows at ₹2.14cr).

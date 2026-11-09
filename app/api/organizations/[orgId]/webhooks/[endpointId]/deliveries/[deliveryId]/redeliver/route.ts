@@ -120,7 +120,7 @@ export async function POST(
           actorMembershipId: access.member.id,
           category: "WEBHOOK",
           action: AUDIT_ACTIONS.WEBHOOK.WEBHOOK_DELIVERY_REDELIVERED,
-          description: `Re-queued delivery ${deliveryId} (event ${delivery.eventType})`,
+          description: `Re-queued a webhook delivery (event ${delivery.eventType})`,
           details: { deliveryId, endpointId, eventType: delivery.eventType },
         },
       });

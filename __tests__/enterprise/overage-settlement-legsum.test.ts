@@ -12,6 +12,8 @@
  * and broke the leg-sum invariant). Only the surcharge is genuinely-additional.
  */
 
+import { runAsRegisteredPlatform } from "../fixtures/gst-registered";
+
 import { recordOverageAtCheckout } from "@/lib/payments/billing/overage-settlement";
 import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
 import { txDouble } from "../fixtures/tx-double";
@@ -919,3 +921,6 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
     expect(consultantUpdateMany).not.toHaveBeenCalled();
   });
 });
+
+// Priced and invoiced as a GST-registered platform.
+runAsRegisteredPlatform();

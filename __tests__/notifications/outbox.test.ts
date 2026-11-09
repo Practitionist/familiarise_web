@@ -79,8 +79,6 @@ jest.mock("@sentry/nextjs", () => ({
 import {
   attemptTrigger,
   deriveTransactionId,
-  LEGACY_BROADCAST,
-  LEGACY_DELIVERY_FORMAT,
   outboxTransactionIdOf,
   recipientTransactionId,
   stageTrigger,
@@ -800,56 +798,19 @@ describe("definitive responses", () => {
   });
 });
 
-describe("rows attempted by the earlier sender", () => {
-  it("holds a row the earlier sender attempted for review instead of resending it under new identities", async () => {
-    // Novu accepted the earlier request under the row transactionId; only the ack was lost.
-    const legacy = row({
-      kind: "MULTI",
-      recipients: ["u1", "u2"],
-      status: "RETRY",
-      attempts: 2,
-      lastError: "Request timed out",
-    });
-
-    const result = await attemptTrigger(legacy, { relay: true });
-
-    expect(result).toEqual({
-      success: false,
-      error: LEGACY_DELIVERY_FORMAT,
-      outcome: "DEAD_LETTER",
-      deadLetterReason: LEGACY_DELIVERY_FORMAT,
-    });
-    expect(requests()).toHaveLength(0);
-    expect(mockUserFindMany).not.toHaveBeenCalled();
-  });
-
-  it("holds a row whose only earlier attempt was inline", async () => {
-    const result = await attemptTrigger(
-      row({ attempts: 0, lastError: "Request timed out" }),
-    );
-
-    expect(result).toMatchObject({ deadLetterReason: LEGACY_DELIVERY_FORMAT });
-    expect(requests()).toHaveLength(0);
-  });
-
-  it("sends a row nobody attempted yet under the current format", async () => {
+describe("rows with no first-attempt anchor", () => {
+  it("sends a row whose error came before any anchor, since no request carried it", async () => {
     await expect(
-      attemptTrigger(row({ attempts: 0, lastError: null }), { relay: true }),
+      attemptTrigger(row({ attempts: 1, lastError: "Request timed out" }), {
+        relay: true,
+      }),
     ).resolves.toEqual({ success: true, outcome: "SENT" });
   });
 
-  it("holds a broadcast row for review rather than skipping it as revoked", async () => {
-    const result = await attemptTrigger(
-      row({ kind: "BROADCAST", recipients: [] }),
-      { relay: true },
-    );
-
-    expect(result).toMatchObject({
-      success: false,
-      outcome: "DEAD_LETTER",
-      deadLetterReason: LEGACY_BROADCAST,
-    });
-    expect(requests()).toHaveLength(0);
+  it("sends a row nobody attempted yet", async () => {
+    await expect(
+      attemptTrigger(row({ attempts: 0, lastError: null }), { relay: true }),
+    ).resolves.toEqual({ success: true, outcome: "SENT" });
   });
 });
 

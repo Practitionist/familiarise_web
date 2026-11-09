@@ -1,4 +1,4 @@
-/** One bounded slice of the audit-class retention windows in docs/decisions/2026-11-01-data-retention-windows.md. */
+/** One bounded slice of the audit-class retention windows in docs/decisions/2026-11-01-data-retention-windows.md, plus the fraud-signal windows in lib/compliance/signal-retention.ts. */
 
 import prisma from "../../lib/prisma";
 import type {
@@ -15,6 +15,12 @@ import type { BackofficeSurface } from "../../lib/auth/backoffice-permissions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { deleteBoundedPage } from "@/lib/cron/run-deadline";
 import { yearsBefore } from "@/lib/cron/retention-cutoff";
+import {
+  NULLED_PAYER_SIGNALS,
+  NULLED_REFERRAL_SIGNALS,
+  paymentSignalPruneWhere,
+  referralSignalPruneWhere,
+} from "@/lib/compliance/signal-retention";
 
 const MONEY_AUDIT_YEARS = 8;
 const OTHER_AUDIT_YEARS = 2;
@@ -48,7 +54,7 @@ const OPS_SURFACE_WINDOW: Record<BackofficeSurface, "money" | "other"> = {
   "supportChat.intervene": "other",
   "engineering.escalate": "other",
   "appointments.manage": "other",
-  "waitlist.manage": "other",
+  "newsletter.manage": "other",
   "leads.manage": "other",
   "users.read": "other",
   "users.verify": "other",
@@ -185,6 +191,8 @@ export interface AuditPruneResult {
   opsProposalsDeleted: number;
   bookingHistoryDeleted: number;
   ledgerReportsDeleted: number;
+  referralSignalsNulled: number;
+  payerSignalsNulled: number;
   success: boolean;
   errors: string[];
   hasMore: boolean;
@@ -232,6 +240,8 @@ async function pruneAuditLogsUnlocked(
     opsProposalsDeleted: 0,
     bookingHistoryDeleted: 0,
     ledgerReportsDeleted: 0,
+    referralSignalsNulled: 0,
+    payerSignalsNulled: 0,
     success: true,
     errors: [],
     hasMore: false,
@@ -342,6 +352,41 @@ async function pruneAuditLogsUnlocked(
         where: w,
         select: { id: true },
       }),
+  );
+  // These two pages clear columns instead of deleting rows: the row is a money or referral record that stays.
+  result.referralSignalsNulled = await page(
+    "referral request signals",
+    referralSignalPruneWhere(now),
+    (w, take) =>
+      prisma.referral.findMany({
+        where: w,
+        select: { id: true },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take,
+      }),
+    (w, ids) =>
+      prisma.referral.updateMany({
+        where: { AND: [w, { id: { in: ids } }] },
+        data: NULLED_REFERRAL_SIGNALS,
+      }),
+    (w) => prisma.referral.findFirst({ where: w, select: { id: true } }),
+  );
+  result.payerSignalsNulled = await page(
+    "payer instrument hashes",
+    paymentSignalPruneWhere(now),
+    (w, take) =>
+      prisma.payment.findMany({
+        where: w,
+        select: { id: true },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take,
+      }),
+    (w, ids) =>
+      prisma.payment.updateMany({
+        where: { AND: [w, { id: { in: ids } }] },
+        data: NULLED_PAYER_SIGNALS,
+      }),
+    (w) => prisma.payment.findFirst({ where: w, select: { id: true } }),
   );
   return result;
 }

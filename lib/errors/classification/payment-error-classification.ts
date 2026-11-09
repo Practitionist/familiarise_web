@@ -76,6 +76,8 @@ export const ErrorTypes = {
   CREDIT_SHORTFALL: "CREDIT_SHORTFALL_ERROR",
   DISCOUNT_CURRENCY_MISMATCH: "DISCOUNT_CURRENCY_MISMATCH_ERROR",
   DISCOUNT_EXHAUSTED: "DISCOUNT_EXHAUSTED_ERROR",
+  // A code that is unknown, switched off or expired when checkout re-validates it.
+  DISCOUNT_CODE_INVALID: "DISCOUNT_CODE_INVALID_ERROR",
   // Literal-equality rule as WALLET_FROZEN: the checkout modal hands this
   // string straight to the toast map as `code` when verify answers non-2xx.
   VERIFICATION_FAILED: "VERIFICATION_FAILED",
@@ -125,6 +127,12 @@ export const ErrorTypes = {
   SEAT_HOLD_LAPSED: "SEAT_HOLD_LAPSED",
   // A replay of a seat checkout whose order is still being minted; 409 + retryAfter.
   CHECKOUT_IN_PROGRESS: "CHECKOUT_IN_PROGRESS",
+  // A platform code on an order whose take cannot fund promo (fee waiver, host org).
+  DISCOUNT_NOT_APPLICABLE: "DISCOUNT_NOT_APPLICABLE_ERROR",
+  // Organisation-funded rails while the platform is not GST-registered.
+  GST_REGISTRATION_REQUIRED: "GST_REGISTRATION_REQUIRED_ERROR",
+  // PLATFORM_GSTIN set but unusable: pricing refuses instead of charging 0% GST.
+  GST_CONFIG_INVALID: "GST_CONFIG_INVALID_ERROR",
 
   // Catch-all
   UNKNOWN: "UNKNOWN_ERROR",
@@ -225,7 +233,8 @@ export const INFRA_ERROR_PATTERNS: ReadonlyArray<{
   {
     patterns: ["Authentication failed", "Invalid API key"],
     errorType: ErrorTypes.PAYMENT_CONFIG,
-    userMessage: "Payment gateway configuration error. Please contact support.",
+    userMessage:
+      "Payments aren't working right now. Please try again shortly. If this keeps happening, contact support.",
   },
   // The #1219 posture guard: a Razorpay TEST key under NODE_ENV=production.
   // Reaches the route as a typed PaymentError now that the gateway loads at
@@ -239,13 +248,12 @@ export const INFRA_ERROR_PATTERNS: ReadonlyArray<{
   {
     patterns: ["Prisma", "database"],
     errorType: ErrorTypes.DATABASE,
-    userMessage: "Database error. Please try again or contact support.",
+    userMessage: "We couldn't save that just now. Please try again shortly.",
   },
   {
     patterns: ["Failed to create payment intent"],
     errorType: ErrorTypes.PAYMENT_PROCESSING,
-    userMessage:
-      "Payment processing unavailable. Please try again later or contact support.",
+    userMessage: "Payments aren't working right now. Please try again shortly.",
   },
 ] as const;
 
@@ -391,7 +399,7 @@ const BUSINESS_ERROR_ENTRIES = [
     errorType: ErrorTypes.REFUND_BLOCKED,
     httpStatus: 409,
     userMessage:
-      "Erasure is blocked while money is in flight for this user; settle the listed items first.",
+      "We can't delete this account yet because some payments or payouts are still being settled. Please try again once they finish.",
   },
   // #1440 — the admin recovery route lost the link-write CAS (or the row was
   // already linked): an answer, not a fault.
@@ -510,6 +518,13 @@ const BUSINESS_ERROR_ENTRIES = [
       "This discount code is for a different currency and cannot be applied to this plan.",
   },
   {
+    code: "DISCOUNT_CODE_INVALID",
+    errorType: ErrorTypes.DISCOUNT_CODE_INVALID,
+    httpStatus: 400,
+    userMessage:
+      "That discount code is not valid for this purchase. Remove it and try again — your card was not charged.",
+  },
+  {
     code: "DISCOUNT_EXHAUSTED",
     errorType: ErrorTypes.DISCOUNT_EXHAUSTED,
     httpStatus: 409,
@@ -600,6 +615,12 @@ const BUSINESS_ERROR_ENTRIES = [
     httpStatus: 409,
     userMessage: "This plan isn't available to book right now.",
   },
+  // A non-marketplace plan bought outside the org that offers it.
+  {
+    code: "PLAN_NOT_AVAILABLE_TO_ORG",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 409,
+  },
   {
     code: "PAYMENT_LINK_FAILED",
     errorType: ErrorTypes.BOOKING_RULE,
@@ -611,6 +632,27 @@ const BUSINESS_ERROR_ENTRIES = [
     httpStatus: 409,
     userMessage:
       "Your seat was held for a while, but payment didn't open in time. Your card was not charged — start checkout again.",
+  },
+  {
+    code: "DISCOUNT_NOT_APPLICABLE",
+    errorType: ErrorTypes.DISCOUNT_NOT_APPLICABLE,
+    httpStatus: 409,
+    userMessage:
+      "This code can't be used on this expert's sessions. Remove it and try again — your card was not charged.",
+  },
+  {
+    code: "GST_REGISTRATION_REQUIRED",
+    errorType: ErrorTypes.GST_REGISTRATION_REQUIRED,
+    httpStatus: 403,
+    userMessage:
+      "Booking on your organisation's account isn't available yet. You can still pay yourself.",
+  },
+  {
+    code: "GST_CONFIG_INVALID",
+    errorType: ErrorTypes.GST_CONFIG_INVALID,
+    httpStatus: 503,
+    userMessage:
+      "Checkout is temporarily unavailable. Please try again later — you were not charged.",
   },
   {
     code: "CHECKOUT_IN_PROGRESS",

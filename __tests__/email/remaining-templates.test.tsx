@@ -4,7 +4,7 @@
 
 /**
  * Render coverage for the remaining 15 email templates across auth,
- * organizations, payments, waitlist, booking window opened, and verification.
+ * organizations, payments, newsletter, booking window opened, and verification.
  */
 
 import * as React from "react";
@@ -24,8 +24,8 @@ import { PaymentFailedEmail } from "@/emails/payments/PaymentFailedEmail";
 import { PaymentLinkEmail } from "@/emails/payments/PaymentLinkEmail";
 import { PaymentSuccessEmail } from "@/emails/payments/PaymentSuccessEmail";
 import VerificationDecidedEmail from "@/emails/verification/VerificationDecidedEmail";
-import { WaitlistConfirmEmail } from "@/emails/waitlist/WaitlistConfirmEmail";
-import { WaitlistWelcomeEmail } from "@/emails/waitlist/WaitlistWelcomeEmail";
+import { NewsletterConfirmEmail } from "@/emails/newsletter/NewsletterConfirmEmail";
+import { NewsletterWelcomeEmail } from "@/emails/newsletter/NewsletterWelcomeEmail";
 
 const dashboardUrl = "https://app.test/dashboard";
 
@@ -242,22 +242,22 @@ describe("payment email templates", () => {
   });
 });
 
-describe("waitlist, booking window, and verification email templates", () => {
-  it("WaitlistConfirmEmail and WaitlistWelcomeEmail render links and recipient names", () => {
-    const confirmLink = "https://app.test/api/waitlist/confirm?token=w1";
+describe("newsletter, booking window, and verification email templates", () => {
+  it("NewsletterConfirmEmail and NewsletterWelcomeEmail render links and recipient names", () => {
+    const confirmLink = "https://app.test/api/newsletter/confirm?token=w1";
     const confirmOut = html(
-      <WaitlistConfirmEmail name="Asha" confirmLink={confirmLink} />,
+      <NewsletterConfirmEmail name="Asha" confirmLink={confirmLink} />,
     );
     expect(confirmOut).toContain("One click to confirm");
     expect(confirmOut).toContain("Asha");
     expect(confirmOut).toContain(`href="${confirmLink}"`);
 
     const unsubscribeLink =
-      "https://app.test/api/waitlist/unsubscribe?token=w1";
+      "https://app.test/api/newsletter/unsubscribe?token=w1";
     const welcomeOut = html(
-      <WaitlistWelcomeEmail name="Asha" unsubscribeLink={unsubscribeLink} />,
+      <NewsletterWelcomeEmail name="Asha" unsubscribeLink={unsubscribeLink} />,
     );
-    expect(welcomeOut).toContain("You are on the list");
+    expect(welcomeOut).toContain("You are subscribed");
     expect(welcomeOut).toContain(`href="${unsubscribeLink}"`);
   });
 

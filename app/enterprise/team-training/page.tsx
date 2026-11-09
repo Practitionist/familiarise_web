@@ -41,7 +41,7 @@ export default function TeamTrainingPage() {
         titleAccent: "one seat plan.",
         subtitle:
           "Licensed seats cover your cohort so managers stop chasing receipts and learners book vetted experts under your organisation.",
-        primaryCta: { label: "Talk to sales", href: "/contactus" },
+        primaryCta: { label: "Book a demo", href: "/enterprise/demo" },
         secondaryCta: {
           label: "All enterprise options",
           href: "/enterprise",
@@ -68,7 +68,7 @@ export default function TeamTrainingPage() {
         title: "Want licensed seats for your team?",
         description:
           "Share headcount, domains, and cycle length. We will propose a seat program that fits how your L&D team actually runs.",
-        primaryCta: { label: "Talk to sales", href: "/contactus" },
+        primaryCta: { label: "Book a demo", href: "/enterprise/demo" },
         secondaryCta: {
           label: "See corporate mentorship",
           href: "/enterprise/corporate-mentorship",
@@ -89,8 +89,8 @@ export default function TeamTrainingPage() {
             "Ideal for graduate batches and new-manager ramps",
             "Overage rules lock with the contract",
           ],
-          href: "/contactus",
-          ctaLabel: "Talk to sales",
+          href: "/enterprise/demo",
+          ctaLabel: "Book a demo",
         }}
         right={{
           label: "Alternative",

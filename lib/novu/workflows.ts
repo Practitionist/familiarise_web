@@ -19,6 +19,7 @@ export const NOVU_WORKFLOWS = {
   SESSION_NO_SHOW: "session-no-show",
   SESSION_MISSED_RECORDING: "session-missed-recording",
   WINDOW_OPENED: "window-opened",
+  EVENT_SEAT_OPENED: "event-seat-opened",
   APPOINTMENT_RESCHEDULED: "appointment-rescheduled",
   APPOINTMENT_REMINDER: "appointment-reminder",
   SESSION_HOST_LIVE: "session-host-live",
@@ -191,6 +192,13 @@ export type AppointmentPartiallyScheduledInput = AppointmentPayloadInput & {
   placedSessions: number;
   requiredSessions: number;
   unplacedSessions: number;
+};
+
+/** Rung to every waiter on a sold-out webinar or class when a seat frees; nothing is reserved. */
+export type EventSeatOpenedPayload = NotificationScope & {
+  planTitle: string;
+  eventLabel: "webinar" | "class";
+  checkoutUrl: string;
 };
 
 /** Rung once per session to its paid seats when the host first joins through the app. */

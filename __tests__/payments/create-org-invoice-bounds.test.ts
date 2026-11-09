@@ -2,6 +2,8 @@
  * @jest-environment node
  */
 
+import { runAsRegisteredPlatform } from "../fixtures/gst-registered";
+
 jest.mock("../../lib/enterprise/outbound-webhooks/dispatch", () => ({
   dispatchWebhookEvent: jest.fn(),
 }));
@@ -101,3 +103,6 @@ describe("createOrgInvoice total overflow", () => {
     expect(mockGenerateNumber).not.toHaveBeenCalled();
   });
 });
+
+// Priced and invoiced as a GST-registered platform.
+runAsRegisteredPlatform();

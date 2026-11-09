@@ -8,10 +8,10 @@ A referral touches four moments in a payment's life, and each moment has one own
 
 | Moment          | Where it runs                                                                                   | What it does                                                                                                  |
 | --------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Apply           | `applyReferralCode` in `lib/referrals/service.ts`                                               | Creates the `Referral` row in `SIGNED_UP` for a new account.                                                  |
+| Apply           | `applyReferralCode` in `lib/referrals/service.ts`                                               | Creates the `Referral` row in `SIGNED_UP` for a new account, with the request's IP hash and user agent.       |
 | Price and stamp | `resolveCheckoutAttribution` in `lib/referrals/attribution.ts`, called when the order is minted | Decides the source, the take rate, the welcome discount and the credit cap, and stamps them on the `Payment`. |
 | Capture         | `recordReferralCapture` in `lib/referrals/capture.ts`, inside the payment confirmation          | Records who owns the buyer, moves the referral to `QUALIFYING`, and creates the referrer's `PENDING` credit.  |
-| Vest            | `settleQualifyingReferral` in `lib/referrals/vesting.ts`, run by the ticker                     | Vests, voids, reopens or defers each waiting referral.                                                        |
+| Vest            | `settleQualifyingReferral` in `lib/referrals/vesting.ts`, run by the ticker                     | Vests, voids, reopens, holds or defers each waiting referral.                                                 |
 
 The capture step runs inside its own database savepoint. A fault in referral code rolls back to the savepoint, is reported to Sentry once, and never undoes a confirmed booking. Only a serialization failure aborts the whole capture so that it retries.
 
@@ -19,10 +19,10 @@ The capture step runs inside its own database savepoint. A fault in referral cod
 
 Two first-party cookies carry attribution for 30 days, which equals the default qualify window.
 
-| Cookie    | Set by                                                                   | Contents                                                                                      | Used for                                                   |
-| --------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `fam_ref` | `app/r/[code]/route.ts`                                                  | The consumer referral code, validated against `^[A-Za-z0-9_-]{3,32}$` and an active code row. | Onboarding reads it and calls `POST /api/referrals/apply`. |
-| `fam_via` | The `rememberExpertVia` step of `middleware.ts`, on `/explore/experts/*` | `<consultantProfileId>.<issued-at seconds>.<HMAC>`, checked at the edge for shape only.       | Checkout verifies the HMAC and the 30-day age.             |
+| Cookie    | Set by                                                                                                   | Contents                                                                                      | Used for                                                   |
+| --------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `fam_ref` | `app/r/[code]/route.ts`                                                                                  | The consumer referral code, validated against `^[A-Za-z0-9_-]{3,32}$` and an active code row. | Onboarding reads it and calls `POST /api/referrals/apply`. |
+| `fam_via` | The `rememberExpertVia` step of `middleware.ts`, on `/explore/experts/*` and `/explore/programs/plans/*` | `<consultantProfileId>.<issued-at seconds>.<HMAC>`, checked at the edge for shape only.       | Checkout verifies the HMAC and the 30-day age.             |
 
 The HMAC key is derived from `BETTER_AUTH_SECRET` with a fixed purpose string, so the token cannot be reused as any other credential. A token is rejected when it is malformed, forged, older than 30 days, or issued more than five minutes in the future. An expert obtains a freshly signed link from `GET /api/referrals/expert-link`.
 
@@ -66,6 +66,8 @@ A `Referral` moves through the states shown below. `EXPIRED` is not written to t
   EXPIRED  (computed when read, after the qualify window)
 ```
 
+One more state sits beside `QUALIFYING`. A referral that trips a review rule at vest moves `QUALIFYING` to `HELD`. An ADMIN then moves it `HELD` to `QUALIFYING` (release) or `HELD` to `VOID` with reason `REVIEW_REJECTED` (void).
+
 The vest sweep decides each `QUALIFYING` referral in this order:
 
 1. A succeeded refund on the qualifying payment ends the referral. If the buyer asked for the refund, or the refund's initiator was never recorded, the referral becomes `VOID` with reason `REFUNDED`. If the expert or the platform caused the refund, a consumer referral reopens to `SIGNED_UP`, and an expert referral becomes `VOID`.
@@ -73,8 +75,10 @@ The vest sweep decides each `QUALIFYING` referral in this order:
 3. If the qualifying session was cancelled, rescheduled away or voided, the referral becomes `VOID` with reason `SESSION_NOT_DELIVERED`. A rescheduled session moves the referral to the appointment's next live session. If no live session remains, or the session is not completed within the qualify window, the reason is `WINDOW_LAPSED`.
 4. A pending refund, an unsettled dispute, or a session that has not yet ended plus the appointment type's hold period makes the sweep wait.
 5. The referrer being the seller (consumer referral) or the buyer (expert referral) becomes `VOID` with reason `SELF_DEALING`.
-6. A programme that is not live defers the referral without changing it.
-7. Otherwise the referral vests under the consumer or expert rules below.
+6. A qualifying payment made with a UPI address or phone number that the referrer has also paid with becomes `VOID` with reason `SHARED_PAYER`.
+7. A programme that is not live defers the referral without changing it.
+8. A referral that trips a review rule moves to `HELD` and leaves its `PENDING` credit untouched. The rules are described in [Review hold](#review-hold).
+9. Otherwise the referral vests under the consumer or expert rules below.
 
 Every transition is a conditional update that names the expected prior status. One referral is settled per Serializable transaction, so a failed row never blocks the others. The ticker passes a limit of 10 per tick, the sweep stops starting rows after 12 seconds, and a row that waits is moved behind unexamined rows so waiting referrals cannot starve ready ones.
 
@@ -85,7 +89,7 @@ The consumer vest, in one transaction, does the following.
 1. It finds the referrer's `PENDING` credit for this referral. If none exists, the referral becomes `VOID` with reason `MISSING_CREDIT`.
 2. It claims a slot on the referrer's code in one conditional update that checks the lifetime cap (25 vests), the yearly reward cap (₹10,000), and the weekly cap (5 vests). A refused slot becomes `VOID` for the lifetime or yearly cap, and a weekly refusal defers the referral to a later run.
 3. It claims the reward from the monthly budget by conditional update on the configuration `version`. If the budget cannot cover the reward, the whole row rolls back and waits for the next month.
-4. It moves the referral to `VESTED`, the credit to `VESTED` with an expiry of `creditExpiryDays` from now, and posts the ledger entry described in [03-credit-system.md](../finance/20-ledger/07-referral-credits.md).
+4. It moves the referral to `VESTED`, the credit to `VESTED` with an expiry of `creditExpiryDays` from now, and posts the ledger entry described in [Referral credits and the ledger](../finance/20-ledger/07-referral-credits.md).
 5. It stages the referrer's `referral-bonus-earned` bell and `REFERRAL_BONUS_EARNED` email in the same transaction (`stageReferralReward`, `lib/referrals/referral-notify.ts`), attempted after commit. Applying a code stages the referee's welcome notice the same way, stating the programme's `discountMaxPaise` as a cap, and the payment that redeems credits stages `referral-credits-applied` in its checkout or capture transaction (notification decision 17).
 
 ### Expert referral vest
@@ -98,6 +102,26 @@ An expert referral qualifies when a referred expert receives a first paid sale t
 4. A budget claim of `expertReferralBudgetPaise`, which stands for the take the waived sessions forgo.
 
 On success the referral vests and a `ConsultantFeeWaiver` row is created for the referred expert with reason `REFERRED_EXPERT`, and another for the referring expert with reason `REFERRING_EXPERT` when the referrer has a profile. Each waiver carries `expertWaiverSessions` sessions and expires after `expertWaiverDays`.
+
+### Shared payer
+
+The capture webhook carries the payer's UPI address (`vpa`, or `upi.vpa`) and phone (`contact`). `recordPayerInstruments` in `lib/payments/payer-instruments.ts` stores keyed hashes of them on the `Payment` as `payerVpaHash` and `payerPhoneHash`, once, after the capture has been confirmed. The raw values are never stored. The vest compares the qualifying payment's hashes with every other payment of the referrer. Razorpay exposes no stable card fingerprint across customers, so card payments are not compared. A payment that arrived before these columns existed carries no hashes and cannot match.
+
+### Review hold
+
+Two rules, both configuration fields on `ReferralProgramConfig`, decide whether a referral is held instead of vested. A rule is off while its field is null, and the values are set by the owner and kept in Notion.
+
+| Field                     | The referral is held when                                                                                     |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `holdSameIpReferrals`     | at least this many referrals of the same code carry the same `ipHash` (reason `SAME_IP`).                     |
+| `holdSameDeviceReferrals` | at least this many referrals of the same code carry the same `ipHash` and `userAgent` (reason `SAME_DEVICE`). |
+| `holdWindowDays`          | limits both counts to referrals that signed up within this many days; null counts every referral.             |
+
+A held referral is listed under "Held for review" in the referrals back office. An ADMIN either releases it, which moves it back to `QUALIFYING` and stamps `reviewReleasedAt` so the rules never hold it again, or voids it, which sets reason `REVIEW_REJECTED` and voids the `PENDING` credit. Both decisions need a reason and write an ops audit row. The referrer's own list shows a held referral as still waiting.
+
+### Chargeback after vest
+
+When a dispute on a payment settles `LOST` or `CHARGE_REFUNDED` (or `CLOSED` with an amount deducted), `settleLostDispute` calls `voidVestedReferralRewards` in the same transaction. For every `VESTED` referral that payment qualified, the referrer's `REFERRAL_BONUS` credit, and any credit restored from it (`sourceCreditId`), loses its unspent balance through the operator reversal (`reverseCreditBalance`, journal key `referral-reverse:<creditId>`), and any part already spent is absorbed by the platform. A credit with nothing left, because it is spent, reserved by an unpaid checkout or expired, is stamped as reversed anyway, so a later restore lands on a non-spendable row. The referral itself stays `VESTED`. For an expert referral, every fee waiver of that referral with sessions left is set to zero sessions. A replayed verdict finds the credit already reversed and the waivers already at zero, so it changes nothing.
 
 ## 5. Fee waivers
 
@@ -124,7 +148,9 @@ The budget window is a UTC calendar month. The welcome discount is added to the 
 
 ## 8. Referral code rules
 
-A user has one code, either generated from the name or random, plus an optional vanity code of 3 to 20 letters and digits. A code accepts at most 25 applies (`maxReferrals`). `applyReferralCode` runs as a Serializable transaction and refuses when any of these hold: the code is unknown or inactive, the code belongs to the applier, the code is full, the programme takes no new referees, the account was created before the qualify window began, the account already has a succeeded payment, or the account already has a referral. The apply route is rate limited to 3 tries per day per user.
+A user has one code, either generated from the name or random, plus an optional vanity code of 3 to 20 letters and digits. A code accepts at most 25 applies (`maxReferrals`). `applyReferralCode` runs as a Serializable transaction and refuses when any of these hold: the code is unknown or inactive, the code belongs to the applier, the code is full, the programme takes no new referees, the account was created before the qualify window began, the account's email is on a disposable-mail domain (`lib/referrals/disposable-domains.ts`), the account's normalised email equals the referrer's, the account already has a succeeded payment, or the account already has a referral. Normalising lowercases the address, drops a `+tag`, and for `gmail.com` and `googlemail.com` also drops dots. The apply route is rate limited to 3 tries per day per user, and the vanity-code route to 5 tries per hour.
+
+The `ipHash` stored at apply is an HMAC of the middleware-stamped client IP (`stampedClientIp` in `lib/request-ip.ts`) under a key derived from `BETTER_AUTH_SECRET` with its own purpose label (`lib/referrals/signal-hash.ts`). The user agent is kept to 256 characters and stored as sent, not hashed; the privacy policy says so. Neither is shown to the referrer. `referralSignalPruneWhere` (`lib/compliance/signal-retention.ts`) nulls both 180 days after the referral ends, or 180 days after creation for a referral that never settles, and `scrubUser` nulls them on erasure.
 
 ## Deprecated & Superseded Approaches
 

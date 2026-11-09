@@ -201,20 +201,20 @@ export function ConsentSection() {
     <Section
       id={DATA_CONSENT_ANCHOR}
       title="Data consent & privacy rights"
-      description="Manage your DPDP Act 2023 data consents, download a machine-readable summary of your personal data and sub-processor sharing (§11), or withdraw core consent to close your account (§6(4) & §12)."
+      description="Choose what we may use your information for, download a copy of your data and see who we share it with, or withdraw your consent and close your account."
       variant="card"
     >
       <div className="space-y-6">
-        {/* DPDP §11 Data Export + Core Withdrawal Action Bar */}
+        {/* Data export and account-closing action bar */}
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 p-3.5">
           <div className="space-y-0.5">
             <p className="text-sm font-medium text-foreground">
-              Your personal data &amp; processor sharing summary (DPDP §11)
+              Your personal data and who we share it with
             </p>
             <p className="text-xs text-muted-foreground">
-              Download your profile, bookings, payments, consent history, and
-              the list of Data Processors (Razorpay, GetStream, Novu, Resend,
-              Sentry pseudonymous token) as JSON.
+              Download your profile, bookings, payments and consent history,
+              plus the companies that handle your data for us (Razorpay,
+              GetStream, Novu, Resend and Sentry), as a JSON file.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -239,7 +239,7 @@ export function ConsentSection() {
                   ?.scrollIntoView({ behavior: "smooth" })
               }
             >
-              Withdraw core consent &amp; close account
+              Withdraw consent &amp; close account
             </Button>
           </div>
         </div>
@@ -250,10 +250,10 @@ export function ConsentSection() {
             Familiarise platform consent
           </h3>
           <p className="text-xs text-muted-foreground">
-            Core platform purposes (including pseudonymous security &amp; error
-            telemetry via <code className="text-[11px]">ust_&lt;hash&gt;</code>{" "}
-            under DPDP §8(5) &amp; Rule 6) are required while your account is
-            open. Optional purposes can be toggled anytime in 1 click without
+            The required purposes below are needed while your account is open.
+            They include keeping the platform secure. Error reports are sent
+            without your account details, and email addresses in them are
+            removed. You can turn optional purposes on or off anytime without
             affecting your bookings.
           </p>
           <ul className="divide-y divide-border">
@@ -273,7 +273,7 @@ export function ConsentSection() {
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
-                    <StatusBadge label="Required (Active)" tone="success" />
+                    <StatusBadge label="Required" tone="success" />
                   </div>
                 </li>
               );

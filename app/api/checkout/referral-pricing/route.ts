@@ -52,6 +52,7 @@ export async function GET(req: NextRequest) {
     const body: ReferralPricing = {
       welcomeDiscount: attribution.welcomeDiscount,
       creditCapBps: attribution.creditCapBps,
+      promoFeeBps: attribution.promoFeeBps,
     };
     return NextResponse.json(body);
   } catch (error) {

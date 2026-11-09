@@ -4,6 +4,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Shield } from "lucide-react";
 import { MESSAGE_REVIEW_ARTICLE_HREF } from "@/lib/compliance/purpose-codes";
+import {
+  PAYER_SIGNAL_RETENTION_YEARS,
+  REFERRAL_SIGNAL_RETENTION_DAYS,
+} from "@/lib/compliance/signal-retention";
+import { RECORDING_RETENTION_SCHEDULE } from "@/lib/stream/recording-retention-schedule";
 import { CompanyDetails } from "../CompanyDetails";
 import { COMPANY_INFO } from "@/lib/company";
 import {
@@ -75,6 +80,7 @@ export default function PrivacyPolicyPage() {
               <ul>
                 <li>
                   Register for an account (name, email address, phone number)
+                  and confirm your age (date of birth)
                 </li>
                 <li>
                   Complete your profile (professional details, expertise,
@@ -183,15 +189,11 @@ export default function PrivacyPolicyPage() {
               </ul>
 
               <h3 className="text-xl font-semibold mt-6 mb-2">
-                3.5 Itemised Purpose &amp; Retention Schedule (DPDP Act 2023
-                &amp; Rule 3)
+                3.5 What We Use Your Data For, and How Long We Keep It
               </h3>
               <p>
-                In accordance with Section 5 of the Digital Personal Data
-                Protection Act, 2023 (&ldquo;DPDP Act&rdquo;) and Rule 3 of the
-                Digital Personal Data Protection Rules, 2025, the table below
-                itemises the personal data we process, the specific purpose and
-                canonical purpose code, and the applicable retention period:
+                The table below lists the personal data we process, the specific
+                reason for each, and how long we keep it:
               </p>
               <div className="overflow-x-auto my-4">
                 <table className="min-w-full text-sm border border-border">
@@ -201,10 +203,10 @@ export default function PrivacyPolicyPage() {
                         Data Category
                       </th>
                       <th className="p-2 text-left border-b border-border">
-                        Specific Purpose &amp; Code
+                        What we use it for
                       </th>
                       <th className="p-2 text-left border-b border-border">
-                        Tier &amp; Retention Period
+                        How long we keep it
                       </th>
                     </tr>
                   </thead>
@@ -213,19 +215,15 @@ export default function PrivacyPolicyPage() {
                       <td className="p-2 align-top">
                         <strong>Account &amp; Identity</strong> (name, email,
                         phone, timezone, role, professional bio/credentials,
-                        date of birth for 18+ age verification under DPDP
-                        &sect;9 / Fourth Schedule Part B Item 6)
+                        date of birth to confirm you are 18 or older)
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Service &amp; Account</strong> {"("}
-                        <code>PRIMARY_PROCESSING</code>
-                        {")"} — Create and operate your account, authenticate
-                        sessions, and verify adult eligibility.
+                        <strong>Your account</strong> — Create and run your
+                        account, sign you in, and confirm you are an adult.
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Core (Required)</strong> — Retained while
-                        account is active; scrubbed on account erasure
-                        (&sect;12).
+                        <strong>Required</strong> — Kept while your account is
+                        open; erased when you delete your account.
                       </td>
                     </tr>
                     <tr>
@@ -235,15 +233,14 @@ export default function PrivacyPolicyPage() {
                         request notes)
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Session Booking</strong> {"("}
-                        <code>SESSION_BOOKING</code>
-                        {")"} — Schedule, manage, and deliver 1:1 consultations,
-                        subscriptions, webinars, and classes.
+                        <strong>Booking sessions</strong> — Schedule, manage and
+                        deliver 1:1 consultations, subscriptions, webinars and
+                        classes.
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Core (Required)</strong> — Free-text notes
-                        scrubbed on erasure; appointment delivery records linked
-                        to tax invoices retained per statutory tax law.
+                        <strong>Required</strong> — Free-text notes are erased
+                        when you delete your account; booking records linked to
+                        tax invoices are kept as tax law requires.
                       </td>
                     </tr>
                     <tr>
@@ -252,55 +249,53 @@ export default function PrivacyPolicyPage() {
                         name, avatar, session room participation)
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Video &amp; Chat</strong> {"("}
-                        <code>STREAM_DATA_PROCESSING</code>
-                        {")"} — Real-time video calls and messaging via
-                        GetStream.io.
+                        <strong>Video calls and chat</strong> — Live video calls
+                        and messaging, run by GetStream.
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Core (Required)</strong> — Active account
-                        lifetime; access and tokens revoked upon erasure.
+                        <strong>Required</strong> — Kept while your account is
+                        open; access is cut off when you delete your account.
                       </td>
                     </tr>
                     <tr>
                       <td className="p-2 align-top">
                         <strong>Payments, Payouts &amp; Tax Records</strong>{" "}
                         (Razorpay order/payment IDs, invoices, consultant
-                        earnings, payouts, PAN/TDS &amp; GST ledger rows)
+                        earnings, payouts, and PAN, TDS and GST records)
                       </td>
                       <td className="p-2 align-top">
-                        <strong>
-                          Financial Settlement &amp; Statutory Tax
-                        </strong>{" "}
-                        {"("}
-                        <code>PRIMARY_PROCESSING</code> &amp; DPDP
-                        &sect;12(3)/&sect;8(7)(b)
-                        {")"}
+                        <strong>Payments and legal tax records</strong> — Take
+                        payments, pay out experts, and keep the invoices and tax
+                        records the law requires.
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Statutory Retention</strong> — Retained for 7–8
-                        years under the Income Tax Act, 1961 (&sect;44AA / Rule
-                        6F) and CGST Act, 2017 (&sect;36) with profile identity
-                        tombstoned to a pseudonymous hash after erasure.
+                        <strong>Kept by law</strong> — Retained for 7–8 years
+                        under the Income-tax Act, 1961 and the CGST Act, 2017,
+                        with your identity replaced by a one-way scrambled code
+                        after you delete your account.
                       </td>
                     </tr>
                     <tr>
                       <td className="p-2 align-top">
-                        <strong>Security &amp; Error Diagnostics</strong>{" "}
-                        (one-way HMAC-SHA256 virtual token{" "}
-                        <code>ust_&lt;hash&gt;</code>, trace IDs, error stack
-                        traces, security audit logs)
+                        <strong>Security &amp; Error Diagnostics</strong> (a
+                        one-way scrambled code in place of your account ID,
+                        trace IDs, error stack traces, security audit logs)
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Security Safeguards &amp; Support</strong> (DPDP
-                        &sect;8(4)–(5) &amp; Rule 6) — Detect deadlocks, failed
-                        checkouts, and security incidents without exposing raw
-                        PII.
+                        <strong>Keeping the platform secure</strong> — Find
+                        technical faults, failed checkouts and security
+                        incidents. Reports are sent without your account
+                        details, and email addresses in them are removed.
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Statutory Security</strong> — 30–90 days in
-                        Sentry; 1 year minimum for security/processing logs
-                        under DPDP Rule 8(3).
+                        <strong>Legal minimum</strong> — 30–90 days in our
+                        error-monitoring tool (Sentry). Sign-in and access logs
+                        (IP address and browser) are kept for 180 days after the
+                        session ends, as India&rsquo;s cyber-security rules
+                        require, and background job logs for 180 days.
+                        Payment-provider and email delivery logs are kept for 1
+                        year. Staff and organisation activity logs are kept for
+                        2 years, or 8 years when they concern money.
                       </td>
                     </tr>
                     <tr>
@@ -309,14 +304,13 @@ export default function PrivacyPolicyPage() {
                         address and newsletter subscription)
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Marketing</strong> {"("}
-                        <code>MARKETING_COMMS</code>
-                        {")"} — Send the Familiarise newsletter and emails about
-                        our products, offers and updates.
+                        <strong>Marketing emails</strong> — Send the Familiarise
+                        newsletter and emails about our products, offers and
+                        updates.
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Optional</strong> — Until withdrawn via 1-click
-                        toggle in Settings &rarr; Account.
+                        <strong>Optional</strong> — Until you turn it off in
+                        Settings &rarr; Account.
                       </td>
                     </tr>
                     <tr>
@@ -345,6 +339,71 @@ export default function PrivacyPolicyPage() {
                         or payment hold, and the related payment and refund
                         records as the law requires. Staff access logs follow
                         the security-log period above.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-2 align-top">
+                        <strong>Session recordings</strong> (the audio and video
+                        of a recorded session, and its preview clip)
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Video calls and chat</strong> — Let participants
+                        replay a session they took part in, and settle disputes
+                        about it.
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Fixed period</strong> — One-on-one sessions and
+                        trials: {RECORDING_RETENTION_SCHEDULE.oneToOneDays} days
+                        after the session. Subscriptions:{" "}
+                        {RECORDING_RETENTION_SCHEDULE.subscriptionDays} days
+                        after the subscription ends. Webinars and classes:{" "}
+                        {RECORDING_RETENTION_SCHEDULE.groupDays} days after the
+                        session or the class&rsquo;s last session. A recording
+                        its host has published for sale, or that someone has
+                        bought, is kept while it is on sale or the purchase is
+                        live. An organisation that sponsors a session can set a
+                        shorter period. Your own one-on-one recordings are
+                        deleted when you erase your account.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-2 align-top">
+                        <strong>Fraud-prevention signals</strong> (when a
+                        referral code is used: a one-way hash of the IP address,
+                        and the browser&rsquo;s user-agent string, which is
+                        stored as sent, not hashed, for fraud review; and
+                        one-way hashes of the UPI address and phone number a
+                        payment was made with)
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Support, Safety &amp; Fraud Prevention</strong>{" "}
+                        — Detect self-referral and repeat abuse of referral
+                        rewards, and support chargeback review.
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Fixed period</strong> — The IP hash and the
+                        user-agent string are deleted{" "}
+                        {REFERRAL_SIGNAL_RETENTION_DAYS} days after the referral
+                        ends, {REFERRAL_SIGNAL_RETENTION_DAYS} days after it was
+                        created if it never completes, or when you erase your
+                        account. Payment hashes are cleared{" "}
+                        {PAYER_SIGNAL_RETENTION_YEARS} years after the payment,
+                        and stay through account erasure until then.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-2 align-top">
+                        <strong>Consent records</strong> (which purposes you
+                        agreed to, the notice version, and when)
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Proof of consent</strong> — Show what you agreed
+                        to and when you withdrew it, as India&rsquo;s data
+                        protection law requires us to be able to prove.
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Proof record</strong> — Kept for at least 7
+                        years after the consent is given or withdrawn.
                       </td>
                     </tr>
                   </tbody>
@@ -456,28 +515,66 @@ export default function PrivacyPolicyPage() {
               </p>
               <ul>
                 <li>
-                  <strong>Razorpay / Stripe:</strong> Payment processing,
-                  refunds, consultant payouts, and transaction management
+                  <strong>Razorpay and RazorpayX:</strong> Payment processing,
+                  refunds and consultant payouts. Razorpay handles your card and
+                  UPI details; we do not store them.
                 </li>
                 <li>
                   <strong>GetStream.io:</strong> Video conferencing and
-                  real-time chat communication {"("}
-                  <code>STREAM_DATA_PROCESSING</code>
-                  {")"}
+                  real-time chat communication
                 </li>
                 <li>
-                  <strong>
-                    Cloud Database &amp; Storage (Supabase / Neon):
-                  </strong>{" "}
-                  Encrypted database hosting, verification document storage, and
-                  backups
+                  <strong>Supabase:</strong> Our database (hosted in Mumbai,
+                  India) and file storage for verification documents and preview
+                  clips, including backups
+                </li>
+                <li>
+                  <strong>Cloudflare R2:</strong> Storage for full session
+                  recordings and for the files experts sell as digital products
+                </li>
+                <li>
+                  <strong>Cloudflare Turnstile:</strong> A bot check on sign-up,
+                  password-reset and code-resend forms. It sends Cloudflare
+                  information about your browser and connection.
+                </li>
+                <li>
+                  <strong>Netlify:</strong> Hosting and content delivery. Our
+                  application runs on Netlify&rsquo;s servers in Singapore and
+                  sees the technical details of each request, such as your IP
+                  address.
+                </li>
+                <li>
+                  <strong>Upstash:</strong> Request rate limits and short-lived
+                  locks that stop abuse and double bookings, keyed by IP address
+                  or account identifier and expiring when the limit window ends
                 </li>
                 <li>
                   <strong>
                     Email &amp; Notification Providers (Resend / Novu):
                   </strong>{" "}
-                  Transactional booking notifications and consented marketing
-                  emails
+                  Transactional booking notifications, the in-app inbox and
+                  consented marketing emails
+                </li>
+                <li>
+                  <strong>Better Stack:</strong> Uptime checks of our site and
+                  operational logs of our background jobs. These logs carry
+                  identifiers only, never names or email addresses.
+                </li>
+                <li>
+                  <strong>logo.dev:</strong> Company logos shown next to
+                  employers and institutions on profiles. It receives only the
+                  company&rsquo;s web domain.
+                </li>
+                <li>
+                  <strong>Have I Been Pwned:</strong> When you choose a
+                  password, we check it against known breaches by sending only
+                  the first five characters of its SHA-1 hash, never the
+                  password.
+                </li>
+                <li>
+                  <strong>Google and GitHub:</strong> Only if you choose to sign
+                  in with them. They tell us your name, email address and
+                  profile photo.
                 </li>
                 <li>
                   <strong>
@@ -485,16 +582,15 @@ export default function PrivacyPolicyPage() {
                     <code>us.sentry.io</code>):
                   </strong>{" "}
                   Application error monitoring, distributed tracing, and
-                  reliability diagnostics. Under DPDP Rule 6(1)(a)
-                  de-identification safeguards, Familiarise does not send Sentry
-                  your name, email address, phone number, IP address, cookies,
-                  request or response headers, or the text of the pages you
-                  view, and Sentry records no session replays. Where an event is
-                  linked to an account, it carries only a one-way salted
-                  HMAC-SHA256 virtual token (
-                  <code>ust_&lt;24-hex-chars&gt;</code>), never your identity.
-                  Events are retained for 30–90 days to help our support and
-                  engineering teams diagnose technical issues you report.
+                  reliability diagnostics. To protect your identity, Familiarise
+                  does not send Sentry your name, email address, phone number,
+                  IP address, cookies, request or response headers, or the text
+                  of the pages you view, and Sentry records no session replays.
+                  Where an event is linked to an account, it carries only a
+                  one-way scrambled code that cannot be reversed to find you,
+                  never your identity. Events are retained for 30–90 days to
+                  help our support and engineering teams diagnose technical
+                  issues you report.
                 </li>
               </ul>
 
@@ -588,6 +684,10 @@ export default function PrivacyPolicyPage() {
                   <strong>Razorpay:</strong> checkout
                 </li>
                 <li>
+                  <strong>Cloudflare Turnstile:</strong> the bot check on
+                  sign-up, password-reset and code-resend forms
+                </li>
+                <li>
                   <strong>Sentry:</strong> error monitoring, with its automatic
                   collection of IP addresses, cookies, request headers and user
                   details turned off, and no session replay
@@ -647,8 +747,7 @@ export default function PrivacyPolicyPage() {
               <ul>
                 <li>
                   If you have an account, marketing emails and our newsletter
-                  follow your Marketing Communications consent (
-                  <code>MARKETING_COMMS</code>) in{" "}
+                  follow your Marketing emails consent in{" "}
                   <strong>Settings &rarr; Account</strong> (&ldquo;Data
                   consent&rdquo;). Giving it subscribes your account&apos;s
                   email address to the newsletter; withdrawing it unsubscribes
@@ -669,16 +768,16 @@ export default function PrivacyPolicyPage() {
               </ul>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
-                7.4 Data Portability &amp; Summary of Personal Data (DPDP
-                &sect;11)
+                7.4 Data Portability &amp; Summary of Personal Data
               </h3>
               <ul>
                 <li>
                   Download a machine-readable JSON summary of your personal
-                  data, booking history, payment records, consent artifacts, and
-                  the list of Data Processors with whom your data has been
-                  shared directly from <strong>Settings &rarr; Account</strong>{" "}
-                  (&ldquo;Download my data &amp; processor summary&rdquo;)
+                  data, booking history, payment records, records of your
+                  consent choices, and the list of Data Processors with whom
+                  your data has been shared directly from{" "}
+                  <strong>Settings &rarr; Account</strong> (&ldquo;Download my
+                  data&rdquo;)
                 </li>
                 <li>
                   Transfer your data to another service (where technically
@@ -687,28 +786,28 @@ export default function PrivacyPolicyPage() {
               </ul>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
-                7.5 Consent Withdrawal, Grievance Redressal &amp; Data
-                Protection Board of India (DPDP &sect;6, &sect;12, &sect;13
-                &amp; &sect;14)
+                7.5 Withdrawing Consent, Complaints &amp; the Data Protection
+                Board of India
               </h3>
               <ul>
                 <li>
                   <strong>Withdraw Optional Consent Anytime:</strong> You can
-                  grant or withdraw the optional Marketing Communications
-                  consent (<code>MARKETING_COMMS</code>) with one click in{" "}
+                  give or withdraw the optional Marketing emails consent with
+                  one click in{" "}
                   <strong>Dashboard &rarr; Settings &rarr; Account</strong>{" "}
                   (&ldquo;Data consent&rdquo;) without affecting your core
                   account access.
                 </li>
                 <li>
-                  <strong>Withdraw Core Consent &amp; Erase Account:</strong>{" "}
-                  Core platform consents (<code>PRIMARY_PROCESSING</code>,{" "}
-                  <code>SESSION_BOOKING</code>,{" "}
-                  <code>STREAM_DATA_PROCESSING</code>) are required to operate
-                  your account and deliver bookings. Under DPDP &sect;6(4)–(6)
-                  and &sect;12, you may withdraw core consent at any time by
+                  <strong>
+                    Withdraw Required Consent &amp; Erase Account:
+                  </strong>{" "}
+                  The consents for running your account, booking sessions and
+                  video calls and chat are required to operate your account and
+                  deliver bookings. Under India&rsquo;s Digital Personal Data
+                  Protection Act, 2023, you may withdraw them at any time by
                   selecting{" "}
-                  <strong>Withdraw core consent &amp; delete account</strong> in{" "}
+                  <strong>Withdraw consent &amp; delete account</strong> in{" "}
                   <strong>Settings &rarr; Account</strong>. If you have active
                   upcoming sessions, unsettled payouts or open chargebacks, we
                   will guide you to complete or cancel them first; upon erasure,
@@ -717,8 +816,8 @@ export default function PrivacyPolicyPage() {
                   tax law.
                 </li>
                 <li>
-                  <strong>Grievance Officer &amp; Statutory SLA:</strong> You
-                  may file a grievance in{" "}
+                  <strong>Grievance Officer &amp; Response Times:</strong> You
+                  may send a complaint in{" "}
                   <strong>Settings &rarr; Account</strong>, on our{" "}
                   <a
                     href="/grievance"
@@ -741,9 +840,9 @@ export default function PrivacyPolicyPage() {
                   <strong>Right to Approach the Data Protection Board:</strong>{" "}
                   If your grievance is not resolved within the statutory period
                   or you are dissatisfied with the resolution, you have the
-                  right under Section 13(3) and Section 27 of the DPDP Act, 2023
-                  to make a complaint to the{" "}
-                  <strong>Data Protection Board of India (DPBI)</strong>.
+                  right under India&rsquo;s Digital Personal Data Protection
+                  Act, 2023 to make a complaint to the{" "}
+                  <strong>Data Protection Board of India</strong>.
                 </li>
               </ul>
 
@@ -787,14 +886,19 @@ export default function PrivacyPolicyPage() {
                 8. Children's Privacy
               </h2>
               <p>
-                Under the Digital Personal Data Protection Act, 2023, a child is
-                anyone who has not completed eighteen years of age. Our services
-                are not intended for children, and we do not knowingly collect
-                personal information from anyone under 18. We ask for your date
-                of birth during onboarding solely to confirm that you are not a
-                child — a purpose expressly permitted by Part B, item 6 of the
-                Fourth Schedule to the Digital Personal Data Protection Rules,
-                2025.
+                Familiarise is for adults. You must be at least 18 years old to
+                use it. Under the Digital Personal Data Protection Act, 2023, a
+                child is anyone who has not completed eighteen years of age, and
+                we do not knowingly collect personal information from anyone
+                under 18.
+              </p>
+              <p>
+                During onboarding we ask for your date of birth and for your
+                confirmation that you are 18 or older, and we refuse an account
+                for a date of birth under 18. We collect the date of birth only
+                to confirm that you are not a child, a purpose permitted by Part
+                B, item 6 of the Fourth Schedule to the Digital Personal Data
+                Protection Rules, 2025.
               </p>
               <p>
                 If you are a parent or guardian and believe your child has
@@ -808,11 +912,13 @@ export default function PrivacyPolicyPage() {
                 9. International Data Transfers
               </h2>
               <p>
-                Your information may be transferred to and processed in
-                countries other than your country of residence. These countries
-                may have different data protection laws. We ensure that
-                appropriate safeguards are in place to protect your information
-                in accordance with this Privacy Policy.
+                Our database is hosted in Mumbai, India, and our application
+                runs on servers in Singapore. Error monitoring data goes to
+                Sentry in the United States, and some other providers in Section
+                4.2 may process data in other countries. These countries may
+                have different data protection laws. We ensure that appropriate
+                safeguards are in place to protect your information in
+                accordance with this Privacy Policy.
               </p>
 
               <Separator className="my-6" />

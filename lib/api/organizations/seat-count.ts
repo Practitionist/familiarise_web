@@ -27,6 +27,7 @@ import type { Tx } from "@/lib/prisma";
  */
 
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { CONTRACT_STATUS_LABEL } from "@/lib/labels/org-labels";
 import {
   ASSIGNMENT_ALLOWED_FROM,
   IllegalTransitionError,
@@ -250,7 +251,7 @@ export async function closeContractSeats(
       targetMembershipId: seat.membershipId,
       category: "PROGRAM" as const,
       action: AUDIT_ACTIONS.PROGRAM.ASSIGNMENT_CLOSED_BY_CONTRACT,
-      description: `Seat ${seat.id} closed: contract ${contractId} ${args.contractStatus.toLowerCase()}`,
+      description: `Program seat closed: contract ${CONTRACT_STATUS_LABEL[args.contractStatus].toLowerCase()}`,
       details: {
         contractId,
         programId: seat.programId,

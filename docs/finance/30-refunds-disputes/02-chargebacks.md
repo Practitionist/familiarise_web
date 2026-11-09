@@ -81,6 +81,7 @@ Both the webhook and `reconcile-disputes` call the same function, `settleDispute
 4. **Releases this dispute's holds**, so a partial loss leaves the rest payable.
 5. **Books the money.** For a card-funded payment, personal or organisation-tagged, the booking journal is mirrored in proportion: `chargeback:<disputeId>` flips each `booking:<paymentId>` line, scaled by the reversed fraction, with the rounding residual on `PLATFORM_FEE`; refunds already succeeded are subtracted first, and past the GST cutoff the GST line is omitted. For an organisation-funded payment (wallet, invoice or licence legs) the funder bears the loss: its wallet is debited if it can cover it, otherwise the amount is booked as `ORG_RECEIVABLE` for dunning.
 6. **Mints credit notes** for the lost amount, keyed to the dispute and idempotent: the organisation's note (`mintRefundCreditNote`) and the personal buyer's consumer note (`mintConsumerCreditNote`). Replay purchases lose their playback entitlement.
+7. **Takes back an unspent referral reward.** If the payment qualified a vested referral, `voidVestedReferralRewards` voids the unspent balance of the referrer's credit under `referral-reverse:<creditId>` and ends the unused fee-waiver sessions of an expert referral ([referral credits](../20-ledger/07-referral-credits.md#6-a-lost-chargeback-after-vest)).
 
 ### Who bears a loss
 

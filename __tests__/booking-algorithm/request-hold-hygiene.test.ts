@@ -14,6 +14,14 @@
 import { BEING_MOVED } from "@/lib/data/needs-you";
 import "./setup";
 
+// The notify-me hooks are pinned by their own suites; here they stage nothing.
+jest.mock("@/lib/booking/event-waitlist", () => ({
+  stageSeatOpenedNotices: jest.fn(async () => ({ pages: [], email: null })),
+  finishSeatOpenedNotices: jest.fn(async () => undefined),
+  markEventWaitlistBooked: jest.fn(async () => ({ count: 0 })),
+  expireEventWaitlist: jest.fn(async () => ({ expired: 0, purged: 0 })),
+  hasLapsedEventWaitlist: jest.fn(async () => false),
+}));
 jest.mock("../../lib/prisma", () => {
   const db: Record<string, unknown> = {
     consultation: {
@@ -43,9 +51,10 @@ jest.mock("../../lib/prisma", () => {
     },
     payment: { findMany: jest.fn().mockResolvedValue([]) },
     appointment: { findMany: jest.fn().mockResolvedValue([]) },
-    // #1778 — the sweep's backup-interest expiry arm.
+    // The sweep's backup-interest expiry and purge arm.
     windowBackupInterest: {
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      findMany: jest.fn().mockResolvedValue([]),
     },
     $disconnect: jest.fn(),
   };

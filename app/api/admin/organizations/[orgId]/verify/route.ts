@@ -15,6 +15,7 @@ import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { purgeOrgSurfaces } from "@/lib/data/public-cache";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { ORG_STATUS_LABEL } from "@/lib/labels/org-labels";
 import {
   IllegalTransitionError,
   transitionOrganization,
@@ -34,6 +35,14 @@ const ActionSchema = z.enum([
   "REACTIVATE",
   "DEACTIVATE",
 ]);
+
+const ACTION_PAST: Record<z.infer<typeof ActionSchema>, string> = {
+  VERIFY: "verified",
+  REJECT: "rejected",
+  SUSPEND: "suspended",
+  REACTIVATE: "reactivated",
+  DEACTIVATE: "deactivated",
+};
 
 /** An org lifecycle door: ADMIN, step-up, a reason (the owner sees it on REJECT) and an ops log row. */
 export const POST = withOpsAction(
@@ -110,7 +119,7 @@ export const POST = withOpsAction(
             actorMembershipId: null,
             category: "SYSTEM",
             action: actionKey,
-            description: `Admin reject: stays ${current.status}`,
+            description: `Admin rejected the verification: stays ${ORG_STATUS_LABEL[current.status]}`,
             details: {
               adminUserId: actor.userId,
               from: current.status,
@@ -144,7 +153,7 @@ export const POST = withOpsAction(
             actorMembershipId: null,
             category: "SYSTEM",
             action: actionKey,
-            description: `Admin ${body.action.toLowerCase()}: ${current.status} → ${nextStatus}`,
+            description: `Admin ${ACTION_PAST[body.action]} the organization: ${ORG_STATUS_LABEL[current.status]} → ${ORG_STATUS_LABEL[nextStatus]}`,
             details: {
               adminUserId: actor.userId,
               from: current.status,

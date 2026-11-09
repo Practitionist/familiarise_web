@@ -13,7 +13,7 @@ import { deriveBatchCards } from "@/lib/booking/batch-cards";
 import { formatRole } from "@/components/collaborators/format";
 import { BatchSchedule } from "./BatchSchedule";
 import { ClientClassRegistration } from "./ClientClassRegistration";
-import { useCurrency } from "@/hooks/useCurrency";
+import { BuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
 import type { TClassPlanDetailsData } from "../types";
@@ -22,13 +22,18 @@ interface ClassDetailsProps {
   readonly plan: TClassPlanDetailsData;
   /** Batches' appointments the signed-in viewer holds a seat on; read by the server. */
   readonly enrolledAppointmentIds: readonly string[];
+  /** Batches' appointments the viewer is on the notify-me list of; read by the server. */
+  readonly waitingAppointmentIds: readonly string[];
+  /** Who the server rendered for, so the client can refresh on a mismatch. */
+  readonly viewerUserId: string | null;
 }
 
 export function ClassDetails({
   plan,
   enrolledAppointmentIds,
+  waitingAppointmentIds,
+  viewerUserId,
 }: ClassDetailsProps) {
-  const { formatPrice } = useCurrency();
   const [userTimeZone, setUserTimeZone] = useState("UTC");
   useEffect(() => {
     setUserTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
@@ -55,19 +60,6 @@ export function ClassDetails({
         />
         <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/60 to-transparent" />
 
-        {/* Back Navigation */}
-        <div className="absolute top-0 left-0 right-0 z-10">
-          <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 py-6">
-            <Link
-              href="/explore/programs"
-              className="inline-flex items-center gap-2 text-sm text-white/80 hover:text-white transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Programs
-            </Link>
-          </div>
-        </div>
-
         {/* Title Overlay */}
         <div className="absolute bottom-0 left-0 right-0 z-10">
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 pb-8">
@@ -77,7 +69,7 @@ export function ClassDetails({
             </h1>
             <div className="flex items-center gap-4 text-white/80">
               <span className="text-2xl md:text-3xl font-bold text-white">
-                {formatPrice(plan.price)}
+                <BuyerPrice paise={plan.price} noteClassName="text-white/70" />
               </span>
               <span className="text-white/60">•</span>
               <span>{plan.durationInMonths} months</span>
@@ -149,6 +141,8 @@ export function ClassDetails({
                   cards={cards}
                   zone={userTimeZone}
                   enrolledAppointmentIds={enrolledAppointmentIds}
+                  waitingAppointmentIds={waitingAppointmentIds}
+                  viewerUserId={viewerUserId}
                 />
               </CardContent>
             </Card>
@@ -252,6 +246,9 @@ export function ClassDetails({
                 plan={plan}
                 maxParticipants={plan.maxParticipants ?? undefined}
                 enrolledAppointmentIds={enrolledAppointmentIds}
+                waitingAppointmentIds={waitingAppointmentIds}
+                viewerUserId={viewerUserId}
+                waitlistEnabled={plan.waitlistEnabled}
                 batch={cards.find((c) => c.canEnrol) ?? cards[0]}
               />
             </div>

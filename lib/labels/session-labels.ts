@@ -43,7 +43,8 @@ import type {
   OccurrenceOutcome,
   ParticipantStatus,
   TrialStatus,
-  WaitlistStatus,
+  NewsletterStatus,
+  PlatformFeedbackStatus,
   WebinarStatus,
 } from "@prisma/client";
 import { humanizeEnum } from "@/lib/ui/tone";
@@ -259,10 +260,13 @@ export const slotStatusBadge = (
   status: OccurrenceCompletionStatus | string | null | undefined,
 ): StatusBadgeStyle => resolve(SLOT_STATUS_BADGE, status);
 
-// ───────────────────────────── WaitlistStatus ─────────────────────────────
+// ───────────────────────────── NewsletterStatus ─────────────────────────────
 // Newsletter subscription lifecycle, not event capacity.
 
-export const WAITLIST_STATUS_BADGE: Record<WaitlistStatus, StatusBadgeStyle> = {
+export const NEWSLETTER_STATUS_BADGE: Record<
+  NewsletterStatus,
+  StatusBadgeStyle
+> = {
   PENDING: {
     label: "Awaiting confirmation",
     className: "bg-amber-100 text-amber-900 border-amber-200",
@@ -285,9 +289,9 @@ export const WAITLIST_STATUS_BADGE: Record<WaitlistStatus, StatusBadgeStyle> = {
   },
 };
 
-export const waitlistStatusBadge = (
-  status: WaitlistStatus | string | null | undefined,
-): StatusBadgeStyle => resolve(WAITLIST_STATUS_BADGE, status);
+export const newsletterStatusBadge = (
+  status: NewsletterStatus | string | null | undefined,
+): StatusBadgeStyle => resolve(NEWSLETTER_STATUS_BADGE, status);
 
 // ───────────────────────────── DocumentReviewStatus ─────────────────────────────
 
@@ -367,9 +371,7 @@ export const recordingStatusBadge = (
 // exist against the payment).
 
 export type PaymentDisplayStatus =
-  | PaymentStatus
-  | "REFUNDED"
-  | "PARTIALLY_REFUNDED";
+  PaymentStatus | "REFUNDED" | "PARTIALLY_REFUNDED";
 
 export const PAYMENT_STATUS_BADGE: Record<
   PaymentDisplayStatus,
@@ -593,6 +595,10 @@ export const REFERRAL_STATUS_BADGE: Record<ReferralStatus, StatusBadgeStyle> = {
     label: "Didn't qualify",
     className: "bg-zinc-100 text-zinc-500 border-zinc-200",
   },
+  HELD: {
+    label: "Held for review",
+    className: "bg-amber-100 text-amber-900 border-amber-200",
+  },
 };
 
 export const referralStatusBadge = (
@@ -631,6 +637,18 @@ export const verificationStatusBadge = (
 ): StatusBadgeStyle => resolve(VERIFICATION_STATUS_BADGE, status);
 
 // ───────────────────────────── Sponsoring-org helper ─────────────────────────────
+
+/** Platform feedback status in sentence case; lower-case it for a mid-sentence clause. */
+export const PLATFORM_FEEDBACK_STATUS_LABEL: Record<
+  PlatformFeedbackStatus,
+  string
+> = {
+  PENDING: "Pending",
+  ACKNOWLEDGED: "Acknowledged",
+  IN_PROGRESS: "In progress",
+  RESOLVED: "Resolved",
+  CLOSED: "Closed",
+};
 
 /**
  * Resolve the display name of the org sponsoring a booking/payment from the

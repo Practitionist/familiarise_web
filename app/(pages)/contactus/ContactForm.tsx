@@ -11,7 +11,8 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { CheckCircle2, Loader2 } from "lucide-react";
+import { FormTail } from "@/components/forms/FormTail";
+import { CheckCircle2 } from "lucide-react";
 import { ACK_PROMISE_COPY, INQUIRY_CATEGORIES } from "../constants";
 
 type FieldErrors = Partial<Record<string, string[]>>;
@@ -262,35 +263,14 @@ export function ContactForm() {
         </select>
       </div>
 
-      {/* Honeypot — hidden from people, irresistible to bots. */}
-      <div aria-hidden className="hidden">
-        <Label htmlFor="website">Website</Label>
-        <Input
-          id="website"
-          name="website"
-          tabIndex={-1}
-          autoComplete="off"
-          value={values.website}
-          onChange={(e) => set("website")(e.target.value)}
-        />
-      </div>
-
-      {formError && (
-        <p role="alert" className="text-sm text-red-600">
-          {formError}
-        </p>
-      )}
-
-      <Button className="w-full" type="submit" size="lg" disabled={sending}>
-        {sending ? (
-          <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-            Sending…
-          </>
-        ) : (
-          "Send Message"
-        )}
-      </Button>
+      <FormTail
+        idPrefix="contact"
+        honeypot={values.website}
+        onHoneypotChange={set("website")}
+        error={formError}
+        sending={sending}
+        submitLabel="Send Message"
+      />
 
       <p className="text-xs text-muted-foreground text-center">
         We acknowledge and reply {ACK_PROMISE_COPY}.

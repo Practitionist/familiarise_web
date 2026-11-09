@@ -5,7 +5,10 @@ import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getSession } from "@/lib/auth-server";
 import { reportSentryError } from "@/lib/observability/report";
 import { getWebinarPlanDetail } from "@/lib/data/plan-details";
-import { viewerSeatAppointmentIds } from "@/lib/data/viewer-seats";
+import {
+  viewerSeatAppointmentIds,
+  viewerWaitlistAppointmentIds,
+} from "@/lib/data/viewer-seats";
 import {
   eventPlanMetadata,
   hiddenEventPlanMetadata,
@@ -64,10 +67,13 @@ export default async function WebinarDetailsPage({
   const nextSession =
     firstWebinarInstance?.appointment?.occurrences?.[0]?.startsAt;
   const appointmentId = firstWebinarInstance?.appointment?.id;
-  const isRegistered = appointmentId
-    ? (await viewerSeatAppointmentIds(session?.user?.id, [appointmentId]))
-        .length > 0
-    : false;
+  const viewerUserId = session?.user?.id ?? null;
+  const [seated, waiting] = appointmentId
+    ? await Promise.all([
+        viewerSeatAppointmentIds(viewerUserId, [appointmentId]),
+        viewerWaitlistAppointmentIds(viewerUserId, [appointmentId]),
+      ])
+    : [[], []];
 
   return (
     <>
@@ -76,7 +82,9 @@ export default async function WebinarDetailsPage({
         plan={webinarData}
         nextSession={nextSession}
         webinarId={firstWebinarInstance?.id}
-        isRegistered={isRegistered}
+        isRegistered={seated.length > 0}
+        isWaiting={waiting.length > 0}
+        viewerUserId={viewerUserId}
       />
     </>
   );

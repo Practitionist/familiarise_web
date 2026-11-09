@@ -10,6 +10,7 @@ import {
   readStandingConfigSkips,
   type StandingConfigSkip,
 } from "@/lib/cron/completion-evidence";
+import { isExpectedConfigSkip } from "@/lib/cron/config-skip";
 import { readIdleCompletions } from "@/lib/cron/idle-skips";
 import {
   assessOperationalCompletions,
@@ -39,6 +40,10 @@ import {
   type ReleaseLag,
 } from "@/lib/observability/release-lag";
 import { razorpayKeyMode } from "@/lib/payments/core/razorpay-key-mode";
+import {
+  checkGstRegistrationTurnover,
+  GST_TURNOVER_ALARM_PAISE,
+} from "@/lib/compliance/gst-turnover";
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -154,6 +159,7 @@ async function jobsSection(
 
 function skipsSection(
   skips: readonly StandingConfigSkip[],
+  expected: readonly StandingConfigSkip[],
   now: Date,
 ): SectionBody {
   return {
@@ -161,8 +167,16 @@ function skipsSection(
       text: `${skip.jobName}: ${skip.reason ?? "not configured"}, ${formatAge(now.getTime() - skip.firstSeenAt.getTime())} (${skip.tier})`,
       isNew: now.getTime() - skip.firstSeenAt.getTime() < DAY_MS,
     })),
-    notes:
-      skips.length === 0 ? ["No job is skipping for a missing setting."] : [],
+    notes: [
+      ...(skips.length === 0 && expected.length === 0
+        ? ["No job is skipping for a missing setting."]
+        : []),
+      ...(expected.length > 0
+        ? [
+            `Expected while unregistered for GST: ${expected.map((skip) => skip.jobName).join(", ")}.`,
+          ]
+        : []),
+    ],
   };
 }
 
@@ -591,6 +605,29 @@ function settingsSection(): SectionBody {
   };
 }
 
+const rupees = (paise: number) =>
+  `₹${Math.floor(paise / 100).toLocaleString("en-IN")}`;
+
+/** Unregistered only: the daily GST registration turnover alarm (one Sentry event a day at most). */
+async function gstRegistrationSection(db: Db, now: Date): Promise<SectionBody> {
+  if (isSet("PLATFORM_GSTIN")) {
+    return { items: [], notes: ["Registered: PLATFORM_GSTIN is set."] };
+  }
+  const check = await checkGstRegistrationTurnover(db, now);
+  const line = `Unregistered; financial-year turnover ${rupees(check.turnoverPaise)} against the ${rupees(GST_TURNOVER_ALARM_PAISE)} alarm.`;
+  return check.alarmed
+    ? {
+        items: [
+          {
+            text: `${line} Register for GST before ₹20,00,000 and set PLATFORM_GSTIN.`,
+            isNew: true,
+          },
+        ],
+        notes: [],
+      }
+    : { items: [], notes: [line] };
+}
+
 function releaseLagSection(lag: ReleaseLag, now: Date): SectionBody {
   if (lag.status === "unknown") {
     return { items: [], notes: [`Unknown: ${lag.reason}.`] };
@@ -756,13 +793,21 @@ export async function runOpsDigest(
     // PG_POOL_MAX=1: one statement at a time, each bounded.
     await read("Jobs", () => jobsSection(db, environment, now));
     await read("Config skips", async () => {
-      standingSkips = await readStandingConfigSkips(
+      const skips = await readStandingConfigSkips(
         db,
         environment,
         OPERATIONAL_COMPLETION_REQUIREMENTS,
         now,
       );
-      return skipsSection(standingSkips, now);
+      // The stored summary feeds /api/health/jobs, so an expected skip never pages.
+      standingSkips = skips.filter(
+        (skip) => !isExpectedConfigSkip(skip.reason),
+      );
+      return skipsSection(
+        standingSkips,
+        skips.filter((skip) => isExpectedConfigSkip(skip.reason)),
+        now,
+      );
     });
     await read("Held email", () => heldEmailSection(db, now));
     await read("Dead letters", () => deadLetterSection(db, now));
@@ -772,6 +817,7 @@ export async function runOpsDigest(
     await read("Sentry ingest", () => canarySection(db, environment, now));
     await read("Better Stack", async () => bodyOf(await betterStack));
     await read("Upstash", async () => bodyOf(await upstash));
+    await read("GST registration", () => gstRegistrationSection(db, now));
     await read("Release lag", async () => {
       releaseLag = await lag;
       return releaseLagSection(releaseLag, now);

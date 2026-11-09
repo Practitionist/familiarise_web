@@ -11,7 +11,7 @@ import {
 } from "../home/PendingPaymentsWidget";
 
 /**
- * #1675 X4 / #1527 — the Billing › Needs you tab: the approved bookings still
+ * The Billing › Needs you tab: the approved bookings still
  * waiting on a payment, the pay links that lapsed, and refunds that failed.
  * It reads the Home inbox's `pending-payments` query (one cache entry for
  * both pages) and mounts the widget itself for the payable rows — the

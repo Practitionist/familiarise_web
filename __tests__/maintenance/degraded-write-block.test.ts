@@ -256,7 +256,7 @@ describe("unreadable maintenance state", () => {
       ),
     ).toBe(true);
     expect(isFailClosedWhenUnreadable("/api/checkout", "GET")).toBe(false);
-    expect(isFailClosedWhenUnreadable("/api/waitlist", "POST")).toBe(true);
+    expect(isFailClosedWhenUnreadable("/api/newsletter", "POST")).toBe(true);
     expect(isFailClosedWhenUnreadable("/api/webhooks/razorpay", "POST")).toBe(
       false,
     );

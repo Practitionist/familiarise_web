@@ -24,7 +24,8 @@ jest.mock("../../lib/prisma", () => ({
       groupBy: jest.fn(),
       aggregate: jest.fn(),
     },
-    consultantReview: { aggregate: jest.fn() },
+    consultantReview: { aggregate: jest.fn(), count: jest.fn() },
+    collaborator: { count: jest.fn() },
     rescheduleRequest: { findMany: jest.fn() },
     appointmentDocument: { count: jest.fn() },
     bookingStatusHistory: { findMany: jest.fn() },
@@ -51,6 +52,38 @@ function slow<T>(value: T) {
   });
 }
 
+/** A verified, fully configured expert: the setup checklist has nothing left. */
+const SET_UP_PROFILE = {
+  description: "A".repeat(40),
+  headline: "Senior engineer and mentor",
+  experience: 8,
+  verificationStatus: "VERIFIED",
+  scheduleType: "WEEKLY",
+  taxInfo: {
+    panLast4: "1234",
+    gstin: null,
+    taxEntityType: "INDIVIDUAL",
+    isIndianResident: true,
+  },
+  payoutAccounts: [{ isVerified: true }],
+  _count: {
+    subDomains: 1,
+    tags: 0,
+    availabilityWindowsWeekly: 3,
+    availabilityWindowsCustom: 0,
+    consultationPlans: 1,
+    subscriptionPlans: 0,
+    webinarPlans: 0,
+    classPlans: 0,
+    digitalProducts: 0,
+  },
+};
+const SET_UP_USER = {
+  image: "x.png",
+  profileDisplayImage: null,
+  _count: { workExperiences: 1 },
+};
+
 const ORIGINAL_POOL = process.env.PG_POOL_MAX;
 beforeEach(() => {
   inFlight = 0;
@@ -63,7 +96,8 @@ beforeEach(() => {
         publishedRatingGroup: null,
         ratedClientsOneToOne: 0,
         ratedEventsGroup: 0,
-        user: { timezone: "Asia/Kolkata" },
+        ...SET_UP_PROFILE,
+        user: { timezone: "Asia/Kolkata", ...SET_UP_USER },
       },
     },
     appointmentOccurrence: { findMany: [], count: 3, groupBy: [] },
@@ -72,7 +106,8 @@ beforeEach(() => {
     subscription: { findMany: [], count: 0 },
     trial: { count: 0, groupBy: [] },
     consultantEarnings: { count: 0, groupBy: [], aggregate: {} },
-    consultantReview: { aggregate: {} },
+    consultantReview: { aggregate: {}, count: 2 },
+    collaborator: { count: 1 },
     rescheduleRequest: { findMany: [] },
     appointmentDocument: { count: 0 },
     bookingStatusHistory: { findMany: [] },
@@ -104,6 +139,23 @@ describe("consultant Home loader", () => {
     ]);
     // The requests number rides NeedsYou: the badge's own count.
     expect(payload.needsYou?.requestsToAnswer).toBe(1);
+    expect(payload.needsYou?.collabInvites).toBe(1);
+    expect(payload.needsYou?.reviewsToReply).toBe(2);
+  });
+
+  it("adds the setup checklist only while a step is open", async () => {
+    const incomplete = {
+      ...SET_UP_PROFILE,
+      verificationStatus: "UNDER_REVIEW",
+    };
+    m.consultantProfile.findUnique = slow({
+      ...incomplete,
+      user: { timezone: "Asia/Kolkata", ...SET_UP_USER },
+    });
+    const payload = await getConsultantDashboard("cp-1", NOW);
+    expect(
+      payload.firstRun?.steps.filter((s) => !s.done).map((s) => s.key),
+    ).toEqual(["verify"]);
   });
 
   it("never runs the reads nobody renders", async () => {

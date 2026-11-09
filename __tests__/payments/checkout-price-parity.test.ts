@@ -33,6 +33,9 @@ import { MIN_CREDIT_REDEMPTION_PAISE } from "@/lib/referrals/constants";
 delete process.env.PLATFORM_LUT_NUMBER;
 delete process.env.PLATFORM_LUT_VALID_TILL;
 
+/** A full take, so the profitability floor stays out of the way of the arithmetic under test. */
+const PROMO_FEE_BPS = 10_000;
+
 type ServerInputs = {
   /** Plan price in paise. */
   basePaise: number;
@@ -60,6 +63,7 @@ async function serverAmount(input: ServerInputs): Promise<Amounts> {
   const derived = await deriveCheckoutAmount({
     basePaise: input.basePaise,
     buyerCountry: input.buyerCountry,
+    gstRegime: "REGISTERED",
     serviceType: "CONSULTING",
     discount: input.discount
       ? {
@@ -73,6 +77,7 @@ async function serverAmount(input: ServerInputs): Promise<Amounts> {
       : null,
     useReferralCredits: true,
     creditCapBps: 10_000,
+    promoFeeBps: PROMO_FEE_BPS,
     resolveAvailableCreditsPaise: () => input.creditsAvailablePaise ?? 0,
   });
   return {
@@ -109,6 +114,8 @@ function clientAmount(input: ServerInputs): Amounts {
           : undefined,
     creditsApplied: input.creditsAvailablePaise ?? 0,
     creditCapBps: 10_000,
+    promoFeeBps: PROMO_FEE_BPS,
+    gstRegistered: true,
   });
   return {
     taxPaise: breakdown.taxAmount,
@@ -321,14 +328,17 @@ describe("checkout price parity — the edges that actually move money", () => {
     expect(clientAmount(input).taxPaise).toBe(14400);
   });
 
-  it("never lets a discount drive the total below zero", async () => {
+  it("never lets a discount drive the total below the gateway estimate", async () => {
     const input: ServerInputs = {
       basePaise: 40000,
       buyerCountry: "IN",
       discount: { type: "FIXED_AMOUNT", value: 90000 },
     };
-    expect((await serverAmount(input)).totalPaise).toBe(0);
-    expect(clientAmount(input).totalPaise).toBe(0);
+    // The floor keeps ceil(3.54 % of ₹472) = 1,671 paise: base 1,671 plus GST 301.
+    expect((await serverAmount(input)).totalPaise).toBe(1972);
+    expect(Math.abs(clientAmount(input).totalPaise - 1972)).toBeLessThanOrEqual(
+      ONE_PAISE,
+    );
   });
 
   it("never applies more credit than the promo cap allows", async () => {
@@ -337,9 +347,9 @@ describe("checkout price parity — the edges that actually move money", () => {
       buyerCountry: "IN",
       creditsAvailablePaise: 99_999_999,
     };
-    // A full-price cap still leaves the tax: credits never cover more than the list price.
-    expect((await serverAmount(input)).totalPaise).toBe(90000);
-    expect(clientAmount(input).totalPaise).toBe(90000);
+    // Credits stop at the list price less the gateway estimate (20,886 on ₹5,900), so the tax stays.
+    expect((await serverAmount(input)).totalPaise).toBe(110886);
+    expect(clientAmount(input).totalPaise).toBe(110886);
   });
 
   it("leaves the earnings base at the list price, not the charged price", async () => {
@@ -348,9 +358,11 @@ describe("checkout price parity — the edges that actually move money", () => {
     const derived = await deriveCheckoutAmount({
       basePaise: 500000,
       buyerCountry: "IN",
+      gstRegime: "REGISTERED",
       discount: { discountType: "PERCENTAGE", discountValue: 10 },
       useReferralCredits: true,
       creditCapBps: 10_000,
+      promoFeeBps: PROMO_FEE_BPS,
       resolveAvailableCreditsPaise: () => 100000,
     });
     expect(derived.originalAmount).toBe(500000);
@@ -369,6 +381,7 @@ describe("checkout price parity — the edges that actually move money", () => {
     await deriveCheckoutAmount({
       basePaise: 30000, // ₹300 + 18% = ₹354, below the floor
       buyerCountry: "IN",
+      gstRegime: "REGISTERED",
       useReferralCredits: true,
       resolveAvailableCreditsPaise: resolve,
     });
@@ -401,6 +414,7 @@ describe("checkout price parity — the edges that actually move money", () => {
       deriveCheckoutAmount({
         basePaise: 500000,
         buyerCountry: "IN",
+        gstRegime: "REGISTERED",
         discount: { discountType: "PERCENTAGE", discountValue: 150 },
       }),
     ).rejects.toThrow(/between 1 and 100/);

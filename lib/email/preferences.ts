@@ -10,7 +10,7 @@ import prisma, { type PrismaLike } from "@/lib/prisma";
 import { DEFAULT_NOTIFICATION_TIMEZONE } from "@/lib/novu/humanize";
 import type { PreferenceCategory } from "@/lib/novu/templates/types";
 import { resolveViewerZone } from "@/lib/time/viewer-zone";
-import { canSignLinks } from "@/lib/waitlist/tokens";
+import { canSignLinks } from "@/lib/auth/link-signing";
 import { buildEmailUnsubscribeUrl } from "./unsubscribe";
 
 /** The nine per-category switches on `NotificationPreference`. */

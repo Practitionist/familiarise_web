@@ -12,7 +12,7 @@ Every in-app notification (subject, body and the payload field that holds the ta
 | ------------- | -------------------------------------------------------------------------------------------------------------- |
 | `b2c.ts`      | In-app templates for the consultant, consultee, staff and admin events                                         |
 | `org.ts`      | In-app templates for the `ORG_*` events                                                                        |
-| `families.ts` | The 16 workflow families, their opt-out category and `EVENT_FAMILY`, the map from each of the 97 events to one |
+| `families.ts` | The 16 workflow families, their opt-out category and `EVENT_FAMILY`, the map from each of the 98 events to one |
 | `types.ts`    | `WorkflowTemplate`, `InAppTemplate` and `PreferenceCategory`                                                   |
 | `index.ts`    | `toWire` (event to family), the family document the sync writes, and `FAMILY_PREFERENCES`                      |
 

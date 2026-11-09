@@ -20,6 +20,7 @@ import {
   computeOverageForBooking,
   surchargeTaxPaise,
 } from "@/lib/payments/billing/overage";
+import { currentGstRegime } from "@/lib/payments/tax/gst-regime";
 import { walletCredit, walletDebit } from "@/lib/api/organizations/wallet";
 import { orgBuyerCountry } from "@/lib/compliance/gst";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
@@ -223,7 +224,7 @@ export async function recordOverageAtCheckout(
   if (overage.decision === "BLOCK" && overage.chargeTo === null) {
     const capExhaustedErr = Object.assign(
       new Error(
-        "PROGRAM_CAP_EXHAUSTED: This booking would exceed the program's per-cycle overage ceiling. Contact your organization administrator to raise the ceiling or wait for the next cycle.",
+        "Your organisation's programme budget for this cycle is used up. Ask your organisation admin, or wait for the next cycle.",
       ),
       { httpStatus: 402, code: "PROGRAM_CAP_EXHAUSTED" },
     );
@@ -401,13 +402,15 @@ async function carveParentBaseForMemberOverage(
   }
 
   const carveErr = new PaymentError(
-    "This programme charges members for bookings past its cap, which is not supported on this organisation's funding source. Ask your billing admin to switch the programme to charge the organisation, or to block over-cap bookings.",
+    "This session can't be booked on your organisation's account right now. You can still book it yourself.",
     "OVERAGE_CHARGE_MEMBER_UNSUPPORTED",
   );
   reportSentryError(carveErr, {
     subsystem: "payments",
     contexts: {
       overage: {
+        adminAction:
+          "Switch the programme to charge the organisation, or block over-cap bookings.",
         paymentId,
         basePaise,
         parentInvoiceAccrualPaise: parentBase ? parentBase.amountPaise : null,
@@ -519,6 +522,7 @@ async function recordMemberOverageCharge(
       amount: chargedPaise,
       originalAmount: effectiveMarginalPaise,
       taxAmount: taxPaise,
+      gstRegime: currentGstRegime(),
       // The member's tax invoice places the supply exactly as the booking's.
       buyerCountry: ctx.buyerCountry,
       isInternational: ctx.isInternational,
@@ -641,6 +645,7 @@ async function mintChildOverageAccrualPayment(
       amount,
       originalAmount: accrualPaise,
       taxAmount: taxPaise,
+      gstRegime: currentGstRegime(),
       currency,
       paymentMethod: "ENTERPRISE_INVOICE_ACCRUAL",
       paymentIntent: `overage_accrual_${globalThis.crypto.randomUUID()}`,

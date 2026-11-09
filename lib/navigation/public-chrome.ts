@@ -45,6 +45,9 @@ export const TRANSPARENT_HERO_ROUTES = [
   "/enterprise",
   "/enterprise/team-training",
   "/enterprise/corporate-mentorship",
+  "/enterprise/funding",
+  "/enterprise/institutions",
+  "/enterprise/security",
 ] as const;
 
 /**

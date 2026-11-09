@@ -582,8 +582,9 @@ function deriveMoney(
   const you = viewer === "CONSULTEE";
   const paid = input.payments.find((x) => x.paymentStatus === "SUCCEEDED");
   const pending = input.payments.find((x) => x.paymentStatus === "PENDING");
+  // A CHARGE_ORG overage child is the organisation's charge, never a co-pay.
   const coPay = input.childPayments.filter(
-    (x) => x.paymentStatus === "SUCCEEDED",
+    (x) => x.paymentStatus === "SUCCEEDED" && !isSponsoredPayment(x),
   );
   const coPayLine =
     coPay.length > 0

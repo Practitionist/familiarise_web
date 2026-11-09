@@ -26,6 +26,7 @@ import {
   PURPOSE_CODE_META,
   SIGNUP_PURPOSES,
 } from "@/lib/compliance/purpose-codes";
+import { LegalLink } from "@/components/compliance/LegalLink";
 import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 
 interface AcceptResponse {
@@ -495,8 +496,8 @@ function InviteConsentStep({ onAgree }: Readonly<{ onAgree: () => void }>) {
   return (
     <div className="space-y-4 py-2">
       <p className="text-sm text-zinc-700">
-        To join, we need your consent to process your data for these purposes.
-        You can withdraw it at any time in Account › Data consent.
+        To join, we need your consent to use your information for these
+        purposes. You can withdraw it at any time in Account › Data consent.
       </p>
       <ul className="space-y-2 text-sm">
         {SIGNUP_PURPOSES.map((code) => (
@@ -511,8 +512,9 @@ function InviteConsentStep({ onAgree }: Readonly<{ onAgree: () => void }>) {
         ))}
       </ul>
       <p className="text-xs text-zinc-500">
-        By clicking Agree and join, you agree to our Terms of Service and
-        Privacy Policy.
+        By clicking Agree and join, you agree to our{" "}
+        <LegalLink href="/terms">Terms and Conditions</LegalLink> and{" "}
+        <LegalLink href="/privacy">Privacy Policy</LegalLink>.
       </p>
       <div className="flex flex-col gap-2">
         <Button className="w-full" onClick={onAgree}>

@@ -13,7 +13,13 @@ import {
 import { Search, SlidersHorizontal } from "lucide-react";
 
 export type SortOption =
-  "nameAsc" | "nameDesc" | "reviewCount" | "rating" | "trending" | "newest";
+  | "recommended"
+  | "nameAsc"
+  | "nameDesc"
+  | "reviewCount"
+  | "rating"
+  | "trending"
+  | "newest";
 
 interface SearchBarProps {
   onSearch: (value: string) => void;
@@ -97,11 +103,12 @@ function SearchBarImpl({
             <SelectValue placeholder="Sort by" />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value="recommended">Recommended</SelectItem>
             <SelectItem value="nameAsc">Name (A-Z)</SelectItem>
             <SelectItem value="nameDesc">Name (Z-A)</SelectItem>
             <SelectItem value="reviewCount">Most Reviews</SelectItem>
             <SelectItem value="rating">Highest Rating</SelectItem>
-            <SelectItem value="trending">Trending</SelectItem>
+            <SelectItem value="trending">Recently reviewed</SelectItem>
             <SelectItem value="newest">Newest</SelectItem>
           </SelectContent>
         </Select>

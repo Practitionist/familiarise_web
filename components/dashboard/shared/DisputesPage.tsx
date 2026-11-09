@@ -26,6 +26,7 @@ import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 // and rounded to whole rupees, so 12,345 paise printed as ₹123 rather than
 // ₹123.45, and any currency with different minor-unit rules was wrong too.
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { disputeStatusLabel } from "@/lib/labels/money-labels";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Search,
@@ -210,7 +211,7 @@ const DISPUTE_COLUMNS: ResponsiveColumn<Dispute>[] = [
         variant="secondary"
       >
         {getStatusIcon(dispute.status)}
-        {dispute.status.toLowerCase().replace(/_/g, " ")}
+        {disputeStatusLabel(dispute.status)}
       </Badge>
     ),
   },

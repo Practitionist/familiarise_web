@@ -17,6 +17,8 @@ This folder documents the money subsystem: how a rupee gets in, how it is record
 - The gateways we run are **Razorpay** (orders, webhooks, refunds, disputes) and **RazorpayX** (payouts and fund-account validation). Settlement is INR only. No other gateway has code; see [money decisions](90-decisions/README.md).
 - Amounts are integer paise in the database (₹1 = 100 paise) and splits are integer basis points (10,000 = 100 %).
 
+Pricing levers (list price, discount codes, the welcome discount, credits, GST display and the platform fee) have their own folder: [pricing](../pricing/README.md). Its [one order, one pipeline](../pricing/01-one-order-pipeline.md) page shows how they combine on a single order.
+
 ## Reading paths
 
 | If you are                                      | Read, in order                                                                                                                                                                                                                                                                         |
@@ -85,6 +87,7 @@ This folder documents the money subsystem: how a rupee gets in, how it is record
 - [02-gst-invoices-and-credit-notes.md](60-tax/02-gst-invoices-and-credit-notes.md)
 - [03-tds-rules-and-returns.md](60-tax/03-tds-rules-and-returns.md)
 - [04-msme-statutory-exports-and-calendar.md](60-tax/04-msme-statutory-exports-and-calendar.md)
+- [05-gst-registration-and-tax-regime.md](60-tax/05-gst-registration-and-tax-regime.md)
 
 ### 70-operations
 

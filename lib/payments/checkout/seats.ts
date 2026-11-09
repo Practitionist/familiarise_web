@@ -2,7 +2,7 @@
 // already holds a seat, which prior payment can be re-minted, and enrolment.
 
 import type { Tx } from "@/lib/prisma";
-import { PaymentStatus } from "@prisma/client";
+import { PaymentStatus, type Prisma } from "@prisma/client";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
@@ -52,6 +52,26 @@ export function asSeatPaymentConflict(err: unknown): unknown {
   );
 }
 
+const PRIOR_SEAT_PAYMENT_SELECT = {
+  id: true,
+  userId: true,
+  paymentIntent: true,
+  gatewayPaymentId: true,
+  amount: true,
+  originalAmount: true,
+  taxAmount: true,
+  gstRegime: true,
+  currency: true,
+  paymentGateway: true,
+  paymentStatus: true,
+  refunds: {
+    where: { status: "SUCCEEDED" },
+    select: { amountPaise: true },
+  },
+  // The seat this payment funded; a released one means the buyer left.
+  appointmentParticipants: { select: { status: true } },
+} satisfies Prisma.PaymentSelect;
+
 /** The buyer's earlier Payment on a shared webinar/class appointment, if any. */
 export function findPriorSeatPayment(
   tx: Tx,
@@ -60,58 +80,81 @@ export function findPriorSeatPayment(
 ) {
   return tx.payment.findFirst({
     where: { userId, appointmentId },
-    select: {
-      id: true,
-      userId: true,
-      paymentIntent: true,
-      gatewayPaymentId: true,
-      amount: true,
-      originalAmount: true,
-      taxAmount: true,
-      currency: true,
-      paymentGateway: true,
-      paymentStatus: true,
-      refunds: {
-        where: { status: "SUCCEEDED" },
-        select: { amountPaise: true },
-      },
-      // The seat this payment funded; a released one means the buyer left.
-      appointmentParticipants: { select: { status: true } },
-    },
+    select: PRIOR_SEAT_PAYMENT_SELECT,
   });
 }
 
-/** Only an EXPIRED or FAILED seat payment is re-minted in place; every other prior row refuses. */
-export function assertSeatRemintable(
-  prior: NonNullable<Awaited<ReturnType<typeof findPriorSeatPayment>>>,
-  kind: "WEBINAR" | "CLASS",
-): void {
+export type PriorSeatPayment = NonNullable<
+  Awaited<ReturnType<typeof findPriorSeatPayment>>
+>;
+
+/** Each user's prior Payment on the appointment, in one query; Payment is unique per (userId, appointmentId). */
+export async function findPriorSeatPayments(
+  tx: Pick<Tx, "payment">,
+  appointmentId: string,
+  userIds: readonly string[],
+): Promise<Map<string, PriorSeatPayment>> {
+  if (userIds.length === 0) return new Map();
+  const rows: PriorSeatPayment[] = await tx.payment.findMany({
+    where: { appointmentId, userId: { in: [...userIds] } },
+    select: PRIOR_SEAT_PAYMENT_SELECT,
+  });
+  return new Map(rows.map((row) => [row.userId, row]));
+}
+
+export type SeatRebuyRefusal =
+  "CHECKOUT_OPEN" | "REFUNDED" | "LEFT" | "ALREADY_REGISTERED";
+
+/** Why a prior seat payment blocks a new one; null only for an EXPIRED or FAILED row. */
+export function seatRebuyRefusal(
+  prior: PriorSeatPayment,
+): SeatRebuyRefusal | null {
   if (
     prior.paymentStatus === PaymentStatus.EXPIRED ||
     prior.paymentStatus === PaymentStatus.FAILED
   ) {
-    return;
+    return null;
   }
-  if (prior.paymentStatus === PaymentStatus.PENDING) {
-    throw new BookingRuleError(
-      "PAYMENT_ALREADY_EXISTS",
-      SEAT_CHECKOUT_OPEN_MESSAGE,
-    );
-  }
+  if (prior.paymentStatus === PaymentStatus.PENDING) return "CHECKOUT_OPEN";
   const refundedPaise = (prior.refunds ?? []).reduce(
     (total, refund) => total + sumPaise(refund.amountPaise),
     0,
   );
   // A zero-amount seat has no refund rows, so only a priced seat can read as refunded.
-  if (prior.amount > 0 && refundedPaise >= prior.amount) {
+  if (prior.amount > 0 && refundedPaise >= prior.amount) return "REFUNDED";
+  // Left with a partial or no refund: the seat is gone, not still held.
+  const seats = prior.appointmentParticipants ?? [];
+  if (seats.length > 0 && seats.every((seat) => seat.status === "CANCELLED")) {
+    return "LEFT";
+  }
+  return "ALREADY_REGISTERED";
+}
+
+/** The buyer may start a seat checkout on this appointment. */
+export function canBuySeat(prior: PriorSeatPayment | null): boolean {
+  return prior === null || seatRebuyRefusal(prior) === null;
+}
+
+/** Only an EXPIRED or FAILED seat payment is re-minted in place; every other prior row refuses. */
+export function assertSeatRemintable(
+  prior: PriorSeatPayment,
+  kind: "WEBINAR" | "CLASS",
+): void {
+  const refusal = seatRebuyRefusal(prior);
+  if (refusal === null) return;
+  if (refusal === "CHECKOUT_OPEN") {
+    throw new BookingRuleError(
+      "PAYMENT_ALREADY_EXISTS",
+      SEAT_CHECKOUT_OPEN_MESSAGE,
+    );
+  }
+  if (refusal === "REFUNDED") {
     throw new BookingRuleError(
       "SEAT_REBUY_UNSUPPORTED",
       "Your earlier seat here was refunded, and a refunded seat can't be bought again yet. Contact support if you'd like to rejoin.",
     );
   }
-  // Left with a partial or no refund: the seat is gone, not still held.
-  const seats = prior.appointmentParticipants ?? [];
-  if (seats.length > 0 && seats.every((seat) => seat.status === "CANCELLED")) {
+  if (refusal === "LEFT") {
     throw new BookingRuleError(
       "SEAT_REBUY_UNSUPPORTED",
       "You left this event earlier, and a seat you've left can't be bought again yet. Contact support if you'd like to rejoin.",

@@ -4,10 +4,7 @@
  */
 
 export type OfferingPlanType =
-  | "consultation"
-  | "subscription"
-  | "webinar"
-  | "class";
+  "consultation" | "subscription" | "webinar" | "class";
 
 export interface OfferingStat {
   planType: OfferingPlanType;
@@ -25,12 +22,16 @@ export interface OfferingStat {
   /** #1509 — the org catalog governs archive for these. */
   orgGoverned: boolean;
   archived: boolean;
+  /** Open appointment-waitlist rows across a webinar or class plan; 0 for other kinds. */
+  waitingCount: number;
 }
 
 export interface OfferingStats {
   rows: OfferingStat[];
   /** Every share this profile ever earned, net of refunds, collaborations included. */
   lifetimePaise: number;
+  /** Open appointment-waitlist rows per Webinar/Class instance id (hosts only). */
+  waitingByEvent: Record<string, number>;
 }
 
 export const offeringStatKey = (type: OfferingPlanType, planId: string) =>

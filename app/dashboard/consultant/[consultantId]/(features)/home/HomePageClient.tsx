@@ -71,6 +71,7 @@ export default function HomePageClient({
         payoutSetup={dashboardData.payoutSetup}
         needsYou={dashboardData.needsYou}
         sessionsDelivered={dashboardData.sessionsDelivered}
+        firstRun={dashboardData.firstRun}
         responseRate={dashboardData.responseRate}
         viewerZone={viewerZone}
         performanceSnapshot={dashboardData.performanceSnapshot}

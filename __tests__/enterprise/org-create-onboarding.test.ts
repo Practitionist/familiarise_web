@@ -36,7 +36,7 @@ const tx = {
     }),
     findUniqueOrThrow: jest.fn(async () => ({ email: "owner@example.com" })),
   },
-  waitlist: { upsert: jest.fn() },
+  newsletterSubscriber: { upsert: jest.fn() },
   organization: {
     findUnique: jest.fn(async () => null),
     create: jest.fn(async (args: { data: { id: string; name: string } }) => {
@@ -130,6 +130,7 @@ describe("POST /api/organizations onboarding a first-time owner", () => {
     });
     expect(claim.data.dateOfBirth).toBeInstanceOf(Date);
     expect(claim.data.termsAcceptedAt).toBeInstanceOf(Date);
+    expect(claim.data.adultConfirmedAt).toBeInstanceOf(Date);
     expect(mockEnsureConsent).toHaveBeenCalledWith(
       tx,
       "user-1",

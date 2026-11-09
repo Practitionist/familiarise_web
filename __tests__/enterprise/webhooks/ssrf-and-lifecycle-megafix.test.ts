@@ -384,6 +384,12 @@ describe("Outbound webhook worker security, backoff, Sentry & OrgAuditLog", () =
       erasureRequest: { findFirst: jest.fn().mockResolvedValue(null) },
       session: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
       account: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      appointmentWaitlist: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      windowBackupInterest: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
       consentArtifact: zeroCount(),
       orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
       webhookEndpoint: {

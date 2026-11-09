@@ -14,6 +14,8 @@ import {
   readReferralProgramConfig,
 } from "./program-config";
 import { refundInitiatedByBuyer } from "./refund-cause";
+import { isDisposableEmail, normaliseEmail } from "./email-signals";
+import type { ReferralRequestSignals } from "./signal-hash";
 
 // #780 — bare model types still say bigint; the extended client returns number
 export type ReferralCodeRow = Omit<
@@ -41,13 +43,6 @@ export type ReferralCreditRow = Omit<
   remainingAmount: number;
 };
 
-// Constants
-// #880 conservative launch: ₹300 each (the referrer reward ramps to ₹500 once
-// unit economics are validated). Role-weighting and the consultant commission
-// waiver arrive in later phases; these are the flat launch baselines.
-const DEFAULT_REFERRER_REWARD = 30000; // ₹300 in paise
-const DEFAULT_REFEREE_REWARD = 30000; // ₹300 in paise
-
 /**
  * Creates or returns an existing referral code for a user.
  */
@@ -68,14 +63,7 @@ export async function createReferralCode(
   const code = await generateUniqueCode(user?.name);
 
   try {
-    return await prisma.referralCode.create({
-      data: {
-        userId,
-        code,
-        referrerReward: DEFAULT_REFERRER_REWARD,
-        refereeReward: DEFAULT_REFEREE_REWARD,
-      },
-    });
+    return await prisma.referralCode.create({ data: { userId, code } });
   } catch (error) {
     // FIX #596: Handle race condition — concurrent first-use requests
     // can both pass the findUnique check, then one fails on unique constraint.
@@ -104,12 +92,7 @@ export async function createReferralCode(
       if (isCodeConflict) {
         const retryCode = await generateUniqueCode(user?.name);
         return prisma.referralCode.create({
-          data: {
-            userId,
-            code: retryCode,
-            referrerReward: DEFAULT_REFERRER_REWARD,
-            refereeReward: DEFAULT_REFEREE_REWARD,
-          },
+          data: { userId, code: retryCode },
         });
       }
     }
@@ -179,11 +162,13 @@ export async function validateReferralCode(
 
 /**
  * Applies a referral code to a new account: no prior paid booking, created inside the
- * qualify window, programme live. Serializable so concurrent applies cannot pass the cap.
+ * qualify window, programme live, not the referrer's own mailbox, not a disposable one.
+ * Serializable so concurrent applies cannot pass the cap.
  */
 export async function applyReferralCode(
   newUserId: string,
   code: string,
+  signals: ReferralRequestSignals = { ipHash: null, userAgent: null },
 ): Promise<ReferralRow | null> {
   let notices: StagedNotificationBundle = {};
 
@@ -205,9 +190,20 @@ export async function applyReferralCode(
         );
         const user = await tx.user.findUnique({
           where: { id: newUserId },
-          select: { createdAt: true },
+          select: { createdAt: true, email: true },
         });
         if (!user || user.createdAt < windowStart) return null;
+        if (isDisposableEmail(user.email)) return null;
+        const referrer = await tx.user.findUnique({
+          where: { id: referralCode.userId },
+          select: { name: true, email: true },
+        });
+        if (
+          !referrer ||
+          normaliseEmail(referrer.email) === normaliseEmail(user.email)
+        ) {
+          return null;
+        }
         const priorPaid = await tx.payment.count({
           where: {
             userId: newUserId,
@@ -230,6 +226,8 @@ export async function applyReferralCode(
             status: "SIGNED_UP",
             referrerRewardAmount: cfg.referrerRewardPaise,
             configVersion: cfg.version,
+            ipHash: signals.ipHash,
+            userAgent: signals.userAgent,
           },
         });
 
@@ -239,15 +237,11 @@ export async function applyReferralCode(
         });
         // The welcome notice states checkout's real cap, the programme's discount maximum.
         if (cfg.discountBps > 0 && cfg.discountMaxPaise > 0) {
-          const referrer = await tx.user.findUnique({
-            where: { id: referralCode.userId },
-            select: { name: true },
-          });
           notices = await stageReferralReward(tx, {
             kind: "WELCOME_BONUS",
             userId: newUserId,
             referralId: created.id,
-            counterpartyName: referrer?.name || "Your friend",
+            counterpartyName: referrer.name || "Your friend",
             amountPaise: cfg.discountMaxPaise,
           });
         }
@@ -432,6 +426,7 @@ const restorableCredit = {
     currency: true,
     source: true,
     configVersion: true,
+    reversedAt: true,
   },
 } as const;
 
@@ -444,6 +439,7 @@ type RestorableCredit = Pick<
   | "currency"
   | "source"
   | "configVersion"
+  | "reversedAt"
 >;
 
 /** True when the expert or the platform raised the refund row, not the buyer. */
@@ -492,6 +488,25 @@ async function restoreUsageToCredit(
   const key = `referral-restore:${input.usageId}:${input.restoredBefore + give}`;
   const floor = new Date(now.getTime() + SELLER_REFUND_VALIDITY_MS);
 
+  // A reversed credit stays reversed: the value lands on its non-spendable row and the liability
+  // is not raised again, so a restore can never undo an operator or chargeback reversal.
+  if (credit.reversedAt) {
+    const kept = await tx.referralCredit.updateMany({
+      where: {
+        id: creditId,
+        state: credit.state,
+        reversedAt: { not: null },
+        usedAmount: { gte: give },
+      },
+      data: {
+        usedAmount: { decrement: give },
+        remainingAmount: { increment: give },
+      },
+    });
+    if (kept.count !== 1) throw restoreRaced(creditId);
+    return;
+  }
+
   if (credit.state === "EXPIRED") {
     // The old row keeps its breakage and usage trail; amount and usedAmount shrink by what moved.
     const shrunk = await tx.referralCredit.updateMany({
@@ -511,6 +526,7 @@ async function restoreUsageToCredit(
         vestedAt: credit.vestedAt ? now : null,
         expiresAt: floor,
         configVersion: credit.configVersion,
+        sourceCreditId: creditId,
         idempotencyKey: key,
         reason: `Restored from expired credit ${creditId} on refunded payment ${input.paymentId}`,
       },
@@ -787,14 +803,29 @@ export async function getReferralCode(
   });
 }
 
+/** Review fields a referrer never sees about the people they referred. */
+const REVIEW_FIELDS = {
+  ipHash: true,
+  userAgent: true,
+  heldAt: true,
+  heldReason: true,
+  reviewReleasedAt: true,
+} as const;
+
+export type ReferredFriendRow = Omit<
+  ReferralRow,
+  keyof typeof REVIEW_FIELDS
+> & {
+  referredUser: { name: string; image: string | null };
+};
+
 /**
- * Gets a user's referral list (people they referred).
+ * Gets a user's referral list (people they referred). A review hold reads as QUALIFYING and a
+ * SIGNED_UP row past the qualify window as EXPIRED.
  */
 export async function getUserReferrals(
   userId: string,
-): Promise<
-  (ReferralRow & { referredUser: { name: string; image: string | null } })[]
-> {
+): Promise<ReferredFriendRow[]> {
   const referralCode = await prisma.referralCode.findUnique({
     where: { userId },
     select: { id: true },
@@ -804,6 +835,7 @@ export async function getUserReferrals(
 
   const rows = await prisma.referral.findMany({
     where: { referralCodeId: referralCode.id },
+    omit: REVIEW_FIELDS,
     include: {
       referredUser: {
         select: { name: true, image: true },
@@ -813,12 +845,15 @@ export async function getUserReferrals(
   });
 
   const cfg = await readReferralProgramConfig();
-  if (!cfg) return rows;
-  const windowCutoff = new Date(
-    Date.now() - cfg.qualifyWindowDays * 24 * 60 * 60 * 1000,
-  );
+  const windowCutoff = cfg
+    ? new Date(Date.now() - cfg.qualifyWindowDays * 24 * 60 * 60 * 1000)
+    : null;
   return rows.map((r) => {
-    const isStale = r.status === "SIGNED_UP" && r.signedUpAt < windowCutoff;
+    if (r.status === "HELD") return { ...r, status: "QUALIFYING" as const };
+    const isStale =
+      windowCutoff !== null &&
+      r.status === "SIGNED_UP" &&
+      r.signedUpAt < windowCutoff;
     return isStale ? { ...r, status: "EXPIRED" as const } : r;
   });
 }

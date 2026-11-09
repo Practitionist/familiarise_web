@@ -1,11 +1,13 @@
 // One attendee's add-to-calendar links: a Google template URL and a signed .ics link whose
-// HMAC binds appointment, user and purpose; the route re-checks the paid seat on every read.
+// HMAC binds appointment, user and purpose; the route re-checks the paid, unrefunded seat on every read.
 
 import type { Prisma } from "@prisma/client";
+import type { Tx } from "@/lib/prisma";
+import { isFullyRefundedPurchase } from "@/lib/payments/utils/refund-balance";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import { paidParticipant } from "@/lib/booking/participants";
 import { getAppUrl } from "@/lib/url";
-import { canSignLinks, safeEquals, signToken } from "@/lib/waitlist/tokens";
+import { canSignLinks, safeEquals, signToken } from "@/lib/auth/link-signing";
 import { sessionEnd, stamp } from "./ics";
 
 const PURPOSE = "calendar-ics";
@@ -20,6 +22,31 @@ export function calendarSeatWhere(
   userId: string,
 ): Prisma.AppointmentParticipantWhereInput {
   return { ...paidParticipant(userId), role: "CONSULTEE" };
+}
+
+/**
+ * The calendar entitlement the .ics route and the success page share: a paid
+ * attendee seat whose own payment is not fully refunded (pending or done).
+ */
+export async function holdsCalendarSeat(
+  db: Pick<Tx, "appointmentParticipant">,
+  appointmentId: string,
+  userId: string,
+): Promise<boolean> {
+  const seat = await db.appointmentParticipant.findFirst({
+    where: { appointmentId, ...calendarSeatWhere(userId) },
+    select: {
+      payment: {
+        select: {
+          amount: true,
+          paymentIntent: true,
+          refunds: { select: { amountPaise: true, status: true } },
+        },
+      },
+    },
+  });
+  if (!seat) return false;
+  return !seat.payment || !isFullyRefundedPurchase([seat.payment]);
 }
 
 export interface CalendarSession {

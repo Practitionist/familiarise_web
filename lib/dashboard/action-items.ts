@@ -120,6 +120,10 @@ export interface ConsultantActionInput {
     title: string;
     deadline: string;
   }[];
+  /** Collaboration invitations still PENDING for this consultant. */
+  collabInvites?: number;
+  /** Live reviews with no reply from this consultant. */
+  reviewsToReply?: number;
   upcomingSessions: ImminentSession[];
   basePath: string;
   payoutSetupNeeded?: boolean;
@@ -133,6 +137,8 @@ export function deriveConsultantActionItems({
   documentsAwaitingReview = 0,
   rescheduleReplies = [],
   owedMakeUps = [],
+  collabInvites = 0,
+  reviewsToReply = 0,
   upcomingSessions,
   basePath,
   payoutSetupNeeded = false,
@@ -210,6 +216,28 @@ export function deriveConsultantActionItems({
       body: "Uploaded by learners ahead of their sessions.",
       ctaLabel: "Review",
       ctaHref: `${basePath}/documents`,
+    });
+  }
+
+  if (collabInvites > 0) {
+    items.push({
+      key: "collab-invites",
+      severity: "info",
+      title: `${collabInvites} ${pluralise(collabInvites, "collaboration invite", "collaboration invites")} to answer`,
+      body: "Other experts asked you to join their sessions.",
+      ctaLabel: "Respond",
+      ctaHref: `${basePath}/collaborations`,
+    });
+  }
+
+  if (reviewsToReply > 0) {
+    items.push({
+      key: "reviews-reply",
+      severity: "info",
+      title: `${reviewsToReply} ${pluralise(reviewsToReply, "review awaits", "reviews await")} your reply`,
+      body: "A short reply shows learners you read their feedback.",
+      ctaLabel: "Reply",
+      ctaHref: `${basePath}/reviews?tab=needs-reply`,
     });
   }
 

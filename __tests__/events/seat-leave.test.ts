@@ -14,6 +14,14 @@ const refundSeat = jest.fn(async () => ({
   refundPct: 100,
   rail: "GATEWAY",
 }));
+// The notify-me hooks are pinned by their own suites; here they stage nothing.
+jest.mock("@/lib/booking/event-waitlist", () => ({
+  stageSeatOpenedNotices: jest.fn(async () => ({ pages: [], email: null })),
+  finishSeatOpenedNotices: jest.fn(async () => undefined),
+  markEventWaitlistBooked: jest.fn(async () => ({ count: 0 })),
+  expireEventWaitlist: jest.fn(async () => ({ expired: 0, purged: 0 })),
+  hasLapsedEventWaitlist: jest.fn(async () => false),
+}));
 jest.mock("../../lib/payments/operations/event-refunds", () => ({
   refundRemovedAttendeeSeat: (...a: unknown[]) => refundSeat(...(a as [])),
 }));
@@ -69,6 +77,10 @@ jest.mock("../../lib/prisma", () => {
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { isHostMove } from "@/lib/booking/class-series";
 import { leaveEventSeat } from "@/lib/booking/seat-leave";
+import {
+  finishSeatOpenedNotices,
+  stageSeatOpenedNotices,
+} from "@/lib/booking/event-waitlist";
 
 const leave = (isSelfLeave = true) =>
   leaveEventSeat({
@@ -93,6 +105,7 @@ it("refuses 20 h before a 24 h window and never releases the seat", async () => 
   await expect(leave()).rejects.toBeInstanceOf(BookingRuleError);
   expect(release).not.toHaveBeenCalled();
   expect(refundSeat).not.toHaveBeenCalled();
+  expect(stageSeatOpenedNotices).not.toHaveBeenCalled();
 });
 
 it("releases and refunds in full 30 h before, keyed on the seat", async () => {
@@ -102,6 +115,19 @@ it("releases and refunds in full 30 h before, keyed on the seat", async () => {
   expect(refundSeat).toHaveBeenCalledWith(
     expect.objectContaining({ mode: "full", dedupeKey: "seat-leave:part-1" }),
   );
+});
+
+it("stages the seat-opened notice in the release commit and finishes it after", async () => {
+  slot.startsAt = inHours(30);
+  const staged = { pages: [], email: null };
+  jest.mocked(stageSeatOpenedNotices).mockResolvedValueOnce(staged);
+  await leave();
+  expect(stageSeatOpenedNotices).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.any(String),
+    expect.any(Date),
+  );
+  expect(finishSeatOpenedNotices).toHaveBeenCalledWith(staged);
 });
 
 it("stamps the refund owed in the release commit, so a crash after it is re-driven", async () => {

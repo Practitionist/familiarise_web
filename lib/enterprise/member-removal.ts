@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { transitionMembership } from "@/lib/enterprise/transitions";
 import { revokeOrgManagedUserSessions } from "@/lib/sso/session-sweeps";
@@ -245,7 +246,7 @@ async function removeInTx(
       action: AUDIT_ACTIONS.MEMBER.MEMBER_REMOVED,
       description: isSelfLeave
         ? "Member left the organization"
-        : `Removed member ${memberId}`,
+        : `Removed a ${MEMBER_ROLE_LABEL[current.role]} from the organization`,
       details: {
         role: current.role,
         previousStatus: current.status,

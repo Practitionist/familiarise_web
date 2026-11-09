@@ -112,7 +112,7 @@ it("org payout failed: FAILED and REVERSED read differently", async () => {
   expect(failed.text).toContain("A payout to Acme failed");
   expect(failed.text).toContain("could not be sent");
   expect(reversed.text).toContain("A payout to Acme was reversed");
-  expect(reversed.text).toContain("returned by the bank");
+  expect(reversed.text).toContain("back in the payable balance");
   expect(failed.text).toContain("₹10,000.00");
   expect(failed.html).toContain(`href="${base.dashboardUrl}"`);
 });

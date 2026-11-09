@@ -345,9 +345,12 @@ async function verifySlugAvailable(
     select: { id: true },
   });
   if (slugTaken && slugTaken.id !== orgId) {
-    throw Object.assign(new Error(`Slug "${nextSlug}" is already taken`), {
-      httpStatus: 409,
-    });
+    throw Object.assign(
+      new Error("That web address is already taken. Choose another one."),
+      {
+        httpStatus: 409,
+      },
+    );
   }
 }
 
@@ -571,7 +574,7 @@ export async function PATCH(
     return NextResponse.json(
       {
         error:
-          "Host-capable orgs are gated by ENABLE_HOST_ORGS. Contact ops to flip the flag for your tenant.",
+          "Hosting sessions isn't available for your organisation yet. Please contact support to switch it on.",
         code: "HOST_ORGS_GATED",
       },
       { status: 400 },

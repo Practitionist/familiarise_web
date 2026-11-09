@@ -157,7 +157,7 @@ describe("a business-coded refusal leaves POST /api/checkout as an answer", () =
     expect(context.level).toBe("info");
     expect(context.tags?.expected).toBe("true");
     expect(getErrorToast("EVENT_FULL_ERROR").description).toContain(
-      "join the waitlist",
+      "Notify me on the event page",
     );
   });
 

@@ -5,14 +5,14 @@ import { RegistrationBadge } from "@/components/ui/registration-badge";
 import { ArrowRight, Flame, Sparkles, Star } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useCurrency } from "@/hooks/useCurrency";
+import { BuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { CompanyLogo } from "@/components/ui/company-logo";
-import { BrandMark } from "@/components/brand/BrandWordmark";
 import { isClassProgram, Program } from "@/lib/explore/programs";
+import { programFacts } from "@/lib/explore/program-facts";
 import { displayedScore, displayedScoreCount } from "@/lib/reviews-display";
 
 type ProgramCardVariant = "grid" | "list" | "carousel";
-export type ProgramBadge = "featured" | "trending" | "new";
+export type ProgramBadge = "trending" | "new";
 
 interface ProgramCardProps {
   program: Program;
@@ -25,13 +25,8 @@ const badgeConfig: Record<
   ProgramBadge,
   { label: string; icon: React.ReactNode; className: string }
 > = {
-  featured: {
-    label: "Familiarise Pick",
-    icon: <Sparkles className="w-3 h-3" />,
-    className: "bg-primary text-primary-foreground",
-  },
   trending: {
-    label: "Trending",
+    label: "Most active",
     icon: <Flame className="w-3 h-3" />,
     className: "bg-background/90 text-foreground border border-border",
   },
@@ -137,6 +132,27 @@ function planHref(program: Program): string {
     : `/explore/programs/plans/webinars/${program.id}`;
 }
 
+function FactsRow({ program }: Readonly<{ program: Program }>) {
+  const { facts, includes } = programFacts(program, new Date());
+  return (
+    <div className="mb-3 space-y-1.5">
+      <p className="text-xs text-muted-foreground">{facts.join(" · ")}</p>
+      {includes.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {includes.map((item) => (
+            <span
+              key={item}
+              className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+            >
+              {item}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GridCard({
   program,
   badge,
@@ -144,7 +160,6 @@ function GridCard({
   program: Program;
   badge?: ProgramBadge;
 }) {
-  const { formatPrice } = useCurrency();
   const rating = getProgramRating(program);
   const ratingCount = getProgramRatingCount(program);
   const instructor = getProgramInstructor(program);
@@ -184,9 +199,10 @@ function GridCard({
         <h3 className="text-lg font-semibold text-foreground mb-2 line-clamp-1 group-hover:text-muted-foreground transition-colors">
           {program.title}
         </h3>
-        <p className="text-sm text-muted-foreground mb-4 line-clamp-2 flex-1">
+        <p className="text-sm text-muted-foreground mb-3 line-clamp-2 flex-1">
           {program.description}
         </p>
+        <FactsRow program={program} />
 
         {/* Instructor info + company logos */}
         {(instructor || workExperiences.length > 0) && (
@@ -208,13 +224,16 @@ function GridCard({
           </div>
         )}
 
-        <div className="flex items-center justify-between pt-4 border-t border-border">
-          <div className="flex items-center gap-2">
-            <div className="text-xl font-bold text-foreground">
-              {formatPrice(program.price)}
+        {/* Wraps rather than shrinks: when the card is too narrow for price and
+            call to action side by side, the call to action drops to its own
+            line instead of overlapping the price. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-4 border-t border-border">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            <div className="whitespace-nowrap text-xl font-bold text-foreground">
+              <BuyerPrice paise={program.price} />
             </div>
             {rating !== null && (
-              <div className="flex items-center gap-0.5 ml-1">
+              <div className="flex items-center gap-0.5">
                 <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                 <span className="text-xs font-medium text-muted-foreground">
                   {rating.toFixed(1)} ({ratingCount})
@@ -222,17 +241,10 @@ function GridCard({
               </div>
             )}
           </div>
-          <div className="flex items-center gap-1 text-sm font-medium text-muted-foreground group-hover:text-foreground transition-colors">
+          <div className="flex items-center gap-1 whitespace-nowrap text-sm font-medium text-muted-foreground group-hover:text-foreground transition-colors">
             <span>View Details</span>
             <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
           </div>
-        </div>
-
-        <div className="flex items-center gap-1 mt-2">
-          <BrandMark className="h-3 w-3 text-[8px]" />
-          <span className="text-[10px] text-muted-foreground/70">
-            on Familiarise
-          </span>
         </div>
       </div>
     </Link>
@@ -246,7 +258,6 @@ function ListCard({
   program: Program;
   badge?: ProgramBadge;
 }) {
-  const { formatPrice } = useCurrency();
   const rating = getProgramRating(program);
   const ratingCount = getProgramRatingCount(program);
   const instructor = getProgramInstructor(program);
@@ -255,16 +266,18 @@ function ListCard({
   return (
     <Link
       href={planHref(program)}
-      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex"
+      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex flex-col sm:flex-row"
       aria-label={`View details for ${program.title}`}
     >
-      <div className="relative w-48 md:w-64 flex-shrink-0">
+      {/* Stacked on phones: image beside text left the text column too narrow
+          for the price and the button. */}
+      <div className="relative aspect-[16/10] w-full flex-shrink-0 sm:aspect-auto sm:w-48 md:w-64">
         <Image
           src={program.imageUrl}
           alt={program.title}
           fill
           className="object-cover"
-          sizes="256px"
+          sizes="(max-width: 639px) 100vw, (max-width: 767px) 192px, 256px"
         />
         <div className="absolute top-3 left-3 flex gap-2">
           <TypeBadge type={program.type} />
@@ -272,7 +285,7 @@ function ListCard({
         </div>
       </div>
 
-      <div className="p-6 flex-1 flex flex-col justify-between min-w-0">
+      <div className="p-4 sm:p-6 flex-1 flex flex-col justify-between min-w-0">
         <div>
           <div className="flex items-start justify-between gap-4 mb-2">
             <h3 className="text-lg font-semibold text-foreground group-hover:text-muted-foreground transition-colors">
@@ -288,6 +301,9 @@ function ListCard({
           <p className="text-sm text-muted-foreground line-clamp-2">
             {program.description}
           </p>
+          <div className="mt-2">
+            <FactsRow program={program} />
+          </div>
           {/* Instructor info + company logos */}
           {(instructor || workExperiences.length > 0) && (
             <div className="flex items-center gap-2 mt-2">
@@ -309,34 +325,26 @@ function ListCard({
           )}
         </div>
 
-        <div>
-          <div className="flex items-center justify-between mt-4">
-            <div className="flex items-center gap-2">
-              <div className="text-xl font-bold text-foreground">
-                {formatPrice(program.price)}
-              </div>
-              {rating !== null && (
-                <div className="flex items-center gap-0.5 ml-1">
-                  <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-                  <span className="text-xs font-medium text-muted-foreground">
-                    {rating.toFixed(1)} ({ratingCount})
-                  </span>
-                </div>
-              )}
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mt-4">
+          <div className="flex items-center gap-2">
+            <div className="whitespace-nowrap text-xl font-bold text-foreground">
+              <BuyerPrice paise={program.price} />
             </div>
-            {/* Not a <Button>: this sits inside the card <Link>, and a
-                <button> inside an <a> is invalid HTML. Same outline look. */}
-            <span className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-muted">
-              View Details
-              <ArrowRight className="w-4 h-4 ml-2" />
-            </span>
+            {rating !== null && (
+              <div className="flex items-center gap-0.5 ml-1">
+                <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                <span className="text-xs font-medium text-muted-foreground">
+                  {rating.toFixed(1)} ({ratingCount})
+                </span>
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-1 mt-2">
-            <BrandMark className="h-3 w-3 text-[8px]" />
-            <span className="text-[10px] text-muted-foreground/70">
-              on Familiarise
-            </span>
-          </div>
+          {/* Not a <Button>: this sits inside the card <Link>, and a
+              <button> inside an <a> is invalid HTML. Same outline look. */}
+          <span className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-muted">
+            View Details
+            <ArrowRight className="w-4 h-4 ml-2" />
+          </span>
         </div>
       </div>
     </Link>
@@ -350,13 +358,12 @@ function CarouselCard({
   program: Program;
   badge?: ProgramBadge;
 }) {
-  const { formatPrice } = useCurrency();
   const workExperiences = getInstructorWorkExperiences(program);
 
   return (
     <Link
       href={planHref(program)}
-      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex-shrink-0 w-[320px] md:w-[360px]"
+      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex-shrink-0 snap-start w-[clamp(15rem,calc((100%_-_2.5rem)/3.3),20rem)]"
       aria-label={`View details for ${program.title}`}
     >
       <div className="relative aspect-[16/10] overflow-hidden">
@@ -369,6 +376,12 @@ function CarouselCard({
         />
         <div className="absolute top-3 left-3 flex gap-2">
           <TypeBadge type={program.type} />
+          {program.isRegistered && (
+            <RegistrationBadge
+              type={isClassProgram(program) ? "class" : "webinar"}
+              compact
+            />
+          )}
         </div>
         {badge && (
           <div className="absolute top-3 right-3">
@@ -384,10 +397,12 @@ function CarouselCard({
         <p className="text-sm text-muted-foreground line-clamp-1 mb-3">
           {program.description}
         </p>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="text-lg font-bold text-foreground">
-              {formatPrice(program.price)}
+        {/* Wraps at the card's 15rem minimum, where a long price, two logos and
+            "View" no longer fit one row inside the overflow-hidden card. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <div className="whitespace-nowrap text-lg font-bold text-foreground">
+              <BuyerPrice paise={program.price} />
             </div>
             {workExperiences.length > 0 && (
               <div className="flex items-center gap-1">

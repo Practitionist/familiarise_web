@@ -136,6 +136,19 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    // Notify-only: every waiter is told at once and the first to pay gets the seat.
+    workflowId: W.EVENT_SEAT_OPENED,
+    name: "Event seat opened",
+    description:
+      "Learners waiting on a sold-out webinar or class, when a seat frees.",
+    category: "appointments",
+    inApp: {
+      subject: "A seat just opened",
+      body: "A seat opened in {{payload.planTitle}}. It may already be gone; first come, first served.",
+      redirect: "checkoutUrl",
+    },
+  },
+  {
     workflowId: W.APPOINTMENT_RESCHEDULED,
     name: "Appointment rescheduled",
     description:
@@ -239,7 +252,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "payments",
     inApp: {
       subject: "Payment failed",
-      body: "Your payment of {{payload.amountFormatted}}{% if payload.planTitle %} for {{payload.planTitle}}{% endif %} did not go through. {{payload.failureReason}}",
+      body: "Your payment of {{payload.amountFormatted}}{% if payload.planTitle %} for {{payload.planTitle}}{% endif %} did not go through{% if payload.failureReason %}: {{payload.failureReason}}{% endif %}.",
       redirect: "retryUrl",
     },
   },

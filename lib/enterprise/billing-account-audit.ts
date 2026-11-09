@@ -2,6 +2,7 @@ import type { FundingSource } from "@prisma/client";
 
 import type { Tx } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { FUNDING_SOURCE_LABEL } from "@/lib/labels/org-labels";
 
 type AuditedFields = {
   fundingSource: FundingSource;
@@ -35,7 +36,7 @@ export async function recordBillingAccountUpdate(
         actorMembershipId,
         category: "INVOICE",
         action: AUDIT_ACTIONS.INVOICE.FUNDING_SOURCE_CHANGED,
-        description: `Funding source: ${before.fundingSource} → ${after.fundingSource}`,
+        description: `Funding source: ${FUNDING_SOURCE_LABEL[before.fundingSource]} → ${FUNDING_SOURCE_LABEL[after.fundingSource]}`,
         details: { from: before.fundingSource, to: after.fundingSource },
       },
     });

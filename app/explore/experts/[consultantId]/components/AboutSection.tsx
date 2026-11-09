@@ -2,7 +2,13 @@
 
 import { User } from "@prisma/client";
 import type { ConsultantDetailData } from "../types";
-import { User2, GraduationCap, Sparkles } from "lucide-react";
+import {
+  User2,
+  Sparkles,
+  Wrench,
+  MessagesSquare,
+  PlayCircle,
+} from "lucide-react";
 
 interface AboutSectionProps {
   userDetails: User;
@@ -22,84 +28,108 @@ const isRealDescription = (
   return !/^(none|n\/?a|na|null|nil|tbd|-+|\.+)$/i.test(trimmed);
 };
 
+/** The profile field accepts any URL scheme; only a web address may become a link. */
+function webUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:"
+      ? url.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function SectionTitle({
+  icon: Icon,
+  children,
+}: Readonly<{ icon: typeof User2; children: React.ReactNode }>) {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
+        <Icon className="w-4 h-4 text-muted-foreground" />
+      </div>
+      <h3 className="text-lg font-semibold text-foreground">{children}</h3>
+    </div>
+  );
+}
+
+function Chips({
+  items,
+}: Readonly<{ items: { key: string; label: string }[] }>) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {items.map((item) => (
+        <span
+          key={item.key}
+          className="px-3 py-1.5 bg-muted text-muted-foreground text-sm font-medium rounded-full"
+        >
+          {item.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export function AboutSection({
   userDetails,
   consultantDetails,
 }: AboutSectionProps) {
+  const introVideo = webUrl(consultantDetails.videoIntroUrl);
+  const tags = consultantDetails.tags ?? [];
+  const tools = (consultantDetails.toolsAndTechnologies ?? []).filter(Boolean);
+  const mentoringStyle = isRealDescription(consultantDetails.mentoringStyle)
+    ? consultantDetails.mentoringStyle.trim()
+    : null;
+  const headline = consultantDetails.headline?.trim();
+
   return (
     <div className="bg-card rounded-2xl border border-border p-6 md:p-8 space-y-6">
-      {/* About */}
       <div>
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
-            <User2 className="w-4 h-4 text-muted-foreground" />
-          </div>
-          <h3 className="text-lg font-semibold text-foreground">About</h3>
-        </div>
+        <SectionTitle icon={User2}>About</SectionTitle>
         <p className="text-muted-foreground leading-relaxed">
-          {isRealDescription(consultantDetails.description) ? (
-            consultantDetails.description.trim()
-          ) : (
-            <>
-              {userDetails.name} is a seasoned{" "}
-              {consultantDetails.headline || consultantDetails.domain.name}{" "}
-              expert with {consultantDetails.experience} of experience in the{" "}
-              {consultantDetails.domain.name} sector. They specialize in helping
-              professionals and businesses achieve their goals through expert
-              guidance and mentorship.
-            </>
-          )}
+          {isRealDescription(consultantDetails.description)
+            ? consultantDetails.description.trim()
+            : [userDetails.name, headline].filter(Boolean).join(", ")}
         </p>
+        {introVideo && (
+          <a
+            href={introVideo}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-3 inline-flex items-center gap-2 text-sm font-medium text-foreground underline underline-offset-4 hover:no-underline"
+          >
+            <PlayCircle className="w-4 h-4" aria-hidden />
+            Watch intro video
+          </a>
+        )}
       </div>
 
-      {/* Education & Background */}
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
-            <GraduationCap className="w-4 h-4 text-muted-foreground" />
-          </div>
-          <h3 className="text-lg font-semibold text-foreground">
-            Education & Background
-          </h3>
+      {mentoringStyle && (
+        <div>
+          <SectionTitle icon={MessagesSquare}>How they work</SectionTitle>
+          <p className="text-muted-foreground leading-relaxed whitespace-pre-line">
+            {mentoringStyle}
+          </p>
         </div>
-        <p className="text-muted-foreground leading-relaxed">
-          {userDetails.name} has extensive experience across multiple
-          industries, with a particular focus on{" "}
-          {consultantDetails?.subDomains
-            ?.map((domain: { name: string }) => domain.name)
-            .join(", ") || consultantDetails.domain.name}
-          . Their background includes working with diverse clients and
-          organizations to deliver measurable results.
-        </p>
-      </div>
+      )}
 
-      {/* Skills & Specialties */}
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
-            <Sparkles className="w-4 h-4 text-muted-foreground" />
-          </div>
-          <h3 className="text-lg font-semibold text-foreground">
-            Skills & Specialties
-          </h3>
+      {tags.length > 0 && (
+        <div>
+          <SectionTitle icon={Sparkles}>Skills & Specialties</SectionTitle>
+          <Chips
+            items={tags.map((tag) => ({ key: tag.id, label: tag.name }))}
+          />
         </div>
-        <div className="flex flex-wrap gap-2">
-          {consultantDetails.tags?.map((tag: { id: string; name: string }) => (
-            <span
-              key={tag.id}
-              className="px-3 py-1.5 bg-muted text-muted-foreground text-sm font-medium rounded-full"
-            >
-              {tag.name}
-            </span>
-          ))}
-          {(!consultantDetails.tags || consultantDetails.tags.length === 0) && (
-            <p className="text-muted-foreground text-sm">
-              Specializes in{" "}
-              {consultantDetails.headline || consultantDetails.domain.name}
-            </p>
-          )}
+      )}
+
+      {tools.length > 0 && (
+        <div>
+          <SectionTitle icon={Wrench}>Tools & technologies</SectionTitle>
+          <Chips items={tools.map((tool) => ({ key: tool, label: tool }))} />
         </div>
-      </div>
+      )}
     </div>
   );
 }

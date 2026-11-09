@@ -217,8 +217,10 @@ export class ClassService {
       durationInMonths: plan?.durationInMonths ?? 1,
       sessionsPerWeek: plan?.sessionsPerWeek ?? 1,
       sessionDurationInHours: plan?.sessionDurationInHours,
-      maxParticipants: plan?.maxParticipants ?? 1,
       certificateProvided: plan?.certificateProvided,
+      waitlistEnabled: plan?.waitlistEnabled,
+      // A cleared size reaches here undefined, which JSON drops; null resets it.
+      waitlistMax: plan?.waitlistMax ?? null,
       ...recordingFields,
       emailSupport: plan?.emailSupport,
       language: plan?.language ?? undefined,
@@ -248,12 +250,16 @@ export class ClassService {
     if (isUpdate) {
       return {
         ...basePayload,
+        // Absent unless the host edited it, so a stale form never moves capacity.
+        ...(plan?.maxParticipants !== undefined
+          ? { maxParticipants: plan.maxParticipants }
+          : {}),
         id: planId,
         classId: classId || undefined,
       };
     }
 
-    return basePayload;
+    return { ...basePayload, maxParticipants: plan?.maxParticipants ?? 1 };
   }
 
   /**

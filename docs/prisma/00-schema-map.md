@@ -729,6 +729,8 @@ erDiagram
         int price
         int maxParticipants
         boolean certificateProvided
+        boolean waitlistEnabled
+        int waitlistMax
     }
     Webinar {
         string id
@@ -743,8 +745,10 @@ erDiagram
         int maxParticipants
         int totalSessions
         boolean certificateProvided
+        boolean waitlistEnabled
+        int waitlistMax
     }
-    Class {
+    ClassBatch {
         string id
         string classPlanId
         ClassStatus status
@@ -752,12 +756,29 @@ erDiagram
         datetime schedulingPeriodEndsAt
     }
     WebinarPlan ||--o{ Webinar : "schedules instances"
-    ClassPlan ||--o{ Class : "runs cohorts"
+    ClassPlan ||--o{ ClassBatch : "runs cohorts"
 ```
 
 `Webinar.maxParticipants` and `Class.maxParticipants` are nullable per-instance
 capacity overrides; null inherits the plan's value. See
 [the capacity section of the booking docs](../booking/02-event-types-and-validation.md).
+
+`WebinarPlan.waitlistEnabled` (default true) and `waitlistMax` (null means the
+200-seat ceiling; the sidecar CHECKs `webinar_plan_waitlist_max_min` and
+`class_plan_waitlist_max_min` require at least 1, and Zod caps it at 200) switch
+the notify-me list on or off per plan, on `ClassPlan` too.
+
+`AppointmentWaitlist` holds one notify-only row per learner per sold-out event
+(`@@unique([appointmentId, userId])`, so a learner is on an event's list once).
+Its columns are `appointmentId` and `userId` (both `onDelete: Cascade`, which
+never fires because users are scrubbed, not deleted), `planKind` (`WEBINAR` or
+`CLASS`, sidecar CHECK `appointment_waitlist_plan_kind_chk`), `planId`, `status`
+(the existing `BackupInterestStatus`: `WAITING`, `NOTIFIED`, `BOOKED`,
+`EXPIRED`), `createdAt`, `updatedAt`, `notifiedAt` and `bookedAt`. The sidecar
+CHECKs `appointment_waitlist_notified_at_chk` and
+`appointment_waitlist_booked_at_chk` require the timestamp that matches
+`NOTIFIED` and `BOOKED`. Nothing is reserved by a row. See
+[the event seat waitlist decision](../decisions/2026-11-07-event-seat-waitlist.md).
 
 ---
 
@@ -1878,8 +1899,8 @@ Every enum in the schema and its values.
 | `RescheduleRequestStatus`      | PENDING_REVIEW, ACCEPTED, AUTO_ACCEPTED, DECLINED, WITHDRAWN, EXPIRED                                                                                                      |
 | `BookingSource`                | DIRECT_CHECKOUT, REQUEST_SUBMITTED                                                                                                                                         |
 | `TrialStatus`                  | PENDING, AWAITING_PAYMENT, SCHEDULED, COMPLETED, CONVERTED, CANCELLED, REJECTED                                                                                            |
-| `WaitlistStatus`               | PENDING, SUBSCRIBED, UNSUBSCRIBED, BOUNCED (newsletter list)                                                                                                               |
-| `WaitlistSource`               | LANDING_PAGE, FOOTER, BLOG, USE_CASE_PAGE, EVENT_SOLD_OUT, IMPORT                                                                                                          |
+| `NewsletterStatus`             | PENDING, SUBSCRIBED, UNSUBSCRIBED, BOUNCED (the `NewsletterSubscriber` list)                                                                                               |
+| `NewsletterSource`             | LANDING_PAGE, FOOTER, BLOG, USE_CASE_PAGE, IMPORT                                                                                                                          |
 | `WebinarStatus`                | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED                                                                                                                               |
 | `ClassStatus`                  | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED                                                                                                                               |
 | `DayOfWeek`                    | MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY                                                                                                             |

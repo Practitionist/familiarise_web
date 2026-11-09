@@ -198,7 +198,8 @@ step 0.
 
 `/onboarding/gate` (`app/onboarding/gate/page.tsx`,
 `components/onboarding/OnboardingGateForm.tsx`,
-`actions/onboarding-gate.action.ts`) collects a DOB (18+, `DateOfBirthSchema`)
+`actions/onboarding-gate.action.ts`) collects a DOB (18+, `DateOfBirthSchema`;
+the only age ask, with no separate "I am 18" checkbox)
 and consent, validated with `OnboardingGateSchema` on the server, and completes
 onboarding in one transaction. It is open only to a user with an ACTIVE
 membership (SSO JIT) or a pending, unexpired invitation to their verified
@@ -299,7 +300,7 @@ Layout:
 | `address`     | text          | No       | —                                                                     |
 | `bio`         | textarea      | No       | max 160 chars                                                         |
 | `linkedinUrl` | url           | No       | URL format or empty                                                   |
-| `dateOfBirth` | date          | Yes      | `DateOfBirthSchema` (18+)                                             |
+| `dateOfBirth` | date          | Yes      | `DateOfBirthSchema` (18+); neutral helper, inline refusal if under 18 |
 | `role`        | radio buttons | Yes      | CONSULTANT, CONSULTEE, ORG_WORKSPACE (operators never use the wizard) |
 
 ### 3.3 Step 1 Consultant: `ConsultantProfessionalStep`
@@ -377,7 +378,8 @@ Uses `VerificationDocumentUpload` component (drag & drop, progress, status badge
 ### 3.6 Agreement Forms
 
 `ConsulteeAgreementForm` (consultee and org owner) and `TermsAndPrivacyAgreement`
-(consultant) collect:
+(consultant) both render `DataProtectionNotice` and `SignupConsentCheckboxes`
+(`components/compliance/`) and collect:
 
 - `termsAccepted` (checkbox, required)
 - `privacyAccepted` (checkbox, required)
@@ -475,7 +477,9 @@ Every branch also merges OnboardingConsentSchema:
 ```
 
 `OnboardingGateSchema` (gate) and `OrgOnboardingSchema` (org create) reuse
-`OnboardingConsentSchema` plus `DateOfBirthSchema`.
+`OnboardingConsentSchema` plus `DateOfBirthSchema`. The date of birth is the
+age attestation: `claimOnboardingCompletion` stamps `User.adultConfirmedAt`
+when it passes the 18+ check (there is no `adultConfirmed` field).
 
 ### OnboardingFormDataSchema (Client Form)
 
@@ -1065,6 +1069,8 @@ The rules below are the availability contract (`lib/scheduling/availability-cont
 
 16. **Availability has one contract, and shrinking it is reported, not refused.** Every availability write (onboarding, settings PUT, per-row routes) validates through `lib/scheduling/availability-contract.ts`; the WEEKLY↔CUSTOM switch stays a hard block while anything is booked (now including trials and open reschedule requests, checked again inside the transaction with a CAS on `scheduleType`); narrowing hours within a type succeeds and the response carries `uncoveredUpcoming` for the settings toast. `profileCompletionPercentage` is computed (`lib/profiles/profile-completion.ts`, #698 OB-1) rather than seeded. Details in [03-availability-contract.md](03-availability-contract.md).
 
+17. **The Home checklist is derived beside the completion score, not from it.** `profileCompletionPercentage` is a stored 0 to 100 score (weights in `PROFILE_COMPLETION_WEIGHTS`: description 15, headline 10, experience 5, domain detail 10, availability 15, plan 15, work experience 10, image 5, verified 15). The expert Home checklist (`deriveConsultantChecklist`, `lib/dashboard/consultant-checklist.ts`) has five steps and stores nothing. Its profile step is `calculateProfileCompletion` with availability, plan and verification forced off, which must reach the remaining 55 points, so those three components are not counted twice. Its offering step counts only published plans and digital products, while the score's plan component does not require publication, so an expert can show a score of 100 and still see the offering step open. The checklist hides itself when all five steps are done.
+
 ### Alternatives considered (#onboarding-ux, 2026-08)
 
 Recorded so nobody re-litigates these without new evidence. Benchmarks from
@@ -1122,7 +1128,7 @@ whole design.
 | `app/form/onboarding/components/ConsultantAgreementAndVerificationStep.tsx` | Step 3 — verification (deferrable) + terms       |
 | `app/form/onboarding/components/ConsultantReviewForm.tsx`                   | Step 4 — review                                  |
 | `app/form/onboarding/components/ConsulteeAgreementForm.tsx`                 | Step 1 — terms + submit (final consultee screen) |
-| `app/form/onboarding/components/TermsAndPrivacyAgreement.tsx`               | Shared terms/privacy/marketing checkboxes        |
+| `app/form/onboarding/components/TermsAndPrivacyAgreement.tsx`               | Notice + terms/privacy/marketing checkboxes      |
 | `components/onboarding/OnboardingGateForm.tsx`                              | Gate form (DOB + consent)                        |
 | `components/verification/ConsultantVerificationForm.tsx`                    | Settings → Verification form (dashboard only)    |
 

@@ -10,13 +10,16 @@ const SECTIONS: readonly { id: ProfileSectionId; label: string }[] = [
   { id: "about", label: "About" },
   { id: "sessions", label: "Sessions" },
   { id: "programs", label: "Programs" },
-  { id: "products", label: "Products & replays" },
+  { id: "products", label: "Products" },
   { id: "reviews", label: "Reviews" },
 ];
 
 /** Scroll offset that clears the fixed site header plus this bar. */
 export const PROFILE_SECTION_SCROLL_MARGIN =
   "scroll-mt-[calc(var(--maintenance-banner-height,0px)+var(--header-height,5rem)+4rem)]";
+
+/** How far past the anchor line still counts as having reached a section. */
+const READING_LINE_SLACK_PX = 16;
 
 /** Sticky in-page tabs for the sections that have content; the active one carries `aria-current`. */
 export function ProfileAnchorTabs({
@@ -29,12 +32,28 @@ export function ProfileAnchorTabs({
   useEffect(() => {
     const order = ids.split(",") as ProfileSectionId[];
     const visible = new Set<ProfileSectionId>();
+
+    // Where an anchor click lands: the section's own scroll margin.
+    const firstSectionReached = () => {
+      const el = document.getElementById(order[0]);
+      if (!el) return true;
+      const line = Number.parseFloat(getComputedStyle(el).scrollMarginTop) || 0;
+      return el.getBoundingClientRect().top <= line + READING_LINE_SLACK_PX;
+    };
+
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
           const id = entry.target.id as ProfileSectionId;
           if (entry.isIntersecting) visible.add(id);
           else visible.delete(id);
+        }
+        // On wide screens the Sessions panel is a sidebar beside About and is
+        // in view from the first paint, while About sits lower. Until the
+        // reader reaches the first section it stays the active tab.
+        if (!firstSectionReached()) {
+          setActive(order[0]);
+          return;
         }
         const first = order.find((id) => visible.has(id));
         if (first) setActive(first);

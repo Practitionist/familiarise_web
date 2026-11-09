@@ -171,7 +171,7 @@ const CODE_SENTENCE: Record<string, string> = {
   // B4 — the capacity pre-check. Terminal, so the sentence points elsewhere
   // rather than at a retry.
   EVENT_SOLD_OUT:
-    "This session is full — pick another time or join the waitlist.",
+    "This session is full. Pick another time, or use Notify me on the event page to hear when a seat opens.",
   // DELIBERATELY ABSENT, because the server's own sentence is the better copy
   // and the fallback below already reaches it (with any `[CODE]` stripped):
   //   RESCHEDULE_WINDOW, SLOT_TOO_SOON, SLOT_NOT_ON_GRID

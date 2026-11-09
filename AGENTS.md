@@ -61,4 +61,4 @@
 5. **CodeRabbit CLI & PR Comment Triage**:
    - Use the `coderabbit` CLI (`coderabbit review`; plain text is the default) for local review checks and follow `.claude/skills/workflow/references/pr-comment-triage.md` to classify and resolve every PR review comment before merging.
 6. **Email Delivery Guard**:
-   - Every send goes through `deliver()`, or for the waitlist broadcast batch through `heldRecipientDomain()`, so the pre-launch guard (`EMAIL_DELIVERY_MODE`) sees every recipient; see `docs/email/README.md`.
+   - Every send goes through `deliver()`, or for the newsletter broadcast batch through `heldRecipientDomain()`, so the pre-launch guard (`EMAIL_DELIVERY_MODE`) sees every recipient; see `docs/email/README.md`.

@@ -50,6 +50,8 @@ interface ExpertPricingProps {
   autoOpenTrial?: boolean;
   onRefreshSlots?: () => void;
   onDurationChange?: (durationInHours: number) => void;
+  /** The earliest bookable time for the selected duration, already formatted in the viewer's zone. */
+  nextAvailableLabel?: string | null;
 }
 
 export function ExpertPricing({
@@ -70,6 +72,7 @@ export function ExpertPricing({
   autoOpenTrial,
   onRefreshSlots,
   onDurationChange,
+  nextAvailableLabel,
 }: Readonly<ExpertPricingProps>) {
   const [activeServiceTab, setActiveServiceTab] = useState<
     "consultations" | "subscriptions"
@@ -172,6 +175,7 @@ export function ExpertPricing({
           priceCurrency: plan.priceCurrency || "INR",
           duration: `${plan.durationInMonths}`,
           durationInMonths: plan.durationInMonths,
+          durationInWeeks: plan.durationInWeeks,
           totalHours: plan.totalHours,
           totalSessions: plan.totalSessions,
           sessionsPerWeek: plan.sessionsPerWeek,
@@ -246,6 +250,17 @@ export function ExpertPricing({
               )}
             </span>
           )}
+          {nextAvailableLabel &&
+            consultantDetails.acceptingRequests !== false &&
+            hasConsultations &&
+            (!hasSubscriptions || activeServiceTab === "consultations") && (
+              <p className="mt-3 text-sm text-zinc-400">
+                Next available:{" "}
+                <span className="font-medium text-white">
+                  {nextAvailableLabel}
+                </span>
+              </p>
+            )}
         </div>
 
         {hasConsultations && hasSubscriptions ? (

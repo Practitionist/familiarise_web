@@ -3,8 +3,8 @@
  * which rail it rode, and where its receipt is. Pure, so the detail client
  * can import it (prisma → pg → fs breaks the build) and a test can pin it.
  *
- * The funding legs are the runtime truth for sponsorship; `paymentMethod` is
- * the fallback for rows written before legs existed. `Appointment.organizationId`
+ * The funding legs are the runtime truth for sponsorship and for the rail's
+ * wording; `paymentMethod` is read only for a row with no legs. `Appointment.organizationId`
  * is NOT a sponsorship signal — checkout stamps it on a PERSONAL-funded booking
  * too, where the member paid their own card and must see the amount.
  */
@@ -20,11 +20,35 @@ export type PaymentDisplayLike = {
   paymentGateway: string;
   receiptUrl: string | null;
   consumerInvoice: { id: string } | null;
-  legs?: ReadonlyArray<{ source: string }>;
-  refunds?: ReadonlyArray<{ amountPaise: bigint | number | string }>;
+  legs?: ReadonlyArray<{ source: string; amountPaise?: PaiseLike }>;
+  refunds?: ReadonlyArray<{ amountPaise: PaiseLike }>;
 };
 
-const ORG_LEG_SOURCES = new Set([
+type PaiseLike = bigint | number | string;
+
+/** The funding leg sources in display order; `*_REVERSAL` legs are refunds, not funding. */
+const FUNDING_LEG_ORDER = [
+  "CARD",
+  "REFERRAL_CREDIT",
+  "WALLET",
+  "INVOICE_ACCRUAL",
+  "OVERAGE_INVOICE_ACCRUAL",
+  "LICENSE",
+] as const;
+
+export type FundingLegSource = (typeof FUNDING_LEG_ORDER)[number];
+
+/** Each funding leg's rail in the payer's words. */
+const LEG_RAIL_LABEL: Record<FundingLegSource, string> = {
+  CARD: "card / UPI",
+  REFERRAL_CREDIT: "referral credit",
+  WALLET: "organisation wallet",
+  INVOICE_ACCRUAL: "invoiced to the organisation",
+  OVERAGE_INVOICE_ACCRUAL: "invoiced to the organisation",
+  LICENSE: "organisation licence",
+};
+
+const ORG_LEG_SOURCES = new Set<string>([
   "WALLET",
   "LICENSE",
   "INVOICE_ACCRUAL",
@@ -72,21 +96,98 @@ const GATEWAY_NAME: Record<string, string> = {
 };
 
 /**
- * "via …" on the money line. The gateway is named, not the instrument: the
- * row records CARD for every gateway charge, UPI included, so "card" would be
- * a guess. Null when nothing honest can be said.
+ * "via …" on the money line. A self-paid row names the gateway, since CARD is
+ * recorded for every gateway charge; an org or credit row names its lead leg.
  */
 export function paymentRailLabel(p: PaymentDisplayLike): string | null {
-  switch (paymentFunding(p)) {
-    case "ORG":
-      if (p.paymentMethod === "INVOICE") return "invoiced to the organisation";
-      if (p.paymentMethod === "LICENSE") return "organisation licence";
-      return "organisation wallet";
-    case "CREDITS":
-      return "credits";
-    default:
-      return GATEWAY_NAME[p.paymentGateway] ?? null;
+  const funding = paymentFunding(p);
+  if (funding === "SELF") return GATEWAY_NAME[p.paymentGateway] ?? null;
+  const sources = new Set((p.legs ?? []).map((l) => l.source));
+  if (sources.size > 0) {
+    const lead = FUNDING_LEG_ORDER.find(
+      (s) =>
+        sources.has(s) && (funding === "CREDITS" || ORG_LEG_SOURCES.has(s)),
+    );
+    if (lead) return LEG_RAIL_LABEL[lead];
   }
+  if (funding === "CREDITS") return "credits";
+  if (p.paymentMethod === "INVOICE") return LEG_RAIL_LABEL.INVOICE_ACCRUAL;
+  if (p.paymentMethod === "LICENSE") return LEG_RAIL_LABEL.LICENSE;
+  return LEG_RAIL_LABEL.WALLET;
+}
+
+export interface FundingBreakdownEntry {
+  source: FundingLegSource;
+  label: string;
+  amountPaise: number;
+}
+
+/**
+ * What each rail carried, merged by wording and in a fixed order. Reversal
+ * legs are left to the refund lines. Every entry but REFERRAL_CREDIT and a
+ * 0-value LICENSE sums to `Payment.amount` (the payment_legs_sum_to_amount trigger).
+ */
+export function paymentFundingBreakdown(
+  legs: ReadonlyArray<{ source: string; amountPaise: PaiseLike }>,
+): FundingBreakdownEntry[] {
+  const byLabel = new Map<string, FundingBreakdownEntry>();
+  for (const source of FUNDING_LEG_ORDER) {
+    const label = LEG_RAIL_LABEL[source];
+    for (const leg of legs.filter((l) => l.source === source)) {
+      const entry = byLabel.get(label) ?? { source, label, amountPaise: 0 };
+      entry.amountPaise += Number(leg.amountPaise);
+      byLabel.set(label, entry);
+    }
+  }
+  const entries = [...byLabel.values()];
+  const funded = entries.filter((e) => e.amountPaise !== 0);
+  return funded.length > 0 ? funded : entries;
+}
+
+export interface PaymentDiscountBreakdown {
+  /** Paise a discount code took off the list price; 0 when no code was used. */
+  codeDiscountPaise: number;
+  /** Paise the referral welcome discount took off the list price. */
+  welcomeDiscountPaise: number;
+}
+
+/**
+ * The pre-tax discounts on one Payment, from the stored fields alone.
+ * `amount` = `originalAmount` - discounts + `taxAmount` - referral credit, so
+ * the code's share is what remains once the welcome discount and the credit
+ * legs are accounted for. A row with no code never reports a code discount.
+ */
+export function paymentDiscountBreakdown(p: {
+  originalAmount: PaiseLike;
+  taxAmount: PaiseLike;
+  amount: PaiseLike;
+  welcomeDiscountPaise?: PaiseLike | null;
+  hasDiscountCode: boolean;
+  legs?: ReadonlyArray<{ source: string; amountPaise: PaiseLike }>;
+}): PaymentDiscountBreakdown {
+  const welcome = Math.max(0, Number(p.welcomeDiscountPaise ?? 0));
+  if (!p.hasDiscountCode) {
+    return { codeDiscountPaise: 0, welcomeDiscountPaise: welcome };
+  }
+  const credits = (p.legs ?? [])
+    .filter((l) => l.source === "REFERRAL_CREDIT")
+    .reduce((sum, l) => sum + Number(l.amountPaise), 0);
+  const totalDiscount =
+    Number(p.originalAmount) + Number(p.taxAmount) - credits - Number(p.amount);
+  return {
+    codeDiscountPaise: Math.max(0, totalDiscount - welcome),
+    welcomeDiscountPaise: welcome,
+  };
+}
+
+/** "₹800 card / UPI + ₹200 referral credit". */
+export function formatFundingBreakdown(
+  entries: ReadonlyArray<FundingBreakdownEntry>,
+  currency: string,
+): string {
+  return entries
+    .map((e) => `${formatCurrencyAmount(e.amountPaise, currency)} ${e.label}`)
+    .join(" + ");
 }
 
 /**

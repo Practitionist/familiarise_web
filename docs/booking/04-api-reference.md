@@ -272,15 +272,44 @@ The compare-and-swap narrows to the status the caller read, so a trial accepted 
 
 ## Calendar Endpoint
 
-`GET /api/calendar/[appointmentId]?u=<userId>&t=<token>` serves one attendee's `.ics` for a booking, and it is the only booking endpoint that takes no session. The link comes from `calendarLinks` (`lib/appointments/calendar-links.ts`), which the booked email and the checkout success page render beside a Google Calendar template URL. The token is an HMAC over the appointment id and the user id with the purpose label `calendar-ics`, signed with the shared link secret (`signToken` in `lib/waitlist/tokens.ts`).
+`GET /api/calendar/[appointmentId]?u=<userId>&t=<token>` serves one attendee's `.ics` for a booking, and it is the only booking endpoint that takes no session. The link comes from `calendarLinks` (`lib/appointments/calendar-links.ts`), which the booked email and the checkout success page render beside a Google Calendar template URL. The token is an HMAC over the appointment id and the user id with the purpose label `calendar-ics`, signed with the shared link secret (`signToken` in `lib/newsletter/tokens.ts`).
 
-| Case                                                                        | Answer                                                |
-| --------------------------------------------------------------------------- | ----------------------------------------------------- |
-| The token verifies and the user holds a paid seat with a session ahead      | 200 `text/calendar`, every upcoming confirmed session |
-| A bad token, a missing or deleted booking, or a seat that is no longer paid | 404 `Not found`, the same body for every case         |
-| More than 30 requests a minute from one IP (`calendarLimiter`)              | 429 with `Retry-After`                                |
+| Case                                                                                               | Answer                                                |
+| -------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| The token verifies and the user holds a paid seat with a session ahead                             | 200 `text/calendar`, every upcoming confirmed session |
+| A bad token, a missing or deleted booking, a seat that is no longer paid, or a fully refunded seat | 404 `Not found`, the same body for every case         |
+| More than 30 requests a minute from one IP (`calendarLimiter`)                                     | 429 with `Retry-After`                                |
 
-Every answer carries `Cache-Control: private, no-store`. A paid seat is a `CONSULTEE` participant row that `paidParticipant(userId)` admits (`calendarSeatWhere`, which the checkout success page also checks before it offers the links), the same predicate the group-event room uses, so a refunded or cancelled seat stops serving the file at once. The file carries the title, each session's start and end in UTC, and the dashboard link (`/dashboard/go/auto/appointments/<id>`), never the video link and never another person's details. The route reads the client IP that middleware stamps, which the `/api/(.*)` matcher covers.
+Every answer carries `Cache-Control: private, no-store`. A paid seat is a `CONSULTEE` participant row that `paidParticipant(userId)` admits (`calendarSeatWhere`, which the checkout success page also checks before it offers the links), the same predicate the group-event room uses. A full refund leaves the payment `SUCCEEDED`, so the route also loads the seat's own payment and refuses it when `isFullyRefundedPurchase` (`lib/payments/utils/refund-balance.ts`) counts pending and completed refunds covering it; a partial refund and a free seat keep the file. Both checks live in `holdsCalendarSeat` (`lib/appointments/calendar-links.ts`), which the checkout success page calls too, so a refunded or cancelled seat stops serving the file at once and the two can never disagree. The file carries the title, each session's start and end in UTC, and the dashboard link (`/dashboard/go/auto/appointments/<id>`), never the video link and never another person's details. The route reads the client IP that middleware stamps, which the `/api/(.*)` matcher covers.
+
+---
+
+## Offering Editor Reads
+
+`GET /api/plans/webinars/{id}/editor` and `GET /api/plans/classes/{id}/editor` return the same plan detail as the public plan GET, for the offering editor only. The caller must be signed in and be the plan's owner or an ACCEPTED co-host; anyone else, like a missing plan, gets 404. Every answer carries `Cache-Control: private, no-store`, while the public GET keeps its shared cache (`s-maxage=60, stale-while-revalidate=300`), so the editor never starts a save from a copy up to six minutes old.
+
+---
+
+## Notify-me Endpoint
+
+`POST /api/scheduling/event-waitlist` joins and `DELETE /api/scheduling/event-waitlist` leaves the notify-me list of a sold-out webinar or class (`app/api/scheduling/event-waitlist/route.ts`). Both take the body `{ "kind": "WEBINAR" | "CLASS", "eventId": "<id>" }`. `GET /api/scheduling/event-waitlist` lists the caller's own open rows for the learner's alerts list; the plan pages still read the viewer's state on the server. The middleware already requires a session for everything under `/api/scheduling/`, `POST` and `DELETE` are limited per user by `eventMutationLimiter`, `GET` carries no limiter, because it is a small read: the event-waitlist list holds at most five open rows per learner (`EVENT_WAITLIST_USER_CAP`), and the backup-interest list it mirrors holds at most three (`BACKUP_INTEREST_CAP`), and every answer carries `Cache-Control: no-store`.
+
+`GET` answers 200 with `{ data: Alert[] }`, oldest row first, validated by `EventWaitlistListResponseSchema` (`schemas/interest.ts`). Each alert carries `kind`, `eventId`, `planId`, `planTitle`, `nextSessionAt` (ISO, or null when no live session is left), `status` (`WAITING` or `NOTIFIED`), `notifiedAt` (ISO or null), `checkoutHref` (the same link the notice carries) and `seatAvailable` (whether checkout would sell a seat right now: the event is on sale and at least one seat is free, so it turns false again if another buyer takes the reopened seat; a row stays open, showing `seatAvailable: false`, while its event is not on sale but has not ended, for example an archived plan or a running class past its late-join cut-off; the stale-request sweep expires it only once the event is completed or cancelled, its appointment is deleted, or no live session is left). For example, Priya waiting on Hannah's webinar after a notice gets `{ "kind": "WEBINAR", "eventId": "web-1", "planId": "plan-1", "planTitle": "Deep work", "nextSessionAt": "2026-11-12T04:30:00.000Z", "status": "NOTIFIED", "notifiedAt": "2026-11-10T06:00:00.000Z", "checkoutHref": "/checkout/plans/webinar/plan-1?eventId=web-1", "seatAvailable": true }`.
+
+| Case                                                                       | Answer                                                                         |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Join succeeds, or the caller is already on the list                        | 200 `{ data: { status } }`                                                     |
+| Leave                                                                      | 200 `{ left: true }`, or `{ left: false }` when no open row                    |
+| Missing event or a plan the caller may not view                            | 404 `EVENT_NOT_FOUND`, the same answer for both                                |
+| Event cancelled, past or archived                                          | 409 `EVENT_CLOSED`; a class past its enrolment cut-off, 409 `ENROLMENT_CLOSED` |
+| The caller is the host or an accepted co-host                              | Refused like checkout (`assertNotSelfBooking`)                                 |
+| The host turned the waitlist off                                           | 409 `WAITLIST_DISABLED`                                                        |
+| Seats are still available                                                  | 409 `EVENT_NOT_FULL`                                                           |
+| The caller already holds a seat, or may not buy one again                  | The existing seat refusals (`alreadyHeldSeatError`, `assertSeatRemintable`)    |
+| The list holds `min(waitlistMax ?? 200, 200)` open rows                    | 409 `WAITLIST_FULL`                                                            |
+| The caller is already waiting on five sessions (`EVENT_WAITLIST_USER_CAP`) | 409 `EVENT_WAITLIST_CAP`                                                       |
+
+The checks run in that order, and nothing here reserves a seat. See [the event seat waitlist decision](../decisions/2026-11-07-event-seat-waitlist.md).
 
 ---
 

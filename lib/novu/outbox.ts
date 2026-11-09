@@ -708,10 +708,6 @@ async function sendChunk(
   return outcome;
 }
 
-/** Dead-letter reasons for rows attempted under the earlier row-wide Novu identity. */
-export const LEGACY_DELIVERY_FORMAT = "review:legacy_delivery_format";
-export const LEGACY_BROADCAST = "review:legacy_broadcast";
-
 /**
  * The DEAD_LETTER row that keeps terminally refused recipients visible once
  * they leave a row that still has recipients to send.
@@ -804,15 +800,6 @@ export async function attemptTrigger(
       ...splitNote(applied, settle?.split),
     };
   };
-
-  // An active row with an error but no anchor was sent under the row-wide
-  // Novu identity; resending under per-recipient ones could ring it twice.
-  if (row.kind === "BROADCAST") {
-    return deadLetter(LEGACY_BROADCAST, row.attempts);
-  }
-  if (!row.firstAttemptAt && row.lastError) {
-    return deadLetter(LEGACY_DELIVERY_FORMAT, row.attempts);
-  }
 
   const pastReplayWindow = (at: Date | null | undefined) =>
     providerWindowRefusal(at ? new Date(at) : null, now) !== null;

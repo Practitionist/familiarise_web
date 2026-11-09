@@ -7,7 +7,7 @@ const mockCaptureException = jest.fn();
 const mockMetricsGauge = jest.fn();
 const mockMetricsCount = jest.fn();
 const mockPostOpsChat = jest.fn();
-const mockWaitlistUnsubscribe = jest.fn();
+const mockNewsletterUnsubscribe = jest.fn();
 
 jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
@@ -24,8 +24,8 @@ jest.mock("../../lib/observability/ops-chat", () => ({
   postOpsChat: (...args: unknown[]) => mockPostOpsChat(...args),
 }));
 
-jest.mock("../../lib/waitlist/service", () => ({
-  unsubscribe: (...args: unknown[]) => mockWaitlistUnsubscribe(...args),
+jest.mock("../../lib/newsletter/service", () => ({
+  unsubscribe: (...args: unknown[]) => mockNewsletterUnsubscribe(...args),
 }));
 
 import { NextRequest } from "next/server";
@@ -38,16 +38,16 @@ import {
   listUnsubscribeHeaders,
   reconstructUnsubscribeHeaders,
 } from "@/lib/email/unsubscribe";
-import { buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
+import { buildUnsubscribeUrl } from "@/lib/newsletter/tokens";
 import {
   runEmailRetryTick,
   type FailedEmailStore,
   type RelaySender,
 } from "@/jobs/email/retry-failed-emails";
 import {
-  GET as getWaitlistUnsubscribe,
-  POST as postWaitlistUnsubscribe,
-} from "@/app/api/waitlist/unsubscribe/route";
+  GET as getNewsletterUnsubscribe,
+  POST as postNewsletterUnsubscribe,
+} from "@/app/api/newsletter/unsubscribe/route";
 
 const T0 = new Date("2026-10-11T12:00:00Z").getTime();
 
@@ -82,8 +82,8 @@ function makeFailedBatch(
 ): FailedEmailBatch {
   return {
     id: "feb-default",
-    idempotencyKey: "WAITLIST_BROADCAST/batch-1",
-    emailType: "WAITLIST_BROADCAST",
+    idempotencyKey: "NEWSLETTER_BROADCAST/batch-1",
+    emailType: "NEWSLETTER_BROADCAST",
     payload: [
       {
         from: "Familiarise <newsletter@news.familiarisenow.com>",
@@ -225,18 +225,18 @@ function makeRelaySender(
   };
 }
 
-const OLD_HMAC = process.env.WAITLIST_HMAC_SECRET;
+const OLD_SECRET = process.env.BETTER_AUTH_SECRET;
 const OLD_DELIVERY_MODE = process.env.EMAIL_DELIVERY_MODE;
 
 beforeEach(() => {
-  process.env.WAITLIST_HMAC_SECRET = "test-hmac-secret-at-least-32-chars-long";
+  process.env.BETTER_AUTH_SECRET = "test-auth-secret-at-least-32-chars-long";
   process.env.EMAIL_DELIVERY_MODE = "live";
   jest.clearAllMocks();
 });
 
 afterEach(() => {
-  if (OLD_HMAC === undefined) delete process.env.WAITLIST_HMAC_SECRET;
-  else process.env.WAITLIST_HMAC_SECRET = OLD_HMAC;
+  if (OLD_SECRET === undefined) delete process.env.BETTER_AUTH_SECRET;
+  else process.env.BETTER_AUTH_SECRET = OLD_SECRET;
 
   if (OLD_DELIVERY_MODE === undefined) delete process.env.EMAIL_DELIVERY_MODE;
   else process.env.EMAIL_DELIVERY_MODE = OLD_DELIVERY_MODE;
@@ -388,7 +388,7 @@ describe("2. Row-scoped Idempotency-Key (<EMAIL_TYPE>/failed-email/<row.id>)", (
 });
 
 describe("3. Stateless RFC 8058 unsubscribe header reconstruction", () => {
-  it("reconstructs List-Unsubscribe + List-Unsubscribe-Post for lifecycle and waitlist emails, and returns undefined for required notices", async () => {
+  it("reconstructs List-Unsubscribe + List-Unsubscribe-Post for lifecycle and newsletter emails, and returns undefined for required notices", async () => {
     const lifecycleUrl = buildEmailUnsubscribeUrl("user_lifecycle_99");
     const lifecycleHeaders = reconstructUnsubscribeHeaders({
       recipient: "member@example.com",
@@ -401,13 +401,13 @@ describe("3. Stateless RFC 8058 unsubscribe header reconstruction", () => {
       "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
     });
 
-    const waitlistUrl = buildUnsubscribeUrl("waitlist-sub@example.com");
-    const waitlistHeaders = reconstructUnsubscribeHeaders({
-      recipient: "waitlist-sub@example.com",
-      htmlBody: `<p>Newsletter <a href="${waitlistUrl}">Unsubscribe</a></p>`,
+    const newsletterUrl = buildUnsubscribeUrl("newsletter-sub@example.com");
+    const newsletterHeaders = reconstructUnsubscribeHeaders({
+      recipient: "newsletter-sub@example.com",
+      htmlBody: `<p>Newsletter <a href="${newsletterUrl}">Unsubscribe</a></p>`,
       textBody: null,
     });
-    expect(waitlistHeaders).toEqual(listUnsubscribeHeaders(waitlistUrl));
+    expect(newsletterHeaders).toEqual(listUnsubscribeHeaders(newsletterUrl));
 
     // Mandatory account notice (category === null) has no unsubscribe link
     const requiredNoticeHeaders = reconstructUnsubscribeHeaders({
@@ -444,11 +444,11 @@ describe("3. Stateless RFC 8058 unsubscribe header reconstruction", () => {
   });
 });
 
-describe("4. GET vs POST /api/waitlist/unsubscribe link-scanner safety", () => {
+describe("4. GET vs POST /api/newsletter/unsubscribe link-scanner safety", () => {
   it("renders confirmation HTML on GET without mutating DB, while POST performs immediate one-click unsubscribe", async () => {
-    const getRes = await getWaitlistUnsubscribe(
+    const getRes = await getNewsletterUnsubscribe(
       new NextRequest(
-        "https://familiarisenow.com/api/waitlist/unsubscribe?email=sub%40example.com&token=tok_xyz",
+        "https://familiarisenow.com/api/newsletter/unsubscribe?email=sub%40example.com&token=tok_xyz",
         { method: "GET" },
       ),
     );
@@ -457,39 +457,39 @@ describe("4. GET vs POST /api/waitlist/unsubscribe link-scanner safety", () => {
     const html = await getRes.text();
     expect(html).toContain("Confirm unsubscribe");
     expect(html).toContain('<form method="post"');
-    expect(mockWaitlistUnsubscribe).not.toHaveBeenCalled();
+    expect(mockNewsletterUnsubscribe).not.toHaveBeenCalled();
 
     // Incomplete link on GET returns 400 HTML and also does not touch DB
-    const badGetRes = await getWaitlistUnsubscribe(
-      new NextRequest("https://familiarisenow.com/api/waitlist/unsubscribe", {
+    const badGetRes = await getNewsletterUnsubscribe(
+      new NextRequest("https://familiarisenow.com/api/newsletter/unsubscribe", {
         method: "GET",
       }),
     );
     expect(badGetRes.status).toBe(400);
-    expect(mockWaitlistUnsubscribe).not.toHaveBeenCalled();
+    expect(mockNewsletterUnsubscribe).not.toHaveBeenCalled();
 
     // RFC 8058 one-click POST immediately unsubscribes
-    mockWaitlistUnsubscribe.mockResolvedValue({ ok: true });
-    const postRes = await postWaitlistUnsubscribe(
+    mockNewsletterUnsubscribe.mockResolvedValue({ ok: true });
+    const postRes = await postNewsletterUnsubscribe(
       new NextRequest(
-        "https://familiarisenow.com/api/waitlist/unsubscribe?email=sub%40example.com&token=tok_xyz",
+        "https://familiarisenow.com/api/newsletter/unsubscribe?email=sub%40example.com&token=tok_xyz",
         { method: "POST" },
       ),
     );
     expect(postRes.status).toBe(200);
     expect(await postRes.json()).toEqual({ success: true });
-    expect(mockWaitlistUnsubscribe).toHaveBeenCalledTimes(1);
-    expect(mockWaitlistUnsubscribe).toHaveBeenCalledWith({
+    expect(mockNewsletterUnsubscribe).toHaveBeenCalledTimes(1);
+    expect(mockNewsletterUnsubscribe).toHaveBeenCalledWith({
       email: "sub@example.com",
       token: "tok_xyz",
     });
   });
 
   it("never answers unsubscribed when the write failed", async () => {
-    mockWaitlistUnsubscribe.mockRejectedValueOnce(new Error("db down"));
-    const res = await postWaitlistUnsubscribe(
+    mockNewsletterUnsubscribe.mockRejectedValueOnce(new Error("db down"));
+    const res = await postNewsletterUnsubscribe(
       new NextRequest(
-        "https://familiarisenow.com/api/waitlist/unsubscribe?email=sub%40example.com&token=tok_xyz",
+        "https://familiarisenow.com/api/newsletter/unsubscribe?email=sub%40example.com&token=tok_xyz",
         { method: "POST", headers: { accept: "text/html" } },
       ),
     );
@@ -528,7 +528,7 @@ describe("5. Per-tick Sentry dead-letter aggregation, metrics gauge & Ops Chat a
       batches: [
         makeFailedBatch({
           id: "feb-dlq-1",
-          emailType: "WAITLIST_BROADCAST",
+          emailType: "NEWSLETTER_BROADCAST",
           status: "PENDING",
           attempts: 0,
         }),

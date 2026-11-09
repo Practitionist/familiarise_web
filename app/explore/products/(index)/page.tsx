@@ -1,13 +1,13 @@
 import { Suspense } from "react";
-import Link from "next/link";
+import { ProductsFilters } from "@/components/explore/ProductsFilters";
 import { ProductsGrid } from "@/components/explore/ProductsGrid";
-import { ReplaysGrid } from "@/components/explore/ReplaysGrid";
-import { PRODUCTS_TABS, parseProductsTab } from "@/lib/explore/products-tabs";
+import { parseProductsQuery } from "@/lib/explore/products-query";
 
 export const metadata = {
-  title: "Digital products and replays | Familiarise",
+  title: "Digital products | Familiarise",
   description:
-    "Files and replays from verified consultants: e-books, templates, packs and recorded sessions.",
+    "E-books, templates and packs from verified consultants. Pay once and keep it.",
+  alternates: { canonical: "/explore/products" },
 };
 
 export default async function ExploreProductsPage({
@@ -15,46 +15,26 @@ export default async function ExploreProductsPage({
 }: Readonly<{
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }>) {
-  const tab = parseProductsTab((await searchParams).tab);
+  const query = parseProductsQuery(await searchParams);
 
   return (
     <div className="container mx-auto px-4 py-10 space-y-8">
       <header className="space-y-2 text-center">
-        <h1 className="text-3xl font-bold tracking-tight">
-          Digital products and replays
-        </h1>
+        <h1 className="text-3xl font-bold tracking-tight">Digital products</h1>
         <p className="text-muted-foreground max-w-2xl mx-auto">
-          Pay once and keep it: files from experts, and replays of their
-          sessions.
+          Pay once and keep it: files from experts.
         </p>
       </header>
-      <nav
-        aria-label="Products sections"
-        className="flex justify-center gap-1 border-b"
-      >
-        {PRODUCTS_TABS.map(({ id, label }) => (
-          <Link
-            key={id}
-            href={`/explore/products?tab=${id}`}
-            aria-current={id === tab ? "page" : undefined}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
-              id === tab
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {label}
-          </Link>
-        ))}
-      </nav>
+      <ProductsFilters query={query} />
       <Suspense
+        key={JSON.stringify(query)}
         fallback={
           <div className="py-24 text-center text-muted-foreground">
             Loading…
           </div>
         }
       >
-        {tab === "replays" ? <ReplaysGrid /> : <ProductsGrid />}
+        <ProductsGrid query={query} />
       </Suspense>
     </div>
   );

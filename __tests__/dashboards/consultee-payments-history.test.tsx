@@ -12,6 +12,7 @@
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PaymentsHistoryList } from "@/app/dashboard/consultee/[consulteeId]/(features)/payments/PaymentsHistoryList";
+import { paymentFundingBreakdown } from "@/lib/appointments/payment-display";
 import type {
   ConsulteePaymentRow,
   ConsulteePaymentRefund,
@@ -65,12 +66,14 @@ function row(
     consultantName: "Asha Rao",
     organizationId: null,
     discount: null,
+    discountBreakdown: { codeDiscountPaise: 0, welcomeDiscountPaise: 0 },
     refunds,
     refundedPaise: 0,
     consumerInvoice: null,
     receiptUrl: paymentInput.receiptUrl,
     expiresAt: null,
     createdAt: AT,
+    fundingBreakdown: [],
     presentation: {
       appointmentType: "CONSULTATION",
       request: { status: "APPROVED", kind: "CONSULTATION", requestedAt: AT },
@@ -104,6 +107,19 @@ describe("PaymentsHistoryList", () => {
           legs: [{ source: "WALLET" }],
           sponsorOrgName: "Wipro Limited",
         }),
+        row("pending-split", {
+          status: "PENDING",
+          fundingBreakdown: paymentFundingBreakdown([
+            { source: "CARD", amountPaise: 80_000 },
+            { source: "REFERRAL_CREDIT", amountPaise: 20_000 },
+          ]),
+        }),
+        row("split", {
+          fundingBreakdown: paymentFundingBreakdown([
+            { source: "CARD", amountPaise: 80_000 },
+            { source: "REFERRAL_CREDIT", amountPaise: 20_000 },
+          ]),
+        }),
       ]}
     />,
   );
@@ -123,6 +139,11 @@ describe("PaymentsHistoryList", () => {
     expect(rowHtml("partly")).toContain("₹500.00 refunded · Razorpay");
     expect(rowHtml("sponsored")).toContain("Sponsored by Wipro Limited");
     expect(rowHtml("sponsored")).not.toContain("₹");
+    expect(rowHtml("split")).toContain(
+      "Paid with ₹800.00 card / UPI + ₹200.00 referral credit",
+    );
+    expect(rowHtml("paid")).not.toContain("Paid with");
+    expect(rowHtml("pending-split")).not.toContain("Paid with");
   });
 
   it("never shows a raw enum", () => {

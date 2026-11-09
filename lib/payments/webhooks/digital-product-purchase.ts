@@ -35,6 +35,7 @@ import {
   AUTO_REFUND_MARKERS,
   cardLeg,
   gatewayPaymentMethod,
+  gstRegimeNote,
   paiseNote,
   refundStagedCapture,
   resolveStandaloneCharge,
@@ -55,6 +56,7 @@ export const digitalProductChargeNotesSchema = z.object({
   originalAmountPaise: paiseNote,
   taxAmountPaise: paiseNote,
   buyerCountry: z.string().length(2),
+  gstRegime: gstRegimeNote,
 });
 const buyerNoteSchema = digitalProductChargeNotesSchema.pick({ userId: true });
 
@@ -249,6 +251,7 @@ async function settleProductSale(
         amount: chargedPaise,
         originalAmount: charge.originalAmount,
         taxAmount: charge.taxAmount,
+        gstRegime: charge.gstRegime,
         ...buyerCountry,
         paymentMethod,
         paymentStatus: "SUCCEEDED",
@@ -265,6 +268,7 @@ async function settleProductSale(
         amount: chargedPaise,
         originalAmount: charge.originalAmount,
         taxAmount: charge.taxAmount,
+        gstRegime: charge.gstRegime,
         ...buyerCountry,
         currency: "INR",
         paymentMethod,

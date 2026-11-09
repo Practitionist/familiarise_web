@@ -300,7 +300,7 @@ async function handleEscalatedTurn(
   const ticket = await createSupportTicket({
     userId,
     clientIntakeId: input.clientTurnId,
-    title: `${flow.title}: ${reason.replaceAll("_", " ").toLowerCase()}`,
+    title: flow.title,
     description,
     priority,
     issueType,
