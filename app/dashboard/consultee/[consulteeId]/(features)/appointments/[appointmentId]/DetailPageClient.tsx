@@ -157,7 +157,7 @@ function UnpaidRequestedBookingControls({
   return (
     <div
       data-testid="unpaid-request-controls"
-      className="w-full mt-2 rounded-lg border border-border bg-muted/40 p-3 text-xs space-y-2"
+      className="rounded-xl border border-border bg-card p-4 text-sm shadow-sm space-y-2"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
@@ -309,17 +309,9 @@ function ConsulteeExtraActions({
     subscriptionPlanId,
     subscriptionId,
     canRenewSubscription,
-    remainingSessions,
     showLowSessionRenewalNudge,
     isCompletedOneOnOne,
-    isUnpaidRequested,
-    initialRequestNotes,
   } = deriveConsulteeActionMeta(vm);
-
-  const renewalNudgeMessage =
-    remainingSessions === 1
-      ? `1 session left in your subscription with ${expertName}. Renew now to keep your momentum going.`
-      : `You've completed all sessions in this subscription with ${expertName}. Renew to continue working together.`;
 
   return (
     <>
@@ -373,11 +365,38 @@ function ConsulteeExtraActions({
           </Link>
         </Button>
       )}
+    </>
+  );
+}
 
+function ConsulteeNotices({
+  vm,
+  appointmentId,
+}: Readonly<{
+  vm: AppointmentVM;
+  appointmentId: string;
+}>) {
+  const {
+    expertName,
+    subscriptionPlanId,
+    subscriptionId,
+    remainingSessions,
+    showLowSessionRenewalNudge,
+    isUnpaidRequested,
+    initialRequestNotes,
+  } = deriveConsulteeActionMeta(vm);
+
+  const renewalNudgeMessage =
+    remainingSessions === 1
+      ? `1 session left in your subscription with ${expertName}. Renew now to keep your momentum going.`
+      : `You've completed all sessions in this subscription with ${expertName}. Renew to continue working together.`;
+
+  return (
+    <>
       {showLowSessionRenewalNudge && (
         <div
           data-testid="subscription-renewal-nudge"
-          className="w-full mt-2 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50/80 px-3.5 py-2.5 text-xs text-amber-900"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200"
         >
           <span>{renewalNudgeMessage}</span>
           <Button size="sm" variant="outline" className="h-7 text-xs" asChild>
@@ -396,24 +415,6 @@ function ConsulteeExtraActions({
           appointmentId={appointmentId}
           initialNotes={initialRequestNotes}
         />
-      )}
-
-      {vm.status === "COMPLETED" && vm.consultantProfileId && (
-        <div
-          data-testid="public-review-followup"
-          className="w-full mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3.5 py-2.5 text-xs"
-        >
-          <span className="text-foreground">
-            Completed your session with {expertName}? Share a public review on
-            their profile.
-          </span>
-          <Link
-            href={`/explore/experts/${vm.consultantProfileId}#reviews`}
-            className="font-semibold text-foreground underline underline-offset-4"
-          >
-            Write a public review →
-          </Link>
-        </div>
       )}
     </>
   );
@@ -453,6 +454,13 @@ export default function DetailPageClient({
                 hasOverflowMessageAction={hasOverflowMessageAction}
                 openChat={openChat}
               />
+            </>
+          );
+        }}
+        renderNotices={(vm) => {
+          return (
+            <>
+              <ConsulteeNotices vm={vm} appointmentId={appointmentId} />
               <IncidentRemedyBanner
                 consulteeId={consulteeId}
                 zone={viewerZone}

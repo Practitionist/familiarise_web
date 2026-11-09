@@ -7,19 +7,23 @@ import { useZonedFormat } from "@/lib/time/zoned-format";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  CalendarClock,
   CalendarX,
+  ChevronDown,
   CreditCard,
   LifeBuoy,
   MessageSquare,
+  Receipt,
+  Star,
   Users,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { AppointmentDetailSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { throwSupportError } from "@/lib/support/error-copy";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { formatRole } from "@/components/collaborators/format";
@@ -93,8 +97,12 @@ import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSu
 import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
 import { useSessionFeedback } from "@/hooks/useSessionFeedback";
 import { ResourceSnapshot, type ResourceHrefs } from "./ResourceSnapshot";
+import { cn } from "@/utils/tailwind";
 
 const PARTICIPANTS_PREVIEW = 5;
+
+/** Overflow actions that change when sessions happen; they sit with the sessions. */
+const SCHEDULE_KEYS = new Set(["reschedule", "new-time", "retime", "timings"]);
 
 // #1675 — booking states from which the booking is a sold, scheduled thing:
 // the progress bar and "Cancel booking" appear from here on; a request has
@@ -114,14 +122,23 @@ function initials(name: string): string {
     .join("");
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
-    <div className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
-      <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {title}
-      </p>
+    <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+        {action}
+      </div>
       {children}
-    </div>
+    </section>
   );
 }
 
@@ -234,11 +251,13 @@ interface AppointmentDetailClientProps {
   joinWindowMs?: number;
   /** Consultant-only: the dashboard whose Requests/allocate pages answer a request. */
   consultantId?: string;
-  /** Extra buttons for the header action bar, e.g. the consultee's Book again / Add to calendar (#1527). */
+  /** Extra buttons for the header action row, e.g. the consultee's Book again / Add to calendar. */
   renderExtraActions?: (
     vm: AppointmentVM,
     actions: { openChat: (target: AppointmentChatTarget) => void },
   ) => ReactNode;
+  /** Full-width banners above the sessions, e.g. a renewal nudge or an incident remedy. */
+  renderNotices?: (vm: AppointmentVM) => ReactNode;
   /** `<tree>/support/requests` — "Get help" opens this booking's request page (#1527). */
   supportRequestsBase: string;
 }
@@ -253,6 +272,7 @@ export function AppointmentDetailClient({
   joinWindowMs,
   consultantId,
   renderExtraActions,
+  renderNotices,
   supportRequestsBase,
 }: AppointmentDetailClientProps) {
   const format = useZonedFormat();
@@ -319,13 +339,7 @@ export function AppointmentDetailClient({
     router.push(intent ? `${supportHref}?intent=${intent}` : supportHref);
 
   if (isLoading && !detail) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-40" />
-        <Skeleton className="h-40 w-full rounded-2xl" />
-        <Skeleton className="h-64 w-full rounded-2xl" />
-      </div>
-    );
+    return <AppointmentDetailSkeleton />;
   }
 
   if (error || !detail || !mapped) {
@@ -409,11 +423,6 @@ export function AppointmentDetailClient({
         ? { ...item, label: "Withdraw request" }
         : item,
     );
-  // #1675 — a destructive overflow item (Withdraw/Cancel) no longer sits at
-  // the front of the action bar next to Approve/Pay; it renders last, past
-  // "Get help", where the row's other destructive secondary actions live.
-  const overflowPrimary = overflow.filter((item) => !item.destructive);
-  const overflowSecondary = overflow.filter((item) => item.destructive);
   const heldCount = detail.appointment.occurrences.filter(
     (o) => o.isTentative && !isDeadOccurrence(o),
   ).length;
@@ -542,20 +551,447 @@ export function AppointmentDetailClient({
     router.push(payHref);
   };
 
+  // Each overflow action is placed where it belongs on the page; items the
+  // page already covers (Resources, Participants, the Set schedule button) drop.
+  const coveredKeys = new Set<string>(["documents"]);
+  if (manageHref) coveredKeys.add("participants");
+  if (action.kind === "schedule") coveredKeys.add("timings");
+  const placed = overflow.filter((item) => !coveredKeys.has(item.key));
+  const chatItems = placed.filter((item) => item.chat && !item.destructive);
+  const scheduleItems = placed.filter(
+    (item) => !item.chat && !item.destructive && SCHEDULE_KEYS.has(item.key),
+  );
+  const manageItems = placed.filter(
+    (item) => !chatItems.includes(item) && !scheduleItems.includes(item),
+  );
+  const renderActionButton = (item: OverflowItem) => (
+    <Button
+      key={item.key}
+      variant="outline"
+      size="sm"
+      disabled={item.disabled}
+      onClick={clickOf(item)}
+      className={cn(
+        item.destructive &&
+          "border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900/40 dark:text-red-400 dark:hover:bg-red-900/20",
+      )}
+    >
+      {item.label}
+    </Button>
+  );
+  const scheduleActions =
+    scheduleItems.length > 0 ? (
+      <div className="flex flex-wrap items-center gap-2">
+        {scheduleItems.map(renderActionButton)}
+      </div>
+    ) : null;
+  const showReviewCard =
+    role === "consultee" &&
+    !!vm.consultantProfileId &&
+    (bookingState.state === "COMPLETED" ||
+      detail.appointment.occurrences.some(
+        (o) => o.completionStatus === "COMPLETED",
+      ));
+  const showProgress =
+    !!vm.group && vm.group.total > 0 && postApproval && !usesSessionProgress;
+  const hasDetails =
+    vm.kind === "TRIAL" || !!sponsoredBy || vm.collaborators.length > 0;
+  // A one-sitting consultee booking has nothing for a main column once the
+  // header carries its session, so its cards flow as one grid instead.
+  const compactLayout = !!soleSession && role === "consultee";
+  const refreshDetail = () => {
+    void queryClient.invalidateQueries({
+      queryKey: ["appointment-detail", appointmentId],
+    });
+  };
+
+  let stickyCta: ReactNode = null;
+  if (nextAction.kind === "PAY" && pendingRow && payHref) {
+    stickyCta = (
+      <Button
+        className="w-full bg-amber-500 text-white hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500"
+        onClick={openPendingPayment}
+      >
+        <CreditCard className="mr-1.5 h-4 w-4" />
+        {nextAction.label}
+      </Button>
+    );
+  } else if (
+    action.kind !== "view" &&
+    (nextAction.kind === "NONE" ||
+      (nextAction.kind === "JOIN" && action.kind === "join"))
+  ) {
+    stickyCta = <RowPrimaryAction action={action} size="default" />;
+  }
+
+  const sessionsCard = !soleSession && (
+    <Section
+      title={
+        heldCount > 0 && !postApproval
+          ? `Sessions · ${heldCount} held`
+          : "Sessions"
+      }
+      action={scheduleActions}
+    >
+      {/* Without this the stars below simply disappeared (or showed empty)
+          on a call the viewer had already rated. */}
+      {sessionFeedback.isError ? (
+        <div className="mb-3">
+          <RatingsUnavailable onRetry={() => sessionFeedback.retry()} />
+        </div>
+      ) : null}
+      {hasConfirmedSessions || hasTentativeSessions ? (
+        <SessionTimeline
+          renderSessionExtra={(session) => {
+            // The host side sees who attended each session.
+            const attendance =
+              role === "consultant" ? (
+                <SessionAttendance
+                  appointmentId={session.appointmentId ?? appointmentId}
+                  occurrenceId={session.occurrenceId}
+                />
+              ) : null;
+            const rating =
+              sessionFeedback.ratings[session.occurrenceId] ?? null;
+            // Stars only where a rating would be accepted: the viewer
+            // attended, or nobody could have recorded attendance.
+            const canRate = sessionFeedback.rateable.has(session.occurrenceId);
+            // A failing read leaves every row looking unrated; the notice
+            // above explains instead.
+            if (sessionFeedback.isError) return attendance;
+            if (role === "consultee" && !canRate && rating === null) {
+              return null;
+            }
+            return (
+              <>
+                {attendance}
+                <SessionRatingRow
+                  appointmentId={session.appointmentId ?? appointmentId}
+                  bookingAppointmentId={appointmentId}
+                  occurrenceId={session.occurrenceId}
+                  existingRating={rating}
+                  // Only the attendee sets a rating; the consultant reads it.
+                  readOnly={role !== "consultee" || !canRate}
+                />
+              </>
+            );
+          }}
+          occurrences={vm.occurrences}
+          joinWindowMs={joinWindowMs}
+          defaultExpanded
+          isJoining={action.kind === "join" && !!action.busy}
+          onJoinSession={
+            action.kind === "join" && action.onClick
+              ? action.onClick
+              : undefined
+          }
+          showHeld
+          // Schedule words only; the pay verb lives in the needs-you slot.
+          heldRowLabel={presentation.sessionRowLabel}
+        />
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          No sessions scheduled yet.
+        </p>
+      )}
+    </Section>
+  );
+
+  const participantsCard = role === "consultant" && (
+    <Section
+      title={
+        participants.length > 0
+          ? `Participants · ${participants.length}`
+          : "Participants"
+      }
+      action={
+        manageHref ? (
+          <Button variant="ghost" size="sm" className="-my-1.5 h-8" asChild>
+            <Link href={manageHref}>
+              <Users className="mr-1.5 h-3.5 w-3.5" />
+              Manage
+            </Link>
+          </Button>
+        ) : null
+      }
+    >
+      {participants.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No participants on this session yet.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {previewParticipants.map((u) => {
+            const seat = isGroup ? seatPayments.get(u.id) : undefined;
+            const seatStatus = seat ? paymentDisplayStatus(seat) : null;
+            const seatBadge = seatStatus
+              ? paymentStatusBadge(seatStatus)
+              : null;
+            return (
+              <span
+                key={u.id}
+                title={seatBadge?.label}
+                className="flex items-center gap-1.5 rounded-full border border-border bg-muted py-0.5 pl-1 pr-2.5 text-xs text-foreground"
+              >
+                <Avatar className="h-5 w-5">
+                  <AvatarImage src={u.image ?? undefined} alt={u.name} />
+                  <AvatarFallback className="text-[9px]">
+                    {initials(u.name) || "?"}
+                  </AvatarFallback>
+                </Avatar>
+                {u.name}
+                {seat && seatBadge && (
+                  <>
+                    <span
+                      aria-hidden
+                      className={`ml-0.5 inline-block h-1.5 w-1.5 rounded-full ${paymentStatusDot(seatStatus)}`}
+                    />
+                    <span className="sr-only">{seatBadge.label}</span>
+                  </>
+                )}
+              </span>
+            );
+          })}
+          {hiddenParticipantCount > 0 && (
+            <span className="inline-flex items-center rounded-full border border-border bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">
+              +{hiddenParticipantCount} more
+            </span>
+          )}
+        </div>
+      )}
+    </Section>
+  );
+
+  const seatRows: Array<[string, number]> = [
+    ["Awaiting payment", seatSummary.pending],
+    ["Lapsed", seatSummary.lapsed],
+    ["Refunded", seatSummary.refunded],
+    ["In another currency", seatSummary.otherCurrency],
+  ];
+  const creditNotes = paidRow?.consumerInvoice?.creditNotes ?? [];
+  const ownCoPays = payments
+    .flatMap((p) => p.childPayments)
+    .filter((c) => c.userId === viewerId && !isSponsoredPayment(c));
+  const showBreakdown =
+    !!paidRow && paidBreakdown.length > 1 && moneyState.state !== "SPONSORED";
+  const hasPaymentDetails =
+    showBreakdown || creditNotes.length > 0 || ownCoPays.length > 0;
+  const paidReceipt = paidRow ? receiptHref(paidRow) : null;
+
+  const paymentCard = (
+    <Section title={showSeatSummary ? "Payments" : "Payment"}>
+      {showSeatSummary ? (
+        payments.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No seat has been paid for yet.
+          </p>
+        ) : (
+          <dl className="space-y-1.5 text-sm">
+            <div className="flex items-baseline justify-between gap-3">
+              <dt className="text-muted-foreground">Seats paid</dt>
+              <dd className="font-medium text-foreground tabular-nums">
+                {seatSummary.paid} of {participants.length} seat
+                {participants.length === 1 ? "" : "s"} paid
+              </dd>
+            </div>
+            <div className="flex items-baseline justify-between gap-3">
+              <dt className="text-muted-foreground">Collected</dt>
+              <dd className="font-medium text-foreground tabular-nums">
+                {formatCurrencyAmount(
+                  seatSummary.collectedPaise,
+                  seatSummary.currency,
+                )}{" "}
+                collected
+              </dd>
+            </div>
+            {seatRows
+              .filter(([, count]) => count > 0)
+              .map(([label, count]) => (
+                <div
+                  key={label}
+                  className="flex items-baseline justify-between gap-3"
+                >
+                  <dt className="text-muted-foreground">{label}</dt>
+                  <dd className="text-foreground tabular-nums">{count}</dd>
+                </div>
+              ))}
+          </dl>
+        )
+      ) : (
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-foreground">
+              {moneyState.line}
+            </p>
+            {moneyState.detail && (
+              <p className="text-xs text-muted-foreground tabular-nums">
+                {moneyState.detail}
+              </p>
+            )}
+          </div>
+          {(paidReceipt || role === "consultee") && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
+              {paidReceipt && (
+                <a
+                  href={paidReceipt}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-4"
+                >
+                  <Receipt className="h-3.5 w-3.5" />
+                  View receipt
+                </a>
+              )}
+              {role === "consultee" && (
+                <button
+                  type="button"
+                  className="font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                  onClick={() => openHelp("PAYMENT_STATUS")}
+                >
+                  {hasOwnCharge
+                    ? "Problem with this charge"
+                    : "Problem with this booking"}
+                </button>
+              )}
+            </div>
+          )}
+          {hasPaymentDetails && (
+            <details className="group border-t border-border pt-3">
+              <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+                Payment details
+                <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="mt-2 space-y-2">
+                {showBreakdown && paidRow && (
+                  <p className="text-xs text-muted-foreground tabular-nums">
+                    Paid with{" "}
+                    {formatFundingBreakdown(
+                      paidBreakdown,
+                      paidRow.currency ?? "INR",
+                    )}
+                  </p>
+                )}
+                {/* A refund's credit note sits beside the charge it reverses. */}
+                {paidRow &&
+                  creditNotes.map((note) => (
+                    <a
+                      key={note.id}
+                      href={`/api/payments/${paidRow.id}/credit-note/${note.id}/pdf`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block text-xs font-medium text-foreground underline underline-offset-4"
+                    >
+                      Credit note {note.creditNoteNumber}
+                    </a>
+                  ))}
+                {/* A co-pay the viewer paid themselves keeps its own receipt. */}
+                {ownCoPays.map((c) => (
+                  <MoneyLine key={c.id} payment={c} />
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      )}
+    </Section>
+  );
+
+  const detailsCard = hasDetails && (
+    <Section title="Details">
+      <dl className="space-y-2.5 text-sm">
+        {vm.kind === "TRIAL" && (
+          <div>
+            <dt className="text-xs text-muted-foreground">Booking type</dt>
+            <dd className="text-foreground">
+              Trial booking — direct chat requires a paid plan
+            </dd>
+          </div>
+        )}
+        {sponsoredBy && (
+          <div>
+            <dt className="text-xs text-muted-foreground">Sponsored by</dt>
+            <dd className="font-medium text-foreground">{sponsoredBy}</dd>
+          </div>
+        )}
+        {vm.collaborators.length > 0 && (
+          <div>
+            <dt className="text-xs text-muted-foreground">Collaborators</dt>
+            <dd className="text-foreground">
+              {vm.collaborators
+                .map(
+                  (c) => `${c.name}${c.role ? ` (${formatRole(c.role)})` : ""}`,
+                )
+                .join(", ")}
+            </dd>
+          </div>
+        )}
+      </dl>
+    </Section>
+  );
+
+  // A seat on a group event is bought, not requested: no path to draw.
+  const timelineCard = !isGroup && presentation.timeline.length > 0 && (
+    <Section title="Timeline">
+      <TimelineStrip events={presentation.timeline} />
+    </Section>
+  );
+
+  const resourcesCard = (
+    <Section title="Resources">
+      <ResourceSnapshot
+        appointmentId={appointmentId}
+        supportsDocuments={supportsDocuments(vm.kind)}
+        hrefs={resourceHrefs}
+      />
+    </Section>
+  );
+
+  const helpCard = (
+    <Section title="Need help?">
+      {/* Renders nothing until a support thread exists for this booking. */}
+      <div className="mb-3 empty:hidden [&>*]:mt-0">
+        <AppointmentSupportStatusCard
+          appointmentId={appointmentId}
+          href={supportHref}
+        />
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-full"
+        onClick={() => openHelp()}
+      >
+        <LifeBuoy className="mr-1.5 h-4 w-4" />
+        Get help
+      </Button>
+    </Section>
+  );
+
+  const manageCard = manageItems.length > 0 && (
+    <section
+      aria-label="Manage booking"
+      className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-border px-5 py-4"
+    >
+      <h2 className="text-sm font-semibold text-foreground">Manage booking</h2>
+      <div className="flex flex-wrap items-center gap-2">
+        {manageItems.map(renderActionButton)}
+      </div>
+    </section>
+  );
+
   return (
     <DashboardErrorBoundary>
-      <div className="w-full space-y-4">
+      <div className={cn("w-full space-y-4", stickyCta && "pb-24 md:pb-0")}>
         <Button variant="ghost" size="sm" className="-ml-2" asChild>
           <Link href={backHref}>
-            <ArrowLeft className="h-4 w-4 mr-1.5" />
+            <ArrowLeft className="mr-1.5 h-4 w-4" />
             All appointments
           </Link>
         </Button>
 
-        {/* Header card */}
-        <div className="rounded-2xl border border-border bg-card shadow-sm p-4 sm:p-6">
-          <div className="flex flex-col sm:flex-row sm:items-start gap-4">
-            <Avatar className="h-14 w-14 border border-border shrink-0">
+        <header className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6">
+          <div className="flex items-start gap-3 sm:gap-4">
+            <Avatar className="h-12 w-12 shrink-0 border border-border sm:h-14 sm:w-14">
               <AvatarImage
                 src={vm.counterpart.image ?? undefined}
                 alt={vm.counterpart.name}
@@ -565,35 +1001,26 @@ export function AppointmentDetailClient({
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-xl font-semibold text-foreground">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <h1 className="text-lg font-semibold leading-tight text-foreground sm:text-xl">
                   {vm.title}
                 </h1>
                 <StatusBadge {...headerChip} withDot size="sm" />
-                {sponsoredBy && (
-                  <span className="rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 px-1.5 py-px text-[10px] font-medium">
-                    Sponsored · {sponsoredBy}
-                  </span>
-                )}
-                {vm.kind === "TRIAL" && (
-                  <span className="rounded bg-muted text-muted-foreground px-1.5 py-px text-[10px] font-medium">
-                    Trial booking — direct chat requires a paid plan
-                  </span>
-                )}
               </div>
-              {/* #1527 — the kind is a fact about the booking, so it reads in
-                  the meta line rather than as a second chip beside the status. */}
-              <p className="text-sm text-muted-foreground mt-1">
+              {/* The kind is a fact about the booking, so it reads in the
+                  meta line rather than as a second chip beside the status. */}
+              <p className="mt-1 text-sm text-muted-foreground">
                 {KIND_LABEL[vm.kind]} with {vm.counterpart.name}
                 {vm.meta ? ` · ${vm.meta}` : ""}
                 {vm.group && vm.group.total > 0 ? ` · ${groupCountLine}` : ""}
               </p>
               {vm.nextAt && (
-                <div className="flex flex-wrap items-center gap-2 mt-2 text-sm">
-                  <span className="font-medium text-foreground tabular-nums">
+                <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
+                  <span className="inline-flex items-center gap-1.5 font-medium text-foreground tabular-nums">
+                    <CalendarClock className="h-4 w-4 text-muted-foreground" />
                     {format(vm.nextAt, "EEE, d MMM yyyy · h:mm a")}
                     {anchorSession?.endsAt && (
-                      <span className="text-muted-foreground font-normal">
+                      <span className="font-normal text-muted-foreground">
                         {" – "}
                         {format(anchorSession.endsAt, "h:mm a")}
                       </span>
@@ -615,32 +1042,34 @@ export function AppointmentDetailClient({
                   )}
                 </div>
               )}
-              {vm.collaborators.length > 0 && (
-                <p className="text-xs text-muted-foreground mt-2">
-                  Collaborators:{" "}
-                  {vm.collaborators
-                    .map(
-                      (c) =>
-                        `${c.name}${c.role ? ` (${formatRole(c.role)})` : ""}`,
-                    )
-                    .join(", ")}
-                </p>
-              )}
             </div>
           </div>
 
-          {/* Actions — full-width bar so buttons aren't cramped beside the title.
-              Always rendered: "Get help" is available on every appointment. */}
-          <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
-            {/* #1675 — the needs-you callout owns Pay/Join/Approve; the bar
-                keeps only what it does not (Set schedule). */}
+          {/* A plan's header already carries "h of T"; classes keep the bar
+              because their header has no session-progress line. */}
+          {showProgress && vm.group && (
+            <div className="mt-4">
+              <div className="mb-1.5 flex items-center justify-between text-xs text-muted-foreground">
+                <span>Program progress</span>
+                <span className="font-medium text-foreground">
+                  {vm.group.completed} of {vm.group.total} sessions
+                </span>
+              </div>
+              <Progress
+                value={(vm.group.completed / vm.group.total) * 100}
+                className="h-2"
+              />
+            </div>
+          )}
+
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            {/* The needs-you callout owns Pay/Join/Approve; this row keeps
+                only what it does not (e.g. Set schedule). */}
             {action.kind !== "view" && nextAction.kind === "NONE" && (
               <RowPrimaryAction action={action} size="default" />
             )}
-            {/* #705 — with the Sessions card folded away, the rating of the
-                one session that happened takes the primary slot. Same gates
-                as the session row: attended (or nobody could have recorded
-                it), never on a dead or still-running call. */}
+            {/* With the Sessions card folded away, the one session's rating
+                takes the primary slot, under the session row's gates. */}
             {soleSession &&
               soleSessionOver &&
               !sessionFeedback.isError &&
@@ -652,7 +1081,7 @@ export function AppointmentDetailClient({
                   feedback={sessionFeedback}
                 />
               )}
-            {overflowPrimary.map((item) => (
+            {chatItems.map((item) => (
               <Button
                 key={item.key}
                 variant="outline"
@@ -660,27 +1089,12 @@ export function AppointmentDetailClient({
                 disabled={item.disabled}
                 onClick={clickOf(item)}
               >
-                {item.chat && <MessageSquare className="mr-1.5 h-4 w-4" />}
+                <MessageSquare className="mr-1.5 h-4 w-4" />
                 {item.label}
               </Button>
             ))}
+            {soleSession && scheduleItems.map(renderActionButton)}
             {renderExtraActions?.(vm, { openChat: setChatTarget })}
-            <Button variant="outline" size="sm" onClick={() => openHelp()}>
-              <LifeBuoy className="mr-1.5 h-4 w-4" />
-              Get help
-            </Button>
-            {overflowSecondary.map((item) => (
-              <Button
-                key={item.key}
-                variant="outline"
-                size="sm"
-                disabled={item.disabled}
-                onClick={item.onClick}
-                className="text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/40 dark:hover:bg-red-900/20"
-              >
-                {item.label}
-              </Button>
-            ))}
           </div>
 
           {soleSession && soleSessionOver && sessionFeedback.isError && (
@@ -689,249 +1103,114 @@ export function AppointmentDetailClient({
             </div>
           )}
 
-          {/* #support-hub — the live support conversation for THIS appointment:
-              status + latest exchange inline; nothing renders until a thread
-              exists. */}
-          <AppointmentSupportStatusCard
-            appointmentId={appointmentId}
-            href={supportHref}
-          />
-
-          {/* #1766 — a subscription's header already carries "h of T"; a
-              second bar here would be a second number beside it (PR-V rule).
-              Classes keep the bar: their header has no session-progress line. */}
-          {vm.group &&
-            vm.group.total > 0 &&
-            postApproval &&
-            !usesSessionProgress && (
-              <div className="mt-4 pt-4 border-t border-border">
-                <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
-                  <span>Program progress</span>
-                  <span className="font-medium text-foreground">
-                    {vm.group.completed} of {vm.group.total} sessions
-                  </span>
-                </div>
-                <Progress
-                  value={
-                    // A group whose sessions have no slots yet has total 0,
-                    // and 0/0 is NaN — which reaches Progress as an
-                    // attribute value and renders a broken bar.
-                    vm.group.total > 0
-                      ? (vm.group.completed / vm.group.total) * 100
-                      : 0
+          <NeedsYouCallout
+            embedded
+            presentation={presentation}
+            names={names}
+            heldCount={heldCount}
+            pending={pendingRow}
+            onPay={payHref ? openPendingPayment : undefined}
+            onExitSeries={
+              role === "consultee" && detail.appointment.class && viewerId
+                ? () =>
+                    exitClassSeries(
+                      detail.appointment.class!.id,
+                      viewerId,
+                    ).then(refreshDetail)
+                : undefined
+            }
+            requestAgainHref={
+              vm.consultantProfileId
+                ? `/explore/experts/${vm.consultantProfileId}`
+                : null
+            }
+            decision={decision}
+            awaitingPayment={
+              role === "consultant" && requestPath
+                ? {
+                    remind: remindMutation.mutateAsync,
+                    withdraw: withdrawMutation.mutateAsync,
+                    onChanged: refreshDetail,
                   }
-                  className="h-2"
-                />
-              </div>
-            )}
-        </div>
+                : undefined
+            }
+            onHelp={() => openHelp()}
+          >
+            {nextAction.kind === "JOIN" && action.kind === "join" ? (
+              <RowPrimaryAction action={action} size="default" />
+            ) : nextAction.kind === "RATE" && rateableSole ? (
+              <SoleSessionRating
+                appointmentId={appointmentId}
+                session={rateableSole}
+                role={role}
+                feedback={sessionFeedback}
+              />
+            ) : null}
+          </NeedsYouCallout>
+        </header>
 
-        <NeedsYouCallout
-          presentation={presentation}
-          names={names}
-          heldCount={heldCount}
-          pending={pendingRow}
-          onPay={payHref ? openPendingPayment : undefined}
-          onExitSeries={
-            role === "consultee" && detail.appointment.class && viewerId
-              ? () =>
-                  exitClassSeries(detail.appointment.class!.id, viewerId).then(
-                    () =>
-                      queryClient.invalidateQueries({
-                        queryKey: ["appointment-detail", appointmentId],
-                      }),
-                  )
-              : undefined
-          }
-          requestAgainHref={
-            vm.consultantProfileId
-              ? `/explore/experts/${vm.consultantProfileId}`
-              : null
-          }
-          decision={decision}
-          awaitingPayment={
-            role === "consultant" && requestPath
-              ? {
-                  remind: remindMutation.mutateAsync,
-                  withdraw: withdrawMutation.mutateAsync,
-                  onChanged: () => {
-                    void queryClient.invalidateQueries({
-                      queryKey: ["appointment-detail", appointmentId],
-                    });
-                  },
-                }
-              : undefined
-          }
-          onHelp={() => openHelp()}
+        <div
+          className={cn(
+            "grid w-full grid-cols-1 gap-4",
+            compactLayout
+              ? "md:grid-cols-2 md:items-start"
+              : "lg:grid-cols-[minmax(0,1fr)_minmax(280px,340px)] lg:items-start",
+          )}
         >
-          {nextAction.kind === "JOIN" && action.kind === "join" ? (
-            <RowPrimaryAction action={action} size="default" />
-          ) : nextAction.kind === "RATE" && rateableSole ? (
-            <SoleSessionRating
-              appointmentId={appointmentId}
-              session={rateableSole}
-              role={role}
-              feedback={sessionFeedback}
-            />
-          ) : null}
-        </NeedsYouCallout>
-
-        {/* A seat on a group event is bought, not requested: no path to draw. */}
-        {!isGroup && <TimelineStrip events={presentation.timeline} />}
-
-        {openProposal && (
-          <RescheduleProposalCard
-            appointmentId={appointmentId}
-            proposal={openProposal}
-            role={role}
-            readOnly={adapter.readOnly}
-          />
-        )}
-
-        <div className="grid w-full grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,340px)] lg:items-start">
-          <div className="flex min-w-0 flex-col gap-4">
-            {/* #705 — attendees only. The API authorizes any participant, so
-                this used to offer a consultant a star rating on their own
-                session, which then fed the org quality average.
-                The per-call rating now lives on each session row below; only
-                the public review is a card of its own, so the page no longer
-                asks the same-looking question twice.
-
-                #1300 — the public review has MOVED to the expert's profile,
-                which is where it lives and where you read the others. Keeping a
-                composer here as well is how the same five-star widget ended up
-                on screen twice: a private per-call rating on each session row
-                and a public review card above them, neither anchored to what
-                the user thought they were rating. What stays here is a link. */}
-            {/* #1300/#1542/#1675 — asking before a session has actually run
-                invites a review of a call that never happened; the prompt
-                waits for the derived state or a completed occurrence. */}
-            {role === "consultee" &&
-              vm.consultantProfileId &&
-              (bookingState.state === "COMPLETED" ||
-                detail.appointment.occurrences.some(
-                  (o) => o.completionStatus === "COMPLETED",
-                )) && (
-                <p className="text-sm text-muted-foreground">
-                  Reviewed this expert?{" "}
+          <div
+            className={cn(
+              "flex min-w-0 flex-col gap-4 empty:hidden",
+              compactLayout && "md:col-span-2",
+            )}
+          >
+            {renderNotices?.(vm)}
+            {openProposal && (
+              <RescheduleProposalCard
+                appointmentId={appointmentId}
+                proposal={openProposal}
+                role={role}
+                readOnly={adapter.readOnly}
+              />
+            )}
+            {/* The public review lives on the expert's profile; this card only
+                links there, and waits until a session has actually run. */}
+            {showReviewCard && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-5 py-4 shadow-sm">
+                <div className="flex min-w-0 items-start gap-3">
+                  <Star className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">
+                      Reviewed this expert?
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Share a public review on {vm.counterpart.name}&apos;s
+                      profile.
+                    </p>
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" asChild>
                   <Link
                     href={`/explore/experts/${vm.consultantProfileId}#reviews`}
-                    className="font-medium text-foreground underline underline-offset-4"
                   >
-                    Write or update your review on their profile
+                    Write or update your review
                   </Link>
-                  .
-                </p>
-              )}
-            {!soleSession && (
-              <Section
-                title={
-                  heldCount > 0 && !postApproval
-                    ? `Sessions · ${heldCount} held`
-                    : "Sessions"
-                }
-              >
-                {/* Without this the stars below simply disappeared (or showed
-                  empty) on a call the viewer had already rated, which reads as
-                  "your rating never happened". */}
-                {sessionFeedback.isError ? (
-                  <div className="mb-3">
-                    <RatingsUnavailable
-                      onRetry={() => sessionFeedback.retry()}
-                    />
-                  </div>
-                ) : null}
-                {hasConfirmedSessions || hasTentativeSessions ? (
-                  <SessionTimeline
-                    // #705 — the private per-call rating sits on the session it
-                    // rates. Attendees only: the API authorizes any participant,
-                    // and a consultant rating their own session would feed the
-                    // org quality average.
-                    renderSessionExtra={(session) => {
-                      // #1569 B-4 — the host side sees who attended each session.
-                      const attendance =
-                        role === "consultant" ? (
-                          <SessionAttendance
-                            appointmentId={
-                              session.appointmentId ?? appointmentId
-                            }
-                            occurrenceId={session.occurrenceId}
-                          />
-                        ) : null;
-                      const rating =
-                        sessionFeedback.ratings[session.occurrenceId] ?? null;
-                      // Offer stars only where a rating would be ACCEPTED —
-                      // you attended, or nobody could have recorded it. Showing
-                      // them on a call the viewer never joined invited a click
-                      // that the route then refused.
-                      const canRate = sessionFeedback.rateable.has(
-                        session.occurrenceId,
-                      );
-                      // While the read is failing, `rateable` is empty and
-                      // `rating` is null for every row — indistinguishable from
-                      // the truth. Show nothing per row and let the notice above
-                      // say why, rather than inviting a click we cannot honour.
-                      if (sessionFeedback.isError) return attendance;
-                      if (role === "consultee" && !canRate && rating === null) {
-                        return null;
-                      }
-                      return (
-                        <>
-                          {attendance}
-                          <SessionRatingRow
-                            appointmentId={
-                              session.appointmentId ?? appointmentId
-                            }
-                            bookingAppointmentId={appointmentId}
-                            occurrenceId={session.occurrenceId}
-                            existingRating={rating}
-                            // The consultant sees what a call scored; only the
-                            // attendee can set it.
-                            readOnly={role !== "consultee" || !canRate}
-                          />
-                        </>
-                      );
-                    }}
-                    occurrences={vm.occurrences}
-                    joinWindowMs={joinWindowMs}
-                    defaultExpanded
-                    isJoining={action.kind === "join" && !!action.busy}
-                    onJoinSession={
-                      action.kind === "join" && action.onClick
-                        ? action.onClick
-                        : undefined
-                    }
-                    showHeld
-                    // #1675 — schedule words only; the pay verb is in the
-                    // needs-you slot above.
-                    heldRowLabel={presentation.sessionRowLabel}
-                  />
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    No sessions scheduled yet.
-                  </p>
-                )}
-              </Section>
+                </Button>
+              </div>
             )}
-
-            {/* #1780 row 4 — cancel one session, make it up, or skip the make-up. */}
+            {sessionsCard}
+            {/* Cancel one class session, make it up, or skip the make-up. */}
             {vm.kind === "CLASS" && detail.appointment.class && (
               <ClassSessionControls
                 appointmentId={appointmentId}
                 sessions={detail.appointment.occurrences}
                 role={role}
-                // The seat's unit depends on when it was bought (#1780); no
-                // list-price guess — the copy says "one session" instead.
+                // A seat's unit depends on when it was bought; the copy says
+                // "one session" rather than guess a list price.
                 unitLabel={null}
-                onChanged={() => {
-                  void queryClient.invalidateQueries({
-                    queryKey: ["appointment-detail", appointmentId],
-                  });
-                }}
+                onChanged={refreshDetail}
               />
             )}
-
-            {/* D8 — the consultee returns one upcoming session to the plan. */}
+            {/* The consultee returns one upcoming session to the plan. */}
             {role === "consultee" &&
               vm.kind === "SUBSCRIPTION" &&
               detail.appointment.subscription?.status === "APPROVED" && (
@@ -942,217 +1221,46 @@ export function AppointmentDetailClient({
                     detail.appointment.subscription.sessionsReturned
                   }
                   rescheduleOpen={!!openProposal}
-                  onChanged={() => {
-                    void queryClient.invalidateQueries({
-                      queryKey: ["appointment-detail", appointmentId],
-                    });
-                  }}
+                  onChanged={refreshDetail}
                 />
               )}
-
-            {role === "consultant" && (
-              <Section title="Participants">
-                {participants.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    No participants on this session yet.
-                  </p>
-                ) : (
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    {previewParticipants.map((u) => {
-                      const seat = isGroup ? seatPayments.get(u.id) : undefined;
-                      const seatStatus = seat
-                        ? paymentDisplayStatus(seat)
-                        : null;
-                      const seatBadge = seatStatus
-                        ? paymentStatusBadge(seatStatus)
-                        : null;
-                      return (
-                        <span
-                          key={u.id}
-                          title={seatBadge?.label}
-                          className="flex items-center gap-1.5 rounded-full border border-border bg-muted py-0.5 pl-1 pr-2.5 text-xs text-foreground"
-                        >
-                          <Avatar className="h-5 w-5">
-                            <AvatarImage
-                              src={u.image ?? undefined}
-                              alt={u.name}
-                            />
-                            <AvatarFallback className="text-[9px]">
-                              {initials(u.name) || "?"}
-                            </AvatarFallback>
-                          </Avatar>
-                          {u.name}
-                          {seat && seatBadge && (
-                            <>
-                              <span
-                                aria-hidden
-                                className={`ml-0.5 inline-block h-1.5 w-1.5 rounded-full ${paymentStatusDot(seatStatus)}`}
-                              />
-                              <span className="sr-only">{seatBadge.label}</span>
-                            </>
-                          )}
-                        </span>
-                      );
-                    })}
-                    {hiddenParticipantCount > 0 && (
-                      <span className="inline-flex items-center rounded-full border border-border bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">
-                        +{hiddenParticipantCount} more
-                      </span>
-                    )}
-                  </div>
-                )}
-                {manageHref && (
-                  <Button variant="outline" size="sm" asChild>
-                    <Link href={manageHref}>
-                      <Users className="mr-1.5 h-3.5 w-3.5" />
-                      Manage participants
-                    </Link>
-                  </Button>
-                )}
-              </Section>
-            )}
-            <Section title={showSeatSummary ? "Payments" : "Payment"}>
-              {showSeatSummary ? (
-                payments.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    No seat has been paid for yet.
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-muted px-3 py-2 text-sm">
-                    <span className="font-medium text-foreground tabular-nums">
-                      {seatSummary.paid} of {participants.length} seat
-                      {participants.length === 1 ? "" : "s"} paid
-                    </span>
-                    <span className="text-muted-foreground">·</span>
-                    <span className="tabular-nums text-foreground">
-                      {formatCurrencyAmount(
-                        seatSummary.collectedPaise,
-                        seatSummary.currency,
-                      )}{" "}
-                      collected
-                    </span>
-                    {seatSummary.pending > 0 && (
-                      <>
-                        <span className="text-muted-foreground">·</span>
-                        <span className="text-muted-foreground">
-                          {seatSummary.pending} awaiting payment
-                        </span>
-                      </>
-                    )}
-                    {seatSummary.lapsed > 0 && (
-                      <>
-                        <span className="text-muted-foreground">·</span>
-                        <span className="text-muted-foreground">
-                          {seatSummary.lapsed} lapsed
-                        </span>
-                      </>
-                    )}
-                    {seatSummary.refunded > 0 && (
-                      <>
-                        <span className="text-muted-foreground">·</span>
-                        <span className="text-muted-foreground">
-                          {seatSummary.refunded} refunded
-                        </span>
-                      </>
-                    )}
-                    {seatSummary.otherCurrency > 0 && (
-                      <>
-                        <span className="text-muted-foreground">·</span>
-                        <span className="text-muted-foreground">
-                          {seatSummary.otherCurrency} in another currency
-                        </span>
-                      </>
-                    )}
-                  </div>
-                )
-              ) : (
-                <div className="space-y-2">
-                  {/* #1675 — money is ONE line (locked 2026-09-13): the
-                      derived state's words, the receipt, the money door. */}
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-                    <span className="text-foreground">{moneyState.line}</span>
-                    {paidRow && receiptHref(paidRow) && (
-                      <a
-                        href={receiptHref(paidRow)!}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs font-medium text-foreground underline underline-offset-4"
-                      >
-                        View receipt
-                      </a>
-                    )}
-                    {/* #1527 — a refund's s.34 credit note sits beside it. */}
-                    {paidRow?.consumerInvoice?.creditNotes.map((note) => (
-                      <a
-                        key={note.id}
-                        href={`/api/payments/${paidRow.id}/credit-note/${note.id}/pdf`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs font-medium text-foreground underline underline-offset-4"
-                      >
-                        Credit note {note.creditNoteNumber}
-                      </a>
-                    ))}
-                    {role === "consultee" && (
-                      <button
-                        type="button"
-                        className="text-xs font-medium text-foreground underline underline-offset-4"
-                        onClick={() => openHelp("PAYMENT_STATUS")}
-                      >
-                        {hasOwnCharge
-                          ? "Problem with this charge"
-                          : "Problem with this booking"}
-                      </button>
-                    )}
-                  </div>
-                  {moneyState.detail && (
-                    <p className="text-xs text-muted-foreground tabular-nums">
-                      {moneyState.detail}
-                    </p>
-                  )}
-                  {paidRow &&
-                    paidBreakdown.length > 1 &&
-                    moneyState.state !== "SPONSORED" && (
-                      <p className="text-xs text-muted-foreground tabular-nums">
-                        Paid with{" "}
-                        {formatFundingBreakdown(
-                          paidBreakdown,
-                          paidRow.currency ?? "INR",
-                        )}
-                      </p>
-                    )}
-                  {/* A CHARGE_MEMBER co-pay the viewer paid themselves keeps
-                      its own line with its receipt (#775). */}
-                  {payments
-                    .flatMap((p) => p.childPayments)
-                    .filter(
-                      (c) => c.userId === viewerId && !isSponsoredPayment(c),
-                    )
-                    .map((c) => (
-                      <MoneyLine key={c.id} payment={c} />
-                    ))}
-                </div>
-              )}
-            </Section>
+            {participantsCard}
           </div>
 
-          <aside className="min-w-0 lg:sticky lg:top-20">
-            <Section title="Resources">
-              <ResourceSnapshot
-                appointmentId={appointmentId}
-                supportsDocuments={supportsDocuments(vm.kind)}
-                hrefs={resourceHrefs}
-              />
-            </Section>
-          </aside>
+          {compactLayout ? (
+            <>
+              <div className="flex min-w-0 flex-col gap-4">
+                {paymentCard}
+                {detailsCard}
+                {timelineCard}
+              </div>
+              <div className="flex min-w-0 flex-col gap-4">
+                {resourcesCard}
+                {helpCard}
+              </div>
+            </>
+          ) : (
+            <aside className="flex min-w-0 flex-col gap-4">
+              {paymentCard}
+              {detailsCard}
+              {resourcesCard}
+              {timelineCard}
+              {helpCard}
+            </aside>
+          )}
         </div>
+
+        {manageCard}
       </div>
 
-      {/* Mounted HERE, not by each caller. This component renders the overflow
-          menu whose every item opens one of these dialogs, so making the host
-          remember to mount them separately is a contract that gets forgotten —
-          and was: the consultee's detail page never did, leaving Reschedule,
-          Cancel and Report issue setting state nothing was listening for. */}
+      {stickyCta && (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 px-4 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3 backdrop-blur md:hidden [&>*]:w-full">
+          {stickyCta}
+        </div>
+      )}
+
+      {/* Mounted HERE, not by each caller: this component renders the
+          actions whose clicks open these dialogs. */}
       {adapter.renderDialogs()}
       <LazyAppointmentChatSheet target={chatTarget} onClose={closeChat} />
     </DashboardErrorBoundary>
