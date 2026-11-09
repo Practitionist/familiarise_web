@@ -656,10 +656,13 @@ export async function findAvailableSlots(
    * bounds the overrun: one day is one pass over that day's rows. A walk it
    * truncates before every session is placed answers SEARCH_TIMEOUT below.
    */
+  // Once the budget is spent no later sweep runs, so it is reported once.
+  let budgetSpent = false;
   const sweepPeriod = (
     perfectOnly: boolean,
     spacing: Spacing = "packed",
   ): void => {
+    if (budgetSpent) return;
     const cursor = new Date(
       Date.UTC(
         startDate.getUTCFullYear(),
@@ -674,6 +677,7 @@ export async function findAvailableSlots(
       cursor.setUTCDate(cursor.getUTCDate() + 1)
     ) {
       if (searchBudget.exhausted()) {
+        budgetSpent = true;
         reportSearchBudgetSpent(searchBudget, consultant, walk);
         return;
       }
