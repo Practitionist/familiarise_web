@@ -65,9 +65,12 @@ export async function completeOnboardingGateAction(
   const gate = parsed.data;
   const provenance = consentProvenance(await headers());
   await prisma.$transaction(async (tx) => {
-    const claimed = await claimOnboardingCompletion(tx, user.id, {
-      dateOfBirth: gate.dateOfBirth,
-    });
+    const claimed = await claimOnboardingCompletion(
+      tx,
+      user.id,
+      { dateOfBirth: gate.dateOfBirth },
+      gate,
+    );
     if (claimed) await recordOnboardingConsent(tx, user.id, gate, provenance);
   });
   return { success: true };

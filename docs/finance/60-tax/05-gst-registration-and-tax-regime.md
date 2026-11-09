@@ -26,7 +26,7 @@ The principal model is also what makes the threshold the platform's own: its tur
 | Valid, same state as the registered office | `REGISTERED`   | Charges 18 % GST (or zero-rates an export under a valid LUT)          |
 | Set but malformed, or from another state   | none           | Refuses with `GST_CONFIG_INVALID` (503); never charges 0 % by mistake |
 
-The regime is read from the environment on every pricing call, so a change takes effect on the next deploy that carries the new value.
+The regime is read from the environment on every pricing call, so a change takes effect on the next deploy that carries the new value. Routes that answer the refusal as a typed 503 with no Sentry event (through `refusalJson` in `lib/errors/refusal-json.ts`) include `GET /api/checkout/context`, the recording purchase, the digital-product purchase and the wallet top-up routes.
 
 ## 3. What each regime does
 
@@ -36,7 +36,7 @@ The regime is read from the environment on every pricing call, so a change takes
 | Checkout preview                | `GET /api/checkout/context` sends `gstRegistered: false`; `calculatePricing` shows 0 % so the quoted total equals the charge                                                                          | `gstRegistered: true`; the preview adds 18 %                                                                            |
 | Payment row                     | `Payment.gstRegime = UNREGISTERED`                                                                                                                                                                    | `Payment.gstRegime = REGISTERED`                                                                                        |
 | Buyer document                  | The gateway receipt; the payment page says no GST was charged                                                                                                                                         | A numbered consumer tax invoice and credit notes ([GST invoices and credit notes](02-gst-invoices-and-credit-notes.md)) |
-| Invoice minting and healing     | `mintConsumerInvoice` declines; `heal-consumer-invoices` mints nothing; the daily ops digest runs the turnover alarm                                                                                  | Mints and heals as usual                                                                                                |
+| Invoice minting and healing     | `mintConsumerInvoice` declines; `heal-consumer-invoices` skips as expected (the digest notes it, the health check does not page); the daily ops digest runs the turnover alarm                        | Mints and heals as usual                                                                                                |
 | Organisation rails              | Checkout on `WALLET`, `INVOICE` or `LICENSE` funding and a wallet top-up refuse with `GST_REGISTRATION_REQUIRED` (403); `createOrgInvoice` refuses; the invoice rollup and subscription invoices skip | Available                                                                                                               |
 | Personal (member-paid) checkout | Available                                                                                                                                                                                             | Available                                                                                                               |
 
@@ -55,7 +55,7 @@ The pending-checkout page re-derives the total under the current regime (`lib/da
 
 ### Invoices never become retroactive
 
-`CONSUMER_INVOICEABLE_PAYMENT_WHERE` (`lib/payments/billing/consumer-invoice.ts`) admits only rows stamped `REGISTERED` or legacy rows with no stamp, and `mintConsumerInvoice` declines a row stamped `UNREGISTERED`. The healer and the monthly outward-register export both read through that filter, so a payment taken while unregistered never gets a tax invoice later, even after `PLATFORM_GSTIN` is set. A legacy row with no stamp keeps today's behaviour.
+`CONSUMER_INVOICEABLE_PAYMENT_WHERE` (`lib/payments/billing/consumer-invoice.ts`) admits only rows stamped `REGISTERED`, and `mintConsumerInvoice` returns no invoice unless the stamp is `REGISTERED`. A row with no stamp predates the column, and production never had a GSTIN, so every such sale was unregistered and is treated as `UNREGISTERED`. The healer and the monthly outward-register export both read through that filter, so a payment taken while unregistered, or before the stamp existed, never gets a tax invoice later, even after `PLATFORM_GSTIN` is set. The organisation series follows the same rule: `rollupOrgInvoiceAccruals` (`lib/payments/billing/invoice-rollup.ts`) and `settle-invoice-accruals` (`jobs/billing/settle-invoice-accruals.ts`) select only `REGISTERED` payments. A credit note needs the original consumer invoice, and `mintConsumerCreditNote` does nothing when none exists, so such a payment gets no credit note either.
 
 ## 4. The turnover alarm
 
@@ -70,9 +70,9 @@ One Postgres database serves dev and prod, so test-mode payments that are not fl
 1. **Register before ₹20 lakh.** Apply on the GST portal as soon as the alarm fires, and no later than 30 days after crossing ₹20 lakh. With Aadhaar authentication the GSTIN usually arrives in about seven working days. Confirm the registration's state is Haryana (state 06), the registered office in `lib/company.ts`.
 2. **Set `PLATFORM_GSTIN` in Netlify production.** Set it for the production context only and redeploy. A typo or a GSTIN from another state makes checkout refuse with `GST_CONFIG_INVALID`, which is deliberate: fix the value rather than unset it.
 3. **Check the first orders.** A ₹1,000 checkout now quotes and charges ₹1,180, and the new Payment reads `gstRegime = REGISTERED`. Run `heal-consumer-invoices` from System Jobs: it should complete without a config skip and mint invoices only for the new orders.
-4. **Old orders keep their stamp.** Orders sold before the switch stay `UNREGISTERED`, carry no GST and never receive a tax invoice; nothing backfills them.
+4. **Old orders keep their stamp.** Orders sold before the switch stay `UNREGISTERED` (or carry no stamp), carry no GST and never receive a tax invoice or credit note; nothing backfills them.
 5. **Organisation rails unlock.** Wallet, invoice and licence checkouts, wallet top-ups and organisation invoices work from the same deploy. The subscription-invoice job bills any subscriptions that fell due while it was skipping.
-6. **Update the price display.** Once registered, public prices show the all-in price including GST (a separate pull request).
+6. **Check the price display.** Once registered, public prices show the all-in price including GST (`buyerDisplayPricePaise`); the pages pick up the registration within the hour, and the Terms (section 4.4) already say the shown price includes GST once registered.
 
 ## Invariants
 
@@ -81,7 +81,7 @@ One Postgres database serves dev and prod, so test-mode payments that are not fl
 | No GST is charged while unregistered                       | `determineTax` with `gstRegistered: false`                                                                    | `__tests__/payments/pricing-levers-invariants.test.ts`               |
 | A malformed GSTIN never prices at 0 %                      | `currentGstRegime` throws `GST_CONFIG_INVALID`                                                                | `__tests__/payments/pricing-levers-invariants.test.ts`               |
 | The preview equals the charge in both regimes              | `calculatePricing` reads `gstRegistered` from the checkout context                                            | `__tests__/payments/pricing-levers-invariants.test.ts`               |
-| An unregistered sale never gets a tax invoice              | `CONSUMER_INVOICEABLE_PAYMENT_WHERE` and `mintConsumerInvoice`                                                | `__tests__/payments/gst-unregistered-invoicing.test.ts`              |
+| An unregistered or unstamped sale never gets a tax invoice | `CONSUMER_INVOICEABLE_PAYMENT_WHERE`, `mintConsumerInvoice`, the org rollup and settle job                    | `__tests__/payments/gst-unregistered-invoicing.test.ts`              |
 | Organisation billing waits for registration                | `assertOrgBillingAvailable`, `createOrgInvoice`, `rollupOrgInvoiceAccruals`, `generate-subscription-invoices` | `__tests__/payments/pricing-levers-invariants.test.ts` (the refusal) |
 | The turnover alarm reports once a day at most, at ₹15 lakh | `checkGstRegistrationTurnover` in the `ops-digest` job                                                        | `__tests__/payments/gst-unregistered-invoicing.test.ts`              |
 
@@ -103,3 +103,4 @@ One Postgres database serves dev and prod, so test-mode payments that are not fl
 
 - **18 % on every domestic order.** Before the regime existed, `determineTax` charged 18 % whether or not `PLATFORM_GSTIN` was set, and every un-invoiced payment waited for the healer to mint its invoice once a GSTIN appeared. A payment is now stamped with its regime, and an unregistered one is never invoiced.
 - **Organisation invoices without a supplier GSTIN.** The org invoice paths used to fall back to the registered office's state and issue GST invoices with no GSTIN. They now refuse or skip while unregistered.
+- **Invoicing legacy rows with no stamp.** The invoice filter used to admit a payment with a NULL `gstRegime` as well as a `REGISTERED` one. A NULL stamp now counts as unregistered, because production never had a GSTIN before the stamp existed; do not re-admit it.

@@ -37,6 +37,7 @@ import { NextRequest } from "next/server";
 import { POST } from "../../app/api/payments/discounts/validate/route";
 import { computeDiscountPaise } from "../../lib/payments/pricing/derive-checkout-amount";
 import { platformFundedCapPaise } from "../../lib/payments/pricing/platform-funded-cap";
+import { runAsUnregisteredPlatform } from "../fixtures/gst-registered";
 
 function post(body: Record<string, unknown>) {
   return POST(
@@ -60,6 +61,8 @@ const base = {
 beforeEach(() => jest.clearAllMocks());
 
 describe("discount preview shares checkout's arithmetic and guard", () => {
+  runAsUnregisteredPlatform();
+
   it("previews the same paise computeDiscountPaise derives for a capped PERCENTAGE code", async () => {
     const code = {
       ...base,
@@ -79,7 +82,7 @@ describe("discount preview shares checkout's arithmetic and guard", () => {
     expect(res.status).toBe(200);
     expect(body.valid).toBe(true);
     // The code's own 20,000 cap is above the floor checkout applies (unregistered, 10 % take):
-    // 10 % of 118,000 less ceil(2.36 % of 118,000) = 11,800 − 2,785.
+    // 10 % of 118,000 less ceil(3.54 % of 118,000) = 11,800 − 4,178.
     expect(
       computeDiscountPaise(118_000, {
         discountType: "PERCENTAGE",
@@ -94,7 +97,7 @@ describe("discount preview shares checkout's arithmetic and guard", () => {
         gstRegistered: false,
       }),
     );
-    expect(body.discountAmount).toBe(9_015);
+    expect(body.discountAmount).toBe(7_622);
   });
 
   it("previews a FIXED_AMOUNT code in another currency as invalid", async () => {

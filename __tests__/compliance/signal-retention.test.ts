@@ -18,7 +18,7 @@ describe("fraud-signal retention windows", () => {
     expect(PAYER_SIGNAL_RETENTION_YEARS).toBe(2);
   });
 
-  it("selects a terminal referral 180 days after it vested, by vestedAt", () => {
+  it("selects a terminal referral 180 days after the transition, an unsettled one 180 days after creation", () => {
     const where = referralSignalPruneWhere(NOW);
     expect(where).toEqual({
       AND: [
@@ -33,17 +33,14 @@ describe("fraud-signal retention windows", () => {
               status: { in: ["VOID", "REWARDED", "EXPIRED", "FRAUDULENT"] },
               updatedAt: { lt: new Date("2026-05-13T12:00:00Z") },
             },
+            {
+              status: { in: ["SIGNED_UP", "QUALIFIED", "QUALIFYING", "HELD"] },
+              createdAt: { lt: new Date("2026-05-13T12:00:00Z") },
+            },
           ],
         },
       ],
     });
-  });
-
-  it("never selects a live referral status", () => {
-    const text = JSON.stringify(referralSignalPruneWhere(NOW));
-    for (const live of ["SIGNED_UP", "QUALIFYING", "QUALIFIED", "HELD"]) {
-      expect(text).not.toContain(live);
-    }
   });
 
   it("selects a payment two years after capture, falling back to createdAt when capturedAt is null", () => {

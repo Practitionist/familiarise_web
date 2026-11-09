@@ -31,7 +31,11 @@ import prisma from "@/lib/prisma";
 import { generateIrn } from "@/lib/compliance/irp";
 import { buildIrpPayload } from "@/lib/compliance/irp-payload";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { reportConfigSkip, type ConfigSkip } from "@/lib/cron/config-skip";
+import {
+  GST_UNREGISTERED_SKIP,
+  reportConfigSkip,
+  type ConfigSkip,
+} from "@/lib/cron/config-skip";
 import * as Sentry from "@sentry/nextjs";
 import { REGISTERED_OFFICE } from "@/lib/company";
 import { platformSupplierForJob } from "@/lib/pdf/supplier";
@@ -258,7 +262,7 @@ async function runIrpUploaderUnlocked(opts: {
   // run and a malformed or wrong-state one throws, so every row stays PENDING.
   const supplier = platformSupplierForJob();
   if (!supplier) {
-    return configSkip("PLATFORM_GSTIN not configured");
+    return configSkip(GST_UNREGISTERED_SKIP);
   }
   const seller: SellerIdentity = {
     gstin: supplier.gstin,

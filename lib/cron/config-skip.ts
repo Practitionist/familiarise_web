@@ -8,3 +8,14 @@ export type ConfigSkip = `${string} not configured`;
 export function reportConfigSkip(job: string, skipped: ConfigSkip): void {
   console.warn(JSON.stringify({ event: "cron.config-skip", job, skipped }));
 }
+
+/** The skip every GST job records while PLATFORM_GSTIN is unset. */
+export const GST_UNREGISTERED_SKIP: ConfigSkip =
+  "PLATFORM_GSTIN not configured";
+
+/** A skip that is the decided steady state: a GST job while the platform is unregistered. */
+export function isExpectedConfigSkip(reason: string | null): boolean {
+  return (
+    reason === GST_UNREGISTERED_SKIP && !process.env.PLATFORM_GSTIN?.trim()
+  );
+}

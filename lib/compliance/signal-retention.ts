@@ -27,7 +27,18 @@ const UNDATED_TERMINAL: ReferralStatus[] = [
   "FRAUDULENT",
 ];
 
-/** Terminal referrals, past the retention window, that still hold a request signal. */
+/** Statuses a referral can sit in forever (never vested, voided or expired in the row). */
+const UNSETTLED: ReferralStatus[] = [
+  "SIGNED_UP",
+  "QUALIFIED",
+  "QUALIFYING",
+  "HELD",
+];
+
+/**
+ * Referrals that still hold a request signal past the retention window: 180 days
+ * after a terminal transition, or 180 days after creation for one never settled.
+ */
 export function referralSignalPruneWhere(
   now: number,
 ): Prisma.ReferralWhereInput {
@@ -39,6 +50,7 @@ export function referralSignalPruneWhere(
         OR: [
           { status: "VESTED", vestedAt: { lt: cutoff } },
           { status: { in: UNDATED_TERMINAL }, updatedAt: { lt: cutoff } },
+          { status: { in: UNSETTLED }, createdAt: { lt: cutoff } },
         ],
       },
     ],

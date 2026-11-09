@@ -23,11 +23,11 @@ Use this page to take the money subsystem from sandbox to real money: first the 
 
 ### 1.2 Keys and the test-key guard
 
-- Before the live keys go in, the daily ops digest reads clean ([Part 3](#part-3-the-daily-ops-digest-reads-clean)). Live collection keys are what turn a standing config skip into a page.
+- Before the live keys go in, the daily ops digest reads clean ([Part 3](#part-3-the-daily-ops-digest-reads-clean)). Live collection keys are what turn a standing config skip into a page, except the expected GST skips while `PLATFORM_GSTIN` is unset.
 - `RAZORPAY_KEY_ID` and `RAZORPAY_SECRET` hold the live pair (`rzp_live_...`). `NEXT_PUBLIC_RAZORPAY_KEY_ID` holds the same key id. A secret is never given a `NEXT_PUBLIC_` prefix.
 - `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION` is deleted from production. While it is unset, `lib/payments/core/razorpay.ts` throws `RAZORPAY_TEST_KEY_IN_PRODUCTION` at boot if a test key ever reaches production; set to `true` it only logs, which is for a pre-launch deploy that must not move money.
 - `RAZORPAY_WEBHOOK_SECRET` holds the live payment-webhook secret.
-- `PLATFORM_GSTIN` holds the platform's GSTIN as soon as GST registration is granted. Until then `heal-consumer-invoices`, `gst-outward-register-export` and `irp-uploader` record a config skip on every run (reason `PLATFORM_GSTIN not configured`) and checkout mints no consumer tax invoice. After setting it and redeploying, run `heal-consumer-invoices` from the System Jobs page and confirm its row is `completed`, then confirm `/api/health/jobs` no longer lists any of the three under `configSkips`. A malformed or other-state value fails these runs instead of skipping them.
+- `PLATFORM_GSTIN` holds the platform's GSTIN as soon as GST registration is granted. Until then `heal-consumer-invoices`, `gst-outward-register-export`, `irp-uploader` and `settle-invoice-accruals` record a config skip on every run (reason `PLATFORM_GSTIN not configured`), and checkout mints no consumer tax invoice. These skips are expected: the digest lists them as a note and `/api/health/jobs` does not page on them. After setting it and redeploying, run `heal-consumer-invoices` from the System Jobs page and confirm its row is `completed`, then confirm `/api/health/jobs` no longer lists any of the four under `configSkips`. From then on any config skip pages. A malformed or other-state value fails these runs instead of skipping them.
 
 ### 1.3 Webhooks (dashboard)
 
@@ -125,7 +125,7 @@ Run `npx tsx scripts/smoke/org-payout-sandbox-smoke.ts` with a RazorpayX test ke
 
 The [daily ops digest](../../maintenance/00-betterstack-setup.md#daily-ops-digest-and-its-heartbeat) lists everything that is parked, held or muted. Before the first live key, its latest email must show:
 
-- **Zero standing config skips.** The "Config skips" section is empty. Once `RAZORPAY_KEY_ID` is live, any paging job that has skipped for a missing setting for more than 7 days makes `/api/health/jobs` answer 503 (`STANDING_CONFIG_SKIP`) at once, and the streak usually started weeks earlier. Set each missing setting (typically `PLATFORM_GSTIN`), redeploy, run the skipping jobs and then `ops-digest` from the System Jobs page, and confirm the section is empty.
+- **Zero unexpected config skips.** The "Config skips" section lists no item. While `PLATFORM_GSTIN` is unset, the section carries only the note "Expected while unregistered for GST: …" (`heal-consumer-invoices`, `gst-outward-register-export`, `irp-uploader` and `settle-invoice-accruals`; `generate-subscription-invoices` logs the skip but records a completed run). Once `RAZORPAY_KEY_ID` is live, any paging job that has skipped for a missing setting for more than 7 days makes `/api/health/jobs` answer 503 (`STANDING_CONFIG_SKIP`) at once, and the streak usually started weeks earlier. Set each other missing setting, redeploy, run the skipping jobs and then `ops-digest` from the System Jobs page, and confirm the section is empty.
 - **No paused or muted Better Stack monitor or heartbeat.** For each one the "Better Stack" section lists, unmute it or resume it, and record the date here:
   - [ ] every monitor and heartbeat in the digest's "Better Stack" section is active (list each by name in the cutover issue)
 - **`EMAIL_DELIVERY_MODE=live`.** The "Settings" line reads `EMAIL_DELIVERY_MODE: live`. Any other value holds every email to a domain other than ours and the allowlist; the "Held email" line counts what it held in the last 24 hours.

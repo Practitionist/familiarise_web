@@ -9,8 +9,9 @@
 import { TAX_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { prorate } from "@/lib/payments/utils/money";
 
-/** Razorpay's 2% domestic fee plus 18% GST on that fee, in bps of the captured amount. */
-export const GATEWAY_COST_BPS = 236;
+/** Razorpay's worst-case rate (3% on international cards, Amex, Diners and EMI) plus
+ *  18% GST on that fee, in bps of the captured amount. */
+export const GATEWAY_COST_BPS = 354;
 
 /**
  * `max(0, fee − gateway estimate)` in paise. The fee is the settlement's own

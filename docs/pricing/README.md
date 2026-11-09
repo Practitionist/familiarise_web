@@ -33,5 +33,5 @@ The repository holds mechanisms, invariants, configuration field names and the t
 
 ## Deprecated & Superseded Approaches
 
-- **A flat 20% platform fee as the only rate.** The fee was one constant (`PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE`). It is now the fallback inside `readActiveFeeSchedule`, used only while no `PlatformFeeSchedule` row is approved. New code reads the schedule, never the constant.
+- **A flat 20% platform fee as the only rate.** The fee was one constant (`PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE`). It is now the fallback inside `readActiveFeeSchedule`, used only while no `PlatformFeeSchedule` row is approved; the `/pricing` and `/become-an-expert` pages read the schedule, not the constant. New code reads the schedule, never the constant.
 - **Suggested discount codes written into the checkout pages.** The webinar, class and subscription checkout pages advertised codes (`WEBINAR10`, `CLASS15`, `SUB20`) that were never rows in `DiscountCode`. They are removed; the generic code input is the only entry point. Do not add a suggested-code row for a code that is not a live database row.

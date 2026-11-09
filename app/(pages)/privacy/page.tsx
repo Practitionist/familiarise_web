@@ -305,8 +305,12 @@ export default function PrivacyPolicyPage() {
                       </td>
                       <td className="p-2 align-top">
                         <strong>Statutory Security</strong> — 30–90 days in
-                        Sentry; 1 year minimum for security/processing logs
-                        under DPDP Rule 8(3).
+                        Sentry. Sign-in and access logs (IP address and browser)
+                        are kept 180 days after the session ends, as CERT-In
+                        requires, and background job logs 180 days.
+                        Payment-provider and email delivery logs are kept 1
+                        year. Staff and organisation audit logs are kept 2
+                        years, or 8 years when they concern money.
                       </td>
                     </tr>
                     <tr>
@@ -381,10 +385,12 @@ export default function PrivacyPolicyPage() {
                     </tr>
                     <tr>
                       <td className="p-2 align-top">
-                        <strong>Fraud-prevention signals</strong> (a one-way
-                        hash of the IP address and the browser string recorded
-                        when a referral code is used, and one-way hashes of the
-                        UPI address and phone number a payment was made with)
+                        <strong>Fraud-prevention signals</strong> (when a
+                        referral code is used: a one-way hash of the IP address,
+                        and the browser&rsquo;s user-agent string, which is
+                        stored as sent, not hashed, for fraud review; and
+                        one-way hashes of the UPI address and phone number a
+                        payment was made with)
                       </td>
                       <td className="p-2 align-top">
                         <strong>Support, Safety &amp; Fraud Prevention</strong>{" "}
@@ -392,12 +398,14 @@ export default function PrivacyPolicyPage() {
                         rewards, and support chargeback review.
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Fixed period</strong> — Referral signals are
-                        cleared {REFERRAL_SIGNAL_RETENTION_DAYS} days after the
-                        referral ends, or when you erase your account. Payment
-                        hashes are cleared {PAYER_SIGNAL_RETENTION_YEARS} years
-                        after the payment, and stay through account erasure
-                        until then.
+                        <strong>Fixed period</strong> — The IP hash and the
+                        user-agent string are deleted{" "}
+                        {REFERRAL_SIGNAL_RETENTION_DAYS} days after the referral
+                        ends, {REFERRAL_SIGNAL_RETENTION_DAYS} days after it was
+                        created if it never completes, or when you erase your
+                        account. Payment hashes are cleared{" "}
+                        {PAYER_SIGNAL_RETENTION_YEARS} years after the payment,
+                        and stay through account erasure until then.
                       </td>
                     </tr>
                     <tr>
