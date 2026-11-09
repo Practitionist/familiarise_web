@@ -13,6 +13,7 @@ import { addMonths } from "date-fns";
 import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
 
 import { formatDateLabel, formatDateRangeLabel } from "@/lib/time/display";
+import { dayStartInstant } from "@/lib/time/grid-zone";
 
 export type CycleUnit = "week" | "month";
 
@@ -179,19 +180,23 @@ export function planEndOf(start: Date, months: number, tz: string): Date {
   });
 }
 
-/** Weeks-plan end: `start` plus `weeks` × 7 zone-days at the same wall time,
- * so a DST change inside the plan never shifts the end hour; exclusive. */
+/**
+ * Weeks-plan end: the zone midnight that closes plan week `weeks - 1`, i.e. the
+ * start of zone-day `day0 + 7 × weeks` where day0 is the purchase's zone-day.
+ * Plan weeks are whole zone-days from day0, so ending on that midnight leaves no
+ * sub-day stub week after the last one. Exclusive; a midnight the clocks skip
+ * resolves to the first minute of that day.
+ */
 export function weeksPlanEndOf(start: Date, weeks: number, tz: string): Date {
-  return shiftWallDate(start, tz, ({ y, m, d }) => {
-    const to = new Date(
-      Date.UTC(y, m - 1, d + 7 * Math.max(1, Math.trunc(weeks))),
-    );
-    return {
-      y: to.getUTCFullYear(),
-      m: to.getUTCMonth() + 1,
-      d: to.getUTCDate(),
-    };
-  });
+  if (!Number.isFinite(start.getTime())) return new Date(Number.NaN);
+  const [y, m, d] = formatInTimeZone(start, tz, "yyyy-MM-dd")
+    .split("-")
+    .map(Number);
+  // A local-noon date names the calendar day; dayStartInstant reads its fields.
+  return dayStartInstant(
+    new Date(y, m - 1, d + 7 * Math.max(1, Math.trunc(weeks)), 12),
+    tz,
+  );
 }
 
 export interface PlanEndShape {
