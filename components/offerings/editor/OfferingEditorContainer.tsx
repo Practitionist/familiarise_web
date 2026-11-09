@@ -423,7 +423,7 @@ export function OfferingEditorContainer({
                 }
               : {}),
             // Files attach to a plan id, so there is nothing to list while
-            // creating (#1851 decision 8).
+            // creating.
             materials: planId ? (
               <OfferingMaterials type={type} planId={planId} />
             ) : (
