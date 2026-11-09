@@ -2,6 +2,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
@@ -30,6 +31,11 @@ import {
 } from "@/lib/payments/pricing/display-price";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { FREE_TRIAL_LABEL } from "@/lib/appointments/trial-labels";
+import { leadMsFor } from "@/lib/booking/lead-time";
+import { invalidateAvailability } from "@/lib/scheduling/use-availability-window";
+import type { SlotWithStatus } from "@/lib/scheduling/booking-windows";
+import { useDisplayZone } from "@/lib/time/use-display-zone";
+import { TrialSlotPicker } from "./TrialSlotPicker";
 import { Gift, Clock, Loader2, CheckCircle } from "lucide-react";
 
 const profileAnswerSchema = z.object({
@@ -86,9 +92,14 @@ export function TrialBookingModal({
   const router = useRouter();
   const pathname = usePathname();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const zone = useDisplayZone(session?.user?.timezone ?? null);
   const [notes, setNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [selectedSlot, setSelectedSlot] = useState<SlotWithStatus | null>(null);
+  // A paid trial is paid after this request, so it needs the unpaid lead.
+  const leadMs = leadMsFor("request", { settled: !isPaidTrial });
 
   // Send an unauthenticated visitor to sign-in, preserving the trial intent so
   // that after auth + onboarding they land back on this expert with the trial
@@ -107,6 +118,10 @@ export function TrialBookingModal({
   const handleSubmit = async () => {
     if (!session?.user?.id) {
       redirectToSignIn();
+      return;
+    }
+    if (!selectedSlot) {
+      toast({ title: "Pick a time first", variant: "destructive" });
       return;
     }
 
@@ -171,11 +186,15 @@ export function TrialBookingModal({
           consulteeProfileId,
           consultantProfileId,
           subscriptionPlanId,
-          notes: notes.trim() || null,
+          notes: notes.trim() || undefined,
+          slot: {
+            startsAt: new Date(selectedSlot.startsAt).toISOString(),
+            endsAt: new Date(selectedSlot.endsAt).toISOString(),
+          },
         }),
       });
 
-      // #1775 C-7 — a paid trial is paid now: straight to its checkout page.
+      // A paid trial holds the time while the buyer pays: straight to checkout.
       const createdBody = createdAnswerSchema.safeParse(
         await requireJsonResponse(response, "Trial request failed"),
       );
@@ -187,21 +206,31 @@ export function TrialBookingModal({
 
       setIsSuccess(true);
       toast({
-        title: "Trial Requested!",
-        description: `Your trial request has been sent to ${consultantName}. They will contact you to schedule the session.`,
+        title: "Trial booked",
+        description: `Your trial with ${consultantName} is confirmed. It's in your appointments.`,
       });
+      void invalidateAvailability(queryClient, consultantProfileId);
 
       // Auto close after success
       setTimeout(() => {
         onClose();
         setIsSuccess(false);
         setNotes("");
+        setSelectedSlot(null);
       }, 2000);
     } catch (error) {
       console.warn("Trial request failed", error);
       // A modelled refusal is an answer, not a fault: it carries a sentence
       // written for the buyer and is not a Sentry event.
       const expected = isExpectedRefusal(error);
+      // The time went while the buyer was choosing: drop it and re-read.
+      if (
+        error instanceof ApiResponseError &&
+        (error.status === 409 || error.status === 423 || error.status === 400)
+      ) {
+        setSelectedSlot(null);
+        void invalidateAvailability(queryClient, consultantProfileId);
+      }
       if (!expected) {
         Sentry.captureException(
           error instanceof Error ? error : new Error(String(error)),
@@ -209,7 +238,7 @@ export function TrialBookingModal({
         );
       }
       toast({
-        title: "Couldn't request the trial",
+        title: "Couldn't book the trial",
         description:
           expected && error instanceof ApiResponseError && error.code
             ? userMessageFrom(error)
@@ -258,11 +287,11 @@ export function TrialBookingModal({
               <CheckCircle className="h-8 w-8 text-emerald-600" />
             </div>
             <h3 className="text-xl font-semibold text-foreground mb-2">
-              Trial Requested!
+              Trial booked
             </h3>
             <p className="text-muted-foreground">
-              {consultantName} will review your request and get back to you
-              soon.
+              Your trial with {consultantName} is confirmed. Find it in your
+              appointments.
             </p>
           </div>
         </DialogContent>
@@ -279,7 +308,8 @@ export function TrialBookingModal({
             Book Trial Session
           </DialogTitle>
           <DialogDescription>
-            Request a {trialDurationMinutes}-minute trial with {consultantName}
+            Pick a time for a {trialDurationMinutes}-minute trial with{" "}
+            {consultantName}
           </DialogDescription>
         </DialogHeader>
 
@@ -304,6 +334,19 @@ export function TrialBookingModal({
             </div>
           </div>
 
+          <div className="space-y-2">
+            <Label>Pick a time</Label>
+            <TrialSlotPicker
+              consultantId={consultantProfileId}
+              consulteeUserId={session.user.id}
+              trialDurationMinutes={trialDurationMinutes}
+              leadMs={leadMs}
+              timezone={zone.zone}
+              selected={selectedSlot}
+              onSelect={setSelectedSlot}
+            />
+          </div>
+
           {/* Notes */}
           <div className="space-y-2">
             <Label htmlFor="notes">
@@ -321,20 +364,17 @@ export function TrialBookingModal({
             </p>
           </div>
 
-          {/* Info — say when money changes hands (#1775 C-7): a paid trial
-              is charged with the request and refunded if it is not taken. */}
+          {/* Say when money changes hands and what confirms the time. */}
           <div className="bg-muted rounded-lg p-4 text-sm text-muted-foreground">
-            <p>
-              After submitting, the consultant will review your request and
-              contact you to schedule a time that works for both of you.
-            </p>
-            {isPaidTrial && (
-              <p className="mt-2">
+            {isPaidTrial ? (
+              <p>
                 You pay{" "}
-                <strong className="text-foreground">{priceLabel}</strong> with
-                the request. Refunded in full if {consultantName} can&apos;t
-                take it.
+                <strong className="text-foreground">{priceLabel}</strong> next.
+                The time is held for you while you pay, and confirmed as soon as
+                the payment goes through.
               </p>
+            ) : (
+              <p>Your trial is confirmed as soon as you book it.</p>
             )}
           </div>
         </div>
@@ -343,16 +383,19 @@ export function TrialBookingModal({
           <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={isSubmitting}>
+          <Button
+            onClick={handleSubmit}
+            disabled={isSubmitting || !selectedSlot}
+          >
             {isSubmitting ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Requesting...
+                Booking...
               </>
             ) : (
               <>
                 <Gift className="h-4 w-4 mr-2" />
-                Request Trial
+                {isPaidTrial ? "Continue to payment" : "Book trial"}
               </>
             )}
           </Button>
