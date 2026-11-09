@@ -9,7 +9,7 @@ last-reviewed: 2026-10-23
 
 # The SLA sweep and its arms
 
-Support has one background job, `support-sla-sweep`, implemented by `runSupportSlaSweep()` in `lib/support/sla-sweep.ts`. Every 30 minutes it works through a fixed list of **arms**: deadline warnings, the 28-day auto-close, the problem-to-incident cascade, the 180-day evidence purge, the chat-access backstop, chargeback deadline alerts, moderation deadlines, and overdue evidence. Each arm handles a bounded slice per run, and each row commits in its own short transaction, so one bad row never blocks the rest and a crash leaves at most one row half-considered.
+Support has one background job, `support-sla-sweep`, implemented by `runSupportSlaSweep()` in `lib/support/sla-sweep.ts`. Every 30 minutes it works through a fixed list of **arms**: deadline warnings, the 28-day auto-close, the problem-to-incident cascade, the 180-day evidence purge, the chat-access backstop, chargeback deadline alerts, moderation deadlines, overdue evidence, and host conduct-removal reviews. Each arm handles a bounded slice per run, and each row commits in its own short transaction, so one bad row never blocks the rest and a crash leaves at most one row half-considered.
 
 There is no second scheduler, no Redis lock and no `jobs/` wrapper (AGENTS.md §1.1, §1.4).
 
@@ -144,15 +144,19 @@ Open moderation reports whose `resolutionDueAt` is due within 24 hours or breach
 
 Unanswered, uncancelled evidence requests past `dueAt` (within the last 30 days) on unresolved cases get one bell to the operator who asked, keyed `evidence-overdue:<requestId>`. An overdue request also makes `EVIDENCE_OVERDUE` a verified basis for a chat intervention.
 
+### 9. Conduct removal reviews
+
+`sweepRemovalReviews()` (`lib/support/removal-review.ts`) handles `ParticipantRemoval` rows still `PENDING_REVIEW`, at most `REMOVAL_REVIEW_CAP` (5) of each kind per run, in two steps. A removal whose case is RESOLVED or CLOSED is marked `OVERTURNED` when a PENDING or SUCCEEDED refund was created for the attendee's payment on that appointment after the removal, and `UPHELD` otherwise; the update is a compare-and-set on `PENDING_REVIEW`. A removal whose case is still open past its `resolutionDueAt` is refunded in full through `refundRemovedAttendeeSeat()` under the key `removal-review:<removalId>`, with the refund read back before anything else changes. Only then does one transaction mark the removal `OVERTURNED`, release the case's holds, add a visible case message and stage a bell to the attendee (`removal-review:<removalId>:refunded`). A refund that did not land leaves the removal pending and adds a line to the run's `errors`, so the next run tries again. The idle probe is `hasRemovalReviewWork()`.
+
 ## Invariants
 
-| Rule                                                                                                | Enforcer                                                                                             | Test                                                 |
-| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| One owned RUNNING lease per sweep; unavailable fail-open admission or lease loss can overlap cores. | The database: `SystemJobExecution_running_jobName_key`; `withCronLock()`.                            | `__tests__/maintenance/with-cron-lock.test.ts`       |
-| Each arm is bounded per run.                                                                        | App: `PROBLEM_CASCADE_CAP` (10), `EVIDENCE_PURGE_CAP` (5), `CHAT_ACCESS_CAP` (10), the limit.        | `__tests__/support/sla-sweep-lifecycle-arms.test.ts` |
-| Each threshold notifies once.                                                                       | App: outbox `entityRef` identities and the preloaded exclusion lists; outbox `transactionId` unique. | `__tests__/support/dispute-deadline-alerts.test.ts`  |
-| A cascade never resolves an incident of a problem that was reopened.                                | App: compare-and-set includes the problem's status.                                                  | `__tests__/db/support/problem-cascade.db.test.ts`    |
-| One failing row never stops the run, and Sentry hears about it once.                                | App: per-row transactions, collected `errors`, one `reportSentryError()`.                            | `__tests__/support/sla-sweep-lifecycle-arms.test.ts` |
+| Rule                                                                                                | Enforcer                                                                                                                | Test                                                 |
+| --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| One owned RUNNING lease per sweep; unavailable fail-open admission or lease loss can overlap cores. | The database: `SystemJobExecution_running_jobName_key`; `withCronLock()`.                                               | `__tests__/maintenance/with-cron-lock.test.ts`       |
+| Each arm is bounded per run.                                                                        | App: `PROBLEM_CASCADE_CAP` (10), `EVIDENCE_PURGE_CAP` (5), `CHAT_ACCESS_CAP` (10), `REMOVAL_REVIEW_CAP` (5), the limit. | `__tests__/support/sla-sweep-lifecycle-arms.test.ts` |
+| Each threshold notifies once.                                                                       | App: outbox `entityRef` identities and the preloaded exclusion lists; outbox `transactionId` unique.                    | `__tests__/support/dispute-deadline-alerts.test.ts`  |
+| A cascade never resolves an incident of a problem that was reopened.                                | App: compare-and-set includes the problem's status.                                                                     | `__tests__/db/support/problem-cascade.db.test.ts`    |
+| One failing row never stops the run, and Sentry hears about it once.                                | App: per-row transactions, collected `errors`, one `reportSentryError()`.                                               | `__tests__/support/sla-sweep-lifecycle-arms.test.ts` |
 
 The auto-close regressions are in `__tests__/support/sla-sweep-auto-close.test.ts`; they cover held-prefix progress, refusal classification, stamp races, unchanged business clocks and admission bounds. Moderation-deadline and overdue-evidence coverage remains separate work.
 

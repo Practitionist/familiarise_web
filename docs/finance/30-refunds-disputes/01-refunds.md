@@ -27,6 +27,7 @@ Every booking refund door goes through `refundBookingPayment` (`lib/payments/ope
 | Cancellation                                  | `POST /api/appointments/[appointmentId]/cancel`                                  | `cancel:<appointmentId>:<paymentId>`                              |
 | Whole event cancelled                         | `refundWholeEventPayments` and `stampWholeEventRefundsOwed` (`event-refunds.ts`) | A per-seat key scoped by the calling door                         |
 | Attendee removed, seat left                   | `refundRemovedAttendeeSeat`; `lib/booking/seat-leave.ts`                         | `seat-leave:<participantId>` or `seat-exit:<id>`                  |
+| Attendee removed for conduct, review lapsed   | `refundRemovedAttendeeSeat`; `lib/support/removal-review.ts`                     | `removal-review:<removalId>`                                      |
 | Missed class session, series cancel           | `lib/booking/class-sessions.ts`                                                  | `occ:<occurrenceId>:pay:<paymentId>`, `series-cancel:<paymentId>` |
 | Consultant no-show, request rejection, expiry | `session-outcome-sweep.ts`, `rejection-refund.ts`, the expire sweeps             | `no-show:<slot>:<user>` and similar                               |
 | Platform incident                             | `refundIncidentSeat` (`incident-refunds.ts`)                                     | `incident:<incident>:<occurrence>:<user>`                         |

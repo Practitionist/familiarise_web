@@ -13,3 +13,8 @@ export function parseCaseKey(key: string | null | undefined): CaseRef | null {
   if (!match || !ID_RE.test(match[2])) return null;
   return { kind: match[1] === "c" ? "case" : "booking", id: match[2] };
 }
+
+/** The role-agnostic page that opens contextual help for one appointment. */
+export function bookingSupportPath(appointmentId: string): string {
+  return `/dashboard/support/${caseKeyOf({ kind: "booking", id: appointmentId })}`;
+}

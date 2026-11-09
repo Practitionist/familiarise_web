@@ -2,9 +2,13 @@ import type { CollaboratorType, StreamRevocationKind } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import {
   getStreamChatClient,
+  getStreamVideoClient,
   isExpectedStreamError,
 } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
+import { paidParticipant } from "@/lib/booking/participants";
+import { MAX_CALL_DURATION_MS } from "@/lib/meetings/duration-cap";
+import { STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
 import { getDmChannelId } from "@/lib/stream-utils";
 import { reportSentryError } from "@/lib/observability/report";
 import {
@@ -228,6 +232,69 @@ export async function enqueueCollaboratorRevocationRetry(
   );
 }
 
+/**
+ * Removes the user from the appointment's open calls and blocks them from
+ * rejoining. Returns false when Stream refused a call, so the caller queues CALL_KICK.
+ */
+export async function kickUserFromAppointmentCalls(
+  appointmentId: string,
+  userId: string,
+): Promise<boolean> {
+  try {
+    const occurrences = await prisma.appointmentOccurrence.findMany({
+      where: {
+        appointmentId,
+        deletedAt: null,
+        endsAt: { gt: new Date(Date.now() - MAX_CALL_DURATION_MS) },
+        meeting: { is: { endedAt: null } },
+      },
+      select: { meeting: { select: { streamCallId: true } } },
+    });
+    const video = getStreamVideoClient().video;
+    const results = await Promise.allSettled(
+      occurrences.flatMap(({ meeting }) => {
+        if (!meeting) return [];
+        const call = video.call(STREAM_CALL_TYPE, meeting.streamCallId);
+        return [
+          (async () => {
+            await call.updateCallMembers({ remove_members: [userId] });
+            await call.kickUser({ user_id: userId, block: true });
+          })(),
+        ];
+      }),
+    );
+    const failures = results.filter(
+      (r): r is PromiseRejectedResult =>
+        r.status === "rejected" && !isExpectedStreamError(r.reason),
+    );
+    if (failures.length === 0) return true;
+    reportSentryError(failures[0].reason, {
+      subsystem: "stream",
+      op: "participantRemoval.kickFromCalls",
+      extra: { appointmentId, failed: failures.length },
+    });
+    return false;
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "stream",
+      op: "participantRemoval.kickFromCalls",
+      extra: { appointmentId },
+    });
+    return false;
+  }
+}
+
+/** Queues a call kick that `kickUserFromAppointmentCalls` reported as incomplete. */
+export async function enqueueCallKickRetry(
+  appointmentId: string,
+  userId: string,
+): Promise<void> {
+  await enqueueOrReport(
+    [{ kind: "CALL_KICK", userId, planId: appointmentId }],
+    "participantRemoval.callKick",
+  );
+}
+
 /** Queues an org-member revocation that did not fully land. */
 export async function enqueueOrgMemberRevocationRetry(
   orgId: string,
@@ -264,7 +331,22 @@ export async function redriveAccessRevocation(
       return redriveDmRemoval(row);
     case "ORG_REVOKE":
       return redriveOrgRevocation(row);
+    case "CALL_KICK":
+      return redriveCallKick(row);
   }
+}
+
+async function redriveCallKick(
+  row: AccessRevocationRow,
+): Promise<string | null> {
+  const reinstated = await prisma.appointmentParticipant.findFirst({
+    where: { appointmentId: row.planId, ...paidParticipant(row.userId) },
+    select: { id: true },
+  });
+  if (reinstated) return null;
+  return (await kickUserFromAppointmentCalls(row.planId, row.userId))
+    ? null
+    : "Call kick failed";
 }
 
 async function redriveCollaboratorRevocation(

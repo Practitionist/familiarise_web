@@ -178,6 +178,8 @@ model User {
   supportCasesRequested          SupportCase[]                    @relation("SupportCaseRequester")
   supportCasesSubmitted          SupportCase[]                    @relation("SupportCaseSubmitter")
   supportCasesAssigned           SupportCase[]                    @relation("SupportCaseAssignee")
+  participantRemovalsReceived    ParticipantRemoval[]             @relation("ParticipantRemovalRemoved")
+  participantRemovalsMade        ParticipantRemoval[]             @relation("ParticipantRemovalActor")
   supportCaseMessagesAuthored    SupportCaseMessage[]             @relation("SupportCaseMessageAuthor")
   supportCaseEventsActed         SupportCaseEvent[]               @relation("SupportCaseEventActor")
   supportEvidenceReceived        SupportCaseEvidenceRequest[]     @relation("SupportEvidenceRecipient")
@@ -446,6 +448,8 @@ model SupportCase {
   /// The moderation report staff opened this case from; one case per report.
   moderationReportId         String?                          @unique
   moderationReport           ModerationReport?                @relation(fields: [moderationReportId], references: [id], onDelete: SetNull)
+  /// The host removal this case reviews; set only on CONDUCT_REMOVAL cases.
+  participantRemoval         ParticipantRemoval?
 
   subjects SupportCaseSubject[]
   messages SupportCaseMessage[]
@@ -862,6 +866,8 @@ enum SupportThreadCategory {
   ORG_ADMIN_DISPUTE
   // A threat, harassment, scam or other safety risk; unlocks a visible support intervention.
   SAFETY_CONCERN
+  // A host removed the attendee from a group event; the case reviews the removal and its money.
+  CONDUCT_REMOVAL
   OTHER
 }
 
@@ -4915,6 +4921,7 @@ model Appointment {
   /// is the durable record of the work.
   chatChannelEnsuredAt DateTime?     @db.Timestamptz
   supportCases         SupportCase[] @relation("SupportCaseByAppointment")
+  participantRemovals  ParticipantRemoval[]
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -5017,6 +5024,61 @@ enum ParticipantStatus {
   CANCELLED
   REFUNDED
   ATTENDED
+}
+
+/// A host or co-host removing an attendee from a group event for conduct. The
+/// seat itself goes to CANCELLED; this row is the who, why and review state.
+/// One per (appointment, user): a reinstated attendee removed again reuses it.
+model ParticipantRemoval {
+  id String @id @default(uuid())
+
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  appointmentId String
+
+  user   User   @relation("ParticipantRemovalRemoved", fields: [userId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  userId String
+
+  removedBy       User   @relation("ParticipantRemovalActor", fields: [removedByUserId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  removedByUserId String
+
+  actorRole ParticipantRemovalActorRole
+  reason    ParticipantRemovalReason
+  note      String?                     @db.Text
+  status    ParticipantRemovalStatus    @default(PENDING_REVIEW)
+
+  supportCase   SupportCase? @relation(fields: [supportCaseId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  supportCaseId String?      @unique
+
+  decidedAt DateTime? @db.Timestamptz
+  createdAt DateTime  @default(now()) @db.Timestamptz
+  updatedAt DateTime  @updatedAt @db.Timestamptz
+
+  @@unique([appointmentId, userId])
+  @@index([status, createdAt])
+  @@index([removedByUserId])
+  @@index([userId])
+}
+
+enum ParticipantRemovalActorRole {
+  HOST
+  CO_HOST
+  ORG_OPERATOR
+  STAFF
+}
+
+enum ParticipantRemovalReason {
+  DISRUPTIVE
+  HARASSMENT
+  SPAM_OR_PROMOTION
+  OFF_TOPIC
+  IMPERSONATION
+  OTHER
+}
+
+enum ParticipantRemovalStatus {
+  PENDING_REVIEW
+  UPHELD
+  OVERTURNED
 }
 
 /// #1319 A12 (adopted) — one append-only row per guarded status transition.
@@ -8402,6 +8464,8 @@ enum StreamRevocationKind {
   EVENT_CHANNEL_REMOVE
   DM_REMOVE
   ORG_REVOKE
+  /// planId is the appointment; the sweep kicks and blocks the user on its open calls.
+  CALL_KICK
 }
 
 enum ErasureVendor {

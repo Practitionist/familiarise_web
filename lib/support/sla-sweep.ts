@@ -29,6 +29,7 @@ import {
   purgeExpiredSupportEvidence,
 } from "./evidence-retention";
 import { hasChatAccessWork, sweepSupportChatAccess } from "./chat-sweep";
+import { hasRemovalReviewWork, sweepRemovalReviews } from "./removal-review";
 import { activeHolds, caseHoldEvents, releaseAllCaseHolds } from "./case-holds";
 import { endCaseChatAccessTx } from "./chat-access-end";
 import {
@@ -57,6 +58,8 @@ const PROBLEM_CASCADE_CAP = 10;
 const EVIDENCE_PURGE_CAP = 5;
 // Each chat-access step is a Stream round trip or a short transaction per row.
 const CHAT_ACCESS_CAP = 10;
+// Each overdue removal is a refund plus a transaction.
+const REMOVAL_REVIEW_CAP = 5;
 
 type SlaNoticeKind = "ack" | "res";
 type SlaNoticeLevel = "warn" | "breach";
@@ -113,6 +116,10 @@ export interface SupportSlaSweepResult {
   /** Channels whose support lock was re-applied or cleared. */
   chatBoundariesSynced: number;
   chatReviewNotices: number;
+  /** Conduct removals marked upheld or overturned after their case closed. */
+  removalReviewsDecided: number;
+  /** Conduct removals refunded in full because support missed its deadline. */
+  removalRefundsOnDeadline: number;
   disputeNoticesStaged: number;
   errors: string[];
 }
@@ -1046,6 +1053,8 @@ export async function hasSupportSlaSweepWork(
   if (outOfTime()) return true;
   if (await hasChatAccessWork(db, now)) return true;
   if (outOfTime()) return true;
+  if (await hasRemovalReviewWork(db, now)) return true;
+  if (outOfTime()) return true;
   const dispute = await db.dispute.findFirst({
     where: { OR: [disputeDeadlineWhere(now), LIVE_DISPUTE_WHERE] },
     select: { id: true },
@@ -1260,6 +1269,12 @@ export async function runSupportSlaSweep(opts?: {
         );
       }
     }
+    const removalReviews = await sweepRemovalReviews({
+      limit: Math.min(limit, REMOVAL_REVIEW_CAP),
+      now,
+      errors,
+      stagedBells,
+    });
     await flushNotificationsAfter(
       {
         bells: stagedBells,
@@ -1299,6 +1314,8 @@ export async function runSupportSlaSweep(opts?: {
       chatInterventionsLeft: chatAccess.left,
       chatBoundariesSynced: chatAccess.boundaries,
       chatReviewNotices: chatAccess.notices,
+      removalReviewsDecided: removalReviews.decided,
+      removalRefundsOnDeadline: removalReviews.refundedOnDeadline,
       disputeNoticesStaged,
       errors,
     };

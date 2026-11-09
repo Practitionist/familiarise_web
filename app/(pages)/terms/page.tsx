@@ -343,6 +343,46 @@ export default function TermsPage() {
                 </li>
               </ul>
 
+              <h3 className="text-xl font-semibold mt-4 mb-2">
+                6.4 Removal from a Group Session
+              </h3>
+              {/* counsel: confirm the grounds, the earnings hold and the review period before launch */}
+              <p>
+                A host or accepted co-host of a webinar or class may remove an
+                attendee for conduct that breaks Section 6.2, such as disrupting
+                the session, harassing others, spam or impersonation. When that
+                happens:
+              </p>
+              <ul>
+                <li>
+                  The attendee is removed from the session, its chat and any
+                  live call, and is shown the reason the host recorded.
+                </li>
+                <li>
+                  We open a support case for the attendee and hold the host's
+                  earnings for that seat while support reviews it. The attendee
+                  can reply on the case to give their side.
+                </li>
+                <li>
+                  If support does not uphold the removal, or does not decide
+                  within 7 days, the attendee is refunded in full.
+                </li>
+                <li>
+                  If support upholds the removal, no refund is due for sessions
+                  already delivered. Support decides any refund for sessions not
+                  yet delivered.
+                </li>
+                <li>
+                  The attendee may appeal support's decision within 7 days. A
+                  removed attendee cannot buy a seat in the same event again
+                  unless support reinstates them.
+                </li>
+              </ul>
+              <p>
+                A host who removes someone only because they enrolled by mistake
+                refunds them in full at once, and no review is needed.
+              </p>
+
               <Separator className="my-6" />
 
               <h2 className="text-2xl font-semibold mt-6 mb-4">

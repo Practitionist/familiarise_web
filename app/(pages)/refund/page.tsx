@@ -286,6 +286,11 @@ export default function RefundPolicyPage() {
                   review)
                 </li>
                 <li>Duplicate or erroneous charges</li>
+                <li>
+                  You are removed from a webinar or class and support does not
+                  uphold the removal, or does not review it in time (see Terms
+                  6.4)
+                </li>
               </ul>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
@@ -294,6 +299,10 @@ export default function RefundPolicyPage() {
               <ul>
                 <li>Late cancellations outside the allowed timeframe</li>
                 <li>No-shows or missed sessions by students</li>
+                <li>
+                  Sessions already delivered when support upholds your removal
+                  from a webinar or class for conduct (see Terms 6.4)
+                </li>
                 <li>
                   Technical issues on the student's side (internet, device,
                   etc.)

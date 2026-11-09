@@ -12,6 +12,10 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
     async (_job: string, _opts: unknown, fn: () => Promise<unknown>) => fn(),
   ),
 }));
+jest.mock("../../lib/support/removal-review", () => ({
+  hasRemovalReviewWork: async () => false,
+  sweepRemovalReviews: async () => ({ decided: 0, refundedOnDeadline: 0 }),
+}));
 jest.mock("../../lib/novu/stage-bell", () => ({
   stageBell: (...args: unknown[]) => mockStageBell(...args),
 }));

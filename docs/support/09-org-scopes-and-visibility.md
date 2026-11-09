@@ -87,7 +87,7 @@ Staff file a PERSONAL case for a customer with the customer as submitter, so it 
 | Org-workspace Support pages                                             | Workspace member      | The viewer's personal and workspace requests only; organization-owned cases stay in the organization dashboard.                                                                                              |
 | Back-office inbox and workspace                                         | `tickets.manage`      | Every case; contact details need `users.read`, payment subjects need `payments.read`, recommendations and holds need `payments.read`.                                                                        |
 
-`ORG_SENSITIVE_PERSONAL_CATEGORIES` lists the personal categories an organization may count but not see: ORG_ADMIN_DISPUTE, QUALITY_COMPLAINT, GRIEVANCE, CONSULTANT_NO_SHOW, CONSULTANT_LATE, SESSION_ENDED_EARLY, SESSION_QUALITY_POOR and WRONG_CONSULTANT and SAFETY_CONCERN. Non-sensitive personal cases on the organization's bookings do appear in the activity feed as metadata, including the requester's name.
+`ORG_SENSITIVE_PERSONAL_CATEGORIES` lists the personal categories an organization may count but not see: ORG_ADMIN_DISPUTE, QUALITY_COMPLAINT, GRIEVANCE, CONSULTANT_NO_SHOW, CONSULTANT_LATE, SESSION_ENDED_EARLY, SESSION_QUALITY_POOR and WRONG_CONSULTANT, SAFETY_CONCERN and CONDUCT_REMOVAL. Non-sensitive personal cases on the organization's bookings do appear in the activity feed as metadata, including the requester's name.
 
 ## Evidence parties
 

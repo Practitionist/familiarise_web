@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import type { ParticipantRemovalActorRole } from "@prisma/client";
 import type { Session } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
@@ -11,6 +12,10 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { leaveEventSeat } from "@/lib/booking/seat-leave";
+import { removeParticipantForConduct } from "@/lib/booking/participant-removal";
+import { bookingPartyWhere } from "@/lib/moderation/report-case";
+import { bookingSupportPath } from "@/lib/support/case-key";
+import { ConductRemovalBodySchema } from "@/schemas/participant-removal";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { isRefusal } from "@/lib/errors/refusal";
@@ -236,6 +241,7 @@ export async function handleGroupParticipantsGet(
 
     return NextResponse.json({
       [loaded.key]: loaded.event,
+      appointmentId: appointmentId ?? null,
       participants,
       collaborators: loaded.collaborators,
       seatPayments,
@@ -371,6 +377,198 @@ async function executeGroupSeatLeave(opts: {
     isSelfLeave: opts.isSelfLeave,
     exit: opts.isSelfLeave && opts.exitMode,
   });
+}
+
+/**
+ * Who the caller is on this group event, or null when they may not remove
+ * attendees: staff, the plan owner, an org operator who can manage the catalog
+ * or cancel for the org, or an accepted PRESENTER-tier collaborator.
+ */
+async function resolveRemovalActorRole(
+  session: Session,
+  appointmentId: string,
+): Promise<ParticipantRemovalActorRole | null> {
+  const planSelect = {
+    consultantProfileId: true,
+    organizationId: true,
+    collaborators: {
+      where: {
+        consultantProfileId: session.user.consultantProfileId ?? "__none__",
+        status: "ACCEPTED" as const,
+        tier: "PRESENTER" as const,
+        consultantProfile: { deletedAt: null },
+      },
+      select: { id: true },
+    },
+  };
+  const appointment = await prisma.appointment.findFirst({
+    where: { id: appointmentId, deletedAt: null },
+    select: {
+      webinar: { select: { webinarPlan: { select: planSelect } } },
+      class: { select: { classPlan: { select: planSelect } } },
+    },
+  });
+  const plan =
+    appointment?.webinar?.webinarPlan ?? appointment?.class?.classPlan;
+  if (!plan) return null;
+
+  if (isPrivileged(session.user.role)) return "STAFF";
+  const profileId = session.user.consultantProfileId;
+  if (profileId && plan.consultantProfileId === profileId) return "HOST";
+  if (plan.organizationId) {
+    const membership = await prisma.membership.findFirst({
+      where: {
+        userId: session.user.id,
+        organizationId: plan.organizationId,
+        status: "ACTIVE",
+        organization: { status: { not: "DEACTIVATED" } },
+      },
+      select: { role: true },
+    });
+    if (
+      membership &&
+      (hasOrgPermission(membership.role, "catalog.manage") ||
+        hasOrgPermission(membership.role, "appointments.actForOrg.cancel"))
+    ) {
+      return "ORG_OPERATOR";
+    }
+  }
+  return plan.collaborators.length > 0 ? "CO_HOST" : null;
+}
+
+/**
+ * POST /api/appointments/[appointmentId]/participants/remove — a host,
+ * co-host or org operator removes an attendee for conduct. The seat is released
+ * at once; the money waits for support (see lib/booking/participant-removal.ts).
+ */
+export async function handleGroupConductRemoval(
+  request: Request,
+  appointmentId: string,
+): Promise<NextResponse> {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
+  const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
+  if (rl) return rl;
+
+  try {
+    const parsed = ConductRemovalBodySchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid removal request.", details: parsed.error.issues },
+        { status: 400 },
+      );
+    }
+    const { targetUserId, reason, note } = parsed.data;
+    if (targetUserId === session.user.id) {
+      return NextResponse.json(
+        { error: "You cannot remove yourself. Leave the session instead." },
+        { status: 400 },
+      );
+    }
+
+    const role = await resolveRemovalActorRole(session, appointmentId);
+    if (!role) {
+      return forbiddenResponse(
+        "Only the host, a co-host or an organisation operator can remove attendees",
+      );
+    }
+
+    const removed = await removeParticipantForConduct({
+      appointmentId,
+      targetUserId,
+      actor: { userId: session.user.id, role },
+      reason,
+      note,
+    }).catch((error: unknown) => {
+      if (error instanceof BookingRuleError) return error;
+      throw error;
+    });
+    if (removed instanceof BookingRuleError)
+      return bookingRuleResponse(removed);
+    if (!removed) return NextResponse.json({ removed: false });
+    return NextResponse.json({
+      removed: true,
+      caseReference: removed.caseReference,
+      earningsHeld: removed.earningsHeld,
+    });
+  } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
+    console.error("[PARTICIPANT_CONDUCT_REMOVAL]", error);
+    return new NextResponse("Internal error", { status: 500 });
+  }
+}
+
+/** The same removal, addressed by the webinar or class id the event chat knows. */
+export async function handleGroupConductRemovalByEvent(
+  request: Request,
+  kind: GroupEventKind,
+  eventId: string,
+): Promise<NextResponse> {
+  const event =
+    kind === "webinar"
+      ? await prisma.webinar.findUnique({
+          where: { id: eventId },
+          select: { appointment: { select: { id: true } } },
+        })
+      : await prisma.class.findUnique({
+          where: { id: eventId },
+          select: { appointment: { select: { id: true } } },
+        });
+  if (!event?.appointment) {
+    return new NextResponse(
+      kind === "webinar" ? "Webinar not found" : "Class not found",
+      { status: 404 },
+    );
+  }
+  return handleGroupConductRemoval(request, event.appointment.id);
+}
+
+/**
+ * GET — the support page for this event's booking, for a host, co-host or
+ * attendee who wants to report a concern. Anyone who is not a party gets the
+ * same 404 as a missing event, so an appointment id never leaks.
+ */
+export async function handleGroupSupportLink(
+  kind: GroupEventKind,
+  eventId: string,
+): Promise<NextResponse> {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
+  const rl = await applyRateLimit(participantReadLimiter, session.user.id);
+  if (rl) return rl;
+
+  const event =
+    kind === "webinar"
+      ? await prisma.webinar.findUnique({
+          where: { id: eventId },
+          select: { appointment: { select: { id: true } } },
+        })
+      : await prisma.class.findUnique({
+          where: { id: eventId },
+          select: { appointment: { select: { id: true } } },
+        });
+  const appointmentId = event?.appointment?.id;
+  const party = appointmentId
+    ? await prisma.appointment.count({
+        where: { id: appointmentId, ...bookingPartyWhere(session.user.id) },
+      })
+    : 0;
+  if (!appointmentId || party === 0) {
+    return new NextResponse(
+      kind === "webinar" ? "Webinar not found" : "Class not found",
+      { status: 404 },
+    );
+  }
+  return NextResponse.json({ href: bookingSupportPath(appointmentId) });
 }
 
 export async function handleGroupParticipantDelete(

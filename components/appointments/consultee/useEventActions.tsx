@@ -208,7 +208,6 @@ export function useEventActions({
   const [isLoading, setIsLoading] = useState(false);
   const [showRescheduleDialog, setShowRescheduleDialog] = useState(false);
   const [showConfirmReschedule, setShowConfirmReschedule] = useState(false);
-  const [showReportDialog, setShowReportDialog] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
 
   const getJoinableOccurrence = (): AppointmentOccurrence | null =>
@@ -494,8 +493,6 @@ export function useEventActions({
     setShowRescheduleDialog,
     showConfirmReschedule,
     setShowConfirmReschedule,
-    showReportDialog,
-    setShowReportDialog,
     showCancelDialog,
     setShowCancelDialog,
     handleRescheduleClick,

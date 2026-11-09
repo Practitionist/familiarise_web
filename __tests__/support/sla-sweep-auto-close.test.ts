@@ -45,6 +45,10 @@ jest.mock("../../lib/payments/payouts/earnings-holds", () => ({
   releaseEarningsHolds: (db: unknown, side: string, ids: string[]) =>
     mockReleaseEarnings(db, side, ids),
 }));
+jest.mock("../../lib/support/removal-review", () => ({
+  hasRemovalReviewWork: async () => false,
+  sweepRemovalReviews: async () => ({ decided: 0, refundedOnDeadline: 0 }),
+}));
 jest.mock("../../lib/novu/stage-bell", () => ({
   stageBell: jest.fn(async () => null),
 }));

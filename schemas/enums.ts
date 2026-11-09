@@ -27,6 +27,7 @@ const SUPPORT_THREAD_CATEGORIES = [
   "SPONSORSHIP_BILLING",
   "ORG_ADMIN_DISPUTE",
   "SAFETY_CONCERN",
+  "CONDUCT_REMOVAL",
   "OTHER",
 ] as const satisfies readonly SupportThreadCategory[];
 

@@ -59,7 +59,7 @@ function buildAccessRefusalBody(
 export async function guardMeetingRoute(
   params: Promise<{ meetingId: string }>,
   /** Named in the two log lines this emits, so a refusal says which route. */
-  op: "admit to" | "end",
+  op: "admit to" | "end" | "remove from",
   /** A mutating route's per-user limiter; it fails open when Redis is unreachable. */
   limiter?: Ratelimit,
 ): Promise<MeetingRouteGrant | MeetingRouteRefusal> {

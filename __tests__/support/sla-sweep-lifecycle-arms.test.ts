@@ -19,6 +19,10 @@ jest.mock("../../lib/support/evidence-retention", () => ({
 jest.mock("../../lib/support/chat-sweep", () => ({
   sweepSupportChatAccess: (...args: unknown[]) => mockChatSweep(...args),
 }));
+jest.mock("../../lib/support/removal-review", () => ({
+  hasRemovalReviewWork: async () => false,
+  sweepRemovalReviews: async () => ({ decided: 0, refundedOnDeadline: 0 }),
+}));
 jest.mock("../../lib/novu/stage-bell", () => ({
   stageBell: jest.fn(async () => null),
 }));
