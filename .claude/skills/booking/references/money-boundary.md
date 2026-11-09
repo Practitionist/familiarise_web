@@ -22,6 +22,14 @@ abandoned-payments sweep mirrors it independently with a 35-minute buffer for
 legacy rows that carry a null `expiresAt`. `Payment` is indexed on
 `[expiresAt, paymentStatus]` for exactly this cohort.
 
+A paid trial holds the learner's picked time the same way: a tentative session
+while the trial is `AWAITING_PAYMENT`, with `Trial.paymentDueAt` and the order's
+`expiresAt` both at `payWindowEnd` (24 hours, never later than 15 minutes before
+the session). The capture webhook confirms it (`transitionTrial` to `SCHEDULED`,
+then `confirmExistingAppointment`), and the expire-unpaid-trials sweep cancels
+and tombstones a lapsed one (`bookTrialInTx` in `lib/trials/book-trial.ts`).
+The hold occupies its time until the sweep releases it.
+
 A webinar or class seat holds for 15 minutes instead: a 12-minute gateway
 window plus a 3-minute capture grace (`SEAT_CHECKOUT_HOLD_MS`; see
 `references/concurrency.md` §11).
@@ -507,6 +515,14 @@ each session (by ordinal) twice (`MAX_CONSULTEE_RESCHEDULES`; 422
 (`MAX_EXPERT_RESCHEDULES`) and the third answers 409 `EXPERT_RESCHEDULE_CAP`. Staff
 are exempt.
 
+A trial is one session, and each side may move it once
+(`MAX_TRIAL_RESCHEDULES_PER_SIDE`, `trialCapReached`), with the same two codes. A
+trial reschedule always names its one new window and has no allocator behind
+it: `confirmTrialProposal` (`lib/booking/trial-reschedule.ts`) moves the
+released session in place and closes the request in one transaction, at once
+for a learner's time inside open hours and on the learner's Accept for an
+expert's. No money moves on a trial reschedule.
+
 A published webinar is never rescheduled; its host re-times it
 (`POST /api/appointments/[appointmentId]/retime`, `retimeWebinar` in
 `lib/booking/event-retime.ts`). The session row moves in place and is stamped
@@ -523,8 +539,9 @@ through `inRetimeFreeLeave`.
 An operator of the plan's host org who cancels is recorded as the actor and
 strikes nobody; the buyer still gets 100 %.
 
-An expert-side cancel of a paid booking, or a consultant no-show claim, writes
-one reliability strike in the same transaction: a `SystemEvent` on the
+An expert-side cancel of a paid booking, an expert's cancel of a confirmed trial
+(free or paid, through trial DELETE), or a consultant no-show claim, writes one
+reliability strike in the same transaction: a `SystemEvent` on the
 `expert-reliability:<consultantProfileId>` correlation (`recordExpertStrike` in
 `lib/booking/expert-reliability.ts`). A platform-caused miss records nothing. The
 public profile shows a notice at three strikes in 90 days

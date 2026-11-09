@@ -103,11 +103,11 @@ cannot cover an atom no surface offers. It also **fails closed** on the profile
 itself — a missing or soft-deleted `ConsultantProfile` returns
 `{ scheduleType: null, weeklyRows: [], customRows: [] }`, so a deleted expert
 publishes nothing whatever rows survived the deletion. As of wave 5 (#1323)
-exactly two callers enforce this inside their transaction: checkout
-(`revalidateInsideLock` in `lib/payments/checkout/revalidate.ts`), and the trial route
-(`app/api/trials/[trialId]/route.ts`), which throws
-`OutsideAvailabilityWindowError` even when the consultant is the one scheduling,
-because a trial is a booking.
+two callers enforce this inside their transaction: checkout
+(`revalidateInsideLock` in `lib/payments/checkout/revalidate.ts`), and every trial
+time writer through `trialWindowRefusal` (`lib/trials/slot-check.ts`) — the
+learner's pick, the consultant's accept and a trial reschedule — which refuses
+even when the consultant is the one scheduling, because a trial is a booking.
 
 The display path matches: `mergeConsecutiveSlots` (`utils/scheduling-engine/intervals.ts`)
 joins free slots on **exact** adjacency — the merged end is the next start — and,
@@ -205,8 +205,10 @@ not host-cancelled, not `CANCELLED`. `RESCHEDULED` rows still occupy.
 `utils/scheduling-engine/occupancyPolicy.ts` answers "what blocks this slot".
 `OCCUPIED_REQUEST_STATUSES` is `PENDING`, `APPROVED`, `APPROVED_PENDING_PAYMENT`
 and `SCHEDULED`; `OCCUPIED_EVENT_STATUSES` is `SCHEDULED` and `IN_PROGRESS`;
-trials occupy at `SCHEDULED` and `AWAITING_PAYMENT`, because a paid trial's slot
-is reserved the moment the consultant accepts. `buildConsultantOccupancyWhere`
+trials occupy at `SCHEDULED` and `AWAITING_PAYMENT`, because a paid trial holds
+the learner's picked time from the request until it is paid or the
+expire-unpaid-trials sweep releases it (no dead-hold arm frees it earlier, so a
+late capture never meets a rival confirmed session). `buildConsultantOccupancyWhere`
 asks both questions the grid and allocator once asked separately: busy if
 connected to a live slot **or** if the appointment runs under one of their
 plans.
