@@ -2,14 +2,14 @@
 
 This doc is the source of truth for the sellable-recordings design and its invariants. How recordings are captured, copied, stored and deleted is in [Stream Recording & Webhooks](./13-recording-webhooks.md); the governing decision is [ADR 2026-10-09](../decisions/2026-10-09-recording-storage-retention-visibility.md).
 
-> **Status (2026-10-26): publishing is closed.** At launch, recordings are included with the booking and nothing is sold separately. `POST /api/stream/recordings/[recordingId]/publish` has been removed, so no recording can become `PUBLISHED`, the Replays tab of `/explore/products` shows its empty state, and the purchase route answers `404 NOT_LISTED` for every recording. Unpublish (`DELETE`) remains. Replays return as their own product, a `ReplayListing` that groups a webinar run's or a class batch's recordings (#2412). The rules below are the requirements that design must keep.
+> **Status (2026-10-26): publishing is closed.** At launch, recordings are included with the booking and nothing is sold separately. `POST /api/stream/recordings/[recordingId]/publish` has been removed, so no recording can become `PUBLISHED`, `/explore/products` has no Replays tab, and the purchase route answers `404 NOT_LISTED` for every recording. Unpublish (`DELETE`) remains. Replays return as their own product, a `ReplayListing` that groups a webinar run's or a class batch's recordings (#2412). The rules below are the requirements that design must keep.
 
 ## What it is
 
 An opt-in, consultant-curated marketplace for **webinar and class replays only**:
 
 - A published `Recording` row (`listingStatus = PUBLISHED`) carries a price, copy, tags, slug and preview clip. Publishing is closed (see the status note above); the `RecordingManageSheet` drawer only offers unpublish.
-- Buyers purchase standalone replays from the Replays tab of `/explore/products` with no booking required. Playback lands in their dashboard resources.
+- Buyers purchase standalone replays with no booking required, from the replay add-on on the webinar or class page once `ReplayListing` exists. Playback lands in their dashboard resources.
 
 Replay sales go live once the copy pipeline has been proven on real recordings. Until a recording has been copied, it cannot be published.
 
@@ -52,7 +52,7 @@ Refunds of a fulfilled purchase are support-led: support marks the row `REFUNDED
 
 ## Caching
 
-The Replays tab of `/explore/products` is rendered per request (the `?tab=` query makes the page dynamic) over `listPublicReplayCards()`, a 300-second data cache under the `recordings` tag. Unpublish (and publish, when it returns) and the unpublish step of a host's erasure (after the scrub transaction commits) call `purgeRecordingSurfaces()` (`lib/data/public-cache.ts`), which clears the `recordings` tag and `/explore/products` (and the affected detail path) at the write site, so listing cards never outlive an unpublish by more than one request. The public list API also sends a short CDN `Cache-Control` (`s-maxage=60, stale-while-revalidate=300`).
+`/explore/products` no longer lists replays; when they return they are listed from the webinar or class page. Unpublish (and publish, when it returns) and the unpublish step of a host's erasure (after the scrub transaction commits) call `purgeRecordingSurfaces()` (`lib/data/public-cache.ts`), which clears the `recordings` tag and `/explore/products` (and the affected detail path) at the write site, so listing cards never outlive an unpublish by more than one request. The public list API also sends a short CDN `Cache-Control` (`s-maxage=60, stale-while-revalidate=300`).
 
 ## Open items
 

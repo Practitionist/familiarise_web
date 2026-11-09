@@ -390,6 +390,7 @@ export function useConsultationCheckout(
         <li>Personalized guidance</li>
         <li>Session notes</li>
         <li>Follow-up resources</li>
+        {eventData?.data?.recordingEnabled && <li>Session recording</li>}
       </>
     ),
     renderFooter: (ctx) => (

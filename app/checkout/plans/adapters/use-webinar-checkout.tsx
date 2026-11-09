@@ -336,8 +336,8 @@ export function useWebinarCheckout(
       <>
         <li>Live webinar access</li>
         <li>Q&A session</li>
-        <li>Recording access</li>
-        <li>Certificate of attendance</li>
+        {planDetails?.recordingEnabled && <li>Recording access</li>}
+        {planDetails?.certificateProvided && <li>Certificate of attendance</li>}
       </>
     ),
     renderFooter: (ctx) => (
