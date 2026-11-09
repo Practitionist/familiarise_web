@@ -125,3 +125,35 @@ export function sameWindow(
     new Date(a.endsAt).getTime() === new Date(b.endsAt).getTime()
   );
 }
+
+/**
+ * The earliest window a buyer could take, across days keyed by calendar date
+ * (`yyyy-MM-dd`, which sorts chronologically). Reads the same windows and the
+ * same predicate as the day marks and the list, so "next available" can never
+ * name a time the picker would not offer.
+ */
+export function nextAvailableWindow(
+  days: Readonly<Record<string, readonly GridAtomInput[]>>,
+  durationInHours: number,
+  timezone: string,
+  nowMs: number,
+  leadMs: number = MINIMUM_BOOKING_LEAD_TIME_MS,
+): SlotWithStatus | null {
+  for (const key of Object.keys(days).sort()) {
+    const windows = windowsForDay(
+      days[key],
+      durationInHours,
+      timezone,
+      nowMs,
+      leadMs,
+    ).filter(isBookableWindow);
+    if (windows.length > 0) {
+      return windows.reduce((earliest, w) =>
+        new Date(w.startsAt).getTime() < new Date(earliest.startsAt).getTime()
+          ? w
+          : earliest,
+      );
+    }
+  }
+  return null;
+}

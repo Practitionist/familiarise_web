@@ -15,12 +15,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import { differenceInCalendarDays } from "date-fns";
+import { formatInTimeZone } from "date-fns-tz";
 import { useSession } from "@/lib/auth-client";
 import { AboutSection } from "./components/AboutSection";
 import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
 import { DigitalProductsSection } from "./components/DigitalProductsSection";
 import type { PublicProductCard } from "@/lib/data/digital-products-public";
-import { ConsultantAvailability } from "./components/ConsultantAvailability";
 import { ExperienceSection } from "./components/ExperienceSection";
 import { ExpertPricing } from "./components/ExpertPricing";
 import { ProfileHeader } from "./components/ProfileHeader";
@@ -40,6 +40,7 @@ import {
   useAvailabilityWindow,
 } from "@/lib/scheduling/use-availability-window";
 import { dayState, isSelectableDay } from "./day-state";
+import { nextAvailableWindow } from "@/lib/scheduling/booking-windows";
 import { zonedWeekWindow } from "./utils/time";
 import { cn } from "@/utils/tailwind";
 
@@ -117,10 +118,7 @@ export function ExpertProfileClient({
   // bypasses the browser cache once.
   const bypassCacheOnce = useRef(searchParams.get("conflict") === "1");
 
-  // Pricing-day slots share the overview's week-window query: the week
-  // containing the selected day uses the same `zonedWeekWindow` bounds as
-  // ConsultantAvailability's weekOffset, so an overlapping reader joins the
-  // single in-flight request instead of firing its own 1-day compute. Day
+  // The week containing the selected day is read once per week window; day
   // clicks inside a loaded week cost zero requests (staleTime 30s).
   // Calendar dates (local fields) on both sides: today is today in the
   // display zone, and seven calendar days are a week across DST.
@@ -150,6 +148,55 @@ export function ExpertProfileClient({
     timezone: zoneReady ? timezone : null,
     consulteeUserId,
   });
+
+  // "Next available" reads this month, and next month only when this one has
+  // nothing left. Both share cache entries with the calendar's own month read.
+  const thisMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const thisMonthQuery = useAvailabilityMonth({
+    consultantId: consultantDetails?.id,
+    monthStart: thisMonthStart,
+    timezone: zoneReady ? timezone : null,
+    consulteeUserId,
+  });
+  const nowMs = now.getTime();
+  const nextInThisMonth = useMemo(
+    () =>
+      thisMonthQuery.data
+        ? nextAvailableWindow(
+            thisMonthQuery.data,
+            selectedDuration,
+            timezone,
+            nowMs,
+          )
+        : null,
+    [thisMonthQuery.data, selectedDuration, timezone, nowMs],
+  );
+  const nextMonthQuery = useAvailabilityMonth({
+    consultantId: consultantDetails?.id,
+    monthStart: new Date(today.getFullYear(), today.getMonth() + 1, 1),
+    timezone:
+      zoneReady && thisMonthQuery.isSuccess && !nextInThisMonth
+        ? timezone
+        : null,
+    consulteeUserId,
+  });
+  const nextAvailable =
+    nextInThisMonth ??
+    (nextMonthQuery.data
+      ? nextAvailableWindow(
+          nextMonthQuery.data,
+          selectedDuration,
+          timezone,
+          nowMs,
+        )
+      : null);
+  const nextAvailableLabel = nextAvailable
+    ? formatInTimeZone(
+        new Date(nextAvailable.startsAt),
+        timezone,
+        "EEE d MMM, h:mm a zzz",
+      )
+    : null;
 
   const selectedDateKey =
     selectedDate && zoneReady ? calendarDateKey(selectedDate) : null;
@@ -485,18 +532,6 @@ export function ExpertProfileClient({
                 education={userDetails.education || []}
                 certifications={userDetails.certifications || []}
               />
-
-              {/* Gated on zone resolution: firing before the session and the
-                  device zone are known would compute the week in a fallback
-                  zone and then again in the real one. */}
-              {zoneReady ? (
-                <ConsultantAvailability
-                  consultantDetails={consultantDetails}
-                  displayZone={displayZone}
-                  consulteeUserId={consulteeUserId}
-                  bypassRef={bypassCacheOnce}
-                />
-              ) : null}
             </div>
           </motion.div>
 
@@ -530,6 +565,7 @@ export function ExpertProfileClient({
               autoOpenTrial={autoOpenTrial}
               onRefreshSlots={refreshSlots}
               onDurationChange={setSelectedDuration}
+              nextAvailableLabel={nextAvailableLabel}
             />
           </motion.div>
         </div>
