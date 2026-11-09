@@ -11,6 +11,7 @@ import {
   CalendarX,
   ChevronDown,
   CreditCard,
+  LifeBuoy,
   MessageSquare,
   Receipt,
   Star,
@@ -81,7 +82,6 @@ import {
   isOccurrenceOver,
 } from "@/lib/appointments/occurrences";
 import { NeedsYouCallout } from "./NeedsYouCallout";
-import { DetailActionsMenu } from "./DetailActionsMenu";
 import { TimelineStrip } from "./TimelineStrip";
 import { CountdownBadge } from "../CountdownBadge";
 import { KIND_LABEL } from "../AppointmentRow";
@@ -100,6 +100,9 @@ import { ResourceSnapshot, type ResourceHrefs } from "./ResourceSnapshot";
 import { cn } from "@/utils/tailwind";
 
 const PARTICIPANTS_PREVIEW = 5;
+
+/** Overflow actions that change when sessions happen; they sit with the sessions. */
+const SCHEDULE_KEYS = new Set(["reschedule", "new-time", "retime", "timings"]);
 
 // #1675 — booking states from which the booking is a sold, scheduled thing:
 // the progress bar and "Cancel booking" appear from here on; a request has
@@ -548,8 +551,40 @@ export function AppointmentDetailClient({
     router.push(payHref);
   };
 
-  const chatItems = overflow.filter((item) => item.chat && !item.destructive);
-  const menuItems = overflow.filter((item) => !chatItems.includes(item));
+  // Each overflow action is placed where it belongs on the page; items the
+  // page already covers (Resources, Participants, the Set schedule button) drop.
+  const coveredKeys = new Set<string>(["documents"]);
+  if (manageHref) coveredKeys.add("participants");
+  if (action.kind === "schedule") coveredKeys.add("timings");
+  const placed = overflow.filter((item) => !coveredKeys.has(item.key));
+  const chatItems = placed.filter((item) => item.chat && !item.destructive);
+  const scheduleItems = placed.filter(
+    (item) => !item.chat && !item.destructive && SCHEDULE_KEYS.has(item.key),
+  );
+  const manageItems = placed.filter(
+    (item) => !chatItems.includes(item) && !scheduleItems.includes(item),
+  );
+  const renderActionButton = (item: OverflowItem) => (
+    <Button
+      key={item.key}
+      variant="outline"
+      size="sm"
+      disabled={item.disabled}
+      onClick={clickOf(item)}
+      className={cn(
+        item.destructive &&
+          "border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900/40 dark:text-red-400 dark:hover:bg-red-900/20",
+      )}
+    >
+      {item.label}
+    </Button>
+  );
+  const scheduleActions =
+    scheduleItems.length > 0 ? (
+      <div className="flex flex-wrap items-center gap-2">
+        {scheduleItems.map(renderActionButton)}
+      </div>
+    ) : null;
   const showReviewCard =
     role === "consultee" &&
     !!vm.consultantProfileId &&
@@ -596,6 +631,7 @@ export function AppointmentDetailClient({
           ? `Sessions · ${heldCount} held`
           : "Sessions"
       }
+      action={scheduleActions}
     >
       {/* Without this the stars below simply disappeared (or showed empty)
           on a call the viewer had already rated. */}
@@ -910,14 +946,37 @@ export function AppointmentDetailClient({
     </Section>
   );
 
-  // Renders nothing until a support thread exists for this booking.
-  const supportCard = (
-    <div className="empty:hidden [&>*]:mt-0">
-      <AppointmentSupportStatusCard
-        appointmentId={appointmentId}
-        href={supportHref}
-      />
-    </div>
+  const helpCard = (
+    <Section title="Need help?">
+      {/* Renders nothing until a support thread exists for this booking. */}
+      <div className="mb-3 empty:hidden [&>*]:mt-0">
+        <AppointmentSupportStatusCard
+          appointmentId={appointmentId}
+          href={supportHref}
+        />
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-full"
+        onClick={() => openHelp()}
+      >
+        <LifeBuoy className="mr-1.5 h-4 w-4" />
+        Get help
+      </Button>
+    </Section>
+  );
+
+  const manageCard = manageItems.length > 0 && (
+    <section
+      aria-label="Manage booking"
+      className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-border px-5 py-4"
+    >
+      <h2 className="text-sm font-semibold text-foreground">Manage booking</h2>
+      <div className="flex flex-wrap items-center gap-2">
+        {manageItems.map(renderActionButton)}
+      </div>
+    </section>
   );
 
   return (
@@ -1034,10 +1093,8 @@ export function AppointmentDetailClient({
                 {item.label}
               </Button>
             ))}
+            {soleSession && scheduleItems.map(renderActionButton)}
             {renderExtraActions?.(vm, { openChat: setChatTarget })}
-            <div className="ml-auto">
-              <DetailActionsMenu items={menuItems} onHelp={() => openHelp()} />
-            </div>
           </div>
 
           {soleSession && soleSessionOver && sessionFeedback.isError && (
@@ -1175,23 +1232,25 @@ export function AppointmentDetailClient({
               <div className="flex min-w-0 flex-col gap-4">
                 {paymentCard}
                 {detailsCard}
-                {supportCard}
+                {timelineCard}
               </div>
               <div className="flex min-w-0 flex-col gap-4">
                 {resourcesCard}
-                {timelineCard}
+                {helpCard}
               </div>
             </>
           ) : (
-            <aside className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-20 lg:-m-1 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:p-1">
+            <aside className="flex min-w-0 flex-col gap-4">
               {paymentCard}
               {detailsCard}
-              {supportCard}
               {resourcesCard}
               {timelineCard}
+              {helpCard}
             </aside>
           )}
         </div>
+
+        {manageCard}
       </div>
 
       {stickyCta && (
@@ -1200,8 +1259,8 @@ export function AppointmentDetailClient({
         </div>
       )}
 
-      {/* Mounted HERE, not by each caller: this component renders the menu
-          whose items open these dialogs. */}
+      {/* Mounted HERE, not by each caller: this component renders the
+          actions whose clicks open these dialogs. */}
       {adapter.renderDialogs()}
       <LazyAppointmentChatSheet target={chatTarget} onClose={closeChat} />
     </DashboardErrorBoundary>
