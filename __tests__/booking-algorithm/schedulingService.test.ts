@@ -1582,6 +1582,54 @@ describe("Auto allocation", () => {
     }
   });
 
+  it("spreads a class across its week before stacking two on one day", async () => {
+    mockTx.class.findUnique.mockResolvedValue(
+      makeClassEvent({
+        classPlan: {
+          consultantProfileId: "consultant-profile-1",
+          durationInMonths: 1,
+          sessionsPerWeek: 3,
+          sessionDurationInHours: 1,
+          totalSessions: 3,
+          consultantProfile: makeConsultantProfile({
+            // Mornings Mon–Fri, two sessions' room each day.
+            availabilityWindowsWeekly: [
+              makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 11),
+              makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 9, 11),
+              makeWeeklyAvailabilitySlot(DayOfWeek.WEDNESDAY, 9, 11),
+              makeWeeklyAvailabilitySlot(DayOfWeek.THURSDAY, 9, 11),
+              makeWeeklyAvailabilitySlot(DayOfWeek.FRIDAY, 9, 11),
+            ],
+          }),
+        },
+        schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
+        schedulingPeriodEndsAt: new Date("2025-01-11T00:00:00Z"),
+        appointment: null,
+      }),
+    );
+    mockTx.appointment.findMany.mockResolvedValue([]);
+
+    const result = await allocate({
+      eventType: "class",
+      eventId: "class-1",
+      mode: "auto",
+    });
+
+    expect(result.success).toBe(true);
+    const occurrences =
+      mockTx.appointment.create.mock.calls[0][0].data.occurrences.create;
+    // Mon / Wed / Fri at 09:00, never 09:00 + 10:00 on Monday.
+    expect(
+      occurrences
+        .map((row: any) => new Date(row.startsAt).toISOString())
+        .sort(),
+    ).toEqual([
+      "2025-01-06T09:00:00.000Z",
+      "2025-01-08T09:00:00.000Z",
+      "2025-01-10T09:00:00.000Z",
+    ]);
+  });
+
   it("still caps subscriptions at one session per day", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
