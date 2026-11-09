@@ -397,13 +397,14 @@ export function PlanCheckoutShell({
         refuseDiscount(
           errorData.error ??
             "That discount code can't be used on this booking.",
+          appliedDiscount?.code,
         );
         return;
       }
       if (adapter.onCheckoutRefusal?.(errorData)) return;
       baseHandleApiError(errorData);
     },
-    [adapter, baseHandleApiError, refuseDiscount],
+    [adapter, appliedDiscount?.code, baseHandleApiError, refuseDiscount],
   );
 
   const razorpayHandlers = useMemo(
@@ -418,6 +419,7 @@ export function PlanCheckoutShell({
           error.description ??
             error.message ??
             "That discount code can't be used on this booking.",
+          appliedDiscount?.code,
         );
         return;
       }
@@ -432,7 +434,13 @@ export function PlanCheckoutShell({
       }
       razorpayHandlers.onPaymentError(error);
     },
-    [handleApiError, paymentErrorsAsRefusals, razorpayHandlers, refuseDiscount],
+    [
+      appliedDiscount?.code,
+      handleApiError,
+      paymentErrorsAsRefusals,
+      razorpayHandlers,
+      refuseDiscount,
+    ],
   );
 
   const buildCheckoutData = useCallback(

@@ -35,11 +35,12 @@ export function useGstRegistered(): boolean {
 /** Formats a plan's list price (INR paise) the way a buyer should see it. */
 export function useBuyerPrice() {
   const gstRegistered = useContext(BuyerPriceContext);
-  const { formatPrice } = useCurrency();
+  // Exact paise: an all-in price is rarely a whole rupee, and the card must match the charge.
+  const { formatPriceExact } = useCurrency();
   const formatBuyerPrice = useCallback(
     (listPricePaise: number) =>
-      formatPrice(buyerDisplayPricePaise(listPricePaise, gstRegistered)),
-    [formatPrice, gstRegistered],
+      formatPriceExact(buyerDisplayPricePaise(listPricePaise, gstRegistered)),
+    [formatPriceExact, gstRegistered],
   );
   const formatBuyerPriceLabel = useCallback(
     (listPricePaise: number) =>
