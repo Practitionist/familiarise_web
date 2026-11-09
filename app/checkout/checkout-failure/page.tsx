@@ -69,8 +69,14 @@ function CheckoutFailureContent() {
           </h1>
           <p className="text-muted-foreground">
             We couldn&apos;t confirm your payment. If any amount was deducted,
-            it will be refunded automatically or shown as confirmed in My
-            payments.
+            it will be refunded automatically or shown as confirmed in{" "}
+            <Link
+              href="/dashboard/go/auto/payments"
+              className="text-foreground font-medium underline"
+            >
+              Billing
+            </Link>
+            .
           </p>
         </div>
 
@@ -145,8 +151,16 @@ function CheckoutFailureContent() {
           <ul className="text-sm text-background/70 space-y-2">
             <li className="flex items-start gap-2">
               <span className="text-background/50">•</span>
-              Check My payments before paying again, so you are not charged
-              twice
+              <span>
+                Check{" "}
+                <Link
+                  href="/dashboard/go/auto/payments"
+                  className="text-background underline"
+                >
+                  Billing
+                </Link>{" "}
+                before paying again, so you are not charged twice
+              </span>
             </li>
             <li className="flex items-start gap-2">
               <span className="text-background/50">•</span>
