@@ -38,8 +38,13 @@ describe("Lighthouse CWV & Anti-Runaway Billing Guardrails", () => {
     expect(src).not.toMatch(
       /^import\s+.*from\s+["']\.\/sentry\.shared\.config["']/m,
     );
-    expect(src).toContain('import("./sentry.shared.config")');
-    expect(src).toContain('import("@sentry/nextjs")');
+    expect(src).toContain('from "./lib/observability/client-capture"');
+
+    const loader = readRepoFile("lib/observability/client-capture.ts");
+    expect(loader).not.toMatch(/^import\s+.*from\s+["']@sentry\/nextjs["']/m);
+    expect(loader).not.toMatch(/^import\s+.*sentry\.shared\.config["']/m);
+    expect(loader).toContain('import("../../sentry.shared.config")');
+    expect(loader).toContain('import("@sentry/nextjs")');
   });
 
   it("includes all required remote image hostnames in next.config.mjs images.remotePatterns", () => {

@@ -1,4 +1,4 @@
-import * as Sentry from "@sentry/nextjs";
+import { captureClientException } from "@/lib/observability/client-capture";
 import React, { Component, ErrorInfo, ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { RotateCcw } from "lucide-react";
@@ -52,7 +52,7 @@ class CalendarErrorBoundary extends Component<Props, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    Sentry.captureException(error, { tags: { subsystem: "client" } });
+    captureClientException(error, { tags: { subsystem: "client" } });
     console.error("Uncaught error in calendar:", error, errorInfo);
     if (isChunkLoadError(error) && typeof window !== "undefined") {
       reloadOnceForChunk();

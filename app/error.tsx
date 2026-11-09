@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import * as Sentry from "@sentry/nextjs";
+import { captureClientException } from "@/lib/observability/client-capture";
 import Link from "next/link";
 import { BrandWordmark } from "@/components/brand/BrandWordmark";
 import { Button } from "@/components/ui/button";
@@ -35,7 +35,7 @@ export default function GlobalError({
     console.error("[GlobalError]", error);
     // Report client-boundary errors to Sentry — server render errors are already
     // captured by onRequestError, but a client error caught here was silent.
-    Sentry.captureException(error);
+    captureClientException(error);
   }, [error]);
 
   useEffect(() => {
