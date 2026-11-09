@@ -741,7 +741,11 @@ The caller must be a party: the expert or a host-org operator, the consultee, or
 | `slotIds` | `string[]` | No       | Specific slot IDs to reschedule. Only meaningful for `SUBSCRIPTION` type. Omit for entire booking reschedule. |
 | `slotId`  | `string`   | No       | Legacy single-slot format. Converted to `[slotId]` array internally. Exists for backward compatibility.       |
 
-If the body is empty, unparseable, or missing the slot fields, the system treats it as "reschedule everything" (no specific slot selection).
+If the body is empty or carries no slot fields, the system treats it as "reschedule everything" (no specific slot selection). A body that is not JSON answers 400, and a `slotIds` or `slotId` of the wrong shape answers 400 `INVALID_SLOT_IDS` (`RescheduleSlotIdsSchema` in `schemas/appointments.ts`), so a malformed session list never widens into a whole-booking release.
+
+### Idempotency-Key
+
+The route runs inside `withIdempotency` (`lib/api/idempotency.ts`), scoped to `booking.reschedule:<appointmentId>` and the caller. A request that repeats an `Idempotency-Key` with the same body gets the committed 2xx answer replayed (header `Idempotent-Replay: true`) and releases nothing again; one that arrives while the first is still running answers 409 `IDEMPOTENCY_IN_FLIGHT`; the same key with a different body answers 422 `IDEMPOTENCY_KEY_REUSED`. A refusal (any non-2xx) frees the key, so the user can retry after fixing the cause. Every reschedule submit sends one: the time picker (`TimePicker`, through `createSubmissionKeys` in `lib/api/submission-key.ts`) reuses the key while the submission is unchanged and mints a new one when the picks change, ignores a submit while one is in flight, and passes it through `handleReschedule` in `useEventActions` and `useConsultantEventActions`; the org detail page's reason-only reschedule does the same. A request without the header behaves as before.
 
 ### Response (200)
 

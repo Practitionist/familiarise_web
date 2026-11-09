@@ -72,6 +72,14 @@ export const RescheduleProposalSchema = z
   })
   .passthrough();
 
+/** The sessions a per-session subscription reschedule names; `slotId` is the legacy single form. */
+export const RescheduleSlotIdsSchema = z
+  .object({
+    slotIds: z.array(z.string().min(1)).max(64).optional(),
+    slotId: z.string().min(1).optional(),
+  })
+  .passthrough();
+
 /** Returning one subscription session to the plan; the path names the session, so the body carries nothing. */
 export const SessionReturnSchema = z.object({}).strict();
 

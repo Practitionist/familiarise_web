@@ -43,6 +43,7 @@ import {
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import { maxSessionsPerDayFor } from "@/utils/scheduling-engine/sessionCaps";
 import { cn } from "@/utils/tailwind";
+import { createSubmissionKeys } from "@/lib/api/submission-key";
 
 /**
  * The one surface for choosing times, shared by allocation, both reschedule
@@ -290,13 +291,19 @@ export function TimePicker({
   const requiredProposedSlots = sessionsBeingMoved * slotsPerSession;
   const pickedTimes = Math.floor(picked.length / slotsPerSession);
 
+  const [submissionKeyFor] = React.useState(createSubmissionKeys);
   const submit = (withTimes: boolean) => {
+    if (isSubmitting) return;
     const named = withTimes && picked.length > 0;
-    void policy.onSubmit({
+    const request = {
       slotIds: releasedOccurrenceIds,
       proposedSlots: named ? picked : undefined,
       preference: named ? undefined : preference(),
+    };
+    void policy.onSubmit({
+      ...request,
       displayZone: listZone,
+      idempotencyKey: submissionKeyFor(request),
     });
   };
 

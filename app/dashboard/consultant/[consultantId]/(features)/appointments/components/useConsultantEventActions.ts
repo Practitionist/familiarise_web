@@ -146,6 +146,8 @@ export function useConsultantEventActions({
     preference?: SlotPreference,
     /** The zone the picker showed, for naming taken times back. */
     displayZone?: string,
+    /** Replays the first answer when the same submission is sent again. */
+    idempotencyKey?: string,
   ): Promise<boolean> => {
     if (!appointmentId) {
       toast({
@@ -173,7 +175,10 @@ export function useConsultantEventActions({
 
       const response = await fetchWithIdentity(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+        },
         body: Object.keys(payload).length ? JSON.stringify(payload) : undefined,
       });
 

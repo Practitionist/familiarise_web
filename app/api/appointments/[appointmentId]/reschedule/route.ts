@@ -24,7 +24,12 @@ import type {
   ReschedulePreferredDays,
   ReschedulePreferredTimeOfDay,
 } from "@prisma/client";
-import { RescheduleProposalSchema } from "@/schemas/appointments";
+import {
+  RescheduleProposalSchema,
+  RescheduleSlotIdsSchema,
+} from "@/schemas/appointments";
+import type { Session } from "@/lib/auth";
+import { withIdempotency } from "@/lib/api/idempotency";
 import {
   autoConfirmRefusalIsFinal,
   autoConfirmTimesTaken,
@@ -125,16 +130,34 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
+  // A fresh, ban-aware read; the 401 / 403 / 503 shapes are the helper's.
+  const authResult = await requireApiAuth({ expectUser: true });
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+  const { appointmentId } = await params;
+  // A repeated `Idempotency-Key` replays the committed answer instead of
+  // releasing the booking a second time.
+  return await withIdempotency(
+    request,
+    {
+      scope: `booking.reschedule:${appointmentId}`,
+      userId: session.user.id,
+    },
+    (body) => requestReschedule(request, session, appointmentId, body),
+  );
+}
+
+async function requestReschedule(
+  request: NextRequest,
+  session: Session,
+  appointmentId: string,
+  body: unknown,
+): Promise<NextResponse> {
   try {
-    // #1583 D-P0-02 — fresh, ban-aware read; 401 / 403 / 503 shapes are the helper's.
-    const authResult = await requireApiAuth({ expectUser: true });
-    if (authResult.error) return authResult.error;
-    const { session } = authResult;
     // #1319 — this route triggers refunds/reallocation and had no limiter.
     const limited = await applyRateLimit(eventMutationLimiter, session.user.id);
     if (limited) return limited;
 
-    const { appointmentId } = await params;
     const apptLimited = await applyRateLimit(
       rescheduleAppointmentLimiter,
       `${session.user.id}:${appointmentId}`,
@@ -166,16 +189,27 @@ export async function POST(
     // time. Scored by the allocator, never used to exclude a candidate.
     let preferredTimeOfDay: ReschedulePreferredTimeOfDay | undefined;
     let preferredDays: ReschedulePreferredDays | undefined;
-    try {
-      const body = await request.json();
-      // Support both single slotId (legacy) and slotIds array
-      if (body?.slotIds && Array.isArray(body.slotIds)) {
-        slotIds = body.slotIds;
-      } else if (body?.slotId) {
-        // Legacy support: convert single slotId to array
-        slotIds = [body.slotId];
+    {
+      const fields = RescheduleSlotIdsSchema.safeParse(body ?? {});
+      // A malformed session list must never widen into a whole-booking release.
+      if (!fields.success) {
+        return NextResponse.json(
+          {
+            error: "Invalid sessions to reschedule",
+            code: "INVALID_SLOT_IDS",
+            details: fields.error.flatten(),
+          },
+          { status: 400 },
+        );
       }
-      const parsedProposal = RescheduleProposalSchema.safeParse(body);
+      // Support both single slotId (legacy) and slotIds array
+      if (fields.data.slotIds) {
+        slotIds = fields.data.slotIds;
+      } else if (fields.data.slotId) {
+        // Legacy support: convert single slotId to array
+        slotIds = [fields.data.slotId];
+      }
+      const parsedProposal = RescheduleProposalSchema.safeParse(body ?? {});
       if (!parsedProposal.success) {
         return NextResponse.json(
           {
@@ -195,8 +229,6 @@ export async function POST(
       reason = parsedProposal.data.reason;
       preferredTimeOfDay = parsedProposal.data.preferredTimeOfDay;
       preferredDays = parsedProposal.data.preferredDays;
-    } catch {
-      // No body or invalid JSON - that's fine, every field here is optional
     }
 
     // #1166 — resolve the funding org's admin membership BEFORE the interactive
