@@ -1747,6 +1747,95 @@ async function emailOrgPayoutFailed(
   }
 }
 
+/**
+ * Returns an unpaid organisation payout's earnings to READY, drops its TDS rows,
+ * records the outcome and stages the notices, inside the caller's transaction.
+ */
+async function settleUnpaidOrgPayoutTx(
+  tx: Tx,
+  {
+    payoutId,
+    kind,
+    reason,
+    reversedFrom,
+  }: {
+    payoutId: string;
+    kind: "FAILED" | "REVERSED";
+    reason: string;
+    reversedFrom?: "COMPLETED" | "PROCESSING";
+  },
+) {
+  await tx.organizationEarnings.updateMany({
+    where: { orgPayoutId: payoutId, status: "BATCHED" },
+    data: { status: "READY", orgPayoutId: null },
+  });
+
+  await tx.tDSRecord.deleteMany({
+    where: { orgPayoutId: payoutId, isReversal: false },
+  });
+  await releaseClawbackRecovery(tx, payoutId);
+
+  const payout = await tx.organizationPayout.findUniqueOrThrow({
+    where: { id: payoutId },
+    select: {
+      id: true,
+      organizationId: true,
+      netPayoutPaise: true,
+      currency: true,
+      organization: { select: { name: true } },
+    },
+  });
+
+  await recordOrgPayoutFailureOutcome(tx, {
+    organizationId: payout.organizationId,
+    payoutId,
+    kind,
+    reversedFrom,
+    reason,
+  });
+
+  const notifyStaged = await notifyOrgPayoutFailed(
+    payout.organizationId,
+    {
+      orgName: payout.organization.name,
+      payoutId,
+      amountPaise: payout.netPayoutPaise,
+      netPayoutPaise: payout.netPayoutPaise,
+      tdsAmountPaise: 0,
+      currency: payout.currency,
+      reason: reason.slice(0, 200),
+      kind,
+      dashboardUrl: `${getAppUrl()}/dashboard/organization/${payout.organizationId}/payouts`,
+    },
+    { tx, entityRef: `orgPayout:${payoutId}` },
+  );
+  const notifyEmails = await stageOrgPayoutEmailsInTx(tx, {
+    organizationId: payout.organizationId,
+    orgName: payout.organization.name,
+    payoutId,
+    status: kind,
+    amountPaise: payout.netPayoutPaise,
+    currency: payout.currency,
+    tdsAmountPaise: 0,
+    reason: reason.slice(0, 200),
+  });
+
+  return {
+    wasNoOp: false,
+    status: kind as PayoutStatus,
+    notifyStaged,
+    notifyEmails,
+    notify: {
+      organizationId: payout.organizationId,
+      orgName: payout.organization.name,
+      amountPaise: payout.netPayoutPaise,
+      netPayoutPaise: payout.netPayoutPaise,
+      tdsAmountPaise: 0,
+      currency: payout.currency,
+    },
+  };
+}
+
 /** Audit row plus outbound webhook for a payout that failed or was reversed; the audit text never carries the gateway's words. */
 async function recordOrgPayoutFailureOutcome(
   tx: Tx,
@@ -1835,74 +1924,7 @@ async function markOrgPayoutFailedInternal(
           };
         }
 
-        await tx.organizationEarnings.updateMany({
-          where: { orgPayoutId: payoutId, status: "BATCHED" },
-          data: { status: "READY", orgPayoutId: null },
-        });
-
-        await tx.tDSRecord.deleteMany({
-          where: { orgPayoutId: payoutId, isReversal: false },
-        });
-        await releaseClawbackRecovery(tx, payoutId);
-
-        const payout = await tx.organizationPayout.findUniqueOrThrow({
-          where: { id: payoutId },
-          select: {
-            id: true,
-            organizationId: true,
-            netPayoutPaise: true,
-            currency: true,
-            organization: { select: { name: true } },
-          },
-        });
-
-        await recordOrgPayoutFailureOutcome(tx, {
-          organizationId: payout.organizationId,
-          payoutId,
-          kind,
-          reason,
-        });
-
-        const notifyStaged = await notifyOrgPayoutFailed(
-          payout.organizationId,
-          {
-            orgName: payout.organization.name,
-            payoutId,
-            amountPaise: payout.netPayoutPaise,
-            netPayoutPaise: payout.netPayoutPaise,
-            tdsAmountPaise: 0,
-            currency: payout.currency,
-            reason: reason.slice(0, 200),
-            kind,
-            dashboardUrl: `${getAppUrl()}/dashboard/organization/${payout.organizationId}/payouts`,
-          },
-          { tx, entityRef: `orgPayout:${payoutId}` },
-        );
-        const notifyEmails = await stageOrgPayoutEmailsInTx(tx, {
-          organizationId: payout.organizationId,
-          orgName: payout.organization.name,
-          payoutId,
-          status: kind,
-          amountPaise: payout.netPayoutPaise,
-          currency: payout.currency,
-          tdsAmountPaise: 0,
-          reason: reason.slice(0, 200),
-        });
-
-        return {
-          wasNoOp: false,
-          status: "FAILED" as PayoutStatus,
-          notifyStaged,
-          notifyEmails,
-          notify: {
-            organizationId: payout.organizationId,
-            orgName: payout.organization.name,
-            amountPaise: payout.netPayoutPaise,
-            netPayoutPaise: payout.netPayoutPaise,
-            tdsAmountPaise: 0,
-            currency: payout.currency,
-          },
-        };
+        return settleUnpaidOrgPayoutTx(tx, { payoutId, kind, reason });
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     ),
@@ -2105,74 +2127,12 @@ export async function markOrgPayoutReversed(
           };
         }
 
-        await tx.organizationEarnings.updateMany({
-          where: { orgPayoutId: payoutId, status: "BATCHED" },
-          data: { status: "READY", orgPayoutId: null },
-        });
-        await tx.tDSRecord.deleteMany({
-          where: { orgPayoutId: payoutId, isReversal: false },
-        });
-        await releaseClawbackRecovery(tx, payoutId);
-
-        const payout = await tx.organizationPayout.findUniqueOrThrow({
-          where: { id: payoutId },
-          select: {
-            id: true,
-            organizationId: true,
-            netPayoutPaise: true,
-            currency: true,
-            organization: { select: { name: true } },
-          },
-        });
-
-        await recordOrgPayoutFailureOutcome(tx, {
-          organizationId: payout.organizationId,
+        return settleUnpaidOrgPayoutTx(tx, {
           payoutId,
           kind: "REVERSED",
           reversedFrom: "PROCESSING",
           reason,
         });
-
-        const notifyStaged = await notifyOrgPayoutFailed(
-          payout.organizationId,
-          {
-            orgName: payout.organization.name,
-            payoutId,
-            amountPaise: payout.netPayoutPaise,
-            netPayoutPaise: payout.netPayoutPaise,
-            tdsAmountPaise: 0,
-            currency: payout.currency,
-            reason: reason.slice(0, 200),
-            kind: "REVERSED",
-            dashboardUrl: `${getAppUrl()}/dashboard/organization/${payout.organizationId}/payouts`,
-          },
-          { tx, entityRef: `orgPayout:${payoutId}` },
-        );
-        const notifyEmails = await stageOrgPayoutEmailsInTx(tx, {
-          organizationId: payout.organizationId,
-          orgName: payout.organization.name,
-          payoutId,
-          status: "REVERSED",
-          amountPaise: payout.netPayoutPaise,
-          currency: payout.currency,
-          tdsAmountPaise: 0,
-          reason: reason.slice(0, 200),
-        });
-
-        return {
-          wasNoOp: false,
-          status: "REVERSED" as PayoutStatus,
-          notifyStaged,
-          notifyEmails,
-          notify: {
-            organizationId: payout.organizationId,
-            orgName: payout.organization.name,
-            amountPaise: payout.netPayoutPaise,
-            netPayoutPaise: payout.netPayoutPaise,
-            tdsAmountPaise: 0,
-            currency: payout.currency,
-          },
-        };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     ),

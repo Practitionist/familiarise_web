@@ -12,6 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import ALREADY_WORDS from "./raw-enum-already-words.json";
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -66,61 +67,7 @@ const ALLOWED: readonly Allowed[] = [
     reason:
       "Spaces out IANA timezone names (America/New_York), which are not enums.",
   },
-  alreadyWords(
-    "app/explore/programs/plans/classes/[classPlanId]/components/BatchSchedule.tsx",
-    "status",
-    "SessionInfo.status is already the words Upcoming / Completed / Happening Now, never a database enum.",
-  ),
-  alreadyWords(
-    "app/meetings/[id]/components/MeetingRoom.tsx",
-    "status",
-    "clock.status is a ready sentence from readClock (Starts in 5 min, 10 min over), not an enum.",
-  ),
-  alreadyWords(
-    "components/chat/DebugDialog.tsx",
-    "role",
-    "Developer tool shown only on localhost.",
-  ),
-  alreadyWords(
-    "components/dashboard/MaintenanceBookingRemediation.tsx",
-    "reason",
-    "Operator-typed audit reason, shown on the operator console.",
-  ),
-  alreadyWords(
-    "components/dashboard/MaintenanceControls.tsx",
-    "reason",
-    "Operator-typed maintenance reason, shown on the operator console.",
-  ),
-  alreadyWords(
-    "components/dashboard/shared/AppointmentTimeline.tsx",
-    "reason",
-    "entry.reason is already copy: the booking-history read maps scheduling tokens to words.",
-  ),
-  alreadyWords(
-    "app/dashboard/organization/[orgId]/billing/InvoiceDetailSheet.tsx",
-    "reason",
-    "Credit-note reason is prose an operator typed.",
-  ),
-  alreadyWords(
-    "components/dashboard/shared/PaymentDetailPage.tsx",
-    "reason",
-    "Refund.reason is the operator's prose reason for the refund.",
-  ),
-  alreadyWords(
-    "app/dashboard/consultant/[consultantId]/(features)/settings/get-paid/ReversePennyDrop.tsx",
-    "reason",
-    "phase.reason is a sentence the verification API wrote for the user.",
-  ),
-  alreadyWords(
-    "components/support/resolution/FinancialPanel.tsx",
-    "reason",
-    "Support-agent resolution panel, not a customer surface.",
-  ),
-  alreadyWords(
-    "emails/organizations/SsoProviderEmail.tsx",
-    "reason",
-    "The reason is prose the platform reviewer typed for the org admin.",
-  ),
+  ...ALREADY_WORDS.map((a) => alreadyWords(a.path, a.field, a.reason)),
 ];
 
 function allowedFor(
