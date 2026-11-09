@@ -263,7 +263,7 @@ export default function PrivacyPolicyPage() {
                       <td className="p-2 align-top">
                         <strong>Payments, Payouts &amp; Tax Records</strong>{" "}
                         (Razorpay order/payment IDs, invoices, consultant
-                        earnings, payouts, PAN/TDS &amp; GST ledger rows)
+                        earnings, payouts, and PAN, TDS and GST records)
                       </td>
                       <td className="p-2 align-top">
                         <strong>Payments and legal tax records</strong> — Take
@@ -775,10 +775,11 @@ export default function PrivacyPolicyPage() {
               <ul>
                 <li>
                   Download a machine-readable JSON summary of your personal
-                  data, booking history, payment records, consent artifacts, and
-                  the list of Data Processors with whom your data has been
-                  shared directly from <strong>Settings &rarr; Account</strong>{" "}
-                  (&ldquo;Download my data&rdquo;)
+                  data, booking history, payment records, records of your
+                  consent choices, and the list of Data Processors with whom
+                  your data has been shared directly from{" "}
+                  <strong>Settings &rarr; Account</strong> (&ldquo;Download my
+                  data&rdquo;)
                 </li>
                 <li>
                   Transfer your data to another service (where technically
