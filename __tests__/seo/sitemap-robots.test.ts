@@ -8,6 +8,11 @@ jest.mock("@/lib/data/indexable-plans", () => ({
   listIndexableEventPlanIds: (...args: unknown[]) =>
     mockListIndexablePlans(...args),
 }));
+const mockListIndexableExperts = jest.fn();
+jest.mock("@/lib/data/indexable-experts", () => ({
+  listIndexableExpertIds: (...args: unknown[]) =>
+    mockListIndexableExperts(...args),
+}));
 const mockReportSentryError = jest.fn();
 jest.mock("@/lib/observability/report", () => ({
   reportSentryError: (...args: unknown[]) => mockReportSentryError(...args),
@@ -19,6 +24,7 @@ import { metadata as blogMetadata } from "@/app/blog/layout";
 
 let entries: Awaited<ReturnType<typeof sitemap>>;
 beforeAll(async () => {
+  mockListIndexableExperts.mockResolvedValue(["c-1", "c-2"]);
   mockListIndexablePlans.mockResolvedValue({
     webinarPlanIds: ["wp-1", "wp-2"],
     classPlanIds: ["cp-1"],
@@ -88,7 +94,25 @@ describe("sitemap", () => {
     ]);
   });
 
+  it("lists each verified expert profile once", () => {
+    const pathnames = entries.map((entry) => pathnameOf(entry.url));
+    expect(
+      pathnames.filter((p) => /^\/explore\/experts\/[^/]+$/.test(p)),
+    ).toEqual(["/explore/experts/c-1", "/explore/experts/c-2"]);
+  });
+
+  it("keeps the static routes and reports once when the expert query fails", async () => {
+    mockReportSentryError.mockClear();
+    mockListIndexableExperts.mockRejectedValueOnce(new Error("db down"));
+    const degraded = await sitemap();
+    const pathnames = degraded.map((entry) => pathnameOf(entry.url));
+    expect(pathnames).toContain("/explore/experts");
+    expect(pathnames).not.toContain("/explore/experts/c-1");
+    expect(mockReportSentryError).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the static routes and reports once when the plan query fails", async () => {
+    mockReportSentryError.mockClear();
     mockListIndexablePlans.mockRejectedValueOnce(new Error("db down"));
     const degraded = await sitemap();
     const pathnames = degraded.map((entry) => pathnameOf(entry.url));
@@ -111,6 +135,7 @@ describe("sitemap", () => {
       "/enterprise",
       "/enterprise/team-training",
       "/enterprise/corporate-mentorship",
+      "/enterprise/demo",
       "/use-cases/mentorship",
       "/use-cases/early-career",
       "/use-cases/college-students",

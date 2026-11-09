@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Sparkles, Users, Star, TrendingUp } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -34,6 +35,13 @@ import {
 // render, so a shorter window underneath would silently win. New and updated
 // profiles purge this path on demand at the write sites.
 export const revalidate = 300;
+
+export const metadata: Metadata = {
+  title: "Find experts and mentors | Familiarise",
+  description:
+    "Browse verified experts across technology, business, design and more. Compare ratings, experience and prices, then book a session.",
+  alternates: { canonical: "/explore/experts" },
+};
 
 const STAT_ICONS: Record<ExpertStatKey, LucideIcon> = {
   experts: Users,

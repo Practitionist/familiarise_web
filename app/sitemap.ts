@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 
+import { listIndexableExpertIds } from "@/lib/data/indexable-experts";
 import { listIndexableEventPlanIds } from "@/lib/data/indexable-plans";
 import { reportSentryError } from "@/lib/observability/report";
 import {
@@ -32,6 +33,19 @@ async function eventPlanRoutes(): Promise<
     ];
   } catch (error) {
     reportSentryError(error, { subsystem: "seo", op: "sitemap-plans" });
+    return [];
+  }
+}
+
+/** Expert profile pages; a database failure leaves only the static routes. */
+async function expertRoutes(): Promise<{ path: string; priority: number }[]> {
+  try {
+    return (await listIndexableExpertIds()).map((id) => ({
+      path: `/explore/experts/${id}`,
+      priority: 0.7,
+    }));
+  } catch (error) {
+    reportSentryError(error, { subsystem: "seo", op: "sitemap-experts" });
     return [];
   }
 }
@@ -71,11 +85,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     })),
   ];
 
-  return [...staticRoutes, ...(await eventPlanRoutes())].map(
-    ({ path, priority }) => ({
-      url: `${BASE_URL}${path}`,
-      changeFrequency: "weekly",
-      priority,
-    }),
-  );
+  const [experts, plans] = await Promise.all([
+    expertRoutes(),
+    eventPlanRoutes(),
+  ]);
+
+  return [...staticRoutes, ...experts, ...plans].map(({ path, priority }) => ({
+    url: `${BASE_URL}${path}`,
+    changeFrequency: "weekly",
+    priority,
+  }));
 }
