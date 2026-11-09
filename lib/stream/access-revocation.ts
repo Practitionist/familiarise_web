@@ -36,15 +36,17 @@ export interface AccessRevocationTarget {
 
 /**
  * Queues revocations for the moderation retry sweep. A target that already has
- * an open row is re-armed, so a capped row cannot swallow a new revocation.
- * `nextRetryAt` holds the row back from the sweep while its writer drives it.
+ * an open row is re-armed, so a capped row cannot swallow a new revocation; the
+ * re-arm restarts the room scan, since a re-bought seat may hold earlier rooms again.
+ * `nextRetryAt` holds the row back from the sweep while its writer drives it, and
+ * is fresh on every write, so it names this generation of the rows; it is returned.
  */
 export async function enqueueStreamRevocationRetries(
   targets: AccessRevocationTarget[],
   opts: { nextRetryAt?: Date } = {},
-): Promise<void> {
-  if (targets.length === 0) return;
-  const nextRetryAt = opts.nextRetryAt ?? null;
+): Promise<Date> {
+  const nextRetryAt = opts.nextRetryAt ?? new Date();
+  if (targets.length === 0) return nextRetryAt;
   await prisma.streamRevocationRetry.updateMany({
     where: {
       erasureRequestId: null,
@@ -55,7 +57,13 @@ export async function enqueueStreamRevocationRetries(
         userId: t.userId,
       })),
     },
-    data: { status: "PENDING", attempts: 0, nextRetryAt, lastError: null },
+    data: {
+      status: "PENDING",
+      attempts: 0,
+      nextRetryAt,
+      lastError: null,
+      resumeAfter: null,
+    },
   });
   await prisma.streamRevocationRetry.createMany({
     data: targets.map((t) => ({
@@ -68,34 +76,41 @@ export async function enqueueStreamRevocationRetries(
     })),
     skipDuplicates: true,
   });
+  return nextRetryAt;
 }
 
-/** Enqueues and never throws: the action that owed the revocation has already committed. */
+/**
+ * Enqueues and never throws: the action that owed the revocation has already
+ * committed. Returns the rows' generation, or null when nothing was written.
+ */
 async function enqueueOrReport(
   targets: AccessRevocationTarget[],
   op: string,
   opts: { nextRetryAt?: Date } = {},
-): Promise<boolean> {
+): Promise<Date | null> {
   try {
-    await enqueueStreamRevocationRetries(targets, opts);
-    return true;
+    return await enqueueStreamRevocationRetries(targets, opts);
   } catch (error) {
     reportSentryError(error, {
       subsystem: "stream",
       op,
       extra: { targets: targets.length, kind: targets[0]?.kind },
     });
-    return false;
+    return null;
   }
 }
 
-/** Marks the writer's own intents done once its drive completed them. */
+/**
+ * Marks the writer's own intents done once its drive completed them. Only rows
+ * still at the generation it wrote settle; a row re-armed since stays owed.
+ */
 async function settleIntents(
   kind: AccessRevocationKind,
   planId: string,
   userIds: string[],
+  generation: Date | null,
 ): Promise<void> {
-  if (userIds.length === 0) return;
+  if (userIds.length === 0 || !generation) return;
   try {
     await prisma.streamRevocationRetry.updateMany({
       where: {
@@ -104,6 +119,7 @@ async function settleIntents(
         planId,
         userId: { in: userIds },
         status: { in: ["PENDING", "FAILED"] },
+        nextRetryAt: generation,
       },
       data: { status: "SUCCEEDED", completedAt: new Date() },
     });
@@ -195,6 +211,7 @@ function loadSeatContext(appointmentId: string) {
     select: {
       deletedAt: true,
       organizationId: true,
+      occurrences: { select: { consultantProfileId: true } },
       webinar: {
         select: { id: true, status: true, webinarPlan: eventPlanSelect },
       },
@@ -250,6 +267,29 @@ function planStaffUserIds(
           ctx.trial?.consultantProfile.userId,
       ];
   return Array.from(new Set(ids.filter((id): id is string => Boolean(id))));
+}
+
+/**
+ * Everyone the meeting gate admits as staff: the plan owner, every accepted
+ * collaborator and each occurrence's host, as `resolveMeetingAccess` grants them.
+ */
+async function seatStaffUserIds(ctx: SeatContext): Promise<Set<string>> {
+  const staff = new Set(planStaffUserIds(ctx, { presentersOnly: false }));
+  const hostProfileIds = Array.from(
+    new Set(
+      ctx.occurrences
+        .map((o) => o.consultantProfileId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  if (hostProfileIds.length > 0) {
+    const hosts = await prisma.user.findMany({
+      where: { consultantProfileId: { in: hostProfileIds } },
+      select: { id: true },
+    });
+    for (const host of hosts) staff.add(host.id);
+  }
+  return staff;
 }
 
 function seatOrganizationId(ctx: SeatContext): string | null {
@@ -317,24 +357,36 @@ async function removeFromSeatDms(
   for (const userId of userIds) {
     for (const counterpart of counterparts) {
       if (counterpart === userId) continue;
-      if (Date.now() >= deadlineMs) {
-        pending.add([userId], "time budget spent before DM removal");
-        continue;
-      }
-      try {
-        if (await isDmContextEligible(counterpart, userId, organizationId)) {
-          continue;
-        }
-      } catch {
-        pending.add([userId], "DM eligibility check failed");
-        continue;
-      }
-      const channelId = getDmChannelId(counterpart, userId, organizationId);
-      if (!(await removeFromDm(channelId, userId, deadlineMs))) {
-        pending.add([userId], "DM removal failed");
-      }
+      const failure = await removeFromSeatDm(
+        counterpart,
+        userId,
+        organizationId,
+        deadlineMs,
+      );
+      if (failure) pending.add([userId], failure);
     }
   }
+}
+
+/** Returns why the DM is still owed, or null once it is gone or still justified. */
+async function removeFromSeatDm(
+  counterpart: string,
+  userId: string,
+  organizationId: string | null,
+  deadlineMs: number,
+): Promise<string | null> {
+  if (Date.now() >= deadlineMs) return "time budget spent before DM removal";
+  try {
+    if (await isDmContextEligible(counterpart, userId, organizationId)) {
+      return null;
+    }
+  } catch {
+    return "DM eligibility check failed";
+  }
+  const channelId = getDmChannelId(counterpart, userId, organizationId);
+  return (await removeFromDm(channelId, userId, deadlineMs))
+    ? null
+    : "DM removal failed";
 }
 
 type VideoCall = ReturnType<
@@ -377,27 +429,134 @@ async function removeChunkFromCall(
   }
 }
 
-/**
- * Drops the users from every room the appointment provisioned. A Postgres end
- * stamp does not seal a room at Stream, so only Stream's own end excuses one.
- */
-async function removeFromAppointmentCalls(
+/** An open seat intent and the room it is confirmed removed up to. */
+type SeatCursor = {
+  id: string;
+  userId: string;
+  resumeAfter: string | null;
+  updatedAt: Date;
+};
+
+/** The users' open seat intents; an unreadable set rescans from the first room. */
+async function loadSeatCursors(
   appointmentId: string,
+  userIds: string[],
+): Promise<SeatCursor[]> {
+  try {
+    const rows = await prisma.streamRevocationRetry.findMany({
+      where: {
+        erasureRequestId: null,
+        kind: "SEAT_ACCESS_REVOKE",
+        planId: appointmentId,
+        userId: { in: userIds },
+        status: { not: "SUCCEEDED" },
+      },
+      select: { id: true, userId: true, resumeAfter: true, updatedAt: true },
+    });
+    return rows.flatMap((r) => (r.userId ? [{ ...r, userId: r.userId }] : []));
+  } catch (error) {
+    streamLogger.warn("Could not read seat revocation progress", {
+      appointmentId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+}
+
+/**
+ * Keeps each still-owed user's confirmed room progress for the next attempt.
+ * The `updatedAt` match drops it when a writer re-armed the row meanwhile.
+ */
+async function saveSeatCursors(
+  cursors: SeatCursor[],
+  reached: Map<string, string | null>,
+  pending: PendingRevocations,
+): Promise<void> {
+  const byCursor = new Map<string, SeatCursor[]>();
+  for (const row of cursors) {
+    const next = reached.get(row.userId);
+    if (!pending.byUser.has(row.userId) || !next || next === row.resumeAfter) {
+      continue;
+    }
+    byCursor.set(next, [...(byCursor.get(next) ?? []), row]);
+  }
+  for (const [resumeAfter, rows] of byCursor) {
+    try {
+      await prisma.streamRevocationRetry.updateMany({
+        where: {
+          status: { not: "SUCCEEDED" },
+          OR: rows.map((r) => ({ id: r.id, updatedAt: r.updatedAt })),
+        },
+        data: { resumeAfter },
+      });
+    } catch (error) {
+      // The rows keep their older cursor and rescan rooms already done.
+      streamLogger.warn("Could not save seat revocation progress", {
+        rows: rows.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+}
+
+/** False when the resume room is gone, so the scan must start over. */
+async function roomStillListed(
+  appointmentId: string,
+  meetingId: string,
+): Promise<boolean> {
+  const room = await prisma.meeting.findFirst({
+    where: { id: meetingId, occurrence: { appointmentId } },
+    select: { id: true },
+  });
+  return room !== null;
+}
+
+/** Removes the users from one room; anyone it keeps joins `blocked`. */
+async function removeFromRoom(
+  meeting: { streamCallId: string },
   userIds: string[],
   deadlineMs: number,
   pending: PendingRevocations,
+  blocked: Set<string>,
 ): Promise<void> {
-  let cursor: string | undefined;
+  for (let i = 0; i < userIds.length; i += MEMBER_CHUNK) {
+    const kept = await removeChunkFromCall(
+      meeting.streamCallId,
+      userIds.slice(i, i + MEMBER_CHUNK),
+      deadlineMs,
+    );
+    pending.add(kept, "call removal failed");
+    for (const userId of kept) blocked.add(userId);
+  }
+}
+
+/**
+ * Drops the users from every room the appointment provisioned after their
+ * shared resume point, in (createdAt, id) order, and records in `reached` the
+ * last room up to which each user is confirmed removed. A Postgres end stamp
+ * does not seal a room at Stream, so only Stream's own end excuses one.
+ */
+async function removeFromRoomsAfter(
+  appointmentId: string,
+  userIds: string[],
+  startAfter: string | null,
+  deadlineMs: number,
+  pending: PendingRevocations,
+  reached: Map<string, string | null>,
+): Promise<void> {
+  let cursor: string | null;
+  try {
+    cursor = await resumePoint(appointmentId, startAfter);
+  } catch {
+    pending.add(userIds, "call lookup failed");
+    return;
+  }
+  if (cursor !== startAfter) advanceReached(userIds, new Set(), null, reached);
+  const blocked = new Set<string>();
   for (;;) {
     let page: { id: string; streamCallId: string }[];
     try {
-      page = await prisma.meeting.findMany({
-        where: { occurrence: { appointmentId } },
-        select: { id: true, streamCallId: true },
-        orderBy: { id: "asc" },
-        take: CALL_PAGE_SIZE,
-        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      });
+      page = await roomPage(appointmentId, cursor);
     } catch {
       pending.add(userIds, "call lookup failed");
       return;
@@ -408,15 +567,8 @@ async function removeFromAppointmentCalls(
         pending.add(userIds, "time budget spent before call removal");
         return;
       }
-      for (let i = 0; i < userIds.length; i += MEMBER_CHUNK) {
-        const chunk = userIds.slice(i, i + MEMBER_CHUNK);
-        const kept = await removeChunkFromCall(
-          meeting.streamCallId,
-          chunk,
-          deadlineMs,
-        );
-        pending.add(kept, "call removal failed");
-      }
+      await removeFromRoom(meeting, userIds, deadlineMs, pending, blocked);
+      advanceReached(userIds, blocked, meeting.id, reached);
     }
     const last = page.at(-1);
     if (page.length < CALL_PAGE_SIZE || !last) return;
@@ -424,9 +576,92 @@ async function removeFromAppointmentCalls(
   }
 }
 
+/** The saved resume room, or null to scan from the first room when it is gone. */
+async function resumePoint(
+  appointmentId: string,
+  startAfter: string | null,
+): Promise<string | null> {
+  if (!startAfter) return null;
+  return (await roomStillListed(appointmentId, startAfter)) ? startAfter : null;
+}
+
+/** The appointment's rooms after `cursor`, oldest first. */
+function roomPage(appointmentId: string, cursor: string | null) {
+  return prisma.meeting.findMany({
+    where: { occurrence: { appointmentId } },
+    select: { id: true, streamCallId: true },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take: CALL_PAGE_SIZE,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  });
+}
+
+/** Moves every user not `blocked` to `roomId`; a blocked user's progress stays put. */
+function advanceReached(
+  userIds: string[],
+  blocked: Set<string>,
+  roomId: string | null,
+  reached: Map<string, string | null>,
+): void {
+  for (const userId of userIds) {
+    if (!blocked.has(userId)) reached.set(userId, roomId);
+  }
+}
+
+/**
+ * Drops the users from the appointment's rooms, each from its persisted resume
+ * point, and saves the progress of anyone still owed for the next attempt.
+ */
+async function removeFromAppointmentCalls(
+  appointmentId: string,
+  userIds: string[],
+  deadlineMs: number,
+  pending: PendingRevocations,
+): Promise<void> {
+  const cursors = await loadSeatCursors(appointmentId, userIds);
+  const startOf = new Map(cursors.map((c) => [c.userId, c.resumeAfter]));
+  const groups = new Map<string | null, string[]>();
+  for (const userId of userIds) {
+    const start = startOf.get(userId) ?? null;
+    groups.set(start, [...(groups.get(start) ?? []), userId]);
+  }
+  const reached = new Map<string, string | null>(startOf);
+  for (const [startAfter, group] of groups) {
+    await removeFromRoomsAfter(
+      appointmentId,
+      group,
+      startAfter,
+      deadlineMs,
+      pending,
+      reached,
+    );
+  }
+  await saveSeatCursors(cursors, reached, pending);
+}
+
+async function removeFromEventChannel(
+  ctx: SeatContext,
+  userIds: string[],
+  deadlineMs: number,
+  pending: PendingRevocations,
+): Promise<void> {
+  const event = seatEvent(ctx);
+  if (!event) return;
+  try {
+    const { failedUserIds } = await withinBudget(
+      removeUsersFromEventChannel(event.type, event.id, userIds),
+      deadlineMs,
+    );
+    pending.add(failedUserIds, "event channel removal failed");
+  } catch {
+    pending.add(userIds, "event channel removal interrupted");
+  }
+}
+
 /**
  * Removes the users the join gate no longer admits from the appointment's event
- * channel, DMs and rooms, chat first. Returns who is still owed, with why.
+ * channel, DMs and rooms, chat first. Staff keep their own access whatever seat
+ * they also hold. Returns who is still owed, with why.
  */
 async function driveSeatRevocation(
   appointmentId: string,
@@ -441,26 +676,18 @@ async function driveSeatRevocation(
     ctx = await loadSeatContext(appointmentId);
     // A deleted appointment took its Meeting rows with it; nothing addressable is left.
     if (!ctx) return pending.byUser;
-    const admitted = await admittedSeatHolders(appointmentId, ctx, userIds);
-    revoked = userIds.filter((id) => !admitted.has(id));
+    const [admitted, staff] = await Promise.all([
+      admittedSeatHolders(appointmentId, ctx, userIds),
+      seatStaffUserIds(ctx),
+    ]);
+    revoked = userIds.filter((id) => !admitted.has(id) && !staff.has(id));
   } catch {
     pending.add(userIds, "seat lookup failed");
     return pending.byUser;
   }
   if (revoked.length === 0) return pending.byUser;
 
-  const event = seatEvent(ctx);
-  if (event) {
-    try {
-      const { failedUserIds } = await withinBudget(
-        removeUsersFromEventChannel(event.type, event.id, revoked),
-        deadlineMs,
-      );
-      pending.add(failedUserIds, "event channel removal failed");
-    } catch {
-      pending.add(revoked, "event channel removal interrupted");
-    }
-  }
+  await removeFromEventChannel(ctx, revoked, deadlineMs, pending);
   await removeFromSeatDms(ctx, revoked, deadlineMs, pending);
   await removeFromAppointmentCalls(appointmentId, revoked, deadlineMs, pending);
   return pending.byUser;
@@ -481,7 +708,7 @@ export async function revokeEndedSeatAccess(
 ): Promise<void> {
   const ids = Array.from(new Set(userIds.filter(Boolean)));
   if (ids.length === 0) return;
-  await persistSeatRevocation(appointmentId, ids);
+  const generation = await persistSeatRevocation(appointmentId, ids);
   let pending: Map<string, string>;
   try {
     pending = await driveSeatRevocation(
@@ -501,20 +728,22 @@ export async function revokeEndedSeatAccess(
     "SEAT_ACCESS_REVOKE",
     appointmentId,
     ids.filter((id) => !pending.has(id)),
+    generation,
   );
 }
 
 /**
  * Persists the seat revocation an action owes without driving it, so a caller
- * with slow work left after its commit owns the obligation first. Never throws.
+ * with slow work left after its commit owns the obligation first. Returns the
+ * rows' generation, or null when nothing was written. Never throws.
  */
 export async function persistSeatRevocation(
   appointmentId: string,
   userIds: string[],
-): Promise<void> {
+): Promise<Date | null> {
   const ids = Array.from(new Set(userIds.filter(Boolean)));
-  if (ids.length === 0) return;
-  await enqueueOrReport(
+  if (ids.length === 0) return null;
+  return enqueueOrReport(
     ids.map((userId) => ({
       kind: "SEAT_ACCESS_REVOKE" as const,
       userId,
@@ -525,57 +754,75 @@ export async function persistSeatRevocation(
   );
 }
 
+/** A fence that could not read the seats says so; the caller must not treat it as admitted. */
+export type SeatGrantFence =
+  { verified: true; lost: string[] } | { verified: false };
+
 /**
  * Re-checks users a room was just granted to, and takes the room back from any
  * seat holder whose entitlement ended meanwhile. A revoker that ran between the
- * grant's check and its write saw no membership to remove.
+ * grant's check and its write saw no membership to remove. When the re-check
+ * cannot be read, the grant stays owed to the sweep, which spares staff.
  */
 export async function fenceSeatGrants(
   appointmentId: string,
   userIds: string[],
-): Promise<string[]> {
+): Promise<SeatGrantFence> {
   const ids = Array.from(new Set(userIds.filter(Boolean)));
-  if (ids.length === 0) return [];
+  if (ids.length === 0) return { verified: true, lost: [] };
+  let lost: string[];
   try {
     const ctx = await loadSeatContext(appointmentId);
-    if (!ctx) return [];
-    const [seatHolders, admitted] = await Promise.all([
+    if (!ctx) return { verified: true, lost: [] };
+    const [seatHolders, admitted, staff] = await Promise.all([
       prisma.appointmentParticipant.findMany({
         where: { appointmentId, role: "CONSULTEE", userId: { in: ids } },
         select: { userId: true },
       }),
       admittedSeatHolders(appointmentId, ctx, ids),
+      seatStaffUserIds(ctx),
     ]);
     // Client seats only: the host and accepted crew reach the room through their own roles.
-    const staff = new Set(planStaffUserIds(ctx, { presentersOnly: false }));
-    const lost = Array.from(
+    lost = Array.from(
       new Set(
         seatHolders
           .map((s) => s.userId)
           .filter((id) => !admitted.has(id) && !staff.has(id)),
       ),
     );
-    if (lost.length > 0) await revokeEndedSeatAccess(appointmentId, lost);
-    return lost;
   } catch (error) {
+    await persistSeatRevocation(appointmentId, ids);
     reportSentryError(error, {
       subsystem: "stream",
       op: "seat.fenceGrant",
       extra: { appointmentId, users: ids.length },
     });
-    return [];
+    return { verified: false };
   }
+  if (lost.length > 0) await revokeEndedSeatAccess(appointmentId, lost);
+  return { verified: true, lost };
 }
 
 type RefundDrive = { error: string | null };
 
-/** Turns a refund into per-seat intents, then drives them; the refund intent is done once they persist. */
+/**
+ * Re-stamps the refund's seats, turns the REFUNDED ones into per-seat intents
+ * and drives them; the refund intent is done once they persist.
+ */
 async function driveRefundRevocation(
-  paymentId: string,
+  refundId: string,
   deadlineMs: number,
 ): Promise<RefundDrive> {
+  const refund = await prisma.refund.findUnique({
+    where: { id: refundId },
+    select: { paymentId: true },
+  });
+  if (!refund) return { error: "Refund row not found" };
+  const { restampRefundedSeats } =
+    await import("@/lib/payments/operations/booking-refund");
+  await restampRefundedSeats(refundId);
   const refunded = await prisma.appointmentParticipant.findMany({
-    where: { paymentId, status: "REFUNDED" },
+    where: { paymentId: refund.paymentId, status: "REFUNDED" },
     select: {
       userId: true,
       appointmentId: true,
@@ -602,7 +849,7 @@ async function driveRefundRevocation(
     return status !== "CANCELLED";
   });
   if (seats.length === 0) return { error: null };
-  const persisted = await enqueueOrReport(
+  const generation = await enqueueOrReport(
     seats.map((s) => ({
       kind: "SEAT_ACCESS_REVOKE" as const,
       userId: s.userId,
@@ -618,61 +865,70 @@ async function driveRefundRevocation(
       deadlineMs,
     );
     if (!pending.has(seat.userId)) {
-      await settleIntents("SEAT_ACCESS_REVOKE", seat.appointmentId, [
-        seat.userId,
-      ]);
+      await settleIntents(
+        "SEAT_ACCESS_REVOKE",
+        seat.appointmentId,
+        [seat.userId],
+        generation,
+      );
     }
   }
-  return { error: persisted ? null : "Seat revocations not persisted" };
+  return { error: generation ? null : "Seat revocations not persisted" };
+}
+
+/** A refund that ended a seat: its `Refund` row and the payer. */
+export interface RefundRevocationIntent {
+  refundId: string;
+  payerUserId: string;
+}
+
+/**
+ * Persists the access revocation a seat-ending refund owes, reading nothing
+ * first, so a caller with a fallible step left after its commit owns it.
+ * Returns the row's generation, or null when it was not written. Never throws.
+ */
+export async function persistRefundRevocation(
+  intent: RefundRevocationIntent,
+): Promise<Date | null> {
+  return enqueueOrReport(
+    [
+      {
+        kind: "REFUND_ACCESS_REVOKE",
+        userId: intent.payerUserId,
+        planId: intent.refundId,
+      },
+    ],
+    "refund.persistRevocation",
+    { nextRetryAt: intentNotBefore() },
+  );
 }
 
 /**
  * After a refund ends a seat, removes the access the join gate no longer
- * grants. The refund intent is persisted before seat discovery. Never throws:
- * the refund has already committed.
+ * grants. The refund intent is persisted before any read. Never throws: the
+ * refund has already committed.
  */
 export async function revokeRefundedSeatAccess(
-  paymentId: string,
+  intent: RefundRevocationIntent,
 ): Promise<void> {
-  let payerUserId: string | null = null;
-  try {
-    const payment = await prisma.payment.findUnique({
-      where: { id: paymentId },
-      select: { userId: true },
-    });
-    payerUserId = payment?.userId ?? null;
-  } catch (error) {
-    reportSentryError(error, {
-      subsystem: "stream",
-      op: "refund.loadPayer",
-      extra: { paymentId },
-    });
-  }
-  if (payerUserId) {
-    await enqueueOrReport(
-      [
-        {
-          kind: "REFUND_ACCESS_REVOKE",
-          userId: payerUserId,
-          planId: paymentId,
-        },
-      ],
-      "refund.persistRevocation",
-      { nextRetryAt: intentNotBefore() },
-    );
-  }
+  const generation = await persistRefundRevocation(intent);
   try {
     const { error } = await driveRefundRevocation(
-      paymentId,
+      intent.refundId,
       Date.now() + SYNC_SEAT_REVOCATION_BUDGET_MS,
     );
-    if (!error && payerUserId) {
-      await settleIntents("REFUND_ACCESS_REVOKE", paymentId, [payerUserId]);
+    if (!error) {
+      await settleIntents(
+        "REFUND_ACCESS_REVOKE",
+        intent.refundId,
+        [intent.payerUserId],
+        generation,
+      );
     }
   } catch (error) {
     // The refund intent stays owed; the sweep re-drives it.
     streamLogger.warn("Refund seat revocation interrupted", {
-      paymentId,
+      refundId: intent.refundId,
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -719,11 +975,17 @@ export interface AccessRevocationRow {
 
 /**
  * Re-drives one queued revocation. Returns the error to record, or null when
- * the access is gone or Postgres has since re-granted it.
+ * the access is gone or Postgres has since re-granted it. A seat or refund row
+ * stops starting Stream work at its slice or at `deadlineMs`, whichever is sooner.
  */
 export async function redriveAccessRevocation(
   row: AccessRevocationRow,
+  opts: { deadlineMs?: number } = {},
 ): Promise<string | null> {
+  const deadlineMs = Math.min(
+    Date.now() + REDRIVE_SEAT_REVOCATION_BUDGET_MS,
+    opts.deadlineMs ?? Number.POSITIVE_INFINITY,
+  );
   switch (row.kind) {
     case "COLLAB_REVOKE":
       return redriveCollaboratorRevocation(row);
@@ -733,27 +995,17 @@ export async function redriveAccessRevocation(
       return redriveDmRemoval(row);
     case "ORG_REVOKE":
       return redriveOrgRevocation(row);
-    case "SEAT_ACCESS_REVOKE":
-      return redriveSeatRevocation(row);
+    case "SEAT_ACCESS_REVOKE": {
+      const pending = await driveSeatRevocation(
+        row.planId,
+        [row.userId],
+        deadlineMs,
+      );
+      return pending.get(row.userId) ?? null;
+    }
     case "REFUND_ACCESS_REVOKE":
-      return (
-        await driveRefundRevocation(
-          row.planId,
-          Date.now() + REDRIVE_SEAT_REVOCATION_BUDGET_MS,
-        )
-      ).error;
+      return (await driveRefundRevocation(row.planId, deadlineMs)).error;
   }
-}
-
-async function redriveSeatRevocation(
-  row: AccessRevocationRow,
-): Promise<string | null> {
-  const pending = await driveSeatRevocation(
-    row.planId,
-    [row.userId],
-    Date.now() + REDRIVE_SEAT_REVOCATION_BUDGET_MS,
-  );
-  return pending.get(row.userId) ?? null;
 }
 
 async function redriveCollaboratorRevocation(

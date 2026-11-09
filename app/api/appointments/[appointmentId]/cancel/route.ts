@@ -1217,12 +1217,12 @@ export async function POST(
         throw err;
       });
     // Whoever loses chat and room access with this booking; read before the commit released them.
-    const revokedUserIds =
-      eventKind && eventId && attendees
-        ? attendees.all
-        : consulteeUserId
-          ? [consulteeUserId]
-          : [];
+    let revokedUserIds: string[] = [];
+    if (eventKind && eventId && attendees) {
+      revokedUserIds = attendees.all;
+    } else if (consulteeUserId) {
+      revokedUserIds = [consulteeUserId];
+    }
     // A retry of a click that died after its commit still owes the revocation.
     if ("replay" in committed) {
       await revokeEndedSeatAccess(appointmentId, revokedUserIds);

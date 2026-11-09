@@ -37,6 +37,7 @@ jest.mock("../../lib/prisma", () => ({
     streamRevocationRetry: {
       findMany: jest.fn(async () => []),
       update: jest.fn(async () => ({})),
+      updateMany: jest.fn(async () => ({ count: 1 })),
       count: jest.fn(async () => 0),
     },
     vendorErasureRetry: {
@@ -85,6 +86,7 @@ const findMany = prisma.moderationAction.findMany as jest.Mock;
 const update = prisma.moderationAction.update as jest.Mock;
 const outboxFindMany = prisma.streamRevocationRetry.findMany as jest.Mock;
 const outboxUpdate = prisma.streamRevocationRetry.update as jest.Mock;
+const outboxUpdateMany = prisma.streamRevocationRetry.updateMany as jest.Mock;
 const outboxCount = prisma.streamRevocationRetry.count as jest.Mock;
 const vendorOutboxFindMany = prisma.vendorErasureRetry.findMany as jest.Mock;
 const vendorOutboxUpdate = prisma.vendorErasureRetry.update as jest.Mock;
@@ -122,6 +124,7 @@ beforeEach(() => {
   // are re-pinned here so a later case cannot inherit an override.
   outboxCount.mockResolvedValue(0);
   outboxUpdate.mockResolvedValue({});
+  outboxUpdateMany.mockResolvedValue({ count: 1 });
   revokeCollaboratorAccessMock.mockResolvedValue({ success: true });
 });
 
@@ -330,6 +333,7 @@ describe("retryModerationEnforcement", () => {
         planType: null,
         planId: "dm-client-1-host-1",
         attempts: 0,
+        nextRetryAt: null,
         createdAt: new Date(),
       },
     ]);
@@ -339,13 +343,152 @@ describe("retryModerationEnforcement", () => {
     expect(outboxFindMany.mock.calls[0][0].where.attempts).toEqual({ lt: 6 });
     expect(redriveAccessRevocation).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "DM_REMOVE", userId: "client-1" }),
+      { deadlineMs: expect.any(Number) },
     );
-    expect(outboxUpdate).toHaveBeenCalledWith({
-      where: { id: "retry-dm" },
+    expect(outboxUpdateMany).toHaveBeenCalledWith({
+      where: { id: "retry-dm", attempts: 0, nextRetryAt: null },
       data: { status: "SUCCEEDED", attempts: 1, completedAt: expect.any(Date) },
     });
+    expect(outboxUpdate).not.toHaveBeenCalled();
     expect(result.accessRevocationsRecovered).toBe(1);
     expect(erasureRequestUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("stops starting revocation rows once the run deadline passes, and bounds the row in flight by it", async () => {
+    const { redriveAccessRevocation } = jest.requireMock(
+      "../../lib/stream/access-revocation",
+    ) as { redriveAccessRevocation: jest.Mock };
+    let now = 5_000_000;
+    const clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+    findMany.mockResolvedValue([]);
+    const seatRow = (id: string) => ({
+      id,
+      kind: "SEAT_ACCESS_REVOKE",
+      erasureRequestId: null,
+      erasureRequest: null,
+      userId: "attendee-1",
+      counterpartUserId: null,
+      planType: null,
+      planId: "appt-1",
+      attempts: 0,
+      nextRetryAt: new Date(4_000_000),
+      createdAt: new Date(),
+    });
+    outboxFindMany.mockResolvedValueOnce([
+      seatRow("retry-a"),
+      seatRow("retry-b"),
+    ]);
+    redriveAccessRevocation.mockImplementationOnce(async () => {
+      now += 17_000;
+      return "time budget spent before call removal";
+    });
+
+    try {
+      await retryModerationEnforcement();
+    } finally {
+      clock.mockRestore();
+    }
+
+    expect(redriveAccessRevocation).toHaveBeenCalledTimes(1);
+    expect(redriveAccessRevocation).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "SEAT_ACCESS_REVOKE" }),
+      { deadlineMs: 5_000_000 + 16_000 },
+    );
+    expect(outboxUpdateMany).toHaveBeenCalledTimes(1);
+    expect(outboxUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: "retry-a",
+          attempts: 0,
+          nextRetryAt: new Date(4_000_000),
+        },
+      }),
+    );
+  });
+
+  it("does not start a seat or refund row with less than its minimum slice left", async () => {
+    const { redriveAccessRevocation } = jest.requireMock(
+      "../../lib/stream/access-revocation",
+    ) as { redriveAccessRevocation: jest.Mock };
+    let now = 5_000_000;
+    const clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+    findMany.mockResolvedValue([]);
+    const row = (id: string, kind: string) => ({
+      id,
+      kind,
+      erasureRequestId: null,
+      erasureRequest: null,
+      userId: "payer-1",
+      counterpartUserId: null,
+      planType: null,
+      planId: "refund-1",
+      attempts: 0,
+      nextRetryAt: null,
+      createdAt: new Date(),
+    });
+    outboxFindMany.mockResolvedValueOnce([
+      row("retry-a", "SEAT_ACCESS_REVOKE"),
+      row("retry-b", "REFUND_ACCESS_REVOKE"),
+    ]);
+    // The first row leaves 4 s of the 16 s run budget: too little for another seat drive.
+    redriveAccessRevocation.mockImplementationOnce(async () => {
+      now += 12_000;
+      return null;
+    });
+
+    try {
+      await retryModerationEnforcement();
+    } finally {
+      clock.mockRestore();
+    }
+
+    expect(redriveAccessRevocation).toHaveBeenCalledTimes(1);
+    expect(outboxUpdateMany).toHaveBeenCalledTimes(1);
+    expect(outboxUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "retry-a" }),
+      }),
+    );
+  });
+
+  it("leaves a row a writer re-armed during the attempt owed, without spending an attempt", async () => {
+    findMany.mockResolvedValue([]);
+    outboxFindMany.mockResolvedValueOnce([
+      {
+        id: "retry-seat",
+        kind: "SEAT_ACCESS_REVOKE",
+        erasureRequestId: null,
+        erasureRequest: null,
+        userId: "attendee-1",
+        counterpartUserId: null,
+        planType: null,
+        planId: "appt-1",
+        attempts: 2,
+        nextRetryAt: new Date(1_000),
+        createdAt: new Date(),
+      },
+    ]);
+    // The re-arm replaced the generation, so the outcome write matches nothing.
+    outboxUpdateMany.mockResolvedValueOnce({ count: 0 });
+    const warn = jest
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+
+    const result = await retryModerationEnforcement();
+    warn.mockRestore();
+
+    expect(outboxFindMany.mock.calls[0][0].select).toMatchObject({
+      nextRetryAt: true,
+    });
+    expect(outboxUpdateMany).toHaveBeenCalledWith({
+      where: { id: "retry-seat", attempts: 2, nextRetryAt: new Date(1_000) },
+      data: { status: "SUCCEEDED", attempts: 3, completedAt: expect.any(Date) },
+    });
+    expect(result).toMatchObject({
+      accessRevocationsRecovered: 0,
+      stillFailing: 0,
+      gaveUp: 0,
+    });
   });
 
   it("drains VendorErasureRetry rows and finalizes IN_PROGRESS ErasureRequest when all outbox legs succeed", async () => {

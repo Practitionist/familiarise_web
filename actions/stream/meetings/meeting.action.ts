@@ -351,6 +351,18 @@ interface RoomGrant {
   userIds: string[];
 }
 
+/** A reused row keeps its call id; an early-ended row is rebuilt under a fresh one. */
+function resolveStreamCallId(
+  slotId: string,
+  existingMeeting: { streamCallId: string } | null | undefined,
+  rebuildEndedEarly: boolean,
+): string {
+  if (rebuildEndedEarly) {
+    return `occurrence-${slotId}-r${Date.now().toString(36)}`;
+  }
+  return existingMeeting?.streamCallId ?? `occurrence-${slotId}`;
+}
+
 async function provisionRoom(
   slot: MeetingSlot,
   granted: RoomGrant,
@@ -377,12 +389,11 @@ async function provisionRoom(
     return { ok: false, refusal: "Video is not available right now." };
   }
 
-  let streamCallId = `occurrence-${anchorSlot.id}`;
-  if (reuseExisting && existingMeeting) {
-    streamCallId = existingMeeting.streamCallId;
-  } else if (rebuildEndedEarly) {
-    streamCallId = `occurrence-${anchorSlot.id}-r${Date.now().toString(36)}`;
-  }
+  const streamCallId = resolveStreamCallId(
+    anchorSlot.id,
+    existingMeeting,
+    rebuildEndedEarly,
+  );
   const { authorUserId, payload } = await buildRoomCallPlan(authorized, {
     extendedSeconds: existingMeeting?.extendedSeconds ?? 0,
     extensionsUsed: existingMeeting?.extensionsUsed ?? 0,

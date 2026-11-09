@@ -33,6 +33,13 @@ jest.mock("../../lib/payments/operations/refund-owed", () => ({
   driveRefundOwed: (...a: unknown[]) => driveRefundOwed(...(a as [])),
 }));
 
+const persistSeatRevocation = jest.fn(async () => undefined);
+jest.mock("../../lib/stream/access-revocation", () => ({
+  persistSeatRevocation: (...a: unknown[]) =>
+    persistSeatRevocation(...(a as [])),
+  revokeEndedSeatAccess: jest.fn(async () => undefined),
+}));
+
 const joinedAt = new Date("2026-09-01T00:00:00Z");
 const slot = { startsAt: new Date(), movedAt: null as Date | null };
 const release = jest.fn(async () => ({ count: 1 }));
@@ -144,6 +151,16 @@ it("stamps the refund owed in the release commit, so a crash after it is re-driv
     }),
   );
   expect(driveRefundOwed).not.toHaveBeenCalled();
+});
+
+it("persists the seat revocation before the refund can throw", async () => {
+  slot.startsAt = inHours(30);
+  refundSeat.mockRejectedValueOnce(new Error("refund stalled"));
+  await expect(leave()).rejects.toThrow("refund stalled");
+  expect(persistSeatRevocation).toHaveBeenCalledWith("apt-1", ["u-1"]);
+  expect(persistSeatRevocation.mock.invocationCallOrder[0]).toBeLessThan(
+    refundSeat.mock.invocationCallOrder[0],
+  );
 });
 
 it("settles the marker after the refund under the same key", async () => {

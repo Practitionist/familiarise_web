@@ -75,6 +75,10 @@ jest.mock("../../lib/stream-client", () => ({
   })),
 }));
 
+// The seat fence has its own suite; here every grant re-checks as still admitted.
+jest.mock("../../lib/stream/access-revocation", () => ({
+  fenceSeatGrants: jest.fn(async () => ({ verified: true, lost: [] })),
+}));
 jest.mock("../../lib/prisma", () => {
   const client: Record<string, unknown> = {
     consentArtifact: { findFirst: jest.fn() },

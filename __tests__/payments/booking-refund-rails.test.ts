@@ -34,12 +34,19 @@ const mockPaymentFindUnique = jest.fn();
 const mockRefundFindMany = jest.fn();
 const mockRefundCreate = jest.fn();
 const mockRefundUpdate = jest.fn();
+const mockRefundFindUnique = jest.fn();
+const mockFindDedupedRefund = jest.fn(
+  async (_key?: string): Promise<unknown> => null,
+);
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     payment: { findUnique: (...a: unknown[]) => mockPaymentFindUnique(...a) },
-    refund: { findMany: (...a: unknown[]) => mockRefundFindMany(...a) },
+    refund: {
+      findMany: (...a: unknown[]) => mockRefundFindMany(...a),
+      findUnique: (...a: unknown[]) => mockRefundFindUnique(...a),
+    },
     $transaction: (fn: (tx: unknown) => unknown) =>
       fn({
         appointmentParticipant: {
@@ -64,6 +71,8 @@ jest.mock("../../lib/db/serializable-retry", () => ({
 
 jest.mock("../../lib/payments/operations/refund", () => ({
   refundPayment: (...a: unknown[]) => mockRefundPayment(...a),
+  findDedupedRefund: (key?: string) => mockFindDedupedRefund(key),
+  isDedupeKeyConflict: () => false,
   RefundValidationError: class RefundValidationError extends Error {
     constructor(
       message: string,
@@ -107,15 +116,24 @@ jest.mock("../../lib/booking/participants", () => ({
   ...jest.requireActual("../../lib/booking/participants"),
   transitionParticipant: (...a: unknown[]) => mockTransitionParticipant(...a),
 }));
+type RefundIntent = { refundId: string; payerUserId: string };
 const mockRevokeRefundedSeatAccess = jest.fn(
-  async (_paymentId: string) => undefined,
+  async (_intent: RefundIntent) => undefined,
+);
+const mockPersistRefundRevocation = jest.fn(
+  async (_intent: RefundIntent) => undefined,
 );
 jest.mock("../../lib/stream/access-revocation", () => ({
-  revokeRefundedSeatAccess: (paymentId: string) =>
-    mockRevokeRefundedSeatAccess(paymentId),
+  revokeRefundedSeatAccess: (intent: RefundIntent) =>
+    mockRevokeRefundedSeatAccess(intent),
+  persistRefundRevocation: (intent: RefundIntent) =>
+    mockPersistRefundRevocation(intent),
 }));
 
-import { refundBookingPayment } from "../../lib/payments/operations/booking-refund";
+import {
+  refundBookingPayment,
+  restampRefundedSeats,
+} from "../../lib/payments/operations/booking-refund";
 import { isInternalFundedIntent } from "../../lib/payments/funding-rail";
 
 const PAYMENT_ID = "pay-1";
@@ -137,6 +155,7 @@ function orgFundedPayment(intent: string) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockRefundFindMany.mockResolvedValue([]);
+  mockFindDedupedRefund.mockResolvedValue(null);
   mockRefundCreate.mockResolvedValue({ id: "refund-row-1" });
   mockRefundUpdate.mockResolvedValue({});
   mockApplyReversal.mockResolvedValue({
@@ -177,7 +196,10 @@ describe("isInternalFundedIntent", () => {
 
 describe("refundBookingPayment", () => {
   it("sends a card payment down the gateway path unchanged", async () => {
-    mockPaymentFindUnique.mockResolvedValue({ paymentIntent: "pay_ABC" });
+    mockPaymentFindUnique.mockResolvedValue({
+      paymentIntent: "pay_ABC",
+      userId: "payer-1",
+    });
     mockRefundPayment.mockResolvedValue({
       refundId: "r1",
       amountRefundedPaise: 50_000,
@@ -199,11 +221,17 @@ describe("refundBookingPayment", () => {
       amountRefundedPaise: 50_000,
       rail: "GATEWAY",
     });
-    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith(PAYMENT_ID);
+    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith({
+      refundId: "r1",
+      payerUserId: "payer-1",
+    });
   });
 
   it("keeps a per-session refund's chat and call access", async () => {
-    mockPaymentFindUnique.mockResolvedValue({ paymentIntent: "pay_ABC" });
+    mockPaymentFindUnique.mockResolvedValue({
+      paymentIntent: "pay_ABC",
+      userId: "payer-1",
+    });
     mockRefundPayment.mockResolvedValue({
       refundId: "r1",
       amountRefundedPaise: 10_000,
@@ -221,7 +249,10 @@ describe("refundBookingPayment", () => {
 
   it("reverses an org-wallet booking in-ledger, never through the gateway", async () => {
     mockPaymentFindUnique
-      .mockResolvedValueOnce({ paymentIntent: "org_wallet_1_a" })
+      .mockResolvedValueOnce({
+        paymentIntent: "org_wallet_1_a",
+        userId: "payer-1",
+      })
       .mockResolvedValueOnce(orgFundedPayment("org_wallet_1_a"));
 
     const result = await refundBookingPayment({
@@ -247,7 +278,10 @@ describe("refundBookingPayment", () => {
 
   it("mints its own Refund row and settles it SUCCEEDED", async () => {
     mockPaymentFindUnique
-      .mockResolvedValueOnce({ paymentIntent: "org_invoice_1_a" })
+      .mockResolvedValueOnce({
+        paymentIntent: "org_invoice_1_a",
+        userId: "payer-1",
+      })
       .mockResolvedValueOnce(orgFundedPayment("org_invoice_1_a"));
 
     await refundBookingPayment({
@@ -286,7 +320,10 @@ describe("refundBookingPayment", () => {
       return 0;
     });
     mockPaymentFindUnique
-      .mockResolvedValueOnce({ paymentIntent: "org_wallet_1_a" })
+      .mockResolvedValueOnce({
+        paymentIntent: "org_wallet_1_a",
+        userId: "payer-1",
+      })
       .mockResolvedValueOnce(orgFundedPayment("org_wallet_1_a"));
 
     await refundBookingPayment({
@@ -323,7 +360,10 @@ describe("refundBookingPayment", () => {
 
   it("refuses to oversubscribe a partly-refunded payment", async () => {
     mockPaymentFindUnique
-      .mockResolvedValueOnce({ paymentIntent: "org_wallet_1_a" })
+      .mockResolvedValueOnce({
+        paymentIntent: "org_wallet_1_a",
+        userId: "payer-1",
+      })
       .mockResolvedValueOnce(orgFundedPayment("org_wallet_1_a"));
     mockRefundFindMany.mockResolvedValue([{ amountPaise: 90_000 }]);
 
@@ -339,7 +379,10 @@ describe("refundBookingPayment", () => {
 
   it("refuses a payment that never captured", async () => {
     mockPaymentFindUnique
-      .mockResolvedValueOnce({ paymentIntent: "org_wallet_1_a" })
+      .mockResolvedValueOnce({
+        paymentIntent: "org_wallet_1_a",
+        userId: "payer-1",
+      })
       .mockResolvedValueOnce({
         ...orgFundedPayment("org_wallet_1_a"),
         paymentStatus: "PENDING",
@@ -402,7 +445,10 @@ describe("the internal rail tells the payer (#1589 N-P0-01)", () => {
   });
 
   it("stages nothing for a gateway refund — the webhook owns that notice", async () => {
-    mockPaymentFindUnique.mockResolvedValue({ paymentIntent: "pay_ABC" });
+    mockPaymentFindUnique.mockResolvedValue({
+      paymentIntent: "pay_ABC",
+      userId: "payer-1",
+    });
     mockRefundPayment.mockResolvedValue({
       refundId: "r1",
       amountRefundedPaise: 100_000,
@@ -421,7 +467,10 @@ describe("keepSeatIfPartial: the seat ends once the payment is fully returned", 
 
   it("internal rail: a partial keeps the seat", async () => {
     mockPaymentFindUnique
-      .mockResolvedValueOnce({ paymentIntent: "org_wallet_1_a" })
+      .mockResolvedValueOnce({
+        paymentIntent: "org_wallet_1_a",
+        userId: "payer-1",
+      })
       .mockResolvedValueOnce(orgFundedPayment("org_wallet_1_a"));
 
     await refundBookingPayment({
@@ -436,7 +485,10 @@ describe("keepSeatIfPartial: the seat ends once the payment is fully returned", 
 
   it("internal rail: an explicit amount equal to the balance ends the seat", async () => {
     mockPaymentFindUnique
-      .mockResolvedValueOnce({ paymentIntent: "org_wallet_1_a" })
+      .mockResolvedValueOnce({
+        paymentIntent: "org_wallet_1_a",
+        userId: "payer-1",
+      })
       .mockResolvedValueOnce(orgFundedPayment("org_wallet_1_a"));
 
     await refundBookingPayment({
@@ -452,7 +504,10 @@ describe("keepSeatIfPartial: the seat ends once the payment is fully returned", 
   it("internal rail: a partial that returns the rest ends the seat", async () => {
     mockRefundFindMany.mockResolvedValue([{ amountPaise: 60_000 }]);
     mockPaymentFindUnique
-      .mockResolvedValueOnce({ paymentIntent: "org_wallet_1_a" })
+      .mockResolvedValueOnce({
+        paymentIntent: "org_wallet_1_a",
+        userId: "payer-1",
+      })
       .mockResolvedValueOnce(orgFundedPayment("org_wallet_1_a"));
 
     await refundBookingPayment({
@@ -470,6 +525,7 @@ describe("keepSeatIfPartial: the seat ends once the payment is fully returned", 
     disputes: { amountPaise: number; status: string }[] = [],
   ) => ({
     paymentIntent: "pay_ABC",
+    userId: "payer-1",
     amount: 100_000,
     refunds: refunds.map((amountPaise) => ({
       amountPaise,
@@ -528,7 +584,7 @@ describe("keepSeatIfPartial: the seat ends once the payment is fully returned", 
       amountRefundedPaise: 1,
     });
     mockPaymentFindUnique
-      .mockResolvedValueOnce({ paymentIntent: "pay_ABC" })
+      .mockResolvedValueOnce({ paymentIntent: "pay_ABC", userId: "payer-1" })
       .mockRejectedValueOnce(new Error("db down"));
 
     await expect(
@@ -540,5 +596,203 @@ describe("keepSeatIfPartial: the seat ends once the payment is fully returned", 
       }),
     ).resolves.toMatchObject({ refundId: "r1", rail: "GATEWAY" });
     expect(seatEnded()).toBe(false);
+  });
+});
+
+describe("the access revocation a seat-ending refund owes", () => {
+  const order = (mock: jest.Mock) => mock.mock.invocationCallOrder[0];
+
+  it("gateway rail: persists the intent before stamping the seat, then drives it", async () => {
+    mockPaymentFindUnique.mockResolvedValue({
+      paymentIntent: "pay_ABC",
+      userId: "payer-1",
+    });
+    mockRefundPayment.mockResolvedValue({
+      refundId: "refund-row-9",
+      amountRefundedPaise: 100_000,
+    });
+
+    await refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancel" });
+
+    const intent = { refundId: "refund-row-9", payerUserId: "payer-1" };
+    expect(mockPersistRefundRevocation).toHaveBeenCalledWith(intent);
+    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith(intent);
+    expect(order(mockPersistRefundRevocation)).toBeLessThan(
+      order(mockTransitionParticipant),
+    );
+    expect(order(mockTransitionParticipant)).toBeLessThan(
+      order(mockRevokeRefundedSeatAccess),
+    );
+  });
+
+  it("gateway rail: a failed seat stamp still leaves the intent owed and driven", async () => {
+    mockPaymentFindUnique.mockResolvedValue({
+      paymentIntent: "pay_ABC",
+      userId: "payer-1",
+    });
+    mockRefundPayment.mockResolvedValue({
+      refundId: "refund-row-9",
+      amountRefundedPaise: 100_000,
+    });
+    mockTransitionParticipant.mockRejectedValueOnce(new Error("db blip"));
+    jest.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(
+      refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancel" }),
+    ).resolves.toMatchObject({ refundId: "refund-row-9", rail: "GATEWAY" });
+
+    expect(mockPersistRefundRevocation).toHaveBeenCalledTimes(1);
+    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("internal rail: stamps inside its transaction and only drives the intent", async () => {
+    mockPaymentFindUnique
+      .mockResolvedValueOnce({
+        paymentIntent: "org_wallet_1_a",
+        userId: "payer-1",
+      })
+      .mockResolvedValueOnce(orgFundedPayment("org_wallet_1_a"));
+
+    await refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancel" });
+
+    expect(mockPersistRefundRevocation).not.toHaveBeenCalled();
+    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith({
+      refundId: "refund-row-1",
+      payerUserId: "payer-1",
+    });
+  });
+
+  it.each([
+    [
+      "internal",
+      () =>
+        mockPaymentFindUnique
+          .mockResolvedValueOnce({
+            paymentIntent: "org_wallet_1_a",
+            userId: "payer-1",
+          })
+          .mockResolvedValueOnce(orgFundedPayment("org_wallet_1_a")),
+    ],
+    [
+      "gateway",
+      () =>
+        mockPaymentFindUnique
+          .mockResolvedValueOnce({
+            paymentIntent: "pay_ABC",
+            userId: "payer-1",
+          })
+          .mockResolvedValueOnce({
+            paymentIntent: "pay_ABC",
+            amount: 100_000,
+            refunds: [{ amountPaise: 10_000, status: "SUCCEEDED" }],
+            disputes: [],
+          }),
+    ],
+  ])(
+    "%s rail: a keepSeatIfPartial partial owes no revocation",
+    async (_rail, arrange) => {
+      arrange();
+      mockRefundPayment.mockResolvedValue({
+        refundId: "r1",
+        amountRefundedPaise: 10_000,
+      });
+
+      await refundBookingPayment({
+        paymentId: PAYMENT_ID,
+        amountPaise: 10_000,
+        reason: "goodwill",
+        keepSeatIfPartial: true,
+      });
+
+      expect(mockPersistRefundRevocation).not.toHaveBeenCalled();
+      expect(mockRevokeRefundedSeatAccess).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("restampRefundedSeats", () => {
+  it.each(["SUCCEEDED", "PENDING"])(
+    "stamps the payment's seats REFUNDED while the refund is %s",
+    async (status) => {
+      mockRefundFindUnique.mockResolvedValue({ status, paymentId: PAYMENT_ID });
+
+      await expect(restampRefundedSeats("refund-row-1")).resolves.toBe(
+        "stamped",
+      );
+      expect(mockTransitionParticipant).toHaveBeenCalledWith(
+        expect.anything(),
+        { paymentId: PAYMENT_ID },
+        "REFUNDED",
+      );
+    },
+  );
+
+  it.each(["FAILED", "CANCELLED"])(
+    "leaves the seat live once the refund is %s, since no money moved",
+    async (status) => {
+      mockRefundFindUnique.mockResolvedValue({ status, paymentId: PAYMENT_ID });
+
+      await expect(restampRefundedSeats("refund-row-1")).resolves.toBe(
+        "skipped",
+      );
+      expect(mockTransitionParticipant).not.toHaveBeenCalled();
+    },
+  );
+
+  it("skips a refund row that does not exist", async () => {
+    mockRefundFindUnique.mockResolvedValue(null);
+
+    await expect(restampRefundedSeats("missing")).resolves.toBe("skipped");
+    expect(mockTransitionParticipant).not.toHaveBeenCalled();
+  });
+});
+
+describe("an internal-rail refund replayed by its dedupe key", () => {
+  // The first call stamped the seat in its transaction, then died before persisting the intent.
+  const replay = (refunded: number[]) => {
+    mockFindDedupedRefund.mockResolvedValue({
+      refundId: "refund-row-1",
+      amountRefundedPaise: 100_000,
+      status: "SUCCEEDED",
+    });
+    mockPaymentFindUnique
+      .mockResolvedValueOnce({
+        paymentIntent: "org_wallet_1_a",
+        userId: "payer-1",
+      })
+      .mockResolvedValueOnce({
+        paymentIntent: "org_wallet_1_a",
+        amount: 100_000,
+        refunds: refunded.map((amountPaise) => ({
+          amountPaise,
+          status: "SUCCEEDED",
+        })),
+        disputes: [],
+      });
+    return refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      reason: "admin refund",
+      dedupeKey: "admin-refund-1",
+      keepSeatIfPartial: true,
+    });
+  };
+
+  it("still owes the revocation when the original refund returned everything", async () => {
+    await expect(replay([100_000])).resolves.toMatchObject({
+      refundId: "refund-row-1",
+      rail: "INTERNAL",
+    });
+
+    expect(mockApplyReversal).not.toHaveBeenCalled();
+    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith({
+      refundId: "refund-row-1",
+      payerUserId: "payer-1",
+    });
+  });
+
+  it("owes nothing when the original refund was a partial that kept the seat", async () => {
+    await replay([10_000]);
+
+    expect(mockRevokeRefundedSeatAccess).not.toHaveBeenCalled();
   });
 });

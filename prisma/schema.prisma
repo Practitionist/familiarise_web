@@ -8391,6 +8391,8 @@ model StreamRevocationRetry {
   nextRetryAt       DateTime?            @db.Timestamptz
   lastError         String?              @db.Text
   completedAt       DateTime?            @db.Timestamptz
+  /// SEAT_ACCESS_REVOKE only: the last Meeting id, in (createdAt, id) order, every room up to which the user is confirmed removed from.
+  resumeAfter       String?
   createdAt         DateTime             @default(now()) @db.Timestamptz
   updatedAt         DateTime             @updatedAt @db.Timestamptz
 
@@ -8406,7 +8408,7 @@ enum StreamRevocationKind {
   ORG_REVOKE
   /// An ended seat's channel, DM and room access; planId is the appointment.
   SEAT_ACCESS_REVOKE
-  /// A refund's seats to revoke; planId is the payment, userId its payer.
+  /// A refund's seats to revoke; planId is the Refund row, userId its payer.
   REFUND_ACCESS_REVOKE
 }
 

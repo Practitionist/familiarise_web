@@ -188,13 +188,23 @@ export async function POST(
 
     // A cancel or refund that committed while this grant was in flight found no membership to remove.
     const appointmentId = access.appointment?.id;
-    if (
-      appointmentId &&
-      (await fenceSeatGrants(appointmentId, [userId])).length > 0
-    ) {
+    const fence = appointmentId
+      ? await fenceSeatGrants(appointmentId, [userId])
+      : null;
+    if (fence?.verified && fence.lost.length > 0) {
       return NextResponse.json(
         { error: "This booking is no longer active.", code: "BOOKING_ENDED" },
         { status: 403 },
+      );
+    }
+    // An unread seat check never admits a client; the sweep re-checks the grant that landed.
+    if (fence && !fence.verified && access.role !== "host") {
+      return NextResponse.json(
+        {
+          error: "We could not confirm your booking. Please try again.",
+          code: "SEAT_UNVERIFIED",
+        },
+        { status: 503 },
       );
     }
 

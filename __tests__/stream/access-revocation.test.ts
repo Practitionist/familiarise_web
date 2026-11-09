@@ -8,6 +8,19 @@ const mockReport = jest.fn();
 const mockIsDmContextEligible = jest.fn();
 const mockRevocationUpdateCallMembers = jest.fn();
 const mockRevocationGetCall = jest.fn();
+const mockRestampRefundedSeats = jest.fn();
+
+type RetryRow = {
+  id: string;
+  kind: string;
+  planId: string;
+  userId: string;
+  status: string;
+  resumeAfter: string | null;
+  updatedAt: Date;
+};
+/** Seat intents as Postgres would hold them, for the drive's room cursor. */
+let retryRows: RetryRow[] = [];
 
 type ParticipantWhere = {
   paymentId?: string;
@@ -25,21 +38,61 @@ const seats = {
 
 const mockRevocationPrisma = {
   streamRevocationRetry: {
-    updateMany: jest.fn(async (_args: unknown) => ({ count: 0 })),
+    updateMany: jest.fn(async (args: unknown) => {
+      const { where, data } = args as {
+        where: { OR?: { id?: string; updatedAt?: Date }[] };
+        data: { resumeAfter?: string | null };
+      };
+      if (data.resumeAfter === undefined) return { count: 0 };
+      let count = 0;
+      for (const row of retryRows) {
+        const hit = (where.OR ?? []).some(
+          (w) =>
+            w.id === row.id &&
+            (w.updatedAt === undefined ||
+              w.updatedAt.getTime() === row.updatedAt.getTime()),
+        );
+        if (!hit || row.status === "SUCCEEDED") continue;
+        row.resumeAfter = data.resumeAfter;
+        row.updatedAt = new Date(row.updatedAt.getTime() + 1);
+        count++;
+      }
+      return { count };
+    }),
     createMany: jest.fn(async (_args: unknown) => ({ count: 1 })),
+    findMany: jest.fn(async (args: unknown): Promise<unknown[]> => {
+      const { where } = args as {
+        where: { kind: string; planId: string; userId: { in: string[] } };
+      };
+      return retryRows
+        .filter(
+          (r) =>
+            r.kind === where.kind &&
+            r.planId === where.planId &&
+            where.userId.in.includes(r.userId) &&
+            r.status !== "SUCCEEDED",
+        )
+        .map((r) => ({ ...r }));
+    }),
+  },
+  refund: {
+    findUnique: jest.fn(async (): Promise<unknown> => ({ paymentId: "pay-1" })),
   },
   webinar: { findUnique: jest.fn(), findFirst: jest.fn() },
   class: { findUnique: jest.fn(), findFirst: jest.fn() },
   webinarPlan: { findUnique: jest.fn() },
   classPlan: { findUnique: jest.fn() },
   membership: { findFirst: jest.fn() },
-  user: { findMany: jest.fn(async () => []) },
+  user: {
+    findMany: jest.fn(async (_args?: unknown): Promise<unknown[]> => []),
+  },
   appointment: { findUnique: jest.fn(async (): Promise<unknown> => null) },
   payment: {
     findUnique: jest.fn(async (): Promise<unknown> => ({ userId: "payer-1" })),
   },
   meeting: {
     findMany: jest.fn(async (_args: unknown): Promise<unknown[]> => []),
+    findFirst: jest.fn(async (_args: unknown): Promise<unknown> => null),
   },
   appointmentParticipant: {
     findMany: jest.fn(
@@ -98,6 +151,10 @@ const mockRecordSystemEvent = jest.fn();
 jest.mock("../../lib/enterprise/system-events", () => ({
   recordSystemEvent: (...args: unknown[]) => mockRecordSystemEvent(...args),
 }));
+jest.mock("../../lib/payments/operations/booking-refund", () => ({
+  restampRefundedSeats: (...args: unknown[]) =>
+    mockRestampRefundedSeats(...args),
+}));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_name: string, _opts: unknown, fn: () => unknown) => fn(),
   readJobCheckpoint: jest.fn(async () => null),
@@ -112,6 +169,7 @@ const plan = (hostUserId: string) => ({
 const webinarSeatContext = {
   deletedAt: null,
   organizationId: null,
+  occurrences: [] as { consultantProfileId: string | null }[],
   webinar: { id: "w1", status: "SCHEDULED", webinarPlan: plan("host-1") },
   class: null,
   consultation: null,
@@ -122,6 +180,7 @@ const webinarSeatContext = {
 const directSeatContext = (status: string) => ({
   deletedAt: null,
   organizationId: null,
+  occurrences: [],
   webinar: null,
   class: null,
   consultation: {
@@ -153,6 +212,12 @@ function serveMeetings(rows: { id: string; streamCallId: string }[]) {
       return rows.slice(start, start + take);
     },
   );
+  mockRevocationPrisma.meeting.findFirst.mockImplementation(
+    async (args: unknown) => {
+      const { where } = args as { where: { id: string } };
+      return rows.find((r) => r.id === where.id) ?? null;
+    },
+  );
 }
 
 const settledCalls = () =>
@@ -180,6 +245,12 @@ beforeEach(() => {
   seats.refunded = [];
   seats.admitted = [];
   seats.holders = [];
+  retryRows = [];
+  mockRestampRefundedSeats.mockResolvedValue("stamped");
+  mockRevocationPrisma.refund.findUnique.mockResolvedValue({
+    paymentId: "pay-1",
+  });
+  mockRevocationPrisma.user.findMany.mockResolvedValue([]);
   mockRemoveMembers.mockResolvedValue({});
   mockRevocationUpdateCallMembers.mockResolvedValue({});
   mockRevocationGetCall.mockResolvedValue({ call: { ended_at: undefined } });
@@ -291,8 +362,9 @@ describe("revocation when a seat or booking ends", () => {
     const queries = mockRevocationPrisma.meeting.findMany.mock.calls.map(
       ([args]) => args as { where: unknown; take: number },
     );
-    expect(queries[0].where).toEqual({
-      occurrence: { appointmentId: "appt-1" },
+    expect(queries[0]).toMatchObject({
+      where: { occurrence: { appointmentId: "appt-1" } },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(queries).toHaveLength(2);
     expect(mockRevocationUpdateCallMembers).toHaveBeenCalledTimes(51);
@@ -387,6 +459,8 @@ describe("revocation when a seat or booking ends", () => {
   });
 });
 
+const refundIntent = { refundId: "refund-1", payerUserId: "payer-1" };
+
 describe("refund revocation", () => {
   const refundedSeat = (status: string) => ({
     userId: "client-1",
@@ -406,12 +480,12 @@ describe("refund revocation", () => {
     );
   });
 
-  it("persists a payment intent before seat discovery, then seat intents, and settles both", async () => {
+  it("persists a refund intent before any read, then seat intents, and settles both", async () => {
     seats.refunded = [refundedSeat("SCHEDULED")];
     const { revokeRefundedSeatAccess } =
       await import("../../lib/stream/access-revocation");
 
-    await revokeRefundedSeatAccess("pay-1");
+    await revokeRefundedSeatAccess(refundIntent);
 
     const created =
       mockRevocationPrisma.streamRevocationRetry.createMany.mock.calls.map(
@@ -421,7 +495,7 @@ describe("refund revocation", () => {
       expect.objectContaining({
         kind: "REFUND_ACCESS_REVOKE",
         userId: "payer-1",
-        planId: "pay-1",
+        planId: "refund-1",
       }),
       expect.objectContaining({
         kind: "SEAT_ACCESS_REVOKE",
@@ -445,7 +519,7 @@ describe("refund revocation", () => {
     const { revokeRefundedSeatAccess } =
       await import("../../lib/stream/access-revocation");
 
-    await revokeRefundedSeatAccess("pay-1");
+    await revokeRefundedSeatAccess(refundIntent);
 
     expect(
       mockRevocationPrisma.streamRevocationRetry.createMany,
@@ -461,7 +535,9 @@ describe("refund revocation", () => {
     const { revokeRefundedSeatAccess } =
       await import("../../lib/stream/access-revocation");
 
-    await expect(revokeRefundedSeatAccess("pay-1")).resolves.toBeUndefined();
+    await expect(
+      revokeRefundedSeatAccess(refundIntent),
+    ).resolves.toBeUndefined();
 
     expect(
       mockRevocationPrisma.streamRevocationRetry.createMany,
@@ -478,7 +554,7 @@ describe("sweep redrive", () => {
   const row = (kind: "SEAT_ACCESS_REVOKE" | "REFUND_ACCESS_REVOKE") => ({
     kind,
     userId: kind === "SEAT_ACCESS_REVOKE" ? "attendee-1" : "payer-1",
-    planId: kind === "SEAT_ACCESS_REVOKE" ? "appt-1" : "pay-1",
+    planId: kind === "SEAT_ACCESS_REVOKE" ? "appt-1" : "refund-1",
     planType: null,
     counterpartUserId: null,
     createdAt: new Date(),
@@ -566,7 +642,7 @@ describe("grant fence", () => {
       "host-1",
     ]);
 
-    expect(lost).toEqual(["attendee-1"]);
+    expect(lost).toEqual({ verified: true, lost: ["attendee-1"] });
     expect(mockRevocationUpdateCallMembers).toHaveBeenCalledWith(
       "default",
       "occurrence-0",
@@ -591,7 +667,10 @@ describe("grant fence", () => {
     const { fenceSeatGrants } =
       await import("../../lib/stream/access-revocation");
 
-    await expect(fenceSeatGrants("appt-1", ["crew-1"])).resolves.toEqual([]);
+    await expect(fenceSeatGrants("appt-1", ["crew-1"])).resolves.toEqual({
+      verified: true,
+      lost: [],
+    });
     expect(mockRevocationUpdateCallMembers).not.toHaveBeenCalled();
   });
 
@@ -602,11 +681,344 @@ describe("grant fence", () => {
       await import("../../lib/stream/access-revocation");
 
     await expect(fenceSeatGrants("appt-1", ["attendee-keep"])).resolves.toEqual(
-      [],
+      { verified: true, lost: [] },
     );
     expect(
       mockRevocationPrisma.streamRevocationRetry.createMany,
     ).not.toHaveBeenCalled();
+  });
+});
+
+describe("grant fence when the seat check cannot be read", () => {
+  it("refuses to vouch for the grant, persists it for the sweep and reports once", async () => {
+    mockRevocationPrisma.appointment.findUnique.mockRejectedValueOnce(
+      new Error("db timeout after the grant"),
+    );
+    const { fenceSeatGrants } =
+      await import("../../lib/stream/access-revocation");
+
+    await expect(fenceSeatGrants("appt-1", ["attendee-1"])).resolves.toEqual({
+      verified: false,
+    });
+
+    expect(
+      mockRevocationPrisma.streamRevocationRetry.createMany,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [
+          expect.objectContaining({
+            kind: "SEAT_ACCESS_REVOKE",
+            userId: "attendee-1",
+            planId: "appt-1",
+          }),
+        ],
+      }),
+    );
+    expect(mockReport).toHaveBeenCalledTimes(1);
+    expect(mockReport).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ op: "seat.fenceGrant" }),
+    );
+    expect(mockRevocationUpdateCallMembers).not.toHaveBeenCalled();
+  });
+
+  it("spares an occurrence host who also holds a lapsed client seat", async () => {
+    mockRevocationPrisma.appointment.findUnique.mockResolvedValue({
+      ...webinarSeatContext,
+      occurrences: [{ consultantProfileId: "cp-occ" }],
+    });
+    mockRevocationPrisma.user.findMany.mockResolvedValue([{ id: "occ-host" }]);
+    seats.holders = ["occ-host"];
+    const { fenceSeatGrants } =
+      await import("../../lib/stream/access-revocation");
+
+    await expect(fenceSeatGrants("appt-1", ["occ-host"])).resolves.toEqual({
+      verified: true,
+      lost: [],
+    });
+    expect(mockRevocationPrisma.user.findMany).toHaveBeenCalledWith({
+      where: { consultantProfileId: { in: ["cp-occ"] } },
+      select: { id: true },
+    });
+    expect(mockRevocationUpdateCallMembers).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the plan host", "host-1"],
+    ["an occurrence host", "occ-host"],
+  ])(
+    "never removes %s named in a fence-failure intent when the sweep drives it",
+    async (_label, userId) => {
+      mockRevocationPrisma.appointment.findUnique.mockResolvedValue({
+        ...webinarSeatContext,
+        occurrences: [{ consultantProfileId: "cp-occ" }],
+      });
+      mockRevocationPrisma.user.findMany.mockResolvedValue([
+        { id: "occ-host" },
+      ]);
+      const { redriveAccessRevocation } =
+        await import("../../lib/stream/access-revocation");
+
+      await expect(
+        redriveAccessRevocation({
+          kind: "SEAT_ACCESS_REVOKE",
+          userId,
+          planId: "appt-1",
+          planType: null,
+          counterpartUserId: null,
+          createdAt: new Date(),
+        }),
+      ).resolves.toBeNull();
+      expect(mockRemoveMembers).not.toHaveBeenCalled();
+      expect(mockRevocationUpdateCallMembers).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("room progress across sweep attempts", () => {
+  const seatRow = {
+    kind: "SEAT_ACCESS_REVOKE" as const,
+    userId: "attendee-1",
+    planId: "appt-1",
+    planType: null,
+    counterpartUserId: null,
+    createdAt: new Date(),
+  };
+  const openIntent = (resumeAfter: string | null): RetryRow => ({
+    id: "retry-1",
+    kind: "SEAT_ACCESS_REVOKE",
+    planId: "appt-1",
+    userId: "attendee-1",
+    status: "PENDING",
+    resumeAfter,
+    updatedAt: new Date(1_000),
+  });
+  const visitedRooms = () =>
+    mockRevocationUpdateCallMembers.mock.calls.map(([, id]) => id as string);
+
+  it("covers all 7 rooms within 6 budget-limited attempts at 5 s per removal", async () => {
+    serveMeetings(meetings(7));
+    retryRows = [openIntent(null)];
+    let now = 1_000_000;
+    jest.spyOn(Date, "now").mockImplementation(() => now);
+    // Each removal takes 5 s once Stream has it.
+    mockRevocationUpdateCallMembers.mockImplementation(async () => {
+      await Promise.resolve();
+      now += 5_000;
+      return {};
+    });
+    const { redriveAccessRevocation } =
+      await import("../../lib/stream/access-revocation");
+
+    const outcomes: (string | null)[] = [];
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const outcome = await redriveAccessRevocation(seatRow);
+      outcomes.push(outcome);
+      if (outcome === null) break;
+      now += 60_000;
+    }
+
+    expect(outcomes).toEqual(["time budget spent before call removal", null]);
+    expect(visitedRooms()).toEqual(meetings(7).map((m) => m.streamCallId));
+    expect(retryRows[0].resumeAfter).toBe("m003");
+  });
+
+  it("stops a user's cursor at a room that kept them, while the scan goes on", async () => {
+    serveMeetings(meetings(3));
+    retryRows = [openIntent(null)];
+    mockRevocationUpdateCallMembers.mockImplementation(
+      async (_type: string, id: string) => {
+        if (id === "occurrence-1") throw new Error("refused");
+        return {};
+      },
+    );
+    const { redriveAccessRevocation } =
+      await import("../../lib/stream/access-revocation");
+
+    await expect(redriveAccessRevocation(seatRow)).resolves.toBe(
+      "call removal failed",
+    );
+    expect(visitedRooms()).toEqual([
+      "occurrence-0",
+      "occurrence-1",
+      "occurrence-2",
+    ]);
+    expect(retryRows[0].resumeAfter).toBe("m000");
+  });
+
+  it("resumes after the saved room and still visits rooms created after it", async () => {
+    serveMeetings(meetings(5));
+    retryRows = [openIntent("m002")];
+    const { redriveAccessRevocation } =
+      await import("../../lib/stream/access-revocation");
+
+    await expect(redriveAccessRevocation(seatRow)).resolves.toBeNull();
+    expect(visitedRooms()).toEqual(["occurrence-3", "occurrence-4"]);
+  });
+
+  it("rescans from the first room when the saved room no longer exists", async () => {
+    serveMeetings(meetings(2));
+    retryRows = [openIntent("m-deleted")];
+    const { redriveAccessRevocation } =
+      await import("../../lib/stream/access-revocation");
+
+    await expect(redriveAccessRevocation(seatRow)).resolves.toBeNull();
+    expect(visitedRooms()).toEqual(["occurrence-0", "occurrence-1"]);
+  });
+
+  it("keeps no progress from a drive whose row was re-armed meanwhile", async () => {
+    serveMeetings(meetings(2));
+    retryRows = [openIntent(null)];
+    let first = true;
+    mockRevocationUpdateCallMembers.mockImplementation(async () => {
+      if (first) {
+        first = false;
+        retryRows[0].updatedAt = new Date(5_000);
+        return {};
+      }
+      throw new Error("down");
+    });
+    const { redriveAccessRevocation } =
+      await import("../../lib/stream/access-revocation");
+
+    await redriveAccessRevocation(seatRow);
+
+    expect(retryRows[0].resumeAfter).toBeNull();
+  });
+
+  it("re-arming an open intent restarts its room scan", async () => {
+    const { enqueueStreamRevocationRetries } =
+      await import("../../lib/stream/access-revocation");
+
+    await enqueueStreamRevocationRetries([
+      { kind: "SEAT_ACCESS_REVOKE", userId: "attendee-1", planId: "appt-1" },
+    ]);
+
+    expect(
+      mockRevocationPrisma.streamRevocationRetry.updateMany,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "PENDING", resumeAfter: null }),
+      }),
+    );
+  });
+});
+
+describe("refund intent keyed by the Refund row", () => {
+  it("writes the intent even when every read after it fails", async () => {
+    mockRevocationPrisma.refund.findUnique.mockRejectedValue(
+      new Error("db down"),
+    );
+    const { revokeRefundedSeatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    await expect(
+      revokeRefundedSeatAccess(refundIntent),
+    ).resolves.toBeUndefined();
+
+    expect(
+      mockRevocationPrisma.streamRevocationRetry.createMany,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [
+          expect.objectContaining({
+            kind: "REFUND_ACCESS_REVOKE",
+            userId: "payer-1",
+            planId: "refund-1",
+          }),
+        ],
+      }),
+    );
+    expect(mockRevocationPrisma.payment.findUnique).not.toHaveBeenCalled();
+    expect(settledCalls()).toHaveLength(0);
+  });
+
+  it("re-stamps the refund's seats before the sweep discovers and revokes them", async () => {
+    seats.refunded = [
+      {
+        userId: "client-1",
+        appointmentId: "appt-1",
+        appointment: {
+          webinar: null,
+          class: null,
+          consultation: { status: "SCHEDULED" },
+          subscription: null,
+          trial: null,
+        },
+      },
+    ];
+    mockRevocationPrisma.appointment.findUnique.mockResolvedValue(
+      directSeatContext("SCHEDULED"),
+    );
+    const { redriveAccessRevocation } =
+      await import("../../lib/stream/access-revocation");
+
+    await expect(
+      redriveAccessRevocation({
+        kind: "REFUND_ACCESS_REVOKE",
+        userId: "payer-1",
+        planId: "refund-1",
+        planType: null,
+        counterpartUserId: null,
+        createdAt: new Date(),
+      }),
+    ).resolves.toBeNull();
+
+    expect(mockRestampRefundedSeats).toHaveBeenCalledWith("refund-1");
+    const discovery =
+      mockRevocationPrisma.appointmentParticipant.findMany.mock
+        .invocationCallOrder[0];
+    expect(mockRestampRefundedSeats.mock.invocationCallOrder[0]).toBeLessThan(
+      discovery,
+    );
+    expect(
+      mockRevocationPrisma.appointmentParticipant.findMany,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { paymentId: "pay-1", status: "REFUNDED" },
+      }),
+    );
+    expect(mockRevocationUpdateCallMembers).toHaveBeenCalledWith(
+      "default",
+      "occurrence-0",
+      { remove_members: ["client-1"] },
+    );
+  });
+
+  it("settles a failed refund's intent with no seat to revoke", async () => {
+    mockRestampRefundedSeats.mockResolvedValue("skipped");
+    const { revokeRefundedSeatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    await revokeRefundedSeatAccess(refundIntent);
+
+    expect(mockRevocationUpdateCallMembers).not.toHaveBeenCalled();
+    expect(settledCalls()).toEqual([
+      expect.objectContaining({
+        where: expect.objectContaining({
+          kind: "REFUND_ACCESS_REVOKE",
+          planId: "refund-1",
+        }),
+      }),
+    ]);
+  });
+
+  it("keeps the intent owed while its Refund row cannot be found", async () => {
+    mockRevocationPrisma.refund.findUnique.mockResolvedValue(null);
+    const { redriveAccessRevocation } =
+      await import("../../lib/stream/access-revocation");
+
+    await expect(
+      redriveAccessRevocation({
+        kind: "REFUND_ACCESS_REVOKE",
+        userId: "payer-1",
+        planId: "refund-1",
+        planType: null,
+        counterpartUserId: null,
+        createdAt: new Date(),
+      }),
+    ).resolves.toBe("Refund row not found");
+    expect(mockRestampRefundedSeats).not.toHaveBeenCalled();
   });
 });
 
@@ -754,5 +1166,92 @@ describe("daily membership reconciler", () => {
       channelsSkippedSuspicious: 0,
       membersRemoved: 0,
     });
+  });
+});
+
+describe("a writer settles only the intent generation it wrote", () => {
+  const writtenGenerations = () =>
+    mockRevocationPrisma.streamRevocationRetry.createMany.mock.calls.map(
+      ([args]) =>
+        (args as { data: { kind: string; nextRetryAt: Date }[] }).data[0],
+    );
+
+  it("settles the seat rows at the generation its own persist wrote", async () => {
+    const { revokeEndedSeatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    await revokeEndedSeatAccess("appt-1", ["attendee-1"]);
+
+    const [written] = writtenGenerations();
+    const rearm = mockRevocationPrisma.streamRevocationRetry.updateMany.mock
+      .calls[0][0] as { data: { nextRetryAt: Date } };
+    expect(rearm.data.nextRetryAt).toBe(written.nextRetryAt);
+    expect(settledCalls()).toEqual([
+      expect.objectContaining({
+        where: expect.objectContaining({
+          kind: "SEAT_ACCESS_REVOKE",
+          nextRetryAt: written.nextRetryAt,
+        }),
+      }),
+    ]);
+  });
+
+  it("settles nothing when its own persist failed, so another writer's row stays owed", async () => {
+    mockRevocationPrisma.streamRevocationRetry.createMany.mockRejectedValueOnce(
+      new Error("db down"),
+    );
+    const { revokeEndedSeatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    await revokeEndedSeatAccess("appt-1", ["attendee-1"]);
+
+    expect(mockRevocationUpdateCallMembers).toHaveBeenCalled();
+    expect(settledCalls()).toHaveLength(0);
+  });
+
+  it("settles a refund's seat and refund rows each at its own generation", async () => {
+    seats.refunded = [
+      {
+        userId: "client-1",
+        appointmentId: "appt-1",
+        appointment: {
+          webinar: null,
+          class: null,
+          consultation: { status: "SCHEDULED" },
+          subscription: null,
+          trial: null,
+        },
+      },
+    ];
+    mockRevocationPrisma.appointment.findUnique.mockResolvedValue(
+      directSeatContext("SCHEDULED"),
+    );
+    let tick = 2_000_000;
+    jest.spyOn(Date, "now").mockImplementation(() => (tick += 1));
+    const { revokeRefundedSeatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    await revokeRefundedSeatAccess(refundIntent);
+
+    const [refundRow, seatRow] = writtenGenerations();
+    expect(refundRow.kind).toBe("REFUND_ACCESS_REVOKE");
+    expect(seatRow.kind).toBe("SEAT_ACCESS_REVOKE");
+    expect(refundRow.nextRetryAt).not.toEqual(seatRow.nextRetryAt);
+    expect(
+      settledCalls().map((c) => [c.where.kind, c.where.nextRetryAt]),
+    ).toEqual([
+      ["SEAT_ACCESS_REVOKE", seatRow.nextRetryAt],
+      ["REFUND_ACCESS_REVOKE", refundRow.nextRetryAt],
+    ]);
+  });
+
+  it("gives a queued collaborator row a fresh generation the sweep can check", async () => {
+    const { enqueueCollaboratorRevocationRetry } =
+      await import("../../lib/stream/access-revocation");
+
+    await enqueueCollaboratorRevocationRetry("webinar", "plan-1", "collab-1");
+
+    const [written] = writtenGenerations();
+    expect(written.nextRetryAt).toBeInstanceOf(Date);
   });
 });

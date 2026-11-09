@@ -107,6 +107,10 @@ jest.mock("../../lib/observability/report", () => ({
 // Only the second half of this file uses it: the route never touches prisma,
 // but the REAL resolveMeetingAccess — exercised below through requireActual —
 // is nothing but database reads.
+// The seat fence has its own suite; here every grant re-checks as still admitted.
+jest.mock("../../lib/stream/access-revocation", () => ({
+  fenceSeatGrants: jest.fn(async () => ({ verified: true, lost: [] })),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {

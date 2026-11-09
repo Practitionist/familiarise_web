@@ -33,6 +33,7 @@ import prisma, { type PrismaLike } from "@/lib/prisma";
 import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { SWEEP_START_DEADLINE_MS } from "@/lib/cron/run-deadline";
 import {
   applyStreamEnforcement,
   restoreStreamAccess,
@@ -76,6 +77,9 @@ export interface ModerationRetryOptions {
 const runFailures = createRunFailureReporter("moderation");
 
 const MAX_ATTEMPTS = 6;
+
+/** A seat or refund revocation is not started with less than this left before the run deadline. */
+const MIN_SEAT_REVOCATION_SLICE_MS = 5_000;
 
 const RETRYABLE_ACTIONS: ModerationActionType[] = [
   "USER_BANNED",
@@ -232,6 +236,7 @@ export async function retryModerationEnforcement(
 async function retryModerationEnforcementUnlocked(
   opts: ModerationRetryOptions = {},
 ): Promise<ModerationRetryResult> {
+  const runStartedAt = Date.now();
   const maxAttempts = opts.maxAttempts ?? 6;
   const giveUpAfterHours = opts.giveUpAfterHours ?? 72;
   const limit = opts.limit ?? 100;
@@ -286,7 +291,12 @@ async function retryModerationEnforcementUnlocked(
   // erasures it could not land; there is no erasure sweep of its own, so this
   // one drains them.
   const settledRequestIds = new Set<string>();
-  await drainErasureRevocations(result, limit, settledRequestIds);
+  await drainErasureRevocations(
+    result,
+    limit,
+    settledRequestIds,
+    runStartedAt + SWEEP_START_DEADLINE_MS,
+  );
   await drainVendorErasureRetries(result, limit, settledRequestIds);
   await finalizeCompletedErasureRequests(settledRequestIds);
 
@@ -349,23 +359,41 @@ async function recordErasureOutboxOutcome(params: {
   result: ModerationRetryResult;
   settledRequestIds: Set<string>;
   recovered?: "erasureRevocationsRecovered" | "accessRevocationsRecovered";
+  /** Access rows only: the `nextRetryAt` read with the row, which every re-arm replaces. */
+  generation?: { nextRetryAt: Date | null };
 }): Promise<void> {
   const { delegate, row, error, errorLabel, now, result, settledRequestIds } =
     params;
   const recovered = params.recovered ?? "erasureRevocationsRecovered";
   const attempts = row.attempts + 1;
   const gaveUp = Boolean(error) && attempts >= MAX_ATTEMPTS;
-  await delegate.update({
-    where: { id: row.id },
-    data: error
-      ? {
-          status: "FAILED",
-          attempts,
-          lastError: error,
-          nextRetryAt: gaveUp ? null : nextRetryAt(attempts, now),
-        }
-      : { status: "SUCCEEDED", attempts, completedAt: now },
-  });
+  const data = error
+    ? {
+        status: "FAILED" as const,
+        attempts,
+        lastError: error,
+        nextRetryAt: gaveUp ? null : nextRetryAt(attempts, now),
+      }
+    : { status: "SUCCEEDED" as const, attempts, completedAt: now };
+  if (params.generation) {
+    const { count } = await prisma.streamRevocationRetry.updateMany({
+      where: {
+        id: row.id,
+        attempts: row.attempts,
+        nextRetryAt: params.generation.nextRetryAt,
+      },
+      data,
+    });
+    if (count === 0) {
+      // A writer re-armed the row during this attempt; its new revocation stays owed.
+      console.warn(
+        JSON.stringify({ event: "access_revocation_rearmed", rowId: row.id }),
+      );
+      return;
+    }
+  } else {
+    await delegate.update({ where: { id: row.id }, data });
+  }
   if (error) {
     if (gaveUp) {
       result.gaveUp++;
@@ -387,10 +415,15 @@ async function recordErasureOutboxOutcome(params: {
   }
 }
 
+/**
+ * Stops starting rows at `runDeadlineMs`, and before a seat or refund row once
+ * less than its minimum slice is left; an unstarted row stays due for the next run.
+ */
 async function drainErasureRevocations(
   result: ModerationRetryResult,
   limit: number,
   settledRequestIds: Set<string>,
+  runDeadlineMs: number,
 ): Promise<void> {
   if (!prisma.streamRevocationRetry?.findMany) return;
   const now = new Date();
@@ -407,6 +440,7 @@ async function drainErasureRevocations(
       planType: true,
       planId: true,
       attempts: true,
+      nextRetryAt: true,
       createdAt: true,
       erasureRequest: { select: { userId: true } },
     },
@@ -422,7 +456,14 @@ async function drainErasureRevocations(
   const { redriveAccessRevocation } =
     await import("@/lib/stream/access-revocation");
   for (const row of rows) {
+    if (Date.now() >= runDeadlineMs) return;
     const { kind } = row;
+    if (
+      (kind === "SEAT_ACCESS_REVOKE" || kind === "REFUND_ACCESS_REVOKE") &&
+      runDeadlineMs - Date.now() < MIN_SEAT_REVOCATION_SLICE_MS
+    ) {
+      return;
+    }
     let error: string | null;
     if (kind === "ERASURE_REVOKE") {
       error = row.erasureRequest
@@ -436,11 +477,10 @@ async function drainErasureRevocations(
           )
         : "Erasure retry has no erasure request";
     } else if (row.userId) {
-      error = await redriveAccessRevocation({
-        ...row,
-        kind,
-        userId: row.userId,
-      }).catch((error_: unknown) => errMsg(error_));
+      error = await redriveAccessRevocation(
+        { ...row, kind, userId: row.userId },
+        { deadlineMs: runDeadlineMs },
+      ).catch((error_: unknown) => errMsg(error_));
     } else {
       error = `${kind} retry has no user`;
     }
@@ -457,6 +497,9 @@ async function drainErasureRevocations(
         kind === "ERASURE_REVOKE"
           ? "erasureRevocationsRecovered"
           : "accessRevocationsRecovered",
+      ...(kind === "ERASURE_REVOKE"
+        ? {}
+        : { generation: { nextRetryAt: row.nextRetryAt } }),
     });
   }
 }
