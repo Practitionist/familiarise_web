@@ -22,6 +22,7 @@ import {
   slotCellClassName,
   type SlotStatusKey,
 } from "@/lib/scheduling/interval-status-tokens";
+import type { GridBlock } from "@/lib/scheduling/grid-blocks";
 import type {
   CellView,
   OverlapDetail,
@@ -49,6 +50,10 @@ export const GRID_COLS =
 
 /** One half-hour row: 24px, so an hour is 48px. Blocks are placed on this pitch. */
 export const GRID_ROW_PX = 24;
+
+/** The sticky header's height, and the matching offset that puts the block layer under it. */
+const HEADER_HEIGHT = "h-14";
+const HEADER_OFFSET = "top-14";
 
 /** A cell fills its slot on the ruled canvas: no radius, no gap, 11px text. */
 const CELL_GEOMETRY = "h-6 rounded-none text-[11px]";
@@ -138,7 +143,6 @@ function sameCellProps(
   return (
     a.cell.startMs === b.cell.startMs &&
     a.cell.statusKey === b.cell.statusKey &&
-    a.cell.text === b.cell.text &&
     a.cell.stateLabel === b.cell.stateLabel &&
     a.cell.isRequested === b.cell.isRequested &&
     a.dayIndex === b.dayIndex &&
@@ -208,7 +212,6 @@ const SlotCell = memo(function SlotCell({
       onFocus={() => onFocusCell(rowKey, dayIndex)}
     >
       <SlotStatusIcon name={token.icon} />
-      {cell.text && <span className="truncate">{cell.text}</span>}
     </button>
   );
   return (
@@ -280,12 +283,68 @@ const SkippedCell = memo(function SkippedCell({
   );
 });
 
+/**
+ * The overlay of session blocks, laid on the same columns and 24px row pitch
+ * as the cells beneath. Decorative: the cells keep focus, clicks and names.
+ */
+function BlockLayer({
+  blocks,
+  rows,
+}: Readonly<{ blocks: readonly GridBlock[]; rows: RowWindow }>) {
+  const count = rows.to - rows.from;
+  return (
+    <div
+      aria-hidden
+      data-testid="grid-blocks"
+      className={cn(
+        GRID_COLS,
+        "pointer-events-none absolute inset-x-0 z-10",
+        HEADER_OFFSET,
+      )}
+      style={{ gridTemplateRows: `repeat(${count}, ${GRID_ROW_PX}px)` }}
+    >
+      {blocks.map((block) => {
+        const from = Math.max(block.fromRow, rows.from);
+        const to = Math.min(block.toRow, rows.to);
+        if (to <= from) return null;
+        const token = SLOT_STATUS_TOKENS[block.statusKey];
+        return (
+          <div
+            key={block.key}
+            data-block-state={block.statusKey}
+            style={{
+              gridColumn: block.dayIndex + 2,
+              gridRow: `${from - rows.from + 1} / span ${to - from}`,
+            }}
+            className={cn(
+              "m-px flex min-w-0 items-start gap-1 overflow-hidden rounded-md border px-1.5 py-0.5 text-xs leading-tight shadow-sm",
+              token.fill,
+              token.border,
+              token.text,
+              token.pattern,
+              block.isRequested && REQUESTED_OUTLINE.className,
+            )}
+          >
+            <SlotStatusIcon name={token.icon} className="mt-0.5" />
+            <span className="min-w-0 break-words">
+              <span className="font-medium">{block.label}</span>
+              {` · ${block.timeLabel}`}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export interface WeekGridProps {
   days: Date[];
   axis: AxisRow[];
   matrix: (CellView | null)[][];
   /** The axis rows drawn: the open-hours window or the full day. */
   rows: RowWindow;
+  /** Busy and picked runs, drawn as one labelled overlay each. */
+  blocks: readonly GridBlock[];
   /** Index of today's column, or -1. */
   todayIndex: number;
   inPeriodDays: boolean[];
@@ -326,6 +385,7 @@ export function WeekGrid({
   axis,
   matrix,
   rows,
+  blocks,
   todayIndex,
   inPeriodDays,
   nowAtomStartMs,
@@ -507,133 +567,141 @@ export function WeekGrid({
       </p>
       <div
         ref={setContainer}
-        role="grid"
-        aria-label={label}
-        aria-describedby={helpId}
-        aria-busy={refreshing || undefined}
-        aria-multiselectable={readOnly ? undefined : true}
-        aria-colcount={8}
-        className="relative flex-1 overflow-y-auto scrollbar-thin min-h-0"
+        className="relative min-h-0 flex-1 overflow-y-auto scrollbar-thin"
       >
         <div
-          role="row"
-          className={cn(
-            GRID_COLS,
-            "sticky top-0 z-30 border-b-2 border-slate-300 bg-background",
-          )}
+          role="grid"
+          aria-label={label}
+          aria-describedby={helpId}
+          aria-busy={refreshing || undefined}
+          aria-multiselectable={readOnly ? undefined : true}
+          aria-colcount={8}
         >
-          <div role="columnheader" className="min-w-0">
-            <span className="sr-only">Time</span>
-          </div>
-          {days.map((date, index) => (
-            <div
-              key={date.toISOString()}
-              role="columnheader"
-              aria-current={index === todayIndex ? "date" : undefined}
-              className={cn(
-                "flex h-14 min-w-0 flex-col items-center justify-center border-l border-slate-200 px-1 text-center",
-                inPeriodDays[index] && "bg-blue-50",
-                index === todayIndex && "bg-primary/10",
-              )}
-            >
-              <div
-                className={cn(
-                  "text-[11px] font-medium uppercase tracking-wide text-muted-foreground",
-                  index === todayIndex && "text-primary",
-                )}
-              >
-                {formatWeekdayShort(date)}
-              </div>
-              <div
-                className={cn(
-                  "text-sm font-semibold leading-6 md:text-base",
-                  index === todayIndex &&
-                    "min-w-7 rounded-full bg-primary px-1.5 text-primary-foreground",
-                )}
-              >
-                {formatDayOfMonth(date)}
-              </div>
+          <div
+            role="row"
+            className={cn(
+              GRID_COLS,
+              "sticky top-0 z-30 border-b-2 border-slate-300 bg-background",
+            )}
+          >
+            <div role="columnheader" className="min-w-0">
+              <span className="sr-only">Time</span>
             </div>
-          ))}
-        </div>
-        {navRows.map((navRow) => {
-          const axisRow = axis[navRow.axisIndex];
-          const line = matrix[navRow.axisIndex] ?? [];
-          // Neighbours outside the drawn rows never join: their border closes the run.
-          const above =
-            navRow.axisIndex > rows.from
-              ? matrix[navRow.axisIndex - 1]
-              : undefined;
-          const below =
-            navRow.axisIndex + 1 < rows.to
-              ? matrix[navRow.axisIndex + 1]
-              : undefined;
-          const endsHour = axisRow.minuteOfDay % 60 === 30;
-          return (
-            <div
-              key={navRow.key}
-              role="row"
-              data-row={navRow.axisIndex}
-              data-nav-key={navRow.key}
-              className={GRID_COLS}
-            >
+            {days.map((date, index) => (
               <div
-                role="rowheader"
-                className="flex h-6 min-w-0 items-start justify-end whitespace-nowrap pr-1 text-[11px] leading-none tabular-nums text-muted-foreground md:pr-2"
+                key={date.toISOString()}
+                role="columnheader"
+                aria-current={index === todayIndex ? "date" : undefined}
+                className={cn(
+                  "flex min-w-0 flex-col items-center justify-center border-l border-slate-200 px-1 text-center",
+                  HEADER_HEIGHT,
+                  inPeriodDays[index] && "bg-blue-50",
+                  index === todayIndex && "bg-primary/10",
+                )}
               >
-                {/* Only hours are printed; the half-hour keeps its name for screen readers. */}
-                <span
-                  className={axisRow.minuteOfDay % 60 === 0 ? "" : "sr-only"}
+                <div
+                  className={cn(
+                    "text-[11px] font-medium uppercase tracking-wide text-muted-foreground",
+                    index === todayIndex && "text-primary",
+                  )}
                 >
-                  {axisRow.label}
-                </span>
+                  {formatWeekdayShort(date)}
+                </div>
+                <div
+                  className={cn(
+                    "text-sm font-semibold leading-6 md:text-base",
+                    index === todayIndex &&
+                      "min-w-7 rounded-full bg-primary px-1.5 text-primary-foreground",
+                  )}
+                >
+                  {formatDayOfMonth(date)}
+                </div>
               </div>
-              {days.map((date, dayIndex) => {
-                const cell = line[dayIndex];
-                const isFocusTarget =
-                  activeFocus.rowKey === navRow.key &&
-                  activeFocus.dayIndex === dayIndex;
-                if (!cell) {
+            ))}
+          </div>
+          {navRows.map((navRow) => {
+            const axisRow = axis[navRow.axisIndex];
+            const line = matrix[navRow.axisIndex] ?? [];
+            // Neighbours outside the drawn rows never join: their border closes the run.
+            const above =
+              navRow.axisIndex > rows.from
+                ? matrix[navRow.axisIndex - 1]
+                : undefined;
+            const below =
+              navRow.axisIndex + 1 < rows.to
+                ? matrix[navRow.axisIndex + 1]
+                : undefined;
+            const endsHour = axisRow.minuteOfDay % 60 === 30;
+            return (
+              <div
+                key={navRow.key}
+                role="row"
+                data-row={navRow.axisIndex}
+                data-nav-key={navRow.key}
+                className={GRID_COLS}
+              >
+                <div
+                  role="rowheader"
+                  className="flex h-6 min-w-0 items-start justify-end whitespace-nowrap pr-1 text-[11px] leading-none tabular-nums text-muted-foreground md:pr-2"
+                >
+                  {/* Only hours are printed; the half-hour keeps its name for screen readers. */}
+                  <span
+                    className={axisRow.minuteOfDay % 60 === 0 ? "" : "sr-only"}
+                  >
+                    {axisRow.label}
+                  </span>
+                </div>
+                {days.map((date, dayIndex) => {
+                  const cell = line[dayIndex];
+                  const isFocusTarget =
+                    activeFocus.rowKey === navRow.key &&
+                    activeFocus.dayIndex === dayIndex;
+                  if (!cell) {
+                    return (
+                      <SkippedCell
+                        key={date.toISOString()}
+                        dayIndex={dayIndex}
+                        rowKey={navRow.key}
+                        endsHour={endsHour}
+                        isRepeat={axisRow.occurrence === 1}
+                        isFocusTarget={isFocusTarget}
+                        onKeyDown={handleKeyDown}
+                        onFocusCell={handleFocusCell}
+                      />
+                    );
+                  }
                   return (
-                    <SkippedCell
+                    <SlotCell
                       key={date.toISOString()}
+                      cell={cell}
                       dayIndex={dayIndex}
                       rowKey={navRow.key}
+                      zone={zone}
                       endsHour={endsHour}
-                      isRepeat={axisRow.occurrence === 1}
+                      joinTop={above?.[dayIndex]?.statusKey === cell.statusKey}
+                      joinBottom={
+                        below?.[dayIndex]?.statusKey === cell.statusKey
+                      }
                       isFocusTarget={isFocusTarget}
+                      nowFraction={
+                        dayIndex === todayIndex &&
+                        cell.startMs === nowAtomStartMs
+                          ? nowFraction
+                          : null
+                      }
+                      readOnly={readOnly}
+                      tooltip={tooltipOf(cell)}
+                      onActivate={handleActivate}
                       onKeyDown={handleKeyDown}
                       onFocusCell={handleFocusCell}
                     />
                   );
-                }
-                return (
-                  <SlotCell
-                    key={date.toISOString()}
-                    cell={cell}
-                    dayIndex={dayIndex}
-                    rowKey={navRow.key}
-                    zone={zone}
-                    endsHour={endsHour}
-                    joinTop={above?.[dayIndex]?.statusKey === cell.statusKey}
-                    joinBottom={below?.[dayIndex]?.statusKey === cell.statusKey}
-                    isFocusTarget={isFocusTarget}
-                    nowFraction={
-                      dayIndex === todayIndex && cell.startMs === nowAtomStartMs
-                        ? nowFraction
-                        : null
-                    }
-                    readOnly={readOnly}
-                    tooltip={tooltipOf(cell)}
-                    onActivate={handleActivate}
-                    onKeyDown={handleKeyDown}
-                    onFocusCell={handleFocusCell}
-                  />
-                );
-              })}
-            </div>
-          );
-        })}
+                })}
+              </div>
+            );
+          })}
+        </div>
+        <BlockLayer blocks={blocks} rows={rows} />
       </div>
     </TooltipProvider>
   );

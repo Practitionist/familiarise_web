@@ -86,6 +86,7 @@ import {
   type TimePickerFocus,
 } from "@/lib/scheduling/time-picker-focus";
 import { cn } from "@/utils/tailwind";
+import { buildGridBlocks } from "@/lib/scheduling/grid-blocks";
 import {
   buildWeekCells,
   describeAtom,
@@ -985,6 +986,11 @@ export function UnifiedCalendar({
     () => buildWeekCells(rowModel, atomContext),
     [rowModel, atomContext],
   );
+  const blocks = useMemo(
+    () => buildGridBlocks(weekCells.matrix, gridZone),
+    [weekCells.matrix, gridZone],
+  );
+
   // "Open hours" crops to the week's live rows; an all-dead week has no window.
   const [hourRange, setHourRange] = useState<"open" | "full">("open");
   const openWindow = useMemo(
@@ -1684,6 +1690,7 @@ export function UnifiedCalendar({
             axis={rowModel.axis}
             matrix={weekCells.matrix}
             rows={rowWindow}
+            blocks={blocks}
             todayIndex={todayIndex}
             inPeriodDays={periodDays}
             nowAtomStartMs={nowAtom.start.getTime()}

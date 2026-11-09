@@ -141,11 +141,9 @@ export function describeAtom(
   };
 }
 
-/** A cell ready to render: the atom plus its visible word. */
+/** A cell ready to render: the atom plus its state's name. Busy runs are labelled by their block, not the cell. */
 export interface CellView extends AtomState {
-  /** The word drawn in the cell; empty on a continuation of the same state. */
-  text: string;
-  /** The state's full name, for the accessible label and tooltip. */
+  /** The state's full name, for the accessible label, tooltip and block label. */
   stateLabel: string;
 }
 
@@ -167,13 +165,6 @@ function stateLabelOf(atom: AtomState): string {
   return SLOT_STATUS_TOKENS[atom.statusKey].label;
 }
 
-function wordOf(atom: AtomState, stateLabel: string): string {
-  if (atom.statusKey === "unavailable" || atom.statusKey === "outsidePeriod") {
-    return "";
-  }
-  return stateLabel;
-}
-
 /** One pass over the week: cells, the fold vectors and the legend's painted set. */
 export function buildWeekCells(
   rows: WeekRowModel,
@@ -184,27 +175,15 @@ export function buildWeekCells(
   const byStart = new Map<number, CellView>();
   const live: boolean[] = [];
   const outsidePeriod: boolean[] = [];
-  const previousWord: string[] = rows.cells.map(() => "");
 
   const matrix = rows.axis.map((axisRow) => {
     let rowLive = false;
     let rowOutside = false;
-    const line = rows.cells.map((dayCells, dayIndex) => {
+    const line = rows.cells.map((dayCells) => {
       const row = dayCells.get(axisRow.key);
-      if (!row) {
-        previousWord[dayIndex] = "";
-        return null;
-      }
+      if (!row) return null;
       const atom = describeAtom(row.start.getTime(), row.end.getTime(), ctx);
-      const stateLabel = stateLabelOf(atom);
-      const word = wordOf(atom, stateLabel);
-      const cell: CellView = {
-        ...atom,
-        stateLabel,
-        // The word stays on the first cell of a run; the rest repeat it silently.
-        text: word === previousWord[dayIndex] ? "" : word,
-      };
-      previousWord[dayIndex] = word;
+      const cell: CellView = { ...atom, stateLabel: stateLabelOf(atom) };
       painted.add(cell.statusKey);
       counts.set(cell.statusKey, (counts.get(cell.statusKey) ?? 0) + 1);
       if (cell.statusKey === "outsidePeriod") rowOutside = true;

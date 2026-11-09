@@ -1,7 +1,9 @@
 /**
- * The week grid shows open hours, not folded strips: the window runs from the
- * week's earliest to its latest live row with an hour of padding, closed gaps
- * inside it stay visible, and "Full day" shows every row.
+ * The week grid's layout end to end: open hours instead of folded strips
+ * (the window runs from the week's earliest to its latest live row with an
+ * hour of padding, closed gaps inside stay visible, "Full day" shows every
+ * row), and busy runs drawn as one labelled block over cells that keep
+ * their names.
  */
 
 jest.mock("../../hooks/use-toast", () => ({
@@ -32,6 +34,11 @@ const ATOM = 30 * 60 * 1000;
 const ZONE = "America/New_York";
 /** Wed 12 Jun 2030: a June week far ahead, no clock change, nothing past. */
 const FOCUS_AT = new Date(Date.UTC(2030, 5, 12, 14, 0));
+
+/** The instant of `hour:minute` on `date` June 2030 in the grid zone. */
+function at(date: number, hour: number, minute = 0): number {
+  return cellInstant(new Date(2030, 5, date, 12), hour, minute, ZONE).getTime();
+}
 
 /** 09:00–12:00 and 13:00–17:00 on Tue 11 and Wed 12 Jun: lunch stays closed. */
 function openDays(): Map<number, ServerCell> {
@@ -170,5 +177,40 @@ describe("UnifiedCalendar open-hours window", () => {
     expect(rowHeaders()).toHaveLength(48);
     fireEvent.click(screen.getByRole("button", { name: "Open hours" }));
     expect(rowHeaders()).toHaveLength(20);
+  });
+});
+
+describe("UnifiedCalendar session blocks", () => {
+  it("draws a 90-minute booking as one labelled block over three named cells", () => {
+    const cells = openDays();
+    for (let start = at(12, 10); start < at(12, 11, 30); start += ATOM) {
+      cells.set(start, {
+        startMs: start,
+        endMs: start + ATOM,
+        bookingStatus: "fully-booked",
+        tooSoon: false,
+        limitReached: false,
+        overlappingAppointments: [
+          { id: "appt-1", type: "Consultation", title: "Spanish B1" },
+        ],
+      });
+    }
+    calendarData.serverCells = cells;
+    renderGrid();
+
+    const layer = screen.getByTestId("grid-blocks");
+    expect(layer).toHaveAttribute("aria-hidden");
+    const booked = layer.querySelectorAll("[data-block-state='fullyBooked']");
+    expect(booked).toHaveLength(1);
+    expect(booked[0].textContent).toMatch(/^Spanish B1 · 10:00 am–11:30 am$/);
+
+    const grid = screen.getByRole("grid");
+    const underneath = grid.querySelectorAll("[data-slot-state='fullyBooked']");
+    expect(underneath).toHaveLength(3);
+    for (const button of Array.from(underneath)) {
+      expect(button.getAttribute("aria-label")).toMatch(/^Booked · Wed/);
+      // The cells carry no run-label text any more; the block does.
+      expect(button.textContent).toBe("");
+    }
   });
 });
