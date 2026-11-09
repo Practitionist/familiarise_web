@@ -1,8 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { CheckCircle2, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { CheckCircle2 } from "lucide-react";
+import { FormTail } from "@/components/forms/FormTail";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -278,35 +278,14 @@ export function DemoForm({
         />
       </Field>
 
-      {/* Honeypot: hidden from people, irresistible to bots. */}
-      <div aria-hidden className="hidden">
-        <Label htmlFor="demo-website">Website</Label>
-        <Input
-          id="demo-website"
-          name="website"
-          tabIndex={-1}
-          autoComplete="off"
-          value={values.website}
-          onChange={(e) => set("website")(e.target.value)}
-        />
-      </div>
-
-      {formError && (
-        <p role="alert" className="text-sm text-red-600">
-          {formError}
-        </p>
-      )}
-
-      <Button className="w-full" type="submit" size="lg" disabled={sending}>
-        {sending ? (
-          <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-            Sending…
-          </>
-        ) : (
-          "Request a demo"
-        )}
-      </Button>
+      <FormTail
+        idPrefix="demo"
+        honeypot={values.website}
+        onHoneypotChange={set("website")}
+        error={formError}
+        sending={sending}
+        submitLabel="Request a demo"
+      />
     </form>
   );
 }

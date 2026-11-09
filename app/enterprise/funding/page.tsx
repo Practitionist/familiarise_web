@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import EnterprisePageLayout from "../_components/EnterprisePageLayout";
+import { enterpriseClosing, enterpriseHero } from "../_components/page-data";
 import {
   EnterpriseAlternatingRows,
   EnterpriseComparison,
@@ -44,14 +45,12 @@ const FAQS = [
 export default function EnterpriseFundingPage() {
   return (
     <EnterprisePageLayout
-      hero={{
+      hero={enterpriseHero({
         eyebrow: "For business · Funding",
-        brandLine: "Familiarise for business",
         titleLead: "Decide who pays,",
         titleAccent: "and how far it goes.",
         subtitle:
           "Pick how a program is shared (seats or a credit pool), how it is paid (wallet, invoice or licence) and what happens when usage goes over.",
-        primaryCta: { label: "Book a demo", href: "/enterprise/demo" },
         secondaryCta: {
           label: "All business options",
           href: "/enterprise",
@@ -71,19 +70,17 @@ export default function EnterpriseFundingPage() {
           footnote:
             "Commercial terms are agreed with our team during onboarding.",
         },
-      }}
+      })}
       faqsJsonLd={FAQS}
-      closing={{
+      closing={enterpriseClosing({
         title: "Not sure which combination fits?",
         description:
           "Tell us your headcount, who should be able to book, and how finance wants to settle. We will propose a setup and walk you through it.",
-        primaryCta: { label: "Book a demo", href: "/enterprise/demo" },
         secondaryCta: {
           label: "See team training",
           href: "/enterprise/team-training",
         },
-        reassurance: "Sales-assisted setup for Indian organisations on INR.",
-      }}
+      })}
     >
       <EnterpriseComparison
         eyebrow="How it is shared"

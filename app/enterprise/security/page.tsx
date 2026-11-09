@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import EnterprisePageLayout from "../_components/EnterprisePageLayout";
+import { enterpriseClosing, enterpriseHero } from "../_components/page-data";
 import {
   EnterpriseAlternatingRows,
   EnterpriseFaqs,
@@ -38,14 +39,12 @@ const FAQS = [
 export default function EnterpriseSecurityPage() {
   return (
     <EnterprisePageLayout
-      hero={{
+      hero={enterpriseHero({
         eyebrow: "For business · Security",
-        brandLine: "Familiarise for business",
         titleLead: "Control who gets in,",
         titleAccent: "and what is kept.",
         subtitle:
           "Organisation access by invitation and role, consent before recording, and billing records finance can audit.",
-        primaryCta: { label: "Book a demo", href: "/enterprise/demo" },
         secondaryCta: {
           label: "How funding works",
           href: "/enterprise/funding",
@@ -65,16 +64,14 @@ export default function EnterpriseSecurityPage() {
           ],
           footnote: "Ask for anything else in the demo or your questionnaire.",
         },
-      }}
+      })}
       faqsJsonLd={FAQS}
-      closing={{
+      closing={enterpriseClosing({
         title: "Running a security review?",
         description:
           "Send your questionnaire with a demo request and we will answer it.",
-        primaryCta: { label: "Book a demo", href: "/enterprise/demo" },
         secondaryCta: { label: "Read the privacy policy", href: "/privacy" },
-        reassurance: "Sales-assisted setup for Indian organisations on INR.",
-      }}
+      })}
     >
       <EnterpriseAlternatingRows
         eyebrow="What we do"

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import EnterprisePageLayout from "../_components/EnterprisePageLayout";
+import { enterpriseClosing, enterpriseHero } from "../_components/page-data";
 import {
   EnterpriseFaqs,
   EnterpriseVerticalTimeline,
@@ -38,17 +39,12 @@ const FAQS = [
 export default function EnterpriseInstitutionsPage() {
   return (
     <EnterprisePageLayout
-      hero={{
+      hero={enterpriseHero({
         eyebrow: "For business · Institutions",
-        brandLine: "Familiarise for business",
         titleLead: "Put industry experts in front of",
         titleAccent: "every student batch.",
         subtitle:
           "Fund career guidance, mock interviews and mentorship for a cohort of students, and let them book vetted experts without paying out of pocket.",
-        primaryCta: {
-          label: "Book a demo",
-          href: "/enterprise/demo?useCase=institution",
-        },
         secondaryCta: {
           label: "How funding works",
           href: "/enterprise/funding",
@@ -68,22 +64,19 @@ export default function EnterpriseInstitutionsPage() {
           ],
           footnote: "Batch size and covered sessions are agreed in onboarding.",
         },
-      }}
+        demoHref: "/enterprise/demo?useCase=institution",
+      })}
       faqsJsonLd={FAQS}
-      closing={{
+      closing={enterpriseClosing({
         title: "Planning the next placement season?",
         description:
           "Tell us the batch size and the kind of guidance students need. We will propose a program and walk the placement team through it.",
-        primaryCta: {
-          label: "Book a demo",
-          href: "/enterprise/demo?useCase=institution",
-        },
         secondaryCta: {
           label: "What students get",
           href: "/use-cases/college-students",
         },
-        reassurance: "Sales-assisted setup for Indian institutions on INR.",
-      }}
+        demoHref: "/enterprise/demo?useCase=institution",
+      })}
     >
       <EnterpriseVerticalTimeline
         eyebrow="Setup"
