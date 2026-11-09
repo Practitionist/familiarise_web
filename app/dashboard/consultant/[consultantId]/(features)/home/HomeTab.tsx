@@ -18,6 +18,7 @@ import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 
 import { AgendaLists } from "./Agenda";
 import { LatestFeedback } from "./LatestFeedback";
+import { ReviewsToReply } from "./ReviewsToReply";
 import { SharePanel } from "./SharePanel";
 import {
   ClientBookingsPanel,
@@ -107,6 +108,7 @@ export function HomeTab({
         requestRows,
         needsYou,
         payoutSetup,
+        sessions,
         unreadMessages,
         basePath,
         viewerZone,
@@ -116,6 +118,7 @@ export function HomeTab({
       requestRows,
       needsYou,
       payoutSetup,
+      sessions,
       unreadMessages,
       basePath,
       viewerZone,
@@ -148,10 +151,10 @@ export function HomeTab({
 
   return (
     <DashboardContent>
+      {firstRun && <SetupChecklist steps={firstRun.steps} />}
+      <NeedsYou items={needsItems} />
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_20rem] xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="min-w-0 space-y-8">
-          {firstRun && <SetupChecklist steps={firstRun.steps} />}
-          <NeedsYou items={needsItems} />
           <NextSession
             sessions={sessions}
             consultantId={consultantId}
@@ -179,6 +182,10 @@ export function HomeTab({
             sessionsThisMonth={sessionsDelivered?.thisMonth ?? 0}
             ratingParts={deriveRatingParts(performanceSnapshot)}
           />
+          <ReviewsToReply
+            count={needsYou?.reviewsToReply ?? 0}
+            consultantId={consultantId}
+          />
           <LatestFeedback
             review={latestReview}
             consultantId={consultantId}
@@ -187,8 +194,8 @@ export function HomeTab({
         </div>
         <aside aria-label="Requests and numbers" className="min-w-0 space-y-6">
           <RequestsPanel consultantId={consultantId} query={requests} />
-          <GlancePanel rows={glanceRows} />
           <SharePanel shareUrl={shareUrl} />
+          <GlancePanel rows={glanceRows} />
           <OrgSessionsPanel
             sessions={orgSessions}
             memberOrgIds={memberOrgIds}

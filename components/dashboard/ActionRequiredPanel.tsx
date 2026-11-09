@@ -72,7 +72,9 @@ export function ActionRequiredPanel({
                 <p className="text-sm font-semibold text-foreground">
                   {item.title}
                 </p>
-                <p className="text-sm text-muted-foreground">{item.body}</p>
+                {item.body && (
+                  <p className="text-sm text-muted-foreground">{item.body}</p>
+                )}
               </div>
               <span className="flex shrink-0 items-center gap-1 text-sm font-medium text-foreground">
                 {item.ctaLabel}

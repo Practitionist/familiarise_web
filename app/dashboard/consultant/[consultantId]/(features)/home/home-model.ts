@@ -7,6 +7,7 @@ import { getAppointmentLifecycleStatus } from "@/lib/appointments/map-consultant
 import { isConfirmedStatus } from "@/lib/appointments/status";
 import { deriveConsultantActionItems } from "@/lib/dashboard/action-items";
 import { nextPayoutBatchAt } from "@/lib/dashboard/earnings-state";
+import type { ActionItem } from "@/lib/enterprise/org-activation";
 import type { InboxRowInput } from "@/lib/dashboard/requests-inbox-state";
 import { toStampDate } from "@/lib/dashboard/requests-inbox-state";
 import {
@@ -46,6 +47,8 @@ const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 export interface HomeNeedsItem {
   key: string;
+  /** Critical is red, warning amber, info blue (ActionRequiredPanel). */
+  severity: ActionItem["severity"];
   /** The one line: what is waiting. */
   text: string;
   /** Muted tail on the same line: the deadline or the reason. */
@@ -78,6 +81,8 @@ export interface HomeNeedsInput {
   requestRows: readonly NeedsYouRow[] | undefined;
   needsYou: TConsultantDashboardResponse["needsYou"];
   payoutSetup: TConsultantDashboardResponse["payoutSetup"];
+  /** Confirmed sessions to come, soonest first; one inside the hour earns a banner. */
+  sessions: readonly HomeSession[];
   unreadMessages: number;
   basePath: string;
   viewerZone: ViewerZone;
@@ -107,6 +112,7 @@ export function deriveHomeNeedsYou({
   requestRows,
   needsYou,
   payoutSetup,
+  sessions,
   unreadMessages,
   basePath,
   viewerZone,
@@ -122,6 +128,7 @@ export function deriveHomeNeedsYou({
     const deadline = row.deadline === null ? null : toStampDate(row.deadline);
     ranked.push({
       key: `request:${row.id}`,
+      severity: deadline ? "critical" : "warning",
       text: `${row.requester.name} · ${row.planTitle}`,
       detail: requestDetail(row, viewerZone, now),
       ctaLabel: "Answer",
@@ -138,6 +145,7 @@ export function deriveHomeNeedsYou({
   if (remaining > 0) {
     ranked.push({
       key: "requests-more",
+      severity: "warning",
       text:
         listed.length > 0
           ? `${remaining} more ${plural(remaining, "request", "requests")} to answer`
@@ -149,16 +157,23 @@ export function deriveHomeNeedsYou({
     });
   }
 
-  // Everything else the dashboard already derives (payout setup, reschedule
-  // replies, make-ups, documents, invitations, reviews) keeps its wording.
+  // Everything else the dashboard already derives keeps its wording and its
+  // severity. Reviews to reply to are not an urgent banner; they sit with
+  // Latest feedback.
   const derived = deriveConsultantActionItems({
     pendingApprovals: 0,
     documentsAwaitingReview: needsYou?.documentsAwaitingReview ?? 0,
     rescheduleReplies: needsYou?.rescheduleReplies ?? [],
     owedMakeUps: needsYou?.owedMakeUps ?? [],
     collabInvites: needsYou?.collabInvites ?? 0,
-    reviewsToReply: needsYou?.reviewsToReply ?? 0,
-    upcomingSessions: [],
+    reviewsToReply: 0,
+    upcomingSessions: sessions.map((s) => ({
+      id: s.occurrenceId,
+      appointmentId: s.appointment.id,
+      startsAt: s.startsAt,
+      endsAt: s.endsAt,
+      title: s.title,
+    })),
     basePath,
     payoutSetupNeeded: payoutSetup?.needed ?? false,
     livePayoutsEnabled: payoutSetup?.livePayoutsEnabled ?? true,
@@ -171,6 +186,7 @@ export function deriveHomeNeedsYou({
   derived.forEach((item, index) => {
     const base = {
       key: item.key,
+      severity: item.severity,
       text: item.title,
       ctaLabel: item.ctaLabel,
       href: item.ctaHref,
@@ -186,6 +202,8 @@ export function deriveHomeNeedsYou({
         tier: 0,
         at: deadline ? deadline.getTime() : Number.MAX_SAFE_INTEGER,
       });
+    } else if (item.key === "session-imminent") {
+      ranked.push({ ...base, detail: item.body, tier: -1, at: index });
     } else if (item.key.startsWith("reschedule-reply:")) {
       ranked.push({ ...base, tier: 1, at: index });
     } else if (item.key === "payout-setup") {
@@ -198,6 +216,7 @@ export function deriveHomeNeedsYou({
   if (unreadMessages > 0) {
     ranked.push({
       key: "unread-messages",
+      severity: "info",
       text: `${unreadMessages} unread ${plural(unreadMessages, "message", "messages")}`,
       ctaLabel: "Open",
       href: `${basePath}/messages`,
@@ -209,8 +228,9 @@ export function deriveHomeNeedsYou({
   return ranked
     .toSorted((a, b) => a.tier - b.tier || a.at - b.at)
     .slice(0, NEEDS_YOU_LIMIT)
-    .map(({ key, text, detail, ctaLabel, href }) => ({
+    .map(({ key, severity, text, detail, ctaLabel, href }) => ({
       key,
+      severity,
       text,
       detail,
       ctaLabel,

@@ -22,7 +22,9 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 
 import * as React from "react";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { reportSentryError } from "@/lib/observability/report";
 import {
@@ -32,6 +34,7 @@ import {
 import { AgendaLists } from "../../app/dashboard/consultant/[consultantId]/(features)/home/Agenda";
 import { LatestFeedback } from "../../app/dashboard/consultant/[consultantId]/(features)/home/LatestFeedback";
 import { SharePanel } from "../../app/dashboard/consultant/[consultantId]/(features)/home/SharePanel";
+import { ReviewsToReply } from "../../app/dashboard/consultant/[consultantId]/(features)/home/ReviewsToReply";
 import { MoneyLine } from "../../app/dashboard/consultant/[consultantId]/(features)/home/MoneyLine";
 import { NeedsYou } from "../../app/dashboard/consultant/[consultantId]/(features)/home/NeedsYou";
 import { NextSession } from "../../app/dashboard/consultant/[consultantId]/(features)/home/NextSession";
@@ -43,6 +46,7 @@ import {
   deriveHomeSessions,
   deriveMoneyLine,
   deriveRatingParts,
+  type HomeSession,
   type NeedsYouRow,
 } from "../../app/dashboard/consultant/[consultantId]/(features)/home/home-model";
 import type { TAppointment } from "@/types/appointment";
@@ -76,6 +80,7 @@ const needsInput = {
   requestRows: undefined as readonly NeedsYouRow[] | undefined,
   needsYou: undefined,
   payoutSetup: undefined,
+  sessions: [] as readonly HomeSession[],
   unreadMessages: 0,
   basePath: BASE,
   viewerZone: ZONE,
@@ -203,12 +208,13 @@ describe("NeedsYou render", () => {
     expect(screen.queryByRole("link")).toBeNull();
   });
 
-  it("gives each item exactly one named action", () => {
+  it("gives each item exactly one named action, coloured by severity", () => {
     render(
       <NeedsYou
         items={[
           {
             key: "a",
+            severity: "critical",
             text: "Priya · Career chat",
             detail: "Reply by Tue",
             ctaLabel: "Answer",
@@ -216,6 +222,14 @@ describe("NeedsYou render", () => {
           },
           {
             key: "b",
+            severity: "warning",
+            text: "Add your bank account to get paid",
+            ctaLabel: "Set up",
+            href: `${BASE}/settings/get-paid`,
+          },
+          {
+            key: "c",
+            severity: "info",
             text: "2 unread messages",
             ctaLabel: "Open",
             href: `${BASE}/messages`,
@@ -223,14 +237,146 @@ describe("NeedsYou render", () => {
         ]}
       />,
     );
-    const rows = screen.getAllByRole("listitem");
-    expect(rows).toHaveLength(2);
-    for (const row of rows) {
-      expect(within(row).getAllByRole("link")).toHaveLength(1);
-    }
+    const links = screen.getAllByRole("link");
+    expect(links).toHaveLength(3);
+    expect(links[0]).toHaveAttribute("href", `${BASE}/requests?focus=a`);
+    expect(links[0]).toHaveTextContent("Reply by Tue");
+    expect(links[0]).toHaveTextContent("Answer");
+    const card = (link: HTMLElement) => link.firstElementChild?.className;
+    expect(card(links[0])).toContain("rose");
+    expect(card(links[1])).toContain("amber");
+    expect(card(links[2])).toContain("sky");
     expect(
-      screen.getByRole("link", { name: "Answer: Priya · Career chat" }),
-    ).toHaveAttribute("href", `${BASE}/requests?focus=a`);
+      screen.getByRole("heading", { name: "Needs you" }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("Needs you severity", () => {
+  const severities = (items: ReturnType<typeof deriveHomeNeedsYou>) =>
+    Object.fromEntries(items.map((i) => [i.key, i.severity]));
+
+  it("maps requests with a deadline to critical and the rest by kind", () => {
+    const items = deriveHomeNeedsYou({
+      ...needsInput,
+      requestRows: [
+        requestRow("timed", "Timed", hoursFromNow(3)),
+        requestRow("open", "Open", null),
+      ],
+      needsYou: {
+        requestsToAnswer: 2,
+        rescheduleReplies: [{ appointmentId: "ap1", counterpartName: "Ravi" }],
+        owedMakeUps: [
+          {
+            appointmentId: "ap2",
+            occurrenceId: "oc2",
+            title: "Yoga",
+            deadline: hoursFromNow(48).toISOString(),
+          },
+        ],
+        documentsAwaitingReview: 1,
+        collabInvites: 1,
+        reviewsToReply: 0,
+      },
+      payoutSetup: {
+        needed: true,
+        href: `${BASE}/settings/get-paid`,
+        livePayoutsEnabled: true,
+      },
+      unreadMessages: 2,
+    });
+    expect(severities(items)).toMatchObject({
+      "request:timed": "critical",
+      "make-up:oc2": "warning",
+      "reschedule-reply:ap1": "warning",
+      "request:open": "warning",
+      "payout-setup": "warning",
+    });
+    const all = deriveHomeNeedsYou({
+      ...needsInput,
+      needsYou: {
+        requestsToAnswer: 0,
+        rescheduleReplies: [],
+        owedMakeUps: [],
+        documentsAwaitingReview: 1,
+        collabInvites: 1,
+        reviewsToReply: 0,
+      },
+      unreadMessages: 2,
+    });
+    expect(severities(all)).toEqual({
+      "unread-messages": "info",
+      "documents-review": "info",
+      "collab-invites": "info",
+    });
+  });
+
+  it("raises a session inside the hour as a critical banner", () => {
+    const sessions = deriveHomeSessions(
+      [
+        consultation("a1", "Priya Nair", [
+          [minutesFromNow(10), minutesFromNow(70)],
+        ]),
+      ],
+      CP,
+      NOW,
+    );
+    const [first] = deriveHomeNeedsYou({ ...needsInput, sessions });
+    expect(first).toMatchObject({
+      key: "session-imminent",
+      severity: "critical",
+      detail: "Priya Nair",
+    });
+  });
+
+  it("keeps reviews to reply to out of the banners", () => {
+    const items = deriveHomeNeedsYou({
+      ...needsInput,
+      needsYou: {
+        requestsToAnswer: 0,
+        rescheduleReplies: [],
+        owedMakeUps: [],
+        documentsAwaitingReview: 0,
+        collabInvites: 0,
+        reviewsToReply: 2,
+      },
+    });
+    expect(items).toEqual([]);
+  });
+});
+
+describe("Reviews to reply to", () => {
+  it("shows a count and one Reply button, only when there are some", () => {
+    render(<ReviewsToReply count={2} consultantId={CP} />);
+    expect(
+      screen.getByText("2 reviews are waiting for your reply"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Reply/ })).toHaveAttribute(
+      "href",
+      `${BASE}/reviews?tab=needs-reply`,
+    );
+    const { container } = render(
+      <ReviewsToReply count={0} consultantId={CP} />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("sits in the main column directly above Latest feedback, below the full-width banners", () => {
+    const src = readFileSync(
+      join(
+        process.cwd(),
+        "app/dashboard/consultant/[consultantId]/(features)/home/HomeTab.tsx",
+      ),
+      "utf8",
+    );
+    const at = (needle: string) => src.indexOf(needle);
+    expect(at("<NeedsYou")).toBeGreaterThan(-1);
+    expect(at("<NeedsYou")).toBeLessThan(at("grid-cols-1"));
+    expect(at("<ReviewsToReply")).toBeGreaterThan(at("<MoneyLine"));
+    expect(at("<ReviewsToReply")).toBeLessThan(at("<LatestFeedback"));
+    expect(at("<LatestFeedback")).toBeLessThan(at("<aside"));
+    expect(at("<RequestsPanel")).toBeLessThan(at("<SharePanel"));
+    expect(at("<SharePanel")).toBeLessThan(at("<GlancePanel"));
   });
 });
 
