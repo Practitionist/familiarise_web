@@ -8,6 +8,7 @@ import Link from "next/link";
 import { BuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { isClassProgram, Program } from "@/lib/explore/programs";
+import { programFacts } from "@/lib/explore/program-facts";
 import { displayedScore, displayedScoreCount } from "@/lib/reviews-display";
 
 type ProgramCardVariant = "grid" | "list" | "carousel";
@@ -136,6 +137,27 @@ function planHref(program: Program): string {
     : `/explore/programs/plans/webinars/${program.id}`;
 }
 
+function FactsRow({ program }: { program: Program }) {
+  const { facts, includes } = programFacts(program, new Date());
+  return (
+    <div className="mb-3 space-y-1.5">
+      <p className="text-xs text-muted-foreground">{facts.join(" · ")}</p>
+      {includes.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {includes.map((item) => (
+            <span
+              key={item}
+              className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+            >
+              {item}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GridCard({
   program,
   badge,
@@ -182,9 +204,10 @@ function GridCard({
         <h3 className="text-lg font-semibold text-foreground mb-2 line-clamp-1 group-hover:text-muted-foreground transition-colors">
           {program.title}
         </h3>
-        <p className="text-sm text-muted-foreground mb-4 line-clamp-2 flex-1">
+        <p className="text-sm text-muted-foreground mb-3 line-clamp-2 flex-1">
           {program.description}
         </p>
+        <FactsRow program={program} />
 
         {/* Instructor info + company logos */}
         {(instructor || workExperiences.length > 0) && (
@@ -283,6 +306,9 @@ function ListCard({
           <p className="text-sm text-muted-foreground line-clamp-2">
             {program.description}
           </p>
+          <div className="mt-2">
+            <FactsRow program={program} />
+          </div>
           {/* Instructor info + company logos */}
           {(instructor || workExperiences.length > 0) && (
             <div className="flex items-center gap-2 mt-2">

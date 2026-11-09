@@ -160,12 +160,6 @@ export default function ProgramsInteractiveContent({
     clearAll: clearAllFilters,
   });
 
-  // Use trending programs as featured (proxy until admin-flagged feature exists)
-  const featuredPrograms = useMemo(
-    () => trendingPrograms.slice(0, 5),
-    [trendingPrograms],
-  );
-
   const handleTopicSelect = useCallback(
     (topicId: string) => {
       updateFilters({
@@ -264,7 +258,6 @@ export default function ProgramsInteractiveContent({
           </div>
 
           <StaticTopRows
-            featuredPrograms={featuredPrograms}
             trendingPrograms={trendingPrograms}
             newPrograms={newPrograms}
             topics={topicsWithCount}
