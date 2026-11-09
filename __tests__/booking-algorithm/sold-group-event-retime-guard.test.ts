@@ -39,6 +39,7 @@ describe("assertGroupEventUnsoldInTx", () => {
       expect(count).toHaveBeenCalledWith({
         where: {
           status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+          role: "CONSULTEE",
           appointment: { [`${eventType}Id`]: "event-1", deletedAt: null },
         },
       });

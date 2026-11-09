@@ -92,9 +92,11 @@ export async function assertGroupEventUnsoldInTx(
 ): Promise<void> {
   if (eventType !== "webinar" && eventType !== "class") return;
   const relationField = getEventRelationField(eventType);
+  // Buyers only: the host and co-hosts hold participant rows of their own.
   const liveSeats = await tx.appointmentParticipant.count({
     where: {
       ...liveParticipant(),
+      role: "CONSULTEE",
       appointment: {
         [`${relationField}Id`]: eventId,
         deletedAt: null,

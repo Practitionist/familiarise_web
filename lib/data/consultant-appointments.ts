@@ -349,8 +349,12 @@ export async function readConsultantAppointmentsPage(
   const hostUserSelect = { id: true, name: true, image: true } as const;
 
   const include = {
-    // Live seats gate the host's Timings action on a webinar or class.
-    _count: { select: { participants: { where: liveParticipant() } } },
+    // Live buyer seats gate the host's Timings action on a webinar or class.
+    _count: {
+      select: {
+        participants: { where: { ...liveParticipant(), role: "CONSULTEE" } },
+      },
+    },
     occurrences: {
       where: { deletedAt: null },
       orderBy: { startsAt: "asc" },

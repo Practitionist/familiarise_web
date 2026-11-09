@@ -73,7 +73,9 @@ async function manageTimingsGate(
   const allowed = allowsManageTimings(
     kind,
     upcomingOccurrences(detail.appointment.occurrences),
-    detail.appointment.participants.length,
+    // Buyers only: the host and co-hosts hold participant rows too.
+    detail.appointment.participants.filter((p) => p.role === "CONSULTEE")
+      .length,
   );
   if (allowed) return "allowed";
   return kind === "WEBINAR" || kind === "CLASS" ? "sold" : "refused";
