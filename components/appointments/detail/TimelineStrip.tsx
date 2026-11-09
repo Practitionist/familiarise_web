@@ -3,48 +3,58 @@ import type { TimelineEvent } from "@/lib/dashboard/money-state";
 import { cn } from "@/utils/tailwind";
 
 /**
- * #1675 — the booking's story in one line: what has happened (●) and what
- * comes next (○), from `deriveBookingPresentation`. Future steps are muted
- * so the strip reads as a path, not as three more states. Each refund adds
- * its own step — requested, processing, completed or failed (#1780) — and a
- * failed one is drawn in the destructive colour so it cannot read as done.
+ * The booking's story as a vertical stepper: filled dots for what has
+ * happened, hollow for what comes next. A failed refund step is drawn in the
+ * destructive colour so it cannot read as done.
  */
 export function TimelineStrip({ events }: { events: TimelineEvent[] }) {
   const format = useZonedFormat();
   if (events.length === 0) return null;
   return (
-    <div className="rounded-2xl border border-border bg-card px-5 py-3 shadow-sm">
-      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        Timeline
-      </p>
-      <ol className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
-        {events.map((event, i) => (
-          <li
-            key={`${event.label}-${i}`}
-            className={cn(
-              "flex items-center gap-1.5",
-              event.done ? "text-foreground" : "text-muted-foreground",
-              event.kind === "refund-failed" && "text-destructive",
+    <ol className="relative space-y-3 text-sm">
+      {events.map((event, i) => {
+        const failed = event.kind === "refund-failed";
+        return (
+          <li key={`${event.label}-${i}`} className="relative flex gap-3">
+            {i < events.length - 1 && (
+              <span
+                aria-hidden
+                className="absolute left-[5px] top-4 h-[calc(100%+0.25rem)] w-px bg-border"
+              />
             )}
-          >
-            {i > 0 && (
-              <span aria-hidden className="text-muted-foreground/60">
-                →
-              </span>
-            )}
-            <span aria-hidden>{event.done ? "●" : "○"}</span>
-            <span className={cn(event.done && "font-medium")}>
-              {event.label}
-              {event.at && (
-                <span className="font-normal text-muted-foreground">
-                  {" · "}
-                  {format(event.at, "EEE d MMM HH:mm")}
-                </span>
+            <span
+              aria-hidden
+              className={cn(
+                "relative mt-1.5 h-[11px] w-[11px] shrink-0 rounded-full border-2",
+                event.done
+                  ? "border-foreground bg-foreground"
+                  : "border-muted-foreground/50 bg-card",
+                failed && "border-destructive bg-destructive",
               )}
-            </span>
+            />
+            <div className="min-w-0">
+              <p
+                className={cn(
+                  event.done
+                    ? "font-medium text-foreground"
+                    : "text-muted-foreground",
+                  failed && "text-destructive",
+                )}
+              >
+                <span className="sr-only">
+                  {event.done ? "Done: " : "Next: "}
+                </span>
+                {event.label}
+              </p>
+              {event.at && (
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {format(event.at, "EEE d MMM, HH:mm")}
+                </p>
+              )}
+            </div>
           </li>
-        ))}
-      </ol>
-    </div>
+        );
+      })}
+    </ol>
   );
 }

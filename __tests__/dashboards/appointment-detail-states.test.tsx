@@ -48,6 +48,22 @@ jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../components/appointments/detail/ResourceSnapshot", () => ({
   ResourceSnapshot: () => null,
 }));
+// A closed Radix menu renders no items; inline them so the menu's order shows.
+jest.mock("../../components/ui/dropdown-menu", () => {
+  const Pass = ({ children }: { children?: React.ReactNode }) => (
+    <>{children}</>
+  );
+  const Item = ({ children }: { children?: React.ReactNode }) => (
+    <div role="menuitem">{children}</div>
+  );
+  return {
+    DropdownMenu: Pass,
+    DropdownMenuTrigger: Pass,
+    DropdownMenuContent: Pass,
+    DropdownMenuItem: Item,
+    DropdownMenuSeparator: () => <hr />,
+  };
+});
 
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -221,6 +237,13 @@ describe("consultee · AWAITING_PAYMENT subscription", () => {
     expect(html).not.toContain("Program progress");
     expect(html).not.toContain("Cancel booking");
     expect(html).toContain("Withdraw request");
+    // The pay verb also rides the mobile sticky bar, and the destructive
+    // item sits behind the More menu rather than in the header row.
+    expect(html.split("Pay ₹7,080.00").length).toBeGreaterThanOrEqual(3);
+    expect(html).toContain('aria-label="More actions"');
+    expect(html.indexOf('aria-label="More actions"')).toBeLessThan(
+      html.indexOf("Withdraw request"),
+    );
   });
 });
 

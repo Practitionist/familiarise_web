@@ -1,6 +1,12 @@
 "use client";
 
-import { useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import Link from "next/link";
 import * as Sentry from "@sentry/nextjs";
 import { useZonedFormat } from "@/lib/time/zoned-format";
@@ -35,6 +41,7 @@ import {
 } from "@/components/dashboard/shared/requests/request-decision";
 import { ApiResponseError } from "@/lib/fetch-helpers";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { cn } from "@/utils/tailwind";
 
 /** The consultant's answer to a request, wired to the Requests page's mutations. */
 export interface RequestDecision {
@@ -78,7 +85,11 @@ export interface NeedsYouCalloutProps {
   onHelp: () => void;
   /** Extra content for JOIN / RATE — the existing button or stars. */
   children?: ReactNode;
+  /** Drawn inside the page header, which already offers Get help in its menu. */
+  embedded?: boolean;
 }
+
+const EmbeddedContext = createContext(false);
 
 function Shell({
   children,
@@ -92,14 +103,22 @@ function Shell({
   /** #1675 — REQUESTED asks nothing of this viewer, so it draws neutral, not amber. */
   tone?: "warning" | "neutral";
 }) {
+  const embedded = useContext(EmbeddedContext);
+  const surface =
+    tone === "neutral"
+      ? "border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/30"
+      : "border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/20";
   return (
     <section
+      id="needs-you"
       aria-label="Needs you"
-      className={
-        tone === "neutral"
-          ? "rounded-2xl border border-zinc-200 bg-zinc-50 p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/30 sm:p-5"
-          : "rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm dark:border-amber-900/40 dark:bg-amber-900/20 sm:p-5"
-      }
+      className={cn(
+        "border",
+        surface,
+        embedded
+          ? "mt-5 scroll-mt-24 rounded-xl p-3.5 sm:p-4"
+          : "rounded-2xl p-4 shadow-sm sm:p-5",
+      )}
     >
       <p
         className={
@@ -114,10 +133,12 @@ function Shell({
         <div className="text-sm text-foreground">{children}</div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {actions}
-          <Button variant="ghost" size="sm" onClick={onHelp}>
-            <LifeBuoy className="mr-1.5 h-4 w-4" />
-            Get help
-          </Button>
+          {!embedded && (
+            <Button variant="ghost" size="sm" onClick={onHelp}>
+              <LifeBuoy className="mr-1.5 h-4 w-4" />
+              Get help
+            </Button>
+          )}
         </div>
       </div>
     </section>
@@ -567,7 +588,18 @@ function ExitSeriesButton({
  * #1675 — the primary slot, one action for this role from
  * `presentation.nextAction`. Renders nothing when there is nothing to do.
  */
-export function NeedsYouCallout(props: NeedsYouCalloutProps) {
+export function NeedsYouCallout({
+  embedded = false,
+  ...props
+}: NeedsYouCalloutProps) {
+  return (
+    <EmbeddedContext.Provider value={embedded}>
+      <CalloutBody {...props} />
+    </EmbeddedContext.Provider>
+  );
+}
+
+function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
   const format = useZonedFormat();
   const {
     presentation,
