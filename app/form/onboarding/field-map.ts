@@ -22,6 +22,7 @@ const FIELDS: Record<string, [OnboardingStepKey, string]> = {
   linkedinUrl: ["personal", "LinkedIn URL"],
   bio: ["personal", "Short bio"],
   dateOfBirth: ["personal", "Date of birth"],
+  adultConfirmed: ["personal", "Age confirmation"],
   image: ["personal", "Profile photo"],
   role: ["personal", "How you'll use Familiarise"],
   // Consultant professional profile (expertise + background tabs).

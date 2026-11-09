@@ -258,7 +258,7 @@ export async function GET() {
     // description of the personal data shared.
     const sharedWithDataProcessors = [
       {
-        entityName: "Supabase Inc. / Neon Inc. (Cloud PostgreSQL & Storage)",
+        entityName: "Supabase Inc. (Cloud PostgreSQL & Storage)",
         role: "Data Processor",
         sharedData: [
           "Account profile, authentication records, booking history, and encrypted verification documents",
@@ -268,7 +268,27 @@ export async function GET() {
         sharedForThisAccount: true,
       },
       {
-        entityName: "Razorpay Software Pvt. Ltd. / Stripe Inc.",
+        entityName: "Netlify, Inc. (Hosting & Content Delivery)",
+        role: "Data Processor",
+        sharedData: [
+          "Technical details of each request, such as your IP address and browser",
+        ],
+        purpose:
+          "Running the application and delivering pages (PRIMARY_PROCESSING)",
+        sharedForThisAccount: true,
+      },
+      {
+        entityName: "Cloudflare, Inc. (R2 Storage & Turnstile)",
+        role: "Data Processor",
+        sharedData: [
+          "Recordings of sessions you took part in and files you sold or bought, where they exist, and browser signals for the bot check on sign-up and password-reset forms",
+        ],
+        purpose:
+          "Recording and file storage (STREAM_DATA_PROCESSING) and abuse prevention (PRIMARY_PROCESSING)",
+        sharedForThisAccount: true,
+      },
+      {
+        entityName: "Razorpay Software Pvt. Ltd.",
         role: "Data Processor (Payment Gateway & Payouts)",
         sharedData: hasPayments
           ? [

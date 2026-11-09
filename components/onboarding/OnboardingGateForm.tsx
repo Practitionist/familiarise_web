@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { FieldError } from "@/components/ui/field-error";
 import { OnboardingNotice } from "@/components/onboarding/OnboardingNotice";
 import { completeOnboardingGateAction } from "@/actions/onboarding-gate.action";
+import { ADULT_CONFIRMATION_LABEL } from "@/lib/compliance/age";
 import {
   PURPOSE_CODE_META,
   SIGNUP_PURPOSES,
@@ -26,6 +27,7 @@ export function OnboardingGateForm({
   defaultDateOfBirth,
 }: Readonly<OnboardingGateFormProps>) {
   const [dateOfBirth, setDateOfBirth] = useState(defaultDateOfBirth ?? "");
+  const [adultConfirmed, setAdultConfirmed] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [marketingConsent, setMarketingConsent] = useState(false);
@@ -44,6 +46,7 @@ export function OnboardingGateForm({
     try {
       const result = await completeOnboardingGateAction({
         dateOfBirth,
+        adultConfirmed,
         termsAccepted,
         privacyAccepted,
         marketingConsent,
@@ -78,7 +81,8 @@ export function OnboardingGateForm({
           required
         />
         <p className="text-xs text-muted-foreground">
-          You must be 18 or older to use Familiarise.
+          Familiarise is for adults. You must be at least 18 years old to use
+          it, and we do not knowingly collect children&apos;s data.
         </p>
         <FieldError id="gate-dob-error" message={dobError} />
       </div>
@@ -105,6 +109,16 @@ export function OnboardingGateForm({
       </div>
 
       <div className="space-y-3">
+        <div className="flex items-center gap-3">
+          <Checkbox
+            id="gate-adult"
+            checked={adultConfirmed}
+            onCheckedChange={(checked) => setAdultConfirmed(checked === true)}
+          />
+          <Label htmlFor="gate-adult" className="cursor-pointer text-sm">
+            {ADULT_CONFIRMATION_LABEL}
+          </Label>
+        </div>
         <div className="flex items-center gap-3">
           <Checkbox
             id="gate-terms"
@@ -168,7 +182,11 @@ export function OnboardingGateForm({
         type="submit"
         className="w-full"
         disabled={
-          isSubmitting || !dateOfBirth || !termsAccepted || !privacyAccepted
+          isSubmitting ||
+          !dateOfBirth ||
+          !adultConfirmed ||
+          !termsAccepted ||
+          !privacyAccepted
         }
       >
         {isSubmitting ? "Saving…" : "Continue"}

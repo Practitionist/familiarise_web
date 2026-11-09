@@ -38,6 +38,7 @@ describe("reduced 2-screen consultee flow", () => {
   it("accepts a form with only step-0 fields plus consent", () => {
     const parsed = OnboardingFormDataSchema.safeParse({
       ...MINIMAL_CONSULTEE_FORM,
+      adultConfirmed: true,
       termsAccepted: true,
       privacyAccepted: true,
     });
@@ -47,6 +48,7 @@ describe("reduced 2-screen consultee flow", () => {
   it("transforms the minimal form into a server-valid payload with an empty profile create", () => {
     const formData = OnboardingFormDataSchema.parse({
       ...MINIMAL_CONSULTEE_FORM,
+      adultConfirmed: true,
       termsAccepted: true,
       privacyAccepted: true,
     });

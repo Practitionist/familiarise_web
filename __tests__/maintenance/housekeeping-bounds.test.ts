@@ -39,6 +39,8 @@ jest.mock("../../lib/prisma", () => {
       opsActionProposal: delegate(),
       bookingStatusHistory: delegate(),
       ledgerReconciliationReport: delegate(),
+      referral: delegate(),
+      payment: delegate(),
       $transaction: jest.fn(),
       $executeRaw: jest.fn(),
       $queryRaw: jest.fn(),
@@ -61,7 +63,9 @@ type Model =
   | "opsActionLog"
   | "opsActionProposal"
   | "bookingStatusHistory"
-  | "ledgerReconciliationReport";
+  | "ledgerReconciliationReport"
+  | "referral"
+  | "payment";
 const { default: db } = jest.requireMock<{
   default: Record<Model, Delegate> & {
     $transaction: jest.Mock;
@@ -81,6 +85,8 @@ const models: Model[] = [
   "opsActionProposal",
   "bookingStatusHistory",
   "ledgerReconciliationReport",
+  "referral",
+  "payment",
 ];
 const NOW = new Date("2026-10-23T12:00:00Z");
 const DAY = 86_400_000;
@@ -459,4 +465,42 @@ it("keeps money-surface console actions eight years and the rest two", async () 
   expect(other.createdAt).toEqual({
     lt: new Date("2024-10-23T12:00:00Z"),
   });
+});
+
+it("nulls referral request signals and payer hashes past their windows, one bounded page each, and reports the counts", async () => {
+  db.referral.findMany.mockResolvedValue([{ id: "ref-1" }, { id: "ref-2" }]);
+  db.referral.updateMany.mockResolvedValue({ count: 2 });
+  db.payment.findMany.mockResolvedValue([{ id: "pay-1" }]);
+  db.payment.updateMany.mockResolvedValue({ count: 1 });
+
+  const result = await pruneAuditLogs({ limit: 50 });
+
+  expect(result).toMatchObject({
+    success: true,
+    referralSignalsNulled: 2,
+    payerSignalsNulled: 1,
+  });
+  expect(db.referral.findMany.mock.calls[0][0].take).toBe(50);
+  expect(db.referral.updateMany.mock.calls[0][0]).toMatchObject({
+    where: { AND: [expect.anything(), { id: { in: ["ref-1", "ref-2"] } }] },
+    data: { ipHash: null, userAgent: null },
+  });
+  expect(db.payment.updateMany.mock.calls[0][0]).toMatchObject({
+    where: { AND: [expect.anything(), { id: { in: ["pay-1"] } }] },
+    data: { payerVpaHash: null, payerPhoneHash: null },
+  });
+  expect(db.payment.updateMany.mock.calls[0][0]).not.toHaveProperty(
+    "data.paymentStatus",
+  );
+});
+
+it("clears nothing and reports no failure when no signal is past its window", async () => {
+  const result = await pruneAuditLogs();
+  expect(result).toMatchObject({
+    success: true,
+    referralSignalsNulled: 0,
+    payerSignalsNulled: 0,
+  });
+  expect(db.referral.updateMany).not.toHaveBeenCalled();
+  expect(db.payment.updateMany).not.toHaveBeenCalled();
 });

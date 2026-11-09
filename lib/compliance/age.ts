@@ -1,23 +1,14 @@
 import { z } from "zod";
 
 /**
- * Age of majority gate — DPDP Act 2023 (#1132).
+ * Age gate: Familiarise is for adults. Anyone under 18 (the DPDP s.2(f) "child")
+ * is refused at every path that stores a date of birth or completes onboarding,
+ * so no child's data is processed and no verifiable-parental-consent flow
+ * (s.9, Rule 10) is needed.
  *
- * India's "child" is anyone under EIGHTEEN (s.2(f)), not the COPPA 13 the
- * privacy policy used to quote. Processing a child's personal data requires
- * verifiable parental consent (s.9(1), Rule 10), and s.9(3) bans behavioural
- * tracking and targeted advertising to children outright. We sell classes and
- * mentoring, so students are squarely in the target market — there is no
- * "we don't serve minors" story that survives contact with the product.
- *
- * Collecting a date of birth to run this check is itself exempt: Fourth
+ * Collecting the date of birth to run this check is itself exempt: Fourth
  * Schedule Part B item 6 covers "confirmation by the Data Fiduciary that the
- * Data Principal is not a child, and observance of due diligence under rule
- * 10". So the gate creates no new obligation — it discharges one.
- *
- * Rules 3 and 5-16 commence 13 May 2027 (G.S.R. 846(E)), so this is a deadline
- * rather than a live breach today. It is cheap now and expensive to retrofit
- * once accounts exist, which is why it ships ahead of the deadline.
+ * Data Principal is not a child".
  */
 
 /** DPDP s.2(f) — a "child" is an individual who has not completed 18 years. */
@@ -69,22 +60,24 @@ export function isAdult(
   return age >= AGE_OF_MAJORITY;
 }
 
+/** The label of the "I am an adult" checkbox, shared by every onboarding form. */
+export const ADULT_CONFIRMATION_LABEL = `I confirm I am ${AGE_OF_MAJORITY} years old or older`;
+
+/** Shown when the "I am an adult" checkbox is not ticked. */
+export const ADULT_CONFIRMATION_MESSAGE = `Confirm that you are ${AGE_OF_MAJORITY} or older to continue`;
+
+/** The checkbox as the server sees it: only `true` passes. */
+export const AdultConfirmationSchema = z.literal(true, {
+  errorMap: () => ({ message: ADULT_CONFIRMATION_MESSAGE }),
+});
+
 /** Copy shown when the gate rejects. Kept here so UI and API cannot drift. */
 export const UNDER_AGE_MESSAGE = `You must be at least ${AGE_OF_MAJORITY} years old to use Familiarise.`;
 
 /**
- * #1132 — the DPDP age gate, defined once and reused by every onboarding
- * schema so the wizard's step schemas and the canonical user schema cannot
- * drift apart.
- *
- * India's age of majority is 18 (DPDP s.2(f)); below it, processing requires
- * verifiable parental consent (s.9) and behavioural tracking is prohibited
- * outright (s.9(3)). `dateOfBirth` was previously optional and never checked,
- * so the product had no age gate at all while the privacy policy quoted the
- * COPPA age of 13. Collecting the date purely to confirm non-child status is
- * itself an exempt purpose (Fourth Schedule Part B item 6), so this adds no
- * new obligation.
- *
+ * The 18+ date-of-birth rule, defined once and reused by every onboarding
+ * schema so the wizard's step schemas, the gate and the canonical user schema
+ * cannot drift apart.
  */
 const INVALID_DOB = "Enter a valid date of birth";
 
@@ -92,7 +85,7 @@ export const DateOfBirthSchema = z
   .union(
     [
       z.date({ invalid_type_error: INVALID_DOB }),
-      // #1132 — a string branch rather than `z.coerce.date()`. Coercing first
+      // A string branch rather than `z.coerce.date()`. Coercing first
       // destroys the evidence: `new Date("2001-02-29")` does not throw, it
       // rolls forward to 2001-03-01, so the schema would end up validating a
       // birthday the user never typed.
