@@ -66,9 +66,14 @@ retries, so a path that breaks the order times out; it never hangs.
 
 The whole-event cancel takes `event-checkout:` before `appointment-lock:`, and
 the re-time door documents the same order at its head (`lib/booking/event-retime.ts`).
-The allocator takes the consultee key only after its search, so a buyer's own
-checkout never reads "another booking in progress on your account" because an
-expert is allocating for them.
+Every allocation mode takes the consultee key only after its search or its
+reads and validation, just before the slot batch (auto in `modes/auto.ts`,
+manual in `modes/manual.ts`, requested in `modes/use-requested.ts`), so a
+buyer's own checkout never reads "another booking in progress on your account"
+because an expert is picking times for them. The in-transaction
+`revalidateConflicts` reads the consultee's calendar under the key, so holding
+it from the batch to the commit is enough to stop a cross-consultant double
+booking.
 
 Every writer that moves one booking's lifecycle takes the `appointment-lock:`
 atom before it opens its transaction. That includes the reschedule withdraw
