@@ -259,8 +259,16 @@ export function orderByForSort(
     case "newest":
       return { createdAt: "desc" };
     case "nameAsc":
-    default:
       return { user: { name: "asc" } };
+    case "recommended":
+    default:
+      // Best-rated first, then the experts with the most rated clients, then
+      // the newest, so unrated experts do not sink in arbitrary order.
+      return [
+        ...PERSON_SCORE_ORDER,
+        { ratedClientsOneToOne: "desc" },
+        { createdAt: "desc" },
+      ];
   }
 }
 

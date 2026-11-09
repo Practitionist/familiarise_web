@@ -191,6 +191,10 @@ export const ConsultantCard = memo(function ConsultantCard({
         }
       : null;
 
+  // Cheapest 1:1 plan first (the card data is ordered by price); this is the
+  // main product, so the card states it instead of showing mentorship only.
+  const cheapestSession = consultant.consultationPlans?.[0] ?? null;
+
   const durationSeen: Record<number, number> = {};
   const tabLabels = sortedPlans.map((plan) => {
     const base = `${plan.durationInMonths} Mo`;
@@ -406,6 +410,31 @@ export const ConsultantCard = memo(function ConsultantCard({
         {/* Right Section: Subscription Plans & Actions */}
         <div className="flex-shrink-0 lg:w-[380px] xl:w-[420px] space-y-4">
           <div className="bg-muted rounded-xl p-4">
+            {cheapestSession && (
+              <div
+                className={`flex items-baseline justify-between gap-3 ${
+                  sortedPlans.length > 0
+                    ? "mb-4 border-b border-border pb-4"
+                    : ""
+                }`}
+              >
+                <span className="text-sm text-muted-foreground">
+                  1:1 session from
+                </span>
+                <span className="text-lg font-semibold text-foreground">
+                  {formatBuyerPriceLabel(cheapestSession.price)}
+                  <span className="ml-1 text-sm font-normal text-muted-foreground">
+                    / {cheapestSession.durationInHours}{" "}
+                    {cheapestSession.durationInHours === 1 ? "hour" : "hours"}
+                  </span>
+                </span>
+              </div>
+            )}
+            {sortedPlans.length > 0 && (
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Mentorship plans
+              </p>
+            )}
             {sortedPlans.length > 0 ? (
               <Tabs defaultValue={sortedPlans[0].id} className="w-full">
                 <TabsList className="w-full mb-4 bg-card p-1 rounded-lg border border-border">
@@ -429,9 +458,11 @@ export const ConsultantCard = memo(function ConsultantCard({
                 ))}
               </Tabs>
             ) : (
-              <div className="text-center text-muted-foreground py-8">
-                <p className="text-sm">No subscription plans available</p>
-              </div>
+              !cheapestSession && (
+                <div className="text-center text-muted-foreground py-8">
+                  <p className="text-sm">No plans available yet</p>
+                </div>
+              )
             )}
           </div>
 

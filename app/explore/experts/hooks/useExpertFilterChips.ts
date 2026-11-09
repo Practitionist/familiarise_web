@@ -77,6 +77,7 @@ function decodeChipKey(encoded: string): ChipKey | null {
 }
 
 const SORT_LABELS: Record<string, string> = {
+  nameAsc: "Name (A-Z)",
   nameDesc: "Name (Z-A)",
   reviewCount: "Most Reviews",
   rating: "Highest Rating",
@@ -193,7 +194,7 @@ export function useExpertFilterChips(
       });
     }
 
-    if (filters.sort !== "nameAsc") {
+    if (filters.sort !== "recommended") {
       out.push({
         key: encodeChipKey({ kind: "sort" }),
         label: "Sort",
@@ -258,7 +259,7 @@ export function useExpertFilterChips(
           updateFilters({ search: "" });
           return;
         case "sort":
-          updateFilters({ sort: "nameAsc" });
+          updateFilters({ sort: "recommended" });
           return;
         case "affiliation":
           updateFilters({ affiliationType: null });

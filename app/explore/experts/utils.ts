@@ -29,7 +29,7 @@ export const DEFAULT_EXPERT_FILTERS: IExpertFilters = {
   tags: [],
   experience: 0,
   search: "",
-  sort: "nameAsc",
+  sort: "recommended",
   minPrice: undefined,
   maxPrice: undefined,
   minRating: undefined,
@@ -138,6 +138,7 @@ function parseIntegerParam(raw: string | null): number | undefined {
 }
 
 const VALID_SORT_OPTIONS: ReadonlySet<SortOption> = new Set<SortOption>([
+  "recommended",
   "nameAsc",
   "nameDesc",
   "reviewCount",
@@ -159,7 +160,7 @@ export function filtersFromSearchParams(
   const sort: SortOption =
     rawSort && VALID_SORT_OPTIONS.has(rawSort as SortOption)
       ? (rawSort as SortOption)
-      : "nameAsc";
+      : "recommended";
 
   return {
     domain: params.get("domain"),
@@ -198,7 +199,7 @@ export function filtersToSearchParams(filters: IExpertFilters): string {
   if (filters.experience > 0)
     params.set("experience", String(filters.experience));
   if (filters.search) params.set("search", filters.search);
-  if (filters.sort !== "nameAsc") params.set("sort", filters.sort);
+  if (filters.sort !== "recommended") params.set("sort", filters.sort);
   if (filters.minPrice !== undefined)
     params.set("minPrice", String(filters.minPrice));
   if (filters.maxPrice !== undefined)

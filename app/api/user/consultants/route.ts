@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     Math.max(1, parseInt(searchParams.get("limit") || "10") || 10),
     100,
   );
-  const sort = searchParams.get("sort") || "nameAsc";
+  const sort = searchParams.get("sort") || "recommended";
 
   try {
     const domain = searchParams.get("domain");
