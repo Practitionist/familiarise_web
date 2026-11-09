@@ -4,7 +4,8 @@ import {
   listIndexableDomainNames,
   listIndexableExpertIds,
 } from "@/lib/data/indexable-experts";
-import { domainPath } from "@/lib/explore/domain-slug";
+import { domainPath, productTopicPath } from "@/lib/explore/domain-slug";
+import { listProductTopics } from "@/lib/data/digital-products-public";
 import { listIndexableEventPlanIds } from "@/lib/data/indexable-plans";
 import { reportSentryError } from "@/lib/observability/report";
 import {
@@ -37,6 +38,24 @@ async function eventPlanRoutes(): Promise<
     ];
   } catch (error) {
     reportSentryError(error, { subsystem: "seo", op: "sitemap-plans" });
+    return [];
+  }
+}
+
+/** One page per field that has products on sale; a database failure leaves only the static routes. */
+async function productTopicRoutes(): Promise<
+  { path: string; priority: number }[]
+> {
+  try {
+    return (await listProductTopics()).map((topic) => ({
+      path: productTopicPath(topic.name),
+      priority: 0.5,
+    }));
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "seo",
+      op: "sitemap-product-topics",
+    });
     return [];
   }
 }
@@ -97,14 +116,17 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     })),
   ];
 
-  const [experts, plans] = await Promise.all([
+  const [experts, plans, productTopics] = await Promise.all([
     expertRoutes(),
     eventPlanRoutes(),
+    productTopicRoutes(),
   ]);
 
-  return [...staticRoutes, ...experts, ...plans].map(({ path, priority }) => ({
-    url: `${BASE_URL}${path}`,
-    changeFrequency: "weekly",
-    priority,
-  }));
+  return [...staticRoutes, ...experts, ...productTopics, ...plans].map(
+    ({ path, priority }) => ({
+      url: `${BASE_URL}${path}`,
+      changeFrequency: "weekly",
+      priority,
+    }),
+  );
 }

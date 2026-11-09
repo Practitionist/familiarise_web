@@ -13,13 +13,20 @@ import { isPlatformGstRegistered } from "@/lib/pdf/supplier";
 
 export async function ProductsGrid({
   query,
-}: Readonly<{ query: ProductsQuery }>) {
+  basePath = "/explore/products",
+  domainId,
+}: Readonly<{
+  query: ProductsQuery;
+  /** The page's own path, so paging links stay on a topic page. */
+  basePath?: string;
+  domainId?: string;
+}>) {
   const {
     items: products,
     total,
     page,
     perPage,
-  } = await listPublicDigitalProducts(query);
+  } = await listPublicDigitalProducts(query, domainId);
   const gstRegistered = isPlatformGstRegistered();
   const filtered = Boolean(query.q || query.category || query.price);
 
@@ -28,9 +35,7 @@ export async function ProductsGrid({
       <div className="py-24 text-center text-muted-foreground">
         <p className="text-lg font-medium">That page has no products</p>
         <Button asChild variant="outline" className="mt-4">
-          <Link
-            href={`/explore/products${productsQueryString(query, { page: 1 })}`}
-          >
+          <Link href={`${basePath}${productsQueryString(query, { page: 1 })}`}>
             Back to the first page
           </Link>
         </Button>
@@ -118,7 +123,7 @@ export async function ProductsGrid({
           {hasPrevious && (
             <Button asChild variant="outline">
               <Link
-                href={`/explore/products${productsQueryString(query, { page: page - 1 })}`}
+                href={`${basePath}${productsQueryString(query, { page: page - 1 })}`}
                 rel="prev"
               >
                 Previous
@@ -128,7 +133,7 @@ export async function ProductsGrid({
           {hasNext && (
             <Button asChild variant="outline">
               <Link
-                href={`/explore/products${productsQueryString(query, { page: page + 1 })}`}
+                href={`${basePath}${productsQueryString(query, { page: page + 1 })}`}
                 rel="next"
               >
                 Next

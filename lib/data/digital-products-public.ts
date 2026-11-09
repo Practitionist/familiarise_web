@@ -96,10 +96,14 @@ function productOrder(
 
 async function fetchPublicProductsPage(
   query: ProductsQuery,
+  domainId?: string,
 ): Promise<PublicProductsPage> {
   const where: Prisma.DigitalProductWhereInput = {
     ...digitalProductDiscoverableWhere(),
-    consultantProfile: { deletedAt: null },
+    consultantProfile: {
+      deletedAt: null,
+      ...(domainId ? { domainId } : {}),
+    },
     ...(query.category ? { category: query.category } : {}),
     ...(query.price === "free" ? { pricePaise: 0 } : {}),
     ...(query.price === "paid" ? { pricePaise: { gt: 0 } } : {}),
@@ -160,12 +164,55 @@ const cachedProductsPage = unstable_cache(
   { revalidate: 300, tags: [PUBLIC_PRODUCTS_TAG] },
 );
 
-/** Free-text searches are not cached: every distinct term would be its own entry. */
+/**
+ * `domainId` narrows to the products of experts in one field (a product's topic
+ * is its creator's field for now). Free-text searches are not cached: every
+ * distinct term would be its own entry.
+ */
 export function listPublicDigitalProducts(
   query: ProductsQuery,
+  domainId?: string,
 ): Promise<PublicProductsPage> {
-  return query.q ? fetchPublicProductsPage(query) : cachedProductsPage(query);
+  return query.q
+    ? fetchPublicProductsPage(query, domainId)
+    : cachedProductsPage(query, domainId);
 }
+
+export interface ProductTopic {
+  id: string;
+  name: string;
+  count: number;
+}
+
+/** Fields that have at least one product on sale, with how many, most products first. */
+export const listProductTopics = unstable_cache(
+  async (): Promise<ProductTopic[]> => {
+    const rows = await prisma.digitalProduct.findMany({
+      where: {
+        ...digitalProductDiscoverableWhere(),
+        consultantProfile: { deletedAt: null },
+      },
+      select: {
+        consultantProfile: {
+          select: { domain: { select: { id: true, name: true } } },
+        },
+      },
+      take: 5_000,
+    });
+    const byId = new Map<string, ProductTopic>();
+    for (const { consultantProfile } of rows) {
+      const { domain } = consultantProfile;
+      const topic = byId.get(domain.id) ?? { ...domain, count: 0 };
+      topic.count += 1;
+      byId.set(domain.id, topic);
+    }
+    return [...byId.values()].sort(
+      (a, b) => b.count - a.count || a.name.localeCompare(b.name),
+    );
+  },
+  ["public-digital-product-topics"],
+  { revalidate: 300, tags: [PUBLIC_PRODUCTS_TAG] },
+);
 
 const PRODUCT_PAGE_SELECT = {
   id: true,

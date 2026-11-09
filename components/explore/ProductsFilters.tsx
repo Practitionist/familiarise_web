@@ -50,7 +50,10 @@ const SORT_LABELS: Record<ProductsQuery["sort"], string> = {
 };
 
 /** A plain GET form: filtering is a link a visitor can share, and needs no client JavaScript. */
-export function ProductsFilters({ query }: Readonly<{ query: ProductsQuery }>) {
+export function ProductsFilters({
+  query,
+  basePath = "/explore/products",
+}: Readonly<{ query: ProductsQuery; basePath?: string }>) {
   const filtered = Boolean(query.q || query.category || query.price);
   return (
     <form
@@ -121,7 +124,7 @@ export function ProductsFilters({ query }: Readonly<{ query: ProductsQuery }>) {
       </Button>
       {filtered && (
         <Button asChild variant="ghost" className={CONTROL_HEIGHT}>
-          <Link href="/explore/products">Clear</Link>
+          <Link href={basePath}>Clear</Link>
         </Button>
       )}
     </form>
