@@ -80,6 +80,8 @@ describe("onboarding consent copy", () => {
     const text = (await render(<DataProtectionNotice audience="consultee" />))
       .textContent;
     expect(text).toContain("How we use your information");
+    expect(text).toContain("date of birth");
+    expect(text).not.toMatch(/18 or older/);
     expect(text).toContain("GetStream");
     expect(text).toContain("Razorpay");
     expect(text).toContain("Familiarise Support");

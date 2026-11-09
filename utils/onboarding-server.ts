@@ -663,7 +663,6 @@ async function runOnboardingTransaction(
         tx,
         userId,
         buildUserUpdateData(validatedBody),
-        validatedBody,
       );
       if (!claimed) throw new OnboardingClaimLostError();
 

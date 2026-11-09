@@ -198,7 +198,8 @@ step 0.
 
 `/onboarding/gate` (`app/onboarding/gate/page.tsx`,
 `components/onboarding/OnboardingGateForm.tsx`,
-`actions/onboarding-gate.action.ts`) collects a DOB (18+, `DateOfBirthSchema`)
+`actions/onboarding-gate.action.ts`) collects a DOB (18+, `DateOfBirthSchema`;
+the only age ask, with no separate "I am 18" checkbox)
 and consent, validated with `OnboardingGateSchema` on the server, and completes
 onboarding in one transaction. It is open only to a user with an ACTIVE
 membership (SSO JIT) or a pending, unexpired invitation to their verified
@@ -299,7 +300,7 @@ Layout:
 | `address`     | text          | No       | —                                                                     |
 | `bio`         | textarea      | No       | max 160 chars                                                         |
 | `linkedinUrl` | url           | No       | URL format or empty                                                   |
-| `dateOfBirth` | date          | Yes      | `DateOfBirthSchema` (18+)                                             |
+| `dateOfBirth` | date          | Yes      | `DateOfBirthSchema` (18+); neutral helper, inline refusal if under 18 |
 | `role`        | radio buttons | Yes      | CONSULTANT, CONSULTEE, ORG_WORKSPACE (operators never use the wizard) |
 
 ### 3.3 Step 1 Consultant: `ConsultantProfessionalStep`
@@ -476,7 +477,9 @@ Every branch also merges OnboardingConsentSchema:
 ```
 
 `OnboardingGateSchema` (gate) and `OrgOnboardingSchema` (org create) reuse
-`OnboardingConsentSchema` plus `DateOfBirthSchema`.
+`OnboardingConsentSchema` plus `DateOfBirthSchema`. The date of birth is the
+age attestation: `claimOnboardingCompletion` stamps `User.adultConfirmedAt`
+when it passes the 18+ check (there is no `adultConfirmed` field).
 
 ### OnboardingFormDataSchema (Client Form)
 

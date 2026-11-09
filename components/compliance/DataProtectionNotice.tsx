@@ -12,6 +12,7 @@ const PURPOSES = {
     "book and manage your sessions",
     "run video calls and chat (via GetStream)",
     "take payments (via Razorpay)",
+    "check you are an adult",
     "keep the platform secure",
   ],
   consultant: [
@@ -19,6 +20,7 @@ const PURPOSES = {
     "book and manage your sessions",
     "run video calls and chat (via GetStream)",
     "take payments and pay you out (via Razorpay)",
+    "check you are an adult",
     "keep the platform secure",
   ],
 } as const;
@@ -39,8 +41,8 @@ export function DataProtectionNotice({
         How we use your information
       </h3>
       <p>
-        We collect your name, email, phone number, date of birth (to confirm
-        you&apos;re 18 or older) and {DETAILS[audience]}, so we can:
+        We collect your name, email, phone number, date of birth and{" "}
+        {DETAILS[audience]}, so we can:
       </p>
       <ul className="list-disc space-y-1 pl-5">
         {PURPOSES[audience].map((purpose) => (

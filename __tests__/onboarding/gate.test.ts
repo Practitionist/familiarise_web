@@ -62,7 +62,6 @@ const USER = {
 
 const validGate = (overrides: Record<string, unknown> = {}) => ({
   dateOfBirth: "1990-06-15",
-  adultConfirmed: true,
   termsAccepted: true,
   privacyAccepted: true,
   ...overrides,
@@ -90,12 +89,14 @@ describe("completeOnboardingGateAction", () => {
     expect(mockTransaction).not.toHaveBeenCalled();
   });
 
-  it("refuses a missing 18+ confirmation even with an adult date of birth", async () => {
+  it("ignores a client-sent adultConfirmed: the date of birth is the only age ask", async () => {
     const result = await completeOnboardingGateAction(
       validGate({ adultConfirmed: false }),
     );
-    expect(result).toMatchObject({ success: false, field: "adultConfirmed" });
-    expect(mockTransaction).not.toHaveBeenCalled();
+    expect(result).toEqual({ success: true });
+    const claim = tx.user.updateMany.mock.calls[0][0];
+    expect(claim.data.adultConfirmedAt).toBeInstanceOf(Date);
+    expect(claim.data).not.toHaveProperty("adultConfirmed");
   });
 
   it("refuses missing consent", async () => {

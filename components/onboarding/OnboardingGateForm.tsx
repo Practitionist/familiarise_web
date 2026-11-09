@@ -9,7 +9,7 @@ import { FieldError } from "@/components/ui/field-error";
 import { LegalLink } from "@/components/compliance/LegalLink";
 import { OnboardingNotice } from "@/components/onboarding/OnboardingNotice";
 import { completeOnboardingGateAction } from "@/actions/onboarding-gate.action";
-import { ADULT_CONFIRMATION_LABEL } from "@/lib/compliance/age";
+import { DATE_OF_BIRTH_HELPER, DateOfBirthSchema } from "@/lib/compliance/age";
 import {
   PURPOSE_CODE_META,
   SIGNUP_PURPOSES,
@@ -22,13 +22,12 @@ interface OnboardingGateFormProps {
   defaultDateOfBirth?: string;
 }
 
-/** Date of birth (18+) and consent for invitees and org members. */
+/** Date of birth and consent for invitees and org members. */
 export function OnboardingGateForm({
   callbackUrl,
   defaultDateOfBirth,
 }: Readonly<OnboardingGateFormProps>) {
   const [dateOfBirth, setDateOfBirth] = useState(defaultDateOfBirth ?? "");
-  const [adultConfirmed, setAdultConfirmed] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [marketingConsent, setMarketingConsent] = useState(false);
@@ -47,7 +46,6 @@ export function OnboardingGateForm({
     try {
       const result = await completeOnboardingGateAction({
         dateOfBirth,
-        adultConfirmed,
         termsAccepted,
         privacyAccepted,
         marketingConsent,
@@ -76,15 +74,26 @@ export function OnboardingGateForm({
           autoComplete="bday"
           max={new Date().toISOString().slice(0, 10)}
           value={dateOfBirth}
-          onChange={(e) => setDateOfBirth(e.target.value)}
+          onChange={(e) => {
+            const value = e.target.value;
+            setDateOfBirth(value);
+            // Same rule as the server, shown as soon as a date is entered.
+            const parsed = value ? DateOfBirthSchema.safeParse(value) : null;
+            setDobError(
+              parsed && !parsed.success
+                ? (parsed.error.issues[0]?.message ?? null)
+                : null,
+            );
+          }}
           aria-invalid={dobError ? true : undefined}
           aria-describedby={dobError ? "gate-dob-error" : undefined}
           required
         />
-        <p className="text-xs text-muted-foreground">
-          Familiarise is for adults. You must be at least 18 years old to use
-          it, and we do not knowingly collect children&apos;s data.
-        </p>
+        {dobError ? null : (
+          <p className="text-xs text-muted-foreground">
+            {DATE_OF_BIRTH_HELPER}
+          </p>
+        )}
         <FieldError id="gate-dob-error" message={dobError} />
       </div>
 
@@ -110,16 +119,6 @@ export function OnboardingGateForm({
       </div>
 
       <div className="space-y-3">
-        <div className="flex items-center gap-3">
-          <Checkbox
-            id="gate-adult"
-            checked={adultConfirmed}
-            onCheckedChange={(checked) => setAdultConfirmed(checked === true)}
-          />
-          <Label htmlFor="gate-adult" className="cursor-pointer text-sm">
-            {ADULT_CONFIRMATION_LABEL}
-          </Label>
-        </div>
         <div className="flex items-center gap-3">
           <Checkbox
             id="gate-terms"
@@ -168,7 +167,7 @@ export function OnboardingGateForm({
         disabled={
           isSubmitting ||
           !dateOfBirth ||
-          !adultConfirmed ||
+          dobError !== null ||
           !termsAccepted ||
           !privacyAccepted
         }
