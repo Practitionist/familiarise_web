@@ -68,8 +68,9 @@ function CheckoutFailureContent() {
             Payment Failed
           </h1>
           <p className="text-muted-foreground">
-            We couldn&apos;t process your payment. Don&apos;t worry, no charges
-            were made.
+            We couldn&apos;t confirm your payment. If any amount was deducted,
+            it will be refunded automatically or shown as confirmed in My
+            payments.
           </p>
         </div>
 
@@ -144,7 +145,8 @@ function CheckoutFailureContent() {
           <ul className="text-sm text-background/70 space-y-2">
             <li className="flex items-start gap-2">
               <span className="text-background/50">•</span>
-              No charges were made to your payment method
+              Check My payments before paying again, so you are not charged
+              twice
             </li>
             <li className="flex items-start gap-2">
               <span className="text-background/50">•</span>

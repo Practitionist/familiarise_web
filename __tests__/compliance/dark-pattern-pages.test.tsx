@@ -84,10 +84,10 @@ describe("how we rank", () => {
   it("states every sort and that placement is never paid for", () => {
     render(<HowWeRankPage />);
     for (const label of [
-      "Highest rated:",
-      "Recently reviewed:",
-      "Most reviews:",
-      "Most booked:",
+      "Highest Rating:",
+      "Trending:",
+      "Most Reviews:",
+      "Most Popular:",
       "Newest:",
     ]) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);

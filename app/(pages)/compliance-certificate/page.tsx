@@ -10,11 +10,16 @@ import {
   isDarkPatternAuditSigned,
 } from "@/lib/company";
 
-export const metadata: Metadata = {
-  title: `Dark-Pattern Compliance Certificate | ${COMPANY_INFO.name}`,
-  description:
-    "Our annual self-audit of every buyer flow against the 13 dark patterns in the CCPA Guidelines, 2023: scope, method, outcome, signatory and next due date.",
-};
+export function generateMetadata(): Metadata {
+  if (!isDarkPatternAuditSigned(DARK_PATTERN_AUDIT)) {
+    return { title: "Page not found", robots: { index: false, follow: false } };
+  }
+  return {
+    title: `Dark-Pattern Compliance Certificate | ${COMPANY_INFO.name}`,
+    description:
+      "Our annual self-audit of every buyer flow against the 13 dark patterns in the CCPA Guidelines, 2023: scope, method, outcome, signatory and next due date.",
+  };
+}
 
 const DEFAULT_OUTCOME =
   "Each finding was recorded, fixed where it could be, and tracked until closed. Anything still open at signing is kept in the audit record held by the company.";

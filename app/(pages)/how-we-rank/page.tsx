@@ -82,7 +82,7 @@ export default function HowWeRankPage() {
               </p>
               <ul>
                 <li>
-                  <strong>Highest rated:</strong> (1) the expert&apos;s
+                  <strong>Highest Rating:</strong> (1) the expert&apos;s
                   published one-to-one rating, highest first, which is the same
                   score shown on their card. That score is the plain average of
                   their clients&apos; ratings, and it is published only once at
@@ -90,13 +90,13 @@ export default function HowWeRankPage() {
                   rated them. Experts without a published rating yet come last.
                 </li>
                 <li>
-                  <strong>Recently reviewed:</strong> (1) the time of the
-                  expert&apos;s most recent review activity, newest first;
-                  experts who have never been reviewed come last. (2) The number
-                  of one-to-one clients who have rated them.
+                  <strong>Trending:</strong> (1) the time of the expert&apos;s
+                  most recent review activity, newest first; experts who have
+                  never been reviewed come last. (2) The number of one-to-one
+                  clients who have rated them.
                 </li>
                 <li>
-                  <strong>Most reviews:</strong> (1) the number of one-to-one
+                  <strong>Most Reviews:</strong> (1) the number of one-to-one
                   clients who have rated the expert, which is the count shown on
                   their card. (2) The number of group events they have been
                   rated for.
@@ -106,9 +106,9 @@ export default function HowWeRankPage() {
                   profile was created, newest first.
                 </li>
                 <li>
-                  <strong>Name (A-Z or Z-A):</strong> (1) the expert&apos;s
-                  name. This is the order you see when you have not chosen a
-                  sort.
+                  <strong>Name (A-Z) or Name (Z-A):</strong> (1) the
+                  expert&apos;s name. This is the order you see when you have
+                  not chosen a sort.
                 </li>
               </ul>
 
@@ -117,7 +117,7 @@ export default function HowWeRankPage() {
               <h2 className="text-2xl font-semibold mt-6 mb-4">4. Programs</h2>
               <ul>
                 <li>
-                  <strong>Most booked:</strong> (1) how many sessions were
+                  <strong>Most Popular:</strong> (1) how many sessions were
                   scheduled for the program in the last 30 days, highest first.
                   This counts sessions scheduled, not seats sold. (2) Programs
                   with the same count are placed in a fixed order so the list
@@ -129,9 +129,12 @@ export default function HowWeRankPage() {
                   newest first.
                 </li>
                 <li>
-                  <strong>Price or title:</strong> (1) the price, lowest or
-                  highest first, or the title, A to Z or Z to A. These sorts use
-                  nothing else.
+                  <strong>
+                    Price: Low to High, Price: High to Low, Title: A to Z,
+                    Title: Z to A:
+                  </strong>{" "}
+                  (1) the price, lowest or highest first, or the title. These
+                  sorts use nothing else.
                 </li>
                 <li>
                   <strong>No sort chosen:</strong> programs are not ranked.
@@ -144,10 +147,11 @@ export default function HowWeRankPage() {
                 5. Highlighted rows
               </h2>
               <p>
-                The rows on the Explore pages, such as top-rated experts, newly
-                joined experts or the most booked programs, use exactly the
-                orders above. A row&apos;s name tells you which order it uses,
-                and none of them is placed by payment.
+                The rows on the Explore pages, such as Trending Experts, Newly
+                Joined, Trending Now and Newly Added, use the orders above:
+                Trending Experts and Trending Now use the Trending and Most
+                Popular orders, and the Newly Joined and Newly Added rows use
+                Newest. None of them is placed by payment.
               </p>
 
               <Separator className="my-6" />
