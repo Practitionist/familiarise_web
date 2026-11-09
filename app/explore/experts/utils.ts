@@ -1,6 +1,6 @@
 import type { IConsultantCardData } from "@/types/consultant";
 import { SortOption } from "./components/SearchBar";
-import { ReadonlyURLSearchParams } from "next/navigation";
+import type { ReadonlyParams } from "@/lib/explore/filter-codec";
 
 export const CONSULTANTS_PER_PAGE = 10;
 
@@ -69,6 +69,33 @@ export interface IExpertsMetaData {
   availableCompanies: string[];
 }
 
+/**
+ * Links written by hand (`?domain=Technology`) name a domain or specialty
+ * instead of carrying its id. Returns the id-form patch for any such value so
+ * the field select and the filter chip can find it; null when nothing needs
+ * rewriting.
+ */
+export function resolveTaxonomyFilters(
+  filters: Pick<IExpertFilters, "domain" | "subdomain">,
+  metadata: Pick<IExpertsMetaData, "domains" | "subdomains">,
+): Partial<Pick<IExpertFilters, "domain" | "subdomain">> | null {
+  const patch: Partial<Pick<IExpertFilters, "domain" | "subdomain">> = {};
+  const byName = (items: { id: string; name: string }[], value: string) => {
+    if (items.some((item) => item.id === value)) return null;
+    const wanted = value.trim().toLowerCase();
+    return items.find((item) => item.name.toLowerCase() === wanted)?.id ?? null;
+  };
+  if (filters.domain) {
+    const id = byName(metadata.domains, filters.domain);
+    if (id) patch.domain = id;
+  }
+  if (filters.subdomain) {
+    const id = byName(metadata.subdomains, filters.subdomain);
+    if (id) patch.subdomain = id;
+  }
+  return Object.keys(patch).length > 0 ? patch : null;
+}
+
 export interface IConsultantsByDomain {
   /** Keyed by `domain.id` (with the literal string `"other"` as the
    *  fallback when a consultant has no domain). Renamed semantics from
@@ -126,7 +153,7 @@ const VALID_AFFILIATIONS: ReadonlySet<string> = new Set([
 
 // Parse IExpertFilters from URL search params
 export function filtersFromSearchParams(
-  params: ReadonlyURLSearchParams,
+  params: ReadonlyParams,
 ): IExpertFilters {
   const rawSort = params.get("sort");
   const sort: SortOption =

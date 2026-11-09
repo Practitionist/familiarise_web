@@ -15,6 +15,9 @@ interface UseUrlSyncedFiltersOptions<T> {
   defaults: T;
   fromSearchParams: (params: ReadonlyParams) => T;
   toSearchParams: (filters: T) => string;
+  /** Query params outside the filter model (e.g. a details-drawer id) that the
+   *  URL rewrite must carry across instead of dropping. */
+  preserveParams?: readonly string[];
 }
 
 export interface UrlSyncedFilters<T> {
@@ -46,6 +49,7 @@ export function useUrlSyncedFilters<T>({
   defaults,
   fromSearchParams,
   toSearchParams,
+  preserveParams,
 }: UseUrlSyncedFiltersOptions<T>): UrlSyncedFilters<T> {
   const searchParams = useSearchParams();
 
@@ -90,7 +94,14 @@ export function useUrlSyncedFilters<T>({
       const qs = toSearchParams(filters);
       // Preserve the hash — see the note in useExpertsFilters.
       const hash = window.location.hash;
-      const target = `${basePath}${qs ? `?${qs}` : ""}${hash}`;
+      const params = new URLSearchParams(qs);
+      const live = new URLSearchParams(window.location.search);
+      for (const name of preserveParams ?? []) {
+        const value = live.get(name);
+        if (value) params.set(name, value);
+      }
+      const fullQs = params.toString();
+      const target = `${basePath}${fullQs ? `?${fullQs}` : ""}${hash}`;
       const current = window.location.pathname + window.location.search + hash;
       if (target !== current) {
         pendingWrittenQs.current = qs;
@@ -101,7 +112,7 @@ export function useUrlSyncedFilters<T>({
     return () => {
       if (urlSyncRef.current) clearTimeout(urlSyncRef.current);
     };
-  }, [filters, basePath, toSearchParams]);
+  }, [filters, basePath, toSearchParams, preserveParams]);
 
   return { filters, updateFilters, clearFilters };
 }

@@ -109,12 +109,10 @@ export function useConsultants(filters: IExpertFilters) {
       orgSlug,
     ],
     queryFn: ({ pageParam = 0 }) => fetchConsultantsData(getKey(pageParam)),
-    getNextPageParam: (lastPage, pages) => {
-      if (lastPage?.data?.length === CONSULTANTS_PER_PAGE) {
-        return pages.length;
-      }
-      return undefined;
-    },
+    getNextPageParam: (lastPage, pages) =>
+      pages.length < (lastPage?.meta?.totalPages ?? 0)
+        ? pages.length
+        : undefined,
     initialPageParam: 0,
     placeholderData: keepPreviousData,
     staleTime: 2 * 60 * 1000,
