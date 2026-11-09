@@ -233,7 +233,7 @@ export const INFRA_ERROR_PATTERNS: ReadonlyArray<{
   {
     patterns: ["Authentication failed", "Invalid API key"],
     errorType: ErrorTypes.PAYMENT_CONFIG,
-    userMessage: "Payment gateway configuration error. Please contact support.",
+    userMessage: "Payments aren't working right now. Please try again shortly.",
   },
   // The #1219 posture guard: a Razorpay TEST key under NODE_ENV=production.
   // Reaches the route as a typed PaymentError now that the gateway loads at
@@ -247,13 +247,12 @@ export const INFRA_ERROR_PATTERNS: ReadonlyArray<{
   {
     patterns: ["Prisma", "database"],
     errorType: ErrorTypes.DATABASE,
-    userMessage: "Database error. Please try again or contact support.",
+    userMessage: "We couldn't save that just now. Please try again shortly.",
   },
   {
     patterns: ["Failed to create payment intent"],
     errorType: ErrorTypes.PAYMENT_PROCESSING,
-    userMessage:
-      "Payment processing unavailable. Please try again later or contact support.",
+    userMessage: "Payments aren't working right now. Please try again shortly.",
   },
 ] as const;
 
@@ -399,7 +398,7 @@ const BUSINESS_ERROR_ENTRIES = [
     errorType: ErrorTypes.REFUND_BLOCKED,
     httpStatus: 409,
     userMessage:
-      "Erasure is blocked while money is in flight for this user; settle the listed items first.",
+      "We can't delete this account yet because some payments or payouts are still being settled. Please try again once they finish.",
   },
   // #1440 — the admin recovery route lost the link-write CAS (or the row was
   // already linked): an answer, not a fault.

@@ -65,6 +65,7 @@ import {
   type StagedRecipientEmail,
 } from "@/lib/email/send-to-recipients";
 import { getAppUrl } from "@/lib/url";
+import { payoutNoticeReason } from "@/lib/dashboard/earnings-state";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
   buildPayoutCompletionPostings,
@@ -1817,8 +1818,8 @@ async function markOrgPayoutFailedInternal(
                 : AUDIT_ACTIONS.PAYOUT.PAYOUT_FAILED,
             description:
               kind === "REVERSED"
-                ? `Payout reversed by the payment provider: ${reason.slice(0, 200)}`
-                : `Payout failed at the payment provider: ${reason.slice(0, 200)}`,
+                ? `Payout reversed: ${payoutNoticeReason("REVERSED", reason)}`
+                : `Payout failed: ${payoutNoticeReason("FAILED", reason)}`,
             details: { payoutId, kind, reason: reason.slice(0, 500) },
           },
         });
@@ -2001,7 +2002,7 @@ export async function markOrgPayoutReversed(
               actorMembershipId: null,
               category: "PAYOUT",
               action: AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED,
-              description: `Payout reversed by the bank after completion: ${reason.slice(0, 200)}`,
+              description: `Payout reversed after completion: ${payoutNoticeReason("REVERSED", reason)}`,
               details: {
                 payoutId,
                 kind: "REVERSED",
@@ -2121,7 +2122,7 @@ export async function markOrgPayoutReversed(
             actorMembershipId: null,
             category: "PAYOUT",
             action: AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED,
-            description: `Payout reversed before completion: ${reason.slice(0, 200)}`,
+            description: `Payout reversed before completion: ${payoutNoticeReason("REVERSED", reason)}`,
             details: {
               payoutId,
               kind: "REVERSED",

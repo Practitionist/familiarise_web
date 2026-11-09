@@ -402,7 +402,7 @@ export async function POST(req: NextRequest) {
           userId,
           {
             kind: "WELCOME",
-            message: `You joined ${org.name} as ${normalizedRole}.`,
+            message: `You joined ${org.name} as ${MEMBER_ROLE_LABEL[normalizedRole]}.`,
             dashboardUrl: `${origin}/dashboard/organization/${inv.organizationId}/home`,
           },
           { tx },

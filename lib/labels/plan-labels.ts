@@ -31,6 +31,19 @@ export const PLAN_LEVEL_ORDER: PlanLevel[] = [
   "ALL_LEVELS",
 ];
 
+const PLAN_TYPE_LABEL: Record<string, string> = {
+  CONSULTATION: "Consultation",
+  SUBSCRIPTION: "Subscription",
+  CLASS: "Class",
+  WEBINAR: "Webinar",
+  TRIAL: "Trial session",
+};
+
+/** A plan or session type in buyer words; an unknown value reads "Session", never the raw code. */
+export function planTypeLabel(planType: string | null | undefined): string {
+  return (planType && PLAN_TYPE_LABEL[planType]) || "Session";
+}
+
 export function planLevelLabel(level: PlanLevel | null | undefined): string {
   return level ? PLAN_LEVEL_LABEL[level] : "All levels";
 }

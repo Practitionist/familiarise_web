@@ -152,7 +152,7 @@ export function resolveFundingRailMotivation(
         tier: "RECOMMENDED",
         title: "Prepaid Wallet — Zero-Friction Learner Checkout",
         message:
-          "Members book sessions immediately without entering a personal card. Every debit is tracked in your organization's ledger with full B2B GST invoicing on top-ups.",
+          "Members book sessions immediately without entering a personal card. Every booking is deducted from your balance, and each top-up gets a full GST tax invoice.",
         recommendation:
           "Best for agile teams and credit-pool programs where you want instant activation and strict prepaid spend control.",
       };
@@ -161,7 +161,7 @@ export function resolveFundingRailMotivation(
         tier: "RECOMMENDED",
         title: "Monthly B2B Invoice — Enterprise Procurement Standard",
         message:
-          "Bookings accrue on your organization's receivables ledger and settle on a consolidated monthly GST tax invoice against your Purchase Order and Net payment terms.",
+          "Bookings add up through the month and you pay once, on a single monthly GST tax invoice, within your agreed payment terms and against your purchase order if you use one.",
         recommendation:
           "Best for enterprise L&D cohorts using licensed seats or credit pools with centralized AP/procurement workflows.",
       };
@@ -187,7 +187,7 @@ export function resolveFundingRailMotivation(
     default:
       return {
         tier: "RECOMMENDED",
-        title: "Choose an Organization-Funded Rail",
+        title: "Choose How Your Organisation Pays",
         message:
           "Prepaid Wallet and Monthly B2B Invoice let learners book without personal card friction while preserving full B2B GST Input Tax Credit.",
       };

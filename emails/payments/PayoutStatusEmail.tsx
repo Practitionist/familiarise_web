@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Button, Section, Text } from "react-email";
 import { EmailLayout } from "@/emails/components/EmailLayout";
+import { payoutMethodLabel } from "@/lib/labels/money-labels";
 import {
   button,
   buttonContainer,
@@ -56,8 +57,8 @@ function PayoutSummaryParagraph(props: {
       <Text style={paragraph}>
         We sent a payout of <strong>{props.amountText}</strong>
         {orgNode}
-        {props.method ? ` (${props.method})` : ""}. Payout reference:{" "}
-        <strong>{props.payoutId}</strong>.
+        {props.method ? ` (${payoutMethodLabel(props.method)})` : ""}. Payout
+        reference: <strong>{props.payoutId}</strong>.
       </Text>
     );
   }

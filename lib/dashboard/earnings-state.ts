@@ -225,7 +225,7 @@ const FAILURE_WORDS: ReadonlyArray<[RegExp, string]> = [
   ],
   [/insufficient|balance|funds/i, "a delay on our side"],
 ];
-const GENERIC_FAILURE = "bank rejected the transfer";
+const GENERIC_FAILURE = "we couldn't send this payout";
 const KNOWN_FAILURE_OUTPUTS = new Set([
   ...FAILURE_WORDS.map(([, words]) => words),
   GENERIC_FAILURE,
@@ -241,6 +241,16 @@ export function sanitizePayoutFailure(reason: string | null): string {
   if (!reason) return GENERIC_FAILURE;
   if (KNOWN_FAILURE_OUTPUTS.has(reason)) return reason;
   return FAILURE_WORDS.find(([re]) => re.test(reason))?.[1] ?? GENERIC_FAILURE;
+}
+
+/** One plain clause for a failed or returned payout in an email or bell; never the gateway text. */
+export function payoutNoticeReason(
+  kind: "FAILED" | "REVERSED",
+  raw: string | null | undefined,
+): string {
+  return kind === "REVERSED"
+    ? "the bank returned the payout"
+    : sanitizePayoutFailure(raw ?? null);
 }
 
 /** What a payout row says to the consultant it pays. */

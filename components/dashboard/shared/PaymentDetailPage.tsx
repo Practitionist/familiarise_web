@@ -16,6 +16,7 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { traceHref } from "@/lib/backoffice/entity-trace-types";
 import { disputeStatus } from "@/lib/labels/backoffice-labels";
+import { disputeReasonText } from "@/lib/labels/money-labels";
 import { paymentDiscountBreakdown } from "@/lib/appointments/payment-display";
 import { gatewayLabel } from "@/lib/labels/money-labels";
 import {
@@ -397,7 +398,7 @@ export function PaymentDetailPage({
                         )}
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        {dispute.reason}
+                        {disputeReasonText(dispute.reason)}
                       </p>
                       <p className="text-xs text-muted-foreground/70 mt-1">
                         {new Date(dispute.createdAt).toLocaleString()}

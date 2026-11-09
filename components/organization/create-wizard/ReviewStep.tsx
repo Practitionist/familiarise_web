@@ -18,6 +18,7 @@ import {
   MEMBER_ROLE_LABEL,
   narrowFundingSource,
   narrowSelfServiceRole,
+  orgSizeBucketLabel,
 } from "@/lib/labels/org-labels";
 import {
   CreateOrganizationPayloadSchema,
@@ -78,7 +79,7 @@ function extractFirstFieldError(detail: unknown): string | null {
  * Lift a launch-flow Error into user-facing copy. ApiResponseError
  * carries the structured detail so we can route through Zod-flattened
  * field errors first, then the humanised server message, then a final
- * fallback. Plain Errors (validation, network) surface verbatim.
+ * fallback. Any other thrown error (network, parsing) gets the fallback.
  */
 function describeLaunchError(err: unknown): string {
   if (err instanceof ApiResponseError) {
@@ -86,8 +87,7 @@ function describeLaunchError(err: unknown): string {
     if (fieldMsg) return fieldMsg;
     return humanizeOrgError(err.message);
   }
-  if (err instanceof Error) return err.message;
-  return "Something went wrong";
+  return "We couldn't finish that. Please check your connection and try again.";
 }
 
 // PATCH /api/organizations/[orgId] returns the updated org (or
@@ -340,8 +340,7 @@ export function ReviewStep({
         )}
         {initialData.sizeBucket && (
           <p>
-            <strong>Size:</strong>{" "}
-            {initialData.sizeBucket.replace(/_/g, " ").toLowerCase()}
+            <strong>Size:</strong> {orgSizeBucketLabel(initialData.sizeBucket)}
           </p>
         )}
         {initialData.website && (

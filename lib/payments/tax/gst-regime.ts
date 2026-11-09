@@ -21,7 +21,7 @@ export const GST_REGISTRATION_REQUIRED = "GST_REGISTRATION_REQUIRED";
 export const GST_CONFIG_INVALID = "GST_CONFIG_INVALID";
 
 export const GST_REGISTRATION_REQUIRED_MESSAGE =
-  "Organisation billing becomes available once the platform completes GST registration.";
+  "Booking on your organisation's account isn't available yet. You can still pay yourself.";
 
 /**
  * The regime new orders are priced under. Throws a 503 `GST_CONFIG_INVALID`

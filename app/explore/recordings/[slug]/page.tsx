@@ -12,6 +12,7 @@ import {
 } from "@/components/explore/PublicBreadcrumb";
 import { Badge } from "@/components/ui/badge";
 import { buildCaptionTrackDataUri } from "@/components/recordings/caption-track";
+import { planTypeLabel } from "@/lib/labels/plan-labels";
 
 type RecordingAccessRow = {
   status: string;
@@ -162,9 +163,9 @@ export default async function RecordingDetailPage({
           )}
 
         <div className="space-y-3">
-          <span className="text-xs uppercase tracking-wide text-muted-foreground">
-            {listing.planType} replay · <Clock className="inline h-3 w-3" />{" "}
-            {listing.durationInMinutes} min
+          <span className="text-xs text-muted-foreground">
+            {planTypeLabel(listing.planType)} replay ·{" "}
+            <Clock className="inline h-3 w-3" /> {listing.durationInMinutes} min
           </span>
           <h1 className="text-2xl font-bold tracking-tight">
             {listing.listingTitle}

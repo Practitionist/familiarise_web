@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { RazorpayEvidenceForm } from "./RazorpayEvidenceForm";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { disputeStatusLabel } from "@/lib/labels/money-labels";
 import type { DisputeDetails } from "@/types/disputes";
 
 const getStatusColor = (status: string) => {
@@ -290,7 +291,7 @@ export function DisputeDetailPage({
             variant="secondary"
           >
             {getStatusIcon(dispute.status)}
-            {dispute.status.toLowerCase().replace(/_/g, " ")}
+            {disputeStatusLabel(dispute.status)}
           </Badge>
           {canSubmitEvidence && !showEvidenceForm && (
             <Button onClick={() => setShowEvidenceForm(true)}>

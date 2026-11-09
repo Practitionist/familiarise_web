@@ -18,7 +18,7 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
-import { humanizeEnum } from "@/lib/ui/tone";
+import { walletReasonLabel } from "@/lib/labels/money-labels";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 interface MonthlySeriesPoint {
@@ -223,9 +223,9 @@ function walletColumns(currency: string): ResponsiveColumn<WalletRow>[] {
   return [
     {
       key: "reason",
-      header: "Movement",
+      header: "Type",
       primary: true,
-      cell: (r) => humanizeEnum(r.reason),
+      cell: (r) => walletReasonLabel(r.reason),
     },
     {
       key: "count",
