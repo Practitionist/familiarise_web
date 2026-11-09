@@ -15,6 +15,7 @@ const RANKED_SURFACES = [
   "app/explore/experts/hooks/useExpertFilterChips.ts",
   "app/explore/programs/components/StaticTopRows.tsx",
   "app/explore/programs/components/ProgramCard.tsx",
+  "app/explore/programs/components/ResultsToolbar.tsx",
   "components/home/FeaturedExpertsSection.tsx",
 ];
 
@@ -26,6 +27,7 @@ const BANNED = [
   "Featured Experts",
   "Trending Experts",
   "Trending Now",
+  "Most Popular",
 ];
 
 describe("ranking labels", () => {
