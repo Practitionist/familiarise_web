@@ -370,3 +370,62 @@ describe("UnifiedCalendar N fit", () => {
     expect(Array.from(grid.children).indexOf(firstCell as Element)).toBe(7 + 5);
   });
 });
+
+describe("UnifiedCalendar session tray", () => {
+  it("numbers each picked session with a remove button and leaves a slot for the next", () => {
+    const atom = (startMs: number) => ({
+      startTime: new Date(startMs),
+      endTime: new Date(startMs + ATOM),
+      isAvailable: true,
+      isBooked: false,
+    });
+    allocation.selectedSlots = [0, 1, 2, 3].map((i) =>
+      atom(at(12, 13) + i * ATOM),
+    );
+    allocation.requiredSlots = 6;
+    renderGrid();
+
+    const tray = screen.getByTestId("session-tray");
+    const picks = within(
+      within(tray).getByRole("list", { name: "Picked times" }),
+    ).getAllByRole("listitem");
+    expect(picks.map((item) => item.textContent)).toEqual([
+      expect.stringMatching(/^Session 1 · Wed,? 12 Jun · 1:00 pm–2:00 pm/),
+      expect.stringMatching(/^Session 2 · Wed,? 12 Jun · 2:00 pm–3:00 pm/),
+      expect.stringMatching(/^Session 3 · point at a free time/),
+    ]);
+
+    fireEvent.click(
+      within(tray).getByRole("button", { name: /^Remove session 2/ }),
+    );
+    const removed = (
+      (allocation.removeSlots as jest.Mock).mock.calls[0][0] as {
+        startTime: Date;
+      }[]
+    ).map((slot) => slot.startTime.getTime());
+    expect(removed).toEqual([at(12, 14), at(12, 14, 30)]);
+  });
+
+  it("holds the save actions and the legend slot", () => {
+    render(
+      <UnifiedCalendar
+        consultantId="consultant-1"
+        eventType="consultation"
+        eventId="consultation-1"
+        mode="allocate"
+        durationInHours={1}
+        viewerZone={ZONE}
+        showAllocationButtons
+        onClose={() => {}}
+        legend={<p>Legend here</p>}
+        warnings={["Only 7 of 9 weeks have room."]}
+      />,
+    );
+    const tray = screen.getByTestId("session-tray");
+    for (const name of ["Cancel", "Auto-schedule", "Save picked times"]) {
+      expect(within(tray).getByRole("button", { name })).toBeInTheDocument();
+    }
+    expect(tray.textContent).toContain("Legend here");
+    expect(tray.textContent).toContain("Only 7 of 9 weeks have room.");
+  });
+});

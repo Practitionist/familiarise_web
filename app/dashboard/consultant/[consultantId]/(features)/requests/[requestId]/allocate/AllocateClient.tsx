@@ -62,9 +62,6 @@ export function AllocateClient({
       onCancel={goBack}
       // Only the request's tentative count moved: reload it and stay here.
       onRequestRefresh={router.refresh}
-      // The legend lives between the grid and the action footer here: the
-      // footer is always on screen, and the top space goes to the heatmap.
-      legendPosition="bottom"
     />
   );
 }

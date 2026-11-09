@@ -24,18 +24,14 @@ const UnifiedCalendar = dynamic(
 );
 
 /**
- * Mounts the legend beside the calendar so no caller can forget it, keeps a
- * crash inside an error boundary whose retry remounts the grid, and
- * code-splits the calendar out of the surrounding page.
+ * Hands the calendar its legend so no caller can forget it (the calendar puts
+ * it in the session tray), keeps a crash inside an error boundary whose retry
+ * remounts the grid, and code-splits the calendar out of the surrounding page.
  */
 export function SafeUnifiedCalendar({
   className,
-  legendPosition = "top",
   ...props
-}: UnifiedCalendarProps & {
-  /** "top" (default) above the grid; "bottom" between grid and footer. */
-  legendPosition?: "top" | "bottom";
-}) {
+}: UnifiedCalendarProps) {
   // Null until the first report, so the legend shows the full set while loading.
   const [painted, setPainted] = useState<{
     keys: ReadonlySet<SlotStatusKey> | null;
@@ -64,14 +60,13 @@ export function SafeUnifiedCalendar({
   return (
     <CalendarErrorBoundary onRetry={() => setMountKey((key) => key + 1)}>
       {/* Layout classes go on the wrapper: it is what the flex parent measures. */}
-      <div className={cn("flex min-h-0 flex-col gap-3", className)}>
-        {legendPosition === "top" && legend}
+      <div className={cn("flex min-h-0 flex-col", className)}>
         <UnifiedCalendar
           key={mountKey}
           {...props}
           onPaintedKeysChange={handlePainted}
           className="min-h-0 flex-1"
-          aboveActionsSlot={legendPosition === "bottom" ? legend : undefined}
+          legend={legend}
         />
       </div>
     </CalendarErrorBoundary>

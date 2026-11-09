@@ -120,6 +120,12 @@ import {
 } from "@/lib/time/grid-zone";
 import { ZoneSwitch } from "@/components/scheduling/ZoneSwitch";
 import {
+  SessionTray,
+  type TrayMeter,
+  type TrayPick,
+} from "@/components/scheduling/SessionTray";
+import { maxSessionsPerDayFor } from "@/utils/scheduling-engine/sessionCaps";
+import {
   overlapTooltip,
   WeekGrid,
   type CellTooltip,
@@ -459,8 +465,10 @@ export interface UnifiedCalendarProps {
   expectedTentativeSlotCount?: number;
   onClose?: () => void;
   showAllocationButtons?: boolean;
-  /** Rendered between the grid and the footer (the legend, on the allocate page). */
-  aboveActionsSlot?: React.ReactNode;
+  /** The status legend: in the session tray while picking, above the grid when read-only. */
+  legend?: React.ReactNode;
+  /** Plan warnings for the session tray. */
+  warnings?: string[];
   /** Occurrences a reschedule would release; the plan-limit overlay counts them free. */
   releasingOccurrenceIds?: readonly string[];
   /** The writer this grid is drawn for; its lead time decides "too soon". */
@@ -572,7 +580,8 @@ export function UnifiedCalendar({
   expectedTentativeSlotCount,
   onClose,
   showAllocationButtons = false,
-  aboveActionsSlot,
+  legend,
+  warnings,
   releasingOccurrenceIds,
   lead,
   requestedSlots,
@@ -1501,6 +1510,79 @@ export function UnifiedCalendar({
     return null;
   })();
 
+  const showTray = mode !== "view";
+  const perDayCap =
+    quota?.perDayCap ??
+    (eventType === "class" || eventType === "subscription"
+      ? maxSessionsPerDayFor(eventType)
+      : undefined);
+  const trayPicks: TrayPick[] = splitIntoSessions(
+    selectedSlots,
+    slotsPerSession,
+    gridZone,
+  ).map((session) => {
+    const label = `${formatDayLabel(session.start, { zone: gridZone })} · ${formatClockTime(session.start, { zone: gridZone })}–${formatClockTime(session.end, { zone: gridZone })}`;
+    return {
+      key: `${session.start.toISOString()}/${session.end.toISOString()}`,
+      label,
+      onRemove: isAllocating
+        ? undefined
+        : () => removeSlots(sessionAtomsAt(session.start.getTime())),
+    };
+  });
+  const trayMeters: TrayMeter[] = [
+    ...(quota
+      ? [
+          {
+            label: "This week",
+            value: quotaFooterText(quota, gridZone),
+            fraction: quota.capacity > 0 ? quota.filled / quota.capacity : 0,
+          },
+        ]
+      : []),
+    ...(entitlement
+      ? [
+          {
+            label: "Plan total",
+            value: `${entitlement.held + pickedSessions} of ${entitlement.total} placed`,
+          },
+        ]
+      : []),
+    ...(perDayCap
+      ? [
+          {
+            label: "Per day",
+            value: `At most ${sessionsPhrase(perDayCap)}`,
+          },
+        ]
+      : []),
+  ];
+  const statusNotes =
+    footerZone.limits || freshness.label ? (
+      <>
+        {footerZone.limits && (
+          <span title={footerZone.limits.title}>{footerZone.limits.label}</span>
+        )}
+        {freshness.label && (
+          <span
+            className={cn(
+              "font-medium",
+              freshness.failed || freshness.freshness === "stale"
+                ? "text-red-700 dark:text-red-400"
+                : "text-amber-800 dark:text-amber-400",
+            )}
+            title={
+              freshness.failed
+                ? "The background refresh is failing. The times shown are the last ones that loaded — reload or try again in a moment."
+                : "This calendar refreshes about once a minute. Times are re-checked when you save them, so an old view can cost a click but cannot double-book."
+            }
+          >
+            {freshness.label}
+          </span>
+        )}
+      </>
+    ) : null;
+
   const footerText = (() => {
     try {
       if (eventType === "subscription") {
@@ -1622,305 +1704,269 @@ export function UnifiedCalendar({
         </div>
       )}
 
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 sm:gap-4">
-        <div className="flex gap-2">
-          <Button
-            variant={view === "week" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setView("week")}
-            aria-pressed={view === "week"}
-          >
-            Week
-          </Button>
-          <Button
-            variant={view === "month" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setView("month")}
-            aria-pressed={view === "month"}
-          >
-            Month
-          </Button>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            aria-label={view === "week" ? "Previous week" : "Previous month"}
-            onClick={() =>
-              setCurrentDate(
-                view === "week"
-                  ? subWeeks(currentDate, 1)
-                  : subMonths(currentDate, 1),
-              )
-            }
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <div className="min-w-0 text-center text-sm font-bold sm:min-w-[150px] sm:text-lg">
-            {view === "week"
-              ? formatDateRangeLabel(
-                  startOfWeek(currentDate, { weekStartsOn }),
-                  endOfWeek(currentDate, { weekStartsOn }),
-                )
-              : formatMonthLabel(currentDate)}
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            aria-label={view === "week" ? "Next week" : "Next month"}
-            onClick={() =>
-              setCurrentDate(
-                view === "week"
-                  ? addWeeks(currentDate, 1)
-                  : addMonths(currentDate, 1),
-              )
-            }
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setCurrentDate(calendarDayOf(now, gridZone))}
-            disabled={
-              view === "week"
-                ? todayIndex >= 0
-                : isSameMonth(currentDate, calendarDayOf(now, gridZone))
-            }
-            title="Jump to today"
-          >
-            <CalendarCheck className="h-4 w-4 sm:mr-1" />
-            <span className="hidden sm:inline">Today</span>
-          </Button>
-        </div>
-
-        {view === "week" && (
-          <div
-            role="group"
-            aria-label="Hours shown"
-            className="inline-flex overflow-hidden rounded-md border border-input"
-          >
-            <button
-              type="button"
-              aria-pressed={hourRange === "open" && !allDead}
-              disabled={allDead}
-              onClick={() => setHourRange("open")}
-              title={
-                allDead
-                  ? "Nothing is open this week, so every hour is shown."
-                  : "Show the hours this week has open, with an hour either side."
-              }
-              className={cn(
-                "px-3 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50",
-                hourRange === "open" && !allDead
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-background hover:bg-muted",
-              )}
-            >
-              Open hours
-            </button>
-            <button
-              type="button"
-              aria-pressed={hourRange === "full" || allDead}
-              onClick={() => setHourRange("full")}
-              title="Show all 24 hours."
-              className={cn(
-                "border-l border-input px-3 py-1 text-xs font-medium",
-                hourRange === "full" || allDead
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-background hover:bg-muted",
-              )}
-            >
-              Full day
-            </button>
-          </div>
-        )}
-
-        {mode === "allocate" ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={clearSlots}
-            disabled={isAllocating || selectedSlots.length === 0}
-          >
-            <RotateCcw className="mr-2 h-4 w-4" />
-            Clear selection
-          </Button>
-        ) : (
-          <div className="hidden w-20 sm:block" />
-        )}
-      </div>
-
-      {showZoneSwitch && (
-        <ZoneSwitch
-          className="shrink-0"
-          zone={gridZone}
-          usingDeviceZone={canSwitchZone && usingDeviceZone}
-          canSwitch={canSwitchZone}
-          onToggle={() => setUsingDeviceZone((value) => !value)}
-          now={now}
-        />
-      )}
-
-      {view === "week" ? (
-        <div className="flex min-h-0 flex-1 flex-col">
-          {allDead && (
-            <p
-              role="status"
-              className="mb-1 shrink-0 rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground"
-            >
-              {weekCells.outsidePeriod.some(Boolean)
-                ? "Nothing this week falls inside this booking's dates. Every hour is shown so you can see where the days are."
-                : "Nothing is published this week. Every hour is shown so you can see where the days are."}
-            </p>
-          )}
-          <WeekGrid
-            days={weekDates}
-            axis={rowModel.axis}
-            matrix={weekCells.matrix}
-            rows={rowWindow}
-            blocks={blocks}
-            dayFits={mode === "view" ? undefined : dayFits}
-            ghost={ghost}
-            onPreview={setPreviewStart}
-            todayIndex={todayIndex}
-            inPeriodDays={periodDays}
-            nowAtomStartMs={nowAtom.start.getTime()}
-            nowFraction={nowAtom.fraction}
-            focus={gridFocus}
-            zone={gridZone}
-            readOnly={mode === "view"}
-            refreshing={refreshing}
-            tooltipOf={tooltipOf}
-            onActivate={handleCellActivate}
-            onFocusChange={setGridFocus}
-            onPageWeek={pageWeek}
-            gridRef={setWeekGridEl}
-            label="Available half-hour times"
-          />
-        </div>
-      ) : (
-        renderMonthView()
-      )}
-
-      {mode !== "view" && (
-        <div role="status" aria-live="polite" className="sr-only">
-          {`${pickedSessions} of ${neededSessions} ${neededSessions === 1 ? "time" : "times"} picked`}
-        </div>
-      )}
-
-      {aboveActionsSlot}
-      <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-          <div className="text-sm">
-            {selectedSlots.length === 0 ? (
-              footerText
-            ) : (
-              <button
-                type="button"
-                onClick={scrollToSelection}
-                className="text-left underline decoration-dotted underline-offset-4 hover:decoration-solid"
-                title="Go to selection"
+      <div className="flex min-h-0 flex-1 flex-col gap-4 xl:flex-row">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+          {!showTray && legend}
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 sm:gap-4">
+            <div className="flex gap-2">
+              <Button
+                variant={view === "week" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setView("week")}
+                aria-pressed={view === "week"}
               >
-                {footerText}
-              </button>
+                Week
+              </Button>
+              <Button
+                variant={view === "month" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setView("month")}
+                aria-pressed={view === "month"}
+              >
+                Month
+              </Button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label={
+                  view === "week" ? "Previous week" : "Previous month"
+                }
+                onClick={() =>
+                  setCurrentDate(
+                    view === "week"
+                      ? subWeeks(currentDate, 1)
+                      : subMonths(currentDate, 1),
+                  )
+                }
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <div className="min-w-0 text-center text-sm font-bold sm:min-w-[150px] sm:text-lg">
+                {view === "week"
+                  ? formatDateRangeLabel(
+                      startOfWeek(currentDate, { weekStartsOn }),
+                      endOfWeek(currentDate, { weekStartsOn }),
+                    )
+                  : formatMonthLabel(currentDate)}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label={view === "week" ? "Next week" : "Next month"}
+                onClick={() =>
+                  setCurrentDate(
+                    view === "week"
+                      ? addWeeks(currentDate, 1)
+                      : addMonths(currentDate, 1),
+                  )
+                }
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentDate(calendarDayOf(now, gridZone))}
+                disabled={
+                  view === "week"
+                    ? todayIndex >= 0
+                    : isSameMonth(currentDate, calendarDayOf(now, gridZone))
+                }
+                title="Jump to today"
+              >
+                <CalendarCheck className="h-4 w-4 sm:mr-1" />
+                <span className="hidden sm:inline">Today</span>
+              </Button>
+            </div>
+
+            {view === "week" && (
+              <div
+                role="group"
+                aria-label="Hours shown"
+                className="inline-flex overflow-hidden rounded-md border border-input"
+              >
+                <button
+                  type="button"
+                  aria-pressed={hourRange === "open" && !allDead}
+                  disabled={allDead}
+                  onClick={() => setHourRange("open")}
+                  title={
+                    allDead
+                      ? "Nothing is open this week, so every hour is shown."
+                      : "Show the hours this week has open, with an hour either side."
+                  }
+                  className={cn(
+                    "px-3 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50",
+                    hourRange === "open" && !allDead
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-background hover:bg-muted",
+                  )}
+                >
+                  Open hours
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={hourRange === "full" || allDead}
+                  onClick={() => setHourRange("full")}
+                  title="Show all 24 hours."
+                  className={cn(
+                    "border-l border-input px-3 py-1 text-xs font-medium",
+                    hourRange === "full" || allDead
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-background hover:bg-muted",
+                  )}
+                >
+                  Full day
+                </button>
+              </div>
+            )}
+
+            {mode === "allocate" ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={clearSlots}
+                disabled={isAllocating || selectedSlots.length === 0}
+              >
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Clear selection
+              </Button>
+            ) : (
+              <div className="hidden w-20 sm:block" />
             )}
           </div>
-          {selectedSlots.length > 0 && (
-            <ul
-              className="flex flex-wrap items-center gap-1.5"
-              aria-label="Picked times"
-            >
-              {groupSelectedIntoSessions(selectedSlots, gridZone).map(
-                (session) => {
-                  const label = `${formatDayLabel(session.start, { zone: gridZone })} · ${formatClockTime(session.start, { zone: gridZone })}–${formatClockTime(session.end, { zone: gridZone })}`;
-                  return (
-                    <li
-                      key={`${session.start.toISOString()}/${session.end.toISOString()}`}
-                      title={label}
-                      className="rounded-full border border-emerald-700/40 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-900"
-                    >
-                      {label}
-                    </li>
-                  );
-                },
-              )}
-            </ul>
+
+          {showZoneSwitch && (
+            <ZoneSwitch
+              className="shrink-0"
+              zone={gridZone}
+              usingDeviceZone={canSwitchZone && usingDeviceZone}
+              canSwitch={canSwitchZone}
+              onToggle={() => setUsingDeviceZone((value) => !value)}
+              now={now}
+            />
           )}
-          {quota && (
-            <span className="rounded-full border border-slate-400 px-2 py-0.5 text-xs text-slate-700">
-              {quotaFooterText(quota, gridZone)}
-            </span>
+
+          {view === "week" ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+              {allDead && (
+                <p
+                  role="status"
+                  className="mb-1 shrink-0 rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground"
+                >
+                  {weekCells.outsidePeriod.some(Boolean)
+                    ? "Nothing this week falls inside this booking's dates. Every hour is shown so you can see where the days are."
+                    : "Nothing is published this week. Every hour is shown so you can see where the days are."}
+                </p>
+              )}
+              <WeekGrid
+                days={weekDates}
+                axis={rowModel.axis}
+                matrix={weekCells.matrix}
+                rows={rowWindow}
+                blocks={blocks}
+                dayFits={mode === "view" ? undefined : dayFits}
+                ghost={ghost}
+                onPreview={setPreviewStart}
+                todayIndex={todayIndex}
+                inPeriodDays={periodDays}
+                nowAtomStartMs={nowAtom.start.getTime()}
+                nowFraction={nowAtom.fraction}
+                focus={gridFocus}
+                zone={gridZone}
+                readOnly={mode === "view"}
+                refreshing={refreshing}
+                tooltipOf={tooltipOf}
+                onActivate={handleCellActivate}
+                onFocusChange={setGridFocus}
+                onPageWeek={pageWeek}
+                gridRef={setWeekGridEl}
+                label="Available half-hour times"
+              />
+            </div>
+          ) : (
+            renderMonthView()
+          )}
+
+          {!showTray && statusNotes && (
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
+              {statusNotes}
+            </div>
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
-          {footerZone.limits && (
-            <span title={footerZone.limits.title}>
-              {footerZone.limits.label}
-            </span>
-          )}
-          {freshness.label && (
-            <span
-              className={cn(
-                "font-medium",
-                freshness.failed || freshness.freshness === "stale"
-                  ? "text-red-700 dark:text-red-400"
-                  : "text-amber-800 dark:text-amber-400",
-              )}
-              title={
-                freshness.failed
-                  ? "The background refresh is failing. The times shown are the last ones that loaded — reload or try again in a moment."
-                  : "This calendar refreshes about once a minute. Times are re-checked when you save them, so an old view can cost a click but cannot double-book."
-              }
-            >
-              {freshness.label}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {showAllocationButtons && mode === "allocate" && (
-        <div className="mt-2 flex shrink-0 flex-wrap justify-end gap-2">
-          {onClose && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onClose}
-              disabled={isAllocating}
-            >
-              Cancel
-            </Button>
-          )}
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => autoAllocate(availableSlots)}
-            disabled={isAllocating}
-            title={
-              isAllocating
-                ? "Saving times — wait for the current attempt to finish."
-                : "Automatically place every session on free times."
+        {showTray && (
+          <SessionTray
+            heading={
+              selectedSlots.length === 0 ? (
+                footerText
+              ) : (
+                <button
+                  type="button"
+                  onClick={scrollToSelection}
+                  className="text-left underline decoration-dotted underline-offset-4 hover:decoration-solid"
+                  title="Go to selection"
+                >
+                  {footerText}
+                </button>
+              )
             }
-          >
-            <Zap className="mr-2 h-4 w-4" />
-            {eventType === "subscription"
-              ? "Auto-schedule this week"
-              : "Auto-schedule"}
-          </Button>
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => void manualAllocate()}
-            disabled={manualBlockedReason !== null}
-            title={manualBlockedReason ?? "Save the picked times."}
-          >
-            <Users className="mr-2 h-4 w-4" />
-            {isAllocating ? "Saving…" : "Save picked times"}
-          </Button>
-        </div>
-      )}
+            picked={pickedSessions}
+            needed={neededSessions}
+            picks={trayPicks}
+            meters={trayMeters}
+            warnings={warnings}
+            legend={legend}
+            status={statusNotes}
+            liveText={`${pickedSessions} of ${neededSessions} ${neededSessions === 1 ? "time" : "times"} picked`}
+            actions={
+              showAllocationButtons && mode === "allocate" ? (
+                <>
+                  {onClose && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={onClose}
+                      disabled={isAllocating}
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => autoAllocate(availableSlots)}
+                    disabled={isAllocating}
+                    title={
+                      isAllocating
+                        ? "Saving times — wait for the current attempt to finish."
+                        : "Automatically place every session on free times."
+                    }
+                  >
+                    <Zap className="mr-2 h-4 w-4" />
+                    {eventType === "subscription"
+                      ? "Auto-schedule this week"
+                      : "Auto-schedule"}
+                  </Button>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => void manualAllocate()}
+                    disabled={manualBlockedReason !== null}
+                    title={manualBlockedReason ?? "Save the picked times."}
+                  >
+                    <Users className="mr-2 h-4 w-4" />
+                    {isAllocating ? "Saving…" : "Save picked times"}
+                  </Button>
+                </>
+              ) : undefined
+            }
+          />
+        )}
+      </div>
 
       <AlertDialog
         open={!!partialOffer}

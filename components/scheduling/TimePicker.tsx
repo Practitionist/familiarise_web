@@ -150,8 +150,6 @@ export interface TimePickerProps {
   /** Back out. Also wired to the allocate grid's own Cancel button. */
   onCancel?: () => void;
   className?: string;
-  /** "top" keeps the legend above the grid; "bottom" puts it above the footer. */
-  legendPosition?: "top" | "bottom";
   /** A caller-pinned instant that outranks the resolved focus. */
   focusAt?: Date;
   /** The viewer's zone from the page; the session hook supplies it otherwise. */
@@ -166,7 +164,6 @@ export function TimePicker({
   isSubmitting = false,
   onCancel,
   className,
-  legendPosition = "top",
   focusAt,
   viewerZone,
   onRequestRefresh,
@@ -356,7 +353,6 @@ export function TimePicker({
   const grid = (
     <SafeUnifiedCalendar
       className="min-h-0 flex-1"
-      legendPosition={legendPosition}
       consultantId={subject.consultantProfileId}
       eventType={subject.eventType}
       eventId={subject.eventId}
@@ -554,7 +550,8 @@ export function TimePicker({
             </div>
           )}
 
-          {picked.length > 0 && (
+          {/* The grid's session tray already counts its picks. */}
+          {useDayList && picked.length > 0 && (
             <p className="mr-auto text-sm text-muted-foreground">
               {pickedTimes} of {sessionsBeingMoved}{" "}
               {sessionsBeingMoved === 1 ? "time" : "times"} picked.
