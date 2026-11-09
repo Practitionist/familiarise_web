@@ -85,7 +85,7 @@
     "@supabase/supabase-js": "^2.118.0",
     "@tanstack/react-query": "^5.105.0",
     "@upstash/ratelimit": "^2.2.0",
-    "@upstash/redis": "^1.39.0",
+    "@upstash/redis": "^1.41.0",
     "bad-words": "^4.1.5",
     "bcrypt": "^6.0.0",
     "better-auth": "1.7.18",
