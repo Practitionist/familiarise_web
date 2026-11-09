@@ -30,7 +30,7 @@ export interface PricingConfig {
   welcomeDiscount?: WelcomeDiscount | null;
   /** Promo may cover at most this many bps of the list price; absent means no credits. */
   creditCapBps?: number;
-  /** The take that funds platform promo (`ReferralPricing.promoFeeBps`); absent leaves the server-capped code as sent. */
+  /** The take that funds platform promo (`ReferralPricing.promoFeeBps`); absent (not loaded) shows no welcome or credits. */
   promoFeeBps?: number;
 }
 
@@ -119,10 +119,11 @@ export function calculatePricing(
   const discountPercent = config.discountPercent ?? 0;
 
   const subtotal = calculateSubtotal(baseAmount);
-  // The same profitability floor the server charges under.
-  const promoCap =
+  // The same profitability floor the server charges under. Until referral pricing
+  // loads, the code keeps its server-capped amount and welcome and credits show none.
+  const loadedCap =
     config.promoFeeBps === undefined
-      ? Number.POSITIVE_INFINITY
+      ? null
       : platformFundedCapPaise({
           listPaise: Math.round(subtotal),
           platformFeeBps: config.promoFeeBps,
@@ -130,8 +131,9 @@ export function calculatePricing(
         });
   const codeDiscount = Math.min(
     calculateDiscount(subtotal, discountPercent, config.discountAmount),
-    promoCap,
+    loadedCap ?? Number.POSITIVE_INFINITY,
   );
+  const promoCap = loadedCap ?? codeDiscount;
   const welcome = codeDiscount > 0 ? null : config.welcomeDiscount;
 
   const price = (welcomePaise: number) => {

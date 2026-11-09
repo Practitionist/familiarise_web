@@ -210,7 +210,7 @@ export function PaymentDetailClient({
             is ready.
           </p>
         )}
-        {detail.gstUnregistered && (
+        {detail.gstUnregistered && row.status === "SUCCEEDED" && (
           <p className="mb-2 text-sm text-muted-foreground">
             No GST was charged on this payment, so it has a receipt rather than
             a tax invoice.

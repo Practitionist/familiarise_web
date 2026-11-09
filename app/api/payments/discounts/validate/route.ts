@@ -9,6 +9,7 @@ import { computeDiscountPaise } from "@/lib/payments/pricing/derive-checkout-amo
 import { platformFundedCapPaise } from "@/lib/payments/pricing/platform-funded-cap";
 import { validateDiscountCurrency } from "@/lib/payments/validation/currency-guards";
 import { currentGstRegime } from "@/lib/payments/tax/gst-regime";
+import { isRefusal } from "@/lib/errors/refusal";
 import { resolveCheckoutAttribution } from "@/lib/referrals/attribution";
 import {
   EXPERT_VIA_COOKIE,
@@ -223,6 +224,13 @@ export async function POST(request: NextRequest) {
       message: "Discount code applied successfully",
     });
   } catch (error) {
+    // A set but unusable PLATFORM_GSTIN is a typed 503 (GST_CONFIG_INVALID), not a fault.
+    if (isRefusal(error)) {
+      return NextResponse.json<DiscountCodeResponse>(
+        { valid: false, errorCode: error.code, message: error.userMessage },
+        { status: error.httpStatus },
+      );
+    }
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "payments" } },

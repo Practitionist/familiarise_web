@@ -12,7 +12,11 @@ import {
   type CheckoutDiscountInput,
 } from "@/lib/payments/pricing/derive-checkout-amount";
 import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
-import { currentGstRegime } from "@/lib/payments/tax/gst-regime";
+import {
+  currentGstRegime,
+  type GstRegime,
+} from "@/lib/payments/tax/gst-regime";
+import { isRefusal } from "@/lib/errors/refusal";
 import { getUserCredits } from "@/lib/referrals/service";
 
 export interface PendingCheckout {
@@ -134,10 +138,18 @@ async function resolveQuoteFreshness(input: QuoteFreshnessInput): Promise<{
     return { currentTotalPaise: null, quoteStaleReason };
   }
 
+  // The re-quote is advisory: an unusable PLATFORM_GSTIN leaves it unknown, never fails the page.
+  let gstRegime: GstRegime;
+  try {
+    gstRegime = currentGstRegime();
+  } catch (error) {
+    if (!isRefusal(error)) throw error;
+    return { currentTotalPaise: null, quoteStaleReason };
+  }
   const rederived = await deriveCheckoutAmount({
     basePaise: input.originalAmount,
     buyerCountry: input.buyerCountry ?? "IN",
-    gstRegime: currentGstRegime(),
+    gstRegime,
     serviceType: input.appointmentType
       ? appointmentTypeToServiceType(input.appointmentType)
       : "CONSULTING",

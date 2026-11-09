@@ -178,6 +178,20 @@ describe("pricing levers invariants", () => {
     },
   );
 
+  it("previews no welcome discount or credits until referral pricing loads", () => {
+    const preview = calculatePricing(100_000, {
+      welcomeDiscount: { bps: 2000, maxPaise: 50_000, minOrderPaise: 0 },
+      creditsApplied: 10_000_000,
+      creditCapBps: 2000,
+      gstRegistered: true,
+    });
+    expect(preview).toMatchObject({
+      discountAmount: 0,
+      creditsApplied: 0,
+      total: 118_000,
+    });
+  });
+
   it("derives the regime from PLATFORM_GSTIN and fails closed on a bad one", () => {
     expect(currentGstRegime()).toBe("UNREGISTERED");
     expect(() => assertOrgBillingAvailable("UNREGISTERED")).toThrow(
