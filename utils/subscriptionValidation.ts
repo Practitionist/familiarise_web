@@ -119,7 +119,7 @@ export class SubscriptionValidationService {
       if (slot < windowStart || slotEnd > windowEnd) {
         result.isValid = false;
         result.errors.push(
-          `Slot ${slot.toLocaleDateString()} is outside this cycle (${windowStart.toLocaleDateString()} - ${lastInstantBefore(windowEnd).toLocaleDateString()})`,
+          `[OUTSIDE_PLAN_WEEK] Slot ${slot.toISOString()} is outside the open plan week (${windowStart.toISOString()} - ${lastInstantBefore(windowEnd).toISOString()})`,
         );
       }
     }
@@ -127,14 +127,14 @@ export class SubscriptionValidationService {
     if (cycleCalls > nextBatch) {
       result.isValid = false;
       result.errors.push(
-        `This cycle has room for ${nextBatch} more session${nextBatch === 1 ? "" : "s"}, but ${cycleCalls} were picked.`,
+        `[PLAN_WEEK_FULL] This plan week has room for ${nextBatch} more session${nextBatch === 1 ? "" : "s"}, but ${cycleCalls} were picked.`,
       );
     }
 
     if (result.totalCallsScheduled > result.maxTotalCalls) {
       result.isValid = false;
       result.errors.push(
-        `Total calls (${result.totalCallsScheduled}) exceed subscription limit (${result.maxTotalCalls})`,
+        `[PLAN_TOTAL_REACHED] Total calls (${result.totalCallsScheduled}) exceed subscription limit (${result.maxTotalCalls})`,
       );
     }
 

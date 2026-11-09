@@ -335,6 +335,10 @@ const ALLOCATION_ERROR_TOASTS: Record<
     title: "Co-host unavailable",
     variant: "destructive",
   },
+  USE_RETIME: {
+    title: "This event already has booked seats — use Re-time",
+    variant: "destructive",
+  },
   // ILLEGAL_TRANSITION and RESCHEDULE_STATE_CHANGED are deliberately absent:
   // both 409s route to requestChangedElsewhere() (qa-1702, #1705).
   SLOT_TAKEN: {

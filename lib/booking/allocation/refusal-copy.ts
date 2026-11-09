@@ -22,6 +22,12 @@ const COPY_BY_TAG: Record<string, string> = {
     "These times put too many sessions on one day. Spread them across more days.",
   TOO_SOON:
     "One of these times has passed or starts too soon to confirm. Pick a later time.",
+  OUTSIDE_PLAN_WEEK:
+    "A subscription is scheduled one plan week at a time. Pick times inside the open week shown on the calendar.",
+  PLAN_WEEK_FULL:
+    "That's more sessions than this plan week has room for. Remove a time, or place it next week.",
+  PLAN_TOTAL_REACHED:
+    "Every session this plan includes already has a time. Remove a time to place a new one.",
 };
 
 const FALLBACK_COPY =
