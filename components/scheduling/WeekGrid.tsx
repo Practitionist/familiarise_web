@@ -47,6 +47,31 @@ import { cn } from "@/utils/tailwind";
 export const GRID_COLS =
   "grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))] md:grid-cols-[5rem_repeat(7,minmax(0,1fr))]";
 
+/** One half-hour row: 24px, so an hour is 48px. Blocks are placed on this pitch. */
+export const GRID_ROW_PX = 24;
+
+/** A cell fills its slot on the ruled canvas: no radius, no gap, 11px text. */
+const CELL_GEOMETRY = "h-6 rounded-none text-[11px]";
+
+/** The rule under a row: solid where the next hour starts, dashed at the half-hour. */
+const HOUR_RULE =
+  "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:border-b after:border-slate-300";
+const HALF_HOUR_RULE =
+  "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:border-b after:border-dashed after:border-slate-200";
+
+/** Closed time (nothing published) is a light hatch on the canvas, unlike past's fade or outside-period's stripe. */
+const CLOSED_CANVAS =
+  "bg-[repeating-linear-gradient(135deg,theme(colors.slate.100)_0_6px,theme(colors.slate.50)_6px_12px)]";
+
+/** The canvas classes of one gridcell: the day-column line, the row rule and, when closed, the hatch. */
+function canvasCellClass(endsHour: boolean, closed: boolean): string {
+  return cn(
+    "relative h-6 min-w-0 border-l border-slate-200",
+    endsHour ? HOUR_RULE : HALF_HOUR_RULE,
+    closed && CLOSED_CANVAS,
+  );
+}
+
 /** The roving-focus key of an axis row. */
 export function rowKeyOf(axisRow: AxisRow): string {
   return `row:${axisRow.key}`;
@@ -67,6 +92,11 @@ interface SlotCellProps {
   dayIndex: number;
   rowKey: string;
   zone: string;
+  /** The row ends on the hour, so its rule is solid. */
+  endsHour: boolean;
+  /** The cell above / below paints the same state: drop the shared border so the run reads as one. */
+  joinTop: boolean;
+  joinBottom: boolean;
   isFocusTarget: boolean;
   /** Fraction down the cell where the now-line sits, or null. */
   nowFraction: number | null;
@@ -86,7 +116,7 @@ function NowLine({ fraction }: Readonly<{ fraction: number }>) {
   return (
     <div
       aria-hidden
-      className="pointer-events-none absolute inset-x-0 z-10 border-t-2 border-primary"
+      className="pointer-events-none absolute inset-x-0 z-20 border-t-2 border-primary"
       style={{ top: `${fraction * 100}%` }}
     >
       <span className="absolute -left-1 -top-[5px] h-2 w-2 rounded-full bg-primary" />
@@ -114,6 +144,9 @@ function sameCellProps(
     a.dayIndex === b.dayIndex &&
     a.rowKey === b.rowKey &&
     a.zone === b.zone &&
+    a.endsHour === b.endsHour &&
+    a.joinTop === b.joinTop &&
+    a.joinBottom === b.joinBottom &&
     a.isFocusTarget === b.isFocusTarget &&
     a.nowFraction === b.nowFraction &&
     a.readOnly === b.readOnly &&
@@ -129,6 +162,9 @@ const SlotCell = memo(function SlotCell({
   dayIndex,
   rowKey,
   zone,
+  endsHour,
+  joinTop,
+  joinBottom,
   isFocusTarget,
   nowFraction,
   readOnly,
@@ -160,6 +196,9 @@ const SlotCell = memo(function SlotCell({
       className={slotCellClassName(cell.statusKey, {
         className: cn(
           "flex items-center gap-0.5 overflow-hidden",
+          CELL_GEOMETRY,
+          joinTop && "border-t-0",
+          joinBottom && "border-b-0",
           readOnly && "cursor-default",
           cell.isRequested && REQUESTED_OUTLINE.className,
         ),
@@ -176,7 +215,7 @@ const SlotCell = memo(function SlotCell({
     <div
       role="gridcell"
       aria-selected={interactive ? cell.statusKey === "selected" : undefined}
-      className="relative min-w-0"
+      className={canvasCellClass(endsHour, cell.statusKey === "unavailable")}
     >
       {tooltip ? (
         <Tooltip>
@@ -205,6 +244,7 @@ const SlotCell = memo(function SlotCell({
 const SkippedCell = memo(function SkippedCell({
   dayIndex,
   rowKey,
+  endsHour,
   isRepeat,
   isFocusTarget,
   onKeyDown,
@@ -212,6 +252,7 @@ const SkippedCell = memo(function SkippedCell({
 }: Readonly<{
   dayIndex: number;
   rowKey: string;
+  endsHour: boolean;
   /** The row is another day's repeated fall-back hour, not a time this day skips. */
   isRepeat: boolean;
   isFocusTarget: boolean;
@@ -219,7 +260,7 @@ const SkippedCell = memo(function SkippedCell({
   onFocusCell: SlotCellProps["onFocusCell"];
 }>) {
   return (
-    <div role="gridcell" className="relative min-w-0">
+    <div role="gridcell" className={canvasCellClass(endsHour, true)}>
       <button
         type="button"
         tabIndex={isFocusTarget ? 0 : -1}
@@ -231,7 +272,7 @@ const SkippedCell = memo(function SkippedCell({
         }
         data-day-index={dayIndex}
         data-row-key={rowKey}
-        className="h-7 w-full cursor-not-allowed rounded-sm border border-dashed border-transparent"
+        className="h-6 w-full cursor-not-allowed"
         onKeyDown={(event) => onKeyDown(event, rowKey, dayIndex)}
         onFocus={() => onFocusCell(rowKey, dayIndex)}
       />
@@ -478,7 +519,7 @@ export function WeekGrid({
           role="row"
           className={cn(
             GRID_COLS,
-            "sticky top-0 z-20 gap-0.5 bg-background pb-1 md:gap-1",
+            "sticky top-0 z-30 border-b-2 border-slate-300 bg-background",
           )}
         >
           <div role="columnheader" className="min-w-0">
@@ -490,20 +531,26 @@ export function WeekGrid({
               role="columnheader"
               aria-current={index === todayIndex ? "date" : undefined}
               className={cn(
-                "min-w-0 rounded-sm p-1 text-center md:p-2",
-                inPeriodDays[index] && "border-x-2 border-blue-200 bg-blue-50",
-                index === todayIndex && "bg-primary/10 ring-1 ring-primary/40",
+                "flex h-14 min-w-0 flex-col items-center justify-center border-l border-slate-200 px-1 text-center",
+                inPeriodDays[index] && "bg-blue-50",
+                index === todayIndex && "bg-primary/10",
               )}
             >
               <div
                 className={cn(
-                  "text-xs font-bold md:text-base",
+                  "text-[11px] font-medium uppercase tracking-wide text-muted-foreground",
                   index === todayIndex && "text-primary",
                 )}
               >
                 {formatWeekdayShort(date)}
               </div>
-              <div className="text-xs text-muted-foreground md:text-sm">
+              <div
+                className={cn(
+                  "text-sm font-semibold leading-6 md:text-base",
+                  index === todayIndex &&
+                    "min-w-7 rounded-full bg-primary px-1.5 text-primary-foreground",
+                )}
+              >
                 {formatDayOfMonth(date)}
               </div>
             </div>
@@ -512,22 +559,34 @@ export function WeekGrid({
         {navRows.map((navRow) => {
           const axisRow = axis[navRow.axisIndex];
           const line = matrix[navRow.axisIndex] ?? [];
+          // Neighbours outside the drawn rows never join: their border closes the run.
+          const above =
+            navRow.axisIndex > rows.from
+              ? matrix[navRow.axisIndex - 1]
+              : undefined;
+          const below =
+            navRow.axisIndex + 1 < rows.to
+              ? matrix[navRow.axisIndex + 1]
+              : undefined;
+          const endsHour = axisRow.minuteOfDay % 60 === 30;
           return (
             <div
               key={navRow.key}
               role="row"
               data-row={navRow.axisIndex}
               data-nav-key={navRow.key}
-              className={cn(
-                GRID_COLS,
-                "gap-0.5 border-b border-border/40 md:gap-1",
-              )}
+              className={GRID_COLS}
             >
               <div
                 role="rowheader"
-                className="flex h-7 min-w-0 items-start justify-end whitespace-nowrap pr-1 text-[10px] tabular-nums text-muted-foreground md:pr-2 md:text-xs"
+                className="flex h-6 min-w-0 items-start justify-end whitespace-nowrap pr-1 text-[11px] leading-none tabular-nums text-muted-foreground md:pr-2"
               >
-                {axisRow.label}
+                {/* Only hours are printed; the half-hour keeps its name for screen readers. */}
+                <span
+                  className={axisRow.minuteOfDay % 60 === 0 ? "" : "sr-only"}
+                >
+                  {axisRow.label}
+                </span>
               </div>
               {days.map((date, dayIndex) => {
                 const cell = line[dayIndex];
@@ -540,6 +599,7 @@ export function WeekGrid({
                       key={date.toISOString()}
                       dayIndex={dayIndex}
                       rowKey={navRow.key}
+                      endsHour={endsHour}
                       isRepeat={axisRow.occurrence === 1}
                       isFocusTarget={isFocusTarget}
                       onKeyDown={handleKeyDown}
@@ -554,6 +614,9 @@ export function WeekGrid({
                     dayIndex={dayIndex}
                     rowKey={navRow.key}
                     zone={zone}
+                    endsHour={endsHour}
+                    joinTop={above?.[dayIndex]?.statusKey === cell.statusKey}
+                    joinBottom={below?.[dayIndex]?.statusKey === cell.statusKey}
                     isFocusTarget={isFocusTarget}
                     nowFraction={
                       dayIndex === todayIndex && cell.startMs === nowAtomStartMs

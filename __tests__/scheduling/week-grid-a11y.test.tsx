@@ -142,3 +142,18 @@ describe("WeekGrid keyboard", () => {
     expect(cellAt(grid, 0, 0)).toHaveAttribute("aria-disabled", "true");
   });
 });
+
+describe("WeekGrid canvas", () => {
+  it("draws cells edge to edge on 24px rows, with closed time hatched on the canvas", () => {
+    render(<Harness onPageWeek={() => {}} />);
+    const grid = screen.getByRole("grid");
+    const cell = cellAt(grid, 0, 0);
+    expect(cell.className).toContain("h-6");
+    expect(cell.className).not.toMatch(/\brounded-sm\b|\bh-7\b/);
+    // Closed time paints on the gridcell, so the unavailable token stays paint-free.
+    expect(cell.closest("[role='gridcell']")?.className).toContain(
+      "repeating-linear-gradient(135deg",
+    );
+    expect(within(grid).getAllByRole("row")[1].className).not.toMatch(/gap-/);
+  });
+});
