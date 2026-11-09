@@ -655,7 +655,11 @@ export function PlanCheckoutShell({
         <Separator className="bg-border" />
         <BillingStateSelect {...billingState.selectProps} />
         <Separator className="bg-border" />
-        <DiscountCodeField discount={discount} formatPrice={formatPriceExact} />
+        <DiscountCodeField
+          discount={discount}
+          formatPrice={formatPriceExact}
+          listPricePaise={adapter.basePricePaise}
+        />
         <Separator className="bg-border" />
         <ReferralCreditsBlock
           availableCredits={availableCredits}

@@ -127,12 +127,17 @@ export type DiscountCodeState = ReturnType<typeof useDiscountCode>;
 export function DiscountCodeField({
   discount,
   formatPrice,
+  listPricePaise,
 }: Readonly<{
   discount: DiscountCodeState;
   formatPrice: (paise: number) => string;
+  /** The list price, so a percentage code capped below its face value says so. */
+  listPricePaise?: number;
 }>) {
   const { applied, error } = discount;
-  const label = applied ? appliedDiscountLabel(applied, formatPrice) : null;
+  const label = applied
+    ? appliedDiscountLabel(applied, formatPrice, listPricePaise)
+    : null;
   return (
     <div className="grid gap-4">
       <label htmlFor="discount-code-input" className="font-semibold">
