@@ -67,6 +67,7 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
       { label: "Contact", href: "/contactus" },
       { label: "Pricing & fees", href: "/pricing" },
       { label: "How it works", href: "/#how-it-works" },
+      { label: "How we rank", href: "/how-we-rank" },
       { label: "Become an expert", href: "/become-an-expert" },
     ],
   },

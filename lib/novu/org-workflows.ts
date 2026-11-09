@@ -8,6 +8,7 @@
 
 import type { MemberRole } from "@prisma/client";
 import prisma, { type PrismaLike } from "@/lib/prisma";
+import { payoutNoticeReason } from "@/lib/dashboard/earnings-state";
 import {
   NOVU_WORKFLOWS,
   notificationScope,
@@ -383,7 +384,10 @@ export const notifyOrgPayoutFailed =
       p.kind === "REVERSED" ? W.ORG_PAYOUT_REVERSED : W.ORG_PAYOUT_FAILED,
     VISIBILITY_ROLES,
     (p): Partial<OrgPayoutFailedPayload> => ({
-      reason: p.reason?.trim() ? p.reason : "no reason was given",
+      reason: payoutNoticeReason(
+        p.kind === "REVERSED" ? "REVERSED" : "FAILED",
+        p.reason,
+      ),
       amount: formatNotificationMoney(p.amountPaise, p.currency),
       withheld: withheldMoney(p.tdsAmountPaise, p.currency),
     }),

@@ -1704,7 +1704,7 @@ export async function handlePaymentFailure(
         currency: payment.currency,
         consultantName,
         appointmentType,
-        failureReason: payment.description || "Payment could not be processed",
+        failureReason: failureReason ?? "",
         retryUrl: `${getAppUrl()}${goHref("client", "payments")}`,
       },
       { tx, entityRef: `payment:${payment.id}` },

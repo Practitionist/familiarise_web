@@ -163,6 +163,8 @@ export async function rollupOrgInvoiceAccruals(params: {
             organizationId,
             billableToOrgInvoiceId: null,
             paymentStatus: "SUCCEEDED",
+            // A tax invoice covers only supplies priced while registered.
+            gstRegime: "REGISTERED",
             legs: {
               some: {
                 source: { in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"] },

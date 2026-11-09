@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 
-// Invariant: a payment sold while unregistered never gets a tax invoice, and the daily
+// Invariant: a payment sold while unregistered (or unstamped) never gets a tax invoice, and the daily
 // turnover alarm reports once at ₹15 lakh of financial-year turnover.
 
 const mockReport = jest.fn();
@@ -19,49 +19,50 @@ import {
 import { checkGstRegistrationTurnover } from "@/lib/compliance/gst-turnover";
 import type { Db, Tx } from "@/lib/prisma";
 
-it("never mints, and never cohorts, a payment stamped UNREGISTERED", async () => {
-  const allocate = jest.fn();
-  const tx = {
-    consumerInvoice: { findUnique: async () => null, create: allocate },
-    consumerInvoiceCounter: { upsert: allocate },
-    payment: {
-      findUnique: async () => ({
-        id: "pay_1",
-        amount: 100_000,
-        taxAmount: 0,
-        currency: "INR",
-        paymentStatus: "SUCCEEDED",
-        deletedAt: null,
-        buyerCountry: "IN",
-        gstRegime: "UNREGISTERED",
-        consumerStateCode: "06",
-        billableToOrgInvoiceId: null,
-        createdAt: new Date("2026-11-09T10:00:00Z"),
-        userId: "user_1",
-        legs: [{ source: "CARD" }],
-        creditUsages: [],
-        digitalProductPurchase: null,
-        refunds: [],
-        user: {
-          id: "user_1",
-          name: "Priya",
-          email: "priya@example.com",
-          address: null,
-          city: null,
-          consulteeProfile: { billingStateCode: "06" },
-        },
-      }),
-    },
-  } as unknown as Tx;
+it.each(["UNREGISTERED", null])(
+  "never mints, and never cohorts, a payment stamped %s",
+  async (gstRegime) => {
+    const allocate = jest.fn();
+    const tx = {
+      consumerInvoice: { findUnique: async () => null, create: allocate },
+      consumerInvoiceCounter: { upsert: allocate },
+      payment: {
+        findUnique: async () => ({
+          id: "pay_1",
+          amount: 100_000,
+          taxAmount: 0,
+          currency: "INR",
+          paymentStatus: "SUCCEEDED",
+          deletedAt: null,
+          buyerCountry: "IN",
+          gstRegime,
+          consumerStateCode: "06",
+          billableToOrgInvoiceId: null,
+          createdAt: new Date("2026-11-09T10:00:00Z"),
+          userId: "user_1",
+          legs: [{ source: "CARD" }],
+          creditUsages: [],
+          digitalProductPurchase: null,
+          refunds: [],
+          user: {
+            id: "user_1",
+            name: "Priya",
+            email: "priya@example.com",
+            address: null,
+            city: null,
+            consulteeProfile: { billingStateCode: "06" },
+          },
+        }),
+      },
+    } as unknown as Tx;
 
-  await expect(
-    mintConsumerInvoice(tx, { paymentId: "pay_1" }),
-  ).resolves.toEqual({ consumerInvoiceId: null });
-  expect(allocate).not.toHaveBeenCalled();
-  expect(CONSUMER_INVOICEABLE_PAYMENT_WHERE.AND).toEqual([
-    { OR: [{ gstRegime: null }, { gstRegime: "REGISTERED" }] },
-  ]);
-});
+    await expect(
+      mintConsumerInvoice(tx, { paymentId: "pay_1" }),
+    ).resolves.toEqual({ consumerInvoiceId: null });
+    expect(allocate).not.toHaveBeenCalled();
+    expect(CONSUMER_INVOICEABLE_PAYMENT_WHERE.gstRegime).toBe("REGISTERED");
+  },
+);
 
 /** Aggregates for one financial year: charged cash, credit still spent, cash refunded. */
 function turnoverDb(sums: {

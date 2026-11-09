@@ -3,7 +3,6 @@
  *
  * This is the production pipeline for consultant payouts
  * (`lib/payments/payouts/payout-service.ts`). It owns:
- *   - Section 194J flat 10% / 20% calculation with the ₹50K fiscal-year threshold
  *   - Indian FY date arithmetic (Apr–Mar) and quarter mapping
  *   - Cumulative FY payout aggregation for threshold-crossing math
  *   - `TDSRecord` audit-trail writes (drives Form 26Q quarterly filing)
@@ -20,7 +19,6 @@
  *
  * Rules encoded here (Section 194J):
  * - Threshold: ₹50,000/financial year (April–March)
- * - Rate: 10% with verified PAN, 20% without PAN (Section 206AA)
  * - Applies to professional/technical services
  * - Must be deposited by 7th of next month
  * - Quarterly filing: Form 26Q
@@ -64,12 +62,6 @@ import { prorate, sumPaise } from "@/lib/payments/utils/money";
 
 /** TDS threshold per financial year in paise (₹50,000 = 5,000,000 paise) */
 export const TDS_THRESHOLD_PAISE = 5_000_000;
-
-/** TDS rate with verified PAN (10%) */
-export const TDS_RATE_WITH_PAN = 10;
-
-/** TDS rate without PAN (20%) — Section 206AA */
-export const TDS_RATE_WITHOUT_PAN = 20;
 
 // ============================================================================
 // Financial Year Utilities
@@ -149,106 +141,6 @@ export async function getCurrentFYCumulativePayments(
   });
 
   return sumPaise(result._sum.amount);
-}
-
-interface TDSCalculationResult {
-  /** TDS amount to deduct, in paise */
-  tdsAmount: number;
-  /** TDS rate applied (10 or 20) */
-  tdsRate: number;
-  /** Whether cumulative payments crossed the threshold */
-  isAboveThreshold: boolean;
-  /** Cumulative credited/payout amounts for FY (BEFORE this payout), in paise */
-  cumulativeBeforePayout: number;
-  /** Cumulative credited/payout amounts for FY (AFTER this payout), in paise */
-  cumulativeAfterPayout: number;
-  /** Current financial year */
-  financialYear: string;
-}
-
-/**
- * Calculate TDS for a payout.
- *
- * TDS applies when cumulative FY payments exceed ₹50,000.
- * If the threshold is crossed mid-payout, TDS is calculated on:
- * - The excess amount if this payout crosses the threshold
- * - The full payout amount if already above threshold
- */
-/**
- * @deprecated #778 §E — the 194J/percent calculator. The engine of record is
- * lib/compliance/tds.ts (computeTdsForPayout); both payout paths call it via
- * the TDS_ENGINE-flagged derivation in the payout services. Kept only for
- * reference until the CA sign-off closes the question; do not add callers.
- */
-export async function calculateTDS(params: {
-  consultantProfileId: string;
-  payoutAmountPaise: number;
-}): Promise<TDSCalculationResult> {
-  const { consultantProfileId, payoutAmountPaise } = params;
-  const financialYear = getIndianFinancialYear();
-
-  // Fetch tax info early for residency check + PAN verification
-  const taxInfo = await prisma.consultantTaxInfo.findUnique({
-    where: { consultantProfileId },
-  });
-
-  // Non-resident guard: Section 194J does not apply to non-residents.
-  // Non-residents would need Section 195 (international withholding) which is not yet supported.
-  if (taxInfo && !taxInfo.isIndianResident) {
-    const cumulativeBeforePayout =
-      await getCurrentFYCumulativePayments(consultantProfileId);
-    return {
-      tdsAmount: 0,
-      tdsRate: 0,
-      isAboveThreshold: false,
-      cumulativeBeforePayout,
-      cumulativeAfterPayout: cumulativeBeforePayout + payoutAmountPaise,
-      financialYear,
-    };
-  }
-
-  // Get cumulative payments for this FY
-  const cumulativeBeforePayout =
-    await getCurrentFYCumulativePayments(consultantProfileId);
-  const cumulativeAfterPayout = cumulativeBeforePayout + payoutAmountPaise;
-
-  // Below threshold — no TDS
-  if (cumulativeAfterPayout <= TDS_THRESHOLD_PAISE) {
-    return {
-      tdsAmount: 0,
-      tdsRate: 0,
-      isAboveThreshold: false,
-      cumulativeBeforePayout,
-      cumulativeAfterPayout,
-      financialYear,
-    };
-  }
-
-  const tdsRate = taxInfo?.panVerified
-    ? TDS_RATE_WITH_PAN
-    : TDS_RATE_WITHOUT_PAN;
-
-  // Calculate taxable amount
-  let taxableAmount: number;
-
-  if (cumulativeBeforePayout >= TDS_THRESHOLD_PAISE) {
-    // Already above threshold — TDS on full payout
-    taxableAmount = payoutAmountPaise;
-  } else {
-    // Crossing threshold this payout — TDS only on excess
-    taxableAmount = cumulativeAfterPayout - TDS_THRESHOLD_PAISE;
-  }
-
-  const tdsAmount = prorate(taxableAmount, tdsRate, 100, "round");
-
-  return {
-    tdsAmount,
-    tdsRate,
-    isAboveThreshold: true,
-    cumulativeBeforePayout,
-    cumulativeAfterPayout,
-    financialYear,
-  };
 }
 
 /**

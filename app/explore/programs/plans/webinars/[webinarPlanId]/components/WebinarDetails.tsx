@@ -22,6 +22,7 @@ import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import { BuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
+import { formatRole } from "@/components/collaborators/format";
 import type { TWebinarPlanData, TSessionStatus } from "../types";
 
 interface WebinarDetailsProps {
@@ -282,7 +283,7 @@ export function WebinarDetails({
                             {collab.consultantProfile.user.name}
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            {collab.role.replace(/_/g, " ")}
+                            {formatRole(collab.role)}
                           </p>
                         </div>
                       </Link>

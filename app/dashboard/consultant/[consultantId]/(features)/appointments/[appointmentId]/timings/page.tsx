@@ -18,6 +18,7 @@ import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-acce
 import { buildManageTimingsSubject } from "@/lib/scheduling/manage-timings-subject";
 import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 
+import { planTypeLabel } from "@/lib/labels/plan-labels";
 import { ManageTimingsClient } from "./ManageTimingsClient";
 
 /**
@@ -138,7 +139,9 @@ export default async function ManageTimingsPage({
 
         {resolved.classInfo && (
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge variant="outline">Plan: {resolved.classInfo.planType}</Badge>
+            <Badge variant="outline">
+              Plan: {planTypeLabel(resolved.classInfo.planType)}
+            </Badge>
             <span>
               {resolved.classInfo.sessionsPerWeek} meetings/week ·{" "}
               {resolved.classInfo.durationInMonths} month

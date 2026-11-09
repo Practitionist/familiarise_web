@@ -252,7 +252,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "payments",
     inApp: {
       subject: "Payment failed",
-      body: "Your payment of {{payload.amountFormatted}}{% if payload.planTitle %} for {{payload.planTitle}}{% endif %} did not go through. {{payload.failureReason}}",
+      body: "Your payment of {{payload.amountFormatted}}{% if payload.planTitle %} for {{payload.planTitle}}{% endif %} did not go through{% if payload.failureReason %}: {{payload.failureReason}}{% endif %}.",
       redirect: "retryUrl",
     },
   },

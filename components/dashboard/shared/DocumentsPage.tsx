@@ -17,6 +17,7 @@ import { useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
+import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -101,7 +102,7 @@ const COLUMNS: Column<DocumentRow>[] = [
           STATUS_CLASS[r.reviewStatus] ?? "bg-muted text-muted-foreground"
         }`}
       >
-        {r.reviewStatus.replace(/_/g, " ")}
+        {documentReviewStatusBadge(r.reviewStatus).label}
       </span>
     ),
   },
@@ -188,7 +189,7 @@ export function DocumentsPage() {
         <SelectItem value="all">Any review status</SelectItem>
         {REVIEW_STATUSES.map((s) => (
           <SelectItem key={s} value={s}>
-            {s.replace(/_/g, " ")}
+            {documentReviewStatusBadge(s).label}
           </SelectItem>
         ))}
       </SelectContent>

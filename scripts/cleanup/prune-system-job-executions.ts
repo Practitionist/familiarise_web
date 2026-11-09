@@ -15,6 +15,7 @@ const ADMIN_RUN_REQUEST_RETENTION_DAYS = 30;
 const DATA_EXPORT_JOB_RETENTION_YEARS = 1;
 const MEETING_PRESENCE_RETENTION_DAYS = 3 * 365;
 const ANONYMOUS_COOKIE_RETENTION_MONTHS = 13;
+const UNCONFIRMED_NEWSLETTER_RETENTION_DAYS = 30;
 const STRANDED_HOURS = 6;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WORK_BUDGET_MS = 16_000;
@@ -70,6 +71,12 @@ export function anonymousCookieRetentionCutoff(now: Date): Date {
   return cutoff;
 }
 
+export function unconfirmedNewsletterRetentionCutoff(now: Date): Date {
+  return new Date(
+    now.getTime() - UNCONFIRMED_NEWSLETTER_RETENTION_DAYS * DAY_MS,
+  );
+}
+
 export const STRANDED_ERROR = "stranded (no heartbeat)";
 
 export interface MessagingRetentionPruneResult {
@@ -85,6 +92,7 @@ export interface MessagingRetentionPruneResult {
 export interface SecondaryRetentionPruneResult {
   dataExportJobsPruned: number;
   cookiePreferencesPruned: number;
+  unconfirmedNewsletterPruned: number;
   meetingPresencePruned: number;
   meetingAttendancePruned: number;
   hasMore: boolean;
@@ -296,7 +304,7 @@ async function pruneMessagingRetentionPages(
   };
 }
 
-/** Export jobs, anonymous cookie choices and meeting presence; one bounded page each. */
+/** Export jobs, anonymous cookie choices, unconfirmed sign-ups and meeting presence; one bounded page each. */
 async function pruneSecondaryRetentionPages(
   now: Date,
   limit: number,
@@ -309,6 +317,13 @@ async function pruneSecondaryRetentionPages(
   const cookieWhere: Prisma.CookiePreferenceWhereInput = {
     userId: null,
     consentUpdatedAt: { lt: anonymousCookieRetentionCutoff(now) },
+  };
+  // A sign-up never confirmed carries no consent; a re-signup restarts the window.
+  const unconfirmedCutoff = unconfirmedNewsletterRetentionCutoff(now);
+  const unconfirmedWhere: Prisma.NewsletterSubscriberWhereInput = {
+    status: "PENDING",
+    createdAt: { lt: unconfirmedCutoff },
+    updatedAt: { lt: unconfirmedCutoff },
   };
   const occurrenceEnded = {
     occurrence: { endsAt: { lt: meetingPresenceRetentionCutoff(now) } },
@@ -341,6 +356,21 @@ async function pruneSecondaryRetentionPages(
     (ids) =>
       prisma.cookiePreference.deleteMany({
         where: { ...cookieWhere, id: { in: ids } },
+      }),
+  );
+  const unconfirmed = await mutateRetentionPage(
+    limit,
+    deadline,
+    (take) =>
+      prisma.newsletterSubscriber.findMany({
+        where: unconfirmedWhere,
+        select: { id: true },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take,
+      }),
+    (ids) =>
+      prisma.newsletterSubscriber.deleteMany({
+        where: { ...unconfirmedWhere, id: { in: ids } },
       }),
   );
   const presence = await mutateRetentionPage(
@@ -376,9 +406,12 @@ async function pruneSecondaryRetentionPages(
   return {
     dataExportJobsPruned: exportJobs.count,
     cookiePreferencesPruned: cookies.count,
+    unconfirmedNewsletterPruned: unconfirmed.count,
     meetingPresencePruned: presence.count,
     meetingAttendancePruned: attendance.count,
-    hasMore: [exportJobs, cookies, presence, attendance].some((p) => p.hasMore),
+    hasMore: [exportJobs, cookies, unconfirmed, presence, attendance].some(
+      (p) => p.hasMore,
+    ),
   };
 }
 

@@ -4,27 +4,27 @@ This document explains why each money rule exists, lists every guard and where i
 
 ## 1. The one principle
 
-A promotion may never cost more than the platform earns on the order it touches. The marketplace take is 20 % of the list price, so a promotion capped at the take can lower the platform's margin on that order to zero but never below it, apart from the payment gateway's own fee. Every guard below follows from that.
+A promotion may never cost more than the platform earns on the order it touches. Everything the platform funds on one order (a platform discount code, the welcome discount and referral credits together) stays within one cap, `platformFundedCapPaise` (`lib/payments/pricing/platform-funded-cap.ts`): the platform fee on the list price less a worst-case gateway estimate. The estimate is `GATEWAY_COST_BPS`, 354 basis points (Razorpay's 3 % rate for international cards, Amex, Diners and EMI, plus 18 % GST on that fee), taken on the largest amount the order can charge. A promotion at the cap therefore lowers the platform's margin on that order to zero after even the costliest gateway fee, never below. Every guard below follows from that.
 
 ## 2. Programme economics at launch
 
 The default values below sit in `ReferralProgramConfig` and the active fee schedule. Operations can change any of them without a code change. The launch budget (`monthlyBudgetPaise`) and the review-hold thresholds (`holdSameIpReferrals`, `holdSameDeviceReferrals`, `holdWindowDays`) are owner-set values kept in Notion (Familiarise / Growth & Marketing), not in this repository.
 
-| Item                                  | Default                                              | Where it is set                            |
-| ------------------------------------- | ---------------------------------------------------- | ------------------------------------------ |
-| Marketplace take                      | 20 %                                                 | `PlatformFeeSchedule.marketplaceBps`       |
-| Own-link take                         | 10 %                                                 | `PlatformFeeSchedule.ownLinkBps`           |
-| Welcome discount                      | 20 % before tax, at most ₹300                        | `discountBps`, `discountMaxPaise`          |
-| Referrer credit                       | ₹300                                                 | `referrerRewardPaise`                      |
-| Credit redemption cap                 | 20 % of list price, and never above the order's take | `redemptionCapBps`                         |
-| Minimum cash paid                     | ₹500                                                 | `minOrderPaise`                            |
-| Credit validity after vest            | 90 days                                              | `creditExpiryDays`                         |
-| Qualify window and attribution window | 30 days                                              | `qualifyWindowDays`, cookie age            |
-| Expert waiver                         | 3 sessions, 90 days, both sides                      | `expertWaiverSessions`, `expertWaiverDays` |
+| Item                                  | Default                                             | Where it is set                            |
+| ------------------------------------- | --------------------------------------------------- | ------------------------------------------ |
+| Marketplace take                      | 20 %                                                | `PlatformFeeSchedule.marketplaceBps`       |
+| Own-link take                         | 10 %                                                | `PlatformFeeSchedule.ownLinkBps`           |
+| Welcome discount                      | Up to 20 % before tax, at most ₹300, within the cap | `discountBps`, `discountMaxPaise`          |
+| Referrer credit                       | ₹300                                                | `referrerRewardPaise`                      |
+| Credit redemption cap                 | 20 % of list price, and never above the cap         | `redemptionCapBps`                         |
+| Minimum cash paid                     | ₹500                                                | `minOrderPaise`                            |
+| Credit validity after vest            | 90 days                                             | `creditExpiryDays`                         |
+| Qualify window and attribution window | 30 days                                             | `qualifyWindowDays`, cookie age            |
+| Expert waiver                         | 3 sessions, 90 days, both sides                     | `expertWaiverSessions`, `expertWaiverDays` |
 
-A worked example makes the discount concrete. At a list price of ₹1,500 the welcome discount is 20 %, which is ₹300, so the buyer's taxable amount is ₹1,200 and GST at 18 % makes the total ₹1,416. The expert still receives ₹1,200, which is 80 % of the list price. The platform margin on that order is ₹0 before gateway costs. A ₹500 order receives a ₹100 discount, not a flat ₹300.
+A worked example makes the discount concrete. At a list price of ₹1,500 on the 20 % marketplace take, 20 % would be ₹300, but the cap is lower. Once the platform is GST-registered, the largest charge is ₹1,770 (₹1,500 plus 18 % GST), its gateway estimate is ₹62.66 (3.54 %, rounded up), and the cap is ₹300 − ₹62.66 = ₹237.34. The welcome discount is therefore ₹237.34, the taxable amount ₹1,262.66, GST ₹227.28 and the total ₹1,489.94. While unregistered there is no GST: the estimate is ₹53.10 on ₹1,500, the discount ₹246.90 and the total ₹1,253.10. The expert still receives ₹1,200, which is 80 % of the list price, either way. At ₹1,000 registered the discount is ₹158.22 and the total ₹993.30. A ₹500 order receives no welcome discount: its cap of ₹79.11 would leave the buyer paying less than the ₹500 minimum, so `keepsWelcomeDiscount` drops it.
 
-An own-link order has only a 10 % take. Because promotion is capped at the take, credit redemption on such an order is limited to 10 %, and a consumer-referral discount does not apply at all, since the source of an own-link order is never `CONSUMER_REFERRAL`.
+An own-link order has only a 10 % take. Because promotion is capped at the take, credit redemption on such an order is limited to 10 % and to the order's cap, and a consumer-referral discount does not apply at all, since the source of an own-link order is never `CONSUMER_REFERRAL`.
 
 ## 3. Guards
 
@@ -32,6 +32,7 @@ Each guard below is a rule the code enforces. The right column says where, so th
 
 | Guard                                                                                                         | Where it is enforced                                                                                                                 |
 | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| A code, the welcome discount and credits together never exceed `platformFundedCapPaise`.                      | `deriveCheckoutAmount`, the checkout preview `calculatePricing` and the discount validate route.                                     |
 | The welcome discount is `min(round(list × bps / 10 000), maxPaise, list)` and is taken before tax.            | `computeWelcomeDiscountPaise` in `lib/referrals/promo-math.ts`, called from `deriveCheckoutAmount`.                                  |
 | The welcome rate cannot exceed the order's take: `min(discountBps, platformFeeBps)`.                          | `resolveCheckoutAttribution`.                                                                                                        |
 | The discount is dropped when cash paid after discount and credits falls under the minimum order.              | `keepsWelcomeDiscount`. The capture step checks the same floor again before qualifying the referral.                                 |

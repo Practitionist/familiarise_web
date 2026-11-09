@@ -17,13 +17,17 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import {
-  PAYOUT_CONSTANTS,
-  TAX_CONSTANTS,
-} from "@/lib/payments/payouts/constants";
+import { withBuildTimeRetry } from "@/lib/data/fail-open";
+import { TAX_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { buyerDisplayPricePaise } from "@/lib/payments/pricing/display-price";
+import {
+  describeFeeRates,
+  readActiveFeeSchedule,
+} from "@/lib/payments/pricing/platform-fee";
+import { prorate } from "@/lib/payments/utils/money";
 import { isPlatformGstRegistered } from "@/lib/pdf/supplier";
+import prisma from "@/lib/prisma";
 import {
   PAGE_META,
   PRICING_DATA,
@@ -31,7 +35,8 @@ import {
   pricingHowItWorks,
 } from "../constants";
 
-// The GST wording follows PLATFORM_GSTIN; hourly regeneration picks up a registration.
+// The GST wording follows PLATFORM_GSTIN and the fee the approved schedule; hourly
+// regeneration picks up a registration or a newly approved schedule.
 export const revalidate = 3600;
 
 export const metadata: Metadata = {
@@ -40,9 +45,6 @@ export const metadata: Metadata = {
 };
 
 const EXAMPLE_LIST_PRICE_PAISE = 100_000;
-const exampleFeePaise = Math.round(
-  (EXAMPLE_LIST_PRICE_PAISE * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
-);
 
 function inr(paise: number): string {
   return formatCurrencyAmount(paise, "INR");
@@ -86,8 +88,18 @@ const SERVICES = [
   },
 ] as const;
 
-export default function PricingPage() {
+export default async function PricingPage() {
   const gstRegistered = isPlatformGstRegistered();
+  const schedule = await withBuildTimeRetry(() =>
+    readActiveFeeSchedule(prisma),
+  );
+  const { marketplaceFeePct } = describeFeeRates(schedule);
+  // The settlement's own floor(list × bps / 10 000).
+  const exampleFeePaise = prorate(
+    EXAMPLE_LIST_PRICE_PAISE,
+    schedule.marketplaceBps,
+    10_000,
+  );
   const totalPaise = buyerDisplayPricePaise(
     EXAMPLE_LIST_PRICE_PAISE,
     gstRegistered,
@@ -181,8 +193,7 @@ export default function PricingPage() {
                 <dl className="space-y-1 text-sm">
                   <div className="flex justify-between gap-4">
                     <dt className="text-muted-foreground">
-                      Platform fee ({PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE}%
-                      of the listed price)
+                      Platform fee ({marketplaceFeePct}% of the listed price)
                     </dt>
                     <dd>{inr(exampleFeePaise)}</dd>
                   </div>
@@ -218,10 +229,10 @@ export default function PricingPage() {
             <CardContent className="space-y-4">
               <p className="text-muted-foreground">
                 Familiarise charges experts a platform fee of currently{" "}
-                <strong>{PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE}%</strong> of
-                the listed price on each booking made through the marketplace.
-                Learners do not pay it separately; it is already part of the
-                listed price. The fee helps us:
+                <strong>{marketplaceFeePct}%</strong> of the listed price on
+                each booking made through the marketplace. Learners do not pay
+                it separately; it is already part of the listed price. The fee
+                helps us:
               </p>
               <ul className="list-disc list-inside space-y-2 text-muted-foreground ml-4">
                 {PRICING_DATA.commissionBenefits.map((benefit) => (

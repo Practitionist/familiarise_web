@@ -59,9 +59,8 @@ export function OnboardingStepper({
   className,
 }: OnboardingStepperProps) {
   const total = steps.length;
-  // A single-step flow has nothing to progress through; showing "100%"
-  // before the user has done anything would be a lie.
-  const percent = total <= 1 ? 0 : Math.round((current / (total - 1)) * 100);
+  // Counts the steps already finished, so the last step never claims 100% before it is submitted.
+  const percent = total <= 0 ? 0 : Math.round((current / total) * 100);
 
   return (
     <nav aria-label="Onboarding steps" className={cn("w-full", className)}>

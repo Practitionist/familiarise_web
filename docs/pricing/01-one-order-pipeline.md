@@ -33,9 +33,9 @@ flowchart LR
 
 - **One modifier.** `deriveCheckoutAmount()` drops the welcome discount when a code is present, so a code and a welcome discount never stack.
 - **Order of operations.** Discount, then GST on the discounted base, then credits against the tax-inclusive total. A fixed code never drives the price below zero (`computeDiscountPaise()`).
-- **One shared cap.** `platformFundedCapPaise()` (`lib/payments/pricing/platform-funded-cap.ts`) is `max(0, platform fee - gateway estimate)`. The code discount, the welcome discount and the credits together stay inside it, in the server derivation, the checkout preview (`calculatePricing()` in `app/checkout/plans/math.ts`) and the discount preview route. The gateway estimate is `GATEWAY_COST_BPS` (236 bps: Razorpay's 2% plus 18% GST on that fee) on the largest amount the order can charge, rounded up.
+- **One shared cap.** `platformFundedCapPaise()` (`lib/payments/pricing/platform-funded-cap.ts`) is `max(0, platform fee - gateway estimate)`. The code discount, the welcome discount and the credits together stay inside it, in the server derivation, the checkout preview (`calculatePricing()` in `app/checkout/plans/math.ts`) and the discount preview route. The gateway estimate is `GATEWAY_COST_BPS` (354 bps: Razorpay's worst-case rate of 3%, on international cards, Amex, Diners and EMI, plus 18% GST on that fee) on the largest amount the order can charge, rounded up.
 - **No promo on a waiver or host-organisation order.** `takeCannotFundPromo()` removes the welcome discount and the credit cap, a platform code is refused there with `DISCOUNT_NOT_APPLICABLE` before any redemption is spent, and `consumeFeeWaiver()` is never spent on an order that carries promo.
-- **GST follows the registration.** `determineTax()` charges 18% only when `currentGstRegime()` says registered; unregistered it charges 0% and the payment is stamped `Payment.gstRegime = UNREGISTERED`. A `PLATFORM_GSTIN` that is set but unusable refuses checkout with `GST_CONFIG_INVALID` rather than charging 0%.
+- **GST follows the registration.** `determineTax()` charges 18% only when `currentGstRegime()` says registered; unregistered it charges 0% and the payment is stamped `Payment.gstRegime = UNREGISTERED`. A `PLATFORM_GSTIN` that is set but unusable refuses checkout with `GST_CONFIG_INVALID` rather than charging 0%, and `GET /api/checkout/context` answers the same typed refusal (503) without a Sentry event. Only a payment stamped `REGISTERED` is ever tax-invoiced; a payment with no stamp predates the column and counts as unregistered.
 - **Money legs add up.** The funding legs sum to `Payment.amount` (the `payment_legs_sum_to_amount` trigger), with the credit leg excluded because the amount is already net of it.
 - **The table is a test.** `__tests__/payments/pricing-levers-invariants.test.ts` runs every combination of regime, rail, modifier and credits and asserts the platform margin is at least zero and the expert's share is untouched.
 
@@ -49,30 +49,30 @@ flowchart LR
 
 ## Worked example
 
-The cast: a learner buys a ₹1,000 (100,000 paise) consultation from an expert on the marketplace. The platform fee is 20%, so the fee is ₹200.00. The gateway estimate is 2.36% of the largest amount the order can charge, rounded up: registered that is ₹1,180, so ₹27.85, and the cap is ₹200.00 - ₹27.85 = ₹172.15. Both rails use the fallback 20% until the owner approves a schedule; the approved rates and the reasoning behind them are kept in Notion (Familiarise / Finance). The numbers below are what `deriveCheckoutAmount()` returns.
+The cast: a learner buys a ₹1,000 (100,000 paise) consultation from an expert on the marketplace. The platform fee is 20%, so the fee is ₹200.00. The gateway estimate is 3.54% of the largest amount the order can charge, rounded up: registered that is ₹1,180, so ₹41.78, and the cap is ₹200.00 - ₹41.78 = ₹158.22. Both rails use the fallback 20% until the owner approves a schedule; the approved rates and the reasoning behind them are kept in Notion (Familiarise / Finance). The numbers below are what `deriveCheckoutAmount()` returns.
 
 ### Variant A: registered, marketplace, referral friend
 
 | Step                                                        |  Paise |  Rupees |
 | ----------------------------------------------------------- | -----: | ------: |
-| Welcome discount: 20% would be ₹200.00, the cap holds it to | 17,215 | ₹172.15 |
-| Taxable value                                               | 82,785 | ₹827.85 |
-| GST at 18%                                                  | 14,901 | ₹149.01 |
-| The buyer pays                                              | 97,686 | ₹976.86 |
+| Welcome discount: 20% would be ₹200.00, the cap holds it to | 15,822 | ₹158.22 |
+| Taxable value                                               | 84,178 | ₹841.78 |
+| GST at 18%                                                  | 15,152 | ₹151.52 |
+| The buyer pays                                              | 99,330 | ₹993.30 |
 | Referral credits (the cap is used up)                       |      0 |   ₹0.00 |
 | The expert's share, 80% of the list price                   | 80,000 | ₹800.00 |
-| Actual gateway cost, 2.36% of ₹976.86 rounded up            |  2,306 |  ₹23.06 |
-| Platform margin: 97,686 - 14,901 - 80,000 - 2,306           |    479 |   ₹4.79 |
+| Actual gateway cost, worst case 3.54% of ₹993.30 rounded up |  3,517 |  ₹35.17 |
+| Platform margin: 99,330 - 15,152 - 80,000 - 3,517           |    661 |   ₹6.61 |
 
-TDS under section 194-O is computed on the ₹1,000 list price, not on the taxable value, because a platform-funded modifier leaves the expert's sale price alone.
+TDS under section 194-O is computed on the ₹1,000 list price, not on the taxable value, because a platform-funded modifier leaves the expert's sale price alone. The margin is the worst case: at the domestic rate of 2.36% the gateway would cost 2,345 (₹23.45) and the margin would be 1,833 (₹18.33). The estimate is sized for the costliest payment method so the floor never goes negative.
 
 ### Variant B: unregistered, same order
 
-With no valid `PLATFORM_GSTIN` the gateway estimate is taken on ₹1,000, so it is ₹23.60 and the cap is ₹176.40. The welcome discount is ₹176.40, there is no GST, and the buyer pays **₹823.60** and receives a receipt rather than a tax invoice. The expert still earns ₹800.00 and the platform keeps ₹4.16 after the gateway. While unregistered the list price is also the all-in price, so the plan card shows ₹1,000 with no GST text.
+With no valid `PLATFORM_GSTIN` the gateway estimate is taken on ₹1,000, so it is ₹35.40 and the cap is ₹164.60. The welcome discount is ₹164.60, there is no GST, and the buyer pays **₹835.40** and receives a receipt rather than a tax invoice. The expert still earns ₹800.00 and the platform keeps 83,540 - 80,000 - 2,958 = 582 paise (₹5.82) after the gateway's worst case. While unregistered the list price is also the all-in price, so the plan card shows ₹1,000 with no GST text.
 
 ### Variant C: own-link buyer (10% fee)
 
-The expert brought this learner through their own link, so the fee is ₹100.00 and the cap is ₹100.00 - ₹27.85 = ₹72.15 registered (₹76.40 unregistered). A welcome discount cannot apply to an own-link buyer (it is for a referral on a marketplace purchase), so the cap matters for a platform code or for credits. The expert earns ₹900.00.
+The expert brought this learner through their own link, so the fee is ₹100.00 and the cap is ₹100.00 - ₹41.78 = ₹58.22 registered (₹100.00 - ₹35.40 = ₹64.60 unregistered). A welcome discount cannot apply to an own-link buyer (it is for a referral on a marketplace purchase), so the cap matters for a platform code or for credits. The expert earns ₹900.00.
 
 ### Variant D: host-funded 10% coupon (planned)
 

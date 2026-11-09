@@ -21,6 +21,7 @@ export const POLICY_DATES = {
   refundLastUpdated: "October 28, 2026",
   grievanceLastUpdated: "October 21, 2026",
   reviewsPolicyLastUpdated: "October 2026",
+  howWeRankLastUpdated: "November 9, 2026",
 } as const;
 
 export const ANTI_SCAM_NOTICE =
@@ -53,6 +54,7 @@ export const SUPPORT_LINKS = [
   { href: "/support", label: "Help Center" },
   { href: "/grievance", label: "Grievance Redressal" },
   { href: "/reviews-policy", label: "Reviews & Moderation Policy" },
+  { href: "/how-we-rank", label: "How We Rank Experts & Programs" },
   { href: "/pricing", label: "Pricing & Platform Fees" },
   { href: "/refund", label: "Cancellation & Refund Policy" },
   { href: "/privacy", label: "Privacy Policy" },

@@ -13,3 +13,16 @@ export function runAsRegisteredPlatform(): void {
     else process.env.PLATFORM_GSTIN = previous;
   });
 }
+
+/** Runs the enclosing suite as an unregistered platform (PLATFORM_GSTIN unset) and restores it after. */
+export function runAsUnregisteredPlatform(): void {
+  let previous: string | undefined;
+  beforeAll(() => {
+    previous = process.env.PLATFORM_GSTIN;
+    delete process.env.PLATFORM_GSTIN;
+  });
+  afterAll(() => {
+    if (previous === undefined) delete process.env.PLATFORM_GSTIN;
+    else process.env.PLATFORM_GSTIN = previous;
+  });
+}

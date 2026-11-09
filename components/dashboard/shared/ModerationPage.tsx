@@ -27,6 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { userRoleLabel } from "@/lib/labels/personal-dashboard";
 import { reportReasonLabel } from "@/lib/labels/report-reasons";
 import { formatReportReference } from "@/lib/moderation/report-reference";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
@@ -148,7 +149,7 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
 };
 
 const humaniseActionType = (actionType: string): string =>
-  ACTION_TYPE_LABELS[actionType] ?? actionType.replace(/_/g, " ").toLowerCase();
+  ACTION_TYPE_LABELS[actionType] ?? "Moderation action";
 
 const relativeDate = (dateString: string) =>
   formatDistanceToNow(new Date(dateString), { addSuffix: true });
@@ -316,7 +317,7 @@ function EnforcementSummary({
           <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
         )}
         <Label className="text-sm font-medium">
-          {action.actionType.replace(/_/g, " ")} —{" "}
+          {humaniseActionType(action.actionType)} —{" "}
           {formatDate(action.createdAt)}
         </Label>
       </div>
@@ -1039,7 +1040,7 @@ export function ModerationPage() {
                                 Against{" "}
                                 {report.targetUser.name ||
                                   report.targetUser.email}{" "}
-                                ({report.targetUser.role})
+                                ({userRoleLabel(report.targetUser.role)})
                                 {report.targetUser.banned && (
                                   <Badge
                                     variant="destructive"
@@ -1335,7 +1336,7 @@ export function ModerationPage() {
                         selectedReport.targetUser.email}
                     </p>
                     <p className="text-xs text-muted-foreground/70">
-                      {selectedReport.targetUser.role}
+                      {userRoleLabel(selectedReport.targetUser.role)}
                       {describeEnforcementState(selectedReport.targetUser)}
                     </p>
                   </div>

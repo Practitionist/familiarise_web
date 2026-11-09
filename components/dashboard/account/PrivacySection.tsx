@@ -24,10 +24,7 @@ const SUBJECT_MAX = 200;
 const DESCRIPTION_MIN = 10;
 const DESCRIPTION_MAX = 5000;
 
-/**
- * #1527 §14 — the DPDP grievance form. `POST /api/compliance/grievances` has
- * existed since #701 with no page calling it; this is that page.
- */
+/** The privacy complaint form, posted to `POST /api/compliance/grievances`. */
 export function GrievanceSection() {
   const { toast } = useToast();
   const [subject, setSubject] = useState("");
@@ -72,13 +69,13 @@ export function GrievanceSection() {
       }
       reset();
       toast({
-        title: "Grievance filed",
+        title: "Complaint sent",
         description:
           "Our grievance officer will reply by email. Keep an eye on your inbox.",
       });
     } catch (error) {
       toast({
-        title: "Couldn't file your grievance",
+        title: "Couldn't send your complaint",
         description: error instanceof Error ? error.message : undefined,
         variant: "destructive",
       });
@@ -89,8 +86,8 @@ export function GrievanceSection() {
 
   return (
     <Section
-      title="Data protection grievance"
-      description="Under India's DPDP Act you can raise a grievance about how we handle your personal data."
+      title="Privacy complaint"
+      description="Tell us if you think we have mishandled your personal data. Our grievance officer will reply by email. If we don't resolve it, you can complain to the Data Protection Board of India."
       variant="card"
     >
       <form onSubmit={submit} className="space-y-4">
@@ -124,7 +121,7 @@ export function GrievanceSection() {
           isSaving={isSaving}
           isDirty={!!(subject || description)}
           onReset={reset}
-          saveLabel="File grievance"
+          saveLabel="Send complaint"
           resetLabel="Clear"
         />
       </form>
@@ -132,7 +129,7 @@ export function GrievanceSection() {
   );
 }
 
-/** Permanent deletion / DPDP §6(4) & §12 core consent withdrawal, confirmed by typing the account's email. */
+/** Permanent deletion and withdrawal of core consent, confirmed by typing the account's email. */
 export function DeleteAccountSection() {
   const { data: session } = useSession();
   const { toast } = useToast();
@@ -141,36 +138,31 @@ export function DeleteAccountSection() {
   return (
     <Section
       id="delete-account"
-      title="Withdraw core consent & delete account"
-      description="Under DPDP Act §6(4)–(5) and §12, withdrawing consent for core platform processing permanently closes your account, revokes all active sessions, and erases your personal identifiers."
+      title="Withdraw consent & delete account"
+      description="Withdrawing the consent we need to run your account permanently closes it, signs you out everywhere and erases your personal details."
       variant="card"
     >
       <div className="space-y-4">
         <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground space-y-1.5">
           <p className="font-medium text-foreground">
-            What happens when you withdraw core consent &amp; delete your
-            account:
+            What happens when you withdraw consent &amp; delete your account:
           </p>
           <ul className="list-disc pl-4 space-y-1">
             <li>
-              <strong>Pre-checks:</strong> Any active upcoming bookings, pending
-              consultant payouts, unsettled earnings, or open payment disputes
-              must be completed or settled first.
+              <strong>Before you delete:</strong> Any active upcoming bookings,
+              pending consultant payouts, unsettled earnings, or open payment
+              disputes must be completed or settled first.
             </li>
             <li>
-              <strong>Immediate PII erasure &amp; vendor offboarding:</strong>{" "}
-              Your name, email, phone, bio, and payout bank details are scrubbed
-              immediately; all active sessions are revoked; and saved Razorpay
-              card tokens and Novu notification profiles are removed.
+              <strong>Your details are erased straight away:</strong> Your name,
+              email, phone, bio and payout bank details are erased, you are
+              signed out everywhere, and your saved cards and notification
+              profile are removed.
             </li>
             <li>
-              <strong>
-                Statutory tax &amp; audit retention (DPDP §12(3)):
-              </strong>{" "}
-              If you have past financial transactions, anonymised ledger,
-              invoice, and TDS records are retained for 7–8 years solely as
-              required under the Income Tax Act, 1961 (§44AA) and CGST Act, 2017
-              (§36).
+              <strong>Tax and accounting records are kept:</strong> If you have
+              past payments, the law requires us to keep anonymised invoice,
+              ledger and tax-deduction records for several years, up to 8.
             </li>
           </ul>
         </div>
@@ -179,10 +171,10 @@ export function DeleteAccountSection() {
             trigger={
               <Button variant="outline" className="text-destructive">
                 <Trash2 className="mr-1.5 h-4 w-4" />
-                Withdraw core consent &amp; delete account
+                Withdraw consent &amp; delete account
               </Button>
             }
-            title="Withdraw core consent and delete your account?"
+            title="Withdraw consent and delete your account?"
             description="Your personal data will be erased, all active consents withdrawn, and your account permanently closed. This cannot be undone."
             requireTyped={user.email}
             confirmLabel="Delete my account"

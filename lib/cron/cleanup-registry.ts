@@ -1439,6 +1439,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           emailEventsPruned: r.emailEventsPruned,
           dataExportJobsPruned: r.dataExportJobsPruned,
           cookiePreferencesPruned: r.cookiePreferencesPruned,
+          unconfirmedNewsletterPruned: r.unconfirmedNewsletterPruned,
           meetingPresencePruned: r.meetingPresencePruned,
           meetingAttendancePruned: r.meetingAttendancePruned,
           hasMore: r.hasMore,
@@ -1453,6 +1454,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             r.emailEventsPruned +
             r.dataExportJobsPruned +
             r.cookiePreferencesPruned +
+            r.unconfirmedNewsletterPruned +
             r.meetingPresencePruned +
             r.meetingAttendancePruned,
         }),

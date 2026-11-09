@@ -44,6 +44,7 @@ import { BookingOpsPanel } from "@/components/dashboard/backoffice/money/Booking
 import { DoorDialog } from "@/components/dashboard/backoffice/money/DoorDialog";
 import { PlatformCancelDoor } from "@/components/dashboard/backoffice/money/PlatformCancelDoor";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { subscriptionStatusLabel } from "@/lib/labels/money-labels";
 import type {
   SubscriptionListItem,
   SubscriptionListResponse,
@@ -189,7 +190,7 @@ function SubscriptionDetailSheet({
                 variant="secondary"
               >
                 {getStatusIcon(subscription.status)}
-                {subscription.status.replace(/_/g, " ")}
+                {subscriptionStatusLabel(subscription.status)}
               </Badge>
             </div>
 
@@ -388,7 +389,7 @@ const SUBSCRIPTION_COLUMNS: ResponsiveColumn<EnrichedSubscriptionItem>[] = [
         variant="secondary"
       >
         {getStatusIcon(subscription.status)}
-        {subscription.status.replace(/_/g, " ")}
+        {subscriptionStatusLabel(subscription.status)}
       </Badge>
     ),
   },

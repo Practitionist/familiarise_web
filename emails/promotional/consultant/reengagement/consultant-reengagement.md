@@ -20,17 +20,9 @@ I've sent you a few emails about **Familiarise** over the past two weeks. You ha
 
 **I'm going to stop emailing you after this one.**
 
-But before I do, I wanted to share what's happened since I first reached out:
+But before I do, here is what Familiarise does:
 
-**We've onboarded 150+ consultants in two weeks.**
-
-They're managing consultations, subscription programs, webinars, and classes from one platform instead of juggling Calendly + Stripe + Zoom + course platforms + spreadsheets.
-
-**The feedback has been incredible:**
-
-- "Booked 12 new clients in the first week"
-- "Finally ditched my $79/month tool stack"
-- "My clients love having one place to access everything I offer"
+Consultants manage consultations, subscription programs, webinars, and classes from one platform instead of juggling Calendly + Stripe + Zoom + course platforms + spreadsheets.
 
 **I reached out to you specifically because** [PERSONALIZED REASON: noticed your work in X / saw you're doing Y / thought you'd benefit from Z].
 

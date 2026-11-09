@@ -235,7 +235,7 @@ export async function resolveOrgFunding(
     ) {
       throw Object.assign(
         new Error(
-          "Consent required before your organization can book sessions for you. Give session-booking consent in Settings › Account › Data consent.",
+          "Your organisation needs your permission to book sessions for you. You can give it in Settings › Account › Data consent.",
         ),
         {
           httpStatus: 403,

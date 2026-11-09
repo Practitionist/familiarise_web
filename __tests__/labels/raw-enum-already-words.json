@@ -1,0 +1,57 @@
+[
+  {
+    "path": "app/explore/programs/plans/classes/[classPlanId]/components/BatchSchedule.tsx",
+    "field": "status",
+    "reason": "SessionInfo.status is already the words Upcoming / Completed / Happening Now, never a database enum."
+  },
+  {
+    "path": "app/meetings/[id]/components/MeetingRoom.tsx",
+    "field": "status",
+    "reason": "clock.status is a ready sentence from readClock (Starts in 5 min, 10 min over), not an enum."
+  },
+  {
+    "path": "components/chat/DebugDialog.tsx",
+    "field": "role",
+    "reason": "Developer tool shown only on localhost."
+  },
+  {
+    "path": "components/dashboard/MaintenanceBookingRemediation.tsx",
+    "field": "reason",
+    "reason": "Operator-typed audit reason, shown on the operator console."
+  },
+  {
+    "path": "components/dashboard/MaintenanceControls.tsx",
+    "field": "reason",
+    "reason": "Operator-typed maintenance reason, shown on the operator console."
+  },
+  {
+    "path": "components/dashboard/shared/AppointmentTimeline.tsx",
+    "field": "reason",
+    "reason": "entry.reason is already copy: the booking-history read maps scheduling tokens to words."
+  },
+  {
+    "path": "app/dashboard/organization/[orgId]/billing/InvoiceDetailSheet.tsx",
+    "field": "reason",
+    "reason": "Credit-note reason is prose an operator typed."
+  },
+  {
+    "path": "components/dashboard/shared/PaymentDetailPage.tsx",
+    "field": "reason",
+    "reason": "Refund.reason is the operator's prose reason for the refund."
+  },
+  {
+    "path": "app/dashboard/consultant/[consultantId]/(features)/settings/get-paid/ReversePennyDrop.tsx",
+    "field": "reason",
+    "reason": "phase.reason is a sentence the verification API wrote for the user."
+  },
+  {
+    "path": "components/support/resolution/FinancialPanel.tsx",
+    "field": "reason",
+    "reason": "Support-agent resolution panel, not a customer surface."
+  },
+  {
+    "path": "emails/organizations/SsoProviderEmail.tsx",
+    "field": "reason",
+    "reason": "The reason is prose the platform reviewer typed for the org admin."
+  }
+]

@@ -10,7 +10,11 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Building2, Mail, Phone, Clock, MessageSquare } from "lucide-react";
 import { ContactForm } from "./ContactForm";
-import { COMPANY_INFO } from "@/lib/company";
+import {
+  COMPANY_INFO,
+  DARK_PATTERN_AUDIT,
+  isDarkPatternAuditSigned,
+} from "@/lib/company";
 import {
   ACK_PROMISE_COPY,
   ANTI_SCAM_NOTICE,
@@ -25,6 +29,18 @@ export const metadata: Metadata = {
   title: `${PAGE_META.contact.title} | Familiarise`,
   description: PAGE_META.contact.description,
 };
+
+const HELP_LINKS = [
+  ...SUPPORT_LINKS,
+  ...(isDarkPatternAuditSigned(DARK_PATTERN_AUDIT)
+    ? [
+        {
+          href: "/compliance-certificate",
+          label: "Dark-Pattern Compliance Certificate",
+        },
+      ]
+    : []),
+];
 
 export default function ContactUsPage() {
   return (
@@ -153,7 +169,7 @@ export default function ContactUsPage() {
                   in our help resources:
                 </p>
                 <ul className="space-y-2">
-                  {SUPPORT_LINKS.map((link) => (
+                  {HELP_LINKS.map((link) => (
                     <li key={link.href} className="text-sm">
                       <a
                         href={link.href}

@@ -75,9 +75,7 @@ export async function validateSlotAvailability(
       ))
     ) {
       throw Object.assign(
-        new Error(
-          "This consultant has withdrawn session-delivery consent and cannot accept new bookings.",
-        ),
+        new Error("This expert isn't taking bookings right now."),
         { httpStatus: 403, code: "CONSENT_WITHDRAWN" },
       );
     }

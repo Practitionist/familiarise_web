@@ -54,25 +54,25 @@ Admin routes run through `withOpsAction`, which requires a written reason and st
 
 The fields that `PATCH /api/admin/referrals/config` accepts, with their bounds, are shown below. Each is optional and at least one must be present.
 
-| Field                                      | Meaning                                                                   | Default       |
-| ------------------------------------------ | ------------------------------------------------------------------------- | ------------- |
-| `paused`                                   | Stops new referees and vests while true.                                  | false         |
-| `monthlyBudgetPaise`                       | The month's ceiling for discounts, rewards and waiver costs. 0 means off. | 0             |
-| `referrerRewardPaise`                      | The referrer's credit.                                                    | 30,000        |
-| `discountBps`, `discountMaxPaise`          | The welcome discount rate (max 10,000) and its ceiling.                   | 2,000; 30,000 |
-| `redemptionCapBps`                         | The most of an order's list price that credits and discount may cover.    | 2,000         |
-| `minOrderPaise`                            | Floor for cash paid after the discount and credits.                       | 50,000        |
-| `creditExpiryDays`                         | Days a vested credit stays spendable (1 to 3,650).                        | 90            |
-| `qualifyWindowDays`                        | Days the referee has to pay and be delivered (1 to 365).                  | 30            |
-| `perCodeLifetimeCap`                       | Vests one code may ever earn.                                             | 25            |
-| `perReferrerYearlyCapPaise`                | Reward value one code may earn per calendar year.                         | 1,000,000     |
-| `weeklyVestCap`                            | Vests one code may earn per ISO week.                                     | 5             |
-| `expertYearlyReferralCap`                  | Expert referrals one code may vest per year.                              | 10            |
-| `expertWaiverSessions`, `expertWaiverDays` | Waived sessions per expert and their validity.                            | 3; 90         |
-| `expertReferralBudgetPaise`                | Budget charged when an expert referral vests.                             | 180,000       |
-| `holdSameIpReferrals`                      | Referrals of one code sharing an IP hash that hold a vest (2 or more).    | Null (off)    |
-| `holdSameDeviceReferrals`                  | The same, counting only a shared IP hash and user agent (2 or more).      | Null (off)    |
-| `holdWindowDays`                           | Limits both hold counts to recent sign-ups; null counts all of them.      | Null          |
+| Field                                      | Meaning                                                                                                                            | Default       |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `paused`                                   | Stops new referees and vests while true.                                                                                           | false         |
+| `monthlyBudgetPaise`                       | The month's ceiling for discounts, rewards and waiver costs. 0 means off.                                                          | 0             |
+| `referrerRewardPaise`                      | The referrer's credit.                                                                                                             | 30,000        |
+| `discountBps`, `discountMaxPaise`          | The welcome discount rate (max 10,000) and its ceiling; the platform-funded cap (`platformFundedCapPaise`) can lower it per order. | 2,000; 30,000 |
+| `redemptionCapBps`                         | The most of an order's list price that credits and discount may cover.                                                             | 2,000         |
+| `minOrderPaise`                            | Floor for cash paid after the discount and credits.                                                                                | 50,000        |
+| `creditExpiryDays`                         | Days a vested credit stays spendable (1 to 3,650).                                                                                 | 90            |
+| `qualifyWindowDays`                        | Days the referee has to pay and be delivered (1 to 365).                                                                           | 30            |
+| `perCodeLifetimeCap`                       | Vests one code may ever earn.                                                                                                      | 25            |
+| `perReferrerYearlyCapPaise`                | Reward value one code may earn per calendar year.                                                                                  | 1,000,000     |
+| `weeklyVestCap`                            | Vests one code may earn per ISO week.                                                                                              | 5             |
+| `expertYearlyReferralCap`                  | Expert referrals one code may vest per year.                                                                                       | 10            |
+| `expertWaiverSessions`, `expertWaiverDays` | Waived sessions per expert and their validity.                                                                                     | 3; 90         |
+| `expertReferralBudgetPaise`                | Budget charged when an expert referral vests.                                                                                      | 180,000       |
+| `holdSameIpReferrals`                      | Referrals of one code sharing an IP hash that hold a vest (2 or more).                                                             | Null (off)    |
+| `holdSameDeviceReferrals`                  | The same, counting only a shared IP hash and user agent (2 or more).                                                               | Null (off)    |
+| `holdWindowDays`                           | Limits both hold counts to recent sign-ups; null counts all of them.                                                               | Null          |
 
 A database check, `referral_program_config_ranges`, repeats these bounds. The hold thresholds are set by the owner and their values are kept in Notion, not in this repository.
 

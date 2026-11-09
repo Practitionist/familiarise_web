@@ -44,6 +44,7 @@ import type {
   ParticipantStatus,
   TrialStatus,
   NewsletterStatus,
+  PlatformFeedbackStatus,
   WebinarStatus,
 } from "@prisma/client";
 import { humanizeEnum } from "@/lib/ui/tone";
@@ -636,6 +637,18 @@ export const verificationStatusBadge = (
 ): StatusBadgeStyle => resolve(VERIFICATION_STATUS_BADGE, status);
 
 // ───────────────────────────── Sponsoring-org helper ─────────────────────────────
+
+/** Platform feedback status in sentence case; lower-case it for a mid-sentence clause. */
+export const PLATFORM_FEEDBACK_STATUS_LABEL: Record<
+  PlatformFeedbackStatus,
+  string
+> = {
+  PENDING: "Pending",
+  ACKNOWLEDGED: "Acknowledged",
+  IN_PROGRESS: "In progress",
+  RESOLVED: "Resolved",
+  CLOSED: "Closed",
+};
 
 /**
  * Resolve the display name of the org sponsoring a booking/payment from the

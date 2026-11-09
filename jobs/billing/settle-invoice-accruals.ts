@@ -11,7 +11,11 @@ import {
   recordSystemEvent,
 } from "@/lib/enterprise/system-events";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
-import { reportConfigSkip, type ConfigSkip } from "@/lib/cron/config-skip";
+import {
+  GST_UNREGISTERED_SKIP,
+  reportConfigSkip,
+  type ConfigSkip,
+} from "@/lib/cron/config-skip";
 import { platformSupplierForJob } from "@/lib/pdf/supplier";
 
 export interface SettleInvoiceAccrualsResult {
@@ -129,7 +133,7 @@ export async function settleInvoiceAccruals(
   }
   // No GST invoice while unregistered; a malformed or wrong-state GSTIN throws here.
   if (!platformSupplierForJob()) {
-    const skipped: ConfigSkip = "PLATFORM_GSTIN not configured";
+    const skipped = GST_UNREGISTERED_SKIP;
     reportConfigSkip("settle-invoice-accruals", skipped);
     return {
       orgsProcessed: 0,
@@ -149,6 +153,7 @@ export async function settleInvoiceAccruals(
         some: {
           billableToOrgInvoiceId: null,
           paymentStatus: "SUCCEEDED",
+          gstRegime: "REGISTERED",
           ...(opts.windowStart ? { createdAt: { lt: opts.windowStart } } : {}),
           legs: {
             some: {

@@ -35,6 +35,24 @@ import {
 } from "@/lib/compliance/purpose-codes";
 import { readSupportExport } from "@/lib/support/privacy-export";
 import { readSessionAccessLog } from "@/lib/auth/session-access-log";
+import {
+  MEMBER_ROLE_LABEL,
+  MEMBER_STATUS_LABEL,
+} from "@/lib/labels/org-labels";
+import { userRoleLabel } from "@/lib/labels/personal-dashboard";
+
+/** Statute citations behind each plain sentence in `statutoryRetentionAndRightsInfo`. */
+const RETENTION_LEGAL_BASIS = {
+  optionalConsentWithdrawal: "DPDP Act 2023, section 6(4)",
+  coreConsentWithdrawalAndErasure:
+    "DPDP Act 2023, sections 6(4) to 6(6) and 12",
+  statutoryTaxRetention:
+    "Income-tax Act 1961, section 44AA and Rule 6F; CGST Act 2017, section 36; DPDP Act 2023, sections 12(3) and 8(7)(b)",
+  securityLogRetention: "DPDP Rules 2025, Rule 8(3)",
+  sessionAccessLogRetention: "CERT-In Directions of 28 April 2022",
+  grievanceAndBoardAppeal:
+    "DPDP Rules 2025, Rule 14(3); DPDP Act 2023, sections 13(3) and 27",
+} as const;
 
 export async function GET() {
   const session = await getSession();
@@ -74,6 +92,7 @@ export async function GET() {
           onboardingCompleted: true,
           termsAcceptedAt: true,
           privacyAcceptedAt: true,
+          adultConfirmedAt: true,
           razorpayCustomerId: true,
           workExperiences: {
             select: {
@@ -259,86 +278,100 @@ export async function GET() {
     const sharedWithDataProcessors = [
       {
         entityName: "Supabase Inc. (Cloud PostgreSQL & Storage)",
-        role: "Data Processor",
+        role: "Service provider that handles data for us",
+        legalRole: "Data Processor",
         sharedData: [
           "Account profile, authentication records, booking history, and encrypted verification documents",
         ],
-        purpose:
-          "Primary database hosting, transactional persistence, and file storage (PRIMARY_PROCESSING)",
+        purpose: "Stores your account data and files so the service can run.",
+        purposeCodes: ["PRIMARY_PROCESSING"],
         sharedForThisAccount: true,
       },
       {
         entityName: "Netlify, Inc. (Hosting & Content Delivery)",
-        role: "Data Processor",
+        role: "Service provider that handles data for us",
+        legalRole: "Data Processor",
         sharedData: [
           "Technical details of each request, such as your IP address and browser",
         ],
-        purpose:
-          "Running the application and delivering pages (PRIMARY_PROCESSING)",
+        purpose: "Runs the website and delivers pages to you.",
+        purposeCodes: ["PRIMARY_PROCESSING"],
         sharedForThisAccount: true,
       },
       {
         entityName: "Cloudflare, Inc. (R2 Storage & Turnstile)",
-        role: "Data Processor",
+        role: "Service provider that handles data for us",
+        legalRole: "Data Processor",
         sharedData: [
           "Recordings of sessions you took part in and files you sold or bought, where they exist, and browser signals for the bot check on sign-up and password-reset forms",
         ],
         purpose:
-          "Recording and file storage (STREAM_DATA_PROCESSING) and abuse prevention (PRIMARY_PROCESSING)",
+          "Stores recordings and files, and stops bots on the sign-up and password-reset forms.",
+        purposeCodes: ["STREAM_DATA_PROCESSING", "PRIMARY_PROCESSING"],
         sharedForThisAccount: true,
       },
       {
         entityName: "Razorpay Software Pvt. Ltd.",
-        role: "Data Processor (Payment Gateway & Payouts)",
+        role: "Service provider for payments and payouts",
+        legalRole: "Data Processor (Payment Gateway & Payouts)",
         sharedData: hasPayments
           ? [
               "Buyer/payee identifier, transaction amount, payment instrument reference, and invoice metadata",
             ]
           : ["No payment transactions recorded for this account yet"],
         purpose:
-          "Payment collection, refunds, consultant payouts, and statutory tax invoicing (PRIMARY_PROCESSING)",
+          "Collects payments, sends refunds and expert payouts, and supports tax invoices.",
+        purposeCodes: ["PRIMARY_PROCESSING"],
         sharedForThisAccount: hasPayments,
       },
       {
         entityName: "Stream.io Inc. (GetStream)",
-        role: "Data Processor (Live Video & Chat)",
+        role: "Service provider for live video and chat",
+        legalRole: "Data Processor (Live Video & Chat)",
         sharedData: hasVideoOrBookings
           ? [
               "Internal user ID, display name, profile avatar, and session channel membership",
             ]
           : ["Synchronised only when you join a chat channel or video session"],
-        purpose:
-          "Real-time consultation video calls and messaging (STREAM_DATA_PROCESSING)",
+        purpose: "Runs live video calls and chat messages.",
+        purposeCodes: ["STREAM_DATA_PROCESSING"],
         sharedForThisAccount: hasVideoOrBookings,
       },
       {
         entityName: "Resend Inc. & Novu",
-        role: "Data Processor (Transactional & Notification Delivery)",
+        role: "Service provider for emails and notifications",
+        legalRole: "Data Processor (Transactional & Notification Delivery)",
         sharedData: [
           "Email address, display name, and booking/support notification templates",
         ],
         purpose:
-          "Verification emails, booking reminders, support updates, and (only if consented) marketing emails",
+          "Sends verification emails, booking reminders and support updates, and marketing emails only if you agreed.",
+        purposeCodes: ["PRIMARY_PROCESSING"],
         sharedForThisAccount: true,
       },
       {
         entityName: "Functional Software, Inc. (Sentry — us.sentry.io)",
-        role: "Data Processor (Security & Reliability Diagnostics)",
+        role: "Service provider for security and error reports",
+        legalRole: "Data Processor (Security & Reliability Diagnostics)",
         sharedData: [
-          `One-way salted HMAC-SHA256 virtual token (${sentryPseudonymousToken}), user role (${user.role}), and scrubbed error/trace diagnostics. Zero raw PII (no email, name, phone, or unmasked page text).`,
+          `A scrambled identifier that can't be traced back to you (${sentryPseudonymousToken}), your account type (${userRoleLabel(user.role)}), and error reports with personal details removed. We do not send your email, name, phone number or page text.`,
         ],
         purpose:
-          "Platform security safeguards, deadlock/error diagnostics, and customer support troubleshooting under DPDP §8(5) & Rule 6(1)(a)",
+          "Helps us keep the service secure, find faults and fix problems you report.",
+        purposeCodes: ["PRIMARY_PROCESSING"],
+        legalBasis:
+          "DPDP Act 2023, section 8(5); DPDP Rules 2025, Rule 6(1)(a)",
         sharedForThisAccount: true,
       },
       ...user.memberships.map((m) => ({
-        entityName: `Organization: ${m.organization.name} (${m.organization.slug})`,
-        role: "Data Fiduciary / Enterprise Workspace",
+        entityName: `Organisation: ${m.organization.name}`,
+        role: "Organisation you belong to",
+        legalRole: "Data Fiduciary",
         sharedData: [
-          `Membership role (${m.role}), status (${m.status}), and organisation-sponsored session participation`,
+          `Your role (${MEMBER_ROLE_LABEL[m.role]}), your membership status (${MEMBER_STATUS_LABEL[m.status]}), and your sessions that the organisation pays for`,
         ],
         purpose:
-          "Enterprise workspace membership and organisation-sponsored learning/mentorship",
+          "Lets the organisation manage its members and sponsor their learning and mentoring sessions.",
         sharedForThisAccount: true,
       })),
     ];
@@ -370,6 +403,7 @@ export async function GET() {
           onboardingCompleted: user.onboardingCompleted,
           termsAcceptedAt: user.termsAcceptedAt,
           privacyAcceptedAt: user.privacyAcceptedAt,
+          adultConfirmedAt: user.adultConfirmedAt,
           pseudonymousTelemetryToken: sentryPseudonymousToken,
         },
         consulteeProfile: user.consulteeProfile,
@@ -401,17 +435,18 @@ export async function GET() {
       consentHistory: consents,
       statutoryRetentionAndRightsInfo: {
         optionalConsentWithdrawal:
-          "You may grant or withdraw the optional marketing consent (MARKETING_COMMS), which also covers the Familiarise newsletter, at any time in Settings -> Account -> Data consent without affecting your core account.",
+          "You can give or withdraw your optional marketing consent, which also covers the Familiarise newsletter, at any time in Settings, then Account, then Data consent. Your account keeps working either way.",
         coreConsentWithdrawalAndErasure:
-          "Withdrawing core platform consent (PRIMARY_PROCESSING, SESSION_BOOKING, STREAM_DATA_PROCESSING) closes your account and scrubs your personal identifiers under DPDP §6(4)-(6) and §12.",
+          "If you withdraw the consent our core service needs, we close your account and remove your personal details.",
         statutoryTaxRetention:
-          "Financial ledger rows, tax invoices, consultant payouts, and TDS/GST records are retained for 7-8 years under the Income Tax Act, 1961 (§44AA / Rule 6F) and CGST Act, 2017 (§36), as required by DPDP §12(3) and §8(7)(b).",
+          "We must keep payment records, tax invoices, expert payouts and tax-deduction records for 7 to 8 years, so these are kept even after you close your account.",
         securityLogRetention:
-          "Pseudonymous security and processing logs are retained for at least 1 year under Rule 8(3) of the DPDP Rules, 2025.",
+          "We keep security and processing logs, with no direct identifiers, for at least 1 year.",
         sessionAccessLogRetention:
-          "Each sign-in session's IP address, device (user agent), start and end are kept for 180 days after the session ends, as the CERT-In Directions of 28 April 2022 require. Erasing your account unlinks these rows from you; they are deleted when the 180 days pass. This export lists your newest 500 sessions; sessionAccessLogTruncated is true when older ones exist.",
+          "For 180 days after each sign-in session ends, we keep its IP address, device, start time and end time, because Indian cyber-security rules require it. Closing your account unlinks these rows from you, and they are deleted when the 180 days pass. This file lists your newest 500 sessions; sessionAccessLogTruncated is true when older ones exist.",
         grievanceAndBoardAppeal:
-          "You may file a grievance in Settings -> Account -> Data protection grievance (resolved within 90 days per Rule 14(3)) and escalate unresolved complaints to the Data Protection Board of India under DPDP §13(3) and §27.",
+          "You can raise a complaint in Settings, then Account, then Data protection grievance, and we will resolve it within 90 days. If it is still unresolved, you can take it to the Data Protection Board of India.",
+        legalBasis: RETENTION_LEGAL_BASIS,
       },
     };
 

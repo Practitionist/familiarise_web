@@ -34,9 +34,9 @@ export const PURPOSE_CODES = {
 
 export type PurposeCode = (typeof PURPOSE_CODES)[keyof typeof PURPOSE_CODES];
 
-/** How chat is reviewed; shown wherever the video & chat purpose is consented to. */
+/** How chat is reviewed; shown wherever the video and chat purpose is consented to. */
 export const MESSAGE_REVIEW_NOTICE =
-  "Chat is checked automatically for fraud, off-platform payment requests, contact sharing and safety. Our support team may read a booking's chat when it is reported or has a support case, and may join it visibly as \u201cFamiliarise Support\u201d.";
+  "We automatically check chats for fraud, requests to pay outside Familiarise, shared contact details and safety issues. If a booking is reported or has a support case, our support team may read its chat, and may join it visibly as \u201cFamiliarise Support\u201d.";
 
 export const MESSAGE_REVIEW_ARTICLE_HREF =
   "/support/help/how-we-review-messages";
@@ -45,7 +45,7 @@ export const MESSAGE_REVIEW_ARTICLE_HREF =
  * Terms and privacy-notice version written to every `ConsentArtifact.version`;
  * bump it when consent text changes. Consent is checked by purpose, so older grants stay valid.
  */
-export const TERMS_VERSION = 3;
+export const TERMS_VERSION = 4;
 
 /**
  * The purposes a sign-up grants. The SSO join gate and the invite-accept
@@ -75,23 +75,22 @@ export const PURPOSE_CODE_META: Record<
   { label: string; description: string }
 > = {
   [PURPOSE_CODES.PRIMARY_PROCESSING]: {
-    label: "Service & account",
+    label: "Your account",
     description:
-      "Process your data to create and run your account and deliver the platform's core features.",
+      "Use your details to create and run your account, sign you in and keep the platform secure.",
   },
   [PURPOSE_CODES.SESSION_BOOKING]: {
-    label: "Session booking",
+    label: "Booking sessions",
     description:
-      "Schedule, manage, and run consultation sessions you book or are booked into.",
+      "Book, manage and run the sessions you book or are booked into.",
   },
   [PURPOSE_CODES.STREAM_DATA_PROCESSING]: {
-    label: "Video & chat (Stream.io)",
-    description: `Share the data needed for live video and chat with our messaging processor (Stream.io). Required for video/chat to work. ${MESSAGE_REVIEW_NOTICE}`,
+    label: "Video calls and chat",
+    description: `Share your name, photo and role with GetStream, the company that runs our video calls and chat. Needed for calls and chat to work. ${MESSAGE_REVIEW_NOTICE}`,
   },
   [PURPOSE_CODES.MARKETING_COMMS]: {
-    label: "Marketing communications",
-    description:
-      "Send you marketing emails, including the Familiarise newsletter, about our products, offers and updates.",
+    label: "Marketing emails",
+    description: "Get the Familiarise newsletter, offers and updates by email.",
   },
   [PURPOSE_CODES.ANALYTICS]: {
     label: "Analytics (not offered)",

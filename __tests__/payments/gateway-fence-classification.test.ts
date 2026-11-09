@@ -170,11 +170,11 @@ describe("gateway fence classification", () => {
     ["EVENT_CHECKOUT_BUSY", "Someone Just Beat You To It"],
     ["CONSULTEE_BOOKING_BUSY", "Booking Already In Progress"],
     ["CHECKOUT_IN_PROGRESS", "Still Preparing Your Checkout"],
-    ["SEAT_HOLD_LAPSED", "Your Seat Hold Ended"],
+    ["SEAT_HOLD_LAPSED", "Your Reserved Seat Expired"],
   ])("gives %s a not-charged toast (%s)", (code, title) => {
     const toast = getErrorToast(code);
     expect(toast.title).toBe(title);
-    expect(toast.description).toContain("card was not charged");
+    expect(toast.description).toMatch(/card was not charged|weren't charged/);
   });
 
   // Resolved by code, so the 409 survives any rewording of the sentence.

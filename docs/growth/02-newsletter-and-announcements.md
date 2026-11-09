@@ -14,7 +14,8 @@ This page explains how a person joins the newsletter, how their consent is recor
 1. A visitor enters an address in the footer form. `POST /api/newsletter` is rate limited to 3 tries an hour per IP (`newsletterLimiter` in `lib/rate-limit.ts`) and shows the purpose notice `NEWSLETTER_NOTICE` (`lib/newsletter/notice.ts`). **(after #2655)**
 2. `subscribe()` (`lib/newsletter/service.ts`) writes a `NewsletterSubscriber` row as `PENDING` and sends a confirmation email. It does not reveal whether the address was already subscribed, so the public route cannot be used to probe membership. If links cannot be signed (see below), it fails the same way for every address before it looks anyone up.
 3. The visitor clicks the link. `confirmSubscription()` verifies the signature and the age of the link (48 hours, `CONFIRM_TOKEN_TTL_MS`) and then, in one transaction, sets the row to `SUBSCRIBED` and writes the consent record. A welcome email follows.
-4. A previously unsubscribed address that signs up again goes back to `PENDING`, not straight to `SUBSCRIBED`. Re-consent must be a fresh click.
+4. A previously unsubscribed address that signs up again goes back to `PENDING`, not straight to `SUBSCRIBED`. Re-consent must be a fresh click. `UNSUBSCRIBED` rows are never pruned, which is what makes the fresh click necessary.
+5. A sign-up that is never confirmed expires. The daily secondary pages of `prune-system-job-executions` (`scripts/cleanup/prune-system-job-executions.ts`) delete `PENDING` rows whose `createdAt` and `updatedAt` are both older than 30 days (`unconfirmedNewsletterRetentionCutoff`; counted as `unconfirmedNewsletterPruned`), one bounded page per run. A re-signup touches `updatedAt`, so it restarts the window. Such a row carries no consent artifact.
 
 Double opt-in is kept although no Indian source found for [the research page](./04-market-research-india-first.md#dpdp) requires it. It is the evidence the DPDP Act asks for, and it protects sender reputation because nobody can add someone else's address. The enforcer is the status machine: only `confirmSubscription()` moves a row to `SUBSCRIBED`, apart from the account consent switch described next.
 
@@ -47,12 +48,12 @@ Every emailed link that works without a login is a signed token: newsletter conf
 
 The back-office Newsletter page (`components/admin/NewsletterManagement.tsx`, permission `newsletter.manage`, administrators only) posts to `POST /api/admin/newsletter/broadcast`. The body is validated by a Zod schema with four modes. **(after #2655)**
 
-| Mode      | What it does                                                                                               |
-| --------- | ---------------------------------------------------------------------------------------------------------- |
-| `preview` | Counts only: how many confirmed subscribers match, how many are suppressed or held, how many are sendable. |
-| `test`    | Sends to the calling administrator's own address, through the same suppression check and guard.            |
-| `warmup`  | Sends to the `limit` most recently confirmed sendable subscribers, newest first.                           |
-| `all`     | Sends to every sendable subscriber in the audience, in signup order.                                       |
+| Mode      | What it does                                                                                                                    |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `preview` | Counts only: how many confirmed subscribers match, how many lack a live consent, are suppressed or held, how many are sendable. |
+| `test`    | Sends to the calling administrator's own address, through the same suppression check and guard.                                 |
+| `warmup`  | Sends to the `limit` most recently confirmed sendable subscribers, newest first.                                                |
+| `all`     | Sends to every sendable subscriber in the audience, in signup order.                                                            |
 
 **Segments.** An audience filter (`broadcastAudienceSchema` in `lib/newsletter/broadcast-audience.ts`) narrows the `SUBSCRIBED` rows by `sources`, by `tags` (a match on any given tag) and by `role`: `EXPERT` is a linked account with a consultant profile, `LEARNER` is a linked account without one, and `NO_ACCOUNT` is a row with no `userId`. The page keeps every send button off until a preview of the current filters has settled, and the confirmation quotes that preview's count.
 
@@ -60,7 +61,7 @@ The back-office Newsletter page (`components/admin/NewsletterManagement.tsx`, pe
 
 **Batches and keys.** Recipients are sent in batches of up to 100 through Resend's batch API. Each batch is a `FailedEmailBatch` row **before** the request goes out, with an idempotency key derived from its content (`NEWSLETTER_BROADCAST/<digest>`). A lost response or failed send is replayed by the relay under the same key. In `all` mode the audience is ordered by signup (`createdAt`, then `id`), so a re-sent broadcast that gained a new subscriber keeps every earlier full batch, and its key, unchanged. The newcomer joins the last batch, and if that batch was partial its content and therefore its key change, so a re-send delivers the message again to everyone already in that batch. Only `warmup` orders by confirmation time. A `test` send carries a one-time nonce so a repeat test really sends.
 
-**What is skipped.** Before sending, the route drops addresses in `EmailSuppression` (a bounce or complaint not yet reflected in the subscriber status) and addresses the pre-launch guard holds (`heldRecipientDomain`). Both counts are returned.
+**What is skipped.** The audience is read from the consent ledger. A `SUBSCRIBED` row is mailed only while it holds a live `MARKETING_COMMS` `ConsentArtifact` (not withdrawn, `auditRetainedUntil` in the future), matched on the linked account (`userId`) or on the row's `consentSubjectId`, which is the artifact's `subjectPseudonymousId` (`withLiveMarketingConsent` in `lib/newsletter/service.ts`). The rest are excluded and counted as `skippedNoConsent` in the preview and send responses, and the admin preview line names them. Then the route drops addresses in `EmailSuppression` (a bounce or complaint not yet reflected in the subscriber status) and addresses the pre-launch guard holds (`heldRecipientDomain`). Those counts (`skippedSuppressed`, `skippedHeld`) are returned as well.
 
 For example (illustrative numbers), 1,200 confirmed subscribers exist, 700 of them with a learner account and 150 tagged `launch`. An administrator previews `role: LEARNER, tags: ["launch"]`, sees `matching: 90`, sends a `test` to themselves, runs a `warmup` of 25, and then `all`. The `all` send is one batch of 90 recipients, one `FailedEmailBatch` row.
 
@@ -124,4 +125,5 @@ The campaign outbox is #2508 "Newsletter system design v1" and is **planned**: a
 - **Confirmation without a consent record.** The first double opt-in changed the row status but wrote no `ConsentArtifact`, so there was no evidence of what the person agreed to. It now writes the artifact.
 - **A `GET` unsubscribe that changed the row.** Link scanners triggered false unsubscribes. The `GET` now only shows a page.
 - **The `marketingEmails` switch.** The notification panel once had a marketing switch that nothing read. `MARKETING_COMMS` consent now drives the subscriber row directly. Delete any new reader of the column.
+- **Broadcasting to every `SUBSCRIBED` row.** The audience once ignored the consent ledger, so a row whose artifact was withdrawn or past its retention date could still be mailed. `withLiveMarketingConsent` now filters on a live artifact.
 - **Whole-list broadcasts.** The first broadcast sent to every subscriber with no filter, test, preview or ceiling. Segments, the test and warm-up modes and the 2,000 refusal replace it.

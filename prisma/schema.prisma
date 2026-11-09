@@ -41,6 +41,8 @@ model User {
   // Consent timestamps
   termsAcceptedAt   DateTime?
   privacyAcceptedAt DateTime?
+  /// Server time the user confirmed they are 18 or older when completing onboarding.
+  adultConfirmedAt  DateTime?
 
   // Professional background (consolidated from profile level)
   workExperiences WorkExperience[]

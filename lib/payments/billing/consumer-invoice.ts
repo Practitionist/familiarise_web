@@ -220,8 +220,8 @@ export const CONSUMER_INVOICEABLE_PAYMENT_WHERE = {
   billableToOrgInvoiceId: null,
   legs: { none: { source: { in: [...ORG_FUNDED_LEG_SOURCES] } } },
   OR: [{ amount: { gt: 0 } }, { creditUsages: { some: {} } }],
-  // An order priced while unregistered never gets a tax invoice; legacy null rows still do.
-  AND: [{ OR: [{ gstRegime: null }, { gstRegime: "REGISTERED" }] }],
+  // Only a supply priced while registered gets a tax invoice; a null stamp predates it.
+  gstRegime: "REGISTERED",
 } satisfies Prisma.PaymentWhereInput;
 
 /**
@@ -309,8 +309,8 @@ export async function mintConsumerInvoice(
   }
   // A refund here would get no credit note, so a refunded supply is left to ops.
   if (payment.refunds.length > 0) return { consumerInvoiceId: null };
-  // Supplied while unregistered: a receipt, never a retroactive tax invoice.
-  if (payment.gstRegime === "UNREGISTERED") return { consumerInvoiceId: null };
+  // Unregistered or unstamped (pre-stamp sales were all unregistered): a receipt only.
+  if (payment.gstRegime !== "REGISTERED") return { consumerInvoiceId: null };
 
   // Org-funded supplies are invoiced to the organization, on the org series.
   if (
