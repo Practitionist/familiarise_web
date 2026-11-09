@@ -42,7 +42,7 @@ describe("ranking labels", () => {
       "Recently reviewed experts",
     );
     expect(read("app/explore/programs/components/StaticTopRows.tsx")).toContain(
-      "Most booked this month",
+      "Most active this month",
     );
   });
 });

@@ -26,7 +26,7 @@ const badgeConfig: Record<
   { label: string; icon: React.ReactNode; className: string }
 > = {
   trending: {
-    label: "Most booked",
+    label: "Most active",
     icon: <Flame className="w-3 h-3" />,
     className: "bg-background/90 text-foreground border border-border",
   },
