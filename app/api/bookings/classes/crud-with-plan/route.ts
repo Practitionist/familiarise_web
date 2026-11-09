@@ -40,6 +40,7 @@ import {
 
 import { getSession } from "@/lib/auth-server";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
+import { seriesStartsFrom } from "@/lib/booking/class-pattern";
 import { buildOccurrence } from "@/lib/appointments/occurrences";
 import {
   assertCollaboratorsAvailableForWindows,
@@ -280,20 +281,12 @@ export async function POST(request: NextRequest) {
     // #784 — the session start times, computed once so the AE-2 co-host guard
     // and the appointment create below cannot drift apart.
     const sessionStarts: Date[] = start
-      ? Array.from({ length: totalSessions }).map((_, index) => {
-          const appointmentDate = new Date(start!);
-          // Spread meetings evenly within each week:
-          // weekOffset positions the week, dayWithinWeek spaces meetings apart
-          // e.g. sessionsPerWeek=2 -> days 0,3 (Mon,Thu)
-          // e.g. sessionsPerWeek=3 -> days 0,2,4 (Mon,Wed,Fri)
-          const weekOffset = Math.floor(index / sessionsPerWeek) * 7;
-          const dayWithinWeek =
-            (index % sessionsPerWeek) * Math.floor(7 / sessionsPerWeek);
-          appointmentDate.setDate(
-            appointmentDate.getDate() + weekOffset + dayWithinWeek,
-          );
-          return appointmentDate;
-        })
+      ? seriesStartsFrom(
+          start,
+          sessionsPerWeek,
+          totalSessions,
+          resolveSchedulingTimezone(consultantProfile.user.timezone),
+        )
       : [];
 
     // Create class plan, instance, and appointments in a transaction.
