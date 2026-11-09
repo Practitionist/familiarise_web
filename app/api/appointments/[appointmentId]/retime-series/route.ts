@@ -30,7 +30,11 @@ async function hostedOrRefusal(appointmentId: string) {
       refusal: NextResponse.json({ error: "Class not found" }, { status: 404 }),
     } as const;
   }
-  const host = await resolveEventHostActor(auth.session, "class", hosted.cls.id);
+  const host = await resolveEventHostActor(
+    auth.session,
+    "class",
+    hosted.cls.id,
+  );
   if (host !== "consultant" && host !== "host-org") {
     return {
       refusal: NextResponse.json(
