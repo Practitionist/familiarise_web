@@ -70,6 +70,17 @@ function actionableRawSlots(vm: AppointmentVM) {
   return upcomingOccurrences(sources.flatMap((a) => a.occurrences ?? []));
 }
 
+/** The length of the booking's next live session, in minutes (60 when it has none). */
+function sessionMinutesOf(vm: AppointmentVM): number {
+  for (const occurrence of vm.occurrences) {
+    const span = occurrence.endsAt
+      ? occurrence.endsAt.getTime() - occurrence.startsAt.getTime()
+      : 0;
+    if (span > 0) return Math.round(span / 60_000);
+  }
+  return 60;
+}
+
 function canOfferTimings(vm: AppointmentVM, timingsOk: boolean): boolean {
   return Boolean(
     vm.raw.appointment &&
@@ -493,6 +504,8 @@ export function useConsultantAppointmentsAdapter(
             }}
             onCancel={closeDialog}
             title={activeVm.title}
+            consultantId={consultantId}
+            sessionMinutes={sessionMinutesOf(activeVm)}
             isLoading={actions.isLoading}
           />
         </>

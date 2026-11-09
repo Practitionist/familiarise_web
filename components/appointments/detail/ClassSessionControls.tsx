@@ -1,7 +1,6 @@
 "use client";
 
 import { useMutation } from "@tanstack/react-query";
-import { fromZonedTime } from "date-fns-tz";
 import { useState } from "react";
 
 import {
@@ -16,6 +15,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { SingleSessionPicker } from "@/components/scheduling/SingleSessionPicker";
 import { useToast } from "@/hooks/use-toast";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatForViewer } from "@/lib/time/viewer-zone";
@@ -28,6 +28,7 @@ export interface ClassSessionRow {
   id: string;
   ordinal: number;
   startsAt: Date | string;
+  endsAt?: Date | string;
   completionStatus: string | null;
   hostCancelledAt?: NullableDate;
   /** #1569 — a held session that lost too much time; owed a make-up like a cancel. */
@@ -52,6 +53,13 @@ async function post(url: string, body?: unknown) {
 }
 
 const missedAt = (s: ClassSessionRow) => s.hostCancelledAt ?? s.voidedAt;
+
+/** A make-up keeps its source's length; 60 minutes when the read lacks an end. */
+function sessionMinutesOf(s: ClassSessionRow): number {
+  if (!s.endsAt) return 60;
+  const span = toDate(s.endsAt).getTime() - toDate(s.startsAt).getTime();
+  return span > 0 ? Math.round(span / 60_000) : 60;
+}
 
 /**
  * The missed source of each ordinal (host-cancelled or voided), and its live
@@ -119,12 +127,15 @@ function ConfirmButton({
  */
 export function ClassSessionControls({
   appointmentId,
+  consultantProfileId,
   sessions,
   role,
   unitLabel,
   onChanged,
 }: Readonly<{
   appointmentId: string;
+  /** The host whose calendar labels make-up times. */
+  consultantProfileId: string | null;
   sessions: ClassSessionRow[];
   role: "consultant" | "consultee";
   /** The seat's per-session amount, e.g. "₹1,000"; null when unknown. */
@@ -153,10 +164,7 @@ export function ClassSessionControls({
   });
   const makeUp = useMutation({
     mutationFn: (args: { id: string; startsAt: string }) =>
-      post(`${base}/${args.id}/make-up`, {
-        // The picker's wall-clock time is in the viewer's profile zone.
-        startsAt: fromZonedTime(args.startsAt, viewer.zone).toISOString(),
-      }),
+      post(`${base}/${args.id}/make-up`, { startsAt: args.startsAt }),
     onSuccess: done("Make-up scheduled"),
     onError: failed,
   });
@@ -242,15 +250,20 @@ export function ClassSessionControls({
                 {source.voidedAt ? "Missed" : "Cancelled"}{" "}
                 {when(source.startsAt)} — make up by {when(by)}.
               </span>
-              <input
-                type="datetime-local"
-                aria-label="Make-up start"
-                className="rounded-md border border-border bg-background px-2 py-1"
-                value={makeUpAt[source.id] ?? ""}
-                onChange={(e) =>
-                  setMakeUpAt((m) => ({ ...m, [source.id]: e.target.value }))
-                }
-              />
+              {consultantProfileId && (
+                <SingleSessionPicker
+                  className="w-full"
+                  consultantId={consultantProfileId}
+                  zone={viewer.zone}
+                  sessionMinutes={sessionMinutesOf(source)}
+                  purpose="makeup"
+                  allowedEnd={by}
+                  value={makeUpAt[source.id] ?? null}
+                  onChange={(iso) =>
+                    setMakeUpAt((m) => ({ ...m, [source.id]: iso ?? "" }))
+                  }
+                />
+              )}
               <Button
                 size="sm"
                 disabled={!makeUpAt[source.id] || makeUp.isPending}

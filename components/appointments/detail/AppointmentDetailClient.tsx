@@ -1202,6 +1202,7 @@ export function AppointmentDetailClient({
             {vm.kind === "CLASS" && detail.appointment.class && (
               <ClassSessionControls
                 appointmentId={appointmentId}
+                consultantProfileId={vm.consultantProfileId ?? null}
                 sessions={detail.appointment.occurrences}
                 role={role}
                 // A seat's unit depends on when it was bought; the copy says

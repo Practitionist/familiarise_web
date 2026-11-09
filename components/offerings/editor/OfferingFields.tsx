@@ -47,6 +47,7 @@ import {
 import type { FieldSpec } from "./manifest";
 import { useWaitingCounts } from "./waiting-count";
 import { WaitlistSwitch } from "./WaitlistSwitch";
+import { SessionTimeField } from "./session-time-field";
 
 /** Sections are a 6-column grid so halves and thirds both land cleanly. */
 const SPAN_CLASS: Record<NonNullable<FieldSpec["span"]>, string> = {
@@ -218,6 +219,14 @@ export function OfferingField<T extends FieldValues = FieldValues>({
           description={spec.description}
           required={spec.required}
         />
+      </div>
+    );
+  }
+
+  if (spec.kind === "sessionTime") {
+    return (
+      <div className={span}>
+        <SessionTimeField control={control} spec={spec} />
       </div>
     );
   }
