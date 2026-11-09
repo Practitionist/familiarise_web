@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import * as Sentry from "@sentry/nextjs";
+import { captureClientException } from "@/lib/observability/client-capture";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, RefreshCw, MessageSquare, Video } from "lucide-react";
 
@@ -167,7 +167,7 @@ class StreamErrorBoundary extends React.Component<
 
     let eventId: string | undefined;
     try {
-      const captured = Sentry.captureException(error, {
+      const captured = captureClientException(error, {
         tags: {
           subsystem: "stream",
           stream_type: this.state.errorType,

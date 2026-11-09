@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import * as Sentry from "@sentry/nextjs";
+import { captureClientException } from "@/lib/observability/client-capture";
 import ErrorBoundary from "./ErrorBoundary";
 import { Button } from "@/components/ui/button";
 
@@ -111,7 +111,7 @@ export function DashboardErrorBoundary({
         // #1580: a dashboard crash reached here with no Sentry issue.
         // Capture it so a repeat is visible instead of console-only.
         console.error("Dashboard error:", error, errorInfo);
-        Sentry.captureException(error, {
+        captureClientException(error, {
           tags: { subsystem: "dashboard", boundary: "DashboardErrorBoundary" },
           extra: { componentStack: errorInfo.componentStack },
         });

@@ -2,7 +2,7 @@
 
 import { leadLabel } from "@/lib/booking/lead-time";
 import type { GridLead } from "@/lib/scheduling/allocationService";
-import * as Sentry from "@sentry/nextjs";
+import { captureClientException } from "@/lib/observability/client-capture";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -672,7 +672,7 @@ export function UnifiedCalendar({
         await refetchEventSlots();
         await refetchAvailability();
       } catch (refetchError) {
-        Sentry.captureException(
+        captureClientException(
           refetchError instanceof Error
             ? refetchError
             : new Error(String(refetchError)),
@@ -711,7 +711,7 @@ export function UnifiedCalendar({
   const refreshGridData = useCallback(() => {
     void Promise.all([refetchAvailability(), refetchEventSlots()]).catch(
       (refetchError) => {
-        Sentry.captureException(
+        captureClientException(
           refetchError instanceof Error
             ? refetchError
             : new Error(String(refetchError)),
@@ -1520,7 +1520,7 @@ export function UnifiedCalendar({
         return `${formatDurationLabel(totalMinutes)} picked`;
       return `${formatDurationLabel(chosenMinutes)} of ${formatDurationLabel(totalMinutes)} picked · pick ${formatDurationLabel(totalMinutes - chosenMinutes)} more`;
     } catch (footerError) {
-      Sentry.captureException(
+      captureClientException(
         footerError instanceof Error
           ? footerError
           : new Error(String(footerError)),
