@@ -47,7 +47,7 @@ export default function EnterpriseLandingPage() {
         titleAccent: "whole organisation.",
         subtitle:
           "Sponsor sessions, run structured training or mentorship programs, and settle with wallet or invoice — without asking every employee to expense a personal booking.",
-        primaryCta: { label: "Talk to sales", href: "/contactus" },
+        primaryCta: { label: "Book a demo", href: "/enterprise/demo" },
         secondaryCta: {
           label: "Browse organisations",
           href: "/explore/enterprise/organisations",
@@ -74,7 +74,7 @@ export default function EnterpriseLandingPage() {
         title: "Ready to bring Familiarise to your team?",
         description:
           "Tell us about your organisation, headcount, and whether you need seats, credits, or both. We will map the right program shape.",
-        primaryCta: { label: "Talk to sales", href: "/contactus" },
+        primaryCta: { label: "Book a demo", href: "/enterprise/demo" },
         secondaryCta: {
           label: "Explore Familiarise",
           href: "/explore/experts",

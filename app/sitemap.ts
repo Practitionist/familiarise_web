@@ -47,6 +47,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { path: "/enterprise", priority: 0.8 },
     { path: "/enterprise/team-training", priority: 0.7 },
     { path: "/enterprise/corporate-mentorship", priority: 0.7 },
+    { path: "/enterprise/demo", priority: 0.6 },
     { path: "/use-cases/mentorship", priority: 0.7 },
     { path: "/use-cases/early-career", priority: 0.7 },
     { path: "/use-cases/college-students", priority: 0.7 },

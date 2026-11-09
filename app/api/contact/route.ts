@@ -28,6 +28,14 @@ import {
   stageExternalIntakeReceiptTx,
 } from "@/lib/support/external-requester";
 import { INQUIRY_CATEGORIES } from "@/app/(pages)/constants";
+import {
+  DEMO_BUDGET_BANDS,
+  DEMO_BUDGET_BAND_VALUES,
+  DEMO_TEAM_SIZES,
+  DEMO_TEAM_SIZE_VALUES,
+  DEMO_USE_CASES,
+  DEMO_USE_CASE_VALUES,
+} from "@/app/enterprise/demo/constants";
 
 const CATEGORY_SET = new Set<string>(INQUIRY_CATEGORIES.map((c) => c.value));
 
@@ -45,17 +53,41 @@ const ContactBodySchema = z.object({
     })
     .optional()
     .or(z.literal("")),
+  // Sent only by the /enterprise/demo form.
+  companyName: z.string().trim().max(200).optional(),
+  useCase: z.enum(DEMO_USE_CASE_VALUES).optional(),
+  teamSize: z.enum(DEMO_TEAM_SIZE_VALUES).optional(),
+  budgetBand: z.enum(DEMO_BUDGET_BAND_VALUES).optional(),
   // Honeypot: a real person never fills a hidden field. Bots fill everything.
   // Present in the payload but never rendered visibly.
   website: z.string().max(200).optional(),
 });
 
+type ContactBody = z.infer<typeof ContactBodySchema>;
+
 const LEAD_CATEGORIES = new Set(["enterprise", "team-training"]);
 
-async function recordContactLeadIfApplicable(
-  data: z.infer<typeof ContactBodySchema>,
-): Promise<void> {
+/** The demo form's structured answers, appended so staff see them in the lead and the email. */
+function messageWithDemoDetails(data: ContactBody): string {
+  const label = (
+    options: readonly { value: string; label: string }[],
+    value: string | undefined,
+  ) => options.find((o) => o.value === value)?.label;
+  const lines: [string, string][] = [];
+  const add = (key: string, value: string | undefined) => {
+    if (value) lines.push([key, value]);
+  };
+  add("Company", data.companyName);
+  add("Interested in", label(DEMO_USE_CASES, data.useCase));
+  add("Team size", label(DEMO_TEAM_SIZES, data.teamSize));
+  add("Budget", label(DEMO_BUDGET_BANDS, data.budgetBand));
+  if (lines.length === 0) return data.message;
+  return `${data.message}\n\n${lines.map(([k, v]) => `${k}: ${v}`).join("\n")}`;
+}
+
+async function recordContactLeadIfApplicable(data: ContactBody): Promise<void> {
   if (!LEAD_CATEGORIES.has(data.category ?? "")) return;
+  const message = messageWithDemoDetails(data);
   const dayBucket = new Date().toISOString().slice(0, 10);
   const submissionKey = createHash("sha256")
     .update(
@@ -66,8 +98,9 @@ async function recordContactLeadIfApplicable(
         data.lastName,
         data.phone ?? "",
         data.subject,
-        data.message,
+        message,
         data.category ?? "",
+        data.companyName ?? "",
       ]),
     )
     .digest("hex");
@@ -76,12 +109,12 @@ async function recordContactLeadIfApplicable(
       data: {
         submissionKey,
         sourceCategory: data.category ?? "",
-        companyName: null,
+        companyName: data.companyName || null,
         contactName: `${data.firstName} ${data.lastName}`.trim(),
         contactEmail: data.email,
         phone: data.phone || null,
         subject: data.subject,
-        message: data.message,
+        message,
       },
     });
   } catch (err) {
@@ -100,7 +133,7 @@ async function recordContactLeadIfApplicable(
  * receives staff content only once its email address is confirmed.
  */
 async function recordPublicGrievanceTicket(
-  data: z.infer<typeof ContactBodySchema>,
+  data: ContactBody,
 ): Promise<string | null> {
   if (data.category !== "grievance") return null;
   const session = await getSession().catch(() => null);
@@ -206,7 +239,7 @@ export async function POST(req: NextRequest) {
     email: parsed.data.email,
     phone: parsed.data.phone || null,
     subject: parsed.data.subject,
-    message: parsed.data.message,
+    message: messageWithDemoDetails(parsed.data),
     category: parsed.data.category || null,
     referenceNumber,
   });
