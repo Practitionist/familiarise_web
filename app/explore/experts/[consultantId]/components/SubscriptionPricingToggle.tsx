@@ -1,6 +1,7 @@
 "use client";
 
 import * as Sentry from "@sentry/nextjs";
+import { planDurationText } from "@/lib/offerings/plan-length-copy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -286,7 +287,7 @@ export default function SubscriptionPricingToggle({
   if (subscriptionOptions.length === 0) {
     return (
       <div className="w-full p-8 text-center text-zinc-400">
-        <p>No subscription plans available at the moment.</p>
+        <p>No mentorship plans available at the moment.</p>
       </div>
     );
   }
@@ -370,7 +371,7 @@ export default function SubscriptionPricingToggle({
                   )}
                 </span>
                 <span className="text-zinc-500 text-sm mb-1.5">
-                  / month
+                  for {planDurationText(option)}
                   {noteFor(option.price) ? ` · ${noteFor(option.price)}` : ""}
                 </span>
               </div>
@@ -467,7 +468,7 @@ export default function SubscriptionPricingToggle({
                   className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-xl h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
                   onClick={handleChoosePlan}
                 >
-                  Subscribe
+                  Start mentorship
                 </Button>
               </div>
             </motion.div>

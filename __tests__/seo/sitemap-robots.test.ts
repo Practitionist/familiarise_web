@@ -8,6 +8,14 @@ jest.mock("@/lib/data/indexable-plans", () => ({
   listIndexableEventPlanIds: (...args: unknown[]) =>
     mockListIndexablePlans(...args),
 }));
+const mockListIndexableExperts = jest.fn();
+const mockListIndexableDomains = jest.fn();
+jest.mock("@/lib/data/indexable-experts", () => ({
+  listIndexableExpertIds: (...args: unknown[]) =>
+    mockListIndexableExperts(...args),
+  listIndexableDomainNames: (...args: unknown[]) =>
+    mockListIndexableDomains(...args),
+}));
 const mockReportSentryError = jest.fn();
 jest.mock("@/lib/observability/report", () => ({
   reportSentryError: (...args: unknown[]) => mockReportSentryError(...args),
@@ -19,6 +27,8 @@ import { metadata as blogMetadata } from "@/app/blog/layout";
 
 let entries: Awaited<ReturnType<typeof sitemap>>;
 beforeAll(async () => {
+  mockListIndexableExperts.mockResolvedValue(["c-1", "c-2"]);
+  mockListIndexableDomains.mockResolvedValue(["Technology", "Creative Arts"]);
   mockListIndexablePlans.mockResolvedValue({
     webinarPlanIds: ["wp-1", "wp-2"],
     classPlanIds: ["cp-1"],
@@ -88,7 +98,35 @@ describe("sitemap", () => {
     ]);
   });
 
+  it("lists each verified expert profile once", () => {
+    const pathnames = entries.map((entry) => pathnameOf(entry.url));
+    expect(
+      pathnames.filter((p) => /^\/explore\/experts\/[^/]+$/.test(p)),
+    ).toEqual(["/explore/experts/c-1", "/explore/experts/c-2"]);
+  });
+
+  it("lists a category page per field that has experts", () => {
+    const pathnames = entries.map((entry) => pathnameOf(entry.url));
+    expect(pathnames).toEqual(
+      expect.arrayContaining([
+        "/explore/experts/c/technology",
+        "/explore/experts/c/creative-arts",
+      ]),
+    );
+  });
+
+  it("keeps the static routes and reports once when the expert query fails", async () => {
+    mockReportSentryError.mockClear();
+    mockListIndexableExperts.mockRejectedValueOnce(new Error("db down"));
+    const degraded = await sitemap();
+    const pathnames = degraded.map((entry) => pathnameOf(entry.url));
+    expect(pathnames).toContain("/explore/experts");
+    expect(pathnames).not.toContain("/explore/experts/c-1");
+    expect(mockReportSentryError).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the static routes and reports once when the plan query fails", async () => {
+    mockReportSentryError.mockClear();
     mockListIndexablePlans.mockRejectedValueOnce(new Error("db down"));
     const degraded = await sitemap();
     const pathnames = degraded.map((entry) => pathnameOf(entry.url));
@@ -111,6 +149,10 @@ describe("sitemap", () => {
       "/enterprise",
       "/enterprise/team-training",
       "/enterprise/corporate-mentorship",
+      "/enterprise/demo",
+      "/enterprise/funding",
+      "/enterprise/institutions",
+      "/enterprise/security",
       "/use-cases/mentorship",
       "/use-cases/early-career",
       "/use-cases/college-students",
@@ -224,35 +266,14 @@ describe("placeholder pages and outbound links", () => {
     expect(blogMetadata.robots).toEqual({ index: false, follow: false });
   });
 
-  it("encodes every domain query value", () => {
-    const files = {
-      "components/Footer.tsx": [
-        'encodeURIComponent("Creative Arts")',
-        'encodeURIComponent("Personal Development")',
-      ],
-      "components/Navbar.tsx": [
-        'encodeURIComponent("Creative Arts")',
-        'encodeURIComponent("Personal Development")',
-      ],
-      "components/home/CategoriesSection.tsx": [
-        "encodeURIComponent(category.name.toLowerCase())",
-      ],
-    };
-
-    for (const [file, expected] of Object.entries(files)) {
+  it("links fields through their category pages, never a name in a query string", () => {
+    for (const file of [
+      "components/Footer.tsx",
+      "lib/navigation/public-nav.ts",
+    ]) {
       const source = readFileSync(path.join(process.cwd(), file), "utf8");
-      for (const snippet of expected) {
-        expect(source).toContain(snippet);
-      }
-
-      const domainLines = source
-        .split("\n")
-        .filter((line) => line.includes("?domain="));
-
-      expect(domainLines.length).toBeGreaterThan(0);
-      for (const line of domainLines) {
-        expect(line).not.toMatch(/\?domain=[^"'`\n]*\s/);
-      }
+      expect(source).toContain("domainPath(");
+      expect(source).not.toContain("?domain=");
     }
   });
 

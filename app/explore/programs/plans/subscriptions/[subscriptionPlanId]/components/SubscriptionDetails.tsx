@@ -132,7 +132,7 @@ export function SubscriptionDetails({
 
                 <Button asChild className="w-full h-11">
                   <Link href={`/checkout/plans/subscription/${plan.id}`}>
-                    Subscribe
+                    Start mentorship
                   </Link>
                 </Button>
 

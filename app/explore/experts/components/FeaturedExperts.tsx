@@ -5,7 +5,15 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { User, Star, StarHalf, ArrowRight, Award, BadgeCheck, Globe } from "lucide-react";
+import {
+  User,
+  Star,
+  StarHalf,
+  ArrowRight,
+  Award,
+  BadgeCheck,
+  Globe,
+} from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import type { IConsultantCardData } from "@/types/consultant";
 
@@ -51,15 +59,15 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
           <div className="inline-flex items-center gap-2 px-4 py-2 bg-primary rounded-full mb-6">
             <Award className="w-4 h-4 text-primary-foreground" />
             <span className="text-sm font-medium text-primary-foreground">
-              Familiarise Pick
+              Highest rated
             </span>
           </div>
           <h2 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight text-foreground mb-4">
-            Top Familiarise <span className="silver-text">Experts</span>
+            Highest rated <span className="silver-text">experts</span>
           </h2>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Discover the best of the best. Our top consultants are ready to help
-            you achieve your goals.
+            Experts with the highest ratings from clients who booked them.
+            Ordered by rating, not by payment.
           </p>
         </motion.div>
 
@@ -158,7 +166,9 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                                   <CompanyLogo
                                     key={`${expert.id}-company-${i}`}
                                     companyName={exp.company}
-                                    companyDomain={exp.companyDomain ?? undefined}
+                                    companyDomain={
+                                      exp.companyDomain ?? undefined
+                                    }
                                     size={22}
                                     className="border-border"
                                   />

@@ -170,8 +170,8 @@ export function WebinarDetails({
               />
               <FeatureItem
                 icon={<Video className="h-5 w-5" />}
-                label="Platform"
-                value={plan.materialProvided ?? "Zoom"}
+                label="Format"
+                value="Live online"
               />
               <FeatureItem
                 icon={<Globe className="h-5 w-5" />}

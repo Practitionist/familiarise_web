@@ -1,5 +1,10 @@
 import type { MetadataRoute } from "next";
 
+import {
+  listIndexableDomainNames,
+  listIndexableExpertIds,
+} from "@/lib/data/indexable-experts";
+import { domainPath } from "@/lib/explore/domain-slug";
 import { listIndexableEventPlanIds } from "@/lib/data/indexable-plans";
 import { reportSentryError } from "@/lib/observability/report";
 import {
@@ -36,6 +41,23 @@ async function eventPlanRoutes(): Promise<
   }
 }
 
+/** Expert profile pages; a database failure leaves only the static routes. */
+async function expertRoutes(): Promise<{ path: string; priority: number }[]> {
+  try {
+    const [ids, domains] = await Promise.all([
+      listIndexableExpertIds(),
+      listIndexableDomainNames(),
+    ]);
+    return [
+      ...domains.map((name) => ({ path: domainPath(name), priority: 0.8 })),
+      ...ids.map((id) => ({ path: `/explore/experts/${id}`, priority: 0.7 })),
+    ];
+  } catch (error) {
+    reportSentryError(error, { subsystem: "seo", op: "sitemap-experts" });
+    return [];
+  }
+}
+
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticRoutes: { path: string; priority: number }[] = [
     { path: "/", priority: 1.0 },
@@ -47,6 +69,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { path: "/enterprise", priority: 0.8 },
     { path: "/enterprise/team-training", priority: 0.7 },
     { path: "/enterprise/corporate-mentorship", priority: 0.7 },
+    { path: "/enterprise/demo", priority: 0.6 },
+    { path: "/enterprise/funding", priority: 0.6 },
+    { path: "/enterprise/institutions", priority: 0.6 },
+    { path: "/enterprise/security", priority: 0.5 },
     { path: "/use-cases/mentorship", priority: 0.7 },
     { path: "/use-cases/early-career", priority: 0.7 },
     { path: "/use-cases/college-students", priority: 0.7 },
@@ -71,11 +97,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     })),
   ];
 
-  return [...staticRoutes, ...(await eventPlanRoutes())].map(
-    ({ path, priority }) => ({
-      url: `${BASE_URL}${path}`,
-      changeFrequency: "weekly",
-      priority,
-    }),
-  );
+  const [experts, plans] = await Promise.all([
+    expertRoutes(),
+    eventPlanRoutes(),
+  ]);
+
+  return [...staticRoutes, ...experts, ...plans].map(({ path, priority }) => ({
+    url: `${BASE_URL}${path}`,
+    changeFrequency: "weekly",
+    priority,
+  }));
 }

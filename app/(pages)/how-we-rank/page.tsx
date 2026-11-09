@@ -82,6 +82,13 @@ export default function HowWeRankPage() {
               </p>
               <ul>
                 <li>
+                  <strong>Recommended:</strong> (1) the expert&apos;s published
+                  one-to-one rating, highest first, as in Highest Rating. (2)
+                  The number of one-to-one clients who have rated them. (3) The
+                  date the profile was created, newest first. This is the order
+                  you see when you have not chosen a sort.
+                </li>
+                <li>
                   <strong>Highest Rating:</strong> (1) the expert&apos;s
                   published one-to-one rating, highest first, which is the same
                   score shown on their card. That score is the plain average of
@@ -90,10 +97,10 @@ export default function HowWeRankPage() {
                   rated them. Experts without a published rating yet come last.
                 </li>
                 <li>
-                  <strong>Trending:</strong> (1) the time of the expert&apos;s
-                  most recent review activity, newest first; experts who have
-                  never been reviewed come last. (2) The number of one-to-one
-                  clients who have rated them.
+                  <strong>Recently reviewed:</strong> (1) the time of the
+                  expert&apos;s most recent review activity, newest first;
+                  experts who have never been reviewed come last. (2) The number
+                  of one-to-one clients who have rated them.
                 </li>
                 <li>
                   <strong>Most Reviews:</strong> (1) the number of one-to-one
@@ -107,8 +114,7 @@ export default function HowWeRankPage() {
                 </li>
                 <li>
                   <strong>Name (A-Z) or Name (Z-A):</strong> (1) the
-                  expert&apos;s name. This is the order you see when you have
-                  not chosen a sort.
+                  expert&apos;s name.
                 </li>
               </ul>
 
@@ -117,7 +123,7 @@ export default function HowWeRankPage() {
               <h2 className="text-2xl font-semibold mt-6 mb-4">4. Programs</h2>
               <ul>
                 <li>
-                  <strong>Most Popular:</strong> (1) how many sessions were
+                  <strong>Most active:</strong> (1) how many sessions were
                   scheduled for the program in the last 30 days, highest first.
                   This counts sessions scheduled, not seats sold. (2) Programs
                   with the same count are placed in a fixed order so the list
@@ -147,11 +153,13 @@ export default function HowWeRankPage() {
                 5. Highlighted rows
               </h2>
               <p>
-                The rows on the Explore pages, such as Trending Experts, Newly
-                Joined, Trending Now and Newly Added, use the orders above:
-                Trending Experts and Trending Now use the Trending and Most
-                Popular orders, and the Newly Joined and Newly Added rows use
-                Newest. None of them is placed by payment.
+                The rows on the Explore pages, such as Highest rated experts,
+                Recently reviewed experts, Newly Joined, Most active this month
+                and Newly Added, use the orders above: Highest rated experts
+                uses Highest Rating, Recently reviewed experts uses Recently
+                reviewed, Most active this month uses Most active, and the Newly
+                Joined and Newly Added rows use Newest. None of them is placed
+                by payment.
               </p>
 
               <Separator className="my-6" />

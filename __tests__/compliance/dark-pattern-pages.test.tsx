@@ -93,10 +93,11 @@ describe("how we rank", () => {
   it("states every sort and that placement is never paid for", () => {
     render(<HowWeRankPage />);
     for (const label of [
+      "Recommended:",
       "Highest Rating:",
-      "Trending:",
+      "Recently reviewed:",
       "Most Reviews:",
-      "Most Popular:",
+      "Most active:",
       "Newest:",
     ]) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);

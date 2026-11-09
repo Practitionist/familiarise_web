@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     Math.max(1, parseInt(searchParams.get("limit") || "10") || 10),
     100,
   );
-  const sort = searchParams.get("sort") || "nameAsc";
+  const sort = searchParams.get("sort") || "recommended";
 
   try {
     const domain = searchParams.get("domain");
@@ -137,25 +137,22 @@ export async function GET(request: NextRequest) {
     if (experience > 0) {
       conditions.push({ experience: { gte: experience } });
     }
-    // #1527 Q4 — price filters match only plans a buyer can actually see.
-    if (minPrice !== undefined && !isNaN(minPrice)) {
+    // Both bounds must hold on the same buyer-visible plan, and either rail
+    // (1:1 session or mentorship) qualifies the expert.
+    const priceRange: { gte?: number; lte?: number } = {};
+    if (minPrice !== undefined && !Number.isNaN(minPrice))
+      priceRange.gte = minPrice;
+    if (maxPrice !== undefined && !Number.isNaN(maxPrice))
+      priceRange.lte = maxPrice;
+    if (priceRange.gte !== undefined || priceRange.lte !== undefined) {
+      const planInRange = {
+        some: { price: priceRange, ...oneOnOnePlanDiscoverableWhere() },
+      };
       conditions.push({
-        subscriptionPlans: {
-          some: {
-            price: { gte: minPrice },
-            ...oneOnOnePlanDiscoverableWhere(),
-          },
-        },
-      });
-    }
-    if (maxPrice !== undefined && !isNaN(maxPrice)) {
-      conditions.push({
-        subscriptionPlans: {
-          some: {
-            price: { lte: maxPrice },
-            ...oneOnOnePlanDiscoverableWhere(),
-          },
-        },
+        OR: [
+          { consultationPlans: planInRange },
+          { subscriptionPlans: planInRange },
+        ],
       });
     }
     if (minRating !== undefined && !isNaN(minRating)) {

@@ -302,8 +302,10 @@ export function useClassCheckout(
           hours)
         </li>
         <li>{sessionsPerWeek} sessions per week</li>
-        <li>Course materials</li>
-        <li>Certificate of completion</li>
+        {planDetails?.materialProvided &&
+          planDetails.materialProvided !== "None" && <li>Course materials</li>}
+        {planDetails?.recordingEnabled && <li>Session recordings</li>}
+        {planDetails?.certificateProvided && <li>Certificate of completion</li>}
       </>
     ),
     renderFooter: (ctx) => (

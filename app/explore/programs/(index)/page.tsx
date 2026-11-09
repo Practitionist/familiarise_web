@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import {
   getCuratedPrograms,
   getTopicsWithCount,
@@ -38,6 +39,13 @@ async function getViewerOrgs(): Promise<Record<string, string>> {
 
 // Stream behind the static layout's instant skeleton; don't prerender at build (#932).
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Live classes and webinars | Familiarise",
+  description:
+    "Join multi-session classes and one-off webinars led by verified experts. Filter by topic, level, language and price.",
+  alternates: { canonical: "/explore/programs" },
+};
 
 /**
  * Server-fetch the trending / newest curated rows, the topic list, and the

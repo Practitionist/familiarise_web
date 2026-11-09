@@ -13,11 +13,9 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { cache } from "react";
-import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
-import { PUBLIC_RECORDINGS_TAG } from "@/lib/data/public-cache";
 import { durablyOursWhere } from "@/lib/stream/recording-storage";
 
 /** Listing metadata only — no storage paths, no playback URLs. */
@@ -269,17 +267,3 @@ export async function getPublicRecordingBySlugUncached(
  * 5-join listing query twice per generation.
  */
 export const getPublicRecordingBySlug = cache(getPublicRecordingBySlugUncached);
-
-export type ReplayCard = Omit<RecordingListing, "recordedAt" | "publishedAt">;
-
-/** First page of the public Replays tab, cached; dates are dropped because the cache stores JSON. */
-export const listPublicReplayCards = unstable_cache(
-  async (perPage: number): Promise<ReplayCard[]> => {
-    const { items } = await listPublicRecordings({ perPage });
-    return items.map(
-      ({ recordedAt: _recordedAt, publishedAt: _publishedAt, ...card }) => card,
-    );
-  },
-  ["public-replay-cards"],
-  { revalidate: 300, tags: [PUBLIC_RECORDINGS_TAG] },
-);

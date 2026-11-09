@@ -362,7 +362,7 @@ export default function ExpertDetailsSheet({
                   )}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Subscription plans start from{" "}
+                  Mentorship plans start from{" "}
                   {cheapest ? (
                     <>
                       <span className="font-semibold text-foreground">
