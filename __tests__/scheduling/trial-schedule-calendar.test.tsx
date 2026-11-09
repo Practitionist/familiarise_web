@@ -2,7 +2,9 @@
  * The trial picker: an older date's answer that lands after a newer one can
  * never overwrite it; times paint from the shared token table with the buyer
  * legend; the 15-minute lead and the server's `tooSoon` make a time
- * unpickable; a failed read shows plain copy with a retry.
+ * unpickable; a failed read shows plain copy with a retry. The read carries
+ * the consultee and the purpose, so the consultee's busy times and the
+ * purpose's lead time (24 h for a reschedule) both apply.
  */
 import * as React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
@@ -192,5 +194,38 @@ describe("TrialScheduleCalendar", () => {
     await act(async () => undefined);
     expect(screen.queryByRole("alert")).toBeNull();
     expect(document.querySelector('[data-status="available"]')).not.toBeNull();
+  });
+
+  it("asks the grid about the consultee and the purpose, and honours a reschedule's 24 h lead", async () => {
+    fetchMock.mockResolvedValue(
+      answer(200, {
+        data: {
+          "2026-11-02": [
+            atom("2026-11-02T13:00:00.000Z"),
+            atom("2026-11-02T15:00:00.000Z"),
+          ],
+        },
+      }),
+    );
+    render(
+      <TrialScheduleCalendar
+        consultantId="cp-1"
+        trialDurationMinutes={30}
+        onSlotSelect={jest.fn()}
+        onCancel={jest.fn()}
+        consulteeUserId="user-learner"
+        purpose="reschedule"
+      />,
+    );
+    await act(async () => undefined);
+
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain("consulteeUserId=user-learner");
+    expect(url).toContain("purpose=reschedule");
+    // Both times are under 24 hours away, so neither is offered.
+    const statuses = Array.from(
+      document.querySelectorAll<HTMLButtonElement>("[data-status]"),
+    ).map((button) => button.dataset.status);
+    expect(statuses).toEqual(["tooSoon", "tooSoon"]);
   });
 });
