@@ -890,9 +890,10 @@ describe("room progress across sweep attempts", () => {
     const { enqueueStreamRevocationRetries } =
       await import("../../lib/stream/access-revocation");
 
-    await enqueueStreamRevocationRetries([
-      { kind: "SEAT_ACCESS_REVOKE", userId: "attendee-1", planId: "appt-1" },
-    ]);
+    await enqueueStreamRevocationRetries(
+      [{ kind: "SEAT_ACCESS_REVOKE", userId: "attendee-1", planId: "appt-1" }],
+      new Date(),
+    );
 
     expect(
       mockRevocationPrisma.streamRevocationRetry.updateMany,
@@ -1242,6 +1243,61 @@ describe("a writer settles only the intent generation it wrote", () => {
     ).toEqual([
       ["SEAT_ACCESS_REVOKE", seatRow.nextRetryAt],
       ["REFUND_ACCESS_REVOKE", refundRow.nextRetryAt],
+    ]);
+  });
+
+  it("settles a refund's driven seats in one write at the seat generation, leaving a pending seat owed", async () => {
+    const seatOf = (userId: string, appointmentId: string) => ({
+      userId,
+      appointmentId,
+      appointment: {
+        webinar: null,
+        class: null,
+        consultation: { status: "SCHEDULED" },
+        subscription: null,
+        trial: null,
+      },
+    });
+    seats.refunded = [
+      seatOf("client-1", "appt-1"),
+      seatOf("client-2", "appt-2"),
+      seatOf("client-3", "appt-3"),
+    ];
+    mockRevocationPrisma.appointment.findUnique.mockResolvedValue(
+      directSeatContext("SCHEDULED"),
+    );
+    mockRevocationUpdateCallMembers.mockImplementation(
+      async (_type: string, _id: string, payload: unknown) => {
+        const { remove_members } = payload as { remove_members: string[] };
+        if (remove_members.includes("client-2")) throw new Error("down");
+        return {};
+      },
+    );
+    let tick = 3_000_000;
+    jest.spyOn(Date, "now").mockImplementation(() => (tick += 1));
+    const { revokeRefundedSeatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    await revokeRefundedSeatAccess(refundIntent);
+
+    const seatRow = writtenGenerations().find(
+      (r) => r.kind === "SEAT_ACCESS_REVOKE",
+    );
+    const seatSettles = settledCalls().filter(
+      (c) => c.where.kind === "SEAT_ACCESS_REVOKE",
+    );
+    expect(seatSettles).toEqual([
+      expect.objectContaining({
+        where: expect.objectContaining({
+          erasureRequestId: null,
+          status: { in: ["PENDING", "FAILED"] },
+          nextRetryAt: seatRow?.nextRetryAt,
+          OR: [
+            { planId: "appt-1", userId: "client-1" },
+            { planId: "appt-3", userId: "client-3" },
+          ],
+        }),
+      }),
     ]);
   });
 

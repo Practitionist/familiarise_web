@@ -28,7 +28,9 @@ import type {
   ModerationActionType,
   ModerationReportType,
   Prisma,
+  StreamRevocationKind,
 } from "@prisma/client";
+import type { AccessRevocationRow } from "@/lib/stream/access-revocation";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { nextRetryAt } from "@/lib/retry/backoff";
@@ -415,6 +417,57 @@ async function recordErasureOutboxOutcome(params: {
   }
 }
 
+function canStartRevocationRow(
+  kind: StreamRevocationKind,
+  runDeadlineMs: number,
+): boolean {
+  const remainingMs = runDeadlineMs - Date.now();
+  if (remainingMs <= 0) return false;
+  const isSeatKind =
+    kind === "SEAT_ACCESS_REVOKE" || kind === "REFUND_ACCESS_REVOKE";
+  return !isSeatKind || remainingMs >= MIN_SEAT_REVOCATION_SLICE_MS;
+}
+
+type RevocationDrainRow = {
+  kind: StreamRevocationKind;
+  planType: string | null;
+  planId: string;
+  userId: string | null;
+  counterpartUserId: string | null;
+  createdAt: Date;
+  erasureRequest: { userId: string } | null;
+};
+
+type RevocationDrainDeps = Parameters<typeof executeErasureRevocationRow>[1] & {
+  redriveAccessRevocation: (
+    row: AccessRevocationRow,
+    opts: { deadlineMs?: number },
+  ) => Promise<string | null>;
+};
+
+async function redriveRevocationRow(
+  row: RevocationDrainRow,
+  deps: RevocationDrainDeps,
+  runDeadlineMs: number,
+): Promise<string | null> {
+  const { kind } = row;
+  if (kind === "ERASURE_REVOKE") {
+    return row.erasureRequest
+      ? executeErasureRevocationRow(
+          { ...row, erasureRequest: row.erasureRequest },
+          deps,
+        )
+      : "Erasure retry has no erasure request";
+  }
+  if (!row.userId) return `${kind} retry has no user`;
+  return deps
+    .redriveAccessRevocation(
+      { ...row, kind, userId: row.userId },
+      { deadlineMs: runDeadlineMs },
+    )
+    .catch((error_: unknown) => errMsg(error_));
+}
+
 /**
  * Stops starting rows at `runDeadlineMs`, and before a seat or refund row once
  * less than its minimum slice is left; an unstarted row stays due for the next run.
@@ -455,51 +508,27 @@ async function drainErasureRevocations(
     await import("@/lib/collaborators/service");
   const { redriveAccessRevocation } =
     await import("@/lib/stream/access-revocation");
+  const deps = {
+    principalPrefix: STREAM_PRINCIPAL_PLAN_ID_PREFIX,
+    eraseStreamPrincipalFootprint,
+    revokeCollaboratorAccess,
+    redriveAccessRevocation,
+  };
   for (const row of rows) {
-    if (Date.now() >= runDeadlineMs) return;
-    const { kind } = row;
-    if (
-      (kind === "SEAT_ACCESS_REVOKE" || kind === "REFUND_ACCESS_REVOKE") &&
-      runDeadlineMs - Date.now() < MIN_SEAT_REVOCATION_SLICE_MS
-    ) {
-      return;
-    }
-    let error: string | null;
-    if (kind === "ERASURE_REVOKE") {
-      error = row.erasureRequest
-        ? await executeErasureRevocationRow(
-            { ...row, erasureRequest: row.erasureRequest },
-            {
-              principalPrefix: STREAM_PRINCIPAL_PLAN_ID_PREFIX,
-              eraseStreamPrincipalFootprint,
-              revokeCollaboratorAccess,
-            },
-          )
-        : "Erasure retry has no erasure request";
-    } else if (row.userId) {
-      error = await redriveAccessRevocation(
-        { ...row, kind, userId: row.userId },
-        { deadlineMs: runDeadlineMs },
-      ).catch((error_: unknown) => errMsg(error_));
-    } else {
-      error = `${kind} retry has no user`;
-    }
+    if (!canStartRevocationRow(row.kind, runDeadlineMs)) return;
+    const isErasure = row.kind === "ERASURE_REVOKE";
     await recordErasureOutboxOutcome({
       delegate: prisma.streamRevocationRetry,
       row,
-      error,
-      errorLabel:
-        kind === "ERASURE_REVOKE" ? "erasure-revoke" : "access-revoke",
+      error: await redriveRevocationRow(row, deps, runDeadlineMs),
+      errorLabel: isErasure ? "erasure-revoke" : "access-revoke",
       now,
       result,
       settledRequestIds,
-      recovered:
-        kind === "ERASURE_REVOKE"
-          ? "erasureRevocationsRecovered"
-          : "accessRevocationsRecovered",
-      ...(kind === "ERASURE_REVOKE"
-        ? {}
-        : { generation: { nextRetryAt: row.nextRetryAt } }),
+      recovered: isErasure
+        ? "erasureRevocationsRecovered"
+        : "accessRevocationsRecovered",
+      ...(isErasure ? {} : { generation: { nextRetryAt: row.nextRetryAt } }),
     });
   }
 }

@@ -39,14 +39,13 @@ export interface AccessRevocationTarget {
  * an open row is re-armed, so a capped row cannot swallow a new revocation; the
  * re-arm restarts the room scan, since a re-bought seat may hold earlier rooms again.
  * `nextRetryAt` holds the row back from the sweep while its writer drives it, and
- * is fresh on every write, so it names this generation of the rows; it is returned.
+ * the caller makes it fresh on every write, so it names this generation of the rows.
  */
 export async function enqueueStreamRevocationRetries(
   targets: AccessRevocationTarget[],
-  opts: { nextRetryAt?: Date } = {},
-): Promise<Date> {
-  const nextRetryAt = opts.nextRetryAt ?? new Date();
-  if (targets.length === 0) return nextRetryAt;
+  nextRetryAt: Date,
+): Promise<void> {
+  if (targets.length === 0) return;
   await prisma.streamRevocationRetry.updateMany({
     where: {
       erasureRequestId: null,
@@ -76,7 +75,6 @@ export async function enqueueStreamRevocationRetries(
     })),
     skipDuplicates: true,
   });
-  return nextRetryAt;
 }
 
 /**
@@ -88,8 +86,10 @@ async function enqueueOrReport(
   op: string,
   opts: { nextRetryAt?: Date } = {},
 ): Promise<Date | null> {
+  const nextRetryAt = opts.nextRetryAt ?? new Date();
   try {
-    return await enqueueStreamRevocationRetries(targets, opts);
+    await enqueueStreamRevocationRetries(targets, nextRetryAt);
+    return nextRetryAt;
   } catch (error) {
     reportSentryError(error, {
       subsystem: "stream",
@@ -128,6 +128,32 @@ async function settleIntents(
     streamLogger.warn("Could not settle revocation intents", {
       kind,
       planId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/** `settleIntents` for seats across appointments, in one write at one generation. */
+async function settleSeatIntents(
+  seats: { planId: string; userId: string }[],
+  generation: Date | null,
+): Promise<void> {
+  if (seats.length === 0 || !generation) return;
+  try {
+    await prisma.streamRevocationRetry.updateMany({
+      where: {
+        erasureRequestId: null,
+        kind: "SEAT_ACCESS_REVOKE",
+        status: { in: ["PENDING", "FAILED"] },
+        nextRetryAt: generation,
+        OR: seats,
+      },
+      data: { status: "SUCCEEDED", completedAt: new Date() },
+    });
+  } catch (error) {
+    // The rows stay owed; the sweep re-drives them and finds nothing left to remove.
+    streamLogger.warn("Could not settle seat revocation intents", {
+      seats: seats.length,
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -480,23 +506,25 @@ async function saveSeatCursors(
     }
     byCursor.set(next, [...(byCursor.get(next) ?? []), row]);
   }
-  for (const [resumeAfter, rows] of byCursor) {
-    try {
-      await prisma.streamRevocationRetry.updateMany({
-        where: {
-          status: { not: "SUCCEEDED" },
-          OR: rows.map((r) => ({ id: r.id, updatedAt: r.updatedAt })),
-        },
-        data: { resumeAfter },
-      });
-    } catch (error) {
-      // The rows keep their older cursor and rescan rooms already done.
-      streamLogger.warn("Could not save seat revocation progress", {
-        rows: rows.length,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
+  await Promise.all(
+    Array.from(byCursor, async ([resumeAfter, rows]) => {
+      try {
+        await prisma.streamRevocationRetry.updateMany({
+          where: {
+            status: { not: "SUCCEEDED" },
+            OR: rows.map((r) => ({ id: r.id, updatedAt: r.updatedAt })),
+          },
+          data: { resumeAfter },
+        });
+      } catch (error) {
+        // The rows keep their older cursor and rescan rooms already done.
+        streamLogger.warn("Could not save seat revocation progress", {
+          rows: rows.length,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }),
+  );
 }
 
 /** False when the resume room is gone, so the scan must start over. */
@@ -858,6 +886,8 @@ async function driveRefundRevocation(
     "refund.persistSeatRevocation",
     { nextRetryAt: intentNotBefore() },
   );
+  const driven: { planId: string; userId: string }[] = [];
+  // One seat at a time, so the Stream writes stay sequential.
   for (const seat of seats) {
     const pending = await driveSeatRevocation(
       seat.appointmentId,
@@ -865,14 +895,10 @@ async function driveRefundRevocation(
       deadlineMs,
     );
     if (!pending.has(seat.userId)) {
-      await settleIntents(
-        "SEAT_ACCESS_REVOKE",
-        seat.appointmentId,
-        [seat.userId],
-        generation,
-      );
+      driven.push({ planId: seat.appointmentId, userId: seat.userId });
     }
   }
+  await settleSeatIntents(driven, generation);
   return { error: generation ? null : "Seat revocations not persisted" };
 }
 
