@@ -7,6 +7,7 @@
  */
 
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
+import type { EventType } from "@/utils/scheduling-engine/types";
 
 // ─── startOfWeekSunday ──────────────────────────────────────────────────────
 
@@ -153,7 +154,10 @@ describe("ScheduleCalculationService.validateDuration", () => {
 
   it("should throw for null duration", () => {
     expect(() =>
-      ScheduleCalculationService.validateDuration(null as any, "myField"),
+      ScheduleCalculationService.validateDuration(
+        null as unknown as number,
+        "myField",
+      ),
     ).toThrow("myField is required but was not provided");
   });
 
@@ -195,7 +199,10 @@ describe("ScheduleCalculationService.validateDuration", () => {
 
   it("should throw for non-number type", () => {
     expect(() =>
-      ScheduleCalculationService.validateDuration("1" as any, "myField"),
+      ScheduleCalculationService.validateDuration(
+        "1" as unknown as number,
+        "myField",
+      ),
     ).toThrow("must be a number");
   });
 });
@@ -230,13 +237,19 @@ describe("ScheduleCalculationService.getSlotsPerCall", () => {
 describe("ScheduleCalculationService.calculateRequiredSlots", () => {
   it("should throw when eventType is empty", () => {
     expect(() =>
-      ScheduleCalculationService.calculateRequiredSlots("" as any, {}),
+      ScheduleCalculationService.calculateRequiredSlots(
+        "" as unknown as EventType,
+        {},
+      ),
     ).toThrow("Event type is required");
   });
 
   it("should throw for invalid event type", () => {
     expect(() =>
-      ScheduleCalculationService.calculateRequiredSlots("unknown" as any, {}),
+      ScheduleCalculationService.calculateRequiredSlots(
+        "unknown" as unknown as EventType,
+        {},
+      ),
     ).toThrow("Invalid event type");
   });
 
