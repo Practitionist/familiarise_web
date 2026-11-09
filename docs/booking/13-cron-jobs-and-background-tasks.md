@@ -69,19 +69,21 @@ Five other sweeps keep their cohorts moving past rows they cannot finish. `clean
 
 **Records affected**:
 
-| Entity       | Source Statuses            | Target Status | Criteria                                                                 |
-| ------------ | -------------------------- | ------------- | ------------------------------------------------------------------------ |
-| Webinar      | `SCHEDULED`, `IN_PROGRESS` | `COMPLETED`   | All slots ended > 1h ago                                                 |
-| Class        | `SCHEDULED`, `IN_PROGRESS` | `COMPLETED`   | All slots across all appointments ended > 1h ago                         |
-| Consultation | `APPROVED`, `SCHEDULED`    | `COMPLETED`   | All slots ended > 1h ago, unless the consultant never joined (see below) |
-| Subscription | `APPROVED`, `SCHEDULED`    | `COMPLETED`   | All slots across all appointments ended > 1h ago                         |
-| Trial        | `SCHEDULED`                | `COMPLETED`   | All slots ended > 1h ago; also sets `completedAt`                        |
+| Entity       | Source Statuses            | Target Status | Criteria                                                                   |
+| ------------ | -------------------------- | ------------- | -------------------------------------------------------------------------- |
+| Webinar      | `SCHEDULED`, `IN_PROGRESS` | `COMPLETED`   | All slots ended > 1h ago                                                   |
+| Class        | `SCHEDULED`, `IN_PROGRESS` | `COMPLETED`   | All slots across all appointments ended > 1h ago; stamps class-end refunds |
+| Consultation | `APPROVED`, `SCHEDULED`    | `COMPLETED`   | All slots ended > 1h ago, unless the consultant never joined (see below)   |
+| Subscription | `APPROVED`, `SCHEDULED`    | `COMPLETED`   | All slots across all appointments ended > 1h ago                           |
+| Trial        | `SCHEDULED`                | `COMPLETED`   | All slots ended > 1h ago; also sets `completedAt`                          |
 
 **The consultant no-show handoff (#1504).** A consultation that the consultant never joined is not this job's to close. The only path that cancels such a booking and refunds the consultee in full is the no-show detector described in section g, and that detector only considers bookings that are still `APPROVED` or `SCHEDULED`. Because this job's buffer is one hour and the detector's grace window is two, this job used to reach every unattended consultation first and mark it `COMPLETED`, which removed it from the detector's candidate set permanently; the platform's promised refund could therefore never fire in production.
 
 Both jobs now read the same predicate from `lib/booking/attendance.ts`, which classifies a booking from the `MeetingAttendance` rows as one of three shapes. When the consultant has a recorded join, this job completes the booking as it always did. When the consultee has a join and the consultant does not, this job defers: it skips the booking and leaves it live for the detector. When there is no session at all, or nobody joined, the booking is not a consultant-fault refund and this job completes it, because the detector's remedy in that case is a support ticket rather than a status change.
 
 The deferral is bounded. The detector declines candidates it cannot decide — Stream's own call report contradicts our attendance rows, the session has no Stream call to ask about, or the run failed — and it leaves those bookings untouched. `NO_SHOW_HANDOFF_MINUTES` (the grace window plus two hours) is the point at which this job stops waiting and completes the booking anyway, so that the detector, which runs every 30 minutes, has had about four runs in which the booking was visible to it. A booking that neither job would ever claim would sit live forever, which is a worse outcome than completing it.
+
+**Class-end settlement.** The commit that completes a class also stamps, through `stampClassEndRefundsOwed` (`lib/payments/operations/event-refunds.ts`), a refund marker on every live paid seat that was sold sessions no row ever placed: `floor(paid × unplaced / sessions bought)`, keyed `class-end:<classId>:pay:<paymentId>`. This job moves no money itself; the `retry-auto-refunds` sweep, which is a financial job and pauses in DEGRADED maintenance, drives the markers, and each marker holds its payment's earnings until the refund settles. A seat whose payment already owes another door's refund refuses the completion, so the class waits for the next run. The rule is in `.claude/skills/booking/references/money-boundary.md` §14.
 
 **Safety**: Per-record `try/catch`. A failure on one record does not prevent processing of others. All errors are collected into a result array and returned. The activity log write for trial sessions has its own nested `try/catch` so a logging failure does not block the completion update.
 

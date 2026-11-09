@@ -62,6 +62,8 @@ export interface SeatLedger {
   /** Live sessions the seat holds that have not started, earliest first. */
   remaining: { startsAt: Date; movedAt: Date | null }[];
   neverScheduled: number;
+  /** Sessions sold to the seat that no row ever placed: not delivered, live or missed, by distinct ordinal. */
+  unplaced: number;
 }
 
 const DEAD = new Set<OccurrenceCompletionStatus>([
@@ -121,6 +123,7 @@ export function seatLedgerFrom(args: {
       0,
       heldCount - deliveredHeld - inProgressHeld - remaining.length,
     ),
+    unplaced: Math.max(0, heldCount - ordinals.size),
   };
 }
 
@@ -138,6 +141,23 @@ export function seriesCancelRefundPaise(
   const left =
     BigInt(amountPaise) - ledger.unitPaise * BigInt(ledger.deliveredHeld);
   return left > BigInt(0) ? left : BigInt(0);
+}
+
+/** The key prefix of the refund a completed class owes a seat for sessions it sold but never placed. */
+export const CLASS_END_REFUND_KEY_PREFIX = "class-end:";
+
+/**
+ * What a class completing short owes this seat for the sessions it was sold but
+ * no row ever placed: floor(amount × unplaced / heldCount), in BigInt.
+ */
+export function classEndRefundPaise(
+  ledger: SeatLedger,
+  amountPaise: bigint | number,
+): bigint {
+  if (ledger.unplaced <= 0 || ledger.heldCount <= 0) return BigInt(0);
+  return (
+    (BigInt(amountPaise) * BigInt(ledger.unplaced)) / BigInt(ledger.heldCount)
+  );
 }
 
 const LEDGER_OCCURRENCE_SELECT = {
@@ -355,12 +375,17 @@ export async function seriesLedgerAfterMiss(
   };
 }
 
-/** Seat doors whose refund returns sessions of this payment: a leave (the re-time free leave included) and the exit right. */
-const SEAT_REFUND_KEY_PREFIXES = ["seat-leave:", "seat-exit:"] as const;
+/** Seat doors whose refund returns sessions of this payment: a leave (the re-time free leave included), the exit right and class-end settlement. */
+const SEAT_REFUND_KEY_PREFIXES = [
+  "seat-leave:",
+  "seat-exit:",
+  CLASS_END_REFUND_KEY_PREFIX,
+] as const;
 
 /**
  * What this payment already got back for sessions it will not be delivered:
- * per session (`occ:*`, `incident:*`) and per seat (`seat-leave:*`, `seat-exit:*`).
+ * per session (`occ:*`, `incident:*`) and per seat (`seat-leave:*`,
+ * `seat-exit:*`, `class-end:*`).
  */
 export async function occurrenceRefundsPaise(
   db: Pick<Tx, "refund">,

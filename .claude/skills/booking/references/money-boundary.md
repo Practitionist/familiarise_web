@@ -345,7 +345,7 @@ the booking it stamps the per-payment marker `Payment.refundOwedPaise`,
 (`cancel:<appointmentId>:<paymentId>`, `trial-cancel:<trialId>:<paymentId>`,
 `rejection:<requestId>:<paymentId>`, `moderation:<appointmentId>:<paymentId>`,
 `freeze:<appointmentId>:<paymentId>`, `consultant-no-show:<paymentId>`,
-`event-cancel:<eventId>:pay:<paymentId>`)
+`event-cancel:<eventId>:pay:<paymentId>`, `class-end:<classId>:pay:<paymentId>`)
 and clears the marker by CAS on the key once the refund is not PENDING. The first
 writer wins, so a second door cannot overwrite the amount owed. A death between
 commit and drive leaves CANCELLED plus SUCCEEDED plus a marker, and the
@@ -374,6 +374,9 @@ with the `dead-letter:` prefix for an operator. The refund re-checks under the
 appointment lock that the session is still `VOIDED`, so an ops un-void wins.
 `occurrenceRefundsPaise` and `voidRefundExists` read the `incident:` prefix, so
 never add a new refund-key family without teaching those two scans.
+`occurrenceRefundsPaise` also reads the per-seat `seat-leave:`, `seat-exit:` and
+`class-end:` prefixes; `voidRefundExists` stays per session, so a per-seat
+family never belongs there.
 
 How a gateway failure is classified decides who finishes the job
 (`refundBookingPayment` and `isDefinitiveRefundRefusal`). A **definitive**
@@ -595,6 +598,32 @@ The pass resumes each tick from a checkpoint, so plans that must wait
 never starve the ones behind them. A void in the middle of a plan is not paid
 back while the session can still be re-booked; it waits for the plan end.
 
+## 14. A class settles its never-placed sessions when it completes
+
+A class completes once every placed session has ended and been decided
+(`completeClasses` in `scripts/appointments/auto-complete-appointments.ts`), and
+the same transaction that moves it to COMPLETED stamps class-end settlement
+(`stampClassEndRefundsOwed` in `lib/payments/operations/event-refunds.ts`).
+Every live paid seat is owed `floor(paid × unplaced / heldCount)` less any
+class-end refund already sent, clamped to the refundable balance. `heldCount` is
+the sessions the seat bought (`sessionsPurchased`, so N for an on-time seat and
+fewer for a late joiner), and `unplaced` is the bought sessions with no row at
+all: `SeatLedger.unplaced` in `lib/booking/class-series.ts` counts distinct
+ordinals that were delivered, are live, or were missed (host-cancelled or
+voided), because a missed session is already answered by its make-up or its
+`occ:` unit refund. A released row that was never re-placed counts as unplaced.
+A ₹100 seat of a 10-session class that ran 8 is owed ₹20.
+
+The marker is keyed `class-end:<classId>:pay:<paymentId>` and goes through
+`stampWholeEventRefundsOwed` with `basis: "unplaced"`, so a payment that already
+owes another door's refund refuses the completion and the class waits for the
+next run. A credit-funded seat owed part of its value is queued for a human
+(`partial-credit:<paymentId>`) in the same commit. Auto-complete moves no money
+itself: the `retry-auto-refunds` sweep, a financial job that pauses in DEGRADED
+maintenance, drives the markers, and each marker holds its payment's earnings
+(`RELEASABLE_PAYMENT` waits for `refundOwedKey: null`) until the refund settles
+and reverses the refunded share.
+
 ## Deprecated & Superseded Approaches
 
 - **The notice floor from history.** The floor once read `BookingStatusHistory`
@@ -625,3 +654,7 @@ back while the session can still be re-booked; it waits for the plan end.
 - **A whole-event cancel that committed without owning every seat's marker.** It
   logged the seats another door held and drove whatever marker it found; it now
   refuses, and a losing door that proceeds holds the earnings for a top-up.
+- **A class completing short with no settlement.** Auto-complete once moved a
+  class to COMPLETED after its last placed session whatever it had sold, so the
+  never-placed sessions were neither delivered nor refunded and the earnings
+  released in full. Class-end settlement owes them now.

@@ -86,6 +86,10 @@ import { sessionHostUserIds } from "@/lib/booking/session-hosts";
 import { recomputeMenteesHelped } from "@/lib/profiles/mentees-helped";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import {
+  stampClassEndRefundsOwed,
+  type ClassEndSettlement,
+} from "@/lib/payments/operations/event-refunds";
 
 // Only complete appointments that ended at least 1 hour ago
 // This gives buffer time for any post-session activities
@@ -389,6 +393,19 @@ async function completeWebinars(
 }
 
 /**
+ * The completing commit reads every seat's ledger and stamps its class-end
+ * refund; only the retry-auto-refunds sweep (a financial job) drives them.
+ */
+const CLASS_END_TX_TIMEOUT_MS = 30_000;
+
+function logClassEndSettlement(settlement: ClassEndSettlement | null): void {
+  if (!settlement || settlement.owed + settlement.escalated === 0) return;
+  console.log(
+    `   💸 Never-scheduled sessions: ${settlement.owed} seat(s) owed ${settlement.owedPaise} paise, ${settlement.escalated} credit seat(s) queued for a human`,
+  );
+}
+
+/**
  * Auto-complete classes that have ended (all sessions done)
  */
 async function completeClasses(
@@ -440,23 +457,30 @@ async function completeClasses(
         `   Last slot ended: ${latestEnd?.toISOString() || "Unknown"}`,
       );
 
-      // CAS (#1319) — same reasoning as the webinar arm above.
-      const moved = await completeThroughHelper(() =>
-        prisma.$transaction((tx) =>
-          transitionClassEvent(tx, {
-            where: { id: cls.id },
-            to: ClassStatus.COMPLETED,
-            fromIn: EVENT_ALLOWED_FROM.COMPLETED,
-            reason: AUTO_COMPLETE_REASON,
-          }),
-        ),
-      );
+      // CAS: same reasoning as the webinar arm above. The completing
+      // commit also stamps each seat's refund for sessions sold but never placed.
+      let settlement: ClassEndSettlement | null = null;
+      const moved = await completeThroughHelper(async () => {
+        settlement = await prisma.$transaction(
+          async (tx) => {
+            await transitionClassEvent(tx, {
+              where: { id: cls.id },
+              to: ClassStatus.COMPLETED,
+              fromIn: EVENT_ALLOWED_FROM.COMPLETED,
+              reason: AUTO_COMPLETE_REASON,
+            });
+            return stampClassEndRefundsOwed(tx, cls.id);
+          },
+          { timeout: CLASS_END_TX_TIMEOUT_MS },
+        );
+      });
       if (!moved) {
         console.log(`   ⏭️ Skipped — status changed since the sweep read`);
         continue;
       }
 
       console.log(`   ✅ Marked as COMPLETED`);
+      logClassEndSettlement(settlement);
       completed++;
     } catch (error) {
       const msg = `Failed to complete class ${cls.id}: ${error}`;

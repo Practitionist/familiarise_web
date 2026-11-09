@@ -817,6 +817,10 @@ Classes are multi-session group events (e.g., "6-week Python bootcamp"). They be
 
 The host can also cancel a single session of a class without touching the rest of the series. The session is then made up within 14 days or refunded one unit per seat by a sweep, and every such cancellation counts as a miss toward the learner's exit right. The state machine is described in `18-state-machines.md`. Misses are host cancellations only today; consultant no-shows and outage voiding are tracked in #1569.
 
+### A class that ends with sessions never placed
+
+A class is not cancelled when its host leaves sessions unscheduled; it completes once every placed session has ended. The completing commit owes each live paid seat the sessions it bought that no row ever placed, `floor(paid × unplaced / sessions bought)`, under a marker keyed `class-end:<classId>:pay:<paymentId>` (`stampClassEndRefundsOwed` in `lib/payments/operations/event-refunds.ts`, called by `completeClasses` in `scripts/appointments/auto-complete-appointments.ts`). A session the host cancelled or that was voided is not unplaced: its make-up or its one-unit refund already answers for it. The `retry-auto-refunds` sweep drives the refund, and the seat's earnings stay held until it settles.
+
 ### The refund window and seat leaves (#1780)
 
 The host sets a free-cancellation window on a webinar or class plan, from 24 to 168 hours before the start (`refundWindowHours`; an unset window means 24 hours). Every seat snapshots the plan's window when it is bought, so a later edit never changes the terms of a seat already sold. When a learner leaves a webinar, or a class none of whose sessions has been delivered to them yet, the rule runs inside the Serializable transaction and before the seat is released: inside the window the leave is refused with `409 REFUND_WINDOW_CLOSED` and the seat stays, and outside it the seat is released and refunded in full. A session the host moved after the purchase (`AppointmentOccurrence.movedAt`, stamped when a reschedule or a re-plan really changes its times) waives the window, so a buyer whose time was changed on them can always leave with their money.
