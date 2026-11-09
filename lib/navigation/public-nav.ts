@@ -12,6 +12,7 @@ import {
   Star,
   FileText,
   BookOpen,
+  Wallet,
 } from "lucide-react";
 import { domainPath } from "@/lib/explore/domain-slug";
 
@@ -182,6 +183,18 @@ const BUSINESS_COLUMNS: NavColumn[] = [
         href: "/enterprise/corporate-mentorship",
         description: "Credit pools for 1:1 expert sessions",
         icon: Users,
+      },
+      {
+        label: "For institutions",
+        href: "/enterprise/institutions",
+        description: "Funded expert access for student batches",
+        icon: GraduationCap,
+      },
+      {
+        label: "How funding works",
+        href: "/enterprise/funding",
+        description: "Seats, credits, wallet, invoice and overage",
+        icon: Wallet,
       },
       {
         label: "Book a demo",
