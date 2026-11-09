@@ -48,6 +48,7 @@ import {
   calculateCallProgress,
   countSundayWeeksInclusive,
   groupSelectedIntoSessions,
+  splitIntoSessions,
 } from "@/lib/scheduling/calendarUtils";
 import { CalendarGridSkeleton } from "@/components/scheduling/CalendarSkeletons";
 import { useCalendarData } from "@/hooks/scheduling/useCalendarData";
@@ -90,6 +91,7 @@ import { buildGridBlocks } from "@/lib/scheduling/grid-blocks";
 import {
   buildWeekCells,
   describeAtom,
+  expandToSession,
   openHoursWindow,
   selectionConflicts,
   type AtomContext,
@@ -119,6 +121,7 @@ import {
   overlapTooltip,
   WeekGrid,
   type CellTooltip,
+  type GhostPiece,
   type GridFocus,
 } from "@/components/scheduling/WeekGrid";
 
@@ -1085,68 +1088,130 @@ export function UnifiedCalendar({
       row.getBoundingClientRect().top - weekGridEl.getBoundingClientRect().top;
   }, [focus, weekGridEl, availableSlots, rowWindow, gridZone, rowModel]);
 
+  /** A free, placeable atom a session may grow into: what a click may take. */
+  const isFreeAtom = useCallback(
+    (startMs: number): boolean => {
+      if (!serverCells.has(startMs) || selectedStarts.has(startMs)) {
+        return false;
+      }
+      const atom = describeAtom(startMs, startMs + ATOM_MS, atomContext);
+      return (
+        atom.isAvailable &&
+        !atom.isInPast &&
+        !atom.isOutsidePeriod &&
+        !atom.isTooSoon &&
+        !atom.isLimitReached
+      );
+    },
+    [serverCells, atomContext, selectedStarts],
+  );
+
   /** Consecutive free atoms around a clicked one, to fill one whole session. */
   const buildAutoExpandGroup = useCallback(
     (clickedSlot: CalendarInterval): CalendarInterval[] => {
-      const targetSize = slotLimits.slotsPerSession;
-      if (!targetSize || targetSize <= 1) return [clickedSlot];
       const clickedMs = clickedSlot.startTime.getTime();
-
-      const eligible = (offsetSteps: number): CalendarInterval | null => {
-        const startMs = clickedMs + offsetSteps * ATOM_MS;
-        if (!serverCells.has(startMs)) return null;
-        const atom = describeAtom(startMs, startMs + ATOM_MS, atomContext);
-        if (
-          !atom.isAvailable ||
-          atom.isInPast ||
-          atom.isOutsidePeriod ||
-          atom.isTooSoon ||
-          atom.isLimitReached ||
-          selectedStarts.has(startMs)
-        ) {
-          return null;
-        }
-        return {
-          startTime: new Date(startMs),
-          endTime: new Date(startMs + ATOM_MS),
-          isAvailable: true,
-          isBooked: false,
-        };
-      };
-
-      const forward: CalendarInterval[] = [clickedSlot];
-      for (let step = 1; step < targetSize; step++) {
-        const next = eligible(step);
-        if (!next) break;
-        forward.push(next);
-      }
-      if (forward.length === targetSize) return forward;
-
-      const backward: CalendarInterval[] = [clickedSlot];
-      for (let step = 1; step < targetSize; step++) {
-        const previous = eligible(-step);
-        if (!previous) break;
-        backward.unshift(previous);
-      }
-      if (backward.length === targetSize) return backward;
-
-      if (forward.length > 1 || backward.length > 1) {
-        const mixed: CalendarInterval[] = [...forward];
-        for (
-          let step = 1;
-          step < targetSize && mixed.length < targetSize;
-          step++
-        ) {
-          const previous = eligible(-step);
-          if (!previous) break;
-          mixed.unshift(previous);
-        }
-        if (mixed.length === targetSize) return mixed;
-      }
-      return [clickedSlot];
+      return expandToSession(
+        clickedMs,
+        slotLimits.slotsPerSession,
+        (startMs) => startMs === clickedMs || isFreeAtom(startMs),
+      ).map((startMs) =>
+        startMs === clickedMs
+          ? clickedSlot
+          : {
+              startTime: new Date(startMs),
+              endTime: new Date(startMs + ATOM_MS),
+              isAvailable: true,
+              isBooked: false,
+            },
+      );
     },
-    [slotLimits.slotsPerSession, serverCells, atomContext, selectedStarts],
+    [slotLimits.slotsPerSession, isFreeAtom],
   );
+
+  /** The picked session holding an atom, as its atoms: a click removes all of them. */
+  const sessionAtomsAt = useCallback(
+    (startMs: number): CalendarInterval[] => {
+      const session = splitIntoSessions(
+        selectedSlots,
+        slotLimits.slotsPerSession,
+        gridZone,
+      ).find(
+        (piece) =>
+          piece.start.getTime() <= startMs && startMs < piece.end.getTime(),
+      );
+      if (!session) return [];
+      return selectedSlots.filter(
+        (slot) =>
+          slot.startTime >= session.start && slot.endTime <= session.end,
+      );
+    },
+    [selectedSlots, slotLimits.slotsPerSession, gridZone],
+  );
+
+  // What a click on the hovered or focused cell would place, drawn as a ghost.
+  const [previewStart, setPreviewStart] = useState<number | null>(null);
+  const ghost = useMemo<GhostPiece[]>(() => {
+    if (mode === "view" || isAllocating || previewStart === null) return [];
+    if (weekCells.byStart.get(previewStart)?.statusKey !== "available") {
+      return [];
+    }
+    const size = Math.max(1, slotLimits.slotsPerSession || 1);
+    const starts = expandToSession(
+      previewStart,
+      size,
+      (startMs) => startMs === previewStart || isFreeAtom(startMs),
+    );
+    const clicked = weekCells.positions.get(previewStart);
+    if (!clicked) return [];
+    if (starts.length < size) {
+      return [
+        {
+          key: `blocked:${previewStart}`,
+          dayIndex: clicked.day,
+          fromRow: clicked.row,
+          toRow: Math.min(clicked.row + size, weekCells.matrix.length),
+          fits: false,
+          startMs: previewStart,
+          endMs: previewStart + size * ATOM_MS,
+          label: "Doesn't fit here",
+        },
+      ];
+    }
+    // A session crossing midnight draws one piece per day column.
+    const pieces: GhostPiece[] = [];
+    for (const startMs of starts) {
+      const position = weekCells.positions.get(startMs);
+      if (!position) continue;
+      const last = pieces[pieces.length - 1];
+      if (last && last.dayIndex === position.day) {
+        last.toRow = position.row + 1;
+        last.endMs = startMs + ATOM_MS;
+        continue;
+      }
+      pieces.push({
+        key: `fits:${startMs}`,
+        dayIndex: position.day,
+        fromRow: position.row,
+        toRow: position.row + 1,
+        fits: true,
+        startMs,
+        endMs: startMs + ATOM_MS,
+        label: "",
+      });
+    }
+    return pieces.map((piece) => ({
+      ...piece,
+      label: `New session · ${formatClockTime(new Date(starts[0]), { zone: gridZone })}–${formatClockTime(new Date(starts[starts.length - 1] + ATOM_MS), { zone: gridZone })}`,
+    }));
+  }, [
+    mode,
+    isAllocating,
+    previewStart,
+    weekCells,
+    slotLimits.slotsPerSession,
+    isFreeAtom,
+    gridZone,
+  ]);
 
   const handleCellActivate = useCallback(
     (startMs: number) => {
@@ -1175,7 +1240,7 @@ export function UnifiedCalendar({
 
       // Past sessions of this booking: deselect allowed, reselect blocked.
       if (cell.isThisEvent && cell.isInPast) {
-        if (isSelected) toggleSlot(slot);
+        if (isSelected) removeSlots(sessionAtomsAt(cell.startMs));
         else toast(pastSessionBlocked());
         return;
       }
@@ -1224,7 +1289,7 @@ export function UnifiedCalendar({
       }
 
       if (isSelected) {
-        toggleSlot(slot);
+        removeSlots(sessionAtomsAt(cell.startMs));
         return;
       }
       const group = buildAutoExpandGroup(slot);
@@ -1244,6 +1309,8 @@ export function UnifiedCalendar({
       allowedStart,
       allowedEnd,
       toggleSlot,
+      removeSlots,
+      sessionAtomsAt,
       quota,
       buildAutoExpandGroup,
       slotLimits.slotsPerSession,
@@ -1691,6 +1758,8 @@ export function UnifiedCalendar({
             matrix={weekCells.matrix}
             rows={rowWindow}
             blocks={blocks}
+            ghost={ghost}
+            onPreview={setPreviewStart}
             todayIndex={todayIndex}
             inPeriodDays={periodDays}
             nowAtomStartMs={nowAtom.start.getTime()}

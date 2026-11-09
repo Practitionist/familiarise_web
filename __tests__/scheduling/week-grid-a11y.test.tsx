@@ -36,6 +36,8 @@ function Harness({
       matrix={cells.matrix}
       rows={VISIBLE_ROWS}
       blocks={[]}
+      ghost={[]}
+      onPreview={() => {}}
       todayIndex={-1}
       inPeriodDays={days.map(() => false)}
       nowAtomStartMs={0}

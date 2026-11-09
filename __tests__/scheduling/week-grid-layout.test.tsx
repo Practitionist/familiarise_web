@@ -214,3 +214,93 @@ describe("UnifiedCalendar session blocks", () => {
     }
   });
 });
+
+function cellButton(startMs: number): HTMLElement {
+  const button = screen
+    .getByRole("grid")
+    .querySelector<HTMLElement>(
+      `[data-slot-start="${new Date(startMs).toISOString()}"]`,
+    );
+  if (!button) throw new Error("cell not drawn");
+  return button;
+}
+
+describe("UnifiedCalendar hover ghost", () => {
+  it("previews exactly the session a click then asks the selection for", () => {
+    renderGrid();
+    const tenAm = cellButton(at(12, 10));
+    fireEvent.mouseEnter(tenAm);
+
+    const ghost = screen
+      .getByTestId("grid-blocks")
+      .querySelectorAll("[data-ghost='fits']");
+    expect(ghost).toHaveLength(1);
+    expect(ghost[0].textContent).toMatch(/^New session · 10:00 am–11:00 am$/);
+
+    fireEvent.click(tenAm);
+    const toggleSlot = allocation.toggleSlot as jest.Mock;
+    expect(toggleSlot).toHaveBeenCalledTimes(1);
+    const [, group] = toggleSlot.mock.calls[0] as [
+      unknown,
+      { startTime: Date; endTime: Date }[],
+    ];
+    expect(group[0].startTime.toISOString()).toBe(
+      ghost[0].getAttribute("data-ghost-start"),
+    );
+    expect(group[group.length - 1].endTime.toISOString()).toBe(
+      ghost[0].getAttribute("data-ghost-end"),
+    );
+  });
+
+  it("follows keyboard focus and says when a session cannot fit", () => {
+    // 11:30 is the last free half-hour before lunch and 11:00 is taken,
+    // so no 1-hour session fits around it.
+    const cells = openDays();
+    cells.set(at(12, 11), {
+      ...(cells.get(at(12, 11)) as ServerCell),
+      bookingStatus: "fully-booked",
+    });
+    calendarData.serverCells = cells;
+    renderGrid();
+    fireEvent.focus(cellButton(at(12, 11, 30)));
+    const ghost = screen
+      .getByTestId("grid-blocks")
+      .querySelector("[data-ghost]");
+    expect(ghost).toHaveAttribute("data-ghost", "blocked");
+    expect(ghost?.textContent).toBe("Doesn't fit here");
+  });
+
+  it("clears when the pointer leaves the grid", () => {
+    renderGrid();
+    fireEvent.mouseEnter(cellButton(at(12, 10)));
+    fireEvent.mouseLeave(screen.getByRole("grid").parentElement as Element);
+    expect(
+      screen.getByTestId("grid-blocks").querySelector("[data-ghost]"),
+    ).toBeNull();
+  });
+});
+
+describe("UnifiedCalendar whole-session deselect", () => {
+  it("removes only the picked session holding the clicked half-hour", () => {
+    const atom = (startMs: number) => ({
+      startTime: new Date(startMs),
+      endTime: new Date(startMs + ATOM),
+      isAvailable: true,
+      isBooked: false,
+    });
+    // Two back-to-back 1-hour picks: 10:00–11:00 and 11:00–12:00.
+    allocation.selectedSlots = [0, 1, 2, 3].map((i) =>
+      atom(at(12, 10) + i * ATOM),
+    );
+    renderGrid();
+    fireEvent.click(cellButton(at(12, 11, 30)));
+
+    expect(allocation.toggleSlot).not.toHaveBeenCalled();
+    const removeSlots = allocation.removeSlots as jest.Mock;
+    expect(removeSlots).toHaveBeenCalledTimes(1);
+    const removed = (removeSlots.mock.calls[0][0] as { startTime: Date }[]).map(
+      (slot) => slot.startTime.getTime(),
+    );
+    expect(removed).toEqual([at(12, 11), at(12, 11, 30)]);
+  });
+});

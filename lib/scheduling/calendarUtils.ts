@@ -97,6 +97,36 @@ export function groupSelectedIntoSessions(
 }
 
 /**
+ * The selection as whole sessions: each same-day run from
+ * `groupSelectedIntoSessions`, cut into `slotsPerSession`-atom pieces from
+ * its start, so two back-to-back picks stay two sessions. A shorter tail is
+ * its own piece. Pass the zone the sessions are labelled in.
+ */
+export function splitIntoSessions(
+  selectedSlots: CalendarInterval[],
+  slotsPerSession: number,
+  schedulingTimezone?: string,
+): SelectedSession[] {
+  const sessionMs = Math.max(1, slotsPerSession) * 30 * 60 * 1000;
+  return groupSelectedIntoSessions(selectedSlots, schedulingTimezone).flatMap(
+    (run) => {
+      const pieces: SelectedSession[] = [];
+      for (
+        let startMs = run.start.getTime();
+        startMs < run.end.getTime();
+        startMs += sessionMs
+      ) {
+        pieces.push({
+          start: new Date(startMs),
+          end: new Date(Math.min(startMs + sessionMs, run.end.getTime())),
+        });
+      }
+      return pieces;
+    },
+  );
+}
+
+/**
  * Count the number of distinct Sunday-start weeks overlapping [start, end].
  * Delegates to ScheduleCalculationService.countWeeks as the single source of truth.
  */

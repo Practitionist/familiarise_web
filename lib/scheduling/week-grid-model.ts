@@ -8,7 +8,7 @@ import {
   SLOT_STATUS_TOKENS,
   type SlotStatusKey,
 } from "@/lib/scheduling/interval-status-tokens";
-import type { WeekRowModel } from "@/lib/time/grid-zone";
+import { ATOM_MS, type WeekRowModel } from "@/lib/time/grid-zone";
 
 export interface OverlapDetail {
   id: string;
@@ -158,6 +158,13 @@ export interface WeekCells {
   paintedCounts: ReadonlyMap<SlotStatusKey, number>;
   /** Atom start → cell, for the visible week. */
   byStart: ReadonlyMap<number, CellView>;
+  /** Atom start → where its cell sits in `matrix`. */
+  positions: ReadonlyMap<number, CellPosition>;
+}
+
+export interface CellPosition {
+  row: number;
+  day: number;
 }
 
 function stateLabelOf(atom: AtomState): string {
@@ -173,13 +180,14 @@ export function buildWeekCells(
   const painted = new Set<SlotStatusKey>();
   const counts = new Map<SlotStatusKey, number>();
   const byStart = new Map<number, CellView>();
+  const positions = new Map<number, CellPosition>();
   const live: boolean[] = [];
   const outsidePeriod: boolean[] = [];
 
-  const matrix = rows.axis.map((axisRow) => {
+  const matrix = rows.axis.map((axisRow, rowIndex) => {
     let rowLive = false;
     let rowOutside = false;
-    const line = rows.cells.map((dayCells) => {
+    const line = rows.cells.map((dayCells, dayIndex) => {
       const row = dayCells.get(axisRow.key);
       if (!row) return null;
       const atom = describeAtom(row.start.getTime(), row.end.getTime(), ctx);
@@ -189,6 +197,7 @@ export function buildWeekCells(
       if (cell.statusKey === "outsidePeriod") rowOutside = true;
       else if (cell.isLive || cell.isRequested) rowLive = true;
       byStart.set(cell.startMs, cell);
+      positions.set(cell.startMs, { row: rowIndex, day: dayIndex });
       return cell;
     });
     live.push(rowLive);
@@ -203,7 +212,36 @@ export function buildWeekCells(
     paintedKeys: painted,
     paintedCounts: counts,
     byStart,
+    positions,
   };
+}
+
+/**
+ * The atom starts one click on `clickedMs` places for a session of `size`
+ * atoms: forward from the click, else backward, else both ways around it.
+ * Just the click when no whole session fits. The click and the hover preview
+ * both call this, so the preview is exactly what a click does.
+ */
+export function expandToSession(
+  clickedMs: number,
+  size: number,
+  isFree: (startMs: number) => boolean,
+): number[] {
+  if (size <= 1) return [clickedMs];
+  const free = (steps: number) => isFree(clickedMs + steps * ATOM_MS);
+  let ahead = 0;
+  while (ahead + 1 < size && free(ahead + 1)) ahead += 1;
+  const at = (steps: number) => clickedMs + steps * ATOM_MS;
+  const span = (from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, i) => at(from + i));
+  if (ahead + 1 === size) return span(0, ahead);
+  let behind = 0;
+  while (behind + 1 < size && free(-(behind + 1))) behind += 1;
+  if (behind + 1 === size) return span(-behind, 0);
+  if (ahead + behind + 1 >= size && (ahead > 0 || behind > 0)) {
+    return span(-(size - 1 - ahead), ahead);
+  }
+  return [clickedMs];
 }
 
 /** Rows of padding the open-hours window keeps above and below the live rows: one hour. */

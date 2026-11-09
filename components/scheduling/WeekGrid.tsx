@@ -87,6 +87,19 @@ export interface GridFocus {
   dayIndex: number;
 }
 
+/** One day column's share of the hover preview: the atoms a click would place. */
+export interface GhostPiece {
+  key: string;
+  dayIndex: number;
+  fromRow: number;
+  toRow: number;
+  /** False when no whole session fits at the hovered time. */
+  fits: boolean;
+  startMs: number;
+  endMs: number;
+  label: string;
+}
+
 export interface CellTooltip {
   title: string;
   lines: string[];
@@ -115,6 +128,8 @@ interface SlotCellProps {
     dayIndex: number,
   ) => void;
   onFocusCell: (rowKey: string, dayIndex: number) => void;
+  /** The pointer or focus is on this atom: preview what a click would place. */
+  onPreview: (startMs: number) => void;
 }
 
 function NowLine({ fraction }: Readonly<{ fraction: number }>) {
@@ -157,7 +172,8 @@ function sameCellProps(
     sameTooltip(a.tooltip, b.tooltip) &&
     a.onActivate === b.onActivate &&
     a.onKeyDown === b.onKeyDown &&
-    a.onFocusCell === b.onFocusCell
+    a.onFocusCell === b.onFocusCell &&
+    a.onPreview === b.onPreview
   );
 }
 
@@ -176,6 +192,7 @@ const SlotCell = memo(function SlotCell({
   onActivate,
   onKeyDown,
   onFocusCell,
+  onPreview,
 }: Readonly<SlotCellProps>) {
   const token = SLOT_STATUS_TOKENS[cell.statusKey];
   const interactive = !readOnly && token.interactive;
@@ -209,7 +226,11 @@ const SlotCell = memo(function SlotCell({
       })}
       onClick={() => onActivate(cell.startMs)}
       onKeyDown={(event) => onKeyDown(event, rowKey, dayIndex)}
-      onFocus={() => onFocusCell(rowKey, dayIndex)}
+      onFocus={() => {
+        onFocusCell(rowKey, dayIndex);
+        onPreview(cell.startMs);
+      }}
+      onMouseEnter={() => onPreview(cell.startMs)}
     >
       <SlotStatusIcon name={token.icon} />
     </button>
@@ -289,9 +310,24 @@ const SkippedCell = memo(function SkippedCell({
  */
 function BlockLayer({
   blocks,
+  ghost,
   rows,
-}: Readonly<{ blocks: readonly GridBlock[]; rows: RowWindow }>) {
+}: Readonly<{
+  blocks: readonly GridBlock[];
+  ghost: readonly GhostPiece[];
+  rows: RowWindow;
+}>) {
   const count = rows.to - rows.from;
+  const place = (dayIndex: number, fromRow: number, toRow: number) => {
+    const from = Math.max(fromRow, rows.from);
+    const to = Math.min(toRow, rows.to);
+    return to <= from
+      ? null
+      : {
+          gridColumn: dayIndex + 2,
+          gridRow: `${from - rows.from + 1} / span ${to - from}`,
+        };
+  };
   return (
     <div
       aria-hidden
@@ -304,18 +340,14 @@ function BlockLayer({
       style={{ gridTemplateRows: `repeat(${count}, ${GRID_ROW_PX}px)` }}
     >
       {blocks.map((block) => {
-        const from = Math.max(block.fromRow, rows.from);
-        const to = Math.min(block.toRow, rows.to);
-        if (to <= from) return null;
+        const style = place(block.dayIndex, block.fromRow, block.toRow);
+        if (!style) return null;
         const token = SLOT_STATUS_TOKENS[block.statusKey];
         return (
           <div
             key={block.key}
             data-block-state={block.statusKey}
-            style={{
-              gridColumn: block.dayIndex + 2,
-              gridRow: `${from - rows.from + 1} / span ${to - from}`,
-            }}
+            style={style}
             className={cn(
               "m-px flex min-w-0 items-start gap-1 overflow-hidden rounded-md border px-1.5 py-0.5 text-xs leading-tight shadow-sm",
               token.fill,
@@ -333,6 +365,27 @@ function BlockLayer({
           </div>
         );
       })}
+      {ghost.map((piece) => {
+        const style = place(piece.dayIndex, piece.fromRow, piece.toRow);
+        if (!style) return null;
+        return (
+          <div
+            key={piece.key}
+            data-ghost={piece.fits ? "fits" : "blocked"}
+            data-ghost-start={new Date(piece.startMs).toISOString()}
+            data-ghost-end={new Date(piece.endMs).toISOString()}
+            style={style}
+            className={cn(
+              "m-px overflow-hidden rounded-md border-2 border-dashed px-1.5 py-0.5 text-xs font-medium leading-tight",
+              piece.fits
+                ? "border-emerald-700 bg-emerald-50/80 text-emerald-900"
+                : "border-rose-600 bg-rose-50/80 text-rose-900",
+            )}
+          >
+            {piece.label}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -345,6 +398,10 @@ export interface WeekGridProps {
   rows: RowWindow;
   /** Busy and picked runs, drawn as one labelled overlay each. */
   blocks: readonly GridBlock[];
+  /** The hover preview; empty when there is nothing to place. */
+  ghost: readonly GhostPiece[];
+  /** The atom under the pointer or focus, or null once both leave the grid. */
+  onPreview: (startMs: number | null) => void;
   /** Index of today's column, or -1. */
   todayIndex: number;
   inPeriodDays: boolean[];
@@ -386,6 +443,8 @@ export function WeekGrid({
   matrix,
   rows,
   blocks,
+  ghost,
+  onPreview,
   todayIndex,
   inPeriodDays,
   nowAtomStartMs,
@@ -451,6 +510,7 @@ export function WeekGrid({
     onActivate,
     onFocusChange,
     onPageWeek,
+    onPreview,
     activeFocus,
   });
   useEffect(() => {
@@ -460,6 +520,7 @@ export function WeekGrid({
       onActivate,
       onFocusChange,
       onPageWeek,
+      onPreview,
       activeFocus,
     };
   });
@@ -544,6 +605,10 @@ export function WeekGrid({
     latest.current.onActivate(startMs);
   }, []);
 
+  const handlePreview = useCallback((startMs: number) => {
+    latest.current.onPreview(startMs);
+  }, []);
+
   const setContainer = useCallback(
     (element: HTMLDivElement | null) => {
       containerRef.current = element;
@@ -568,6 +633,15 @@ export function WeekGrid({
       <div
         ref={setContainer}
         className="relative min-h-0 flex-1 overflow-y-auto scrollbar-thin"
+        onMouseLeave={() => onPreview(null)}
+        onBlur={(event) => {
+          if (
+            !(event.relatedTarget instanceof Node) ||
+            !event.currentTarget.contains(event.relatedTarget)
+          ) {
+            onPreview(null);
+          }
+        }}
       >
         <div
           role="grid"
@@ -694,6 +768,7 @@ export function WeekGrid({
                       onActivate={handleActivate}
                       onKeyDown={handleKeyDown}
                       onFocusCell={handleFocusCell}
+                      onPreview={handlePreview}
                     />
                   );
                 })}
@@ -701,7 +776,7 @@ export function WeekGrid({
             );
           })}
         </div>
-        <BlockLayer blocks={blocks} rows={rows} />
+        <BlockLayer blocks={blocks} ghost={ghost} rows={rows} />
       </div>
     </TooltipProvider>
   );
