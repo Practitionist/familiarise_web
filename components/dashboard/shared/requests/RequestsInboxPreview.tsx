@@ -21,6 +21,16 @@ import { reportSentryError } from "@/lib/observability/report";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
 
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
+import { AUTH_ERROR_COPY } from "@/lib/labels/auth-errors";
+
+import {
+  RequestsLoadError,
+  inboxFailure,
+  isForbidden,
+  isIdentityChanged,
+  isRetryable,
+} from "./inbox-errors";
 import { KIND_LABEL, NEXT_CYCLE_BADGE, nextCycleLine } from "./labels";
 import { requestCountLine } from "./request-count-line";
 
@@ -49,18 +59,6 @@ function previewLine(row: InboxRowInput, zone: string): string {
 
 export const REQUESTS_LOAD_ERROR = "Couldn't load requests. Try again.";
 export const REQUESTS_FORBIDDEN = "You don't have access to these requests.";
-
-/** A refused or failed inbox read; the status decides whether a retry can help. */
-export class RequestsLoadError extends Error {
-  constructor(readonly status: number | null) {
-    super(`Requests inbox read failed${status ? ` (${status})` : ""}`);
-    this.name = "RequestsLoadError";
-  }
-}
-
-/** A 403 is a permission problem, not a transient fault: retrying cannot fix it. */
-export const isForbidden = (error: unknown): boolean =>
-  error instanceof RequestsLoadError && error.status === 403;
 
 function isInboxPayload(value: unknown): value is RequestsInboxPayload {
   return (
@@ -93,7 +91,7 @@ export function useHomeRequests(consultantId: string) {
     queryFn: async ({ signal }): Promise<RequestsInboxPayload> => {
       // A stalled cold instance must surface as an error with a Retry, not
       // as skeletons that never leave.
-      const response = await fetch(
+      const response = await fetchWithIdentity(
         `/api/bookings/inbox?${inboxQueryString(queryArgs)}`,
         {
           signal:
@@ -102,14 +100,14 @@ export function useHomeRequests(consultantId: string) {
               : signal,
         },
       );
-      if (!response.ok) throw new RequestsLoadError(response.status);
+      if (!response.ok) throw await inboxFailure(response);
       const body: unknown = await response.json().catch(() => null);
       if (!isInboxPayload(body)) throw new RequestsLoadError(null);
       return body;
     },
     enabled: consultantId !== "",
     staleTime: 30_000,
-    retry: (failureCount, error) => !isForbidden(error) && failureCount < 1,
+    retry: (failureCount, error) => isRetryable(error) && failureCount < 1,
   });
 
   const forbiddenError = isForbidden(query.error) ? query.error : null;
@@ -153,6 +151,20 @@ export function RequestsInboxPreview({
   if (query.isError) {
     if (isForbidden(query.error)) {
       return <p className="text-sm">{REQUESTS_FORBIDDEN}</p>;
+    }
+    // The page is reloading as the account the cookie holds; Retry would
+    // only ask again as the wrong one.
+    if (isIdentityChanged(query.error)) {
+      return (
+        <div role="status" className="space-y-1 text-sm">
+          <p className="font-medium">
+            {AUTH_ERROR_COPY.IDENTITY_CHANGED.title}
+          </p>
+          <p className="text-muted-foreground">
+            {AUTH_ERROR_COPY.IDENTITY_CHANGED.description}
+          </p>
+        </div>
+      );
     }
     return (
       <div className="space-y-2 text-sm">

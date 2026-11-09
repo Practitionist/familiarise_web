@@ -55,6 +55,7 @@ import { cn } from "@/utils/tailwind";
 import { replaceUrl } from "@/lib/navigation/history";
 
 import { BatchApproveBar } from "./BatchApproveBar";
+import { inboxFailure, isRetryable } from "./inbox-errors";
 import { InboxBuckets } from "./InboxBuckets";
 import { InboxChips } from "./InboxChips";
 import {
@@ -97,29 +98,14 @@ export interface RequestsInboxProps {
   viewerZone?: string | null;
 }
 
-interface FetchError extends Error {
-  code?: string;
-  status?: number;
-}
-
 async function fetchInbox(query: string): Promise<RequestsInboxPayload> {
-  const response = await fetch(`/api/bookings/inbox?${query}`);
-  const body = (await response.json().catch(() => ({}))) as {
-    error?: string;
-    code?: string;
-  };
+  const response = await fetchWithIdentity(`/api/bookings/inbox?${query}`);
   if (!response.ok) {
-    const error: FetchError = new Error(
-      errorSentence(
-        body.code,
-        body.error ?? `Server error (${response.status})`,
-      ),
+    throw await inboxFailure(response, (code, text) =>
+      errorSentence(code, text ?? `Server error (${response.status})`),
     );
-    error.code = body.code;
-    error.status = response.status;
-    throw error;
   }
-  return body as unknown as RequestsInboxPayload;
+  return (await response.json()) as RequestsInboxPayload;
 }
 
 /** A lifecycle POST (remind / withdraw) → its parsed body and status. */
@@ -228,7 +214,7 @@ export function RequestsInbox({
     placeholderData: keepPreviousData,
     // A failing tab should show its error in seconds, not after the
     // provider's two retries.
-    retry: 1,
+    retry: (failureCount, error) => isRetryable(error) && failureCount < 1,
   });
   const { data, dataUpdatedAt, isPlaceholderData } = query;
   const rows = useMemo(() => data?.rows ?? [], [data]);
@@ -875,9 +861,11 @@ export function RequestsInbox({
             Couldn&apos;t load requests
           </p>
           <p className="mt-1 text-sm text-muted-foreground">{message}</p>
-          <Button className="mt-4" onClick={() => void query.refetch()}>
-            Retry
-          </Button>
+          {isRetryable(query.error) && (
+            <Button className="mt-4" onClick={() => void query.refetch()}>
+              Retry
+            </Button>
+          )}
         </div>
       );
     }

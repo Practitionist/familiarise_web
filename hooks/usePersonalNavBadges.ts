@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 import { useChatUnreadCount } from "@/hooks/useChatUnreadCount";
 
 interface InboxCountsResponse {
@@ -13,7 +14,9 @@ async function fetchRequestsCount(
   consultantProfileId: string,
 ): Promise<number> {
   const params = new URLSearchParams({ consultantProfileId, countsOnly: "1" });
-  const res = await fetch(`/api/bookings/inbox?${params.toString()}`);
+  const res = await fetchWithIdentity(
+    `/api/bookings/inbox?${params.toString()}`,
+  );
   if (!res.ok) throw new Error("Failed to load request counts");
   const body = (await res.json()) as InboxCountsResponse;
   return body.toAnswer ?? 0;

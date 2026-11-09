@@ -3,11 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import prisma from "@/lib/prisma";
-import {
-  forbiddenResponse,
-  isPrivileged,
-  requireApiAuth,
-} from "@/lib/auth-helpers";
+import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
 import { parseRequestListQueryOrRespond } from "@/lib/booking/request-route-guards";
 import {
@@ -133,7 +129,7 @@ async function resolveInboxScope(
 
 export async function GET(request: NextRequest) {
   try {
-    const authResult = await requireApiAuth();
+    const authResult = await requireApiAuth({ expectUser: true });
     if (authResult.error) return authResult.error;
     const { session } = authResult;
 
@@ -149,7 +145,10 @@ export async function GET(request: NextRequest) {
       !isPrivileged(session.user.role) &&
       consultantProfileId !== session.user.consultantProfileId
     ) {
-      return forbiddenResponse("Access denied");
+      return NextResponse.json(
+        { error: "Access denied", code: "ACCESS_DENIED" },
+        { status: 403 },
+      );
     }
 
     const scoped = await resolveInboxScope(

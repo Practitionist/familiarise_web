@@ -148,6 +148,8 @@ const CODE_SENTENCE: Record<string, string> = {
   VALIDATION_ERROR: "That request could not be read. Refresh and try again.",
   RATE_LIMITED: "Too many attempts — wait a moment, then retry.",
   ACCESS_DENIED: "You do not have access to this request.",
+  IDENTITY_CHANGED:
+    "You signed in as a different account in another tab. Reload to continue.",
   // #1863 — the codes the booking paths below the inbox emit with no entry
   // here. Each arrived as a bracketed/raw server string, which is both ugly and
   // a lie: the sentence beside the code is the actionable half and the code is

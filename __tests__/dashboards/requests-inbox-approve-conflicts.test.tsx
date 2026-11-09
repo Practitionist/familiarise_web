@@ -209,6 +209,7 @@ describe("requested-times approval conflicts", () => {
       expect(toast).toHaveBeenCalledTimes(1);
       expect(globalThis.fetch).toHaveBeenCalledWith(
         expect.stringContaining("/api/bookings/inbox?"),
+        expect.anything(),
       );
     },
   );

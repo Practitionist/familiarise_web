@@ -12,6 +12,11 @@ jest.mock("next/navigation", () => ({
 jest.mock("../../lib/auth-client", () => ({
   useSession: () => ({ data: null }),
 }));
+// The real helper reloads the page on a 409; jsdom cannot, so it only forwards.
+jest.mock("../../lib/auth/identity-header", () => ({
+  fetchWithIdentity: (input: RequestInfo | URL, init?: RequestInit) =>
+    fetch(input, init),
+}));
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));
@@ -578,6 +583,23 @@ describe("Requests panel errors", () => {
     expect(screen.queryByText(/Access denied/)).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(reportSentryError).toHaveBeenCalledTimes(1));
+  });
+
+  it("tells an account switch apart from a fault: no Retry, no report, no retry", async () => {
+    fetchMock.mockResolvedValue(
+      reply(409, {
+        error: "You signed in as a different account in another tab.",
+        code: "IDENTITY_CHANGED",
+      }),
+    );
+    renderRequests();
+    expect(
+      await screen.findByText("You're signed in as someone else now"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByText("Couldn't load requests. Try again.")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(reportSentryError).not.toHaveBeenCalled();
   });
 
   it("shows friendly copy and Retry for a server fault, never the server's words", async () => {
