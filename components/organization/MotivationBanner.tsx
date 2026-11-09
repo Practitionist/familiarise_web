@@ -179,7 +179,7 @@ export function resolveFundingRailMotivation(
         tier: "DISCOURAGED",
         title: "Personal Card + Reimbursement — High Employee Friction",
         message:
-          "Employees must pay out of pocket with their personal credit/debit card or UPI at checkout and submit manual expense claims afterward. Consumer receipts cannot claim B2B GST Input Tax Credit (ITC), and learner adoption typically drops by 40–60%.",
+          "Employees pay with their own card or UPI and claim the money back afterwards. Their personal receipts can't be used by your organisation to claim GST input tax credit, and having to pay first usually means fewer people take part.",
         recommendation:
           "Switch to Prepaid Wallet or Monthly Invoice so your organization pays directly at checkout and receives compliant B2B GST invoices.",
         recommendedFallback: "WALLET",
