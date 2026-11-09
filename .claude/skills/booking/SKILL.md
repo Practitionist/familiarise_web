@@ -406,6 +406,7 @@ Recognise these leftovers and delete them; never reintroduce them.
 - `linkCompletedTrialToSubscription` at checkout start: replaced by `convertCompletedTrial` at payment.
 - A REJECTED PATCH that ended a booking being moved: refused by `assertNotBeingMoved`.
 - `splitSlotsByDay`: deleted; grid windows sit on the UTC half-hour lattice.
+- Dead-hour folding (`lib/scheduling/dead-hour-bands.ts`, "Unavailable · HH:MM–HH:MM" strips) and per-cell run labels: replaced by the open-hours window (`openHoursWindow`) and session blocks (`buildGridBlocks`); see `docs/calendar/allocate-heatmap-ux.md`.
 - `exitRightFor(misses, N)` (three misses or a quarter of the series, so a 100-session class tripped at 3): replaced by `exitRightFor({ hostMissAts, misses, N })`, 3 host misses inside 30 days or max(3, 15% of N) in all.
 - A whole-event cancel that committed with a seat's refund owned by another door's marker (first writer wins) and drove whatever marker it found: it refuses like every other cancel door and drives only its own keys.
 - `EVENT_WAITLIST_RENOTIFY_COOLDOWN_MS` and `EVENT_WAITLIST_RETENTION_MS`: replaced by `INTEREST_RENOTIFY_COOLDOWN_MS` and `INTEREST_RETENTION_MS` in `lib/booking/interest/lifecycle.ts`, which slot backup interest now shares (it used to notify a row once ever and never purge).
