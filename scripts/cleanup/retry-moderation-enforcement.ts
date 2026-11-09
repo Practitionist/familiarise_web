@@ -25,6 +25,7 @@
  * the per-plan Stream removal is re-driven regardless of the ban's fate.
  */
 import type {
+  CollaboratorType,
   ModerationActionType,
   ModerationReportType,
   Prisma,
@@ -430,7 +431,7 @@ function canStartRevocationRow(
 
 type RevocationDrainRow = {
   kind: StreamRevocationKind;
-  planType: string | null;
+  planType: CollaboratorType | null;
   planId: string;
   userId: string | null;
   counterpartUserId: string | null;
