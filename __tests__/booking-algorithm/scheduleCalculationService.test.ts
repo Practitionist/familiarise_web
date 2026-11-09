@@ -400,6 +400,49 @@ describe("ScheduleCalculationService.calculateRequiredSlots", () => {
         }),
       ).toBe(24);
     });
+
+    it("should size an unscheduled class from the plan total without a period", () => {
+      expect(
+        ScheduleCalculationService.calculateRequiredSlots("class", {
+          sessionsPerWeek: 3,
+          sessionDurationInHours: 2,
+          totalSessions: 72,
+        }),
+      ).toBe(288);
+    });
+
+    it("should still throw without a period when there is no plan total", () => {
+      expect(() =>
+        ScheduleCalculationService.calculateRequiredSlots("class", {
+          sessionsPerWeek: 3,
+          sessionDurationInHours: 2,
+          totalSessions: 0,
+        }),
+      ).toThrow(
+        "Start date and end date are required for class slot calculation",
+      );
+    });
+
+    it("should prefer the plan total over the period when both exist", () => {
+      expect(
+        ScheduleCalculationService.calculateRequiredSlots("class", {
+          schedulingPeriodStartsAt: new Date("2025-01-06"),
+          schedulingPeriodEndsAt: new Date("2025-01-31"),
+          sessionsPerWeek: 3,
+          sessionDurationInHours: 1,
+          totalSessions: 6,
+        }),
+      ).toBe(12);
+    });
+
+    it("should still validate sessionsPerWeek when only the plan total is set", () => {
+      expect(() =>
+        ScheduleCalculationService.calculateRequiredSlots("class", {
+          sessionDurationInHours: 2,
+          totalSessions: 72,
+        }),
+      ).toThrow("Calls per week must be a positive number");
+    });
   });
 });
 

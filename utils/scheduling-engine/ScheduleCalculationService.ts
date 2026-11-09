@@ -456,15 +456,6 @@ export class ScheduleCalculationService {
       }
 
       case "class": {
-        if (
-          !config.schedulingPeriodStartsAt ||
-          !config.schedulingPeriodEndsAt
-        ) {
-          throw new Error(
-            "Start date and end date are required for class slot calculation",
-          );
-        }
-
         if (!config.sessionsPerWeek || config.sessionsPerWeek <= 0) {
           throw new Error(
             "Calls per week must be a positive number for classes",
@@ -480,10 +471,19 @@ export class ScheduleCalculationService {
 
         const slotsPerSession = Math.ceil(sessionDuration / 0.5);
 
-        // Use totalSessions from plan if available (authoritative plan-defined count).
-        // Prevents over-allocation when scheduling period spans more weeks than planned.
+        // The plan total is authoritative and needs no period, so an unscheduled
+        // class can still size its grid; only the weeks-based fallback needs dates.
         if (config.totalSessions && config.totalSessions > 0) {
           return config.totalSessions * slotsPerSession;
+        }
+
+        if (
+          !config.schedulingPeriodStartsAt ||
+          !config.schedulingPeriodEndsAt
+        ) {
+          throw new Error(
+            "Start date and end date are required for class slot calculation",
+          );
         }
 
         const totalWeeks = this.countWeeks(
