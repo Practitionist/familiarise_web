@@ -41,7 +41,7 @@ const PLAN_TYPE_LABEL: Record<string, string> = {
 
 /** A plan or session type in buyer words; an unknown value reads "Session", never the raw code. */
 export function planTypeLabel(planType: string | null | undefined): string {
-  return (planType && PLAN_TYPE_LABEL[planType]) || "Session";
+  return (planType && PLAN_TYPE_LABEL[planType.toUpperCase()]) || "Session";
 }
 
 export function planLevelLabel(level: PlanLevel | null | undefined): string {

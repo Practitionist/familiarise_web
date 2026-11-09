@@ -644,7 +644,7 @@ const BUSINESS_ERROR_ENTRIES = [
     errorType: ErrorTypes.GST_REGISTRATION_REQUIRED,
     httpStatus: 403,
     userMessage:
-      "Organisation billing becomes available once the platform completes GST registration. You can still book this session yourself.",
+      "Booking on your organisation's account isn't available yet. You can still pay yourself.",
   },
   {
     code: "GST_CONFIG_INVALID",
