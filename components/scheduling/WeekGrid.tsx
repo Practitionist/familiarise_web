@@ -23,6 +23,7 @@ import {
   type SlotStatusKey,
 } from "@/lib/scheduling/interval-status-tokens";
 import type { GridBlock } from "@/lib/scheduling/grid-blocks";
+import { GRID_COLS } from "@/lib/scheduling/week-grid-geometry";
 import {
   fitLabel,
   type CellView,
@@ -44,10 +45,6 @@ import { cn } from "@/utils/tailwind";
  * plus objects that change with the data, so a focus move or a clock tick
  * re-renders a handful of cells rather than all of them.
  */
-
-// A fixed time gutter and seven shrinkable day columns.
-export const GRID_COLS =
-  "grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))] md:grid-cols-[5rem_repeat(7,minmax(0,1fr))]";
 
 /** One half-hour row: 24px, so an hour is 48px. Blocks are placed on this pitch. */
 export const GRID_ROW_PX = 24;
