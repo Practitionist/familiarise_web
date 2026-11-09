@@ -466,3 +466,27 @@ export async function planPublishFeasibility(
   }
   return { refusal: null, warnings: report.reasons };
 }
+
+/**
+ * What the allocate page tells the expert about a subscription's coming
+ * weeks, counting today's bookings: nothing when every week fits, otherwise
+ * which weeks can't and what happens to sessions that never get a time.
+ */
+export function hostFeasibilityWarnings(
+  report: FeasibilityReport,
+  sessionsPerWeek: number,
+): string[] {
+  if (report.verdict === "impossible") {
+    return [
+      ...report.reasons.map((reason) => reason.message),
+      "Sessions that never get a time are refunded to the client when the plan ends.",
+    ];
+  }
+  const short = report.weeks.filter(
+    (week) => week.placeable < sessionsPerWeek,
+  ).length;
+  if (short === 0) return [];
+  return [
+    `${short} of the next ${report.weeks.length} weeks can't fit ${sessionsPerWeek} sessions around your other bookings. Open more hours, or sessions that never get a time are refunded to the client when the plan ends.`,
+  ];
+}

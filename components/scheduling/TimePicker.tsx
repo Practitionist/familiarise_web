@@ -162,6 +162,8 @@ export interface TimePickerProps {
   onRequestRefresh?: () => void;
   /** Facts the page knows about what is being scheduled, for the context row. */
   contextChips?: readonly ContextChip[];
+  /** Plan-level warnings for the session tray (feasibility). */
+  warnings?: string[];
 }
 
 export function TimePicker({
@@ -174,6 +176,7 @@ export function TimePicker({
   viewerZone,
   onRequestRefresh,
   contextChips,
+  warnings,
 }: Readonly<TimePickerProps>) {
   const sessionViewer = useViewerZone();
   const gridViewerZone =
@@ -406,6 +409,7 @@ export function TimePicker({
       showZoneSwitch={false}
       zoneSlot={zoneLine}
       contextChips={gridContextChips}
+      warnings={warnings}
       requestedSlots={requestedSlots}
       releasingOccurrenceIds={releasingIds}
       lead={policy.lead}

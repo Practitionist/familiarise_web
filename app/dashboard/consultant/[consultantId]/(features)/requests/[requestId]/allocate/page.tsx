@@ -10,6 +10,16 @@ import { getViewerZone } from "@/lib/time/viewer-zone-server";
 import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 
 import { AllocateClient } from "./AllocateClient";
+import prisma from "@/lib/prisma";
+import {
+  assessExpertFeasibility,
+  hostFeasibilityWarnings,
+} from "@/lib/booking/feasibility";
+import { leadMsFor } from "@/lib/booking/lead-time";
+import { MAX_SUBSCRIPTION_SESSIONS_PER_DAY } from "@/utils/scheduling-engine/sessionCaps";
+
+/** How far ahead the allocate page checks a subscription's room. */
+const HOST_FEASIBILITY_WEEKS = 8;
 
 /**
  * The consultant's slot-allocation surface.
@@ -164,6 +174,27 @@ export default async function AllocateSlotsPage({
   // profile zone travels; without one the grid falls back to the browser's.
   const viewer = await getViewerZone();
 
+  // The coming weeks' room for a subscription, counting today's bookings.
+  const warnings =
+    request.eventType === "subscription" && request.sessionsPerWeek
+      ? hostFeasibilityWarnings(
+          await assessExpertFeasibility(prisma, {
+            consultantProfileId: consultantId,
+            zone: request.schedulingTimezone ?? viewer.zone,
+            sessionMinutes: Math.round(
+              (request.sessionDurationInHours ?? 1) * 60,
+            ),
+            sessionsPerWeek: request.sessionsPerWeek,
+            perDayCap: MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
+            notBeforeMs:
+              Date.now() + leadMsFor("allocate", { settled: request.settled }),
+            weeks: HOST_FEASIBILITY_WEEKS,
+            countBookings: true,
+          }),
+          request.sessionsPerWeek,
+        )
+      : [];
+
   return (
     <DashboardViewportFill className="gap-4">
       <AllocateClient
@@ -172,6 +203,7 @@ export default async function AllocateSlotsPage({
         title={request.title}
         pinnedAt={parsePinnedAt(at)}
         viewerZone={viewer.own ? viewer.zone : null}
+        warnings={warnings}
         subject={{
           consultantProfileId: consultantId,
           eventType: request.eventType,

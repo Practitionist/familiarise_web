@@ -21,6 +21,7 @@ export function AllocateClient({
   title,
   pinnedAt,
   viewerZone,
+  warnings,
 }: Readonly<{
   subject: TimePickerSubject;
   /** Paid (or free): decides the lead time a placed session needs. */
@@ -31,6 +32,8 @@ export function AllocateClient({
   pinnedAt?: Date | null;
   /** The viewer's profile zone from the page, so the grid matches the dashboard (#1703 QA-1). */
   viewerZone: string | null;
+  /** Feasibility warnings for a subscription's coming weeks, shown in the tray. */
+  warnings?: string[];
 }>) {
   const router = useRouter();
   // Replaces the generic "allocate" crumb with the booking's own name (#1064).
@@ -62,6 +65,7 @@ export function AllocateClient({
       onCancel={goBack}
       // Only the request's tentative count moved: reload it and stay here.
       onRequestRefresh={router.refresh}
+      warnings={warnings}
     />
   );
 }

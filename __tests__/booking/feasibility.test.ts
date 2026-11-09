@@ -9,6 +9,7 @@
 import {
   assessFeasibility,
   buyerFeasibilityNotice,
+  hostFeasibilityWarnings,
   mergeSpans,
   subtractSpans,
   zoneDayBoundaries,
@@ -186,5 +187,30 @@ describe("assessFeasibility", () => {
     });
     expect(report.weeks[0].placeable).toBe(1);
     expect(report.longestWindowMinutes).toBe(60);
+  });
+});
+
+describe("hostFeasibilityWarnings", () => {
+  it("names the short weeks and what happens to unplaced sessions", () => {
+    const busy = [0, 2].map((offset) => {
+      const day = MONDAY + offset * 24 * HOUR;
+      return { startMs: day + 18 * HOUR, endMs: day + 20 * HOUR };
+    });
+    const report = assessFeasibility({
+      ...base,
+      busy,
+      windows: eveningWindows([0, 2, 4], 4),
+    });
+    expect(hostFeasibilityWarnings(report, 3)).toEqual([
+      "1 of the next 4 weeks can't fit 3 sessions around your other bookings. Open more hours, or sessions that never get a time are refunded to the client when the plan ends.",
+    ]);
+  });
+
+  it("is silent when every week fits", () => {
+    const report = assessFeasibility({
+      ...base,
+      windows: eveningWindows([0, 1, 2, 3, 4], 4),
+    });
+    expect(hostFeasibilityWarnings(report, 3)).toEqual([]);
   });
 });
