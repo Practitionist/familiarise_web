@@ -46,6 +46,8 @@ import {
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { transitionTrial } from "@/lib/booking/transitions";
 import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
+import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
+import { recordExpertStrike } from "@/lib/booking/expert-reliability";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isRefusal } from "@/lib/errors/refusal";
 import {
@@ -371,6 +373,22 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         return NextResponse.json(
           { error: "Only the consultant can convert a trial" },
           { status: 403 },
+        );
+      }
+
+      // A confirmed trial ends only through DELETE, the door that owns the
+      // cancel window, the quoted refund, the strike and open reschedules.
+      if (
+        status === TrialStatus.CANCELLED &&
+        currentStatus === TrialStatus.SCHEDULED
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Cancel a scheduled trial from its cancel dialog, which shows the refund first.",
+            code: "USE_CANCEL_ENDPOINT",
+          },
+          { status: 409 },
         );
       }
 
@@ -1254,10 +1272,15 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     // paid since the read 409s instead of being cancelled on a stale view,
     // and the tombstone and refund read the committed row, not the pre-read.
     const lockId = existingTrial.appointmentId;
-    // Only the consultee reaches DELETE without privilege, so a privileged
-    // caller is acting on the consultant's behalf.
+    // Anyone but the learner cancels on the consultant's side, so the learner
+    // is refunded in full (`consultantInitiatedPct`). Only the trial's own
+    // expert cancelling a confirmed trial earns a strike; an operator does not.
     const isConsultantInitiated =
       session.user.consulteeProfileId !== existingTrial.consulteeProfileId;
+    const isExpertCancel =
+      isConsultantInitiated &&
+      session.user.consultantProfileId === existingTrial.consultantProfileId &&
+      existingTrial.status === TrialStatus.SCHEDULED;
     const confirmedRefundPaise = await readConfirmedRefund(request);
     const cancelTrial = (owed: RefundOwedMarker | null) =>
       prisma.$transaction(async (tx) => {
@@ -1270,6 +1293,22 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         const cancelled = await tx.trial.findUniqueOrThrow({
           where: { id: trialId },
         });
+        if (cancelled.appointmentId && isExpertCancel) {
+          const cancelledSessions = await tx.appointmentOccurrence.findMany({
+            where: {
+              appointmentId: cancelled.appointmentId,
+              ...LIVE_SLOT_WHERE,
+            },
+            select: { id: true },
+          });
+          await recordExpertStrike(tx, {
+            consultantProfileId: existingTrial.consultantProfileId,
+            cause: "EXPERT_CANCEL",
+            appointmentId: cancelled.appointmentId,
+            occurrenceIds: cancelledSessions.map((o) => o.id),
+            organizationId: cancelled.organizationId,
+          });
+        }
         if (cancelled.appointmentId) {
           // An ending closes any open reschedule, freeing its reservation.
           await declineOpenReschedules(tx, cancelled.appointmentId, {
@@ -1317,6 +1356,24 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       quote,
       owed,
     });
+    // The learner hears "refunded" only once the money actually moved.
+    if (
+      isConsultantInitiated &&
+      refund &&
+      !refund.failed &&
+      refund.amountRefundedPaise > 0
+    ) {
+      const refundedBell = await stageTrialRefundedBell(prisma, {
+        id: trialId,
+        consulteeUserId: existingTrial.consulteeProfile.user.id,
+        planTitle: existingTrial.subscriptionPlan.title,
+        consultantName: existingTrial.consultantProfile.user.name,
+      }).catch(() => undefined);
+      await flushNotificationsAfter(
+        { bells: [refundedBell] },
+        "trial.refunded",
+      );
+    }
 
     const userIds = [
       existingTrial.consultantProfile.user.id,
