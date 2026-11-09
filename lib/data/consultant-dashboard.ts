@@ -40,6 +40,7 @@ import {
   FIRST_RUN_USER_SELECT,
   readFirstRunSteps,
 } from "@/lib/data/consultant-first-run";
+import { readLatestReview } from "@/lib/reviews-latest";
 import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 
 // =============================================================================
@@ -362,11 +363,18 @@ type DashboardAppointment = Prisma.Result<
 export function homeBoundaries(
   now: Date,
   zone: string,
-): { startOfToday: Date; startOfMonth: Date } {
+): { startOfToday: Date; startOfMonth: Date; startOfLastMonth: Date } {
   const day = formatInTimeZone(now, zone, "yyyy-MM-dd");
+  const year = Number(day.slice(0, 4));
+  const month = Number(day.slice(5, 7));
+  const lastMonth =
+    month === 1
+      ? `${year - 1}-12`
+      : `${year}-${String(month - 1).padStart(2, "0")}`;
   return {
     startOfToday: fromZonedTime(`${day}T00:00:00`, zone),
     startOfMonth: fromZonedTime(`${day.slice(0, 7)}-01T00:00:00`, zone),
+    startOfLastMonth: fromZonedTime(`${lastMonth}-01T00:00:00`, zone),
   };
 }
 
@@ -403,7 +411,10 @@ export async function getConsultantDashboard(
     ? readFirstRunSteps(profile, consultantProfileId)
     : null;
   const zone = resolveViewerZone({ userTimezone: profile?.user.timezone });
-  const { startOfToday, startOfMonth } = homeBoundaries(now, zone);
+  const { startOfToday, startOfMonth, startOfLastMonth } = homeBoundaries(
+    now,
+    zone,
+  );
 
   // Which appointments Home shows: Appointment has no start column, so rank
   // on the slot table (indexed on startsAt, endsAt) and keep the soonest ids.
@@ -650,18 +661,26 @@ export async function getConsultantDashboard(
 
   // Supplementary cards: a failed read degrades its card, never Home. Each
   // runs its own reads in sequence, so these stay within the pool bound.
-  const [responseRate, sessionsDelivered, payoutNeeded] = await runBounded([
-    () => getConsultantResponseRate(consultantProfileId, now),
-    () =>
-      readSessionsDelivered(consultantProfileId, startOfMonth).catch(
-        () => undefined,
-      ),
-    () =>
-      readPayoutSetupNeeded(consultantProfileId).catch((error) => {
-        reportSentryError(error, { subsystem: "payments", expected: true });
-        return false;
-      }),
-  ] as const);
+  const [responseRate, sessionsDelivered, payoutNeeded, latestReview] =
+    await runBounded([
+      () => getConsultantResponseRate(consultantProfileId, now),
+      () =>
+        readSessionsDelivered(
+          consultantProfileId,
+          startOfMonth,
+          startOfLastMonth,
+        ).catch(() => undefined),
+      () =>
+        readPayoutSetupNeeded(consultantProfileId).catch((error) => {
+          reportSentryError(error, { subsystem: "payments", expected: true });
+          return false;
+        }),
+      () =>
+        readLatestReview(consultantProfileId).catch((error) => {
+          reportSentryError(error, { subsystem: "dashboard", expected: true });
+          return null;
+        }),
+    ] as const);
   // NeedsYou bounds its own count, so it runs alone.
   const needsYou = await readConsultantNeedsYou(consultantProfileId, now).catch(
     (error) => {
@@ -693,6 +712,7 @@ export async function getConsultantDashboard(
     },
     needsYou,
     sessionsDelivered,
+    ...(latestReview ? { latestReview } : {}),
     ...(firstRunSteps ? { firstRun: { steps: firstRunSteps } } : {}),
     performanceSnapshot: {
       publishedRatingOneToOne: profile?.publishedRatingOneToOne ?? null,

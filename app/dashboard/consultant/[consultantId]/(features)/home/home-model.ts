@@ -29,8 +29,8 @@ import {
 export const NEEDS_YOU_LIMIT = 5;
 /** Requests listed one by one; any others fold into a single "N more" line. */
 const REQUEST_ROWS_LISTED = 3;
-/** Sessions named on the "Then:" line under the next one. */
-export const THEN_LIMIT = 3;
+/** Rows the Today and Upcoming lists share before pointing at Appointments. */
+export const AGENDA_LIMIT = 5;
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -359,6 +359,44 @@ export function joinOpensLabel(
   return `Join at ${text}`;
 }
 
+export interface Agenda {
+  today: HomeSession[];
+  upcoming: HomeSession[];
+  /** Sessions beyond the cap, for the "All appointments" link. */
+  hidden: number;
+}
+
+/**
+ * Today first, then what follows, capped together. The next session already
+ * has its own card, so it is not repeated here. Days are the viewer's.
+ */
+export function deriveAgenda(
+  sessions: readonly HomeSession[],
+  now: Date,
+  zone: string,
+): Agenda {
+  const rest = sessions.slice(1);
+  const todayKey = dayKey(now, zone);
+  const today = rest.filter((s) => dayKey(s.startsAt, zone) === todayKey);
+  const later = rest.filter((s) => dayKey(s.startsAt, zone) !== todayKey);
+  const shownToday = today.slice(0, AGENDA_LIMIT);
+  const shownLater = later.slice(0, AGENDA_LIMIT - shownToday.length);
+  return {
+    today: shownToday,
+    upcoming: shownLater,
+    hidden: rest.length - shownToday.length - shownLater.length,
+  };
+}
+
+/** A quote of at most `max` characters, cut at a word and marked. */
+export function excerptOf(body: string, max = 180): string {
+  const text = body.replace(/\s+/g, " ").trim();
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
+
 // ---------------------------------------------------------------------------
 // Money, reputation and the glance rows
 // ---------------------------------------------------------------------------
@@ -438,6 +476,15 @@ export function deriveGlanceRows({
   now: Date;
 }): GlanceRow[] {
   const rows: GlanceRow[] = [];
+  if (
+    sessionsDelivered &&
+    (sessionsDelivered.thisMonth > 0 || sessionsDelivered.lastMonth > 0)
+  ) {
+    rows.push({
+      label: "Sessions delivered",
+      value: `${sessionsDelivered.thisMonth} this month · ${sessionsDelivered.lastMonth} last month`,
+    });
+  }
   const horizon = now.getTime() + 7 * DAY_MS;
   const week = sessions.filter((s) => s.startsAt.getTime() < horizon);
   if (week.length > 0) {

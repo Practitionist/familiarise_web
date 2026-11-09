@@ -15,7 +15,12 @@ import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 export default function HomePageClient({
   consultantId,
   viewerZone,
-}: Readonly<{ consultantId: string; viewerZone: ViewerZone }>) {
+  shareUrl,
+}: Readonly<{
+  consultantId: string;
+  viewerZone: ViewerZone;
+  shareUrl: string | null;
+}>) {
   // The factory's staleTime (2 min) is not overridden: a shorter one would mark
   // the server-prefetched entry stale on mount and refetch the payload the page
   // just dehydrated.
@@ -70,6 +75,8 @@ export default function HomePageClient({
         payoutSetup={dashboardData.payoutSetup}
         needsYou={dashboardData.needsYou}
         requests={requests}
+        shareUrl={shareUrl}
+        latestReview={dashboardData.latestReview}
         sessionsDelivered={dashboardData.sessionsDelivered}
         firstRun={dashboardData.firstRun}
         responseRate={dashboardData.responseRate}

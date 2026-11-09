@@ -7,7 +7,6 @@ import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
 
 import {
   SESSION_PATTERN,
-  THEN_LIMIT,
   canJoinNow,
   formatDuration,
   joinOpensLabel,
@@ -18,7 +17,7 @@ import {
 
 /**
  * The one session to prepare for: when it is, who it is with, and a Join that
- * opens at the join window. Later sessions follow on a single "Then:" line.
+ * opens at the join window.
  */
 export function NextSession({
   sessions,
@@ -39,7 +38,7 @@ export function NextSession({
   showDevJoin?: boolean;
   onJoin: (session: HomeSession) => void;
 }>) {
-  const [next, ...later] = sessions;
+  const next = sessions[0];
   const base = `/dashboard/consultant/${consultantId}`;
 
   if (!next) {
@@ -66,7 +65,6 @@ export function NextSession({
     minutes ? formatDuration(minutes) : null,
     sponsorName ? `Sponsored by ${sponsorName}` : null,
   ].filter((fact): fact is string => fact !== null);
-  const then = later.slice(0, THEN_LIMIT);
 
   return (
     <Section title="Next session">
@@ -108,17 +106,6 @@ export function NextSession({
             )}
           </div>
         </div>
-        {then.length > 0 && (
-          <p className="mt-4 border-t border-border pt-3 text-sm text-muted-foreground">
-            <span className="font-medium text-foreground">Then:</span>{" "}
-            {then
-              .map(
-                (s) =>
-                  `${formatForViewer(s.startsAt, viewerZone, SESSION_PATTERN)} ${s.title}`,
-              )
-              .join(" · ")}
-          </p>
-        )}
       </div>
     </Section>
   );

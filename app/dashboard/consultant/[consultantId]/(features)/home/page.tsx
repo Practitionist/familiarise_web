@@ -12,8 +12,19 @@ import { getSession } from "@/lib/auth-server";
 import { getConsultantDashboard } from "@/lib/data/consultant-dashboard";
 import { getNeedsYouSummary } from "@/lib/data/needs-you";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { getAppUrl } from "@/lib/url";
+import { expertShareHref } from "@/lib/referrals/attribution-token";
 import { getViewerZone } from "@/lib/time/viewer-zone-server";
 import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
+
+/** Null when the signing secret is unset: the share row is left out, Home still renders. */
+function ownShareUrl(consultantId: string): string | null {
+  try {
+    return `${getAppUrl()}${expertShareHref(consultantId)}`;
+  } catch {
+    return null;
+  }
+}
 
 type PageProps = {
   params: Promise<{ consultantId: string }>;
@@ -50,6 +61,10 @@ export default async function HomePage({ params }: Readonly<PageProps>) {
   // Resolved from the session already in hand, so it costs no read.
   const viewerZone = await getViewerZone();
 
+  // The signed own link is minted here, not fetched: no client round trip.
+  // An inspector must not be handed the expert's link.
+  const shareUrl = access.isInspecting ? null : ownShareUrl(consultantId);
+
   // Everything below streams: the queries no longer gate the shell.
   return (
     <>
@@ -68,7 +83,11 @@ export default async function HomePage({ params }: Readonly<PageProps>) {
         </Suspense>
       )}
       <Suspense fallback={<ExpertHomeSkeleton />}>
-        <DashboardSection consultantId={consultantId} viewerZone={viewerZone} />
+        <DashboardSection
+          consultantId={consultantId}
+          viewerZone={viewerZone}
+          shareUrl={shareUrl}
+        />
       </Suspense>
     </>
   );
@@ -107,7 +126,12 @@ async function NeedsYouSection({
 async function DashboardSection({
   consultantId,
   viewerZone,
-}: Readonly<{ consultantId: string; viewerZone: ViewerZone }>) {
+  shareUrl,
+}: Readonly<{
+  consultantId: string;
+  viewerZone: ViewerZone;
+  shareUrl: string | null;
+}>) {
   const queryClient = new QueryClient();
   // Swallow, don't rethrow: a read failure should degrade to a client-side
   // fetch rather than surfacing the Suspense error boundary for the whole tab.
@@ -120,7 +144,11 @@ async function DashboardSection({
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      <HomePageClient consultantId={consultantId} viewerZone={viewerZone} />
+      <HomePageClient
+        consultantId={consultantId}
+        viewerZone={viewerZone}
+        shareUrl={shareUrl}
+      />
     </HydrationBoundary>
   );
 }

@@ -67,8 +67,21 @@ export interface TConsultantDashboardResponse {
   payoutSetup?: { needed: boolean; href: string; livePayoutsEnabled: boolean };
   /** Home's Needs you strip, the requests count included; absent when its read failed. */
   needsYou?: ConsultantNeedsYou;
-  /** Home's This month card and milestone line. */
-  sessionsDelivered?: { thisMonth: number; lifetime: number };
+  /** Home's sessions-delivered counts. */
+  sessionsDelivered?: {
+    thisMonth: number;
+    /** The previous calendar month, on the consultant's own clock. */
+    lastMonth: number;
+    lifetime: number;
+  };
+  /** The newest learner review with text; absent when there is none. */
+  latestReview?: {
+    rating: number;
+    body: string;
+    createdAt: string;
+    /** First name; null when the learner chose to stay anonymous. */
+    reviewerFirstName: string | null;
+  };
   /** Home's setup checklist; absent once every step is done. */
   firstRun?: { steps: ActivationStep[] };
 }

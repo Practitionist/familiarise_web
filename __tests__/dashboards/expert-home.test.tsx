@@ -24,11 +24,16 @@ import {
   RequestsInboxPreview,
   useHomeRequests,
 } from "@/components/dashboard/shared/requests/RequestsInboxPreview";
+import { AgendaLists } from "../../app/dashboard/consultant/[consultantId]/(features)/home/Agenda";
+import { LatestFeedback } from "../../app/dashboard/consultant/[consultantId]/(features)/home/LatestFeedback";
+import { SharePanel } from "../../app/dashboard/consultant/[consultantId]/(features)/home/SharePanel";
 import { MoneyLine } from "../../app/dashboard/consultant/[consultantId]/(features)/home/MoneyLine";
 import { NeedsYou } from "../../app/dashboard/consultant/[consultantId]/(features)/home/NeedsYou";
 import { NextSession } from "../../app/dashboard/consultant/[consultantId]/(features)/home/NextSession";
 import {
+  deriveAgenda,
   deriveGlanceRows,
+  excerptOf,
   deriveHomeNeedsYou,
   deriveHomeSessions,
   deriveMoneyLine,
@@ -303,22 +308,154 @@ describe("Next session", () => {
       screen.getByRole("link", { name: "Set your availability" }),
     ).toHaveAttribute("href", `${BASE}/availability`);
   });
+});
 
-  it("lists the next three sessions on one Then line", () => {
-    renderNext([
-      consultation("a1", "First", [[hoursFromNow(2), hoursFromNow(3)]]),
-      consultation("a2", "Second", [[hoursFromNow(26), hoursFromNow(27)]]),
-      consultation("a3", "Third", [[hoursFromNow(50), hoursFromNow(51)]]),
-      consultation("a4", "Fourth", [[hoursFromNow(74), hoursFromNow(75)]]),
-      consultation("a5", "Fifth", [[hoursFromNow(98), hoursFromNow(99)]]),
+describe("Today and Upcoming", () => {
+  // 09:00Z is 14:30 IST; midnight IST ends at 18:30Z.
+  const zone = ZONE.zone;
+  const sessionsAt = (hours: number[]) =>
+    deriveHomeSessions(
+      hours.map((h, i) =>
+        consultation(`a${i}`, `Learner ${i}`, [
+          [hoursFromNow(h), hoursFromNow(h + 1)],
+        ]),
+      ),
+      CP,
+      NOW,
+    );
+
+  it("leaves the next session to its own card and puts today first", () => {
+    const sessions = sessionsAt([1, 2, 3, 20, 30]);
+    const agenda = deriveAgenda(sessions, NOW, zone);
+    expect(agenda.today.map((s) => s.title)).toEqual([
+      "Learner 1",
+      "Learner 2",
     ]);
-    const then = screen.getByText("Then:").closest("p");
-    expect(then).not.toBeNull();
-    const text = then?.textContent ?? "";
-    expect(text).toContain("Second");
-    expect(text).toContain("Fourth");
-    expect(text).not.toContain("Fifth");
-    expect(text).not.toContain("First");
+    expect(agenda.upcoming.map((s) => s.title)).toEqual([
+      "Learner 3",
+      "Learner 4",
+    ]);
+    expect(agenda.hidden).toBe(0);
+  });
+
+  it("caps both lists at five together and counts the rest", () => {
+    const agenda = deriveAgenda(
+      sessionsAt([1, 2, 3, 4, 5, 6, 30, 31, 32]),
+      NOW,
+      zone,
+    );
+    expect(agenda.today).toHaveLength(5);
+    expect(agenda.upcoming).toHaveLength(0);
+    expect(agenda.hidden).toBe(3);
+  });
+
+  it("renders time, who or what and status, then the Appointments link", () => {
+    const agenda = deriveAgenda(sessionsAt([1, 2, 30]), NOW, zone);
+    render(<AgendaLists agenda={agenda} consultantId={CP} viewerZone={ZONE} />);
+    expect(screen.getByRole("heading", { name: "Today" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Upcoming" }),
+    ).toBeInTheDocument();
+    const row = screen.getByRole("link", { name: /Learner 1/ });
+    expect(row).toHaveAttribute("href", `${BASE}/appointments/a1`);
+    expect(row).toHaveTextContent("4:30 PM");
+    expect(row).toHaveTextContent("Consultation - Career chat");
+    expect(
+      screen.getByRole("link", { name: /All appointments/ }),
+    ).toHaveAttribute("href", `${BASE}/appointments`);
+  });
+
+  it("renders nothing when only the next session exists", () => {
+    const agenda = deriveAgenda(sessionsAt([1]), NOW, zone);
+    const { container } = render(
+      <AgendaLists agenda={agenda} consultantId={CP} viewerZone={ZONE} />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe("Latest feedback", () => {
+  const review = {
+    rating: 5,
+    body: "Clear, kind and practical.",
+    createdAt: "2026-11-05T08:00:00.000Z",
+    reviewerFirstName: "Priya",
+  };
+
+  it("shows the quote, rating, first name and date", () => {
+    render(
+      <LatestFeedback review={review} consultantId={CP} viewerZone={ZONE} />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Latest feedback" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("“Clear, kind and practical.”"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("5 out of 5 from Priya · 5 Nov 2026"),
+    ).toBeInTheDocument();
+  });
+
+  it("does not name an anonymous learner and renders nothing without a review", () => {
+    render(
+      <LatestFeedback
+        review={{ ...review, reviewerFirstName: null }}
+        consultantId={CP}
+        viewerZone={ZONE}
+      />,
+    );
+    expect(screen.getByText(/5 out of 5 from a learner/)).toBeInTheDocument();
+    const { container } = render(
+      <LatestFeedback review={undefined} consultantId={CP} viewerZone={ZONE} />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("cuts a long quote at a word", () => {
+    const long = `${"word ".repeat(60)}end`;
+    const cut = excerptOf(long);
+    expect(cut.length).toBeLessThanOrEqual(181);
+    expect(cut.endsWith("…")).toBe(true);
+    expect(excerptOf("short")).toBe("short");
+  });
+});
+
+describe("At a glance and share", () => {
+  it("compares this month with last month", () => {
+    const rows = deriveGlanceRows({
+      sessions: [],
+      sessionsDelivered: { thisMonth: 6, lastMonth: 4, lifetime: 40 },
+      responseRate: undefined,
+      now: NOW,
+    });
+    expect(rows).toEqual([
+      { label: "Sessions delivered", value: "6 this month · 4 last month" },
+      { label: "Delivered in total", value: "40" },
+    ]);
+  });
+
+  it("copies the own link and confirms it", async () => {
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    render(
+      <SharePanel shareUrl="https://example.test/explore/experts/cp-1?via=t" />,
+    );
+    expect(
+      screen.getByText("example.test/explore/experts/cp-1?via=t"),
+    ).toBeInTheDocument();
+    screen.getByRole("button", { name: "Copy" }).click();
+    expect(writeText).toHaveBeenCalledWith(
+      "https://example.test/explore/experts/cp-1?via=t",
+    );
+    expect(
+      await screen.findByRole("button", { name: "Copied" }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders no share row without a link", () => {
+    const { container } = render(<SharePanel shareUrl={null} />);
+    expect(container).toBeEmptyDOMElement();
   });
 });
 
@@ -393,7 +530,7 @@ describe("ratings and money", () => {
     expect(
       deriveGlanceRows({
         sessions: [],
-        sessionsDelivered: { thisMonth: 0, lifetime: 0 },
+        sessionsDelivered: { thisMonth: 0, lastMonth: 0, lifetime: 0 },
         responseRate: { withinTarget: 0, total: 0, withinTargetPct: null },
         now: NOW,
       }),

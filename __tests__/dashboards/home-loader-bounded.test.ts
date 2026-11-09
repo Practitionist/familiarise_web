@@ -24,7 +24,11 @@ jest.mock("../../lib/prisma", () => ({
       groupBy: jest.fn(),
       aggregate: jest.fn(),
     },
-    consultantReview: { aggregate: jest.fn(), count: jest.fn() },
+    consultantReview: {
+      aggregate: jest.fn(),
+      count: jest.fn(),
+      findFirst: jest.fn(),
+    },
     collaborator: { count: jest.fn() },
     rescheduleRequest: { findMany: jest.fn() },
     appointmentDocument: { count: jest.fn() },
@@ -34,7 +38,10 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import prisma from "@/lib/prisma";
-import { getConsultantDashboard } from "@/lib/data/consultant-dashboard";
+import {
+  getConsultantDashboard,
+  homeBoundaries,
+} from "@/lib/data/consultant-dashboard";
 
 const m = prisma as unknown as Record<string, Record<string, jest.Mock>>;
 const NOW = new Date("2026-10-31T20:00:00Z"); // 1 Nov 01:30 in Kolkata
@@ -106,7 +113,7 @@ beforeEach(() => {
     subscription: { findMany: [], count: 0 },
     trial: { count: 0, groupBy: [] },
     consultantEarnings: { count: 0, groupBy: [], aggregate: {} },
-    consultantReview: { aggregate: {}, count: 2 },
+    consultantReview: { aggregate: {}, count: 2, findFirst: null },
     collaborator: { count: 1 },
     rescheduleRequest: { findMany: [] },
     appointmentDocument: { count: 0 },
@@ -175,15 +182,65 @@ describe("consultant Home loader", () => {
     expect(peak).toBeLessThanOrEqual(2);
   });
 
-  it("counts this month's sessions from the 1st in the consultant's zone", async () => {
+  it("counts this and last month's sessions from the 1st in the consultant's zone", async () => {
     const payload = await getConsultantDashboard("cp-1", NOW);
-    const monthCall = m.appointmentOccurrence.count.mock.calls.find(
-      ([args]: [{ where: { startsAt?: { gte: Date } } }]) =>
-        args.where.startsAt,
+    const ranged = m.appointmentOccurrence.count.mock.calls
+      .map(
+        ([args]: [{ where: { startsAt?: { gte: Date; lt?: Date } } }]) =>
+          args.where.startsAt,
+      )
+      .filter(Boolean);
+    expect(ranged).toEqual([
+      { gte: new Date("2026-10-31T18:30:00Z") },
+      {
+        gte: new Date("2026-09-30T18:30:00Z"),
+        lt: new Date("2026-10-31T18:30:00Z"),
+      },
+    ]);
+    expect(payload.sessionsDelivered).toEqual({
+      thisMonth: 3,
+      lastMonth: 3,
+      lifetime: 3,
+    });
+  });
+
+  it("rolls January back to December of the previous year", () => {
+    const { startOfMonth, startOfLastMonth } = homeBoundaries(
+      new Date("2026-01-15T10:00:00Z"),
+      "Asia/Kolkata",
     );
-    expect(monthCall?.[0].where.startsAt.gte).toEqual(
-      new Date("2026-10-31T18:30:00Z"),
+    expect(startOfMonth).toEqual(new Date("2025-12-31T18:30:00Z"));
+    expect(startOfLastMonth).toEqual(new Date("2025-11-30T18:30:00Z"));
+  });
+
+  it("carries the newest review with text, first name only, and nothing when anonymous", async () => {
+    const review = {
+      rating: 5,
+      reviewDescription: "  Clear, kind and practical.  ",
+      createdAt: new Date("2026-11-05T08:00:00Z"),
+      isAnonymous: false,
+      consulteeProfile: { user: { name: "Priya Nair" } },
+    };
+    m.consultantReview.findFirst = slow(review);
+    expect((await getConsultantDashboard("cp-1", NOW)).latestReview).toEqual({
+      rating: 5,
+      body: "Clear, kind and practical.",
+      createdAt: "2026-11-05T08:00:00.000Z",
+      reviewerFirstName: "Priya",
+    });
+    m.consultantReview.findFirst = slow({ ...review, isAnonymous: true });
+    expect(
+      (await getConsultantDashboard("cp-1", NOW)).latestReview
+        ?.reviewerFirstName,
+    ).toBeNull();
+    expect(m.consultantReview.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          consultantProfileId: "cp-1",
+          deletedAt: null,
+          reviewDescription: { not: null },
+        },
+      }),
     );
-    expect(payload.sessionsDelivered).toEqual({ thisMonth: 3, lifetime: 3 });
   });
 });

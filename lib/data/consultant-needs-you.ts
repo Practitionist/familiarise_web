@@ -191,11 +191,16 @@ const deliveredBy = (
   ],
 });
 
-/** #1527 — Home's "This month" card and its one milestone line; no engine. */
+/**
+ * Sessions delivered, in total and in the consultant's current and previous
+ * calendar months (both boundaries come from `homeBoundaries`, so the month is
+ * drawn on their own clock).
+ */
 export async function readSessionsDelivered(
   consultantProfileId: string,
   startOfMonth: Date,
-): Promise<{ thisMonth: number; lifetime: number }> {
+  startOfLastMonth: Date,
+): Promise<{ thisMonth: number; lastMonth: number; lifetime: number }> {
   const where: Prisma.AppointmentOccurrenceWhereInput = {
     completionStatus: "COMPLETED",
     deletedAt: null,
@@ -205,5 +210,8 @@ export async function readSessionsDelivered(
   const thisMonth = await prisma.appointmentOccurrence.count({
     where: { ...where, startsAt: { gte: startOfMonth } },
   });
-  return { thisMonth, lifetime };
+  const lastMonth = await prisma.appointmentOccurrence.count({
+    where: { ...where, startsAt: { gte: startOfLastMonth, lt: startOfMonth } },
+  });
+  return { thisMonth, lastMonth, lifetime };
 }

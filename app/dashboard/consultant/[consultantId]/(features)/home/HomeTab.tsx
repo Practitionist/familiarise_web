@@ -16,6 +16,9 @@ import type { ViewerZone } from "@/lib/time/viewer-zone";
 import type { TAppointment } from "@/types/appointment";
 import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 
+import { AgendaLists } from "./Agenda";
+import { LatestFeedback } from "./LatestFeedback";
+import { SharePanel } from "./SharePanel";
 import {
   ClientBookingsPanel,
   GlancePanel,
@@ -26,6 +29,7 @@ import { MoneyLine } from "./MoneyLine";
 import { NeedsYou } from "./NeedsYou";
 import { NextSession } from "./NextSession";
 import {
+  deriveAgenda,
   deriveGlanceRows,
   deriveHomeNeedsYou,
   deriveHomeSessions,
@@ -50,6 +54,9 @@ interface HomeTabProps {
   viewerZone: ViewerZone;
   performanceSnapshot?: TConsultantDashboardResponse["performanceSnapshot"];
   financialSummary?: TConsultantDashboardResponse["financialSummary"];
+  latestReview?: TConsultantDashboardResponse["latestReview"];
+  /** The expert's signed own-link URL, minted on the server; null for an inspector. */
+  shareUrl: string | null;
   /** The Requests inbox read, shared by Needs you and the Requests panel. */
   requests: HomeRequestsQuery;
 }
@@ -71,6 +78,8 @@ export function HomeTab({
   viewerZone,
   performanceSnapshot,
   financialSummary,
+  latestReview,
+  shareUrl,
   requests,
 }: Readonly<HomeTabProps>) {
   const joinMeeting = useLazyJoinMeeting();
@@ -129,6 +138,10 @@ export function HomeTab({
     [sessions, sessionsDelivered, responseRate, now],
   );
 
+  const agenda = useMemo(
+    () => deriveAgenda(sessions, now, viewerZone.zone),
+    [sessions, now, viewerZone.zone],
+  );
   const next = sessions[0];
   const handleJoin = (target: HomeSession) =>
     void joinMeeting(target.appointment, target.occurrence);
@@ -155,16 +168,27 @@ export function HomeTab({
             showDevJoin={process.env.NEXT_PUBLIC_ENABLE_DEV_TOOLS === "true"}
             onJoin={handleJoin}
           />
+          <AgendaLists
+            agenda={agenda}
+            consultantId={consultantId}
+            viewerZone={viewerZone}
+          />
           <MoneyLine
             consultantId={consultantId}
             moneyLine={moneyLine}
             sessionsThisMonth={sessionsDelivered?.thisMonth ?? 0}
             ratingParts={deriveRatingParts(performanceSnapshot)}
           />
+          <LatestFeedback
+            review={latestReview}
+            consultantId={consultantId}
+            viewerZone={viewerZone}
+          />
         </div>
         <aside aria-label="Requests and numbers" className="min-w-0 space-y-6">
           <RequestsPanel consultantId={consultantId} query={requests} />
           <GlancePanel rows={glanceRows} />
+          <SharePanel shareUrl={shareUrl} />
           <OrgSessionsPanel
             sessions={orgSessions}
             memberOrgIds={memberOrgIds}
