@@ -169,18 +169,9 @@ describe("offering manifests", () => {
     expect(descriptionIdx).toBeGreaterThan(inputIdx);
   });
 
-  it("renders ThisMonthCard in a 2x2 StatRow grid and prevents Stat value overflow", async () => {
+  it("prevents Stat value overflow", async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
-    const cardSource = fs.readFileSync(
-      path.join(
-        process.cwd(),
-        "app/dashboard/consultant/[consultantId]/(features)/home/ThisMonthCard.tsx",
-      ),
-      "utf8",
-    );
-    expect(cardSource).toContain("<StatRow columns={2}>");
-
     const statSource = fs.readFileSync(
       path.join(process.cwd(), "components/dashboard/Stat.tsx"),
       "utf8",

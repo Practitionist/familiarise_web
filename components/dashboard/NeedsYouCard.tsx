@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Inbox } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 
 import type { NeedsYouSummary } from "@/lib/data/needs-you";
 
@@ -17,13 +17,18 @@ import type { NeedsYouSummary } from "@/lib/data/needs-you";
  * Renders nothing when there is nothing waiting, so a purely B2C consultant
  * never sees an org concept they have no use for.
  */
-export function NeedsYouCard({ summary }: Readonly<{ summary: NeedsYouSummary }>) {
+export function NeedsYouCard({
+  summary,
+}: Readonly<{ summary: NeedsYouSummary }>) {
   if (summary.total === 0) return null;
 
   // With only a personal context there is nothing cross-context to reconcile,
   // and the Requests nav entry already says this. The card earns its space only
   // once the work is genuinely spread across dashboards.
-  if (summary.contexts.length === 1 && summary.contexts[0].organizationId === null) {
+  if (
+    summary.contexts.length === 1 &&
+    summary.contexts[0].organizationId === null
+  ) {
     return null;
   }
 
@@ -32,15 +37,9 @@ export function NeedsYouCard({ summary }: Readonly<{ summary: NeedsYouSummary }>
       aria-labelledby="needs-you-heading"
       className="rounded-xl border border-border bg-card p-4"
     >
-      <div className="mb-3 flex items-center gap-2">
-        <Inbox className="h-4 w-4 text-muted-foreground" />
-        <h2 id="needs-you-heading" className="text-sm font-semibold">
-          Needs you
-        </h2>
-        <span className="text-xs text-muted-foreground">
-          across {summary.contexts.length} dashboards
-        </span>
-      </div>
+      <h2 id="needs-you-heading" className="mb-3 text-sm font-semibold">
+        Waiting across your dashboards
+      </h2>
 
       <ul className="divide-y divide-border">
         {summary.contexts.map((context) => (

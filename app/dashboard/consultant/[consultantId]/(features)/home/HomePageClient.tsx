@@ -3,10 +3,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Inbox } from "lucide-react";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { HomeSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { ErrorState } from "@/components/dashboard/ErrorState";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
+import { useHomeRequests } from "@/components/dashboard/shared/requests/RequestsInboxPreview";
+import { ExpertHomeSkeleton } from "./ExpertHomeSkeleton";
 import { HomeTab } from "./HomeTab";
 import type { ViewerZone } from "@/lib/time/viewer-zone";
 import type { TConsultantDashboardResponse } from "@/types/consultant-events";
@@ -15,13 +16,9 @@ export default function HomePageClient({
   consultantId,
   viewerZone,
 }: Readonly<{ consultantId: string; viewerZone: ViewerZone }>) {
-  // The factory's staleTime (2 min) is deliberately NOT overridden here. This
-  // used to force `staleTime: 0` under a comment about showing stale data
-  // immediately, which is not what staleTime does: it marks the server-prefetched
-  // cache entry stale on mount, so the client refetched
-  // GET /api/dashboard/consultant/[id] straight after hydration and recomputed
-  // the identical payload the page had just dehydrated — doubling every query
-  // behind it. Harmless before #890 seeded the cache; pure waste after. (#1121)
+  // The factory's staleTime (2 min) is not overridden: a shorter one would mark
+  // the server-prefetched entry stale on mount and refetch the payload the page
+  // just dehydrated.
   const dashboardQuery = {
     ...createConsultantQueries(consultantId).dashboard,
     refetchOnWindowFocus: false,
@@ -32,11 +29,13 @@ export default function HomePageClient({
     error,
     refetch,
   } = useQuery<TConsultantDashboardResponse>(dashboardQuery);
+  // Starts with the dashboard read, not after it, so the two never queue.
+  const requests = useHomeRequests(consultantId);
 
   // Show skeleton only for initial load when no data exists
   if (isLoading && !dashboardData) {
-    // Header is owned by the server page now — see its comment on FCP.
-    return <HomeSkeleton withHeader={false} />;
+    // The server page owns the header.
+    return <ExpertHomeSkeleton />;
   }
 
   if (error && !dashboardData) {
@@ -70,6 +69,7 @@ export default function HomePageClient({
         clientBookings={dashboardData.clientBookings}
         payoutSetup={dashboardData.payoutSetup}
         needsYou={dashboardData.needsYou}
+        requests={requests}
         sessionsDelivered={dashboardData.sessionsDelivered}
         firstRun={dashboardData.firstRun}
         responseRate={dashboardData.responseRate}

@@ -1,5 +1,5 @@
-import { HomeSkeleton } from "@/components/dashboard/DashboardSkeletons";
+import { ExpertHomeSkeleton } from "./ExpertHomeSkeleton";
 
 export default function HomeLoading() {
-  return <HomeSkeleton />;
+  return <ExpertHomeSkeleton withHeader />;
 }

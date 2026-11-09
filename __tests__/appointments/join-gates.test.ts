@@ -233,6 +233,12 @@ describe("#1270 — the surfaces are wired to those predicates", () => {
   const consultantHome = read(
     "app/dashboard/consultant/[consultantId]/(features)/home/HomeTab.tsx",
   );
+  const consultantHomeModel = read(
+    "app/dashboard/consultant/[consultantId]/(features)/home/home-model.ts",
+  );
+  const consultantNextSession = read(
+    "app/dashboard/consultant/[consultantId]/(features)/home/NextSession.tsx",
+  );
   const timeline = read("components/appointments/SessionTimeline.tsx");
 
   it("gates the consultant adapter's Join on a confirmed status", () => {
@@ -244,9 +250,11 @@ describe("#1270 — the surfaces are wired to those predicates", () => {
     expect(consultantAdapter).toMatch(/if \(canJoinNow\(vm\)\) \{/);
   });
 
-  it("gates the consultant home row on the same status", () => {
-    expect(consultantHome).toContain("isConfirmedStatus(");
-    expect(consultantHome).toContain("getAppointmentLifecycleStatus(");
+  it("gates the consultant home session on the same status and window", () => {
+    expect(consultantHomeModel).toContain("isConfirmedStatus(");
+    expect(consultantHomeModel).toContain("getAppointmentLifecycleStatus(");
+    expect(consultantHomeModel).toContain("CONSULTANT_JOIN_WINDOW_MS");
+    expect(consultantNextSession).toContain("disabled={!joinable}");
   });
 
   it("keeps every dev backdoor on one flag and additive to the gate", () => {
@@ -258,8 +266,10 @@ describe("#1270 — the surfaces are wired to those predicates", () => {
     }
     // The dev arm renders where the real Join does not; it never re-labels or
     // un-disables the real one.
-    expect(consultantHome).toContain("isDev && !isJoinable");
-    expect(consultantHome).not.toContain("isDev ? false : !isJoinable");
+    expect(consultantNextSession).toContain("showDevJoin && !joinable");
+    expect(consultantNextSession).not.toContain(
+      "disabled={!joinable && !showDevJoin}",
+    );
     expect(consultantAdapter).toContain(
       "isDev && hasSlotRows(vm) && !canJoinNow(vm)",
     );
