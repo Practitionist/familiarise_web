@@ -111,6 +111,8 @@ export interface AppointmentVMRaw {
   groupAppointments?: TAppointment[];
   /** The original role-specific list item (trial, unscheduled event, …). */
   source?: unknown;
+  /** Live seats on a webinar or class (HELD, CONFIRMED, ATTENDED); gates Timings. */
+  liveSeats?: number;
 }
 
 export interface AppointmentVM {

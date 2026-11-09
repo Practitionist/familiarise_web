@@ -244,6 +244,7 @@ export type AllocationErrorCode =
   | "RESCHEDULE_NO_LONGER_OPEN" // the confirmed proposal was answered or expired mid-move — 409
   | "PROPOSAL_AWAITING_CLIENT" // the consultant's own proposal with times is still open — 409
   | "SESSION_HAS_REMEDY" // a session to be re-planned carries an incident remedy — 409
+  | "USE_RETIME" // a webinar or class with a live seat is re-timed, never re-planned — 409
   | "BOOKING_LOCK_UNAVAILABLE" // the locking service is down; retry shortly — 503
   | "SEARCH_TIMEOUT" // the auto search ran out of time before placing every session — 503
   | "UNKNOWN_ERROR"; // infra / unexpected — 500

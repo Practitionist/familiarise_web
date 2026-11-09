@@ -4,7 +4,10 @@ import { notFound } from "next/navigation";
 
 import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportFill";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
+import Link from "next/link";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   allowsManageTimings,
   upcomingOccurrences,
@@ -41,33 +44,39 @@ type PageProps = {
 const loadTarget = cache(readManageTimingsTarget);
 const loadDetail = cache(readAppointmentDetail);
 
+type TimingsGate = "allowed" | "sold" | "refused";
+
 /**
- * The counterparty gate, server side (#1082).
+ * The counterparty gate, server side. This surface writes new times with no
+ * notice and no acceptance, which is honest only while nobody has committed to
+ * one; the URL is linkable, so the menu is not the control.
  *
- * This surface writes new times with no notice and no acceptance, which is
- * honest only while nobody else has committed to one. The menu already hides
- * it for a 1:1 whose consultee holds a confirmed slot, but the URL is linkable
- * and survives a refresh, so the menu is not the control.
- *
- * Only the two 1:1 kinds need the extra read, and only they pay for it: a
- * group event is allowed regardless. Slots are fetched here rather than
- * widened into `ManageTimingsTarget` to stay clear of #1075; `cache` keeps it
- * to one query across metadata and body.
+ * A 1:1 is refused once its consultee holds a confirmed slot (Reschedule owns
+ * that move). A webinar or class is "sold" once a seat is live: the page then
+ * points at Re-time instead of 404ing, and the allocator refuses the write with
+ * 409 `USE_RETIME` regardless. A never-scheduled offering has no seats.
  */
-async function manageTimingsAllowed(
+async function manageTimingsGate(
   target: ManageTimingsTarget,
   appointmentId: string,
-): Promise<boolean> {
+): Promise<TimingsGate> {
   const kind = target.appointment.appointmentType;
-  if (kind !== "CONSULTATION" && kind !== "SUBSCRIPTION") return true;
+  if (
+    (kind === "WEBINAR" || kind === "CLASS") &&
+    appointmentId.startsWith("unscheduled-")
+  ) {
+    return "allowed";
+  }
 
   const detail = await loadDetail(appointmentId);
-  if (!detail) return false;
-  // #1554 — the wrapper's rows are the whole programme.
-  return allowsManageTimings(
+  if (!detail) return "refused";
+  const allowed = allowsManageTimings(
     kind,
     upcomingOccurrences(detail.appointment.occurrences),
+    detail.appointment.participants.length,
   );
+  if (allowed) return "allowed";
+  return kind === "WEBINAR" || kind === "CLASS" ? "sold" : "refused";
 }
 
 /**
@@ -86,10 +95,10 @@ export async function generateMetadata({
   if (!target || !target.planOwnerIds.includes(consultantId)) {
     return { title: "Manage timings — Familiarise" };
   }
-  const allowed = await manageTimingsAllowed(target, appointmentId).catch(
-    () => false,
+  const allowed = await manageTimingsGate(target, appointmentId).catch(
+    (): TimingsGate => "refused",
   );
-  if (!allowed) return { title: "Manage timings — Familiarise" };
+  if (allowed !== "allowed") return { title: "Manage timings — Familiarise" };
 
   const resolved = buildManageTimingsSubject(consultantId, target.appointment);
   return { title: `Manage timings: ${resolved.title} — Familiarise` };
@@ -112,8 +121,30 @@ export default async function ManageTimingsPage({
   if (!target.planOwnerIds.includes(consultantId)) notFound();
 
   // Ownership is not the question a booked consultee cares about — see
-  // manageTimingsAllowed. Reschedule is the route for that case.
-  if (!(await manageTimingsAllowed(target, appointmentId))) notFound();
+  // manageTimingsGate. Reschedule (1:1) or Re-time (sold event) owns that move.
+  const gate = await manageTimingsGate(target, appointmentId);
+  if (gate === "refused") notFound();
+  if (gate === "sold") {
+    const detailHref = `/dashboard/consultant/${consultantId}/appointments/${appointmentId}`;
+    return (
+      <DashboardViewportFill className="gap-4">
+        <Alert className="max-w-2xl">
+          <AlertTitle>This event already has booked seats</AlertTitle>
+          <AlertDescription className="space-y-3">
+            <p>
+              Its times can&apos;t be re-planned here, because that would move
+              people who already paid without notice. Use Re-time on the event
+              page instead: attendees are told, and anyone who can&apos;t make
+              the new time may leave with a full refund.
+            </p>
+            <Button asChild size="sm">
+              <Link href={detailHref}>Open the event</Link>
+            </Button>
+          </AlertDescription>
+        </Alert>
+      </DashboardViewportFill>
+    );
+  }
 
   const resolved = buildManageTimingsSubject(
     consultantId,

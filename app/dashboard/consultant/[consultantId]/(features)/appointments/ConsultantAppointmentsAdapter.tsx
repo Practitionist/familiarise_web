@@ -89,6 +89,8 @@ function canOfferReschedule(
   return Boolean(
     vm.appointmentId &&
     vm.kind !== "TRIAL" &&
+    vm.kind !== "WEBINAR" &&
+    vm.kind !== "CLASS" &&
     lifecycleOk &&
     !inactive &&
     isApprovedStatus(vm.status) &&
@@ -346,7 +348,11 @@ export function useConsultantAppointmentsAdapter(
     const inactive = isInactiveStatus(vm.status);
     const rawOccurrences = actionableRawSlots(vm);
     const lifecycleOk = canManageBookingLifecycle(vm);
-    const timingsOk = allowsManageTimings(vm.kind, rawOccurrences);
+    const timingsOk = allowsManageTimings(
+      vm.kind,
+      rawOccurrences,
+      vm.raw.liveSeats ?? 0,
+    );
 
     if (canOfferTimings(vm, timingsOk)) {
       items.push({

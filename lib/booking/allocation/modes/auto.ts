@@ -73,6 +73,7 @@ import {
   assertExpectedTentativeSlotCountInTx,
   assertNoConfirmedSlots,
   guardAllocationInTx,
+  assertGroupEventUnsoldInTx,
 } from "@/lib/booking/allocation/guards";
 import {
   resolveConsumedPreferenceRequests,
@@ -523,6 +524,8 @@ export async function autoAllocate(
           isFreshAllocation && !isTopUp,
         );
         if (lockedReplay) return lockedReplay;
+        // A sold webinar or class is re-timed, never re-planned.
+        if (!isTopUp) await assertGroupEventUnsoldInTx(tx, eventType, eventId);
         // #1766 — a stale tab must not append a second cycle: re-count the
         // held sessions under the advisory lock before writing.
         if (isTopUp) {

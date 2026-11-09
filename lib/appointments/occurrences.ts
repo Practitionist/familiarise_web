@@ -291,11 +291,18 @@ export function occurrencesAllowReschedule(
   return !occurrences.some((row) => row.completionStatus === "RESCHEDULED");
 }
 
+/**
+ * Whether the host may re-plan this booking's times without anyone's consent.
+ * A webinar or class only while no seat is live: once sold, it is re-timed
+ * (notice plus free leave), never re-planned. The allocator enforces the same
+ * rule in its transaction (`assertGroupEventUnsoldInTx`).
+ */
 export function allowsManageTimings(
   kind: AppointmentKind,
   occurrences: Array<{ isTentative?: boolean | null }>,
+  liveSeats: number,
 ): boolean {
-  if (kind === "WEBINAR" || kind === "CLASS") return true;
+  if (kind === "WEBINAR" || kind === "CLASS") return liveSeats === 0;
   if (occurrences.length === 0) return true;
   return occurrences.every((row) => Boolean(row.isTentative));
 }

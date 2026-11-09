@@ -185,6 +185,8 @@ const mockTx = {
   },
   collaborator: { findMany: jest.fn().mockResolvedValue([]) },
   appointmentParticipant: {
+    // Live seats on the event; a sold webinar/class refuses a re-plan.
+    count: jest.fn().mockResolvedValue(0),
     createMany: jest.fn().mockResolvedValue({ count: 1 }),
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   },

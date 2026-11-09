@@ -274,6 +274,18 @@ status intent is limited to DRAFT and SCHEDULED (`EventEditorStatusSchema` in
 `lib/api/plans/event-status.ts`). The cancel route is the only door because it
 owns refunds and history.
 
+A sold webinar or class is never re-planned. Once any seat is live (HELD,
+CONFIRMED or ATTENDED), a manual or auto allocation that would replace its
+sessions answers 409 `USE_RETIME`: `assertGroupEventUnsoldInTx`
+(`lib/booking/allocation/guards.ts`) counts the live seats with `tx` right after
+`guardAllocationInTx` takes the event's advisory lock, so a seat checkout that
+commits first is always seen. A top-up that only appends sessions skips the check.
+The move for a sold event is the webinar re-time (`retimeWebinar` in
+`lib/booking/event-retime.ts`), which carries the 24-hour notice and the
+`retimeBy` free leave. The host's menu and the timings page apply the same rule
+through `allowsManageTimings`, but they are conveniences; the transaction is the
+control.
+
 ## 10. Sweeps are scoped to the lapsed buyer and bounded in time
 
 The abandoned-payments sweep (`scripts/payments/cleanup-abandoned-payments.ts`)

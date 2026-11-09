@@ -166,6 +166,8 @@ function makeMockTx() {
       deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     appointmentParticipant: {
+      // Live seats on the event; a sold webinar/class refuses a re-plan.
+      count: jest.fn().mockResolvedValue(0),
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       // #1554 — the roster read behind the top-up's re-seat.

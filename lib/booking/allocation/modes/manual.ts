@@ -68,6 +68,7 @@ import {
   assertExpectedTentativeSlotCountInTx,
   assertNoConfirmedSlots,
   guardAllocationInTx,
+  assertGroupEventUnsoldInTx,
   probeConfirmedOverlap,
 } from "@/lib/booking/allocation/guards";
 import { resolveConsumedPreferenceRequests } from "@/lib/booking/allocation/preference";
@@ -502,6 +503,8 @@ export async function manualAllocate(
           slotStrings,
         );
         if (lockedReplay) return lockedReplay;
+        // A sold webinar or class is re-timed, never re-planned.
+        if (!isTopUp) await assertGroupEventUnsoldInTx(tx, eventType, eventId);
         // #1766 — see autoAllocate: a stale tab must not append twice.
         if (isTopUp) {
           await assertHeldSessionCountInTx(
