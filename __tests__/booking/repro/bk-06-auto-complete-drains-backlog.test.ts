@@ -27,6 +27,7 @@ jest.mock("../../../lib/booking/session-outcome-sweep", () => ({
   createStreamWitnessBudget: () => ({ remaining: 100, failures: 0 }),
   readOutageWindows: async () => [],
   alertStaleNeedsHuman: async () => undefined,
+  escalateAgedNeedsHuman: async () => 0,
   decideSlotOutcome: async (slot: Slot) => {
     decided.push(slot.id);
     queue = queue.filter((s) => s.id !== slot.id);

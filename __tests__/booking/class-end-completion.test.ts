@@ -52,6 +52,7 @@ jest.mock("../../lib/booking/session-outcome-sweep", () => ({
   createStreamWitnessBudget: () => ({ remaining: 100, failures: 0 }),
   readOutageWindows: async () => [],
   alertStaleNeedsHuman: async () => undefined,
+  escalateAgedNeedsHuman: async () => 0,
   staleNeedsHumanWhere: () => ({}),
   decideSlotOutcome: async () => ({ kind: "deferred" }),
 }));

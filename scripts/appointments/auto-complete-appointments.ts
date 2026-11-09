@@ -68,6 +68,7 @@ import {
 import {
   alertStaleNeedsHuman,
   createStreamWitnessBudget,
+  escalateAgedNeedsHuman,
   decideSlotOutcome,
   OUTCOME_SLOT_SELECT,
   type StreamWitnessBudget,
@@ -1331,6 +1332,14 @@ async function autoCompleteAppointmentsUnlocked(
     } catch (error) {
       allErrors.push(
         `Failed to alert stale needs-human sessions: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+    }
+    try {
+      // Parked over 7 days: escalated so an ended plan's settlement never waits silently.
+      await escalateAgedNeedsHuman(prisma, new Date());
+    } catch (error) {
+      allErrors.push(
+        `Failed to escalate aged needs-human sessions: ${error instanceof Error ? error.message : "Unknown error"}`,
       );
     }
   } finally {

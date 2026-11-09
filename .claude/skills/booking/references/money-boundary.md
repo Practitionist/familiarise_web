@@ -550,6 +550,16 @@ exit is `session.set-outcome`; nothing is refunded or released automatically. A
 free session where nobody joined has no money to hold and completes. Widen this
 predicate, never a caller's copy of it.
 
+A parked session cannot wait silently. After 72 hours `alertStaleNeedsHuman`
+records a standing finding; after 7 days (`NEEDS_HUMAN_ESCALATE_DAYS`,
+`agedNeedsHumanWhere` in `lib/booking/misses.ts`) `escalateAgedNeedsHuman` in
+`lib/booking/session-outcome-sweep.ts`, run by `auto-complete-appointments`,
+records one standing finding and one Sentry warning per new session id per day
+(`reportStandingFinding`), naming how many sit on a plan whose end has passed,
+because plan-end settlement waits on them. `readSessionsNeedingHuman` lists
+those sessions first, oldest first, marked "Waiting over 7 days", so the list's
+cap never hides them.
+
 ## 13. A subscription settles at its fixed plan end
 
 A subscription's terms are fixed at purchase by `purchaseTermsOf`
