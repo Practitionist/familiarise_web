@@ -74,10 +74,7 @@ export async function ProductsGrid({
       <ul className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {products.map((product) => (
           <li key={product.id}>
-            <Link
-              href={`/explore/products/${product.slug}`}
-              className="group flex h-full flex-col overflow-hidden rounded-xl border bg-card transition-shadow hover:shadow-md"
-            >
+            <article className="group relative flex h-full flex-col overflow-hidden rounded-xl border bg-card transition-shadow hover:shadow-md">
               <div className="relative flex aspect-video items-center justify-center bg-muted">
                 {product.coverImagePath ? (
                   <Image
@@ -104,14 +101,25 @@ export async function ProductsGrid({
                   </span>
                 </div>
                 <h3 className="line-clamp-2 text-sm font-medium transition-colors group-hover:text-primary">
-                  {product.title}
+                  <Link
+                    href={`/explore/products/${product.slug}`}
+                    className="after:absolute after:inset-0"
+                  >
+                    {product.title}
+                  </Link>
                 </h3>
                 <p className="truncate text-xs text-muted-foreground">
-                  {product.creator.name ?? "Expert"} · {product.fileCount}{" "}
+                  <Link
+                    href={`/explore/experts/${product.creator.consultantProfileId}`}
+                    className="relative z-10 underline-offset-4 hover:text-foreground hover:underline"
+                  >
+                    {product.creator.name ?? "Expert"}
+                  </Link>{" "}
+                  · {product.fileCount}{" "}
                   {product.fileCount === 1 ? "file" : "files"}
                 </p>
               </div>
-            </Link>
+            </article>
           </li>
         ))}
       </ul>

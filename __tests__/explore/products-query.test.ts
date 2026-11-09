@@ -48,3 +48,11 @@ describe("products query", () => {
     expect(productsQueryString(parseProductsQuery({}))).toBe("");
   });
 });
+
+describe("popular sort", () => {
+  it("is accepted and kept in the query string", () => {
+    const query = parseProductsQuery({ sort: "popular" });
+    expect(query.sort).toBe("popular");
+    expect(productsQueryString(query)).toBe("?sort=popular");
+  });
+});

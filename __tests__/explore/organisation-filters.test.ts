@@ -17,10 +17,7 @@ describe("orgFiltersFromSearchParams", () => {
     params.append("type", "EXPERT_NETWORK");
     params.append("type", "LEARNING_INSTITUTION");
     const filters = orgFiltersFromSearchParams(params);
-    expect(filters.types).toEqual([
-      "EXPERT_NETWORK",
-      "LEARNING_INSTITUTION",
-    ]);
+    expect(filters.types).toEqual(["EXPERT_NETWORK", "LEARNING_INSTITUTION"]);
     const qs = orgFiltersToSearchParams(filters);
     expect(qs).toBe("type=EXPERT_NETWORK&type=LEARNING_INSTITUTION");
     expect(new URLSearchParams(qs).getAll("type")).toEqual([
@@ -53,10 +50,7 @@ describe("shouldSkipUrlHydrate", () => {
     // Boolean-flag race: self-write pending, then soft-nav changes the URL.
     // Matching the written QS (not a boolean) must NOT consume the skip.
     expect(
-      shouldSkipUrlHydrate(
-        "type=EXPERT_NETWORK",
-        "type=LEARNING_INSTITUTION",
-      ),
+      shouldSkipUrlHydrate("type=EXPERT_NETWORK", "type=LEARNING_INSTITUTION"),
     ).toEqual({ skip: false, nextPending: null });
   });
 });

@@ -94,6 +94,39 @@ function productOrder(
   return [{ publishedAt: "desc" }, { id: "asc" }];
 }
 
+const POPULAR_RANK_CAP = 5_000;
+
+/**
+ * Product ids for one page, most completed purchases first (newest first on a
+ * tie). Prisma cannot order by a filtered relation count, so the matching ids
+ * are counted in one grouped read and paged here.
+ */
+async function popularPageIds(
+  where: Prisma.DigitalProductWhereInput,
+  query: ProductsQuery,
+): Promise<string[]> {
+  const candidates = await prisma.digitalProduct.findMany({
+    where,
+    select: { id: true, publishedAt: true },
+    orderBy: [{ publishedAt: "desc" }, { id: "asc" }],
+    take: POPULAR_RANK_CAP,
+  });
+  const sold = await prisma.digitalProductPurchase.groupBy({
+    by: ["productId"],
+    where: {
+      status: "SUCCEEDED",
+      productId: { in: candidates.map((c) => c.id) },
+    },
+    _count: { _all: true },
+  });
+  const soldById = new Map(sold.map((s) => [s.productId, s._count._all]));
+  return candidates
+    .map((c, index) => ({ id: c.id, index, sold: soldById.get(c.id) ?? 0 }))
+    .sort((a, b) => b.sold - a.sold || a.index - b.index)
+    .slice((query.page - 1) * PRODUCTS_PER_PAGE, query.page * PRODUCTS_PER_PAGE)
+    .map((c) => c.id);
+}
+
 async function fetchPublicProductsPage(
   query: ProductsQuery,
   domainId?: string,
@@ -121,12 +154,18 @@ async function fetchPublicProductsPage(
         }
       : {}),
   };
-  const [rows, total] = await Promise.all([
+  const popularIds =
+    query.sort === "popular" ? await popularPageIds(where, query) : null;
+  const [fetched, total] = await Promise.all([
     prisma.digitalProduct.findMany({
-      where,
+      where: popularIds ? { id: { in: popularIds } } : where,
       orderBy: productOrder(query.sort),
-      take: PRODUCTS_PER_PAGE,
-      skip: (query.page - 1) * PRODUCTS_PER_PAGE,
+      ...(popularIds
+        ? {}
+        : {
+            take: PRODUCTS_PER_PAGE,
+            skip: (query.page - 1) * PRODUCTS_PER_PAGE,
+          }),
       select: {
         id: true,
         slug: true,
@@ -143,6 +182,9 @@ async function fetchPublicProductsPage(
     }),
     prisma.digitalProduct.count({ where }),
   ]);
+  const rows = popularIds
+    ? popularIds.flatMap((id) => fetched.filter((row) => row.id === id))
+    : fetched;
   return {
     items: rows.map(({ _count, consultantProfile, ...row }) => ({
       ...row,

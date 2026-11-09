@@ -150,7 +150,29 @@ export default function HowWeRankPage() {
               <Separator className="my-6" />
 
               <h2 className="text-2xl font-semibold mt-6 mb-4">
-                5. Highlighted rows
+                5. Digital products
+              </h2>
+              <ul>
+                <li>
+                  <strong>Most purchased:</strong> (1) how many purchases have
+                  completed, highest first; refunded and unpaid purchases are
+                  not counted. (2) Products with the same count are ordered
+                  newest first.
+                </li>
+                <li>
+                  <strong>Newest:</strong> (1) the date the product was
+                  published, newest first.
+                </li>
+                <li>
+                  <strong>Price: low to high, Price: high to low:</strong> (1)
+                  the price. These sorts use nothing else.
+                </li>
+              </ul>
+
+              <Separator className="my-6" />
+
+              <h2 className="text-2xl font-semibold mt-6 mb-4">
+                6. Highlighted rows
               </h2>
               <p>
                 The rows on the Explore pages, such as Highest rated experts,
@@ -165,7 +187,7 @@ export default function HowWeRankPage() {
               <Separator className="my-6" />
 
               <h2 className="text-2xl font-semibold mt-6 mb-4">
-                6. Questions and reviews
+                7. Questions and reviews
               </h2>
               <p>
                 How ratings are collected and moderated is explained in{" "}
