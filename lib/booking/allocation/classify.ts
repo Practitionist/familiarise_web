@@ -120,6 +120,7 @@ const LOCK_BUSY_CODES: ReadonlySet<string> = new Set([
   "AUTO_ALLOCATE_BUSY",
   "CONSULTEE_BOOKING_BUSY",
   "LOCK_CONTENTION",
+  "LOCK_LOST",
 ]);
 
 function lockErrorCode(error: unknown): string | null {

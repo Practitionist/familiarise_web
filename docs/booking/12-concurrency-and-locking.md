@@ -142,7 +142,7 @@ end
 - Returns `0` if the lock was already expired or owned by another client.
 - The `GET` + `DEL` executes atomically within Redis (single-threaded Lua evaluation).
 
-`releaseLock()` never throws. It catches all errors and logs them. This makes it safe to call from `finally` blocks without masking the original error.
+`releaseLock()` never throws. It catches all errors and logs them. This makes it safe to call from `finally` blocks without masking the original error. A single-key acquire whose `SET` errors (a timeout after the write may have landed) compare-deletes its own token before it retries or gives up (`releaseIfOurs`), so the key is never orphaned for the full TTL and the retry never meets its own key as contention.
 
 ---
 
@@ -275,7 +275,7 @@ try {
 - **Postgres is the authority; Redis only removes contention.** Every status write is a CAS with its allowed-from set in the `WHERE` (`lib/booking/transitions.ts`), and 1:1 overlap is refused at commit by `occurrence_no_confirmed_overlap` (`23P01`). A Redis outage costs a 503, never correctness.
 - **One acquisition order: event/consultant → consultee → slot atoms (ascending).** Checkout is the one visible inversion: a slot checkout takes the consultee lock before its atoms, an event checkout after the event lock. It cannot cycle because no checkout shape takes slot atoms while holding an event lock.
 - **Fail closed on Redis loss, fail open on contention.** `acquireGuarded` answers `BookingLockUnavailableError` (503) when Redis is unreachable and a typed 409 when a key is genuinely held.
-- **Retries.** `withSerializableRetry` replays P2034 and deadlocks (40P01, read from the raw `DriverAdapterError` by `isDeadlock`), up to 3 retries; business errors propagate on the first attempt. The approval and appointment locks are re-granted per attempt (`renewApprovalLock`, `renewAppointmentLock`) because four attempts outlive their TTL.
+- **Retries.** `withSerializableRetry` replays P2034 and deadlocks (40P01, read from the raw `DriverAdapterError` by `isDeadlock`), up to 3 retries; business errors propagate on the first attempt. The approval and appointment locks are re-granted per attempt (`renewApprovalLock`, `renewAppointmentLock`) because four attempts outlive their TTL. A re-grant that finds the appointment lock taken over throws `LockLostError` (409 `LOCK_LOST`, a typed refusal), so no attempt runs unserialised; the allocator answers it as `LOCK_CONTENTION`.
 - **Known gaps (closing in Wave 3).** The allocator (lock family `auto-allocate:`, Read Committed) and checkout (lock family `slot-booking:`, Serializable) share no lock, and tentative rows sit outside the exclusion, so an allocator-versus-checkout clash ends in a charge followed by a refund. Co-host, consultant-as-client and consultee overlaps are application-only under disjoint lock families. Only checkout ↔ checkout is serialised in Postgres for the cross-consultant consultee double-book (both Serializable); the allocator, request-for-approval, trials and reschedule writers rely on the Redis `consultee-booking:` lock alone.
 
 ## Deprecated & Superseded Approaches
