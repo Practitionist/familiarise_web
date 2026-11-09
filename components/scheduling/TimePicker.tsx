@@ -36,6 +36,10 @@ import {
 import { useDisplayZone } from "@/lib/time/use-display-zone";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { ZoneSwitch } from "@/components/scheduling/ZoneSwitch";
+import {
+  SchedulingContextBar,
+  type ContextChip,
+} from "@/components/scheduling/SchedulingContextBar";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import { maxSessionsPerDayFor } from "@/utils/scheduling-engine/sessionCaps";
 import { cn } from "@/utils/tailwind";
@@ -156,6 +160,8 @@ export interface TimePickerProps {
   viewerZone?: string | null;
   /** The request changed under this tab: reload the subject in place. */
   onRequestRefresh?: () => void;
+  /** Facts the page knows about what is being scheduled, for the context row. */
+  contextChips?: readonly ContextChip[];
 }
 
 export function TimePicker({
@@ -167,6 +173,7 @@ export function TimePicker({
   focusAt,
   viewerZone,
   onRequestRefresh,
+  contextChips,
 }: Readonly<TimePickerProps>) {
   const sessionViewer = useViewerZone();
   const gridViewerZone =
@@ -350,6 +357,32 @@ export function TimePicker({
     [policy],
   );
 
+  const zoneLine = (
+    <ZoneSwitch
+      className="shrink-0"
+      zone={display.zone}
+      usingDeviceZone={display.usingDeviceZone}
+      canSwitch={display.canSwitch}
+      onToggle={display.toggle}
+    />
+  );
+  const gridContextChips = React.useMemo<ContextChip[]>(
+    () => [
+      ...(policy.minLeadHours > 0
+        ? [
+            {
+              key: "notice",
+              label: "Moves",
+              value: `not within ${policy.minLeadHours} h of the start · not refunded`,
+              title: `Sessions cannot be moved within ${policy.minLeadHours} hours of their start time, and rescheduling is not refunded.`,
+            },
+          ]
+        : []),
+      ...(contextChips ?? []),
+    ],
+    [policy.minLeadHours, contextChips],
+  );
+
   const grid = (
     <SafeUnifiedCalendar
       className="min-h-0 flex-1"
@@ -371,6 +404,8 @@ export function TimePicker({
       focus={focus}
       viewerZone={listZone}
       showZoneSwitch={false}
+      zoneSlot={zoneLine}
+      contextChips={gridContextChips}
       requestedSlots={requestedSlots}
       releasingOccurrenceIds={releasingIds}
       lead={policy.lead}
@@ -460,16 +495,6 @@ export function TimePicker({
 
   return (
     <div className={cn("flex min-h-0 flex-col gap-4", className)}>
-      {policy.minLeadHours > 0 && (
-        <div className="shrink-0 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/40 dark:bg-amber-900/20">
-          <p className="text-xs text-amber-800 dark:text-amber-300">
-            <strong>Note:</strong> sessions cannot be moved within{" "}
-            {policy.minLeadHours} hours of their start time, and rescheduling is
-            not refunded.
-          </p>
-        </div>
-      )}
-
       {showReleaseStep && (
         <div className="shrink-0">
           <SessionReleasePicker
@@ -498,14 +523,17 @@ export function TimePicker({
           : policy.pickerHint}
       </p>
 
-      {wide !== null && (
-        <ZoneSwitch
-          className="shrink-0"
-          zone={display.zone}
-          usingDeviceZone={display.usingDeviceZone}
-          canSwitch={display.canSwitch}
-          onToggle={display.toggle}
-        />
+      {/* The grid carries the zone line in its context row; the day list needs its own. */}
+      {useDayList && (
+        <>
+          {gridContextChips.length > 0 && (
+            <SchedulingContextBar
+              className="shrink-0"
+              chips={gridContextChips}
+            />
+          )}
+          {zoneLine}
+        </>
       )}
 
       {picker}

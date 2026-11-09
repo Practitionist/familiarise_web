@@ -10,7 +10,12 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
 
 jest.mock("@/components/scheduling/SafeUnifiedCalendar", () => ({
-  SafeUnifiedCalendar: () => <div data-testid="week-grid" />,
+  SafeUnifiedCalendar: (props: { contextChips?: { value: string }[] }) => (
+    <div
+      data-testid="week-grid"
+      data-chips={props.contextChips?.map((chip) => chip.value).join("|")}
+    />
+  ),
 }));
 jest.mock("@/components/scheduling/MobileDayListPicker", () => ({
   MobileDayListPicker: (props: { timesNeeded: number; zone: string }) => (
@@ -103,6 +108,11 @@ describe("TimePicker for a subscription reschedule", () => {
       screen.getByText("All 3 sessions are released."),
     ).toBeInTheDocument();
     expect(screen.getByText(/Pick 3 times\./)).toBeInTheDocument();
+    // The notice rule rides the grid's context row, not a banner above it.
+    expect(screen.queryByText(/Note:/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("week-grid").dataset.chips).toBe(
+      "not within 24 h of the start · not refunded",
+    );
   });
 
   it("on a phone shows the day list, and Any time works stays reachable", async () => {
@@ -120,6 +130,10 @@ describe("TimePicker for a subscription reschedule", () => {
     expect(dayList).toHaveAttribute("data-zone", "Asia/Kolkata");
     expect(screen.queryByTestId("week-grid")).not.toBeInTheDocument();
     expect(screen.queryByText(/desktop/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId("scheduling-context").textContent).toContain(
+      "not within 24 h of the start",
+    );
+    expect(screen.getByTestId("zone-switch")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Any time works" }));
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ proposedSlots: undefined }),

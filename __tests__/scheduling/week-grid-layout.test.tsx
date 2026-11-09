@@ -429,3 +429,38 @@ describe("UnifiedCalendar session tray", () => {
     expect(tray.textContent).toContain("Only 7 of 9 weeks have room.");
   });
 });
+
+describe("UnifiedCalendar context row", () => {
+  it("puts the plan, window, earliest start and zone on one row of chips", () => {
+    calendarData.leadMs = 2 * 60 * 60 * 1000;
+    render(
+      <UnifiedCalendar
+        consultantId="consultant-1"
+        eventType="class"
+        eventId="class-1"
+        mode="allocate"
+        sessionDurationInHours={1}
+        sessionsPerWeek={2}
+        totalSessions={8}
+        allowedStart={new Date(at(10, 0))}
+        allowedEnd={new Date(at(30, 0))}
+        viewerZone={ZONE}
+        showZoneSwitch={false}
+        zoneSlot={<span>Zone line</span>}
+        contextChips={[{ key: "class-plan", label: "Class", value: "Monthly" }]}
+        focus={{ at: FOCUS_AT, precision: "session" }}
+      />,
+    );
+    const row = screen.getByTestId("scheduling-context");
+    const text = row.textContent ?? "";
+    expect(text).toMatch(/^Class Monthly/);
+    expect(text).toContain("Plan 2 a week · 1 hour each");
+    expect(text).toMatch(/Scheduling period 10 Jun 2030/);
+    expect(text).toContain("Earliest start");
+    expect(text).toContain("Zone line");
+    // The class daily cap reads from the one cap table, not the weekly count.
+    expect(screen.getByTestId("session-tray").textContent).toContain(
+      "At most 2 sessions",
+    );
+  });
+});

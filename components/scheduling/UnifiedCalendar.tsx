@@ -103,6 +103,7 @@ import {
 import {
   formatClockTime,
   formatDateLabel,
+  formatDateTimeLabel,
   formatDateRangeLabel,
   formatDayLabel,
   formatMonthLabel,
@@ -119,6 +120,10 @@ import {
   weekRowModel,
 } from "@/lib/time/grid-zone";
 import { ZoneSwitch } from "@/components/scheduling/ZoneSwitch";
+import {
+  SchedulingContextBar,
+  type ContextChip,
+} from "@/components/scheduling/SchedulingContextBar";
 import {
   SessionTray,
   type TrayMeter,
@@ -465,6 +470,10 @@ export interface UnifiedCalendarProps {
   expectedTentativeSlotCount?: number;
   onClose?: () => void;
   showAllocationButtons?: boolean;
+  /** Chips the host knows and the grid does not (a reschedule's notice rule, the plan's name), shown first. */
+  contextChips?: readonly ContextChip[];
+  /** The host's zone line, shown at the end of the context row when the host owns the zone switch. */
+  zoneSlot?: React.ReactNode;
   /** The status legend: in the session tray while picking, above the grid when read-only. */
   legend?: React.ReactNode;
   /** Plan warnings for the session tray. */
@@ -582,6 +591,8 @@ export function UnifiedCalendar({
   showAllocationButtons = false,
   legend,
   warnings,
+  contextChips,
+  zoneSlot,
   releasingOccurrenceIds,
   lead,
   requestedSlots,
@@ -1511,6 +1522,59 @@ export function UnifiedCalendar({
   })();
 
   const showTray = mode !== "view";
+  const sessionHours =
+    eventType === "consultation" || eventType === "webinar"
+      ? durationInHours
+      : sessionDurationInHours;
+  const sessionLength = formatDurationLabel((sessionHours || 1) * 60);
+  const contextBarChips: ContextChip[] = [
+    ...(contextChips ?? []),
+    isRecurringEventType(eventType) && sessionsPerWeek
+      ? {
+          key: "cadence",
+          label: "Plan",
+          value: `${sessionsPerWeek} a week · ${sessionLength} each`,
+        }
+      : { key: "cadence", label: "Session", value: sessionLength },
+    ...(quota
+      ? [
+          {
+            key: "week",
+            label: quota.unit === "week" ? "Week" : "Month",
+            value: `${quota.weekNumber} of ${quota.weekCount}`,
+          },
+          {
+            key: "plan-end",
+            label: "Plan ends",
+            value: formatDateLabel(
+              lastInstantBefore(new Date(quota.planEndsAt)),
+              { zone: gridZone },
+            ),
+          },
+        ]
+      : []),
+    ...(allowedStart && allowedEnd
+      ? [
+          {
+            key: "window",
+            label: windowBannerLabel(eventType),
+            value: formatAllowedRange(gridZone, allowedStart, allowedEnd),
+          },
+        ]
+      : []),
+    ...(leadMs
+      ? [
+          {
+            key: "earliest",
+            label: "Earliest start",
+            value: formatDateTimeLabel(new Date(nowMs + leadMs), {
+              zone: gridZone,
+            }),
+            title: `Times need ${leadLabel(leadMs)} notice, so nothing before this can be picked.`,
+          },
+        ]
+      : []),
+  ];
   const perDayCap =
     quota?.perDayCap ??
     (eventType === "class" || eventType === "subscription"
@@ -1645,29 +1709,29 @@ export function UnifiedCalendar({
         </div>
       )}
 
-      {allowedStart && allowedEnd && (
-        <div className="shrink-0 rounded-md border border-blue-200 bg-blue-50 px-4 py-3">
-          <div className="flex items-start">
-            <Calendar
-              className="mr-2 h-5 w-5 flex-shrink-0 text-blue-600"
-              aria-hidden
+      <SchedulingContextBar
+        className="shrink-0"
+        chips={contextBarChips}
+        trailing={
+          showZoneSwitch ? (
+            <ZoneSwitch
+              className="shrink-0"
+              zone={gridZone}
+              usingDeviceZone={canSwitchZone && usingDeviceZone}
+              canSwitch={canSwitchZone}
+              onToggle={() => setUsingDeviceZone((value) => !value)}
+              now={now}
             />
-            <div className="flex-1">
-              <p className="text-sm font-medium text-blue-800">
-                {windowBannerLabel(eventType)}
-              </p>
-              <p className="text-sm text-blue-700">
-                {formatAllowedRange(gridZone, allowedStart, allowedEnd)}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+          ) : (
+            zoneSlot
+          )
+        }
+      />
 
       {refreshFailed && (
         <div
           role="alert"
-          className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900"
+          className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs text-amber-900"
         >
           <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
           <span className="flex-1">
@@ -1687,7 +1751,7 @@ export function UnifiedCalendar({
       {eventSlotsFailed && (
         <div
           role="alert"
-          className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900"
+          className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs text-amber-900"
         >
           <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
           <span className="flex-1">
@@ -1838,17 +1902,6 @@ export function UnifiedCalendar({
               <div className="hidden w-20 sm:block" />
             )}
           </div>
-
-          {showZoneSwitch && (
-            <ZoneSwitch
-              className="shrink-0"
-              zone={gridZone}
-              usingDeviceZone={canSwitchZone && usingDeviceZone}
-              canSwitch={canSwitchZone}
-              onToggle={() => setUsingDeviceZone((value) => !value)}
-              now={now}
-            />
-          )}
 
           {view === "week" ? (
             <div className="flex min-h-0 flex-1 flex-col">

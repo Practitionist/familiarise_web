@@ -6,7 +6,6 @@ import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportF
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import Link from "next/link";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   allowsManageTimings,
@@ -167,38 +166,26 @@ export default async function ManageTimingsPage({
       {/* The OFFERING now lives in the breadcrumb (ManageTimingsClient sets it
           via useSetBreadcrumbLabel) — see the reschedule/allocate pages
           (#1064). */}
-      <div className="shrink-0 space-y-4">
+      <div className="shrink-0">
         <PanelHeader description={resolved.description} />
-
-        {resolved.classInfo && (
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge variant="outline">
-              Plan: {planTypeLabel(resolved.classInfo.planType)}
-            </Badge>
-            <span>
-              {resolved.classInfo.sessionsPerWeek} meetings/week ·{" "}
-              {resolved.classInfo.durationInMonths} month
-              {resolved.classInfo.durationInMonths !== 1 ? "s" : ""} ·{" "}
-              {resolved.classInfo.durationInHours}h/session
-            </span>
-          </div>
-        )}
-
-        {resolved.classInfo && (
-          <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
-            Tip: Each class is{" "}
-            {Math.ceil(resolved.classInfo.durationInHours / 0.5)} consecutive
-            30-min slots. Complete an in-progress class before starting another.
-            Max {resolved.classInfo.sessionsPerWeek} classes per day; weekly
-            limit applies.
-          </div>
-        )}
       </div>
 
+      {/* Cadence, session length and the daily cap ride the grid's context row and tray. */}
       <ManageTimingsClient
         subject={resolved.subject}
         backHref={backHref}
         title={resolved.title}
+        contextChips={
+          resolved.classInfo
+            ? [
+                {
+                  key: "class-plan",
+                  label: "Class",
+                  value: `${planTypeLabel(resolved.classInfo.planType)} · ${resolved.classInfo.durationInMonths} month${resolved.classInfo.durationInMonths === 1 ? "" : "s"}`,
+                },
+              ]
+            : undefined
+        }
       />
     </DashboardViewportFill>
   );

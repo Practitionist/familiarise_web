@@ -9,6 +9,7 @@ import {
   type TimePickerSubject,
 } from "@/components/scheduling/time-picker-policy";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
+import type { ContextChip } from "@/components/scheduling/SchedulingContextBar";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { Button } from "@/components/ui/button";
 
@@ -23,10 +24,12 @@ export function ManageTimingsClient({
   subject,
   backHref,
   title,
+  contextChips,
 }: Readonly<{
   subject: TimePickerSubject;
   backHref: string;
   title: string;
+  contextChips?: ContextChip[];
 }>) {
   const router = useRouter();
   const { zone: viewerZone } = useViewerZone();
@@ -77,6 +80,7 @@ export function ManageTimingsClient({
         policy={policy}
         subject={subject}
         onCancel={goBack}
+        contextChips={contextChips}
       />
     </div>
   );
