@@ -1,4 +1,7 @@
-import { MESSAGE_REVIEW_ARTICLE_HREF } from "@/lib/compliance/purpose-codes";
+import {
+  MESSAGE_REVIEW_ARTICLE_HREF,
+  MESSAGE_REVIEW_NOTICE,
+} from "@/lib/compliance/purpose-codes";
 import { LegalLink } from "./LegalLink";
 
 const DETAILS = {
@@ -50,13 +53,11 @@ export function DataProtectionNotice({
         ))}
       </ul>
       <p>
-        Our error reports don&apos;t include your name, email or phone number.
+        Our error reports are sent without your account details, and email
+        addresses in them are removed.
       </p>
       <p>
-        We automatically check chats for fraud, requests to pay outside
-        Familiarise, shared contact details and safety issues. If a booking is
-        reported, our support team may read its chat, and may join it visibly as
-        &ldquo;Familiarise Support&rdquo;.{" "}
+        {MESSAGE_REVIEW_NOTICE}{" "}
         <LegalLink href={MESSAGE_REVIEW_ARTICLE_HREF}>
           How we review messages
         </LegalLink>

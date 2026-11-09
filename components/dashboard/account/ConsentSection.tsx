@@ -251,9 +251,10 @@ export function ConsentSection() {
           </h3>
           <p className="text-xs text-muted-foreground">
             The required purposes below are needed while your account is open.
-            They include keeping the platform secure; our error reports
-            don&apos;t include your name, email or phone number. You can turn
-            optional purposes on or off anytime without affecting your bookings.
+            They include keeping the platform secure. Error reports are sent
+            without your account details, and email addresses in them are
+            removed. You can turn optional purposes on or off anytime without
+            affecting your bookings.
           </p>
           <ul className="divide-y divide-border">
             {SIGNUP_PURPOSES.map((code) => {

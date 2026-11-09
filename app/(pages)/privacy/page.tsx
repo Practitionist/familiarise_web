@@ -192,9 +192,7 @@ export default function PrivacyPolicyPage() {
                 3.5 What We Use Your Data For, and How Long We Keep It
               </h3>
               <p>
-                As India&rsquo;s Digital Personal Data Protection Act, 2023 and
-                the Digital Personal Data Protection Rules, 2025 require, the
-                table below lists the personal data we process, the specific
+                The table below lists the personal data we process, the specific
                 reason for each, and how long we keep it:
               </p>
               <div className="overflow-x-auto my-4">
@@ -286,8 +284,8 @@ export default function PrivacyPolicyPage() {
                       <td className="p-2 align-top">
                         <strong>Keeping the platform secure</strong> — Find
                         technical faults, failed checkouts and security
-                        incidents without exposing your name, email or phone
-                        number.
+                        incidents. Reports are sent without your account
+                        details, and email addresses in them are removed.
                       </td>
                       <td className="p-2 align-top">
                         <strong>Legal minimum</strong> — 30–90 days in our
