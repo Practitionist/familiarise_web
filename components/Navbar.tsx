@@ -1,23 +1,6 @@
 "use client";
 
-import {
-  ChevronDown,
-  Menu,
-  X,
-  Search,
-  Users,
-  GraduationCap,
-  Briefcase,
-  ArrowRightLeft,
-  UserCheck,
-  Building2,
-  HelpCircle,
-  Info,
-  Mail,
-  Presentation,
-  Layers,
-  Star,
-} from "lucide-react";
+import { ChevronDown, Menu, X } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import {
   accountBaseLinks,
@@ -51,236 +34,15 @@ import { useCurrency, SUPPORTED_CURRENCIES } from "@/hooks/useCurrency";
 import { RATE_PROVIDER_NAME, RATE_PROVIDER_URL } from "@/lib/currency-codes";
 import { resolveAuthView, useRememberedAuth } from "@/hooks/useRememberedAuth";
 import { hasDarkHero, isChromeHidden } from "@/lib/navigation/public-chrome";
+import {
+  NAV_FLAT_LINKS,
+  NAV_GROUPS,
+  type NavDropdownGroup,
+  type NavDropdownItem,
+} from "@/lib/navigation/public-nav";
 import { useAnnouncementBar } from "@/providers/AnnouncementBarProvider";
 
 const defaultUserImage = "/avif/static/assets/default-profile.avif";
-
-// ─── Nav Data ────────────────────────────────────────────────────────────────
-
-interface NavDropdownItem {
-  label: string;
-  href: string;
-  description: string;
-  icon: React.ElementType;
-  /** Not yet available: renders a "Soon" pill and routes to /contactus. */
-  disabled?: boolean;
-}
-
-interface NavCategoryChip {
-  label: string;
-  href: string;
-}
-
-/** A titled column inside a mega-menu panel. */
-interface NavColumn {
-  heading: string;
-  items: NavDropdownItem[];
-}
-
-interface NavDropdownGroup {
-  label: string;
-  /** Single-column panel (w-80) vs multi-column mega panel. */
-  variant: "list" | "mega";
-  columns: NavColumn[];
-  categoryChips?: NavCategoryChip[];
-}
-
-// Catalog first: a marketplace's nav should open onto its inventory, the way
-// Toptal leads with "Hire Talent" and Maven with "Courses". "Use Cases" led
-// before, which put marketing ahead of the thing people came to browse.
-const EXPLORE_COLUMNS: NavColumn[] = [
-  {
-    heading: "Experts",
-    items: [
-      {
-        label: "Find experts",
-        href: "/explore/experts",
-        description: "Browse verified consultants across domains",
-        icon: Search,
-      },
-      {
-        label: "Browse by domain",
-        href: "/explore/experts#domains",
-        description: "Technology, business, health, and more",
-        icon: Layers,
-      },
-      {
-        label: "Top rated",
-        // Anchor as well as sort — without it the sort applies but the user
-        // lands at the top of the page and never sees the sorted list.
-        href: "/explore/experts?sort=rating#all-experts",
-        description: "Highest-rated experts on Familiarise",
-        icon: Star,
-      },
-    ],
-  },
-  {
-    heading: "Programs",
-    items: [
-      {
-        label: "Classes",
-        href: "/explore/programs?tab=class",
-        description: "Multi-session cohorts and courses",
-        icon: GraduationCap,
-      },
-      {
-        label: "Webinars",
-        href: "/explore/programs?tab=webinar",
-        description: "Single live sessions with an expert",
-        icon: Presentation,
-      },
-      {
-        label: "All programs",
-        href: "/explore/programs",
-        description: "Everything on offer right now",
-        icon: Layers,
-      },
-    ],
-  },
-  {
-    heading: "Organisations",
-    items: [
-      {
-        label: "All organisations",
-        href: "/explore/enterprise/organisations",
-        description: "Expert networks, agencies, and institutions",
-        icon: Building2,
-      },
-      {
-        label: "Expert networks",
-        href: "/explore/enterprise/organisations?type=EXPERT_NETWORK",
-        description: "Curated panels you can book directly",
-        icon: Users,
-      },
-      {
-        label: "Learning institutions",
-        href: "/explore/enterprise/organisations?type=LEARNING_INSTITUTION",
-        description: "Universities and research institutes",
-        icon: GraduationCap,
-      },
-    ],
-  },
-];
-
-const EXPLORE_CATEGORIES: NavCategoryChip[] = [
-  { label: "Technology", href: "/explore/experts?domain=Technology" },
-  { label: "Business", href: "/explore/experts?domain=Business" },
-  {
-    label: "Creative Arts",
-    href: `/explore/experts?domain=${encodeURIComponent("Creative Arts")}`,
-  },
-  { label: "Education", href: "/explore/experts?domain=Education" },
-  { label: "Health", href: "/explore/experts?domain=Health" },
-  {
-    label: "Personal Dev",
-    href: `/explore/experts?domain=${encodeURIComponent("Personal Development")}`,
-  },
-];
-
-// B2C use cases only. B2B lives in the Enterprise dropdown.
-const SOLUTIONS_COLUMNS: NavColumn[] = [
-  {
-    heading: "By goal",
-    items: [
-      {
-        label: "College students",
-        href: "/use-cases/college-students",
-        description: "Get career guidance before you graduate",
-        icon: GraduationCap,
-      },
-      {
-        label: "Early-career professionals",
-        href: "/use-cases/early-career",
-        description: "Accelerate your first 1–5 years",
-        icon: Briefcase,
-      },
-      {
-        label: "Career switchers",
-        href: "/use-cases/career-switchers",
-        description: "Navigate the service-to-product transition",
-        icon: ArrowRightLeft,
-      },
-      {
-        label: "Long-term mentorship",
-        href: "/use-cases/mentorship",
-        description: "Ongoing guidance from industry experts",
-        icon: UserCheck,
-      },
-    ],
-  },
-];
-
-const ENTERPRISE_COLUMNS: NavColumn[] = [
-  {
-    heading: "Programs",
-    items: [
-      {
-        label: "Overview",
-        href: "/enterprise",
-        description: "Familiarise for organisations",
-        icon: Building2,
-      },
-      {
-        label: "Team training",
-        href: "/enterprise/team-training",
-        description: "Licensed seats for a whole cohort",
-        icon: GraduationCap,
-      },
-      {
-        label: "Corporate mentorship",
-        href: "/enterprise/corporate-mentorship",
-        description: "Credit pools for 1:1 expert sessions",
-        icon: Users,
-      },
-      {
-        label: "Talk to sales",
-        href: "/contactus",
-        description: "Tell us what your organisation needs",
-        icon: Mail,
-      },
-    ],
-  },
-];
-
-const RESOURCE_COLUMNS: NavColumn[] = [
-  {
-    heading: "Resources",
-    items: [
-      {
-        label: "How it works",
-        href: "/#how-it-works",
-        description: "See how Familiarise works",
-        icon: HelpCircle,
-      },
-      {
-        label: "About",
-        href: "/about",
-        description: "Our company and what we do",
-        icon: Info,
-      },
-      {
-        label: "Contact",
-        href: "/contactus",
-        description: "Get in touch with our team",
-        icon: Mail,
-      },
-    ],
-  },
-];
-
-const NAV_GROUPS: NavDropdownGroup[] = [
-  {
-    label: "Explore",
-    variant: "mega",
-    columns: EXPLORE_COLUMNS,
-    categoryChips: EXPLORE_CATEGORIES,
-  },
-  // Single B2C column — list panel, not a half-empty mega.
-  { label: "Solutions", variant: "list", columns: SOLUTIONS_COLUMNS },
-  { label: "Resources", variant: "list", columns: RESOURCE_COLUMNS },
-  // B2B programs only — org directory lives under Explore → Organisations.
-  { label: "Enterprise", variant: "list", columns: ENTERPRISE_COLUMNS },
-];
 
 // ─── Dropdown Panel (Desktop) ────────────────────────────────────────────────
 
@@ -292,18 +54,8 @@ function DropdownLink({
   onClose: () => void;
 }) {
   const Icon = item.icon;
-  return (
-    <Link
-      href={item.disabled ? "/contactus" : item.href}
-      onClick={onClose}
-      // Not a real `disabled` — these still navigate (to /contactus), so the
-      // "Soon" state has to reach assistive tech through the label rather than
-      // a visual pill alone.
-      aria-label={item.disabled ? `${item.label} — coming soon` : undefined}
-      className={`flex items-start gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-        item.disabled ? "opacity-60" : "hover:bg-muted"
-      }`}
-    >
+  const body = (
+    <>
       <div className="mt-0.5 w-8 h-8 rounded-lg bg-muted flex items-center justify-center shrink-0">
         <Icon className="w-4 h-4 text-muted-foreground" />
       </div>
@@ -320,6 +72,26 @@ function DropdownLink({
           {item.description}
         </p>
       </div>
+    </>
+  );
+  const rowClass = "flex items-start gap-3 px-3 py-2.5 rounded-lg";
+  if (item.disabled) {
+    return (
+      <div
+        aria-disabled="true"
+        className={`${rowClass} opacity-60 cursor-not-allowed`}
+      >
+        {body}
+      </div>
+    );
+  }
+  return (
+    <Link
+      href={item.href}
+      onClick={onClose}
+      className={`${rowClass} transition-colors hover:bg-muted`}
+    >
+      {body}
     </Link>
   );
 }
@@ -384,7 +156,7 @@ function DesktopDropdownPanel({
       {group.categoryChips && group.categoryChips.length > 0 && (
         <div className="border-t border-border px-4 py-3">
           <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">
-            By Category
+            {group.categoryHeading ?? "By Category"}
           </p>
           <div className="flex flex-wrap gap-1.5">
             {group.categoryChips.map((chip) => (
@@ -613,15 +385,16 @@ const Navbar = () => {
                 />
               ))}
 
-              {/* Pricing — flat link */}
-              <Link href="/pricing">
-                <Button
-                  variant="ghost"
-                  className={`font-medium lg:px-3 xl:px-4 ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
-                >
-                  Pricing
-                </Button>
-              </Link>
+              {NAV_FLAT_LINKS.map((link) => (
+                <Link key={link.href} href={link.href}>
+                  <Button
+                    variant="ghost"
+                    className={`font-medium lg:px-3 xl:px-4 ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
+                  >
+                    {link.label}
+                  </Button>
+                </Link>
+              ))}
             </div>
 
             {/* Desktop Auth / CTA Buttons */}
@@ -837,30 +610,41 @@ const Navbar = () => {
                                 {column.heading}
                               </p>
                             )}
-                            {column.items.map((item) => (
-                              <Link
-                                key={item.href + item.label}
-                                href={item.disabled ? "/contactus" : item.href}
-                                onClick={closeMenu}
-                                className={`block px-4 py-2.5 rounded-lg transition-colors ${
-                                  item.disabled
-                                    ? "opacity-50"
-                                    : "hover:bg-zinc-800"
-                                }`}
-                              >
-                                <span className="text-sm font-medium text-white flex items-center gap-2">
-                                  {item.label}
-                                  {item.disabled && (
-                                    <span className="text-[10px] uppercase tracking-wider text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded">
-                                      Soon
-                                    </span>
-                                  )}
-                                </span>
-                                <span className="text-xs text-zinc-500 mt-0.5 block">
-                                  {item.description}
-                                </span>
-                              </Link>
-                            ))}
+                            {column.items.map((item) => {
+                              const label = (
+                                <>
+                                  <span className="text-sm font-medium text-white flex items-center gap-2">
+                                    {item.label}
+                                    {item.disabled && (
+                                      <span className="text-[10px] uppercase tracking-wider text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded">
+                                        Soon
+                                      </span>
+                                    )}
+                                  </span>
+                                  <span className="text-xs text-zinc-500 mt-0.5 block">
+                                    {item.description}
+                                  </span>
+                                </>
+                              );
+                              return item.disabled ? (
+                                <div
+                                  key={item.href + item.label}
+                                  aria-disabled="true"
+                                  className="block px-4 py-2.5 rounded-lg opacity-50"
+                                >
+                                  {label}
+                                </div>
+                              ) : (
+                                <Link
+                                  key={item.href + item.label}
+                                  href={item.href}
+                                  onClick={closeMenu}
+                                  className="block px-4 py-2.5 rounded-lg transition-colors hover:bg-zinc-800"
+                                >
+                                  {label}
+                                </Link>
+                              );
+                            })}
                           </div>
                         ))}
 
@@ -869,7 +653,7 @@ const Navbar = () => {
                           group.categoryChips.length > 0 && (
                             <div className="px-4 pt-2">
                               <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 mb-2">
-                                By Category
+                                {group.categoryHeading ?? "By Category"}
                               </p>
                               <div className="flex flex-wrap gap-1.5">
                                 {group.categoryChips.map((chip) => (
@@ -891,14 +675,16 @@ const Navbar = () => {
                 ))}
               </Accordion>
 
-              {/* Pricing — flat link */}
-              <Link
-                href="/pricing"
-                className="flex items-center gap-3 px-4 py-3 rounded-xl text-white hover:bg-zinc-800 transition-colors mt-1"
-                onClick={closeMenu}
-              >
-                <span className="font-medium">Pricing</span>
-              </Link>
+              {NAV_FLAT_LINKS.map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className="flex items-center gap-3 px-4 py-3 rounded-xl text-white hover:bg-zinc-800 transition-colors mt-1"
+                  onClick={closeMenu}
+                >
+                  <span className="font-medium">{link.label}</span>
+                </Link>
+              ))}
 
               {/* Mobile Currency Selector */}
               <div className="px-4 pt-4 mt-2 border-t border-zinc-800">

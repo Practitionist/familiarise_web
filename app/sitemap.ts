@@ -1,6 +1,10 @@
 import type { MetadataRoute } from "next";
 
-import { listIndexableExpertIds } from "@/lib/data/indexable-experts";
+import {
+  listIndexableDomainNames,
+  listIndexableExpertIds,
+} from "@/lib/data/indexable-experts";
+import { domainPath } from "@/lib/explore/domain-slug";
 import { listIndexableEventPlanIds } from "@/lib/data/indexable-plans";
 import { reportSentryError } from "@/lib/observability/report";
 import {
@@ -40,10 +44,14 @@ async function eventPlanRoutes(): Promise<
 /** Expert profile pages; a database failure leaves only the static routes. */
 async function expertRoutes(): Promise<{ path: string; priority: number }[]> {
   try {
-    return (await listIndexableExpertIds()).map((id) => ({
-      path: `/explore/experts/${id}`,
-      priority: 0.7,
-    }));
+    const [ids, domains] = await Promise.all([
+      listIndexableExpertIds(),
+      listIndexableDomainNames(),
+    ]);
+    return [
+      ...domains.map((name) => ({ path: domainPath(name), priority: 0.8 })),
+      ...ids.map((id) => ({ path: `/explore/experts/${id}`, priority: 0.7 })),
+    ];
   } catch (error) {
     reportSentryError(error, { subsystem: "seo", op: "sitemap-experts" });
     return [];

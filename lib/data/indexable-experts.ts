@@ -13,3 +13,17 @@ export async function listIndexableExpertIds(): Promise<string[]> {
   });
   return rows.map((row) => row.id);
 }
+
+/** Every field that has at least one verified expert, for its category page. */
+export async function listIndexableDomainNames(): Promise<string[]> {
+  const rows = await prisma.domain.findMany({
+    where: {
+      consultantProfiles: {
+        some: { verificationStatus: "VERIFIED", deletedAt: null },
+      },
+    },
+    select: { name: true },
+    orderBy: { name: "asc" },
+  });
+  return rows.map((row) => row.name);
+}
