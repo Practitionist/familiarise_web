@@ -798,6 +798,58 @@ export async function handlePaymentSuccess(
           }
 
           if (metadata.trialId) {
+            // Nobody pays for a trial whose held session already started: the
+            // hold is released, the trial cancelled, and the capture refunded.
+            const startedHold = await tx.appointmentOccurrence.findFirst({
+              where: {
+                appointmentId: appointment.id,
+                isTentative: true,
+                deletedAt: null,
+                startsAt: { lte: new Date() },
+              },
+              select: { id: true },
+            });
+            if (startedHold) {
+              try {
+                await transitionTrial(tx, {
+                  reason: "PAID_AFTER_SESSION_STARTED",
+                  appointmentId: appointment.id,
+                  where: { id: metadata.trialId },
+                  to: TrialStatus.CANCELLED,
+                  fromIn: [TrialStatus.AWAITING_PAYMENT],
+                  data: { pendingPaymentUrl: null, paymentDueAt: null },
+                });
+              } catch (err) {
+                if (!(err instanceof IllegalTransitionError)) throw err;
+              }
+              await transitionOccurrenceCompletion(tx, {
+                actorUserId: null,
+                reason: "PAID_AFTER_SESSION_STARTED",
+                where: {
+                  appointmentId: appointment.id,
+                  isTentative: true,
+                  deletedAt: null,
+                },
+                to: OccurrenceCompletionStatus.CANCELLED,
+                data: { deletedAt: new Date() },
+                allowZero: true,
+              });
+              await tx.payment.update({
+                where: { id: payment.id },
+                data: {
+                  description: autoRefundPendingDescription(
+                    `trial ${metadata.trialId} was paid after its session started`,
+                  ),
+                },
+              });
+              await parkCapture();
+              return {
+                outcome: "captured_after_release",
+                paymentId: payment.id,
+                releasedBy: `trial session started before payment (${metadata.trialId})`,
+              };
+            }
+
             let scheduled = { count: 0 };
             try {
               await transitionTrial(tx, {
