@@ -14,6 +14,8 @@ export function TimelineStrip({ events }: { events: TimelineEvent[] }) {
     <ol className="relative space-y-3 text-sm">
       {events.map((event, i) => {
         const failed = event.kind === "refund-failed";
+        let srPrefix = event.done ? "Done: " : "Next: ";
+        if (failed) srPrefix = "Problem: ";
         return (
           <li key={`${event.label}-${i}`} className="relative flex gap-3">
             {i < events.length - 1 && (
@@ -41,9 +43,7 @@ export function TimelineStrip({ events }: { events: TimelineEvent[] }) {
                   failed && "text-destructive",
                 )}
               >
-                <span className="sr-only">
-                  {event.done ? "Done: " : "Next: "}
-                </span>
+                <span className="sr-only">{srPrefix}</span>
                 {event.label}
               </p>
               {event.at && (
