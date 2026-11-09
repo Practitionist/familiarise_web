@@ -216,7 +216,7 @@ The feature flags (`ENABLE_*`, `TDS_ENGINE`, `RATE_CARD_SCOPED_RESOLUTION`), the
 
 ### Payment rails
 
-Razorpay is the only live rail (INR settlement); Stripe was removed from the code on 2026-10-04. `DODO_PAYMENTS` exists only as a `PaymentGateway` enum value. There is no client, checkout path, webhook handler, payout submitter or timeline behind it, and it throws `UnsupportedGatewayError` if it ever reaches gateway routing, a refund or a payout. Dodo has never moved money and appears in no reconciliation or filing. Lemon Squeezy and XFlow were evaluated in March 2026, rejected and removed. See [the gateway page](docs/finance/10-money-in/04-razorpay-gateway-and-currency.md).
+Razorpay is the only live rail (INR settlement); Stripe was removed from the code on 2026-10-04. `DODO_PAYMENTS` exists only as a `PaymentGateway` enum value. There is no client, checkout path, webhook handler, payout submitter or timeline behind it, and it throws `UnsupportedGatewayError` if it ever reaches gateway routing, a refund or a payout. Dodo has never moved money and appears in no reconciliation or filing. The other options were evaluated and are either rejected or deferred with a revisit trigger; none has code. See [the gateway decision](docs/decisions/2026-11-09-payment-gateways-one-rail.md) and [the gateway page](docs/finance/10-money-in/04-razorpay-gateway-and-currency.md).
 
 ### Production vs local checklist
 
