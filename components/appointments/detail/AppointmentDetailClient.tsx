@@ -22,6 +22,7 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { throwSupportError } from "@/lib/support/error-copy";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
+import { formatRole } from "@/components/collaborators/format";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 import type {
   AppointmentActionAdapter,
@@ -618,7 +619,10 @@ export function AppointmentDetailClient({
                 <p className="text-xs text-muted-foreground mt-2">
                   Collaborators:{" "}
                   {vm.collaborators
-                    .map((c) => `${c.name}${c.role ? ` (${c.role})` : ""}`)
+                    .map(
+                      (c) =>
+                        `${c.name}${c.role ? ` (${formatRole(c.role)})` : ""}`,
+                    )
                     .join(", ")}
                 </p>
               )}

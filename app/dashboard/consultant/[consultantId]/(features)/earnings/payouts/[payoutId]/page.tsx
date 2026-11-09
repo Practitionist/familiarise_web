@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { formatInTimeZone } from "date-fns-tz";
+import { payoutMethodLabel } from "@/lib/labels/money-labels";
 
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Section, KeyValueList } from "@/components/dashboard/Section";
@@ -11,7 +12,6 @@ import {
   derivePayoutPresentation,
   presentationBadge,
 } from "@/lib/dashboard/earnings-state";
-import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 type PageProps = {
@@ -87,7 +87,7 @@ export default async function PayoutDetailPage({
                 ]
               : []),
             { label: "Net to your account", value: money(payout.netPaise) },
-            { label: "Method", value: humanizeEnum(payout.method) },
+            { label: "Method", value: payoutMethodLabel(payout.method) },
             ...(payout.utr ? [{ label: "UTR", value: payout.utr }] : []),
           ]}
         />

@@ -102,7 +102,8 @@ const ORG_CATEGORY_FIELDS: ToggleField<EmailCategoryColumn>[] = [
   {
     key: "orgBillingAlerts",
     label: "Billing & payouts",
-    description: "Invoices, dunning, wallet balance, payouts, and overages",
+    description:
+      "Invoices, overdue-payment reminders, wallet balance, payouts, and extra charges",
   },
   {
     key: "orgMembershipAlerts",

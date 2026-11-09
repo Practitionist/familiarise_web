@@ -112,7 +112,7 @@ export async function POST(
     if (isMissing) {
       return NextResponse.json(
         {
-          error: `No TXT record found at ${lookupHost}. Add the record shown on the claim and retry.`,
+          error: `We couldn't find the verification record for ${domain} yet. Add the record shown on your domain claim at your domain provider, then try again. It can take a few minutes to appear.`,
           code: "DNS_VERIFICATION_FAILED",
         },
         { status: 422 },
@@ -132,7 +132,8 @@ export async function POST(
     );
     return NextResponse.json(
       {
-        error: "DNS lookup failed — please retry in a moment.",
+        error:
+          "We couldn't check your domain just now. Please try again in a moment.",
         code: "DNS_RESOLVE_ERROR",
       },
       { status: 502 },
@@ -148,7 +149,7 @@ export async function POST(
   if (!matched) {
     return NextResponse.json(
       {
-        error: `TXT record at ${lookupHost} did not match the expected token. Check the value on your DNS provider and retry.`,
+        error: `We found a record for ${domain}, but its value doesn't match the one shown on your domain claim. Copy the value again at your domain provider and try again.`,
         code: "DNS_VERIFICATION_FAILED",
         observedCount: records.length,
       },

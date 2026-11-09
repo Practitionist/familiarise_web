@@ -54,6 +54,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { PlatformFeedbackStatus } from "@prisma/client";
 import type { PlatformFeedback, FeedbackCounts } from "@/types/feedback";
+import { PLATFORM_FEEDBACK_STATUS_LABEL } from "@/lib/labels/session-labels";
 
 interface FeedbackListResponse {
   feedbacks: PlatformFeedback[];
@@ -339,7 +340,7 @@ export function FeedbackPage({
       header: "Status",
       cell: (feedback) => (
         <Badge variant="outline" className={getStatusColor(feedback.status)}>
-          {feedback.status.replace("_", " ")}
+          {PLATFORM_FEEDBACK_STATUS_LABEL[feedback.status]}
         </Badge>
       ),
     },

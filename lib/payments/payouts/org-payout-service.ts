@@ -65,6 +65,7 @@ import {
   type StagedRecipientEmail,
 } from "@/lib/email/send-to-recipients";
 import { getAppUrl } from "@/lib/url";
+import { payoutNoticeReason } from "@/lib/dashboard/earnings-state";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
   buildPayoutCompletionPostings,
@@ -1746,6 +1747,144 @@ async function emailOrgPayoutFailed(
   }
 }
 
+/**
+ * Returns an unpaid organisation payout's earnings to READY, drops its TDS rows,
+ * records the outcome and stages the notices, inside the caller's transaction.
+ */
+async function settleUnpaidOrgPayoutTx(
+  tx: Tx,
+  {
+    payoutId,
+    kind,
+    reason,
+    reversedFrom,
+  }: {
+    payoutId: string;
+    kind: "FAILED" | "REVERSED";
+    reason: string;
+    reversedFrom?: "COMPLETED" | "PROCESSING";
+  },
+) {
+  await tx.organizationEarnings.updateMany({
+    where: { orgPayoutId: payoutId, status: "BATCHED" },
+    data: { status: "READY", orgPayoutId: null },
+  });
+
+  await tx.tDSRecord.deleteMany({
+    where: { orgPayoutId: payoutId, isReversal: false },
+  });
+  await releaseClawbackRecovery(tx, payoutId);
+
+  const payout = await tx.organizationPayout.findUniqueOrThrow({
+    where: { id: payoutId },
+    select: {
+      id: true,
+      organizationId: true,
+      netPayoutPaise: true,
+      currency: true,
+      organization: { select: { name: true } },
+    },
+  });
+
+  await recordOrgPayoutFailureOutcome(tx, {
+    organizationId: payout.organizationId,
+    payoutId,
+    kind,
+    reversedFrom,
+    reason,
+  });
+
+  const notifyStaged = await notifyOrgPayoutFailed(
+    payout.organizationId,
+    {
+      orgName: payout.organization.name,
+      payoutId,
+      amountPaise: payout.netPayoutPaise,
+      netPayoutPaise: payout.netPayoutPaise,
+      tdsAmountPaise: 0,
+      currency: payout.currency,
+      reason: reason.slice(0, 200),
+      kind,
+      dashboardUrl: `${getAppUrl()}/dashboard/organization/${payout.organizationId}/payouts`,
+    },
+    { tx, entityRef: `orgPayout:${payoutId}` },
+  );
+  const notifyEmails = await stageOrgPayoutEmailsInTx(tx, {
+    organizationId: payout.organizationId,
+    orgName: payout.organization.name,
+    payoutId,
+    status: kind,
+    amountPaise: payout.netPayoutPaise,
+    currency: payout.currency,
+    tdsAmountPaise: 0,
+    reason: reason.slice(0, 200),
+  });
+
+  return {
+    wasNoOp: false,
+    status: kind as PayoutStatus,
+    notifyStaged,
+    notifyEmails,
+    notify: {
+      organizationId: payout.organizationId,
+      orgName: payout.organization.name,
+      amountPaise: payout.netPayoutPaise,
+      netPayoutPaise: payout.netPayoutPaise,
+      tdsAmountPaise: 0,
+      currency: payout.currency,
+    },
+  };
+}
+
+/** Audit row plus outbound webhook for a payout that failed or was reversed; the audit text never carries the gateway's words. */
+async function recordOrgPayoutFailureOutcome(
+  tx: Tx,
+  p: {
+    organizationId: string;
+    payoutId: string;
+    kind: "FAILED" | "REVERSED";
+    reversedFrom?: "COMPLETED" | "PROCESSING";
+    reason: string;
+  },
+): Promise<void> {
+  const reversed = p.kind === "REVERSED";
+  const when =
+    p.reversedFrom === "COMPLETED"
+      ? " after completion"
+      : p.reversedFrom === "PROCESSING"
+        ? " before completion"
+        : "";
+  await tx.orgAuditLog.create({
+    data: {
+      organizationId: p.organizationId,
+      actorMembershipId: null,
+      category: "PAYOUT",
+      action: reversed
+        ? AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED
+        : AUDIT_ACTIONS.PAYOUT.PAYOUT_FAILED,
+      description: reversed
+        ? `Payout reversed${when}.`
+        : `Payout failed: ${payoutNoticeReason("FAILED", p.reason)}`,
+      details: {
+        payoutId: p.payoutId,
+        kind: p.kind,
+        ...(p.reversedFrom ? { reversedFrom: p.reversedFrom } : {}),
+        reason: p.reason.slice(0, 500),
+      },
+    },
+  });
+  await dispatchWebhookEvent({
+    prisma: tx,
+    organizationId: p.organizationId,
+    eventType: "payout.failed",
+    payload: {
+      payoutId: p.payoutId,
+      reason: p.reason || (reversed ? "PAYOUT_REVERSED" : "PAYOUT_FAILED"),
+      lastError: p.reason || null,
+    },
+  });
+}
+
 async function markOrgPayoutFailedInternal(
   payoutId: string,
   reason: string,
@@ -1785,95 +1924,7 @@ async function markOrgPayoutFailedInternal(
           };
         }
 
-        await tx.organizationEarnings.updateMany({
-          where: { orgPayoutId: payoutId, status: "BATCHED" },
-          data: { status: "READY", orgPayoutId: null },
-        });
-
-        await tx.tDSRecord.deleteMany({
-          where: { orgPayoutId: payoutId, isReversal: false },
-        });
-        await releaseClawbackRecovery(tx, payoutId);
-
-        const payout = await tx.organizationPayout.findUniqueOrThrow({
-          where: { id: payoutId },
-          select: {
-            id: true,
-            organizationId: true,
-            netPayoutPaise: true,
-            currency: true,
-            organization: { select: { name: true } },
-          },
-        });
-
-        await tx.orgAuditLog.create({
-          data: {
-            organizationId: payout.organizationId,
-            actorMembershipId: null,
-            category: "PAYOUT",
-            action:
-              kind === "REVERSED"
-                ? AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED
-                : AUDIT_ACTIONS.PAYOUT.PAYOUT_FAILED,
-            description:
-              kind === "REVERSED"
-                ? `Payout reversed by the payment provider: ${reason.slice(0, 200)}`
-                : `Payout failed at the payment provider: ${reason.slice(0, 200)}`,
-            details: { payoutId, kind, reason: reason.slice(0, 500) },
-          },
-        });
-
-        await dispatchWebhookEvent({
-          prisma: tx,
-          organizationId: payout.organizationId,
-          eventType: "payout.failed",
-          payload: {
-            payoutId: payout.id,
-            reason: reason || "PAYOUT_FAILED",
-            lastError: reason || null,
-          },
-        });
-
-        const notifyStaged = await notifyOrgPayoutFailed(
-          payout.organizationId,
-          {
-            orgName: payout.organization.name,
-            payoutId,
-            amountPaise: payout.netPayoutPaise,
-            netPayoutPaise: payout.netPayoutPaise,
-            tdsAmountPaise: 0,
-            currency: payout.currency,
-            reason: reason.slice(0, 200),
-            kind,
-            dashboardUrl: `${getAppUrl()}/dashboard/organization/${payout.organizationId}/payouts`,
-          },
-          { tx, entityRef: `orgPayout:${payoutId}` },
-        );
-        const notifyEmails = await stageOrgPayoutEmailsInTx(tx, {
-          organizationId: payout.organizationId,
-          orgName: payout.organization.name,
-          payoutId,
-          status: kind,
-          amountPaise: payout.netPayoutPaise,
-          currency: payout.currency,
-          tdsAmountPaise: 0,
-          reason: reason.slice(0, 200),
-        });
-
-        return {
-          wasNoOp: false,
-          status: "FAILED" as PayoutStatus,
-          notifyStaged,
-          notifyEmails,
-          notify: {
-            organizationId: payout.organizationId,
-            orgName: payout.organization.name,
-            amountPaise: payout.netPayoutPaise,
-            netPayoutPaise: payout.netPayoutPaise,
-            tdsAmountPaise: 0,
-            currency: payout.currency,
-          },
-        };
+        return settleUnpaidOrgPayoutTx(tx, { payoutId, kind, reason });
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     ),
@@ -1995,31 +2046,12 @@ export async function markOrgPayoutReversed(
             });
           }
 
-          await tx.orgAuditLog.create({
-            data: {
-              organizationId: payout.organizationId,
-              actorMembershipId: null,
-              category: "PAYOUT",
-              action: AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED,
-              description: `Payout reversed by the bank after completion: ${reason.slice(0, 200)}`,
-              details: {
-                payoutId,
-                kind: "REVERSED",
-                reversedFrom: "COMPLETED",
-                reason: reason.slice(0, 500),
-              },
-            },
-          });
-
-          await dispatchWebhookEvent({
-            prisma: tx,
+          await recordOrgPayoutFailureOutcome(tx, {
             organizationId: payout.organizationId,
-            eventType: "payout.failed",
-            payload: {
-              payoutId: payout.id,
-              reason: reason || "PAYOUT_REVERSED",
-              lastError: reason || null,
-            },
+            payoutId,
+            kind: "REVERSED",
+            reversedFrom: "COMPLETED",
+            reason,
           });
 
           const notifyStaged = await notifyOrgPayoutFailed(
@@ -2095,93 +2127,12 @@ export async function markOrgPayoutReversed(
           };
         }
 
-        await tx.organizationEarnings.updateMany({
-          where: { orgPayoutId: payoutId, status: "BATCHED" },
-          data: { status: "READY", orgPayoutId: null },
-        });
-        await tx.tDSRecord.deleteMany({
-          where: { orgPayoutId: payoutId, isReversal: false },
-        });
-        await releaseClawbackRecovery(tx, payoutId);
-
-        const payout = await tx.organizationPayout.findUniqueOrThrow({
-          where: { id: payoutId },
-          select: {
-            id: true,
-            organizationId: true,
-            netPayoutPaise: true,
-            currency: true,
-            organization: { select: { name: true } },
-          },
-        });
-
-        await tx.orgAuditLog.create({
-          data: {
-            organizationId: payout.organizationId,
-            actorMembershipId: null,
-            category: "PAYOUT",
-            action: AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED,
-            description: `Payout reversed before completion: ${reason.slice(0, 200)}`,
-            details: {
-              payoutId,
-              kind: "REVERSED",
-              reversedFrom: "PROCESSING",
-              reason: reason.slice(0, 500),
-            },
-          },
-        });
-
-        await dispatchWebhookEvent({
-          prisma: tx,
-          organizationId: payout.organizationId,
-          eventType: "payout.failed",
-          payload: {
-            payoutId: payout.id,
-            reason: reason || "PAYOUT_REVERSED",
-            lastError: reason || null,
-          },
-        });
-
-        const notifyStaged = await notifyOrgPayoutFailed(
-          payout.organizationId,
-          {
-            orgName: payout.organization.name,
-            payoutId,
-            amountPaise: payout.netPayoutPaise,
-            netPayoutPaise: payout.netPayoutPaise,
-            tdsAmountPaise: 0,
-            currency: payout.currency,
-            reason: reason.slice(0, 200),
-            kind: "REVERSED",
-            dashboardUrl: `${getAppUrl()}/dashboard/organization/${payout.organizationId}/payouts`,
-          },
-          { tx, entityRef: `orgPayout:${payoutId}` },
-        );
-        const notifyEmails = await stageOrgPayoutEmailsInTx(tx, {
-          organizationId: payout.organizationId,
-          orgName: payout.organization.name,
+        return settleUnpaidOrgPayoutTx(tx, {
           payoutId,
-          status: "REVERSED",
-          amountPaise: payout.netPayoutPaise,
-          currency: payout.currency,
-          tdsAmountPaise: 0,
-          reason: reason.slice(0, 200),
+          kind: "REVERSED",
+          reversedFrom: "PROCESSING",
+          reason,
         });
-
-        return {
-          wasNoOp: false,
-          status: "REVERSED" as PayoutStatus,
-          notifyStaged,
-          notifyEmails,
-          notify: {
-            organizationId: payout.organizationId,
-            orgName: payout.organization.name,
-            amountPaise: payout.netPayoutPaise,
-            netPayoutPaise: payout.netPayoutPaise,
-            tdsAmountPaise: 0,
-            currency: payout.currency,
-          },
-        };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     ),

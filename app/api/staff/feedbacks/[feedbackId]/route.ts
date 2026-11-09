@@ -9,6 +9,7 @@ import { stageBell } from "@/lib/novu/stage-bell";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { PatchFeedbackSchema } from "@/schemas/moderation";
+import { PLATFORM_FEEDBACK_STATUS_LABEL } from "@/lib/labels/session-labels";
 
 const patchFeedbackSchema = PatchFeedbackSchema.strict();
 
@@ -134,7 +135,8 @@ export async function PATCH(
               feedbackId,
               userId: existing.userId,
               title: existing.title ?? undefined,
-              statusLabel: nextStatus.toLowerCase().replace(/_/g, " "),
+              statusLabel:
+                PLATFORM_FEEDBACK_STATUS_LABEL[nextStatus].toLowerCase(),
               dashboardUrl,
             }
           : null,

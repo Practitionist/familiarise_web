@@ -19,14 +19,14 @@ import { humanizeOrgError, ORG_ERROR_COPY } from "@/lib/labels/org-errors";
 describe("humanizeOrgError", () => {
   const KNOWN_CODES: Array<[code: string, mustContain: RegExp]> = [
     // (code, a substring or regex the friendly copy MUST contain)
-    ["ORG_NOT_VERIFIED", /awaiting platform review/i],
+    ["ORG_NOT_VERIFIED", /awaiting review/i],
     ["ROLE_TRANSITION_BLOCKED", /Learner and Expert roles/i],
     ["USER_NOT_FOUND", /sign up at Familiarise/i],
-    ["EXPERT_REQUIRES_CANHOST", /host-capable organizations/i],
+    ["EXPERT_REQUIRES_CANHOST", /organisations that host sessions/i],
     ["PO_BALANCE_EXCEEDED", /remaining budget/i],
     ["PO_BALANCE_INSUFFICIENT", /remaining budget/i],
     ["DOMAIN_NOT_OWNED", /Add it under Settings → SSO → Domains/i],
-    ["DOMAIN_NOT_VERIFIED", /TXT-record/i],
+    ["DOMAIN_NOT_VERIFIED", /verification record/i],
     ["SSO_PROVIDER_MISCONFIGURED", /re-add the provider/i],
   ];
 
@@ -46,6 +46,15 @@ describe("humanizeOrgError", () => {
     // Lookalike strings that aren't in the table must also pass through
     // unchanged — never coerced into one of the known sentences.
     expect(humanizeOrgError("PO_BALANCE_UNKNOWN")).toBe("PO_BALANCE_UNKNOWN");
+  });
+
+  it("a mapped machine code wins over the server sentence; other codes keep the server message", () => {
+    expect(humanizeOrgError("Hosting is gated.", "HOST_ORGS_GATED")).toBe(
+      ORG_ERROR_COPY.HOST_ORGS_GATED,
+    );
+    expect(humanizeOrgError("That web address is taken.", "SLUG_TAKEN")).toBe(
+      "That web address is taken.",
+    );
   });
 
   it("the alias PO_BALANCE_INSUFFICIENT renders the same copy as PO_BALANCE_EXCEEDED", () => {

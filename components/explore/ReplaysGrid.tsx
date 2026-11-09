@@ -5,6 +5,7 @@ import { listPublicReplayCards } from "@/lib/data/recordings-explore";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import { buyerPriceLabelInr } from "@/lib/payments/pricing/display-price";
 import { isPlatformGstRegistered } from "@/lib/pdf/supplier";
+import { planTypeLabel } from "@/lib/labels/plan-labels";
 
 export async function ReplaysGrid() {
   // A failing read reaches the error boundary; the listing never degrades to empty.
@@ -58,8 +59,8 @@ export async function ReplaysGrid() {
           </div>
           <div className="p-4 space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                {rec.planType}
+              <span className="text-xs text-muted-foreground">
+                {planTypeLabel(rec.planType)}
               </span>
               <span className="font-semibold text-primary">
                 {buyerPriceLabelInr(rec.listPricePaise, gstRegistered)}

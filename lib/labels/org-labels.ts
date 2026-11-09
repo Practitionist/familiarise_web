@@ -86,7 +86,7 @@ export const FUNDING_SOURCE_TAGLINE: Record<FundingSource, string> = {
   WALLET:
     "Org pre-purchases a credit pool. Credits are deducted automatically when members book.",
   INVOICE:
-    "Members book freely. One consolidated invoice at month-end; pay within NET terms.",
+    "Members book freely. One consolidated invoice at month-end; pay within your agreed payment terms.",
   LICENSE:
     "Flat-fee enterprise license. Sessions are unmetered for the contract period.",
 };
@@ -104,6 +104,14 @@ export const ORG_STATUS_LABEL: Record<OrgStatus, string> = {
   SUSPENDED: "Suspended",
   DEACTIVATED: "Deactivated",
 };
+
+/** An org status arriving as a plain string; an unknown value reads "Not active", never the raw code. */
+export function orgStatusLabel(status: string): string {
+  const entry = Object.entries(ORG_STATUS_LABEL).find(
+    ([key]) => key === status,
+  );
+  return entry ? entry[1] : "Not active";
+}
 
 export const SESSION_TYPE_LABEL: Record<AppointmentsType, string> = {
   CONSULTATION: "Consultation",
@@ -484,6 +492,14 @@ export const ORG_SIZE_BUCKET_LABEL: Record<OrgSizeBucket, string> = {
   LARGE_201_1000: "201–1,000 people",
   ENTERPRISE_1000_PLUS: "1,000+ people",
 };
+
+/** A size bucket arriving as a plain string, in the words the picker shows. */
+export function orgSizeBucketLabel(bucket: string): string {
+  const entry = Object.entries(ORG_SIZE_BUCKET_LABEL).find(
+    ([key]) => key === bucket,
+  );
+  return entry ? entry[1] : "Not specified";
+}
 
 // ───────────────────────────── Fallback org selection ─────────────────────────────
 

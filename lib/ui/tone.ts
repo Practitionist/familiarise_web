@@ -16,12 +16,7 @@
  */
 
 export type Tone =
-  | "neutral"
-  | "info"
-  | "success"
-  | "caution"
-  | "warning"
-  | "critical";
+  "neutral" | "info" | "success" | "caution" | "warning" | "critical";
 
 export interface ToneStyle {
   /** Pill surface: background, text and border. */
@@ -81,10 +76,33 @@ export function toneTextClass(tone: Tone): string {
  * no label map covers yet; a map entry always reads better (#1527 raw-enum
  * sweep).
  */
+/** Acronyms that stay in capitals when an enum is turned into words. */
+const ENUM_ACRONYMS = new Set([
+  "UPI",
+  "NEFT",
+  "IMPS",
+  "RTGS",
+  "GST",
+  "TDS",
+  "PAN",
+  "KYC",
+  "UTR",
+  "SSO",
+  "API",
+  "ID",
+  "PDF",
+  "OTP",
+]);
+
 export function humanizeEnum(value: string | null | undefined): string {
   if (!value) return "";
   return value
-    .replace(/_/g, " ")
-    .toLowerCase()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+    .split("_")
+    .filter(Boolean)
+    .map((word) =>
+      ENUM_ACRONYMS.has(word.toUpperCase())
+        ? word.toUpperCase()
+        : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase(),
+    )
+    .join(" ");
 }

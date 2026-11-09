@@ -40,7 +40,8 @@ import {
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { humanizeEnum } from "@/lib/ui/tone";
+import { FUNDING_SOURCE_LABEL } from "@/lib/labels/org-labels";
+import { walletReasonLabel } from "@/lib/labels/money-labels";
 
 const walletResponseSchema = z.object({
   billingAccount: z.object({
@@ -78,7 +79,10 @@ type WalletResponse = z.infer<typeof walletResponseSchema>;
 
 const walletErrorResponseSchema = z.object({
   error: z.string(),
-  currentFundingSource: z.string().optional(),
+  currentFundingSource: z
+    .enum(["PERSONAL", "WALLET", "INVOICE", "LICENSE"])
+    .optional()
+    .catch(undefined),
 });
 
 const walletFetchResultSchema = z.union([
@@ -464,7 +468,7 @@ export function WalletTab({
       className: "text-sm",
       cell: (row) => (
         <>
-          {humanizeEnum(row.reason)}
+          {walletReasonLabel(row.reason)}
           {row.notes && (
             <span className="text-xs text-muted-foreground block">
               {row.notes}
@@ -475,7 +479,7 @@ export function WalletTab({
     },
     {
       key: "delta",
-      header: "Δ",
+      header: "Change",
       headClassName: "text-right",
       cell: (row) => (
         <span
@@ -510,8 +514,8 @@ export function WalletTab({
                 <>
                   {" "}
                   This organization is funded by{" "}
-                  {humanizeEnum(walletError.currentFundingSource)}; a wallet
-                  applies only to prepaid-wallet organizations.
+                  {FUNDING_SOURCE_LABEL[walletError.currentFundingSource]}; a
+                  wallet applies only to prepaid-wallet organizations.
                 </>
               )}
             </CardDescription>
@@ -573,7 +577,7 @@ export function WalletTab({
               variant="success"
             />
             <StatCard
-              title="Ledger entries"
+              title="Transactions"
               value={walletResponse.meta.total.toLocaleString()}
               icon={Coins}
             />

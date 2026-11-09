@@ -45,7 +45,7 @@ export const OrgPayoutFailedEmail = ({
         {reversed ? (
           <>
             A payout of <strong>{amountText}</strong> to{" "}
-            <strong>{orgName}</strong> was sent and then returned by the bank.
+            <strong>{orgName}</strong> was reversed.
           </>
         ) : (
           <>

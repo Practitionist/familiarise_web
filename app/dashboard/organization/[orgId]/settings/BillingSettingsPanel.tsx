@@ -169,7 +169,7 @@ export function BillingSettingsPanel({ orgId }: Readonly<{ orgId: string }>) {
           onChange={(e) => setBillingEmail(e.target.value)}
         />
         <p className="text-xs text-muted-foreground">
-          Where invoices and dunning notices are sent.
+          Where invoices and overdue-payment reminders are sent.
         </p>
       </div>
 

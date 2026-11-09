@@ -39,7 +39,7 @@ export function formatRole(role: string): string {
     GUEST_LECTURER: "Guest Lecturer",
     CONTENT_CREATOR: "Content Creator",
   };
-  return labels[role] || role.replace(/_/g, " ");
+  return labels[role] ?? "Collaborator";
 }
 
 export const ROLE_DESCRIPTIONS: Record<string, string> = {

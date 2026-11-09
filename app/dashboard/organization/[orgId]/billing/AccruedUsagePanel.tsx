@@ -12,26 +12,26 @@ import type {
   OrgReceivablePosting,
   OrgReceivablesPayload,
 } from "@/lib/data/org-receivables";
-import { humanizeEnum } from "@/lib/ui/tone";
+import { ORG_INVOICE_STATUS_LABEL } from "@/lib/labels/org-labels";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 // Stateless; module scope keeps the panel's cognitive complexity down.
 const columns: ResponsiveColumn<OrgReceivablePosting>[] = [
   {
     key: "posted",
-    header: "Posted",
+    header: "Date",
     primary: true,
     className: "text-xs text-muted-foreground",
     cell: (p) => new Date(p.postedAt).toLocaleDateString(),
   },
   {
     key: "movement",
-    header: "Movement",
+    header: "Type",
     cell: (p) =>
       p.movement === "ACCRUED" ? (
-        <StatusBadge label="Accrued" tone="caution" />
+        <StatusBadge label="Charged" tone="caution" />
       ) : (
-        <StatusBadge label="Cleared" tone="success" />
+        <StatusBadge label="Paid" tone="success" />
       ),
   },
   {
@@ -43,9 +43,14 @@ const columns: ResponsiveColumn<OrgReceivablePosting>[] = [
   {
     key: "source",
     header: "Source",
-    className: "font-mono text-xs",
-    // Ids, not links: ADR 20's addendum gives no org role a per-session page.
-    cell: (p) => p.appointmentId ?? p.paymentId ?? p.invoiceId ?? "—",
+    className: "text-xs",
+    // No org role has a per-session page, so the row names the kind of source, never its id.
+    cell: (p) => {
+      if (p.appointmentId) return "Session booking";
+      if (p.paymentId) return "Payment";
+      if (p.invoiceId) return "Invoice";
+      return "—";
+    },
   },
   {
     key: "status",
@@ -54,7 +59,7 @@ const columns: ResponsiveColumn<OrgReceivablePosting>[] = [
     // The posting has no status (append-only ledger); what the org can act
     // on is the invoice that would clear it.
     cell: (p) => {
-      if (p.invoiceStatus) return humanizeEnum(p.invoiceStatus);
+      if (p.invoiceStatus) return ORG_INVOICE_STATUS_LABEL[p.invoiceStatus];
       return p.movement === "ACCRUED" ? "Not yet invoiced" : "—";
     },
   },
@@ -71,7 +76,7 @@ export function AccruedUsagePanel({
   if (!receivables) {
     return (
       <ErrorState
-        title="Couldn't load accrued usage"
+        title="Couldn't load usage charges"
         description="Reload the page to try again."
       />
     );
@@ -80,9 +85,8 @@ export function AccruedUsagePanel({
     <>
       <p className="max-w-3xl text-sm text-muted-foreground">
         Each sponsored booking adds to this balance and each invoice payment
-        clears it, so a charge shows here before it appears on an invoice.
-        Nothing here can be edited; a correction arrives as a later
-        counter-posting.
+        brings it down, so a charge shows here before it appears on an invoice.
+        Nothing here can be edited; a correction shows up as a new entry later.
       </p>
       <StatRow columns={3}>
         <Stat
@@ -91,25 +95,25 @@ export function AccruedUsagePanel({
           tone={receivables.outstandingPaise > 0 ? "warning" : "neutral"}
         />
         <Stat
-          label="Accrued to date"
+          label="Charged so far"
           value={formatCurrencyAmount(receivables.accruedPaise, "INR")}
         />
         <Stat
-          label="Cleared to date"
+          label="Paid so far"
           value={formatCurrencyAmount(receivables.clearedPaise, "INR")}
         />
       </StatRow>
-      <Section title="Postings">
+      <Section title="Activity">
         <ResponsiveTable<OrgReceivablePosting>
           columns={columns}
           rows={receivables.postings}
           getRowId={(p) => p.entryId}
-          empty="Nothing has accrued yet. Only invoice-funded bookings, and any shortfall a wallet debit could not cover, accrue here."
+          empty="Nothing has been charged yet. Only bookings billed on invoice, and any amount your wallet could not cover, show up here."
         />
         {receivables.totalPostings > receivables.postings.length && (
           <p className="mt-2 text-xs text-muted-foreground">
             Showing the {receivables.postings.length} most recent of{" "}
-            {receivables.totalPostings} postings. The totals above cover all of
+            {receivables.totalPostings} entries. The totals above cover all of
             them.
           </p>
         )}
