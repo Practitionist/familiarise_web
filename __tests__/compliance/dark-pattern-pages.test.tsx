@@ -43,8 +43,17 @@ beforeEach(() => {
 });
 
 describe("the certificate gate", () => {
-  it("needs both a signatory and a signing date", () => {
-    const signed = { ...mockAudit, signatoryName: "A", signedOn: "2026-12-20" };
+  it("needs the signatory, the date and every audit detail", () => {
+    const signed = {
+      ...mockAudit,
+      signatoryName: "A",
+      signedOn: "2026-12-20",
+      periodFrom: "2026-01-01",
+      periodTo: "2026-12-01",
+      nextDueOn: "2027-12-20",
+      outcomeSummary: "Done.",
+    };
+    expect(isDarkPatternAuditSigned({ ...signed, nextDueOn: "" })).toBe(false);
     expect(isDarkPatternAuditSigned(signed)).toBe(true);
     expect(isDarkPatternAuditSigned({ ...signed, signedOn: "" })).toBe(false);
     expect(isDarkPatternAuditSigned({ ...signed, signatoryName: " " })).toBe(

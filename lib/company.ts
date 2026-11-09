@@ -45,8 +45,8 @@ export interface DarkPatternAudit {
 
 /**
  * Empty until the director signs the annual dark-pattern self-audit
- * (docs/compliance/06-dark-pattern-self-audit.md). Filling the signatory and
- * the signing date publishes the certificate page.
+ * (docs/compliance/06-dark-pattern-self-audit.md). Filling the signatory, the date, the
+ * period, the next due date and the outcome publishes the certificate page.
  */
 export const DARK_PATTERN_AUDIT: DarkPatternAudit = {
   signatoryName: "",
@@ -58,9 +58,16 @@ export const DARK_PATTERN_AUDIT: DarkPatternAudit = {
   outcomeSummary: "",
 };
 
-/** The certificate is public only once a named signatory has signed on a date. */
+/** The certificate is public only once a named signatory has signed on a date and the audit period, due date and outcome are filled. */
 export function isDarkPatternAuditSigned(audit: DarkPatternAudit): boolean {
-  return audit.signatoryName.trim() !== "" && audit.signedOn.trim() !== "";
+  return [
+    audit.signatoryName,
+    audit.signedOn,
+    audit.periodFrom,
+    audit.periodTo,
+    audit.nextDueOn,
+    audit.outcomeSummary,
+  ].every((field) => field.trim() !== "");
 }
 
 /** Where /contactus inquiries are delivered. */

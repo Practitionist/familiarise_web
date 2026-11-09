@@ -41,7 +41,7 @@ export const referralTermsSchema = z.object({
 
 export type ReferralTerms = z.infer<typeof referralTermsSchema>;
 
-/** What a referred friend is promised, including the order floor and that a low-priced session can earn less. */
+/** What a referred friend is promised, including the payable-after-discount floor and that a low-priced session can earn less. */
 export function welcomeOfferText(
   terms: Pick<
     ReferralTerms,
@@ -51,7 +51,7 @@ export function welcomeOfferText(
 ): string {
   const floor =
     terms.minOrderPaise > 0
-      ? ` on orders of ${formatAmount(terms.minOrderPaise)} or more`
+      ? `, if you still pay at least ${formatAmount(terms.minOrderPaise)} after the discount`
       : "";
   return `${terms.discountPercent}% off your first booking, up to ${formatAmount(terms.discountMaxPaise)}${floor}, and it may be lower on low-priced sessions`;
 }

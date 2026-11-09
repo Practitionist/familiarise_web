@@ -13,7 +13,7 @@ it("states the percentage, the ceiling, the order floor and the low-price caveat
     inr,
   );
   expect(text).toBe(
-    "15% off your first booking, up to ₹300 on orders of ₹500 or more, and it may be lower on low-priced sessions",
+    "15% off your first booking, up to ₹300, if you still pay at least ₹500 after the discount, and it may be lower on low-priced sessions",
   );
 });
 
@@ -22,6 +22,6 @@ it("drops the floor clause when the programme sets no minimum order", () => {
     { discountPercent: 10, discountMaxPaise: 20_000, minOrderPaise: 0 },
     inr,
   );
-  expect(text).not.toContain("orders of");
+  expect(text).not.toContain("after the discount");
   expect(text).toContain("may be lower on low-priced sessions");
 });
