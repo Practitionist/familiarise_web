@@ -486,7 +486,15 @@ plan, backed by the `subscription_sessions_returned_range` CHECK) and
 `Subscription.planEndsAt` moves seven days later in the same conditional write. No
 money moves. Refusals are typed: `RETURN_WINDOW_CLOSED`, `RETURN_CAP_REACHED`,
 `RETURN_RESCHEDULE_OPEN`, `DISPUTE_ACTIVE`, `SESSION_NOT_RETURNABLE`. Inside 24
-hours a missed session counts as delivered.
+hours a missed session counts as delivered, and no consultee door can hand it
+back: a return needs 24 hours of notice (`returnBlock` in
+`lib/booking/session-return-rules.ts`), a reschedule release needs 24 hours of
+notice on every session it moves (`RESCHEDULE_MIN_LEAD_HOURS` in the reschedule
+route), the only single-session cancel is the class host's, and a consultee who
+does not join is `LEARNER_ABSENT`, written as COMPLETED. Plan-end settlement
+therefore counts such a session as delivered and never refunds it; only host- or
+platform-caused misses (voided, never placed, or a release by the expert that was
+never re-placed) stay refundable.
 
 Reschedule caps count the release records on `RescheduleRequest`, not occurrence
 rows, because the allocator hard-deletes the occurrences a re-allocation replaces
