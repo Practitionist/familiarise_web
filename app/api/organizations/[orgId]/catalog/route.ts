@@ -27,6 +27,10 @@ import {
 } from "@/schemas/plans";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import { planTotalSessions } from "@/lib/booking/entitlement";
+import {
+  sessionDurationInHoursSchema,
+  sessionsPerWeekSchema,
+} from "@/schemas/plans";
 
 const PlanKindSchema = z.enum(["WEBINAR", "CLASS"]);
 
@@ -67,8 +71,8 @@ const CreateBodySchema = z.discriminatedUnion("kind", [
   BaseCreateSchema.extend({
     kind: z.literal("CLASS"),
     durationInMonths: z.number().int().positive().default(1),
-    sessionsPerWeek: z.number().int().positive().default(1),
-    sessionDurationInHours: z.number().positive().default(1),
+    sessionsPerWeek: sessionsPerWeekSchema.default(1),
+    sessionDurationInHours: sessionDurationInHoursSchema.default(1),
   }),
 ]);
 
