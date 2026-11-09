@@ -29,7 +29,11 @@ describe("buyerDisplayPricePaise", () => {
   it.each([1, 49_999, 99_950, 123_457, 3_333_333])(
     "equals what checkout charges for a %i paise list price",
     (list) => {
-      const tax = determineTax({ baseAmountPaise: list, buyerCountry: "IN" });
+      const tax = determineTax({
+        baseAmountPaise: list,
+        buyerCountry: "IN",
+        gstRegistered: true,
+      });
       expect(buyerDisplayPricePaise(list, true)).toBe(list + tax.taxAmount);
     },
   );

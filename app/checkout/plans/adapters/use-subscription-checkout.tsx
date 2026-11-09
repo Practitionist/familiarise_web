@@ -1,0 +1,312 @@
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { CancellationPolicyNote } from "@/components/booking/CancellationPolicyNote";
+import { Separator } from "@/components/ui/separator";
+import { firstCycleWindow, lastInstantBefore } from "@/lib/booking/entitlement";
+import {
+  planDurationText,
+  planPriceLabel,
+} from "@/lib/offerings/plan-length-copy";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import {
+  subscriptionSearchParamsSchema,
+  type SubscriptionSearchParams,
+} from "@/schemas/checkout";
+
+import type { ConsultantProfile, SubscriptionPlan } from "@prisma/client";
+
+import {
+  CheckoutDetailRow,
+  type CheckoutPlanAdapter,
+  type CheckoutSearchParams,
+} from "../components/PlanCheckoutShell";
+import { CheckoutTotalNotes } from "../components/CheckoutTotals";
+import { reportPaymentsError } from "../utils";
+import { loadErrorMessage, searchParamsKey } from "./shared";
+
+// price arrives as number: extended client + JSON serialization
+type SubscriptionPlanWithConsultant = Omit<SubscriptionPlan, "price"> & {
+  price: number;
+  consultantProfile: ConsultantProfile & {
+    user: {
+      id: string;
+      name: string;
+      email: string;
+      image: string;
+      workExperiences?: Array<{
+        company: string;
+        companyDomain: string | null;
+        isCurrent: boolean;
+      }>;
+    };
+  };
+};
+
+type SubscriptionResponse = {
+  data: SubscriptionPlanWithConsultant;
+};
+
+const START_PASSED =
+  "The start date has passed. Please go back and pick a new one.";
+
+function confirmationText(data: {
+  isZeroAmountPayment?: boolean;
+  isMockPayment?: boolean;
+}): string {
+  if (data.isZeroAmountPayment) {
+    return "Payment completed via referral credits. Your subscription is now active.";
+  }
+  if (data.isMockPayment) {
+    return "Mock payment processed. Your subscription is now active. Check your dashboard for details.";
+  }
+  return "Your subscription is now active. Check your dashboard for details.";
+}
+
+export function useSubscriptionCheckout(
+  planId: string,
+  searchParams: CheckoutSearchParams,
+): CheckoutPlanAdapter {
+  const viewer = useViewerZone();
+  const [staleError, setStaleError] = useState<string | null>(null);
+
+  const validatedSearchParams = useMemo((): SubscriptionSearchParams | null => {
+    const result = subscriptionSearchParamsSchema.safeParse(searchParams);
+    return result.success ? result.data : null;
+  }, [searchParams]);
+  const searchParamsString = useMemo(
+    () => searchParamsKey(searchParams),
+    [searchParams],
+  );
+
+  const checkoutPlanQuery = useQuery({
+    queryKey: ["checkout-plan", planId, searchParamsString],
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async (): Promise<SubscriptionResponse> => {
+      const response = await fetch(`/api/plans/subscriptions/${planId}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      if (!data.data.consultantProfile?.user) {
+        throw new Error("Consultant details not found");
+      }
+      return data;
+    },
+  });
+  const planData = checkoutPlanQuery.data ?? null;
+  const plan = planData?.data;
+  const consultantDetails = plan?.consultantProfile;
+
+  useEffect(() => {
+    if (checkoutPlanQuery.error) {
+      reportPaymentsError(checkoutPlanQuery.error);
+      console.error("Error fetching plan data:", checkoutPlanQuery.error);
+    }
+  }, [checkoutPlanQuery.error]);
+
+  // Derive a default start when the buyer arrives without one (the plan-detail
+  // "Subscribe" link is bare), so the payment controls always render. Only the
+  // START travels: the window is the first cycle and the server derives it in
+  // the consultant's zone; a client end is ignored there, so none is minted.
+  const effectiveSearchParams = useMemo((): SubscriptionSearchParams | null => {
+    if (!validatedSearchParams) return null;
+    const { schedulingPeriodEndsAt: _ignored, ...rest } = validatedSearchParams;
+    return {
+      ...rest,
+      schedulingPeriodStartsAt:
+        rest.schedulingPeriodStartsAt ?? new Date().toISOString(),
+    };
+  }, [validatedSearchParams]);
+
+  // The first cycle as the buyer will see it, in the browser's zone (display
+  // only; the persisted window is the server's).
+  const firstCycle = useMemo(() => {
+    const start = effectiveSearchParams?.schedulingPeriodStartsAt;
+    if (!planData?.data || !start) return null;
+    return firstCycleWindow(
+      {
+        sessionsPerWeek: planData.data.sessionsPerWeek ?? 1,
+        durationInMonths: planData.data.durationInMonths ?? 1,
+      },
+      new Date(start),
+      Intl.DateTimeFormat().resolvedOptions().timeZone,
+    );
+  }, [planData?.data, effectiveSearchParams?.schedulingPeriodStartsAt]);
+
+  // Periodic staleness check: warn once the first cycle has elapsed.
+  const cycleEnd = firstCycle?.end;
+  useEffect(() => {
+    if (!cycleEnd) return;
+    const checkStaleness = () => {
+      if (cycleEnd.getTime() < Date.now()) setStaleError(START_PASSED);
+    };
+    checkStaleness();
+    const intervalId = setInterval(checkStaleness, 60_000);
+    return () => clearInterval(intervalId);
+  }, [cycleEnd]);
+
+  const preflight = useCallback(() => {
+    if (!effectiveSearchParams) {
+      throw new Error("Invalid subscription parameters");
+    }
+    if (!planData?.data?.id) throw new Error("Subscription plan not found");
+    if (!effectiveSearchParams.schedulingPeriodStartsAt) {
+      throw new Error("A start date is required for subscriptions");
+    }
+    // The first cycle the buyer was shown must not have fully elapsed.
+    if (firstCycle && firstCycle.end.getTime() < Date.now()) {
+      throw new Error(START_PASSED);
+    }
+  }, [effectiveSearchParams, planData, firstCycle]);
+
+  const checkoutPlanFields = useMemo(
+    () =>
+      effectiveSearchParams?.schedulingPeriodStartsAt
+        ? {
+            appointmentType: "SUBSCRIPTION" as const,
+            planId: plan?.id || "",
+            schedulingPeriodStartsAt:
+              effectiveSearchParams.schedulingPeriodStartsAt,
+            renewsSubscriptionId: effectiveSearchParams.renewsSubscriptionId,
+          }
+        : null,
+    [effectiveSearchParams, plan?.id],
+  );
+
+  const sessionsPerWeek = plan?.sessionsPerWeek || 1;
+  const durationInMonths = plan?.durationInMonths || 1;
+  const sessionDurationInHours = plan?.sessionDurationInHours || 1;
+  const computedSessions = sessionsPerWeek * durationInMonths * 4;
+
+  return {
+    appointmentType: "SUBSCRIPTION",
+    isLoading: checkoutPlanQuery.isPending,
+    error: staleError ?? loadErrorMessage(checkoutPlanQuery.error),
+    missingMessage: null,
+    consultantProfileId: consultantDetails?.id,
+    header: {
+      user: consultantDetails?.user,
+      headline: consultantDetails?.headline || "Consultant",
+      typeLabel: "Subscription",
+      title: plan?.title || "Monthly Plan",
+    },
+    detailsTitle: "Subscription Details",
+    detailsBanner: effectiveSearchParams?.renewsSubscriptionId ? (
+      <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
+        Renewing your existing subscription — your new period will start
+        immediately after your current subscription ends
+      </div>
+    ) : null,
+    detailRows: (
+      <>
+        {/* Start + first cycle: the buyer picked a start; the consultant
+            schedules one cycle at a time from it. */}
+        {typeof effectiveSearchParams?.schedulingPeriodStartsAt ===
+          "string" && (
+          <>
+            <CheckoutDetailRow label="Starts" className="text-right text-sm">
+              {new Date(
+                effectiveSearchParams.schedulingPeriodStartsAt,
+              ).toLocaleDateString()}
+            </CheckoutDetailRow>
+            {firstCycle && (
+              <CheckoutDetailRow
+                label="First cycle"
+                className="text-right text-sm"
+              >
+                {firstCycle.start.toLocaleDateString()} →{" "}
+                {lastInstantBefore(firstCycle.end).toLocaleDateString()} ·{" "}
+                {sessionsPerWeek} session{sessionsPerWeek === 1 ? "" : "s"} per
+                cycle · {plan?.totalSessions ?? "—"} in the plan
+              </CheckoutDetailRow>
+            )}
+            <Separator className="bg-border" />
+          </>
+        )}
+        <CheckoutDetailRow label="Duration">
+          {planDurationText(plan ?? {})}
+        </CheckoutDetailRow>
+        <CheckoutDetailRow label="Sessions per Week">
+          {sessionsPerWeek} {sessionsPerWeek === 1 ? "session" : "sessions"}
+        </CheckoutDetailRow>
+        <CheckoutDetailRow label="Session Duration">
+          {sessionDurationInHours} hour(s)
+        </CheckoutDetailRow>
+        <CheckoutDetailRow label="Total Sessions">
+          {plan?.totalSessions || computedSessions} sessions
+        </CheckoutDetailRow>
+        <CheckoutDetailRow label="Total Hours">
+          {plan?.totalHours || computedSessions * sessionDurationInHours} hours
+        </CheckoutDetailRow>
+        <CheckoutDetailRow label="Email Support">
+          {plan?.emailSupport || "General"}
+        </CheckoutDetailRow>
+        <CheckoutDetailRow label="Language">
+          {plan?.language || "English"}
+        </CheckoutDetailRow>
+        <CheckoutDetailRow label="Level">
+          {plan?.level || "Beginner"}
+        </CheckoutDetailRow>
+        <CheckoutDetailRow label="Prerequisites">
+          {plan?.prerequisites || "None"}
+        </CheckoutDetailRow>
+        <CheckoutDetailRow label="Material Provided">
+          {plan?.materialProvided || "None"}
+        </CheckoutDetailRow>
+      </>
+    ),
+    groupDisclosure: false,
+    basePricePaise: plan?.price || 0,
+    pricingTitle: "Subscription Pricing",
+    feeLabel: planPriceLabel(plan ?? {}),
+    includes: (
+      <>
+        <li>
+          {plan?.totalSessions || computedSessions} total sessions (
+          {plan?.totalHours || computedSessions * sessionDurationInHours} hours)
+        </li>
+        <li>{sessionsPerWeek} sessions per week</li>
+        <li>{sessionDurationInHours} hour sessions</li>
+        <li>{plan?.emailSupport || "General"} email support</li>
+        <li>Learning materials</li>
+      </>
+    ),
+    renderFooter: (ctx) => (
+      <>
+        {/* Plans are paid at purchase; the 48 h promise. */}
+        {ctx.taxContext.taxContextStatus === "loaded" && (
+          <p className="text-xs text-muted-foreground">
+            You pay {ctx.formatPrice(ctx.pricing.total)} now ·{" "}
+            {consultantDetails?.user?.name ?? "Your expert"} schedules your
+            first week within 48 h or you&apos;re refunded in full.
+          </p>
+        )}
+        <CheckoutTotalNotes
+          totalPaise={ctx.pricing.total}
+          organizationId={ctx.selectedOrganizationId}
+          taxContextStatus={ctx.taxContext.taxContextStatus}
+        />
+        {/* The notice ladder at purchase: the 48 h promise above is about the
+            expert not scheduling; this is about the buyer changing their mind. */}
+        <CancellationPolicyNote
+          eventKind="individual"
+          funding={ctx.purchaseFunding}
+          viewerZone={viewer}
+          className="border-t border-border pt-3 text-xs text-muted-foreground"
+        />
+      </>
+    ),
+    checkoutPlanFields,
+    soldOut: false,
+    mockFlow: {
+      kind: "direct",
+      successTitle: "✅ Subscription Activated Successfully!",
+      confirmation: confirmationText,
+    },
+    preflight,
+  };
+}
