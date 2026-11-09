@@ -221,6 +221,14 @@ describe("consultee · AWAITING_PAYMENT subscription", () => {
     expect(html).not.toContain("Program progress");
     expect(html).not.toContain("Cancel booking");
     expect(html).toContain("Withdraw request");
+    // The pay verb also rides the mobile sticky bar; the withdrawal sits in
+    // the Manage booking row at the foot of the page, not in the header.
+    expect(html.split("Pay ₹7,080.00").length).toBeGreaterThanOrEqual(3);
+    expect(html).toContain('aria-label="Manage booking"');
+    expect(html.indexOf('aria-label="Manage booking"')).toBeLessThan(
+      html.indexOf("Withdraw request"),
+    );
+    expect(html).not.toContain("More actions");
   });
 });
 

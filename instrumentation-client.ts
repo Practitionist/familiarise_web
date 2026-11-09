@@ -8,20 +8,17 @@
 // `./sentry.shared.config` at the top level here. A static import bundles ~368 KB
 // of Sentry + OpenTelemetry instrumentation into the initial critical client
 // chunk and costs ~2.1s of main-thread evaluation during hydration/LCP. Instead,
-// dynamically import Sentry on first user interaction or after a post-load
-// idle timer.
+// dynamically import Sentry (via `ensureSentry`) on first user interaction, after
+// a post-load idle timer, or when an error boundary captures before either.
 
-let sentryInitialized = false;
+import { ensureSentry } from "./lib/observability/client-capture";
+
 let routerTransitionHandler:
   ((href: string, navigationType: string) => void) | null = null;
 
 function loadAndInitSentry() {
-  if (sentryInitialized) return;
-  sentryInitialized = true;
-
-  void Promise.all([import("./sentry.shared.config"), import("@sentry/nextjs")])
-    .then(([shared, Sentry]) => {
-      shared.initSentry();
+  ensureSentry()
+    .then((Sentry) => {
       routerTransitionHandler = Sentry.captureRouterTransitionStart;
     })
     .catch(() => {

@@ -16,7 +16,7 @@
  * correlate a user-facing "Error ID" with the server log line.
  */
 
-import * as Sentry from "@sentry/nextjs";
+import { captureClientException } from "@/lib/observability/client-capture";
 import { useEffect, useState, startTransition } from "react";
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -96,7 +96,7 @@ export function DashboardRouteError({
   // A self-healed blip must not spend Sentry quota.
   useEffect(() => {
     if (autoRetrying) return;
-    const capturedId = Sentry.captureException(
+    const capturedId = captureClientException(
       error instanceof Error ? error : new Error(String(error)),
       {
         tags: {

@@ -39,6 +39,8 @@ export interface DashboardBreadcrumbsInput {
 const looksLikeRecordId = (segment: string) =>
   parseCaseKey(segment) !== null ||
   /^[a-z0-9]{20,}$/i.test(segment) ||
+  // An unscheduled class/webinar travels as `unscheduled-<kind>-<cuid>`.
+  /^unscheduled-(class|webinar)-[a-z0-9]{20,}$/i.test(segment) ||
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
     segment,
   );
