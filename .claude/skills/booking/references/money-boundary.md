@@ -345,7 +345,8 @@ the booking it stamps the per-payment marker `Payment.refundOwedPaise`,
 (`cancel:<appointmentId>:<paymentId>`, `trial-cancel:<trialId>:<paymentId>`,
 `rejection:<requestId>:<paymentId>`, `moderation:<appointmentId>:<paymentId>`,
 `freeze:<appointmentId>:<paymentId>`, `consultant-no-show:<paymentId>`,
-`event-cancel:<eventId>:pay:<paymentId>`, `class-end:<classId>:pay:<paymentId>`)
+`event-cancel:<eventId>:pay:<paymentId>`, `class-end:<classId>:pay:<paymentId>`,
+`parked-consultation:<consultationId>:<paymentId>`)
 and clears the marker by CAS on the key once the refund is not PENDING. The first
 writer wins, so a second door cannot overwrite the amount owed. A death between
 commit and drive leaves CANCELLED plus SUCCEEDED plus a marker, and the

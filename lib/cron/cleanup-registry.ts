@@ -1005,6 +1005,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         },
         summarize: (r) => ({
           consultationsExpired: r.consultationsExpired,
+          parkedConsultationsCancelled: r.parkedConsultationsCancelled,
           subscriptionsExpired: r.subscriptionsExpired,
           subscriptionNudgesSent: r.subscriptionNudgesSent,
           paymentPendingExpired: r.paymentPendingExpired,
@@ -1014,6 +1015,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         items: (r) => ({
           processed:
             r.consultationsExpired +
+            r.parkedConsultationsCancelled +
             r.subscriptionsExpired +
             r.paymentPendingExpired,
         }),

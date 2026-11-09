@@ -43,6 +43,10 @@ import {
 } from "@/lib/booking/event-waitlist";
 import { lapseApprovedRequest } from "@/lib/booking/lapse-approved-request";
 import {
+  cancelAgedParkedConsultations,
+  hasAgedParkedConsultation,
+} from "@/lib/booking/parked-consultation-sweep";
+import {
   notifyConsulteeRequestExpired,
   PAY_LINK_LAPSED_REASON,
   UNANSWERED_REQUEST_REASON,
@@ -344,6 +348,8 @@ export async function hasStaleRequestWork(
   });
   if (consultation) return true;
   if (outOfTime()) return true;
+  if (await hasAgedParkedConsultation(db, now)) return true;
+  if (outOfTime()) return true;
   const subscription = await db.subscription.findFirst({
     where: {
       OR: [
@@ -384,6 +390,8 @@ export async function hasStaleRequestWork(
 export interface ExpireStaleRequestsResult {
   success: boolean;
   consultationsExpired: number;
+  /** Paid consultations parked after a failed restore, cancelled with a full refund. */
+  parkedConsultationsCancelled: number;
   subscriptionsExpired: number;
   /** #1703 — consultant nudges sent for paid, still-unscheduled subscriptions. */
   subscriptionNudgesSent: number;
@@ -2153,6 +2161,12 @@ async function expireStaleRequestsUnlocked(
   const consultationResult = await expirePendingConsultations(limits);
   allErrors.push(...consultationResult.errors);
 
+  // Paid consultations parked after a failed restore and never re-placed.
+  const parkedResult = await cancelAgedParkedConsultations({
+    maxRows: limits.maxRequests,
+  });
+  allErrors.push(...parkedResult.errors);
+
   // Expire PENDING subscriptions
   const subscriptionResult = await expirePendingSubscriptions(limits);
   allErrors.push(...subscriptionResult.errors);
@@ -2219,6 +2233,7 @@ async function expireStaleRequestsUnlocked(
   console.log(
     `   Tentative slots released with them: ${consultationResult.slotsReleased}`,
   );
+  console.log(`   Parked consultations cancelled: ${parkedResult.cancelled}`);
   console.log(
     `   Subscriptions expired (PENDING): ${subscriptionResult.expired}`,
   );
@@ -2230,7 +2245,7 @@ async function expireStaleRequestsUnlocked(
   );
   console.log(`   Unscheduled-subscription nudges sent: ${nudges.nudged}`);
   console.log(
-    `   Refunds issued/failed: ${consultationResult.issued + subscriptionResult.issued + approvedUnallocated.issued + paidUnallocated.issued}/${consultationResult.failures + subscriptionResult.failures + approvedUnallocated.failures + paidUnallocated.failures}`,
+    `   Refunds issued/failed: ${consultationResult.issued + parkedResult.issued + subscriptionResult.issued + approvedUnallocated.issued + paidUnallocated.issued}/${consultationResult.failures + parkedResult.failures + subscriptionResult.failures + approvedUnallocated.failures + paidUnallocated.failures}`,
   );
   console.log(`   Payment pending expired: ${totalPaymentPending}`);
 
@@ -2242,6 +2257,7 @@ async function expireStaleRequestsUnlocked(
   return {
     success: allErrors.length === 0,
     consultationsExpired: consultationResult.expired,
+    parkedConsultationsCancelled: parkedResult.cancelled,
     // #1423 — both subscription arms count here. The APPROVED-unallocated arm
     // used to be invisible in this field: the PENDING arm's bulk statement ran
     // unconditionally and its `count` was reported as the whole total, so the
@@ -2255,11 +2271,13 @@ async function expireStaleRequestsUnlocked(
     consultationSlotsReleased: consultationResult.slotsReleased,
     refundsIssued:
       consultationResult.issued +
+      parkedResult.issued +
       subscriptionResult.issued +
       approvedUnallocated.issued +
       paidUnallocated.issued,
     refundFailures:
       consultationResult.failures +
+      parkedResult.failures +
       subscriptionResult.failures +
       approvedUnallocated.failures +
       paidUnallocated.failures,
