@@ -19,12 +19,9 @@ import {
   rescheduleReleasable,
 } from "@/lib/booking/reschedule-proposals";
 import { newTimeDoor } from "@/lib/appointments/new-time-door";
-import {
-  isApprovedStatus,
-  isConfirmedStatus,
-  isInactiveStatus,
-} from "@/lib/appointments/status";
+import { isConfirmedStatus, isInactiveStatus } from "@/lib/appointments/status";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
+import { rescheduleStatusOk } from "@/lib/appointments/consultee-affordances";
 import type { ConsultantTrialLike } from "@/lib/appointments/map-consultant";
 import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import { useNowTick } from "@/hooks/use-now-tick";
@@ -99,12 +96,11 @@ function canOfferReschedule(
 ): boolean {
   return Boolean(
     vm.appointmentId &&
-    vm.kind !== "TRIAL" &&
     vm.kind !== "WEBINAR" &&
     vm.kind !== "CLASS" &&
     lifecycleOk &&
     !inactive &&
-    isApprovedStatus(vm.status) &&
+    rescheduleStatusOk(vm.kind, vm.status) &&
     !timingsOk &&
     occurrencesAllowReschedule(rawOccurrences) &&
     rescheduleReleasable(rawOccurrences),
@@ -382,13 +378,25 @@ export function useConsultantAppointmentsAdapter(
         onClick: () => router.push(participantsUrl),
       });
     }
-    const mayReschedule = canOfferReschedule(
-      vm,
-      lifecycleOk,
-      inactive,
-      timingsOk,
-      rawOccurrences,
-    );
+    const mayReschedule =
+      vm.kind === "TRIAL"
+        ? canOfferReschedule(
+            vm,
+            lifecycleOk,
+            inactive,
+            false,
+            trialSlotsOf(vm).map((o) => ({
+              ...o,
+              isTentative: o.isTentative ?? false,
+            })),
+          )
+        : canOfferReschedule(
+            vm,
+            lifecycleOk,
+            inactive,
+            timingsOk,
+            rawOccurrences,
+          );
     const mayCancel = Boolean(
       vm.appointmentId && vm.kind !== "TRIAL" && lifecycleOk && !inactive,
     );

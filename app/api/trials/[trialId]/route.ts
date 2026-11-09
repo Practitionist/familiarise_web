@@ -45,6 +45,7 @@ import {
 } from "@/utils/appointmentlock";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { transitionTrial } from "@/lib/booking/transitions";
+import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isRefusal } from "@/lib/errors/refusal";
 import {
@@ -1270,6 +1271,11 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
           where: { id: trialId },
         });
         if (cancelled.appointmentId) {
+          // An ending closes any open reschedule, freeing its reservation.
+          await declineOpenReschedules(tx, cancelled.appointmentId, {
+            actorUserId: session.user.id,
+            reason: "trial cancelled",
+          });
           await softCancelTrialAppointmentInTx(tx, cancelled.appointmentId);
         }
         // The confirmed refund commits with the cancel, so a death before the

@@ -27,11 +27,11 @@ import { rescheduleReleasable } from "@/lib/booking/reschedule-proposals";
 import {
   consulteeDestructiveAction,
   consulteeMayReschedule,
+  rescheduleStatusOk,
   openProposalTarget,
   type OpenRescheduleProposal,
 } from "@/lib/appointments/consultee-affordances";
 import {
-  isApprovedStatus,
   isCompletedLikeStatus,
   isConfirmedStatus,
   isInactiveStatus,
@@ -441,7 +441,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
       // there is no id to send them to.
       consulteeId &&
       !inactive &&
-      isApprovedStatus(vm.status) &&
+      rescheduleStatusOk(vm.kind, vm.status) &&
       occurrencesAllowReschedule(slots) &&
       rescheduleReleasable(slots),
     );
