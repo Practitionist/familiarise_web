@@ -302,7 +302,11 @@ it("re-flags after a clear only on a later host cancellation", async () => {
 
 it("makes up on the source ordinal; a second make-up and a late one are refused", async () => {
   const inDays = (d: number) =>
-    new Date(cancelledAt.getTime() + d * 86_400_000);
+    // Make-up starts sit on the half-hour grid, like every host-set time.
+    new Date(
+      Math.ceil((cancelledAt.getTime() + d * 86_400_000) / 1_800_000) *
+        1_800_000,
+    );
   db.occurrenceCreate.mockResolvedValue({ id: "occ-make-up" });
   await scheduleClassMakeUp(hosted, "occ-5", inDays(5));
   expect(db.occurrenceCreate.mock.calls[0][0].data.ordinal).toBe(5);
@@ -326,7 +330,11 @@ it("refuses a make-up onto host time any other booking holds, and takes the host
     tryLockSlotBatch: jest.Mock;
   };
   const inDays = (d: number) =>
-    new Date(cancelledAt.getTime() + d * 86_400_000);
+    // Make-up starts sit on the half-hour grid, like every host-set time.
+    new Date(
+      Math.ceil((cancelledAt.getTime() + d * 86_400_000) / 1_800_000) *
+        1_800_000,
+    );
   hostFree.current = false;
   await expect(
     scheduleClassMakeUp(hosted, "occ-5", inDays(5)),
@@ -349,7 +357,11 @@ it("refuses a make-up when the host's time is held by an in-flight booking", asy
   };
   lock.tryLockSlotBatch.mockResolvedValueOnce({ ok: false, heldKeys: ["k"] });
   const inDays = (d: number) =>
-    new Date(cancelledAt.getTime() + d * 86_400_000);
+    // Make-up starts sit on the half-hour grid, like every host-set time.
+    new Date(
+      Math.ceil((cancelledAt.getTime() + d * 86_400_000) / 1_800_000) *
+        1_800_000,
+    );
   await expect(scheduleClassMakeUp(hosted, "occ-5", inDays(5))).rejects.toThrow(
     /being booked right now/,
   );
@@ -363,7 +375,11 @@ it("locks the host the make-up is written under, not the plan's current owner", 
   db.sourceProfile = "cp-source-host";
   db.occurrenceCreate.mockResolvedValue({ id: "occ-make-up" });
   const inDays = (d: number) =>
-    new Date(cancelledAt.getTime() + d * 86_400_000);
+    // Make-up starts sit on the half-hour grid, like every host-set time.
+    new Date(
+      Math.ceil((cancelledAt.getTime() + d * 86_400_000) / 1_800_000) *
+        1_800_000,
+    );
 
   await scheduleClassMakeUp(hosted, "occ-5", inDays(5));
 

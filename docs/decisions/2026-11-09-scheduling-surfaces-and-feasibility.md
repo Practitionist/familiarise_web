@@ -63,12 +63,18 @@ Three read-only audits of `dev` at `b3d86d012` (math and quotas, event and trial
    - A month view that counts whole sessions that fit.
 
 9. **Money and stuck states.**
-   - A class that completes with sessions sold but never placed refunds them pro rata.
-   - A consultation parked after a failed restore cancels with a full refund after 7 days, or 48 hours past its original time, whichever is first.
-   - The 30-day "approved but unallocated" refund applies only to plans that never had a confirmed session.
-   - A consultee's own release or cancel inside 24 hours is forfeited at plan-end settlement.
-   - Reschedule POST takes an idempotency key and replays a committed outcome.
+   - A class that completes with sessions sold but never placed refunds each seat for them. The amount is floor(seat paid × unplaced ÷ sessions the seat bought), less any earlier class-end refund. The completing commit stamps a `class-end:` refund-owed marker, and the retry sweep drives it, so the payment's earnings stay held until it settles. A seat whose payment already owes another door's refund holds the completion until that clears.
+   - A consultation parked after a failed restore cancels with a full refund after 7 days, or 48 hours past its original time, whichever is first. It records a strike only when the consultant started the move.
+   - The 30-day "approved but unallocated" refund applies only to plans that never started: no confirmed session ever (tombstones included) and no reschedule request ever.
+   - A consultee cannot release or cancel a single subscription session inside 24 hours. Returns need 24 hours, and a no-show is recorded as delivered, so such a session is already forfeited at plan end. This is now pinned by a test.
+   - Reschedule POST takes an `Idempotency-Key` and replays a committed outcome through the shared `withIdempotency` store. A request killed mid-flight keeps its key busy (409 `IDEMPOTENCY_IN_FLIGHT`) until the page is reloaded, which mints a new key.
    - A session parked for ops more than 7 days goes on the ops list.
+   - Hardening:
+     - Single-key locks never orphan themselves, and a lost lock renewal aborts with 409.
+     - Manual and requested allocation take the consultee key after their reads.
+     - A reused wrapper keeps its first allocation key.
+     - Read Committed booking transactions replay once on a deadlock.
+     - Two webhook payment writes settle by compare-and-set.
 
 ## Alternatives considered
 
