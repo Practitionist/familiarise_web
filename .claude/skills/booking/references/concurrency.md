@@ -274,8 +274,9 @@ status intent is limited to DRAFT and SCHEDULED (`EventEditorStatusSchema` in
 `lib/api/plans/event-status.ts`). The cancel route is the only door because it
 owns refunds and history.
 
-A sold webinar or class is never re-planned. Once any seat is live (HELD,
-CONFIRMED or ATTENDED), a manual or auto allocation that would replace its
+A sold webinar or class is never re-planned. Once any buyer seat is live (a
+`CONSULTEE` participant that is HELD, CONFIRMED or ATTENDED; the host's own
+participant row never counts), a manual or auto allocation that would replace its
 sessions answers 409 `USE_RETIME`: `assertGroupEventUnsoldInTx`
 (`lib/booking/allocation/guards.ts`) counts the live seats with `tx` right after
 `guardAllocationInTx` takes the event's advisory lock, so a seat checkout that

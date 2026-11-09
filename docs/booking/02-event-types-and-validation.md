@@ -95,6 +95,10 @@ Single one-time event with multiple attendees.
 **Slots**: `slotsPerSession = Math.ceil(durationInHours / 0.5)`
 **Rules**: Consecutive slots required. Exactly one Appointment created. Consultant-scheduled (no request-based flow).
 
+**Setting its time**: the host picks the start on their own calendar with the single-session picker (`SingleSessionPicker`). The picker lists every half-hour start of a day, labelled Free (inside published hours, unbooked), Outside your hours (allowed for an event), Busy or Too soon, in the host's zone. The server applies `eventTimeRefusal` (`lib/booking/event-time-rules.ts`) on create and on a changed time: the start must be on the UTC half hour and at least an hour away, or it answers 400 `EVENT_TIME_INVALID`. The end is the start plus whole minutes, so a 90-minute webinar's slot (and its co-host check) covers 90 minutes. For example, an IST host picks Thu 18:30, a 1.5 h webinar, and the session is stored as 13:00–14:30 UTC.
+
+**After it sells**: once any buyer seat is live, the webinar is never re-planned through Manage timings (409 `USE_RETIME`); the host re-times it at least 24 hours out, and every attendee may leave with a full refund until `retimeBy`.
+
 **Enrollment**: Consultees enroll via checkout. A full event is sold out — registration closes until the organizer raises its capacity.
 
 ---
@@ -121,6 +125,10 @@ flowchart LR
 ```
 
 Consultant-scheduled. Consultees enroll via checkout; a full event reads as sold out.
+
+**Scheduling a class**: the host schedules from a weekly pattern on the Manage timings page (`ClassPatternScheduler`): a first possible day plus weekday and time rows ("Mon and Thu at 18:00"). The pattern is projected into the plan's N sessions on the host's wall clock (`projectPattern` in `lib/booking/class-pattern.ts`), so a daylight-saving change keeps 18:00 at 18:00. Each session is labelled against the host's calendar before saving, and saving sends exactly those times through the allocator's manual mode, which re-checks overlap, co-hosts and the two-a-day cap. The week grid stays available as the calendar view. The editor's start date produces the default series through the same projection (`seriesStartsFrom`). The offering card's "Schedule now" link opens the scheduler for a class with no sessions yet.
+
+**After it sells**: the allocator refuses to re-plan a class with a live buyer seat (409 `USE_RETIME`). The host either moves every session at least 24 hours away to a new pattern in one step (`retimeClassSeries`, "Move upcoming sessions"), or cancels one session and schedules a make-up within 14 days with the single-session picker. A series move records no host miss and gives every seat a free leave until `retimeBy`; a cancel counts as a miss toward learners' exit right.
 
 ---
 
