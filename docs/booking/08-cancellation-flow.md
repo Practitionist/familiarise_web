@@ -811,7 +811,7 @@ Classes are multi-session group events (e.g., "6-week Python bootcamp"). They be
 
 **What gets written to the database**: Only `status: "CANCELLED"`, same as webinar.
 
-**What the host's series cancel refunds (#1780 D-5)**: A webinar still refunds every seat in full. A class refunds each seat only the sessions it was not delivered. The cancel route reads every paid seat's ledger (`classSeriesLedgers`) before its transaction tombstones the sessions, and each seat then refunds `amount − unit × delivered`, keyed `series-cancel:<paymentId>`. The delivered share of the fee stays with the consultant, because the refund cascade claws back the consultant's share in proportion to the refund. A credit-funded seat that had sessions delivered is escalated to ops, because the credits rail restores all or nothing.
+**What the host's series cancel refunds (#1780 D-5)**: A webinar still refunds every seat in full. A class refunds each seat only the sessions it was not delivered. The cancel route reads every paid seat's ledger (`classSeriesLedgers`) on its own transaction, under the event and appointment locks and before that transaction tombstones the sessions, so a session refunded, completed or left between the click and the commit is never paid twice. Each seat then refunds `amount − unit × delivered` less what it already got back per session, keyed `event-cancel:<classId>:pay:<paymentId>`. The delivered share of the fee stays with the consultant, because the refund cascade claws back the consultant's share in proportion to the refund. A credit-funded seat that had sessions delivered is escalated to ops, because the credits rail restores all or nothing.
 
 ### Cancelling one class session (#1780 row 4)
 
@@ -1393,3 +1393,4 @@ See [the money HLD](../start-here/02-money-system-hld.md#10-refunds) and worked 
 
 1. **Computing the quote after the commit with no durable marker.** Replaced by the in-transaction quote and the refund-owed marker.
 2. **Cancelling an event by `PUT` with `status: "CANCELLED"`.** That path wrote no refunds or history and is refused with `USE_CANCEL_ROUTE`; cancel through this route.
+3. **Class ledgers read before the locks.** The cancel route once read every seat's class-series ledger on the global client before it took the event and appointment locks, so a session refunded, completed or left in between was refunded again by the series cancel. The ledgers are read on the cancel's transaction now.
