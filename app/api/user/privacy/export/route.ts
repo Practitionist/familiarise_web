@@ -74,6 +74,7 @@ export async function GET() {
           onboardingCompleted: true,
           termsAcceptedAt: true,
           privacyAcceptedAt: true,
+          adultConfirmedAt: true,
           razorpayCustomerId: true,
           workExperiences: {
             select: {
@@ -370,6 +371,7 @@ export async function GET() {
           onboardingCompleted: user.onboardingCompleted,
           termsAcceptedAt: user.termsAcceptedAt,
           privacyAcceptedAt: user.privacyAcceptedAt,
+          adultConfirmedAt: user.adultConfirmedAt,
           pseudonymousTelemetryToken: sentryPseudonymousToken,
         },
         consulteeProfile: user.consulteeProfile,

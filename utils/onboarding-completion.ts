@@ -22,6 +22,7 @@ export async function claimOnboardingCompletion(
   tx: Tx,
   userId: string,
   data: Prisma.UserUncheckedUpdateManyInput,
+  consent: Pick<OnboardingConsent, "adultConfirmed">,
 ): Promise<boolean> {
   const now = new Date();
   const { count } = await tx.user.updateMany({
@@ -32,6 +33,7 @@ export async function claimOnboardingCompletion(
       onboardingCompleted: true,
       termsAcceptedAt: now,
       privacyAcceptedAt: now,
+      adultConfirmedAt: consent.adultConfirmed ? now : null,
     },
   });
   return count > 0;

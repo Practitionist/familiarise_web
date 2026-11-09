@@ -34,7 +34,10 @@ import { postInvoiceIssuedJournal } from "@/lib/payments/billing/org-invoice-jou
 import { notifyIssuedOrgInvoice } from "@/lib/payments/billing/create-org-invoice";
 import { drawCoveringPurchaseOrder } from "@/lib/payments/billing/purchase-order-draw";
 import { supplierStateCode } from "@/lib/payments/billing/consumer-invoice";
-import { reportConfigSkip } from "@/lib/cron/config-skip";
+import {
+  GST_UNREGISTERED_SKIP,
+  reportConfigSkip,
+} from "@/lib/cron/config-skip";
 import { platformSupplierForJob } from "@/lib/pdf/supplier";
 import { BILLABLE_ORG_STATUSES } from "@/lib/enterprise/org-status";
 import { notifyOrgLicenseRenewalUpcoming } from "@/lib/novu/org-workflows";
@@ -143,10 +146,7 @@ async function generateSubscriptionInvoices(opts: {
   // No GST invoice while unregistered; a malformed or wrong-state GSTIN throws
   // here so no invoice in the run is issued under an ambiguous state.
   if (!platformSupplierForJob()) {
-    reportConfigSkip(
-      "generate-subscription-invoices",
-      "PLATFORM_GSTIN not configured",
-    );
+    reportConfigSkip("generate-subscription-invoices", GST_UNREGISTERED_SKIP);
     return {
       generated: 0,
       skipped: 0,

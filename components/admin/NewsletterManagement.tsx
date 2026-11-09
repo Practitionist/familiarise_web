@@ -101,6 +101,7 @@ async function fetchSubscribers(
 type AudiencePreview = {
   matching: number;
   sendable: number;
+  skippedNoConsent: number;
   skippedSuppressed: number;
   skippedHeld: number;
   limit: number;
@@ -428,7 +429,7 @@ export function NewsletterManagement() {
 
               <p className="text-sm text-muted-foreground">
                 {previewReady && preview.data
-                  ? `${preview.data.sendable} sendable of ${preview.data.matching} confirmed subscribers matching (${preview.data.skippedSuppressed} suppressed, ${preview.data.skippedHeld} held before launch).`
+                  ? `${preview.data.sendable} sendable of ${preview.data.matching} confirmed subscribers matching (${preview.data.skippedNoConsent} without a live marketing consent, ${preview.data.skippedSuppressed} suppressed, ${preview.data.skippedHeld} held before launch).`
                   : "Counting the audience…"}{" "}
                 An unsubscribe footer is appended automatically.
               </p>

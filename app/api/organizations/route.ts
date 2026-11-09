@@ -229,6 +229,7 @@ export async function POST(req: NextRequest) {
             timezone: onboarding.timezone,
             dateOfBirth: onboarding.dateOfBirth,
           },
+          onboarding,
         );
         if (!claimed) {
           throw new HttpError(

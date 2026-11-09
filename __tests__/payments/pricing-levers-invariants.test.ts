@@ -134,7 +134,7 @@ describe("pricing levers invariants", () => {
   it.each([
     [
       "a code that took something off",
-      { discountCodeId: "dc_1", amount: 97_686 },
+      { discountCodeId: "dc_1", amount: 99_330 },
       false,
     ],
     [
@@ -144,7 +144,7 @@ describe("pricing levers invariants", () => {
     ],
     [
       "a welcome discount",
-      { welcomeDiscountPaise: 17_215, amount: 97_686 },
+      { welcomeDiscountPaise: 15_822, amount: 99_330 },
       false,
     ],
     [
@@ -217,10 +217,10 @@ describe("pricing levers invariants", () => {
       promoFeeBps: 2000,
     });
     expect(d).toMatchObject({
-      platformFundedCapPaise: 17_215,
-      welcomeDiscountPaise: 17_215,
-      taxAmount: 14_901,
-      amount: 97_686,
+      platformFundedCapPaise: 15_822,
+      welcomeDiscountPaise: 15_822,
+      taxAmount: 15_152,
+      amount: 99_330,
     });
   });
 });

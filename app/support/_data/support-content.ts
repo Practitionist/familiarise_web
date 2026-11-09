@@ -642,8 +642,8 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Earning and using credits",
         paragraphs: [
-          "A friend who joins through your link gets 20% off their first booking, up to ₹300, taken off the price before tax. You get ₹300 of credit after your friend's first paid session has taken place and its refund window has passed; if that booking is refunded or charged back, the credit is cancelled.",
-          "Credit applies automatically at checkout on orders of ₹500 or more, oldest-expiring first, and can cover up to 20% of a booking (less on an expert's own-link bookings). Credit expires 90 days after it becomes spendable, is INR-only and cannot be withdrawn or transferred.",
+          "A friend who joins through your link gets a discount on their first booking of up to 20%, at most ₹300, taken off the price before tax. The discount is limited by the platform's fee on that booking, so it is often less. You earn up to ₹300 of credit after your friend's first paid session has taken place and its refund window has passed; if that booking is refunded or charged back, the credit is cancelled.",
+          "Credit applies automatically at checkout on orders of ₹500 or more, oldest-expiring first, and can cover up to 20% of a booking (less on an expert's own-link bookings). Together with any discount, it never exceeds the platform's fee on that booking. Credit expires 90 days after it becomes spendable, is INR-only and cannot be withdrawn or transferred.",
           "Your referral link is on the Invite & earn page of your dashboard. A referral counts when the person you invited makes their first paid booking within 30 days of signing up; a sign-up alone earns nothing.",
         ],
       },

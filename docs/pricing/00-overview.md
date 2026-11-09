@@ -18,7 +18,7 @@ A buyer-facing price is shown in one of two ways, chosen by whether the platform
 - **Unregistered:** the list price is the all-in price, and no GST text appears.
 - **Registered (a valid `PLATFORM_GSTIN`):** every buyer price is shown all-in, for example "₹1,180 incl. GST" for a ₹1,000 list price. The expert still types the ex-GST price.
 
-The display is computed by `buyerDisplayPricePaise()` in `lib/payments/pricing/display-price.ts`, which rounds the GST exactly as the checkout does (`determineTax()` in `lib/payments/tax/tax-engine.ts`), so the number on a card equals the number the buyer is charged. The registration flag is read on the server with `isPlatformGstRegistered()` in `lib/pdf/supplier.ts` and handed to client components through `BuyerPriceProvider` (`components/pricing/BuyerPriceProvider.tsx`), mounted by `app/explore/layout.tsx`. A client component never reads `PLATFORM_GSTIN` itself.
+The display is computed by `buyerDisplayPricePaise()` in `lib/payments/pricing/display-price.ts`, which rounds the GST exactly as the checkout does (`determineTax()` in `lib/payments/tax/tax-engine.ts`), so the number on a card equals the number the buyer is charged. The registration flag is read on the server with `isPlatformGstRegistered()` in `lib/pdf/supplier.ts` and handed to client components through `BuyerPriceProvider` (`components/pricing/BuyerPriceProvider.tsx`), mounted by `app/explore/layout.tsx` and `app/checkout/layout.tsx`. A client component never reads `PLATFORM_GSTIN` itself.
 
 ## The levers today
 
@@ -63,7 +63,7 @@ Which rate applies to an order depends on **attribution**, stamped on the paymen
 
 `ExpertCustomerRelationship` makes the first attribution for an expert and buyer pair permanent: a later purchase from the same buyer keeps the original source. `feeBpsForSource()` picks `ownLinkBps` for `OWN_LINK` and `marketplaceBps` for the other two.
 
-The public `become-an-expert` page renders both rates from the active schedule through `describeFeeRates()` and `readActiveFeeSchedule()`, so the page states "You keep 80–90%" only when the schedule says so, and "You keep 80%" while both rates are the fallback. The page is incrementally regenerated hourly, so a newly approved schedule appears within the hour.
+The public `become-an-expert` page renders both rates from the active schedule through `describeFeeRates()` and `readActiveFeeSchedule()`, so the page states "You keep 80–90%" only when the schedule says so, and "You keep 80%" while both rates are the fallback. The page is incrementally regenerated hourly, so a newly approved schedule appears within the hour. The `/pricing` page (`app/(pages)/pricing/page.tsx`) reads the marketplace rate from the same schedule through `readActiveFeeSchedule()` and `describeFeeRates()`, wrapped in `withBuildTimeRetry`, with the same hourly regeneration (`revalidate = 3600`); it no longer hard-codes `PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE`.
 
 ### Fee waivers
 
@@ -75,7 +75,7 @@ When an expert sells under a hosting organisation, the split is set by the organ
 
 ### GST on the order
 
-`determineTax()` (`lib/payments/tax/tax-engine.ts`) takes the regime from `currentGstRegime()` (`lib/payments/tax/gst-regime.ts`), which reads `PLATFORM_GSTIN` alone. Registered, it charges 18% GST on the discounted base for an Indian buyer. Unregistered, it charges 0%, the payment is stamped `Payment.gstRegime = UNREGISTERED`, and the buyer gets a receipt instead of a tax invoice. A GSTIN that is set but malformed or from another state refuses checkout with `GST_CONFIG_INVALID` rather than charging 0%. The rules and the turnover alarm are in [GST registration and the tax regime](../finance/60-tax/05-gst-registration-and-tax-regime.md).
+`determineTax()` (`lib/payments/tax/tax-engine.ts`) takes the regime from `currentGstRegime()` (`lib/payments/tax/gst-regime.ts`), which reads `PLATFORM_GSTIN` alone. Registered, it charges 18% GST on the discounted base for an Indian buyer. Unregistered, it charges 0%, the payment is stamped `Payment.gstRegime = UNREGISTERED`, and the buyer gets a receipt instead of a tax invoice. A payment with no stamp predates the column and is treated as unregistered, so only a `REGISTERED` stamp is ever tax-invoiced. A GSTIN that is set but malformed or from another state refuses checkout with `GST_CONFIG_INVALID` rather than charging 0%; `GET /api/checkout/context` answers the same typed refusal (503) without a Sentry event. The rules and the turnover alarm are in [GST registration and the tax regime](../finance/60-tax/05-gst-registration-and-tax-regime.md).
 
 ## What does not exist yet
 

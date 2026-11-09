@@ -219,7 +219,9 @@ export default function TermsPage() {
               <ul>
                 <li>All transactions are processed in Indian Rupees (INR)</li>
                 <li>
-                  Prices may or may not include applicable taxes (GST, etc.)
+                  The price shown before you pay is the full amount you pay.
+                  Once Familiarise is registered for GST, that price includes
+                  GST, and your tax invoice shows the GST separately.
                 </li>
                 <li>
                   You are responsible for any taxes applicable in your

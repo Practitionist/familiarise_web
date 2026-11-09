@@ -334,9 +334,9 @@ describe("checkout price parity — the edges that actually move money", () => {
       buyerCountry: "IN",
       discount: { type: "FIXED_AMOUNT", value: 90000 },
     };
-    // The floor keeps ceil(2.36 % of ₹472) = 1,114 paise: base 1,114 plus GST 201.
-    expect((await serverAmount(input)).totalPaise).toBe(1315);
-    expect(Math.abs(clientAmount(input).totalPaise - 1315)).toBeLessThanOrEqual(
+    // The floor keeps ceil(3.54 % of ₹472) = 1,671 paise: base 1,671 plus GST 301.
+    expect((await serverAmount(input)).totalPaise).toBe(1972);
+    expect(Math.abs(clientAmount(input).totalPaise - 1972)).toBeLessThanOrEqual(
       ONE_PAISE,
     );
   });
@@ -347,9 +347,9 @@ describe("checkout price parity — the edges that actually move money", () => {
       buyerCountry: "IN",
       creditsAvailablePaise: 99_999_999,
     };
-    // Credits stop at the list price less the gateway estimate (13,924 on ₹5,900), so the tax stays.
-    expect((await serverAmount(input)).totalPaise).toBe(103924);
-    expect(clientAmount(input).totalPaise).toBe(103924);
+    // Credits stop at the list price less the gateway estimate (20,886 on ₹5,900), so the tax stays.
+    expect((await serverAmount(input)).totalPaise).toBe(110886);
+    expect(clientAmount(input).totalPaise).toBe(110886);
   });
 
   it("leaves the earnings base at the list price, not the charged price", async () => {

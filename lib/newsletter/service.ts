@@ -15,6 +15,10 @@ import {
   sendNewsletterConfirmEmail,
   sendNewsletterWelcomeEmail,
 } from "@/lib/email";
+import {
+  purposeCodeAliases,
+  PURPOSE_CODES,
+} from "@/lib/compliance/purpose-codes";
 import type { BroadcastAudience } from "./broadcast-audience";
 import { verifyConfirmToken, verifyUnsubscribeToken } from "./tokens";
 import {
@@ -341,12 +345,51 @@ export function listSendableSubscribers(
 ) {
   return prisma.newsletterSubscriber.findMany({
     where: audienceWhere(audience),
-    select: { email: true },
+    select: { email: true, userId: true, consentSubjectId: true },
     orderBy:
       order === "stable"
         ? [{ createdAt: "asc" }, { id: "asc" }]
         : [{ confirmedAt: { sort: "desc", nulls: "last" } }, { id: "asc" }],
   });
+}
+
+/**
+ * The subscribers that still hold a live `MARKETING_COMMS` artifact, on the linked
+ * account or on the row's pseudonymous subject; order is kept. One read for the batch.
+ */
+export async function withLiveMarketingConsent<
+  T extends { userId: string | null; consentSubjectId: string | null },
+>(rows: readonly T[], now: Date): Promise<T[]> {
+  const userIds = [
+    ...new Set(rows.flatMap((r) => (r.userId ? [r.userId] : []))),
+  ];
+  const subjectIds = [
+    ...new Set(
+      rows.flatMap((r) => (r.consentSubjectId ? [r.consentSubjectId] : [])),
+    ),
+  ];
+  if (userIds.length === 0 && subjectIds.length === 0) return [];
+  const live = await prisma.consentArtifact.findMany({
+    where: {
+      OR: [
+        { userId: { in: userIds } },
+        { subjectPseudonymousId: { in: subjectIds } },
+      ],
+      purposeCodes: {
+        hasSome: purposeCodeAliases(PURPOSE_CODES.MARKETING_COMMS),
+      },
+      withdrawnAt: null,
+      auditRetainedUntil: { gt: now },
+    },
+    select: { userId: true, subjectPseudonymousId: true },
+  });
+  const liveUsers = new Set(live.map((a) => a.userId));
+  const liveSubjects = new Set(live.map((a) => a.subjectPseudonymousId));
+  return rows.filter(
+    (r) =>
+      (r.userId !== null && liveUsers.has(r.userId)) ||
+      (r.consentSubjectId !== null && liveSubjects.has(r.consentSubjectId)),
+  );
 }
 
 function csvCell(value: string | null | undefined = ""): string {

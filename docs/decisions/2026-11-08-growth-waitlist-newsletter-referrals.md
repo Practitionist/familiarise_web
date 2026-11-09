@@ -17,20 +17,20 @@ The platform is pre-launch: every newsletter, waitlist and referral row is seed 
 
 One word per concept, in code, copy and docs.
 
-| Concept | Term | Model |
-| --- | --- | --- |
-| People who asked for product news and launch email | **newsletter subscribers** (the newsletter list) | `NewsletterSubscriber` |
-| A learner queued for a seat on a sold-out webinar or class | **appointment waitlist** (the button says "Notify me") | `AppointmentWaitlist` |
-| A learner asking to be told when a 1:1 window frees | **slot backup interest** | `WindowBackupInterest` |
+| Concept                                                    | Term                                                   | Model                  |
+| ---------------------------------------------------------- | ------------------------------------------------------ | ---------------------- |
+| People who asked for product news and launch email         | **newsletter subscribers** (the newsletter list)       | `NewsletterSubscriber` |
+| A learner queued for a seat on a sold-out webinar or class | **appointment waitlist** (the button says "Notify me") | `AppointmentWaitlist`  |
+| A learner asking to be told when a 1:1 window frees        | **slot backup interest**                               | `WindowBackupInterest` |
 
 ## Decisions
 
 ### Part 1: the appointment waitlist
 
 1. **Notify everyone; the first to pay gets the seat.** The 2026-11-07 model stays: no queue position, no reservation and no claim window. No Indian ticketing or creator platform publishes a stronger standard, and a reserved seat needs an offer timer, a re-offer sweep and a hold that blocks the seat while a waiter ignores the email. Ordered offer waves are reconsidered only if the monthly conversion read-out or learner complaints show waiters losing races; rows are already ordered by `createdAt`, so no migration is needed. **(planned: post-launch trigger)**
-2. **Capacity is normalised on the server.** The webinar and class `crud-with-plan` PATCH routes write no per-event override (`null`) when the submitted capacity equals the plan's, and an override only when it differs. The editor loads the event's effective capacity. Pre-launch rows are seed data, so there is no backfill. **(planned: waitlist pull request)**
-3. **Hosts see demand where they decide capacity.** "N waiting" appears on the planner and offering event cards and beside the capacity field in the editor, and switching the list off first says how many open entries will expire. Hosts see counts only, never names. **(planned: waitlist pull request)**
-4. **Two tables, one shared interest module.** `AppointmentWaitlist` is keyed on a group event's roster and `WindowBackupInterest` on an expert's time window, so their matching queries differ (an equality on the appointment against a time-range overlap), and booking v2 keeps 1:1 and group bookings apart. They keep separate tables and share one module for statuses, the 12-hour re-notice and the 30-day purge, one "Notify me" component, one learner "My alerts" list, and one read-only `demand` SQL view over both, with no user ids, for analytics and ranking. Both tables carry the same lifecycle columns, so a later merge stays cheap if a real need appears. **(planned: waitlist pull request)**
+2. **Capacity is normalised on the server.** The webinar and class `crud-with-plan` PATCH routes write no per-event override (`null`) when the submitted capacity equals the plan's, and an override only when it differs. The editor loads the event's effective capacity. Pre-launch rows are seed data, so there is no backfill. **(shipped)**
+3. **Hosts see demand where they decide capacity.** "N waiting" appears on the planner and offering event cards and beside the capacity field in the editor, and switching the list off first says how many open entries will expire. Hosts see counts only, never names. **(shipped)**
+4. **Two tables, one shared interest module.** `AppointmentWaitlist` is keyed on a group event's roster and `WindowBackupInterest` on an expert's time window, so their matching queries differ (an equality on the appointment against a time-range overlap), and booking v2 keeps 1:1 and group bookings apart. They keep separate tables and share one module for statuses, the 12-hour re-notice and the 30-day purge, one "Notify me" component, one learner "My alerts" list, and one read-only `demand` SQL view over both, with no user ids, for analytics and ranking. Both tables carry the same lifecycle columns, so a later merge stays cheap if a real need appears. **(shipped)**
 
 ### The rename
 
@@ -40,7 +40,7 @@ One word per concept, in code, copy and docs.
 
 ### Part 2: the newsletter and announcements
 
-8. **One consent ledger for everyone.** Every newsletter confirmation writes a `ConsentArtifact` for `MARKETING_COMMS` with the notice version, linked to the account when the email matches one and to a pseudonymous subject otherwise. Every unsubscribe, complaint or withdrawal withdraws it. Double opt-in stays: Indian law was not found to require it, but it is the evidence the DPDP Act asks for and it protects sender reputation. **(shipped in the newsletter pull request)**
+8. **One consent ledger for everyone.** Every newsletter confirmation writes a `ConsentArtifact` for `MARKETING_COMMS` with the notice version, linked to the account when the email matches one and to a pseudonymous subject otherwise. Every unsubscribe, complaint or withdrawal withdraws it, and a broadcast reads the ledger: a subscriber is mailed only while it holds a live `MARKETING_COMMS` artifact (`withLiveMarketingConsent`), and the others are counted as `skippedNoConsent`. Double opt-in stays: Indian law was not found to require it, but it is the evidence the DPDP Act asks for and it protects sender reputation. **(shipped in the newsletter pull request)**
 9. **Resend Pro at go-live, our own send path.** The account moves to Resend Pro at go-live because the free plan stops at 100 emails a day. The newsletter keeps sending through our own batch path, so consent, suppression and erasure stay in one database with no copy of the list in Resend. The broadcast gains an audience filter (role, source, tags) with a count preview, a test send and a warm-up send to the most recently confirmed subscribers, and it refuses an audience above about 2,000 recipients; a ticker-driven campaign outbox is the next step at that size. Moving the list to Resend Broadcasts stays a documented later option. **(shipped in the newsletter pull request)**
 10. **Announcements and the newsletter stay separate.** An announcement is a product or service notice for account holders (the site banner and an in-app bell) and needs no marketing consent. The newsletter is marketing email and goes only to subscribers with consent. An item meant for both is written once and sent twice, each under its own rule, and announcements get no email channel. **(shipped: the newsletter pull request fixed the notification family label that said "No opt-out")**
 11. **Lifecycle email.** The welcome email and the launch broadcast exist; re-engagement email waits until after launch.
@@ -48,30 +48,30 @@ One word per concept, in code, copy and docs.
 ### Part 3: referrals
 
 12. **What is on at launch.** Both expert programmes start on: an expert's own link (a lower platform fee on that expert's sales to the learners it brings) and expert-to-expert referral (fee-free sessions for both experts); neither costs cash. Learner-to-learner referral (a welcome discount for the friend and a platform credit for the referrer) starts on with a capped monthly budget, reviewed after 60 days of booking data. The budget figure is kept in Notion, not in this repository.
-13. **Cheap fraud controls before learner referral goes live.** Email aliases are normalised and disposable domains refused when a code is applied; a vest is voided when the referrer and the referee paid with the same UPI address, card or phone; a hashed IP and user agent are stored on the referral; suspicious vests wait in a "held for review" state with an admin queue; and the code-customise and expert-link routes are rate-limited. No paid device-fingerprinting vendor is added until abuse appears. Review thresholds are configuration, and their values are kept in Notion. **(planned: referrals pull request)**
-14. **A lost chargeback after vest voids what is left.** When the dispute on the friend's qualifying payment is lost, the unspent part of the referrer's credit is voided through the existing reversal posting, and any part already spent is absorbed. **(planned: referrals pull request)**
+13. **Cheap fraud controls before learner referral goes live.** Disposable domains are refused when a code is applied, and email aliases are normalised only for the self-referral check; a vest is voided when the referrer and the referee paid with the same UPI address or phone (card comparison is not built); a hashed IP and user agent are stored on the referral; suspicious vests wait in a "held for review" state with an admin queue; and the code-customise and expert-link routes are rate-limited. No paid device-fingerprinting vendor is added until abuse appears. Review thresholds are configuration, and their values are kept in Notion. **(shipped)** Card comparison and alias-aware matching beyond the self-referral check stay out of scope.
+14. **A lost chargeback after vest voids what is left.** When the dispute on the friend's qualifying payment is lost, the unspent part of the referrer's credit is voided through the existing reversal posting, and any part already spent is absorbed. **(shipped)**
 15. **Attribution precedence is unchanged.** An expert's own link still wins over a learner referral for that expert's sales, as decided on 2026-10-04.
 
 ### Cross-cutting
 
-16. **Where the knowledge lives.** `docs/growth/` holds the subsystem documents and `.claude/skills/growth/` the playbook; `docs/referrals/` stays and is refreshed. **(planned: docs pull request)**
+16. **Where the knowledge lives.** `docs/growth/` holds the subsystem documents and `.claude/skills/growth/` the playbook; `docs/referrals/` stays and is refreshed. **(shipped)**
 17. **The repository holds mechanisms; Notion holds levers and intelligence.** Code, docs and skills carry how things work, the invariants, configuration field names and the terms a user sees on screen. The owner's Notion workspace ("Familiarise / Growth & Marketing") holds the referral budget, fraud thresholds, vendor costs and plan choices, growth targets, detailed competitor research and the conversion read-outs. A document that needs one of those values says it is in Notion.
 18. **Delivery order.** The newsletter pull request lands first (the widest rename, the schema rename, the link key and consent, the go-live blockers), then the appointment waitlist, then the referral money work with a second review round, then the documentation. Each code pull request updates the docs and skills that describe the code it changes.
 19. **The migration cutover comes last.** Moving from `db push` to versioned, CI-applied migrations, with a Supabase-aware runbook and a rehearsed expand-and-contract step (dropping the unused referral statuses and reward columns), follows the coding work. **(planned)**
 
 ## Alternatives considered
 
-| Alternative | Why it lost |
-| --- | --- |
-| Ordered offer waves or a reserved claim window for waiters | Needs an offer timer and a re-offer sweep; a waiter who never answers blocks the seat. Kept as a post-launch option behind data. |
+| Alternative                                                             | Why it lost                                                                                                                         |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Ordered offer waves or a reserved claim window for waiters              | Needs an offer timer and a re-offer sweep; a waiter who never answers blocks the seat. Kept as a post-launch option behind data.    |
 | Merging `AppointmentWaitlist` and `WindowBackupInterest` into one table | The two match differently, every query would branch on kind, and the merge rewires about 18 release hooks during the schema freeze. |
-| Keeping old `/api/waitlist/*` routes as aliases | No email carrying them has been sent, so an alias would only be dead code. |
-| Keeping the `"Waitlist"` table name behind `@@map` | Leaves the collision in every SQL console; renaming is cheapest before launch. |
-| A dedicated `LINK_SIGNING_SECRET` | One more secret on every host; deriving from the auth secret is already a pattern here. |
-| Moving the newsletter to Resend Contacts and Broadcasts now | A second copy of personal data that erasure must reach; revisit when the list grows. |
-| Email on announcements | A second marketing-email path to guard; two sends keep each consent rule simple. |
-| A device-fingerprinting vendor for referral fraud | Cost and a new personal-data processor before there is any abuse to stop. |
-| A negative credit balance on a lost chargeback | A new money state for a loss capped at one reward. |
+| Keeping old `/api/waitlist/*` routes as aliases                         | No email carrying them has been sent, so an alias would only be dead code.                                                          |
+| Keeping the `"Waitlist"` table name behind `@@map`                      | Leaves the collision in every SQL console; renaming is cheapest before launch.                                                      |
+| A dedicated `LINK_SIGNING_SECRET`                                       | One more secret on every host; deriving from the auth secret is already a pattern here.                                             |
+| Moving the newsletter to Resend Contacts and Broadcasts now             | A second copy of personal data that erasure must reach; revisit when the list grows.                                                |
+| Email on announcements                                                  | A second marketing-email path to guard; two sends keep each consent rule simple.                                                    |
+| A device-fingerprinting vendor for referral fraud                       | Cost and a new personal-data processor before there is any abuse to stop.                                                           |
+| A negative credit balance on a lost chargeback                          | A new money state for a loss capped at one reward.                                                                                  |
 
 ## Consequences
 

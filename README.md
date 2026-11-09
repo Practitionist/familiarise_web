@@ -172,7 +172,7 @@ Every deploy context shares one database, so a deploy preview is new code pointe
 
 ### Tax, compliance and encryption
 
-- **`PLATFORM_GSTIN`:** the platform's GSTIN, issued after GST registration. Leave it empty until then; invoice jobs record a config skip meanwhile. Set it before the live Razorpay keys.
+- **`PLATFORM_GSTIN`:** the platform's GSTIN, issued after GST registration. Leave it empty until then; the GST jobs record a config skip meanwhile, which the health check treats as expected. Set it before the live Razorpay keys.
 - **`PLATFORM_LUT_NUMBER` and `PLATFORM_LUT_VALID_TILL`:** the Letter of Undertaking for zero-rated exports, with the date as `YYYY-MM-DD`. Without both, exports are taxed at 18% IGST.
 - **`CLEARTAX_API_KEY`, `CLEARTAX_GSP_TOKEN` and `CLEARTAX_ENV`:** from ClearTax. The e-invoice uploader stays dormant until all of them and `PLATFORM_GSTIN` are set.
 - **`PAN_ENCRYPTION_KEY` and `ERASURE_SALT`** (secrets): generate each with `openssl rand -hex 32`. The PAN key has no previous slot and no re-encrypt script, so changing it leaves every stored consultant PAN unreadable. The salt only changes future pseudonyms when rotated.
@@ -236,7 +236,7 @@ Taking the platform from sandbox to real money is a short ordered list of owner 
 
 1. **Resume the paused job fleet.** The scheduled jobs are deliberately paused until launch, and nothing runs on schedule until the Upstash key `ops:active_cron_platform` is deleted or set to `netlify`. The resume steps are in [the pause decision](docs/decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md#how-to-resume-go-live-or-any-time).
 2. **Run the pre-launch secret rotation.** Several credentials were exposed before launch, and Netlify secrets are write-only, so follow the ordered procedures in the [secret rotation runbook](docs/maintenance/19-secret-rotation-runbook.md).
-3. **Set `PLATFORM_GSTIN` before the Razorpay live keys.** Until it is set, the invoice jobs record a standing config skip, and live keys turn that skip into a page. See [1.2 Keys and the test-key guard](docs/finance/70-operations/07-go-live-checklist.md#12-keys-and-the-test-key-guard).
+3. **Set `PLATFORM_GSTIN` before the Razorpay live keys.** Until it is set, the GST jobs record a config skip that the ops digest notes as expected and the health check ignores; once it is set, any config skip pages. See [1.2 Keys and the test-key guard](docs/finance/70-operations/07-go-live-checklist.md#12-keys-and-the-test-key-guard).
 4. **Make the daily ops digest read clean.** The latest digest email must show no config skips and no paused or muted monitor. See [Part 3](docs/finance/70-operations/07-go-live-checklist.md#part-3-the-daily-ops-digest-reads-clean).
 5. **Set `EMAIL_DELIVERY_MODE=live`.** Any other value holds every email to a domain other than ours and the allowlist. The digest's "Settings" line shows the current value ([Part 3](docs/finance/70-operations/07-go-live-checklist.md#part-3-the-daily-ops-digest-reads-clean)).
 6. **Clear the sandbox identities.** Razorpay rejects every test-mode customer, contact and fund-account id under a live key, so run the purge once, in the cutover window, and never again after live traffic. See [1.5 Clear sandbox identities from the database](docs/finance/70-operations/07-go-live-checklist.md#15-clear-sandbox-identities-from-the-database).
