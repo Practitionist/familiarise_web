@@ -9,7 +9,7 @@ last-reviewed: 2026-11-09
 
 Pricing is everything that decides what a buyer sees, what a buyer is charged and what the platform and the expert keep from one order: the list price, discount codes, the referral welcome discount, referral credits, GST, the platform fee and its waivers. This folder is the subsystem documentation. The checkout mechanics and the ledger stay in [finance](../finance/README.md); this folder explains how the levers fit together and where each one is capped.
 
-Items that are not on `dev` yet are marked **(planned)**. The rules for the planned items were decided on 2026-11-09 and are recorded in the decision record `docs/decisions/2026-11-09-tax-compliance-and-pricing-levers.md`, which lands with the tax-regime pull request "Tax regime and profitability floor". The GST registration rules are in `docs/finance/60-tax/05-gst-registration-and-tax-regime.md`, which that pull request also creates.
+Items that are not built yet are marked **(planned)**; the host-funded coupon, the early-bird price and codes on digital products are the only planned levers. The owner's decisions are recorded in [Tax compliance and pricing levers](../decisions/2026-11-09-tax-compliance-and-pricing-levers.md), and the GST registration rules are in [GST registration and the tax regime](../finance/60-tax/05-gst-registration-and-tax-regime.md).
 
 ## The pages
 

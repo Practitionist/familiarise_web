@@ -7,7 +7,7 @@ last-reviewed: 2026-11-09
 
 # Coupons and early-bird
 
-This page is the **target design (planned)** for two post-launch pricing features: coupons that an expert or host funds, and one early-bird price per event plan. Nothing here is built. The current behaviour is in the [overview](./00-overview.md); the slot each feature occupies is in [one order, one pipeline](./01-one-order-pipeline.md). The owner decided the rules on 2026-11-09; the decision record `docs/decisions/2026-11-09-tax-compliance-and-pricing-levers.md` lands with the tax-regime pull request. The reasons for choosing these levers, and what competitors do, are kept in Notion (Familiarise / Finance).
+This page is the **target design (planned)** for two post-launch pricing features: coupons that an expert or host funds, and one early-bird price per event plan. Nothing here is built. The current behaviour is in the [overview](./00-overview.md); the slot each feature occupies is in [one order, one pipeline](./01-one-order-pipeline.md). The owner decided the rules on 2026-11-09; the decision record is [Tax compliance and pricing levers](../decisions/2026-11-09-tax-compliance-and-pricing-levers.md). The reasons for choosing these levers, and what competitors do, are kept in Notion (Familiarise / Finance).
 
 ## Why a second kind of coupon
 
