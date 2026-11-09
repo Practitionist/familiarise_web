@@ -51,8 +51,9 @@ jest.mock("../../lib/stream-logger", () => ({
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: (...a: unknown[]) => mockReport(...a),
 }));
+const mockCaptureThrottled = jest.fn();
 jest.mock("../../lib/observability/throttled-capture", () => ({
-  captureThrottled: jest.fn(),
+  captureThrottled: (...a: unknown[]) => mockCaptureThrottled(...a),
 }));
 jest.mock("../../lib/stream/dm-eligibility", () => ({
   isDmContextEligible: jest.fn(async () => false),
@@ -160,7 +161,12 @@ describe("join when the post-grant seat check fails", () => {
         ],
       }),
     );
-    expect(mockReport).toHaveBeenCalledTimes(1);
+    expect(mockCaptureThrottled).toHaveBeenCalledTimes(1);
+    expect(mockCaptureThrottled).toHaveBeenCalledWith(
+      "stream.seat.fenceGrant",
+      expect.any(Error),
+      expect.objectContaining({ op: "seat.fenceGrant" }),
+    );
   });
 
   it("admits the host, and the sweep's later drive of the intent never removes them", async () => {

@@ -10,7 +10,7 @@ import { streamLogger } from "@/lib/stream-logger";
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { liveParticipant, paidParticipant } from "@/lib/booking/participants";
-import { reportSentryError } from "@/lib/observability/report";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 import {
   isDmChannelIdEligible,
   isDmContextEligible,
@@ -91,7 +91,8 @@ async function enqueueOrReport(
     await enqueueStreamRevocationRetries(targets, nextRetryAt);
     return nextRetryAt;
   } catch (error) {
-    reportSentryError(error, {
+    // A database outage fails every writer at once; one report per window says it.
+    captureThrottled(`stream.${op}`, error, {
       subsystem: "stream",
       op,
       extra: { targets: targets.length, kind: targets[0]?.kind },
@@ -820,7 +821,7 @@ export async function fenceSeatGrants(
     );
   } catch (error) {
     await persistSeatRevocation(appointmentId, ids);
-    reportSentryError(error, {
+    captureThrottled("stream.seat.fenceGrant", error, {
       subsystem: "stream",
       op: "seat.fenceGrant",
       extra: { appointmentId, users: ids.length },
