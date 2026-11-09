@@ -37,6 +37,7 @@ import { NextRequest } from "next/server";
 import { POST } from "../../app/api/payments/discounts/validate/route";
 import { computeDiscountPaise } from "../../lib/payments/pricing/derive-checkout-amount";
 import { platformFundedCapPaise } from "../../lib/payments/pricing/platform-funded-cap";
+import { runAsUnregisteredPlatform } from "../fixtures/gst-registered";
 
 function post(body: Record<string, unknown>) {
   return POST(
@@ -60,6 +61,8 @@ const base = {
 beforeEach(() => jest.clearAllMocks());
 
 describe("discount preview shares checkout's arithmetic and guard", () => {
+  runAsUnregisteredPlatform();
+
   it("previews the same paise computeDiscountPaise derives for a capped PERCENTAGE code", async () => {
     const code = {
       ...base,
