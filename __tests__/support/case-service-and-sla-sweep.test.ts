@@ -716,7 +716,7 @@ it("uses the canonical absolute case link in intake emails", async () => {
   expect(email.text.split("\n").at(-1)).toBe(supportRequestHref("c_case"));
 });
 
-it("includes the recorded complaint in an organization case's intake email", async () => {
+it("keeps an organization case's intake email to the reference only", async () => {
   (prisma.user.findMany as jest.Mock).mockResolvedValue([
     { id: "member", email: "member@example.com" },
   ]);
@@ -741,5 +741,6 @@ it("includes the recorded complaint in an organization case's intake email", asy
     ),
   );
   const [email] = (stageEmail as jest.Mock).mock.calls[0];
-  expect(email.text).toContain("Our invoice total is wrong");
+  expect(email.text).not.toContain("Our invoice total is wrong");
+  expect(email.text).toContain("An organization support case was received.");
 });

@@ -700,7 +700,7 @@ export async function stageSupportCaseIntakeTx(
       });
       // Keep outbox writes sequential on the transaction’s single connection.
       for (const recipient of recipients) {
-        const text = `Reference: ${created.referenceNumber}\n\n${created.description}\n\n${href}`;
+        const text = `Reference: ${created.referenceNumber}\n\n${created.ownershipScope === "PERSONAL" ? created.description : "An organization support case was received."}\n\n${href}`;
         const html = text
           .replace(
             /[&<>"']/g,
