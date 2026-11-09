@@ -11,6 +11,7 @@ import {
   planPriceLabel,
 } from "@/lib/offerings/plan-length-copy";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { planFeasibilitySchema } from "@/schemas/plan-feasibility";
 import {
   subscriptionSearchParamsSchema,
   type SubscriptionSearchParams,
@@ -137,6 +138,29 @@ export function useSubscriptionCheckout(
     );
   }, [planData?.data, effectiveSearchParams?.schedulingPeriodStartsAt]);
 
+  // The expert's room for this cadence over the first weeks, counting today's
+  // bookings. Advisory: checkout itself refuses only an empty first week.
+  const feasibilityQuery = useQuery({
+    queryKey: [
+      "plan-feasibility",
+      planId,
+      effectiveSearchParams?.schedulingPeriodStartsAt ?? null,
+    ],
+    enabled: Boolean(planId && effectiveSearchParams?.schedulingPeriodStartsAt),
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async () => {
+      const startsAt = effectiveSearchParams?.schedulingPeriodStartsAt;
+      const qs = startsAt ? `?startsAt=${encodeURIComponent(startsAt)}` : "";
+      const response = await fetch(
+        `/api/plans/subscriptions/${planId}/feasibility${qs}`,
+      );
+      if (!response.ok) return null;
+      return planFeasibilitySchema.parse(await response.json());
+    },
+  });
+  const feasibility = feasibilityQuery.data ?? null;
+
   // Periodic staleness check: warn once the first cycle has elapsed.
   const cycleEnd = firstCycle?.end;
   useEffect(() => {
@@ -195,12 +219,34 @@ export function useSubscriptionCheckout(
       title: plan?.title || "Monthly Plan",
     },
     detailsTitle: "Subscription Details",
-    detailsBanner: effectiveSearchParams?.renewsSubscriptionId ? (
-      <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
-        Renewing your existing subscription — your new period will start
-        immediately after your current subscription ends
-      </div>
-    ) : null,
+    detailsBanner:
+      effectiveSearchParams?.renewsSubscriptionId ||
+      feasibility?.notice ||
+      feasibility?.firstWeekPlaceable === 0 ? (
+        <div className="space-y-2">
+          {effectiveSearchParams?.renewsSubscriptionId && (
+            <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
+              Renewing your existing subscription — your new period will start
+              immediately after your current subscription ends
+            </div>
+          )}
+          {feasibility?.firstWeekPlaceable === 0 ? (
+            <div
+              role="alert"
+              className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-foreground"
+            >
+              This expert has no free time in the first week of this plan right
+              now. Pick a later start date, or ask them to open more hours.
+            </div>
+          ) : (
+            feasibility?.notice && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                {feasibility.notice}
+              </div>
+            )
+          )}
+        </div>
+      ) : null,
     detailRows: (
       <>
         {/* Start + first cycle: the buyer picked a start; the consultant

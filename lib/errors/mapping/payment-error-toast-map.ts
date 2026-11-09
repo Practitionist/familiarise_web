@@ -191,6 +191,10 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     title: "You Already Have This Plan",
     description: null,
   },
+  [ErrorTypes.NOT_PLACEABLE]: {
+    title: "No Free Time In The First Week",
+    description: null,
+  },
   [ErrorTypes.CURRENCY_UNSUPPORTED]: {
     title: "Currency Not Supported",
     description: null,

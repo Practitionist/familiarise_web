@@ -72,6 +72,8 @@ export const ErrorTypes = {
   CONSULTANT_EXCLUSIVE_ENGAGEMENT: "CONSULTANT_EXCLUSIVE_ENGAGEMENT_ERROR",
   // #1766 — the buyer already holds this plan with entitlement left.
   SUBSCRIPTION_ALREADY_ACTIVE: "SUBSCRIPTION_ALREADY_ACTIVE_ERROR",
+  // The expert's hours can't hold even the first week of the plan.
+  NOT_PLACEABLE: "NOT_PLACEABLE_ERROR",
   CURRENCY_UNSUPPORTED: "CURRENCY_UNSUPPORTED_ERROR",
   CREDIT_SHORTFALL: "CREDIT_SHORTFALL_ERROR",
   DISCOUNT_CURRENCY_MISMATCH: "DISCOUNT_CURRENCY_MISMATCH_ERROR",
@@ -475,6 +477,12 @@ const BUSINESS_ERROR_ENTRIES = [
     errorType: ErrorTypes.SUBSCRIPTION_ALREADY_ACTIVE,
     httpStatus: 409,
   },
+  // No userMessage: the thrown sentence says what to do instead.
+  {
+    code: "NOT_PLACEABLE",
+    errorType: ErrorTypes.NOT_PLACEABLE,
+    httpStatus: 409,
+  },
   // #1564 — a non-INR plan price or settlement is a configuration the platform
   // does not offer, not a crash; 422 like the other unsupported-config codes.
   {
@@ -586,6 +594,12 @@ const BUSINESS_ERROR_ENTRIES = [
   },
   {
     code: "BACKUP_WINDOW_PAST",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 400,
+  },
+  // A host-set event time off the half-hour grid or too close to now.
+  {
+    code: "EVENT_TIME_INVALID",
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 400,
   },
