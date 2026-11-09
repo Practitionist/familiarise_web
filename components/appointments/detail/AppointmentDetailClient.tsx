@@ -87,6 +87,7 @@ import { CountdownBadge } from "../CountdownBadge";
 import { KIND_LABEL } from "../AppointmentRow";
 import { RowPrimaryAction } from "../RowPrimaryAction";
 import { SessionTimeline } from "../SessionTimeline";
+import { ClassSeriesRetimeButton } from "./ClassSeriesRetimeButton";
 import { ClassSessionControls } from "./ClassSessionControls";
 import { SubscriptionReturnControls } from "./SubscriptionReturnControls";
 import { SessionAttendance } from "./SessionAttendance";
@@ -1198,6 +1199,23 @@ export function AppointmentDetailClient({
               </div>
             )}
             {sessionsCard}
+            {/* Move every session 24 h or more away to a new weekly pattern. */}
+            {role === "consultant" &&
+              vm.kind === "CLASS" &&
+              detail.appointment.class &&
+              vm.consultantProfileId && (
+                <div className="flex justify-end">
+                  <ClassSeriesRetimeButton
+                    appointmentId={appointmentId}
+                    classId={detail.appointment.class.id}
+                    consultantProfileId={vm.consultantProfileId}
+                    sessionsPerWeek={
+                      detail.appointment.class.classPlan?.sessionsPerWeek ?? 1
+                    }
+                    onMoved={refreshDetail}
+                  />
+                </div>
+              )}
             {/* Cancel one class session, make it up, or skip the make-up. */}
             {vm.kind === "CLASS" && detail.appointment.class && (
               <ClassSessionControls

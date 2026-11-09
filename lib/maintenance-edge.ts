@@ -142,6 +142,8 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/checkout",
   "/api/appointments/*/cancel",
   "/api/appointments/*/reschedule",
+  "/api/appointments/*/retime",
+  "/api/appointments/*/retime-series",
   "/api/appointments/*/documents",
   "/api/appointments/*/feedback",
   "/api/bookings/consultations",
