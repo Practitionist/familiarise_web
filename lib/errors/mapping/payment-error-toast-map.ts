@@ -202,6 +202,10 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     title: "Discount Code Not Applicable",
     description: null,
   },
+  [ErrorTypes.DISCOUNT_CODE_INVALID]: {
+    title: "Discount Code Not Valid",
+    description: null,
+  },
   [ErrorTypes.DISCOUNT_EXHAUSTED]: {
     title: "Discount Code Fully Redeemed",
     description: null,
