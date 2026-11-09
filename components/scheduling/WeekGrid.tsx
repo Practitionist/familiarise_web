@@ -23,10 +23,11 @@ import {
   type SlotStatusKey,
 } from "@/lib/scheduling/interval-status-tokens";
 import type { GridBlock } from "@/lib/scheduling/grid-blocks";
-import type {
-  CellView,
-  OverlapDetail,
-  RowWindow,
+import {
+  fitLabel,
+  type CellView,
+  type OverlapDetail,
+  type RowWindow,
 } from "@/lib/scheduling/week-grid-model";
 import {
   formatDateTimeLabel,
@@ -52,8 +53,8 @@ export const GRID_COLS =
 export const GRID_ROW_PX = 24;
 
 /** The sticky header's height, and the matching offset that puts the block layer under it. */
-const HEADER_HEIGHT = "h-14";
-const HEADER_OFFSET = "top-14";
+const HEADER_HEIGHT = "h-16";
+const HEADER_OFFSET = "top-16";
 
 /** A cell fills its slot on the ruled canvas: no radius, no gap, 11px text. */
 const CELL_GEOMETRY = "h-6 rounded-none text-[11px]";
@@ -398,6 +399,8 @@ export interface WeekGridProps {
   rows: RowWindow;
   /** Busy and picked runs, drawn as one labelled overlay each. */
   blocks: readonly GridBlock[];
+  /** Per day, the whole sessions its free time holds ("N fit"). Absent on a read-only grid. */
+  dayFits?: readonly number[];
   /** The hover preview; empty when there is nothing to place. */
   ghost: readonly GhostPiece[];
   /** The atom under the pointer or focus, or null once both leave the grid. */
@@ -443,6 +446,7 @@ export function WeekGrid({
   matrix,
   rows,
   blocks,
+  dayFits,
   ghost,
   onPreview,
   todayIndex,
@@ -690,6 +694,19 @@ export function WeekGrid({
                 >
                   {formatDayOfMonth(date)}
                 </div>
+                {dayFits && (
+                  <div
+                    data-day-fit
+                    className={cn(
+                      "text-[11px] leading-4",
+                      dayFits[index] > 0
+                        ? "font-medium text-emerald-800"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {fitLabel(dayFits[index] ?? 0)}
+                  </div>
+                )}
               </div>
             ))}
           </div>

@@ -217,6 +217,52 @@ export function buildWeekCells(
 }
 
 /**
+ * How many whole sessions of `size` atoms the free atoms in `starts` hold:
+ * each unbroken run holds `floor(run / size)`. Session-length aware, so two
+ * free half-hours on either side of a booking hold no 1-hour session.
+ */
+export function sessionsThatFit(
+  starts: Iterable<number>,
+  size: number,
+): number {
+  const sorted = [...starts].sort((a, b) => a - b);
+  const per = Math.max(1, size);
+  let fits = 0;
+  let run = 0;
+  sorted.forEach((startMs, index) => {
+    run = index > 0 && sorted[index - 1] + ATOM_MS === startMs ? run + 1 : 1;
+    if (run % per === 0) fits += 1;
+  });
+  return fits;
+}
+
+/** "3 fit": the whole sessions a day's free time holds, as the week header and month view print it. */
+export function fitLabel(count: number): string {
+  if (count === 0) return "None fit";
+  return `${count} ${count === 1 ? "fits" : "fit"}`;
+}
+
+/** Per day column of `matrix`, the whole sessions its free cells hold: the week header's "N fit". */
+export function weekDayFits(
+  matrix: readonly (readonly (Pick<
+    CellView,
+    "startMs" | "statusKey"
+  > | null)[])[],
+  size: number,
+): number[] {
+  const days = matrix.reduce((most, line) => Math.max(most, line.length), 0);
+  return Array.from({ length: days }, (_, day) =>
+    sessionsThatFit(
+      matrix.flatMap((line) => {
+        const cell = line[day];
+        return cell?.statusKey === "available" ? [cell.startMs] : [];
+      }),
+      size,
+    ),
+  );
+}
+
+/**
  * The atom starts one click on `clickedMs` places for a session of `size`
  * atoms: forward from the click, else backward, else both ways around it.
  * Just the click when no whole session fits. The click and the hover preview

@@ -13,7 +13,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TWENTY_FOUR_HOURS_IN_MS } from "@/utils/scheduling-engine/slotTimeUtils";
 import { isRecurringEventType } from "@/utils/scheduling-engine/types";
@@ -93,6 +92,9 @@ import {
   describeAtom,
   expandToSession,
   openHoursWindow,
+  fitLabel,
+  sessionsThatFit,
+  weekDayFits,
   selectionConflicts,
   type AtomContext,
   type CellView,
@@ -135,6 +137,8 @@ function formatDurationLabel(minutes: number): string {
   const hours = minutes / 60;
   return `${hours} hour${hours === 1 ? "" : "s"}`;
 }
+
+const WEEKDAY_HEADERS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function sessionsPhrase(count: number): string {
   return `${count} session${count === 1 ? "" : "s"}`;
@@ -993,6 +997,10 @@ export function UnifiedCalendar({
     () => buildGridBlocks(weekCells.matrix, gridZone),
     [weekCells.matrix, gridZone],
   );
+  const dayFits = useMemo(
+    () => weekDayFits(weekCells.matrix, slotLimits.slotsPerSession),
+    [weekCells.matrix, slotLimits.slotsPerSession],
+  );
 
   // "Open hours" crops to the week's live rows; an all-dead week has no window.
   const [hourRange, setHourRange] = useState<"open" | "full">("open");
@@ -1346,42 +1354,55 @@ export function UnifiedCalendar({
     );
   }, []);
 
-  // Free, bookable half-hours per calendar day of the visible month.
-  const monthFreeCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    if (view !== "month") return counts;
+  // Whole sessions the free time holds, per calendar day of the visible month, in the grid zone.
+  const monthFitCounts = useMemo(() => {
+    const byDay = new Map<string, number[]>();
+    if (view !== "month") return new Map<string, number>();
     serverCells.forEach((cell) => {
       if (
-        cell.bookingStatus !== "available" ||
-        cell.tooSoon ||
-        cell.limitReached ||
-        cell.endMs < matrixNowMs
+        describeAtom(cell.startMs, cell.endMs, atomContext).statusKey !==
+        "available"
       ) {
         return;
       }
       const key = formatInTimeZone(cell.startMs, gridZone, "yyyy-MM-dd");
-      counts.set(key, (counts.get(key) ?? 0) + 1);
+      const starts = byDay.get(key) ?? [];
+      starts.push(cell.startMs);
+      byDay.set(key, starts);
     });
-    return counts;
-  }, [view, serverCells, gridZone, matrixNowMs]);
+    return new Map(
+      [...byDay].map(([key, starts]) => [
+        key,
+        sessionsThatFit(starts, slotLimits.slotsPerSession),
+      ]),
+    );
+  }, [view, serverCells, atomContext, gridZone, slotLimits.slotsPerSession]);
 
   const renderMonthView = () => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
-    const firstDayOfMonth = new Date(year, month, 1).getDay();
+    // Weekday arithmetic on the calendar date itself, never a device-local midnight.
+    const leadingBlanks =
+      (new Date(Date.UTC(year, month, 1)).getUTCDay() - weekStartsOn + 7) % 7;
     const todayKey = calendarDateKey(calendarDayOf(now, gridZone));
-    const weekdayHeaders = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const weekdayHeaders = Array.from(
+      { length: 7 },
+      (_, i) => WEEKDAY_HEADERS[(weekStartsOn + i) % 7],
+    );
     return (
       <div className="grid min-h-0 flex-1 grid-cols-7 gap-1 overflow-y-auto">
         {weekdayHeaders.map((day) => (
-          <div key={day} className="p-2 text-center font-bold">
+          <div
+            key={day}
+            className="p-2 text-center text-xs font-medium uppercase tracking-wide text-muted-foreground"
+          >
             {day}
           </div>
         ))}
-        {Array.from({ length: firstDayOfMonth }, (_, i) => (
+        {Array.from({ length: leadingBlanks }, (_, i) => (
           <div
             key={`empty-start-${i}`}
-            className="min-h-[100px] border bg-gray-50/50"
+            className="min-h-[100px] rounded-md border bg-muted/30"
           />
         ))}
         {Array.from({ length: getDaysInMonth(currentDate) }, (_, i) => {
@@ -1389,34 +1410,36 @@ export function UnifiedCalendar({
           const key = calendarDateKey(date);
           const isCurrentDay = key === todayKey;
           const isPastDay = key < todayKey;
-          const freeCount = isPastDay ? 0 : (monthFreeCounts.get(key) ?? 0);
+          const fits = isPastDay ? 0 : (monthFitCounts.get(key) ?? 0);
           return (
             <div
               key={key}
+              data-month-day={key}
               className={cn(
-                "flex min-h-[100px] flex-col border p-1",
+                "flex min-h-[100px] flex-col rounded-md border p-1",
                 isCurrentDay && "ring-2 ring-primary",
-                isPastDay ? "bg-gray-100 text-gray-500" : "bg-white",
+                isPastDay ? "bg-muted/50 text-muted-foreground" : "bg-card",
               )}
             >
               <div
                 className={cn(
                   "mb-1 text-xs font-bold",
                   isCurrentDay && "text-primary",
-                  !isPastDay && "text-gray-700",
                 )}
               >
                 {i + 1}
               </div>
               <div className="flex flex-grow items-center justify-center">
-                {!isPastDay && freeCount > 0 && (
-                  <Badge variant="outline" className="p-1 text-[10px]">
-                    {formatDurationLabel(freeCount * 30)} free
-                  </Badge>
-                )}
-                {!isPastDay && freeCount === 0 && (
-                  <span className="text-xs text-muted-foreground">
-                    Nothing free
+                {!isPastDay && (
+                  <span
+                    className={cn(
+                      "text-xs",
+                      fits > 0
+                        ? "font-medium text-emerald-800"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {fitLabel(fits)}
                   </span>
                 )}
               </div>
@@ -1758,6 +1781,7 @@ export function UnifiedCalendar({
             matrix={weekCells.matrix}
             rows={rowWindow}
             blocks={blocks}
+            dayFits={mode === "view" ? undefined : dayFits}
             ghost={ghost}
             onPreview={setPreviewStart}
             todayIndex={todayIndex}

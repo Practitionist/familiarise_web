@@ -304,3 +304,69 @@ describe("UnifiedCalendar whole-session deselect", () => {
     expect(removed).toEqual([at(12, 11), at(12, 11, 30)]);
   });
 });
+
+describe("UnifiedCalendar N fit", () => {
+  it("prints whole sessions that fit in each week header", () => {
+    renderGrid();
+    const fits = Array.from(
+      screen.getByRole("grid").querySelectorAll("[data-day-fit]"),
+    ).map((element) => element.textContent);
+    // Sun 9 … Sat 15 Jun; Tue and Wed hold 3 + 4 one-hour sessions.
+    expect(fits).toEqual([
+      "None fit",
+      "None fit",
+      "7 fit",
+      "7 fit",
+      "None fit",
+      "None fit",
+      "None fit",
+    ]);
+  });
+
+  it("counts the month by the grid zone's days and starts weeks on the cycle's weekday", () => {
+    const cells = openDays();
+    // 21:00–23:00 on Thu 13 in New York is already Fri 14 in UTC.
+    for (let start = at(13, 21); start < at(13, 23); start += ATOM) {
+      cells.set(start, {
+        startMs: start,
+        endMs: start + ATOM,
+        bookingStatus: "available",
+        tooSoon: false,
+        limitReached: false,
+        overlappingAppointments: [],
+      });
+    }
+    calendarData.serverCells = cells;
+    render(
+      <UnifiedCalendar
+        consultantId="consultant-1"
+        eventType="subscription"
+        eventId="subscription-1"
+        mode="allocate"
+        sessionDurationInHours={1}
+        sessionsPerWeek={2}
+        // A Monday cycle start in the grid zone: weeks run Monday to Sunday.
+        allowedStart={new Date(at(10, 0))}
+        allowedEnd={new Date(at(30, 0))}
+        viewerZone={ZONE}
+        focus={{ at: FOCUS_AT, precision: "session" }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Month" }));
+
+    const fitOn = (key: string) =>
+      document.querySelector(`[data-month-day="${key}"]`)?.textContent;
+    expect(fitOn("2030-06-12")).toBe("127 fit");
+    expect(fitOn("2030-06-13")).toBe("132 fit");
+    expect(fitOn("2030-06-14")).toBe("14None fit");
+
+    const firstCell = document.querySelector("[data-month-day]");
+    const grid = firstCell?.parentElement as HTMLElement;
+    const headers = Array.from(grid.children)
+      .slice(0, 7)
+      .map((element) => element.textContent);
+    expect(headers[0]).toBe("Mon");
+    // 1 Jun 2030 is a Saturday: five blanks (Mon–Fri) lead the month.
+    expect(Array.from(grid.children).indexOf(firstCell as Element)).toBe(7 + 5);
+  });
+});
