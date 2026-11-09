@@ -87,16 +87,13 @@ import {
 } from "@/lib/scheduling/time-picker-focus";
 import { cn } from "@/utils/tailwind";
 import {
-  foldDeadHourBands,
-  nearestVisibleRow,
-  type RowSegment,
-} from "@/lib/scheduling/dead-hour-bands";
-import {
   buildWeekCells,
   describeAtom,
+  openHoursWindow,
   selectionConflicts,
   type AtomContext,
   type CellView,
+  type RowWindow,
 } from "@/lib/scheduling/week-grid-model";
 import {
   formatClockTime,
@@ -111,7 +108,6 @@ import {
   calendarDateKey,
   calendarDayOf,
   canSwitchToDeviceZone,
-  dayStartInstant,
   footerZoneLine,
   isOnCalendarDay,
   resolveGridZone,
@@ -123,7 +119,6 @@ import {
   WeekGrid,
   type CellTooltip,
   type GridFocus,
-  type NavRow,
 } from "@/components/scheduling/WeekGrid";
 
 function getSlotsPerCall(sessionDurationInHours?: number): number {
@@ -990,9 +985,22 @@ export function UnifiedCalendar({
     () => buildWeekCells(rowModel, atomContext),
     [rowModel, atomContext],
   );
-  const folded = useMemo(
-    () => foldDeadHourBands(weekCells.live, weekCells.outsidePeriod),
-    [weekCells],
+  // "Open hours" crops to the week's live rows; an all-dead week has no window.
+  const [hourRange, setHourRange] = useState<"open" | "full">("open");
+  const openWindow = useMemo(
+    () => openHoursWindow(weekCells.live),
+    [weekCells.live],
+  );
+  const allDead = openWindow === null;
+  const axisLength = rowModel.axis.length;
+  const openFrom = openWindow?.from;
+  const openTo = openWindow?.to;
+  const rowWindow = useMemo<RowWindow>(
+    () =>
+      hourRange === "open" && openFrom !== undefined && openTo !== undefined
+        ? { from: openFrom, to: openTo }
+        : { from: 0, to: axisLength },
+    [hourRange, openFrom, openTo, axisLength],
   );
 
   const onPaintedKeysChangeRef = useLatest(onPaintedKeysChange);
@@ -1002,87 +1010,6 @@ export function UnifiedCalendar({
       weekCells.paintedCounts,
     );
   }, [weekCells, onPaintedKeysChangeRef]);
-
-  // Opened bands are remembered for the tab's session, per consultant.
-  const bandStorageKey = `fw:calendar:open-bands:${consultantId}`;
-  const [openBands, setOpenBands] = useState<ReadonlySet<string>>(() => {
-    if (typeof window === "undefined") return new Set();
-    try {
-      const raw = window.sessionStorage.getItem(bandStorageKey);
-      return new Set(raw ? raw.split(",").filter(Boolean) : []);
-    } catch {
-      return new Set();
-    }
-  });
-  const toggleBand = useCallback(
-    (key: string) => {
-      setOpenBands((previous) => {
-        const next = new Set(previous);
-        if (next.has(key)) next.delete(key);
-        else next.add(key);
-        try {
-          window.sessionStorage.setItem(bandStorageKey, [...next].join(","));
-        } catch {
-          // Storage is a convenience; a blocked sessionStorage must not break the grid.
-        }
-        return next;
-      });
-    },
-    [bandStorageKey],
-  );
-
-  const navRows = useMemo<NavRow[]>(() => {
-    const rows: NavRow[] = [];
-    for (const segment of folded.segments) {
-      if (segment.kind === "band") {
-        // Keyed by wall-clock rows, not indices, so a DST week keeps it open.
-        const toggleKey = `${rowModel.axis[segment.from]?.key}-${rowModel.axis[segment.to - 1]?.key}`;
-        const open = openBands.has(toggleKey);
-        rows.push({
-          kind: "band",
-          key: `band:${toggleKey}`,
-          toggleKey,
-          segment,
-          open,
-        });
-        if (!open) continue;
-      }
-      for (let index = segment.from; index < segment.to; index += 1) {
-        rows.push({
-          kind: "cells",
-          key: `row:${rowModel.axis[index].key}`,
-          axisIndex: index,
-        });
-      }
-    }
-    return rows;
-  }, [folded, openBands, rowModel]);
-
-  const visibleRows = useMemo(
-    () =>
-      navRows.flatMap((row) => (row.kind === "cells" ? [row.axisIndex] : [])),
-    [navRows],
-  );
-
-  const midnightLabel = useMemo(
-    () =>
-      formatClockTime(dayStartInstant(weekDates[0], gridZone), {
-        zone: gridZone,
-      }),
-    [weekDates, gridZone],
-  );
-  const bandLabelOf = useCallback(
-    (segment: RowSegment) => {
-      const from = rowModel.axis[segment.from]?.label ?? midnightLabel;
-      const to = rowModel.axis[segment.to]?.label ?? midnightLabel;
-      const name =
-        segment.kind === "band" && segment.variant === "outsidePeriod"
-          ? "Outside this booking's dates"
-          : "Unavailable";
-      return `${name} · ${from}–${to}`;
-    },
-    [rowModel, midnightLabel],
-  );
 
   const todayIndex = weekDates.findIndex((date) =>
     isOnCalendarDay(date, now, gridZone),
@@ -1127,7 +1054,7 @@ export function UnifiedCalendar({
       row.getBoundingClientRect().top -
       weekGridEl.getBoundingClientRect().top -
       row.getBoundingClientRect().height * FOCUS_LEAD_ROWS;
-  }, [weekGridEl, weekDates, visibleRows, selectedSlots]);
+  }, [weekGridEl, weekDates, rowWindow, selectedSlots]);
 
   // Where to look on open, once; a user who already scrolled keeps their place.
   useEffect(() => {
@@ -1141,14 +1068,16 @@ export function UnifiedCalendar({
       rowModel.axis,
       focusTargetMinute(focus, availableSlots, gridZone),
     );
-    const scrollRow = nearestVisibleRow(focusScrollRow(targetRow), visibleRows);
-    if (scrollRow === null) return;
+    const scrollRow = Math.min(
+      Math.max(focusScrollRow(targetRow), rowWindow.from),
+      rowWindow.to - 1,
+    );
     const row = weekGridEl.querySelector(`[data-row="${scrollRow}"]`);
     if (!(row instanceof HTMLElement)) return;
     focusAppliedRef.current = true;
     weekGridEl.scrollTop +=
       row.getBoundingClientRect().top - weekGridEl.getBoundingClientRect().top;
-  }, [focus, weekGridEl, availableSlots, visibleRows, gridZone, rowModel]);
+  }, [focus, weekGridEl, availableSlots, rowWindow, gridZone, rowModel]);
 
   /** Consecutive free atoms around a clicked one, to fill one whole session. */
   const buildAutoExpandGroup = useCallback(
@@ -1670,6 +1599,48 @@ export function UnifiedCalendar({
           </Button>
         </div>
 
+        {view === "week" && (
+          <div
+            role="group"
+            aria-label="Hours shown"
+            className="inline-flex overflow-hidden rounded-md border border-input"
+          >
+            <button
+              type="button"
+              aria-pressed={hourRange === "open" && !allDead}
+              disabled={allDead}
+              onClick={() => setHourRange("open")}
+              title={
+                allDead
+                  ? "Nothing is open this week, so every hour is shown."
+                  : "Show the hours this week has open, with an hour either side."
+              }
+              className={cn(
+                "px-3 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50",
+                hourRange === "open" && !allDead
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-background hover:bg-muted",
+              )}
+            >
+              Open hours
+            </button>
+            <button
+              type="button"
+              aria-pressed={hourRange === "full" || allDead}
+              onClick={() => setHourRange("full")}
+              title="Show all 24 hours."
+              className={cn(
+                "border-l border-input px-3 py-1 text-xs font-medium",
+                hourRange === "full" || allDead
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-background hover:bg-muted",
+              )}
+            >
+              Full day
+            </button>
+          </div>
+        )}
+
         {mode === "allocate" ? (
           <Button
             variant="outline"
@@ -1698,21 +1669,21 @@ export function UnifiedCalendar({
 
       {view === "week" ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          {folded.allDead && (
+          {allDead && (
             <p
               role="status"
               className="mb-1 shrink-0 rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground"
             >
-              Nothing is published this week. Every hour is shown so you can see
-              where the days are.
+              {weekCells.outsidePeriod.some(Boolean)
+                ? "Nothing this week falls inside this booking's dates. Every hour is shown so you can see where the days are."
+                : "Nothing is published this week. Every hour is shown so you can see where the days are."}
             </p>
           )}
           <WeekGrid
             days={weekDates}
             axis={rowModel.axis}
             matrix={weekCells.matrix}
-            navRows={navRows}
-            bandLabelOf={bandLabelOf}
+            rows={rowWindow}
             todayIndex={todayIndex}
             inPeriodDays={periodDays}
             nowAtomStartMs={nowAtom.start.getTime()}
@@ -1723,7 +1694,6 @@ export function UnifiedCalendar({
             refreshing={refreshing}
             tooltipOf={tooltipOf}
             onActivate={handleCellActivate}
-            onToggleBand={toggleBand}
             onFocusChange={setGridFocus}
             onPageWeek={pageWeek}
             gridRef={setWeekGridEl}

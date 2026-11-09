@@ -5,11 +5,7 @@
 import React, { useState } from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 
-import {
-  WeekGrid,
-  type GridFocus,
-  type NavRow,
-} from "@/components/scheduling/WeekGrid";
+import { WeekGrid, type GridFocus } from "@/components/scheduling/WeekGrid";
 import { buildWeekCells } from "@/lib/scheduling/week-grid-model";
 import { weekRowModel } from "@/lib/time/grid-zone";
 
@@ -27,11 +23,7 @@ const cells = buildWeekCells(rows, {
   nowMs: 0,
 });
 // Three visible rows (9:00, 9:30, 10:00) to keep the test readable.
-const navRows: NavRow[] = [18, 19, 20].map((axisIndex) => ({
-  kind: "cells",
-  key: `row:${rows.axis[axisIndex].key}`,
-  axisIndex,
-}));
+const VISIBLE_ROWS = { from: 18, to: 21 };
 
 function Harness({
   onPageWeek,
@@ -42,8 +34,7 @@ function Harness({
       days={days}
       axis={rows.axis}
       matrix={cells.matrix}
-      navRows={navRows}
-      bandLabelOf={() => "Unavailable"}
+      rows={VISIBLE_ROWS}
       todayIndex={-1}
       inPeriodDays={days.map(() => false)}
       nowAtomStartMs={0}
@@ -54,7 +45,6 @@ function Harness({
       refreshing={false}
       tooltipOf={() => null}
       onActivate={() => {}}
-      onToggleBand={() => {}}
       onFocusChange={setFocus}
       onPageWeek={onPageWeek}
       gridRef={() => {}}

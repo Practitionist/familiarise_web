@@ -22,8 +22,11 @@ import {
   slotCellClassName,
   type SlotStatusKey,
 } from "@/lib/scheduling/interval-status-tokens";
-import type { CellView, OverlapDetail } from "@/lib/scheduling/week-grid-model";
-import type { RowSegment } from "@/lib/scheduling/dead-hour-bands";
+import type {
+  CellView,
+  OverlapDetail,
+  RowWindow,
+} from "@/lib/scheduling/week-grid-model";
 import {
   formatDateTimeLabel,
   formatDayOfMonth,
@@ -44,17 +47,10 @@ import { cn } from "@/utils/tailwind";
 export const GRID_COLS =
   "grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))] md:grid-cols-[5rem_repeat(7,minmax(0,1fr))]";
 
-/** One keyboard stop in the grid, top to bottom. */
-export type NavRow =
-  | {
-      kind: "band";
-      key: string;
-      /** What the open/closed state is remembered under. */
-      toggleKey: string;
-      segment: RowSegment;
-      open: boolean;
-    }
-  | { kind: "cells"; key: string; axisIndex: number };
+/** The roving-focus key of an axis row. */
+export function rowKeyOf(axisRow: AxisRow): string {
+  return `row:${axisRow.key}`;
+}
 
 export interface GridFocus {
   rowKey: string;
@@ -247,8 +243,8 @@ export interface WeekGridProps {
   days: Date[];
   axis: AxisRow[];
   matrix: (CellView | null)[][];
-  navRows: NavRow[];
-  bandLabelOf: (segment: RowSegment) => string;
+  /** The axis rows drawn: the open-hours window or the full day. */
+  rows: RowWindow;
   /** Index of today's column, or -1. */
   todayIndex: number;
   inPeriodDays: boolean[];
@@ -261,7 +257,6 @@ export interface WeekGridProps {
   refreshing: boolean;
   tooltipOf: (cell: CellView) => CellTooltip | null;
   onActivate: (startMs: number) => void;
-  onToggleBand: (key: string) => void;
   onFocusChange: (focus: GridFocus) => void;
   onPageWeek: (direction: -1 | 1) => void;
   gridRef: (element: HTMLDivElement | null) => void;
@@ -289,8 +284,7 @@ export function WeekGrid({
   days,
   axis,
   matrix,
-  navRows,
-  bandLabelOf,
+  rows,
   todayIndex,
   inPeriodDays,
   nowAtomStartMs,
@@ -301,7 +295,6 @@ export function WeekGrid({
   refreshing,
   tooltipOf,
   onActivate,
-  onToggleBand,
   onFocusChange,
   onPageWeek,
   gridRef,
@@ -311,38 +304,39 @@ export function WeekGrid({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const pendingFocusRef = useRef<GridFocus | null>(null);
 
+  // One keyboard stop per drawn row, top to bottom.
+  const navRows = useMemo(
+    () =>
+      axis.slice(rows.from, rows.to).map((axisRow, offset) => ({
+        key: rowKeyOf(axisRow),
+        axisIndex: rows.from + offset,
+      })),
+    [axis, rows.from, rows.to],
+  );
   const navIndexOf = useMemo(() => {
     const map = new Map<string, number>();
     navRows.forEach((row, index) => map.set(row.key, index));
     return map;
   }, [navRows]);
 
-  // The roving stop must always land on a row that exists this week.
+  // The roving stop must always land on a row that is drawn.
   const activeFocus = useMemo<GridFocus>(() => {
     if (navIndexOf.has(focus.rowKey)) return focus;
-    const firstCells =
-      navRows.find((row) => row.kind === "cells") ?? navRows[0];
-    return { rowKey: firstCells?.key ?? "", dayIndex: focus.dayIndex };
+    return { rowKey: navRows[0]?.key ?? "", dayIndex: focus.dayIndex };
   }, [focus, navIndexOf, navRows]);
 
   const focusElement = useCallback((target: GridFocus) => {
     const container = containerRef.current;
     if (!container) return false;
-    const row = container.querySelector<HTMLElement>(
-      `[data-nav-key="${target.rowKey}"]`,
-    );
-    const element =
-      row?.dataset.navKind === "band"
-        ? row.querySelector<HTMLElement>("button")
-        : row?.querySelector<HTMLElement>(
-            `[data-day-index="${target.dayIndex}"]`,
-          );
+    const element = container
+      .querySelector<HTMLElement>(`[data-nav-key="${target.rowKey}"]`)
+      ?.querySelector<HTMLElement>(`[data-day-index="${target.dayIndex}"]`);
     if (!element) return false;
     element.focus();
     return true;
   }, []);
 
-  // After a week change or band toggle the target renders later; finish the move then.
+  // After a week or view change the target renders later; finish the move then.
   useEffect(() => {
     const pending = pendingFocusRef.current;
     if (pending && focusElement(pending)) pendingFocusRef.current = null;
@@ -356,7 +350,6 @@ export function WeekGrid({
     onActivate,
     onFocusChange,
     onPageWeek,
-    onToggleBand,
     activeFocus,
   });
   useEffect(() => {
@@ -366,7 +359,6 @@ export function WeekGrid({
       onActivate,
       onFocusChange,
       onPageWeek,
-      onToggleBand,
       activeFocus,
     };
   });
@@ -385,27 +377,26 @@ export function WeekGrid({
       rowKey: string,
       dayIndex: number,
     ) => {
-      const { navRows: rows, navIndexOf: indexOf } = latest.current;
+      const { navRows: stops, navIndexOf: indexOf } = latest.current;
       const index = indexOf.get(rowKey) ?? 0;
       const lastDay = 6;
       const go = (nextIndex: number, nextDay: number) => {
-        const clampedIndex = Math.max(0, Math.min(rows.length - 1, nextIndex));
-        const row = rows[clampedIndex];
+        const clampedIndex = Math.max(0, Math.min(stops.length - 1, nextIndex));
+        const row = stops[clampedIndex];
         if (!row) return;
         moveTo({
           rowKey: row.key,
           dayIndex: Math.max(0, Math.min(lastDay, nextDay)),
         });
       };
-      const isBand = rows[index]?.kind === "band";
       switch (event.key) {
         case "ArrowRight":
           event.preventDefault();
-          if (!isBand) go(index, dayIndex + 1);
+          go(index, dayIndex + 1);
           break;
         case "ArrowLeft":
           event.preventDefault();
-          if (!isBand) go(index, dayIndex - 1);
+          go(index, dayIndex - 1);
           break;
         case "ArrowDown":
           event.preventDefault();
@@ -422,7 +413,7 @@ export function WeekGrid({
           break;
         case "End":
           event.preventDefault();
-          if (event.ctrlKey || event.metaKey) go(rows.length - 1, lastDay);
+          if (event.ctrlKey || event.metaKey) go(stops.length - 1, lastDay);
           else go(index, lastDay);
           break;
         case "PageUp":
@@ -519,53 +510,6 @@ export function WeekGrid({
           ))}
         </div>
         {navRows.map((navRow) => {
-          if (navRow.kind === "band") {
-            const holdsNow =
-              todayIndex >= 0 &&
-              !navRow.open &&
-              matrix
-                .slice(navRow.segment.from, navRow.segment.to)
-                .some((line) => line[todayIndex]?.startMs === nowAtomStartMs);
-            const isFocusTarget = activeFocus.rowKey === navRow.key;
-            return (
-              <div
-                key={navRow.key}
-                role="row"
-                data-nav-key={navRow.key}
-                data-nav-kind="band"
-                className="grid grid-cols-1"
-              >
-                <div role="gridcell" aria-colspan={8}>
-                  <button
-                    type="button"
-                    tabIndex={isFocusTarget ? 0 : -1}
-                    onClick={() => onToggleBand(navRow.toggleKey)}
-                    onKeyDown={(event) =>
-                      handleKeyDown(event, navRow.key, activeFocus.dayIndex)
-                    }
-                    onFocus={() =>
-                      handleFocusCell(navRow.key, activeFocus.dayIndex)
-                    }
-                    aria-expanded={navRow.open}
-                    className={cn(
-                      "relative my-0.5 flex h-6 w-full items-center justify-center gap-1 rounded-sm border border-dashed border-border text-[10px] text-muted-foreground hover:bg-muted",
-                      holdsNow && "border-primary/60",
-                    )}
-                  >
-                    {holdsNow && (
-                      <span
-                        aria-hidden
-                        className="absolute inset-y-0 left-0 w-0.5 rounded-full bg-primary"
-                      />
-                    )}
-                    {bandLabelOf(navRow.segment)}
-                    <span aria-hidden>{navRow.open ? "· hide" : "· show"}</span>
-                    {holdsNow && <span aria-hidden>· now</span>}
-                  </button>
-                </div>
-              </div>
-            );
-          }
           const axisRow = axis[navRow.axisIndex];
           const line = matrix[navRow.axisIndex] ?? [];
           return (
@@ -574,7 +518,6 @@ export function WeekGrid({
               role="row"
               data-row={navRow.axisIndex}
               data-nav-key={navRow.key}
-              data-nav-kind="cells"
               className={cn(
                 GRID_COLS,
                 "gap-0.5 border-b border-border/40 md:gap-1",

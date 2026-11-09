@@ -1,7 +1,7 @@
 /**
  * The dashboard heat map as data: one resolved cell per (row, day), built
  * once per data change so rendering is a lookup and every reader (paint,
- * dead-hour fold, legend, click guard, keyboard) agrees on what a cell is.
+ * open-hours window, legend, click guard, keyboard) agrees on what a cell is.
  */
 import {
   resolveSlotStatusKey,
@@ -152,8 +152,9 @@ export interface CellView extends AtomState {
 export interface WeekCells {
   /** `[axisIndex][dayIndex]`; null where a clock change skips that time. */
   matrix: (CellView | null)[][];
-  /** Rows with an in-period live cell; outside-period-only rows band separately. */
+  /** Rows with an in-period live or requested cell; they bound the open-hours window. */
   live: boolean[];
+  /** Rows with an outside-period cell, so an empty window can say why. */
   outsidePeriod: boolean[];
   paintedKeys: ReadonlySet<SlotStatusKey>;
   paintedCounts: ReadonlyMap<SlotStatusKey, number>;
@@ -207,7 +208,7 @@ export function buildWeekCells(
       painted.add(cell.statusKey);
       counts.set(cell.statusKey, (counts.get(cell.statusKey) ?? 0) + 1);
       if (cell.statusKey === "outsidePeriod") rowOutside = true;
-      else if (cell.isLive) rowLive = true;
+      else if (cell.isLive || cell.isRequested) rowLive = true;
       byStart.set(cell.startMs, cell);
       return cell;
     });
@@ -223,6 +224,33 @@ export function buildWeekCells(
     paintedKeys: painted,
     paintedCounts: counts,
     byStart,
+  };
+}
+
+/** Rows of padding the open-hours window keeps above and below the live rows: one hour. */
+export const OPEN_HOURS_PAD_ROWS = 2;
+
+/** A contiguous run of axis rows, `from` inclusive to `to` exclusive. */
+export interface RowWindow {
+  from: number;
+  to: number;
+}
+
+/**
+ * The "Open hours" view: the earliest to the latest live row of the week,
+ * padded by an hour each side and clamped to the day. Closed rows inside it
+ * stay visible. Null when nothing in the week is live.
+ */
+export function openHoursWindow(
+  live: readonly boolean[],
+  padRows: number = OPEN_HOURS_PAD_ROWS,
+): RowWindow | null {
+  const first = live.indexOf(true);
+  if (first === -1) return null;
+  const last = live.lastIndexOf(true);
+  return {
+    from: Math.max(0, first - padRows),
+    to: Math.min(live.length, last + 1 + padRows),
   };
 }
 
