@@ -247,11 +247,27 @@ function stalePendingSubscriptionWhere(expirationDate: Date) {
   } satisfies Prisma.SubscriptionWhereInput;
 }
 
+// No session was ever confirmed: no confirmed row in any status, tombstones
+// included, and no release, because every party release opens a
+// RescheduleRequest over a confirmed session (a returned or stale-released row
+// stays tentative). A plan that ever had one waits for plan-end settlement.
+const NEVER_CONFIRMED = {
+  NOT: {
+    appointment: {
+      OR: [
+        { occurrences: { some: { isTentative: false } } },
+        { rescheduleRequests: { some: {} } },
+      ],
+    },
+  },
+} satisfies Prisma.SubscriptionWhereInput;
+
+/** The 30-day arm's cohort, repeated in its CAS: a plan that never started, with nothing open. */
 function approvedUnallocatedWhere(cutoff: Date) {
   return {
     status: AppointmentStatus.APPROVED,
     updatedAt: { lt: cutoff },
-    ...NO_LIVE_SESSION,
+    AND: [NEVER_CONFIRMED, noLiveProposal()],
   } satisfies Prisma.SubscriptionWhereInput;
 }
 
@@ -1188,7 +1204,7 @@ async function expireApprovedUnallocatedSubscriptions(
     }
 
     console.log(
-      `Found ${stale.length} APPROVED subscriptions with zero allocated sessions for >${PENDING_EXPIRATION_DAYS} days`,
+      `Found ${stale.length} APPROVED subscriptions never scheduled for >${PENDING_EXPIRATION_DAYS} days`,
     );
 
     // #1423 — the bulk write bypassed transitionSubscriptionRequest, so a
@@ -1206,17 +1222,13 @@ async function expireApprovedUnallocatedSubscriptions(
           prisma.$transaction(
             async (tx) => {
               await transitionSubscriptionRequest(tx, {
-                where: {
-                  id: subscription.id,
-                  updatedAt: { lt: cutoff },
-                  ...NO_LIVE_SESSION,
-                },
+                where: { id: subscription.id, ...cohortWhere },
                 to: AppointmentStatus.EXPIRED,
                 // Deliberate subset of REQUEST_ALLOWED_FROM.EXPIRED: this cohort
                 // is the abandoned-APPROVED shape only.
                 fromIn: [AppointmentStatus.APPROVED],
                 actorUserId: null,
-                reason: `Auto-expired: APPROVED with zero allocated sessions for more than ${PENDING_EXPIRATION_DAYS} days`,
+                reason: `Auto-expired: APPROVED and never scheduled for more than ${PENDING_EXPIRATION_DAYS} days`,
               });
               return stageExpiredRefunds(
                 tx,

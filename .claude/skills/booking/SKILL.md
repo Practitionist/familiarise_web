@@ -268,8 +268,10 @@ in this sweep, because a paid row never reaches the expiry: `SUCCEEDED` payments
 are filtered out by the cohort read and again by the CAS `where`, and the payment
 rows themselves expire from `PENDING` only. The sweep that does refund is a
 different cohort — `expireApprovedUnallocatedSubscriptions` in
-`scripts/appointments/expire-stale-requests.ts` calls `refundPaymentsForExpired`,
-which routes every `SUCCEEDED` payment through `refundBookingPayment`. The
+`scripts/appointments/expire-stale-requests.ts` expires an `APPROVED` plan that
+never had a confirmed session and has no open proposal (`approvedUnallocatedWhere`,
+repeated in its CAS) and stamps a full refund for every `SUCCEEDED` payment; a
+plan that ever had a session waits for plan-end settlement instead. The
 sibling pass in that same file, `expirePaymentPendingRequests`, is the pattern
 rather than a counter-example as of #1423: it flips `APPROVED_PENDING_PAYMENT`
 to `EXPIRED` through `transitionConsultationRequest`, with `fromIn:
