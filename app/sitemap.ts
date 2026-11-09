@@ -59,6 +59,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { path: "/privacy", priority: 0.4 },
     { path: "/refund", priority: 0.4 },
     { path: "/reviews-policy", priority: 0.3 },
+    { path: "/how-we-rank", priority: 0.3 },
     { path: "/grievance", priority: 0.3 },
     ...supportCategories.map((c) => ({
       path: `/support/${c.slug}`,

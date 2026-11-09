@@ -42,6 +42,10 @@ export const ASSET_REJECT_MESSAGES: Record<string, string> = {
     "Archives inside the ZIP aren't allowed. Unpack them into the main archive.",
   ZIP_EXECUTABLE_ENTRY:
     "The archive contains a program or script, which isn't allowed. Remove it and upload again.",
+  ZIP_OFFICE_MACRO:
+    "This document contains macros, which aren't allowed. Save a copy without macros (for example as a plain .docx, .xlsx or .pptx) and upload it again.",
+  ZIP_EMBEDDED_OBJECT:
+    "This document contains embedded objects (OLE or ActiveX), which aren't allowed. Remove them or paste the content as plain text or an image, then upload it again.",
   ZIP_EMPTY_ARCHIVE:
     "This archive has no files in it. Add the files you want to sell and zip them again.",
   ZIP_UNLISTED_DATA:

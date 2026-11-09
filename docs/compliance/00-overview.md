@@ -13,6 +13,7 @@
 | Consumer Protection (E-Commerce) Rules 2020, Grievance Officer    | [Consumer protection and grievance](./03-consumer-protection-and-grievance.md)                      |
 | Row-level security proposal (deferred)                            | [RLS design memo](./04-rls-design-memo.md)                                                          |
 | Filing deadlines (DPDP rows and the statutory calendar)           | [India compliance calendar](./05-india-compliance-calendar.md)                                      |
+| Dark-pattern self-audit, findings and the displayed certificate   | [Dark-pattern self-audit](./07-dark-pattern-self-audit.md)                                          |
 | Tax model: principal supplier, Section 194-O, what we do not levy | [Tax explainer](../finance/60-tax/01-tax-explainer.md)                                              |
 | GST invoices, credit notes, place of supply, e-invoicing          | [GST invoices and credit notes](../finance/60-tax/02-gst-invoices-and-credit-notes.md)              |
 | TDS rules, rates, quarterly returns                               | [TDS rules and returns](../finance/60-tax/03-tds-rules-and-returns.md)                              |

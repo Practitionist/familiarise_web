@@ -23,6 +23,8 @@ export type ZipProblem =
   | "SYMLINK_ENTRY"
   | "NESTED_ARCHIVE"
   | "EXECUTABLE_ENTRY"
+  | "OFFICE_MACRO"
+  | "EMBEDDED_OBJECT"
   | "LOCAL_HEADER_MISMATCH"
   | "UNLISTED_DATA"
   | "EMPTY_ARCHIVE"
@@ -36,7 +38,10 @@ export type ZipInspection =
   | { ok: false; problem: ZipProblem; detail?: string };
 
 export interface ZipInspectOptions {
-  /** Refuse nested archives and executable or script entries (plain ZIP products). */
+  /**
+   * True for a plain ZIP product: refuse nested archives and executable or script entries.
+   * False for a document container (OOXML, EPUB): refuse macros and embedded OLE or ActiveX objects.
+   */
   checkEntryTypes: boolean;
 }
 
@@ -345,7 +350,30 @@ function unicodePath(
   }
 }
 
-/** The path and, in a plain archive, the entry-type rules every name an extractor may honour must pass. */
+/** Whether a document part is a macro project or macro sheet, which run code when the file opens. */
+function isOfficeMacroPart(name: string): boolean {
+  const segments = name.toLowerCase().split(/[\\/]/);
+  const base = (segments.pop() ?? "").replace(/[. ]+$/, "");
+  return (
+    base === "vbaproject.bin" ||
+    base === "vbadata.xml" ||
+    segments.includes("macrosheets")
+  );
+}
+
+/** Whether a document part is an OLE or ActiveX binary, which an embedded object opens as a program. */
+function isEmbeddedObjectPart(name: string): boolean {
+  const segments = name.toLowerCase().split(/[\\/]/);
+  const base = (segments.pop() ?? "").replace(/[. ]+$/, "");
+  if (!base.endsWith(".bin")) return false;
+  return (
+    /^oleobject\d*\.bin$/.test(base) ||
+    segments.includes("embeddings") ||
+    segments.includes("activex")
+  );
+}
+
+/** The path rules, then the entry-type rules for a plain archive or the macro and object rules for a document container, that every name an extractor may honour must pass. */
 function policeNames(names: readonly string[], options: ZipInspectOptions) {
   for (const candidate of names) {
     if (isUnsafePath(candidate)) {
@@ -353,7 +381,16 @@ function policeNames(names: readonly string[], options: ZipInspectOptions) {
     }
   }
   for (const candidate of names) {
-    if (candidate.endsWith("/") || !options.checkEntryTypes) continue;
+    if (candidate.endsWith("/")) continue;
+    if (!options.checkEntryTypes) {
+      if (isOfficeMacroPart(candidate)) {
+        throw new ZipFault("OFFICE_MACRO", candidate);
+      }
+      if (isEmbeddedObjectPart(candidate)) {
+        throw new ZipFault("EMBEDDED_OBJECT", candidate);
+      }
+      continue;
+    }
     const ext = extensionOf(candidate);
     if (NESTED_ARCHIVE_EXTENSIONS.has(ext)) {
       throw new ZipFault("NESTED_ARCHIVE", candidate);

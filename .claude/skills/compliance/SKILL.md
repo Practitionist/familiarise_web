@@ -136,6 +136,10 @@ obvious from the compliance side alone. `/finance` and `/enterprise` own it.
 
 For how the breach and MSME alert emails are routed and guarded, see [docs/email/README.md](../../../docs/email/README.md).
 
+## Dark patterns and the displayed certificate
+
+Any change to pricing, checkout, promo, ranking, consent, notification copy or uploads re-opens a row of [the dark-pattern self-audit](../../../docs/compliance/07-dark-pattern-self-audit.md); add the finding there. Orders shown to buyers must match `/how-we-rank` (`app/(pages)/how-we-rank/page.tsx`), and no placement may be paid for unless it is labelled Sponsored. The certificate page `/compliance-certificate` returns 404 until `DARK_PATTERN_AUDIT` in `lib/company.ts` has a signatory name and signing date; never fill them without the director's signature. An anonymous grievance complainant gets a copy of the complaint only after their address is confirmed.
+
 ## Breach deadline staging
 
 Preserve the boundary between recipient transactions and digest completion when

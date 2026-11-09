@@ -1,8 +1,14 @@
 # Familiarise Email Campaign Templates
 
+## Content Rules
+
+- No invented numbers: every figure (sign-ups, consultants onboarded, savings, response times) must come from real data on the day you send.
+- No false deadlines: never say access is closing, ending soon or a last chance unless a real, dated cutoff exists.
+- Attributed testimonials only: quote a real person who agreed to be quoted, with their name, or leave the quote out.
+
 ## Overview
 
-This folder contains 16 professional cold email templates for launching Familiarise. Each template is optimized for different audiences, messaging angles, and campaign stages.
+This folder contains 14 professional cold email templates for launching Familiarise. Each template is optimized for different audiences, messaging angles, and campaign stages.
 
 ---
 
@@ -16,8 +22,7 @@ emails/promotional/
 │   │   ├── consultant-initial-v2.md (Collaborative tone)
 │   │   └── consultant-initial-v3.md (Value-focused)
 │   ├── followup/
-│   │   ├── consultant-followup-v1.md (Day 3 soft reminder)
-│   │   └── consultant-followup-v2.md (Day 7 urgency)
+│   │   └── consultant-followup-v1.md (Day 3 soft reminder)
 │   ├── specialized/
 │   │   ├── consultant-webinar-specialist.md (Webinar hosts)
 │   │   └── consultant-course-creator.md (Course creators)
@@ -30,8 +35,7 @@ emails/promotional/
 │   │   ├── consultee-initial-v2.md (Educational angle)
 │   │   └── consultee-initial-v3.md (Price-focused)
 │   ├── followup/
-│   │   ├── consultee-followup-v1.md (Day 3 curiosity)
-│   │   └── consultee-followup-v2.md (Day 7 FOMO)
+│   │   └── consultee-followup-v1.md (Day 3 curiosity)
 │   ├── specialized/
 │   │   ├── consultee-career-switcher.md (Career changers)
 │   │   └── consultee-entrepreneur.md (Startup founders)
@@ -41,7 +45,7 @@ emails/promotional/
 └── README.md (This file)
 ```
 
-**Total: 16 email templates organized by audience and campaign stage**
+**Total: 14 email templates organized by audience and campaign stage**
 
 ---
 
@@ -53,7 +57,6 @@ emails/promotional/
 
 - Day 0: Send initial email (choose v1, v2, or v3 based on audience)
 - Day 3: Send `consultant-followup-v1.md` to non-responders
-- Day 7: Send `consultant-followup-v2.md` to non-responders
 
 **Week 2:**
 
@@ -72,7 +75,6 @@ emails/promotional/
 
 - Day 0: Send initial email (choose v1, v2, or v3 based on audience)
 - Day 3: Send `consultee-followup-v1.md` to non-responders
-- Day 7: Send `consultee-followup-v2.md` to non-responders
 
 **Week 2:**
 
@@ -165,7 +167,6 @@ For each email template, monitor:
 
 - Don't send more than 1 email per week per person
 - Don't use the same email template twice to same person
-- Don't forget to update social proof numbers as you grow
 - Don't send from noreply@ addresses
 - Don't skip the re-engagement email (it's surprisingly effective)
 
@@ -216,7 +217,6 @@ As you use these templates:
 
 - Track which emails perform best
 - Note any phrases that get replies
-- Update social proof numbers monthly
 - Adapt to your brand voice
 - Test new angles based on user feedback
 
@@ -228,4 +228,4 @@ Good luck with your launch! 🚀
 
 **Last updated:** 2025-11-02
 **Created by:** Claude Code for Familiarise Launch Campaign
-**Total templates:** 16 (8 consultant + 8 consultee)
+**Total templates:** 14 (7 consultant + 7 consultee)

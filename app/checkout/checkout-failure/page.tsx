@@ -148,7 +148,9 @@ function CheckoutFailureContent() {
             </li>
             <li className="flex items-start gap-2">
               <span className="text-background/50">•</span>
-              Your booking slot is still available for a limited time
+              Your slot is held only while your payment window is open. Once it
+              ends without a payment, the slot is released and someone else can
+              book it
             </li>
             <li className="flex items-start gap-2">
               <span className="text-background/50">•</span>
