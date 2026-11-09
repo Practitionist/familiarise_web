@@ -91,6 +91,7 @@ import {
   reconnectEnrolledUsers,
   collectEventParticipantIds,
 } from "@/lib/booking/allocation/commit/reconnect-enrolled";
+import { bookingTransaction } from "@/lib/db/booking-transaction";
 
 export async function autoAllocate(
   eventType: EventType,
@@ -509,7 +510,7 @@ export async function autoAllocate(
     // connection, so this can start promptly; an explicit maxWait still
     // absorbs transient pool spikes (concurrency is bounded by the locks +
     // the route's eventMutationLimiter).
-    return await prisma.$transaction(
+    return await bookingTransaction(
       async (tx) => {
         await renewAllocationBatch(slotGrant);
         // #1692 — per-event serialisation first, so every re-check below

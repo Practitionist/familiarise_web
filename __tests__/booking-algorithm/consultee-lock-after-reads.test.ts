@@ -38,7 +38,7 @@ describe.each(MODES)("%s", (rel) => {
 
   it("re-checks the consultee's calendar inside the write transaction", () => {
     const recheck = at(".revalidateConflicts(");
-    expect(recheck).toBeGreaterThan(at("prisma.$transaction("));
+    expect(recheck).toBeGreaterThan(at("bookingTransaction("));
     expect(src.slice(recheck, recheck + 400)).toContain("consulteeUserId");
   });
 });

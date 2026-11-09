@@ -87,6 +87,7 @@ import {
   RELEASE_ONE_WEEK_MESSAGE,
   spansPlanWeeks,
 } from "@/lib/booking/release-weeks";
+import { bookingTransaction } from "@/lib/db/booking-transaction";
 
 const RESCHEDULE_REALLOCATION_BUFFER_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -292,7 +293,7 @@ async function requestReschedule(
     );
 
     const result = await withAppointmentLock(appointmentId, () =>
-      prisma.$transaction(
+      bookingTransaction(
         async (tx) => {
           const appointment = await tx.appointment.findUnique({
             where: { id: appointmentId },

@@ -80,6 +80,7 @@ import {
   reconnectEnrolledUsers,
   collectEventParticipantIds,
 } from "@/lib/booking/allocation/commit/reconnect-enrolled";
+import { bookingTransaction } from "@/lib/db/booking-transaction";
 
 /**
  * MANUAL ALLOCATION: Validate and allocate user-selected slots
@@ -493,7 +494,7 @@ export async function manualAllocate(
     );
 
     // SHORT write-only transaction (see autoAllocate for the rationale).
-    return await prisma.$transaction(
+    return await bookingTransaction(
       async (tx) => {
         await renewAllocationBatch(slotGrant);
         // #1692 — per-event serialisation first (see autoAllocate).

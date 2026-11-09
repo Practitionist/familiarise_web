@@ -103,6 +103,7 @@ import {
   revokeEndedEventChatAccess,
 } from "@/lib/stream/access-revocation";
 import { bookingOrgId } from "@/lib/stream-utils";
+import { bookingTransaction } from "@/lib/db/booking-transaction";
 
 /** Audit attribution shared by every CAS this cancel drives (#1322 A12). */
 type CancelAuditMeta = {
@@ -868,7 +869,7 @@ export async function POST(
     const runCancel = (captureLanded: boolean) =>
       withEventCheckoutLock(eventCheckoutKey, () =>
         withAppointmentLock(appointmentId, () =>
-          prisma.$transaction(
+          bookingTransaction(
             async (tx) => {
               // The CAS below is pinned to this read, so a capture committing
               // after it makes the cancel match zero rows instead of cancelling

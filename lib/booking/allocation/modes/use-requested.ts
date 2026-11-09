@@ -62,6 +62,7 @@ import {
 } from "@/lib/booking/allocation/guards";
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
 import { assertCollaboratorsFree } from "@/lib/booking/allocation/collaborators";
+import { bookingTransaction } from "@/lib/db/booking-transaction";
 
 /**
  * REQUESTED SLOTS: Use pre-selected slots from consultee
@@ -294,7 +295,7 @@ export async function useRequestedSlots(
       }),
     );
 
-    return await prisma.$transaction(
+    return await bookingTransaction(
       async (tx) => {
         await renewAllocationBatch(slotGrant);
         // Multi-tab guard: another tab already confirmed slots for this
