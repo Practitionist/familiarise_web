@@ -20,7 +20,8 @@ describe("money label maps", () => {
     expect(disputeReasonText("product_not_received")).toBe(
       "Goods never arrived",
     );
-    expect(disputeReasonText("some_new_code")).toBe("Other reason");
+    expect(disputeReasonText("some_new_code")).toBe("Some new code");
+    expect(disputeReasonText("Chargeback")).toBe("Chargeback");
     expect(disputeReasonText("Customer says the class never ran")).toBe(
       "Customer says the class never ran",
     );
@@ -29,7 +30,7 @@ describe("money label maps", () => {
 
   it("gives a payout notice plain words, never gateway text or ids", () => {
     expect(payoutNoticeReason("REVERSED", "pout_ABC reversed")).toBe(
-      "the bank returned the payout",
+      "the amount is back in your balance",
     );
     expect(payoutNoticeReason("FAILED", "RazorpayX failure pout_XYZ")).toBe(
       "we couldn't send this payout",

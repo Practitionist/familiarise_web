@@ -146,7 +146,7 @@ export async function recordCheckoutUtilization(
         // ask an admin to raise.
         throw Object.assign(
           new Error(
-            "You've used all the sessions in your programme for this cycle. Ask your organisation admin, or wait for the next cycle.",
+            "This booking exceeds your programme's limits for this cycle. Ask your organisation admin, or wait for the next cycle.",
           ),
           { httpStatus: 402, code: "PROGRAM_SESSION_CAP_REACHED" },
         );

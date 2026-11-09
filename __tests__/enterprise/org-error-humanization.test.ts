@@ -48,6 +48,15 @@ describe("humanizeOrgError", () => {
     expect(humanizeOrgError("PO_BALANCE_UNKNOWN")).toBe("PO_BALANCE_UNKNOWN");
   });
 
+  it("a mapped machine code wins over the server sentence; other codes keep the server message", () => {
+    expect(humanizeOrgError("Hosting is gated.", "HOST_ORGS_GATED")).toBe(
+      ORG_ERROR_COPY.HOST_ORGS_GATED,
+    );
+    expect(humanizeOrgError("That web address is taken.", "SLUG_TAKEN")).toBe(
+      "That web address is taken.",
+    );
+  });
+
   it("the alias PO_BALANCE_INSUFFICIENT renders the same copy as PO_BALANCE_EXCEEDED", () => {
     // The server only emits EXCEEDED today, but the INSUFFICIENT alias is
     // pinned so a future route rename doesn't silently change UI copy.

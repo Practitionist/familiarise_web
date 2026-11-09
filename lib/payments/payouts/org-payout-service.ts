@@ -1747,6 +1747,55 @@ async function emailOrgPayoutFailed(
   }
 }
 
+/** Audit row plus outbound webhook for a payout that failed or was reversed; the audit text never carries the gateway's words. */
+async function recordOrgPayoutFailureOutcome(
+  tx: Tx,
+  p: {
+    organizationId: string;
+    payoutId: string;
+    kind: "FAILED" | "REVERSED";
+    reversedFrom?: "COMPLETED" | "PROCESSING";
+    reason: string;
+  },
+): Promise<void> {
+  const reversed = p.kind === "REVERSED";
+  const when =
+    p.reversedFrom === "COMPLETED"
+      ? " after completion"
+      : p.reversedFrom === "PROCESSING"
+        ? " before completion"
+        : "";
+  await tx.orgAuditLog.create({
+    data: {
+      organizationId: p.organizationId,
+      actorMembershipId: null,
+      category: "PAYOUT",
+      action: reversed
+        ? AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED
+        : AUDIT_ACTIONS.PAYOUT.PAYOUT_FAILED,
+      description: reversed
+        ? `Payout reversed${when}.`
+        : `Payout failed: ${payoutNoticeReason("FAILED", p.reason)}`,
+      details: {
+        payoutId: p.payoutId,
+        kind: p.kind,
+        ...(p.reversedFrom ? { reversedFrom: p.reversedFrom } : {}),
+        reason: p.reason.slice(0, 500),
+      },
+    },
+  });
+  await dispatchWebhookEvent({
+    prisma: tx,
+    organizationId: p.organizationId,
+    eventType: "payout.failed",
+    payload: {
+      payoutId: p.payoutId,
+      reason: p.reason || (reversed ? "PAYOUT_REVERSED" : "PAYOUT_FAILED"),
+      lastError: p.reason || null,
+    },
+  });
+}
+
 async function markOrgPayoutFailedInternal(
   payoutId: string,
   reason: string,
@@ -1807,32 +1856,11 @@ async function markOrgPayoutFailedInternal(
           },
         });
 
-        await tx.orgAuditLog.create({
-          data: {
-            organizationId: payout.organizationId,
-            actorMembershipId: null,
-            category: "PAYOUT",
-            action:
-              kind === "REVERSED"
-                ? AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED
-                : AUDIT_ACTIONS.PAYOUT.PAYOUT_FAILED,
-            description:
-              kind === "REVERSED"
-                ? `Payout reversed: ${payoutNoticeReason("REVERSED", reason)}`
-                : `Payout failed: ${payoutNoticeReason("FAILED", reason)}`,
-            details: { payoutId, kind, reason: reason.slice(0, 500) },
-          },
-        });
-
-        await dispatchWebhookEvent({
-          prisma: tx,
+        await recordOrgPayoutFailureOutcome(tx, {
           organizationId: payout.organizationId,
-          eventType: "payout.failed",
-          payload: {
-            payoutId: payout.id,
-            reason: reason || "PAYOUT_FAILED",
-            lastError: reason || null,
-          },
+          payoutId,
+          kind,
+          reason,
         });
 
         const notifyStaged = await notifyOrgPayoutFailed(
@@ -1996,31 +2024,12 @@ export async function markOrgPayoutReversed(
             });
           }
 
-          await tx.orgAuditLog.create({
-            data: {
-              organizationId: payout.organizationId,
-              actorMembershipId: null,
-              category: "PAYOUT",
-              action: AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED,
-              description: `Payout reversed after completion: ${payoutNoticeReason("REVERSED", reason)}`,
-              details: {
-                payoutId,
-                kind: "REVERSED",
-                reversedFrom: "COMPLETED",
-                reason: reason.slice(0, 500),
-              },
-            },
-          });
-
-          await dispatchWebhookEvent({
-            prisma: tx,
+          await recordOrgPayoutFailureOutcome(tx, {
             organizationId: payout.organizationId,
-            eventType: "payout.failed",
-            payload: {
-              payoutId: payout.id,
-              reason: reason || "PAYOUT_REVERSED",
-              lastError: reason || null,
-            },
+            payoutId,
+            kind: "REVERSED",
+            reversedFrom: "COMPLETED",
+            reason,
           });
 
           const notifyStaged = await notifyOrgPayoutFailed(
@@ -2116,31 +2125,12 @@ export async function markOrgPayoutReversed(
           },
         });
 
-        await tx.orgAuditLog.create({
-          data: {
-            organizationId: payout.organizationId,
-            actorMembershipId: null,
-            category: "PAYOUT",
-            action: AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED,
-            description: `Payout reversed before completion: ${payoutNoticeReason("REVERSED", reason)}`,
-            details: {
-              payoutId,
-              kind: "REVERSED",
-              reversedFrom: "PROCESSING",
-              reason: reason.slice(0, 500),
-            },
-          },
-        });
-
-        await dispatchWebhookEvent({
-          prisma: tx,
+        await recordOrgPayoutFailureOutcome(tx, {
           organizationId: payout.organizationId,
-          eventType: "payout.failed",
-          payload: {
-            payoutId: payout.id,
-            reason: reason || "PAYOUT_REVERSED",
-            lastError: reason || null,
-          },
+          payoutId,
+          kind: "REVERSED",
+          reversedFrom: "PROCESSING",
+          reason,
         });
 
         const notifyStaged = await notifyOrgPayoutFailed(

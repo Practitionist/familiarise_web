@@ -233,7 +233,8 @@ export const INFRA_ERROR_PATTERNS: ReadonlyArray<{
   {
     patterns: ["Authentication failed", "Invalid API key"],
     errorType: ErrorTypes.PAYMENT_CONFIG,
-    userMessage: "Payments aren't working right now. Please try again shortly.",
+    userMessage:
+      "Payments aren't working right now. Please try again shortly. If this keeps happening, contact support.",
   },
   // The #1219 posture guard: a Razorpay TEST key under NODE_ENV=production.
   // Reaches the route as a typed PaymentError now that the gateway loads at

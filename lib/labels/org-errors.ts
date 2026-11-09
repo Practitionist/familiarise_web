@@ -71,11 +71,14 @@ export const ORG_ERROR_COPY: Record<string, string> = {
 };
 
 /**
- * Translate a server-provided error string into user-facing copy.
- * If the string matches a known code, returns the mapped sentence.
- * Otherwise returns the input unchanged, so free-form server messages
+ * Translate a server error into user-facing copy. A machine `code` that has
+ * a mapped sentence wins; otherwise the message is looked up as a code, and
+ * anything unknown is returned unchanged so free-form server messages
  * (e.g. validation feedback) still reach the user verbatim.
  */
-export function humanizeOrgError(message: string): string {
-  return ORG_ERROR_COPY[message] ?? message;
+export function humanizeOrgError(message: string, code?: string): string {
+  if (code && Object.hasOwn(ORG_ERROR_COPY, code)) return ORG_ERROR_COPY[code];
+  return Object.hasOwn(ORG_ERROR_COPY, message)
+    ? ORG_ERROR_COPY[message]
+    : message;
 }

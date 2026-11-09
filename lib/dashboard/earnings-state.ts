@@ -249,7 +249,7 @@ export function payoutNoticeReason(
   raw: string | null | undefined,
 ): string {
   return kind === "REVERSED"
-    ? "the bank returned the payout"
+    ? "the amount is back in your balance"
     : sanitizePayoutFailure(raw ?? null);
 }
 

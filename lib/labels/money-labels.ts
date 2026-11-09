@@ -56,12 +56,16 @@ const DISPUTE_REASON_LABEL: Record<string, string> = {
   general: "General dispute",
 };
 
-/** A dispute reason: gateway codes become words, prose a person wrote passes through. */
+/** A dispute reason: gateway codes become words, free text a person wrote passes through. */
 export function disputeReasonText(reason: string | null | undefined): string {
   const raw = reason?.trim();
   if (!raw) return "No reason given";
-  if (!/^[a-z][a-z0-9_]*$/i.test(raw)) return raw;
-  return DISPUTE_REASON_LABEL[raw.toLowerCase()] ?? "Other reason";
+  const key = raw.toLowerCase();
+  if (Object.hasOwn(DISPUTE_REASON_LABEL, key))
+    return DISPUTE_REASON_LABEL[key];
+  if (!/^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/i.test(raw)) return raw;
+  const words = key.split("_").join(" ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 /** Subscription plan statuses come off the wire in lower case. */

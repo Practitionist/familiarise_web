@@ -63,9 +63,7 @@ function PayoutSummaryParagraph(props: {
     );
   }
   const suffix =
-    props.status === "REVERSED"
-      ? "was returned by the receiving bank."
-      : "could not be completed.";
+    props.status === "REVERSED" ? "was reversed." : "could not be completed.";
   return (
     <Text style={paragraph}>
       A payout of <strong>{props.amountText}</strong>

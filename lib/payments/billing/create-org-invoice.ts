@@ -21,7 +21,7 @@ import { drawPurchaseOrder } from "@/lib/payments/billing/purchase-order-draw";
 import { isPlatformGstRegistered } from "@/lib/pdf/supplier";
 import {
   GST_REGISTRATION_REQUIRED,
-  GST_REGISTRATION_REQUIRED_MESSAGE,
+  GST_INVOICE_REGISTRATION_MESSAGE,
 } from "@/lib/payments/tax/gst-regime";
 
 const LineItemSchema = z.object({
@@ -183,7 +183,7 @@ export async function createOrgInvoice(
   if (!isPlatformGstRegistered()) {
     throw new OpsRefusal(
       GST_REGISTRATION_REQUIRED,
-      GST_REGISTRATION_REQUIRED_MESSAGE,
+      GST_INVOICE_REGISTRATION_MESSAGE,
       403,
     );
   }

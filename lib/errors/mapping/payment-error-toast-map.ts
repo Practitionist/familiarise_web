@@ -129,9 +129,9 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
       "Your organisation's programme budget for this cycle is used up. Ask your organisation admin, or pay yourself if you can. You weren't charged.",
   },
   [ErrorTypes.PROGRAM_SESSION_CAP_REACHED]: {
-    title: "Programme Sessions Used Up",
+    title: "Programme Limit Reached",
     description:
-      "You've used all the sessions in your programme. Ask your organisation admin, or book it yourself. You weren't charged.",
+      "This booking exceeds your programme's limits. Ask your organisation admin, or book it yourself. You weren't charged.",
   },
   [ErrorTypes.OVERAGE_CHARGE_MEMBER_UNSUPPORTED]: {
     title: "Can't Book Through Your Organisation",

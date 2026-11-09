@@ -85,7 +85,7 @@ function describeLaunchError(err: unknown): string {
   if (err instanceof ApiResponseError) {
     const fieldMsg = extractFirstFieldError(err.detail);
     if (fieldMsg) return fieldMsg;
-    return humanizeOrgError(err.message);
+    return humanizeOrgError(err.message, err.code);
   }
   return "We couldn't finish that. Please check your connection and try again.";
 }

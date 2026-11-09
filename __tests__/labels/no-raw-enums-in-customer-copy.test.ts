@@ -34,112 +34,93 @@ interface Allowed {
   reason: string;
 }
 
-const BACKOFFICE_REASON =
-  "Staff-only console: operators read the enum vocabulary, customers never see this surface.";
+const BOTH: readonly Rule[] = ["underscore-replace", "raw-field"];
+
+/** A staff-only surface: operators read the enum vocabulary, customers never see it. */
+const staffOnly = (
+  path: string,
+  rules: readonly Rule[] = BOTH,
+  surface = "console",
+): Allowed => ({
+  path,
+  rules,
+  reason: `Staff-only ${surface}: read by operators, not customers.`,
+});
+
+/** One field of one file that is already words, not an enum. */
+const alreadyWords = (
+  path: string,
+  field: string,
+  reason: string,
+): Allowed => ({ path, rules: ["raw-field"], fields: [field], reason });
 
 const ALLOWED: readonly Allowed[] = [
-  {
-    path: "app/dashboard/(backoffice)/",
-    rules: ["underscore-replace", "raw-field"],
-    reason: BACKOFFICE_REASON,
-  },
-  {
-    path: "components/dashboard/backoffice/",
-    rules: ["underscore-replace", "raw-field"],
-    reason: BACKOFFICE_REASON,
-  },
-  {
-    path: "components/admin/",
-    rules: ["underscore-replace", "raw-field"],
-    reason: BACKOFFICE_REASON,
-  },
-  {
-    path: "app/api/admin/",
-    rules: ["underscore-replace", "raw-field"],
-    reason: "Admin-only API: the response is read by staff, not customers.",
-  },
-  {
-    path: "app/api/staff/",
-    rules: ["raw-field"],
-    reason: "Staff-only API: the response is read by staff, not customers.",
-  },
+  staffOnly("app/dashboard/(backoffice)/"),
+  staffOnly("components/dashboard/backoffice/"),
+  staffOnly("components/admin/"),
+  staffOnly("app/api/admin/", BOTH, "API"),
+  staffOnly("app/api/staff/", ["raw-field"], "API"),
   {
     path: "components/dashboard/account/AccountDetailsSection.tsx",
     rules: ["underscore-replace"],
     reason:
       "Spaces out IANA timezone names (America/New_York), which are not enums.",
   },
-  {
-    path: "app/explore/programs/plans/classes/[classPlanId]/components/BatchSchedule.tsx",
-    rules: ["raw-field"],
-    fields: ["status"],
-    reason:
-      "SessionInfo.status is already the words Upcoming / Completed / Happening Now, never a database enum.",
-  },
-  {
-    path: "app/meetings/[id]/components/MeetingRoom.tsx",
-    rules: ["raw-field"],
-    fields: ["status"],
-    reason:
-      "clock.status is a ready sentence from readClock (Starts in 5 min, 10 min over), not an enum.",
-  },
-  {
-    path: "components/chat/DebugDialog.tsx",
-    rules: ["raw-field"],
-    fields: ["role"],
-    reason: "Developer tool shown only on localhost.",
-  },
-  {
-    path: "components/dashboard/MaintenanceBookingRemediation.tsx",
-    rules: ["raw-field"],
-    fields: ["reason"],
-    reason: "Operator-typed audit reason, shown on the operator console.",
-  },
-  {
-    path: "components/dashboard/MaintenanceControls.tsx",
-    rules: ["raw-field"],
-    fields: ["reason"],
-    reason: "Operator-typed maintenance reason, shown on the operator console.",
-  },
-  {
-    path: "components/dashboard/shared/AppointmentTimeline.tsx",
-    rules: ["raw-field"],
-    fields: ["reason"],
-    reason:
-      "entry.reason is already copy: the booking-history read maps scheduling tokens to words.",
-  },
-  {
-    path: "app/dashboard/organization/[orgId]/billing/InvoiceDetailSheet.tsx",
-    rules: ["raw-field"],
-    fields: ["reason"],
-    reason: "Credit-note reason is prose an operator typed.",
-  },
-  {
-    path: "components/dashboard/shared/PaymentDetailPage.tsx",
-    rules: ["raw-field"],
-    fields: ["reason"],
-    reason: "Refund.reason is the operator's prose reason for the refund.",
-  },
-  {
-    path: "app/dashboard/consultant/[consultantId]/(features)/settings/get-paid/ReversePennyDrop.tsx",
-    rules: ["raw-field"],
-    fields: ["reason"],
-    reason:
-      "phase.reason is a sentence the verification API wrote for the user.",
-  },
-  {
-    path: "components/support/resolution/FinancialPanel.tsx",
-    rules: ["raw-field"],
-    fields: ["reason"],
-    reason: "Support-agent resolution panel, not a customer surface.",
-  },
-  {
-    path: "emails/organizations/SsoProviderEmail.tsx",
-    rules: ["raw-field"],
-    fields: ["reason"],
-    reason:
-      "The reason is prose the platform reviewer typed for the org admin.",
-  },
+  alreadyWords(
+    "app/explore/programs/plans/classes/[classPlanId]/components/BatchSchedule.tsx",
+    "status",
+    "SessionInfo.status is already the words Upcoming / Completed / Happening Now, never a database enum.",
+  ),
+  alreadyWords(
+    "app/meetings/[id]/components/MeetingRoom.tsx",
+    "status",
+    "clock.status is a ready sentence from readClock (Starts in 5 min, 10 min over), not an enum.",
+  ),
+  alreadyWords(
+    "components/chat/DebugDialog.tsx",
+    "role",
+    "Developer tool shown only on localhost.",
+  ),
+  alreadyWords(
+    "components/dashboard/MaintenanceBookingRemediation.tsx",
+    "reason",
+    "Operator-typed audit reason, shown on the operator console.",
+  ),
+  alreadyWords(
+    "components/dashboard/MaintenanceControls.tsx",
+    "reason",
+    "Operator-typed maintenance reason, shown on the operator console.",
+  ),
+  alreadyWords(
+    "components/dashboard/shared/AppointmentTimeline.tsx",
+    "reason",
+    "entry.reason is already copy: the booking-history read maps scheduling tokens to words.",
+  ),
+  alreadyWords(
+    "app/dashboard/organization/[orgId]/billing/InvoiceDetailSheet.tsx",
+    "reason",
+    "Credit-note reason is prose an operator typed.",
+  ),
+  alreadyWords(
+    "components/dashboard/shared/PaymentDetailPage.tsx",
+    "reason",
+    "Refund.reason is the operator's prose reason for the refund.",
+  ),
+  alreadyWords(
+    "app/dashboard/consultant/[consultantId]/(features)/settings/get-paid/ReversePennyDrop.tsx",
+    "reason",
+    "phase.reason is a sentence the verification API wrote for the user.",
+  ),
+  alreadyWords(
+    "components/support/resolution/FinancialPanel.tsx",
+    "reason",
+    "Support-agent resolution panel, not a customer surface.",
+  ),
+  alreadyWords(
+    "emails/organizations/SsoProviderEmail.tsx",
+    "reason",
+    "The reason is prose the platform reviewer typed for the org admin.",
+  ),
 ];
 
 function allowedFor(
@@ -187,10 +168,17 @@ function isComment(line: string): boolean {
   return t.startsWith("//") || t.startsWith("*") || t.startsWith("/*");
 }
 
-function scan(): { file: string; line: number; rule: Rule; text: string }[] {
+interface Hit {
+  file: string;
+  line: number;
+  rule: Rule;
+  text: string;
+}
+
+function scan(): Hit[] {
   const files: string[] = [];
   for (const dir of SCAN_DIRS) walk(dir, files);
-  const hits: { file: string; line: number; rule: Rule; text: string }[] = [];
+  const hits: Hit[] = [];
   for (const file of files) {
     const lines = fs.readFileSync(path.join(ROOT, file), "utf8").split("\n");
     lines.forEach((text, i) => {
