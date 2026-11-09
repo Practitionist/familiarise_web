@@ -1355,7 +1355,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Newsletter and marketing emails",
         paragraphs: [
-          "Marketing emails and the newsletter follow one choice: Marketing communications in Settings › Account › Data consent & privacy rights. Giving that consent subscribes your account's email address to the newsletter without a confirmation email; withdrawing it unsubscribes you. The unsubscribe link in a newsletter stops it at once and also withdraws that consent for your account. The notification settings have no separate marketing switch.",
+          "Marketing emails and the newsletter follow one choice: Marketing emails in Settings › Account › Data consent & privacy rights. Giving that consent subscribes your account's email address to the newsletter without a confirmation email; withdrawing it unsubscribes you. The unsubscribe link in a newsletter stops it at once and also withdraws that consent for your account. The notification settings have no separate marketing switch.",
         ],
       },
       {

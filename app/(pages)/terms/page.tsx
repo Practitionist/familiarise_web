@@ -769,7 +769,7 @@ export default function TermsPage() {
               </h2>
               <p>
                 These Terms, together with our Privacy Policy and Cancellation &
-                Refund Policy, constitute the entire agreement between you and
+                Refund Policy, constitute the entire agreement between you and{" "}
                 {COMPANY_INFO.name} regarding your use of the platform and
                 supersede all prior agreements and understandings.
               </p>

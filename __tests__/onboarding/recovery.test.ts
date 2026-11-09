@@ -57,7 +57,6 @@ const consulteeBody = (overrides: Record<string, unknown> = {}) => ({
   email: "ada@example.com",
   dateOfBirth: "1990-06-15",
   consulteeProfile: { create: {} },
-  adultConfirmed: true,
   termsAccepted: true,
   privacyAccepted: true,
   ...overrides,
@@ -117,6 +116,7 @@ describe("processOnboardingData claim-first CAS", () => {
     expect(claim.data.role).toBe("CONSULTEE");
     expect(claim.data.termsAcceptedAt).toBeInstanceOf(Date);
     expect(claim.data.privacyAcceptedAt).toBeInstanceOf(Date);
+    expect(claim.data.adultConfirmedAt).toBeInstanceOf(Date);
     expect(mockEnsureConsent).toHaveBeenCalledWith(
       tx,
       USER_ID,
@@ -134,20 +134,6 @@ describe("processOnboardingData claim-first CAS", () => {
       success: false,
       code: "VALIDATION",
       field: "termsAccepted",
-    });
-    expect(mockTransaction).not.toHaveBeenCalled();
-  });
-
-  it("refuses a payload without the 18+ confirmation, routed to the personal step", async () => {
-    const result = await processOnboardingData(
-      USER_ID,
-      consulteeBody({ adultConfirmed: false }),
-      PROVENANCE,
-    );
-    expect(result).toMatchObject({
-      success: false,
-      code: "VALIDATION",
-      field: "adultConfirmed",
     });
     expect(mockTransaction).not.toHaveBeenCalled();
   });

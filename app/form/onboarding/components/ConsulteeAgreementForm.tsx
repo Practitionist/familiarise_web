@@ -1,13 +1,12 @@
 import React from "react";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   ConsulteeProfile,
   ConsulteePreferences,
   PersonalInfoAndRole,
 } from "@/schemas/user";
-import { PURPOSE_CODE_META } from "@/lib/compliance/purpose-codes";
-import { MessageReviewNotice } from "./MessageReviewNotice";
+import { DataProtectionNotice } from "@/components/compliance/DataProtectionNotice";
+import { SignupConsentCheckboxes } from "@/components/compliance/SignupConsentCheckboxes";
 
 type ConsulteeFormData = Partial<PersonalInfoAndRole> &
   Partial<ConsulteeProfile> &
@@ -59,112 +58,25 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
       {/* Header */}
       <div className="space-y-2">
         <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Terms, Privacy &amp; Data Protection Notice
+          Terms and privacy
         </h3>
         <p className="text-sm text-muted-foreground">
-          Please review our itemised data protection notice and accept our terms
-          to complete your registration
+          Please review how we use your information and accept our terms to
+          complete your registration
         </p>
       </div>
 
-      {/* DPDP Act 2023 & Rule 3 Itemised Data Protection Notice */}
-      <div className="rounded-lg border border-border bg-muted/40 p-4 text-xs text-muted-foreground space-y-2">
-        <p className="font-semibold text-foreground text-sm">
-          Data Protection Notice (DPDP Act, 2023 &amp; Rule 3)
-        </p>
-        <p>
-          To operate your Familiarise account, we process your{" "}
-          <strong>identity &amp; profile details</strong> (name, email, phone,
-          learning preferences, and 18+ age verification) for{" "}
-          <strong>core account delivery</strong> (
-          <code>PRIMARY_PROCESSING</code>
-          ), <strong>session scheduling</strong> (<code>SESSION_BOOKING</code>),
-          and <strong>live video &amp; chat</strong> via GetStream.io (
-          <code>STREAM_DATA_PROCESSING</code>), as well as payment processing
-          via Razorpay. For platform security and support diagnostics (DPDP
-          &sect;8(5) &amp; Rule 6), error traces use a one-way pseudonymous
-          token (<code>ust_&lt;hash&gt;</code>) with no raw PII sent to Sentry.
-        </p>
-        <MessageReviewNotice />
-        <p>
-          You can <strong>download your data &amp; processor summary</strong>,{" "}
-          <strong>withdraw optional consents</strong> in 1 click,{" "}
-          <strong>withdraw core consent &amp; delete your account</strong>{" "}
-          (subject to Indian 7–8 yr tax invoice retention), or{" "}
-          <strong>file a data protection grievance</strong> (with escalation to
-          the Data Protection Board of India) anytime in{" "}
-          <strong>Settings &rarr; Account</strong>.
-        </p>
-      </div>
+      <DataProtectionNotice audience="consultee" />
 
-      {/* Checkboxes */}
       <div className="space-y-4">
-        <div className="flex items-center space-x-3 p-4 rounded-lg bg-muted/50 border hover:bg-muted transition-colors">
-          <Checkbox
-            id="terms"
-            checked={termsAccepted}
-            // Radix CheckedState = boolean | "indeterminate"; no indeterminate here
-            onCheckedChange={(checked) => setTermsAccepted(checked as boolean)}
-            className="h-5 w-5"
-          />
-          <label htmlFor="terms" className="text-sm cursor-pointer font-medium">
-            I accept the{" "}
-            <a
-              href="/terms"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline transition-colors"
-            >
-              terms and conditions
-            </a>
-          </label>
-        </div>
-        <div className="flex items-center space-x-3 p-4 rounded-lg bg-muted/50 border hover:bg-muted transition-colors">
-          <Checkbox
-            id="privacy"
-            checked={privacyAccepted}
-            // Radix CheckedState narrowing — no indeterminate
-            onCheckedChange={(checked) =>
-              setPrivacyAccepted(checked as boolean)
-            }
-            className="h-5 w-5"
-          />
-          <label
-            htmlFor="privacy"
-            className="text-sm cursor-pointer font-medium"
-          >
-            I accept the{" "}
-            <a
-              href="/privacy"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline transition-colors"
-            >
-              privacy policy
-            </a>{" "}
-            and give consent for the core platform purposes above
-          </label>
-        </div>
-        <div className="flex items-start space-x-3 p-4 rounded-lg bg-muted/30 border border-dashed border-border hover:bg-muted/50 transition-colors">
-          <Checkbox
-            id="marketing-consent"
-            checked={marketingAccepted}
-            onCheckedChange={(checked) =>
-              setMarketingAccepted(checked === true)
-            }
-            className="h-5 w-5 mt-0.5"
-          />
-          <label
-            htmlFor="marketing-consent"
-            className="text-sm cursor-pointer leading-snug"
-          >
-            <span className="font-medium">
-              Optional: {PURPOSE_CODE_META.MARKETING_COMMS.label}.
-            </span>{" "}
-            {PURPOSE_CODE_META.MARKETING_COMMS.description} You can withdraw
-            this anytime in Settings.
-          </label>
-        </div>
+        <SignupConsentCheckboxes
+          termsChecked={termsAccepted}
+          privacyChecked={privacyAccepted}
+          marketingChecked={marketingAccepted}
+          onTermsChange={setTermsAccepted}
+          onPrivacyChange={setPrivacyAccepted}
+          onMarketingChange={setMarketingAccepted}
+        />
         {(!termsAccepted || !privacyAccepted) && (
           <p className="text-sm text-muted-foreground">
             Accept both required agreements to complete your registration.

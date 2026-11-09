@@ -6,7 +6,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -23,28 +22,18 @@ import {
 import { Check, ChevronDown, Loader2 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { PersonalInfoAndRoleFormSchema } from "@/utils/onboarding";
-import {
-  ADULT_CONFIRMATION_LABEL,
-  ADULT_CONFIRMATION_MESSAGE,
-} from "@/lib/compliance/age";
+import { DATE_OF_BIRTH_HELPER } from "@/lib/compliance/age";
 import { trackOnboardingEvent } from "@/utils/onboarding-telemetry";
 import { useSession } from "@/lib/auth-client";
 import { z } from "zod";
 import { UserRole, Gender } from "@prisma/client";
 
-// A boolean in the type so a saved draft can restore it; only `true` passes.
-const PersonalInfoStepSchema = PersonalInfoAndRoleFormSchema.extend({
-  adultConfirmed: z
-    .boolean({ required_error: ADULT_CONFIRMATION_MESSAGE })
-    .refine((confirmed) => confirmed, { message: ADULT_CONFIRMATION_MESSAGE }),
-});
-
-type FormData = z.infer<typeof PersonalInfoStepSchema>;
+type FormData = z.infer<typeof PersonalInfoAndRoleFormSchema>;
 // DateOfBirthSchema accepts a Date OR a `YYYY-MM-DD` string (the wizard
 // round-trips values through JSON between steps) and always yields a Date, so
 // the schema's input and output types differ. useForm needs both spelled out;
 // inferring from the output alone makes the resolver unassignable.
-type FormInput = z.input<typeof PersonalInfoStepSchema>;
+type FormInput = z.input<typeof PersonalInfoAndRoleFormSchema>;
 
 interface Props {
   onNext: (data: FormData) => void;
@@ -161,7 +150,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
     reset,
     formState: { errors },
   } = useForm<FormInput, unknown, FormData>({
-    resolver: zodResolver(PersonalInfoStepSchema),
+    resolver: zodResolver(PersonalInfoAndRoleFormSchema),
     // Was `onChange`, which re-validated on every keystroke and so showed
     // "required" and a malformed-email error while the user was still typing
     // the field — most visibly on DOB, which is empty-but-valid for most of
@@ -372,7 +361,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Familiarise is 18+ only. The date of birth is required and sits outside
+      {/* Familiarise is 18+ only. The one neutral age ask: the date of birth is required and sits outside
           the optional collapsible below, which would hide both the input and its
           error on a failed submit. */}
       <div className="grid gap-4 sm:grid-cols-2">
@@ -400,11 +389,14 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
                       ? field.value.slice(0, 10)
                       : ""
                 }
-                onChange={(e) =>
+                onChange={(e) => {
                   field.onChange(
                     e.target.value ? new Date(e.target.value) : undefined,
-                  )
-                }
+                  );
+                  // A date input only emits a complete date, so entry is
+                  // finished here: validate now, not on the next blur.
+                  field.onBlur();
+                }}
                 aria-invalid={!!errors.dateOfBirth}
               />
             )}
@@ -413,39 +405,10 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
             <FieldError message={errors.dateOfBirth.message} />
           ) : (
             <p className="text-xs text-muted-foreground">
-              Familiarise is for adults. You must be at least 18 years old to
-              use it, and we do not knowingly collect children&apos;s data.
+              {DATE_OF_BIRTH_HELPER}
             </p>
           )}
         </div>
-      </div>
-
-      <div className="space-y-2">
-        <div className="flex items-start gap-3">
-          <Controller
-            name="adultConfirmed"
-            control={control}
-            render={({ field }) => (
-              <Checkbox
-                id="adultConfirmed"
-                checked={field.value === true}
-                onCheckedChange={(checked) => field.onChange(checked === true)}
-                aria-invalid={!!errors.adultConfirmed}
-                className="mt-0.5"
-              />
-            )}
-          />
-          <Label
-            htmlFor="adultConfirmed"
-            className="cursor-pointer text-sm leading-snug"
-          >
-            {ADULT_CONFIRMATION_LABEL}{" "}
-            <span className="text-destructive">*</span>
-          </Label>
-        </div>
-        {errors.adultConfirmed ? (
-          <FieldError message={errors.adultConfirmed.message} />
-        ) : null}
       </div>
 
       {/* Optional Fields Collapsible */}

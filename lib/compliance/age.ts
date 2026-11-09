@@ -60,19 +60,12 @@ export function isAdult(
   return age >= AGE_OF_MAJORITY;
 }
 
-/** The label of the "I am an adult" checkbox, shared by every onboarding form. */
-export const ADULT_CONFIRMATION_LABEL = `I confirm I am ${AGE_OF_MAJORITY} years old or older`;
-
-/** Shown when the "I am an adult" checkbox is not ticked. */
-export const ADULT_CONFIRMATION_MESSAGE = `Confirm that you are ${AGE_OF_MAJORITY} or older to continue`;
-
-/** The checkbox as the server sees it: only `true` passes. */
-export const AdultConfirmationSchema = z.literal(true, {
-  errorMap: () => ({ message: ADULT_CONFIRMATION_MESSAGE }),
-});
-
 /** Copy shown when the gate rejects. Kept here so UI and API cannot drift. */
-export const UNDER_AGE_MESSAGE = `You must be at least ${AGE_OF_MAJORITY} years old to use Familiarise.`;
+export const UNDER_AGE_MESSAGE = `You must be at least ${AGE_OF_MAJORITY} to use Familiarise.`;
+
+/** Neutral helper under the date field: the cutoff is not named before entry. */
+export const DATE_OF_BIRTH_HELPER =
+  "We use this once, to check you are eligible to use Familiarise.";
 
 /**
  * The 18+ date-of-birth rule, defined once and reused by every onboarding

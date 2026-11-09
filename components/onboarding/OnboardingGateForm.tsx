@@ -6,9 +6,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FieldError } from "@/components/ui/field-error";
+import { LegalLink } from "@/components/compliance/LegalLink";
 import { OnboardingNotice } from "@/components/onboarding/OnboardingNotice";
 import { completeOnboardingGateAction } from "@/actions/onboarding-gate.action";
-import { ADULT_CONFIRMATION_LABEL } from "@/lib/compliance/age";
+import { DATE_OF_BIRTH_HELPER, DateOfBirthSchema } from "@/lib/compliance/age";
 import {
   PURPOSE_CODE_META,
   SIGNUP_PURPOSES,
@@ -21,13 +22,12 @@ interface OnboardingGateFormProps {
   defaultDateOfBirth?: string;
 }
 
-/** Date of birth (18+) and consent for invitees and org members. */
+/** Date of birth and consent for invitees and org members. */
 export function OnboardingGateForm({
   callbackUrl,
   defaultDateOfBirth,
 }: Readonly<OnboardingGateFormProps>) {
   const [dateOfBirth, setDateOfBirth] = useState(defaultDateOfBirth ?? "");
-  const [adultConfirmed, setAdultConfirmed] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [marketingConsent, setMarketingConsent] = useState(false);
@@ -46,7 +46,6 @@ export function OnboardingGateForm({
     try {
       const result = await completeOnboardingGateAction({
         dateOfBirth,
-        adultConfirmed,
         termsAccepted,
         privacyAccepted,
         marketingConsent,
@@ -75,21 +74,32 @@ export function OnboardingGateForm({
           autoComplete="bday"
           max={new Date().toISOString().slice(0, 10)}
           value={dateOfBirth}
-          onChange={(e) => setDateOfBirth(e.target.value)}
+          onChange={(e) => {
+            const value = e.target.value;
+            setDateOfBirth(value);
+            // Same rule as the server, shown as soon as a date is entered.
+            const parsed = value ? DateOfBirthSchema.safeParse(value) : null;
+            setDobError(
+              parsed && !parsed.success
+                ? (parsed.error.issues[0]?.message ?? null)
+                : null,
+            );
+          }}
           aria-invalid={dobError ? true : undefined}
           aria-describedby={dobError ? "gate-dob-error" : undefined}
           required
         />
-        <p className="text-xs text-muted-foreground">
-          Familiarise is for adults. You must be at least 18 years old to use
-          it, and we do not knowingly collect children&apos;s data.
-        </p>
+        {dobError ? null : (
+          <p className="text-xs text-muted-foreground">
+            {DATE_OF_BIRTH_HELPER}
+          </p>
+        )}
         <FieldError id="gate-dob-error" message={dobError} />
       </div>
 
       <div className="space-y-3 rounded-lg border border-border bg-muted/40 p-4 text-sm">
         <p className="font-medium text-foreground">
-          We process your data for these purposes
+          We use your information for these purposes
         </p>
         <ul className="space-y-2">
           {SIGNUP_PURPOSES.map((code) => (
@@ -111,30 +121,13 @@ export function OnboardingGateForm({
       <div className="space-y-3">
         <div className="flex items-center gap-3">
           <Checkbox
-            id="gate-adult"
-            checked={adultConfirmed}
-            onCheckedChange={(checked) => setAdultConfirmed(checked === true)}
-          />
-          <Label htmlFor="gate-adult" className="cursor-pointer text-sm">
-            {ADULT_CONFIRMATION_LABEL}
-          </Label>
-        </div>
-        <div className="flex items-center gap-3">
-          <Checkbox
             id="gate-terms"
             checked={termsAccepted}
             onCheckedChange={(checked) => setTermsAccepted(checked === true)}
           />
           <Label htmlFor="gate-terms" className="cursor-pointer text-sm">
-            I accept the{" "}
-            <a
-              href="/terms"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline"
-            >
-              Terms of Service
-            </a>
+            I agree to the{" "}
+            <LegalLink href="/terms">Terms and Conditions</LegalLink>
           </Label>
         </div>
         <div className="flex items-center gap-3">
@@ -144,16 +137,9 @@ export function OnboardingGateForm({
             onCheckedChange={(checked) => setPrivacyAccepted(checked === true)}
           />
           <Label htmlFor="gate-privacy" className="cursor-pointer text-sm">
-            I accept the{" "}
-            <a
-              href="/privacy"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline"
-            >
-              Privacy Policy
-            </a>{" "}
-            and consent to the purposes above
+            I&apos;ve read the{" "}
+            <LegalLink href="/privacy">Privacy Policy</LegalLink> and agree to
+            Familiarise using my information as above
           </Label>
         </div>
         <div className="flex items-start gap-3">
@@ -167,11 +153,8 @@ export function OnboardingGateForm({
             htmlFor="gate-marketing"
             className="cursor-pointer text-sm leading-snug"
           >
-            <span className="font-medium">
-              Optional: {PURPOSE_CODE_META.MARKETING_COMMS.label}.
-            </span>{" "}
-            {PURPOSE_CODE_META.MARKETING_COMMS.description} You can withdraw
-            this anytime in Settings.
+            Optional: {PURPOSE_CODE_META.MARKETING_COMMS.description} You can
+            turn this off anytime in Settings.
           </Label>
         </div>
       </div>
@@ -184,7 +167,7 @@ export function OnboardingGateForm({
         disabled={
           isSubmitting ||
           !dateOfBirth ||
-          !adultConfirmed ||
+          dobError !== null ||
           !termsAccepted ||
           !privacyAccepted
         }
