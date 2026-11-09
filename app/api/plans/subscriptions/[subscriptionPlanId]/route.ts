@@ -7,6 +7,8 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
+import { planPublishFeasibility } from "@/lib/booking/feasibility";
+import { MAX_SUBSCRIPTION_SESSIONS_PER_DAY } from "@/utils/scheduling-engine/sessionCaps";
 import {
   curriculumCreateNested,
   faqReplaceNested,
@@ -191,6 +193,29 @@ export async function PUT(
         }
       : null;
 
+    // A terms edit or a publish must leave the plan deliverable from the
+    // expert's published hours; an untouched plan is never retro-policed.
+    const effectiveStatus = validatedData.status ?? existingPlan.status;
+    const publishing =
+      effectiveStatus === "PUBLISHED" &&
+      (termsChange || existingPlan.status !== "PUBLISHED");
+    const feasibility = await planPublishFeasibility(prisma, {
+      consultantProfileId: existingPlan.consultantProfileId,
+      sessionsPerWeek:
+        validatedData.sessionsPerWeek ?? existingPlan.sessionsPerWeek,
+      sessionMinutes: Math.round(
+        (validatedData.sessionDurationInHours ??
+          existingPlan.sessionDurationInHours) * 60,
+      ),
+      perDayCap: MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
+      publishing,
+    });
+    if (feasibility.refusal) {
+      return NextResponse.json(feasibility.refusal.body, {
+        status: feasibility.refusal.status,
+      });
+    }
+
     // Floor check on the effective post-update trial price. Untouched
     // plans are never retro-policed — only edits that set a price or
     // newly enable the trial run against the platform floor.
@@ -328,6 +353,7 @@ export async function PUT(
       {
         data: transformTopicsToStrings(subscriptionPlan),
         activeClients,
+        feasibilityWarnings: feasibility.warnings,
         notice: activeClientsNotice(activeClients),
       },
       { status: 200 },
