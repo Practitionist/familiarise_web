@@ -101,7 +101,7 @@ These are the owner's working positions. Each is recorded in `docs/decisions/202
 
 |            | Contract acceptance (ToS)                           | Data-processing consent (DPDP s.6)                   |
 | ---------- | --------------------------------------------------- | ---------------------------------------------------- |
-| Instrument | contract, IC Act ss.10/10A                          | permission for a _specified purpose_                 |
+| Instrument | contract, Contract Act s.10; IT Act s.10A           | permission for a _specified purpose_                 |
 | Trigger    | ToS change                                          | new/changed purpose                                  |
 | Acceptance | fresh; may be implied by conduct (Contract Act s.9) | **clear affirmative action, s.6(1)** — never implied |
 | Withdrawal | close the account                                   | stop processing, keep the account                    |

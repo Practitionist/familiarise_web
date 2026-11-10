@@ -19,7 +19,7 @@ Stream's [Maker Account](https://getstream.io/maker-account/) is a zero-cost tie
 | Monthly revenue        | < $10K      |
 | Funding raised to date | < $100K     |
 
-> **Critical:** The `< $100K in funding` condition is easy to miss. Any seed round, even a small angel cheque, likely loses eligibility.
+> **Critical:** The `< $100K in funding` condition is easy to miss. Eligibility is lost when cumulative funding reaches $100K, so a small angel cheque below that total does not end it; compare the running total with the limit.
 
 ### What Maker Includes
 
@@ -91,7 +91,7 @@ Pricing as of April 2026 in US dollars. Annual = 2 months free.
 
 ## The Cost Cliff
 
-Losing any one Maker condition ends the free tier, and Chat then starts at the Start plan price in the Chat table above. The projected rupee cost, the stage-by-stage budget and the GMV level at which to plan for it: value kept in Notion (Familiarise / Finance and Pricing).
+Losing any one Maker condition ends the free tier. Stream's public pages do not say how the transition happens, so arrange the paid plan before eligibility ends; Chat then starts at the Start plan price in the Chat table above. The projected rupee cost, the stage-by-stage budget and the GMV level at which to plan for it: value kept in Notion (Familiarise / Finance and Pricing).
 
 ### Monitoring
 

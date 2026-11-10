@@ -191,7 +191,7 @@ Three rules from the same guide decide what a webinar costs:
 2. Stream's own example: a viewer who receives two HD tracks (2 × 1280 × 720 = 1,843,200 pixels) is billed at the Full HD rate.
 3. A participant whose camera and microphone are both off is metered as a livestream viewer, at the cheaper livestream rates in section 2.1, even inside a normal video call.
 
-Worked example (derived from those rules and this platform's defaults, not measured). Webinar attendees join muted with their cameras off, because `buildCallSettingsOverride` in `lib/meetings/room-ready.ts` applies the backstage and muted defaults to webinars and classes, so rule 3 applies to them. The default quality is a 720p camera and a 1080p screen share (`DEFAULT_VIDEO_CONFIG` in `lib/stream/video-quality.ts`; section 8.5). One hundred attendees watching for 90 minutes is 9,000 participant minutes:
+Worked example (derived from those rules and this platform's defaults, not measured). Webinar attendees join muted with their cameras off, because `buildCallSettingsOverride` in `lib/meetings/room-ready.ts` applies the backstage and muted defaults to webinars and classes, so rule 3 applies to them. The default quality is a 720p camera and a 1080p screen share (`DEFAULT_VIDEO_CONFIG` in `lib/stream/video-quality.ts`; section 8.2). One hundred attendees watching for 90 minutes is 9,000 participant minutes:
 
 | What the attendee receives                                         | Combined pixels | Billed as a livestream viewer (rule 3)       | Billed at the call rates of section 1.2       |
 | ------------------------------------------------------------------ | --------------- | -------------------------------------------- | --------------------------------------------- |
@@ -392,7 +392,7 @@ Must be explicitly applied for in the Stream dashboard. Availability is limited 
 
 **Maker Chat is a modified Start Plan:** MAU capped at **2,000** (not 10K) with **hard limits**: no overage billing, and the service pauses at the ceiling.
 
-**Cliff:** Losing any one condition activates the Chat subscription at $499/mo (monthly) or $399/mo (annual). See `15-enterprise-and-maker-account.md` for the transition details.
+**Cliff:** Losing any one condition ends Maker eligibility, and Chat is then priced at $499/mo (monthly) or $399/mo (annual). Stream's public pages do not say how or when the transition happens, so arrange the paid plan with Stream before eligibility ends rather than expecting it to activate on its own. See `15-enterprise-and-maker-account.md` for the transition details.
 
 ---
 
