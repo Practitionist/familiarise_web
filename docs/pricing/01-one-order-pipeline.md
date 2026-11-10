@@ -49,7 +49,7 @@ flowchart LR
 
 ## Worked example
 
-The cast: a learner buys a ₹1,000 (100,000 paise) consultation from an expert on the marketplace. The platform fee is 20%, so the fee is ₹200.00. The gateway estimate is 3.54% of the largest amount the order can charge, rounded up: registered that is ₹1,180, so ₹41.78, and the cap is ₹200.00 - ₹41.78 = ₹158.22. Both rails use the fallback 20% until the owner approves a schedule; the approved rates and the reasoning behind them are kept in Notion (Familiarise / Finance). The numbers below are what `deriveCheckoutAmount()` returns.
+The cast: a learner buys a ₹1,000 (100,000 paise) consultation from an expert on the marketplace. The platform fee is 20%, so the fee is ₹200.00. The gateway estimate is 3.54% of the largest amount the order can charge, rounded up: registered that is ₹1,180, so ₹41.78, and the cap is ₹200.00 - ₹41.78 = ₹158.22. Both rails use the fallback 20% until the owner approves a schedule; the approved rates and the reasoning behind them are kept in Notion (Familiarise / Finance and Pricing / 09 Pricing Strategy). The numbers below are what `deriveCheckoutAmount()` returns.
 
 ### Variant A: registered, marketplace, referral friend
 

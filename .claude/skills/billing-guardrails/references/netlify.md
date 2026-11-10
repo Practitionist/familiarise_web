@@ -10,10 +10,10 @@ Netlify distinguishes legacy request billing from credit-based compute and web-r
 
 ## 1.1 What the bill is made of (legacy Pro)
 
-MEASURED from receipts (team `teetangh`, invoices CFJUKK-00015 to CFJUKK-00020):
+MEASURED from receipts and usage (what we pay: value kept in Notion (Familiarise / Finance and Pricing)):
 
-- $19 per member per month. A second member (a Developer) was added on 2026-10-05 and billed $18.39 prorated; the next bill is about $63 if invocations stay above 125,000.
-- Function invocations of the `familiarise` site by billing period: May 24,804; June 48,552; August 75,897; September 4 to October 3 282,162. Crossing the 125,000-per-site tier adds a flat $25 (125,000 to 2,000,000), which is why the 2026-10-06 bill was $44.
+- $19 per member per month (public legacy Pro price). The seat count and the resulting bill: value kept in Notion (Familiarise / Finance and Pricing).
+- Function invocations of the `familiarise` site by billing period: May 24,804; June 48,552; August 75,897; September 4 to October 3 282,162. Crossing the 125,000-per-site tier adds a flat $25 (125,000 to 2,000,000).
 - Nothing else is close: bandwidth 1.29, 1.60, 8.26 and 8.36 GB against 1 TB; edge function invocations 52,000 rising to 284,000 against 2,000,000 free; build minutes up to 9,777 of 25,000. Invocations are the only meter that has crossed a line.
 
 DOCS (Netlify support ticket #1112198, 2026-09-17, and [legacy plans](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-legacy-plans/legacy-pricing-plans/)):
