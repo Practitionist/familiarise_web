@@ -45,7 +45,7 @@ Every booking state change must agree across these surfaces. "Cross-check" in a 
 | Consultee payments and refunds | `/dashboard/consultee/[uid]/payments` |
 | Public expert page and checkout | `/explore/experts/[consultantId]`, `/explore/programs/plans/…`, `/checkout/plans/{consultation,subscription,webinar,class}/[planId]`, `/checkout/plans/trial/[trialId]` |
 | Org workspace / org dashboard | `/dashboard/org-workspace/[id]/…`, `/dashboard/organization/[orgId]/{home,my-program,compensation}` |
-| Staff back office | `/dashboard/staff/[staffProfileId]/…` (bookings, refunds, parked sessions, support) |
+| Staff back office | `/dashboard/staff/…` (fixed segment: bookings, refunds, parked sessions, support) |
 | Admin | `/dashboard/admin/…` (maintenance, system jobs, analytics) |
 | Notifications | bell menu on each dashboard; outgoing mail rows in `NotificationOutbox` |
 
@@ -56,19 +56,20 @@ Create these through the UI. Each later folder says which it needs.
 - **F-AV1 — H1 availability** (weekly, `Asia/Kolkata`): Mon–Fri 09:00–13:00 and 17:00–21:00; Sat 10:00–14:00; Sun closed. The 13:00–17:00 weekday gap must stay visible on the grid.
 - **F-AV2 — H2 availability:** Mon/Wed/Fri 18:00–21:00; Tue/Thu 07:00–09:00 (tight, for feasibility).
 - **F-AV3 — H3 availability** (`America/New_York`): Mon–Fri 09:00–17:00 local.
-- **F-AV4 — H4 availability** (`Asia/Kathmandu`): Mon–Sat 10:00–12:00 local (tests :45 offsets on a half-hour grid).
+- **F-AV4 — H4 availability** (`Asia/Kathmandu`): the server refuses weekly hours in a zone whose offset is off the half hour (code `ZONE`, `weeklyZoneRefusal`), so H4 uses a **custom** schedule: six consecutive days from D, 10:15–12:15 NPT (04:30–06:30Z). S-05 creates it and also records the weekly refusal.
 - **F-PL1 — H1 plans:**
   - consultation 60 min, priced (₹500);
   - consultation 30 min, free;
-  - consultation 45 min, priced, **request/approval** booking mode (if the editor offers it; otherwise note it);
+  - consultation 90 min, priced (request/approval cases use it; booking mode is per expert, `ConsultantProfile.bookingMode` under Settings → Booking, not per plan; folder 03 flips H1 to request mode and flips it back at the end);
   - subscription **weeks** plan: 4 weeks × 3/week × 60 min, priced, free 30-min trial;
-  - subscription **months** plan: 2 months × 2/week × 90 min, priced, paid trial (₹100).
+  - subscription **months** plan: 2 months × 2/week × 90 min, priced, paid trial (₹100). The editor only makes weeks plans, so S-12 creates this one through `POST /api/plans/subscriptions`.
 - **F-PL2 — H2 plans:**
   - webinar 90 min, capacity 5, priced;
   - webinar 60 min, free;
   - class: 2/week, 60 min, capacity 5, priced, start date about 10 days out;
   - a second class left **DRAFT** with no start date.
-- **F-PL3 — OX plan (LearnPro-hosted):** consultation 60 min, priced, to test org-hosted earnings and the OH dashboard.
+- **F-PL3 — OX plan (LearnPro-hosted):** consultation 60 min, priced, to test org-hosted earnings and the OH dashboard. No UI makes an org-hosted consultation plan, so S-16 sets `organizationId` with an owner-approved UPDATE.
+- **F-AV5 — OX availability:** weekdays 10:00–13:00 IST (S-16).
 - **F-BUSY — busy block:** B3 books H1's 60-min consultation at next Tuesday 18:00 IST, so H1's grid shows a "Busy" block.
 
 After setup, assert with recipe R-02: availability rows have non-null `timezone` and `local*` columns; plan rows have the expected `sessionsPerWeek`, `sessionDurationInHours`, `durationInWeeks`, `totalSessions` (weeks plan: 12) and `status`.
