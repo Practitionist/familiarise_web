@@ -113,8 +113,10 @@ SELECT s.id, s.status, s."sessionsTotal", s."sessionsPerWeek", s."sessionMinutes
            AND o."completionStatus" NOT IN ('CANCELLED','RESCHEDULED','VOIDED')) AS live_sessions
 FROM "Subscription" s WHERE s.id = :sid;
 
--- sessions per plan week (week = 7-day buckets from schedulingPeriodStartsAt, in schedulingTimezone)
-SELECT floor(extract(epoch FROM (o."startsAt" - s."schedulingPeriodStartsAt")) / 604800)::int + 1 AS plan_week,
+-- sessions per plan week: whole days in the scheduling zone from the purchase day
+-- (lib/booking/entitlement.ts), so week edges are host-zone midnights and DST-safe
+SELECT ((o."startsAt" AT TIME ZONE s."schedulingTimezone")::date
+        - (s."schedulingPeriodStartsAt" AT TIME ZONE s."schedulingTimezone")::date) / 7 + 1 AS plan_week,
        count(*) AS sessions
 FROM "AppointmentOccurrence" o JOIN "Appointment" a ON a.id = o."appointmentId"
 JOIN "Subscription" s ON s.id = a."subscriptionId"
@@ -130,8 +132,14 @@ Expect: `live_sessions + sessionsReturned + sessionsRefunded ≤ sessionsTotal`;
 SELECT scope, key, "responseStatus", "completedAt", "createdAt", "expiresAt"
 FROM "IdempotencyRecord" WHERE "userId" = :uid ORDER BY "createdAt" DESC LIMIT 10;
 
-SELECT kind, status, recipients, "entityRef", "notBefore", "sentAt", "lastError", "createdAt"
-FROM "NotificationOutbox" WHERE "entityRef" LIKE '%' || :entityId || '%' ORDER BY "createdAt";
+-- everything notified for one entity: bell/outbox rows and email rows
+SELECT 'outbox' AS ch, "workflowId" AS kind, recipients::text AS who, status::text,
+       "createdAt", "sentAt", "lastError"
+FROM "NotificationOutbox" WHERE "entityRef" LIKE '%' || :entityId || '%'
+UNION ALL
+SELECT 'email', "emailType", recipient, status::text, "createdAt", "sentAt", "lastError"
+FROM "FailedEmail" WHERE "entityRef" LIKE '%' || :entityId || '%'
+ORDER BY 5;
 ```
 
 ## R-08 Find your fixtures

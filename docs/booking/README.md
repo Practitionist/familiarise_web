@@ -179,7 +179,7 @@ Then reference these as needed:
 
 - **Payments**: [../finance/README.md](../finance/README.md) -- Payment architecture, checkout flows, refunds, payouts
 - **Notifications**: [../notifications/README.md](../notifications/README.md) -- Novu workflows triggered by booking events
-- **Agent-run booking test corpus**: `prompts/booking-algorithm-tests/` -- the E2E prompt corpus that exercises this subsystem; scenario prompts and the harness that runs them
+- **Agent-run booking QA suite**: `prompts/booking-qa/` -- exhaustive QA prompts for every booking journey (consultations, subscriptions, webinars, classes, trials, money, concurrency, time zones, dashboards, sweeps, copy and accessibility), run with the Chrome DevTools and Supabase MCPs; start at its `README.md`
 - **Booking-specific Claude Code skills**: `.claude/skills/booking/` -- doctrine and workflow skills for agents working in this subsystem
 - **Distributed Locking**: [../upstash/redis/locking/00_README.md](../upstash/redis/locking/00_README.md) -- Redis locking deep dive
 - **Cron Setup**: [../guides/cron-setup.md](../guides/cron-setup.md) -- Deployment-specific cron configuration

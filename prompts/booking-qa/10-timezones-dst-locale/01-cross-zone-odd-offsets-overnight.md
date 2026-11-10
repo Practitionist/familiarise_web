@@ -209,11 +209,11 @@ JOIN "Subscription" s ON s.id = a."subscriptionId"
 WHERE s.id = :sid AND o."deletedAt" IS NULL ORDER BY 1;
 ```
 
-3. Compare with R-06's second query (7 × 24 h buckets from the purchase instant).
+3. Compare with R-06's second query, which uses the same rule.
 
 **Expect:** week boundaries are IST midnights. For B3 a week starts at 10:30 am PST on a Sunday or Monday. The SQL above and the chips agree.
 
-**Probe further:** R-06 buckets on the purchase **instant** + 604 800 s, not on host midnights. A session early on day 7 lands in week 1 by R-06 and week 2 by the product. Report **DOC-DRIFT** against `_shared/sql-recipes.md` R-06 if they disagree for any row. Does B3 see any week range at all? If B3 sees "Week 2" with no dates, can they tell when it starts?
+**Probe further:** a session early on a host-zone day 7 is week 1, and one just after host midnight is week 2; check the chips agree at both edges. Does B3 see any week range at all? If B3 sees "Week 2" with no dates, can they tell when it starts?
 
 ## TZ-11 — A webinar and a class read in four zones
 
