@@ -18,7 +18,8 @@ Passwords: non-operator seed users share the seed default password in `prisma/se
 | **OS** | `samantha.anderson@yahoo.com` | OWNER of Wipro (SPONSOR org): sponsor allocation, org spend | `Asia/Kolkata` |
 | **OH** | `daniel.anderson@outlook.com` | OWNER of LearnPro Academy (HOST org): org-hosted experts, org earnings | `Asia/Kolkata` |
 | **OX** | `aarav.anderson@gmail.com` | EXPERT in LearnPro Academy (payout SELF): org-hosted offering | `Asia/Kolkata` |
-| **ST** | `qa-staff-1@qa.familiarise.invalid` | STAFF: back office, refunds console, parked sessions | — |
+| **IL** | `rachel.anderson@hotmail.com` | IIT Madras LEARNER (HYBRID org): WALLET and CREDIT_POOL rails | `Asia/Kolkata` |
+| **ST** | `qa-staff-1@qa.familiarise.invalid` | STAFF: back office, parked sessions, refund views (refund issuing needs ADMIN plus step-up; staff get a quote but 403 `PLATFORM_CANCEL_DOOR_REQUIRED` on cancel) | — |
 | **AD** | `qa-admin-2@qa.familiarise.invalid` | ADMIN: maintenance mode, system jobs page (read), analytics | — |
 
 Rules:
@@ -34,15 +35,15 @@ Every booking state change must agree across these surfaces. "Cross-check" in a 
 
 | Surface | Route |
 | --- | --- |
-| Consultant home (Needs-you, today) | `/dashboard/consultant/[cid]/home` |
-| Consultant requests and allocate | `/dashboard/consultant/[cid]/requests`, `…/requests/[rid]/allocate` |
-| Consultant appointments | `/dashboard/consultant/[cid]/appointments`, `…/appointments/[aid]`, `…/[aid]/timings`, `…/[aid]/reschedule` |
-| Consultant availability | `/dashboard/consultant/[cid]/availability` |
+| Consultant home (Needs-you, today) | `/dashboard/consultant/[consultantId]/home` |
+| Consultant requests and allocate | `/dashboard/consultant/[consultantId]/requests`, `…/requests/[rid]/allocate` |
+| Consultant appointments | `/dashboard/consultant/[consultantId]/appointments`, `…/appointments/[aid]`, `…/[aid]/timings`, `…/[aid]/reschedule` |
+| Consultant availability | `/dashboard/consultant/[consultantId]/availability` |
 | Consultant offerings and selling | `…/offerings/[type]/new`, `…/offerings/[type]/[id]/edit`, `…/sell/sessions`, `…/sell/programs` |
-| Consultant earnings | `/dashboard/consultant/[cid]/earnings` |
-| Consultee home | `/dashboard/consultee/[uid]/home` |
-| Consultee appointments | `/dashboard/consultee/[uid]/appointments`, `…/[aid]`, `…/[aid]/reschedule`, `…/[aid]/rebook` |
-| Consultee payments and refunds | `/dashboard/consultee/[uid]/payments` |
+| Consultant earnings | `/dashboard/consultant/[consultantId]/earnings` |
+| Consultee home | `/dashboard/consultee/[consulteeId]/home` |
+| Consultee appointments | `/dashboard/consultee/[consulteeId]/appointments`, `…/[aid]`, `…/[aid]/reschedule`, `…/[aid]/rebook` |
+| Consultee payments and refunds | `/dashboard/consultee/[consulteeId]/payments` |
 | Public expert page and checkout | `/explore/experts/[consultantId]`, `/explore/programs/plans/…`, `/checkout/plans/{consultation,subscription,webinar,class}/[planId]`, `/checkout/plans/trial/[trialId]` |
 | Org workspace / org dashboard | `/dashboard/org-workspace/[id]/…`, `/dashboard/organization/[orgId]/{home,my-program,compensation}` |
 | Staff back office | `/dashboard/staff/…` (fixed segment: bookings, refunds, parked sessions, support) |

@@ -19,7 +19,7 @@ LEFT JOIN "StaffProfile" sp ON sp."userId" = u.id
 WHERE u.email IN ('hannah.anderson@yahoo.com','grace.anderson@outlook.com','james.anderson@protonmail.com',
   'ethan.anderson@gmail.com','charlotte.brown@protonmail.com','daniel.brown@gmail.com','david.brown@outlook.com',
   'patrick.anderson@outlook.com','olivia.anderson@gmail.com','samantha.anderson@yahoo.com',
-  'daniel.anderson@outlook.com','aarav.anderson@gmail.com','qa-staff-1@qa.familiarise.invalid',
+  'daniel.anderson@outlook.com','aarav.anderson@gmail.com','rachel.anderson@hotmail.com','qa-staff-1@qa.familiarise.invalid',
   'qa-admin-2@qa.familiarise.invalid');
 ```
 
