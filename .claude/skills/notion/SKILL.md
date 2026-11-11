@@ -1,6 +1,6 @@
 ---
 name: notion
-description: How to write to the owner's private Notion workspace (the "Familiarise" root page) so its pages stay thorough, sourced and consistent — the page standard (header callout, evidence tags, alternatives, future trajectory and a revisit trigger on every decision), the decimal outline and its numbering rules, the two lever-register databases as the single home of tunable values, the Decision Log and Assumptions & Experiments databases, the Archive deletion register, the restricted People & Hiring page, backup-before-edit and re-fetch verification, the Notion MCP mechanics and pitfalls (query allowance, smallest edits, ID collisions, one agent per page), and the research standard (India-first, dated, cited). Use when the user says "Notion", "update the workspace", "write this to Notion", "lever register", "decision log", "assumptions", "Executive Brief", "Scorecard", "90-day plan", "pricing strategy page", "vendors and spend", "sales playbook", "CA questions", or when a decision made in a session must be recorded outside the repo.
+description: How to write to the owner's private Notion workspace (the "Familiarise" root page) so its pages stay thorough, sourced and consistent — the page standard (header callout, evidence tags, alternatives, future trajectory and a revisit trigger on every decision), the decimal outline and its numbering rules, the two lever-register databases as the single home of tunable values, the long-form playbook writing style (narrative chapters and worked examples; tables only as end-of-page reference), the Decision Journal as the primary record with the Decision Log and Assumptions & Experiments databases as end-of-outline indexes, the Archive deletion register, the restricted People & Hiring page, backup-before-edit and re-fetch verification, the Notion MCP mechanics and pitfalls (query allowance, smallest edits, ID collisions, one agent per page), and the research standard (India-first, dated, cited). Use when the user says "Notion", "update the workspace", "write this to Notion", "lever register", "decision log", "decision journal", "levers explained", "assumptions", "playbook", "Executive Brief", "Scorecard", "90-day plan", "pricing strategy page", "vendors and spend", "sales playbook", "CA questions", or when a decision made in a session must be recorded outside the repo.
 ---
 
 # Notion
@@ -13,22 +13,24 @@ Never write a lever value, a personal fact or a page ID into the repository. The
 
 The root page is **Familiarise**. Find it with `notion-search` for "Familiarise", or fetch the root and walk its children. Never guess page IDs, and never copy one into the repository.
 
-| #       | Page                                                                                                                                                                                                                                                 | Kind                        |
-| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| 01–03   | Executive Brief · Strategy Scorecard · 90-Day Operating Plan                                                                                                                                                                                         | root anchors, read in order |
-| 04      | Strategy and Competition (Market, Positioning & Initial Wedge · Competitor Register · Retention & Defensibility · Competitor screenshots and teardowns)                                                                                              | section                     |
-| 05      | Growth & Marketing (GTM Plan · Sales Playbook · **Growth & Marketing Lever Register**, a database)                                                                                                                                                   | section and a content page  |
-| 06      | Finance and Pricing (Pricing Strategy · Unit Economics & Financial Model, which holds the monthly CFO dashboard · Vendors & Spend · People & Hiring, **restricted** · **Finance Lever Register**, a database · Host Coupons & Early-Bird (deferred)) | section                     |
-| 07      | Tax & CA Working Notes (Tax, Legal & Regulatory Register · CA Engagement & Open Questions)                                                                                                                                                           | section                     |
-| 08      | Product Vision and Roadmap                                                                                                                                                                                                                           | section                     |
-| 09 · 10 | Decision Log · Assumptions & Experiments                                                                                                                                                                                                             | root databases              |
-| 11      | Archive (a deletion register only; no archived copies)                                                                                                                                                                                               | register                    |
+| #       | Page                                                                                                                                                                                                                                                                                  | Kind                        |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| 01–03   | Executive Brief · Strategy Scorecard · 90-Day Operating Plan                                                                                                                                                                                                                          | root anchors, read in order |
+| 04      | Strategy and Competition (Market, Positioning & Initial Wedge · Competitor Register · Retention & Defensibility · Competitor screenshots and teardowns)                                                                                                                               | section                     |
+| 05      | Growth & Marketing (GTM Plan · Sales Playbook · Growth & Marketing Levers Explained · **Growth & Marketing Lever Register**, a database, last)                                                                                                                                        | section and a content page  |
+| 06      | Finance and Pricing (Pricing Strategy · Unit Economics & Financial Model, which holds the monthly CFO dashboard · Vendors & Spend · People & Hiring, **restricted** · Finance Levers Explained · Host Coupons & Early-Bird (deferred) · **Finance Lever Register**, a database, last) | section                     |
+| 07      | Tax & CA Working Notes (Tax, Legal & Regulatory Register · CA Engagement & Open Questions)                                                                                                                                                                                            | section                     |
+| 08      | Product Vision and Roadmap                                                                                                                                                                                                                                                            | section                     |
+| 09      | Decision Journal (the long-form story of every decision; the primary record)                                                                                                                                                                                                          | root databases              |
+| 10 · 11 | Decision Log · Assumptions & Experiments (root databases; indexes only)                                                                                                                                                                                                               |
+| 12      | Archive (a deletion register only; no archived copies)                                                                                                                                                                                                                                | register                    |
 
 **Numbering.**
 
 - Titles carry a decimal outline, for example `05.02 — Sales Playbook`.
 - A new child takes the next free number in its section.
 - On an insert or a delete, renumber the following siblings so the numbering stays contiguous (root `AGENTS.md` §4.4 applies to Notion too).
+- **Databases and tables come last.** A database is an index for minor lookups, so it takes the last number in its section (the lever registers) or at the root (the Decision Log, Assumptions & Experiments, then the Archive register).
 - Repository docs name pages without numbers (`Familiarise / Finance and Pricing / Pricing Strategy`), so renumbering never breaks a repository pointer.
 
 Every page uses the full page width.
@@ -41,19 +43,18 @@ Every page uses the full page width.
    - **Next decision.**
    - `As of <date> · Owner · Review cadence · Evidence: <links>`.
 2. **An evidence tag on every material fact:** **VERIFIED** (source URL and the date checked), **FOUNDER-APPROVED** (date), **FOUNDER-STATED** (date), **REPO-OBSERVED** (a path on `origin/dev`), **HYPOTHESIS**, **UNVERIFIED** or **SUPERSEDED**. Never present a recommendation as founder-approved.
-3. **Every decision or recommendation ends with three blocks:**
-   - **Alternatives considered:** each option with one line on why it lost.
-   - **Future trajectory:** what this becomes at the next stage and the trigger that moves it.
-   - **Revisit when:** a measurable trigger.
-4. **Thorough, not padded.** Tables first, then full-sentence prose. About 3,500 words a page at most (5,000 for the financial model and the legal register). No motivational prose, superlatives or generic startup advice. Link the canonical page instead of restating another page's facts.
-5. **Research standard.** Use India-first sources (Indian platforms, law and vendors) and label foreign sources "directional". Cite a URL and a check date. Never invent a market size, CAC or conversion rate; write "not found". Run scans and research on Sonnet subagents (see `workflow` → model orchestration).
-6. **Money figures** come from a script or a register row, never from memory. Each figure carries its assumption (for example the FX rate) inline.
-7. **Close each page** with `## Open questions for the founder`.
+3. **Every decision or recommendation carries its alternatives, its future trajectory and a revisit trigger**, written as prose inside the chapter ("the roads not taken", "where this goes next"), not as bullet stubs: each alternative says what it would have looked like and why it lost, and the trajectory names the signal that moves the decision.
+4. **Long-form playbook, not tables (owner preference, 2026-11-11).** A page reads like a chapter of a business book or a course module, in continuous full-sentence prose under headed chapters. Each topic follows the same shape: the situation; how it works, in plain words (an analogy where it helps); a worked example with real numbers; what was decided and why; the roads not taken, told as prose; where it goes next and what would change it; what to do now. Tables are allowed only for genuinely tabular reference (a price ladder, a deadline list, a threshold grid), explained in prose first and placed in a closing **Reference** appendix at the end of the page. Long reading is wanted: about 2,500–6,000 words for a substantive page (the Executive Brief about 1,500–2,500, still prose). No motivational prose, superlatives or generic startup advice. Link the canonical page and recap it in one sentence instead of restating it.
+5. **Page skeleton:** the opening callout; a "How to read this page" paragraph; the chapters; a short "How we decided" narrative linking its Decision Journal chapter; open questions; then the Reference appendix with any tables, the sources (URLs with check dates) and links.
+6. **Research standard.** Use India-first sources (Indian platforms, law and vendors) and label foreign sources "directional". Cite a URL and a check date. Never invent a market size, CAC or conversion rate; write "not found". Run scans and research on Sonnet subagents (see `workflow` → model orchestration).
+7. **Money figures** come from a script or a register row, never from memory. Each figure carries its assumption (for example the FX rate) inline.
+8. **Close the chapters** with "Open questions for the founder", before the Reference appendix.
 
 ## 3. The lever registers
 
 - **They are the only home of tunable values:** fees, prices, discounts, referral settings, holds, vendor triggers, budgets, runway and the company levers.
-- **Pages explain the reasoning and link to register rows.** A number on a page must match its row exactly. When a value changes, change the row first, then the pages that cite it.
+- **Each section has a long-form "Levers Explained" page** that tells every lever as a chapter (why this value, the min and max, a worked example, what would change it, the trajectory). The database is the compact index at the end of the section; the explained page is what the owner reads.
+- **Pages explain the reasoning and link to register rows.** A number on a page must match its row exactly. When a value changes, change the row first, then the Levers Explained chapter and the pages that cite it.
 - **Columns (both databases):**
   - Lever, Code (`F<n>` finance, `G<n>` growth), Group, Status (Approved · Partly decided · Proposed · Superseded).
   - Approved value, Min, Max, Recommended.
@@ -66,7 +67,10 @@ Every page uses the full page width.
 - **The code-constant exception.** Where the founder chose to enforce a value in code (per-format minimum prices), the code constant is the value's home. The register row names the file and keeps the reasoning.
 - **Personal values never go in a register row.** Founder funding and pay go on the restricted page; the row says "see People & Hiring".
 
-## 4. Decision Log and Assumptions & Experiments
+## 4. Decision Journal, Decision Log and Assumptions & Experiments
+
+- **The Decision Journal is the primary record of decisions.** It is a long-form page that tells each decision as a chapter: what we faced, how it works, a worked example, what was chosen and why, the roads not taken, what would change it and where it goes next. Every new owner decision gets its story added to the right chapter (or a new chapter) in the same session, and the section page it affects gets a short "How we decided" passage linking it.
+- **The Decision Log database is a minor index** at the end of the root numbering: one row per decision so it can be searched and filtered. It never replaces the Journal's story.
 
 - **One Decision Log row per owner decision**, with Decision text, Rationale, Alternatives, Evidence, Revisit trigger, Related page and Related GitHub.
 - **ID series:** `D-nn` (history), `G2-n` (strategy-audit gates), `C-nn` (CFO and CSMO levers), then a new letter per later review.
@@ -110,6 +114,8 @@ Every page uses the full page width.
    - update the repository only through pointers (`value kept in Notion (Familiarise / <section> / <page>)`) or an engineering handoff.
 
 ## Deprecated & Superseded Approaches
+
+- **Table-first pages and the Decision Log as the primary decision record.** Replaced on 2026-11-11, at the owner's request, by long-form playbook pages, the Decision Journal and the Levers Explained pages; tables and databases remain only as end-of-page appendices and end-of-outline indexes.
 
 - **Archive copies inside Notion.** Replaced on 2026-11-11 by the deletion register; originals live in git history and local backups.
 - **Two-digit page numbers in titles** (the old "09 Pricing Strategy" form). Replaced by the decimal outline. Repository pointers carry no numbers.

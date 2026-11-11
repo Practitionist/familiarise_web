@@ -25,7 +25,7 @@ The workspace keeps the six sections from the 2026-11-09 record. Notion page tit
 | Tax & CA Working Notes     | Tax, Legal & Regulatory Register; CA Engagement & Open Questions                     | The tax and legal register, including the former 14-question CA research memo; the accountant engagement.                                                |
 | Product Vision and Roadmap | Product Vision, Scope & Horizons; Practitionist Ecosystem                            | Vision, scope and horizons; the ecosystem.                                                                                                               |
 
-Two databases sit at the workspace root: Decision Log, and Assumptions & Experiments.
+Two databases sit at the workspace root: Decision Log, and Assumptions & Experiments. Since decision 5 they follow the long-form Decision Journal page and serve as indexes.
 
 ### 3. Pricing Strategy stays the canonical pricing page
 
@@ -34,6 +34,10 @@ Two databases sit at the workspace root: Decision Log, and Assumptions & Experim
 ### 4. Archive is a deletion register
 
 The Archive section keeps no page copies, only a register of deletions. Retired content lives in its canonical page or in git history. A doc never points at Archive.
+
+### 5. Long-form playbook pages; databases last
+
+Added later on 2026-11-11 (owner decision). Notion pages are written as long-form playbooks: continuous chapters with worked examples, with alternatives and trajectories told in prose. Tables appear only as reference appendices at the end of a page. Decisions are told in a long-form Decision Journal page at the root, which is the primary record. The Decision Log and Assumptions & Experiments databases follow it as indexes, then the Archive register. In each section, a "Levers Explained" page narrates the levers, and the lever-register database takes the section's last number. The rules live in [the notion skill](../../.claude/skills/notion/SKILL.md). Repository pointers keep naming pages without numbers, so the renumbering changes no pointer.
 
 ## Consequences
 
