@@ -22,7 +22,7 @@ Items that are not built yet are marked **(planned)**; the host-funded coupon, t
 
 ## What is not in this repository
 
-The repository holds mechanisms, invariants, configuration field names and the terms a user sees on screen. The reasons for the chosen price levels, the unit economics and the competitor coupon practice are kept in the owner's Notion workspace: value kept in Notion (Familiarise / Finance and Pricing / 09 Pricing Strategy). A page here that needs one of those values says so instead of stating it.
+The repository holds mechanisms, invariants, configuration field names and the terms a user sees on screen. The reasons for the chosen price levels, the unit economics and the competitor coupon practice are kept in the owner's Notion workspace: value kept in Notion (Familiarise / Finance and Pricing / Pricing Strategy). A page here that needs one of those values says so instead of stating it.
 
 ## Related documents
 

@@ -231,7 +231,7 @@ Severity: **P0** means a wrong money or booking outcome from a normal click. **P
 | Doctrine change            | none                          | none                                                  | none                                                                                                      | **yes** (host-only placement)             | none for the core; opt-in self-pick is a policy decision                                                                               |
 | Precedent                  | none found                    | none kept                                             | Cal.com recurring (≤32 occurrences, incompatible with payments and seats); Acuity recurring               | italki                                    | **Preply weekly lessons** ("Scheduled" inside the paid cycle, "Reserved 🔒" beyond); SimplyBook conflict modes                         |
 
-Competitor sources (help centres via search, medium confidence; detail in D §2): help.preply.com, cal.com/docs, help.acuityscheduling.com, help.simplybook.me, support.italki.com. The wider survey is kept in Notion (Familiarise / Strategy and Competition).
+Competitor sources (help centres via search, medium confidence; detail in D §2): help.preply.com, cal.com/docs, help.acuityscheduling.com, help.simplybook.me, support.italki.com. The wider survey is kept in Notion (Familiarise / Strategy and Competition / Competitor Register).
 
 **Recommendation: (e).** Why:
 

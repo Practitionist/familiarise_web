@@ -1,6 +1,6 @@
 # Stream.io — Pricing Overview
 
-Quick-reference public price schedule for Stream.io (Video + Chat + Feeds), as published on [Stream's pricing page](https://getstream.io/pricing/) and verified April 23, 2026 via the live pricing calculator and the Maker Account page. Which tier Familiarise runs, and what it costs per month, is not here: value kept in Notion (Familiarise / Finance and Pricing).
+Quick-reference public price schedule for Stream.io (Video + Chat + Feeds), as published on [Stream's pricing page](https://getstream.io/pricing/) and verified April 23, 2026 via the live pricing calculator and the Maker Account page. Which tier Familiarise runs, and what it costs per month, is not here: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend).
 
 For full rate tables and permutation matrices, see [`14-pricing-and-cost-model.md`](./14-pricing-and-cost-model.md).
 For Enterprise plans, SLA tiers, AI Moderation, and the Maker-to-paid transition roadmap, see [`15-enterprise-and-maker-account.md`](./15-enterprise-and-maker-account.md).
@@ -9,7 +9,7 @@ For Enterprise plans, SLA tiers, AI Moderation, and the Maker-to-paid transition
 
 ## The Maker Account (Free)
 
-Stream's [Maker Account](https://getstream.io/maker-account/) is a zero-cost tier for early-stage products. Which tier Familiarise is on, and whether it still qualifies: value kept in Notion (Familiarise / Finance and Pricing).
+Stream's [Maker Account](https://getstream.io/maker-account/) is a zero-cost tier for early-stage products. Which tier Familiarise is on, and whether it still qualifies: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend).
 
 ### Eligibility (ALL three must hold simultaneously)
 
@@ -91,7 +91,7 @@ Pricing as of April 2026 in US dollars. Annual = 2 months free.
 
 ## The Cost Cliff
 
-Losing any one Maker condition ends the free tier. Stream's public pages do not say how the transition happens, so arrange the paid plan before eligibility ends; Chat then starts at the Start plan price in the Chat table above. The projected rupee cost, the stage-by-stage budget and the GMV level at which to plan for it: value kept in Notion (Familiarise / Finance and Pricing).
+Losing any one Maker condition ends the free tier. Stream's public pages do not say how the transition happens, so arrange the paid plan before eligibility ends; Chat then starts at the Start plan price in the Chat table above. The projected rupee cost, the stage-by-stage budget and the GMV level at which to plan for it: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend).
 
 ### Monitoring
 

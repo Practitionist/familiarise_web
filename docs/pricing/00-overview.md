@@ -53,7 +53,7 @@ Credits are money a referrer has earned, spent after tax. `creditCapPaise()` (`l
 
 ### The platform fee: two rates and attribution
 
-`PlatformFeeSchedule` holds two rates in basis points, `marketplaceBps` and `ownLinkBps`, versioned with a maker and a checker; the active row is the latest approved one whose `effectiveFrom` has passed (`readActiveFeeSchedule()` in `lib/payments/pricing/platform-fee.ts`). While no row is approved both rates fall back to 20%. The owner approving a schedule is a go-live step; the values and their reasoning are kept in Notion (Familiarise / Finance and Pricing / 09 Pricing Strategy).
+`PlatformFeeSchedule` holds two rates in basis points, `marketplaceBps` and `ownLinkBps`, versioned with a maker and a checker; the active row is the latest approved one whose `effectiveFrom` has passed (`readActiveFeeSchedule()` in `lib/payments/pricing/platform-fee.ts`). While no row is approved both rates fall back to 20%. The owner approving a schedule is a go-live step; the values and their reasoning are kept in Notion (Familiarise / Finance and Pricing / Pricing Strategy).
 
 Which rate applies to an order depends on **attribution**, stamped on the payment as `attributionSource`:
 

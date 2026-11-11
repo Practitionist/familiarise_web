@@ -22,7 +22,7 @@ Resend dashboard, Settings, Usage: note the 100 per day cap before any broadcast
 
 ## 5. When to move to Pro
 
-Which plan we are on and when the owner moves up: value kept in Notion (Familiarise / Finance and Pricing). Free stops sending at 100 emails a day (3,000 a month), so a marketing batch or a booking surge on Free fails rather than bills. The reminder is also a line in the launch checklist (`docs/notifications/05-pre-production-checklist.md`, Step 5) and in the [booking v2 direction record](../../../../docs/decisions/2026-11-03-booking-v2-direction.md).
+Which plan we are on and when the owner moves up: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). Free stops sending at 100 emails a day (3,000 a month), so a marketing batch or a booking surge on Free fails rather than bills. The reminder is also a line in the launch checklist (`docs/notifications/05-pre-production-checklist.md`, Step 5) and in the [booking v2 direction record](../../../../docs/decisions/2026-11-03-booking-v2-direction.md).
 
 ## 6. Monitor
 

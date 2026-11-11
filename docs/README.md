@@ -398,6 +398,7 @@ Prisma operations and migration documentation.
 - [2026-11-07-supabase-mcp-sql-approval-hook.md](./decisions/2026-11-07-supabase-mcp-sql-approval-hook.md) - Supabase MCP reads run freely; a PreToolUse hook stops every write for the owner's approval
 - [2026-11-02-agent-instruction-layout.md](./decisions/2026-11-02-agent-instruction-layout.md) - One shared root `AGENTS.md`, nested per-directory files, and the deterministic checks that replace prose bans
 - [2026-11-09-repo-notion-split.md](./decisions/2026-11-09-repo-notion-split.md) - The six Notion sections, one canonical pricing page, the delete-versus-archive rule, competitor screenshots kept out of git, and legal facts written into the compliance docs
+- [2026-11-11-notion-workspace-consolidation.md](./decisions/2026-11-11-notion-workspace-consolidation.md) - Notion page titles carry outline numbers, repository pointers name the section and page without them, and the canonical page names after the consolidation
 
 ---
 

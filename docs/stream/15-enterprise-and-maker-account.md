@@ -393,7 +393,7 @@ These can be added to non-Enterprise plans as upgrades:
 
 ### 8.1 Familiarise's tier, spend and plan
 
-Which Stream tier Familiarise is on, the projected monthly cost at each stage, and the plan for the first upgrade and the growth stage: value kept in Notion (Familiarise / Finance and Pricing). The public rates behind any projection are in sections 1 to 7 and in `docs/stream/14-pricing-and-cost-model.md`.
+Which Stream tier Familiarise is on, the projected monthly cost at each stage, and the plan for the first upgrade and the growth stage: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). The public rates behind any projection are in sections 1 to 7 and in `docs/stream/14-pricing-and-cost-model.md`.
 
 ### 8.2 Elevate Upgrade Decision (Chat)
 

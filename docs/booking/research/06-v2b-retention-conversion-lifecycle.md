@@ -128,7 +128,7 @@ Severity: P0 = wrong money or legal exposure now; P1 = a broken journey or a blo
 
 ### 3.0 Competitor precedent (web research, 2026-11-03)
 
-Only the precedents that shaped a recommendation below are kept, each cited by site and help topic (search returned grounding redirect links, not direct URLs). The full comparison of platforms, the vendor-reported conversion figures and the platforms that shaped no recommendation are kept in Notion (Familiarise / Strategy and Competition).
+Only the precedents that shaped a recommendation below are kept, each cited by site and help topic (search returned grounding redirect links, not direct URLs). The full comparison of platforms, the vendor-reported conversion figures and the platforms that shaped no recommendation are kept in Notion (Familiarise / Strategy and Competition / Competitor Register).
 
 - **Preply** (help: "How do subscriptions work", "Trial lesson replacement"): a paid trial is followed by a prompt to pick a plan, and a learner who is disappointed gets a free replacement trial with a different tutor, up to two times. Subscriptions renew every 28 days and can be paused once per cycle for up to 20 days.
 - **italki** (support: "Packages", "Recurring lessons"): a "Book again" path after a lesson, and a notice to the student when a package is close to expiring or running out.

@@ -7,7 +7,7 @@ last-reviewed: 2026-11-09
 
 # Pricing roadmap
 
-Every pricing item with its priority and phase. Priority runs P0 (blocks launch) to P4 (nice to have); BS means an owner step with no code, and defer means do nothing until a trigger appears. The launch target is before 1 January 2027, with January to March 2027 as the fallback. Anything with a 1 January 2027 legal date is therefore P0 and due on 31 December. "Done when" is the check that closes the item. Prices, rates and the reasoning behind them are never written here: value kept in Notion (Familiarise / Finance and Pricing / 09 Pricing Strategy).
+Every pricing item with its priority and phase. Priority runs P0 (blocks launch) to P4 (nice to have); BS means an owner step with no code, and defer means do nothing until a trigger appears. The launch target is before 1 January 2027, with January to March 2027 as the fallback. Anything with a 1 January 2027 legal date is therefore P0 and due on 31 December. "Done when" is the check that closes the item. Prices, rates and the reasoning behind them are never written here: value kept in Notion (Familiarise / Finance and Pricing / Pricing Strategy).
 
 ## Pre-launch
 

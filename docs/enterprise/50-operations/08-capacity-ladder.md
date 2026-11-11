@@ -54,7 +54,7 @@ ceilings. The required moves are persistent compute (Railway, Render, or
 EC2), a real job queue (BullMQ needs persistent workers, which is exactly
 why it is wrong for us today and right after leaving serverless), a larger
 Supabase tier with read replicas, and a CDN-fronted read path. The projected monthly spend at
-each rung: value kept in Notion (Familiarise / Finance and Pricing). The migration is two to four weeks of
+each rung: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). The migration is two to four weeks of
 work when the traffic justifies it; pre-building it now would cost months.
 The one cheap pre-commitment we make today is keeping all background work
 behind the existing job-entry abstraction so the GitHub-Actions-to-queue
