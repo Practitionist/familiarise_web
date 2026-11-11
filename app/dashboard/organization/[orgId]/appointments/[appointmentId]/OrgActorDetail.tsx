@@ -211,11 +211,18 @@ export function OrgActorDetail({
     const url = isSubscription
       ? `/api/appointments/${appointmentId}/reschedule?type=SUBSCRIPTION`
       : `/api/appointments/${appointmentId}/reschedule`;
-    await postJson(
+    const body = { reason };
+    // Keyed on the whole request and the times it releases, so a later move of
+    // the same booking never replays an earlier answer.
+    const key = rescheduleKeyFor({
       url,
-      { reason },
-      { "Idempotency-Key": rescheduleKeyFor({ reason }) },
-    );
+      body,
+      releases: meta.sessions.map((s) => [
+        s.id,
+        new Date(s.startsAt).getTime(),
+      ]),
+    });
+    await postJson(url, body, { "Idempotency-Key": key });
     toast({
       title: "Reschedule requested",
       description: "The expert will pick a new time.",

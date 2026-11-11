@@ -16,11 +16,13 @@ import {
   type ApprovalLock,
 } from "@/utils/appointmentlock";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { reportSentryError } from "@/lib/observability/report";
-import { EMAIL_BUDGET_MS, sendAppointmentRescheduledEmail } from "@/lib/email";
-import { notifyAppointmentRescheduled } from "@/lib/novu";
+import { stageAppointmentRescheduledEmail } from "@/lib/email/senders/booking";
+import { notifyAppointmentRescheduled } from "@/lib/novu/service";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import type { StagedTrigger } from "@/lib/novu/outbox";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { isTooSoonFor } from "@/lib/booking/lead-time";
@@ -38,6 +40,9 @@ import { trialWindowRefusal } from "@/lib/trials/slot-check";
 export type TrialConfirmOutcome =
   | { confirmed: true }
   | { confirmed: false; reason: string; takenSlotStarts?: string[] };
+
+/** A committed move, carrying the trial-moved notice staged with it. */
+type MoveOutcome = { confirmed: true; notice: TrialMovedNotice | null };
 
 const ATOM_MS = 30 * 60_000;
 
@@ -146,7 +151,7 @@ export async function confirmTrialProposal(args: {
   }
 
   const consulteeUserId = trial.consulteeProfile.userId;
-  const move = async (): Promise<TrialConfirmOutcome> => {
+  const move = async (): Promise<MoveOutcome> => {
     const buyerProfile = await prisma.consultantProfile.findUnique({
       where: { userId: consulteeUserId },
       select: { id: true },
@@ -159,7 +164,7 @@ export async function confirmTrialProposal(args: {
       endsAt: window.endsAt,
     });
     try {
-      await prisma.$transaction(async (tx) => {
+      return await prisma.$transaction(async (tx): Promise<MoveOutcome> => {
         await closeConfirmedProposal(tx, {
           where: { id: request.id },
           to: args.to,
@@ -200,14 +205,22 @@ export async function confirmTrialProposal(args: {
           allowZero: true,
         });
         if (moved !== 1) throw new TrialMoveRefused("VALIDATION_FAILED");
+        const notice =
+          args.to === "ACCEPTED"
+            ? await stageTrialMovedBells(tx, {
+                rescheduleRequestId: request.id,
+                newStartsAt: window.startsAt,
+                moverId: args.resolvedById,
+              })
+            : null;
+        return { confirmed: true, notice };
       });
-      return { confirmed: true };
     } finally {
       await release();
     }
   };
 
-  let outcome: TrialConfirmOutcome;
+  let outcome: MoveOutcome;
   try {
     outcome = args.heldAppointmentLock
       ? await move()
@@ -244,46 +257,61 @@ export async function confirmTrialProposal(args: {
     throw error;
   }
 
-  if (outcome.confirmed && args.to === "ACCEPTED") {
-    await notifyTrialMoved(request.id, window.startsAt);
-  }
-  return outcome;
+  if (outcome.notice) await flushTrialMovedNotice(outcome.notice);
+  return { confirmed: true };
 }
 
-/** The initiator hears that the other side accepted and the trial moved. Never throws. */
-async function notifyTrialMoved(
-  rescheduleRequestId: string,
-  newStartsAt: Date,
-): Promise<void> {
-  try {
-    const detail = await prisma.rescheduleRequest.findUnique({
-      where: { id: rescheduleRequestId },
-      select: {
-        initiatedById: true,
-        releasedSessions: true,
-        appointment: {
-          select: {
-            id: true,
-            organizationId: true,
-            appointmentType: true,
-            ...RESCHEDULE_PARTIES_SELECT,
-          },
+interface TrialMovedNotice {
+  bells: Array<StagedTrigger | undefined>;
+  email: {
+    appointmentId: string;
+    userIds: string[];
+    appointmentType: string;
+    oldStartsAt: Date;
+    newStartsAt: Date;
+    dashboardUrl: string;
+  };
+}
+
+/**
+ * The party who did not make the move hears the trial moved: the bell is
+ * staged on the move's transaction, the email after commit.
+ */
+async function stageTrialMovedBells(
+  tx: Tx,
+  args: { rescheduleRequestId: string; newStartsAt: Date; moverId?: string },
+): Promise<TrialMovedNotice | null> {
+  const detail = await tx.rescheduleRequest.findUnique({
+    where: { id: args.rescheduleRequestId },
+    select: {
+      initiatedById: true,
+      releasedSessions: true,
+      appointment: {
+        select: {
+          id: true,
+          organizationId: true,
+          appointmentType: true,
+          ...RESCHEDULE_PARTIES_SELECT,
         },
       },
-    });
-    const appt = detail?.appointment;
-    const parties = appt ? rescheduleParties(appt) : null;
-    if (!detail || !appt || !parties) return;
-    const released = ReleasedSessionsSchema.safeParse(detail.releasedSessions);
-    const first = released.success ? released.data[0] : undefined;
-    if (!first) return;
-    const oldStartsAt = new Date(first.startsAt);
-    const userIds = [
-      parties.consultantUser.id,
-      parties.consulteeUser.id,
-    ].filter((id, i, all) => all.indexOf(id) === i);
-    const dashboardUrl = notificationHref(appt.organizationId, "appointments");
-    await notifyAppointmentRescheduled(userIds, {
+    },
+  });
+  const appt = detail?.appointment;
+  const parties = appt ? rescheduleParties(appt) : null;
+  if (!detail || !appt || !parties) return null;
+  const released = ReleasedSessionsSchema.safeParse(detail.releasedSessions);
+  const first = released.success ? released.data[0] : undefined;
+  if (!first) return null;
+  const mover = args.moverId ?? detail.initiatedById;
+  const userIds = [parties.consultantUser.id, parties.consulteeUser.id].filter(
+    (id, i, all) => id !== mover && all.indexOf(id) === i,
+  );
+  if (userIds.length === 0) return null;
+  const oldStartsAt = new Date(first.startsAt);
+  const dashboardUrl = notificationHref(appt.organizationId, "appointments");
+  const staged = await notifyAppointmentRescheduled(
+    userIds,
+    {
       ...notificationScope(appt.organizationId),
       appointmentType: appt.appointmentType,
       consultantName: parties.consultantUser.name || "Consultant",
@@ -292,25 +320,41 @@ async function notifyTrialMoved(
       dashboardUrl,
       outcome: "MOVED",
       oldDateTime: oldStartsAt.toISOString(),
-      newDateTime: newStartsAt.toISOString(),
-    });
-    await sendAppointmentRescheduledEmail(
-      {
-        appointmentId: appt.id,
-        userIds,
-        outcome: "MOVED",
-        appointmentType: appt.appointmentType,
-        oldStartsAt,
-        newStartsAt,
-        dashboardUrl,
-      },
-      EMAIL_BUDGET_MS.REQUEST,
-    );
-  } catch (error) {
+      newDateTime: args.newStartsAt.toISOString(),
+    },
+    { tx, deferAttempt: true },
+  );
+  return {
+    bells: staged.map((row) => row.staged),
+    email: {
+      appointmentId: appt.id,
+      userIds,
+      appointmentType: appt.appointmentType,
+      oldStartsAt,
+      newStartsAt: args.newStartsAt,
+      dashboardUrl,
+    },
+  };
+}
+
+/** Stages the email and dispatches the committed bells. Never throws. */
+async function flushTrialMovedNotice(notice: TrialMovedNotice): Promise<void> {
+  const rows = await stageAppointmentRescheduledEmail(prisma, {
+    ...notice.email,
+    outcome: "MOVED",
+  }).catch((error: unknown) => {
     reportSentryError(error, {
       subsystem: "bookings",
       op: "trial-reschedule-accept-notify",
       expected: true,
     });
-  }
+    return [];
+  });
+  await flushNotificationsAfter(
+    {
+      bells: notice.bells,
+      emails: [{ rows, emailType: "APPOINTMENT_RESCHEDULED" }],
+    },
+    "trial-reschedule-accept",
+  );
 }

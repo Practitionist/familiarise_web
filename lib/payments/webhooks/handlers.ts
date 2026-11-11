@@ -90,8 +90,10 @@ import {
   notifyPaymentSuccess,
   notifyPaymentFailed,
   notifyAppointmentBooked,
+  notifyTrialCancelled,
   type StagedTrigger,
 } from "@/lib/novu";
+import { stageTrialLifecycleEmail } from "@/lib/email/senders/booking";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { goHref } from "@/lib/dashboard/go";
@@ -156,6 +158,8 @@ type PaymentSuccessTxResult =
       outcome: "captured_after_release";
       paymentId: string;
       releasedBy: string;
+      /** Both parties' cancelled notice, staged with the release. */
+      trialNotice?: StagedNotificationBundle | null;
     }
   | {
       outcome: "confirmed";
@@ -810,6 +814,7 @@ export async function handlePaymentSuccess(
               select: { id: true },
             });
             if (startedHold) {
+              let cancelledHere = false;
               try {
                 await transitionTrial(tx, {
                   reason: "PAID_AFTER_SESSION_STARTED",
@@ -819,6 +824,7 @@ export async function handlePaymentSuccess(
                   fromIn: [TrialStatus.AWAITING_PAYMENT],
                   data: { pendingPaymentUrl: null, paymentDueAt: null },
                 });
+                cancelledHere = true;
               } catch (err) {
                 if (!(err instanceof IllegalTransitionError)) throw err;
               }
@@ -847,6 +853,10 @@ export async function handlePaymentSuccess(
                 outcome: "captured_after_release",
                 paymentId: payment.id,
                 releasedBy: `trial session started before payment (${metadata.trialId})`,
+                // Only the door that cancelled the trial announces it.
+                trialNotice: cancelledHere
+                  ? await stageTrialPaidAfterStartNotice(tx, metadata.trialId)
+                  : null,
               };
             }
 
@@ -1267,6 +1277,12 @@ export async function handlePaymentSuccess(
         err: new Error("CAPTURE_AFTER_RELEASE_REFUND_FAILED"),
         context: { paymentId: txResult.paymentId },
       });
+    }
+    if (txResult.trialNotice) {
+      await flushNotificationsAfter(
+        txResult.trialNotice,
+        "capture.trial-paid-after-start",
+      );
     }
     return txResult.outcome;
   }
@@ -2736,6 +2752,77 @@ async function stageStartedBeforePaymentNotice(
     reportSentryError(error, {
       subsystem: "payments",
       op: "capture.started-before-payment-notice.stage",
+      level: "warning",
+    });
+    return null;
+  }
+}
+
+/**
+ * Both parties hear a trial paid after its held session started was cancelled
+ * (the trial templates carry no reason line); null when staging failed.
+ */
+async function stageTrialPaidAfterStartNotice(
+  tx: Tx,
+  trialId: string,
+): Promise<StagedNotificationBundle | null> {
+  await tx.$executeRaw`SAVEPOINT sp_trial_started_notice`;
+  try {
+    const trial = await tx.trial.findUnique({
+      where: { id: trialId },
+      select: {
+        subscriptionPlan: { select: { title: true } },
+        consultantProfile: {
+          select: { user: { select: { id: true, name: true } } },
+        },
+        consulteeProfile: {
+          select: { user: { select: { id: true, name: true } } },
+        },
+      },
+    });
+    if (!trial) {
+      await tx.$executeRaw`RELEASE SAVEPOINT sp_trial_started_notice`;
+      return null;
+    }
+    const consultant = trial.consultantProfile.user;
+    const consultee = trial.consulteeProfile.user;
+    const userIds = [consultant.id, consultee.id];
+    const consultantName = consultant.name || "Consultant";
+    const consulteeName = consultee.name || "User";
+    const dashboardUrl = goHref("auto", "appointments");
+    const bells = await notifyTrialCancelled(
+      userIds,
+      {
+        consultantName,
+        consulteeName,
+        planTitle: trial.subscriptionPlan.title,
+        status: TrialStatus.CANCELLED,
+        dashboardUrl,
+      },
+      { tx, deferAttempt: true },
+    );
+    const emails = await stageTrialLifecycleEmail(tx, {
+      trialId,
+      userIds,
+      kind: "TRIAL_CANCELLED",
+      planTitle: trial.subscriptionPlan.title,
+      consultantUserId: consultant.id,
+      consulteeUserId: consultee.id,
+      consultantName,
+      consulteeName,
+      dashboardUrl,
+    });
+    await tx.$executeRaw`RELEASE SAVEPOINT sp_trial_started_notice`;
+    return {
+      bells: bells.map((row) => row.staged),
+      emails: [{ rows: emails, emailType: "TRIAL_CANCELLED" }],
+    };
+  } catch (error) {
+    await tx.$executeRaw`ROLLBACK TO SAVEPOINT sp_trial_started_notice`;
+    if (isWriteConflict(error)) throw error;
+    reportSentryError(error, {
+      subsystem: "payments",
+      op: "capture.trial-paid-after-start-notice.stage",
       level: "warning",
     });
     return null;

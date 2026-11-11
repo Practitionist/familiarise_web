@@ -20,8 +20,8 @@ jest.mock("../../lib/auth-helpers", () => ({
   requireApiAuth: async () => ({ session }),
 }));
 jest.mock("../../lib/rate-limit", () => ({
-  applyRateLimit: async () => null,
-  trialRequestLimiter: {},
+  trialRequestRefusal: async () => null,
+  spendTrialRequest: async () => undefined,
 }));
 jest.mock("../../lib/booking/participants", () => ({
   recordParticipants: jest.fn(),

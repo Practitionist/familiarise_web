@@ -12,6 +12,7 @@ import { leadMsFor } from "@/lib/booking/lead-time";
 import type { SlotWithStatus } from "@/lib/scheduling/booking-windows";
 import { useDisplayZone } from "@/lib/time/use-display-zone";
 import { trialProposalAtoms } from "@/lib/trials/proposal-atoms";
+import { createSubmissionKeys } from "@/lib/api/submission-key";
 
 /**
  * The consultee's trial reschedule: the expert page's slot list at the
@@ -37,6 +38,7 @@ export function TrialRescheduleClient({
   const { data: session } = useSession();
   const zone = useDisplayZone(session?.user?.timezone ?? null);
   const [selected, setSelected] = useState<SlotWithStatus | null>(null);
+  const [submissionKeyFor] = useState(createSubmissionKeys);
   const actions = useEventActions({
     appointmentId,
     rawOccurrences: [],
@@ -52,14 +54,16 @@ export function TrialRescheduleClient({
 
   const submit = async () => {
     if (!selected) return;
+    const atoms = trialProposalAtoms(
+      new Date(selected.startsAt),
+      new Date(selected.endsAt),
+    );
     const moved = await actions.handleReschedule(
       undefined,
-      trialProposalAtoms(
-        new Date(selected.startsAt),
-        new Date(selected.endsAt),
-      ),
+      atoms,
       undefined,
       zone.zone,
+      submissionKeyFor(atoms),
     );
     if (moved) goBack();
     else setSelected(null);

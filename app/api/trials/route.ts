@@ -19,7 +19,7 @@ import { prepareTrialScheduledEmail } from "@/lib/email/senders/booking";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { CreateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { trialRequestLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { spendTrialRequest, trialRequestRefusal } from "@/lib/rate-limit";
 import {
   resolveOrgScope,
   scopeToPlanHostWhere,
@@ -259,7 +259,11 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("Error fetching trial sessions:", error);
+    reportSentryError(error, {
+      subsystem: "trials",
+      op: "GET /api/trials",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "An error occurred while fetching trial sessions" },
       { status: 500 },
@@ -304,15 +308,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Rate limit: 3 trial requests per 24 hours per creator. #831 — applied
-    // uniformly: a privileged session can still flood consultant inboxes,
-    // so role no longer bypasses the limiter.
-    const rl = await applyRateLimit(trialRequestLimiter, session.user.id);
-    if (rl) return rl;
-
-    // #1527 review — the plan lookup + refusal checks used to run AFTER the
-    // freed-trial deleteMany below, so a request against a DRAFT plan (409)
-    // still consumed the consultee's freed trial slot. Verify the plan first.
+    // The plan and its refusals come before the freed-trial deleteMany below,
+    // so a refused request never consumes the pair's freed trial slot.
     const subscriptionPlan = await prisma.subscriptionPlan.findUnique({
       where: { id: subscriptionPlanId },
       include: {
@@ -393,6 +390,11 @@ export async function POST(request: NextRequest) {
       if (error instanceof BookingRuleError) return bookingRuleResponse(error);
       throw error;
     }
+
+    // 3 trials per 24 hours per caller, privileged included: read here without
+    // spending one, and spent only once a trial is created.
+    const rl = await trialRequestRefusal(session.user.id);
+    if (rl) return rl;
 
     // Check if a trial already exists for this consultee-consultant pair
     const existingTrial = await prisma.trial.findUnique({
@@ -640,6 +642,7 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
+    await spendTrialRequest(session.user.id);
 
     if (staged) {
       await flushNotificationsAfter(
@@ -665,7 +668,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ data: trial, checkoutUrl }, { status: 201 });
   } catch (error) {
-    console.error("Error creating trial session:", error);
+    reportSentryError(error, {
+      subsystem: "trials",
+      op: "POST /api/trials",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "An error occurred while creating trial session" },
       { status: 500 },

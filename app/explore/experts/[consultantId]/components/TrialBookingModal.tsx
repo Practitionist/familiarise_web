@@ -35,6 +35,8 @@ import { leadMsFor } from "@/lib/booking/lead-time";
 import { invalidateAvailability } from "@/lib/scheduling/use-availability-window";
 import type { SlotWithStatus } from "@/lib/scheduling/booking-windows";
 import { useDisplayZone } from "@/lib/time/use-display-zone";
+import { formatDateTimeLabel } from "@/lib/time/display";
+import { ZoneSwitch } from "@/components/scheduling/ZoneSwitch";
 import { TrialSlotPicker } from "./TrialSlotPicker";
 import { Gift, Clock, Loader2, CheckCircle } from "lucide-react";
 
@@ -50,6 +52,16 @@ const eligibilityAnswerSchema = z.object({
 const createdAnswerSchema = z.object({
   checkoutUrl: z.string().nullish(),
 });
+const rateLimitedBodySchema = z.object({ retryAt: z.string().datetime() });
+
+/** When a 429 lets the buyer try again: the body's `retryAt`, else `Retry-After`. */
+function retryInstantOf(error: ApiResponseError): Date | null {
+  const parsed = rateLimitedBodySchema.safeParse(error.body);
+  if (parsed.success) return new Date(parsed.data.retryAt);
+  return error.retryAfterMs === undefined
+    ? null
+    : new Date(Date.now() + error.retryAfterMs);
+}
 
 interface TrialBookingModalProps {
   isOpen: boolean;
@@ -237,6 +249,17 @@ export function TrialBookingModal({
           { tags: { subsystem: "client", flow: "trial-request" } },
         );
       }
+      if (error instanceof ApiResponseError && error.status === 429) {
+        const retryAt = retryInstantOf(error);
+        toast({
+          title: "Too many trial requests",
+          description: retryAt
+            ? `You can request another trial from ${formatDateTimeLabel(retryAt, { zone: zone.zone })}.`
+            : "Please try again later.",
+          variant: "destructive",
+        });
+        return;
+      }
       toast({
         title: "Couldn't book the trial",
         description:
@@ -336,6 +359,12 @@ export function TrialBookingModal({
 
           <div className="space-y-2">
             <Label>Pick a time</Label>
+            <ZoneSwitch
+              zone={zone.zone}
+              usingDeviceZone={zone.usingDeviceZone}
+              canSwitch={zone.canSwitch}
+              onToggle={zone.toggle}
+            />
             <TrialSlotPicker
               consultantId={consultantProfileId}
               consulteeUserId={session.user.id}

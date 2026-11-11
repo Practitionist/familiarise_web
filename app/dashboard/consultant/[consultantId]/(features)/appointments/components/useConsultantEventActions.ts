@@ -465,10 +465,12 @@ export function useConsultantEventActions({
       invalidateBookingData();
       return true;
     } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client" } },
-      );
+      if (!isExpectedRefusal(error)) {
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "client" } },
+        );
+      }
       toast({
         title: "Error",
         description: actionFailureMessage(error, "Failed to cancel trial"),

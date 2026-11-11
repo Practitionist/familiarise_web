@@ -1,10 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { TrialScheduleCalendar } from "@/components/dashboard/shared/requests/components/TrialScheduleCalendar";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 import { trialProposalAtoms } from "@/lib/trials/proposal-atoms";
+import { createSubmissionKeys } from "@/lib/api/submission-key";
 import { useConsultantEventActions } from "../../components/useConsultantEventActions";
 
 /**
@@ -38,6 +40,7 @@ export function TrialRescheduleClient({
     title,
     type: "Trial",
   });
+  const [submissionKeyFor] = useState(createSubmissionKeys);
 
   const goBack = () => {
     router.push(backHref);
@@ -55,16 +58,20 @@ export function TrialRescheduleClient({
       confirmLabel="Send new time"
       isProcessing={actions.isLoading}
       onCancel={goBack}
-      onSlotSelect={(slot) =>
+      onSlotSelect={(slot) => {
+        const atoms = trialProposalAtoms(slot.startsAt, slot.endsAt);
         void actions
           .handleReschedule(
             undefined,
-            trialProposalAtoms(slot.startsAt, slot.endsAt),
+            atoms,
+            undefined,
+            undefined,
+            submissionKeyFor(atoms),
           )
           .then((moved) => {
             if (moved) goBack();
-          })
-      }
+          });
+      }}
     />
   );
 }

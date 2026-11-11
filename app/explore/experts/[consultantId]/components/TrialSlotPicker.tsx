@@ -100,9 +100,9 @@ export function TrialSlotPicker({
   const activeWindows = windowsByDay.get(activeKey) ?? [];
 
   return (
-    <div className="space-y-3 rounded-xl bg-zinc-900 p-3 text-zinc-100">
+    <div className="min-w-0 space-y-3 rounded-xl bg-zinc-900 p-3 text-zinc-100">
       <div
-        className="flex gap-2 overflow-x-auto pb-1"
+        className="flex min-w-0 gap-2 overflow-x-auto pb-1"
         role="group"
         aria-label="Pick a day"
       >

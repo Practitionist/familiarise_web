@@ -25,7 +25,9 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     rescheduleRequest: { findUnique: jest.fn(async () => db.request) },
     consultantProfile: { findUnique: jest.fn(async () => null) },
-    $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn({})),
+    $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
+      fn({ rescheduleRequest: { findUnique: jest.fn(async () => null) } }),
+    ),
   },
 }));
 jest.mock("../../lib/booking/reschedule-confirm", () => ({
@@ -49,12 +51,14 @@ jest.mock("../../utils/appointmentlock", () => ({
   AppointmentBusyError: class extends Error {},
   BookingLockUnavailableError: class extends Error {},
 }));
-jest.mock("../../lib/novu", () => ({
+jest.mock("../../lib/novu/service", () => ({
   notifyAppointmentRescheduled: jest.fn(async () => []),
 }));
-jest.mock("../../lib/email", () => ({
-  EMAIL_BUDGET_MS: { REQUEST: 1 },
-  sendAppointmentRescheduledEmail: jest.fn(async () => undefined),
+jest.mock("../../lib/email/senders/booking", () => ({
+  stageAppointmentRescheduledEmail: jest.fn(async () => []),
+}));
+jest.mock("../../lib/novu/stage-then-attempt", () => ({
+  flushNotificationsAfter: jest.fn(async () => undefined),
 }));
 
 import {

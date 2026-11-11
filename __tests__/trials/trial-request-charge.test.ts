@@ -26,9 +26,11 @@ jest.mock("../../lib/auth-helpers", () => ({
     },
   }),
 }));
+const trialRequestRefusal = jest.fn(async () => null);
+const spendTrialRequest = jest.fn(async () => undefined);
 jest.mock("../../lib/rate-limit", () => ({
-  applyRateLimit: async () => null,
-  trialRequestLimiter: {},
+  trialRequestRefusal: (...a: unknown[]) => trialRequestRefusal(...(a as [])),
+  spendTrialRequest: (...a: unknown[]) => spendTrialRequest(...(a as [])),
 }));
 jest.mock("../../lib/email/senders/booking", () => ({
   prepareTrialScheduledEmail: jest.fn(async () => ({
@@ -154,6 +156,17 @@ it("a window that is not the trial's length answers 400 WINDOW_DURATION_MISMATCH
   expect(res.status).toBe(400);
   expect((await res.json()).code).toBe("WINDOW_DURATION_MISMATCH");
   expect(bookTrial).not.toHaveBeenCalled();
+});
+
+it("a refused request costs no attempt; only a created trial spends one", async () => {
+  plan.trialPriceInPaise = 0;
+  const refused = await post({ slot: slot(60) });
+  expect(refused.status).toBe(400);
+  expect(trialRequestRefusal).not.toHaveBeenCalled();
+  expect(spendTrialRequest).not.toHaveBeenCalled();
+  const created = await post();
+  expect(created.status).toBe(201);
+  expect(spendTrialRequest).toHaveBeenCalledTimes(1);
 });
 
 it("a paid pick inside the unpaid lead time answers 409 REQUEST_TOO_SOON", async () => {

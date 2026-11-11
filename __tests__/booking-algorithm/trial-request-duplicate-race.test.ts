@@ -25,8 +25,8 @@ jest.mock("../../lib/auth-server", () => ({
 
 jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
-  trialRequestLimiter: {},
-  applyRateLimit: jest.fn(async () => null),
+  trialRequestRefusal: jest.fn(async () => null),
+  spendTrialRequest: jest.fn(async () => undefined),
 }));
 
 jest.mock("../../lib/trials/book-trial", () => ({
