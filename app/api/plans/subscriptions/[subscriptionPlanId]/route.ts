@@ -23,6 +23,7 @@ import {
   isShortPack,
   PlanPriceBelowFloorError,
 } from "@/lib/payments/pricing/price-bounds";
+import { StalePlanEditError } from "@/lib/api/plans/stale-edit";
 import {
   archivedAtForArchive,
   parsePlanArchiveBody,
@@ -268,6 +269,20 @@ export async function PUT(
     // Use transaction to ensure atomicity when updating subscription contents
     // This prevents data loss if the update fails after deleting old contents
     const subscriptionPlan = await prisma.$transaction(async (tx) => {
+      // Save only against the price and terms this edit was validated on.
+      const { count } = await tx.subscriptionPlan.updateMany({
+        where: {
+          id: subscriptionPlanId,
+          price: existingPlan.price,
+          sessionsPerWeek: existingPlan.sessionsPerWeek,
+          sessionDurationInHours: existingPlan.sessionDurationInHours,
+          durationInMonths: existingPlan.durationInMonths,
+          durationInWeeks: existingPlan.durationInWeeks,
+          totalSessions: existingPlan.totalSessions,
+        },
+        data: { price: packPrice },
+      });
+      if (count === 0) throw new StalePlanEditError();
       // If subscriptionContents is provided, delete existing and create new ones
       if (subscriptionContents !== undefined) {
         await tx.subscriptionContent.deleteMany({
@@ -362,7 +377,10 @@ export async function PUT(
       { status: 200 },
     );
   } catch (error) {
-    if (error instanceof PlanPriceBelowFloorError) {
+    if (
+      error instanceof PlanPriceBelowFloorError ||
+      error instanceof StalePlanEditError
+    ) {
       return NextResponse.json(
         { error: error.message, code: error.code },
         { status: error.httpStatus },

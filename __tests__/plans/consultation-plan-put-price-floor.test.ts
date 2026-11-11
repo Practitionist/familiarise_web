@@ -2,11 +2,26 @@
  * @jest-environment node
  */
 
-/** The consultation PUT holds only a real price or length change to the floor. */
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: { consultationPlan: { findUnique: jest.fn(), update: jest.fn() } },
-}));
+/**
+ * The consultation PUT holds only a real price or length change to the floor,
+ * and saves only against the price and length it validated.
+ */
+jest.mock("../../lib/prisma", () => {
+  const consultationPlan = {
+    findUnique: jest.fn(),
+    update: jest.fn(),
+    updateMany: jest.fn(),
+  };
+  return {
+    __esModule: true,
+    default: {
+      consultationPlan,
+      $transaction: jest.fn((cb: (tx: unknown) => unknown) =>
+        cb({ consultationPlan }),
+      ),
+    },
+  };
+});
 jest.mock("../../lib/auth-server", () => ({ getSession: jest.fn() }));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/topics", () => ({
@@ -32,6 +47,7 @@ import { PUT } from "@/app/api/plans/consultations/[consultationPlanId]/route";
 const plans = prisma.consultationPlan as unknown as {
   findUnique: jest.Mock;
   update: jest.Mock;
+  updateMany: jest.Mock;
 };
 
 const put = (body: unknown) =>
@@ -54,6 +70,7 @@ beforeEach(() => {
     consultantProfile: { userId: "owner" },
   });
   plans.update.mockResolvedValue({ id: "plan-1", topics: [] });
+  plans.updateMany.mockResolvedValue({ count: 1 });
 });
 
 it.each([
@@ -64,4 +81,16 @@ it.each([
   const res = await put({ title: "Renamed", ...terms });
   expect(res.status).toBe(status);
   expect(plans.update).toHaveBeenCalledTimes(status === 200 ? 1 : 0);
+});
+
+it("answers 409 when the price or length changed after this edit read them", async () => {
+  plans.updateMany.mockResolvedValue({ count: 0 });
+  const res = await put({ title: "Renamed", price: 120_000 });
+  expect(res.status).toBe(409);
+  expect(await res.json()).toMatchObject({ code: "PLAN_CHANGED" });
+  expect(plans.updateMany).toHaveBeenCalledWith({
+    where: { id: "plan-1", price: 20_000, durationInHours: 1 },
+    data: { price: 120_000, durationInHours: 1 },
+  });
+  expect(plans.update).not.toHaveBeenCalled();
 });

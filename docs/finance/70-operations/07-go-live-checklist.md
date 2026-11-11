@@ -103,7 +103,42 @@ flowchart TD
   4. Make the ₹1 canary payout in 2.3. A `RAZORPAYX_EGRESS_NOT_CONFIGURED` refusal means the variable is missing. An authentication error can mean either wrong live keys or a missing allowlist entry, so first confirm `RAZORPAYX_KEY_ID` and `RAZORPAYX_KEY_SECRET` are the live pair, and only then check that the proxy's egress addresses are on the allowlist.
 - **Payout accounts verified** for every payee in the first batch: `PayoutAccount.isVerified` for consultants and `OrganizationPayoutAccount.status = VERIFIED` for organisations. RazorpayX test mode does not run penny-drop or reverse-penny-drop, so an account "verified" on a preview was verified by hand and must be verified again after the purge in 1.5.
 - **Payout constants are set.** The consultation hold (`PAYOUT_CONSTANTS.HOLD_PERIOD_HOURS.CONSULTATION`) covers the 48-hour scope-claim window of the public promise, and `NEW_EXPERT_EXTRA_HOLD_DAYS`, `NEW_EXPERT_LIFETIME_SHARE_PAISE` and `MINIMUM_PAYOUT_AMOUNT` hold the approved values from Notion (Familiarise / Finance and Pricing / Finance Lever Register); all four live in `lib/payments/payouts/constants.ts` and change only through a reviewed code pull request. Set them before the first live payment: `computeHoldUntil` (`lib/payments/payouts/earnings-hold.ts`) stamps each earning's `holdUntil` when the earning is created, so a later change to the hold does not move earnings that already exist. If live payments were taken before the change, review those earnings' saved hold dates (and any approved payouts) before enabling payouts. The batch runs weekly (`create-payout-batch`), and no page or email may promise a faster payout.
-- **Per-format minimum prices.** `lib/payments/pricing/price-bounds.ts` holds the 1:1 floor and the floor for short packs (≤ 4 weeks), enforced when a consultation or subscription plan is created or edited; trials keep their own floor, `PlatformPricingConfig.minTrialPriceInPaise`. A plan saved before the floor keeps its price until edited, so list live plans below the floor and have their experts reprice them before launch.
+- **Per-format minimum prices.** `lib/payments/pricing/price-bounds.ts` holds the 1:1 floor and the floor for short packs (≤ 4 weeks), enforced when a consultation or subscription plan is created or edited; trials keep their own floor, `PlatformPricingConfig.minTrialPriceInPaise`. Checkout charges the saved plan price and does not re-check the floor, so a plan saved before the floor existed keeps its price. After the Session F reset (#2700) and before taking real money, run this read-only query in the Supabase SQL editor; it lists every live consultation plan and every short pack (`durationInWeeks` set and at most 4) priced below its floor. Fix the price with the expert, or archive the plan, until it returns no rows. The numbers in it copy `price-bounds.ts`; if the file has changed, update the query from it first.
+
+  ```sql
+  -- Read-only. Floors copied from lib/payments/pricing/price-bounds.ts; minutes round half up like Math.round.
+  WITH plan AS (
+    SELECT 'CONSULTATION' AS kind, id, title, "consultantProfileId", price,
+           floor("durationInHours" * 60 + 0.5)::int AS minutes, 1 AS sessions
+    FROM "ConsultationPlan"
+    WHERE "archivedAt" IS NULL
+    UNION ALL
+    SELECT 'SHORT_PACK', id, title, "consultantProfileId", price,
+           floor("sessionDurationInHours" * 60 + 0.5)::int, "totalSessions"
+    FROM "SubscriptionPlan"
+    WHERE "archivedAt" IS NULL
+      AND "durationInWeeks" IS NOT NULL
+      AND "durationInWeeks" <= 4
+  ), floored AS (
+    SELECT plan.*,
+           CASE
+             WHEN kind = 'CONSULTATION' THEN session_min
+             ELSE ceil(session_min * sessions * 7500 / 1000000.0) * 100
+           END AS min_paise
+    FROM plan,
+         LATERAL (SELECT CASE
+                    WHEN minutes <= 30 THEN 49900
+                    WHEN minutes <= 45 THEN 79900
+                    WHEN minutes <= 60 THEN 99900
+                    ELSE ceil(99900 * minutes / 6000.0) * 100
+                  END AS session_min) s
+  )
+  SELECT kind, id, title, "consultantProfileId", price, min_paise
+  FROM floored
+  WHERE price < min_paise
+  ORDER BY kind, "consultantProfileId", price;
+  ```
+
 - **PAN and TDS.** Every payable consultant has a verified PAN, otherwise withholding uses the no-PAN rate. Confirm `TDS_ENGINE` is unset (the default is the Section 194-O engine; `LEGACY` is a flag-only fallback) and `ENABLE_TDS_194O_GROSS` is not `"false"`. See [TDS withholding](../40-payouts/06-tds-withholding.md).
 - **Idempotency.** Every payout carries its deterministic idempotency key so a retry cannot pay twice; the schema makes it unique.
 - **Reconcile is clean:** `reconcile-ledgers` reports `ok: true` with no unbaselined findings, including `ORG_PAYOUT_TOTAL_MISMATCH`.

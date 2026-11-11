@@ -7,6 +7,7 @@ import {
   assertPlanPriceWithinBounds,
   PlanPriceBelowFloorError,
 } from "@/lib/payments/pricing/price-bounds";
+import { StalePlanEditError } from "@/lib/api/plans/stale-edit";
 import { faqReplaceNested } from "@/lib/api/plans/content";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import {
@@ -155,37 +156,49 @@ export async function PUT(
       };
     }
 
-    const consultationPlan = await prisma.consultationPlan.update({
-      where: { id: consultationPlanId },
-      data: {
-        title: validatedData.title,
-        description: validatedData.description,
-        durationInHours: validatedData.durationInHours,
-        price:
-          validatedData.price !== undefined
-            ? Math.round(validatedData.price)
-            : undefined,
-        priceCurrency: validatedData.priceCurrency,
-        language: validatedData.language,
-        level: validatedData.level,
-        prerequisites: validatedData.prerequisites,
-        materialProvided: validatedData.materialProvided,
-        learningOutcomes: validatedData.learningOutcomes,
-        subtitle: validatedData.subtitle,
-        targetAudience: validatedData.targetAudience,
-        whatsIncluded: validatedData.whatsIncluded,
-        faqs: faqReplaceNested(validatedData.faqs),
-        recordingEnabled: validatedData.recordingEnabled,
-        // #1527 Q4 — absent means PUBLISHED on create and unchanged on update.
-        status: validatedData.status,
-        ...topicsUpdate,
-      },
-      include: {
-        consultantProfile: { select: planConsultantSelect },
-        consultations: true,
-        topics: true,
-        faqs: { orderBy: { order: "asc" } },
-      },
+    const consultationPlan = await prisma.$transaction(async (tx) => {
+      // Save only against the price and length this edit was validated on.
+      const { count } = await tx.consultationPlan.updateMany({
+        where: {
+          id: consultationPlanId,
+          price: existingPlan.price,
+          durationInHours: existingPlan.durationInHours,
+        },
+        data: { price: pricePaise, durationInHours },
+      });
+      if (count === 0) throw new StalePlanEditError();
+      return tx.consultationPlan.update({
+        where: { id: consultationPlanId },
+        data: {
+          title: validatedData.title,
+          description: validatedData.description,
+          durationInHours: validatedData.durationInHours,
+          price:
+            validatedData.price !== undefined
+              ? Math.round(validatedData.price)
+              : undefined,
+          priceCurrency: validatedData.priceCurrency,
+          language: validatedData.language,
+          level: validatedData.level,
+          prerequisites: validatedData.prerequisites,
+          materialProvided: validatedData.materialProvided,
+          learningOutcomes: validatedData.learningOutcomes,
+          subtitle: validatedData.subtitle,
+          targetAudience: validatedData.targetAudience,
+          whatsIncluded: validatedData.whatsIncluded,
+          faqs: faqReplaceNested(validatedData.faqs),
+          recordingEnabled: validatedData.recordingEnabled,
+          // #1527 Q4 — absent means PUBLISHED on create and unchanged on update.
+          status: validatedData.status,
+          ...topicsUpdate,
+        },
+        include: {
+          consultantProfile: { select: planConsultantSelect },
+          consultations: true,
+          topics: true,
+          faqs: { orderBy: { order: "asc" } },
+        },
+      });
     });
 
     return NextResponse.json(
@@ -193,7 +206,10 @@ export async function PUT(
       { status: 200 },
     );
   } catch (error) {
-    if (error instanceof PlanPriceBelowFloorError) {
+    if (
+      error instanceof PlanPriceBelowFloorError ||
+      error instanceof StalePlanEditError
+    ) {
       return NextResponse.json(
         { error: error.message, code: error.code },
         { status: error.httpStatus },

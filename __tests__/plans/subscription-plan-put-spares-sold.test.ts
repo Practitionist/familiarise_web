@@ -10,9 +10,11 @@
  */
 const order: string[] = [];
 const sold = { count: 3 };
+const guard = { count: 1 };
 const tx = {
   subscriptionContent: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   subscriptionPlan: {
+    updateMany: jest.fn(async () => ({ count: guard.count })),
     findUnique: jest.fn(async () => {
       order.push("read-plan");
       return {
@@ -114,6 +116,7 @@ beforeEach(() => {
   db.subscriptionPlan.findUnique.mockResolvedValue(monthPlan);
   db.subscription.count.mockResolvedValue(3);
   sold.count = 3;
+  guard.count = 1;
 });
 
 it("stamps sold rows (cadence, length, total, end) before the plan changes", async () => {
@@ -206,4 +209,12 @@ it("lets a full-form save that re-sends a short pack's stored price and terms th
     sessionDurationInHours: 1,
   });
   expect(res.status).toBe(200);
+});
+
+it("answers 409 when the price or terms changed after this edit read them", async () => {
+  guard.count = 0;
+  const res = await put({ price: 6_000_000 });
+  expect(res.status).toBe(409);
+  expect(await res.json()).toMatchObject({ code: "PLAN_CHANGED" });
+  expect(tx.subscriptionPlan.update).not.toHaveBeenCalled();
 });

@@ -379,7 +379,7 @@ PENDING (in hold) -> READY (hold expired) -> PAID (in payout batch)
 
 1. For each consultant with READY earnings:
    - Sum `consultantShare` amounts
-   - Check >= Rs 500 minimum (`MINIMUM_PAYOUT_AMOUNT`)
+   - Check >= Rs 250 minimum (`MINIMUM_PAYOUT_AMOUNT`)
    - Check verified default `PayoutAccount` exists
    - Create `Payout` record (auto-approve if < Rs 5000, else needs admin approval)
    - Link all READY `ConsultantEarnings` to the payout
