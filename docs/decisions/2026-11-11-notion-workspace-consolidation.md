@@ -37,7 +37,7 @@ The Archive section keeps no page copies, only a register of deletions. Retired 
 
 ### 5. Long-form playbook pages; databases last
 
-Added later on 2026-11-11 (owner decision). Notion pages are written as long-form playbooks: continuous chapters with worked examples, with alternatives and trajectories told in prose. Tables appear only as reference appendices at the end of a page. Decisions are told in a long-form Decision Journal page at the root, which is the primary record. The Decision Log and Assumptions & Experiments databases follow it as indexes, then the Archive register. In each section, a "Levers Explained" page narrates the levers, and the lever-register database takes the section's last number. The rules live in [the notion skill](../../.claude/skills/notion/SKILL.md). Repository pointers keep naming pages without numbers, so the renumbering changes no pointer.
+Added later on 2026-11-11 (owner decision). Notion pages are written as long-form playbooks: continuous chapters with worked examples, with alternatives and trajectories told in prose. Tables appear only as reference appendices at the end of a page. Decisions are told in a long-form Decision Journal page at the root, which is the primary record. The Decision Log and Assumptions & Experiments databases follow it as indexes, then the Archive register. The two sections that hold lever registers, Growth & Marketing and Finance and Pricing, each gain a "Levers Explained" page that narrates the levers, and each register database takes its section's last number. Other sections have no register. The rules live in [the notion skill](../../.claude/skills/notion/SKILL.md). Repository pointers keep naming pages without numbers, so the renumbering changes no pointer.
 
 ## Consequences
 

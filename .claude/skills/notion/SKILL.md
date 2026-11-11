@@ -53,7 +53,7 @@ Every page uses the full page width.
 ## 3. The lever registers
 
 - **They are the only home of tunable values:** fees, prices, discounts, referral settings, holds, vendor triggers, budgets, runway and the company levers.
-- **Each section has a long-form "Levers Explained" page** that tells every lever as a chapter (why this value, the min and max, a worked example, what would change it, the trajectory). The database is the compact index at the end of the section; the explained page is what the owner reads.
+- **Each of the two register sections (Growth & Marketing, Finance and Pricing) has a long-form "Levers Explained" page** that tells every lever as a chapter (why this value, the min and max, a worked example, what would change it, the trajectory). The database is the compact index at the end of the section; the explained page is what the owner reads.
 - **Pages explain the reasoning and link to register rows.** A number on a page must match its row exactly. When a value changes, change the row first, then the Levers Explained chapter and the pages that cite it.
 - **Columns (both databases):**
   - Lever, Code (`F<n>` finance, `G<n>` growth), Group, Status (Approved · Partly decided · Proposed · Superseded).
