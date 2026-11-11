@@ -43,7 +43,7 @@ A **parked** consultation: a paid booking whose released session couldn't go bac
 **Expect (verification SQL):**
 
 ```sql
-SELECT c.status FROM "Consultation" c JOIN "Appointment" a ON a."consultationId" = c.id WHERE a.id = :aid;   -- CANCELLED
+SELECT c."requestStatus" FROM "Consultation" c JOIN "Appointment" a ON a."consultationId" = c.id WHERE a.id = :aid;   -- CANCELLED
 SELECT "completionStatus", "deletedAt" FROM "AppointmentOccurrence" WHERE "appointmentId" = :aid;              -- released row closed
 SELECT "refundOwedKey", "refundOwedPaise", "refundOwedReason" FROM "Payment" WHERE "appointmentId" = :aid;    -- parked-consultation:<cid>:<pid>, full amount, then cleared
 SELECT "dedupeKey", "amountPaise", status FROM "Refund" r JOIN "Payment" p ON p.id = r."paymentId" WHERE p."appointmentId" = :aid;

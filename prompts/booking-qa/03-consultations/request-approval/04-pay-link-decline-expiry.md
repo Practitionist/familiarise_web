@@ -76,7 +76,7 @@ Outcome words matter here. Doctrine: an approved request nobody paid ends **EXPI
 **Expect (verification SQL):**
 
 ```sql
-SELECT c.id, c.status, c."pendingPaymentUrl" FROM "Consultation" c WHERE c.id = :cid;          -- EXPIRED
+SELECT c.id, c."requestStatus", c."pendingPaymentUrl" FROM "Consultation" c WHERE c.id = :cid;          -- EXPIRED
 SELECT id, "paymentStatus" FROM "Payment" WHERE "appointmentId" = :aid;                          -- EXPIRED (from PENDING only)
 SELECT "completionStatus", "deletedAt" FROM "AppointmentOccurrence" WHERE "appointmentId" = :aid; -- hold released
 SELECT kind, recipients, "createdAt" FROM "NotificationOutbox" WHERE "entityRef" LIKE '%' || :cid || '%'; -- exactly one lapse notice

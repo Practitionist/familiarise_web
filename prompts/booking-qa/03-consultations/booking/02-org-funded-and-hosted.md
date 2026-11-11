@@ -8,7 +8,7 @@ Read Wipro's funding setup before CO-12 and paste it in the report:
 
 ```sql
 SELECT o.id, o.name, o.status, o."canSponsor", o."canHost", b."fundingSource", b."walletBalance", b."creditLimit"
-FROM "Organization" o LEFT JOIN "BillingAccount" b ON b."organizationId" = o.id
+FROM "organizations" o LEFT JOIN "BillingAccount" b ON b."organizationId" = o.id
 WHERE o.name ILIKE '%wipro%' OR o.name ILIKE '%learnpro%';
 
 SELECT pa.id, pa.status, pa."userId", p.name, p.status AS program_status, p."coveredPlanTypes"

@@ -32,7 +32,7 @@ SELECT "refundOwedKey", "refundOwedPaise", "refundOwedReason", "refundOwedAt", "
 
 ```sql
 BEGIN;
-UPDATE "Consultation" SET status = 'CANCELLED', "cancelledAt" = now() WHERE id = (SELECT "consultationId" FROM "Appointment" WHERE id = :aid);
+UPDATE "Consultation" SET "requestStatus" = 'CANCELLED', "cancelledAt" = now() WHERE id = (SELECT "consultationId" FROM "Appointment" WHERE id = :aid);
 UPDATE "AppointmentOccurrence" SET "completionStatus" = 'CANCELLED', "deletedAt" = now() WHERE "appointmentId" = :aid;
 UPDATE "Payment" SET "refundOwedKey" = 'cancel:' || :aid || ':' || id, "refundOwedPaise" = amount,
   "refundOwedReason" = 'qa-MO-56 emulated crash after commit', "refundOwedAt" = now() - interval '20 minutes', "refundOwedAttempts" = 0

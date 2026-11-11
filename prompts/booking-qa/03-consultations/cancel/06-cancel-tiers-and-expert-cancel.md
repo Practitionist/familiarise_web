@@ -151,7 +151,7 @@ Strike query (run before and after each case):
 
 ```sql
 SELECT id, message, context->>'strike' AS cause, context->>'appointmentId' AS appt, "createdAt"
-FROM "SystemEvent"
+FROM "system_events"
 WHERE category = 'BOOKING' AND context ? 'strike' AND context->>'consultantProfileId' = :cid
 ORDER BY "createdAt" DESC;
 ```

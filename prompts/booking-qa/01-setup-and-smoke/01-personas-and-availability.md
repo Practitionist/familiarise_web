@@ -26,7 +26,7 @@ Conventions for the whole suite (from the old `wave0-shared-setup.md`, still val
    SELECT u.email, cp.id, cp."scheduleType", cp."bookingMode", cp."acceptingRequests", cp."maxOpenRequests",
           (SELECT count(*) FROM "AvailabilityWindowWeekly" w WHERE w."consultantProfileId" = cp.id) AS weekly_rows,
           (SELECT count(*) FROM "AvailabilityWindowCustom" c WHERE c."consultantProfileId" = cp.id) AS custom_rows
-   FROM "ConsultantProfile" cp JOIN "User" u ON u.id = cp."userId"
+   FROM "ConsultantProfile" cp JOIN "users" u ON u.id = cp."userId"
    WHERE u.email IN ('hannah.anderson@yahoo.com','grace.anderson@outlook.com','james.anderson@protonmail.com',
                      'ethan.anderson@gmail.com','aarav.anderson@gmail.com');
    ```

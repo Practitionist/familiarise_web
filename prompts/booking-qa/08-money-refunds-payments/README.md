@@ -20,8 +20,8 @@ Journeys that create the money are owned by 03–07 (for example CO-01 books, CO
 - **IL — an IIT Madras learner** (not in `_shared` personas; needed for the WALLET / CREDIT_POOL rail, MO-25). Find one, then sign in with the seed default password:
 
   ```sql
-  SELECT u.email, u.id, m.role, m.status FROM "Membership" m JOIN "User" u ON u.id = m."userId"
-  JOIN "Organization" o ON o.id = m."organizationId"
+  SELECT u.email, u.id, m.role, m.status FROM "Membership" m JOIN "users" u ON u.id = m."userId"
+  JOIN "organizations" o ON o.id = m."organizationId"
   WHERE o.name = 'Indian Institute of Technology Madras' AND m.role = 'LEARNER' AND m.status = 'ACTIVE' LIMIT 3;
   ```
 
@@ -48,7 +48,7 @@ SELECT "organizationId", "grossAmountPaise", "platformFeePaise", "orgSharePaise"
 SELECT "refundOwedKey", "refundOwedPaise", "refundOwedReason", "refundOwedAt", "refundOwedAttempts", "refundOwedNextAt", description FROM "Payment" WHERE id = :pid;
 
 -- MQ-5 holds on one payment's earnings
-SELECT h.reason, h."sourceRef", h."placedAt", h."releasedAt", h.note, e.status, e."preHoldStatus"
+SELECT h.reason, h."sourceRef", h."placedAt", h."releasedAt", h.note, e.status, e."preDisputeStatus"
 FROM "EarningsHold" h JOIN "ConsultantEarnings" e ON e.id = h."consultantEarningsId" WHERE e."paymentId" = :pid;
 ```
 

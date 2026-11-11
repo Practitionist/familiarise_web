@@ -12,7 +12,7 @@ SELECT u.email, u.id AS "userId", u.timezone, u.role,
        ce.id AS "consulteeProfileId", sp.id AS "staffProfileId",
        (SELECT json_agg(json_build_object('org', m."organizationId", 'role', m.role, 'status', m.status))
           FROM "Membership" m WHERE m."userId" = u.id) AS memberships
-FROM "User" u
+FROM "users" u
 LEFT JOIN "ConsultantProfile" cp ON cp."userId" = u.id
 LEFT JOIN "ConsulteeProfile" ce ON ce."userId" = u.id
 LEFT JOIN "StaffProfile" sp ON sp."userId" = u.id
@@ -43,7 +43,7 @@ FROM "ClassPlan" WHERE "consultantProfileId" = :cid AND "archivedAt" IS NULL;
 
 ```sql
 SELECT a.id, a."appointmentType", a."deletedAt",
-       c.status AS consult, s.status AS sub, w.status AS webinar, k.status AS class, t.status AS trial
+       c."requestStatus" AS consult, s."requestStatus" AS sub, w.status AS webinar, k.status AS class, t.status AS trial
 FROM "Appointment" a
 LEFT JOIN "Consultation" c ON c.id = a."consultationId"
 LEFT JOIN "Subscription" s ON s.id = a."subscriptionId"
@@ -57,7 +57,7 @@ SELECT id, ordinal, "startsAt", "endsAt", "isTentative", "completionStatus", "de
 FROM "AppointmentOccurrence" WHERE "appointmentId" = :aid ORDER BY ordinal, "startsAt";
 
 SELECT p.id, u.email, p.role, p.status, p."paymentId", p."sessionsPurchased", p."organizationId"
-FROM "AppointmentParticipant" p JOIN "User" u ON u.id = p."userId" WHERE p."appointmentId" = :aid;
+FROM "AppointmentParticipant" p JOIN "users" u ON u.id = p."userId" WHERE p."appointmentId" = :aid;
 
 SELECT entity, "fromStatus", "toStatus", reason, "actorUserId", "createdAt"
 FROM "BookingStatusHistory" WHERE "appointmentId" = :aid ORDER BY "createdAt";
@@ -105,7 +105,7 @@ WHERE a."consultantProfileId" = :cid
 ## R-06 Plan math for a subscription or class
 
 ```sql
-SELECT s.id, s.status, s."sessionsTotal", s."sessionsPerWeek", s."sessionMinutes", s."sessionsReturned",
+SELECT s.id, s."requestStatus", s."sessionsTotal", s."sessionsPerWeek", s."sessionMinutes", s."sessionsReturned",
        s."sessionsRefunded", s."schedulingPeriodStartsAt", s."schedulingPeriodEndsAt", s."planEndsAt",
        s."schedulingTimezone",
        (SELECT count(*) FROM "AppointmentOccurrence" o JOIN "Appointment" a ON a.id = o."appointmentId"
@@ -145,8 +145,8 @@ ORDER BY 5;
 ## R-08 Find your fixtures
 
 ```sql
-SELECT 'consultation' k, id, status::text, "requestNotes" FROM "Consultation" WHERE "requestNotes" LIKE 'qa-%'
-UNION ALL SELECT 'subscription', id, status::text, "requestNotes" FROM "Subscription" WHERE "requestNotes" LIKE 'qa-%'
+SELECT 'consultation' k, id, "requestStatus"::text, "requestNotes" FROM "Consultation" WHERE "requestNotes" LIKE 'qa-%'
+UNION ALL SELECT 'subscription', id, "requestStatus"::text, "requestNotes" FROM "Subscription" WHERE "requestNotes" LIKE 'qa-%'
 UNION ALL SELECT 'trial', id, status::text, notes FROM "Trial" WHERE notes LIKE 'qa-%'
 UNION ALL SELECT 'reschedule', id, status::text, reason FROM "RescheduleRequest" WHERE reason LIKE 'qa-%';
 ```

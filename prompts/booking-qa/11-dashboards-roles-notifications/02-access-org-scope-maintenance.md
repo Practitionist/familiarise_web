@@ -175,7 +175,7 @@ Salvaged from old `e2e-booking-agent-008` (the UI parts; 09 owns the money invar
 
 ## DB-30 — A suspended or deactivated org on its members' dashboards
 
-**Steps:** read-only unless an org in that state already exists in seed data (`SELECT id, name, status FROM "Organization" WHERE status <> 'ACTIVE';`). If one exists with a QA-safe member, sign in as that member and open the org dashboard and an old booking.
+**Steps:** read-only unless an org in that state already exists in seed data (`SELECT id, name, status FROM "organizations" WHERE status <> 'ACTIVE';`). If one exists with a QA-safe member, sign in as that member and open the org dashboard and an old booking.
 
 **Expect:** members of a DEACTIVATED org get 403 `ORG_DEACTIVATED` ("Organization has been deactivated") on scoped lists; their personal bookings still show on the consultee dashboard.
 
