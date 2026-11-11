@@ -108,7 +108,11 @@ jest.mock("../../lib/prisma", () => {
       findFirst: async () => null,
     },
     consultantProfile: { findMany: async () => [] },
-    class: { updateMany: async () => ({ count: 1 }) },
+    class: {
+      updateMany: async () => ({ count: 1 }),
+      // The free leave a make-up opens is read back after it is written.
+      findUnique: async () => ({ retimeBy: null }),
+    },
     appointmentParticipant: { findMany: async () => [{ userId: "u-1" }] },
     systemEvent: { findFirst: async () => db.flagged },
     user: { findMany: async () => [] },

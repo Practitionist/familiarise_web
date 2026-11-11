@@ -19,13 +19,21 @@ jest.mock("../../utils/appointmentlock", () => ({
   withEventCheckoutLock: jest.fn(),
   withAppointmentLock: jest.fn(),
 }));
+jest.mock("../../lib/booking/host-slot-batch", () => ({
+  acceptedCohostProfileIds: jest.fn(async () => []),
+  hostBatchEntries: jest.fn(() => []),
+  withHostSlotBatch: jest.fn((_entries: unknown, run: () => unknown) => run()),
+}));
 jest.mock("../../lib/novu/service", () => ({
   notifyAppointmentRescheduled: jest.fn(),
 }));
 
 import prisma from "@/lib/prisma";
 import { retimeClassSeries } from "@/lib/booking/class-retime";
-import { withEventCheckoutLock } from "@/utils/appointmentlock";
+import {
+  withAppointmentLock,
+  withEventCheckoutLock,
+} from "@/utils/appointmentlock";
 import type { HostedClass } from "@/lib/booking/class-sessions";
 
 const db = prisma as unknown as {
@@ -117,4 +125,52 @@ it("points at cancel + make-up when nothing is 24 hours away", async () => {
   await expect(
     retimeClassSeries({ hosted, starts: [onGrid(200)], actorUserId: "host" }),
   ).rejects.toMatchObject({ code: "RETIME_NOT_ALLOWED" });
+});
+
+it("refuses a move whose sessions changed after it read them, and writes nothing", async () => {
+  // Another move committed first: the same rows now sit at different times.
+  const tx = {
+    class: {
+      findUnique: jest.fn(async () => ({
+        status: "SCHEDULED",
+        schedulingTimezone: "Asia/Kolkata",
+      })),
+    },
+    appointmentOccurrence: {
+      findMany: jest.fn(async () => [
+        {
+          id: "occ-1",
+          startsAt: onGrid(96),
+          endsAt: new Date(onGrid(96).getTime() + HOUR),
+        },
+        {
+          id: "occ-2",
+          startsAt: onGrid(144),
+          endsAt: new Date(onGrid(144).getTime() + HOUR),
+        },
+      ]),
+      updateMany: jest.fn(),
+    },
+  };
+  (withEventCheckoutLock as jest.Mock).mockImplementation(
+    (_scope: unknown, run: () => unknown) => run(),
+  );
+  (withAppointmentLock as jest.Mock).mockImplementation(
+    (_id: unknown, run: () => unknown) => run(),
+  );
+  (prisma.$transaction as jest.Mock).mockImplementation(
+    (run: (t: unknown) => unknown) => run(tx),
+  );
+  await expect(
+    retimeClassSeries({
+      hosted,
+      starts: [onGrid(200), onGrid(300)],
+      actorUserId: "host",
+    }),
+  ).rejects.toMatchObject({
+    code: "RETIME_NOT_ALLOWED",
+    message:
+      "This class changed while you were moving it. Refresh and try again.",
+  });
+  expect(tx.appointmentOccurrence.updateMany).not.toHaveBeenCalled();
 });

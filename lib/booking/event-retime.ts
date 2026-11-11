@@ -207,8 +207,12 @@ export async function retimeWebinar(args: {
                   "This webinar changed while you were re-timing it. Refresh and try again.",
                 );
               }
-              const retimeBy = retimeLeaveUntil(now, startsAt);
-              await extendRetimeLeave(tx, "webinar", webinar.id, retimeBy);
+              const retimeBy = await extendRetimeLeave(
+                tx,
+                "webinar",
+                webinar.id,
+                retimeLeaveUntil(now, startsAt),
+              );
               await recomputeEarningsHold(tx, appointmentId);
               // The bells commit with the move; a crash after commit loses none.
               const groups = splitByClash(

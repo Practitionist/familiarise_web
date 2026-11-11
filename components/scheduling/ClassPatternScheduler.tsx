@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useNowTick } from "@/hooks/use-now-tick";
+import { createSubmissionKeys } from "@/lib/api/submission-key";
+import { OUTCOME_UNKNOWN_MESSAGE } from "@/lib/fetch-helpers";
 import {
   PATTERN_PROBLEM_COPY,
   patternProblem,
@@ -109,6 +111,7 @@ export function ClassPatternScheduler({
     defaultRows(sessionsPerWeek, phase),
   );
   const [saving, setSaving] = useState(false);
+  const [keyFor] = useState(createSubmissionKeys);
 
   const pattern = { startDate, rows, zone };
   const problem = patternProblem(pattern, MAX_CLASS_SESSIONS_PER_DAY);
@@ -161,12 +164,17 @@ export function ClassPatternScheduler({
 
   const save = async () => {
     setSaving(true);
+    // The same times re-sent reuse their key, so a retry replays the first answer.
+    const idempotencyKey = keyFor({ mode, starts });
     try {
       const response =
         mode === "retime" && appointmentId
           ? await fetch(`/api/appointments/${appointmentId}/retime-series`, {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: {
+                "Content-Type": "application/json",
+                "Idempotency-Key": idempotencyKey,
+              },
               body: JSON.stringify({
                 starts: starts.map((start) => start.toISOString()),
               }),
@@ -175,7 +183,7 @@ export function ClassPatternScheduler({
               method: "PATCH",
               headers: {
                 "Content-Type": "application/json",
-                "Idempotency-Key": crypto.randomUUID(),
+                "Idempotency-Key": idempotencyKey,
               },
               body: JSON.stringify({
                 isAuto: false,
@@ -205,6 +213,13 @@ export function ClassPatternScheduler({
             : `${starts.length} sessions scheduled`,
       });
       onSaved();
+    } catch {
+      // The request never got an answer, so the outcome is unknown.
+      toast({
+        title: "Couldn't reach the server",
+        description: OUTCOME_UNKNOWN_MESSAGE,
+        variant: "destructive",
+      });
     } finally {
       setSaving(false);
     }

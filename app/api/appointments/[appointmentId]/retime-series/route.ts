@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requireApiAuth, resolveEventHostActor } from "@/lib/auth-helpers";
@@ -13,6 +13,13 @@ import {
   retimeClassSeries,
 } from "@/lib/booking/class-retime";
 import { MAX_ALLOCATION_SLOTS } from "@/schemas/slotAllocation/validationSchemas";
+import { withIdempotency } from "@/lib/api/idempotency";
+import {
+  AppointmentBusyError,
+  BookingLockUnavailableError,
+  EventCheckoutBusyError,
+  EventCheckoutLockUnavailableError,
+} from "@/utils/appointmentlock";
 
 const BodySchema = z.object({
   starts: z.array(z.string().datetime()).min(1).max(MAX_ALLOCATION_SLOTS),
@@ -64,19 +71,41 @@ export async function GET(_request: Request, { params }: { params: Params }) {
 /**
  * POST { starts } — move every class session at least 24 hours away to the
  * given starts, in order. Attendees are told and may leave with a full
- * refund until `retimeBy`; nobody's exit-right count changes.
+ * refund until `retimeBy`; nobody's exit-right count changes. A repeated
+ * `Idempotency-Key` replays the first answer instead of moving twice.
  */
-export async function POST(request: Request, { params }: { params: Params }) {
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Params },
+) {
   const { appointmentId } = await params;
   const gate = await hostedOrRefusal(appointmentId);
   if ("refusal" in gate) return gate.refusal;
+  return await withIdempotency(
+    request,
+    {
+      scope: `class.retime-series:${appointmentId}`,
+      userId: gate.session.user.id,
+    },
+    (body) => moveSeries(appointmentId, gate, body),
+  );
+}
+
+async function moveSeries(
+  appointmentId: string,
+  gate: Exclude<
+    Awaited<ReturnType<typeof hostedOrRefusal>>,
+    { refusal: unknown }
+  >,
+  rawBody: unknown,
+): Promise<NextResponse> {
   const limited = await applyRateLimit(
     eventMutationLimiter,
     gate.session.user.id,
   );
   if (limited) return limited;
 
-  const body = BodySchema.safeParse(await request.json().catch(() => null));
+  const body = BodySchema.safeParse(rawBody);
   if (!body.success) {
     return NextResponse.json(
       { error: "Send the new start times as ISO 8601 strings." },
@@ -92,6 +121,17 @@ export async function POST(request: Request, { params }: { params: Params }) {
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof BookingRuleError) return bookingRuleResponse(error);
+    if (
+      error instanceof AppointmentBusyError ||
+      error instanceof BookingLockUnavailableError ||
+      error instanceof EventCheckoutBusyError ||
+      error instanceof EventCheckoutLockUnavailableError
+    ) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     if (error instanceof ConsultantScheduleConflictError) {
       return NextResponse.json(
         { error: error.message, code: "SCHEDULE_CONFLICT" },
