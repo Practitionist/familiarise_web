@@ -336,18 +336,18 @@ Redundant pairs worth merging: `alert-orphaned-payments` with `reconcile-orphane
 
 Checked by grep before being called missing:
 
-| Missing                                                               | Why it matters                                                       | Priority                  |
-| --------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------- |
-| Log archive to Mumbai (180 days, and a year for DPDP security logs)   | CERT-In 2022 directions require 180 days; Netlify keeps about 7      | P1 before launch          |
-| One breach runbook with a 6-hour (CERT-In) and a 72-hour (DPDP) clock | Two regimes, one incident                                            | P1 before launch          |
-| DPDP grievance and erasure-request ageing alert                       | Only the breach deadline job exists                                  | P1                        |
-| Webhook-absence heartbeat per provider                                | Razorpay disables a webhook after 24 h of failures and nothing pages | P1                        |
-| Leftover-work alarm for windowed jobs (J8)                            | Fixed windows silently cap throughput                                | P2                        |
-| Backup restore drill (scheduled, evidenced)                           | Free-tier Supabase has no backups; a restore was never rehearsed     | P1 (with the Pro upgrade) |
-| GST turnover monitor (registration and e-invoicing thresholds)        | Statutory thresholds                                                 | P2                        |
-| Database bloat and vacuum check                                       | Long-lived ledger and event tables                                   | P3                        |
-| Secret and API key expiry tracking                                    | Rotations are manual                                                 | P3                        |
-| Organisation domain DNS re-verification                               | Verified domains can lapse                                           | P3                        |
+| Missing                                                                                      | Why it matters                                                       | Priority                  |
+| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------- |
+| Log archive to Mumbai (180 days, and a year for DPDP security logs)                          | CERT-In 2022 directions require 180 days; Netlify keeps about 7      | P1 before launch          |
+| One breach runbook with a 6-hour (CERT-In) and a 72-hour (DPDP) clock                        | Two regimes, one incident                                            | P1 before launch          |
+| DPDP grievance and erasure-request ageing alert                                              | Only the breach deadline job exists                                  | P1                        |
+| Webhook-absence heartbeat per provider                                                       | Razorpay disables a webhook after 24 h of failures and nothing pages | P1                        |
+| Leftover-work alarm for windowed jobs (J8)                                                   | Fixed windows silently cap throughput                                | P2                        |
+| Backup restore drill (scheduled, evidenced)                                                  | Free-tier Supabase has no backups; a restore was never rehearsed     | P1 (with the Pro upgrade) |
+| GST e-invoicing turnover threshold (the registration alarm already exists in the ops digest) | Statutory threshold                                                  | P2                        |
+| Database bloat and vacuum check                                                              | Long-lived ledger and event tables                                   | P3                        |
+| Secret and API key expiry tracking                                                           | Rotations are manual                                                 | P3                        |
+| Organisation domain DNS re-verification                                                      | Verified domains can lapse                                           | P3                        |
 
 ### 5.6 Environment variables
 
@@ -449,6 +449,8 @@ Each row says who acts. "PR" items are code; "Owner" items are console or vendor
 
 ### P1 — before launch
 
+The subsystem sweep on [page 09](./09-subsystem-obligations-sweep-2026-11.md) adds 18 launch blockers (its section 3) and 21 owner decisions (its section 6); they extend this list.
+
 | #     | Item                                                                                                                                           | Who               |
 | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
 | P1-1  | Money-job PR: J1–J3 (orphan alert and reconciler starvation), J7 (subscription invoicing bound + CAS + unique per cycle), J10 (per-row Sentry) | PR (money)        |
@@ -487,7 +489,7 @@ Each row says who acts. "PR" items are code; "Owner" items are console or vendor
 | P3-2 | One structured logger with a request id; one Sentry reporting door (D9)                                                                                              | PR         |
 | P3-3 | Portability made real or downgraded: standalone output, complete build args, `PG_POOL_MAX` required everywhere, per-host trusted hops, a failback rehearsal (D4, D5) | PR + owner |
 | P3-4 | Merge the redundant job pairs (§5.2)                                                                                                                                 | PR         |
-| P3-5 | Bloat, secret-expiry and domain re-verification checks; GST turnover monitor                                                                                         | PR         |
+| P3-5 | Bloat, secret-expiry and domain re-verification checks; GST e-invoicing turnover threshold                                                                           | PR         |
 | P3-6 | Move to Vercel `bom1` when the hosting trigger fires                                                                                                                 | Owner + PR |
 
 ### Landing order with the open pull requests
