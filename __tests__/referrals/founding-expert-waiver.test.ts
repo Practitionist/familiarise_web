@@ -130,6 +130,12 @@ describe("POST /api/admin/referrals/founding-waivers", () => {
     const res = await post(validBody);
     expect(res.status).toBe(201);
     expect(mockTx.$executeRaw).toHaveBeenCalledTimes(1);
+    const [lock] = mockTx.$executeRaw.mock.invocationCallOrder;
+    const [counted] = mockTx.consultantFeeWaiver.count.mock.invocationCallOrder;
+    const [created] =
+      mockTx.consultantFeeWaiver.create.mock.invocationCallOrder;
+    expect(lock).toBeLessThan(counted);
+    expect(counted).toBeLessThan(created);
     const { data } = mockTx.consultantFeeWaiver.create.mock.calls[0][0];
     expect(data).toMatchObject({
       consultantProfileId: "cp_1",
@@ -189,6 +195,7 @@ describe("POST /api/admin/referrals/founding-waivers", () => {
 describe("founding waiver consumption", () => {
   type Row = {
     id: string;
+    consultantProfileId: string;
     reason: string;
     sessionsRemaining: number;
     expiresAt: Date;
@@ -196,20 +203,41 @@ describe("founding waiver consumption", () => {
   const NOW = new Date("2026-11-11T00:00:00Z");
   const day = (n: number) => new Date(NOW.getTime() + n * 86_400_000);
 
-  /** Applies the live-waiver filter and expiry order the way Postgres would. */
+  type Where = {
+    id?: string;
+    consultantProfileId?: string;
+    sessionsRemaining?: { gt: number };
+    expiresAt?: { gt: Date };
+  };
+  /** Only the predicates the query names, so a dropped filter lets the wrong row through. */
+  const matches = (r: Row, w: Where) =>
+    (w.id === undefined || r.id === w.id) &&
+    (w.consultantProfileId === undefined ||
+      r.consultantProfileId === w.consultantProfileId) &&
+    (w.sessionsRemaining === undefined ||
+      r.sessionsRemaining > w.sessionsRemaining.gt) &&
+    (w.expiresAt === undefined || r.expiresAt > w.expiresAt.gt);
+
+  /** Interprets the waiver query's where and orderBy the way Postgres would. */
   const txWith = (rows: Row[], payment: Record<string, unknown>) => {
-    const live = (r: Row) => r.sessionsRemaining > 0 && r.expiresAt > NOW;
-    const updateMany = jest.fn(async ({ where }: { where: { id: string } }) => {
-      const row = rows.find((r) => r.id === where.id && live(r));
-      if (row) row.sessionsRemaining -= 1;
-      return { count: row ? 1 : 0 };
+    const updateMany = jest.fn(async ({ where }: { where: Where }) => {
+      const hits = rows.filter((r) => matches(r, where));
+      for (const r of hits) r.sessionsRemaining -= 1;
+      return { count: hits.length };
     });
-    const findFirst = jest.fn(async () => {
-      const sorted = rows
-        .filter(live)
-        .sort((a, b) => a.expiresAt.getTime() - b.expiresAt.getTime());
-      return sorted[0] ? { id: sorted[0].id } : null;
-    });
+    const findFirst = jest.fn(
+      async (q: { where: Where; orderBy?: { expiresAt?: "asc" | "desc" } }) => {
+        const hits = rows.filter((r) => matches(r, q.where));
+        const dir = q.orderBy?.expiresAt;
+        if (dir) {
+          const sign = dir === "asc" ? 1 : -1;
+          hits.sort(
+            (a, b) => sign * (a.expiresAt.getTime() - b.expiresAt.getTime()),
+          );
+        }
+        return hits[0] ? { id: hits[0].id } : null;
+      },
+    );
     const db = {
       consultantFeeWaiver: { findFirst, updateMany },
       payment: {
@@ -230,31 +258,46 @@ describe("founding waiver consumption", () => {
     return { tx: db as unknown as Tx, findFirst, updateMany };
   };
 
-  it("spends the earliest-expiring waiver first, founding or referral", async () => {
+  it("spends this expert's live waiver that expires first, founding or referral", async () => {
+    const waiver = (
+      id: string,
+      consultantProfileId: string,
+      sessionsRemaining: number,
+      expiresInDays: number,
+    ): Row => ({
+      id,
+      consultantProfileId,
+      reason: id === "w_founding" ? "FOUNDING_EXPERT" : "REFERRED_EXPERT",
+      sessionsRemaining,
+      expiresAt: day(expiresInDays),
+    });
+    // Each decoy wins only if one predicate or the expiry order is dropped.
     const rows: Row[] = [
-      {
-        id: "w_ref",
-        reason: "REFERRED_EXPERT",
-        sessionsRemaining: 3,
-        expiresAt: day(60),
-      },
-      {
-        id: "w_founding",
-        reason: "FOUNDING_EXPERT",
-        sessionsRemaining: 1,
-        expiresAt: day(30),
-      },
+      waiver("w_other_expert", "cp_2", 3, 10),
+      waiver("w_expired", "cp_1", 5, -1),
+      waiver("w_exhausted", "cp_1", 0, 5),
+      waiver("w_ref", "cp_1", 3, 60),
+      waiver("w_founding", "cp_1", 1, 30),
     ];
     const { tx } = txWith(rows, {});
     expect(await consumeFeeWaiver(tx, "cp_1", "pay_1", NOW)).toBe(true);
     expect(await consumeFeeWaiver(tx, "cp_1", "pay_2", NOW)).toBe(true);
-    expect(rows.map((r) => r.sessionsRemaining)).toEqual([2, 0]);
+    expect(
+      Object.fromEntries(rows.map((r) => [r.id, r.sessionsRemaining])),
+    ).toEqual({
+      w_other_expert: 3,
+      w_expired: 5,
+      w_exhausted: 0,
+      w_ref: 2,
+      w_founding: 0,
+    });
   });
 
   it("never spends a founding waiver on an order that carries promo", async () => {
     const rows: Row[] = [
       {
         id: "w_founding",
+        consultantProfileId: "cp_1",
         reason: "FOUNDING_EXPERT",
         sessionsRemaining: 3,
         expiresAt: day(30),
@@ -269,6 +312,7 @@ describe("founding waiver consumption", () => {
     const rows: Row[] = [
       {
         id: "w_founding",
+        consultantProfileId: "cp_1",
         reason: "FOUNDING_EXPERT",
         sessionsRemaining: 3,
         expiresAt: day(30),
