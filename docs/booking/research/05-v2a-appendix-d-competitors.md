@@ -11,7 +11,7 @@ last-reviewed: 2026-11-03
 > **Status:** Research snapshot of dev @ 39f98669f on 2026-11-03; findings fixed in the booking v2 correctness PR are marked in the [decision record](../../decisions/2026-11-03-booking-v2-direction.md). Appendix D of the [V2A review](./01-v2a-booking-product-and-system-review.md).
 
 Repo: `familiarise_web` @ `dev` 39f98669f. Read-only. Repo claims carry `path:line` and are marked **VERIFIED** (I read the code) or **SUSPECTED**.
-Only the competitor patterns that shaped the design are kept below, each with the vendor help centre it came from. The wider competitor survey, the per-vendor teardowns and the comparison table are kept in Notion (Familiarise / Strategy and Competition). Treat the cited claims as **medium confidence**: help-centre wording changes often, and Preply's rollover rules came back inconsistent (noted where it matters).
+Only the competitor patterns that shaped the design are kept below, each with the vendor help centre it came from. The wider competitor survey, the per-vendor teardowns and the comparison table are kept in Notion (Familiarise / Strategy and Competition / Competitor Register). Treat the cited claims as **medium confidence**: help-centre wording changes often, and Preply's rollover rules came back inconsistent (noted where it matters).
 
 ---
 

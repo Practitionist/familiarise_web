@@ -91,7 +91,7 @@ We have 2-3 engineers. A monolith built on a productive full-stack framework (Ne
 
 ### Speed to market > theoretical scale
 
-Products in this space rarely start on a "scalable enterprise stack." They start on what ships fastest, and by the time scale is a problem they have revenue to fund engineering solutions. That is the playbook here too. Competitive positioning: kept in Notion (Familiarise / Strategy and Competition).
+Products in this space rarely start on a "scalable enterprise stack." They start on what ships fastest, and by the time scale is a problem they have revenue to fund engineering solutions. That is the playbook here too. Competitive positioning: kept in Notion (Familiarise / Strategy and Competition / Market, Positioning & Initial Wedge).
 
 ### The alternative would have looked like this
 
@@ -431,7 +431,7 @@ Companies operating at significant scale in India, and what stacks they used:
 | **Postman**    | Node.js                | Node.js + Electron + cloud services | 25M+ users                    | One of India's most valuable startups, built on Node.js                                                                   |
 | **Unacademy**  | Python/Django          | Gradually evolved                   | Millions of learners          | EdTech at India scale, didn't start with microservices                                                                    |
 
-Competitive positioning: kept in Notion (Familiarise / Strategy and Competition).
+Competitive positioning: kept in Notion (Familiarise / Strategy and Competition / Market, Positioning & Initial Wedge).
 
 **Common pattern:** Every single one started with the simplest stack that shipped product. They evolved their architecture in response to measured bottlenecks, funded by the revenue their working product generated. None of them sat at the whiteboard designing a microservices architecture before they had users.
 
@@ -494,4 +494,4 @@ The platform runs in production on **Netlify Pro** (with Netlify Edge Functions,
 ## Deprecated & Superseded Approaches
 
 - **A multi-gateway payments layer.** Earlier versions of this page described Stripe next to Razorpay and "4 payment gateways". Stripe was removed from the code on 2026-10-04 and the other labels are schema-only; see [the gateway decision](../decisions/2026-11-09-payment-gateways-one-rail.md).
-- **A competitor stack comparison.** An earlier edition compared our stack with a named competitor's. That positioning is not engineering rationale and now lives in Notion (Familiarise / Strategy and Competition).
+- **A competitor stack comparison.** An earlier edition compared our stack with a named competitor's. That positioning is not engineering rationale and now lives in Notion (Familiarise / Strategy and Competition / Market, Positioning & Initial Wedge).

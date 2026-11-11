@@ -388,7 +388,7 @@ Stream waives the Chat subscription while all **three** conditions hold **simult
 | Total funding raised | **< $100,000**              |
 | Monthly revenue      | **< $10,000** (~₹9.07 lakh) |
 
-Must be explicitly applied for in the Stream dashboard. Availability is limited and subject to re-qualification. Whether Familiarise meets the conditions today: value kept in Notion (Familiarise / Finance and Pricing).
+Must be explicitly applied for in the Stream dashboard. Availability is limited and subject to re-qualification. Whether Familiarise meets the conditions today: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend).
 
 **Maker Chat is a modified Start Plan:** MAU capped at **2,000** (not 10K) with **hard limits**: no overage billing, and the service pauses at the ceiling.
 
@@ -398,7 +398,7 @@ Must be explicitly applied for in the Stream dashboard. Availability is limited 
 
 ## 8. Video cost at the design limits
 
-Familiarise's own monthly video cost projections at expected booking volumes: value kept in Notion (Familiarise / Finance and Pricing). The matrices in section 1.3 give the public arithmetic for any session size and count.
+Familiarise's own monthly video cost projections at expected booking volumes: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). The matrices in section 1.3 give the public arithmetic for any session size and count.
 
 ### 8.1 The 200-participant cap
 
@@ -412,7 +412,7 @@ Staff can raise call video, screen share and recording quality on the back-offic
 
 ## 9. The Stream.io Cost Cliff
 
-Stream is free on the Maker Account and then steps up to the Chat plan price in section 5. The chosen tier, the projected rupee cost at each step and the planning rules: value kept in Notion (Familiarise / Finance and Pricing). The public price steps are the plan tables in section 5.1.
+Stream is free on the Maker Account and then steps up to the Chat plan price in section 5. The chosen tier, the projected rupee cost at each step and the planning rules: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). The public price steps are the plan tables in section 5.1.
 
 ---
 
