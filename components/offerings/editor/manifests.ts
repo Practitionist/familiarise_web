@@ -338,7 +338,8 @@ const trialSection: SectionSpec = {
       name: "trialEnabled",
       kind: "switch",
       label: "Offer a trial session",
-      description: "Trial requests arrive in Requests, under Trials.",
+      description:
+        "Learners pick a time from your open hours; the trial then shows in Appointments.",
       span: 6,
     },
     {
