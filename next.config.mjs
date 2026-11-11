@@ -378,10 +378,11 @@ const nextConfig = {
       // turns them on and never deletes them; nothing reads them at runtime
       // (no --enable-source-maps). They stay in .next/server for the upload.
       ".next/server/**/*.map",
-      // #1527 — /_next/image goes to the Netlify Image CDN, so sharp (only
-      // Next's optimizer imports it) never runs in the function.
-      "node_modules/sharp/**",
-      "node_modules/@img/**",
+      // Netlify and Vercel serve /_next/image from their image CDN, so sharp
+      // (only Next's optimizer imports it) never runs there; other hosts keep it.
+      ...(process.env.NETLIFY === "true" || process.env.VERCEL === "1"
+        ? ["node_modules/sharp/**", "node_modules/@img/**"]
+        : []),
     ],
   },
 
