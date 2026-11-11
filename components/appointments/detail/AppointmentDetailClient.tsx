@@ -17,6 +17,7 @@ import {
   ChevronDown,
   CreditCard,
   LifeBuoy,
+  Video,
   MessageSquare,
   Receipt,
   Star,
@@ -79,7 +80,9 @@ import {
   seatPaymentsByUser,
   summarizeSeatPayments,
 } from "@/lib/appointments/seat-payments";
+import { useNowTick } from "@/hooks/use-now-tick";
 import {
+  CONSULTEE_JOIN_WINDOW_MS,
   appointmentStatusChip,
   getOccurrenceVMJoinState,
   isDeadOccurrence,
@@ -338,6 +341,7 @@ export function AppointmentDetailClient({
   const sessionFeedback = useSessionFeedback(appointmentId);
   useSetBreadcrumbLabel(mapped?.vm.title);
   const viewerZone = useProvidedZone();
+  const now = useNowTick();
   const refreshDetail = () => {
     void queryClient.invalidateQueries({
       queryKey: ["appointment-detail", appointmentId],
@@ -658,8 +662,26 @@ export function AppointmentDetailClient({
       formatInViewerZone(vm.nextAt, viewerZone, "xxx")
       ? `${formatInViewerZone(vm.nextAt, counterpartZone, "EEE h:mm a")} for ${vm.counterpart.name.split(" ")[0]} (${zoneLabel(vm.nextAt, counterpartZone)})`
       : null;
-  const heroCaption =
-    vm.bucket === "past"
+  // The next session's Join lives in the Next up panel the whole time: live
+  // once the join window opens, and until then a disabled button that says
+  // when it opens, so nobody hunts for it at the last minute.
+  const joinWindow = joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
+  const joinOpensAt = anchorSession
+    ? new Date(anchorSession.startsAt.getTime() - joinWindow)
+    : null;
+  const canJoinNow = action.kind === "join";
+  const joinNotYet =
+    !canJoinNow &&
+    !!joinOpensAt &&
+    !anchorSession?.isTentative &&
+    bookingState.state === "CONFIRMED" &&
+    vm.bucket !== "past" &&
+    vm.bucket !== "cancelled" &&
+    now.getTime() < joinOpensAt.getTime();
+
+  const heroCaption = canJoinNow
+    ? "Your session is open"
+    : vm.bucket === "past"
       ? "Last session"
       : isGroup || (vm.group?.total ?? 0) > 1
         ? "Next session"
@@ -1176,15 +1198,37 @@ export function AppointmentDetailClient({
                   }
                 />
               )}
+              {canJoinNow ? (
+                <RowPrimaryAction action={action} size="default" />
+              ) : joinNotYet && joinOpensAt ? (
+                <div className="flex flex-col items-end gap-1">
+                  <Button
+                    size="default"
+                    disabled
+                    aria-describedby="join-opens-at"
+                  >
+                    <Video className="mr-1.5 h-4 w-4" />
+                    Join
+                  </Button>
+                  <span
+                    id="join-opens-at"
+                    className="text-[11px] text-muted-foreground"
+                  >
+                    Opens at {format(joinOpensAt, "h:mm a")}
+                  </span>
+                </div>
+              ) : null}
             </div>
           )}
 
           <div className="mt-5 flex flex-wrap items-center gap-2">
             {/* The needs-you callout owns Pay/Join/Approve; this row keeps
                 only what it does not (e.g. Set schedule). */}
-            {action.kind !== "view" && nextAction.kind === "NONE" && (
-              <RowPrimaryAction action={action} size="default" />
-            )}
+            {action.kind !== "view" &&
+              action.kind !== "join" &&
+              nextAction.kind === "NONE" && (
+                <RowPrimaryAction action={action} size="default" />
+              )}
             {/* With the Sessions card folded away, the one session's rating
                 takes the primary slot, under the session row's gates. */}
             {soleSession &&
@@ -1253,7 +1297,9 @@ export function AppointmentDetailClient({
             }
             onHelp={() => openHelp()}
           >
-            {nextAction.kind === "JOIN" && action.kind === "join" ? (
+            {/* The Next up panel carries Join; without a next session time
+                the callout keeps it. */}
+            {nextAction.kind === "JOIN" && canJoinNow && !vm.nextAt ? (
               <RowPrimaryAction action={action} size="default" />
             ) : nextAction.kind === "RATE" && rateableSole ? (
               <SoleSessionRating
