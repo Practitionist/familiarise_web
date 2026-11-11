@@ -82,7 +82,11 @@ import {
   priorReschedules as priorRescheduleCount,
   trialCapReached,
 } from "@/lib/booking/reschedule-caps";
-import { confirmTrialProposal } from "@/lib/booking/trial-reschedule";
+import {
+  confirmTrialProposal,
+  proposedTrialWindow,
+  type TrialConfirmOutcome,
+} from "@/lib/booking/trial-reschedule";
 import type { AppointmentType } from "@/lib/payments/payouts/constants";
 import { releasedSessionsOf } from "@/lib/booking/released-sessions";
 import {
@@ -109,6 +113,18 @@ function durationWords(minutes: number): string {
  * back-office door, who is neither party and therefore never auto-confirms on
  * someone else's behalf.
  */
+/** A trial moves as one window, so a taken refusal names that window's start. */
+function trialTakenStarts(
+  outcome: TrialConfirmOutcome,
+  proposedSlots: { startsAt: Date; endsAt: Date }[] | undefined,
+): string[] {
+  if (!outcome.confirmed && outcome.takenSlotStarts?.length) {
+    return outcome.takenSlotStarts;
+  }
+  const window = proposedTrialWindow(proposedSlots ?? []);
+  return window ? [window.startsAt.toISOString()] : [];
+}
+
 function roleOf(
   isConsultee: boolean,
   isConsultant: boolean,
@@ -399,16 +415,24 @@ async function requestReschedule(
                 consultantProfileId === classConsultantId) ||
               isHostOrgOperator;
           } else if (appointment.trial) {
+            // Only the trial's own two parties move it, as only they can
+            // answer the move or cancel the trial.
             const isConsultant =
-              (Boolean(consultantProfileId) &&
-                consultantProfileId ===
-                  appointment.trial.consultantProfileId) ||
-              isHostOrgOperator;
+              Boolean(consultantProfileId) &&
+              consultantProfileId === appointment.trial.consultantProfileId;
             const isConsultee =
               Boolean(consulteeProfileId) &&
               consulteeProfileId === appointment.trial.consulteeProfileId;
             isParticipant = isConsultant || isConsultee;
             initiatorRole = roleOf(isConsultee, isConsultant);
+            if (!initiatorRole) {
+              throw Object.assign(
+                new Error(
+                  "Only the trial's expert or learner can move it. Cancel it from the back office instead.",
+                ),
+                { httpStatus: 403, code: "TRIAL_PARTY_ONLY" },
+              );
+            }
           }
 
           const isPrivilegedUser = isPrivileged(session.user.role);
@@ -487,17 +511,9 @@ async function requestReschedule(
             );
           }
 
-          // A trial has no allocator to place it later, so only a party moves
-          // it and always to a named window; the confirm checks the length.
+          // A trial has no allocator to place it later, so it always moves to
+          // a named window; the confirm checks the length.
           const isTrial = derivedType === "TRIAL";
-          if (isTrial && !initiatorRole) {
-            throw Object.assign(
-              new Error(
-                "Only the trial's expert or learner can move it. Cancel it from the back office instead.",
-              ),
-              { httpStatus: 403, code: "TRIAL_PARTY_ONLY" },
-            );
-          }
           if (isTrial && !proposedSlots?.length) {
             throw Object.assign(new Error("Pick the new time for the trial."), {
               httpStatus: 400,
@@ -616,24 +632,23 @@ async function requestReschedule(
               { httpStatus: 409, code: "NOT_RESCHEDULABLE" },
             );
           }
-          // An approved request waiting on its pay link moves only once it is
-          // paid or the link is gone, so no capture lands on a moved booking.
-          if (parentStatus === "APPROVED_PENDING_PAYMENT") {
-            const livePayLinks = await tx.payment.count({
-              where: {
-                appointmentId,
-                paymentStatus: "PENDING",
-                deletedAt: null,
-              },
-            });
-            if (livePayLinks > 0) {
-              throw Object.assign(
-                new Error(
-                  "This booking is waiting for payment. Pay or cancel it first, then reschedule.",
-                ),
-                { httpStatus: 409, code: "PAY_LINK_LIVE" },
-              );
-            }
+          // A booking holding its time on a live, unexpired payment moves only
+          // once it is paid or cancelled, so no capture lands on a moved booking.
+          const livePayLinks = await tx.payment.count({
+            where: {
+              appointmentId,
+              paymentStatus: "PENDING",
+              deletedAt: null,
+              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+            },
+          });
+          if (livePayLinks > 0) {
+            throw Object.assign(
+              new Error(
+                "This booking is still waiting for payment. Pay for it or cancel it first, then reschedule.",
+              ),
+              { httpStatus: 409, code: "PAY_LINK_LIVE" },
+            );
           }
 
           if (isTrial && initiatorRole && !isPrivilegedUser) {
@@ -1003,8 +1018,7 @@ async function requestReschedule(
                   error:
                     "That time was just taken. Your trial keeps its original time — pick another time.",
                   code: "TIMES_TAKEN",
-                  takenSlotStarts:
-                    (!outcome.confirmed && outcome.takenSlotStarts) || [],
+                  takenSlotStarts: trialTakenStarts(outcome, proposedSlots),
                 }
               : {
                   error:

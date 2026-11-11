@@ -44,6 +44,11 @@ const refundCancelledTrial = jest.fn(
 const transitionTrial = jest.fn(async () => {
   calls.push("cancel");
 });
+const expirePendingPaymentsInTx = jest.fn(async () => {
+  calls.push("expire");
+  return { expired: 0, gatewayCancels: [] };
+});
+const cancelGatewayOrders = jest.fn(async () => undefined);
 
 jest.mock("../../lib/auth-helpers", () => ({
   requireApiAuth: async () => ({ session: { user: state.session } }),
@@ -76,6 +81,11 @@ jest.mock("../../lib/booking/reschedule-decline", () => ({
     calls.push("decline-reschedules");
     return 0;
   }),
+}));
+jest.mock("../../lib/booking/pending-payment-expiry", () => ({
+  expirePendingPaymentsInTx: (...a: unknown[]) =>
+    expirePendingPaymentsInTx(...(a as [])),
+  cancelGatewayOrders: (...a: unknown[]) => cancelGatewayOrders(...(a as [])),
 }));
 jest.mock("../../lib/booking/expert-reliability", () => ({
   recordExpertStrike: (...a: unknown[]) => recordExpertStrike(...(a as [])),
@@ -220,6 +230,7 @@ describe("the expert cancels a scheduled trial", () => {
     });
     // One transaction: status, strike, reschedules, tombstone, marker.
     expect(calls).toEqual([
+      "expire",
       "cancel",
       "strike",
       "decline-reschedules",
@@ -266,6 +277,29 @@ describe("the expert cancels a scheduled trial", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("SESSION_IN_PROGRESS");
     expect(transitionTrial).not.toHaveBeenCalled();
+  });
+});
+
+describe("cancelling a held trial", () => {
+  it("expires its pending payment on the cancel transaction, before the trial moves", async () => {
+    state.trialStatus = "AWAITING_PAYMENT";
+    state.paid = false;
+    const cancels = [{ paymentIntent: "order_9", gateway: "RAZORPAY" }];
+    expirePendingPaymentsInTx.mockImplementationOnce(async () => {
+      calls.push("expire");
+      return { expired: 1, gatewayCancels: cancels as never[] };
+    });
+    const res = await del();
+    expect(res.status).toBe(200);
+    const [expireTx, expireArgs] = expirePendingPaymentsInTx.mock
+      .calls[0] as unknown as [unknown, { appointmentId: string }];
+    expect(expireArgs.appointmentId).toBe("apt-1");
+    expect(expireTx).toBe((transitionTrial.mock.calls[0] as unknown[])[0]);
+    expect(calls.slice(0, 2)).toEqual(["expire", "cancel"]);
+    expect(cancelGatewayOrders).toHaveBeenCalledWith(
+      cancels,
+      expect.objectContaining({ appointmentId: "apt-1" }),
+    );
   });
 });
 

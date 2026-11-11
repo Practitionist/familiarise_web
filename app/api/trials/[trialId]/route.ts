@@ -46,6 +46,11 @@ import {
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { transitionTrial } from "@/lib/booking/transitions";
 import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
+import {
+  cancelGatewayOrders,
+  expirePendingPaymentsInTx,
+  type GatewayCancel,
+} from "@/lib/booking/pending-payment-expiry";
 import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
 import { recordExpertStrike } from "@/lib/booking/expert-reliability";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -994,6 +999,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     // validTransitions check above is only the friendly error text.
     const { status: nextStatus, ...restUpdate } = updateData;
     let subscriptionBecameInactive = false;
+    let gatewayCancels: GatewayCancel[] = [];
     const updatedTrial = await prisma.$transaction(async (tx) => {
       if (
         nextStatus === TrialStatus.CONVERTED &&
@@ -1013,6 +1019,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           subscriptionBecameInactive = true;
           return null;
         }
+      }
+      // An ending trial's unpaid order dies before the status move, in the
+      // capture's lock order (payment → trial); a captured payment stays.
+      if (deferredCancellation?.appointmentId) {
+        ({ gatewayCancels } = await expirePendingPaymentsInTx(tx, {
+          appointmentId: deferredCancellation.appointmentId,
+          reason: "trial ended before payment",
+        }));
       }
       if (nextStatus !== undefined) {
         await transitionTrial(tx, {
@@ -1128,6 +1142,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (deferredCancellation) {
       if (deferredCancellation.appointmentId) {
         await softCancelTrialAppointment(deferredCancellation.appointmentId);
+        await cancelGatewayOrders(gatewayCancels, {
+          op: "trial.patch.gateway-cancel",
+          appointmentId: deferredCancellation.appointmentId,
+        });
       }
       refund = await refundCancelledTrial({
         trialId,
@@ -1282,8 +1300,17 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       session.user.consultantProfileId === existingTrial.consultantProfileId &&
       existingTrial.status === TrialStatus.SCHEDULED;
     const confirmedRefundPaise = await readConfirmedRefund(request);
+    let gatewayCancels: GatewayCancel[] = [];
     const cancelTrial = (owed: RefundOwedMarker | null) =>
       prisma.$transaction(async (tx) => {
+        // A held time's unpaid order dies first, in the capture's lock order
+        // (payment → trial); a captured payment is left to the quoted refund.
+        if (lockId) {
+          ({ gatewayCancels } = await expirePendingPaymentsInTx(tx, {
+            appointmentId: lockId,
+            reason: "trial cancelled before payment",
+          }));
+        }
         await transitionTrial(tx, {
           actorUserId: session.user.id,
           where: { id: trialId },
@@ -1349,6 +1376,10 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     } = lockId
       ? await withAppointmentLock(lockId, quoteThenCancel)
       : await quoteThenCancel();
+    await cancelGatewayOrders(gatewayCancels, {
+      op: "trial.delete.gateway-cancel",
+      appointmentId: lockId ?? trialId,
+    });
 
     const refund = await refundCancelledTrial({
       trialId,
