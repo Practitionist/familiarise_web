@@ -6,7 +6,7 @@ const read = (file: string) =>
   readFileSync(path.join(process.cwd(), file), "utf8");
 
 // No placement is paid for: every curated row is ordered by rating or activity,
-// so its label has to say so. See the owner decisions on the 2026 consumer rules.
+// so its label has to say so (ranking-parameter disclosure).
 const RANKED_SURFACES = [
   "app/explore/experts/components/FeaturedExperts.tsx",
   "app/explore/experts/components/StaticTopRows.tsx",
