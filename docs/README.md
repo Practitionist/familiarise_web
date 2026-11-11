@@ -397,6 +397,7 @@ Prisma operations and migration documentation.
 - [02-schema-freeze-and-migration-cutover.md](./prisma/02-schema-freeze-and-migration-cutover.md) - Pre-launch shape freeze and the `db push` to versioned-migrations cutover plan
 - [2026-11-07-supabase-mcp-sql-approval-hook.md](./decisions/2026-11-07-supabase-mcp-sql-approval-hook.md) - Supabase MCP reads run freely; a PreToolUse hook stops every write for the owner's approval
 - [2026-11-02-agent-instruction-layout.md](./decisions/2026-11-02-agent-instruction-layout.md) - One shared root `AGENTS.md`, nested per-directory files, and the deterministic checks that replace prose bans
+- [2026-11-11-fable-5-2-advisor-tier.md](./decisions/2026-11-11-fable-5-2-advisor-tier.md) - Fable 5.2 becomes the advisor tier, audit days run at `xhigh` and orchestration at `high`, executor pins stay on Opus and Sonnet, and the Fable 5.2 briefing rules
 - [2026-11-09-repo-notion-split.md](./decisions/2026-11-09-repo-notion-split.md) - The six Notion sections, one canonical pricing page, the delete-versus-archive rule, competitor screenshots kept out of git, and legal facts written into the compliance docs
 
 ---
