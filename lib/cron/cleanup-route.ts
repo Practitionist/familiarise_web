@@ -382,7 +382,7 @@ function refuseUnauthorized(
   unauthorizedMessage: string | undefined,
 ): CleanupExecutionResult | null {
   const authHeader = req.headers.get("authorization");
-  const cronSecret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
+  const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || !bearerMatches(authHeader, cronSecret)) {
     console.warn(`Unauthorized ${job} attempt`);
     return {

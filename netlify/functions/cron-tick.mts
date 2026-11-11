@@ -539,6 +539,15 @@ const THIS_PLATFORM = "netlify";
 const ACTIVE_PLATFORM_TIMEOUT_MS = 1_000;
 const activePlatformReply = z.object({ result: z.string().nullable() });
 
+// A switch read that fails runs this tick, so it must leave a log line: it is the
+// only trace that a pause (for example `paused-prelaunch`) was bypassed.
+function failOpen(reason: string): null {
+  console.warn(
+    JSON.stringify({ event: "cron-tick-fleet-switch-unreadable", reason }),
+  );
+  return null;
+}
+
 /**
  * The platform that owns the fleet when it is not this one, else null. One
  * Upstash REST GET per tick; an absent key, missing credentials, a timeout, an
@@ -566,13 +575,13 @@ export async function otherActivePlatform(
         signal: controller.signal,
       },
     );
-    if (!res.ok) return null;
+    if (!res.ok) return failOpen(`status ${res.status}`);
     const parsed = activePlatformReply.safeParse(await res.json());
-    if (!parsed.success) return null;
+    if (!parsed.success) return failOpen("unparsable reply");
     const platform = parsed.data.result;
     return platform === null || platform === THIS_PLATFORM ? null : platform;
-  } catch {
-    return null;
+  } catch (err) {
+    return failOpen(err instanceof Error ? err.name : "fetch error");
   } finally {
     clearTimeout(timer);
   }

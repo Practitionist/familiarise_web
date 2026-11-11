@@ -54,7 +54,7 @@ async function readDigestVerdicts(db: Db, environment: string, now: Date) {
 
 /** Read-only external absence probe; never invokes or repairs a job. */
 export async function GET(request: NextRequest) {
-  const secret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
+  const secret = process.env.CRON_SECRET;
   if (!secret || !bearerMatches(request.headers.get("authorization"), secret)) {
     return NextResponse.json(
       { error: "Unauthorized" },

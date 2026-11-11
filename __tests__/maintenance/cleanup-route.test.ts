@@ -207,7 +207,6 @@ describe("cleanupRoute", () => {
 
   it("rejects everyone when no cron secret is configured", async () => {
     delete process.env.CRON_SECRET;
-    delete process.env.VERCEL_CRON_SECRET;
     const run = jest.fn();
     const { POST } = cleanupRoute({ job: "test-job", run });
 

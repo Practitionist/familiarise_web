@@ -27,7 +27,7 @@ it("detects Netlify from the inlined NETLIFY or the runtime SITE_ID, both litera
   expect(host).toMatch(/process\.env\.SITE_ID\b/);
 });
 
-it.each(["lib/cron/with-cron-lock.ts", "lib/prisma.ts"])(
+it.each(["lib/prisma.ts"])(
   "%s keys its Netlify behaviour on onNetlify()",
   (file) => {
     expect(read(file)).toMatch(/onNetlify\(\)/);

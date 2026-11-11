@@ -14,7 +14,7 @@ function isTarget(name: string): name is Target {
 
 /** Read-only: when each requested target's job last COMPLETED and last FAILED, for the ticker's escalation and background outcomes. */
 export async function GET(request: NextRequest) {
-  const secret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
+  const secret = process.env.CRON_SECRET;
   if (!secret || !bearerMatches(request.headers.get("authorization"), secret)) {
     return NextResponse.json(
       { error: "Unauthorized" },
