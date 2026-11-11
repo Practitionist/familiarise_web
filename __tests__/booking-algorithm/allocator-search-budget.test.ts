@@ -46,6 +46,10 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
+  withEventCheckoutLock: (
+    _key: unknown,
+    fn: (renew: () => unknown) => unknown,
+  ) => fn(async () => undefined),
   lockAutoAllocate: jest
     .fn()
     .mockResolvedValue({ key: "mock-key", value: "mock-value" }),

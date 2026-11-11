@@ -1,7 +1,8 @@
 /**
- * Lock order appointment → auto-allocate → consultee → slot batch: allocating
- * an event that already has its booking wrapper runs under that wrapper's
- * appointment lock, and a caller that already holds it hands it over instead.
+ * Lock order event checkout → appointment → auto-allocate → consultee → slot
+ * batch: a webinar or class plans under its checkout key, an event that already
+ * has its booking wrapper runs under that wrapper's appointment lock, and a
+ * caller that already holds it hands it over instead.
  */
 import "./setup";
 
@@ -16,6 +17,15 @@ jest.mock("../../lib/prisma", () => ({
 }));
 const mockOrder: string[] = [];
 jest.mock("../../utils/appointmentlock", () => ({
+  withEventCheckoutLock: jest.fn(
+    async (
+      key: { appointmentType: string; eventId: string } | null,
+      fn: (renew: () => Promise<void>) => Promise<unknown>,
+    ) => {
+      if (key) mockOrder.push(`event:${key.appointmentType}:${key.eventId}`);
+      return fn(async () => undefined);
+    },
+  ),
   withAppointmentLock: jest.fn(
     async (id: string, fn: (lock: unknown) => Promise<unknown>) => {
       mockOrder.push(`lock:${id}`);
@@ -73,10 +83,18 @@ it("renews the grant a reschedule accept already holds instead of re-acquiring i
   expect(mockFindFirst).not.toHaveBeenCalled();
 });
 
-it("runs unlocked when the event has no booking yet", async () => {
+it("holds only the checkout key when the event has no booking yet", async () => {
   mockFindFirst.mockResolvedValue(null);
 
   await allocate({ eventType: "webinar", eventId: "web-1", mode: "auto" });
 
-  expect(mockOrder).toEqual(["allocate"]);
+  expect(mockOrder).toEqual(["event:WEBINAR:web-1", "allocate"]);
+});
+
+it("re-plans a class under its checkout key before its appointment lock", async () => {
+  mockFindFirst.mockResolvedValue({ id: "appt-1" });
+
+  await allocate({ eventType: "class", eventId: "class-1", mode: "auto" });
+
+  expect(mockOrder).toEqual(["event:CLASS:class-1", "lock:appt-1", "allocate"]);
 });

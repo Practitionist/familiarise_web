@@ -93,7 +93,14 @@ export function classifyError(error: unknown): {
   }
   // Lock refusals by class: a held key is contention (409, retry); the
   // locking service being down is an outage (503) and a fault.
-  if (lockErrorCode(error) === "BOOKING_LOCK_UNAVAILABLE") {
+  const lockCode = lockErrorCode(error);
+  if (lockCode === "EVENT_CHECKOUT_BUSY") {
+    return { errorCode: "EVENT_CHECKOUT_BUSY", httpStatus: 409 };
+  }
+  if (
+    lockCode === "BOOKING_LOCK_UNAVAILABLE" ||
+    lockCode === "EVENT_CHECKOUT_LOCK_UNAVAILABLE"
+  ) {
     return { errorCode: "BOOKING_LOCK_UNAVAILABLE", httpStatus: 503 };
   }
   if (isLockBusy(error)) {
@@ -119,6 +126,7 @@ const LOCK_BUSY_CODES: ReadonlySet<string> = new Set([
   "APPOINTMENT_BUSY",
   "AUTO_ALLOCATE_BUSY",
   "CONSULTEE_BOOKING_BUSY",
+  "EVENT_CHECKOUT_BUSY",
   "LOCK_CONTENTION",
   "LOCK_LOST",
 ]);

@@ -225,6 +225,7 @@ export type AllocationErrorCode =
   | "NOT_FOUND" // event/consultant missing — 400
   | "INVALID_MODE" // unknown allocation mode — 400
   | "LOCK_CONTENTION" // Redis lock busy / replay in flight — 409
+  | "EVENT_CHECKOUT_BUSY" // a seat checkout holds the event while it is re-planned — 409
   | "ALREADY_ALLOCATED" // confirmed slots already exist for this event — 409
   | "RESCHEDULE_STATE_CHANGED" // #1012 stale-tab tentative count moved — 409
   | "SLOT_TAKEN" // a chosen time went to someone else mid-allocation — 409

@@ -50,7 +50,11 @@ jest.mock("../../lib/prisma", () => ({
 
 // Mock appointmentlock to avoid @upstash/redis ESM import issues in Jest
 jest.mock("../../utils/appointmentlock", () => ({
-  // allocate() takes an existing booking's appointment lock first.
+  // allocate() takes a webinar's or class's checkout key, then the appointment lock.
+  withEventCheckoutLock: (
+    _key: unknown,
+    fn: (renew: () => unknown) => unknown,
+  ) => fn(async () => undefined),
   withAppointmentLock: (_id: string, fn: (lock: unknown) => unknown) =>
     fn({ key: "appointment-lock" }),
   renewAppointmentLock: async () => true,
