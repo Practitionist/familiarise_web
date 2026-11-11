@@ -221,15 +221,50 @@ export function getSlotLimits(
 }
 
 /**
- * Groups an array of time slots by scheduling-timezone day.
+ * Each slot's scheduling-day key by start time, with a session that runs past
+ * midnight kept whole on the day it starts: contiguous runs are cut into
+ * sessions of `slotsPerSession` from the run's first slot.
+ */
+export function sessionDayKeys(
+  slots: CalendarInterval[],
+  slotsPerSession: number,
+  timeZone?: string,
+): Map<number, string> {
+  const sorted = [...slots].sort(
+    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+  );
+  const keys = new Map<number, string>();
+  const perSession = Math.max(1, slotsPerSession);
+  let indexInRun = 0;
+  let sessionKey = "";
+  let lastEnd: number | null = null;
+  for (const slot of sorted) {
+    const start = slot.startTime.getTime();
+    if (start !== lastEnd) indexInRun = 0;
+    if (indexInRun % perSession === 0) {
+      sessionKey = dayKey(slot.startTime, timeZone);
+    }
+    keys.set(start, sessionKey);
+    indexInRun += 1;
+    lastEnd = slot.endTime.getTime();
+  }
+  return keys;
+}
+
+/**
+ * Groups time slots by scheduling-timezone day. Given `slotsPerSession`, a
+ * session that crosses midnight stays in its start day's group.
  */
 export function groupSlotsByDay(
   slots: CalendarInterval[],
   timeZone?: string,
+  slotsPerSession = 1,
 ): Map<string, CalendarInterval[]> {
+  const keys = sessionDayKeys(slots, slotsPerSession, timeZone);
   const slotsByDay = new Map<string, CalendarInterval[]>();
   slots.forEach((slot) => {
-    const key = dayKey(slot.startTime, timeZone);
+    const key =
+      keys.get(slot.startTime.getTime()) ?? dayKey(slot.startTime, timeZone);
     if (!slotsByDay.has(key)) {
       slotsByDay.set(key, []);
     }
@@ -320,7 +355,9 @@ export function validateClassSessionDistributionByCount(
   timeZone?: string,
 ): boolean {
   if (slots.length === 0) return true;
-  for (const [, daySlots] of Array.from(groupSlotsByDay(slots, timeZone))) {
+  for (const [, daySlots] of Array.from(
+    groupSlotsByDay(slots, timeZone, slotsPerSession),
+  )) {
     const { sessions } = countSessionsForDay(daySlots, slotsPerSession);
     if (sessions > maxSessions) return false;
   }
@@ -337,23 +374,24 @@ export function validateWeeklySessionsDistribution(
   timeZone?: string,
 ): boolean {
   if (slots.length === 0) return true;
-  const weeks = new Map<string, Map<string, CalendarInterval[]>>();
-  for (const slot of slots) {
-    const wk = weekKey(slot.startTime, timeZone);
-    if (!weeks.has(wk)) weeks.set(wk, new Map());
-    const byDay = weeks.get(wk)!;
-    const dk = dayKey(slot.startTime, timeZone);
-    if (!byDay.has(dk)) byDay.set(dk, []);
-    byDay.get(dk)!.push(slot);
+  // A session counts in the week of the day it starts.
+  const weekSessions = new Map<string, number>();
+  for (const [, daySlots] of Array.from(
+    groupSlotsByDay(slots, timeZone, slotsPerSession),
+  )) {
+    const first = daySlots.reduce((earliest, slot) =>
+      slot.startTime < earliest.startTime ? slot : earliest,
+    );
+    const wk = weekKey(first.startTime, timeZone);
+    weekSessions.set(
+      wk,
+      (weekSessions.get(wk) ?? 0) +
+        countSessionsForDay(daySlots, slotsPerSession).sessions,
+    );
   }
-  for (const [, byDay] of Array.from(weeks)) {
-    let weekSessions = 0;
-    for (const [, daySlots] of Array.from(byDay)) {
-      weekSessions += countSessionsForDay(daySlots, slotsPerSession).sessions;
-    }
-    if (weekSessions > sessionsPerWeek) return false;
-  }
-  return true;
+  return Array.from(weekSessions.values()).every(
+    (sessions) => sessions <= sessionsPerWeek,
+  );
 }
 
 /**
@@ -502,7 +540,7 @@ export function validateSubscriptionSlots(
   const maxTotalCalls = limits.totalSessions;
   const timeZone = options.schedulingTimezone;
 
-  const slotsByDay = groupSlotsByDay(slots, timeZone);
+  const slotsByDay = groupSlotsByDay(slots, timeZone, slotsPerCall);
 
   const weekCalls = new Map<
     string,
@@ -594,7 +632,7 @@ function validateSelectionCounts(
 ): void {
   if (eventType === "subscription") {
     const completeCalls = countCompleteCallsInMap(
-      groupSlotsByDay(slots, timeZone),
+      groupSlotsByDay(slots, timeZone, limits.slotsPerSession),
       limits.slotsPerSession,
     );
 
@@ -664,7 +702,7 @@ function validateClassSelection(
   // disconnected fragments masquerade as one session. Informational only:
   // interactive blocking happens in toggleSlot so users can start a class
   // by selecting the first slot.
-  const byDay = groupSlotsByDay(slots, timeZone);
+  const byDay = groupSlotsByDay(slots, timeZone, slotsPerSession);
   const hasInProgress = Array.from(byDay.values()).some(
     (daySlots) =>
       countSessionsForDay(daySlots, slotsPerSession).sessions *

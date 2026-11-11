@@ -20,6 +20,7 @@ import {
   getSlotLimits,
   validateEventSlots,
   groupSlotsByDay,
+  sessionDayKeys,
   countCompleteCallsInMap,
   isCompleteCall,
   countSessionsForDay,
@@ -771,18 +772,23 @@ export function useEventSlotAllocation(
           (s) => s.startTime.getTime() === slot.startTime.getTime(),
         );
 
+        // The day a slot's session starts, so a session past midnight stays whole.
+        const sessionDayOf = (
+          selection: CalendarInterval[],
+          target: CalendarInterval,
+        ) =>
+          sessionDayKeys(
+            selection,
+            slotLimits.slotsPerSession || 1,
+            options.schedulingTimezone,
+          ).get(target.startTime.getTime()) ??
+          dayKey(target.startTime, options.schedulingTimezone);
+
         if (isSelected) {
           // Remove the entire consecutive group containing this slot
-          const removalDayKey = dayKey(
-            slot.startTime,
-            options.schedulingTimezone,
-          );
+          const removalDayKey = sessionDayOf(currentSlots, slot);
           const daySlots = currentSlots
-            .filter(
-              (s) =>
-                dayKey(s.startTime, options.schedulingTimezone) ===
-                removalDayKey,
-            )
+            .filter((s) => sessionDayOf(currentSlots, s) === removalDayKey)
             .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
           const group = findConsecutiveGroupContaining(slot, daySlots);
@@ -804,24 +810,23 @@ export function useEventSlotAllocation(
           // week) is the only weekly cap; the grid paints it as "Limit reached".
           if (eventType === "subscription") {
             const slotsPerCall = slotLimits.slotsPerSession;
-            const targetDayKey = dayKey(
-              slot.startTime,
-              options.schedulingTimezone,
-            );
-
-            // Count total complete calls across ALL weeks for newSelection (post-add)
-            const totalCompleteCalls = countCompleteCallsInMap(
-              groupSlotsByDay(newSelection, options.schedulingTimezone),
-              slotsPerCall,
-            );
-
-            const maxTotalCalls = slotLimits.totalSessions;
+            const targetDayKey = sessionDayOf(newSelection, slot);
 
             // If this slot would complete a call, check total limits
             const slotsByDayPost = groupSlotsByDay(
               newSelection,
               options.schedulingTimezone,
+              slotsPerCall,
             );
+
+            // Count total complete calls across ALL weeks for newSelection (post-add)
+            const totalCompleteCalls = countCompleteCallsInMap(
+              slotsByDayPost,
+              slotsPerCall,
+            );
+
+            const maxTotalCalls = slotLimits.totalSessions;
+
             const potentialDaySlots = [
               ...(slotsByDayPost.get(targetDayKey) || []),
             ];
@@ -837,15 +842,13 @@ export function useEventSlotAllocation(
           } else if (eventType === "class") {
             // Class-specific interactive guards
             const slotsPerSession = slotLimits.slotsPerSession;
-            const targetDayKey = dayKey(
-              slot.startTime,
-              options.schedulingTimezone,
-            );
+            const targetDayKey = sessionDayOf(newSelection, slot);
 
             // Group current selection by day (pre-add)
             const preByDay = groupSlotsByDay(
               currentSlots,
               options.schedulingTimezone,
+              slotsPerSession,
             );
 
             // Detect any in-progress class (day not multiple of slotsPerSession)
@@ -937,16 +940,12 @@ export function useEventSlotAllocation(
             const slotsPerCall = slotLimits.slotsPerSession;
             const maxTotalCalls = slotLimits.totalSessions;
 
-            const targetDayKey = dayKey(
-              slot.startTime,
-              options.schedulingTimezone,
-            );
+            const targetDayKey = sessionDayOf(newSelection, slot);
 
             // Check daily call limit BEFORE adding the new slot
             const currentDaySlots = currentSlots.filter(
               (selectedSlot) =>
-                dayKey(selectedSlot.startTime, options.schedulingTimezone) ===
-                targetDayKey,
+                sessionDayOf(newSelection, selectedSlot) === targetDayKey,
             );
 
             // Check if adding this slot would exceed the per-call limit
