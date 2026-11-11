@@ -242,7 +242,10 @@ export function fitLabel(count: number): string {
   return `${count} ${count === 1 ? "fits" : "fit"}`;
 }
 
-/** Per day column of `matrix`, the whole sessions its free cells hold: the week header's "N fit". */
+/**
+ * Per day column of `matrix`, the whole sessions its free cells hold: the week
+ * header's "N fit". A session that runs past midnight counts on the day it starts.
+ */
 export function weekDayFits(
   matrix: readonly (readonly (Pick<
     CellView,
@@ -251,15 +254,23 @@ export function weekDayFits(
   size: number,
 ): number[] {
   const days = matrix.reduce((most, line) => Math.max(most, line.length), 0);
-  return Array.from({ length: days }, (_, day) =>
-    sessionsThatFit(
-      matrix.flatMap((line) => {
-        const cell = line[day];
-        return cell?.statusKey === "available" ? [cell.startMs] : [];
-      }),
-      size,
-    ),
+  const dayOf = new Map<number, number>();
+  matrix.forEach((line) =>
+    line.forEach((cell, day) => {
+      if (cell?.statusKey === "available") dayOf.set(cell.startMs, day);
+    }),
   );
+  const per = Math.max(1, size);
+  const fits = Array.from({ length: days }, () => 0);
+  const sorted = [...dayOf.keys()].sort((a, b) => a - b);
+  let run = 0;
+  sorted.forEach((startMs, index) => {
+    run = index > 0 && sorted[index - 1] + ATOM_MS === startMs ? run + 1 : 1;
+    if (run % per !== 0) return;
+    const day = dayOf.get(startMs - (per - 1) * ATOM_MS);
+    if (day !== undefined) fits[day] += 1;
+  });
+  return fits;
 }
 
 /**

@@ -48,8 +48,8 @@ export function calculateRequiredSlots(
 }
 
 /**
- * A selected session for display: one consecutive same-day run of 30-minute
- * atoms, collapsed so a 1-hour pick reads as one chip ("Thu 24 Sep ·
+ * A selected session for display: one consecutive run of 30-minute atoms,
+ * collapsed so a 1-hour pick reads as one chip ("Thu 24 Sep ·
  * 11:00 am–12:00 pm") instead of two atom rows. Sorted ascending by start.
  */
 export interface SelectedSession {
@@ -58,19 +58,11 @@ export interface SelectedSession {
 }
 
 /**
- * Collapse selected 30-minute atoms into consecutive same-day sessions.
- * Pure: sorts a copy, never mutates. An atom joins the open run only when it
- * starts exactly when the run ends *and* both fall on the same scheduling-
- * timezone day (ADR B9): an overnight run crossing local midnight is two
- * sessions, so the chip never attributes post-midnight time to the prior day.
- * Without a zone the UTC day is used — pass the event's scheduling timezone.
- * Callers must pass the SAME resolved zone they format the chip with
- * (`schedulingTimezone ?? gridZone`): grouping and labelling share one
- * day-boundary by construction, so a chip's day always owns both atoms.
+ * Collapse selected 30-minute atoms into consecutive runs, sorted by start.
+ * Pure: sorts a copy, never mutates. A run that crosses local midnight stays one run.
  */
 export function groupSelectedIntoSessions(
   selectedSlots: CalendarInterval[],
-  schedulingTimezone?: string,
 ): SelectedSession[] {
   const sorted = [...selectedSlots].sort(
     (a, b) => a.startTime.getTime() - b.startTime.getTime(),
@@ -81,12 +73,7 @@ export function groupSelectedIntoSessions(
     if (
       open &&
       slot.startTime.getTime() === open.end.getTime() &&
-      slot.endTime.getTime() > open.end.getTime() &&
-      (schedulingTimezone
-        ? ScheduleCalculationService.dayKey(open.start, schedulingTimezone) ===
-          ScheduleCalculationService.dayKey(slot.startTime, schedulingTimezone)
-        : open.start.toISOString().slice(0, 10) ===
-          slot.startTime.toISOString().slice(0, 10))
+      slot.endTime.getTime() > open.end.getTime()
     ) {
       open.end = slot.endTime;
     } else {
@@ -97,33 +84,30 @@ export function groupSelectedIntoSessions(
 }
 
 /**
- * The selection as whole sessions: each same-day run from
- * `groupSelectedIntoSessions`, cut into `slotsPerSession`-atom pieces from
- * its start, so two back-to-back picks stay two sessions. A shorter tail is
- * its own piece. Pass the zone the sessions are labelled in.
+ * The selection as whole sessions: each run from `groupSelectedIntoSessions`,
+ * cut into `slotsPerSession`-atom pieces from its start, so two back-to-back
+ * picks stay two sessions and one across midnight stays one. A shorter tail is
+ * its own piece.
  */
 export function splitIntoSessions(
   selectedSlots: CalendarInterval[],
   slotsPerSession: number,
-  schedulingTimezone?: string,
 ): SelectedSession[] {
   const sessionMs = Math.max(1, slotsPerSession) * 30 * 60 * 1000;
-  return groupSelectedIntoSessions(selectedSlots, schedulingTimezone).flatMap(
-    (run) => {
-      const pieces: SelectedSession[] = [];
-      for (
-        let startMs = run.start.getTime();
-        startMs < run.end.getTime();
-        startMs += sessionMs
-      ) {
-        pieces.push({
-          start: new Date(startMs),
-          end: new Date(Math.min(startMs + sessionMs, run.end.getTime())),
-        });
-      }
-      return pieces;
-    },
-  );
+  return groupSelectedIntoSessions(selectedSlots).flatMap((run) => {
+    const pieces: SelectedSession[] = [];
+    for (
+      let startMs = run.start.getTime();
+      startMs < run.end.getTime();
+      startMs += sessionMs
+    ) {
+      pieces.push({
+        start: new Date(startMs),
+        end: new Date(Math.min(startMs + sessionMs, run.end.getTime())),
+      });
+    }
+    return pieces;
+  });
 }
 
 /**

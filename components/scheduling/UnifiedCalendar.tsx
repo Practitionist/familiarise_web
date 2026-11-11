@@ -237,7 +237,6 @@ function classFooterText(
     sessionDurationInHours?: number;
     totalSessions?: number;
     pastEventSlotCount: number;
-    schedulingTimezone?: string;
   }>,
 ): string {
   const slotsPerSession = getSlotsPerCall(params.sessionDurationInHours);
@@ -248,7 +247,6 @@ function classFooterText(
     pastCompletedSessions: Math.floor(
       params.pastEventSlotCount / slotsPerSession,
     ),
-    schedulingTimezone: params.schedulingTimezone,
   });
 }
 
@@ -370,41 +368,15 @@ function computeSubscriptionFooter(
   return `All ${sessionsPhrase(maxTotalCalls)} picked`;
 }
 
-/** Total completed class sessions across the selection. */
+/** Total completed class sessions across the selection; one across midnight counts once. */
 function countCompletedSelectedClasses(
   selectedSlots: CalendarInterval[],
   slotsPerSession: number,
-  schedulingTimezone?: string,
 ): number {
-  if (!selectedSlots?.length) return 0;
-  const byDay = new Map<string, CalendarInterval[]>();
-  for (const s of selectedSlots) {
-    const key = ScheduleCalculationService.dayKey(
-      s.startTime,
-      schedulingTimezone,
-    );
-    const list = byDay.get(key) ?? [];
-    list.push(s);
-    byDay.set(key, list);
-  }
-  let sessions = 0;
-  byDay.forEach((daySlots) => {
-    const sorted = [...daySlots].sort(
-      (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-    );
-    let run = 0;
-    let lastEnd: number | null = null;
-    for (const slot of sorted) {
-      if (lastEnd !== null && slot.startTime.getTime() !== lastEnd) {
-        sessions += Math.floor(run / slotsPerSession);
-        run = 0;
-      }
-      run += 1;
-      lastEnd = slot.endTime.getTime();
-    }
-    sessions += Math.floor(run / slotsPerSession);
-  });
-  return sessions;
+  const sessionMs = Math.max(1, slotsPerSession) * ATOM_MS;
+  return splitIntoSessions(selectedSlots, slotsPerSession).filter(
+    (session) => session.end.getTime() - session.start.getTime() === sessionMs,
+  ).length;
 }
 
 function computeClassFooter(params: {
@@ -412,20 +384,17 @@ function computeClassFooter(params: {
   sessionDurationInHours?: number;
   totalSessions?: number;
   pastCompletedSessions?: number;
-  schedulingTimezone?: string;
 }): string {
   const {
     selectedSlots,
     sessionDurationInHours,
     totalSessions,
     pastCompletedSessions = 0,
-    schedulingTimezone,
   } = params;
   const slotsPerSession = getSlotsPerCall(sessionDurationInHours);
   const scheduled = countCompletedSelectedClasses(
     selectedSlots,
     slotsPerSession,
-    schedulingTimezone,
   );
   const totalScheduled = scheduled + pastCompletedSessions;
   const durationText = formatDurationLabel((sessionDurationInHours || 1) * 60);
@@ -934,8 +903,7 @@ export function UnifiedCalendar({
 
   useEffect(() => {
     if (conflicts.size === 0) return;
-    const zone = effectiveSchedulingTz ?? gridZone;
-    const doomed = groupSelectedIntoSessions(selectedSlots, zone).flatMap(
+    const doomed = groupSelectedIntoSessions(selectedSlots).flatMap(
       (session) => {
         const atoms = selectedSlots.filter(
           (slot) =>
@@ -963,14 +931,7 @@ export function UnifiedCalendar({
         ? "That time is no longer free, so it has been removed — pick another time."
         : "It is now too close to its start or past this plan's limit. It has been removed — pick another time.",
     });
-  }, [
-    conflicts,
-    selectedSlots,
-    removeSlots,
-    toast,
-    effectiveSchedulingTz,
-    gridZone,
-  ]);
+  }, [conflicts, selectedSlots, removeSlots, toast]);
 
   // Report the selection when it changes, not when the parent re-renders.
   const onSlotsSelectedRef = useLatest(onSlotsSelected);
@@ -1162,7 +1123,6 @@ export function UnifiedCalendar({
       const session = splitIntoSessions(
         selectedSlots,
         slotLimits.slotsPerSession,
-        gridZone,
       ).find(
         (piece) =>
           piece.start.getTime() <= startMs && startMs < piece.end.getTime(),
@@ -1173,7 +1133,7 @@ export function UnifiedCalendar({
           slot.startTime >= session.start && slot.endTime <= session.end,
       );
     },
-    [selectedSlots, slotLimits.slotsPerSession, gridZone],
+    [selectedSlots, slotLimits.slotsPerSession],
   );
 
   // What a click on the hovered or focused cell would place, drawn as a ghost.
@@ -1583,7 +1543,6 @@ export function UnifiedCalendar({
   const trayPicks: TrayPick[] = splitIntoSessions(
     selectedSlots,
     slotsPerSession,
-    gridZone,
   ).map((session) => {
     const label = `${formatDayLabel(session.start, { zone: gridZone })} · ${formatClockTime(session.start, { zone: gridZone })}–${formatClockTime(session.end, { zone: gridZone })}`;
     return {
@@ -1670,7 +1629,6 @@ export function UnifiedCalendar({
           sessionDurationInHours,
           totalSessions: slotLimits.totalSessions,
           pastEventSlotCount,
-          schedulingTimezone: effectiveSchedulingTz ?? undefined,
         });
       }
       const duration =

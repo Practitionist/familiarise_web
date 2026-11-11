@@ -49,11 +49,7 @@ describe("splitIntoSessions", () => {
   });
 
   it("keeps two back-to-back picks as two sessions", () => {
-    const sessions = splitIntoSessions(
-      [atom(0), atom(1), atom(2), atom(3)],
-      2,
-      "UTC",
-    );
+    const sessions = splitIntoSessions([atom(0), atom(1), atom(2), atom(3)], 2);
     expect(
       sessions.map((s) => [
         (s.start.getTime() - T0) / ATOM,
@@ -66,9 +62,26 @@ describe("splitIntoSessions", () => {
   });
 
   it("leaves a short tail as its own piece", () => {
-    expect(splitIntoSessions([atom(0), atom(1), atom(2)], 2, "UTC")).toEqual([
+    expect(splitIntoSessions([atom(0), atom(1), atom(2)], 2)).toEqual([
       { start: new Date(T0), end: new Date(T0 + 2 * ATOM) },
       { start: new Date(T0 + 2 * ATOM), end: new Date(T0 + 3 * ATOM) },
+    ]);
+  });
+
+  it("keeps a 120-minute pick from 23:00 to 01:00 as one session", () => {
+    const at = (iso: string) => ({
+      startTime: new Date(iso),
+      endTime: new Date(Date.parse(iso) + ATOM),
+      isAvailable: true,
+      isBooked: false,
+    });
+    const picks = ["23:00", "23:30"].map((t) => at(`2030-06-12T${t}:00Z`));
+    picks.push(...["00:00", "00:30"].map((t) => at(`2030-06-13T${t}:00Z`)));
+    expect(splitIntoSessions(picks, 4)).toEqual([
+      {
+        start: new Date("2030-06-12T23:00:00Z"),
+        end: new Date("2030-06-13T01:00:00Z"),
+      },
     ]);
   });
 });
