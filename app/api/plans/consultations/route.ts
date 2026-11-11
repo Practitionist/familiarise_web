@@ -3,10 +3,8 @@ import prisma from "@/lib/prisma";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
 import { NextRequest, NextResponse } from "next/server";
 import { ConsultationPlanSchema } from "@/schemas/plans";
-import {
-  assertPlanPriceWithinBounds,
-  PlanPriceBelowFloorError,
-} from "@/lib/payments/pricing/price-bounds";
+import { assertPlanPriceWithinBounds } from "@/lib/payments/pricing/price-bounds";
+import { planEditRefusal } from "@/lib/api/plans/plan-edit-guard";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import {
   oneOnOnePlanListCacheControl,
@@ -193,12 +191,8 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
-    if (error instanceof PlanPriceBelowFloorError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: error.httpStatus },
-      );
-    }
+    const refusal = planEditRefusal(error);
+    if (refusal) return refusal;
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "bookings" } },

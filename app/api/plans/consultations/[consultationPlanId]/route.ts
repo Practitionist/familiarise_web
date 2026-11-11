@@ -3,11 +3,12 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { ConsultationPlanSchema } from "@/schemas/plans";
+import { assertPlanPriceWithinBounds } from "@/lib/payments/pricing/price-bounds";
 import {
-  assertPlanPriceWithinBounds,
-  PlanPriceBelowFloorError,
-} from "@/lib/payments/pricing/price-bounds";
-import { StalePlanEditError } from "@/lib/api/plans/stale-edit";
+  claimPlanTerms,
+  editedTerms,
+  planEditRefusal,
+} from "@/lib/api/plans/plan-edit-guard";
 import { faqReplaceNested } from "@/lib/api/plans/content";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import {
@@ -130,20 +131,22 @@ export async function PUT(
     const validatedData = validationResult.data;
 
     // Only an edit that changes the stored price or length is held to the floor.
-    const pricePaise =
-      validatedData.price === undefined
-        ? existingPlan.price
-        : Math.round(validatedData.price);
-    const durationInHours =
-      validatedData.durationInHours ?? existingPlan.durationInHours;
-    if (
-      pricePaise !== existingPlan.price ||
-      durationInHours !== existingPlan.durationInHours
-    ) {
+    const storedTerms = {
+      price: existingPlan.price,
+      durationInHours: existingPlan.durationInHours,
+    };
+    const { terms, changed } = editedTerms(storedTerms, {
+      price:
+        validatedData.price === undefined
+          ? undefined
+          : Math.round(validatedData.price),
+      durationInHours: validatedData.durationInHours,
+    });
+    if (changed) {
       assertPlanPriceWithinBounds({
         kind: "SESSION",
-        pricePaise,
-        durationInHours,
+        pricePaise: terms.price,
+        durationInHours: terms.durationInHours,
       });
     }
 
@@ -158,15 +161,12 @@ export async function PUT(
 
     const consultationPlan = await prisma.$transaction(async (tx) => {
       // Save only against the price and length this edit was validated on.
-      const { count } = await tx.consultationPlan.updateMany({
-        where: {
-          id: consultationPlanId,
-          price: existingPlan.price,
-          durationInHours: existingPlan.durationInHours,
-        },
-        data: { price: pricePaise, durationInHours },
-      });
-      if (count === 0) throw new StalePlanEditError();
+      await claimPlanTerms(
+        tx.consultationPlan.updateMany({
+          where: { id: consultationPlanId, ...storedTerms },
+          data: terms,
+        }),
+      );
       return tx.consultationPlan.update({
         where: { id: consultationPlanId },
         data: {
@@ -188,7 +188,7 @@ export async function PUT(
           whatsIncluded: validatedData.whatsIncluded,
           faqs: faqReplaceNested(validatedData.faqs),
           recordingEnabled: validatedData.recordingEnabled,
-          // #1527 Q4 — absent means PUBLISHED on create and unchanged on update.
+          // Absent means PUBLISHED on create and unchanged on update.
           status: validatedData.status,
           ...topicsUpdate,
         },
@@ -206,15 +206,8 @@ export async function PUT(
       { status: 200 },
     );
   } catch (error) {
-    if (
-      error instanceof PlanPriceBelowFloorError ||
-      error instanceof StalePlanEditError
-    ) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: error.httpStatus },
-      );
-    }
+    const refusal = planEditRefusal(error);
+    if (refusal) return refusal;
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"

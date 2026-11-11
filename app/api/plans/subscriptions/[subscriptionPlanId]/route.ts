@@ -19,11 +19,11 @@ import {
 import { activeClientCount, freezeSoldTerms } from "@/lib/booking/sold-terms";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
 import {
-  assertPlanPriceWithinBounds,
-  isShortPack,
-  PlanPriceBelowFloorError,
-} from "@/lib/payments/pricing/price-bounds";
-import { StalePlanEditError } from "@/lib/api/plans/stale-edit";
+  assertSubscriptionPlanFloor,
+  claimPlanTerms,
+  editedTerms,
+  planEditRefusal,
+} from "@/lib/api/plans/plan-edit-guard";
 import {
   archivedAtForArchive,
   parsePlanArchiveBody,
@@ -198,26 +198,27 @@ export async function PUT(
       : null;
 
     // Only a short pack whose edit changes the stored price or terms is held to the pack floor.
-    const packPrice =
-      validatedData.price === undefined
-        ? existingPlan.price
-        : Math.round(validatedData.price);
-    const packSessionHours =
-      validatedData.sessionDurationInHours ??
-      existingPlan.sessionDurationInHours;
-    const packSessions = derived?.totalSessions ?? existingPlan.totalSessions;
-    if (
-      isShortPack(durationInWeeks) &&
-      (packPrice !== existingPlan.price ||
-        packSessionHours !== existingPlan.sessionDurationInHours ||
-        packSessions !== existingPlan.totalSessions ||
-        durationInWeeks !== existingPlan.durationInWeeks)
-    ) {
-      assertPlanPriceWithinBounds({
-        kind: "PACK",
-        pricePaise: packPrice,
-        sessionDurationInHours: packSessionHours,
-        totalSessions: packSessions,
+    const storedTerms = {
+      price: existingPlan.price,
+      sessionDurationInHours: existingPlan.sessionDurationInHours,
+      totalSessions: existingPlan.totalSessions,
+      durationInWeeks: existingPlan.durationInWeeks,
+    };
+    const { terms, changed } = editedTerms(storedTerms, {
+      price:
+        validatedData.price === undefined
+          ? undefined
+          : Math.round(validatedData.price),
+      sessionDurationInHours: validatedData.sessionDurationInHours,
+      totalSessions: derived?.totalSessions,
+      durationInWeeks,
+    });
+    if (changed) {
+      assertSubscriptionPlanFloor({
+        pricePaise: terms.price,
+        sessionDurationInHours: terms.sessionDurationInHours,
+        totalSessions: terms.totalSessions,
+        durationInWeeks: terms.durationInWeeks,
       });
     }
 
@@ -270,19 +271,17 @@ export async function PUT(
     // This prevents data loss if the update fails after deleting old contents
     const subscriptionPlan = await prisma.$transaction(async (tx) => {
       // Save only against the price and terms this edit was validated on.
-      const { count } = await tx.subscriptionPlan.updateMany({
-        where: {
-          id: subscriptionPlanId,
-          price: existingPlan.price,
-          sessionsPerWeek: existingPlan.sessionsPerWeek,
-          sessionDurationInHours: existingPlan.sessionDurationInHours,
-          durationInMonths: existingPlan.durationInMonths,
-          durationInWeeks: existingPlan.durationInWeeks,
-          totalSessions: existingPlan.totalSessions,
-        },
-        data: { price: packPrice },
-      });
-      if (count === 0) throw new StalePlanEditError();
+      await claimPlanTerms(
+        tx.subscriptionPlan.updateMany({
+          where: {
+            id: subscriptionPlanId,
+            ...storedTerms,
+            sessionsPerWeek: existingPlan.sessionsPerWeek,
+            durationInMonths: existingPlan.durationInMonths,
+          },
+          data: { price: terms.price },
+        }),
+      );
       // If subscriptionContents is provided, delete existing and create new ones
       if (subscriptionContents !== undefined) {
         await tx.subscriptionContent.deleteMany({
@@ -377,15 +376,8 @@ export async function PUT(
       { status: 200 },
     );
   } catch (error) {
-    if (
-      error instanceof PlanPriceBelowFloorError ||
-      error instanceof StalePlanEditError
-    ) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: error.httpStatus },
-      );
-    }
+    const refusal = planEditRefusal(error);
+    if (refusal) return refusal;
     if (error instanceof PlanLengthUnitLockedError) {
       return NextResponse.json(
         { error: error.message, code: "PLAN_LENGTH_UNIT_LOCKED" },

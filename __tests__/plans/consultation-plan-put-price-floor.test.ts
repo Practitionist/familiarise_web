@@ -28,16 +28,21 @@ jest.mock("../../lib/topics", () => ({
   findOrCreateTopics: jest.fn(async () => []),
   transformTopicsToStrings: (plan: unknown) => plan,
 }));
-jest.mock("../../utils/contentValidation", () => ({
-  __esModule: true,
-  hasDuplicates: () => false,
-  containsGibberish: () => false,
-  containsProfanity: () => false,
-  isProfanityFree: () => true,
-  isMeaningfulText: () => true,
-  validateSensibleContent: () => true,
-  cleanProfanity: (text: string) => text,
-}));
+// Every text passes: these cases are about price and length only.
+jest.mock("../../utils/contentValidation", () => {
+  const pass = () => true;
+  const fail = () => false;
+  return {
+    __esModule: true,
+    cleanProfanity: (text: string) => text,
+    containsGibberish: fail,
+    containsProfanity: fail,
+    hasDuplicates: fail,
+    isMeaningfulText: pass,
+    isProfanityFree: pass,
+    validateSensibleContent: pass,
+  };
+});
 
 import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";

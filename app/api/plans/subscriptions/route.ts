@@ -16,10 +16,9 @@ import {
 } from "@/lib/api/plans/visibility";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
 import {
-  assertPlanPriceWithinBounds,
-  isShortPack,
-  PlanPriceBelowFloorError,
-} from "@/lib/payments/pricing/price-bounds";
+  assertSubscriptionPlanFloor,
+  planEditRefusal,
+} from "@/lib/api/plans/plan-edit-guard";
 
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
@@ -169,14 +168,12 @@ export async function POST(request: NextRequest) {
         sessionDurationInHours,
       });
 
-    if (isShortPack(durationInWeeks)) {
-      assertPlanPriceWithinBounds({
-        kind: "PACK",
-        pricePaise: Math.round(validatedData.price),
-        sessionDurationInHours,
-        totalSessions,
-      });
-    }
+    assertSubscriptionPlanFloor({
+      pricePaise: Math.round(validatedData.price),
+      sessionDurationInHours,
+      totalSessions,
+      durationInWeeks,
+    });
 
     // Trial fields — Zod-validated; free by default until paid-trial
     // checkout is wired (the wiring PR flips the default to ₹100).
@@ -267,12 +264,8 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
-    if (error instanceof PlanPriceBelowFloorError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: error.httpStatus },
-      );
-    }
+    const refusal = planEditRefusal(error);
+    if (refusal) return refusal;
     console.error("Error creating subscription plan:", error);
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
