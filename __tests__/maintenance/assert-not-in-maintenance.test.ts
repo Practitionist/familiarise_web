@@ -3,11 +3,9 @@
  */
 
 /**
- * The HTTP twins of the cron jobs live under `app/api/cleanup/**` and share the
- * job cores, but they run inside the Next server, where `abortIfMaintenance`'s
- * `process.exit(0)` would take the whole instance down with the request. They
- * call `assertNotInMaintenance` instead, which must apply exactly the same
- * phase rule and surface it as a 503-carrying error.
+ * Every job runs inside the Next server through `app/api/cleanup/[job]`, so
+ * the maintenance gate is `assertNotInMaintenance`, which surfaces the phase
+ * rule as a 503-carrying error instead of exiting the process.
  *
  * These cases pin that rule: OFFLINE stops every job, DEGRADED stops only the
  * jobs on FINANCIAL_JOB_NAMES, and unreadable state refuses mutation.
@@ -25,13 +23,18 @@ jest.mock("../../lib/redis", () => ({
   // `.get()` is actually invoked, by which point it is initialised.
   default: { get: (...args: unknown[]) => mockGet(...args) },
 }));
+const mockWindowFindFirst = jest.fn();
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    maintenanceWindow: {
+      findFirst: (...args: unknown[]) => mockWindowFindFirst(...args),
+    },
+  },
+}));
 jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-}));
-jest.mock("../../lib/observability/job-sentry", () => ({
-  flushJobSentry: jest.fn(),
-  runJob: jest.fn(),
 }));
 
 import {
@@ -100,16 +103,41 @@ describe("assertNotInMaintenance", () => {
     }
   });
 
-  it("fails closed when the Redis probe throws", async () => {
+  it("reads the Postgres window when the Redis probe throws", async () => {
     mockGet.mockRejectedValue(new Error("upstash unreachable"));
+    mockWindowFindFirst.mockResolvedValue(null);
+
+    await expect(
+      assertNotInMaintenance(FINANCIAL_JOB),
+    ).resolves.toBeUndefined();
+    expect(mockWindowFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { organizationId: null, phase: { not: "OFF" } },
+      }),
+    );
+  });
+
+  it("applies an active Postgres window when Redis is unreadable", async () => {
+    mockGet.mockRejectedValue(new Error("upstash unreachable"));
+    mockWindowFindFirst.mockResolvedValue({ phase: "OFFLINE" });
+
+    const error = await assertNotInMaintenance(PLAIN_JOB).catch((e) => e);
+    expect(error).toBeInstanceOf(MaintenanceActiveError);
+    expect(error.phase).toBe("OFFLINE");
+  });
+
+  it("fails closed when neither Redis nor Postgres can answer", async () => {
+    mockGet.mockRejectedValue(new Error("upstash unreachable"));
+    mockWindowFindFirst.mockRejectedValue(new Error("pool exhausted"));
 
     await expect(assertNotInMaintenance(FINANCIAL_JOB)).rejects.toBeInstanceOf(
       MaintenanceUnavailableError,
     );
   });
 
-  it("fails closed when no explicit phase is recorded", async () => {
+  it("treats a missing Redis phase like an unreadable one", async () => {
     mockGet.mockResolvedValue(null);
+    mockWindowFindFirst.mockRejectedValue(new Error("pool exhausted"));
 
     await expect(assertNotInMaintenance(FINANCIAL_JOB)).rejects.toBeInstanceOf(
       MaintenanceUnavailableError,

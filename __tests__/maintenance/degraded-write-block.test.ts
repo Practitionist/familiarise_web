@@ -244,7 +244,22 @@ describe("unreadable maintenance state", () => {
     ).toBe(true);
   });
 
-  it("fails closed for non-exempt mutations and permits ordinary reads", () => {
+  it("lets job twins and non-money writes through a Redis outage", () => {
+    expect(
+      isFailClosedWhenUnreadable(
+        "/api/cleanup/drain-notification-outbox",
+        "POST",
+      ),
+    ).toBe(false);
+    expect(isFailClosedWhenUnreadable("/api/users/me/profile", "PATCH")).toBe(
+      false,
+    );
+    expect(
+      isFailClosedWhenUnreadable("/api/appointments/appt_1/cancel", "POST"),
+    ).toBe(true);
+  });
+
+  it("fails closed for money and booking mutations and permits ordinary reads", () => {
     expect(
       isFailClosedWhenUnreadable("/api/bookings/booking_1/abandon", "POST"),
     ).toBe(true);
