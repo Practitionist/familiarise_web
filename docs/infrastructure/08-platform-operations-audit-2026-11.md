@@ -150,7 +150,7 @@ sequenceDiagram
     T->>R: POST ?limit=N, Bearer CRON_SECRET, x-tick-id
     R->>R: bearer, jobsMayRunHere, assertNotInMaintenance
     R->>L: withCronLock(job)
-    L->>PG: find RUNNING; sweep if stale; INSERT RUNNING
+    L->>PG: find RUNNING, sweep if stale, then INSERT RUNNING
     L->>J: run bounded slice
     J-->>L: result
     L->>PG: UPDATE ... WHERE id AND status=RUNNING
