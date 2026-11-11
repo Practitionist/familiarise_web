@@ -149,6 +149,7 @@ The owner took these decisions on 2026-10-26 while sweeping the launch-blocking 
 - **Consequences:**
   - A job that must be seen cannot rely on a Sentry warning; it needs a durable row or an alert on another channel.
   - The seven jobs that reported once per row now collect failures and report once per run (section 4.2 of the catalog).
+  - **Superseded in part (2026-11-11).** The rejection of the Team plan no longer stands. The owner decided on 2026-11-11 to buy Sentry Team at launch or on a quota trigger; the trigger is kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). The reporting rules above stay in force whatever the plan, because they also keep the noise down. See [the 2026-11-11 levers record](2026-11-11-cfo-csmo-levers.md).
 
 ### ADR-10. The apex `netlify.app` host redirects to `familiarisenow.com`
 

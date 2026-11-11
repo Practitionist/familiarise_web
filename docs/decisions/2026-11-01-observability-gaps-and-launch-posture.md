@@ -70,6 +70,7 @@ The [ownership decision](2026-11-01-observability-ownership.md) made Better Stac
 - `ENABLE_BETTERSTACK_TELEMETRY` is read at call time by the emitter; the module-load constant in `lib/feature-flags.ts` is removed.
 - The gauges are blind when the probe budget is spent or the claim is unreachable; the money alerts then open an incident by policy, and the freshness alert covers a stopped ticker.
 - On the shared database the money gauges are not zero today because of seeded and QA rows; the owner chose to create the alerts muted and unmute them after the go-live data reset, without deleting rows on the shared database.
+- **Superseded in part (2026-11-11).** The Better Stack responder seat and the Telemetry Nano bundle are no longer bought "at launch"; each moves to a trigger kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). The static-egress vendor in decision 10 is open: QuotaGuard Static or any other fixed-IP proxy works, because the code reads only `RAZORPAYX_EGRESS_PROXY_URL`. The purchase stays tied to the first live platform payout. See [the 2026-11-11 levers record](2026-11-11-cfo-csmo-levers.md).
 
 ## Deprecated & Superseded Approaches
 

@@ -33,14 +33,14 @@ Never write "waitlist" for the newsletter. Never reintroduce `/api/waitlist/*`, 
 10. **Capacity override is stored only when it differs from the plan.** Use `capacityOverrideFor(submitted, plan)` in any route that saves an event.
 11. **Hosts see counts, never names.** The `demand` view (`prisma/sql/analytics-views.sql`) carries no user id or email.
 12. **A referral reward vests only after a paid, delivered session.** Enforcer: `settleQualifyingReferral` in `lib/referrals/vesting.ts`. A credit never exceeds the platform's take on the order it pays for.
-13. **Fraud thresholds are configuration, not constants.** The hold rules are fields on `ReferralProgramConfig`; their values are kept in Notion. Never hard-code a threshold, a budget or a vendor cost.
+13. **Fraud thresholds are configuration, not constants.** The hold rules are fields on `ReferralProgramConfig`; their values are kept in Notion (Familiarise / Growth & Marketing / Growth & Marketing Lever Register). Never hard-code a threshold, a budget or a vendor cost.
 14. **A lost chargeback voids the unspent credit through `reverseCreditBalance`** in the dispute transaction (`settleLostDispute`). Do not add a negative balance.
 15. **Money columns are `BigInt` paise; credit and status writes are CAS-in-WHERE** (see `lib/payments/AGENTS.md`).
 16. **Stack levers by the one-order pipeline.** A referral welcome discount and a discount code never apply together (`deriveCheckoutAmount()` drops the welcome discount when a code is present), and credits are spent after tax under the same take-rate cap. Read `docs/pricing/01-one-order-pipeline.md` before changing a promo, a credit cap or a fee waiver.
 
 ## Confidentiality
 
-Growth follows the general repo-versus-Notion rule (root `README.md`, section "Repo versus Notion"; applied in `.claude/skills/documentation/SKILL.md`). For growth, the repository holds mechanisms, invariants, configuration field names and on-screen terms. The Notion section "Familiarise / Growth & Marketing" holds the referral budget, fraud and hold thresholds, vendor costs and plan choices, growth targets, competitor research and conversion read-outs. Write "set by the owner; the value is kept in Notion (Familiarise / Growth & Marketing)" instead of the value. Vendor plan limits from a public pricing page are allowed.
+Growth follows the general repo-versus-Notion rule (root `README.md`, section "Repo versus Notion"; applied in `.claude/skills/documentation/SKILL.md`). For growth, the repository holds mechanisms, invariants, configuration field names and on-screen terms. The Notion section "Familiarise / Growth & Marketing" holds the referral budget, fraud and hold thresholds, vendor costs and plan choices, growth targets, competitor research and conversion read-outs. Referral and growth lever values live in the database "Growth & Marketing Lever Register", and sales scripts and objection handling in the page "Sales Playbook". Write "set by the owner; the value is kept in Notion (Familiarise / Growth & Marketing / Growth & Marketing Lever Register)" instead of the value. Vendor plan limits from a public pricing page are allowed.
 
 ## Where things live
 
@@ -79,7 +79,7 @@ Growth follows the general repo-versus-Notion rule (root `README.md`, section "R
 
 1. Store it as a keyed hash (`hashSignal` in `lib/referrals/signal-hash.ts`); never store the raw value.
 2. Read it in `reviewHoldReason` or the void checks of `lib/referrals/vesting.ts`.
-3. Put any threshold on `ReferralProgramConfig` as a nullable field (null means off) and edit it through `PATCH /api/admin/referrals/config` with a reason; the value goes in Notion.
+3. Put any threshold on `ReferralProgramConfig` as a nullable field (null means off) and edit it through `PATCH /api/admin/referrals/config` with a reason; the value goes in the Notion register (Familiarise / Growth & Marketing / Growth & Marketing Lever Register).
 4. Add a case to `__tests__/referrals/referral-fraud-controls.test.ts`.
 5. Update `docs/referrals/01-architecture.md` and the control table in `docs/growth/03-referrals.md`.
 

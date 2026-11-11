@@ -22,7 +22,7 @@ The repo records the account as the Maker plan (`docs/infrastructure/00-producti
 
 ## 4. Guardrails to set
 
-Stream dashboard, Usage and Billing: usage alerts at 70 percent of MAU and minutes. Cap concurrent calls per call type where possible. Record only when the plan needs it.
+Stream dashboard, Usage and Billing: usage alerts at 70 percent of MAU and minutes. Cap concurrent calls per call type where possible. Record only when the plan needs it. When the owner moves to a paid plan, and what the account costs now: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend).
 
 ## 5. Monitor
 

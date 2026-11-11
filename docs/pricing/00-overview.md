@@ -45,7 +45,7 @@ The `DiscountCode` model (`prisma/schema.prisma`) holds `code`, `discountType` (
 
 ### The referral welcome discount
 
-A buyer who signed up through a consumer referral gets a pre-tax discount on their first marketplace purchase. `resolveCheckoutAttribution()` (`lib/referrals/attribution.ts`) decides eligibility and builds the `WelcomeDiscount` (basis points, a rupee ceiling and a minimum order); `computeWelcomeDiscountPaise()` and `keepsWelcomeDiscount()` (`lib/referrals/promo-math.ts`) apply it. Its percentage is `min(ReferralProgramConfig.discountBps, platform fee bps)`, so it never exceeds the order's take rate. The amount is stored in `Payment.welcomeDiscountPaise`. The database holds the "one live welcome-discounted order per buyer" slot as the unique index `Payment_live_welcome_discount_user_key`; losing the race returns the typed 409 `WELCOME_DISCOUNT_IN_USE`. The program thresholds are configuration; their values are kept in Notion (Familiarise / Growth & Marketing).
+A buyer who signed up through a consumer referral gets a pre-tax discount on their first marketplace purchase. `resolveCheckoutAttribution()` (`lib/referrals/attribution.ts`) decides eligibility and builds the `WelcomeDiscount` (basis points, a rupee ceiling and a minimum order); `computeWelcomeDiscountPaise()` and `keepsWelcomeDiscount()` (`lib/referrals/promo-math.ts`) apply it. Its percentage is `min(ReferralProgramConfig.discountBps, platform fee bps)`, so it never exceeds the order's take rate. The amount is stored in `Payment.welcomeDiscountPaise`. The database holds the "one live welcome-discounted order per buyer" slot as the unique index `Payment_live_welcome_discount_user_key`; losing the race returns the typed 409 `WELCOME_DISCOUNT_IN_USE`. The program thresholds are configuration; their approved values are kept in Notion (Familiarise / Growth & Marketing / Growth & Marketing Lever Register).
 
 ### Referral credits
 
@@ -53,7 +53,7 @@ Credits are money a referrer has earned, spent after tax. `creditCapPaise()` (`l
 
 ### The platform fee: two rates and attribution
 
-`PlatformFeeSchedule` holds two rates in basis points, `marketplaceBps` and `ownLinkBps`, versioned with a maker and a checker; the active row is the latest approved one whose `effectiveFrom` has passed (`readActiveFeeSchedule()` in `lib/payments/pricing/platform-fee.ts`). While no row is approved both rates fall back to 20%. The owner approving a schedule is a go-live step; the values and their reasoning are kept in Notion (Familiarise / Finance and Pricing / Pricing Strategy).
+`PlatformFeeSchedule` holds two rates in basis points, `marketplaceBps` and `ownLinkBps`, versioned with a maker and a checker; the active row is the latest approved one whose `effectiveFrom` has passed (`readActiveFeeSchedule()` in `lib/payments/pricing/platform-fee.ts`). While no row is approved both rates fall back to 20%. The owner approving a schedule is a go-live step; the approved values are kept in Notion (Familiarise / Finance and Pricing / Finance Lever Register) and the reasoning in Notion (Familiarise / Finance and Pricing / Pricing Strategy).
 
 Which rate applies to an order depends on **attribution**, stamped on the payment as `attributionSource`:
 
