@@ -94,22 +94,24 @@ const put = (body: unknown) =>
     { params: Promise.resolve({ subscriptionPlanId: "plan-1" }) },
   );
 
+const monthPlan = {
+  id: "plan-1",
+  price: 5_000_000,
+  sessionsPerWeek: 2,
+  sessionDurationInHours: 1,
+  totalSessions: 8,
+  durationInMonths: 1,
+  durationInWeeks: null,
+  trialEnabled: false,
+  trialPriceInPaise: 0,
+  consultantProfile: { userId: "owner" },
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
   order.length = 0;
   (getSession as jest.Mock).mockResolvedValue({ user: { id: "owner" } });
-  db.subscriptionPlan.findUnique.mockResolvedValue({
-    id: "plan-1",
-    price: 5_000_000,
-    sessionsPerWeek: 2,
-    sessionDurationInHours: 1,
-    totalSessions: 8,
-    durationInMonths: 1,
-    durationInWeeks: null,
-    trialEnabled: false,
-    trialPriceInPaise: 0,
-    consultantProfile: { userId: "owner" },
-  });
+  db.subscriptionPlan.findUnique.mockResolvedValue(monthPlan);
   db.subscription.count.mockResolvedValue(3);
   sold.count = 3;
 });
@@ -170,7 +172,11 @@ it("lets an unsold months plan move to weeks", async () => {
   );
 });
 
-it("refuses a price under the pack floor in plain words, before any write", async () => {
+it("refuses a short pack priced under the pack floor in plain words, before any write", async () => {
+  db.subscriptionPlan.findUnique.mockResolvedValueOnce({
+    ...monthPlan,
+    durationInWeeks: 4,
+  });
   const res = await put({ price: 100_000 });
   expect(res.status).toBe(400);
   expect(await res.json()).toEqual({
@@ -178,4 +184,10 @@ it("refuses a price under the pack floor in plain words, before any write", asyn
     code: "PLAN_PRICE_BELOW_FLOOR",
   });
   expect(tx.subscriptionPlan.update).not.toHaveBeenCalled();
+});
+
+it("leaves a month-based plan unfloored", async () => {
+  const res = await put({ price: 100_000 });
+  expect(res.status).toBe(200);
+  expect(tx.subscriptionPlan.update).toHaveBeenCalled();
 });

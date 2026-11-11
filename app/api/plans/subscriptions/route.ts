@@ -17,6 +17,7 @@ import {
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
 import {
   assertPlanPriceWithinBounds,
+  isShortPack,
   PlanPriceBelowFloorError,
 } from "@/lib/payments/pricing/price-bounds";
 
@@ -168,12 +169,14 @@ export async function POST(request: NextRequest) {
         sessionDurationInHours,
       });
 
-    assertPlanPriceWithinBounds({
-      kind: "PACK",
-      pricePaise: Math.round(validatedData.price),
-      sessionDurationInHours,
-      totalSessions,
-    });
+    if (isShortPack(durationInWeeks)) {
+      assertPlanPriceWithinBounds({
+        kind: "PACK",
+        pricePaise: Math.round(validatedData.price),
+        sessionDurationInHours,
+        totalSessions,
+      });
+    }
 
     // Trial fields — Zod-validated; free by default until paid-trial
     // checkout is wired (the wiring PR flips the default to ₹100).

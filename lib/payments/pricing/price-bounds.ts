@@ -22,6 +22,14 @@ const LONG_SESSION_HOURLY = {
 /** A pack's per-session price may sit at most this far below the single-session floor. */
 export const MAX_PACK_DISCOUNT_BPS = 2_500;
 
+/** Only a weeks plan of at most this many weeks is a pack; longer and month-based plans are unfloored. */
+export const PACK_MAX_WEEKS = 4;
+
+/** Whether a subscription plan of this length is a short pack held to the pack floor. */
+export function isShortPack(durationInWeeks: number | null): boolean {
+  return durationInWeeks !== null && durationInWeeks <= PACK_MAX_WEEKS;
+}
+
 /** Suggestions for the listing UI until each format launches; nothing enforces them. */
 export const SUGGESTED_DEFAULT_PRICE_PAISE = {
   WEBINAR_SEAT: 14_900,

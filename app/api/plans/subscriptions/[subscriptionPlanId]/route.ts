@@ -20,6 +20,7 @@ import { activeClientCount, freezeSoldTerms } from "@/lib/booking/sold-terms";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
 import {
   assertPlanPriceWithinBounds,
+  isShortPack,
   PlanPriceBelowFloorError,
 } from "@/lib/payments/pricing/price-bounds";
 import {
@@ -195,8 +196,11 @@ export async function PUT(
         }
       : null;
 
-    // Only an edit that sets the price or the terms is held to the pack floor.
-    if (validatedData.price !== undefined || derived) {
+    // Only a short pack whose edit sets the price or the terms is held to the pack floor.
+    if (
+      isShortPack(durationInWeeks) &&
+      (validatedData.price !== undefined || derived)
+    ) {
       assertPlanPriceWithinBounds({
         kind: "PACK",
         pricePaise: Math.round(validatedData.price ?? existingPlan.price),

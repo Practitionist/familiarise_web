@@ -1,6 +1,7 @@
 import {
   assertPlanPriceWithinBounds,
   defaultPriceForSession,
+  isShortPack,
   minPriceForPack,
   minPriceForSession,
   PlanPriceBelowFloorError,
@@ -55,6 +56,15 @@ describe("price bounds", () => {
         durationInHours: 0.5,
       }),
     ).not.toThrow();
+  });
+
+  it.each([
+    ["a 3-week pack", 3, true],
+    ["a 4-week pack", 4, true],
+    ["a 5-week plan", 5, false],
+    ["a month-based plan", null, false],
+  ])("floors %s: %s", (_label, weeks, floored) => {
+    expect(isShortPack(weeks)).toBe(floored);
   });
 
   it("rejects a non-positive length or session count", () => {
