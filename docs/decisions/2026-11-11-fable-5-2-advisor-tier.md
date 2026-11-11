@@ -7,7 +7,7 @@
 
 ## Context
 
-Anthropic released Claude Fable 5.2 on 2026-11-09. It costs $8 per million input tokens and $40 per million output tokens, against $10 and $50 for Fable 5.1, so it is now 2× Opus 5.5 instead of 2.5×. From Claude Code v2.1.321 the `fable` alias resolves to Fable 5.2, and this machine runs v2.1.322. Claude Code starts Fable 5.2 at `medium` effort, while the API starts it at `high`.
+Anthropic released Claude Fable 5.2 on 2026-11-09. It costs $8 per million input tokens and $40 per million output tokens, against $10 and $50 for Fable 5.1, so on base input and output it is now 2× Opus 5.5 instead of 2.5×. Cache reads cost $0.20 per million tokens on both. From Claude Code v2.1.321 the `fable` alias resolves to Fable 5.2, and this machine runs v2.1.322. The exception is a Claude apps gateway session, where `fable` still resolves to Fable 5 unless `ANTHROPIC_DEFAULT_FABLE_MODEL` overrides it; select `claude-fable-5-2` explicitly there. Claude Code starts Fable 5.2 at `medium` effort, while the API starts it at `high`.
 
 Anthropic's effort guidance for Fable 5.2 says most of the capability gain is already present at `high`, that gains above `high` are uneven, and that `max` is slow and costly for a small gain and is meant for measuring the model's ceiling. The prompting guide also reports four behaviours that affect how this repository briefs agents: early stopping at low and medium effort, ready delegation when prompts invite it, over-caution when "never" rules stack up, and larger diffs when a prompt calls the code the model's own.
 
