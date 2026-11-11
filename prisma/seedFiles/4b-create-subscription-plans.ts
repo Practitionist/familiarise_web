@@ -108,7 +108,7 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
             description:
               "Intensive program with 3 calls per week for 12 months. Designed for advanced learners and professionals seeking mastery.",
             durationInMonths: 12,
-            price: faker.number.int({ min: 5990000, max: 9990000 }), // ₹59900-₹99900 in paise
+            price: faker.number.int({ min: 10800000, max: 14400000 }), // ₹108000-₹144000: clears the 144-session pack floor
             priceCurrency: "INR",
             sessionsPerWeek: 3,
             sessionDurationInHours: 1.0,
@@ -161,7 +161,11 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
           data: {
             subscriptionContents: {
               create: SUBSCRIPTION_ROADMAP.slice(0, sessionCount).map(
-                (item, index) => ({ ...item, order: index + 1, hoursAllotted: 1 }),
+                (item, index) => ({
+                  ...item,
+                  order: index + 1,
+                  hoursAllotted: 1,
+                }),
               ),
             },
             faqs: {

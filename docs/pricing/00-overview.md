@@ -2,7 +2,7 @@
 title: Pricing — Overview and current state
 type: explanation
 status: live
-last-reviewed: 2026-11-09
+last-reviewed: 2026-11-11
 ---
 
 # Pricing: overview and current state
@@ -73,6 +73,12 @@ The public `become-an-expert` page renders both rates from the active schedule t
 
 When an expert sells under a hosting organisation, the split is set by the organisation's `RateCard` (`platformBps`, `orgBps`, `consultantBps`, summing to 10,000) rather than by the marketplace fee. The effective card is resolved by `resolveEffectiveRateCard()` in `lib/api/organizations/rate-card.ts`, and settlement is in `lib/payments/payouts/earnings-service.ts`. The detail is in [rate cards and overage](../finance/50-b2b/03-rate-cards-and-overage.md).
 
+### Price bounds
+
+`lib/payments/pricing/price-bounds.ts` holds, in code, the lowest price and a suggested default for a 1:1 session by its length, and the pack rule: a subscription plan's price divided by its `totalSessions` may sit at most `MAX_PACK_DISCOUNT_BPS` below the single-session floor for its `sessionDurationInHours`. There is no maximum. `minPriceForSession()`, `defaultPriceForSession()` and `minPriceForPack()` are pure, so the offering editor imports the default too: a new consultation plan opens at the suggested 60-minute price.
+
+`assertPlanPriceWithinBounds()` throws `PlanPriceBelowFloorError` (400, `PLAN_PRICE_BELOW_FLOOR`) with a plain sentence naming the floor. Four routes call it: the consultation plan `POST` (`app/api/plans/consultations/route.ts`) and `PUT` (`app/api/plans/consultations/[consultationPlanId]/route.ts`), and the subscription plan `POST` (`app/api/plans/subscriptions/route.ts`) and `PUT` (`app/api/plans/subscriptions/[subscriptionPlanId]/route.ts`). A `PUT` checks only an edit that sets the price or the length terms, against the plan as it would be saved. Checkout charges a 1:1 or a pack only from the saved plan price (`calculateAmountAndValidate()` in `lib/payments/checkout/pricing.ts`, and the pay-link in `lib/payments/operations/approval-payment.ts`), so it has no second guard; a plan saved before the floor existed keeps its price until it is next edited. `SUGGESTED_DEFAULT_PRICE_PAISE` holds the defaults for webinars, classes, monthly subscriptions, digital products and replays, which are suggestions only until each format launches. Trials keep their own floor, `PlatformPricingConfig.minTrialPriceInPaise`.
+
 ### GST on the order
 
 `determineTax()` (`lib/payments/tax/tax-engine.ts`) takes the regime from `currentGstRegime()` (`lib/payments/tax/gst-regime.ts`), which reads `PLATFORM_GSTIN` alone. Registered, it charges 18% GST on the discounted base for an Indian buyer. Unregistered, it charges 0%, the payment is stamped `Payment.gstRegime = UNREGISTERED`, and the buyer gets a receipt instead of a tax invoice. A payment with no stamp predates the column and is treated as unregistered, so only a `REGISTERED` stamp is ever tax-invoiced. A GSTIN that is set but malformed or from another state refuses checkout with `GST_CONFIG_INVALID` rather than charging 0%; `GET /api/checkout/context` answers the same typed refusal (503) without a Sentry event. The rules and the turnover alarm are in [GST registration and the tax regime](../finance/60-tax/05-gst-registration-and-tax-regime.md).
@@ -96,6 +102,7 @@ When an expert sells under a hosting organisation, the split is set by the organ
 | Welcome discount and credit cap           | `lib/referrals/attribution.ts`, `lib/referrals/promo-math.ts`                                                                                                          |
 | Fee schedule, waiver, attribution         | `lib/payments/pricing/platform-fee.ts`, `ExpertCustomerRelationship`                                                                                                   |
 | Host-organisation rate card               | `lib/api/organizations/rate-card.ts`                                                                                                                                   |
+| Price floors and suggested defaults       | `lib/payments/pricing/price-bounds.ts`, called by the consultation and subscription plan routes under `app/api/plans/`                                                 |
 | The checkout page for all four plan types | `PlanCheckoutShell` and the per-type adapters in `app/checkout/plans/` (`adapters/`, `components/`), with `DiscountCodeField` for the code input and its inline errors |
 | Buyer payment detail (discount amounts)   | `paymentDiscountBreakdown()` in `lib/appointments/payment-display.ts`                                                                                                  |
 

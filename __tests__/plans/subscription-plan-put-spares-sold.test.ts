@@ -100,8 +100,10 @@ beforeEach(() => {
   (getSession as jest.Mock).mockResolvedValue({ user: { id: "owner" } });
   db.subscriptionPlan.findUnique.mockResolvedValue({
     id: "plan-1",
+    price: 5_000_000,
     sessionsPerWeek: 2,
     sessionDurationInHours: 1,
+    totalSessions: 8,
     durationInMonths: 1,
     durationInWeeks: null,
     trialEnabled: false,
@@ -166,4 +168,14 @@ it("lets an unsold months plan move to weeks", async () => {
       }),
     }),
   );
+});
+
+it("refuses a price under the pack floor in plain words, before any write", async () => {
+  const res = await put({ price: 100_000 });
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({
+    error: "A plan of 8 60-minute sessions must be priced at ₹5,994 or more.",
+    code: "PLAN_PRICE_BELOW_FLOOR",
+  });
+  expect(tx.subscriptionPlan.update).not.toHaveBeenCalled();
 });

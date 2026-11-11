@@ -15,6 +15,10 @@ import {
   oneOnOnePlanListWhere,
 } from "@/lib/api/plans/visibility";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
+import {
+  assertPlanPriceWithinBounds,
+  PlanPriceBelowFloorError,
+} from "@/lib/payments/pricing/price-bounds";
 
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
@@ -164,6 +168,13 @@ export async function POST(request: NextRequest) {
         sessionDurationInHours,
       });
 
+    assertPlanPriceWithinBounds({
+      kind: "PACK",
+      pricePaise: Math.round(validatedData.price),
+      sessionDurationInHours,
+      totalSessions,
+    });
+
     // Trial fields — Zod-validated; free by default until paid-trial
     // checkout is wired (the wiring PR flips the default to ₹100).
     const trialEnabled = validatedData.trialEnabled ?? false;
@@ -253,6 +264,12 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
+    if (error instanceof PlanPriceBelowFloorError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     console.error("Error creating subscription plan:", error);
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

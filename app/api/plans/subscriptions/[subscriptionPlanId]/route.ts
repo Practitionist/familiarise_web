@@ -19,6 +19,10 @@ import {
 import { activeClientCount, freezeSoldTerms } from "@/lib/booking/sold-terms";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
 import {
+  assertPlanPriceWithinBounds,
+  PlanPriceBelowFloorError,
+} from "@/lib/payments/pricing/price-bounds";
+import {
   archivedAtForArchive,
   parsePlanArchiveBody,
   PLAN_ORG_GOVERNED_RESPONSE,
@@ -191,6 +195,18 @@ export async function PUT(
         }
       : null;
 
+    // Only an edit that sets the price or the terms is held to the pack floor.
+    if (validatedData.price !== undefined || derived) {
+      assertPlanPriceWithinBounds({
+        kind: "PACK",
+        pricePaise: Math.round(validatedData.price ?? existingPlan.price),
+        sessionDurationInHours:
+          validatedData.sessionDurationInHours ??
+          existingPlan.sessionDurationInHours,
+        totalSessions: derived?.totalSessions ?? existingPlan.totalSessions,
+      });
+    }
+
     // Floor check on the effective post-update trial price. Untouched
     // plans are never retro-policed — only edits that set a price or
     // newly enable the trial run against the platform floor.
@@ -333,6 +349,12 @@ export async function PUT(
       { status: 200 },
     );
   } catch (error) {
+    if (error instanceof PlanPriceBelowFloorError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     if (error instanceof PlanLengthUnitLockedError) {
       return NextResponse.json(
         { error: error.message, code: "PLAN_LENGTH_UNIT_LOCKED" },

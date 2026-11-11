@@ -3,6 +3,10 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { ConsultationPlanSchema } from "@/schemas/plans";
+import {
+  assertPlanPriceWithinBounds,
+  PlanPriceBelowFloorError,
+} from "@/lib/payments/pricing/price-bounds";
 import { faqReplaceNested } from "@/lib/api/plans/content";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import {
@@ -124,6 +128,19 @@ export async function PUT(
 
     const validatedData = validationResult.data;
 
+    // Only an edit that sets the price or the length is held to the floor.
+    if (
+      validatedData.price !== undefined ||
+      validatedData.durationInHours !== undefined
+    ) {
+      assertPlanPriceWithinBounds({
+        kind: "SESSION",
+        pricePaise: Math.round(validatedData.price ?? existingPlan.price),
+        durationInHours:
+          validatedData.durationInHours ?? existingPlan.durationInHours,
+      });
+    }
+
     // Handle topics if provided
     let topicsUpdate = {};
     if (validatedData.topics !== undefined) {
@@ -171,6 +188,12 @@ export async function PUT(
       { status: 200 },
     );
   } catch (error) {
+    if (error instanceof PlanPriceBelowFloorError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"

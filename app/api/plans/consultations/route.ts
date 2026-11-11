@@ -3,6 +3,10 @@ import prisma from "@/lib/prisma";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
 import { NextRequest, NextResponse } from "next/server";
 import { ConsultationPlanSchema } from "@/schemas/plans";
+import {
+  assertPlanPriceWithinBounds,
+  PlanPriceBelowFloorError,
+} from "@/lib/payments/pricing/price-bounds";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import {
   oneOnOnePlanListCacheControl,
@@ -142,6 +146,11 @@ export async function POST(request: NextRequest) {
     }
 
     const validatedData = validationResult.data;
+    assertPlanPriceWithinBounds({
+      kind: "SESSION",
+      pricePaise: Math.round(validatedData.price),
+      durationInHours: validatedData.durationInHours,
+    });
 
     // Find or create topics by name
     const topicIds = await findOrCreateTopics(validatedData.topics ?? []);
@@ -184,6 +193,12 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
+    if (error instanceof PlanPriceBelowFloorError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "bookings" } },

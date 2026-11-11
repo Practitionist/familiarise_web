@@ -61,9 +61,9 @@ stateDiagram-v2
 
 ### PENDING and the hold window
 
-An earning starts PENDING with a `holdUntil` timestamp. `computeHoldUntil` sets it to the later of the capture time and the end of the last live session, plus the hold for the appointment type: 24 hours for a consultation or a class, 48 hours for a webinar, 168 hours (7 days) for a subscription (`PAYOUT_CONSTANTS.HOLD_PERIOD_HOURS`, `lib/payments/payouts/constants.ts`). A session that was cancelled, rescheduled or voided never anchors the hold. A rescheduled session moves the release with it.
+An earning starts PENDING with a `holdUntil` timestamp. `computeHoldUntil` sets it to the later of the capture time and the end of the last live session, plus the hold for the appointment type: 48 hours for a consultation, so the 48-hour scope-claim window closes before release, 24 hours for a class, 48 hours for a webinar, 168 hours (7 days) for a subscription (`PAYOUT_CONSTANTS.HOLD_PERIOD_HOURS`, `lib/payments/payouts/constants.ts`). A session that was cancelled, rescheduled or voided never anchors the hold. A rescheduled session moves the release with it.
 
-A new expert waits longer. `withNewExpertHold` adds 7 days (`NEW_EXPERT_EXTRA_HOLD_DAYS`) when the expert's first earning on a succeeded payment is under 30 days old or they have none, or when their lifetime share net of refunds is under ₹50,000 (5,000,000 paise).
+A new expert waits longer. `withNewExpertHold` adds 3 days (`NEW_EXPERT_EXTRA_HOLD_DAYS`) when the expert's first earning on a succeeded payment is under 30 days old or they have none, or when their lifetime share net of refunds is under ₹10,000 (1,000,000 paise, `NEW_EXPERT_LIFETIME_SHARE_PAISE`).
 
 A subscription is the exception to a hold set at mint: its earnings are one row per cycle with `holdUntil` unset, and the hold is stamped when the cycle's last session completes. Cancelled-session and trial settlements stamp holds later in the same way (`stampConsultantHolds`).
 
@@ -118,10 +118,10 @@ A refund of an earning that is already PAID is a clawback, and it is gated: `ref
 Priya pays ₹5,000 (500,000 paise) before GST on Monday 2026-10-05 at 15:00 IST for a one-hour consultation with Hannah on Monday 2026-10-12 from 10:00 to 11:00 IST. Hannah is an established expert at the 20 percent marketplace rate.
 
 1. **2026-10-05 15:05 IST.** The capture is confirmed. One `ConsultantEarnings` row is minted: gross 500,000, platform fee 100,000, share 400,000, status PENDING. The `BOOKING` journal credits `CONSULTANT_PAYABLE` 400,000.
-2. **The hold.** The session ends 2026-10-12 11:00 IST, which is later than the capture, so `holdUntil` is 2026-10-13 11:00 IST. For a new expert it would be 2026-10-20 11:00 IST.
-3. **2026-10-13 11:05 IST.** The release job runs, finds the payment has no pending refund and no undelivered session, and moves the row to READY.
+2. **The hold.** The session ends 2026-10-12 11:00 IST, which is later than the capture, so `holdUntil` is 2026-10-14 11:00 IST. For a new expert it would be 2026-10-17 11:00 IST.
+3. **2026-10-14 11:05 IST.** The release job runs, finds the payment has no pending refund and no undelivered session, and moves the row to READY.
 4. **Monday batch.** The row is claimed into Hannah's payout and becomes BATCHED. When the payout is COMPLETED it becomes PAID.
-5. **What if.** If Priya's bank opened a chargeback on 2026-10-14, `placeDisputeHolds` would freeze the row as HELD with `preHoldStatus` READY. A win releases the hold and restores READY. A loss of half reverses 200,000 paise and leaves the rest payable.
+5. **What if.** If Priya's bank opened a chargeback on 2026-10-15, `placeDisputeHolds` would freeze the row as HELD with `preHoldStatus` READY. A win releases the hold and restores READY. A loss of half reverses 200,000 paise and leaves the rest payable.
 
 ## What the consultant sees
 
