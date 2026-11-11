@@ -50,6 +50,12 @@ import { activeClientsNotice } from "@/lib/booking/entitlement";
 import { activeClientsOf, withPricingNotice } from "./sold-terms-notice";
 import { sellHomeHref } from "@/lib/dashboard/sell-pages";
 import { SessionHostProvider } from "./session-time-field";
+import {
+  feasibilityRefusalOf,
+  feasibilityWarningsOf,
+} from "./feasibility-feedback";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { isExpectedRefusal } from "@/lib/errors/client-refusal";
 
 interface OfferingEditorContainerProps {
   type: OfferingType;
@@ -253,6 +259,9 @@ export function OfferingEditorContainer({
   // bookings": that let an unpublish through with no confirmation while the
   // real count was simply unknown.
   const bookingsUnknown = unpublishCanStrand && !stats.data;
+  const [publishRefusal, setPublishRefusal] = React.useState<string[] | null>(
+    null,
+  );
   const [pendingUnpublish, setPendingUnpublish] = React.useState<Record<
     string,
     unknown
@@ -310,6 +319,8 @@ export function OfferingEditorContainer({
     { publish }: { publish: boolean },
   ) => {
     setSavingAction(publish ? "publish" : "draft");
+    setPublishRefusal(null);
+    const wasPublishedBeforeSave = status === "PUBLISHED";
     try {
       const payload = {
         ...values,
@@ -318,11 +329,11 @@ export function OfferingEditorContainer({
         status: publish ? "SCHEDULED" : "DRAFT",
       };
 
-      const wasPublishedBeforeSave = status === "PUBLISHED";
+      let saved: unknown;
       if (onSave) {
         await onSave(payload, { publish });
       } else {
-        await adapter.save(payload, consultantId, {
+        saved = await adapter.save(payload, consultantId, {
           ...saveCtx,
           capacityEdited:
             existingPlan?.maxParticipants === undefined ||
@@ -335,23 +346,36 @@ export function OfferingEditorContainer({
       void invalidateOfferingQueries(queryClient, consultantId);
       if (!(await commitStagedImage())) return;
 
-      toast(
-        savedToast({
-          publish,
-          hasRealDraft,
-          wasPublished: wasPublishedBeforeSave,
-        }),
-      );
+      const savedNotice = savedToast({
+        publish,
+        hasRealDraft,
+        wasPublished: wasPublishedBeforeSave,
+      });
+      const hoursWarnings = feasibilityWarningsOf(saved);
+      toast({
+        ...savedNotice,
+        description:
+          [savedNotice.description, ...hoursWarnings]
+            .filter(Boolean)
+            .join(" ") || undefined,
+      });
 
       router.push(returnHref ?? sellHomeHref(consultantId, type));
       router.refresh();
     } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "offerings" } },
-      );
+      // A 4xx is the server's answer, not a fault.
+      if (!isExpectedRefusal(error)) {
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "offerings" } },
+        );
+      }
+      setPublishRefusal(feasibilityRefusalOf(error));
       toast({
-        title: publish ? "Couldn't publish" : "Couldn't save",
+        title:
+          publish && !wasPublishedBeforeSave
+            ? "Couldn't publish"
+            : "Couldn't save",
         description:
           error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",
@@ -366,6 +390,24 @@ export function OfferingEditorContainer({
       value={{ plan: planWaiting, instance: instanceWaiting }}
     >
       <SessionHostProvider consultantProfileId={consultantId}>
+        {publishRefusal && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertTitle>
+              This plan can&apos;t be delivered from your published hours
+            </AlertTitle>
+            <AlertDescription>
+              <ul className="list-disc space-y-1 pl-5">
+                {publishRefusal.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+              <p className="mt-2">
+                Add hours in Availability, shorten the sessions, or lower the
+                sessions a week, then save again.
+              </p>
+            </AlertDescription>
+          </Alert>
+        )}
         <OfferingEditor
           manifest={effectiveManifest}
           form={form}
