@@ -343,7 +343,8 @@ export const EVENT_ALLOWED_FROM: Record<WebinarStatus, WebinarStatus[]> = {
   SCHEDULED: ["SCHEDULED", "IN_PROGRESS"],
   IN_PROGRESS: ["SCHEDULED"],
   COMPLETED: ["SCHEDULED", "IN_PROGRESS"],
-  CANCELLED: ["SCHEDULED", "IN_PROGRESS"],
+  // A draft with placed sessions is cancellable, so its host is never stuck with it.
+  CANCELLED: ["DRAFT", "SCHEDULED", "IN_PROGRESS"],
 };
 // Type-level proof the two enums stay in lockstep.
 export const CLASS_EVENT_ALLOWED_FROM: Record<ClassStatus, ClassStatus[]> =

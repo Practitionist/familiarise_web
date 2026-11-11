@@ -41,6 +41,7 @@ import {
 import { getSession } from "@/lib/auth-server";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import { seriesStartsFrom } from "@/lib/booking/class-pattern";
+import { eventTimeRefusal } from "@/lib/booking/event-time-rules";
 import { buildOccurrence } from "@/lib/appointments/occurrences";
 import {
   assertCollaboratorsAvailableForWindows,
@@ -288,6 +289,20 @@ export async function POST(request: NextRequest) {
           resolveSchedulingTimezone(consultantProfile.user.timezone),
         )
       : [];
+
+    // A class given a start holds every session, each on the half-hour grid.
+    const startRefusal = start ? eventTimeRefusal(start, "create") : null;
+    if (startRefusal || (start && sessionStarts.length !== totalSessions)) {
+      return NextResponse.json(
+        {
+          error:
+            startRefusal?.message ??
+            `That start can't place all ${totalSessions} sessions. Pick a different day or time.`,
+          code: "EVENT_TIME_INVALID",
+        },
+        { status: 400 },
+      );
+    }
 
     // Create class plan, instance, and appointments in a transaction.
     // Serializable + retry: this writes N session slot atoms that the #440

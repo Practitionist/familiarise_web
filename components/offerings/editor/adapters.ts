@@ -16,6 +16,7 @@ import {
   WebinarPlanSchema,
 } from "@/schemas/plans";
 import { DigitalProductCategory, PlanLevel } from "@prisma/client";
+import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
 import { DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE } from "@/lib/digital-products/constants";
 import { DIGITAL_PRODUCT_PRICE_RULE } from "@/schemas/digital-products";
@@ -62,6 +63,16 @@ const toIsoDate = (value: unknown): string | null | undefined => {
   if (typeof value === "string" && value) return value;
   if (value === null || value === "") return null;
   return undefined;
+};
+
+/** A class start rounded up to the half-hour grid every session is stored on. */
+const toGridIsoDate = (value: unknown): string | null | undefined => {
+  const iso = toIsoDate(value);
+  const ms = iso ? Date.parse(iso) : Number.NaN;
+  if (!iso || Number.isNaN(ms)) return iso;
+  return new Date(
+    Math.ceil(ms / SCHEDULING_INTERVAL_MS) * SCHEDULING_INTERVAL_MS,
+  ).toISOString();
 };
 
 /** Which group-event instance a save addresses, and its current status. */
@@ -362,7 +373,7 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
           classPlan: withoutUntouchedCapacity(values, ctx),
         } as never,
         consultantId,
-        toIsoDate(values.schedulingStartDate),
+        toGridIsoDate(values.schedulingStartDate),
       ),
   },
 };
