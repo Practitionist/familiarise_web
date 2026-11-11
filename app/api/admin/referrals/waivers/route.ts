@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+import { ConsultantFeeWaiverReason, Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import prisma from "@/lib/prisma";
@@ -10,11 +10,13 @@ import { readReferralProgramConfig } from "@/lib/referrals/program-config";
 
 const WaiverStatusFilterSchema = z.enum(["ACTIVE", "EXHAUSTED", "EXPIRED"]);
 const WaiverReasonSchema = z.enum(["REFERRED_EXPERT", "REFERRING_EXPERT"]);
+// Founding waivers are listed here but granted only through the founding-waivers route.
+const WaiverReasonFilterSchema = z.nativeEnum(ConsultantFeeWaiverReason);
 
 const GetWaiversQuerySchema = z.object({
   q: z.string().trim().max(200).optional(),
   status: WaiverStatusFilterSchema.optional(),
-  reason: WaiverReasonSchema.optional(),
+  reason: WaiverReasonFilterSchema.optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
