@@ -1,25 +1,8 @@
 "use client";
 
 import { useMutation } from "@tanstack/react-query";
+import { useState, type ReactNode } from "react";
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import {
   RETURN_BLOCK_COPY,
@@ -30,6 +13,12 @@ import {
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { lastInstantBefore } from "@/lib/booking/entitlement";
 import { formatForViewer } from "@/lib/time/viewer-zone";
+
+import {
+  SessionConfirmDialog,
+  type PendingConfirm,
+} from "./SessionConfirmDialog";
+import type { SessionRowAction } from "./SessionSchedule";
 
 interface ReturnableSessionRow {
   id: string;
@@ -62,26 +51,34 @@ async function postReturn(appointmentId: string, occurrenceId: string) {
 }
 
 /**
- * D8 — the consultee's "Return to plan" on each upcoming subscription session.
- * A disabled button says why; the confirm states the rule before anything moves.
+ * D8 — the consultee's "Return to plan" on each upcoming subscription session,
+ * offered on that session's row. A blocked return stays in the menu with the
+ * reason under it; the confirm states the rule before anything moves, and
+ * the footnote names the rule and how many returns are left.
  */
-export function SubscriptionReturnControls({
+export function useSubscriptionReturnActions({
   appointmentId,
   sessions,
   sessionsReturned,
   rescheduleOpen,
   onChanged,
+  enabled,
 }: Readonly<{
   appointmentId: string;
   sessions: ReturnableSessionRow[];
   sessionsReturned: number;
   rescheduleOpen: boolean;
   onChanged: () => void;
-}>) {
+  /** False for anyone but the paying consultee of a live plan. */
+  enabled: boolean;
+}>): {
+  rowActions: (occurrenceId: string) => SessionRowAction[];
+  footnote: ReactNode;
+  dialog: ReactNode;
+} {
   const { toast } = useToast();
   const viewer = useViewerZone();
-  const when = (d: Date | string) =>
-    formatForViewer(toDate(d), viewer, "EEE d MMM, h:mm a");
+  const [pending, setPending] = useState<PendingConfirm | null>(null);
   const giveBack = useMutation({
     mutationFn: (occurrenceId: string) =>
       postReturn(appointmentId, occurrenceId),
@@ -101,82 +98,60 @@ export function SubscriptionReturnControls({
         variant: "destructive",
       }),
   });
+  const dialog = (
+    <SessionConfirmDialog pending={pending} onClose={() => setPending(null)} />
+  );
 
   const now = new Date();
-  const upcoming = sessions.filter(
-    (s) =>
-      !s.deletedAt &&
-      !s.isTentative &&
-      (s.completionStatus ?? "SCHEDULED") === "SCHEDULED" &&
-      toDate(s.startsAt).getTime() > now.getTime(),
+  const upcoming = new Map(
+    (enabled ? sessions : [])
+      .filter(
+        (s) =>
+          !s.deletedAt &&
+          !s.isTentative &&
+          (s.completionStatus ?? "SCHEDULED") === "SCHEDULED" &&
+          toDate(s.startsAt).getTime() > now.getTime(),
+      )
+      .map((s) => [s.id, s]),
   );
-  if (upcoming.length === 0) return null;
+  if (upcoming.size === 0) {
+    return { rowActions: () => [], footnote: null, dialog };
+  }
 
-  return (
-    <div className="space-y-2">
+  const rowActions = (occurrenceId: string): SessionRowAction[] => {
+    const s = upcoming.get(occurrenceId);
+    if (!s) return [];
+    const block = returnBlock({
+      startsAt: s.startsAt,
+      now,
+      sessionsReturned,
+      rescheduleOpen,
+    });
+    return [
+      {
+        key: "return-to-plan",
+        label: "Return to plan",
+        disabled: !!block || giveBack.isPending,
+        blockedBecause: block ? RETURN_BLOCK_COPY[block] : undefined,
+        onSelect: () =>
+          setPending({
+            title: "Return this session to your plan?",
+            body: RETURN_CONFIRM_COPY,
+            confirmLabel: "Return to plan",
+            onConfirm: () => giveBack.mutate(s.id),
+          }),
+      },
+    ];
+  };
+
+  return {
+    rowActions,
+    dialog,
+    footnote: (
       <p className="text-xs text-muted-foreground">
         Can&apos;t make a session? Return it to your plan at least 24 hours
-        ahead ({sessionsReturned} of {RETURN_CAP} used).
+        ahead from its menu ({sessionsReturned} of {RETURN_CAP} returns used).
       </p>
-      <TooltipProvider>
-        {upcoming.map((s) => {
-          const block = returnBlock({
-            startsAt: s.startsAt,
-            now,
-            sessionsReturned,
-            rescheduleOpen,
-          });
-          const button = (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!!block || giveBack.isPending}
-                >
-                  Return to plan
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    Return this session to your plan?
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {RETURN_CONFIRM_COPY}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Keep it</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => giveBack.mutate(s.id)}>
-                    Return to plan
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          );
-          return (
-            <div
-              key={s.id}
-              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3 text-sm"
-            >
-              <span>{when(s.startsAt)}</span>
-              {block ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span tabIndex={0}>{button}</span>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">
-                    {RETURN_BLOCK_COPY[block]}
-                  </TooltipContent>
-                </Tooltip>
-              ) : (
-                button
-              )}
-            </div>
-          );
-        })}
-      </TooltipProvider>
-    </div>
-  );
+    ),
+  };
 }
