@@ -2,13 +2,13 @@
 
 ## 1. Plan and limits
 
-Free is the plan the owner confirmed on 2026-11-06, and `docs/notifications/05-pre-production-checklist.md` plans for it (10,000 workflow runs a month, 20 active workflows, 24-hour activity retention, 16 families deployed, in-app channel only). VERIFIED 2026-10-17 from [novu.co/pricing](https://novu.co/pricing/): Free is 10,000 workflow runs a month, 20 workflows, 24-hour activity retention; Team is 250,000+ runs, 100 workflows, 90-day retention and $1.20 per 1,000 additional runs; subscribers are unlimited. The overage behaviour on Free is not stated on the page (unknown); treat the 10,000 runs as a hard ceiling.
+Free is the planned plan (confirmation date kept in Notion, Familiarise / Finance and Pricing / Vendors & Spend), and `docs/notifications/05-pre-production-checklist.md` plans for it (10,000 workflow runs a month, 20 active workflows, 24-hour activity retention, 16 families deployed, in-app channel only). VERIFIED 2026-10-17 from [novu.co/pricing](https://novu.co/pricing/): Free is 10,000 workflow runs a month, 20 workflows, 24-hour activity retention; Team is 250,000+ runs, 100 workflows, 90-day retention and $1.20 per 1,000 additional runs; subscribers are unlimited. The overage behaviour on Free is not stated on the page (unknown); treat the 10,000 runs as a hard ceiling.
 
 ## 2. What causes surprise bills or outages
 
 - One trigger per recipient is one run: a fan-out to 1,000 users spends 10 percent of the free month.
 - Development and Production are separate tenants with separate keys, but owner decision 2026-11-06 is to treat the monthly runs as counted across **both** environments (one quota). Development testing, previews and local runs all spend the same 10,000 runs, so keep them small. A preview that holds the production key spends production traffic. (The pricing page does not state this; it is the conservative planning assumption.)
-- Upgrade to Pro once monthly runs pass about 60 % of the quota (6,000 of 10,000). There is no Novu usage meter, so count from our own table: a planned ops-digest line sums the recipients of `SENT` `NotificationOutbox` rows for the month.
+- Check the monthly run count against the upgrade trigger kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). There is no Novu usage meter, so count from our own table: a planned ops-digest line sums the recipients of `SENT` `NotificationOutbox` rows for the month.
 - Retried triggers count again unless idempotent.
 - The 20-workflow cap stops new families, not billing.
 

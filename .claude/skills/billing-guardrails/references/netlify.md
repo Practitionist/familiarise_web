@@ -33,8 +33,7 @@ DOCS ([pricing](https://www.netlify.com/pricing/), [how credits work](https://do
 - Pro is $20 flat with 3,000 credits and unlimited members. Packs are 1,500 credits for $10; auto-recharge is off by default; free-plan sites pause when credits run out.
 - Costs: a production deploy 15 credits; Deploy Previews and branch deploys free; compute 10 credits per GB-hour (Serverless, Scheduled and Background Functions; Edge Functions do not count); web requests 2 credits per 10,000; bandwidth 20 credits per GB; forms free.
 - The switch is permanent: "You cannot revert to a Legacy plan from a Credit-based plan."
-- ESTIMATE at our usage: about 1,000 to 1,300 credits a month.
-- Status: an email asking Netlify support to confirm region pinning, Background Functions and seats before switching was drafted on 2026-11-01 and is not yet sent. Do not recommend the switch as decided.
+- Our usage estimate in credits and the status of the support email are kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). Do not recommend the switch as decided.
 
 ## 2. What causes surprise bills or outages
 
