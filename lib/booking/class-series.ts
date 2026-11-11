@@ -171,6 +171,12 @@ const LEDGER_OCCURRENCE_SELECT = {
   outcome: true,
 } as const;
 
+/** A seat's ledger counts confirmed, untombstoned rows only. */
+const LEDGER_OCCURRENCE_WHERE = {
+  deletedAt: null,
+  isTentative: false,
+} as const;
+
 /** Reads the seat's sessions and its plan size, on the caller's client. */
 export async function seatLedger(
   db: Pick<Tx, "appointment" | "appointmentOccurrence">,
@@ -190,11 +196,7 @@ export async function seatLedger(
     },
   });
   const occurrences = await db.appointmentOccurrence.findMany({
-    where: {
-      appointmentId: seat.appointmentId,
-      deletedAt: null,
-      isTentative: false,
-    },
+    where: { appointmentId: seat.appointmentId, ...LEDGER_OCCURRENCE_WHERE },
     select: LEDGER_OCCURRENCE_SELECT,
   });
   return seatLedgerFrom({
@@ -205,6 +207,37 @@ export async function seatLedger(
     now,
     sessionsPurchased: seat.sessionsPurchased,
   });
+}
+
+/** {@link seatLedger}'s plan size and sessions for many wrappers, in two reads whatever their count. */
+export async function seatSessionsByAppointment(
+  db: Pick<Tx, "appointment" | "appointmentOccurrence">,
+  appointmentIds: readonly string[],
+): Promise<Map<string, { N: number; occurrences: LedgerOccurrence[] }>> {
+  const ids = [...new Set(appointmentIds)];
+  // Sequential: the caller's transaction runs one statement at a time.
+  const appointments = await db.appointment.findMany({
+    where: { id: { in: ids } },
+    select: {
+      id: true,
+      class: { select: { classPlan: { select: { totalSessions: true } } } },
+    },
+  });
+  const rows = await db.appointmentOccurrence.findMany({
+    where: { appointmentId: { in: ids }, ...LEDGER_OCCURRENCE_WHERE },
+    select: { ...LEDGER_OCCURRENCE_SELECT, appointmentId: true },
+  });
+  const sessions = new Map<
+    string,
+    { N: number; occurrences: LedgerOccurrence[] }
+  >();
+  for (const id of ids) {
+    const occurrences = rows.filter((o) => o.appointmentId === id);
+    const planSize = appointments.find((a) => a.id === id)?.class?.classPlan
+      ?.totalSessions;
+    sessions.set(id, { N: planSize ?? occurrences.length, occurrences });
+  }
+  return sessions;
 }
 
 /** #1780 decision 9 — the times a freed ordinal held before a re-plan. */
@@ -382,28 +415,56 @@ const SEAT_REFUND_KEY_PREFIXES = [
   CLASS_END_REFUND_KEY_PREFIX,
 ] as const;
 
+/** Per-payment refund keys end in `:pay:<paymentId>`; an incident key names no payment. */
+const PAYMENT_KEYED_PREFIXES = ["occ:", ...SEAT_REFUND_KEY_PREFIXES] as const;
+
+/** Whether a refund on `paymentId` returns sessions of it: the one dedupe-key predicate. */
+function returnsSessionsOf(dedupeKey: string | null, paymentId: string) {
+  if (!dedupeKey) return false;
+  if (dedupeKey.startsWith(INCIDENT_REFUND_KEY_PREFIX)) return true;
+  return (
+    PAYMENT_KEYED_PREFIXES.some((prefix) => dedupeKey.startsWith(prefix)) &&
+    dedupeKey.endsWith(`:pay:${paymentId}`)
+  );
+}
+
 /**
- * What this payment already got back for sessions it will not be delivered:
+ * What each payment already got back for sessions it will not be delivered:
  * per session (`occ:*`, `incident:*`) and per seat (`seat-leave:*`,
- * `seat-exit:*`, `class-end:*`).
+ * `seat-exit:*`, `class-end:*`), in one read whatever the count.
  */
+export async function occurrenceRefundsByPayment(
+  db: Pick<Tx, "refund">,
+  paymentIds: readonly string[],
+): Promise<Map<string, number>> {
+  const totals = new Map(paymentIds.map((id) => [id, 0]));
+  if (totals.size === 0) return totals;
+  const rows = await db.refund.findMany({
+    where: {
+      paymentId: { in: [...totals.keys()] },
+      status: { in: ["SUCCEEDED", "PENDING"] },
+      OR: [INCIDENT_REFUND_KEY_PREFIX, ...PAYMENT_KEYED_PREFIXES].map(
+        (prefix) => ({ dedupeKey: { startsWith: prefix } }),
+      ),
+    },
+    select: { paymentId: true, dedupeKey: true, amountPaise: true },
+  });
+  for (const r of rows) {
+    if (!returnsSessionsOf(r.dedupeKey, r.paymentId)) continue;
+    totals.set(
+      r.paymentId,
+      (totals.get(r.paymentId) ?? 0) + Number(r.amountPaise),
+    );
+  }
+  return totals;
+}
+
+/** {@link occurrenceRefundsByPayment} for one payment. */
 export async function occurrenceRefundsPaise(
   db: Pick<Tx, "refund">,
   paymentId: string,
 ): Promise<number> {
-  const rows = await db.refund.findMany({
-    where: {
-      paymentId,
-      status: { in: ["SUCCEEDED", "PENDING"] },
-      OR: [
-        { dedupeKey: { startsWith: "occ:", endsWith: `:pay:${paymentId}` } },
-        { dedupeKey: { startsWith: INCIDENT_REFUND_KEY_PREFIX } },
-        ...SEAT_REFUND_KEY_PREFIXES.map((prefix) => ({
-          dedupeKey: { startsWith: prefix, endsWith: `:pay:${paymentId}` },
-        })),
-      ],
-    },
-    select: { amountPaise: true },
-  });
-  return rows.reduce((sum, r) => sum + Number(r.amountPaise), 0);
+  return (
+    (await occurrenceRefundsByPayment(db, [paymentId])).get(paymentId) ?? 0
+  );
 }

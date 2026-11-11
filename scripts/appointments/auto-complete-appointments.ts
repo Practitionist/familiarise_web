@@ -10,12 +10,7 @@
  * - Final billing/payout processing
  * - Accurate reporting
  *
- * This module exports the core function.
- * It is imported by:
- * - jobs/auto-complete-appointments.ts (GitHub Actions)
- * - app/api/cleanup/auto-complete-appointments/route.ts (API endpoint)
- *
- * Schedule: Hourly, at :07.
+ * Registered in lib/cron/cleanup-registry.ts; the ticker runs it every 30 minutes.
  *
  * One consultation it deliberately does not complete: a paid session the
  * consultant never joined belongs to `detect-consultant-no-shows` (:57), which
@@ -47,7 +42,7 @@ import {
 import { notificationScope } from "../../lib/novu/workflows";
 import { notificationHref } from "../../lib/novu/resolve-href";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { startDeadline } from "@/lib/cron/run-deadline";
+import { startDeadline, startDeadlineShare } from "@/lib/cron/run-deadline";
 import {
   EVENT_ALLOWED_FROM,
   REQUEST_ALLOWED_FROM,
@@ -280,6 +275,8 @@ interface PassBite {
   completed: number;
   errors: string[];
   read: string[];
+  /** What the class pass's completing commits stamped. */
+  classEnd?: ClassEndSettlement;
 }
 
 /** Excludes rows an earlier bite of this run read but left in the cohort. */
@@ -294,6 +291,12 @@ export interface AutoCompleteResult {
   consultationsCompleted: number;
   subscriptionsCompleted: number;
   trialsCompleted: number;
+  sessionsCompleted: number;
+  sessionsVoided: number;
+  sessionsUnverified: number;
+  classEndSeatsOwed: number;
+  classEndOwedPaise: number;
+  classEndCreditSeatsEscalated: number;
   errors: string[];
   timestamp: string;
 }
@@ -394,16 +397,19 @@ async function completeWebinars(
 }
 
 /**
- * The completing commit reads every seat's ledger and stamps its class-end
- * refund; only the retry-auto-refunds sweep (a financial job) drives them.
+ * One class per commit: its completion and every seat's class-end marker land
+ * together, from a fixed number of ledger reads; retry-auto-refunds drives them.
  */
-const CLASS_END_TX_TIMEOUT_MS = 30_000;
+const CLASS_END_TX_TIMEOUT_MS = 6_000;
 
-function logClassEndSettlement(settlement: ClassEndSettlement | null): void {
-  if (!settlement || settlement.owed + settlement.escalated === 0) return;
-  console.log(
-    `   💸 Never-scheduled sessions: ${settlement.owed} seat(s) owed ${settlement.owedPaise} paise, ${settlement.escalated} credit seat(s) queued for a human`,
-  );
+/** Adds one class's settlement into the run's running total. */
+function addSettlement(
+  total: ClassEndSettlement,
+  settlement: ClassEndSettlement,
+): void {
+  total.owed += settlement.owed;
+  total.owedPaise += settlement.owedPaise;
+  total.escalated += settlement.escalated;
 }
 
 /**
@@ -416,6 +422,7 @@ async function completeClasses(
 ): Promise<PassBite> {
   const errors: string[] = [];
   let completed = 0;
+  const classEnd: ClassEndSettlement = { owed: 0, owedPaise: 0, escalated: 0 };
 
   const bufferTime = new Date(
     Date.now() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
@@ -460,9 +467,8 @@ async function completeClasses(
 
       // CAS: same reasoning as the webinar arm above. The completing
       // commit also stamps each seat's refund for sessions sold but never placed.
-      let settlement: ClassEndSettlement | null = null;
       const moved = await completeThroughHelper(async () => {
-        settlement = await prisma.$transaction(
+        const settlement = await prisma.$transaction(
           async (tx) => {
             await transitionClassEvent(tx, {
               where: { id: cls.id },
@@ -474,6 +480,7 @@ async function completeClasses(
           },
           { timeout: CLASS_END_TX_TIMEOUT_MS },
         );
+        addSettlement(classEnd, settlement);
       });
       if (!moved) {
         console.log(`   ⏭️ Skipped — status changed since the sweep read`);
@@ -481,7 +488,6 @@ async function completeClasses(
       }
 
       console.log(`   ✅ Marked as COMPLETED`);
-      logClassEndSettlement(settlement);
       completed++;
     } catch (error) {
       const msg = `Failed to complete class ${cls.id}: ${error}`;
@@ -490,7 +496,12 @@ async function completeClasses(
     }
   }
 
-  return { completed, errors, read: classesToComplete.map((row) => row.id) };
+  return {
+    completed,
+    errors,
+    read: classesToComplete.map((row) => row.id),
+    classEnd,
+  };
 }
 
 /**
@@ -1215,6 +1226,8 @@ type ParentPassState = (typeof PARENT_PASSES)[number] & {
   completed: number;
   seen: string[];
   open: boolean;
+  /** When this pass stops starting rows; the class pass stops early. */
+  pastDeadline: () => boolean;
 };
 
 /**
@@ -1231,12 +1244,14 @@ async function drainRounds(
   slotRun: SlotRun,
   parents: ParentPassState[],
   allErrors: string[],
+  classEnd: ClassEndSettlement,
 ): Promise<number> {
   const { maxParents, maxSlotOutcomes, pastDeadline } = bites;
   const slotSeen: string[] = [];
   let slotsOpen = true;
   let rounds = 0;
-  while (!pastDeadline() && (slotsOpen || parents.some((p) => p.open))) {
+  const startable = (p: ParentPassState) => p.open && !p.pastDeadline();
+  while (!pastDeadline() && (slotsOpen || parents.some(startable))) {
     rounds++;
     if (slotsOpen) {
       const bite = await completeIndividualSlots(
@@ -1250,10 +1265,11 @@ async function drainRounds(
       slotsOpen = bite.read.length === maxSlotOutcomes;
     }
     for (const pass of parents) {
-      if (!pass.open || pastDeadline()) continue;
-      const bite = await pass.run(maxParents, pass.seen, pastDeadline);
+      if (!startable(pass)) continue;
+      const bite = await pass.run(maxParents, pass.seen, pass.pastDeadline);
       allErrors.push(...bite.errors);
       pass.completed += bite.completed;
+      if (bite.classEnd) addSettlement(classEnd, bite.classEnd);
       pass.seen.push(...bite.read);
       // A later slot bite can make more parents eligible, so a short parent
       // cohort closes its pass only once the slot pass has closed.
@@ -1266,8 +1282,8 @@ async function drainRounds(
 /**
  * Main function to auto-complete all eligible appointments
  */
-// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
-// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
+// Locked at the core so every entry shares one mutual exclusion; fail-closed
+// because the class pass stamps refunds owed.
 //
 // `maxParents` and `maxSlotOutcomes` are bite sizes: the run loops bites until
 // every pass reads a short cohort or `startedAt` + SWEEP_START_DEADLINE_MS passes.
@@ -1285,17 +1301,29 @@ export async function autoCompleteAppointments(opts?: {
     opts?.maxSlotOutcomes && opts.maxSlotOutcomes > 0
       ? Math.floor(opts.maxSlotOutcomes)
       : MAX_SLOT_OUTCOMES_PER_BITE;
-  const pastDeadline = startDeadline(opts?.startedAt);
-  return withCronLock("auto-complete-appointments", { failMode: "open" }, () =>
-    autoCompleteAppointmentsUnlocked(maxParents, maxSlotOutcomes, pastDeadline),
+  const startedAt = opts?.startedAt ?? Date.now();
+  const deadlines = {
+    pastDeadline: startDeadline(startedAt),
+    // A class's commit holds every seat's stamps, so none starts after half the start budget.
+    classesPastDeadline: startDeadlineShare(0.5, startedAt),
+  };
+  return withCronLock(
+    "auto-complete-appointments",
+    { failMode: "closed" },
+    () =>
+      autoCompleteAppointmentsUnlocked(maxParents, maxSlotOutcomes, deadlines),
   );
 }
 
 async function autoCompleteAppointmentsUnlocked(
   maxParents: number,
   maxSlotOutcomes: number,
-  pastDeadline: () => boolean,
+  deadlines: {
+    pastDeadline: () => boolean;
+    classesPastDeadline: () => boolean;
+  },
 ): Promise<AutoCompleteResult> {
+  const { pastDeadline, classesPastDeadline } = deadlines;
   const allErrors: string[] = [];
 
   console.log("🔄 Starting auto-complete appointments scan...");
@@ -1312,12 +1340,14 @@ async function autoCompleteAppointmentsUnlocked(
     witness: createStreamWitnessBudget(),
     menteeFailures: createRunFailureReporter("bookings"),
   };
-  const parents = PARENT_PASSES.map((pass) => ({
+  const parents: ParentPassState[] = PARENT_PASSES.map((pass) => ({
     ...pass,
     completed: 0,
     seen: [] as string[],
     open: true,
+    pastDeadline: pass.key === "classes" ? classesPastDeadline : pastDeadline,
   }));
+  const classEnd: ClassEndSettlement = { owed: 0, owedPaise: 0, escalated: 0 };
   let rounds = 0;
   try {
     rounds = await drainRounds(
@@ -1325,6 +1355,7 @@ async function autoCompleteAppointmentsUnlocked(
       slotRun,
       parents,
       allErrors,
+      classEnd,
     );
     try {
       // Owner decision — a needs-human item older than 72 h is warned about, throttled.
@@ -1371,9 +1402,7 @@ async function autoCompleteAppointmentsUnlocked(
 
   // Summary
   console.log(`\n📊 Auto-Complete Summary (${rounds} round(s)):`);
-  console.log(
-    `   Sessions: ${tally.completed} completed, ${tally.voided} voided, ${tally.unverified} unverified, ${tally.deferred} deferred`,
-  );
+  console.log(`   Sessions deferred: ${tally.deferred}`);
   console.log(`   Webinars completed: ${completed("webinars")}`);
   console.log(`   Classes completed: ${completed("classes")}`);
   console.log(`   Consultations completed: ${completed("consultations")}`);
@@ -1392,6 +1421,12 @@ async function autoCompleteAppointmentsUnlocked(
     consultationsCompleted: completed("consultations"),
     subscriptionsCompleted: completed("subscriptions"),
     trialsCompleted: completed("trials"),
+    sessionsCompleted: tally.completed,
+    sessionsVoided: tally.voided,
+    sessionsUnverified: tally.unverified,
+    classEndSeatsOwed: classEnd.owed,
+    classEndOwedPaise: classEnd.owedPaise,
+    classEndCreditSeatsEscalated: classEnd.escalated,
     errors: allErrors,
     timestamp: new Date().toISOString(),
   };

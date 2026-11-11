@@ -36,8 +36,9 @@ import {
 import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
 import { liveParticipant } from "@/lib/booking/participants";
 import {
-  seatLedger,
-  occurrenceRefundsPaise,
+  seatLedgerFrom,
+  seatSessionsByAppointment,
+  occurrenceRefundsByPayment,
   seriesCancelRefundPaise,
   classEndRefundPaise,
   CLASS_END_REFUND_KEY_PREFIX,
@@ -499,10 +500,9 @@ export async function refundWholeEventPayments(
 }
 
 /**
- * #1780 D-5 — each paid class seat's ledger by payment id, joined at the later
- * of its participant row and its payment (a re-bought seat reuses the row).
- * Read on `db`, sequentially: a door passes its transaction so the amounts it
- * stamps come from the same snapshot its locks protect.
+ * Each paid class seat's ledger by payment id, joined at the later of its
+ * participant row and its payment (a re-bought seat reuses the row). At most
+ * five reads on `db` whatever the roster, so a door's transaction stays short.
  */
 export async function classSeriesLedgers(
   classId: string,
@@ -522,6 +522,8 @@ export async function classSeriesLedgers(
       appointmentId: true,
     },
   });
+  const ledgers = new Map<string, SeriesSeat>();
+  if (payments.length === 0) return ledgers;
   const seats = await db.appointmentParticipant.findMany({
     where: {
       appointment: { classId },
@@ -529,23 +531,35 @@ export async function classSeriesLedgers(
     },
     select: { userId: true, createdAt: true, sessionsPurchased: true },
   });
-  const ledgers = new Map<string, SeriesSeat>();
-  for (const p of payments) {
-    if (!p.appointmentId) continue;
+  const placed = payments.flatMap((p) =>
+    p.appointmentId ? [{ ...p, appointmentId: p.appointmentId }] : [],
+  );
+  const sessions = await seatSessionsByAppointment(
+    db,
+    placed.map((p) => p.appointmentId),
+  );
+  const refunded = await occurrenceRefundsByPayment(
+    db,
+    placed.map((p) => p.id),
+  );
+  const now = new Date();
+  for (const p of placed) {
     const seat = seats.find((s) => s.userId === p.userId);
     const seatAt = seat?.createdAt;
-    const joinedAt = seatAt && seatAt > p.createdAt ? seatAt : p.createdAt;
+    const { N, occurrences } = sessions.get(p.appointmentId) ?? {
+      N: 0,
+      occurrences: [],
+    };
     ledgers.set(p.id, {
-      ...(await seatLedger(
-        db,
-        {
-          appointmentId: p.appointmentId,
-          createdAt: joinedAt,
-          sessionsPurchased: seat?.sessionsPurchased,
-        },
-        p.amount,
-      )),
-      occRefundedPaise: await occurrenceRefundsPaise(db, p.id),
+      ...seatLedgerFrom({
+        N,
+        amountPaise: p.amount,
+        joinedAt: seatAt && seatAt > p.createdAt ? seatAt : p.createdAt,
+        occurrences,
+        now,
+        sessionsPurchased: seat?.sessionsPurchased,
+      }),
+      occRefundedPaise: refunded.get(p.id) ?? 0,
     });
   }
   return ledgers;

@@ -40,12 +40,20 @@ it("reads every seat's ledger only through the client it is given", async () => 
       ]),
     },
     appointment: {
-      findUnique: jest.fn(async () => ({
-        class: { classPlan: { totalSessions: 10 } },
-      })),
+      findMany: jest.fn(async () => [
+        { id: "appt-1", class: { classPlan: { totalSessions: 10 } } },
+      ]),
     },
     appointmentOccurrence: { findMany: jest.fn(async () => []) },
-    refund: { findMany: jest.fn(async () => [{ amountPaise: 1_000 }]) },
+    refund: {
+      findMany: jest.fn(async () => [
+        {
+          paymentId: "pay-a",
+          dedupeKey: "occ:o-1:pay:pay-a",
+          amountPaise: 1_000,
+        },
+      ]),
+    },
   };
 
   const ledgers = await classSeriesLedgers(

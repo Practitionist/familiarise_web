@@ -42,6 +42,8 @@ export const FINANCIAL_JOB_NAMES = new Set([
   // Voids a declared incident's sessions and refunds them through the front door.
   "settle-platform-incidents",
   "maintenance-booking-remediation",
+  // Its class pass stamps each seat's class-end refund owed in the completing commit.
+  "auto-complete-appointments",
   // #1846 N2 — re-drives the capture webhook's owed auto-refunds.
   "retry-auto-refunds",
   // Settles standalone sale captures and stages refunds for the ones it cannot grant.

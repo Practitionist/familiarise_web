@@ -97,9 +97,10 @@ it("stamps the class-end refunds on the completing transaction, after the CAS", 
   );
   expect(mockTransaction).toHaveBeenCalledWith(
     expect.any(Function),
-    expect.objectContaining({ timeout: 30_000 }),
+    expect.objectContaining({ timeout: 6_000 }),
   );
   expect(result.classesCompleted).toBe(1);
+  expect(result.classEndSeatsOwed).toBe(2);
 });
 
 it("stamps nothing when the class moved since the cohort read", async () => {

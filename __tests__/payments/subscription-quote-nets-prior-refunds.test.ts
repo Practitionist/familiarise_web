@@ -69,7 +69,13 @@ describe("subscription quote nets per-session refunds already paid", () => {
       async (args: { where: { supportRecommendation?: unknown } }) =>
         args.where.supportRecommendation
           ? [{ amountPaise: 30_000 }]
-          : [{ amountPaise: 100_000 }],
+          : [
+              {
+                paymentId: "pay-sub",
+                dedupeKey: "occ:o-1:pay:pay-sub",
+                amountPaise: 100_000,
+              },
+            ],
     );
     const db = {
       appointment: {
@@ -123,10 +129,10 @@ describe("subscription quote nets per-session refunds already paid", () => {
     expect(ctx.windowState).toBe("BEFORE");
     const where = (
       refundFindMany.mock.calls[0] as unknown as [
-        { where: { paymentId: string } },
+        { where: { paymentId: unknown } },
       ]
     )[0].where;
-    expect(where.paymentId).toBe("pay-sub");
+    expect(where.paymentId).toEqual({ in: ["pay-sub"] });
   });
 });
 

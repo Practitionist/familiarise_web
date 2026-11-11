@@ -575,13 +575,25 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           classesCompleted: r.classesCompleted,
           consultationsCompleted: r.consultationsCompleted,
           subscriptionsCompleted: r.subscriptionsCompleted,
+          trialsCompleted: r.trialsCompleted,
+          sessionsCompleted: r.sessionsCompleted,
+          sessionsVoided: r.sessionsVoided,
+          sessionsUnverified: r.sessionsUnverified,
+          classEndSeatsOwed: r.classEndSeatsOwed,
+          classEndOwedPaise: r.classEndOwedPaise,
+          classEndCreditSeatsEscalated: r.classEndCreditSeatsEscalated,
         }),
         items: (r) => ({
           processed:
             r.webinarsCompleted +
             r.classesCompleted +
             r.consultationsCompleted +
-            r.subscriptionsCompleted,
+            r.subscriptionsCompleted +
+            r.trialsCompleted +
+            r.sessionsCompleted +
+            r.sessionsVoided +
+            r.sessionsUnverified +
+            r.classEndSeatsOwed,
         }),
         failureMessage: "Failed to auto-complete appointments",
       }),

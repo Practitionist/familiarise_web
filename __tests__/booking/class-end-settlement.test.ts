@@ -15,14 +15,18 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
 }));
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 
-import type { Tx } from "@/lib/prisma";
+import type { PrismaLike, Tx } from "@/lib/prisma";
 import {
   classEndRefundPaise,
   occurrenceRefundsPaise,
+  seatLedger,
   seatLedgerFrom,
   type LedgerOccurrence,
 } from "@/lib/booking/class-series";
-import { stampClassEndRefundsOwed } from "@/lib/payments/operations/event-refunds";
+import {
+  classSeriesLedgers,
+  stampClassEndRefundsOwed,
+} from "@/lib/payments/operations/event-refunds";
 
 const DAY = 86_400_000;
 const NOW = new Date("2026-11-09T12:00:00Z");
@@ -127,7 +131,13 @@ describe("the seat ledger's unplaced count and the class-end amount", () => {
 
 describe("occurrenceRefundsPaise reads the class-end prefix", () => {
   it("counts a class-end refund as sessions already returned on the payment", async () => {
-    const findMany = jest.fn(async () => [{ amountPaise: 2_000 }]);
+    const findMany = jest.fn(async () => [
+      {
+        paymentId: "pay-a",
+        dedupeKey: "class-end:cls-1:pay:pay-a",
+        amountPaise: 2_000,
+      },
+    ]);
     const total = await occurrenceRefundsPaise(
       { refund: { findMany } } as unknown as Pick<Tx, "refund">,
       "pay-a",
@@ -137,9 +147,91 @@ describe("occurrenceRefundsPaise reads the class-end prefix", () => {
       { where: { OR: { dedupeKey: { startsWith: string } }[] } },
     ][];
     expect(calls[0][0].where.OR).toContainEqual({
-      dedupeKey: { startsWith: "class-end:", endsWith: ":pay:pay-a" },
+      dedupeKey: { startsWith: "class-end:" },
     });
   });
+});
+
+/** A class of `count` seats over two wrappers, late joiners and a refund on every fifth seat. */
+function classDb(count: number) {
+  const payments = Array.from({ length: count }, (_, i) => ({
+    id: `pay-${i}`,
+    amount: 10_000 + i * 37,
+    userId: `u-${i}`,
+    createdAt: new Date(JOINED.getTime() + (i % 3) * DAY),
+    appointmentId: `appt-${i % 2}`,
+  }));
+  const seats = payments.map((p, i) => ({
+    userId: p.userId,
+    createdAt: JOINED,
+    sessionsPurchased: i % 4 === 0 ? null : 10,
+  }));
+  const occurrences = [
+    ...sessions(8).map((o) => ({ ...o, appointmentId: "appt-0" })),
+    ...sessions(6).map((o) => ({ ...o, appointmentId: "appt-1" })),
+  ];
+  const refunds = payments
+    .filter((_, i) => i % 5 === 0)
+    .flatMap((p) => [
+      { paymentId: p.id, dedupeKey: `occ:o-1:pay:${p.id}`, amountPaise: 1_000 },
+      {
+        paymentId: p.id,
+        dedupeKey: "seat-leave:x:pay:other",
+        amountPaise: 400,
+      },
+    ]);
+  const ids = (w: unknown): string[] =>
+    typeof w === "string" ? [w] : ((w as { in: string[] }).in ?? []);
+  type Args = { where: Record<string, unknown> };
+  const plan = (id: unknown) => ({
+    id,
+    class: { classPlan: { totalSessions: 10 } },
+  });
+  const db = {
+    payment: { findMany: jest.fn(async () => payments) },
+    appointmentParticipant: { findMany: jest.fn(async () => seats) },
+    appointment: {
+      findUnique: jest.fn(async ({ where }: Args) => plan(where.id)),
+      findMany: jest.fn(async ({ where }: Args) => ids(where.id).map(plan)),
+    },
+    appointmentOccurrence: {
+      findMany: jest.fn(async ({ where }: Args) =>
+        occurrences.filter((o) =>
+          ids(where.appointmentId).includes(o.appointmentId),
+        ),
+      ),
+    },
+    refund: {
+      findMany: jest.fn(async ({ where }: Args) =>
+        refunds.filter((r) => ids(where.paymentId).includes(r.paymentId)),
+      ),
+    },
+  };
+  const reads = () =>
+    Object.values(db)
+      .flatMap((table) => Object.values(table) as jest.Mock[])
+      .reduce((n, fn) => n + fn.mock.calls.length, 0);
+  return { db: db as unknown as PrismaLike, payments, reads };
+}
+
+it("classSeriesLedgers gives every seat its per-seat ledger in five reads, for 1 seat or 50", async () => {
+  const one = classDb(1);
+  await classSeriesLedgers("cls-1", one.db);
+  const fifty = classDb(50);
+  const ledgers = await classSeriesLedgers("cls-1", fifty.db);
+  expect(one.reads()).toBe(5);
+  expect(fifty.reads()).toBe(5);
+  for (const [i, p] of fifty.payments.entries()) {
+    const seat = {
+      appointmentId: p.appointmentId,
+      createdAt: p.createdAt,
+      sessionsPurchased: i % 4 === 0 ? null : 10,
+    };
+    expect(ledgers.get(p.id)).toEqual({
+      ...(await seatLedger(fifty.db, seat, p.amount)),
+      occRefundedPaise: i % 5 === 0 ? 1_000 : 0,
+    });
+  }
 });
 
 type SeatRow = {
@@ -190,11 +282,15 @@ function fakeTx(opts: {
       ),
     },
     appointment: {
-      findUnique: jest.fn(async () => ({
-        class: { classPlan: { totalSessions: 10 } },
-      })),
+      findMany: jest.fn(async () => [
+        { id: "appt-1", class: { classPlan: { totalSessions: 10 } } },
+      ]),
     },
-    appointmentOccurrence: { findMany: jest.fn(async () => opts.occurrences) },
+    appointmentOccurrence: {
+      findMany: jest.fn(async () =>
+        opts.occurrences.map((o) => ({ ...o, appointmentId: "appt-1" })),
+      ),
+    },
     refund: {
       findMany: jest.fn(async (args: { where: { dedupeKey?: unknown } }) => {
         const key = args.where.dedupeKey as { startsWith?: string } | undefined;
