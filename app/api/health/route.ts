@@ -326,6 +326,10 @@ export async function GET(request: Request) {
       ? "degraded"
       : "healthy";
 
+  // Readiness: a probe that checks only the status code must see the outages
+  // that stop bookings and payments. Stream and Redis-only issues stay 200.
+  const httpStatus = database === "unreachable" || !maintenance.ok ? 503 : 200;
+
   const cacheControl =
     status === "healthy" && !includeBetterStack
       ? "public, s-maxage=30, stale-while-revalidate=60"
@@ -355,6 +359,7 @@ export async function GET(request: Request) {
       timestamp: new Date().toISOString(),
     },
     {
+      status: httpStatus,
       headers: {
         "Cache-Control": cacheControl,
         // Keyed on the flag, or a cached plain probe answers a `?includeBetterStack=1` call.
