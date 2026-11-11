@@ -37,7 +37,9 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
             </Badge>
             <h2 className="text-fluid-4xl font-bold text-foreground mb-6 tracking-tight">
               Learn live from{" "}
-              <span className="text-muted-foreground">verified experts</span>
+              <span className="text-muted-foreground">
+                founder-interviewed experts
+              </span>
             </h2>
             <p className="text-lg text-muted-foreground mb-8">
               Join live classes, webinars and sessions taught by working

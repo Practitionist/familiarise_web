@@ -99,12 +99,27 @@ These are the owner's working positions. Each is recorded in `docs/decisions/202
 
 ## The two instruments, and why they must stay separate
 
-|            | Contract acceptance (ToS)              | Data-processing consent (DPDP s.6)                   |
-| ---------- | -------------------------------------- | ---------------------------------------------------- |
-| Instrument | contract, IC Act ss.10/10A             | permission for a _specified purpose_                 |
-| Trigger    | ToS change                             | new/changed purpose                                  |
-| Acceptance | fresh; may be implied by conduct (s.9) | **clear affirmative action, s.6(1)** — never implied |
-| Withdrawal | close the account                      | stop processing, keep the account                    |
+|            | Contract acceptance (ToS)                           | Data-processing consent (DPDP s.6)                   |
+| ---------- | --------------------------------------------------- | ---------------------------------------------------- |
+| Instrument | contract, Contract Act s.10; IT Act s.10A           | permission for a _specified purpose_                 |
+| Trigger    | ToS change                                          | new/changed purpose                                  |
+| Acceptance | fresh; may be implied by conduct (Contract Act s.9) | **clear affirmative action, s.6(1)** — never implied |
+| Withdrawal | close the account                                   | stop processing, keep the account                    |
+
+The two instruments are kept in separate places in the data model, so a Terms acceptance can never be read as a data-processing consent. Acceptance of the Terms and the privacy policy is a pair of timestamps on the user row, `User.termsAcceptedAt` and `User.privacyAcceptedAt` (`prisma/schema.prisma`), stamped once when onboarding completes (`claimOnboardingCompletion`, `utils/onboarding-completion.ts`). Data-processing consent is a different table, `ConsentArtifact`, which holds the purpose codes, the notice `version`, `grantedAt`, `withdrawnAt` and a tamper-evident `hash`, and which every consent gate reads (`checkConsent`, see [DPDP and privacy](./02-dpdp-and-privacy.md)). No gate reads `termsAcceptedAt`, and no code path writes a `ConsentArtifact` as a side effect of a Terms acceptance.
+
+### The statutory sections behind the table
+
+Each section below was checked against a published copy of the Act on 2026-11-09. The table above and the owner decisions in this page rely on them.
+
+- **Contract Act s.9 (promises, express and implied).** A promise is express when the proposal or acceptance is made in words and implied when it is made otherwise than in words, which is why a user who keeps using the service after a notified Terms change can be treated as having accepted it. This applies to the contract only; DPDP s.6(1) demands a clear affirmative action, so conduct never counts as data-processing consent.
+- **Contract Act s.62 (effect of novation, rescission and alteration).** When the parties agree to substitute a new contract or to alter the existing one, the original need not be performed. An alteration therefore needs the agreement of both parties, so a Terms change must be put to the user and cannot simply be applied by the platform.
+- **IT Act s.4 (legal recognition of electronic records) and s.10A (validity of contracts formed through electronic means).** Where a law requires information to be in writing, an electronic record that stays accessible for later reference satisfies it (s.4), and a contract is not unenforceable only because its offer and acceptance were electronic (s.10A). An in-app acceptance and an emailed notice are therefore valid written forms. The IT Act has no section 4A.
+- **DPDP Act s.5(2).** For consent a person gave before the Act commenced, the fiduciary must give a notice "as soon as it is reasonably practicable" that says what data is processed and why, how the person can withdraw consent and exercise the rights in s.13, and how to complain to the Board. The Act's own illustration says the notice may be given by email, in-app notification or another effective method, and processing may continue until the person withdraws consent.
+- **Contract Act s.56 is frustration, not unfairness.** Section 56 voids an agreement to do an impossible act and a contract that later becomes impossible or unlawful. Do not cite it for a harsh Terms clause.
+- **Consumer Protection Act 2019 s.2(46) and s.2(47).** Section 2(46) defines an "unfair contract", one whose terms significantly change the consumer's rights, and s.2(47) defines an "unfair trade practice". A Terms clause is tested against s.2(46), and a misleading method of selling is tested against s.2(47).
+
+Sources: the Indian Contract Act 1872 (<https://indiacode.nic.in/bitstream/123456789/2187/2/A187209.pdf>, with the section 62 text read at <https://www.lawx.in/acts/section/6/104/1268>); the Information Technology Act 2000, Chapter III (<https://vidhijudicial.com/sec-4-to-10a-chapter-iii-(electronic-governance)-the-information-technology-act,-2000.html>); the DPDP Act 2023 section 5 (<https://dpdpa.com/dpdpa2023/chapter-2/section5.html>); the Consumer Protection Act 2019 section 2 (<https://taxguru.in/?p=732585>).
 
 **A ToS change can never carry new data-processing consent.** Bundling is the
 named anti-pattern (GDPR Art 7(4); EDPB Guidelines 03/2022). India has no

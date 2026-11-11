@@ -24,6 +24,15 @@ export function DisplayZoneProvider({
 }
 
 /**
+ * The zone a `DisplayZoneProvider` above pinned, or null without one. A
+ * surface that names its zone or offers a switch reads it here so the label
+ * and the times underneath come from the same value.
+ */
+export function useProvidedZone(): string | null {
+  return useContext(DisplayZoneContext);
+}
+
+/**
  * A date-fns style `format(date, pattern)` in the provided viewer zone.
  * Without a provider it keeps the runtime zone, the pre-#1527 behaviour of
  * the surfaces that have not been seeded with a zone yet.

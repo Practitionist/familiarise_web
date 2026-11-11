@@ -8,7 +8,7 @@ A promotion may never cost more than the platform earns on the order it touches.
 
 ## 2. Programme economics at launch
 
-The default values below sit in `ReferralProgramConfig` and the active fee schedule. Operations can change any of them without a code change. The launch budget (`monthlyBudgetPaise`) and the review-hold thresholds (`holdSameIpReferrals`, `holdSameDeviceReferrals`, `holdWindowDays`) are owner-set values kept in Notion (Familiarise / Growth & Marketing), not in this repository.
+The default values below sit in `ReferralProgramConfig` and the active fee schedule. Operations can change any of them without a code change. The launch budget (`monthlyBudgetPaise`) and the review-hold thresholds (`holdSameIpReferrals`, `holdSameDeviceReferrals`, `holdWindowDays`) are owner-set values kept in Notion (Familiarise / Growth & Marketing / Growth & Marketing Lever Register), not in this repository. The approved values of the other `ReferralProgramConfig` fields in the table below are kept there too; where such a default differs from the approved value, the Notion register wins and the owner sets the field through the referral admin route (`PATCH /api/admin/referrals/config`). The fee-schedule rates in the table are different: their approved values are kept in Notion (Familiarise / Finance and Pricing / Finance Lever Register), and they change only through the maker-checker fee-schedule approval in section 8, never through the referral route.
 
 | Item                                  | Default                                             | Where it is set                            |
 | ------------------------------------- | --------------------------------------------------- | ------------------------------------------ |

@@ -313,7 +313,7 @@ No new vendor. Sentry Developer ($0) includes 5k errors/month; the 2026-09-21
 Upstash incident consumed ~80% of that in 24 hours, which is what the
 `INFRA_THROTTLE_MS` throttle in `sentry.shared.config.ts` exists to mitigate.
 The real fix is the **Team plan at $26/mo** — 50k errors, 90-day retention
-instead of 30, and the REST API scope the triage panel above needs.
+instead of 30, and the REST API scope the triage panel above needs. The owner decided on 2026-11-11 to buy Team on a trigger kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend) (the trigger is kept in Notion, Familiarise / Finance and Pricing / Vendors & Spend), which supersedes the earlier rejection recorded in ADR-09 of `docs/decisions/2026-10-26-launch-sweep-observability-and-money-holds.md`.
 
 Cron monitors are 1 free then $0.78 each, and worth turning on: the cron fleet
 is where the observed outages were, and 34 of the 53 `/api/cleanup/*` routes

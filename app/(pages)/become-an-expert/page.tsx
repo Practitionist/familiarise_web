@@ -47,9 +47,9 @@ const STEPS = [
   },
   {
     icon: BadgeCheck,
-    title: "Get verified",
+    title: "Get interviewed",
     description:
-      "We review your credentials and experience so learners know every expert on the platform is genuine.",
+      "Our founder personally interviews you, and we confirm your employer by work email or LinkedIn, before you can take bookings.",
   },
   {
     icon: Target,
@@ -296,7 +296,7 @@ export default async function BecomeAnExpertPage() {
               What we need from you
             </Badge>
             <h2 className="text-fluid-3xl font-bold tracking-tight text-foreground">
-              What it takes to get verified
+              What it takes to get listed
             </h2>
           </div>
 

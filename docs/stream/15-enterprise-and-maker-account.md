@@ -389,39 +389,13 @@ These can be added to non-Enterprise plans as upgrades:
 
 ---
 
-## 8. Familiarise Tier Roadmap
+## 8. Upgrade Paths
 
-### 8.1 Current (Maker)
+### 8.1 Familiarise's tier, spend and plan
 
-| Product        | Tier                                       | Monthly cost |
-| -------------- | ------------------------------------------ | ------------ |
-| Chat           | Maker (modified Start — 2K MAU hard limit) | $0           |
-| Video & Audio  | Build ($100 credit)                        | $0           |
-| Activity Feeds | Start Plan                                 | $0           |
-| AI Moderation  | PAYG ($100 credit)                         | $0           |
-| **Total**      |                                            | **$0**       |
+Which Stream tier Familiarise is on, the projected monthly cost at each stage, and the plan for the first upgrade and the growth stage: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). The public rates behind any projection are in sections 1 to 7 and in `docs/stream/14-pricing-and-cost-model.md`.
 
-### 8.2 Post-Maker (first upgrade, annual billing)
-
-Triggered by: revenue > ₹9.07L/mo OR team > 4 OR funding > $100K OR MAU > 2K.
-
-| Product                       | Tier                     | Monthly cost (annual) | INR/mo        |
-| ----------------------------- | ------------------------ | --------------------- | ------------- |
-| Chat                          | Start 10K                | $399                  | ₹36,189       |
-| Video & Audio                 | PAYG (above $100 credit) | ~$80–180              | ₹7K–16K       |
-| Activity Feeds                | Start (if needed)        | $499                  | ₹45,269       |
-| AI Moderation                 | PAYG (above $100 credit) | ~$0–20                | ₹0–1,814      |
-| **Total (Chat + Video only)** |                          | **~$479–579**         | **~₹43K–53K** |
-
-### 8.3 Growth Stage (10K–25K MAU)
-
-| Product       | Tier      | Monthly cost (annual) | INR/mo          |
-| ------------- | --------- | --------------------- | --------------- |
-| Chat          | Start 25K | $1,049                | ₹95,144         |
-| Video & Audio | PAYG      | ~$500–800             | ₹45K–73K        |
-| **Total**     |           | **~$1,549–1,849**     | **~₹140K–168K** |
-
-### 8.4 Elevate Upgrade Decision (Chat)
+### 8.2 Elevate Upgrade Decision (Chat)
 
 Upgrade from Start → Elevate when **any** of these are needed:
 
@@ -433,7 +407,7 @@ Upgrade from Start → Elevate when **any** of these are needed:
 At 10K MAU: Start = $399/mo → Elevate = $599/mo (adds $200/mo = ₹18,140 extra).  
 At 25K MAU: Start = $1,049/mo → Elevate = $1,299/mo (adds $250/mo = ₹22,675 extra).
 
-### 8.5 Enterprise Trigger Points
+### 8.3 Enterprise Trigger Points
 
 | Signal                                   | Recommended action                                   |
 | ---------------------------------------- | ---------------------------------------------------- |
@@ -455,7 +429,6 @@ At 25K MAU: Start = $1,049/mo → Elevate = $1,299/mo (adds $250/mo = ₹22,675 
 | First paid Chat tier (annual)       | $399/month = $4,788/year                           |
 | First paid Chat tier (monthly)      | $499/month = $5,988/year                           |
 | Stream.io GMV cliff (Maker exit)    | ~₹9.07L monthly revenue = ~₹1.09Cr annual run rate |
-| Video cost at 1K bookings/month HD  | ~$80/month above free credit                       |
 | Enterprise SLA credit acceleration  | 100× (7 min downtime → 700 min credit)             |
 | Concurrent users at Enterprise Chat | 750,000+ included                                  |
 | Stream end users globally           | 1B+ (scale reference)                              |

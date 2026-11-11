@@ -43,6 +43,7 @@ Full CI on every pull request costs about 8,500 Actions minutes a month at the p
 - `Release checks` runs jest without the `.env` that `ci.yaml` writes, so no production secret is exposed to it; `jest.setup.ts` supplies the test defaults.
 - On the Free plan, branch protection may not be enforceable on a private repository, so the required check becomes real only after the move to Team at launch.
 - A new workflow file is active as soon as it is on the default branch; no `gh workflow enable` is needed for it.
+- **Superseded in part (2026-11-11).** The number of GitHub Team seats equals the number of active contributors, not one. The count and the cost are kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). See [the 2026-11-11 levers record](2026-11-11-cfo-csmo-levers.md).
 
 ## Sources
 

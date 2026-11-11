@@ -3,6 +3,19 @@
 import Link from "next/link";
 import { formatInTimeZone } from "date-fns-tz";
 import { Badge } from "@/components/ui/badge";
+import {
+  buildScheduleModel,
+  lengthLabel,
+  timeRangeLabel,
+  weekRangeLabel,
+  type ScheduleSession,
+} from "@/lib/appointments/session-schedule";
+import {
+  canonicalZone,
+  zoneDisplayLabel,
+  zoneLabel,
+} from "@/lib/time/viewer-zone";
+import { cn } from "@/utils/tailwind";
 import { Button } from "@/components/ui/button";
 import { useBuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { useSession } from "@/lib/auth-client";
@@ -11,7 +24,6 @@ import { useRefreshOnViewerChange } from "@/hooks/useRefreshOnViewerChange";
 import type { BatchCard } from "@/lib/booking/batch-cards";
 import {
   buildSessionsFromAppointment,
-  groupSessionsByWeek,
   type SessionInfo,
 } from "@/app/explore/programs/plans/schedule-utils";
 import type { TClassPlanDetailsData } from "../types";
@@ -19,17 +31,12 @@ import type { TClassPlanDetailsData } from "../types";
 type Plan = TClassPlanDetailsData;
 type Batch = Plan["classes"][number];
 
-function badgeVariant(status: string): "outline" | "destructive" | "default" {
-  if (status === "Completed") return "outline";
-  if (status === "Happening Now") return "destructive";
-  return "default";
-}
-
 /** #1819 — the batch's enrolment state in one sentence. */
 function enrolmentLine(
   card: BatchCard,
   price: (paise: number) => string,
   when: (d: Date) => string,
+  scheduled: number,
 ): string {
   const next = card.nextBatchStartsAt
     ? ` · next batch starts ${when(card.nextBatchStartsAt)}`
@@ -39,9 +46,13 @@ function enrolmentLine(
   if (card.isFull) return `Sold out${next}`;
   if (card.enrolment.state !== "open") return `Enrolment closed${next}`;
   const { basePaise, remaining, N, isLateJoin } = card.enrolment;
+  // The price covers the plan's N sessions; when fewer are on the calendar
+  // yet, say so instead of letting the list below contradict the line.
+  const placed =
+    scheduled > 0 && scheduled < N ? ` (${scheduled} scheduled so far)` : "";
   return isLateJoin
-    ? `Join now for ${price(basePaise)} · ${remaining} of ${N} sessions left`
-    : `Join now for ${price(basePaise)} · all ${N} sessions`;
+    ? `Join now for ${price(basePaise)} · ${remaining} of ${N} sessions left${placed}`
+    : `Join now for ${price(basePaise)} · all ${N} sessions${placed}`;
 }
 
 function seatsLine(card: BatchCard): string {
@@ -50,80 +61,133 @@ function seatsLine(card: BatchCard): string {
 }
 
 function SessionRow({
-  session,
+  entry,
   zone,
-}: Readonly<{ session: SessionInfo; zone: string }>) {
+  showLength,
+}: Readonly<{
+  entry: ScheduleSession<ScheduleRow>;
+  zone: string;
+  showLength: boolean;
+}>) {
+  const { session } = entry;
+  const status = session.info.status;
+  const details = [
+    showLength ? lengthLabel(entry.minutes) : null,
+    entry.sharesDay ? "Same day as another session" : null,
+  ].filter(Boolean);
   return (
-    <div
-      className={`flex items-center justify-between p-3 rounded-lg bg-muted ${
-        session.status === "Completed" ? "opacity-60" : ""
-      }`}
+    <li
+      className={cn(
+        "flex items-center gap-4 py-3",
+        status === "Completed" && "opacity-70",
+      )}
     >
-      <div className="flex items-center gap-3">
-        <div className="w-7 h-7 rounded-full bg-border text-muted-foreground flex items-center justify-center text-xs font-semibold flex-shrink-0">
-          {session.sessionNumber}
-        </div>
-        <div className="text-sm">
-          <span className="font-medium text-foreground">
-            {formatInTimeZone(session.sessionStart, zone, "EEEE, MMMM d")}
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border text-xs font-semibold tabular-nums text-muted-foreground">
+        {entry.number}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-foreground">
+          {formatInTimeZone(session.startsAt, zone, "EEE d MMM")}
+          <span className="ml-2 font-normal text-muted-foreground tabular-nums">
+            {timeRangeLabel(
+              (d, pattern) => formatInTimeZone(d, zone, pattern),
+              session.startsAt,
+              session.endsAt,
+            )}
           </span>
-          <span className="text-muted-foreground ml-2">
-            {formatInTimeZone(session.sessionStart, zone, "h:mm a")}
-            {" – "}
-            {formatInTimeZone(session.sessionEnd, zone, "h:mm a zzz")}
-          </span>
-        </div>
+        </p>
+        {details.length > 0 && (
+          <p className="text-xs text-muted-foreground">{details.join(" · ")}</p>
+        )}
       </div>
-      <Badge variant={badgeVariant(session.status)}>{session.status}</Badge>
-    </div>
+      {/* Upcoming is the default and says nothing; only a finished or
+          running session carries a word. */}
+      {status === "Completed" && (
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span
+            aria-hidden
+            className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40"
+          />
+          Done
+        </span>
+      )}
+      {status === "Happening Now" && (
+        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+          <span
+            aria-hidden
+            className="h-1.5 w-1.5 rounded-full bg-emerald-500"
+          />
+          Live now
+        </span>
+      )}
+    </li>
   );
 }
 
+type ScheduleRow = {
+  key: string;
+  startsAt: Date;
+  endsAt: Date;
+  info: SessionInfo;
+};
+
 function BatchSessions({
   batch,
-  weekly,
+  sessionsPerWeek,
   zone,
-}: Readonly<{ batch: Batch; weekly: boolean; zone: string }>) {
+}: Readonly<{ batch: Batch; sessionsPerWeek: number; zone: string }>) {
   const sessions = buildSessionsFromAppointment(batch.appointment);
   if (sessions.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">Schedule to be announced</p>
     );
   }
+  const model = buildScheduleModel(
+    sessions.map((info) => ({
+      key: info.sessionStart.toISOString(),
+      startsAt: info.sessionStart,
+      endsAt: info.sessionEnd,
+      info,
+    })),
+    zone,
+    { sessionsPerWeek },
+  );
+  const row = (entry: ScheduleSession<ScheduleRow>) => (
+    <SessionRow
+      key={entry.session.key}
+      entry={entry}
+      zone={zone}
+      showLength={model.mixedLengths}
+    />
+  );
   // One session a week makes every "Week N" heading hold a single row.
-  if (!weekly) {
+  if (sessionsPerWeek <= 1 || !model.multiWeek) {
     return (
-      <div className="space-y-2">
-        {sessions.map((s) => (
-          <SessionRow
-            key={s.sessionStart.toISOString()}
-            session={s}
-            zone={zone}
-          />
-        ))}
-      </div>
+      <ul className="divide-y divide-border/70">{model.sessions.map(row)}</ul>
     );
   }
   return (
     <div className="space-y-4">
-      {Array.from(groupSessionsByWeek(sessions).entries()).map(
-        ([weekNum, weekSessions]) => (
-          <div key={weekNum}>
-            <h4 className="text-xs font-medium text-muted-foreground/70 uppercase tracking-wider mb-2 px-1">
-              Week {weekNum}
-            </h4>
-            <div className="space-y-2">
-              {weekSessions.map((s) => (
-                <SessionRow
-                  key={s.sessionStart.toISOString()}
-                  session={s}
-                  zone={zone}
-                />
-              ))}
-            </div>
-          </div>
-        ),
-      )}
+      {model.weeks.map((week) => (
+        <section key={week.week} aria-label={`Week ${week.week}`}>
+          <h4 className="mb-1 flex flex-wrap items-baseline gap-x-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Week {week.week}
+            <span className="font-normal normal-case tracking-normal">
+              {weekRangeLabel(week.firstDay, week.lastDay)}
+            </span>
+            {week.sessions.length === 0 && (
+              <span className="font-normal normal-case tracking-normal">
+                · No sessions this week
+              </span>
+            )}
+          </h4>
+          {week.sessions.length > 0 && (
+            <ul className="divide-y divide-border/70">
+              {week.sessions.map(row)}
+            </ul>
+          )}
+        </section>
+      ))}
     </div>
   );
 }
@@ -166,13 +230,16 @@ function BatchPanel({
     ? checkoutUrl
     : `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`;
   return (
-    <div className="p-4 border border-border rounded-xl space-y-4">
+    <div className="space-y-4 rounded-2xl border border-border/80 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <h3 className="font-medium text-foreground">{card.label}</h3>
           <p className="text-sm text-muted-foreground">
-            {enrolmentLine(card, formatBuyerPriceLabel, (d) =>
-              formatInTimeZone(d, zone, "EEE d MMM"),
+            {enrolmentLine(
+              card,
+              formatBuyerPriceLabel,
+              (d) => formatInTimeZone(d, zone, "EEE d MMM"),
+              buildSessionsFromAppointment(batch.appointment).length,
             )}
           </p>
           {card.phase !== "completed" && (
@@ -184,9 +251,9 @@ function BatchPanel({
               {formatInTimeZone(
                 card.freeCancellationUntil,
                 zone,
-                "EEE d MMM, h:mm a zzz",
-              )}
-              .
+                "EEE d MMM, h:mm a",
+              )}{" "}
+              {zoneLabel(card.freeCancellationUntil, zone)}.
             </p>
           )}
         </div>
@@ -206,9 +273,17 @@ function BatchPanel({
           </Button>
         )}
       </div>
+      {card.startsAt && (
+        <p
+          className="text-xs text-muted-foreground"
+          title={canonicalZone(zone)}
+        >
+          Times in {zoneDisplayLabel(card.startsAt, zone)}
+        </p>
+      )}
       <BatchSessions
         batch={batch}
-        weekly={plan.sessionsPerWeek > 1}
+        sessionsPerWeek={plan.sessionsPerWeek}
         zone={zone}
       />
     </div>

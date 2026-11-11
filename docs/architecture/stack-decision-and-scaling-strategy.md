@@ -46,7 +46,7 @@ This document explains why that decision was correct, what the trade-offs are, a
 | Auth               | BetterAuth             | Authentication and session management                          |
 | Cache              | Upstash Redis          | Distributed locks, maintenance state, rate limiting            |
 | Video & Chat       | Stream.io              | Real-time video calls, messaging, presence                     |
-| Payments           | Stripe + Razorpay      | Multi-gateway payment processing (2 gateways)                  |
+| Payments           | Razorpay + RazorpayX   | Collections and payouts through one gateway (INR settlement)   |
 | Notifications      | Novu + Resend          | Push notifications, transactional email                        |
 | Storage            | Supabase Storage       | File uploads, image hosting                                    |
 | Hosting            | Netlify                | Edge network, serverless/scheduled functions, CDN, deployments |
@@ -62,9 +62,9 @@ The current stack has enabled a single developer (with part-time help) to build:
 - **102 page components** across 4 user role dashboards
 - **4 user roles:** Consultant, Consultee, Staff, Admin
 - **4 service types:** Consultations, Subscriptions, Webinars, Classes
-- **4 payment gateways** with multi-currency support
+- **One payment gateway pair** (Razorpay for collections, RazorpayX for payouts), INR settlement
 - **Integrated video/chat** via Stream.io (not Zoom links — a key differentiator)
-- **Document review system** (unique feature vs competitors)
+- **Document review system**
 - **Trial sessions** with conversion tracking
 - **Request approval workflows**
 - **25+ cron/cleanup jobs** for maintenance
@@ -91,7 +91,7 @@ We have 2-3 engineers. A monolith built on a productive full-stack framework (Ne
 
 ### Speed to market > theoretical scale
 
-TopMate (our #1 competitor) didn't start on a "scalable enterprise stack." They started on what shipped fastest. By the time scale is a problem, they had revenue to fund engineering solutions. That's the playbook.
+Products in this space rarely start on a "scalable enterprise stack." They start on what ships fastest, and by the time scale is a problem they have revenue to fund engineering solutions. That is the playbook here too. Competitive positioning: kept in Notion (Familiarise / Strategy and Competition / Market, Positioning & Initial Wedge).
 
 ### The alternative would have looked like this
 
@@ -124,7 +124,7 @@ A key architectural insight that's easy to miss: **offloading to SaaS providers 
 | ------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | Video/Chat    | Build & host WebRTC infra, TURN/STUN servers, media servers, chat storage, presence system                          | Stream.io handles all of it        |
 | Database      | Manage Postgres instances, configure replicas, handle backups, set up connection pooling, monitor query performance | Supabase handles all of it         |
-| Payments      | PCI-DSS compliance, payment routing, reconciliation, refund handling, multi-currency                                | Stripe/Razorpay handle all of it   |
+| Payments      | PCI-DSS compliance, payment routing, reconciliation, refund handling, multi-currency                                | Razorpay handles all of it         |
 | Email         | SMTP infrastructure, deliverability optimization, bounce handling, spam compliance                                  | Resend handles all of it           |
 | Notifications | Push notification infra, delivery tracking, preference management, multi-channel routing                            | Novu handles all of it             |
 | CDN/Edge      | CloudFront/CloudFlare setup, origin configuration, cache invalidation, edge compute                                 | Netlify handles all of it          |
@@ -134,7 +134,7 @@ We get the core benefits of microservices:
 
 - **Fault isolation:** If Stream.io goes down, payments still work
 - **Independent scaling:** Supabase scales the DB independently from Netlify's serverless functions
-- **Specialized teams:** Stream.io has a dedicated team making video better; Stripe has thousands of engineers on payments
+- **Specialized teams:** Stream.io has a dedicated team making video better; the payment gateway has thousands of engineers on payments
 
 The trade-off is **cost at scale, not capability.** We're paying money (or using free tiers) instead of engineering time. At our stage, engineering time is worth infinitely more than the cost of these services.
 
@@ -262,7 +262,7 @@ Current cost on managed stack: **~₹10K/mo (~$110)** for all SaaS combined. The
 | Netlify (Edge + Serverless)               | ~100K+ concurrent users         | Auto-scales serverless functions, CDN serves static assets from global edge nodes |
 | Supabase Postgres (with pgbouncer pooler) | ~10K-50K concurrent connections | Already configured with connection pooling on port 6543                           |
 | Stream.io                                 | Their infrastructure handles it | Dedicated video/chat platform designed for millions of concurrent connections     |
-| Stripe/Razorpay                           | Effectively unlimited           | Battle-tested payment infrastructure processing billions of dollars               |
+| Razorpay                                  | Effectively unlimited           | Battle-tested payment infrastructure processing billions of dollars               |
 | Next.js with ISR/SSG                      | Very high                       | Static and ISR pages served from CDN edge — near-zero server cost per request     |
 | Upstash Redis                             | ~100K+ commands/sec             | Serverless Redis, auto-scales with demand                                         |
 | Supabase Storage                          | High                            | CDN-backed file storage                                                           |
@@ -351,7 +351,7 @@ Good news — vendor lock-in is actually minimal:
 - **Next.js** = runs anywhere. Not locked to Netlify (can deploy on AWS, Railway, Fly.io, Docker)
 - **Prisma** = generates standard SQL. Can switch ORMs without changing the database
 - **Stream.io** = this is the stickiest dependency. But it's a deliberate trade-off (building video/chat infra in-house would take 6+ months)
-- **Stripe/Razorpay** = standard payment APIs. Can add or swap gateways (we already have 4)
+- **Razorpay** = standard payment APIs. Can add or swap gateways later (only Razorpay is integrated today)
 
 ---
 
@@ -399,7 +399,7 @@ Stage 4: First Service Extraction (~50K+ DAU)
 │   Key work: Likely extract notifications or analytics as
 │             independent services. Video/chat is already
 │             external (Stream.io). Payments already external
-│             (Stripe/Razorpay). Identify what's actually
+│             (Razorpay). Identify what's actually
 │             bottlenecking and extract only that.
 │
 ▼
@@ -423,14 +423,15 @@ Stage 5: Selective Microservices (~100K+ DAU, 15+ engineers)
 
 Companies operating at significant scale in India, and what stacks they used:
 
-| Company        | Starting Stack                | Current Stack                       | Scale                                    | Key Insight                                                                                                               |
-| -------------- | ----------------------------- | ----------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| **Zerodha**    | PHP → Go + Postgres           | Go + Postgres + Kite platform       | 10M+ users, India's #1 broker            | Never adopted Java microservices. Go monolith handles millions of trades/day                                              |
-| **Razorpay**   | Ruby on Rails                 | Gradually extracted services in Go  | Millions of transactions                 | Started as a Rails monolith. Extracted payment processing into Go services only when Rails couldn't handle the throughput |
-| **TopMate**    | JS/TS stack (similar to ours) | Still JS/TS based                   | Direct competitor, Indian creator market | Our #1 competitor runs on a comparable stack                                                                              |
-| **Freshworks** | Ruby on Rails monolith        | Gradually modularized               | $500M+ ARR, 5000+ employees              | Ran as a Rails monolith for years. Didn't adopt microservices until they had hundreds of engineers                        |
-| **Postman**    | Node.js                       | Node.js + Electron + cloud services | 25M+ users                               | One of India's most valuable startups, built on Node.js                                                                   |
-| **Unacademy**  | Python/Django                 | Gradually evolved                   | Millions of learners                     | EdTech at India scale, didn't start with microservices                                                                    |
+| Company        | Starting Stack         | Current Stack                       | Scale                         | Key Insight                                                                                                               |
+| -------------- | ---------------------- | ----------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **Zerodha**    | PHP → Go + Postgres    | Go + Postgres + Kite platform       | 10M+ users, India's #1 broker | Never adopted Java microservices. Go monolith handles millions of trades/day                                              |
+| **Razorpay**   | Ruby on Rails          | Gradually extracted services in Go  | Millions of transactions      | Started as a Rails monolith. Extracted payment processing into Go services only when Rails couldn't handle the throughput |
+| **Freshworks** | Ruby on Rails monolith | Gradually modularized               | $500M+ ARR, 5000+ employees   | Ran as a Rails monolith for years. Didn't adopt microservices until they had hundreds of engineers                        |
+| **Postman**    | Node.js                | Node.js + Electron + cloud services | 25M+ users                    | One of India's most valuable startups, built on Node.js                                                                   |
+| **Unacademy**  | Python/Django          | Gradually evolved                   | Millions of learners          | EdTech at India scale, didn't start with microservices                                                                    |
+
+Competitive positioning: kept in Notion (Familiarise / Strategy and Competition / Market, Positioning & Initial Wedge).
 
 **Common pattern:** Every single one started with the simplest stack that shipped product. They evolved their architecture in response to measured bottlenecks, funded by the revenue their working product generated. None of them sat at the whiteboard designing a microservices architecture before they had users.
 
@@ -462,7 +463,7 @@ Don't re-evaluate the architecture on a schedule. Re-evaluate when you observe t
 
 2. **Next.js API routes are already a modular monolith in practice.** The 214 API routes are organized by domain (`/api/user/`, `/api/plans/`, `/api/payments/`, `/api/dashboard/`). If `/api/payments/` becomes a bottleneck, you extract it into a standalone service. You don't rewrite the user dashboard.
 
-3. **The SaaS approach already handles the hardest parts.** The components most likely to need independent scaling — video (Stream.io), payments (Stripe/Razorpay), email (Resend), caching (Upstash) — are already external services. What's left in the monolith is relatively straightforward CRUD and business logic.
+3. **The SaaS approach already handles the hardest parts.** The components most likely to need independent scaling — video (Stream.io), payments (Razorpay), email (Resend), caching (Upstash) — are already external services. What's left in the monolith is relatively straightforward CRUD and business logic.
 
 4. **The database is portable.** Supabase is standard Postgres. Prisma generates standard SQL. If we need to move to RDS, Neon, or self-hosted Postgres, it's a connection string change plus minor configuration.
 
@@ -487,3 +488,10 @@ Every major tech company started as a monolith. They adopted microservices when 
 ## Addendum, 2026-09-12: Hosting on Netlify Pro + Supabase + Upstash
 
 The platform runs in production on **Netlify Pro** (with Netlify Edge Functions, serverless functions, and the scheduled `netlify/functions/cron-tick.mts` ticker), **Supabase Postgres** (with PgBouncer transaction pooler), and **Upstash Redis** (rate limiting, distributed locks, maintenance state). On 2026-09-12 the "Spring Boot, alternative serverless hosts, or a broker" question was re-examined against measured production behaviour and current vendor numbers. The evidence supports the monolith, Next.js, and the no-broker posture, and narrows the live question to where the Node process runs — a serverless platform whose instances share a process and offer Mumbai, or one always-on process on a container host. The fact sheet, with sources and a dated reading, is `.claude/skills/deployment/netlify/hosting-alternatives.md`; the per-issue ledger it draws on is `.claude/skills/deployment/netlify/issue-ledger.md`.
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **A multi-gateway payments layer.** Earlier versions of this page described Stripe next to Razorpay and "4 payment gateways". Stripe was removed from the code on 2026-10-04 and the other labels are schema-only; see [the gateway decision](../decisions/2026-11-09-payment-gateways-one-rail.md).
+- **A competitor stack comparison.** An earlier edition compared our stack with a named competitor's. That positioning is not engineering rationale and now lives in Notion (Familiarise / Strategy and Competition / Market, Positioning & Initial Wedge).

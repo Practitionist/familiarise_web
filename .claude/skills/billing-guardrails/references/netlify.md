@@ -10,10 +10,10 @@ Netlify distinguishes legacy request billing from credit-based compute and web-r
 
 ## 1.1 What the bill is made of (legacy Pro)
 
-MEASURED from receipts (team `teetangh`, invoices CFJUKK-00015 to CFJUKK-00020):
+MEASURED from receipts and usage (what we pay: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend); the plan and seat triggers are rows in Familiarise / Finance and Pricing / Finance Lever Register):
 
-- $19 per member per month. A second member (a Developer) was added on 2026-10-05 and billed $18.39 prorated; the next bill is about $63 if invocations stay above 125,000.
-- Function invocations of the `familiarise` site by billing period: May 24,804; June 48,552; August 75,897; September 4 to October 3 282,162. Crossing the 125,000-per-site tier adds a flat $25 (125,000 to 2,000,000), which is why the 2026-10-06 bill was $44.
+- $19 per member per month (public legacy Pro price). The seat count and the resulting bill: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend).
+- Function invocations of the `familiarise` site by billing period: May 24,804; June 48,552; August 75,897; September 4 to October 3 282,162. Crossing the 125,000-per-site tier adds a flat $25 (125,000 to 2,000,000).
 - Nothing else is close: bandwidth 1.29, 1.60, 8.26 and 8.36 GB against 1 TB; edge function invocations 52,000 rising to 284,000 against 2,000,000 free; build minutes up to 9,777 of 25,000. Invocations are the only meter that has crossed a line.
 
 DOCS (Netlify support ticket #1112198, 2026-09-17, and [legacy plans](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-legacy-plans/legacy-pricing-plans/)):
@@ -33,8 +33,7 @@ DOCS ([pricing](https://www.netlify.com/pricing/), [how credits work](https://do
 - Pro is $20 flat with 3,000 credits and unlimited members. Packs are 1,500 credits for $10; auto-recharge is off by default; free-plan sites pause when credits run out.
 - Costs: a production deploy 15 credits; Deploy Previews and branch deploys free; compute 10 credits per GB-hour (Serverless, Scheduled and Background Functions; Edge Functions do not count); web requests 2 credits per 10,000; bandwidth 20 credits per GB; forms free.
 - The switch is permanent: "You cannot revert to a Legacy plan from a Credit-based plan."
-- ESTIMATE at our usage: about 1,000 to 1,300 credits a month.
-- Status: an email asking Netlify support to confirm region pinning, Background Functions and seats before switching was drafted on 2026-11-01 and is not yet sent. Do not recommend the switch as decided.
+- Our usage estimate in credits and the status of the support email are kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). Do not recommend the switch as decided.
 
 ## 2. What causes surprise bills or outages
 
