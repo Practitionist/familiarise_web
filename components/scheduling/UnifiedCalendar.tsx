@@ -114,6 +114,7 @@ import {
   calendarDateKey,
   calendarDayOf,
   canSwitchToDeviceZone,
+  dayRangeBounds,
   footerZoneLine,
   isOnCalendarDay,
   resolveGridZone,
@@ -602,9 +603,6 @@ export function UnifiedCalendar({
     return () => window.clearInterval(tick);
   }, []);
   const nowMs = now.getTime();
-  // Cells only change at half-hour boundaries; the matrix follows the boundary,
-  // not the minute, so a tick re-renders the now-line alone.
-  const matrixNowMs = Math.floor(nowMs / ATOM_MS) * ATOM_MS + 1;
 
   const weekStartsOn = weekStartFor({
     eventType,
@@ -652,6 +650,24 @@ export function UnifiedCalendar({
 
   const effectiveSchedulingTz =
     schedulingTimezone ?? consultantDetails?.timezone ?? null;
+
+  // The matrix's clock moves only when a cell can change: a half-hour starts,
+  // or now plus the lead time reaches one. The minute tick moves the now-line.
+  const [matrixNowMs, setMatrixNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const lead = leadMs ?? 0;
+    const nextAtom = (ms: number) =>
+      Math.floor(ms / ATOM_MS) * ATOM_MS + ATOM_MS;
+    const due = Math.min(
+      nextAtom(matrixNowMs),
+      nextAtom(matrixNowMs + lead) - lead,
+    );
+    const timer = window.setTimeout(
+      () => setMatrixNowMs(Math.max(Date.now(), due + 1)),
+      Math.max(0, due - Date.now()),
+    );
+    return () => window.clearTimeout(timer);
+  }, [matrixNowMs, leadMs]);
 
   const onAllocationCompleteRef = useLatest(onAllocationComplete);
   const onAllocationConflictRef = useLatest(onAllocationConflict);
@@ -807,6 +823,7 @@ export function UnifiedCalendar({
     partialOffer,
     dismissPartialOffer,
     slotLimits,
+    canAddSlot,
   } = useEventSlotAllocation(allocationOptions);
 
   // The dialog animates out after `partialOffer` clears; keep the last one
@@ -990,6 +1007,13 @@ export function UnifiedCalendar({
     [weekCells.live],
   );
   const allDead = openWindow === null;
+  // The empty-week note waits for the visible week's own answer.
+  const visibleWeek = dayRangeBounds(weekDates[0], weekDates[6], gridZone);
+  const weekLoaded =
+    !refreshing &&
+    cellsWindow !== null &&
+    cellsWindow.startMs <= visibleWeek.start.getTime() &&
+    cellsWindow.endMs >= visibleWeek.end.getTime();
   const axisLength = rowModel.axis.length;
   const openFrom = openWindow?.from;
   const openTo = openWindow?.to;
@@ -1095,6 +1119,22 @@ export function UnifiedCalendar({
     [serverCells, atomContext, selectedStarts],
   );
 
+  /** A free atom, or one of this booking's own upcoming ones: a session may take either. */
+  const isExpandableAtom = useCallback(
+    (startMs: number): boolean => {
+      if (isFreeAtom(startMs)) return true;
+      if (selectedStarts.has(startMs)) return false;
+      const atom = describeAtom(startMs, startMs + ATOM_MS, atomContext);
+      return (
+        atom.isThisEvent &&
+        !atom.isInPast &&
+        !atom.isOutsidePeriod &&
+        !atom.isTentative
+      );
+    },
+    [isFreeAtom, selectedStarts, atomContext],
+  );
+
   /** Consecutive free atoms around a clicked one, to fill one whole session. */
   const buildAutoExpandGroup = useCallback(
     (clickedSlot: CalendarInterval): CalendarInterval[] => {
@@ -1102,7 +1142,7 @@ export function UnifiedCalendar({
       return expandToSession(
         clickedMs,
         slotLimits.slotsPerSession,
-        (startMs) => startMs === clickedMs || isFreeAtom(startMs),
+        (startMs) => startMs === clickedMs || isExpandableAtom(startMs),
       ).map((startMs) =>
         startMs === clickedMs
           ? clickedSlot
@@ -1114,7 +1154,7 @@ export function UnifiedCalendar({
             },
       );
     },
-    [slotLimits.slotsPerSession, isFreeAtom],
+    [slotLimits.slotsPerSession, isExpandableAtom],
   );
 
   /** The picked session holding an atom, as its atoms: a click removes all of them. */
@@ -1140,15 +1180,17 @@ export function UnifiedCalendar({
   const [previewStart, setPreviewStart] = useState<number | null>(null);
   const ghost = useMemo<GhostPiece[]>(() => {
     if (mode === "view" || isAllocating || previewStart === null) return [];
-    if (weekCells.byStart.get(previewStart)?.statusKey !== "available") {
-      return [];
-    }
+    const previewCell = weekCells.byStart.get(previewStart);
+    if (previewCell?.statusKey !== "available") return [];
     const size = Math.max(1, slotLimits.slotsPerSession || 1);
-    const starts = expandToSession(
-      previewStart,
-      size,
-      (startMs) => startMs === previewStart || isFreeAtom(startMs),
-    );
+    const previewSlot: CalendarInterval = {
+      startTime: new Date(previewStart),
+      endTime: new Date(previewStart + ATOM_MS),
+      isAvailable: previewCell.isAvailable,
+      isBooked: previewCell.isBooked,
+    };
+    const group = buildAutoExpandGroup(previewSlot);
+    const starts = group.map((slot) => slot.startTime.getTime());
     const clicked = weekCells.positions.get(previewStart);
     if (!clicked) return [];
     if (starts.length < size) {
@@ -1165,6 +1207,8 @@ export function UnifiedCalendar({
         },
       ];
     }
+    // The click's own rules: a pick toggleSlot would refuse is not previewed.
+    if (!canAddSlot(previewSlot, group)) return [];
     // A session crossing midnight draws one piece per day column.
     const pieces: GhostPiece[] = [];
     for (const startMs of starts) {
@@ -1197,7 +1241,8 @@ export function UnifiedCalendar({
     previewStart,
     weekCells,
     slotLimits.slotsPerSession,
-    isFreeAtom,
+    buildAutoExpandGroup,
+    canAddSlot,
     gridZone,
   ]);
 
@@ -1863,7 +1908,7 @@ export function UnifiedCalendar({
 
           {view === "week" ? (
             <div className="flex min-h-0 flex-1 flex-col">
-              {allDead && (
+              {allDead && weekLoaded && (
                 <p
                   role="status"
                   className="mb-1 shrink-0 rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground"

@@ -6,6 +6,7 @@ import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import type { AppointmentStatus } from "@prisma/client";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import {
+  planWeekStartsAt,
   soldSessionMinutes,
   soldSessionsPerWeek,
   soldTermsOf,
@@ -44,6 +45,8 @@ export interface AllocationRequest {
   allowedEnd?: Date;
   /** #1766 — the one counter the page's heading and batch size read. */
   entitlement?: SubscriptionEntitlement;
+  /** Zone-midnight start of the plan week being filled. */
+  cycleStartsAt?: Date;
   /**
    * Some slot is released and awaiting a new time, i.e. this is a partial
    * reschedule rather than a fresh allocation — which is exactly when the
@@ -173,6 +176,14 @@ async function readAllocationRequestOrThrow(
       allowedStart: entitlement.cycle.windowStart,
       allowedEnd: entitlement.cycle.windowEnd,
       entitlement,
+      cycleStartsAt: planWeekStartsAt(
+        {
+          ...soldTermsOf(subscription),
+          schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
+          schedulingTimezone: subscription.schedulingTimezone,
+        },
+        entitlement.cycle.ordinal,
+      ),
       hasReleasedSlots:
         subscription.appointment?.occurrences.some(isReleasedForReschedule) ??
         false,

@@ -84,7 +84,8 @@ function setCalendarData(overrides: Record<string, unknown> = {}) {
     consultantDetails: { id: "consultant-1" },
     availableSlots: NO_AVAILABILITY,
     serverCells: PUBLISHED_WEEK,
-    cellsWindow: null,
+    // A settled read whose window covers whatever week is shown.
+    cellsWindow: { startMs: 0, endMs: Number.MAX_SAFE_INTEGER },
     eventSlots: [],
     eventTentativeSlots: [],
     weeklyConfirmedCallCounts: {},
@@ -127,6 +128,7 @@ function resetAllocation() {
     partialOffer: null,
     dismissPartialOffer: jest.fn(),
     slotLimits: { slotsPerSession: 2, maxSlots: 10, totalSessions: 5 },
+    canAddSlot: () => true,
   };
 }
 

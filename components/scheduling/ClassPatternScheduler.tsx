@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Loader2, Plus, X } from "lucide-react";
 
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -111,6 +112,7 @@ export function ClassPatternScheduler({
     defaultRows(sessionsPerWeek, phase),
   );
   const [saving, setSaving] = useState(false);
+  const [confirmOutside, setConfirmOutside] = useState(false);
   const [keyFor] = useState(createSubmissionKeys);
 
   const pattern = { startDate, rows, zone };
@@ -142,7 +144,12 @@ export function ClassPatternScheduler({
   );
   const labelled = starts.map((start) => {
     if (start.getTime() >= previewEnd.getTime()) {
-      return { start, label: "Checked when you save", blocking: false };
+      return {
+        start,
+        label: "Checked when you save",
+        blocking: false,
+        outside: false,
+      };
     }
     const [option] = singleSessionOptions({
       atoms,
@@ -152,15 +159,22 @@ export function ClassPatternScheduler({
       notBeforeMs,
     });
     if (!option) {
-      return { start, label: "Checked when you save", blocking: false };
+      return {
+        start,
+        label: "Checked when you save",
+        blocking: false,
+        outside: false,
+      };
     }
     return {
       start,
       label: SINGLE_SESSION_STATE_LABEL[option.state],
       blocking: !option.selectable,
+      outside: option.state === "outsideHours",
     };
   });
   const busyCount = labelled.filter((row) => row.blocking).length;
+  const outsideCount = labelled.filter((row) => row.outside).length;
   const short = !problem && starts.length < totalSessions;
 
   const save = async () => {
@@ -368,28 +382,50 @@ export function ClassPatternScheduler({
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        {onUseCalendar && (
-          <Button type="button" variant="ghost" onClick={onUseCalendar}>
-            Use the calendar view instead
-          </Button>
+      <div className="sticky bottom-0 z-10 flex flex-col gap-2 border-t bg-background py-2">
+        {outsideCount > 0 && (
+          <p className="text-sm text-amber-700 dark:text-amber-400">
+            {outsideCount} of {starts.length} sessions are outside your
+            published hours. You can still schedule them.
+          </p>
         )}
-        <Button
-          type="button"
-          onClick={() => void save()}
-          disabled={saving || Boolean(problem) || short || busyCount > 0}
-        >
-          {saving ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…
-            </>
-          ) : mode === "retime" ? (
-            `Move ${starts.length} sessions`
-          ) : (
-            `Schedule ${starts.length} sessions`
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {onUseCalendar && (
+            <Button type="button" variant="ghost" onClick={onUseCalendar}>
+              Use the calendar view instead
+            </Button>
           )}
-        </Button>
+          <Button
+            type="button"
+            onClick={() =>
+              outsideCount > 0 ? setConfirmOutside(true) : void save()
+            }
+            disabled={saving || Boolean(problem) || short || busyCount > 0}
+          >
+            {saving ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…
+              </>
+            ) : mode === "retime" ? (
+              `Move ${starts.length} sessions`
+            ) : (
+              `Schedule ${starts.length} sessions`
+            )}
+          </Button>
+        </div>
       </div>
+      <ConfirmDialog
+        open={confirmOutside}
+        onOpenChange={setConfirmOutside}
+        title="Schedule outside your published hours?"
+        description={`${outsideCount} of ${starts.length} sessions fall outside the hours you publish. Learners see the times you pick.`}
+        confirmLabel={
+          mode === "retime"
+            ? `Move ${starts.length} sessions`
+            : `Schedule ${starts.length} sessions`
+        }
+        onConfirm={save}
+      />
     </div>
   );
 }

@@ -66,9 +66,9 @@ function blockLabel(cell: BlockCell): string {
  * Merges `matrix[axisIndex][dayIndex]` into blocks. An atom joins the open
  * run only when it paints the same block state, has the same requested flag
  * and booking, starts exactly when the run ends, and falls on the same
- * calendar day in `zone` (the `dayKey` rule `groupSelectedIntoSessions`
- * uses), so a run never crosses local midnight. A null cell (a time the
- * clocks skip that day) neither breaks nor extends a run.
+ * calendar day in `zone`, so a drawn run never crosses local midnight even
+ * when the session it belongs to does. A null cell (a time the clocks skip
+ * that day) neither breaks nor extends a run.
  */
 export function buildGridBlocks(
   matrix: readonly (readonly (BlockCell | null)[])[],

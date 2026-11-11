@@ -174,7 +174,12 @@ export default async function AllocateSlotsPage({
   // profile zone travels; without one the grid falls back to the browser's.
   const viewer = await getViewerZone();
 
-  // The coming weeks' room for a subscription, counting today's bookings.
+  // The coming plan weeks' room for a subscription, counting today's bookings:
+  // from the plan week being filled, never past the plan's end.
+  const cycle = request.entitlement?.cycle;
+  const feasibilityWeeks = cycle
+    ? Math.min(HOST_FEASIBILITY_WEEKS, cycle.count - cycle.ordinal)
+    : HOST_FEASIBILITY_WEEKS;
   const warnings =
     request.eventType === "subscription" && request.sessionsPerWeek
       ? hostFeasibilityWarnings(
@@ -188,7 +193,8 @@ export default async function AllocateSlotsPage({
             perDayCap: MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
             notBeforeMs:
               Date.now() + leadMsFor("allocate", { settled: request.settled }),
-            weeks: HOST_FEASIBILITY_WEEKS,
+            weeks: feasibilityWeeks,
+            weeksFromMs: request.cycleStartsAt?.getTime(),
             countBookings: true,
           }),
           request.sessionsPerWeek,

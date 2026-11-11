@@ -107,6 +107,7 @@ beforeEach(() => {
     partialOffer: null,
     dismissPartialOffer: jest.fn(),
     slotLimits: { slotsPerSession: 2, maxSlots: 10, totalSessions: 5 },
+    canAddSlot: () => true,
   };
 });
 

@@ -52,8 +52,10 @@ export interface FeasibilityInput {
   perDayCap: number;
   /** Earliest instant a session may start (now plus the purpose's lead time). */
   notBeforeMs: number;
-  /** Plan weeks to assess, each seven zone-days from `notBeforeMs`'s zone-day. */
+  /** Plan weeks to assess, each seven zone-days from `weeksFromMs`'s zone-day. */
   weeks: number;
+  /** Where week one starts, e.g. the plan week being filled; `notBeforeMs` when absent. */
+  weeksFromMs?: number;
 }
 
 export interface WeekCapacity {
@@ -212,7 +214,7 @@ export function assessFeasibility(input: FeasibilityInput): FeasibilityReport {
   const windows = mergeSpans(input.windows);
   const free = subtractSpans(windows, input.busy);
   const days = zoneDayBoundaries(
-    input.notBeforeMs,
+    input.weeksFromMs ?? input.notBeforeMs,
     input.zone,
     input.weeks * 7,
   );
@@ -404,11 +406,17 @@ export async function assessExpertFeasibility(
   },
   now: Date = new Date(),
 ): Promise<FeasibilityReport> {
-  const toMs = params.notBeforeMs + (params.weeks * 7 + 1) * DAY_MS;
+  const fromMs = Math.min(
+    params.weeksFromMs ?? params.notBeforeMs,
+    params.notBeforeMs,
+  );
+  const toMs =
+    (params.weeksFromMs ?? params.notBeforeMs) +
+    (params.weeks * 7 + 1) * DAY_MS;
   const spans = await readFeasibilitySpans(
     db,
     params.consultantProfileId,
-    { fromMs: params.notBeforeMs - DAY_MS, toMs },
+    { fromMs: fromMs - DAY_MS, toMs },
     now,
   );
   return assessFeasibility({

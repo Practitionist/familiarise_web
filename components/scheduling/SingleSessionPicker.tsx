@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -50,6 +50,13 @@ export interface SingleSessionPickerProps {
   onChange: (startsAt: string | null) => void;
   className?: string;
 }
+
+const ARROW_STEP: Record<string, number> = {
+  ArrowRight: 1,
+  ArrowDown: 1,
+  ArrowLeft: -1,
+  ArrowUp: -1,
+};
 
 const STATE_CLASS: Record<SingleSessionOption["state"], string> = {
   free: "border-emerald-600 bg-emerald-50 text-emerald-950 hover:bg-emerald-100",
@@ -120,6 +127,30 @@ export function SingleSessionPicker({
     allowedEndMs: allowedEnd?.getTime(),
   });
   const pickable = options.filter((option) => option.state !== "outsideWindow");
+  const isoOf = (option: SingleSessionOption) =>
+    new Date(option.startMs).toISOString();
+  // One tab stop for the time radios: the chosen time, else the first one that can be picked.
+  const choosable = pickable.filter((option) => option.selectable);
+  const tabStopMs = (
+    choosable.find((option) => isoOf(option) === value) ??
+    choosable[0] ??
+    pickable[0]
+  )?.startMs;
+  const timeButtons = useRef(new Map<number, HTMLButtonElement>());
+  const onTimeKey = (event: KeyboardEvent, option: SingleSessionOption) => {
+    const at = choosable.findIndex((o) => o.startMs === option.startMs);
+    if (at < 0 || choosable.length === 0) return;
+    let next: number;
+    if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = choosable.length - 1;
+    else if (event.key in ARROW_STEP) {
+      next = (at + ARROW_STEP[event.key] + choosable.length) % choosable.length;
+    } else return;
+    event.preventDefault();
+    const target = choosable[next];
+    onChange(isoOf(target));
+    timeButtons.current.get(target.startMs)?.focus();
+  };
   const canNext =
     allowedEnd === undefined || bounds.end.getTime() < allowedEnd.getTime();
 
@@ -139,7 +170,7 @@ export function SingleSessionPicker({
         <div
           role="radiogroup"
           aria-label="Day"
-          className="flex flex-1 gap-1 overflow-x-auto"
+          className="flex min-w-0 flex-1 gap-1 overflow-x-auto"
         >
           {days.map((day) => {
             const key = calendarDateKey(day);
@@ -190,21 +221,26 @@ export function SingleSessionPicker({
           className="grid max-h-72 grid-cols-3 gap-1 overflow-y-auto sm:grid-cols-4"
         >
           {pickable.map((option) => {
-            const iso = new Date(option.startMs).toISOString();
+            const iso = isoOf(option);
             const chosen = value === iso;
             const label = `${formatClockTime(new Date(option.startMs), { zone })}`;
             return (
               <button
                 key={option.startMs}
+                ref={(element) => {
+                  if (element) timeButtons.current.set(option.startMs, element);
+                  else timeButtons.current.delete(option.startMs);
+                }}
                 type="button"
                 role="radio"
                 aria-checked={chosen}
+                tabIndex={option.startMs === tabStopMs ? 0 : -1}
+                onKeyDown={(event) => onTimeKey(event, option)}
                 aria-disabled={!option.selectable || undefined}
                 aria-label={`${label}, ${SINGLE_SESSION_STATE_LABEL[option.state]}`}
                 title={SINGLE_SESSION_STATE_LABEL[option.state]}
                 onClick={() => {
-                  if (!option.selectable) return;
-                  onChange(chosen ? null : iso);
+                  if (option.selectable && !chosen) onChange(iso);
                 }}
                 className={cn(
                   "rounded-md border px-2 py-1.5 text-left text-xs",

@@ -46,18 +46,23 @@ export function ManageTimingsClient({
   const policy = manageTimingsPolicy({ onSubmit: goBack });
 
   if (isClass && !calendarView && subject.eventId) {
+    // The page is a fixed-height viewport fill, so the scheduler scrolls inside it.
     return (
-      <ClassPatternScheduler
-        classId={subject.eventId}
-        consultantId={subject.consultantProfileId}
-        zone={subject.schedulingTimezone ?? viewerZone}
-        sessionMinutes={Math.round((subject.sessionDurationInHours ?? 1) * 60)}
-        totalSessions={subject.totalSessions ?? subject.sessionsPerWeek ?? 1}
-        sessionsPerWeek={subject.sessionsPerWeek ?? 1}
-        hasSessions={(subject.slots?.length ?? 0) > 0}
-        onSaved={goBack}
-        onUseCalendar={() => setCalendarView(true)}
-      />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <ClassPatternScheduler
+          classId={subject.eventId}
+          consultantId={subject.consultantProfileId}
+          zone={subject.schedulingTimezone ?? viewerZone}
+          sessionMinutes={Math.round(
+            (subject.sessionDurationInHours ?? 1) * 60,
+          )}
+          totalSessions={subject.totalSessions ?? subject.sessionsPerWeek ?? 1}
+          sessionsPerWeek={subject.sessionsPerWeek ?? 1}
+          hasSessions={(subject.slots?.length ?? 0) > 0}
+          onSaved={goBack}
+          onUseCalendar={() => setCalendarView(true)}
+        />
+      </div>
     );
   }
 
