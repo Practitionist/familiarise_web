@@ -574,8 +574,9 @@ export default function RefundPolicyPage() {
                 11. Consultant-Initiated Refunds
               </h2>
               <p>
-                Consultants have the discretion to issue refunds or offer
-                alternative compensation in the following situations:
+                Refund decisions are made by Familiarise, not by the consultant.
+                A consultant may ask us to refund, or offer alternative
+                compensation, in the following situations:
               </p>
               <ul>
                 <li>If they are unable to fulfill the service as described</li>

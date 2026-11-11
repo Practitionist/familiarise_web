@@ -28,6 +28,7 @@ import {
 import { prorate } from "@/lib/payments/utils/money";
 import { isPlatformGstRegistered } from "@/lib/pdf/supplier";
 import prisma from "@/lib/prisma";
+import { ATTRIBUTION_COOKIE_MAX_AGE_S } from "@/lib/referrals/attribution-token-shape";
 import {
   PAGE_META,
   PRICING_DATA,
@@ -45,6 +46,7 @@ export const metadata: Metadata = {
 };
 
 const EXAMPLE_LIST_PRICE_PAISE = 100_000;
+const OWN_LINK_WINDOW_DAYS = ATTRIBUTION_COOKIE_MAX_AGE_S / 86_400;
 
 function inr(paise: number): string {
   return formatCurrencyAmount(paise, "INR");
@@ -93,7 +95,7 @@ export default async function PricingPage() {
   const schedule = await withBuildTimeRetry(() =>
     readActiveFeeSchedule(prisma),
   );
-  const { marketplaceFeePct } = describeFeeRates(schedule);
+  const { marketplaceFeePct, ownLinkFeePct } = describeFeeRates(schedule);
   // The settlement's own floor(list × bps / 10 000).
   const exampleFeePaise = prorate(
     EXAMPLE_LIST_PRICE_PAISE,
@@ -231,9 +233,24 @@ export default async function PricingPage() {
                 Familiarise charges experts a platform fee of currently{" "}
                 <strong>{marketplaceFeePct}%</strong> of the listed price on
                 each booking made through the marketplace. Learners do not pay
-                it separately; it is already part of the listed price. The fee
-                helps us:
+                it separately; it is already part of the listed price.
               </p>
+              {schedule.ownLinkBps < schedule.marketplaceBps ? (
+                <p className="text-muted-foreground">
+                  The lower rate of <strong>{ownLinkFeePct}%</strong> applies
+                  when a buyer&apos;s first paid booking with an expert comes
+                  through that expert&apos;s own link, opened within the last{" "}
+                  {OWN_LINK_WINDOW_DAYS} days. However that first booking
+                  arrived, the same rate applies to every later booking between
+                  that buyer and that expert.
+                </p>
+              ) : (
+                <p className="text-muted-foreground">
+                  The same rate applies when the buyer comes through the
+                  expert&apos;s own link.
+                </p>
+              )}
+              <p className="text-muted-foreground">The fee helps us:</p>
               <ul className="list-disc list-inside space-y-2 text-muted-foreground ml-4">
                 {PRICING_DATA.commissionBenefits.map((benefit) => (
                   <li key={benefit}>{benefit}</li>

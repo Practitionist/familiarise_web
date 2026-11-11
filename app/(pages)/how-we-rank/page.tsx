@@ -59,9 +59,9 @@ export default function HowWeRankPage() {
               </h2>
               <ul>
                 <li>
-                  <strong>Experts:</strong> only experts whose identity and
-                  credentials we have verified, and whose profile has not been
-                  removed.
+                  <strong>Experts:</strong> only experts our founder has
+                  personally interviewed and whose employer we have confirmed,
+                  and whose profile has not been removed.
                 </li>
                 <li>
                   <strong>Programs:</strong> only classes and webinars that are
