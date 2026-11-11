@@ -11,7 +11,7 @@
  * - validateSameDaySlots
  * - validateConsultation (duration, same-day, consecutive)
  * - validateWebinar (duration, consecutive)
- * - validateClass (weekly limits, session grouping)
+ * - validateClass (per-day cap, session grouping)
  * - slotDurationMinutes fix verification
  */
 
@@ -915,17 +915,20 @@ describe("validate: class event", () => {
     );
   });
 
-  it("should reject when weekly session count exceeds limit", async () => {
-    // 6 slots = 3 sessions in 1 week, but limit is 2
+  it("accepts more sessions in a week than the plan's cadence when no day exceeds 2", async () => {
+    // A 2-a-week plan: two sessions on Monday and one on Tuesday, all one week.
     const result = await service.validate(
       "class",
       "event-1",
-      futureSlots(6, "2025-06-02T10:00:00Z"),
+      [
+        ...futureSlots(4, "2025-06-02T10:00:00Z"),
+        ...futureSlots(2, "2025-06-03T10:00:00Z"),
+      ],
       weeklyConsultant,
       { sessionsPerWeek: 2, sessionDurationInHours: 1 },
     );
-    expect(result.isValid).toBe(false);
-    expect(result.errors.some((e) => e.includes("max is 2"))).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(result.isValid).toBe(true);
   });
 
   it("should accept cross-midnight sessions that span two UTC days", async () => {
@@ -979,66 +982,6 @@ describe("validate: class event", () => {
     );
     expect(result.isValid).toBe(false);
     expect(result.errors.some((e) => e.includes("consecutive"))).toBe(true);
-  });
-
-  // ── RV-5: weekly limit seeds from existing confirmed sessions ──────────────
-  describe("RV-5: weekly limit counts existing confirmed sessions", () => {
-    // Mon Jun 16 and Tue Jun 17 2025 both fall in the Sunday-week of Jun 15 and
-    // are valid Mon/Tue availability days for weeklyConsultant.
-    const session1 = futureSlots(2, "2025-06-16T10:00:00Z"); // Mon 10:00-11:00
-    const session2 = futureSlots(2, "2025-06-17T10:00:00Z"); // Tue 10:00-11:00
-
-    it("FAILS when proposed sessions plus a surviving confirmed session exceed the limit", async () => {
-      // No conflicts from the universal conflict scan, but the class already
-      // has 1 CONFIRMED (non-tentative) session this week (#1554 — one row).
-      mockPrisma.appointmentOccurrence.findMany.mockResolvedValueOnce([
-        {
-          id: "confirmed-occ",
-          appointmentId: "class-wrapper",
-          startsAt: new Date("2025-06-18T10:00:00Z"),
-          isTentative: false,
-          completionStatus: "SCHEDULED",
-        },
-      ]);
-
-      // sessionsPerWeek = 2; reschedule proposes 2 NEW sessions in the same week.
-      // 2 proposed + 1 confirmed = 3 > 2 → must fail (matches the allocator).
-      const result = await service.validate(
-        "class",
-        "class-rv5",
-        [...session1, ...session2],
-        weeklyConsultant,
-        { sessionsPerWeek: 2, sessionDurationInHours: 1 },
-      );
-
-      expect(result.isValid).toBe(false);
-      expect(result.errors.some((e) => e.includes("WEEKLY_LIMIT"))).toBe(true);
-      expect(result.errors.some((e) => e.includes("3 sessions"))).toBe(true);
-    });
-
-    it("does NOT count the class's own tentative session being replaced", async () => {
-      // The only existing session this week is TENTATIVE (the one being
-      // rescheduled). It must be excluded from the seed, so 2 proposed + 0 = 2.
-      mockPrisma.appointmentOccurrence.findMany.mockResolvedValueOnce([
-        {
-          id: "tentative-occ",
-          appointmentId: "class-wrapper",
-          startsAt: new Date("2025-06-18T10:00:00Z"),
-          isTentative: true,
-          completionStatus: "SCHEDULED",
-        },
-      ]);
-
-      const result = await service.validate(
-        "class",
-        "class-rv5",
-        [...session1, ...session2],
-        weeklyConsultant,
-        { sessionsPerWeek: 2, sessionDurationInHours: 1 },
-      );
-
-      expect(result.isValid).toBe(true);
-    });
   });
 });
 

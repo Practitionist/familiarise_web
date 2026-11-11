@@ -14,7 +14,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ClassPatternScheduler } from "@/components/scheduling/ClassPatternScheduler";
-import { useViewerZone } from "@/lib/time/use-viewer-zone";
 
 const MovableSchema = z.object({
   count: z.number().int().nonnegative(),
@@ -32,17 +31,19 @@ export function ClassSeriesRetimeButton({
   appointmentId,
   classId,
   consultantProfileId,
+  schedulingTimezone,
   sessionsPerWeek,
   onMoved,
 }: Readonly<{
   appointmentId: string;
   classId: string;
   consultantProfileId: string;
+  /** The class's own zone: its weekly pattern is wall-clock time there. */
+  schedulingTimezone: string;
   sessionsPerWeek: number;
   onMoved: () => void;
 }>) {
   const [open, setOpen] = useState(false);
-  const { zone } = useViewerZone();
   const movable = useQuery({
     queryKey: ["class-series-movable", appointmentId],
     enabled: open,
@@ -96,7 +97,7 @@ export function ClassSeriesRetimeButton({
               appointmentId={appointmentId}
               classId={classId}
               consultantId={consultantProfileId}
-              zone={zone}
+              zone={schedulingTimezone}
               sessionMinutes={movable.data.sessionMinutes}
               totalSessions={movable.data.count}
               sessionsPerWeek={sessionsPerWeek}

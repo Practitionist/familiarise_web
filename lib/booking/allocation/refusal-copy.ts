@@ -16,8 +16,6 @@ const COPY_BY_TAG: Record<string, string> = {
     "One of these times is outside a co-host's available hours. Pick another time.",
   OUTSIDE_AVAILABILITY:
     "One of these times is outside the expert's available hours or this plan's scheduling period. Pick another time.",
-  WEEKLY_LIMIT:
-    "These times go over this plan's sessions per week. Spread them across more weeks.",
   DAILY_LIMIT:
     "These times put too many sessions on one day. Spread them across more days.",
   TOO_SOON:

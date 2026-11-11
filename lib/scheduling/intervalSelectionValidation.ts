@@ -365,36 +365,6 @@ export function validateClassSessionDistributionByCount(
 }
 
 /**
- * Validate weekly distribution for classes using complete session count per week.
- */
-export function validateWeeklySessionsDistribution(
-  slots: CalendarInterval[],
-  sessionsPerWeek: number,
-  slotsPerSession: number,
-  timeZone?: string,
-): boolean {
-  if (slots.length === 0) return true;
-  // A session counts in the week of the day it starts.
-  const weekSessions = new Map<string, number>();
-  for (const [, daySlots] of Array.from(
-    groupSlotsByDay(slots, timeZone, slotsPerSession),
-  )) {
-    const first = daySlots.reduce((earliest, slot) =>
-      slot.startTime < earliest.startTime ? slot : earliest,
-    );
-    const wk = weekKey(first.startTime, timeZone);
-    weekSessions.set(
-      wk,
-      (weekSessions.get(wk) ?? 0) +
-        countSessionsForDay(daySlots, slotsPerSession).sessions,
-    );
-  }
-  return Array.from(weekSessions.values()).every(
-    (sessions) => sessions <= sessionsPerWeek,
-  );
-}
-
-/**
  * Validate daily hours limit (for classes)
  */
 export function validateDailyHours(
@@ -686,7 +656,6 @@ function validateClassSelection(
   slots: CalendarInterval[],
   constraints: EventConstraints,
   limits: SlotLimits,
-  options: SlotValidationOptions,
   result: ValidationResult,
   timeZone?: string,
 ): void {
@@ -717,15 +686,8 @@ function validateClassSelection(
     timeZone,
   );
 
-  const weeklyOk = validateWeeklySessionsDistribution(
-    slots,
-    options.sessionsPerWeek || 1,
-    slotsPerSession,
-    timeZone,
-  );
-
+  // A class may meet more often than its plan's weekly count; only the day is capped.
   result.sessionDistributionValid = sessionsPerDayOk;
-  result.weeklyDistributionValid = weeklyOk;
 
   if (!result.dailyHoursValid) {
     result.isValid = false;
@@ -742,12 +704,6 @@ function validateClassSelection(
     result.isValid = false;
     result.errors.push(
       `Maximum ${constraints.maxSessionsPerDay || 2} classes per day exceeded`,
-    );
-  }
-  if (!weeklyOk) {
-    result.isValid = false;
-    result.errors.push(
-      `Maximum ${options.sessionsPerWeek || 1} classes per week exceeded`,
     );
   }
 }
@@ -823,7 +779,7 @@ function validateConsultationSelection(
   }
 }
 
-/** Soft weekly-spread warnings for recurring events. */
+/** Soft weekly-spread warning for a subscription; a class may meet more often than its plan. */
 function warnOnWeeklyDistribution(
   slots: CalendarInterval[],
   eventType: ClientEventType,
@@ -844,19 +800,6 @@ function warnOnWeeklyDistribution(
     if (!result.weeklyDistributionValid) {
       result.warnings.push(
         `Consider distributing calls more evenly across weeks`,
-      );
-    }
-  } else if (eventType === "class") {
-    const ok = validateWeeklySessionsDistribution(
-      slots,
-      options.sessionsPerWeek,
-      limits.slotsPerSession,
-      timeZone,
-    );
-    if (!ok) {
-      result.weeklyDistributionValid = false;
-      result.warnings.push(
-        `Consider distributing classes more evenly across weeks`,
       );
     }
   }
@@ -894,14 +837,7 @@ export function validateEventSlots(
       validateWebinarSelection(slots, limits, result);
       break;
     case "class":
-      validateClassSelection(
-        slots,
-        constraints,
-        limits,
-        options,
-        result,
-        timeZone,
-      );
+      validateClassSelection(slots, constraints, limits, result, timeZone);
       break;
     case "subscription":
       validateSubscriptionSelection(slots, options, limits, result);

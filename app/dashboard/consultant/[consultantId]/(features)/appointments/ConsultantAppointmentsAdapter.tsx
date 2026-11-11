@@ -48,10 +48,19 @@ const TYPE_LABEL: Record<AppointmentVM["kind"], string> = {
   TRIAL: "Trial",
 };
 
-/** Webinar/class lifecycle actions are plan-owner only (API rejects collaborators). */
-function canManageBookingLifecycle(vm: AppointmentVM): boolean {
+/**
+ * Webinar/class lifecycle actions belong to the plan's host, or whoever acts on
+ * that host's dashboard; the routes refuse co-hosts and co-instructors.
+ */
+function canManageBookingLifecycle(
+  vm: AppointmentVM,
+  consultantId: string,
+): boolean {
   if (vm.kind === "WEBINAR" || vm.kind === "CLASS") {
-    return !vm.collaboratorRole || vm.collaboratorRole === "HOST";
+    return (
+      (!vm.collaboratorRole || vm.collaboratorRole === "HOST") &&
+      (!vm.consultantProfileId || vm.consultantProfileId === consultantId)
+    );
   }
   return true;
 }
@@ -334,7 +343,10 @@ export function useConsultantAppointmentsAdapter(
   };
 
   const primaryAction = (vm: AppointmentVM): PrimaryAction => {
-    if (vm.needsActionReason === "UNSCHEDULED") {
+    if (
+      vm.needsActionReason === "UNSCHEDULED" &&
+      canManageBookingLifecycle(vm, consultantId)
+    ) {
       const href = timingsHref(vm);
       if (href) {
         return {
@@ -360,14 +372,14 @@ export function useConsultantAppointmentsAdapter(
     const appointment = vm.raw.appointment;
     const inactive = isInactiveStatus(vm.status);
     const rawOccurrences = actionableRawSlots(vm);
-    const lifecycleOk = canManageBookingLifecycle(vm);
+    const lifecycleOk = canManageBookingLifecycle(vm, consultantId);
     const timingsOk = allowsManageTimings(
       vm.kind,
       rawOccurrences,
       vm.raw.liveSeats ?? 0,
     );
 
-    if (canOfferTimings(vm, timingsOk)) {
+    if (lifecycleOk && canOfferTimings(vm, timingsOk)) {
       items.push({
         key: "timings",
         label: "Timings",

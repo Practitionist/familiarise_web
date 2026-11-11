@@ -401,6 +401,12 @@ export function AppointmentDetailClient({
   }
 
   const { vm } = mapped;
+  // Class host controls are for the plan's host and whoever acts on that
+  // host's dashboard; the routes refuse co-hosts and co-instructors.
+  const classControls =
+    role === "consultee" ||
+    !consultantId ||
+    vm.consultantProfileId === consultantId;
   const action = adapter.primaryAction(vm);
   const orgName =
     detail.appointment.organization?.name ??
@@ -718,6 +724,7 @@ export function AppointmentDetailClient({
   // Move every session 24 h or more away to a new weekly pattern.
   const seriesMove =
     role === "consultant" &&
+    classControls &&
     vm.kind === "CLASS" &&
     detail.appointment.class &&
     vm.consultantProfileId ? (
@@ -725,6 +732,7 @@ export function AppointmentDetailClient({
         appointmentId={appointmentId}
         classId={detail.appointment.class.id}
         consultantProfileId={vm.consultantProfileId}
+        schedulingTimezone={detail.appointment.class.schedulingTimezone}
         sessionsPerWeek={
           detail.appointment.class.classPlan?.sessionsPerWeek ?? 1
         }
@@ -770,7 +778,7 @@ export function AppointmentDetailClient({
           />
         </div>
       )}
-      {classActions.notices && (
+      {classControls && classActions.notices && (
         <div className="mb-4">{classActions.notices}</div>
       )}
       {hasConfirmedSessions || hasTentativeSessions ? (
@@ -820,7 +828,9 @@ export function AppointmentDetailClient({
           // Schedule words only; the pay verb lives in the needs-you slot.
           heldRowLabel={presentation.sessionRowLabel}
           rowActions={(session): SessionRowAction[] => [
-            ...classActions.rowActions(session.occurrenceId),
+            ...(classControls
+              ? classActions.rowActions(session.occurrenceId)
+              : []),
             ...returnActions.rowActions(session.occurrenceId),
           ]}
           sessionsPerWeek={sessionsPerWeek}
