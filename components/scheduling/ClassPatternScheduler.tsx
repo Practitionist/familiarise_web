@@ -13,6 +13,7 @@ import {
   patternProblem,
   projectPattern,
   sessionAtoms,
+  startDatePhase,
   type PatternRow,
 } from "@/lib/booking/class-pattern";
 import { eventLeadMs } from "@/lib/booking/event-time-rules";
@@ -28,7 +29,6 @@ import { formatInTimeZone } from "date-fns-tz";
 import { cn } from "@/utils/tailwind";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const TIMES = Array.from({ length: 48 }, (_, i) => i * 30);
 const PREVIEW_DAYS = 28;
 
 function timeLabel(minutes: number): string {
@@ -37,13 +37,21 @@ function timeLabel(minutes: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
-/** Sessions a week spread across the week at 18:00: 3 → Mon, Wed, Fri. */
-export function defaultRows(sessionsPerWeek: number): PatternRow[] {
+/** The 48 local starts of a day that land on the UTC atoms, `phase` minutes past :00/:30. */
+function dayTimes(phase: number): number[] {
+  return Array.from({ length: 48 }, (_, i) => phase + i * 30);
+}
+
+/** Sessions a week spread across the week at 18:00 (18:15 at +05:45): 3 → Mon, Wed, Fri. */
+export function defaultRows(
+  sessionsPerWeek: number,
+  phase: number,
+): PatternRow[] {
   const count = Math.min(7, Math.max(1, sessionsPerWeek));
   const gap = Math.max(1, Math.floor(7 / count));
   return Array.from({ length: count }, (_, i) => ({
     weekday: (1 + i * gap) % 7,
-    startMinutes: 18 * 60,
+    startMinutes: 18 * 60 + phase,
   }));
 }
 
@@ -95,8 +103,10 @@ export function ClassPatternScheduler({
   const [startDate, setStartDate] = useState(() =>
     formatInTimeZone(new Date(notBeforeMs), zone, "yyyy-MM-dd"),
   );
+  const phase = startDatePhase(startDate, zone);
+  const times = useMemo(() => dayTimes(phase), [phase]);
   const [rows, setRows] = useState<PatternRow[]>(() =>
-    defaultRows(sessionsPerWeek),
+    defaultRows(sessionsPerWeek, phase),
   );
   const [saving, setSaving] = useState(false);
 
@@ -137,6 +147,9 @@ export function ClassPatternScheduler({
       sessionMinutes,
       notBeforeMs,
     });
+    if (!option) {
+      return { start, label: "Checked when you save", blocking: false };
+    }
     return {
       start,
       label: SINGLE_SESSION_STATE_LABEL[option.state],
@@ -249,7 +262,7 @@ export function ClassPatternScheduler({
                   )
                 }
               >
-                {TIMES.map((minutes) => (
+                {times.map((minutes) => (
                   <option key={minutes} value={minutes}>
                     {timeLabel(minutes)}
                   </option>
@@ -274,7 +287,10 @@ export function ClassPatternScheduler({
             variant="outline"
             size="sm"
             onClick={() =>
-              setRows((all) => [...all, { weekday: 1, startMinutes: 18 * 60 }])
+              setRows((all) => [
+                ...all,
+                { weekday: 1, startMinutes: 18 * 60 + phase },
+              ])
             }
           >
             <Plus className="mr-1 h-4 w-4" /> Add a day

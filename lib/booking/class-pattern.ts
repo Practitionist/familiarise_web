@@ -10,6 +10,8 @@
 
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 
+import { atomPhaseMinutes } from "@/lib/time/grid-zone";
+
 const ATOM_MS = 30 * 60_000;
 /** One pattern never needs more than a year and a half to place a long class. */
 const MAX_DAYS_SCANNED = 550;
@@ -17,7 +19,7 @@ const MAX_DAYS_SCANNED = 550;
 export interface PatternRow {
   /** 0 = Sunday … 6 = Saturday, in the host's zone. */
   weekday: number;
-  /** Minutes after local midnight, on the half hour (e.g. 1080 for 18:00). */
+  /** Minutes after local midnight, on the zone's atom phase (1080 for 18:00, 1095 for 18:15 at +05:45). */
   startMinutes: number;
 }
 
@@ -35,6 +37,15 @@ export type PatternProblem =
   | "DUPLICATE_ROW"
   | "TOO_MANY_PER_DAY";
 
+/** The zone's atom phase on `startDate`, read at local noon; an unreadable date reads now. */
+export function startDatePhase(startDate: string, zone: string): number {
+  const noon = fromZonedTime(`${startDate}T12:00:00`, zone);
+  return atomPhaseMinutes(
+    zone,
+    Number.isNaN(noon.getTime()) ? new Date() : noon,
+  );
+}
+
 /** Why a pattern can't be projected, or null when it can. */
 export function patternProblem(
   pattern: ClassPattern,
@@ -42,6 +53,7 @@ export function patternProblem(
 ): PatternProblem | null {
   if (pattern.rows.length === 0) return "NO_ROWS";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(pattern.startDate)) return "BAD_START_DATE";
+  const phase = startDatePhase(pattern.startDate, pattern.zone);
   const seen = new Set<string>();
   const perDay = new Map<number, number>();
   for (const row of pattern.rows) {
@@ -51,7 +63,7 @@ export function patternProblem(
       row.weekday > 6 ||
       row.startMinutes < 0 ||
       row.startMinutes >= 24 * 60 ||
-      row.startMinutes % 30 !== 0
+      (row.startMinutes - phase) % 30 !== 0
     ) {
       return "OFF_GRID_TIME";
     }
@@ -69,7 +81,7 @@ export function patternProblem(
 export const PATTERN_PROBLEM_COPY: Record<PatternProblem, string> = {
   NO_ROWS: "Add at least one weekday and time.",
   BAD_START_DATE: "Pick the date the class starts.",
-  OFF_GRID_TIME: "Pick each time on the hour or half hour.",
+  OFF_GRID_TIME: "Pick each time from the list.",
   DUPLICATE_ROW: "Two rows have the same day and time.",
   TOO_MANY_PER_DAY: "A class meets at most twice on one day.",
 };
@@ -106,7 +118,7 @@ export function projectPattern(
       if (row.weekday !== weekday || starts.length >= count) continue;
       const wall = `${dateKey}T${pad(Math.floor(row.startMinutes / 60))}:${pad(row.startMinutes % 60)}:00`;
       const start = fromZonedTime(wall, pattern.zone);
-      // A wall time the clocks skip, or a :15/:45 zone, falls off the lattice.
+      // Only a wall time inside a DST gap resolves off the lattice.
       if (start.getTime() % ATOM_MS !== 0) continue;
       if (start.getTime() < notBeforeMs) continue;
       starts.push(start);

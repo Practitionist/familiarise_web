@@ -71,18 +71,19 @@ describe("projectPattern", () => {
     ]);
   });
 
-  it("skips a time that falls off the UTC half-hour grid in a :45 zone", () => {
-    // 10:00 in Kathmandu is 04:15 UTC.
+  it("offers 18:15 in a :45 zone and refuses 18:00 as off the grid", () => {
+    // 18:15 in Kathmandu is 12:30 UTC; 18:00 is 12:15 UTC.
+    const zone = "Asia/Kathmandu";
+    const at = (startMinutes: number) => ({
+      startDate: "2026-12-07",
+      rows: [{ weekday: 1, startMinutes }],
+      zone,
+    });
+    expect(patternProblem(at(18 * 60 + 15), 2)).toBeNull();
     expect(
-      projectPattern(
-        {
-          startDate: "2026-12-07",
-          rows: [{ weekday: 1, startMinutes: 10 * 60 }],
-          zone: "Asia/Kathmandu",
-        },
-        1,
-      ),
-    ).toEqual([]);
+      projectPattern(at(18 * 60 + 15), 2).map((s) => s.toISOString()),
+    ).toEqual(["2026-12-07T12:30:00.000Z", "2026-12-14T12:30:00.000Z"]);
+    expect(patternProblem(at(18 * 60), 2)).toBe("OFF_GRID_TIME");
   });
 });
 

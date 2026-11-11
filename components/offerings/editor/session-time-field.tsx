@@ -41,7 +41,7 @@ function toIso(value: unknown): string | null {
 /**
  * A webinar's start, picked on the host's own calendar in the host's zone
  * with the event-time rules (half hour, an hour ahead) the server enforces.
- * The form keeps a Date, as the previous date-time input did.
+ * The form keeps the ISO string `WebinarPlanSchema.scheduledAt` validates.
  */
 export function SessionTimeField<T extends FieldValues = FieldValues>({
   control,
@@ -72,7 +72,7 @@ export function SessionTimeField<T extends FieldValues = FieldValues>({
                 sessionMinutes={Math.round(hours * 60)}
                 purpose="create"
                 value={toIso(field.value)}
-                onChange={(iso) => field.onChange(iso ? new Date(iso) : null)}
+                onChange={(iso) => field.onChange(iso ?? null)}
               />
             ) : (
               <p className="text-sm text-muted-foreground">

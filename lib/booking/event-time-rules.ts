@@ -37,6 +37,12 @@ const LEAD_WORDS: Record<EventTimePurpose, string> = {
   retime: "at least 24 hours from now",
 };
 
+/** True when `startsAt` is a real instant on the UTC half-hour lattice. */
+export function isOnEventLattice(startsAt: Date): boolean {
+  const ms = startsAt.getTime();
+  return Number.isFinite(ms) && ms % SCHEDULING_INTERVAL_MS === 0;
+}
+
 /** Null when `startsAt` is a legal start for `purpose`, else plain copy to show. */
 export function eventTimeRefusal(
   startsAt: Date,
@@ -51,7 +57,7 @@ export function eventTimeRefusal(
         "The start time could not be read. Pick the date and time again.",
     };
   }
-  if (ms % SCHEDULING_INTERVAL_MS !== 0) {
+  if (!isOnEventLattice(startsAt)) {
     return {
       code: "EVENT_TIME_INVALID",
       message: "Pick a start time on the hour or half hour.",

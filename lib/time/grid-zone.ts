@@ -11,7 +11,7 @@
  * Calendar dates travel as local-noon `Date`s (date-fns's week helpers need
  * them); only their year/month/day fields are read, never their instant.
  */
-import { fromZonedTime } from "date-fns-tz";
+import { fromZonedTime, getTimezoneOffset } from "date-fns-tz";
 
 import { DISPLAY_LOCALE } from "@/lib/time/display";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
@@ -23,6 +23,12 @@ import {
 } from "./viewer-zone";
 
 export const ATOM_MS = 30 * 60 * 1000;
+
+/** Local minutes past :00/:30 where `zone`'s UTC atoms start at `at`: 15 at +05:45, else 0. */
+export function atomPhaseMinutes(zone: string, at: Date): number {
+  const offsetMinutes = getTimezoneOffset(zone, at) / 60_000;
+  return ((offsetMinutes % 30) + 30) % 30;
+}
 
 /** The profile zone when it is valid and the viewer has not switched, else the device's. */
 export function resolveGridZone(

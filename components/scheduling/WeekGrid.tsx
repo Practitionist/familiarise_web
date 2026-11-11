@@ -719,7 +719,8 @@ export function WeekGrid({
               navRow.axisIndex + 1 < rows.to
                 ? matrix[navRow.axisIndex + 1]
                 : undefined;
-            const endsHour = axisRow.minuteOfDay % 60 === 30;
+            const minuteOfHour = axisRow.minuteOfDay % 60;
+            const endsHour = minuteOfHour >= 30;
             return (
               <div
                 key={navRow.key}
@@ -732,12 +733,19 @@ export function WeekGrid({
                   role="rowheader"
                   className="flex h-6 min-w-0 items-start justify-end whitespace-nowrap pr-1 text-[11px] leading-none tabular-nums text-muted-foreground md:pr-2"
                 >
-                  {/* Only hours are printed; the half-hour keeps its name for screen readers. */}
-                  <span
-                    className={axisRow.minuteOfDay % 60 === 0 ? "" : "sr-only"}
-                  >
-                    {axisRow.label}
-                  </span>
+                  {/* The first row of each local hour prints the hour; every row keeps its full name for screen readers. */}
+                  {minuteOfHour === 0 ? (
+                    <span>{axisRow.label}</span>
+                  ) : (
+                    <>
+                      {minuteOfHour < 30 && (
+                        <span aria-hidden="true">
+                          {axisRow.label.replace(/:\d{2}/, "")}
+                        </span>
+                      )}
+                      <span className="sr-only">{axisRow.label}</span>
+                    </>
+                  )}
                 </div>
                 {days.map((date, dayIndex) => {
                   const cell = line[dayIndex];

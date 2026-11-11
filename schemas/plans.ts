@@ -7,6 +7,7 @@ import {
 } from "@/utils/contentValidation";
 import { experienceValidation } from "./shared";
 import { MAX_GROUP_SESSION_PARTICIPANTS } from "@/lib/events/capacity";
+import { isOnEventLattice } from "@/lib/booking/event-time-rules";
 
 // Separate refine functions for different validation types
 const profanityFreeRefinement = (value: string) => {
@@ -480,16 +481,10 @@ export const WebinarPlanSchema = BaseEventPlanSchema.extend({
   scheduledAt: z
     .string()
     .min(1, "Start time is required")
-    .refine((val) => {
-      const date = new Date(val);
-      return date.getMinutes() % 30 === 0;
-    }, "Please select either :00 or :30 for the minutes (e.g., 9:00 or 9:30)")
-    .refine((val) => {
-      const selectedDate = new Date(val);
-      const minAllowedDate = new Date();
-      minAllowedDate.setHours(minAllowedDate.getHours() + 1); // At least 1 hour in future
-      return selectedDate > minAllowedDate;
-    }, "Start time must be at least 1 hour in the future"),
+    .refine(
+      (value) => isOnEventLattice(new Date(value)),
+      "Pick a start time from the list.",
+    ),
 });
 
 export const ClassPlanSchema = BaseEventPlanSchema.extend({
