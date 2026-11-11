@@ -4,7 +4,7 @@ type: how-to
 band: 70-operations
 audience: sde3
 status: live
-last-reviewed: 2026-11-06
+last-reviewed: 2026-11-11
 ---
 
 # Money go-live checklist
@@ -12,6 +12,16 @@ last-reviewed: 2026-11-06
 Use this page to take the money subsystem from sandbox to real money: first the collection side (Razorpay accepting real cards and UPI), then the disbursement side (RazorpayX paying real people). The two can be cut over together or separately. Each section ends with the proof that the step worked, because the failure mode at go-live is not a crash but a wrong amount or a wrong recipient on a path that was never exercised with live credentials. Items that live in the Razorpay dashboards rather than in code are marked "dashboard"; record a screenshot or a signed delivery log against the cutover issue for each.
 
 **Resume the paused job fleet first (paused 2026-11-05 to save invocations on mock data).** Delete the Upstash key `ops:active_cron_platform`, or set it to `netlify`. Confirm a new production `cron-tick` row appears. Then unpause the Better Stack tick heartbeat, digest heartbeat and probe monitor, and re-enable the Sentry `cron-tick` monitor and uptime detector. The exact commands are in [the pause decision](../../decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md#how-to-resume-go-live-or-any-time). Do this before Part 1: the digest checks in 1.2 and Part 3, and the job-freshness monitor in 2.1, all need the fleet running.
+
+## Company prerequisites (before Part 1)
+
+These steps decide whether the live accounts can exist. They are owner and company actions, not code; the dates, amounts and names are kept in Notion (Familiarise / Tax & CA Working Notes / Tax, Legal & Regulatory Register).
+
+- [ ] The company PAN is in hand and matches the registered company.
+- [ ] A current account in the company's name is open and the capital deposit is made. The settlement account in 1.1 is this account.
+- [ ] INC-20A (the declaration that business can commence) is filed.
+- [ ] Razorpay is activated as a registered company. Activation reviews the public site, so the legal pages (`app/(pages)/terms`, `privacy`, `refund`) are live and describe what the platform does. An earlier individual application was rejected at KYC.
+- [ ] RazorpayX: the bank account and the GSTIN question are confirmed, namely whether it can use the same current account and whether it needs a GSTIN while `PLATFORM_GSTIN` is unset.
 
 ## Part 1: accepting real money (Razorpay)
 
@@ -86,17 +96,19 @@ flowchart TD
 ### 2.1 Pre-flip checks
 
 - **RazorpayX account** is live, KYB is complete, and its balance covers the first batch. `RAZORPAYX_KEY_ID`, `RAZORPAYX_KEY_SECRET` and `RAZORPAYX_ACCOUNT_NUMBER` hold live values (the key pair falls back to the Razorpay pair if unset). With the flag on, `getRazorpayPayoutsService` throws `RAZORPAYX_TEST_KEYS_IN_LIVE_MODE` for a test key, because a test key would let the ledger mark payouts `COMPLETED` while no bank account is ever debited.
-- **Static egress.** Live RazorpayX APIs answer only allowlisted source IPs, and Netlify has no static egress. `RAZORPAYX_EGRESS_PROXY_URL` must be set: without it every payout call with a live key refuses with `RAZORPAYX_EGRESS_NOT_CONFIGURED`, and the boot check reports it to Sentry once per process. The proxy is bought only for the first live payout ([owner decision of 2026-11-01](../../decisions/2026-11-01-observability-gaps-and-launch-posture.md)):
-  1. Buy QuotaGuard Static in the Mumbai region and copy its proxy URL and its static egress addresses.
+- **Static egress.** Live RazorpayX APIs answer only allowlisted source IPs, and Netlify has no static egress. `RAZORPAYX_EGRESS_PROXY_URL` must be set: without it every payout call with a live key refuses with `RAZORPAYX_EGRESS_NOT_CONFIGURED`, and the boot check reports it to Sentry once per process. The proxy is bought when its trigger fires, and at the latest before the first live payout ([owner decision of 2026-11-01](../../decisions/2026-11-01-observability-gaps-and-launch-posture.md), refined by [the 2026-11-11 levers record](../../decisions/2026-11-11-cfo-csmo-levers.md)); the trigger is kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). The vendor is open: any fixed-IP proxy works, because the code reads only the URL.
+  1. Buy a static-egress proxy and copy its proxy URL and its static egress addresses. It must be an HTTP or HTTPS forward proxy that supports `CONNECT`, because the payout client sends through undici's `ProxyAgent` (`lib/payments/payouts/razorpay-payouts.ts`); QuotaGuard Static or Fixie's HTTP proxy fit, a SOCKS-only product does not.
   2. Set `RAZORPAYX_EGRESS_PROXY_URL` to the proxy URL in the Netlify production environment (Functions scope) and redeploy. The `ProxyAgent` in `lib/payments/payouts/razorpay-payouts.ts` then routes every RazorpayX call through it.
   3. Add every egress address to the RazorpayX API allowlist.
   4. Make the ₹1 canary payout in 2.3. A `RAZORPAYX_EGRESS_NOT_CONFIGURED` refusal means the variable is missing. An authentication error can mean either wrong live keys or a missing allowlist entry, so first confirm `RAZORPAYX_KEY_ID` and `RAZORPAYX_KEY_SECRET` are the live pair, and only then check that the proxy's egress addresses are on the allowlist.
 - **Payout accounts verified** for every payee in the first batch: `PayoutAccount.isVerified` for consultants and `OrganizationPayoutAccount.status = VERIFIED` for organisations. RazorpayX test mode does not run penny-drop or reverse-penny-drop, so an account "verified" on a preview was verified by hand and must be verified again after the purge in 1.5.
+- **Payout constants are set.** The consultation hold (`PAYOUT_CONSTANTS.HOLD_PERIOD_HOURS.CONSULTATION`) covers the 48-hour scope-claim window of the public promise, and `NEW_EXPERT_EXTRA_HOLD_DAYS`, `NEW_EXPERT_LIFETIME_SHARE_PAISE` and `MINIMUM_PAYOUT_AMOUNT` hold the approved values from Notion (Familiarise / Finance and Pricing / Finance Lever Register); all four live in `lib/payments/payouts/constants.ts` and change only through a reviewed code pull request. Set them before the first live payment: `computeHoldUntil` (`lib/payments/payouts/earnings-hold.ts`) stamps each earning's `holdUntil` when the earning is created, so a later change to the hold does not move earnings that already exist. If live payments were taken before the change, review those earnings' saved hold dates (and any approved payouts) before enabling payouts. The batch runs weekly (`create-payout-batch`), and no page or email may promise a faster payout.
+- **Per-format minimum prices (planned).** A price-bounds constants file under `lib/payments/pricing/` is planned; it does not exist yet. When it ships, its minimum and default prices are the one pricing lever kept in code and are enforced when a plan is saved and at checkout; until then the only floor this checklist relies on is the trial-price floor `PlatformPricingConfig.minTrialPriceInPaise`.
 - **PAN and TDS.** Every payable consultant has a verified PAN, otherwise withholding uses the no-PAN rate. Confirm `TDS_ENGINE` is unset (the default is the Section 194-O engine; `LEGACY` is a flag-only fallback) and `ENABLE_TDS_194O_GROSS` is not `"false"`. See [TDS withholding](../40-payouts/06-tds-withholding.md).
 - **Idempotency.** Every payout carries its deterministic idempotency key so a retry cannot pay twice; the schema makes it unique.
 - **Reconcile is clean:** `reconcile-ledgers` reports `ok: true` with no unbaselined findings, including `ORG_PAYOUT_TOTAL_MISMATCH`.
 - **Monitoring is on:** `handle-stuck-payouts` and the webhook sweep report to Sentry, and a Sentry alert exists for them.
-- **Better Stack launch plan is bought.** Until launch Better Stack stays on the free plan (3-day logs, email and Slack alerts). At launch buy the responder seat (phone and SMS, about $29 to $34 a month) and the Telemetry Nano bundle (30-day retention, about $25 a month billed yearly, EU region), then add phone and SMS to the four money backlog alerts (`refundsOwed`, `payoutsStuck`, `dunningNotices`, `disputesDue`) described in the [Better Stack setup guide](../../maintenance/00-betterstack-setup.md#owner-step-the-oldest-pending-age-alerts).
+- **The Better Stack responder seat is bought when its trigger fires.** Until then Better Stack stays on the free plan (3-day logs, email and Slack alerts); the trigger for the responder seat and the Telemetry Nano bundle is kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). Once the seat exists, add phone and SMS to the four money backlog alerts (`refundsOwed`, `payoutsStuck`, `dunningNotices`, `disputesDue`) described in the [Better Stack setup guide](../../maintenance/00-betterstack-setup.md#owner-step-the-oldest-pending-age-alerts). Without it those four alert by email and Slack, and someone must read them daily.
 - **The job-freshness monitor exists and is green.** A Better Stack uptime monitor polls `https://familiarisenow.com/api/health/jobs` every 5 minutes with `Authorization: Bearer <CRON_SECRET>` and alerts on any non-2xx status (keyword `"healthy":false` as a belt). It exists since 2026-11-05 (monitor `familiarise job fleet probe (prod)`; see [the detector rollout decision](../../decisions/2026-11-05-detector-rollout-and-redundancy.md)). At launch, confirm it still shows Up, is not paused, and that its body reads `"healthy":true`; the [runbook](../../maintenance/00-betterstack-setup.md#runbook-create-the-better-stack-monitor-owner-step-done-2026-11-05) recreates it.
 - **Better Stack backlog alerts are unmuted.** The freshness alert and the seven backlog alerts were created paused on 2026-11-05 (ids in the [runbook](../../maintenance/00-betterstack-setup.md#owner-step-the-oldest-pending-age-alerts)). They are paused before launch because seeded and QA money rows on the shared database would fire them. Unmute them after the go-live data reset, once every money gauge in the latest `cron-tick summary` event reads zero. The digest cannot see these Telemetry alerts, so tick each one off here:
   - [ ] `Ticker telemetry stale` (the tick-summary freshness alert)
@@ -163,7 +175,7 @@ Email and in-app notifications do not move money, but a wrong cutover silently d
 
 ## Part 5: GitHub plan and CI at launch
 
-Owner steps in GitHub, from [the CI decision](../../decisions/2026-11-07-ci-before-and-at-launch.md): move the `Practitionist` organisation to Team with one seat, cancel the personal Pro on `teetangh` only once nothing personal depends on it (for example a private personal repository that relies on branch protection), pay with an eligible Indian credit card (a debit card works only for a one-time "Pay now" fallback), set the Actions budget to about $15 with stop-usage, and require the `Release checks` status check on `prod`.
+Owner steps in GitHub, from [the CI decision](../../decisions/2026-11-07-ci-before-and-at-launch.md): move the `Practitionist` organisation to Team with one seat per active contributor (the count is kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend)), cancel the personal Pro on `teetangh` only once nothing personal depends on it (for example a private personal repository that relies on branch protection), pay with an eligible Indian credit card (a debit card works only for a one-time "Pay now" fallback), set the Actions budget to about $15 with stop-usage, and require the `Release checks` status check on `prod`.
 
 ## Where in code
 

@@ -10,7 +10,7 @@ Netlify distinguishes legacy request billing from credit-based compute and web-r
 
 ## 1.1 What the bill is made of (legacy Pro)
 
-MEASURED from receipts and usage (what we pay: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend)):
+MEASURED from receipts and usage (what we pay: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend); the plan and seat triggers are rows in Familiarise / Finance and Pricing / Finance Lever Register):
 
 - $19 per member per month (public legacy Pro price). The seat count and the resulting bill: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend).
 - Function invocations of the `familiarise` site by billing period: May 24,804; June 48,552; August 75,897; September 4 to October 3 282,162. Crossing the 125,000-per-site tier adds a flat $25 (125,000 to 2,000,000).
