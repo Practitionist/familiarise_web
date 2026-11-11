@@ -14,10 +14,6 @@ jest.mock("../../lib/prisma", () => ({
     $disconnect: jest.fn(),
   },
 }));
-jest.mock("../../lib/maintenance-cron", () => ({
-  abortIfMaintenance: jest.fn(),
-}));
-jest.mock("../../lib/observability/job-sentry", () => ({ runJob: jest.fn() }));
 jest.mock("../../lib/stream-logger", () => ({
   streamLogger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
@@ -36,7 +32,6 @@ jest.mock("../../lib/storage/r2-client", () => ({
 
 import prisma from "../../lib/prisma";
 import { RecordingStatus, RecordingStorageType } from "@prisma/client";
-import { runJob } from "../../lib/observability/job-sentry";
 import { reportSentryMessage } from "../../lib/observability/report";
 import {
   deleteR2Object,
@@ -627,43 +622,6 @@ describe("transferRecordings", () => {
     expect(reportSentryMessage).toHaveBeenCalledTimes(1);
     expect(dataOf(0).where).toMatchObject({ id: "a" });
     expect(dataOf(1).where).toMatchObject({ id: "b" });
-  });
-});
-
-describe("transfer-recordings job", () => {
-  it("fails the run for exhausted rows but not for a copy that will retry", async () => {
-    jest.spyOn(console, "log").mockImplementation(() => undefined);
-    await import("../../jobs/stream/transfer-recordings");
-    const job = (runJob as jest.Mock).mock.calls[0][1] as () => Promise<void>;
-    const priorExitCode = process.exitCode;
-    try {
-      process.exitCode = undefined;
-      recording.findMany
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([{ id: "c" }])
-        .mockResolvedValueOnce([]);
-      global.fetch = jest
-        .fn()
-        .mockRejectedValue(new Error("reset")) as unknown as typeof fetch;
-      await job();
-      expect(process.exitCode).toBeUndefined();
-
-      recording.findMany
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([
-          {
-            id: "a",
-            transferAttempts: 12,
-            transferFailureAlertedAt: null,
-            lastTransferError: "x",
-          },
-        ]);
-      await job();
-      expect(process.exitCode).toBe(1);
-    } finally {
-      process.exitCode = priorExitCode;
-    }
   });
 });
 

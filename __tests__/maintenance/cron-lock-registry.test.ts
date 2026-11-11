@@ -21,7 +21,6 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 jest.mock("../../lib/observability/job-sentry", () => ({
   flushJobSentry: jest.fn(),
-  runJob: jest.fn(),
 }));
 
 import fs from "node:fs";

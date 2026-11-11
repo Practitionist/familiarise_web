@@ -1,19 +1,8 @@
-#!/usr/bin/env node
-
 /**
- * Abandoned Payment Cleanup Script
- *
- * Core library for cleaning up abandoned payments and appointments
- * that have exceeded their timeout periods.
- *
- * This module exports functions that can be used by:
- * - Local development: `npm run scripts:cleanup-abandoned-payments`
- * - GitHub Actions: `jobs/cleanup-abandoned-payments.ts`
- * - API routes: Can import and call functions directly
- *
- * Contains race condition fixes:
- * - Issue #6: 35 min buffer (5 min over 30 min expiry) for legacy payments
- * - Issue #10: Re-check payment status before cleanup to handle webhooks
+ * Abandoned payment cleanup: the core of the `abandoned-payments` registry job
+ * (lib/cron/cleanup-registry.ts), dispatched only through `/api/cleanup/[job]`.
+ * Expires payments and approval-pending bookings past their windows, re-reading
+ * the gateway before any status change.
  */
 
 import {
@@ -1476,67 +1465,6 @@ async function remindApprovalPaymentsDueUnlocked(
 }
 
 /**
- * Run all cleanup tasks
- *
- * Executes both abandoned payment cleanup and expired consultation cleanup.
- * Disconnects from database when complete.
- *
- * @returns Combined results from both cleanup operations
- */
-export async function runAllCleanupTasks(): Promise<{
-  paymentResult: CleanupResult;
-  consultationResult: CleanupResult;
-  reminderResult: CleanupResult;
-  overallSuccess: boolean;
-}> {
-  const startTime = Date.now();
-  console.log(`🚀 Starting cleanup job at ${new Date().toISOString()}`);
-
-  try {
-    // Run abandoned payment cleanup
-    const paymentResult = await cleanupAbandonedPayments();
-
-    // Run expired consultation cleanup
-    const consultationResult = await cleanupExpiredApprovalPendingPayments();
-
-    // #1703 D2 — the half-window reminder rides the same run.
-    const reminderResult = await remindApprovalPaymentsDue();
-
-    const duration = (Date.now() - startTime) / 1000;
-    console.log(`⏱️ Job completed in ${duration.toFixed(2)} seconds`);
-
-    // Combined summary
-    console.log(`\n📊 Overall Cleanup Summary:`);
-    console.log(
-      `   🧹 Abandoned payments cleaned: ${paymentResult.cleanedCount}`,
-    );
-    console.log(
-      `   🧹 Expired consultations reset: ${consultationResult.cleanedCount}`,
-    );
-    console.log(
-      `   ⏰ Pay-link reminders sent: ${reminderResult.cleanedCount}`,
-    );
-    console.log(
-      `   ❌ Total errors: ${paymentResult.errorCount + consultationResult.errorCount + reminderResult.errorCount}`,
-    );
-
-    const overallSuccess =
-      paymentResult.success &&
-      consultationResult.success &&
-      reminderResult.success;
-
-    return {
-      paymentResult,
-      consultationResult,
-      reminderResult,
-      overallSuccess,
-    };
-  } finally {
-    await prisma.$disconnect();
-  }
-}
-
-/**
  * True when any of the three registry passes (abandoned holds, lapsed pay-links,
  * due reminders) has a candidate row. Reminder candidates already reminded still count.
  */
@@ -1574,30 +1502,4 @@ export async function hasAbandonedPaymentWork(
     select: { id: true },
   });
   return subscription !== null;
-}
-
-/**
- * Disconnect from the database
- * Call this when done using the cleanup functions if not using runAllCleanupTasks
- */
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
-}
-
-// Run the cleanup if this script is executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runAllCleanupTasks()
-    .then(({ overallSuccess }) => {
-      if (overallSuccess) {
-        console.log("🎉 Cleanup job completed successfully");
-        process.exit(0);
-      } else {
-        console.error("❌ Cleanup job completed with errors");
-        process.exit(1);
-      }
-    })
-    .catch((error) => {
-      console.error("💥 Cleanup job failed:", error);
-      process.exit(1);
-    });
 }

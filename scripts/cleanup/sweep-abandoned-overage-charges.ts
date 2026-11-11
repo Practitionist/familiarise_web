@@ -214,7 +214,3 @@ async function sweepAbandonedOverageChargesUnlocked(
     errored: errors.length,
   };
 }
-
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
-}

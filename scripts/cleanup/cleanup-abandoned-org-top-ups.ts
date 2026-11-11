@@ -181,11 +181,3 @@ async function cleanupAbandonedOrgTopUpsUnlocked(
     timestamp: new Date().toISOString(),
   };
 }
-
-/**
- * Disconnect from database — call this when running as a CLI/job script.
- * The HTTP route should NOT call this since Next.js manages the connection.
- */
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
-}

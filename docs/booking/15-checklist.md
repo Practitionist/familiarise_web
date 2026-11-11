@@ -133,7 +133,7 @@ Every direct slot writer (checkout, request-for-approval, trial scheduling) lock
   - 409: conflict (lock contention, illegal transition, slot already booked)
   - 500: unexpected server errors only
 - [ ] Stream channel cleanup: paginated + restricted to managed namespace prefixes
-- [ ] Maintenance-mode writes are guarded: cron/job entry points call `abortIfMaintenance` (money-adjacent jobs also join `FINANCIAL_JOB_NAMES`), and every `app/api/cleanup/*` HTTP twin calls the throwing `assertNotInMaintenance` (a 503), since the exit-based job guard cannot run inside a route
+- [ ] Maintenance-mode writes are guarded: every job runs through `app/api/cleanup/[job]`, whose `cleanupRoute` calls the throwing `assertNotInMaintenance` (a 503); money-adjacent jobs also join `FINANCIAL_JOB_NAMES`
 
 ## 10. Status Transitions
 
@@ -163,7 +163,7 @@ Every direct slot writer (checkout, request-for-approval, trial scheduling) lock
 - [ ] Auto-complete marks past appointments as COMPLETED, and completes eligible trials in the same pass
 - [ ] Cron jobs are idempotent (safe to re-run without side effects)
 - [ ] No cron job modifies data outside its documented scope
-- [ ] A new `jobs/**` entry point that can write during a maintenance freeze calls `abortIfMaintenance` (and joins `FINANCIAL_JOB_NAMES` if it touches money); a new `app/api/cleanup/*` route calls `assertNotInMaintenance`
+- [ ] A new job is registered in `lib/cron/cleanup-registry.ts` (never a separate entry point) and joins `FINANCIAL_JOB_NAMES` if it touches money
 
 ---
 

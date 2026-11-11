@@ -17,10 +17,7 @@
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
-import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
-import { recordSystemError } from "@/lib/enterprise/system-events";
-import { abortIfMaintenance } from "@/lib/maintenance-cron";
-import { runJob } from "@/lib/observability/job-sentry";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { postOpsChat } from "@/lib/observability/ops-chat";
 import {
   DEAD_LETTER_BELL_WHERE,
@@ -340,37 +337,4 @@ export async function drainNotificationOutbox(opts?: {
   return withCronLock("drain-notification-outbox", { failMode: "closed" }, () =>
     runNotificationDrainTick({ prisma, maxBatch: opts?.limit }),
   );
-}
-
-if (require.main === module) {
-  runJob("drain-notification-outbox", async () => {
-    // Loaded here (not at module top) so importing this file from Next/tests never
-    // reads .env; dynamic import is the ESM form of the old lazy require.
-    await import("dotenv/config");
-    await abortIfMaintenance("drain-notification-outbox");
-    Sentry.logger.info("job:drain-notification-outbox started");
-    try {
-      const result = await drainNotificationOutbox();
-      console.log(JSON.stringify(result, null, 2));
-      Sentry.logger.info("job:drain-notification-outbox finished", {
-        scanned: result.scanned,
-        sent: result.sent,
-        retried: result.retried,
-        deadLettered: result.deadLettered,
-        errors: result.errors.length,
-      });
-      if (result.errors.length > 0) process.exitCode = 1;
-    } catch (err) {
-      if (!(err instanceof CronLockHeldError)) {
-        await recordSystemError({
-          category: "NOTIFICATION",
-          summary: "Notification outbox drain crashed",
-          err,
-        });
-      }
-      throw err;
-    } finally {
-      await prisma.$disconnect();
-    }
-  });
 }

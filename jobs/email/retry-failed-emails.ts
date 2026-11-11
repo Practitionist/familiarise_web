@@ -81,11 +81,8 @@ import {
   logHeld,
   recipientsOf,
 } from "@/lib/email/delivery-guard";
-import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
-import { recordSystemError } from "@/lib/enterprise/system-events";
-import { abortIfMaintenance } from "@/lib/maintenance-cron";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
-import { runJob } from "@/lib/observability/job-sentry";
 import { postOpsChat } from "@/lib/observability/ops-chat";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import {
@@ -740,53 +737,10 @@ function buildResendSender(): RelaySender | null {
 // Deferred retries resume next tick once Redis recovers — no message loss,
 // just delay.
 export async function retryFailedEmails(opts?: {
-  /** #1654 — the ticker's bite; the Actions run omits it and drains MAX_BATCH. */
+  /** The ticker's per-tick bite; omitted, the run drains MAX_BATCH. */
   limit?: number;
 }): Promise<EmailRetryRunResult> {
   return withCronLock("retry-failed-emails", { failMode: "closed" }, () =>
     runEmailRetryTick({ prisma, maxBatch: opts?.limit }),
   );
-}
-
-if (require.main === module) {
-  // tsx doesn't auto-load .env outside the Next.js runtime; without this
-  // RESEND_API_KEY/DATABASE_URL are undefined. (Mirrors the webhook wrapper.)
-  runJob("retry-failed-emails", async () => {
-    // Loaded here (not at module top) so importing this file from Next/tests never
-    // reads .env; dynamic import is the ESM form of the old lazy require.
-    await import("dotenv/config");
-    await abortIfMaintenance("retry-failed-emails");
-    Sentry.logger.info("job:retry-failed-emails started");
-    console.log("📧 Retrying dead-lettered transactional emails...");
-    try {
-      const result = await retryFailedEmails();
-      console.log(JSON.stringify(result, null, 2));
-      Sentry.logger.info("job:retry-failed-emails finished", {
-        scanned: result.scanned,
-        sent: result.sent,
-        retried: result.retried,
-        deadLettered: result.deadLettered,
-        batchesScanned: result.batchesScanned,
-        batchesSent: result.batchesSent,
-        batchesRetried: result.batchesRetried,
-        batchesDeadLettered: result.batchesDeadLettered,
-        errors: result.errors.length,
-      });
-      if (result.errors.length > 0) process.exitCode = 1;
-    } catch (err) {
-      // A crashed retry sweep means transactional emails stay stuck — surface
-      // it to the telemetry sink too. Everything generic (capture, job tag,
-      // step annotation, exit code, lock-held skip) is runJob's. (#1066)
-      if (!(err instanceof CronLockHeldError)) {
-        await recordSystemError({
-          category: "EMAIL",
-          summary: "Transactional email retry job crashed",
-          err,
-        });
-      }
-      throw err;
-    } finally {
-      await prisma.$disconnect();
-    }
-  });
 }

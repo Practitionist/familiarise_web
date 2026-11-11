@@ -485,7 +485,3 @@ async function pruneOrgAuditSlice(
     result.errors.push(formatPruneError(error));
   }
 }
-
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
-}
