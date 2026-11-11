@@ -30,7 +30,7 @@ The organisation is on the Developer (free) plan (`docs/observability/sentry/06-
 
 - Settings, Spike Protection: enable for every project.
 - Settings, Inbound Filters: keep browser extensions, crawlers, legacy browsers and localhost on.
-- The owner rejected the Team upgrade on 2026-10-26 (ADR-09 in `docs/decisions/2026-10-26-launch-sweep-observability-and-money-holds.md`) and reversed that on 2026-11-11: Team is bought at launch or on a quota trigger (trigger kept in Notion, Familiarise / Finance and Pricing / Vendors & Spend; see `docs/decisions/2026-11-11-cfo-csmo-levers.md`). Until then Developer has no notification at all, so the 70 percent email in `lib/observability/quota-alert.ts` is the only early warning.
+- The owner rejected the Team upgrade on 2026-10-26 (ADR-09 in `docs/decisions/2026-10-26-launch-sweep-observability-and-money-holds.md`) and reversed that on 2026-11-11: Team is bought on a trigger kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend) (trigger kept in Notion, Familiarise / Finance and Pricing / Vendors & Spend; see `docs/decisions/2026-11-11-cfo-csmo-levers.md`). Until then Developer has no notification at all, so the 70 percent email in `lib/observability/quota-alert.ts` is the only early warning.
 - In code: report once per run, collect failures and capture one summary (`AGENTS.md` rule on Sentry discipline); a standing finding needs shared state (Postgres), not process memory. Use `createRunFailureReporter` (`lib/observability/run-failures.ts`) for per-row failures and `reportStandingFinding` (`lib/observability/standing-finding.ts`, ids stored in `SystemEvent`) for findings that recur across runs.
 - Choose one cron monitor deliberately (issue #2145, A3).
 

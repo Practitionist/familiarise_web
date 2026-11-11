@@ -121,7 +121,7 @@ Done on 2026-11-08 for Production, in the window of the production release promo
 ### Step 5: Environment Variables & Pre-Launch Delivery Guard Cutover
 
 - [ ] Confirm all required environment variables are configured in Netlify Dashboard and GitHub Actions secrets
-- [ ] Move Resend from Free to Pro on the first purchase trigger (the first marketing batch, daily volume approaching the Free cap, or go-live with more than a handful of active experts; the triggers are kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend)): Free stops sending at 100 emails a day (see [Resend billing guardrails](../../.claude/skills/billing-guardrails/references/resend.md#5-when-to-move-to-pro-owner-decision-2026-11-03))
+- [ ] Move Resend from Free to Pro on the first purchase trigger (the first marketing batch, daily volume approaching the Free cap, or go-live with more than a handful of active experts; the triggers are kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend)): Free stops sending at 100 emails a day (see [Resend billing guardrails](../../.claude/skills/billing-guardrails/references/resend.md#5-when-to-move-to-pro))
 - [ ] **Launch Cutover Gate**: Flip `EMAIL_DELIVERY_MODE=live` in the production env vars of the active application host and of the standby Netlify site (every scheduled job that sends mail runs on the Netlify ticker, so no Actions variable is read by a cron job) when opening public traffic (while unset or `allowlist`, external recipients are held safely as `DEAD_LETTER` `held:pre-launch` in `FailedEmail`)
 
 ### Step 6: Smoke Test Verification

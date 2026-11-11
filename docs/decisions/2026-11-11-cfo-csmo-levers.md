@@ -47,7 +47,7 @@ The owner decided that minimum prices are enforced, not advised. The planned fil
 
 ### 5. Vendor purchases follow triggers, not dates
 
-Resend Pro, Supabase Pro, Sentry Team, the Better Stack responder seat and Telemetry Nano, and the GitHub Team seats are bought when a measurable trigger fires, with two exceptions the owner fixed in time: Supabase Pro at the first real-money booking on the platform, and Sentry Team at launch or on a quota trigger. Each trigger is a row in the Finance Lever Register and is explained on Vendors & Spend. GitHub Team seats equal the number of active contributors. This supersedes the "buy at go-live" lines of the earlier records, which now carry a pointer here.
+Resend Pro, Supabase Pro, Sentry Team, the Better Stack responder seat and Telemetry Nano, and the GitHub Team seats are bought when a measurable trigger fires. The triggers themselves are owner-set plans and live in Notion, not here. One constraint is technical rather than a lever: the database moves to a plan with backups before the first real customer data is stored. Each trigger is a row in the Finance Lever Register and is explained on Vendors & Spend. GitHub Team seats equal the number of active contributors. This supersedes the "buy at go-live" lines of the earlier records, which now carry a pointer here.
 
 ### 6. The static-egress vendor is open
 
@@ -96,7 +96,7 @@ The monthly dashboard on Unit Economics & Financial Model gives each metric a gr
 ## Deprecated & Superseded Approaches
 
 - **"Buy at go-live" for vendor plans.** The responder seat and Telemetry Nano (2026-11-01), Resend Pro (2026-11-08) and Supabase Pro "before the first real customer" (2026-10-31) are replaced by triggers and, for Supabase, by the first real-money booking.
-- **The 2026-10-26 rejection of Sentry Team (ADR-09).** Replaced by a purchase at launch or on a quota trigger.
+- **The 2026-10-26 rejection of Sentry Team (ADR-09).** Replaced by a purchase of Team on a trigger kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend).
 - **One GitHub Team seat (2026-11-07).** Replaced by one seat per active contributor.
 - **QuotaGuard named as the one static-egress vendor (2026-11-01).** Replaced by an open choice behind `RAZORPAYX_EGRESS_PROXY_URL`.
 - **Fee and referral amounts quoted in the 2026-11-08 record.** Replaced by the Growth & Marketing Lever Register.

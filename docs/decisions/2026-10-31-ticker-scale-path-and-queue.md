@@ -93,7 +93,7 @@ Until that pull request merges, the canary in `docs/observability/sentry/06-inge
 - A job added to the schedule must fit under the 11-per-tick pin, or shift existing offsets until it does.
 - The shared database remains the main safety risk until the split. Previews can no longer run jobs or flip production's maintenance and heartbeat state, but an ordinary request on a preview still reads and writes production tables (a booking, a profile edit), and rate-limit and lock keys are shared.
 - A job cannot be exercised on a preview any more, so job changes are checked locally with `next dev` or on production after release.
-- **Superseded in part (2026-11-11).** Decision 5's timing of Supabase Pro is sharpened: Pro is bought at the first real-money booking on the platform, not at a calendar date. The Free plan stays only while the database holds mock data. See [the 2026-11-11 levers record](2026-11-11-cfo-csmo-levers.md).
+- **Superseded in part (2026-11-11).** Decision 5's timing of Supabase Pro is now a trigger kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend) rather than a calendar date. One constraint stays here because it is about data safety, not price: the project moves to a plan with backups before the first real customer data (a real-money booking on the platform) is stored, so the Free plan holds mock data only. See [the 2026-11-11 levers record](2026-11-11-cfo-csmo-levers.md).
 
 ## Deprecated & Superseded Approaches
 
