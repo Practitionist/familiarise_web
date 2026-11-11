@@ -2135,6 +2135,8 @@ async function expirePaymentPendingRequests(
 // double refund; a missed run pages instead.
 export async function expireStaleRequests(opts?: {
   limits?: Partial<StaleRequestRunLimits>;
+  /** When the request began (ms epoch); defaults to this call. */
+  startedAt?: number;
 }): Promise<ExpireStaleRequestsResult> {
   const limits: StaleRequestRunLimits = {
     maxRequests: Math.min(
@@ -2147,13 +2149,15 @@ export async function expireStaleRequests(opts?: {
     maxSlotReleases:
       opts?.limits?.maxSlotReleases ?? DEFAULT_RUN_LIMITS.maxSlotReleases,
   };
+  const pastDeadline = startDeadline(opts?.startedAt);
   return withCronLock("expire-stale-requests", { failMode: "closed" }, () =>
-    expireStaleRequestsUnlocked(limits),
+    expireStaleRequestsUnlocked(limits, pastDeadline),
   );
 }
 
 async function expireStaleRequestsUnlocked(
   limits: StaleRequestRunLimits,
+  pastDeadline: () => boolean,
 ): Promise<ExpireStaleRequestsResult> {
   const allErrors: string[] = [];
 
@@ -2176,6 +2180,7 @@ async function expireStaleRequestsUnlocked(
   // Paid consultations parked after a failed restore and never re-placed.
   const parkedResult = await cancelAgedParkedConsultations({
     maxRows: limits.maxRequests,
+    pastDeadline,
   });
   allErrors.push(...parkedResult.errors);
 

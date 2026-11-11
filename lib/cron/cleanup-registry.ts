@@ -1002,7 +1002,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     build: () =>
       cleanupRoute({
         job: "expire-stale-requests",
-        run: async (req) => {
+        run: async (req, { startedAt }) => {
           const { expireStaleRequests } =
             await import("@/scripts/appointments/expire-stale-requests");
           return expireStaleRequests({
@@ -1013,6 +1013,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
               ),
               maxSlotReleases: MAX_STALE_SLOT_RELEASES,
             },
+            startedAt,
           });
         },
         summarize: (r) => ({

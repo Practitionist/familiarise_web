@@ -19,7 +19,10 @@ import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { startDeadline } from "@/lib/cron/run-deadline";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { createRunFailureReporter } from "@/lib/observability/run-failures";
+import {
+  createRunFailureReporter,
+  type RunFailureReporter,
+} from "@/lib/observability/run-failures";
 import {
   driveRefundOwed,
   stampRefundsOwed,
@@ -30,7 +33,10 @@ import {
   BookingLockUnavailableError,
   withAppointmentLock,
 } from "@/utils/appointmentlock";
+import { revokeEndedBookingChatAccess } from "@/lib/stream/access-revocation";
+import { bookingOrgId } from "@/lib/stream-utils";
 import { recordExpertStrike } from "./expert-reliability";
+import { transitionParticipant } from "./participants";
 import {
   attemptStagedRequestExpired,
   stageRequestEndedNotice,
@@ -157,6 +163,7 @@ const PARKED_SELECT = {
   consultationPlan: {
     select: {
       title: true,
+      organizationId: true,
       consultantProfileId: true,
       consultantProfile: {
         select: { user: { select: { id: true, name: true } } },
@@ -255,11 +262,14 @@ async function cancelOneParked(
             reason: PARKED_CONSULTATION_REASON,
           });
           const released = row.appointment?.occurrences ?? [];
+          // Tombstoned like the cancel door's rows, so no `deletedAt: null` reader still sees them.
           await transitionOccurrenceCompletion(tx, {
             where: { appointmentId, ...RELEASED_ROW },
             to: OccurrenceCompletionStatus.CANCELLED,
+            data: { deletedAt: now },
             allowZero: true,
           });
+          await transitionParticipant(tx, { appointmentId }, "CANCELLED");
           const markers = await stampParkedRefunds(tx, row.id, appointmentId);
           // The expert moved the session and never placed it again: their miss.
           if (
@@ -314,18 +324,102 @@ export interface ParkedConsultationSweepResult {
   errors: string[];
 }
 
+/** Ends the booking's chat access after its cancel committed; a Stream failure queues its own retry. */
+async function revokeParkedChat(
+  row: ParkedRow,
+  failures: RunFailureReporter,
+): Promise<void> {
+  const consulteeUserId = row.requestedBy?.user?.id;
+  const consultantUserId = row.consultationPlan?.consultantProfile?.user?.id;
+  if (!consulteeUserId || !consultantUserId) return;
+  try {
+    await revokeEndedBookingChatAccess({
+      userIds: [consulteeUserId],
+      dmCounterpartUserIds: [consultantUserId],
+      dmOrganizationId: bookingOrgId({
+        consultationPlan: row.consultationPlan,
+        appointment: row.appointment,
+      }),
+    });
+  } catch (error) {
+    failures.add("parked-consultation-chat", error, { consultationId: row.id });
+  }
+}
+
+/** Cancels one aged park and returns its markers; a row another writer holds returns none. */
+async function settleOneParked(
+  row: ParkedRow,
+  now: Date,
+  result: ParkedConsultationSweepResult,
+  failures: RunFailureReporter,
+): Promise<RefundOwedMarker[]> {
+  const appointmentId = row.appointment?.id;
+  if (!appointmentId) return [];
+  try {
+    const done = await cancelOneParked(row, appointmentId, now);
+    result.cancelled += 1;
+    await revokeParkedChat(row, failures);
+    await attemptStagedRequestExpired(done.notice, EMAIL_BUDGET_MS.JOB);
+    return done.markers;
+  } catch (error) {
+    // Moved since the read, or a live writer holds the booking: the next run decides.
+    if (
+      error instanceof IllegalTransitionError ||
+      error instanceof AppointmentBusyError
+    ) {
+      return [];
+    }
+    if (error instanceof ParkedRefundHeldError) {
+      result.errors.push(
+        `Parked consultation ${row.id} waits: ${error.message}`,
+      );
+      return [];
+    }
+    const lockDown = error instanceof BookingLockUnavailableError;
+    failures.add(
+      lockDown ? "parked-consultation-lock" : "parked-consultation-cancel",
+      error,
+      { consultationId: row.id },
+    );
+    result.errors.push(`Failed to cancel parked consultation ${row.id}`);
+    return [];
+  }
+}
+
+/** Drives the committed markers until the run's deadline; `retry-auto-refunds` drives the rest. */
+async function driveParkedRefunds(
+  markers: RefundOwedMarker[],
+  pastDeadline: () => boolean,
+  result: ParkedConsultationSweepResult,
+  failures: RunFailureReporter,
+): Promise<void> {
+  for (const marker of markers) {
+    if (pastDeadline()) return;
+    const outcome = await driveRefundOwed(marker);
+    if (outcome.kind === "refunded") result.issued += 1;
+    else if (outcome.kind === "failed") {
+      result.failures += 1;
+      failures.add("parked-consultation-refund", outcome.error, {
+        paymentId: marker.paymentId,
+      });
+    }
+  }
+}
+
 /**
  * Cancels every consultation parked past its deadline, oldest first and
- * bounded per run: the request CAS carries the park and money predicates, the
- * released rows close, a full refund is owed in the same commit (driven after
- * it, re-driven by `retry-auto-refunds`), an expert who started the move takes
- * a strike, and both sides are told through the outbox. Sentry hears once per run.
+ * bounded by the job's run deadline: the request CAS carries the park and money
+ * predicates, the released rows close and are tombstoned, the participants are
+ * cancelled, a full refund is owed in the same commit (driven after it,
+ * re-driven by `retry-auto-refunds`), an expert who started the move takes a
+ * strike, chat access ends, and both sides are told through the outbox.
+ * Sentry hears once per run.
  */
 export async function cancelAgedParkedConsultations(
-  opts: { maxRows?: number; now?: Date } = {},
+  opts: { maxRows?: number; now?: Date; pastDeadline?: () => boolean } = {},
 ): Promise<ParkedConsultationSweepResult> {
   const now = opts.now ?? new Date();
-  const pastDeadline = startDeadline();
+  const pastDeadline = opts.pastDeadline ?? startDeadline();
   const failures = createRunFailureReporter("bookings");
   const result: ParkedConsultationSweepResult = {
     cancelled: 0,
@@ -333,7 +427,6 @@ export async function cancelAgedParkedConsultations(
     failures: 0,
     errors: [],
   };
-  const markers: RefundOwedMarker[] = [];
   try {
     const rows = await prisma.consultation.findMany({
       where: agedParkedConsultationWhere(now),
@@ -341,48 +434,12 @@ export async function cancelAgedParkedConsultations(
       orderBy: { updatedAt: "asc" },
       take: Math.min(opts.maxRows ?? PARKED_PER_RUN, PARKED_PER_RUN),
     });
+    const markers: RefundOwedMarker[] = [];
     for (const row of rows) {
       if (pastDeadline()) break;
-      const appointmentId = row.appointment?.id;
-      if (!appointmentId) continue;
-      try {
-        const done = await cancelOneParked(row, appointmentId, now);
-        result.cancelled += 1;
-        markers.push(...done.markers);
-        await attemptStagedRequestExpired(done.notice, EMAIL_BUDGET_MS.JOB);
-      } catch (error) {
-        // Moved since the read, or a live writer holds the booking: the next run decides.
-        if (
-          error instanceof IllegalTransitionError ||
-          error instanceof AppointmentBusyError
-        ) {
-          continue;
-        }
-        if (error instanceof ParkedRefundHeldError) {
-          result.errors.push(
-            `Parked consultation ${row.id} waits: ${error.message}`,
-          );
-          continue;
-        }
-        const lockDown = error instanceof BookingLockUnavailableError;
-        failures.add(
-          lockDown ? "parked-consultation-lock" : "parked-consultation-cancel",
-          error,
-          { consultationId: row.id },
-        );
-        result.errors.push(`Failed to cancel parked consultation ${row.id}`);
-      }
+      markers.push(...(await settleOneParked(row, now, result, failures)));
     }
-    for (const marker of markers) {
-      const outcome = await driveRefundOwed(marker);
-      if (outcome.kind === "refunded") result.issued += 1;
-      else if (outcome.kind === "failed") {
-        result.failures += 1;
-        failures.add("parked-consultation-refund", outcome.error, {
-          paymentId: marker.paymentId,
-        });
-      }
-    }
+    await driveParkedRefunds(markers, pastDeadline, result, failures);
   } catch (error) {
     failures.add("parked-consultation-read", error);
     result.errors.push(`Failed to read parked consultations: ${error}`);

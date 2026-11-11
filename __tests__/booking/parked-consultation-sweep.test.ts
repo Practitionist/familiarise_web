@@ -23,14 +23,23 @@ const mockStageNotice = jest.fn(async (..._a: unknown[]) => ({
 }));
 const mockFindMany = jest.fn();
 const mockPayments = jest.fn();
+const mockTransitionParticipant = jest.fn(async (..._a: unknown[]) => 1);
+const mockTx = {
+  payment: { findMany: (...a: unknown[]) => mockPayments(...a) },
+};
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     consultation: { findMany: (...a: unknown[]) => mockFindMany(...a) },
-    $transaction: (fn: (tx: unknown) => unknown) =>
-      fn({ payment: { findMany: (...a: unknown[]) => mockPayments(...a) } }),
+    $transaction: (fn: (tx: unknown) => unknown) => fn(mockTx),
   },
+}));
+jest.mock("../../lib/booking/participants", () => ({
+  transitionParticipant: (...a: unknown[]) => mockTransitionParticipant(...a),
+}));
+jest.mock("../../lib/stream/access-revocation", () => ({
+  revokeEndedBookingChatAccess: jest.fn(async () => undefined),
 }));
 jest.mock("../../lib/booking/transitions", () => ({
   RESCHEDULE_OPEN_STATUSES: ["PENDING_REVIEW"],
@@ -139,7 +148,7 @@ describe("cancelAgedParkedConsultations", () => {
       ...agedParkedConsultationWhere(NOW),
     });
     expect(mockTransitionOccurrence).toHaveBeenCalledWith(
-      expect.anything(),
+      mockTx,
       expect.objectContaining({
         where: {
           appointmentId: "appt-1",
@@ -147,7 +156,13 @@ describe("cancelAgedParkedConsultations", () => {
           deletedAt: null,
         },
         to: "CANCELLED",
+        data: { deletedAt: NOW },
       }),
+    );
+    expect(mockTransitionParticipant).toHaveBeenCalledWith(
+      mockTx,
+      { appointmentId: "appt-1" },
+      "CANCELLED",
     );
     expect(mockStamp.mock.calls[0][1]).toEqual([
       expect.objectContaining({
