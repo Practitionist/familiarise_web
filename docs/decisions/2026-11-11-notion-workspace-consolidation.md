@@ -13,7 +13,7 @@ On 2026-11-11 the owner consolidated the Notion workspace, merging and deleting 
 
 ### 1. Six sections, numbered titles, unnumbered pointers
 
-The workspace keeps the six sections from the 2026-11-09 record. Notion page titles carry outline numbers (for example 08.01), and a repository pointer names the section and the page without the number: `value kept in Notion (Familiarise / Finance and Pricing / Pricing Strategy)`. Renumbering therefore never breaks a pointer.
+The workspace keeps the six sections from the 2026-11-09 record. Notion page titles carry outline numbers (a number such as 04.01), and a repository pointer names the section and the page without the number: `value kept in Notion (Familiarise / Finance and Pricing / Pricing Strategy)`. Renumbering therefore never breaks a pointer.
 
 ### 2. Canonical pages
 
@@ -29,7 +29,7 @@ Two databases sit at the workspace root: Decision Log, and Assumptions & Experim
 
 ### 3. Pricing Strategy stays the canonical pricing page
 
-"Pricing Strategy" (numbered 08.01) remains the one canonical home for pricing rationale and levels. It supersedes the title "09 Pricing Strategy" named in the 2026-11-09 record.
+"Pricing Strategy" remains the one canonical home for pricing rationale and levels. It supersedes the title "09 Pricing Strategy" named in the 2026-11-09 record.
 
 ### 4. Archive is a deletion register
 
