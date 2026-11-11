@@ -21,6 +21,12 @@ import {
 import { activeClientCount, freezeSoldTerms } from "@/lib/booking/sold-terms";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
 import {
+  assertSubscriptionPlanFloor,
+  claimPlanTerms,
+  editedTerms,
+  planEditRefusal,
+} from "@/lib/api/plans/plan-edit-guard";
+import {
   archivedAtForArchive,
   parsePlanArchiveBody,
   PLAN_ORG_GOVERNED_RESPONSE,
@@ -193,6 +199,31 @@ export async function PUT(
         }
       : null;
 
+    // Only a short pack whose edit changes the stored price or terms is held to the pack floor.
+    const storedTerms = {
+      price: existingPlan.price,
+      sessionDurationInHours: existingPlan.sessionDurationInHours,
+      totalSessions: existingPlan.totalSessions,
+      durationInWeeks: existingPlan.durationInWeeks,
+    };
+    const { terms, changed } = editedTerms(storedTerms, {
+      price:
+        validatedData.price === undefined
+          ? undefined
+          : Math.round(validatedData.price),
+      sessionDurationInHours: validatedData.sessionDurationInHours,
+      totalSessions: derived?.totalSessions,
+      durationInWeeks,
+    });
+    if (changed) {
+      assertSubscriptionPlanFloor({
+        pricePaise: terms.price,
+        sessionDurationInHours: terms.sessionDurationInHours,
+        totalSessions: terms.totalSessions,
+        durationInWeeks: terms.durationInWeeks,
+      });
+    }
+
     // A terms edit or a publish must leave the plan deliverable from the
     // expert's published hours; an untouched plan is never retro-policed.
     const effectiveStatus = validatedData.status ?? existingPlan.status;
@@ -264,6 +295,18 @@ export async function PUT(
     // Use transaction to ensure atomicity when updating subscription contents
     // This prevents data loss if the update fails after deleting old contents
     const subscriptionPlan = await prisma.$transaction(async (tx) => {
+      // Save only against the price and terms this edit was validated on.
+      await claimPlanTerms(
+        tx.subscriptionPlan.updateMany({
+          where: {
+            id: subscriptionPlanId,
+            ...storedTerms,
+            sessionsPerWeek: existingPlan.sessionsPerWeek,
+            durationInMonths: existingPlan.durationInMonths,
+          },
+          data: { price: terms.price },
+        }),
+      );
       // If subscriptionContents is provided, delete existing and create new ones
       if (subscriptionContents !== undefined) {
         await tx.subscriptionContent.deleteMany({
@@ -359,6 +402,8 @@ export async function PUT(
       { status: 200 },
     );
   } catch (error) {
+    const refusal = planEditRefusal(error);
+    if (refusal) return refusal;
     if (error instanceof PlanLengthUnitLockedError) {
       return NextResponse.json(
         { error: error.message, code: "PLAN_LENGTH_UNIT_LOCKED" },

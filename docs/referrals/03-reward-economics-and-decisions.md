@@ -21,10 +21,13 @@ The default values below sit in `ReferralProgramConfig` and the active fee sched
 | Credit validity after vest            | 90 days                                             | `creditExpiryDays`                         |
 | Qualify window and attribution window | 30 days                                             | `qualifyWindowDays`, cookie age            |
 | Expert waiver                         | 3 sessions, 90 days, both sides                     | `expertWaiverSessions`, `expertWaiverDays` |
+| Founding-expert waiver                | Owner-set; see the Finance Lever Register           | The three `founding*` fields               |
 
 A worked example makes the discount concrete. At a list price of ₹1,500 on the 20 % marketplace take, 20 % would be ₹300, but the cap is lower. Once the platform is GST-registered, the largest charge is ₹1,770 (₹1,500 plus 18 % GST), its gateway estimate is ₹62.66 (3.54 %, rounded up), and the cap is ₹300 − ₹62.66 = ₹237.34. The welcome discount is therefore ₹237.34, the taxable amount ₹1,262.66, GST ₹227.28 and the total ₹1,489.94. While unregistered there is no GST: the estimate is ₹53.10 on ₹1,500, the discount ₹246.90 and the total ₹1,253.10. The expert still receives ₹1,200, which is 80 % of the list price, either way. At ₹1,000 registered the discount is ₹158.22 and the total ₹993.30. A ₹500 order receives no welcome discount: its cap of ₹79.11 would leave the buyer paying less than the ₹500 minimum, so `keepsWelcomeDiscount` drops it.
 
 An own-link order has only a 10 % take. Because promotion is capped at the take, credit redemption on such an order is limited to 10 % and to the order's cap, and a consumer-referral discount does not apply at all, since the source of an own-link order is never `CONSUMER_REFERRAL`.
+
+A founding-expert waiver is the one fee waiver that needs no referral. An ADMIN grants it with a reason through `POST /api/admin/referrals/founding-waivers`, and `GET` on the same route lists the grants and the seats left. The grant takes its session count, its validity in days and the cap on founding experts from `foundingWaiverSessions`, `foundingWaiverDays` and `foundingExpertCap` on `ReferralProgramConfig`; the approved values are kept in Notion (Familiarise / Finance and Pricing / Finance Lever Register), and the schema defaults match them. The route refuses an expert whose `verificationStatus` is not `VERIFIED`, refuses once the number of founding waivers ever granted reaches the cap (a revoked one still counts), and refuses a second grant to the same expert. At capture the waiver is spent exactly like a referral waiver: the live waiver that expires first is used, and never on an order that carries promotion or on a host-organisation sale.
 
 ## 3. Guards
 
@@ -41,6 +44,8 @@ Each guard below is a rule the code enforces. The right column says where, so th
 | Credit redemption needs a tax-inclusive total of at least ₹500.                                               | `MIN_CREDIT_REDEMPTION_PAISE` and `isCreditRedemptionEligible`.                                                                      |
 | Redemption is at most `min(config cap, the order's take)`, less any welcome discount already given.           | `creditCapPaise` with `creditCapBps` from `resolveCheckoutAttribution`.                                                              |
 | Promotion is never combined with an expert fee waiver, in either direction.                                   | `takeCannotFundPromo` (no discount, cap 0) and `consumeFeeWaiver` (refuses a payment that carries promotion).                        |
+| A founding waiver has no referral, a referral waiver has one; an expert holds at most one founding waiver.    | The CHECK `consultant_fee_waiver_referral_matches_reason` and the index `consultant_fee_waiver_one_founding_key`.                    |
+| Founding waivers never exceed `foundingExpertCap`.                                                            | The founding grant route counts grants under the `ReferralProgramConfig` row lock.                                                   |
 | Host-organisation sellers receive no promotion.                                                               | `takeCannotFundPromo`, when the host-organisation feature is on and the expert is an active member of an organisation that can host. |
 | Organisation-funded orders (wallet, invoice, licence) are never consumer referrals.                           | `orgFunded` in `resolveSource`, and capture requires a gateway cash leg.                                                             |
 | A zero-value, credit-only or organisation-funded sale never creates a customer relationship.                  | `recordReferralCapture`, which requires a positive cash leg.                                                                         |
@@ -117,6 +122,8 @@ The following parts of the design are not in the code.
 - Comparing card payments for a shared payer. Razorpay exposes no card fingerprint that stays the same across customers.
 - Ops console reports for referrals by state, void rate by reason, budget burn, liability and breakage.
 - Notices for a voided referral and for credit that is about to expire. The welcome, reward-earned and credits-applied notices exist.
+- A back-office dialog for the founding-expert grant. The referrals console lists founding waivers, but they are granted only through the API.
+- Limiting a founding waiver to sessions priced at or above the format minimum. It waits on the per-format price floors, which are not in the code yet.
 
 Several smaller gaps between the design and the code are worth knowing.
 

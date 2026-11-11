@@ -26,6 +26,9 @@ const configSelect = {
   expertWaiverSessions: true,
   expertWaiverDays: true,
   expertReferralBudgetPaise: true,
+  foundingWaiverSessions: true,
+  foundingWaiverDays: true,
+  foundingExpertCap: true,
   holdSameIpReferrals: true,
   holdSameDeviceReferrals: true,
   holdWindowDays: true,
@@ -63,6 +66,9 @@ export function configSnapshot(cfg: {
   expertWaiverSessions: number;
   expertWaiverDays: number;
   expertReferralBudgetPaise: number;
+  foundingWaiverSessions: number;
+  foundingWaiverDays: number;
+  foundingExpertCap: number;
   holdSameIpReferrals: number | null;
   holdSameDeviceReferrals: number | null;
   holdWindowDays: number | null;
@@ -85,6 +91,9 @@ export function configSnapshot(cfg: {
     expertWaiverSessions: cfg.expertWaiverSessions,
     expertWaiverDays: cfg.expertWaiverDays,
     expertReferralBudgetPaise: cfg.expertReferralBudgetPaise,
+    foundingWaiverSessions: cfg.foundingWaiverSessions,
+    foundingWaiverDays: cfg.foundingWaiverDays,
+    foundingExpertCap: cfg.foundingExpertCap,
     holdSameIpReferrals: cfg.holdSameIpReferrals,
     holdSameDeviceReferrals: cfg.holdSameDeviceReferrals,
     holdWindowDays: cfg.holdWindowDays,
@@ -178,6 +187,9 @@ export const referralProgramConfigPatchSchema = z
     expertWaiverSessions: z.number().int().min(0).max(100),
     expertWaiverDays: z.number().int().min(1).max(3650),
     expertReferralBudgetPaise: paise,
+    foundingWaiverSessions: z.number().int().min(0).max(100),
+    foundingWaiverDays: z.number().int().min(1).max(3650),
+    foundingExpertCap: z.number().int().min(0).max(1_000),
     // Null switches a review-hold rule off.
     holdSameIpReferrals: z.number().int().min(2).max(1_000).nullable(),
     holdSameDeviceReferrals: z.number().int().min(2).max(1_000).nullable(),

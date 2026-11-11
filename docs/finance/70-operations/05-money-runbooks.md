@@ -178,7 +178,7 @@ For each row:
 
 Never clear `refundOwedKey` by SQL.
 
-A `PENDING` earning that is simply young is not held: `release-earnings` moves it to `READY` after its hold-until time (24 hours for a consultation, 48 for a webinar, 168 for a subscription, 24 for a class, plus 7 days for a new expert). **Verify:** the earning is `READY` and appears in the next payout batch.
+A `PENDING` earning that is simply young is not held: `release-earnings` moves it to `READY` after its hold-until time (48 hours for a consultation, 48 for a webinar, 168 for a subscription, 24 for a class, plus 3 days for a new expert). **Verify:** the earning is `READY` and appears in the next payout batch.
 
 ## 6. A member overage is stuck pending
 

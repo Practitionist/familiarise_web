@@ -7260,6 +7260,10 @@ model ReferralProgramConfig {
   expertWaiverDays          Int      @default(90)
   // Budget charged when an expert referral vests: the expected forgone take on its waived sessions.
   expertReferralBudgetPaise BigInt   @default(180000)
+  // Founding-expert grant: sessions and validity per waiver, and how many experts may hold one.
+  foundingWaiverSessions    Int      @default(3)
+  foundingWaiverDays        Int      @default(90)
+  foundingExpertCap         Int      @default(30)
   // Review-hold rules, off while null: referrals of one code sharing an IP hash (or IP hash and
   // user agent) at or above the count, within holdWindowDays of signup when that is set.
   holdSameIpReferrals       Int?
@@ -7310,8 +7314,9 @@ model ConsultantFeeWaiver {
   reason              ConsultantFeeWaiverReason
   sessionsRemaining   Int
   expiresAt           DateTime                  @db.Timestamptz
-  referralId          String
-  referral            Referral                  @relation(fields: [referralId], references: [id], onDelete: Cascade)
+  // Null exactly when reason is FOUNDING_EXPERT, at most one per consultant (sidecar CHECK + partial unique).
+  referralId          String?
+  referral            Referral?                 @relation(fields: [referralId], references: [id], onDelete: Cascade)
   createdAt           DateTime                  @default(now()) @db.Timestamptz
 
   @@unique([referralId, consultantProfileId])
@@ -7321,6 +7326,7 @@ model ConsultantFeeWaiver {
 enum ConsultantFeeWaiverReason {
   REFERRED_EXPERT
   REFERRING_EXPERT
+  FOUNDING_EXPERT
 }
 
 // Single-row platform pricing config (fixed id), mirroring

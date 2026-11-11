@@ -16,7 +16,7 @@ describe("hold copy", () => {
     expect(copy).toContain(
       `₹${(PAYOUT_CONSTANTS.NEW_EXPERT_LIFETIME_SHARE_PAISE / 100).toLocaleString("en-IN")}`,
     );
-    expect(copy).toContain("₹50,000");
+    expect(copy).toContain("₹10,000");
   });
 
   it("names the trust-parked tile and the parked org payout in plain words", () => {

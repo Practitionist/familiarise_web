@@ -1008,8 +1008,8 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Hold periods and the minimum payout",
         paragraphs: [
-          "Each earning is held for a short period after the later of the payment and the end of the session, so a cancellation or refund can still be settled. The hold is 24 hours for consultations and classes, 48 hours for webinars, and 7 days for subscriptions; moving a session moves its release date with it.",
-          "A payout is sent once your available balance reaches ₹500. Smaller balances stay available and join the next payout. An earning marked Refunded was returned to the learner after a cancellation and is not paid out. On bookings you sell yourself, Familiarise keeps a 20% platform fee; sessions an organisation pays for follow that organisation's agreement.",
+          "Each earning is held for a short period after the later of the payment and the end of the session, so a cancellation or refund can still be settled. The hold is 48 hours for consultations and webinars, 24 hours for classes, and 7 days for subscriptions; moving a session moves its release date with it.",
+          "A payout is sent once your available balance reaches ₹250. Smaller balances stay available and join the next payout. An earning marked Refunded was returned to the learner after a cancellation and is not paid out. On bookings you sell yourself, Familiarise keeps a 20% platform fee; sessions an organisation pays for follow that organisation's agreement.",
         ],
       },
       {
