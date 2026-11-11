@@ -151,7 +151,7 @@ export const ABOUT_DATA = {
     {
       title: "Interviewed Experts",
       description:
-        "Every expert is personally interviewed by our founder before taking bookings, their employer is confirmed, and reviews come only from completed paid sessions",
+        "Every expert is personally interviewed by our founder before taking bookings, their employer is confirmed, and reviews come only from people who attended a completed session",
     },
     {
       title: "Secure Payments",

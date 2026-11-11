@@ -21,7 +21,7 @@ These steps decide whether the live accounts can exist. They are owner and compa
 - [ ] A current account in the company's name is open and the capital deposit is made. The settlement account in 1.1 is this account.
 - [ ] INC-20A (the declaration that business can commence) is filed.
 - [ ] Razorpay is activated as a registered company. Activation reviews the public site, so the legal pages (`app/(pages)/terms`, `privacy`, `refund`) are live and describe what the platform does. An earlier individual application was rejected at KYC.
-- [ ] The expert-card badge wording is decided. Public marketing copy says experts are personally interviewed by the founder, but the badge on expert cards (`app/explore/experts/components/ExpertMiniCard.tsx`, `ExpertDetailsSheet.tsx`, `FeaturedExperts.tsx`) still reads "Verified by Familiarise" when the expert's `isVerified` flag is true. The owner kept it on purpose; confirm the wording with the lawyer before go-live, or reword it to match the public claims.
+- [ ] The expert-card badge wording is decided. Public marketing copy says experts are personally interviewed by the founder, but the badge on expert cards (`app/explore/experts/components/ExpertMiniCard.tsx`, `ExpertDetailsSheet.tsx`, `FeaturedExperts.tsx`, `ConsultantCard.tsx`) still reads "Verified by Familiarise" when the expert's `isVerified` flag is true. The owner kept it on purpose; confirm the wording with the lawyer before go-live, or reword it to match the public claims.
 - [ ] RazorpayX: the bank account and the GSTIN question are confirmed, namely whether it can use the same current account and whether it needs a GSTIN while `PLATFORM_GSTIN` is unset.
 
 ## Part 1: accepting real money (Razorpay)

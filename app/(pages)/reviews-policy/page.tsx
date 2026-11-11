@@ -8,7 +8,7 @@ import { POLICY_DATES } from "../constants";
 export const metadata = {
   title: `How Reviews & Ratings Work | ${COMPANY_INFO.name}`,
   description:
-    "Transparency policy covering reviews from completed paid sessions, BIS IS 19000:2022 standards, rating tracks, human moderation, and appeals.",
+    "Transparency policy covering reviews from attended sessions, BIS IS 19000:2022 standards, rating tracks, human moderation, and appeals.",
 };
 
 export default function ReviewsPolicyPage() {
@@ -44,11 +44,13 @@ export default function ReviewsPolicyPage() {
                 1. Review Eligibility &amp; Authentic Experience
               </h2>
               <p>
-                Only authenticated users who completed a paid booking on{" "}
+                Only signed-in users who attended a completed session on{" "}
                 {COMPANY_INFO.name} may publish a public review or submit
-                session quality feedback. Unbooked visitors, cancelled
-                appointments, and unpaid sessions cannot post public reviews,
-                and collaborators or host team members cannot review their own
+                session quality feedback. That includes 1:1 consultations,
+                subscriptions and completed trials, free or paid; for classes
+                and webinars a paid seat is also required. Unbooked visitors and
+                cancelled appointments cannot post public reviews, and
+                collaborators or host team members cannot review their own
                 sessions.
               </p>
 
@@ -100,8 +102,12 @@ export default function ReviewsPolicyPage() {
                 </li>
               </ul>
               <p>
-                Every displayed average score is always accompanied by the
-                number of ratings included in that track.
+                A track shows an average only once it has at least five data
+                points, and the number shown beside it is that count. On the 1:1
+                track each review from a client is one data point. On the group
+                track each class or webinar is one data point, counted only once
+                at least five of its attendees have rated it, and scored as the
+                average of their ratings.
               </p>
 
               <Separator className="my-6" />

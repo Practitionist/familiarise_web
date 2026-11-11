@@ -108,7 +108,7 @@ export const BENEFITS = [
   {
     title: "Interviewed Experts",
     description:
-      "Every expert is personally interviewed by our founder before taking bookings, and reviews come only from completed paid sessions.",
+      "Every expert is personally interviewed by our founder before taking bookings, and reviews come only from people who attended a completed session.",
     icon: BadgeCheck,
   },
   {
@@ -187,7 +187,7 @@ export const PLATFORM_FEATURES = [
     icon: Star,
     title: "Reviews & Ratings",
     description:
-      "Rate your sessions and read reviews from completed paid sessions to find the perfect expert.",
+      "Rate your sessions and read reviews from people who attended completed sessions to find the perfect expert.",
   },
   {
     icon: BadgeCheck,
@@ -248,7 +248,8 @@ export const TRUST_BADGES = [
   {
     icon: Award,
     label: "Honest Reviews",
-    description: "Reviews come only from completed paid sessions",
+    description:
+      "Reviews come only from people who attended a completed session",
   },
 ];
 
