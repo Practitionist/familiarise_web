@@ -1,12 +1,14 @@
 # Infrastructure jobs and maintenance
 
+> **Status (pre-launch).** The scheduled job fleet is paused: the Upstash key `ops:active_cron_platform` is set to `paused-prelaunch`, so every tick of `netlify/functions/cron-tick.mts` returns before running a job, and the monitors that watch the fleet are paused or disabled with it (see [the pause decision](../decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md)). Read the live-monitor descriptions below as the design that applies once the fleet is resumed; the resume step is the first item of the [go-live skill](../../.claude/skills/go-live/SKILL.md). Jobs can still be run by hand from the System Jobs page.
+
 Start with the [infrastructure architecture and operating model](../start-here/09-infra-and-maintenance-sre-orientation.md). It explains scheduler ownership, durable obligations, leases, cross-job races, bounded progress, reconciliation, operational health, maintenance recovery and portability. This directory supplies the inventory and detailed runbooks. GitHub review comments record decisions and evidence; they are not the architecture manual.
 
 ## Runtime model
 
 The active platform ticker dispatches registered bounded jobs. Postgres owns job leases, execution history, transactional obligations and database invariants. Redis owns short-lived interactive mutexes, request limits, maintenance edge state and active-host preference. A timeout, lease expiry or host switch does not cancel work already in flight; business CAS and vendor idempotency protect overlapping effects.
 
-The ticker owns all of about 76 registered targets, including the housekeeping, compliance and retention jobs that GitHub Actions once ran, so no Actions workflow schedules a registry job. GitHub Actions keeps only CI and the cron heartbeat, the live-database drift check and the security audit (`.github/workflows`). Source configuration and a registered handler do not establish live execution. The architecture guide describes the configured Stream ticker cadences and their Netlify background targets.
+The ticker owns every registered job (see the generated inventory [04-cron-jobs-reference.md](./04-cron-jobs-reference.md)), including the housekeeping, compliance and retention jobs that GitHub Actions once ran, so no Actions workflow schedules a registry job. GitHub Actions keeps only CI and the cron heartbeat, the live-database drift check and the security audit (`.github/workflows`). Source configuration and a registered handler do not establish live execution. The architecture guide describes the configured Stream ticker cadences and their Netlify background targets.
 
 | Maintenance state        | Policy                                                                                                 |
 | ------------------------ | ------------------------------------------------------------------------------------------------------ |

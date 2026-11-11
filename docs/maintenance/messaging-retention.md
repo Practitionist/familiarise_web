@@ -47,7 +47,7 @@ The six-hour check detects a missing lease heartbeat. Marking an execution `FAIL
 
 ## Ownership and validation
 
-The automatic owner is the ticker target `prune-system-job-executions` (every 30 minutes at offset 25, in the 20:00 to 23:30 UTC window, limit 500). The daily Actions step and the `jobs/cleanup` wrapper were removed in the same change, so there is one clock. Verify completion and backlog age after deployment. CI/CD remains a separate responsibility from runtime maintenance scheduling.
+The automatic owner is the ticker target `prune-system-job-executions` (every 30 minutes at offset 25, in the 20:00 to 23:30 UTC window, limit 500). The daily Actions step and its wrapper under `jobs/` were removed in the same change, so there is one clock. Verify completion and backlog age after deployment. CI/CD remains a separate responsibility from runtime maintenance scheduling.
 
 Mock tests cover row bounds, invalid limits, the retention windows above, eligibility in final writes, heartbeat renewal, and retry after a later-phase failure. `__tests__/db/messaging-retention.db.test.ts` exercises a real blocked-delete/replay interleaving, legacy timestamp preservation, and multi-slice progress. Its guard permits only a disposable localhost `/ci` database with `CI=true`; never point it at the shared database.
 

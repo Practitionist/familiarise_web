@@ -9,6 +9,8 @@ last-reviewed: 2026-11-05
 
 # How we know a job did not run
 
+> **Status (pre-launch).** The scheduled job fleet is paused: the Upstash key `ops:active_cron_platform` is set to `paused-prelaunch`, so every tick of `netlify/functions/cron-tick.mts` returns before running a job, and the monitors that watch the fleet are paused or disabled with it (see [the pause decision](../decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md)). Read the live-monitor descriptions below as the design that applies once the fleet is resumed; the resume step is the first item of the [go-live skill](../../.claude/skills/go-live/SKILL.md). Jobs can still be run by hand from the System Jobs page.
+
 This page is for an engineer who has never seen the system. It explains how the platform notices that scheduled work stopped, which tool watches which question, which decisions were taken and which alternatives lost. It states what the monitors looked like on 2026-11-05 as dated evidence, and it ends with the exact read-only steps to re-check all of it yourself. The canonical decision record, with the full alternatives tables, is [2026-11-05-detector-rollout-and-redundancy.md](../decisions/2026-11-05-detector-rollout-and-redundancy.md). The runbooks are in the [Better Stack setup guide](../maintenance/00-betterstack-setup.md). The wider design is in [Observability system design](../observability/00-system-design.md) and [Infrastructure and maintenance orientation](./09-infra-and-maintenance-sre-orientation.md).
 
 ## 1. The incident in two paragraphs
@@ -200,7 +202,7 @@ These are known gaps, not decisions.
 
 ## Deprecated & Superseded Approaches
 
-- **A hand-kept list of job completion SLOs.** It missed 41 of 77 targets and drifted on renames. The budgets are now derived from `lib/cron/schedule.ts`, and `checkJobCoverage` (`lib/cron/job-coverage.ts`) enforces coverage inside `npm run build`.
+- **A hand-kept list of job completion SLOs.** It missed over half of the ticker targets and drifted on renames. The budgets are now derived from `lib/cron/schedule.ts`, and `checkJobCoverage` (`lib/cron/job-coverage.ts`) enforces coverage inside `npm run build`.
 - **The Actions workflow `cron-heartbeat.yml` as the fleet watchdog.** It shared the failure domain of what it watched. It now watches only the Actions-scheduled workflows.
 - **A Sentry uptime monitor on the homepage.** Duplicated Better Stack; repointed to the job fleet probe.
 - **Treating `/api/health`'s `cron.stale` as a fleet alarm.** It never changes the status code by design; use the probe.

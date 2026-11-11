@@ -101,7 +101,7 @@ The table summarises the measured state of the system that the rest of this revi
 
 | Fact            | Value                                                                                                                                                                  | Source                           |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| Registered jobs | 76, all now on one Netlify ticker                                                                                                                                      | `lib/cron/schedule.ts`, #2474    |
+| Registered jobs | Every registered job, all on one Netlify ticker                                                                                                                        | `lib/cron/schedule.ts`, #2474    |
 | Job starts      | about 2,876 a day, 3,456 slots (83 % used), cap 12 per tick                                                                                                            | #2474                            |
 | Ticker health   | 446 ticks in 36 h, 0.07 % target failures, p99 15 s against a 30 s limit                                                                                               | #2466 §0 (MEASURED)              |
 | Duplicate ticks | 3.5 % of slots fired twice                                                                                                                                             | #2466 §2.5 D                     |
@@ -434,7 +434,7 @@ The table lists what peer companies run for background jobs.
 
 - **Freeze the failback path.** Mark `cron-tick.mts`, the background functions and the HTTP-only ticker logic as failback-only. Stop extending them. Revisit AGENTS §2.5 and rule 4 so they describe "VM primary, Netlify failback" rather than the reverse.
 - **Queue.** When a second owed-work source needs reaction in seconds (refunds owed, payouts), adopt a Postgres queue **inside the worker**, with transactional enqueue in the door's transaction. Sweeps become hourly safety nets. pg-boss, graphile-worker or the hand-written `Job` table are all acceptable (§9); the mistake would be building it on the ticker first.
-- **Consolidation.** Merge the 76 jobs toward domain workers only where it deletes code.
+- **Consolidation.** Merge the registered jobs toward domain workers only where it deletes code.
 - **Exit criteria:**
   - the active path has no code that exists only for Netlify;
   - every money-critical owed-work source reacts in under a minute;
@@ -483,7 +483,7 @@ The sections below are the reviewer's own view and are not adopted.
 | Split the DB after launch (ADR decision 5)                               | Disagree                                              | About $0 for a second Free project. It removes a money-safety bug class and unblocks the load test                                                                                                       |
 | Hand-written Prisma `Job` table on the ticker (ADR decision 4)           | Premature                                             | Right idea (a Postgres queue, transactional enqueue), wrong time and host. Decide on the worker                                                                                                          |
 | Keep both hosts bootable on every commit (AGENTS §2.5)                   | Keep it, but flip it                                  | Make the Mumbai VM primary and Netlify the failback. Previews already prove the Netlify build on every PR, so the rule becomes nearly free                                                               |
-| Phase 3 "consolidate 76 jobs into domain workers"                        | Low priority                                          | The count of jobs is not what hurts; the trigger mechanism is                                                                                                                                            |
+| Phase 3 "consolidate jobs into domain workers"                           | Low priority                                          | The count of jobs is not what hurts; the trigger mechanism is                                                                                                                                            |
 
 ---
 

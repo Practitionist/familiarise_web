@@ -14,7 +14,7 @@ This document includes comprehensive visual diagrams to illustrate the document 
 2. **[Visual Storage Organization](#visual-storage-organization)** - Storage hierarchy and folder structure
 3. **[Document Upload Sequence Flow](#document-upload-sequence-flow)** - Detailed upload process interactions
 4. **[Document Review Sequence Flow](#document-review-sequence-flow)** - Consultant review workflow
-5. **[Automated Cleanup Process Flow](#automated-cleanup-process-flow)** - Maintenance and cleanup procedures
+5. **[Automated Cleanup Process Flow](#cleanup-strategy)** - Maintenance and cleanup procedures
 6. **[Error Handling Scenarios](#error-handling-scenarios)** - Error handling scenarios
 
 ### 🎯 **Quick Navigation**

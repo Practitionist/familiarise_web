@@ -18,9 +18,9 @@ For every major dependency, this document covers: current version, what it's use
 
 | Field                         | Value                                                                                                                          |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| **Current Version**           | ^15.3.8                                                                                                                        |
+| **Current Version**           | ^15.5.28 (never below `>= 15.5.27`, the AGENTS.md floor)                                                                       |
 | **Used For**                  | Framework: middleware, API routes, SSR, static generation, routing                                                             |
-| **Key Files**                 | `middleware.ts`, all `app/` routes, `next.config.js`                                                                           |
+| **Key Files**                 | `middleware.ts`, all `app/` routes, `next.config.mjs`                                                                          |
 | **Minor Update**              | Needs Testing -- middleware behavior changes can affect maintenance mode                                                       |
 | **Major Update**              | Needs Maintenance -- breaking changes to App Router, middleware API, or API routes                                             |
 | **How to Test**               | 1. Run `npm run build` 2. Test middleware (auth, maintenance checks) 3. Test API routes (checkout, webhooks) 4. Test SSR pages |
@@ -103,32 +103,18 @@ For every major dependency, this document covers: current version, what it's use
 
 ## Payment Gateways
 
-### Stripe
-
-| Field                         | Value                                                                                                                                     |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| **Current Version**           | ^20.2.0 (server) + ^8.6.4 (`@stripe/stripe-js` client)                                                                                    |
-| **Used For**                  | Payment intents, webhook handling, Connect payouts, refunds, disputes                                                                     |
-| **Key Files**                 | `lib/stripe.ts`, `app/api/checkout/route.ts`, `app/api/webhooks/stripe/route.ts`, payout jobs                                             |
-| **Minor Update**              | Needs Testing -- API version changes can affect webhook payload format                                                                    |
-| **Major Update**              | **Needs Testing** -- Stripe SDK major versions change API surface                                                                         |
-| **How to Test**               | 1. Test checkout flow (create payment intent) 2. Test webhook signature verification 3. Test refund flow 4. Run payout reconciliation job |
-| **Breaking Changes to Watch** | Default API version, webhook event format, PaymentIntent API changes, Connect API changes                                                 |
-| **Special Notes**             | Stripe SDK versions pin an API version. Updating may change default API version.                                                          |
-| **Estimated Time**            | Minor: 1-2 hours. Major: 4-8 hours.                                                                                                       |
-
 ### Razorpay
 
-| Field                         | Value                                                                                             |
-| ----------------------------- | ------------------------------------------------------------------------------------------------- |
-| **Current Version**           | ^2.9.6                                                                                            |
-| **Used For**                  | Payment orders, webhook handling, RazorpayX payouts                                               |
-| **Key Files**                 | `lib/razorpay.ts`, `app/api/checkout/route.ts`, `app/api/webhooks/razorpay/route.ts`, payout jobs |
-| **Minor Update**              | Needs Testing -- API changes can affect order creation or webhook format                          |
-| **Major Update**              | Needs Testing -- limited breaking changes historically                                            |
-| **How to Test**               | 1. Test checkout (create order) 2. Test webhook signature verification 3. Test payout processing  |
-| **Breaking Changes to Watch** | Order API, webhook signature format, RazorpayX API changes                                        |
-| **Estimated Time**            | Minor: 1 hour. Major: 2-4 hours.                                                                  |
+| Field                         | Value                                                                                                           |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **Current Version**           | ^2.9.6                                                                                                          |
+| **Used For**                  | Payment orders, webhook handling, RazorpayX payouts                                                             |
+| **Key Files**                 | `lib/payments/core/razorpay.ts`, `app/api/checkout/route.ts`, `app/api/webhooks/razorpay/route.ts`, payout jobs |
+| **Minor Update**              | Needs Testing -- API changes can affect order creation or webhook format                                        |
+| **Major Update**              | Needs Testing -- limited breaking changes historically                                                          |
+| **How to Test**               | 1. Test checkout (create order) 2. Test webhook signature verification 3. Test payout processing                |
+| **Breaking Changes to Watch** | Order API, webhook signature format, RazorpayX API changes                                                      |
+| **Estimated Time**            | Minor: 1 hour. Major: 2-4 hours.                                                                                |
 
 ---
 
@@ -140,7 +126,7 @@ For every major dependency, this document covers: current version, what it's use
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | **Current Version**           | ^9.30.1 (`stream-chat`) + ^13.13.4 (`stream-chat-react`)                                                                |
 | **Used For**                  | Chat channels, message sync, user management, chat UI components                                                        |
-| **Key Files**                 | `lib/stream.ts`, chat components in dashboard, `stream-chat-react` UI                                                   |
+| **Key Files**                 | `lib/stream-client.ts`, chat components in dashboard, `stream-chat-react` UI                                            |
 | **Minor Update**              | Needs Testing -- chat behavior or component API changes                                                                 |
 | **Major Update**              | **Needs Testing** -- React component API changes, event handling                                                        |
 | **How to Test**               | 1. Test chat in a consultation 2. Test channel creation 3. Test message sending/receiving 4. Test user token generation |
@@ -153,7 +139,7 @@ For every major dependency, this document covers: current version, what it's use
 | ----------------------------- | ------------------------------------------------------------------------------------------------ |
 | **Current Version**           | ^1.31.5 (`@stream-io/video-react-sdk`)                                                           |
 | **Used For**                  | Video calls, recording, screen sharing in consultations                                          |
-| **Key Files**                 | Video call components in meeting pages, `lib/stream.ts`                                          |
+| **Key Files**                 | Video call components in meeting pages, `lib/stream-client.ts`                                   |
 | **Minor Update**              | Needs Testing -- video call behavior is critical                                                 |
 | **Major Update**              | **Needs Testing** -- component API changes, call handling                                        |
 | **How to Test**               | 1. Test starting a video call 2. Test screen sharing 3. Test recording 4. Test call end handling |
@@ -166,7 +152,7 @@ For every major dependency, this document covers: current version, what it's use
 | ----------------------------- | -------------------------------------------------------------------------- |
 | **Current Version**           | ^0.7.36 (`@stream-io/node-sdk`)                                            |
 | **Used For**                  | Server-side token generation, user creation/deletion, admin operations     |
-| **Key Files**                 | `lib/stream.ts`, `scripts/stream/stream-sync.ts`                           |
+| **Key Files**                 | `lib/stream-client.ts`, `scripts/stream/stream-sync.ts`                    |
 | **Minor Update**              | Needs Testing -- token format or user API changes                          |
 | **Major Update**              | **Needs Testing** -- 0.x to 1.x may have significant changes               |
 | **How to Test**               | 1. Test user token generation 2. Test user creation 3. Run Stream sync job |

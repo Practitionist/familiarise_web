@@ -9,6 +9,8 @@ last-reviewed: 2026-10-31
 
 # Observability system design
 
+> **Status (pre-launch).** The scheduled job fleet is paused: the Upstash key `ops:active_cron_platform` is set to `paused-prelaunch`, so every tick of `netlify/functions/cron-tick.mts` returns before running a job, and the monitors that watch the fleet are paused or disabled with it (see [the pause decision](../decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md)). Read the live-monitor descriptions below as the design that applies once the fleet is resumed; the resume step is the first item of the [go-live skill](../../.claude/skills/go-live/SKILL.md). Jobs can still be run by hand from the System Jobs page.
+
 This page explains how the platform finds out that something went wrong, what it keeps so that a person can work out why, and which tool answers which question. It is the high-level design for the whole subsystem. The detail lives in the Sentry set (`sentry/01` to `sentry/08`), in the [job machinery catalog](../maintenance/11-job-machinery-catalog.md) and in the [2026-10-26 decisions record](../decisions/2026-10-26-launch-sweep-observability-and-money-holds.md). Behaviour that is not on `dev` yet is labelled **(arrives with #N)**, **(pending)** or **(planned)**. The run record, run id, tick id, outcome vocabulary, counters and freshness tiers below are Phase 1 of the operations console.
 
 ## 1. Three questions, three layers

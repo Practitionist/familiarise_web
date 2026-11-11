@@ -19,7 +19,7 @@ A lightweight, REST API-based locking system that prevents concurrent operations
 - **Appointment Booking**: Avoid double-booking time slots
 - **Circuit Breaking**: Protect against Redis failures with graceful degradation
 
-> **Note**: API rate limiting is handled by **Arcjet** at the route level, not by this module.
+> **Note**: API rate limiting is handled by `@upstash/ratelimit` in `lib/rate-limit.ts`, not by this module.
 
 ### Why Upstash?
 
@@ -124,7 +124,7 @@ export async function performRedisOperation() {
 }
 ```
 
-> **Note**: For API rate limiting, use **Arcjet** instead. See the Arcjet documentation for setup.
+> **Note**: For API rate limiting, use `@upstash/ratelimit` through `lib/rate-limit.ts` instead.
 
 #### Example 3: Lock Extension for Long Operations
 
@@ -233,8 +233,6 @@ The circuit breaker state is stored **in-memory per instance**. In a multi-insta
 // Option 2: Use a distributed service like Redis Sentinel
 // Option 3: Use Upstash's built-in rate limiting with circuit breaker
 ```
-
-See [Future Improvements](#future-improvements) for more details.
 
 ### Lock Lifecycle
 
@@ -354,9 +352,9 @@ lib/
 
 **Common problems**:
 
-- Lock acquisition always fails → [Solution](./01_MIGRATION_GUIDE.md#lock-acquisition-always-fails)
+- Lock acquisition always fails → [Solution](./01_MIGRATION_GUIDE.md#problem-1-lock-acquisition-always-fails)
 - High retry rate → [Solution](./01_MIGRATION_GUIDE.md#high-retry-rate)
-- Locks not released → [Solution](./01_MIGRATION_GUIDE.md#locks-not-released)
+- Locks not released → [Solution](./01_MIGRATION_GUIDE.md#problem-3-locks-not-released)
 
 ---
 

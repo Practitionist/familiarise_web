@@ -1,5 +1,7 @@
 # Infrastructure and maintenance: architecture and operating model
 
+> **Status (pre-launch).** The scheduled job fleet is paused: the Upstash key `ops:active_cron_platform` is set to `paused-prelaunch`, so every tick of `netlify/functions/cron-tick.mts` returns before running a job, and the monitors that watch the fleet are paused or disabled with it (see [the pause decision](../decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md)). Read the live-monitor descriptions below as the design that applies once the fleet is resumed; the resume step is the first item of the [go-live skill](../../.claude/skills/go-live/SKILL.md). Jobs can still be run by hand from the System Jobs page.
+
 This guide explains the implemented infrastructure, why its boundaries exist, and how to adapt the design to another product. Read it before changing a cron, a reconciliation query, maintenance admission, or hosting. The source files linked below own behavior; the [generated job inventory](../maintenance/04-cron-jobs-reference.md) owns the configured roster. Configuration, reviewed code, deployment, accepted execution and completed business obligations are separate evidence.
 
 This guide describes current source contracts. Deployment and business-effect evidence remain separate: verify the required database schema and maintenance edge state before new readers, and verify actual worker effects after deployment. The Stream lifecycle catalog now dispatches through the ticker; its Netlify-only background destinations are a portability constraint.
@@ -16,7 +18,6 @@ flowchart TD
   CLOCK[Active platform scheduler] --> TICK[Bounded ticker dispatch]
   TICK --> DOOR[Authenticated cleanup registry]
   ADMIN[Authenticated admin recovery] --> DOOR
-  LEGACY[Remaining operational Actions steps] --> CORE
   DOOR --> CORE[One job implementation]
   CORE --> LEASE[(Postgres execution lease)]
   CORE --> CLAIM[Conditional claim and bounded slice]
@@ -47,7 +48,7 @@ Do not create a new script, job wrapper and API route for the same implementatio
 
 The active application platform owns latency-sensitive recovery and money operations: payment/refund reconciliation, payout and billing slices, statutory exports, delivery retries and booking recovery. Netlify currently provides the five-minute tick. Some targets run every 15 minutes or in bounded daily/calendar windows; consult the executable catalog rather than inferring their cadence from the tick.
 
-GitHub Actions owns source verification, security checks, configuration/schema drift checks and explicitly requested engineering drills. Its scheduled workflows are the cron heartbeat, the live-database drift check and the security audit. The heartbeat watches only the other two, never a runtime job. No workflow schedules a registry job, because the ticker owns all 80 targets. An enabled workflow is not evidence of execution. GitHub documents that scheduled jobs can also be delayed or dropped under load ([official troubleshooting guide](https://docs.github.com/en/enterprise-cloud%40latest/actions/how-tos/troubleshoot-workflows)). It is unsuitable as the only recovery clock for a short business deadline.
+GitHub Actions owns source verification, security checks, configuration/schema drift checks and explicitly requested engineering drills. Its scheduled workflows are the cron heartbeat, the live-database drift check and the security audit. The heartbeat watches only the other two, never a runtime job. No workflow schedules a registry job, because the ticker owns every registered job (see the generated inventory [`docs/maintenance/04-cron-jobs-reference.md`](../maintenance/04-cron-jobs-reference.md)). An enabled workflow is not evidence of execution. GitHub documents that scheduled jobs can also be delayed or dropped under load ([official troubleshooting guide](https://docs.github.com/en/enterprise-cloud%40latest/actions/how-tos/troubleshoot-workflows)). It is unsuitable as the only recovery clock for a short business deadline.
 
 Keep one automatic owner per operational job. Removing an old Actions step is part of the same reviewed handoff that establishes the replacement. A lease does not justify deliberately running both schedulers: a second invocation after the first finishes can repeat effects unless the domain itself is idempotent.
 
@@ -82,7 +83,7 @@ The recording adapter deliberately imports a narrow dependency graph: the shared
 
 `withCronLock` records attempts in `SystemJobExecution`. Acquisition expires stale owned rows and creates a new RUNNING row; the partial unique resolves racing acquisitions. Closed jobs refuse unavailable acquisition, including Prisma import failures. Open jobs may run unlocked only under their documented repeat-safe policy; connection/pool exhaustion is treated as closed. Completion updates the same execution only while it remains RUNNING. A stale owner cannot rewrite a newer execution's history or refresh success through an unowned finish.
 
-On Netlify the effective lease is capped at 90 seconds and renewed every third of its TTL; other hosts retain the requested TTL. Renewal errors or lost ownership do not cancel the core. A database outage or stalled process can therefore outlive its lease while another invocation starts. Conditional domain claims and attempt-specific external identities remain necessary; the short lease is not proof that all earlier effects have stopped.
+The effective lease is capped at 90 seconds on every host and renewed every third of its TTL, so hosts sharing the database agree on when a lease is stale. Renewal errors or lost ownership do not cancel the core. A database outage or stalled process can therefore outlive its lease while another invocation starts. Conditional domain claims and attempt-specific external identities remain necessary; the short lease is not proof that all earlier effects have stopped.
 
 Different jobs can still touch the same payment, appointment, support case or recording. Their safety depends on shared domain transitions and row-level claims. For example, recording transfer and erasure must agree on the recording row and exact asset identity; separate cron leases alone cannot protect that race.
 

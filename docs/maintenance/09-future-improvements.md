@@ -2,7 +2,7 @@
 
 Recommended code changes to improve maintenance mode protection.
 
-> **Already implemented**: BetterStack incident management (auto-create on OFFLINE, auto-resolve on end) is complete. See [Architecture](./01-architecture.md#betterstack-integration) and [BetterStack Setup Guide](./00-betterstack-setup.md).
+> **Already implemented**: BetterStack incident management (auto-create on OFFLINE, auto-resolve on end) is complete. See the [BetterStack Setup Guide](./00-betterstack-setup.md).
 >
 > **Sprint 1 completed (Feb 2026)**: Items 1, 2, 3, and new items A, B below are **fully implemented**. The Implementation Priority table at the bottom reflects the updated status.
 >
@@ -79,7 +79,6 @@ The original proposal that stood here — a twenty-line sketch, a 27-job scope a
 
 **Files to Modify**:
 
-- `app/api/webhooks/stripe/route.ts`
 - `app/api/webhooks/razorpay/route.ts`
 
 **Implementation**:
@@ -211,7 +210,7 @@ export function useMaintenanceGuard() {
 
 **Files to Create**:
 
-- `jobs/maintenance/activate-scheduled-maintenance.ts` -- Cron job to activate when time comes
+- A job to activate scheduled maintenance when its time comes (planned; no file exists yet)
 
 **Implementation Details**:
 

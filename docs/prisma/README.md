@@ -173,7 +173,7 @@ skill in `.claude/skills/schema/`. Its `references/this-repo.md` is the short
 version of this page for an agent that is about to edit the schema.
 
 Keeping the seed suite in sync with a schema change is covered by the
-`/maintenance` skill. The money invariants that the sidecars enforce, and why
+`/jobs` skill. The money invariants that the sidecars enforce, and why
 they cannot live in the Prisma schema, are covered by `/finance`.
 
 ---
