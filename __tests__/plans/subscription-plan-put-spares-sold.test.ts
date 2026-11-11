@@ -191,3 +191,19 @@ it("leaves a month-based plan unfloored", async () => {
   expect(res.status).toBe(200);
   expect(tx.subscriptionPlan.update).toHaveBeenCalled();
 });
+
+it("lets a full-form save that re-sends a short pack's stored price and terms through", async () => {
+  db.subscriptionPlan.findUnique.mockResolvedValueOnce({
+    ...monthPlan,
+    price: 100_000,
+    durationInWeeks: 4,
+  });
+  const res = await put({
+    title: "Renamed sprint",
+    price: 100_000,
+    sessionsPerWeek: 2,
+    durationInWeeks: 4,
+    sessionDurationInHours: 1,
+  });
+  expect(res.status).toBe(200);
+});

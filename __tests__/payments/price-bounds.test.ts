@@ -67,6 +67,25 @@ describe("price bounds", () => {
     expect(isShortPack(weeks)).toBe(floored);
   });
 
+  it.each([
+    [30, 37_500],
+    [30.5, 60_000],
+    [45.01, 60_000],
+  ])(
+    "a one-session pack of %s-minute sessions floors on the minute it sells",
+    (minutes, floor) => {
+      const at = (pricePaise: number) => () =>
+        assertPlanPriceWithinBounds({
+          kind: "PACK",
+          pricePaise,
+          sessionDurationInHours: minutes / 60,
+          totalSessions: 1,
+        });
+      expect(at(floor)).not.toThrow();
+      expect(at(floor - 100)).toThrow(PlanPriceBelowFloorError);
+    },
+  );
+
   it("rejects a non-positive length or session count", () => {
     expect(() => minPriceForSession(0)).toThrow(RangeError);
     expect(() => minPriceForPack(60, 0)).toThrow(RangeError);

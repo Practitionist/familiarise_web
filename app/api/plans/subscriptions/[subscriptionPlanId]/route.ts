@@ -196,18 +196,27 @@ export async function PUT(
         }
       : null;
 
-    // Only a short pack whose edit sets the price or the terms is held to the pack floor.
+    // Only a short pack whose edit changes the stored price or terms is held to the pack floor.
+    const packPrice =
+      validatedData.price === undefined
+        ? existingPlan.price
+        : Math.round(validatedData.price);
+    const packSessionHours =
+      validatedData.sessionDurationInHours ??
+      existingPlan.sessionDurationInHours;
+    const packSessions = derived?.totalSessions ?? existingPlan.totalSessions;
     if (
       isShortPack(durationInWeeks) &&
-      (validatedData.price !== undefined || derived)
+      (packPrice !== existingPlan.price ||
+        packSessionHours !== existingPlan.sessionDurationInHours ||
+        packSessions !== existingPlan.totalSessions ||
+        durationInWeeks !== existingPlan.durationInWeeks)
     ) {
       assertPlanPriceWithinBounds({
         kind: "PACK",
-        pricePaise: Math.round(validatedData.price ?? existingPlan.price),
-        sessionDurationInHours:
-          validatedData.sessionDurationInHours ??
-          existingPlan.sessionDurationInHours,
-        totalSessions: derived?.totalSessions ?? existingPlan.totalSessions,
+        pricePaise: packPrice,
+        sessionDurationInHours: packSessionHours,
+        totalSessions: packSessions,
       });
     }
 

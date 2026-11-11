@@ -128,16 +128,21 @@ export async function PUT(
 
     const validatedData = validationResult.data;
 
-    // Only an edit that sets the price or the length is held to the floor.
+    // Only an edit that changes the stored price or length is held to the floor.
+    const pricePaise =
+      validatedData.price === undefined
+        ? existingPlan.price
+        : Math.round(validatedData.price);
+    const durationInHours =
+      validatedData.durationInHours ?? existingPlan.durationInHours;
     if (
-      validatedData.price !== undefined ||
-      validatedData.durationInHours !== undefined
+      pricePaise !== existingPlan.price ||
+      durationInHours !== existingPlan.durationInHours
     ) {
       assertPlanPriceWithinBounds({
         kind: "SESSION",
-        pricePaise: Math.round(validatedData.price ?? existingPlan.price),
-        durationInHours:
-          validatedData.durationInHours ?? existingPlan.durationInHours,
+        pricePaise,
+        durationInHours,
       });
     }
 
