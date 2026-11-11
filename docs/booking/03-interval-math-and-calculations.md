@@ -80,7 +80,7 @@ An open window is a statement about the clock, not about the booking. `isConfirm
 
 ### Is the surface allowed to hand over a join handler?
 
-The third question is asked by the adapter, not by the shared helpers. A read-only surface renders the timeline without an `onJoinSession` callback, and a session that is live but whose booking the adapter has refused must then read as a state rather than as an action. `SessionTimeline` renders the Join button only when a handler is present and shows a muted, non-actionable label otherwise, because a row that says "JOIN" in unmuted text and does nothing when clicked is worse than one that says nothing at all.
+The third question is asked by the adapter, not by the shared helpers. A read-only surface renders the timeline without an `onJoinSession` callback, and a session that is live but whose booking the adapter has refused must then read as a state rather than as an action. `SessionTimeline` (the appointment sheet) and `SessionSchedule` (the detail page) render the Join button only when a handler is present and show a muted, non-actionable label otherwise, because a row that says "JOIN" in unmuted text and does nothing when clicked is worse than one that says nothing at all.
 
 ### The development escape hatch
 

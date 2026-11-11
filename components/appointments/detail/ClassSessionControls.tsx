@@ -2,24 +2,19 @@
 
 import { useMutation } from "@tanstack/react-query";
 import { fromZonedTime } from "date-fns-tz";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatForViewer } from "@/lib/time/viewer-zone";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
+
+import {
+  SessionConfirmDialog,
+  type PendingConfirm,
+} from "./SessionConfirmDialog";
+import type { SessionRowAction } from "./SessionSchedule";
 
 type NullableDate = Date | string | null;
 
@@ -75,49 +70,14 @@ function pairs(sessions: ClassSessionRow[]) {
     }));
 }
 
-/** A button that asks before it acts. */
-function ConfirmButton({
-  label,
-  title,
-  body,
-  disabled,
-  onConfirm,
-  variant = "outline",
-}: Readonly<{
-  label: string;
-  title: string;
-  body: string;
-  disabled: boolean;
-  onConfirm: () => void;
-  variant?: "outline" | "ghost";
-}>) {
-  return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button size="sm" variant={variant} disabled={disabled}>
-          {label}
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>{body}</AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Keep it</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>{label}</AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
-
 /**
  * #1780 row 4 — the per-session controls of a class. The host cancels one
- * future session and schedules its make-up within 14 days (E-6); a seat
- * holder who cannot make a make-up takes that session back (E-3b).
+ * future session from that session's row and schedules its make-up within
+ * 14 days (E-6); a seat holder who cannot make a make-up takes that session
+ * back (E-3b). Row actions go to the session list; the make-up work, which
+ * needs a time or a decision, renders as notices above it.
  */
-export function ClassSessionControls({
+export function useClassSessionActions({
   appointmentId,
   sessions,
   role,
@@ -130,10 +90,15 @@ export function ClassSessionControls({
   /** The seat's per-session amount, e.g. "₹1,000"; null when unknown. */
   unitLabel: string | null;
   onChanged: () => void;
-}>) {
+}>): {
+  rowActions: (occurrenceId: string) => SessionRowAction[];
+  notices: ReactNode;
+  dialog: ReactNode;
+} {
   const { toast } = useToast();
   const viewer = useViewerZone();
   const [makeUpAt, setMakeUpAt] = useState<Record<string, string>>({});
+  const [pending, setPending] = useState<PendingConfirm | null>(null);
   const base = `/api/appointments/${appointmentId}/occurrences`;
   const done = (title: string) => () => {
     toast({ title });
@@ -172,71 +137,93 @@ export function ClassSessionControls({
     formatForViewer(toDate(d), viewer, "EEE d MMM, h:mm a");
   const skipUnit = unitLabel ? ` (${unitLabel})` : "";
   const refundUnit = unitLabel ? ` ${unitLabel}` : " one session";
+  const dialog = (
+    <SessionConfirmDialog pending={pending} onClose={() => setPending(null)} />
+  );
 
   if (role === "consultee") {
     // Skippable only while the make-up is still ahead (the server's rule).
     const skippable = open.filter(
       (p) => p.makeUp && toDate(p.makeUp.startsAt).getTime() > now,
     );
-    if (skippable.length === 0) return null;
-    return (
-      <div className="space-y-2">
-        {skippable.map(({ source, makeUp: row }) => (
-          <div
-            key={source.id}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3 text-sm"
-          >
-            <span>
-              Make-up for the {when(source.startsAt)} session is on{" "}
-              {row && when(row.startsAt)}.
-            </span>
-            <ConfirmButton
-              label="Can't make it — refund this session"
-              title="Refund this session?"
-              body={`This session${skipUnit} comes back to you instead of the make-up. You keep your seat for the rest of the series.`}
-              disabled={skip.isPending}
-              onConfirm={() => skip.mutate(source.id)}
-            />
+    return {
+      rowActions: () => [],
+      dialog,
+      notices:
+        skippable.length === 0 ? null : (
+          <div className="space-y-2">
+            {skippable.map(({ source, makeUp: row }) => (
+              <div
+                key={source.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-muted/40 p-3 text-sm"
+              >
+                <span>
+                  Make-up for the {when(source.startsAt)} session is on{" "}
+                  {row && when(row.startsAt)}.
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={skip.isPending}
+                  onClick={() =>
+                    setPending({
+                      title: "Refund this session?",
+                      body: `This session${skipUnit} comes back to you instead of the make-up. You keep your seat for the rest of the series.`,
+                      confirmLabel: "Can't make it — refund this session",
+                      onConfirm: () => skip.mutate(source.id),
+                    })
+                  }
+                >
+                  Can&apos;t make it — refund this session
+                </Button>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
-    );
+        ),
+    };
   }
 
-  const upcoming = sessions.filter(
-    (s) =>
-      !s.deletedAt &&
-      s.completionStatus === "SCHEDULED" &&
-      toDate(s.startsAt).getTime() > now,
+  const cancellable = new Set(
+    sessions
+      .filter(
+        (s) =>
+          !s.deletedAt &&
+          s.completionStatus === "SCHEDULED" &&
+          toDate(s.startsAt).getTime() > now,
+      )
+      .map((s) => s.id),
   );
-  return (
-    <div className="space-y-2">
-      {upcoming.map((s) => (
-        <div
-          key={s.id}
-          className="flex flex-wrap items-center justify-between gap-2 text-sm"
-        >
-          <span>{when(s.startsAt)}</span>
-          <ConfirmButton
-            label="Cancel this session"
-            title="Cancel this session?"
-            body={`Learners are told; you have ${MAKEUP_WINDOW_DAYS} days to schedule a make-up or each seat is refunded${refundUnit}.`}
-            disabled={cancel.isPending}
-            onConfirm={() => cancel.mutate(s.id)}
-            variant="ghost"
-          />
-        </div>
-      ))}
-      {open
-        .filter((p) => !p.makeUp)
-        .map(({ source }) => {
+  const rowActions = (occurrenceId: string): SessionRowAction[] =>
+    cancellable.has(occurrenceId)
+      ? [
+          {
+            key: "cancel-session",
+            label: "Cancel this session",
+            destructive: true,
+            disabled: cancel.isPending,
+            onSelect: () =>
+              setPending({
+                title: "Cancel this session?",
+                body: `Learners are told; you have ${MAKEUP_WINDOW_DAYS} days to schedule a make-up or each seat is refunded${refundUnit}.`,
+                confirmLabel: "Cancel this session",
+                onConfirm: () => cancel.mutate(occurrenceId),
+              }),
+          },
+        ]
+      : [];
+
+  const owed = open.filter((p) => !p.makeUp);
+  const notices =
+    owed.length === 0 ? null : (
+      <div className="space-y-2">
+        {owed.map(({ source }) => {
           const by = new Date(
             toDate(missedAt(source)!).getTime() + MAKEUP_WINDOW_DAYS * DAY_MS,
           );
           return (
             <div
               key={source.id}
-              className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-3 text-sm"
+              className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-sm dark:border-amber-900/40 dark:bg-amber-950/20"
             >
               <span className="flex-1">
                 {source.voidedAt ? "Missed" : "Cancelled"}{" "}
@@ -266,6 +253,7 @@ export function ClassSessionControls({
             </div>
           );
         })}
-    </div>
-  );
+      </div>
+    );
+  return { rowActions, notices, dialog };
 }

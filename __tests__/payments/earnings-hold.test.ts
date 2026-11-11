@@ -169,23 +169,23 @@ describe("withNewExpertHold", () => {
     }) as never;
 
   it.each([
-    ["no paid earning yet", null, 0, 7],
+    ["no paid earning yet", null, 0, 3],
     [
       "first paid earning under 30 days old",
       at("2026-10-01T00:00:00Z"),
       9e6,
-      7,
+      3,
     ],
     [
-      "tenured but under ₹50,000 lifetime",
+      "tenured but under ₹10,000 lifetime",
       at("2026-01-01T00:00:00Z"),
-      4_999_999,
-      7,
+      999_999,
+      3,
     ],
     [
-      "tenured and over ₹50,000 lifetime",
+      "tenured and over ₹10,000 lifetime",
       at("2026-01-01T00:00:00Z"),
-      5_000_000,
+      1_000_000,
       0,
     ],
   ])("%s", async (_label, firstAt, lifetime, extraDays) => {
@@ -201,12 +201,12 @@ describe("withNewExpertHold", () => {
   it("counts the lifetime share net of partial refunds", async () => {
     const tenured = at("2026-01-01T00:00:00Z");
     const out = await withNewExpertHold(
-      db(tenured, 6_000_000, 1_500_000),
+      db(tenured, 1_200_000, 300_000),
       "cp-1",
       hold,
       now,
     );
-    expect(out!.getTime() - hold.getTime()).toBe(7 * 24 * HOUR);
+    expect(out!.getTime() - hold.getTime()).toBe(3 * 24 * HOUR);
   });
 
   it("leaves an undelivered (null) hold null", async () => {

@@ -3,7 +3,12 @@
 import { useCallback, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useZonedFormat } from "@/lib/time/zoned-format";
+import { useProvidedZone, useZonedFormat } from "@/lib/time/zoned-format";
+import {
+  formatInViewerZone,
+  isValidTimeZone,
+  zoneLabel,
+} from "@/lib/time/viewer-zone";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -12,6 +17,7 @@ import {
   ChevronDown,
   CreditCard,
   LifeBuoy,
+  Video,
   MessageSquare,
   Receipt,
   Star,
@@ -74,7 +80,9 @@ import {
   seatPaymentsByUser,
   summarizeSeatPayments,
 } from "@/lib/appointments/seat-payments";
+import { useNowTick } from "@/hooks/use-now-tick";
 import {
+  CONSULTEE_JOIN_WINDOW_MS,
   appointmentStatusChip,
   getOccurrenceVMJoinState,
   isDeadOccurrence,
@@ -86,9 +94,9 @@ import { TimelineStrip } from "./TimelineStrip";
 import { CountdownBadge } from "../CountdownBadge";
 import { KIND_LABEL } from "../AppointmentRow";
 import { RowPrimaryAction } from "../RowPrimaryAction";
-import { SessionTimeline } from "../SessionTimeline";
-import { ClassSessionControls } from "./ClassSessionControls";
-import { SubscriptionReturnControls } from "./SubscriptionReturnControls";
+import { useClassSessionActions } from "./ClassSessionControls";
+import { useSubscriptionReturnActions } from "./SubscriptionReturnControls";
+import { SessionSchedule, type SessionRowAction } from "./SessionSchedule";
 import { SessionAttendance } from "./SessionAttendance";
 import { RescheduleProposalCard } from "./RescheduleProposalCard";
 import { LazyAppointmentChatSheet } from "../LazyAppointmentChatSheet";
@@ -132,9 +140,11 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+    <section className="rounded-2xl border border-border/80 bg-card p-5 sm:p-6">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-[15px] font-semibold tracking-tight text-foreground">
+          {title}
+        </h2>
         {action}
       </div>
       {children}
@@ -330,6 +340,34 @@ export function AppointmentDetailClient({
   // request; #1554 made the booking one Appointment, so that is one row.
   const sessionFeedback = useSessionFeedback(appointmentId);
   useSetBreadcrumbLabel(mapped?.vm.title);
+  const viewerZone = useProvidedZone();
+  const now = useNowTick();
+  const refreshDetail = () => {
+    void queryClient.invalidateQueries({
+      queryKey: ["appointment-detail", appointmentId],
+    });
+  };
+  // Per-session actions live on the session rows; the hooks run before the
+  // loading and error returns below, so they take the read as it stands.
+  const classActions = useClassSessionActions({
+    appointmentId,
+    sessions: detail?.appointment.class ? detail.appointment.occurrences : [],
+    role,
+    // A seat's unit depends on when it was bought; the copy says "one
+    // session" rather than guess a list price.
+    unitLabel: null,
+    onChanged: refreshDetail,
+  });
+  const returnActions = useSubscriptionReturnActions({
+    appointmentId,
+    sessions: detail?.appointment.occurrences ?? [],
+    sessionsReturned: detail?.appointment.subscription?.sessionsReturned ?? 0,
+    rescheduleOpen: !!detail?.appointment.rescheduleRequests?.[0],
+    onChanged: refreshDetail,
+    enabled:
+      role === "consultee" &&
+      detail?.appointment.subscription?.status === "APPROVED",
+  });
 
   const payments = detail?.appointment.payment ?? [];
   // #1527 — one request page, two doors: "Get help" opens on the intent
@@ -599,11 +637,55 @@ export function AppointmentDetailClient({
   // A one-sitting consultee booking has nothing for a main column once the
   // header carries its session, so its cards flow as one grid instead.
   const compactLayout = !!soleSession && role === "consultee";
-  const refreshDetail = () => {
-    void queryClient.invalidateQueries({
-      queryKey: ["appointment-detail", appointmentId],
-    });
-  };
+  // The other party's wall clock for the next session, when their zone is
+  // known and differs, so neither side has to convert a time in their head.
+  const counterpartZone = (() => {
+    const seats = detail.appointment.participants as Array<{
+      role: string;
+      user: { id: string; timezone?: string | null };
+    }>;
+    if (isGroup) {
+      return role === "consultee"
+        ? (seats.find((s) => s.role === "CONSULTANT")?.user.timezone ?? null)
+        : null;
+    }
+    const other = seats.filter((s) =>
+      role === "consultee" ? s.role === "CONSULTANT" : s.role === "CONSULTEE",
+    );
+    return other.length === 1 ? (other[0].user.timezone ?? null) : null;
+  })();
+  const theirTime =
+    vm.nextAt &&
+    viewerZone &&
+    isValidTimeZone(counterpartZone) &&
+    formatInViewerZone(vm.nextAt, counterpartZone, "xxx") !==
+      formatInViewerZone(vm.nextAt, viewerZone, "xxx")
+      ? `${formatInViewerZone(vm.nextAt, counterpartZone, "EEE h:mm a")} for ${vm.counterpart.name.split(" ")[0]} (${zoneLabel(vm.nextAt, counterpartZone)})`
+      : null;
+  // The next session's Join lives in the Next up panel the whole time: live
+  // once the join window opens, and until then a disabled button that says
+  // when it opens, so nobody hunts for it at the last minute.
+  const joinWindow = joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
+  const joinOpensAt = anchorSession
+    ? new Date(anchorSession.startsAt.getTime() - joinWindow)
+    : null;
+  const canJoinNow = action.kind === "join";
+  const joinNotYet =
+    !canJoinNow &&
+    !!joinOpensAt &&
+    !anchorSession?.isTentative &&
+    bookingState.state === "CONFIRMED" &&
+    vm.bucket !== "past" &&
+    vm.bucket !== "cancelled" &&
+    now.getTime() < joinOpensAt.getTime();
+
+  const heroCaption = canJoinNow
+    ? "Your session is open"
+    : vm.bucket === "past"
+      ? "Last session"
+      : isGroup || (vm.group?.total ?? 0) > 1
+        ? "Next session"
+        : "Session";
 
   let stickyCta: ReactNode = null;
   if (nextAction.kind === "PAY" && pendingRow && payHref) {
@@ -624,6 +706,12 @@ export function AppointmentDetailClient({
     stickyCta = <RowPrimaryAction action={action} size="default" />;
   }
 
+  // The plan's weekly count, so the schedule can call out a short week.
+  const sessionsPerWeek =
+    detail.appointment.subscription?.sessionsPerWeek ??
+    detail.appointment.subscription?.subscriptionPlan?.sessionsPerWeek ??
+    detail.appointment.class?.classPlan?.sessionsPerWeek ??
+    null;
   const sessionsCard = !soleSession && (
     <Section
       title={
@@ -640,8 +728,27 @@ export function AppointmentDetailClient({
           <RatingsUnavailable onRetry={() => sessionFeedback.retry()} />
         </div>
       ) : null}
+      {showProgress && vm.group && (
+        <div className="mb-5">
+          <div className="mb-1.5 flex items-center justify-between text-xs">
+            <span className="font-medium text-foreground tabular-nums">
+              {vm.group.completed} of {vm.group.total} done
+            </span>
+            <span className="text-muted-foreground tabular-nums">
+              {Math.max(0, vm.group.total - vm.group.completed)} to go
+            </span>
+          </div>
+          <Progress
+            value={(vm.group.completed / vm.group.total) * 100}
+            className="h-1.5"
+          />
+        </div>
+      )}
+      {classActions.notices && (
+        <div className="mb-4">{classActions.notices}</div>
+      )}
       {hasConfirmedSessions || hasTentativeSessions ? (
-        <SessionTimeline
+        <SessionSchedule
           renderSessionExtra={(session) => {
             // The host side sees who attended each session.
             const attendance =
@@ -660,7 +767,7 @@ export function AppointmentDetailClient({
             // above explains instead.
             if (sessionFeedback.isError) return attendance;
             if (role === "consultee" && !canRate && rating === null) {
-              return null;
+              return attendance;
             }
             return (
               <>
@@ -678,16 +785,20 @@ export function AppointmentDetailClient({
           }}
           occurrences={vm.occurrences}
           joinWindowMs={joinWindowMs}
-          defaultExpanded
           isJoining={action.kind === "join" && !!action.busy}
           onJoinSession={
             action.kind === "join" && action.onClick
               ? action.onClick
               : undefined
           }
-          showHeld
           // Schedule words only; the pay verb lives in the needs-you slot.
           heldRowLabel={presentation.sessionRowLabel}
+          rowActions={(session): SessionRowAction[] => [
+            ...classActions.rowActions(session.occurrenceId),
+            ...returnActions.rowActions(session.occurrenceId),
+          ]}
+          sessionsPerWeek={sessionsPerWeek}
+          footnote={returnActions.footnote}
         />
       ) : (
         <p className="text-sm text-muted-foreground">
@@ -762,7 +873,17 @@ export function AppointmentDetailClient({
     </Section>
   );
 
+  // A paid seat that cost nothing (a free event, a full discount) is why a
+  // host can read "1 of 2 seats paid" beside nothing collected; name it.
+  const freeSeats = Array.from(seatPayments.values()).filter((row) => {
+    const status = paymentDisplayStatus(row);
+    return (
+      (status === "SUCCEEDED" || status === "PARTIALLY_REFUNDED") &&
+      Number(row.amount) === 0
+    );
+  }).length;
   const seatRows: Array<[string, number]> = [
+    ["Free seats", freeSeats],
     ["Awaiting payment", seatSummary.pending],
     ["Lapsed", seatSummary.lapsed],
     ["Refunded", seatSummary.refunded],
@@ -797,11 +918,14 @@ export function AppointmentDetailClient({
             <div className="flex items-baseline justify-between gap-3">
               <dt className="text-muted-foreground">Collected</dt>
               <dd className="font-medium text-foreground tabular-nums">
-                {formatCurrencyAmount(
-                  seatSummary.collectedPaise,
-                  seatSummary.currency,
-                )}{" "}
-                collected
+                {seatSummary.collectedPaise === 0 &&
+                seatSummary.paid > 0 &&
+                freeSeats === seatSummary.paid
+                  ? "Nothing — every paid seat was free"
+                  : `${formatCurrencyAmount(
+                      seatSummary.collectedPaise,
+                      seatSummary.currency,
+                    )} collected`}
               </dd>
             </div>
             {seatRows
@@ -989,85 +1113,122 @@ export function AppointmentDetailClient({
           </Link>
         </Button>
 
-        <header className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6">
-          <div className="flex items-start gap-3 sm:gap-4">
-            <Avatar className="h-12 w-12 shrink-0 border border-border sm:h-14 sm:w-14">
+        <header className="rounded-2xl border border-border/80 bg-card p-5 sm:p-7">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              {KIND_LABEL[vm.kind]}
+            </span>
+            <StatusBadge {...headerChip} withDot size="sm" />
+          </div>
+          <h1 className="mt-2 text-xl font-semibold leading-tight tracking-tight text-foreground sm:text-2xl">
+            {vm.title}
+          </h1>
+          <div className="mt-3 flex items-center gap-2.5 text-sm text-muted-foreground">
+            <Avatar className="h-7 w-7 shrink-0 border border-border">
               <AvatarImage
                 src={vm.counterpart.image ?? undefined}
                 alt={vm.counterpart.name}
               />
-              <AvatarFallback className="text-base font-medium">
+              <AvatarFallback className="text-[11px] font-medium">
                 {initials(vm.counterpart.name) || "?"}
               </AvatarFallback>
             </Avatar>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <h1 className="text-lg font-semibold leading-tight text-foreground sm:text-xl">
-                  {vm.title}
-                </h1>
-                <StatusBadge {...headerChip} withDot size="sm" />
-              </div>
-              {/* The kind is a fact about the booking, so it reads in the
-                  meta line rather than as a second chip beside the status. */}
-              <p className="mt-1 text-sm text-muted-foreground">
-                {KIND_LABEL[vm.kind]} with {vm.counterpart.name}
-                {vm.meta ? ` · ${vm.meta}` : ""}
-                {vm.group && vm.group.total > 0 ? ` · ${groupCountLine}` : ""}
-              </p>
-              {vm.nextAt && (
-                <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
-                  <span className="inline-flex items-center gap-1.5 font-medium text-foreground tabular-nums">
-                    <CalendarClock className="h-4 w-4 text-muted-foreground" />
-                    {format(vm.nextAt, "EEE, d MMM yyyy · h:mm a")}
-                    {anchorSession?.endsAt && (
-                      <span className="font-normal text-muted-foreground">
-                        {" – "}
-                        {format(anchorSession.endsAt, "h:mm a")}
-                      </span>
-                    )}
-                  </span>
-                  {vm.bucket !== "past" && vm.bucket !== "cancelled" && (
-                    <CountdownBadge
-                      targetDate={vm.nextAt}
-                      sessionEndDate={anchorSession?.endsAt ?? undefined}
-                      meetingEnded={
-                        anchorSession
-                          ? isDeliberateEnd({
-                              endedAt: anchorSession.meetingEndedAt,
-                              endedReason: anchorSession.meetingEndedReason,
-                            })
-                          : false
-                      }
-                    />
-                  )}
-                </div>
-              )}
-            </div>
+            {/* The kind is a fact about the booking, so it reads in the
+                eyebrow rather than as a second chip beside the status. */}
+            <p className="min-w-0">
+              with{" "}
+              <span className="font-medium text-foreground">
+                {vm.counterpart.name}
+              </span>
+              {vm.meta ? ` · ${vm.meta}` : ""}
+              {vm.group && vm.group.total > 0 ? ` · ${groupCountLine}` : ""}
+            </p>
           </div>
 
-          {/* A plan's header already carries "h of T"; classes keep the bar
-              because their header has no session-progress line. */}
-          {showProgress && vm.group && (
-            <div className="mt-4">
-              <div className="mb-1.5 flex items-center justify-between text-xs text-muted-foreground">
-                <span>Program progress</span>
-                <span className="font-medium text-foreground">
-                  {vm.group.completed} of {vm.group.total} sessions
+          {vm.nextAt && (
+            <div className="mt-5 flex flex-wrap items-center gap-4 rounded-xl border border-border/80 bg-muted/40 p-4">
+              <div
+                aria-hidden
+                className="flex w-14 shrink-0 flex-col items-center rounded-lg border border-border bg-background py-1.5 leading-none"
+              >
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {format(vm.nextAt, "EEE")}
+                </span>
+                <span className="mt-1 text-xl font-semibold tabular-nums text-foreground">
+                  {format(vm.nextAt, "d")}
+                </span>
+                <span className="mt-1 text-[10px] uppercase text-muted-foreground">
+                  {format(vm.nextAt, "MMM")}
                 </span>
               </div>
-              <Progress
-                value={(vm.group.completed / vm.group.total) * 100}
-                className="h-2"
-              />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-muted-foreground">
+                  {heroCaption}
+                </p>
+                <p className="mt-0.5 text-base font-semibold text-foreground tabular-nums">
+                  {format(vm.nextAt, "h:mm a")}
+                  {anchorSession?.endsAt && (
+                    <span className="font-normal text-muted-foreground">
+                      {" – "}
+                      {format(anchorSession.endsAt, "h:mm a")}
+                    </span>
+                  )}
+                </p>
+                <p className="mt-0.5 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <CalendarClock aria-hidden className="h-3.5 w-3.5" />
+                  {format(vm.nextAt, "EEEE, d MMMM yyyy")}
+                </p>
+                {theirTime && (
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {theirTime}
+                  </p>
+                )}
+              </div>
+              {vm.bucket !== "past" && vm.bucket !== "cancelled" && (
+                <CountdownBadge
+                  targetDate={vm.nextAt}
+                  sessionEndDate={anchorSession?.endsAt ?? undefined}
+                  meetingEnded={
+                    anchorSession
+                      ? isDeliberateEnd({
+                          endedAt: anchorSession.meetingEndedAt,
+                          endedReason: anchorSession.meetingEndedReason,
+                        })
+                      : false
+                  }
+                />
+              )}
+              {canJoinNow ? (
+                <RowPrimaryAction action={action} size="default" />
+              ) : joinNotYet && joinOpensAt ? (
+                <div className="flex flex-col items-end gap-1">
+                  <Button
+                    size="default"
+                    disabled
+                    aria-describedby="join-opens-at"
+                  >
+                    <Video className="mr-1.5 h-4 w-4" />
+                    Join
+                  </Button>
+                  <span
+                    id="join-opens-at"
+                    className="text-[11px] text-muted-foreground"
+                  >
+                    Opens at {format(joinOpensAt, "h:mm a")}
+                  </span>
+                </div>
+              ) : null}
             </div>
           )}
 
           <div className="mt-5 flex flex-wrap items-center gap-2">
             {/* The needs-you callout owns Pay/Join/Approve; this row keeps
                 only what it does not (e.g. Set schedule). */}
-            {action.kind !== "view" && nextAction.kind === "NONE" && (
-              <RowPrimaryAction action={action} size="default" />
-            )}
+            {action.kind !== "view" &&
+              action.kind !== "join" &&
+              nextAction.kind === "NONE" && (
+                <RowPrimaryAction action={action} size="default" />
+              )}
             {/* With the Sessions card folded away, the one session's rating
                 takes the primary slot, under the session row's gates. */}
             {soleSession &&
@@ -1136,7 +1297,9 @@ export function AppointmentDetailClient({
             }
             onHelp={() => openHelp()}
           >
-            {nextAction.kind === "JOIN" && action.kind === "join" ? (
+            {/* The Next up panel carries Join; without a next session time
+                the callout keeps it. */}
+            {nextAction.kind === "JOIN" && canJoinNow && !vm.nextAt ? (
               <RowPrimaryAction action={action} size="default" />
             ) : nextAction.kind === "RATE" && rateableSole ? (
               <SoleSessionRating
@@ -1198,32 +1361,6 @@ export function AppointmentDetailClient({
               </div>
             )}
             {sessionsCard}
-            {/* Cancel one class session, make it up, or skip the make-up. */}
-            {vm.kind === "CLASS" && detail.appointment.class && (
-              <ClassSessionControls
-                appointmentId={appointmentId}
-                sessions={detail.appointment.occurrences}
-                role={role}
-                // A seat's unit depends on when it was bought; the copy says
-                // "one session" rather than guess a list price.
-                unitLabel={null}
-                onChanged={refreshDetail}
-              />
-            )}
-            {/* The consultee returns one upcoming session to the plan. */}
-            {role === "consultee" &&
-              vm.kind === "SUBSCRIPTION" &&
-              detail.appointment.subscription?.status === "APPROVED" && (
-                <SubscriptionReturnControls
-                  appointmentId={appointmentId}
-                  sessions={detail.appointment.occurrences}
-                  sessionsReturned={
-                    detail.appointment.subscription.sessionsReturned
-                  }
-                  rescheduleOpen={!!openProposal}
-                  onChanged={refreshDetail}
-                />
-              )}
             {participantsCard}
           </div>
 
@@ -1262,6 +1399,8 @@ export function AppointmentDetailClient({
       {/* Mounted HERE, not by each caller: this component renders the
           actions whose clicks open these dialogs. */}
       {adapter.renderDialogs()}
+      {classActions.dialog}
+      {returnActions.dialog}
       <LazyAppointmentChatSheet target={chatTarget} onClose={closeChat} />
     </DashboardErrorBoundary>
   );

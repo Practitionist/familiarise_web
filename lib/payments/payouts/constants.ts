@@ -15,15 +15,15 @@ export const PAYOUT_CONSTANTS = {
   /** Consultant share percentage (80%) */
   CONSULTANT_SHARE_PERCENTAGE: 80,
 
-  /** Minimum payout amount in paise (₹500) */
-  MINIMUM_PAYOUT_AMOUNT: 50000,
+  /** Minimum payout amount in paise (₹250) */
+  MINIMUM_PAYOUT_AMOUNT: 25000,
 
   /** Auto-approve threshold in paise (₹5000) - below this, auto-approve */
   AUTO_APPROVE_THRESHOLD: 500000,
 
   /** Hold periods in hours before earnings become payable */
   HOLD_PERIOD_HOURS: {
-    CONSULTATION: 24, // 24 hours after consultation
+    CONSULTATION: 48, // covers the 48-hour scope-claim window after a 1:1
     WEBINAR: 48, // 48 hours after webinar ends
     SUBSCRIPTION: 168, // 7 days for subscriptions
     CLASS: 24, // 24 hours after class ends
@@ -34,11 +34,11 @@ export const PAYOUT_CONSTANTS = {
   MAX_RETRY_ATTEMPTS: 3,
 
   /** Extra hold days on a new expert's earnings. */
-  NEW_EXPERT_EXTRA_HOLD_DAYS: 7,
+  NEW_EXPERT_EXTRA_HOLD_DAYS: 3,
   /** An expert is new while their first paid earning is younger than this. */
   NEW_EXPERT_TENURE_DAYS: 30,
-  /** ...or while their lifetime non-refunded share is below this (₹50,000). */
-  NEW_EXPERT_LIFETIME_SHARE_PAISE: 5_000_000,
+  /** ...or while their lifetime non-refunded share is below this (₹10,000). */
+  NEW_EXPERT_LIFETIME_SHARE_PAISE: 1_000_000,
 
   /** A consultant owing more than this clawback (₹10,000) is not paid out. */
   CLAWBACK_RECOVERY_PAUSE_PAISE: 1_000_000,

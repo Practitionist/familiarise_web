@@ -135,7 +135,7 @@ it("the 4th completion stamps tranche 0 only, anchored on that session's end plu
   );
 });
 
-it("a new expert's tranche waits the extra seven days", async () => {
+it("a new expert's tranche waits the extra new-expert days", async () => {
   const { tx, updateMany } = makeTx(completed(4), new Date());
   await settleSubscriptionCycle(tx as never, {
     appointmentId: "apt-1",
@@ -145,7 +145,7 @@ it("a new expert's tranche waits the extra seven days", async () => {
   const fourthEnd = row(3, "COMPLETED").endsAt.getTime();
   expect(stampCall(updateMany).data.holdUntil).toEqual(
     new Date(
-      Math.max(fourthEnd, NOW.getTime()) + HOLD_HOURS * HOUR + 7 * 24 * HOUR,
+      Math.max(fourthEnd, NOW.getTime()) + HOLD_HOURS * HOUR + 3 * 24 * HOUR,
     ),
   );
 });
