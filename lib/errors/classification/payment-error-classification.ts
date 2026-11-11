@@ -603,6 +603,12 @@ const BUSINESS_ERROR_ENTRIES = [
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 400,
   },
+  // A published plan's cadence that no week of the expert's published hours can hold.
+  {
+    code: "PLAN_NOT_FEASIBLE",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 422,
+  },
   // The buyer already holds a live seat on this webinar or class.
   {
     code: "ALREADY_REGISTERED",

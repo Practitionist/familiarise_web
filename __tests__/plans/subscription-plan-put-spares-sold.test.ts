@@ -215,10 +215,7 @@ it("refuses a terms edit the published hours can't deliver, before writing", asy
 it("never re-polices a published plan on an edit that leaves its terms alone", async () => {
   const res = await put({ title: "A clearer title for the plan" });
   expect(res.status).toBe(200);
-  expect(planPublishFeasibility).toHaveBeenCalledWith(
-    expect.anything(),
-    expect.objectContaining({ publishing: false }),
-  );
+  expect(planPublishFeasibility).not.toHaveBeenCalled();
 });
 
 it("refuses a short pack priced under the pack floor in plain words, before any write", async () => {
@@ -255,6 +252,7 @@ it("lets a full-form save that re-sends a short pack's stored price and terms th
     sessionDurationInHours: 1,
   });
   expect(res.status).toBe(200);
+  expect(planPublishFeasibility).not.toHaveBeenCalled();
 });
 
 it("answers 409 when the price or terms changed after this edit read them", async () => {

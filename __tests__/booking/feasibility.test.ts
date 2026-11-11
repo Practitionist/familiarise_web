@@ -118,6 +118,32 @@ describe("assessFeasibility", () => {
     expect(report.longestWindowMinutes).toBe(120);
   });
 
+  it("counts a session that runs past midnight on the day it starts", () => {
+    // Open 23:00 to 01:00 on three nights a week; each session is the full two hours.
+    const windows: TimeSpan[] = [];
+    for (let week = 0; week < 4; week += 1) {
+      for (const offset of [0, 2, 4]) {
+        const day = MONDAY + (week * 7 + offset) * 24 * HOUR;
+        windows.push({ startMs: day + 23 * HOUR, endMs: day + 25 * HOUR });
+      }
+    }
+    const report = assessFeasibility({ ...base, sessionMinutes: 120, windows });
+    expect(report.verdict).not.toBe("impossible");
+    expect(report.weeks.map((w) => w.publishedCapacity)).toEqual([3, 3, 3, 3]);
+  });
+
+  it("never counts two sessions that would overlap across midnight", () => {
+    // 23:00 to 02:30 holds one two-hour session, not one per calendar day.
+    const report = assessFeasibility({
+      ...base,
+      sessionMinutes: 120,
+      sessionsPerWeek: 1,
+      weeks: 1,
+      windows: [{ startMs: MONDAY + 23 * HOUR, endMs: MONDAY + 26.5 * HOUR }],
+    });
+    expect(report.bestWeekPublishedSessions).toBe(1);
+  });
+
   it("refuses an expert with no published hours", () => {
     const report = assessFeasibility({ ...base, windows: [] });
     expect(report.verdict).toBe("impossible");

@@ -10,6 +10,7 @@ import {
   firstWeekPlaceable,
   PLAN_FEASIBILITY_WEEKS,
 } from "@/lib/booking/feasibility";
+import { isHiddenDraft } from "@/lib/api/plans/draft-access";
 import { leadMsFor } from "@/lib/booking/lead-time";
 import { applyRateLimit, checkoutContextLimiter } from "@/lib/rate-limit";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
@@ -54,13 +55,14 @@ export async function GET(
     const plan = await prisma.subscriptionPlan.findUnique({
       where: { id: subscriptionPlanId },
       select: {
+        status: true,
         consultantProfileId: true,
         sessionsPerWeek: true,
         sessionDurationInHours: true,
         consultantProfile: { select: { user: { select: { timezone: true } } } },
       },
     });
-    if (!plan) {
+    if (!plan || (await isHiddenDraft(plan))) {
       return NextResponse.json({ error: "Plan not found" }, { status: 404 });
     }
 

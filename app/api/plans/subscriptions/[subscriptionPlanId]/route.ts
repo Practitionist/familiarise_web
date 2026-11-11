@@ -7,7 +7,10 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
-import { planPublishFeasibility } from "@/lib/booking/feasibility";
+import {
+  planPublishFeasibility,
+  type PlanFeasibilityOutcome,
+} from "@/lib/booking/feasibility";
 import { MAX_SUBSCRIPTION_SESSIONS_PER_DAY } from "@/utils/scheduling-engine/sessionCaps";
 import {
   curriculumCreateNested,
@@ -224,23 +227,34 @@ export async function PUT(
       });
     }
 
-    // A terms edit or a publish must leave the plan deliverable from the
-    // expert's published hours; an untouched plan is never retro-policed.
+    // A cadence change or a first publish must leave the plan deliverable from
+    // the expert's published hours; a published plan saved unchanged is not re-checked.
+    const cadence = editedTerms(
+      {
+        sessionsPerWeek: existingPlan.sessionsPerWeek,
+        sessionDurationInHours: existingPlan.sessionDurationInHours,
+      },
+      {
+        sessionsPerWeek: validatedData.sessionsPerWeek,
+        sessionDurationInHours: validatedData.sessionDurationInHours,
+      },
+    );
     const effectiveStatus = validatedData.status ?? existingPlan.status;
     const publishing =
       effectiveStatus === "PUBLISHED" &&
-      (termsChange || existingPlan.status !== "PUBLISHED");
-    const feasibility = await planPublishFeasibility(prisma, {
-      consultantProfileId: existingPlan.consultantProfileId,
-      sessionsPerWeek:
-        validatedData.sessionsPerWeek ?? existingPlan.sessionsPerWeek,
-      sessionMinutes: Math.round(
-        (validatedData.sessionDurationInHours ??
-          existingPlan.sessionDurationInHours) * 60,
-      ),
-      perDayCap: MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
-      publishing,
-    });
+      (cadence.changed || existingPlan.status !== "PUBLISHED");
+    const feasibility: PlanFeasibilityOutcome =
+      effectiveStatus === "PUBLISHED" && !publishing
+        ? { refusal: null, warnings: [] }
+        : await planPublishFeasibility(prisma, {
+            consultantProfileId: existingPlan.consultantProfileId,
+            sessionsPerWeek: cadence.terms.sessionsPerWeek,
+            sessionMinutes: Math.round(
+              cadence.terms.sessionDurationInHours * 60,
+            ),
+            perDayCap: MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
+            publishing,
+          });
     if (feasibility.refusal) {
       return NextResponse.json(feasibility.refusal.body, {
         status: feasibility.refusal.status,

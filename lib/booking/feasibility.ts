@@ -7,10 +7,10 @@
  * rows projected in their own zone, minus the time already held, on the UTC
  * half-hour lattice, one session per start day up to the per-day cap.
  *
- * It is deliberately conservative in one direction only: a session that would
- * cross the scheduling zone's midnight is not counted, so a verdict of "ok" is
- * never optimistic. Spacing is ignored, because the allocator packs when it
- * cannot space.
+ * A session counts on the zone-day it starts, so one that runs past midnight
+ * still counts. Counted sessions never overlap, so a verdict of "ok" is never
+ * optimistic. Spacing is ignored, because the allocator packs when it cannot
+ * space.
  */
 
 import type { Tx } from "@/lib/prisma";
@@ -132,15 +132,34 @@ export function subtractSpans(
   return out;
 }
 
-/** Whole sessions that fit back to back inside the spans, on the half-hour lattice. */
-function sessionsIn(spans: readonly TimeSpan[], sessionMs: number): number {
-  let count = 0;
+/**
+ * Sessions per zone-day, each on the day it starts: placed back to back from
+ * the earliest lattice start in sorted, disjoint spans, at most `perDayCap` a day.
+ */
+function sessionsByStartDay(
+  spans: readonly TimeSpan[],
+  days: readonly number[],
+  sessionMs: number,
+  perDayCap: number,
+  notBeforeMs: number,
+): number[] {
+  const counts = new Array<number>(days.length - 1).fill(0);
+  const horizon = days[days.length - 1];
+  let day = 0;
   for (const span of spans) {
-    const start = ceilAtom(span.startMs);
     const end = floorAtom(span.endMs);
-    if (end > start) count += Math.floor((end - start) / sessionMs);
+    let cursor = ceilAtom(Math.max(span.startMs, notBeforeMs, days[0]));
+    while (cursor + sessionMs <= end && cursor < horizon) {
+      while (days[day + 1] <= cursor) day += 1;
+      if (counts[day] < perDayCap) {
+        counts[day] += 1;
+        cursor += sessionMs;
+      } else {
+        cursor = ceilAtom(days[day + 1]);
+      }
+    }
   }
-  return count;
+  return counts;
 }
 
 function clip(
@@ -207,29 +226,35 @@ export function assessFeasibility(input: FeasibilityInput): FeasibilityReport {
     0,
   );
 
+  const publishedByDay = sessionsByStartDay(
+    windows,
+    days,
+    sessionMs,
+    input.perDayCap,
+    input.notBeforeMs,
+  );
+  const placeableByDay = sessionsByStartDay(
+    free,
+    days,
+    sessionMs,
+    input.perDayCap,
+    input.notBeforeMs,
+  );
+  const weekTotal = (byDay: readonly number[], week: number) =>
+    byDay.slice(week * 7, week * 7 + 7).reduce((sum, n) => sum + n, 0);
+
   const weeks: WeekCapacity[] = [];
   let bestWeekPublishedSessions = 0;
   for (let week = 0; week < input.weeks; week += 1) {
-    let published = 0;
-    let placeable = 0;
-    for (let d = week * 7; d < week * 7 + 7; d += 1) {
-      const dayFrom = Math.max(days[d], input.notBeforeMs);
-      const dayTo = days[d + 1];
-      if (dayTo <= dayFrom) continue;
-      published += Math.min(
-        input.perDayCap,
-        sessionsIn(clip(windows, dayFrom, dayTo), sessionMs),
-      );
-      placeable += Math.min(
-        input.perDayCap,
-        sessionsIn(clip(free, dayFrom, dayTo), sessionMs),
-      );
-    }
+    const published = weekTotal(publishedByDay, week);
     bestWeekPublishedSessions = Math.max(bestWeekPublishedSessions, published);
     weeks.push({
       weekStartMs: days[week * 7],
       publishedCapacity: Math.min(input.sessionsPerWeek, published),
-      placeable: Math.min(input.sessionsPerWeek, placeable),
+      placeable: Math.min(
+        input.sessionsPerWeek,
+        weekTotal(placeableByDay, week),
+      ),
     });
   }
 
@@ -266,7 +291,7 @@ export function assessFeasibility(input: FeasibilityInput): FeasibilityReport {
   if (shortWeeks > 0) {
     reasons.push({
       code: "WEEKS_SHORT",
-      message: `${shortWeeks} of the next ${weeks.length} weeks can't fit ${input.sessionsPerWeek} sessions around existing bookings.`,
+      message: `${shortWeeks} of the next ${weeks.length} weeks can't fit ${input.sessionsPerWeek} sessions${input.busy.length > 0 ? " around existing bookings" : ""}.`,
     });
   }
   if (
