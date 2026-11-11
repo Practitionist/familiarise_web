@@ -42,7 +42,7 @@ async function seedStaleApproved() {
     })
   ).id;
   const age = new Date(Date.now() - 31 * DAY_MS);
-  await prisma.$executeRaw`UPDATE "Subscription" SET status = 'APPROVED', "updatedAt" = ${age} WHERE id = ${sub.subscriptionId}`;
+  await prisma.$executeRaw`UPDATE "Subscription" SET "requestStatus" = 'APPROVED', "updatedAt" = ${age} WHERE id = ${sub.subscriptionId}`;
   return { host, subscriber, ...sub, paymentId };
 }
 
