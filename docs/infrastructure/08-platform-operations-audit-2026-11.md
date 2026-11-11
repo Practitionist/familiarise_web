@@ -451,19 +451,20 @@ Each row says who acts. "PR" items are code; "Owner" items are console or vendor
 
 The subsystem sweep on [page 09](./09-subsystem-obligations-sweep-2026-11.md) adds 18 launch blockers (its section 3) and 21 owner decisions (its section 6); they extend this list.
 
-| #     | Item                                                                                                                                           | Who               |
-| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| P1-1  | Money-job PR: J1–J3 (orphan alert and reconciler starvation), J7 (subscription invoicing bound + CAS + unique per cycle), J10 (per-row Sentry) | PR (money)        |
-| P1-2  | Zod 4 migration before 8 Dec (the audit allowlist expires)                                                                                     | PR (#2648)        |
-| P1-3  | Set `SENTRY_STATS_TOKEN`; point the Better Stack status monitor at `/api/health` (now 503 when not ready)                                      | Owner             |
-| P1-4  | Supabase Pro, the first restore drill, and the prod/dev database split                                                                         | Owner + Session F |
-| P1-5  | Log archive to Mumbai and one breach runbook (6 h and 72 h clocks), CERT-In point of contact                                                   | PR + owner        |
-| P1-6  | Per-provider webhook-absence heartbeat (Razorpay first)                                                                                        | PR                |
-| P1-7  | DPDP grievance and erasure ageing alert                                                                                                        | PR                |
-| P1-8  | Replace `cron-heartbeat.yml` with a Better Stack heartbeat at the end of each scheduled workflow                                               | PR                |
-| P1-9  | Move the fleet switch to Postgres and fail closed while paused (M6)                                                                            | PR                |
-| P1-10 | Versioned migrations and the schema freeze (baseline, `migrate deploy` from CI)                                                                | Session F (#2700) |
-| P1-11 | Resume the fleet and its monitors from the go-live checklist; verify one full day of run rows                                                  | Owner             |
+| #     | Item                                                                                                                                                                                                                                         | Who               |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| P1-1  | Money-job PR: J1–J3 (orphan alert and reconciler starvation), J7 (subscription invoicing bound + CAS + unique per cycle), J10 (per-row Sentry)                                                                                               | PR (money)        |
+| P1-12 | Sweep contract on every recovery sweep before launch, money reconcilers first (owner decision D21 on page 09): attempts and backoff, quarantine with an alarm, eligibility in SQL, a time budget, `remaining` and oldest-due age on run rows | PR                |
+| P1-2  | Zod 4 migration before 8 Dec (the audit allowlist expires)                                                                                                                                                                                   | PR (#2648)        |
+| P1-3  | Set `SENTRY_STATS_TOKEN`; point the Better Stack status monitor at `/api/health` (now 503 when not ready)                                                                                                                                    | Owner             |
+| P1-4  | Supabase Pro, the first restore drill, and the prod/dev database split                                                                                                                                                                       | Owner + Session F |
+| P1-5  | Log archive to Mumbai and one breach runbook (6 h and 72 h clocks), CERT-In point of contact                                                                                                                                                 | PR + owner        |
+| P1-6  | Per-provider webhook-absence heartbeat (Razorpay first)                                                                                                                                                                                      | PR                |
+| P1-7  | DPDP grievance and erasure ageing alert                                                                                                                                                                                                      | PR                |
+| P1-8  | Replace `cron-heartbeat.yml` with a Better Stack heartbeat at the end of each scheduled workflow                                                                                                                                             | PR                |
+| P1-9  | Move the fleet switch to Postgres and fail closed while paused (M6)                                                                                                                                                                          | PR                |
+| P1-10 | Versioned migrations and the schema freeze (baseline, `migrate deploy` from CI)                                                                                                                                                              | Session F (#2700) |
+| P1-11 | Resume the fleet and its monitors from the go-live checklist; verify one full day of run rows                                                                                                                                                | Owner             |
 
 ### P2 — first month after launch
 
