@@ -81,7 +81,6 @@ flowchart TB
     subgraph STUBS["DEFERRED — STUBS"]
         direction TB
         STUB_CK["ConvertKit / Kit\nNo code yet — deferred until\nthe list outgrows the Resend batch API"]
-        STUB_CMS["Directus CMS\napp/api/webhooks/directus/\nLogs webhook, returns 200\nTODO: blog → broadcast"]
         STUB_PUSH["Push Notifications\nSchema: pushEnabled field\nNo FCM integration"]
     end
 
@@ -149,7 +148,6 @@ flowchart TB
     P3_SEND --> DEL_RESEND
 
     %% Stubs
-    STUB_CMS -.->|"future: blog webhook"| STUB_CK
 
     %% Delivery
     DEL_RESEND --> DEL_EMAIL
@@ -454,9 +452,8 @@ The two relays are the outbox halves of the design: every email and every Novu t
 
 ### STUB (placeholder code, no functionality)
 
-| Component            | File                                 | What It Does Now        | When to Implement  |
-| -------------------- | ------------------------------------ | ----------------------- | ------------------ |
-| Directus CMS webhook | `app/api/webhooks/directus/route.ts` | Logs event, returns 200 | When blog launches |
+| Component | File | What It Does Now | When to Implement |
+| --------- | ---- | ---------------- | ----------------- |
 
 ### NEEDS AN OPERATOR STEP (code complete)
 

@@ -237,7 +237,7 @@ Rotate `RESEND_API_KEY` across all four locations in lockstep so no environment 
 
 - **Resend Free → Pro (\$20/mo)**: On the owner's purchase triggers (kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend)): typically daily volume approaching the Free cap of 100 emails a day, a newsletter broadcast larger than the Free plan allows, or a need for native Resend open/click analytics.
 - **Novu Free → Pro (~\$25–30/mo)**: When monthly workflow runs (one per bell recipient, Development and Production together) pass the upgrade trigger kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend), or when activity history beyond the Free plan's 24 hours is required.
-- **Kit / Directus CMS**: Remain deferred post-launch (`lib/newsletter/convertkit.ts` and `app/api/webhooks/directus/route.ts`) until automated drip sequences or managed CMS publishing are prioritized.
+- **Kit**: Remains deferred post-launch (`lib/newsletter/convertkit.ts`) until automated drip sequences are prioritized. A CMS webhook is built only when a CMS is chosen; the unused Directus placeholder route was deleted.
 
 ---
 

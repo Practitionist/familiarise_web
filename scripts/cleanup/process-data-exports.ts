@@ -618,7 +618,3 @@ function recordExpiryFailure(
     `export=${exportJobId}: artifact expiry could not be confirmed; owner retained for retry`,
   );
 }
-
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
-}

@@ -64,7 +64,7 @@ Every option with a "Yes" in the third column requires the always-on process tha
 
 ## Measured hosted job runtimes, 2026-10-31
 
-These are evidence for the decided scale path, not a recommendation. The platform facts are in `job-runtime-options.md` in this folder, the library facts in `.claude/skills/maintenance/references/job-runtime-options.md`, and the depth in `docs/maintenance/14-background-job-runtime-options.md`.
+These are evidence for the decided scale path, not a recommendation. The platform facts are in `job-runtime-options.md` in this folder, the library facts in `.claude/skills/jobs/references/job-runtime-options.md`, and the depth in `docs/maintenance/14-background-job-runtime-options.md`.
 
 ## Background Functions against the five-minute ticker
 

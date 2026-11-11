@@ -409,10 +409,6 @@ async function reconcileOrphanedConfirmationsUnlocked(
   };
 }
 
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
-}
-
 export interface OrphanedPaymentHealResult {
   success: boolean;
   scanned: number;

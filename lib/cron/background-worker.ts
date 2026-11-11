@@ -82,7 +82,7 @@ export async function runBackgroundWorker(
     logRefusal(job, "method-not-allowed");
     return;
   }
-  const secret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
+  const secret = process.env.CRON_SECRET;
   if (!secret || !bearerMatches(req.headers.get("authorization"), secret)) {
     logRefusal(job, "unauthorized");
     return;

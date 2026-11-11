@@ -133,13 +133,13 @@ describe("GET /api/health", () => {
     );
   });
 
-  it("a database that really fails is still degraded, and says why", async () => {
+  it("a database that really fails answers 503 for status-code monitors, and says why", async () => {
     findFirst.mockRejectedValue(new Error("connection refused"));
 
     const res = await GET(request());
     const body = await res.json();
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(503);
     expect(body.status).toBe("degraded");
     expect(body.database).toBe("unreachable");
     expect(body.platform.databaseProbeRetried).toBe(false);
@@ -247,13 +247,13 @@ describe("GET /api/health", () => {
     });
   });
 
-  it("degrades instead of throwing when the maintenance read fails", async () => {
+  it("answers 503 instead of throwing when the maintenance read fails", async () => {
     (getMaintenanceState as jest.Mock).mockRejectedValueOnce(
       new Error("column does not exist"),
     );
     const res = await GET(request());
     const body = await res.json();
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(503);
     expect(body.status).toBe("degraded");
     expect(body.maintenance.phase).toBe("OFF");
   });

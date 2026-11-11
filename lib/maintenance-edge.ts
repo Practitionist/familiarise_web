@@ -236,21 +236,16 @@ export function isWriteBlockedInDegraded(
   );
 }
 
-// Every non-exempt mutation requires readable maintenance state.
+// Only the money and booking writes DEGRADED blocks need readable state; every
+// other write, the job twins included, proceeds through a Redis outage.
 export function isFailClosedWhenUnreadable(
   pathname: string,
   method: string,
   searchParams?: URLSearchParams,
 ): boolean {
-  if (
-    pathname === "/api/checkout/verify" &&
-    method.toUpperCase() === "GET" &&
-    searchParams?.get("sync") === "true"
-  )
-    return true;
   return (
-    !READ_ONLY_METHODS.has(method.toUpperCase()) &&
-    !isMaintenanceExempt(pathname)
+    !isMaintenanceExempt(pathname) &&
+    isWriteBlockedInDegraded(pathname, method, searchParams)
   );
 }
 

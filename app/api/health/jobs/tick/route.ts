@@ -28,7 +28,7 @@ const claimSchema = z.object({
  * and `pendingAges` carries the queue gauges the ticker puts on its summary.
  */
 export async function POST(request: NextRequest) {
-  const secret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
+  const secret = process.env.CRON_SECRET;
   if (!secret || !bearerMatches(request.headers.get("authorization"), secret)) {
     return NextResponse.json(
       { error: "Unauthorized" },

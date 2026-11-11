@@ -9,6 +9,8 @@ last-reviewed: 2026-10-18
 
 # Platform Architecture — The Load-Bearing Ideas
 
+> **Status (pre-launch).** The scheduled job fleet is paused: the Upstash key `ops:active_cron_platform` is set to `paused-prelaunch`, so every tick of `netlify/functions/cron-tick.mts` returns before running a job, and the monitors that watch the fleet are paused or disabled with it (see [the pause decision](../decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md)). Read the live-monitor descriptions below as the design that applies once the fleet is resumed; the resume step is the first item of the [go-live skill](../../.claude/skills/go-live/SKILL.md). Jobs can still be run by hand from the System Jobs page.
+
 The booking and money systems have their own high-level designs in [01-booking-system-hld.md](./01-booking-system-hld.md) and [02-money-system-hld.md](./02-money-system-hld.md), and [03-booking-and-money-machinery.md](./03-booking-and-money-machinery.md) walks a seeded cast through nine worked examples. This document covers the layer _underneath_ all three: the set of decisions that every other subsystem inherits, and the machinery — the database invariants, the scheduler, and the reconcilers — that keeps them honest.
 
 It is written for a reader who has never opened the repository, and it deliberately names the enforcer of every rule it states so you can find it later without reading the prose twice.
@@ -64,7 +66,7 @@ A scheduled job in this repository is a single function in a single domain modul
 
 Adding a parallel `route.ts` plus a `jobs/` wrapper plus a `scripts/` wrapper for the same job is explicitly banned, because in practice those three copies drift apart and only one of them gets updated.
 
-There is exactly one scheduler, and every job is reached by it: `netlify/functions/cron-tick.mts` runs every five minutes and dispatches all 77 targets, from the **latency-sensitive recovery sweeps** (every 5 to 15 minutes) to the **daily, weekly and statutory batch work** (a window inside which a target fires on its slot). No GitHub Actions workflow schedules a registry job, so a job that is missing from the ticker runs nowhere. The ticker dispatches at most 12 targets per tick and the busiest tick has 11. Overlapping runs of the same job are safe because of the shared Postgres lease: whichever runner loses answers 409.
+There is exactly one scheduler, and every job is reached by it: `netlify/functions/cron-tick.mts` runs every five minutes and dispatches every registered job (see the generated inventory [`docs/maintenance/04-cron-jobs-reference.md`](../maintenance/04-cron-jobs-reference.md)), from the **latency-sensitive recovery sweeps** (every 5 to 15 minutes) to the **daily, weekly and statutory batch work** (a window inside which a target fires on its slot). No GitHub Actions workflow schedules a registry job, so a job that is missing from the ticker runs nowhere. The ticker dispatches at most 12 targets per tick and the busiest tick has 11. Overlapping runs of the same job are safe because of the shared Postgres lease: whichever runner loses answers 409.
 
 There is no silent gap: a test, `__tests__/maintenance/cleanup-job-scheduler-drift.test.ts`, fails the build if a registered job has no ticker target and no explicit manual-only entry.
 
@@ -132,7 +134,7 @@ The dispatch path is:
 
 ```mermaid
 flowchart LR
-    S1["Netlify ticker<br/>every 5 min · 77 targets"] --> R
+    S1["Netlify ticker<br/>every 5 min · every registered job"] --> R
     R["app/api/cleanup/[job]/route.ts<br/>CRON_SECRET"] --> G["assertNotInMaintenance(job)"]
     G --> L["withCronLock(jobName, failMode)"]
     L --> C["core module<br/>the only implementation"]

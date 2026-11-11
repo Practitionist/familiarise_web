@@ -528,7 +528,7 @@ npm install @upstash/redis
 
 **Impact**: 11 fewer packages, smaller bundle size
 
-> **Note**: API rate limiting is now handled by **Arcjet** at the route level, not by Upstash Ratelimit.
+> **Note**: API rate limiting is handled by `@upstash/ratelimit` in `lib/rate-limit.ts`, not by this lock module.
 
 ---
 

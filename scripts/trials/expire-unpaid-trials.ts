@@ -608,7 +608,3 @@ async function expireUnpaidTrialsUnlocked(
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
-}

@@ -130,7 +130,3 @@ async function sweepOrphanedTopupCapturesUnlocked(
     errors,
   };
 }
-
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
-}

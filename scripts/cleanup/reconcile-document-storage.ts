@@ -535,10 +535,3 @@ async function reconcileDocumentStorageUnlocked(): Promise<DocumentReconciliatio
     timestamp: new Date().toISOString(),
   };
 }
-
-/**
- * Disconnect from database - call this when done
- */
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
-}

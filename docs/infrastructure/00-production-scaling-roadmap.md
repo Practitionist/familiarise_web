@@ -24,7 +24,7 @@
 - [Section 9: Database Indexing Strategy](#section-9-database-indexing-strategy)
 - [Section 10: Scaling Roadmap (1K → 10K → 100K → 1M)](#section-10-scaling-roadmap)
 - [Section 11: Cost Projections at Scale](#section-11-cost-projections-at-scale)
-- [Section 12: Priority Matrix — What to Fix Now vs Later](#section-12-priority-matrix)
+- [Section 12: Priority Matrix — What to Fix Now vs Later](#section-12-priority-matrix--what-to-fix-now-vs-later)
 
 ---
 
@@ -196,7 +196,7 @@ For a page of 10 consultants = ~60 queries. The `include` pattern causes N+1 at 
 
 ### B2-3: N+1 Pattern in Payout Batch Creation (MEDIUM)
 
-**File**: `scripts/payouts/create-payout-batch.ts` (lines 97-205)
+**File**: the payout batch creation in `lib/payments/payouts/payout-service.ts` (registered as the `create-payout-batch` job; the original script no longer exists)
 
 **Problem**: Loop with 3-4 sequential DB calls per consultant:
 
@@ -225,7 +225,7 @@ At 100 consultants = 300+ sequential DB round trips (~3-5 seconds). At 1,000 con
 **Files**:
 
 - `app/api/stream/search-consultees/route.ts` (lines 51-176) — loads ALL consultations, subscriptions, webinars, classes with nested includes, **no pagination**
-- `app/api/collaborators/[consultantProfileId]/availability/route.ts` — three unbounded queries (route deleted in #1580 C-P1-8; nothing fetched it)
+- the collaborator availability route (deleted; nothing fetched it): three unbounded queries
 
 **Fix**: Add `take: 100` to all `findMany()` calls. Add cursor-based pagination for endpoints returning lists.
 
@@ -514,35 +514,11 @@ At 10,000 concurrent users:
 
 ## Section 6: GitHub Actions Cron Unreliability
 
-### The Problem
+### Current state
 
-Our 61 cron jobs run via GitHub Actions scheduled workflows. Known issues:
+Scheduled jobs no longer run on GitHub Actions. The Netlify scheduled function `netlify/functions/cron-tick.mts` is the only scheduler: every five minutes it dispatches the due targets of every registered job (see the generated inventory `docs/maintenance/04-cron-jobs-reference.md`), and each run takes a Postgres lease (`withCronLock` in `lib/cron/with-cron-lock.ts`). No workflow in `.github/workflows/` schedules a registry job. Delay, silent disabling after 60 idle days and connection storms were the reasons the Actions fleet was retired; the ticker spreads targets across ticks (`MAX_TARGETS_PER_TICK` in `lib/cron/schedule.ts`) instead of firing them together. The scheduled fleet is currently paused before launch (see [the pause decision](../decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md)).
 
-1. **Scheduling delays**: 15-60 minutes common during peak GitHub load
-2. **Silent disabling**: Repositories with no activity for 60 days have scheduled workflows **automatically disabled** without notification
-3. **Connection storms**: 61 cron jobs potentially hitting the database simultaneously. If 5 cron jobs fire within a 1-minute window, each opening 5 connections = 25 connections consumed just by cron
-
-### Approaches
-
-| Approach                                   | Effort  | Cost                     | Reliability                              | Selected?               |
-| ------------------------------------------ | ------- | ------------------------ | ---------------------------------------- | ----------------------- |
-| **A: Keep GitHub Actions, add monitoring** | 1 hour  | $0                       | Medium (delays OK for non-critical jobs) | **Yes (launch)**        |
-| B: Migrate to QStash CRON (Upstash)        | 4 hours | $1/100K messages         | High (HTTP-based, exact scheduling)      | Yes (at 10K users)      |
-| C: Migrate to Vercel Cron (if on Vercel)   | 2 hours | $0 (included)            | High (100 jobs, per-minute)              | If we migrate to Vercel |
-| D: Migrate to Inngest                      | 6 hours | $0 (25K runs/month free) | Very high (retries, fan-out, dashboard)  | At 50K users            |
-
-### For Now
-
-1. Add a "last successful run" timestamp check for critical crons
-2. Set up GitHub Actions failure notifications (email + Slack/Discord webhook)
-3. Push a commit to the repo at least monthly to prevent auto-disabling
-4. Stagger cron schedules to avoid simultaneous execution:
-   ```
-   auto-complete:     0 * * * *  (minute 0)
-   tentative-cleanup: 15 * * * * (minute 15)
-   reconcile-slots:   30 * * * * (minute 30)
-   reconcile-payments: 45 * * * * (minute 45)
-   ```
+How a job that did not run is detected: [How we know a job did not run](../start-here/08-how-we-know-a-job-did-not-run.md). The alternatives that were compared for a later move off the ticker are in [Background jobs and cron options](./03-background-jobs-and-cron-options.md).
 
 ---
 
@@ -767,7 +743,7 @@ npx prisma migrate deploy
 - [ ] Implement Redis caching for consultant listings (5-min TTL)
 - [ ] Cache count() results for admin dashboards
 - [ ] Batch payout processing (B2-3)
-- [ ] Migrate critical crons from GitHub Actions to QStash/Vercel Cron
+- [x] Move scheduled jobs off GitHub Actions (done: the Netlify ticker owns every registered job)
 - [ ] Add distributed locking for overlapping cron jobs
 - [ ] Implement signed URL caching for file downloads
 
@@ -913,7 +889,7 @@ npx prisma migrate deploy
 | Serverless concurrency         | Vercel Pro handles 1,000 concurrent. Enterprise for more. | Not a blocker                  |
 | Indian network conditions      | Set Mumbai region + lazy-load heavy SDKs.                 | Easy fixes                     |
 | Message queue                  | Not needed until 10K users. QStash when ready.            | Deferred                       |
-| GitHub Actions crons           | Unreliable at scale. Migrate to QStash/Vercel Cron later. | Manageable                     |
+| GitHub Actions crons           | Retired: the Netlify ticker is the only scheduler.        | Resolved                       |
 
 **No Kafka, RabbitMQ, or complex infrastructure needed at launch.** The app's current architecture (serverless + managed services) scales to 100K users with staged compute upgrades and the code fixes listed above. At 1M users, consider dedicated infrastructure.
 

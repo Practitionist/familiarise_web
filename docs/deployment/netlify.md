@@ -16,7 +16,7 @@
 5. [The BetterAuth / "Invalid Origin" Incident](#the-betterauth--invalid-origin-incident)
 6. [Netlify CLI Setup](#netlify-cli-setup)
 7. [DNS Architecture on Netlify](#dns-architecture-on-netlify)
-8. [Setting Up dev.familiarisenow.com](#setting-up-devfamiliariseonowcom)
+8. [Setting Up dev.familiarisenow.com](#setting-up-devfamiliarisenowcom)
 9. [GCP OAuth Configuration](#gcp-oauth-configuration)
 10. [The `netlify.toml` File](#the-netlifytoml-file)
 11. [Deployment Workflow](#deployment-workflow)
@@ -1042,13 +1042,9 @@ Before discovering the true root cause inside `NextNodeServer`, we ran four rigo
 - **Why this fooled both us and Netlify Support (Ticket `#1112198`):** Because `probe-bare/route.ts` had zero imports of its own, both we and Netlify's support engineer concluded the application could not possibly be executing code during that 26-second gap, attributing it to _"contention in Netlify's shared AWS Lambda account pool in `ap-southeast-1`"_.
 - **What was actually happening during that 26-second gap (discovered in `#1972`):** `NextNodeServer`'s constructor had kicked off an **unawaited background promise** (`this.unstable_preloadEntries()`) that was synchronously executing **1.67 million `webpackRequire` calls across all 606 routes** on the single-threaded Node.js event loop right in the middle of `probe-bare`'s `setTimeout` loop!
 
-##### Experiment 4: Scheduled Keep-Warm Pingers (`keep-warm.mts`, PR `#1685`)
+##### Experiment 4: Scheduled keep-warm pingers
 
-- **Hypothesis:** Firing 3 parallel keep-warm requests every 4 minutes will keep 3 Lambda containers warm in `ap-southeast-1` (where idle containers are reclaimed after ~5 minutes).
-- **What we observed:**
-  1. Any time a deploy happened or traffic exceeded 3 concurrent requests, new cold instances still stalled for ~28–34s.
-  2. Lambda bills wall-clock duration from init to response: across a 12-hour production sample, just 3 cold-start stalls accounted for **63% of total billed GB-hours**.
-- **Verdict:** **Retired and deleted.**
+- **Verdict:** **Retired and deleted.** The cold-start stall was not a container-warmth problem; the narrative is under [Deprecated & Superseded Approaches](#deprecated--superseded-approaches).
 
 ---
 
@@ -1412,7 +1408,7 @@ During the 6-week investigation of `#1124`, a recurring question was: _"Would mo
    - **Shared `waitUntil` lifecycle:** Background work scheduled via `after()` / `waitUntil()` shares the existing warm Fluid instance rather than keeping a dedicated single-request Lambda slot occupied.
    - **Regional proximity to Mumbai (`bom1`):** Vercel offers `bom1` (Mumbai, ~2–5 ms RTT to Supabase `ap-south-1`), whereas Netlify's closest region is `sin` (Singapore, `ap-southeast-1`, ~55–70 ms RTT per sequential SQL round trip).
 
-#### C. Verify/Falsify Breakdown #3: Why `cron-tick.mts` Errored During the Outage vs. Why `keep-warm.mts` Was Deleted in PR `#1972`
+#### C. Verify/Falsify Breakdown #3: Why `cron-tick.mts` Errored During the Outage
 
 1. **Did `cron-tick.mts` cause the `2026-10-03` outage? No — `cron-tick.mts` was the victim and canary detector:**
    - `netlify/functions/cron-tick.mts` is a tiny, zero-dependency Scheduled Function (`339 KB`) that runs every 5 minutes and sends HTTP `POST` requests to `${baseUrl}/api/cleanup/<target>?limit=N` with a `15s–20s` `AbortController` timeout.
@@ -1423,10 +1419,7 @@ During the 6-week investigation of `#1124`, a recurring question was: _"Would mo
    - **Cause 2 (`#1634` — Missing `CRON_SECRET` in `production` Context):** `CRON_SECRET` was set in `deploy-preview` only, causing production ticks to fail with `401` for 9 days. Fixed by setting `CRON_SECRET` in `--context production` and adding `alertMissingSecret()` fatal Sentry page.
    - **Cause 3 (`#1686` — Returning HTTP `500` Triggered 3× Immediate Netlify Retries):** Whenever a target returned `500` (e.g., UUID-shaped seed payment intents in `reconcile-payment-status`), `cron-tick.mts` returned `500`, which caused Netlify's scheduler to immediately re-invoke `cron-tick.mts` **3 times in ~10 seconds**, tripling downstream load and exhausting the Upstash 500k Redis command cap. Fixed by making `statusFor()` always return HTTP `200` and moving cron locks from Upstash Redis to Postgres (`SystemJobExecution`).
    - **Cause 4 (`#1926` — Unstaggered `:00` / `:30` Stampede Against the 30s Scheduled Function Cap):** Firing all 23 targets simultaneously at `:00` and `:30` (and 0 targets at `:05`, `:25`, `:35`, `:55`) overwhelmed PgBouncer and the 30s Scheduled Function timeout. Fixed by adding `TARGET_OFFSET_MINUTES` (`0`, `5`, `10`) so every 5-minute tick fires only **7–8 targets**.
-3. **Why `netlify/functions/keep-warm.mts` Was Deleted in PR `#1972`:**
-   - We discovered during the `#1972` audit that `netlify/functions/keep-warm.mts` (`schedule: "*/4 * * * *"`) and `__tests__/maintenance/keep-warm.test.ts` were **still committed in git and actively running in production**, firing 3 parallel requests every 4 minutes = **1,080 invocations/day = 32,400 invocations/month** (~26% of Netlify Pro's 125,000 monthly invocation allowance) against `/api/perf/probe-bare`.
-   - Worse, before `#1972` fixed `preloadEntriesOnStart`, whenever `keep-warm.mts` hit a cold container after a deploy, it triggered 3 parallel 28–38s preloads that billed ~90 GB-seconds of Lambda duration every 4 minutes!
-   - With `preloadEntriesOnStart: false` (`#1972`) reducing cold starts to **`0.97–1.90s`** (`33 MB` V8 heap), keeping containers warm with synthetic pings is completely unnecessary. Both `netlify/functions/keep-warm.mts` and `__tests__/maintenance/keep-warm.test.ts` were deleted in PR `#1972` (and guarded by `__tests__/lib/next-config-preload.test.ts` so they cannot be accidentally reintroduced).
+3. **There is no keep-warm pinger.** Cold starts are fixed at the source (`preloadEntriesOnStart: false`), so no scheduled function warms containers; the retired pinger is recorded under [Deprecated & Superseded Approaches](#deprecated--superseded-approaches).
 
 ---
 
@@ -1441,7 +1434,7 @@ A cross-industry survey of production Next.js 15 App Router teams running on AWS
   1. `outputFileTracingExcludes` to strip `.next/server/**/*.map`, `sharp`/`@img/*` (when using an edge image CDN like Netlify Image CDN or CloudFront/Imgix), and build-time compilers (`typescript`, `esbuild`, `webpack`, `terser`).
   2. `serverExternalPackages` + `experimental.optimizePackageImports` to prevent barrel libraries (`lucide-react`, `@radix-ui/*`, `date-fns`, `recharts`) and server SDKs (`@novu/api`, `stripe`, `razorpay`, `@stream-io/node-sdk`) from bloating webpack server chunks.
   3. **Function Splitting (OpenNext / SST):** Very large SaaS monorepos on raw AWS Lambda use OpenNext's function splitting to route heavy subsystems (e.g., PDF generation or admin reporting) to dedicated Lambda functions with their own memory/timeout budgets, keeping the primary SSR handler lightweight.
-- **Why Keep-Warm Pingers Are an Industry Anti-Pattern:** Cloud and serverless engineering teams treat cron-based "warmer pings" (`keep-warm.mts`) as an anti-pattern once cold start is $< 1.5\text{s}$:
+- **Why Keep-Warm Pingers Are an Industry Anti-Pattern:** Cloud and serverless engineering teams treat cron-based "warmer pings" as an anti-pattern once cold start is $< 1.5\text{s}$:
   - A pinger that fires 3 requests every 4 minutes only warms 3 containers; the 4th concurrent user still gets a cold start, and every deploy invalidates all warm containers anyway.
   - It burns tens of thousands of billed function invocations per month and pollutes function logs/metrics.
   - If cold starts exceed 2 seconds in Node.js, the root cause is almost always synchronous initialization work (`preloadEntriesOnStart`, eager SDK instantiation, or synchronous crypto/WASM loading) rather than the cloud provider's container allocation. (For mission-critical sub-100ms APIs on raw AWS Lambda, teams use native **AWS Lambda Provisioned Concurrency** or **Vercel Fluid Compute**, not self-pinging crons.)
@@ -1460,7 +1453,7 @@ When a Next.js SaaS outgrows simple in-request `await` calls, production enginee
 ##### 3. Incident & Hotfix PR Hygiene: When to Bundle Cleanup vs. Split PRs
 
 - **General Rule:** During an active P0 outage, keep the hotfix PR as small and surgical as possible so reviewers can verify it in seconds and roll it back cleanly if needed.
-- **Exception (Applied in PR `#1972`):** When a temporary operational workaround (`netlify/functions/keep-warm.mts`, firing 32,400 invocations/month) was introduced _solely_ to mask the exact bug fixed by the hotfix (`#1124` cold-start stall), has **zero imports or coupling** with application runtime code, and is already documented as retired in the same PR, deleting the dead scheduled function in the same PR prevents burning 1,080 wasted invocations/day between merge and a follow-up cleanup PR while keeping git history and documentation 100% consistent.
+- **Exception:** When a temporary workaround exists solely to mask the bug a hotfix fixes, has no coupling with application runtime code and is already documented as retired, delete it in the same PR so it does not keep burning invocations until a follow-up cleanup lands.
 
 ---
 
@@ -1469,9 +1462,9 @@ When a Next.js SaaS outgrows simple in-request `await` calls, production enginee
 The following approaches were previously tested or deployed on Netlify and have been permanently superseded. Do not re-introduce them:
 
 - **Default `preloadEntriesOnStart: true` & `appDocumentPreloading: true` on Serverless (`#1124`, `#1972`)**: Next.js 15 defaults both flags to `true`, which caused `NextNodeServer` (running with `minimalMode: false` under `@netlify/plugin-nextjs` v5) to eagerly `webpackRequire` all 606 routes on every cold Lambda start — stalling the event loop for 20–34s and eventually crossing Node 22's 512 MB V8 old-space heap cap (`504 Inactivity Timeout`). Permanently disabled in `next.config.mjs` and guarded by `__tests__/lib/next-config-preload.test.ts`.
-- **Scheduled Keep-Warm Pinger (`netlify/functions/keep-warm.mts` & `KEEP_WARM_CONCURRENCY`)**: Previously ran every 4 minutes (3 parallel pings = 32,400 invocations/month against `/api/perf/probe-bare`) to keep 3 Next.js Lambda containers warm while `#1124`'s cold-start stall was misattributed to AWS Lambda `ap-southeast-1` container provisioning. Both `netlify/functions/keep-warm.mts` and `__tests__/maintenance/keep-warm.test.ts` were permanently deleted in PR `#1972` once disabling `preloadEntriesOnStart` reduced cold starts across 12-way bursts to `0.97–1.90s` (guarded by `__tests__/lib/next-config-preload.test.ts`).
+- **Scheduled Keep-Warm Pinger (`keep-warm.mts` & `KEEP_WARM_CONCURRENCY`)**: Previously ran every 4 minutes (3 parallel pings = 32,400 invocations/month against `/api/perf/probe-bare`) to keep 3 Next.js Lambda containers warm while `#1124`'s cold-start stall was misattributed to AWS Lambda `ap-southeast-1` container provisioning. Both `keep-warm.mts` and its test were permanently deleted in PR `#1972` once disabling `preloadEntriesOnStart` reduced cold starts across 12-way bursts to `0.97–1.90s` (guarded by `__tests__/lib/next-config-preload.test.ts`).
 - **2048 MB Per-Function Memory Overrides in `netlify.toml`**: Tested via A/B deployment to mitigate cold-instance stalls; raising Lambda memory to 2048 MB doubled GB-hour billing without preventing `NextNodeServer`'s 606-route preload stall.
-- **Standalone Background Function for Ledger Reconciliation (`netlify/functions/reconcile-ledgers-background.mts`)**: Previously used a 15-minute Netlify Background Function with multi-step database cursors (`advanceReconcileRun`, `ReconcileCursorState`) because row-by-row JS reconciliation timed out at the ~26 s edge cap (and Background Functions silently do not run on deploy previews). Superseded by rewriting `runLedgerReconciliation` (`scripts/reconcile/reconcile-ledgers.ts`) into 5 set-based SQL `GROUP BY` queries that complete in milliseconds inside standard Route Handlers (`/api/cleanup/reconcile-ledgers` and `/api/admin/reconcile-ledgers`).
+- **Standalone Background Function for Ledger Reconciliation (`reconcile-ledgers-background.mts`)**: Previously used a 15-minute Netlify Background Function with multi-step database cursors (`advanceReconcileRun`, `ReconcileCursorState`) because row-by-row JS reconciliation timed out at the ~26 s edge cap (and Background Functions silently do not run on deploy previews). Superseded by rewriting `runLedgerReconciliation` (`scripts/reconcile/reconcile-ledgers.ts`) into 5 set-based SQL `GROUP BY` queries that complete in milliseconds inside standard Route Handlers (`/api/cleanup/reconcile-ledgers` and `/api/admin/reconcile-ledgers`).
 - **41 Standalone Per-Job GitHub Actions Cron YAML Files & 50 `/api/cleanup/<job>/route.ts` Route Wrappers**: Previously each scheduled sweep had its own `.github/workflows/<job>.yml` file, `jobs/<domain>/<job>.ts` wrapper, and individual `/api/cleanup/<job>/route.ts` folder. Consolidated into a single dynamic route (`app/api/cleanup/[job]/route.ts` backed by `lib/cron/cleanup-registry.ts`), and `netlify/functions/cron-tick.mts` for every schedule. (The three tiered GitHub Actions workflows that followed `cron-intra-day.yml`, `cron-daily.yml` and `cron-weekly.yml` were later deleted.)
 
 > **See Also**: [Lighthouse Audit & Core Web Vitals Playbook](../performance/05-lighthouse-audit-and-cwv-playbook.md) for client-side Core Web Vitals (LCP, TBT, CLS), `next/image` `remotePatterns` governance, lazy Sentry client SDK loading (`instrumentation-client.ts`), and application/platform anti-runaway billing guardrails (`#1973`).

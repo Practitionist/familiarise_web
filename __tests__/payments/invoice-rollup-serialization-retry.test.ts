@@ -44,10 +44,6 @@ jest.mock("../../lib/enterprise/system-events", () => {
   };
 });
 
-jest.mock("../../lib/maintenance-cron", () => ({
-  abortIfMaintenance: jest.fn(),
-}));
-
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));

@@ -5,7 +5,7 @@ type: reference
 
 # Job-runtime experiments, 2026-10-31
 
-This folder is the index to the raw reports from the throwaway experiments that tested how background jobs behave on different runtimes. The reading guide and the comparison matrix are in [Background-job runtime options](../../14-background-job-runtime-options.md). The decision context and the open questions are in [Job-runtime experiments (evidence record)](../../../decisions/2026-10-31-job-runtime-experiments.md). Agents read the short versions in `.claude/skills/maintenance/references/job-runtime-options.md` and `.claude/skills/deployment/netlify/job-runtime-options.md`.
+This folder is the index to the raw reports from the throwaway experiments that tested how background jobs behave on different runtimes. The reading guide and the comparison matrix are in [Background-job runtime options](../../14-background-job-runtime-options.md). The decision context and the open questions are in [Job-runtime experiments (evidence record)](../../../decisions/2026-10-31-job-runtime-experiments.md). Agents read the short versions in `.claude/skills/jobs/references/job-runtime-options.md` and `.claude/skills/deployment/netlify/job-runtime-options.md`.
 
 ## 1. Method
 
@@ -13,7 +13,7 @@ The method was the same for every experiment.
 
 - Each experiment ran in its own scratch directory outside the repository, with credentials supplied through environment variables only.
 - Every probe measured the same things where it could: connect time, 50 sequential `SELECT 1` round trips (median and p95), a 20-query read mix, and a ten-round-trip row-lock hold (`SELECT … FOR UPDATE`, eight statements, `COMMIT`) on a scratch table. The lock-hold shape is the same everywhere so that the runtimes are comparable.
-- Database work used schemas named `lab_*` on the shared Supabase project (Mumbai, `ap-south-1`), dropped at the end of each run. The shared project holds mock data only, and these runs were owner-authorised. Each report ends with a cleanup proof. A rerun defaults to a local or separate disposable database (see the rerun steps in `.claude/skills/maintenance/references/job-runtime-options.md`).
+- Database work used schemas named `lab_*` on the shared Supabase project (Mumbai, `ap-south-1`), dropped at the end of each run. The shared project holds mock data only, and these runs were owner-authorised. Each report ends with a cleanup proof. A rerun defaults to a local or separate disposable database (see the rerun steps in `.claude/skills/jobs/references/job-runtime-options.md`).
 - The Netlify and Vercel probes pinned the function region (`ap-southeast-1` and `bom1`) and confirmed it at runtime from inside the function.
 - Library and CLI versions are recorded in every report, because the queue libraries and the Inngest SDK change defaults between releases.
 - Raw `pg` was used for latency probes, so the numbers exclude Prisma.

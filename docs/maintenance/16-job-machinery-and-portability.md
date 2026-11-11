@@ -19,7 +19,7 @@ The table lists the job machinery by file group. The line counts were taken with
 | `lib/cron/cleanup-route.ts`, `with-cron-lock.ts`, `run-record.ts`, `run-outcome.ts`, `run-context.ts`, `run-counters.ts`, `job-outcome.ts`, `cron-lock-errors.ts`, `cas-notice.ts`, `failure-streak.ts`, `dispatch-refusal.ts`, `run-display.ts` | 1,656 (12 files) | Lease, run rows, outcomes, counters and refusal rules. This is correctness and observability | Needed on every host                            | Keep                   |
 | `lib/cron/run-deadline.ts`, `dispatch-background.ts`, `background-worker.ts`, `netlify/functions/recording-transfer-background.mts`, `netlify/functions/stream-maintenance-background.ts`                                                        |    324 (5 files) | Per-run deadlines and hand-off to Netlify Background Functions                               | Netlify's time limits                           | Removed if limits lift |
 
-The registry job count is about 76. The registry carries 77 `@cleanup-twin` markers and the generated cron reference is the source for the exact figure.
+The registry holds every registered job; the generated cron reference (`docs/maintenance/04-cron-jobs-reference.md`) is the source for the exact figure.
 
 ## 2. What a move to Vercel removes
 

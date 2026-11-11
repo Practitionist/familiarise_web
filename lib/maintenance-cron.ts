@@ -5,7 +5,6 @@
 import redis from "@/lib/redis";
 import { z } from "zod";
 import { REDIS_KEYS } from "@/lib/maintenance-keys";
-import { flushJobSentry } from "@/lib/observability/job-sentry";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 import { FINANCIAL_JOB_NAMES } from "@/lib/cron/financial-jobs";
 
@@ -46,8 +45,8 @@ let phaseCachedValue: string | null = null;
 let phaseCacheHasValue = false;
 
 /**
- * Read `maintenance:phase` from Redis with a 60s success cache (5s failure cache).
- * Pass `{ bypassCache: true }` for uncached reads on admin/money-gate paths.
+ * Read `maintenance:phase` from Redis with a 60s success cache, falling back to
+ * the Postgres window for 5s when Redis fails. `bypassCache` forces a fresh read.
  */
 export async function readMaintenancePhase(
   jobName = "maintenance",
@@ -71,12 +70,13 @@ export async function readMaintenancePhase(
     phaseCacheTtlMs = PHASE_CACHE_MS;
     return phase;
   } catch (error) {
+    const fallback = await readPhaseFromPostgres();
     console.warn(
-      `[${jobName}] Could not check maintenance state (Redis error: ${
+      `[${jobName}] Could not read maintenance state from Redis (${
         error instanceof Error ? error.message : String(error)
-      }) — refusing mutation`,
+      }) — ${fallback === null ? "refusing mutation" : `using Postgres phase ${fallback}`}`,
     );
-    phaseCachedValue = null;
+    phaseCachedValue = fallback;
     phaseCacheHasValue = true;
     phaseCachedAt = now;
     phaseCacheTtlMs = PHASE_FAILURE_CACHE_MS;
@@ -85,6 +85,22 @@ export async function readMaintenancePhase(
       error instanceof Error ? error : new Error(String(error)),
       { subsystem: "maintenance", expected: false },
     );
+    return fallback;
+  }
+}
+
+// The MaintenanceWindow row is the truth Redis mirrors, so a Redis outage reads
+// it directly; null (refuse) only when Postgres cannot answer either.
+async function readPhaseFromPostgres(): Promise<string | null> {
+  try {
+    const { default: prisma } = await import("@/lib/prisma");
+    const row = await prisma.maintenanceWindow.findFirst({
+      where: { organizationId: null, phase: { not: "OFF" } },
+      orderBy: { createdAt: "desc" },
+      select: { phase: true },
+    });
+    return row?.phase ?? "OFF";
+  } catch {
     return null;
   }
 }
@@ -108,32 +124,6 @@ function blockingPhaseFor(
     return "DEGRADED";
   }
   return null;
-}
-
-export async function abortIfMaintenance(jobName: string): Promise<void> {
-  const phase = await readMaintenancePhase(jobName);
-  if (phase === null) throw new MaintenanceUnavailableError();
-  const blocking = blockingPhaseFor(phase, jobName);
-
-  if (blocking === "OFFLINE") {
-    console.log(
-      `[${jobName}] Maintenance mode is OFFLINE — skipping job to protect DB during migration`,
-    );
-  } else if (blocking === "DEGRADED") {
-    console.log(
-      `[${jobName}] Maintenance mode is DEGRADED — skipping financial job to protect payment integrity`,
-    );
-  } else {
-    if (phase === "DEGRADED") {
-      console.log(
-        `[${jobName}] Maintenance mode is DEGRADED — proceeding (non-financial job)`,
-      );
-    }
-    return;
-  }
-
-  await flushJobSentry();
-  process.exit(0);
 }
 
 export async function assertNotInMaintenance(jobName: string): Promise<void> {

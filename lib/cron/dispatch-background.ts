@@ -19,7 +19,7 @@ export async function dispatchBackgroundJob(
   if (jobEnvironment() !== "production") {
     throw new BackgroundDispatchRefusedError(job);
   }
-  const secret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
+  const secret = process.env.CRON_SECRET;
   if (!secret) throw new Error("Stream worker authentication is unconfigured");
   const origin = z
     .string()

@@ -21,14 +21,13 @@ import {
   statusOfOutcome,
   type RunOutcome,
 } from "@/lib/cron/run-outcome";
-import { onNetlify } from "@/lib/runtime-host";
 import { mayWriteProductionState } from "@/lib/production-state";
 
 // Postgres leases prevent overlap; each worker must independently tolerate replay.
 
 export { CronLockHeldError, CronLockUnavailableError };
 
-const DEFAULT_TTL_MS = 15 * 60 * 1000; // workflows set timeout-minutes: 10
+const DEFAULT_TTL_MS = 15 * 60 * 1000;
 /** Payout/reconcile family runs up to 30 min (ADR 05) — lock must outlive it. */
 export const LONG_JOB_TTL_MS = 35 * 60 * 1000;
 
@@ -178,12 +177,12 @@ function tagSentryRun(executionId: string): void {
   }
 }
 
-// Renewal refreshes a live run every ttl/3 (background functions included), so a
-// short lease only shortens how long a killed Netlify run's row blocks the next tick.
-const NETLIFY_MAX_LEASE_MS = 90_000;
+// One cap on every host: a taker judges staleness by its own lease, so hosts
+// sharing the database must agree. Renewal every ttl/3 keeps live runs owned.
+const MAX_LEASE_MS = 90_000;
 
 export function effectiveLeaseTtlMs(ttlMs: number): number {
-  return onNetlify() ? Math.min(ttlMs, NETLIFY_MAX_LEASE_MS) : ttlMs;
+  return Math.min(ttlMs, MAX_LEASE_MS);
 }
 
 export async function withCronLock<T>(

@@ -1,24 +1,8 @@
-#!/usr/bin/env node
-
 /**
- * Release Earnings Script
- *
- * Releases both consultant AND host-organization earnings from their hold
- * period to READY status. Earnings are held for a period after payment so a
- * refund or dispute lands before the money is payable.
- *
- * #1471 — the organization arm used to be missing here, and because every
- * scheduled entry point (the GitHub Actions job, the cleanup HTTP twin, the
- * admin system-jobs runner) imports THIS module, `OrganizationEarnings` rows
- * never left PENDING and a host org's retained share could never be picked up
- * by `createOrgPayoutBatch`, which only selects READY rows.
- *
- * This module exports functions that can be used by:
- * - Local development: `npm run scripts:release-earnings`
- * - GitHub Actions: `jobs/release-earnings.ts`
- * - API routes: Can import and call functions directly
- *
- * Schedule: Runs hourly via GitHub Actions
+ * Releases consultant and host-organisation earnings from their hold to READY,
+ * so a refund or dispute lands before the money is payable. The core of the
+ * `release-earnings` registry job, dispatched only through `/api/cleanup/[job]`
+ * and the admin system-jobs runner.
  */
 
 import { AWAITING_HUMAN, EARNINGS_HOLDING_MISS } from "@/lib/booking/misses";
@@ -29,7 +13,6 @@ import {
   RefundStatus,
 } from "@prisma/client";
 import prisma, { type PrismaLike } from "@/lib/prisma";
-import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 /**
@@ -331,101 +314,4 @@ async function releaseEarningsFromHoldUnlocked(
   }
 
   return result;
-}
-
-/**
- * Get statistics about pending earnings
- */
-export async function getPendingEarningsStats(): Promise<{
-  pendingCount: number;
-  pendingAmount: number;
-  readyCount: number;
-  readyAmount: number;
-}> {
-  const [pending, ready] = await Promise.all([
-    prisma.consultantEarnings.aggregate({
-      where: { status: EarningStatus.PENDING },
-      _sum: { consultantSharePaise: true },
-      _count: true,
-    }),
-    prisma.consultantEarnings.aggregate({
-      where: { status: EarningStatus.READY },
-      _sum: { consultantSharePaise: true },
-      _count: true,
-    }),
-  ]);
-
-  return {
-    pendingCount: pending._count,
-    pendingAmount: sumPaise(pending._sum.consultantSharePaise),
-    readyCount: ready._count,
-    readyAmount: sumPaise(ready._sum.consultantSharePaise),
-  };
-}
-
-/**
- * Run the release task and print stats
- */
-export async function runReleaseTask(): Promise<ReleaseResult> {
-  const startTime = Date.now();
-  console.log(
-    `🚀 Starting earnings release job at ${new Date().toISOString()}`,
-  );
-
-  try {
-    // Get pre-release stats
-    const preStats = await getPendingEarningsStats();
-    console.log(`\n📊 Pre-release Stats:`);
-    console.log(
-      `   ⏳ Pending: ${preStats.pendingCount} earnings (₹${(preStats.pendingAmount / 100).toFixed(2)})`,
-    );
-    console.log(
-      `   ✅ Ready: ${preStats.readyCount} earnings (₹${(preStats.readyAmount / 100).toFixed(2)})`,
-    );
-
-    // Run release
-    const result = await releaseEarningsFromHold();
-
-    // Get post-release stats
-    const postStats = await getPendingEarningsStats();
-    console.log(`\n📊 Post-release Stats:`);
-    console.log(
-      `   ⏳ Pending: ${postStats.pendingCount} earnings (₹${(postStats.pendingAmount / 100).toFixed(2)})`,
-    );
-    console.log(
-      `   ✅ Ready: ${postStats.readyCount} earnings (₹${(postStats.readyAmount / 100).toFixed(2)})`,
-    );
-
-    const duration = (Date.now() - startTime) / 1000;
-    console.log(`\n⏱️ Job completed in ${duration.toFixed(2)} seconds`);
-
-    return result;
-  } finally {
-    await prisma.$disconnect();
-  }
-}
-
-/**
- * Disconnect from the database
- */
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
-}
-
-// Run the release if this script is executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runReleaseTask()
-    .then((result) => {
-      if (result.success) {
-        console.log("🎉 Earnings release job completed successfully");
-        process.exit(0);
-      } else {
-        console.error("❌ Earnings release job completed with errors");
-        process.exit(1);
-      }
-    })
-    .catch((error) => {
-      console.error("💥 Earnings release job failed:", error);
-      process.exit(1);
-    });
 }

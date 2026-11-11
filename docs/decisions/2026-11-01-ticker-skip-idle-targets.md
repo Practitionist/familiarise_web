@@ -62,7 +62,7 @@ Together these 36 jobs account for about 5,170 dispatches a month. The low-frequ
   - `lib/backoffice/job-run-metrics.ts`, last success and missed window, plus a 7-day `idleSkips` count shown as the "Idle skips" column in `components/dashboard/backoffice/JobRunMetrics.tsx`;
   - `app/api/health/route.ts`, where `readLatestCompletedCronExecutionAt` counts a claim row with `idleCount > 0` as liveness, because a bare claim proves only that the ticker fired.
 - **Generated reference.** `scripts/maintenance/generate-cron-reference.ts` adds an "Idle probe" column to `docs/maintenance/04-cron-jobs-reference.md`.
-- **Adding a job** now means writing the probe from the claim predicate, or stating why it always runs. See `.claude/skills/maintenance/references/cron-ticker.md`.
+- **Adding a job** now means writing the probe from the claim predicate, or stating why it always runs. See `.claude/skills/jobs/references/cron-ticker.md`.
 
 ## Billing rationale
 

@@ -235,7 +235,3 @@ export async function sweepVerification(
     };
   });
 }
-
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
-}

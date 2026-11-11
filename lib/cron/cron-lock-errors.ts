@@ -29,7 +29,7 @@ export class CronLockHeldError extends Error {
  *
  * Deliberately NOT a subclass of CronLockHeldError: a job that cannot obtain a
  * lock has not been skipped by a healthy sibling, it has failed, and it must
- * still page. `runJobWithSentry` only treats CronLockHeldError as a skip.
+ * still page. Only CronLockHeldError is treated as a skip.
  */
 export class CronLockUnavailableError extends Error {
   readonly code = "CRON_LOCK_UNAVAILABLE" as const;

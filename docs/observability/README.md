@@ -9,14 +9,16 @@ last-reviewed: 2026-10-27
 
 # Observability
 
+> **Status (pre-launch).** The scheduled job fleet is paused: the Upstash key `ops:active_cron_platform` is set to `paused-prelaunch`, so every tick of `netlify/functions/cron-tick.mts` returns before running a job, and the monitors that watch the fleet are paused or disabled with it (see [the pause decision](../decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md)). Read the live-monitor descriptions below as the design that applies once the fleet is resumed; the resume step is the first item of the [go-live skill](../../.claude/skills/go-live/SKILL.md). Jobs can still be run by hand from the System Jobs page.
+
 This folder explains how the platform learns that something went wrong and how a person finds out why. Start with the system design, which sets out the three questions an operator asks and which tool answers each one. The Sentry set then covers the error-tracking layer in depth.
 
 ## Start here
 
-| Document                                     | Type        | Read it when                                                                                                            |
-| -------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------- |
-| [00-system-design.md](./00-system-design.md) | explanation | You need the whole picture: signal sources and sinks, the three layers, quota rules and ticker failure escalation.      |
-| [three-layers.md](./three-layers.md)         | explanation | You need to trace one payment or booking, or read the per-job run metrics. The page is not on `dev` until #2422 merges. |
+| Document                                     | Type        | Read it when                                                                                                       |
+| -------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------ |
+| [00-system-design.md](./00-system-design.md) | explanation | You need the whole picture: signal sources and sinks, the three layers, quota rules and ticker failure escalation. |
+| [three-layers.md](./three-layers.md)         | explanation | You need to trace one payment or booking, or read the per-job run metrics.                                         |
 
 ## Ownership and research
 

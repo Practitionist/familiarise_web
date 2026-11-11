@@ -844,7 +844,3 @@ async function detectConsultantNoShowsUnlocked(
     timestamp: new Date().toISOString(),
   };
 }
-
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
-}

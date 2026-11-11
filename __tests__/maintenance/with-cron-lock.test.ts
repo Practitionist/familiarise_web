@@ -148,16 +148,14 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
     expect(fn).not.toHaveBeenCalled();
   });
 
-  it("honours a custom TTL: a heartbeat inside it holds, one past it is swept", async () => {
+  it("judges a long job's heartbeat against the capped lease: inside it holds, past it is swept", async () => {
     const heartbeat = (ageMs: number) => ({
       id: "exec-old",
       startedAt: new Date(Date.now() - ageMs),
       createdAt: new Date(Date.now() - ageMs - 60_000),
       result: { environment: "preview" },
     });
-    delegate.findFirst.mockResolvedValueOnce(
-      heartbeat(LONG_JOB_TTL_MS - 5_000),
-    );
+    delegate.findFirst.mockResolvedValueOnce(heartbeat(90_000 - 5_000));
     await expect(
       withCronLock(
         "create-payout-batch",
@@ -166,9 +164,7 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
       ),
     ).rejects.toBeInstanceOf(CronLockHeldError);
 
-    delegate.findFirst.mockResolvedValueOnce(
-      heartbeat(LONG_JOB_TTL_MS + 5_000),
-    );
+    delegate.findFirst.mockResolvedValueOnce(heartbeat(90_000 + 5_000));
     await withRunContext({ triggeredBy: "cron" }, async () => {
       await withCronLock(
         "create-payout-batch",
@@ -199,20 +195,15 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
       },
     });
     // Duration runs from the swept row's acquisition, not its last heartbeat.
-    expect(sweep.data.durationMs).toBeGreaterThanOrEqual(
-      LONG_JOB_TTL_MS + 65_000,
-    );
+    expect(sweep.data.durationMs).toBeGreaterThanOrEqual(90_000 + 65_000);
   });
 
-  it("caps the lease to 90 s on Netlify and leaves other hosts alone", () => {
-    process.env.NETLIFY = "true";
+  it("caps the lease to 90 s on every host so takers agree on staleness", () => {
     expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(90_000);
     expect(effectiveLeaseTtlMs(30_000)).toBe(30_000);
-    delete process.env.NETLIFY;
-    process.env.SITE_ID = "site";
+    process.env.NETLIFY = "true";
     expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(90_000);
-    delete process.env.SITE_ID;
-    expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(LONG_JOB_TTL_MS);
+    delete process.env.NETLIFY;
   });
 
   it("re-arms the lease every third of the TTL while the job runs and computes durationMs from initial acquisition", async () => {
@@ -224,19 +215,19 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
         { failMode: "closed", ttlMs: 30 * 60 * 1000 },
         () => new Promise<void>((resolve) => (finish = resolve)),
       );
-      await jest.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
+      await jest.advanceTimersByTimeAsync(30_000 + 1);
       expect(delegate.updateMany).toHaveBeenCalledWith({
         where: { id: "exec-1", status: "RUNNING" },
         data: { startedAt: expect.any(Date) },
       });
-      await jest.advanceTimersByTimeAsync(5 * 60 * 1000);
+      await jest.advanceTimersByTimeAsync(15 * 60 * 1000);
       finish();
       await running;
       const renewals = delegate.updateMany.mock.calls.length;
       await jest.advanceTimersByTimeAsync(60 * 60 * 1000);
       expect(delegate.updateMany).toHaveBeenCalledTimes(renewals);
 
-      // Total elapsed time is ~15 minutes (900_000 ms), not ~5 minutes since the 10-min renewal.
+      // Duration runs from acquisition (~15 min), not from the last 30 s renewal.
       const finishArgs = delegate.updateMany.mock.calls.find(
         ([args]) => args.data.endedAt && args.where.id,
       )[0];

@@ -19,7 +19,7 @@ Inputs read: `AGENTS.md` rules 1–4, `docs/decisions/2026-10-30-architecture-at
 
 1. **The Netlify ticker is not the problem at pre-launch volume.** It was measured healthy: 446 ticks in 36 h, 0.07% blips, p99 15 s against the 30 s cap, no lock contention (#2466 §0). It costs $0.
 2. **What breaks first is the database path, and user traffic breaks it, not jobs.** The break comes at roughly 300–500 concurrent active users, from the 200 pooler clients on Nano/Micro, one connection per Lambda and about 95 ms per statement. The ticker adds 9–10 clients for a few seconds every 5 minutes, which is about 5% of the cap (#2466 §3.2, §3.4).
-3. **Job count does not scale with users.** About 2,850 runs/day is set by cadence (65 targets on fixed intervals). More users make each slice heavier but do not add runs. "10×" only happens if you go event-driven (one job per state change) or tighten cadences.
+3. **Job count does not scale with users.** About 2,850 runs/day is set by cadence (every registered job runs on a fixed interval). More users make each slice heavier but do not add runs. "10×" only happens if you go event-driven (one job per state change) or tighten cadences.
 4. **No job SaaS (Inngest, Trigger.dev, QStash, Hatchet, Temporal) fixes the 95 ms.** They all call back into your code. Your code still runs on Netlify in Singapore unless you also move it to Mumbai compute, and none of them hosts compute in Mumbai.
 5. **The only thing that fixes job latency is running job code in Mumbai.** For jobs alone that costs **$7–20 a month**, not $100–440: one small always-on box, or one managed jobs-only deployment in Mumbai, wired into the existing `ops:active_cron_platform` switch. Netlify stays as the failback, which is what AGENTS rule 4 already describes.
 6. **Nothing short of moving the web tier fixes user-facing latency.** What raises the user ceiling cheaply is the database, not the scheduler: Supabase Pro plus the right compute size (Small doubles pooler clients to 400 for about $15) and fewer statements per route.
@@ -132,7 +132,7 @@ Legend for the "95 ms fixed?" column: **Yes** means the job code runs in Mumbai,
 ### D. Inngest
 
 - **Pricing.** Every run and every step counts ("a function with 5 `step.run()` calls uses 6 executions"). Our 85k runs a month exceed the Free 50k, and Free _pauses_ at the quota rather than billing. That makes it unsafe for payouts and reconcilers. **Pro starts at $99/mo** for 1M executions.
-- **Fit.** It needs an `app/api/inngest` route served from Netlify, so the same latency remains.
+- **Fit.** It needs an Inngest route (an `api/inngest` handler under `app/`, not present in this repo) served from Netlify, so the same latency remains.
 
 ### E. Trigger.dev
 
@@ -142,7 +142,7 @@ Legend for the "95 ms fixed?" column: **Yes** means the job code runs in Mumbai,
   - Plans: Free ($5 credit, 10 schedules), Hobby ($10, 100 schedules), Pro ($50).
 - **Calculation.** A task that only `fetch`es our door and waits about 2 s costs about $5/mo at V1, so Hobby at $10. At V10 it is about $51/mo. This is an ESTIMATE.
 - **Regions.** I found three AWS regions, US and EU, and no Mumbai. Running our job _code_ on Trigger compute would therefore be slower than Netlify, not faster.
-- **Self-hosting.** It is a multi-service stack (webapp with Postgres and Redis, plus a worker supervisor). The cloud-only features listed are warm starts, auto-scaling and checkpoints. Too heavy for 76 short sweeps.
+- **Self-hosting.** It is a multi-service stack (webapp with Postgres and Redis, plus a worker supervisor). The cloud-only features listed are warm starts, auto-scaling and checkpoints. Too heavy for short sweeps.
 - **Real user.** Cal.com runs booking orchestration and calendar syncs on Trigger.dev.
 
 ### F/G. Temporal and Hatchet
@@ -152,7 +152,7 @@ Legend for the "95 ms fixed?" column: **Yes** means the job code runs in Mumbai,
   - Pay-as-you-go starts at $50 per million actions, with $150 credit for 90 days.
   - Both Temporal and Hatchet need a long-running worker process that you host. The latency fix comes from _that worker_ being in Mumbai, not from the SaaS.
 - **Hatchet Cloud.** It gives 1M task runs a month free once a card is on file, then $30 per million. Its serverless adapter is documented for Vercel, not Netlify.
-- **Verdict.** You would pay the worker cost _and_ learn a workflow model. For 76 idempotent, cursor-based sweeps this buys nothing over the existing lease plus slices.
+- **Verdict.** You would pay the worker cost _and_ learn a workflow model. For idempotent, cursor-based sweeps this buys nothing over the existing lease plus slices.
 
 ### H. Vercel, jobs-only, in `bom1`
 

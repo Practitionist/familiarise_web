@@ -1,6 +1,6 @@
 # Hosting facts for background-job runtimes
 
-Platform facts measured or read on 2026-10-31 to 2026-11-01. The facts about the queue and scheduler libraries are in `.claude/skills/maintenance/references/job-runtime-options.md`. Depth, diagrams and sources: `docs/maintenance/14-background-job-runtime-options.md`.
+Platform facts measured or read on 2026-10-31 to 2026-11-01. The facts about the queue and scheduler libraries are in `.claude/skills/jobs/references/job-runtime-options.md`. Depth, diagrams and sources: `docs/maintenance/14-background-job-runtime-options.md`.
 
 ## Current decision
 

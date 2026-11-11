@@ -12,7 +12,6 @@ import {
 import { adminActorId } from "@/lib/cron/run-context";
 import { reportConfigSkip, type ConfigSkip } from "@/lib/cron/config-skip";
 import type { JobCategory } from "@/lib/cron/job-categories";
-import { reportSentryError } from "@/lib/observability/report";
 import type { FrozenWallet } from "@/lib/payments/wallet-freeze";
 import type { Tx } from "@/lib/prisma";
 import type {
@@ -259,7 +258,6 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           const {
             cleanupAbandonedPayments,
             cleanupExpiredApprovalPendingPayments,
-            disconnectDatabase,
             remindApprovalPaymentsDue,
           } = await import("@/scripts/payments/cleanup-abandoned-payments");
           const limit = parseLimitParam(req);
@@ -271,41 +269,26 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
                   const second = Math.ceil((limit - first) / 2);
                   return [first, second, limit - first - second];
                 })();
-          try {
-            const paymentResult = await cleanupAbandonedPayments({
-              limit: perPass[0],
+          const paymentResult = await cleanupAbandonedPayments({
+            limit: perPass[0],
+          });
+          const consultationResult =
+            await cleanupExpiredApprovalPendingPayments({
+              limit: perPass[1],
             });
-            const consultationResult =
-              await cleanupExpiredApprovalPendingPayments({
-                limit: perPass[1],
-              });
-            const reminderResult = await remindApprovalPaymentsDue({
-              limit: perPass[2],
-            });
-            const overallSuccess =
-              paymentResult.success &&
-              consultationResult.success &&
-              reminderResult.success;
-            return {
-              paymentCleanup: paymentResult,
-              consultationCleanup: consultationResult,
-              paymentReminders: reminderResult,
-              overallSuccess,
-            };
-          } finally {
-            try {
-              await disconnectDatabase();
-            } catch (disconnectError) {
-              reportSentryError(disconnectError, {
-                subsystem: "cron",
-                tags: { job: "cleanup-abandoned-payments", task: "disconnect" },
-              });
-              console.error(
-                "Disconnect after abandoned-payments failed:",
-                disconnectError,
-              );
-            }
-          }
+          const reminderResult = await remindApprovalPaymentsDue({
+            limit: perPass[2],
+          });
+          const overallSuccess =
+            paymentResult.success &&
+            consultationResult.success &&
+            reminderResult.success;
+          return {
+            paymentCleanup: paymentResult,
+            consultationCleanup: consultationResult,
+            paymentReminders: reminderResult,
+            overallSuccess,
+          };
         },
         summarize: (r) => ({
           paymentSuccess: r.paymentCleanup.success,
