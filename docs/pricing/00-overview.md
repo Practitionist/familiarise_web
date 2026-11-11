@@ -67,7 +67,7 @@ The public `become-an-expert` page renders both rates from the active schedule t
 
 ### Fee waivers
 
-`ConsultantFeeWaiver` grants an expert a 0% platform fee on their next N sessions, created by the referral program for the referred and the referring expert. A waiver is consumed by compare-and-set in the capture transaction (`consumeFeeWaiver()` in `lib/payments/pricing/platform-fee.ts`). An order that carries a welcome discount or a credit leg does not consume a waiver, because the platform's take must fund that promo. Conversely `takeCannotFundPromo()` in `lib/referrals/attribution.ts` removes the welcome discount and the credit cap from any order whose expert has a live waiver, or belongs to a host organisation while `ENABLE_HOST_ORGS` is on.
+`ConsultantFeeWaiver` grants an expert a 0% platform fee on their next N sessions, created by the referral program for the referred and the referring expert, or by an ADMIN founding-expert grant (`POST /api/admin/referrals/founding-waivers`). A waiver is consumed by compare-and-set in the capture transaction (`consumeFeeWaiver()` in `lib/payments/pricing/platform-fee.ts`). An order that carries a welcome discount or a credit leg does not consume a waiver, because the platform's take must fund that promo. Conversely `takeCannotFundPromo()` in `lib/referrals/attribution.ts` removes the welcome discount and the credit cap from any order whose expert has a live waiver, or belongs to a host organisation while `ENABLE_HOST_ORGS` is on.
 
 ### Host-organisation rate cards
 
