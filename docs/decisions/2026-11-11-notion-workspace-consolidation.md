@@ -38,5 +38,5 @@ The Archive section keeps no page copies, only a register of deletions. Retired 
 ## Consequences
 
 - Pointers that named a merged or deleted page were repointed to the page that now holds the value (vendor plan and cost facts to Vendors & Spend, competitor survey facts to Competitor Register, positioning to Market, Positioning & Initial Wedge, the CA research memo to Tax, Legal & Regulatory Register).
-- The 2026-11-09 records are left as written; this record supersedes their page titles.
+- The 2026-11-09 records are left as written. This record supersedes their page titles and decision 3 of the repo-Notion split (archive whatever fails the delete tests): Notion keeps no archived page copies, unique content moves to its canonical page before a page is deleted, and the Archive section lists every deletion.
 - Fee values, budgets and vendor costs stay in Notion, not here.
