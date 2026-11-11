@@ -3,6 +3,12 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { ConsultationPlanSchema } from "@/schemas/plans";
+import { assertPlanPriceWithinBounds } from "@/lib/payments/pricing/price-bounds";
+import {
+  claimPlanTerms,
+  editedTerms,
+  planEditRefusal,
+} from "@/lib/api/plans/plan-edit-guard";
 import { faqReplaceNested } from "@/lib/api/plans/content";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import {
@@ -124,6 +130,26 @@ export async function PUT(
 
     const validatedData = validationResult.data;
 
+    // Only an edit that changes the stored price or length is held to the floor.
+    const storedTerms = {
+      price: existingPlan.price,
+      durationInHours: existingPlan.durationInHours,
+    };
+    const { terms, changed } = editedTerms(storedTerms, {
+      price:
+        validatedData.price === undefined
+          ? undefined
+          : Math.round(validatedData.price),
+      durationInHours: validatedData.durationInHours,
+    });
+    if (changed) {
+      assertPlanPriceWithinBounds({
+        kind: "SESSION",
+        pricePaise: terms.price,
+        durationInHours: terms.durationInHours,
+      });
+    }
+
     // Handle topics if provided
     let topicsUpdate = {};
     if (validatedData.topics !== undefined) {
@@ -133,37 +159,46 @@ export async function PUT(
       };
     }
 
-    const consultationPlan = await prisma.consultationPlan.update({
-      where: { id: consultationPlanId },
-      data: {
-        title: validatedData.title,
-        description: validatedData.description,
-        durationInHours: validatedData.durationInHours,
-        price:
-          validatedData.price !== undefined
-            ? Math.round(validatedData.price)
-            : undefined,
-        priceCurrency: validatedData.priceCurrency,
-        language: validatedData.language,
-        level: validatedData.level,
-        prerequisites: validatedData.prerequisites,
-        materialProvided: validatedData.materialProvided,
-        learningOutcomes: validatedData.learningOutcomes,
-        subtitle: validatedData.subtitle,
-        targetAudience: validatedData.targetAudience,
-        whatsIncluded: validatedData.whatsIncluded,
-        faqs: faqReplaceNested(validatedData.faqs),
-        recordingEnabled: validatedData.recordingEnabled,
-        // #1527 Q4 — absent means PUBLISHED on create and unchanged on update.
-        status: validatedData.status,
-        ...topicsUpdate,
-      },
-      include: {
-        consultantProfile: { select: planConsultantSelect },
-        consultations: true,
-        topics: true,
-        faqs: { orderBy: { order: "asc" } },
-      },
+    const consultationPlan = await prisma.$transaction(async (tx) => {
+      // Save only against the price and length this edit was validated on.
+      await claimPlanTerms(
+        tx.consultationPlan.updateMany({
+          where: { id: consultationPlanId, ...storedTerms },
+          data: terms,
+        }),
+      );
+      return tx.consultationPlan.update({
+        where: { id: consultationPlanId },
+        data: {
+          title: validatedData.title,
+          description: validatedData.description,
+          durationInHours: validatedData.durationInHours,
+          price:
+            validatedData.price !== undefined
+              ? Math.round(validatedData.price)
+              : undefined,
+          priceCurrency: validatedData.priceCurrency,
+          language: validatedData.language,
+          level: validatedData.level,
+          prerequisites: validatedData.prerequisites,
+          materialProvided: validatedData.materialProvided,
+          learningOutcomes: validatedData.learningOutcomes,
+          subtitle: validatedData.subtitle,
+          targetAudience: validatedData.targetAudience,
+          whatsIncluded: validatedData.whatsIncluded,
+          faqs: faqReplaceNested(validatedData.faqs),
+          recordingEnabled: validatedData.recordingEnabled,
+          // Absent means PUBLISHED on create and unchanged on update.
+          status: validatedData.status,
+          ...topicsUpdate,
+        },
+        include: {
+          consultantProfile: { select: planConsultantSelect },
+          consultations: true,
+          topics: true,
+          faqs: { orderBy: { order: "asc" } },
+        },
+      });
     });
 
     return NextResponse.json(
@@ -171,6 +206,8 @@ export async function PUT(
       { status: 200 },
     );
   } catch (error) {
+    const refusal = planEditRefusal(error);
+    if (refusal) return refusal;
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"

@@ -19,6 +19,7 @@ import { DigitalProductCategory, PlanLevel } from "@prisma/client";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
 import { DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE } from "@/lib/digital-products/constants";
 import { DIGITAL_PRODUCT_PRICE_RULE } from "@/schemas/digital-products";
+import { defaultPriceForSession } from "@/lib/payments/pricing/price-bounds";
 import type { TPlanImageType } from "@/lib/supabase";
 import { ConsultationService } from "@/components/planner/services/plans/consultation-service";
 import { SubscriptionService } from "@/components/planner/services/plans/subscription-service";
@@ -216,6 +217,8 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
     defaults: {
       ...sharedDefaults,
       durationInHours: 1,
+      // The suggested 60-minute price, in rupees like every form price.
+      price: defaultPriceForSession(60) / 100,
       recordingEnabled: false,
     },
     planOf: (event) => {

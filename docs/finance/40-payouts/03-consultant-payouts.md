@@ -16,7 +16,7 @@ All amounts are integer paise. They live in `PAYOUT_CONSTANTS` (`lib/payments/pa
 
 | Constant                            | Value               | Meaning                                                                                            |
 | ----------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------- |
-| `MINIMUM_PAYOUT_AMOUNT`             | 50,000 (₹500)       | A payout below this is never minted                                                                |
+| `MINIMUM_PAYOUT_AMOUNT`             | 25,000 (₹250)       | A payout below this is never minted                                                                |
 | `AUTO_APPROVE_THRESHOLD`            | 500,000 (₹5,000)    | A batch payout strictly below this is approved at mint; at or above it waits for an administrator  |
 | `INSTANT_PAYOUT_AUTO_APPROVE_PAISE` | 500,000 (₹5,000)    | An instant payout at or below this is approved and sent at once; the default is the constant above |
 | `CLAWBACK_RECOVERY_PAUSE_PAISE`     | 1,000,000 (₹10,000) | An expert owing more than this in clawback is skipped by mint                                      |
@@ -33,7 +33,7 @@ All amounts are integer paise. They live in `PAYOUT_CONSTANTS` (`lib/payments/pa
 4. `UNVERIFIED` — the default account has not passed verification (penny drop or reverse penny drop).
 5. `PAYOUT_ACCOUNT_FROZEN` or `PAYOUT_ACCOUNT_COOLING_OFF` — the payee froze the account, or it became the default less than 48 hours ago (`payoutAccountHold`).
 6. `CLAWBACK_RECOVERY_PAUSE` — the expert owes more than ₹10,000.
-7. `BELOW_MINIMUM` — READY earnings net of refunds are under ₹500.
+7. `BELOW_MINIMUM` — READY earnings net of refunds are under ₹250.
 
 The same function feeds the Earnings banner, the Get-paid page and the Home needs-you row, so the three cannot disagree. `payoutRequirements` adds what the expert still has to give: a payout account and its verification block a transfer outright, while a missing PAN or entity type only raises the withholding rate, so those are due now only once earnings exist. A missing GSTIN is only ever "eventually due".
 
@@ -47,7 +47,7 @@ sequenceDiagram
   participant D as Database
   T->>B: POST /api/cleanup/create-payout-batch?limit=10
   B->>B: withCronLock fail-closed, Redis lock lock:payout_batch_creation
-  B->>D: group READY earnings by expert, total at least ₹500
+  B->>D: group READY earnings by expert, total at least ₹250
   loop up to 10 experts per slice
     B->>S: mint
     S->>D: Serializable tx: clawback pause, sum READY, create payout, net clawback, READY to BATCHED
@@ -60,7 +60,7 @@ sequenceDiagram
 
 1. Skips the expert if there is no verified default account, if the account is frozen or cooling off, or if the account is on a gateway with no implementation (`isUnimplementedGateway`).
 2. Skips the expert if the outstanding clawback exceeds ₹10,000, so a clawback committing after the read conflicts and retries.
-3. Sums the READY earnings net of refunds. Below ₹500 it mints nothing.
+3. Sums the READY earnings net of refunds. Below ₹250 it mints nothing.
 4. Creates the payout with the idempotency key `payout_<consultantProfileId>_<batchId>`, status APPROVED with approver `SYSTEM_AUTO_APPROVE` if the amount is below ₹5,000 and PENDING otherwise, the bank method (BANK_TRANSFER or UPI) from the account type, and an MSME deadline `mustPayByDate` (see [MSME and statutory exports](../60-tax/04-msme-statutory-exports-and-calendar.md)).
 5. Nets any outstanding clawback against the payout, up to what leaves the payout minimum and room for the highest withholding rate (`recoverClawbackOnPayout`, `recoverablePaise`).
 6. Claims the earnings READY to BATCHED with a conditional update and rolls the whole transaction back if the count differs from what was read.
@@ -146,7 +146,7 @@ While maintenance is DEGRADED, `/api/admin/payouts`, `/api/consultant/payouts/in
 
 ## Worked examples
 
-**A clawback is netted.** Hannah was paid ₹12,000 on 2026-10-20. Later Priya's ₹5,000 session in that payout is refunded in full, and Hannah's 400,000 paise share was already paid out with no TDS withheld. The refund posts `Dr CONSULTANT_RECEIVABLE 400,000 / Cr CONSULTANT_PAYABLE 400,000` (key `clawback:<refundId>:<payoutId>`). On Monday 2026-10-26 Hannah has 1,000,000 paise READY. Her outstanding clawback of 400,000 is below the ₹10,000 pause, so the payout is minted with the clawback netted: the recoverable ceiling is 1,000,000 − 50,000 − 200,000 = 750,000, and 400,000 is recovered under `clawback-recovery:<payoutId>` (`Dr CONSULTANT_PAYABLE / Cr CONSULTANT_RECEIVABLE`). The payout row keeps its 1,000,000 gross, and 600,000 paise, less any TDS, reaches Hannah's bank. If the payout fails, the recovery journal is mirrored back and the clawback is owed again.
+**A clawback is netted.** Hannah was paid ₹12,000 on 2026-10-20. Later Priya's ₹5,000 session in that payout is refunded in full, and Hannah's 400,000 paise share was already paid out with no TDS withheld. The refund posts `Dr CONSULTANT_RECEIVABLE 400,000 / Cr CONSULTANT_PAYABLE 400,000` (key `clawback:<refundId>:<payoutId>`). On Monday 2026-10-26 Hannah has 1,000,000 paise READY. Her outstanding clawback of 400,000 is below the ₹10,000 pause, so the payout is minted with the clawback netted: the recoverable ceiling is 1,000,000 − 25,000 − 200,000 = 775,000, and 400,000 is recovered under `clawback-recovery:<payoutId>` (`Dr CONSULTANT_PAYABLE / Cr CONSULTANT_RECEIVABLE`). The payout row keeps its 1,000,000 gross, and 600,000 paise, less any TDS, reaches Hannah's bank. If the payout fails, the recovery journal is mirrored back and the clawback is owed again.
 
 **A lost answer.** A payout of 1,200,000 paise is sent at 12:00 IST, and the request times out. The payout stays PROCESSING with its idempotency key stored. The next stuck-payout run asks RazorpayX for a payout with reference equal to the payout id. If RazorpayX holds it, its status is applied. If RazorpayX has no record, the payout resets to APPROVED and the retry sends it under the same key, so RazorpayX can deduplicate a request it did accept. That protection lasts only as long as RazorpayX keeps the idempotency key, which its documentation does not state, so an empty lookup is strong evidence, not proof, that the first request was never accepted.
 
