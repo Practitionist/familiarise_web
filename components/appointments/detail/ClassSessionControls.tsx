@@ -87,6 +87,7 @@ function pairs(sessions: ClassSessionRow[]) {
  */
 export function useClassSessionActions({
   appointmentId,
+  classId,
   consultantProfileId,
   sessions,
   role,
@@ -94,6 +95,8 @@ export function useClassSessionActions({
   onChanged,
 }: Readonly<{
   appointmentId: string;
+  /** The class, so the make-up picker counts its co-hosts' time. */
+  classId: string | null;
   /** The host whose calendar labels make-up times. */
   consultantProfileId: string | null;
   sessions: ClassSessionRow[];
@@ -244,6 +247,7 @@ export function useClassSessionActions({
                   zone={viewer.zone}
                   sessionMinutes={sessionMinutesOf(source)}
                   purpose="makeup"
+                  event={classId ? { classId } : undefined}
                   allowedEnd={by}
                   value={makeUpAt[source.id] ?? null}
                   onChange={(iso) =>

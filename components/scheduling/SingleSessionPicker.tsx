@@ -16,7 +16,10 @@ import {
   SINGLE_SESSION_STATE_LABEL,
   type SingleSessionOption,
 } from "@/lib/scheduling/single-session-options";
-import { useAvailabilityWindow } from "@/lib/scheduling/use-availability-window";
+import {
+  useAvailabilityWindow,
+  type AvailabilityEvent,
+} from "@/lib/scheduling/use-availability-window";
 import {
   calendarDateKey,
   calendarDayOf,
@@ -40,6 +43,8 @@ export interface SingleSessionPickerProps {
   /** The window a start must sit in (a make-up's 14 days); open when absent. */
   allowedStart?: Date;
   allowedEnd?: Date;
+  /** The event being placed: its co-hosts' time counts, and a move frees its own sessions. */
+  event?: AvailabilityEvent;
   /** The chosen start, ISO, or null. */
   value: string | null;
   onChange: (startsAt: string | null) => void;
@@ -68,6 +73,7 @@ export function SingleSessionPicker({
   purpose,
   allowedStart,
   allowedEnd,
+  event,
   value,
   onChange,
   className,
@@ -96,6 +102,7 @@ export function SingleSessionPicker({
     startUtc: bounds.start,
     endUtc: bounds.end,
     timezone: zone,
+    event,
     keepPrevious: true,
   });
   const atoms = useMemo(

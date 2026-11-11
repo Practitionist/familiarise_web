@@ -352,6 +352,7 @@ export function AppointmentDetailClient({
   // loading and error returns below, so they take the read as it stands.
   const classActions = useClassSessionActions({
     appointmentId,
+    classId: detail?.appointment.classId ?? null,
     consultantProfileId: mapped?.vm.consultantProfileId ?? null,
     sessions: detail?.appointment.class ? detail.appointment.occurrences : [],
     role,

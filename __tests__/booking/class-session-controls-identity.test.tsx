@@ -40,6 +40,7 @@ import {
 function Harness({ sessions }: Readonly<{ sessions: ClassSessionRow[] }>) {
   const actions = useClassSessionActions({
     appointmentId: "apt-1",
+    classId: "class-1",
     consultantProfileId: "profile-1",
     role: "consultant",
     unitLabel: null,

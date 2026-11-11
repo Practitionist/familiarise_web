@@ -132,6 +132,7 @@ export function ClassPatternScheduler({
     startUtc: previewStart,
     endUtc: previewEnd,
     timezone: zone,
+    event: { classId, moving: mode === "retime" },
     keepPrevious: true,
     enabled: starts.length > 0,
   });

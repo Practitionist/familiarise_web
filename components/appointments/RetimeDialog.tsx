@@ -26,6 +26,8 @@ interface RetimeDialogProps {
   consultantId: string;
   /** The session keeps its length; the picker checks that much free time. */
   sessionMinutes: number;
+  /** The webinar being moved: its own session reads free, its co-hosts' time busy. */
+  webinarId?: string;
   isLoading?: boolean;
 }
 
@@ -42,6 +44,7 @@ export function RetimeDialog({
   title,
   consultantId,
   sessionMinutes,
+  webinarId,
   isLoading = false,
 }: Readonly<RetimeDialogProps>) {
   const { zone } = useViewerZone();
@@ -82,6 +85,7 @@ export function RetimeDialog({
           zone={zone}
           sessionMinutes={sessionMinutes}
           purpose="retime"
+          event={webinarId ? { webinarId, moving: true } : undefined}
           value={picked}
           onChange={setPicked}
         />

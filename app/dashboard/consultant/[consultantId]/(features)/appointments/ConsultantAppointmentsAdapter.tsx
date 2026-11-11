@@ -533,6 +533,7 @@ export function useConsultantAppointmentsAdapter(
             title={activeVm.title}
             consultantId={consultantId}
             sessionMinutes={sessionMinutesOf(activeVm)}
+            webinarId={activeVm.raw.appointment?.webinarId ?? undefined}
             isLoading={actions.isLoading}
           />
         </>
