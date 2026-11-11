@@ -41,6 +41,8 @@ model User {
   // Consent timestamps
   termsAcceptedAt   DateTime?
   privacyAcceptedAt DateTime?
+  /// Server time the user confirmed they are 18 or older when completing onboarding.
+  adultConfirmedAt  DateTime?
 
   // Professional background (consolidated from profile level)
   workExperiences WorkExperience[]
@@ -6135,6 +6137,8 @@ model Payment {
   attributionReferral         Referral?                    @relation("PaymentAttributionReferral", fields: [attributionReferralId], references: [id], onDelete: SetNull)
   // Platform fee actually charged on this sale, in basis points (0 under a fee waiver).
   platformFeeBps              Int?
+  // GST regime the order was priced under; UNREGISTERED orders carry no GST and get no tax invoice.
+  gstRegime                   GstRegime?
   // Pre-tax referee welcome discount; non-null only on discounted orders (one live per buyer).
   welcomeDiscountPaise        BigInt?
   // Set when an expert or platform cancellation returned this order's referral to SIGNED_UP:
@@ -6246,6 +6250,12 @@ model Payment {
   @@index([billingAccountId])
   @@index([attributionReferralId])
   @@index([paymentStatus, lastReconciledAt, id])
+}
+
+// Null on orders priced before the regime was stamped.
+enum GstRegime {
+  REGISTERED
+  UNREGISTERED
 }
 
 enum PaymentAttributionSource {

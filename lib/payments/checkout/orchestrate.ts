@@ -72,6 +72,10 @@ import {
   resolveOrgFunding,
 } from "@/lib/payments/checkout/org-funding";
 import { commitCheckout } from "@/lib/payments/checkout/commit";
+import {
+  assertOrgBillingAvailable,
+  currentGstRegime,
+} from "@/lib/payments/tax/gst-regime";
 import { dispatchProgramBell } from "@/lib/payments/checkout/program-bell";
 
 export const REFERRAL_CREDITS_DROPPED_NOTICE =
@@ -93,10 +97,12 @@ export const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<BusinessErrorCode> =
     "CONSULTANT_EXCLUSIVE_ENGAGEMENT",
     "CREDIT_SHORTFALL",
     "DISCOUNT_EXHAUSTED",
+    "DISCOUNT_CODE_INVALID",
     "SUBSCRIPTION_ALREADY_ACTIVE",
     "ALREADY_RENEWED",
     "INVALID_RENEWAL_SOURCE",
     "WELCOME_DISCOUNT_IN_USE",
+    "DISCOUNT_NOT_APPLICABLE",
     "PAYMENT_ALREADY_EXISTS",
     "SEAT_REBUY_UNSUPPORTED",
     "ALREADY_REGISTERED",
@@ -152,6 +158,11 @@ export async function handleCheckout(
     referralCreditsDropped,
   } = orgFunding;
   let { billingAccountId, fundingSource, creditEffectiveLimit } = orgFunding;
+
+  // The rail cannot change under the lock (revalidateInsideLock refuses), so this gate holds.
+  if (fundingSource && fundingSource !== "PERSONAL") {
+    assertOrgBillingAvailable(currentGstRegime());
+  }
 
   // A buyer-paid domestic supply gets a consumer tax invoice, which must carry
   // the buyer's state; org rails bill on the org series and exports have none.
@@ -894,6 +905,7 @@ export async function handleCheckout(
           amount,
           originalAmount,
           taxAmount,
+          gstRegime: priced.gstRegime,
           currency,
           reason: dbError instanceof Error ? dbError.message : String(dbError),
         });

@@ -104,9 +104,9 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
   // Checkout raises this for the booking member's own SESSION_BOOKING consent
   // on an org-funded booking; the checkout toast links to the fix (#1527 3c).
   [ErrorTypes.CONSENT_REQUIRED]: {
-    title: "Your Consent Is Needed",
+    title: "Your Permission Is Needed",
     description:
-      "Your organisation can't book this session for you until you give session-booking consent in Settings › Account › Data consent. You were not charged.",
+      "Your organisation needs your permission to book sessions for you. You can give it in Settings › Account › Data consent. You weren't charged.",
   },
   [ErrorTypes.CONSENT_WITHDRAWN]: {
     title: "Booking Not Available",
@@ -126,23 +126,24 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
   [ErrorTypes.PROGRAM_CAP_EXHAUSTED]: {
     title: "Programme Budget Used Up",
     description:
-      "Your organisation's programme budget for this cycle is used up; ask your admin or pay yourself if allowed.",
+      "Your organisation's programme budget for this cycle is used up. Ask your organisation admin, or pay yourself if you can. You weren't charged.",
   },
   [ErrorTypes.PROGRAM_SESSION_CAP_REACHED]: {
-    title: "Programme Session Cap Reached",
-    description: null, // The server message already names the admin action.
+    title: "Programme Limit Reached",
+    description:
+      "This booking exceeds your programme's limits. Ask your organisation admin, or book it yourself. You weren't charged.",
   },
   [ErrorTypes.OVERAGE_CHARGE_MEMBER_UNSUPPORTED]: {
-    title: "Programme Not Bookable Past Its Cap",
+    title: "Can't Book Through Your Organisation",
     description:
-      "This programme is set to charge members for bookings past its cap, which is not available on a wallet-funded organisation. Ask your billing admin to switch the programme to charge the organisation or to block over-cap bookings.",
+      "This session can't be booked on your organisation's account right now, and we've told our team. You can still book it yourself. You weren't charged.",
   },
   // #1467 — the organisation's entitlement, not the booking, is what stops
   // these. Retrying changes nothing, so each toast names the admin who can.
   [ErrorTypes.PROGRAM_ASSIGNMENT_INACTIVE]: {
     title: "No Programme Covers This Booking",
     description:
-      "Your organisation has no active programme assignment for this session type, usually because its contract or programme has ended. Ask your organisation admin to assign you to a programme that covers it, or book it yourself. You were not charged.",
+      "Your organisation has no programme for you that covers this kind of session, usually because it has ended. Ask your organisation admin to add you to one, or book it yourself. You weren't charged.",
   },
   [ErrorTypes.BILLING_SUSPENDED_DUNNING]: {
     title: "Organisation Billing Suspended",
@@ -202,6 +203,10 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     title: "Discount Code Not Applicable",
     description: null,
   },
+  [ErrorTypes.DISCOUNT_CODE_INVALID]: {
+    title: "Discount Code Not Valid",
+    description: null,
+  },
   [ErrorTypes.DISCOUNT_EXHAUSTED]: {
     title: "Discount Code Fully Redeemed",
     description: null,
@@ -247,15 +252,27 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     description:
       "Your checkout is still being prepared. Try again in a moment — your card was not charged.",
   },
+  [ErrorTypes.DISCOUNT_NOT_APPLICABLE]: {
+    title: "Discount Code Not Valid Here",
+    description: null,
+  },
+  [ErrorTypes.GST_REGISTRATION_REQUIRED]: {
+    title: "Organisation Booking Not Available Yet",
+    description: null,
+  },
+  [ErrorTypes.GST_CONFIG_INVALID]: {
+    title: "Checkout Temporarily Unavailable",
+    description: null,
+  },
   [ErrorTypes.SEAT_HOLD_LAPSED]: {
-    title: "Your Seat Hold Ended",
+    title: "Your Reserved Seat Expired",
     description:
-      "Payment didn't open before your seat hold ended. Your card was not charged — start checkout again.",
+      "Payment didn't open before your reserved seat expired. You weren't charged. Please start checkout again.",
   },
   [ErrorTypes.SERIALIZATION_CONFLICT]: {
-    title: "The Booking System Was Busy",
+    title: "Someone Else Was Booking",
     description:
-      "Another booking was being written at the same time. Your card was not charged — please try again in a moment.",
+      "Someone else was booking at the same moment. You weren't charged. Please try again in a moment.",
   },
   // B4 — the optimistic capacity pre-check. Terminal until someone cancels, so
   // this is deliberately NOT a "wait and retry" and points at the two ways out

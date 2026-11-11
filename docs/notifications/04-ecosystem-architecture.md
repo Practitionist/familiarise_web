@@ -86,7 +86,7 @@ flowchart TB
     end
 
     subgraph PROMO["PROMOTIONAL — NOT CONNECTED"]
-        PROMO_MD["emails/promotional/\n16 markdown templates\n8 consultant + 8 consultee\ninitial / followup /\nspecialized / reengagement\nFor: Lemlist, Apollo, Instantly"]
+        PROMO_MD["emails/promotional/\n14 markdown templates\n7 consultant + 7 consultee\ninitial / followup /\nspecialized / reengagement\nFor: Lemlist, Apollo, Instantly"]
     end
 
     subgraph CLIENT["CLIENT-SIDE — LIVE"]

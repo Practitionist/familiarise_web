@@ -436,14 +436,14 @@ function buildConsultantServerProfile(formData: OnboardingFormData) {
     subDomains: formData.subDomains?.length
       ? {
           connect: formData.subDomains
-            .filter((sd) => sd.id != null)
+            .filter((sd) => sd.id !== null && sd.id !== undefined)
             .map((sd) => ({ id: sd.id })),
         }
       : undefined,
     tags: formData.tags?.length
       ? {
           connect: formData.tags
-            .filter((t) => t.id != null)
+            .filter((t) => t.id !== null && t.id !== undefined)
             .map((t) => ({ id: t.id })),
         }
       : undefined,

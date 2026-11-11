@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { detectBuyerCountry, extractBuyerCountryParams } from "./buyer-country";
 import { hasValidPlatformLut } from "@/lib/compliance/lut";
+import { currentGstRegime } from "./gst-regime";
 
 export interface CheckoutTaxContext {
   buyerCountry: string;
@@ -13,6 +14,8 @@ export interface CheckoutTaxContext {
    * server charge in lockstep with determineTax/gst.ts.
    */
   exportZeroRated: boolean;
+  /** False while PLATFORM_GSTIN is unset: checkout charges no GST, so the preview shows none. */
+  gstRegistered: boolean;
   /**
    * #1365 — the buyer's remembered GST billing state (2-digit numeric), so the
    * checkout page can pre-fill the picker and a repeat buyer is never asked
@@ -25,6 +28,7 @@ export async function resolveCheckoutTaxContext(params: {
   userId: string;
   headers: Headers;
 }): Promise<CheckoutTaxContext> {
+  const gstRegistered = currentGstRegime() === "REGISTERED";
   const userRecord = await prisma.user.findUnique({
     where: { id: params.userId },
     select: {
@@ -44,6 +48,7 @@ export async function resolveCheckoutTaxContext(params: {
     buyerCountry,
     isInternational,
     exportZeroRated: isInternational && hasValidPlatformLut(),
+    gstRegistered,
     billingStateCode: userRecord?.consulteeProfile?.billingStateCode ?? null,
   };
 }

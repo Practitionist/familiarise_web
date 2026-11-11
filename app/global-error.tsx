@@ -1,6 +1,6 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
+import { captureClientException } from "@/lib/observability/client-capture";
 import NextError from "next/error";
 import { useEffect, useState } from "react";
 
@@ -16,7 +16,7 @@ export default function GlobalError({
   const [eventId, setEventId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    const id = Sentry.captureException(error, {
+    const id = captureClientException(error, {
       tags: {
         subsystem: "client",
         boundary: "global-error",

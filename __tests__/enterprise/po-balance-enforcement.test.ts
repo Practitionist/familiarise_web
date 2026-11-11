@@ -66,6 +66,11 @@ jest.mock("../../lib/auth-helpers", () => ({
   orgRoleSatisfies: () => true,
 }));
 
+// Invoiced as a GST-registered platform.
+jest.mock("../../lib/pdf/supplier", () => ({
+  ...jest.requireActual("../../lib/pdf/supplier"),
+  isPlatformGstRegistered: () => true,
+}));
 jest.mock("../../lib/compliance/gst", () => ({
   orgBuyerCountry: () => "IN",
   // Why: we don't want the GST math to be the test surface — invoke

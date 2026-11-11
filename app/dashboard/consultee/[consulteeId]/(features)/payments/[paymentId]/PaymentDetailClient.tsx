@@ -56,7 +56,24 @@ function chargeFacts(detail: ConsulteePaymentDetail, money: Money) {
         ]
       : []),
     ...(row.discount
-      ? [{ label: "Discount", value: `Code ${row.discount.code}` }]
+      ? [
+          {
+            label: "Discount",
+            value:
+              detail.showAmount && row.discountBreakdown.codeDiscountPaise > 0
+                ? `Code ${row.discount.code} · \u2212${money(row.discountBreakdown.codeDiscountPaise)}`
+                : `Code ${row.discount.code}`,
+          },
+        ]
+      : []),
+    ...(detail.showAmount && row.discountBreakdown.welcomeDiscountPaise > 0
+      ? [
+          {
+            label: "Welcome discount",
+            value: `\u2212${money(row.discountBreakdown.welcomeDiscountPaise)}`,
+            hint: "Your referral welcome discount, taken off before GST",
+          },
+        ]
       : []),
     ...(row.refundedPaise > 0 && detail.showAmount
       ? [{ label: "Refunded", value: money(row.refundedPaise) }]
@@ -110,6 +127,7 @@ export function PaymentDetailClient({
 
   const facts = chargeFacts(detail, money);
   const taxDocsPending =
+    !detail.gstUnregistered &&
     !detail.taxDocumentsAvailable &&
     (detail.invoicePdfHref !== null ||
       detail.creditNotes.length > 0 ||
@@ -209,8 +227,15 @@ export function PaymentDetailClient({
             is ready.
           </p>
         )}
+        {detail.gstUnregistered && row.status === "SUCCEEDED" && (
+          <p className="mb-2 text-sm text-muted-foreground">
+            No GST was charged on this payment, so it has a receipt rather than
+            a tax invoice.
+          </p>
+        )}
         {documents.length === 0 ? (
-          !taxDocsPending && (
+          !taxDocsPending &&
+          !detail.gstUnregistered && (
             <p className="text-sm text-muted-foreground">
               No documents for this charge yet. A tax invoice is issued once a
               payment goes through.

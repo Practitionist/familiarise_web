@@ -130,6 +130,7 @@ describe("POST /api/organizations onboarding a first-time owner", () => {
     });
     expect(claim.data.dateOfBirth).toBeInstanceOf(Date);
     expect(claim.data.termsAcceptedAt).toBeInstanceOf(Date);
+    expect(claim.data.adultConfirmedAt).toBeInstanceOf(Date);
     expect(mockEnsureConsent).toHaveBeenCalledWith(
       tx,
       "user-1",

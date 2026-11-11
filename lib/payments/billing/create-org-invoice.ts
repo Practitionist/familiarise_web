@@ -18,6 +18,11 @@ import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numberi
 import { postInvoiceIssuedJournal } from "@/lib/payments/billing/org-invoice-journal";
 import { transitionOrgInvoice } from "@/lib/enterprise/transitions";
 import { drawPurchaseOrder } from "@/lib/payments/billing/purchase-order-draw";
+import { isPlatformGstRegistered } from "@/lib/pdf/supplier";
+import {
+  GST_REGISTRATION_REQUIRED,
+  GST_INVOICE_REGISTRATION_MESSAGE,
+} from "@/lib/payments/tax/gst-regime";
 
 const LineItemSchema = z.object({
   description: z.string().min(1).max(500),
@@ -172,6 +177,14 @@ export async function createOrgInvoice(
       "INVOICE_SERVICE_UNAVAILABLE",
       "Invoice service is temporarily unavailable.",
       503,
+    );
+  }
+  // An unregistered supplier issues no GST invoice.
+  if (!isPlatformGstRegistered()) {
+    throw new OpsRefusal(
+      GST_REGISTRATION_REQUIRED,
+      GST_INVOICE_REGISTRATION_MESSAGE,
+      403,
     );
   }
   const gst = deriveGstBreakdown({

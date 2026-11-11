@@ -31,6 +31,7 @@ import {
   resolveFileErrorCode,
 } from "@/lib/documents/file-errors";
 import { buildCaptionTrackDataUri } from "./caption-track";
+import { planTypeLabel } from "@/lib/labels/plan-labels";
 
 export const PLAYBACK_SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
 export type PlaybackSpeed = (typeof PLAYBACK_SPEEDS)[number];
@@ -452,8 +453,8 @@ export function RecordingPlayerModal({
         <DialogHeader className="space-y-1.5 pr-6 text-left">
           <div className="flex flex-wrap items-center gap-2">
             {recording.planType && (
-              <span className="rounded bg-primary/10 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-primary">
-                {recording.planType}
+              <span className="rounded bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                {planTypeLabel(recording.planType)}
               </span>
             )}
             {storageBadge && (

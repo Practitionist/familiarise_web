@@ -236,7 +236,7 @@ Rotate `RESEND_API_KEY` across all four locations in lockstep so no environment 
 ## When You'll Need to Upgrade
 
 - **Resend Free → Pro (\$20/mo)**: When daily volume regularly exceeds ~80 emails/day, newsletter broadcasts exceed 100 subscribers in a single blast, or native Resend open/click analytics are required.
-- **Novu Free → Pro (~\$25–30/mo)**: When monthly workflow runs (one per bell recipient, Development and Production together) pass about 60 % of the 10,000-run quota, or when activity history beyond the Free plan's 24 hours is required.
+- **Novu Free → Pro (~\$25–30/mo)**: When monthly workflow runs (one per bell recipient, Development and Production together) pass the upgrade trigger kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend), or when activity history beyond the Free plan's 24 hours is required.
 - **Kit / Directus CMS**: Remain deferred post-launch (`lib/newsletter/convertkit.ts` and `app/api/webhooks/directus/route.ts`) until automated drip sequences or managed CMS publishing are prioritized.
 
 ---

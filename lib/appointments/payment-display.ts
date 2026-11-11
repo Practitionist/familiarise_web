@@ -144,6 +144,42 @@ export function paymentFundingBreakdown(
   return funded.length > 0 ? funded : entries;
 }
 
+export interface PaymentDiscountBreakdown {
+  /** Paise a discount code took off the list price; 0 when no code was used. */
+  codeDiscountPaise: number;
+  /** Paise the referral welcome discount took off the list price. */
+  welcomeDiscountPaise: number;
+}
+
+/**
+ * The pre-tax discounts on one Payment, from the stored fields alone.
+ * `amount` = `originalAmount` - discounts + `taxAmount` - referral credit, so
+ * the code's share is what remains once the welcome discount and the credit
+ * legs are accounted for. A row with no code never reports a code discount.
+ */
+export function paymentDiscountBreakdown(p: {
+  originalAmount: PaiseLike;
+  taxAmount: PaiseLike;
+  amount: PaiseLike;
+  welcomeDiscountPaise?: PaiseLike | null;
+  hasDiscountCode: boolean;
+  legs?: ReadonlyArray<{ source: string; amountPaise: PaiseLike }>;
+}): PaymentDiscountBreakdown {
+  const welcome = Math.max(0, Number(p.welcomeDiscountPaise ?? 0));
+  if (!p.hasDiscountCode) {
+    return { codeDiscountPaise: 0, welcomeDiscountPaise: welcome };
+  }
+  const credits = (p.legs ?? [])
+    .filter((l) => l.source === "REFERRAL_CREDIT")
+    .reduce((sum, l) => sum + Number(l.amountPaise), 0);
+  const totalDiscount =
+    Number(p.originalAmount) + Number(p.taxAmount) - credits - Number(p.amount);
+  return {
+    codeDiscountPaise: Math.max(0, totalDiscount - welcome),
+    welcomeDiscountPaise: welcome,
+  };
+}
+
 /** "₹800 card / UPI + ₹200 referral credit". */
 export function formatFundingBreakdown(
   entries: ReadonlyArray<FundingBreakdownEntry>,

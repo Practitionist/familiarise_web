@@ -18,7 +18,10 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
 }));
 jest.mock("@/hooks/useCurrency", () => ({
-  useCurrency: () => ({ formatPrice: (value: number) => `₹${value}` }),
+  useCurrency: () => ({
+    formatPrice: (value: number) => `₹${value}`,
+    formatPriceExact: (value: number) => `₹${value}`,
+  }),
 }));
 jest.mock("@/components/booking/NotifyWhenFreeButton", () => ({
   HELD_BY_SOMEONE_ELSE: new Set<string>(),

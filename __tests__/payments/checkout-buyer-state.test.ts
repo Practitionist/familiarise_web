@@ -4,6 +4,7 @@
 
 // A domestic buyer-paid checkout carries the buyer's GST state; org-funded and export checkouts need none.
 
+import { runAsRegisteredPlatform } from "../fixtures/gst-registered";
 import "../booking-algorithm/setup";
 import {
   buildCheckoutInput,
@@ -96,3 +97,6 @@ describe("the buyer's GST state at checkout", () => {
     expect(storedStateCode()).toBeNull();
   });
 });
+
+// Org-funded rails and GST on surcharges exist only for a GST-registered platform.
+runAsRegisteredPlatform();

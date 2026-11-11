@@ -1,6 +1,6 @@
 ---
 name: compliance
-description: Work on this repo's DPDP/consent/erasure/retention subsystem and the India-first compliance posture — the consent state model and its fail-closed gate, withdrawal versus erasure, the per-data-class retention engine, the processor inventory and vendor off-boarding, the terms-vs-privacy-policy change mechanism, and the staged DPDP commencement dates. Use when the user says "DPDP", "consent", "DPDP compliance", "privacy policy", "terms of service", "right to erasure", "delete my data", "data retention", "grievance", "RoPA", "processor", "India compliance", "cross-border transfer", "CERT-In", "data residency", or is touching lib/compliance/, lib/novu/, lib/newsletter/, prisma's ConsentArtifact or ErasureRequest models, app/api/users/me/erasure-requests/, app/api/organizations/[orgId]/consent/, components/dashboard/account/ConsentSection.tsx, jobs/compliance/, or docs/compliance/.
+description: Work on this repo's DPDP/consent/erasure/retention subsystem and the India-first compliance posture — the consent state model and its fail-closed gate, withdrawal versus erasure, the per-data-class retention engine, the processor inventory and vendor off-boarding, the terms-vs-privacy-policy change mechanism, and the staged DPDP commencement dates. Use when the user says "DPDP", "consent", "DPDP compliance", "privacy policy", "terms of service", "right to erasure", "delete my data", "data retention", "grievance", "RoPA", "processor", "India compliance", "cross-border transfer", "CERT-In", "data residency", "age gate", "18+", "minors", "signal retention", or is touching lib/compliance/, lib/novu/, lib/newsletter/, prisma's ConsentArtifact or ErasureRequest models, app/api/users/me/erasure-requests/, app/api/organizations/[orgId]/consent/, components/dashboard/account/ConsentSection.tsx, jobs/compliance/, or docs/compliance/.
 ---
 
 # Compliance
@@ -20,7 +20,11 @@ s.194-O. ~90% of customers are Indian. Reach for GDPR/CCPA only for the foreign
 slice, and label it as such.
 
 Full reference, including the staged commencement dates and what is enforceable
-_today_ versus in 2027: **`docs/compliance/01-india-first-posture.md`**.
+_today_ versus in 2027: **`docs/compliance/01-india-first-posture.md`**. The dates
+to quote: the DPDP Rules are G.S.R. 846(E) of 13 Nov 2025 (14 Nov is only the
+press-release date), Rule 4 starts 13 Nov 2026 and the substantive duties about
+13 May 2027; the E-Commerce (Amendment) Rules 2026 (G.S.R. 789(E)) start
+1 Jan 2027, tracked in #2666.
 
 | Reference                          | Purpose                                                                                                                                                                                         | Read it when                                   |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
@@ -91,6 +95,15 @@ The intended use of this work is **another company**. So:
   confidence marker. **A decision with no such claim is a guess.**
 - Do not copy the India answers. Copy the questions and the sources.
 
+## Adults only, and the fraud signals
+
+- **18+ only (owner decision, 2026-11-09).** Never build a parental-consent, guardian or minor flow. `DateOfBirthSchema` (`lib/compliance/age.ts`) is the one rule, and the date of birth is the only age ask: one neutral date field (the 18 cutoff is not named before entry; an under-18 date shows `UNDER_AGE_MESSAGE` inline and the server refuses it), no "I am 18" checkbox and no `adultConfirmed` field (owner decision, 2026-11-09). The wizard, the gate (`completeOnboardingGateAction`) and the organisation-create `onboarding` block each parse an 18+ `dateOfBirth`. `claimOnboardingCompletion` stamps `User.adultConfirmedAt` (server time) when the date of birth it is given passes `isAdult`, and the data export includes it; a new completion path must pass its parsed `dateOfBirth` in. Operator accounts (`lib/auth/operators.ts`) are created already onboarded with no date of birth and are not stamped. A new route that stores a date of birth or completes onboarding must parse it with `DateOfBirthSchema` and refuse with a typed `VALIDATION` error on `dateOfBirth`; `PUT /api/user/[id]` does and no longer accepts `onboardingCompleted`. The Terms (3.1 Eligibility) and the privacy policy (section 8) say the same; keep the three in step.
+- **Signal retention.** `Referral.ipHash` and `userAgent` are nulled 180 days after the referral is terminal, 180 days after creation if it never settles (`SIGNED_UP`, `QUALIFIED`, `QUALIFYING`, `HELD`), and in `scrubUser`; the user-agent is stored as sent, not hashed, and the privacy page says so; `Payment.payerVpaHash` and `payerPhoneHash` are nulled 2 years after capture and stay through erasure until then. The windows and predicates are in `lib/compliance/signal-retention.ts`, run by the daily `prune-audit-logs` job. Do not add a job or a Redis lock for them.
+- **Consent artifacts are kept 7 years** (`auditRetainedUntil`): proof of consent under DPDP s.6(10) plus the limitation periods, with counsel to confirm. No code.
+- **Policy copy names only integrated vendors.** The processor list is privacy section 4.2, the export's `sharedWithDataProcessors` and the table in `docs/compliance/02-dpdp-and-privacy.md`; Stripe, Neon, Google Analytics and Hotjar are not integrated and must not be named. Add a processor to all three together, and bump the matching `POLICY_DATES` entry (`app/(pages)/constants.ts`) on any change to a policy page. `TERMS_VERSION` moves only when a `PURPOSE_CODE_META` text changes.
+- **Grievance numbers.** The promise is 24 hours to acknowledge and 7 days to resolve (`lib/support/sla.ts`); 15 days, 48 hours and one month are statutory ceilings, never our promise.
+- **Tax positions** that this posture rests on (s.9(5) not applicable, no s.52 TCS under the principal model, s.194R not applied, all pending the accountant) are in `docs/compliance/01-india-first-posture.md` and `docs/decisions/2026-11-09-tax-compliance-and-pricing-levers.md`.
+
 ## Money-adjacent consequences
 
 Erasure and consent both intersect the money path, and the reasoning is not
@@ -116,12 +129,16 @@ obvious from the compliance side alone. `/finance` and `/enterprise` own it.
 - The newsletter unsubscribe (`unsubscribe` in `lib/newsletter/service.ts`) commits first, then withdraws a linked account's `MARKETING_COMMS` in its own best-effort transaction. Never put the two in one transaction, and never answer "unsubscribed" when the write failed.
 - Offer only `OFFERED_PURPOSE_CODES`. `ANALYTICS` is kept for stored artifacts but never offered or granted until a real analytics tool exists; do not write copy that claims analytics or telemetry.
 - Every marketing grant records `consentProvenance(headers)` (`lib/newsletter/consent-link.ts`): the middleware-stamped IP via `lib/request-ip.ts` and the user agent.
-- Look consent up by purpose (`purposeCodeAliases`), never by a notice `version`. Grants stamp `TERMS_VERSION` on the server (currently 3); bump it when any purpose text in `PURPOSE_CODE_META` changes, and render purpose text only from `PURPOSE_CODE_META`.
+- Look consent up by purpose (`purposeCodeAliases`), never by a notice `version`. Grants stamp `TERMS_VERSION` on the server (currently 4); bump it when any purpose text in `PURPOSE_CODE_META` changes, and render purpose text only from `PURPOSE_CODE_META`. User-facing consent copy is plain words: never render a purpose code, `ust_` token or statute citation; the shared notice is `components/compliance/DataProtectionNotice.tsx`.
 - `NotificationPreference.marketingEmails` and `CookiePreference` are unread; never add a reader or writer. There is no cookie banner: the site sets essential cookies only. Adding any non-essential script needs a consent prompt and a privacy-policy update first.
 - Erasure's mail scrub is `scrubMailFootprintTx` (`lib/compliance/erasure/mail-footprint.ts`), inside the `scrubUser` transaction: `NewsletterSubscriber` rows deleted and the address's pseudonymous `MARKETING_COMMS` artifact withdrawn, queued `FailedEmail` dead-lettered `policy:recipient_erased` and redacted, `recipient` on every `FailedEmail` row (settled too) and the `newsletter:<address>` / `contact:<address>` `entityRef` replaced by an `erased:<digest>` marker that `emailPolicyRefusal` and `emailReplayRefusal` refuse, the address removed from every batch (`review:erased_recipient` when a queued batch's key may have been seen). `EmailSuppression` is kept on purpose so the address stays unmailable. Bells are dropped at send time (`unerasedRecipients`). Proof: `__tests__/db/erasure-mail-footprint.db.test.ts`.
-- Erasure also deletes the user's `AppointmentWaitlist` (notify-me) and `WindowBackupInterest` rows inside the `scrubUser` transaction; the stale-requests job deletes settled `AppointmentWaitlist` rows 30 days after their last change.
+- Erasure also deletes the user's `AppointmentWaitlist` (notify-me) and `WindowBackupInterest` rows inside the `scrubUser` transaction; the stale-requests job deletes settled `AppointmentWaitlist` rows 30 days after their last change and settled `WindowBackupInterest` rows 30 days after `windowEnd` (`purgeSettledBackupInterest`).
 
 For how the breach and MSME alert emails are routed and guarded, see [docs/email/README.md](../../../docs/email/README.md).
+
+## Dark patterns and the displayed certificate
+
+Any change to pricing, checkout, promo, ranking, consent, notification copy or uploads re-opens a row of [the dark-pattern self-audit](../../../docs/compliance/06-dark-pattern-self-audit.md); add the finding there. Orders shown to buyers must match `/how-we-rank` (`app/(pages)/how-we-rank/page.tsx`), and no placement may be paid for unless it is labelled Sponsored. The certificate page `/compliance-certificate` returns 404 until `DARK_PATTERN_AUDIT` in `lib/company.ts` has a signatory name and signing date; never fill them without the director's signature. An anonymous grievance complainant gets a copy of the complaint only after their address is confirmed.
 
 ## Breach deadline staging
 

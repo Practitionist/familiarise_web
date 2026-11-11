@@ -24,20 +24,23 @@ Consequences for how you work:
   These are the ones to check first: notice architecture (DPDP s.5 + Rule 3 need a
   standalone itemised notice, not a marketing privacy policy); a _purpose_
   inventory rather than a data-category inventory; a grievance _workflow_ with
-  24h/15d acknowledgement-and-disposal, not a contact mailbox; proactive
+  24h acknowledgement and 7-day resolution (the platform standard, inside the
+  24h/15d statutory ceiling), not a contact mailbox; proactive
   erasure under s.8(7) rather than delete-account-on-request; and a processor
   inventory with erasure fan-out.
 - **Dates matter enormously and are staged.** Get them right; do not guess.
 
 ## Dates that are load-bearing
 
-| What                                                              | Date             | Source                     |
-| ----------------------------------------------------------------- | ---------------- | -------------------------- |
-| DPDP operative sections (ss.3-17, 19-33, penalties s.33) commence | **13 May 2027**  | G.S.R. 843(E), 13 Nov 2025 |
-| DPDP s.6(9) + Rules r.4 (Consent Managers) commence               | **13 Nov 2026**  | G.S.R. 843(E)              |
-| IT Act s.43A + SPDI Rules 2011 repealed                           | **13 May 2027**  | G.S.R. 843(E) s.44(2)(a)   |
-| Consumer Protection (E-Commerce) Amendment Rules 2026 in force    | **1 Jan 2027**   | CG-DL-E-10092026-276125    |
-| IT Act s.43A + SPDI Rules 2011                                    | **in force now** | until 13 May 2027          |
+| What                                                                                            | Date             | Source                                 |
+| ----------------------------------------------------------------------------------------------- | ---------------- | -------------------------------------- |
+| DPDP ss.1(2), 2 and 18-26 (definitions and the Data Protection Board) commence                  | **13 Nov 2025**  | G.S.R. 843(E), 13 Nov 2025             |
+| DPDP ss.3-17 (except s.6(9)) and 27-33 (except s.27(1)(d)), including the penalties, commence   | **13 May 2027**  | G.S.R. 843(E), 13 Nov 2025             |
+| DPDP s.6(9), s.27(1)(d) and Rules r.4 (Consent Managers) commence                               | **13 Nov 2026**  | G.S.R. 843(E)                          |
+| IT Act s.43A + SPDI Rules 2011 repealed                                                         | **13 May 2027**  | G.S.R. 843(E) s.44(2)(a)               |
+| DPDP Rules 2025 notified; Rule 4 after one year, Rules 3, 5-16, 22 and 23 after eighteen months | **13 Nov 2025**  | G.S.R. 846(E)                          |
+| Consumer Protection (E-Commerce) Amendment Rules 2026 in force                                  | **1 Jan 2027**   | G.S.R. 789(E), CG-DL-E-10092026-276125 |
+| IT Act s.43A + SPDI Rules 2011                                                                  | **in force now** | until 13 May 2027                      |
 
 ⚠ **The 18-month window is under live pressure.** On 22 Jan 2026 MeitY proposed
 cutting 18 months to 12, which would pull the deadline to **13 Nov 2026**. No
@@ -52,7 +55,10 @@ inherited the PIB date. The gazette says 13 Nov 2025, so 18 months is
 ## What is enforceable TODAY (do not let these slide)
 
 1. **IT Rules 2021 r.3(2)(a)(i)** — acknowledge a grievance within **24 hours**,
-   dispose within **15 days**. Not a guideline; a rule.
+   dispose within **15 days**. Not a guideline; a rule. The platform promises
+   the stricter **24 hours and 7 days** (`STATUTORY_ACK_HOURS` and
+   `STATUTORY_RESOLUTION_DAYS` in `lib/support/sla.ts`), and every doc quotes
+   those two numbers as the promise.
 2. **CERT-In Directions 28.04.2022** — cyber incident report within **6 hours**;
    ICT logs retained **180 days**; a nominated Point of Contact. Binds "any
    entity whatsoever", so it reaches us as a body corporate. The 180 days is
@@ -69,21 +75,51 @@ inherited the PIB date. The gazette says 13 Nov 2025, so 18 months is
    gac.gov.in. 30 days to appeal, GAC aims to resolve in 30 days, order is
    binding. A functioning, no-cost Indian escalation path.
 6. **E-Commerce Rules** — INR price display with charge break-up (r.5(1)); no
-   pre-ticked boxes (r.3(2)); seller grievance 48h/1 month (r.6(4)(b)).
+   pre-ticked boxes (r.3(2)); seller grievance 48h/1 month (r.6(4)(b), the
+   statutory ceiling; the platform promise is 24 hours and 7 days).
 7. **CBDT s.194-O** — 0.1% TDS on gross sales of resident e-commerce
    participants, ₹5 lakh individual carve-out. **The structuring question is
    open**: are we the facilitator (194-O) or the principal service provider
    (194-J at 10%)? Unresolved here, and it decides our consultants' tax
    treatment. Needs tax advice, not engineering.
 
+## Owner decisions that shape the posture
+
+- **18+ only (2026-11-09).** Familiarise serves adults. A child is anyone under 18 (DPDP s.2(f)), and serving one would need verifiable parental consent (s.9, Rule 10) and a ban on behavioural tracking (s.9(3)). The owner chose to refuse minors rather than build that, so the Terms carry an eligibility clause, the privacy policy says the service is for adults and that children's data is not knowingly collected, onboarding asks once for a date of birth, which is the attestation (stamped as `User.adultConfirmedAt` when it passes the 18+ check), and the server refuses an under-18 date of birth on every path ([age gate](./02-dpdp-and-privacy.md#age-gate-18-only)). The earlier parental-consent plan is dropped.
+- **Hashed fraud signals expire (2026-11-09).** Referral request signals are cleared 180 days after the referral is terminal (or after creation if it never settles) and on erasure; payer UPI and phone hashes 2 years after capture ([fraud-signal retention](./02-dpdp-and-privacy.md#fraud-signal-retention)).
+- **Consent artifacts are kept 7 years.** The basis is proof of consent, which the fiduciary must be able to produce (DPDP s.6(10)), plus the limitation periods for a claim. Counsel confirms the figure; no code changes.
+
+## Tax positions this posture relies on
+
+These are the owner's working positions. Each is recorded in `docs/decisions/2026-11-09-tax-compliance-and-pricing-levers.md` and the chartered accountant confirms them; they are not advice.
+
+- **CGST s.9(5) does not apply.** It makes an e-commerce operator liable for GST on only a short list of notified services (passenger transport, accommodation, housekeeping, restaurant services). Coaching and consultation sessions are not on it.
+- **No s.52 TCS under the principal model.** Familiarise is the supplier of the session to the buyer, not an operator collecting tax on another supplier's sale, so it collects no TCS and has no s.24(x) compulsory-registration trigger. If the accountant rejects the principal model, registration becomes compulsory from the first rupee.
+- **Income-tax s.194R is not applied** to an expert's own-link commission rate or a platform fee waiver. They are price terms of our commission, not a benefit or perquisite, and CBDT Circular 12/2022 keeps sales discounts out of s.194R. The accountant confirms before launch.
+
 ## The two instruments, and why they must stay separate
 
-|            | Contract acceptance (ToS)              | Data-processing consent (DPDP s.6)                   |
-| ---------- | -------------------------------------- | ---------------------------------------------------- |
-| Instrument | contract, IC Act ss.10/10A             | permission for a _specified purpose_                 |
-| Trigger    | ToS change                             | new/changed purpose                                  |
-| Acceptance | fresh; may be implied by conduct (s.9) | **clear affirmative action, s.6(1)** — never implied |
-| Withdrawal | close the account                      | stop processing, keep the account                    |
+|            | Contract acceptance (ToS)                           | Data-processing consent (DPDP s.6)                   |
+| ---------- | --------------------------------------------------- | ---------------------------------------------------- |
+| Instrument | contract, Contract Act s.10; IT Act s.10A           | permission for a _specified purpose_                 |
+| Trigger    | ToS change                                          | new/changed purpose                                  |
+| Acceptance | fresh; may be implied by conduct (Contract Act s.9) | **clear affirmative action, s.6(1)** — never implied |
+| Withdrawal | close the account                                   | stop processing, keep the account                    |
+
+The two instruments are kept in separate places in the data model, so a Terms acceptance can never be read as a data-processing consent. Acceptance of the Terms and the privacy policy is a pair of timestamps on the user row, `User.termsAcceptedAt` and `User.privacyAcceptedAt` (`prisma/schema.prisma`), stamped once when onboarding completes (`claimOnboardingCompletion`, `utils/onboarding-completion.ts`). Data-processing consent is a different table, `ConsentArtifact`, which holds the purpose codes, the notice `version`, `grantedAt`, `withdrawnAt` and a tamper-evident `hash`, and which every consent gate reads (`checkConsent`, see [DPDP and privacy](./02-dpdp-and-privacy.md)). No gate reads `termsAcceptedAt`, and no code path writes a `ConsentArtifact` as a side effect of a Terms acceptance.
+
+### The statutory sections behind the table
+
+Each section below was checked against a published copy of the Act on 2026-11-09. The table above and the owner decisions in this page rely on them.
+
+- **Contract Act s.9 (promises, express and implied).** A promise is express when the proposal or acceptance is made in words and implied when it is made otherwise than in words, which is why a user who keeps using the service after a notified Terms change can be treated as having accepted it. This applies to the contract only; DPDP s.6(1) demands a clear affirmative action, so conduct never counts as data-processing consent.
+- **Contract Act s.62 (effect of novation, rescission and alteration).** When the parties agree to substitute a new contract or to alter the existing one, the original need not be performed. An alteration therefore needs the agreement of both parties, so a Terms change must be put to the user and cannot simply be applied by the platform.
+- **IT Act s.4 (legal recognition of electronic records) and s.10A (validity of contracts formed through electronic means).** Where a law requires information to be in writing, an electronic record that stays accessible for later reference satisfies it (s.4), and a contract is not unenforceable only because its offer and acceptance were electronic (s.10A). An in-app acceptance and an emailed notice are therefore valid written forms. The IT Act has no section 4A.
+- **DPDP Act s.5(2).** For consent a person gave before the Act commenced, the fiduciary must give a notice "as soon as it is reasonably practicable" that says what data is processed and why, how the person can withdraw consent and exercise the rights in s.13, and how to complain to the Board. The Act's own illustration says the notice may be given by email, in-app notification or another effective method, and processing may continue until the person withdraws consent.
+- **Contract Act s.56 is frustration, not unfairness.** Section 56 voids an agreement to do an impossible act and a contract that later becomes impossible or unlawful. Do not cite it for a harsh Terms clause.
+- **Consumer Protection Act 2019 s.2(46) and s.2(47).** Section 2(46) defines an "unfair contract", one whose terms significantly change the consumer's rights, and s.2(47) defines an "unfair trade practice". A Terms clause is tested against s.2(46), and a misleading method of selling is tested against s.2(47).
+
+Sources: the Indian Contract Act 1872 (<https://indiacode.nic.in/bitstream/123456789/2187/2/A187209.pdf>, with the section 62 text read at <https://www.lawx.in/acts/section/6/104/1268>); the Information Technology Act 2000, Chapter III (<https://vidhijudicial.com/sec-4-to-10a-chapter-iii-(electronic-governance)-the-information-technology-act,-2000.html>); the DPDP Act 2023 section 5 (<https://dpdpa.com/dpdpa2023/chapter-2/section5.html>); the Consumer Protection Act 2019 section 2 (<https://taxguru.in/?p=732585>).
 
 **A ToS change can never carry new data-processing consent.** Bundling is the
 named anti-pattern (GDPR Art 7(4); EDPB Guidelines 03/2022). India has no
@@ -150,3 +186,8 @@ fresh consent. The purposes list is a hard boundary.
   notice-versioning, withdrawal vs erasure, processor fan-out).
 - **#1879** — per-user telemetry consent, privacy/terms rewrite, DPDP workstream.
 - **#1881** — hotfix PR off `dev`: retention clock, Novu erasure leak, doc lies.
+
+## Deprecated & Superseded Approaches
+
+- **Verifiable parental consent for students (dropped 2026-11-09).** Students are in the target market, but the owner chose 18+ only over a guardian flow, so none is built.
+- **"24h/15d" as the grievance promise (replaced 2026-11-09).** 15 days is the IT Rules ceiling. The platform promises 24 hours and 7 days.

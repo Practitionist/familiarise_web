@@ -122,7 +122,11 @@ describe("deriveGstBreakdown export branch", () => {
 describe("determineTax export branch (checkout parity)", () => {
   it("no LUT ⇒ 18% IN-GST treatment with explanatory notes", () => {
     setLut(null, null);
-    const r = determineTax({ baseAmountPaise: 100_000, buyerCountry: "US" });
+    const r = determineTax({
+      baseAmountPaise: 100_000,
+      buyerCountry: "US",
+      gstRegistered: true,
+    });
     expect(r.isZeroRated).toBe(false);
     expect(r.taxRate).toBe(18);
     expect(r.taxAmount).toBe(18_000);
@@ -133,7 +137,11 @@ describe("determineTax export branch (checkout parity)", () => {
   it("valid LUT ⇒ zero-rated export", () => {
     freezeInsideLutWindow();
     setLut("LUT/2627", "2027-03-31");
-    const r = determineTax({ baseAmountPaise: 100_000, buyerCountry: "GB" });
+    const r = determineTax({
+      baseAmountPaise: 100_000,
+      buyerCountry: "GB",
+      gstRegistered: true,
+    });
     expect(r.isZeroRated).toBe(true);
     expect(r.taxAmount).toBe(0);
     expect(r.jurisdiction).toBe("EXPORT-ZERO");
@@ -141,7 +149,11 @@ describe("determineTax export branch (checkout parity)", () => {
 
   it("domestic supply is unaffected by LUT state", () => {
     setLut(null, null);
-    const r = determineTax({ baseAmountPaise: 100_000, buyerCountry: "IN" });
+    const r = determineTax({
+      baseAmountPaise: 100_000,
+      buyerCountry: "IN",
+      gstRegistered: true,
+    });
     expect(r.jurisdiction).toBe("IN-GST");
     expect(r.taxAmount).toBe(18_000);
   });

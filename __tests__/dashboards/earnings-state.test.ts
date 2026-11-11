@@ -123,7 +123,7 @@ describe("derivePayoutPresentation — every PayoutStatus has one label and one 
       "FAILED",
       "Failed",
       "warning",
-      /^Bank rejected the transfer; we retry on Monday$/,
+      /^We couldn't send this payout; we retry on Monday$/,
     ],
     ["CANCELLED", "Cancelled", "neutral", /stays in your balance/],
     ["REVERSED", "Returned by your bank", "critical", /account details/],
@@ -140,7 +140,7 @@ describe("derivePayoutPresentation — every PayoutStatus has one label and one 
 
   it("a failure reason is plain words, never the gateway's text or its ids", () => {
     const raw = "Gateway accepted (pout_ABC123); post-submit DB write failed";
-    expect(sanitizePayoutFailure(raw)).toBe("bank rejected the transfer");
+    expect(sanitizePayoutFailure(raw)).toBe("we couldn't send this payout");
     expect(sanitizePayoutFailure("invalid_account_number")).toBe(
       "your bank details did not match",
     );

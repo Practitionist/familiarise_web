@@ -16,11 +16,12 @@ export const GRIEVANCE_OFFICER = {
 } as const;
 
 export const POLICY_DATES = {
-  privacyLastUpdated: "November 7, 2026",
-  termsLastUpdated: "October 28, 2026",
+  privacyLastUpdated: "November 9, 2026",
+  termsLastUpdated: "November 9, 2026",
   refundLastUpdated: "October 28, 2026",
   grievanceLastUpdated: "October 21, 2026",
   reviewsPolicyLastUpdated: "October 2026",
+  howWeRankLastUpdated: "November 9, 2026",
 } as const;
 
 export const ANTI_SCAM_NOTICE =
@@ -53,6 +54,7 @@ export const SUPPORT_LINKS = [
   { href: "/support", label: "Help Center" },
   { href: "/grievance", label: "Grievance Redressal" },
   { href: "/reviews-policy", label: "Reviews & Moderation Policy" },
+  { href: "/how-we-rank", label: "How We Rank Experts & Programs" },
   { href: "/pricing", label: "Pricing & Platform Fees" },
   { href: "/refund", label: "Cancellation & Refund Policy" },
   { href: "/privacy", label: "Privacy Policy" },
@@ -74,7 +76,7 @@ export const PAGE_META = {
   pricing: {
     title: "Pricing",
     description:
-      "Experts set their prices in INR. You see the full amount, including GST, before you pay.",
+      "Experts set their prices in INR. You see the full amount you will pay before you pay.",
   },
   privacy: {
     title: "Privacy Policy",
@@ -136,7 +138,7 @@ export const ABOUT_DATA = {
       step: 2,
       title: "Book & Pay Securely",
       description:
-        "Choose a class, webinar or session, pick a time, and pay in INR through Razorpay. GST is shown at checkout before you pay",
+        "Choose a class, webinar or session, pick a time, and pay in INR through Razorpay. The full amount is shown at checkout before you pay",
     },
     {
       step: 3,
@@ -168,7 +170,7 @@ export const ABOUT_DATA = {
     },
     {
       title: "Transparent Pricing",
-      description: "Prices in INR, with GST shown before you pay",
+      description: "Prices in INR, with the full amount shown before you pay",
     },
     {
       title: "Responsive Support",
@@ -179,12 +181,6 @@ export const ABOUT_DATA = {
 
 // Pricing Page Data
 export const PRICING_DATA = {
-  howItWorks: [
-    "Experts set their own prices in Indian rupees (INR) for each class, webinar, session and plan.",
-    "You see the exact list price on the expert's profile and on the booking page before you book.",
-    "GST at 18% is added at checkout for buyers in India, and the full total is shown before you pay.",
-    "Familiarise's platform fee is taken from the expert's earnings; it is never added on top of what you pay.",
-  ],
   commissionBenefits: [
     "Run secure payment processing",
     "Provide built-in video sessions, in-session chat and course materials",
@@ -199,16 +195,41 @@ export const PRICING_DATA = {
     "Net Banking",
     "Wallets",
   ],
-  faqs: [
+} as const;
+
+const GST_LINE_REGISTERED =
+  "GST at 18% is added at checkout for buyers in India, and the full total is shown before you pay.";
+const GST_LINE_UNREGISTERED =
+  "No GST is added at the moment: the price you see is the price you pay.";
+
+/** The pricing page's "how it works" lines; the GST line follows the platform's registration. */
+export function pricingHowItWorks(gstRegistered: boolean): string[] {
+  return [
+    "Experts set their own prices in Indian rupees (INR) for each class, webinar, session and plan.",
+    "You see the exact list price on the expert's profile and on the booking page before you book.",
+    gstRegistered ? GST_LINE_REGISTERED : GST_LINE_UNREGISTERED,
+    "Familiarise's platform fee is taken from the expert's earnings; it is never added on top of what you pay.",
+  ];
+}
+
+/** The pricing page's FAQ; the two GST answers follow the platform's registration. */
+export function pricingFaqs(
+  gstRegistered: boolean,
+): { question: string; answer: string }[] {
+  const bank =
+    "Your bank or card issuer may apply its own charges, which we do not control.";
+  return [
     {
       question: "How do I know the price before booking?",
-      answer:
-        "The list price of each class, webinar, session or plan is shown on the expert's profile and on the booking page. At checkout we add GST where it applies and show the total before you confirm.",
+      answer: gstRegistered
+        ? "The list price of each class, webinar, session or plan is shown on the expert's profile and on the booking page, as the all-in price including GST. At checkout the total is shown again before you confirm."
+        : "The price of each class, webinar, session or plan is shown on the expert's profile and on the booking page. It is the price you pay, and the total is shown again at checkout before you confirm.",
     },
     {
       question: "Are there any additional fees?",
-      answer:
-        "Familiarise adds no booking fee. The only addition to the list price is GST (18% for buyers in India), shown at checkout before you pay. Your bank or card issuer may apply its own charges, which we do not control.",
+      answer: gstRegistered
+        ? `Familiarise adds no booking fee. The only addition to the expert's price is GST (18% for buyers in India), already included in the price shown. ${bank}`
+        : `Familiarise adds no booking fee and no tax is added at the moment. ${bank}`,
     },
     {
       question: "Can I get a refund if I cancel?",
@@ -223,15 +244,15 @@ export const PRICING_DATA = {
     {
       question: "Do you offer discounts or promotional pricing?",
       answer:
-        "Individual experts may offer promotional pricing or discounts. These are shown on their profiles and during booking. We also occasionally run platform-wide promotions; subscribe to our newsletter to hear about them.",
+        "We occasionally run platform-wide promotions, and a discount code can be entered at checkout. Subscribe to our newsletter to hear about them.",
     },
     {
       question: "How are experts paid?",
       answer:
         "Experts are paid after the session has been delivered and a short hold period has passed. The platform fee is deducted and the rest is transferred to the expert's registered bank account.",
     },
-  ],
-} as const;
+  ];
+}
 
 // Helper function to get mailto link
 export const getMailtoLink = (email: string = COMPANY_INFO.email) =>

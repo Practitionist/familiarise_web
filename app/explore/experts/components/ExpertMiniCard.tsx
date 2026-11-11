@@ -45,7 +45,7 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
               ) : (
                 <Clock className="w-3 h-3" />
               )}
-              {badge === "trending" ? "Trending" : "New"}
+              {badge === "trending" ? "Recently reviewed" : "New"}
             </span>
           </div>
         )}

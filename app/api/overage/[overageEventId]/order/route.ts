@@ -53,6 +53,7 @@ export async function POST(
           amount: true,
           originalAmount: true,
           taxAmount: true,
+          gstRegime: true,
           paymentGateway: true,
         },
       },

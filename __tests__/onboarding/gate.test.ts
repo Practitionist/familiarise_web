@@ -89,6 +89,16 @@ describe("completeOnboardingGateAction", () => {
     expect(mockTransaction).not.toHaveBeenCalled();
   });
 
+  it("ignores a client-sent adultConfirmed: the date of birth is the only age ask", async () => {
+    const result = await completeOnboardingGateAction(
+      validGate({ adultConfirmed: false }),
+    );
+    expect(result).toEqual({ success: true });
+    const claim = tx.user.updateMany.mock.calls[0][0];
+    expect(claim.data.adultConfirmedAt).toBeInstanceOf(Date);
+    expect(claim.data).not.toHaveProperty("adultConfirmed");
+  });
+
   it("refuses missing consent", async () => {
     for (const missing of ["termsAccepted", "privacyAccepted"]) {
       const result = await completeOnboardingGateAction(

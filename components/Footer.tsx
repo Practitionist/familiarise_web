@@ -11,13 +11,15 @@ import { Input } from "@/components/ui/input";
 import { COMPANY_INFO } from "@/lib/company";
 import { NEWSLETTER_NOTICE } from "@/lib/newsletter/notice";
 import { isChromeHidden } from "@/lib/navigation/public-chrome";
+import { EXPLORE_FIELDS } from "@/lib/navigation/public-nav";
+import { domainPath } from "@/lib/explore/domain-slug";
 
 interface FooterLink {
   label: string;
   href: string;
 }
 
-// Mirrors the Navbar's IA (Explore / Solutions / Enterprise / Company / Legal).
+// Follows the Navbar's IA (Explore / Solutions / For business) and adds the pages the bar leaves out (Company / Legal).
 // Users who miss something in the nav look for it in the footer, so the two
 // disagreeing costs clicks.
 const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
@@ -25,9 +27,10 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
     heading: "Explore",
     links: [
       { label: "Find experts", href: "/explore/experts" },
-      { label: "Programs", href: "/explore/programs" },
+      { label: "Classes & webinars", href: "/explore/programs" },
+      { label: "Digital products", href: "/explore/products" },
       {
-        label: "Organisations",
+        label: "Partner organisations",
         href: "/explore/enterprise/organisations",
       },
     ],
@@ -42,7 +45,7 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
     ],
   },
   {
-    heading: "Enterprise",
+    heading: "For business",
     links: [
       { label: "Overview", href: "/enterprise" },
       { label: "Team training", href: "/enterprise/team-training" },
@@ -50,7 +53,10 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
         label: "Corporate mentorship",
         href: "/enterprise/corporate-mentorship",
       },
-      { label: "Talk to sales", href: "/contactus" },
+      { label: "For institutions", href: "/enterprise/institutions" },
+      { label: "How funding works", href: "/enterprise/funding" },
+      { label: "Security", href: "/enterprise/security" },
+      { label: "Book a demo", href: "/enterprise/demo" },
     ],
   },
   {
@@ -59,8 +65,9 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
       { label: "About", href: "/about" },
       { label: "Help Center", href: "/support" },
       { label: "Contact", href: "/contactus" },
-      { label: "Pricing", href: "/pricing" },
+      { label: "Pricing & fees", href: "/pricing" },
       { label: "How it works", href: "/#how-it-works" },
+      { label: "How we rank", href: "/how-we-rank" },
       { label: "Become an expert", href: "/become-an-expert" },
     ],
   },
@@ -77,20 +84,10 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
 
 // Internal-linking band. A marketplace's value is its long-tail catalog, so
 // these deep links are worth more here than another column of company pages.
-const EXPERTISE_LINKS: FooterLink[] = [
-  { label: "Technology", href: "/explore/experts?domain=Technology" },
-  { label: "Business", href: "/explore/experts?domain=Business" },
-  {
-    label: "Creative Arts",
-    href: `/explore/experts?domain=${encodeURIComponent("Creative Arts")}`,
-  },
-  { label: "Education", href: "/explore/experts?domain=Education" },
-  { label: "Health", href: "/explore/experts?domain=Health" },
-  {
-    label: "Personal Development",
-    href: `/explore/experts?domain=${encodeURIComponent("Personal Development")}`,
-  },
-];
+const EXPERTISE_LINKS: FooterLink[] = EXPLORE_FIELDS.map((name) => ({
+  label: name,
+  href: domainPath(name),
+}));
 
 const Footer: React.FC = () => {
   const pathname = usePathname();

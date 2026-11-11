@@ -136,6 +136,9 @@ describe("confirming the address", () => {
   const caseRow = {
     id: "case-1",
     referenceNumber: "FAM-000123",
+    title: "[Grievance] Refund not received",
+    description:
+      "Submitted via public form by Asha <outside@example.com>\n\nMy refund is missing.",
     externalRequesterEmail: "outside@example.com",
   };
 
@@ -161,6 +164,39 @@ describe("confirming the address", () => {
       }),
     });
     expect(stageMock.mock.calls[0][0].text).toContain("Withheld staff reply");
+  });
+
+  it("sends the complaint as recorded only once the address is confirmed", async () => {
+    db.supportCase.findFirst.mockResolvedValue(caseRow);
+    db.supportCaseEvent.findFirst.mockResolvedValue(null);
+    db.supportCaseMessage.findMany.mockResolvedValue([]);
+
+    await confirmExternalRequesterEmail({
+      caseId: "case-1",
+      token: externalEmailToken("case-1", "outside@example.com", issuedAt),
+      issuedAt,
+    });
+
+    expect(stageMock).toHaveBeenCalledTimes(1);
+    const [message, emailType, options] = stageMock.mock.calls[0];
+    expect(message.to).toBe("outside@example.com");
+    expect(message.subject).toContain("Your grievance as recorded");
+    expect(message.text).toContain("FAM-000123");
+    expect(message.text).toContain("My refund is missing.");
+    expect(emailType).toBe("SUPPORT_TICKET_RECEIVED");
+    expect(options).toEqual(
+      expect.objectContaining({ entityRef: "case-complaint-copy:case-1" }),
+    );
+  });
+
+  it("sends no complaint copy for an unconfirmable link", async () => {
+    db.supportCase.findFirst.mockResolvedValue(caseRow);
+    await confirmExternalRequesterEmail({
+      caseId: "case-1",
+      token: externalEmailToken("case-1", "attacker@example.com", issuedAt),
+      issuedAt,
+    });
+    expect(stageMock).not.toHaveBeenCalled();
   });
 
   it("withholds presenter replies while digesting the staff ones", async () => {

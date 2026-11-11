@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { getUserDetails } from "@/lib/data/user-details";
 import { NextRequest, NextResponse } from "next/server";
 import { Gender } from "@prisma/client";
+import { DateOfBirthSchema, UNDER_AGE_MESSAGE } from "@/lib/compliance/age";
 
 import { getSession } from "@/lib/auth-server";
 import { requireApiAuth } from "@/lib/auth-helpers";
@@ -110,7 +111,6 @@ export async function PUT(
       image,
       phone,
       address,
-      onboardingCompleted,
       currentTimezone,
       // New user fields
       dateOfBirth,
@@ -129,6 +129,23 @@ export async function PUT(
       );
     }
 
+    // The 18+ rule applies to every write of a date of birth.
+    const parsedDateOfBirth = dateOfBirth
+      ? DateOfBirthSchema.safeParse(dateOfBirth)
+      : null;
+    if (parsedDateOfBirth && !parsedDateOfBirth.success) {
+      return NextResponse.json(
+        {
+          error:
+            parsedDateOfBirth.error.issues[0]?.message ?? UNDER_AGE_MESSAGE,
+          code: "VALIDATION",
+          field: "dateOfBirth",
+        },
+        { status: 400 },
+      );
+    }
+
+    // Onboarding completes only through its own transaction, never a self-edit.
     const updatedUser = await prisma.user.update({
       where: { id: id },
       data: {
@@ -136,9 +153,8 @@ export async function PUT(
         image: emptyToUndefined(image),
         phone: emptyToUndefined(phone),
         address: emptyToUndefined(address),
-        onboardingCompleted,
         timezone: emptyToUndefined(currentTimezone),
-        dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
+        dateOfBirth: parsedDateOfBirth?.data,
         gender: parseEnumOrUndefined(gender, Gender),
         city: emptyToUndefined(city),
         country: emptyToUndefined(country),

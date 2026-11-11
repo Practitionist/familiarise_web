@@ -101,7 +101,18 @@ export default function TermsPage() {
               </h2>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
-                3.1 Registration
+                3.1 Eligibility
+              </h3>
+              <p>
+                You must be at least 18 years old to use Familiarise. By
+                creating an account you confirm that you are 18 or older and
+                that the date of birth you give is true. Familiarise is not
+                intended for anyone under 18, and we refuse or close an account
+                that belongs to a person under 18.
+              </p>
+
+              <h3 className="text-xl font-semibold mt-4 mb-2">
+                3.2 Registration
               </h3>
               <p>
                 To use certain features of our platform, you must create an
@@ -119,7 +130,7 @@ export default function TermsPage() {
               </p>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
-                3.2 Account Responsibilities
+                3.3 Account Responsibilities
               </h3>
               <p>You agree to:</p>
               <ul>
@@ -133,7 +144,7 @@ export default function TermsPage() {
               </ul>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
-                3.3 Account Termination
+                3.4 Account Termination
               </h3>
               <p>
                 We reserve the right to suspend or terminate your account if
@@ -142,7 +153,10 @@ export default function TermsPage() {
               <ul>
                 <li>Violate these Terms & Conditions</li>
                 <li>Engage in fraudulent or illegal activities</li>
-                <li>Provide false or misleading information</li>
+                <li>
+                  Provide false or misleading information, including a false
+                  date of birth
+                </li>
                 <li>Abuse or harass other users</li>
                 <li>Violate intellectual property rights</li>
               </ul>
@@ -205,7 +219,9 @@ export default function TermsPage() {
               <ul>
                 <li>All transactions are processed in Indian Rupees (INR)</li>
                 <li>
-                  Prices may or may not include applicable taxes (GST, etc.)
+                  The price shown before you pay is the full amount you pay.
+                  Once Familiarise is registered for GST, that price includes
+                  GST, and your tax invoice shows the GST separately.
                 </li>
                 <li>
                   You are responsible for any taxes applicable in your
@@ -753,7 +769,7 @@ export default function TermsPage() {
               </h2>
               <p>
                 These Terms, together with our Privacy Policy and Cancellation &
-                Refund Policy, constitute the entire agreement between you and
+                Refund Policy, constitute the entire agreement between you and{" "}
                 {COMPANY_INFO.name} regarding your use of the platform and
                 supersede all prior agreements and understandings.
               </p>

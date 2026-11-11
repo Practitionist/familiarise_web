@@ -127,6 +127,20 @@ The money subsystem: checkout and pricing, capture and webhooks, the double-entr
 - [finance/00-overview/01-money-map.md](./finance/00-overview/01-money-map.md) - Diagram-first system map
 - [finance/70-operations/05-money-runbooks.md](./finance/70-operations/05-money-runbooks.md) - Symptom-first money runbooks
 - [finance/90-decisions/README.md](./finance/90-decisions/README.md) - The money ADRs and the gateway decision
+- [finance/60-tax/05-gst-registration-and-tax-regime.md](./finance/60-tax/05-gst-registration-and-tax-regime.md) - The registered and unregistered GST regimes, the `Payment.gstRegime` stamp, the ₹15 lakh turnover alarm and the switch-over runbook
+- [2026-11-09-tax-compliance-and-pricing-levers.md](./decisions/2026-11-09-tax-compliance-and-pricing-levers.md) - Launch unregistered under the s.22 threshold with the regime from `PLATFORM_GSTIN`; one order pipeline; the profitability floor on every platform-funded lever; the roadmap and cited sources
+- [2026-11-09-payment-gateways-one-rail.md](./decisions/2026-11-09-payment-gateways-one-rail.md) - Why only Razorpay and RazorpayX are integrated: Stripe removed, the US-entity route and the merchant-of-record platforms rejected, Cashfree, Tazapay and Xflow deferred with revisit triggers
+
+---
+
+### Pricing
+
+How the pricing levers combine on one order: the list price, discount codes, the welcome discount, referral credits, GST display and the platform fee. See [pricing/README.md](./pricing/README.md).
+
+- [pricing/00-overview.md](./pricing/00-overview.md) - Every lever as it exists today, with the code that implements it
+- [pricing/01-one-order-pipeline.md](./pricing/01-one-order-pipeline.md) - The five slots, the "never" rules and the worked ₹1,000 example
+- [pricing/02-coupons-and-early-bird.md](./pricing/02-coupons-and-early-bird.md) - Target design for host-funded coupons and the early-bird price
+- [pricing/03-roadmap.md](./pricing/03-roadmap.md) - Pricing items with priority and phase
 
 ---
 
@@ -383,6 +397,9 @@ Prisma operations and migration documentation.
 - [02-schema-freeze-and-migration-cutover.md](./prisma/02-schema-freeze-and-migration-cutover.md) - Pre-launch shape freeze and the `db push` to versioned-migrations cutover plan
 - [2026-11-07-supabase-mcp-sql-approval-hook.md](./decisions/2026-11-07-supabase-mcp-sql-approval-hook.md) - Supabase MCP reads run freely; a PreToolUse hook stops every write for the owner's approval
 - [2026-11-02-agent-instruction-layout.md](./decisions/2026-11-02-agent-instruction-layout.md) - One shared root `AGENTS.md`, nested per-directory files, and the deterministic checks that replace prose bans
+- [2026-11-11-fable-5-2-advisor-tier.md](./decisions/2026-11-11-fable-5-2-advisor-tier.md) - Fable 5.2 becomes the advisor tier, audit days run at `xhigh` and orchestration at `high`, executor pins stay on Opus and Sonnet, and the Fable 5.2 briefing rules
+- [2026-11-09-repo-notion-split.md](./decisions/2026-11-09-repo-notion-split.md) - The six Notion sections, one canonical pricing page, the delete-versus-archive rule, competitor screenshots kept out of git, and legal facts written into the compliance docs
+- [2026-11-11-notion-workspace-consolidation.md](./decisions/2026-11-11-notion-workspace-consolidation.md) - Notion page titles carry outline numbers, repository pointers name the section and page without them, and the canonical page names after the consolidation
 
 ---
 

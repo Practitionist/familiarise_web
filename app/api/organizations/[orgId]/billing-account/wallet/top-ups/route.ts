@@ -38,6 +38,11 @@ import { Prisma } from "@prisma/client";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
 import { PaymentError } from "@/lib/payments/core/types";
+import { refusalJson } from "@/lib/errors/refusal-json";
+import {
+  assertOrgBillingAvailable,
+  currentGstRegime,
+} from "@/lib/payments/tax/gst-regime";
 
 const TopUpBodySchema = z.object({
   // Minimum top-up of ₹100 (10000 paise) so gateway fees don't dwarf
@@ -139,6 +144,14 @@ export async function POST(
       { error: "Top-ups are only allowed on WALLET funding" },
       { status: 409 },
     );
+  }
+  // Wallet money is organisation-funded billing, which needs a GST registration.
+  try {
+    assertOrgBillingAvailable(currentGstRegime());
+  } catch (error) {
+    const refused = refusalJson(error);
+    if (!refused) throw error;
+    return refused;
   }
 
   // Idempotent by client key: a replay reuses the minted order, or completes a

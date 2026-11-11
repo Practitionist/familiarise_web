@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Button, Section, Text } from "react-email";
 import { EmailLayout } from "@/emails/components/EmailLayout";
+import { payoutMethodLabel } from "@/lib/labels/money-labels";
 import {
   button,
   buttonContainer,
@@ -56,15 +57,13 @@ function PayoutSummaryParagraph(props: {
       <Text style={paragraph}>
         We sent a payout of <strong>{props.amountText}</strong>
         {orgNode}
-        {props.method ? ` (${props.method})` : ""}. Payout reference:{" "}
-        <strong>{props.payoutId}</strong>.
+        {props.method ? ` (${payoutMethodLabel(props.method)})` : ""}. Payout
+        reference: <strong>{props.payoutId}</strong>.
       </Text>
     );
   }
   const suffix =
-    props.status === "REVERSED"
-      ? "was returned by the receiving bank."
-      : "could not be completed.";
+    props.status === "REVERSED" ? "was reversed." : "could not be completed.";
   return (
     <Text style={paragraph}>
       A payout of <strong>{props.amountText}</strong>

@@ -11,17 +11,20 @@ import {
   type ConsentProvenance,
 } from "@/lib/newsletter/consent-link";
 import type { OnboardingConsent } from "./onboarding";
+import { isAdult } from "@/lib/compliance/age";
 
 /**
  * The one terminal onboarding transition, shared by the wizard, the gate and
  * org creation. CAS on `onboardingCompleted`, so it must be the first write in
  * its transaction: it takes the user-row lock and serialises racing submits.
  * Returns false when another request already completed onboarding.
+ * The date of birth is the age declaration: `adultConfirmedAt` is stamped only
+ * when it passes the 18+ check.
  */
 export async function claimOnboardingCompletion(
   tx: Tx,
   userId: string,
-  data: Prisma.UserUncheckedUpdateManyInput,
+  data: Prisma.UserUncheckedUpdateManyInput & { dateOfBirth: Date },
 ): Promise<boolean> {
   const now = new Date();
   const { count } = await tx.user.updateMany({
@@ -32,6 +35,7 @@ export async function claimOnboardingCompletion(
       onboardingCompleted: true,
       termsAcceptedAt: now,
       privacyAcceptedAt: now,
+      adultConfirmedAt: isAdult(data.dateOfBirth, now) ? now : null,
     },
   });
   return count > 0;

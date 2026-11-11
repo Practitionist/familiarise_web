@@ -1,6 +1,7 @@
 /**
  * Mints the consumer tax invoice for SUCCEEDED payments the capture path left
- * un-invoiced (a missing GSTIN, a crash after commit), within a bounded lookback.
+ * un-invoiced (a crash after commit), within a bounded lookback. While the
+ * platform is unregistered it mints nothing.
  */
 
 import { randomUUID } from "node:crypto";
@@ -8,7 +9,11 @@ import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
-import { reportConfigSkip, type ConfigSkip } from "@/lib/cron/config-skip";
+import {
+  GST_UNREGISTERED_SKIP,
+  reportConfigSkip,
+  type ConfigSkip,
+} from "@/lib/cron/config-skip";
 import { startDeadline } from "@/lib/cron/run-deadline";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
@@ -47,7 +52,7 @@ export async function healConsumerInvoices(opts: {
 }): Promise<HealConsumerInvoicesResult> {
   // An unset GSTIN skips before any row is read; a malformed or wrong-state one throws.
   if (!platformSupplierForJob()) {
-    const skipped: ConfigSkip = "PLATFORM_GSTIN not configured";
+    const skipped = GST_UNREGISTERED_SKIP;
     reportConfigSkip("heal-consumer-invoices", skipped);
     return { scanned: 0, minted: 0, declined: 0, failed: 0, skipped };
   }

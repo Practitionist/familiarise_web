@@ -13,7 +13,7 @@ import {
   useInfiniteScroll,
   useExpertFilterChips,
 } from "./hooks";
-import type { IExpertsMetaData } from "./utils";
+import { resolveTaxonomyFilters, type IExpertsMetaData } from "./utils";
 import StickyFilterBar from "./components/StickyFilterBar";
 import StaticTopRows from "./components/StaticTopRows";
 import ExpertResults from "./components/ExpertResults";
@@ -34,6 +34,12 @@ export default function ExpertsInteractiveContent({
   const { filters, updateFilters, clearFilters } = useExpertsFilters();
   const browseSectionRef = useRef<HTMLDivElement>(null);
   const { formatPrice } = useCurrency();
+
+  useEffect(() => {
+    if (!metadata) return;
+    const patch = resolveTaxonomyFilters(filters, metadata);
+    if (patch) updateFilters(patch);
+  }, [filters, metadata, updateFilters]);
 
   // Main listing — keepPreviousData inside the hook keeps stale results
   // visible during refetch.

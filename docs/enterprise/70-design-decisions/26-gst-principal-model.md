@@ -3,7 +3,7 @@ title: GST — the platform bills as principal supplier
 band: 70-design-decisions
 audience: sde3
 status: live
-last-reviewed: 2026-09-03
+last-reviewed: 2026-11-09
 ---
 
 # ADR 26 — GST: the platform bills as principal supplier
@@ -18,8 +18,8 @@ The 2026-09-03 financial audit assumed the facilitator reading for GST as well a
 
 The platform bills as **principal supplier for GST**. Concretely:
 
-1. GST stays at 18% on the full discounted price, booked to `GST_PAYABLE` at settlement, exactly as today.
-2. The platform will issue a numbered **B2C tax invoice** for every consumer supply and a **credit note** for every refund (`ConsumerInvoice`, `ConsumerCreditNote`, platform-wide gapless series under CGST Rule 46 and Rule 53), alongside the existing org invoices for sponsored supplies. This is design intent, not yet shipped: the models do not exist in the schema as of this ADR and land with PR-E (`feat/finance-b2c-tax-invoice`, in flight).
+1. Once the platform is GST-registered, GST is 18% on the full discounted price, booked to `GST_PAYABLE` at settlement. While `PLATFORM_GSTIN` is unset the platform is unregistered under the CGST s.22 threshold and charges no GST at all; [GST registration and the tax regime](../../finance/60-tax/05-gst-registration-and-tax-regime.md) covers both regimes and the `Payment.gstRegime` stamp.
+2. The platform issues a numbered **B2C tax invoice** for every consumer supply made while registered and a **credit note** for every refund (`ConsumerInvoice`, `ConsumerCreditNote`, platform-wide gapless series under CGST Rule 46 and Rule 53, minted by `mintConsumerInvoice` in `lib/payments/billing/consumer-invoice.ts`), alongside the org invoices for sponsored supplies. A payment stamped `UNREGISTERED`, or with no stamp (a sale from before the stamp existed, when production had no GSTIN), gets a receipt and never a retroactive tax invoice or credit note; only a `REGISTERED` stamp is invoiced, on the consumer series and on the organisation series alike.
 3. Place of supply for a consumer is the declared or remembered billing state, which a domestic buyer-paid checkout must now supply (question 4 below); for an older payment with no address on record, it defaults to the **supplier's state under Section 12(2)(b)** of the IGST Act, which makes the supply intra-state (CGST + SGST). This is the opposite of the B2B derivation's IGST fallback, which stays as an audit signal for org invoices.
 4. GST-TCS under Section 52 **does not apply** on this model and is not collected. The dormant TCS schema and GSTR-8 draft builder were deleted on 2026-10-04; if the CA overturns this decision, TCS is rebuilt at the then-current rate.
 5. The platform's own outward-supply return is produced as a period **register export** (all tax invoices and credit notes, with place of supply and tax heads) that the CA files GSTR-1 and GSTR-3B from. No in-app GSTR JSON builders.
@@ -31,7 +31,9 @@ The facilitator model — GST only on the platform's commission, 0.5% Section 52
 
 ## Consequences
 
-Every consumer payment will leave a statutory document trail the buyer can download once the B2C tax-invoice work lands, which closes the "incomplete information" gap in the money journey; that work (`ConsumerInvoice`, `ConsumerCreditNote`) is in flight and not yet in the schema (tracked as PR-E, `feat/finance-b2c-tax-invoice`). The register export gives the CA one file per month instead of a database query, once it ships alongside the invoices. Consultants who hold a GSTIN invoice the platform, not the buyer; that is a contractual and onboarding matter, not a code path, and belongs in the consultant terms.
+Every consumer payment made while registered leaves a statutory document trail the buyer can download (`ConsumerInvoice`, `ConsumerCreditNote`), which closes the "incomplete information" gap in the money journey. The register export (`jobs/compliance/gst-outward-register-export.ts`) gives the CA one file per month instead of a database query.
+
+The principal model also makes the platform's GST turnover the full value of every sale, so the ₹20 lakh registration threshold is reached on gross sales, not on the platform fee. If the CA rejects the principal model, registration becomes compulsory from the first rupee and the unregistered regime does not apply. Consultants who hold a GSTIN invoice the platform, not the buyer; that is a contractual and onboarding matter, not a code path, and belongs in the consultant terms.
 
 The pairing of principal-for-GST with operator-for-income-tax is defensible but unusual, and it is the first question on the CA list below. If the CA rejects it, the facilitator model is a pricing, invoice and ledger re-architecture (GST only on the platform fee, TCS on registered consultants, GSTR-8 monthly) and would be a new ADR.
 
@@ -49,5 +51,11 @@ The full 14-question research memo, with code status, is [docs/finance/60-tax/03
 
 - ADR 21 (single writer for payment confirmation) — the invoice is minted inside the same pipeline, never by a second writer.
 - ADR 08 (gapless invoice counters) — the platform series reuses the same atomic counter shape.
-- docs/finance/60-tax/02-gst-invoices-and-credit-notes.md, docs/compliance/00-overview.md (RBI payment-aggregator posture).
+- docs/finance/60-tax/02-gst-invoices-and-credit-notes.md, docs/finance/60-tax/05-gst-registration-and-tax-regime.md, docs/compliance/00-overview.md (RBI payment-aggregator posture).
+- docs/decisions/2026-11-09-tax-compliance-and-pricing-levers.md (the registration regime and the profitability floor).
 - #1360 (relabelled CA-gated), #1361 (re-scoped to the register export), #1365, #1370.
+
+## Deprecated & Superseded Approaches
+
+- **"The consumer invoice models do not exist yet."** This ADR first described `ConsumerInvoice` and `ConsumerCreditNote` as in-flight design intent. They have shipped, together with the healer and the monthly register export.
+- **18% on every order regardless of registration.** Checkout charged GST before the platform held a GSTIN. GST is now charged only in the registered regime.

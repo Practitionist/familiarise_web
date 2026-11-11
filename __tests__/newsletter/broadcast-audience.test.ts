@@ -3,12 +3,13 @@
  */
 
 /**
- * The broadcast audience: filters compose on the confirmed list, a preview only
- * counts, a test goes to the calling admin alone, a warm-up takes the most
+ * The broadcast audience: filters compose on the confirmed list, only a live
+ * MARKETING_COMMS consent is mailable, a preview only counts, a test goes to the calling admin alone, a warm-up takes the most
  * recently confirmed N, and an audience above the limit is refused.
  */
 
 const mockFindMany = jest.fn();
+const mockArtifacts = jest.fn();
 const mockBatchUpsert = jest.fn();
 const mockBatchSend = jest.fn();
 const mockFindSuppressed = jest.fn();
@@ -19,6 +20,9 @@ jest.mock("@/lib/prisma", () => ({
   default: {
     newsletterSubscriber: {
       findMany: (...args: unknown[]) => mockFindMany(...args),
+    },
+    consentArtifact: {
+      findMany: (...args: unknown[]) => mockArtifacts(...args),
     },
     failedEmailBatch: {
       upsert: (...args: unknown[]) => mockBatchUpsert(...args),
@@ -74,10 +78,39 @@ function post(body: unknown) {
   );
 }
 
+/** Even rows are accounts, odd rows guests with a pseudonymous consent subject. */
 function subscribers(count: number) {
   return Array.from({ length: count }, (_, i) => ({
     email: `s${i}@example.com`,
+    userId: i % 2 === 0 ? `u${i}` : null,
+    consentSubjectId: i % 2 === 0 ? null : `subj${i}`,
   }));
+}
+
+/** Every queried account and subject holds a live artifact, except those listed. */
+function liveConsent(except: string[] = []) {
+  mockArtifacts.mockImplementation(
+    async (args: {
+      where: {
+        OR: [
+          { userId: { in: string[] } },
+          { subjectPseudonymousId: { in: string[] } },
+        ];
+      };
+    }) =>
+      [
+        ...args.where.OR[0].userId.in.map((userId) => ({
+          userId,
+          subjectPseudonymousId: null,
+        })),
+        ...args.where.OR[1].subjectPseudonymousId.in.map((id) => ({
+          userId: null,
+          subjectPseudonymousId: id,
+        })),
+      ].filter(
+        (a) => !except.includes(a.userId ?? a.subjectPseudonymousId ?? ""),
+      ),
+  );
 }
 
 const sentTo = () =>
@@ -91,6 +124,7 @@ describe("newsletter broadcast audience", () => {
     jest.spyOn(console, "log").mockImplementation(() => {});
     jest.spyOn(console, "info").mockImplementation(() => {});
     mockBatchUpsert.mockResolvedValue({ id: "batch_1" });
+    liveConsent();
     mockFindSuppressed.mockResolvedValue(new Set(["s1@example.com"]));
     mockHeld.mockImplementation((email: string) =>
       email === "s2@example.com" ? "example.com" : null,
@@ -127,6 +161,23 @@ describe("newsletter broadcast audience", () => {
       skippedHeld: 1,
     });
     expect(mockBatchSend).not.toHaveBeenCalled();
+  });
+
+  it("excludes and counts subscribers without a live MARKETING_COMMS artifact", async () => {
+    mockFindMany.mockResolvedValue(subscribers(6));
+    liveConsent(["u4", "subj5"]);
+
+    const res = await post({ mode: "preview" });
+
+    expect(await res.json()).toMatchObject({
+      matching: 6,
+      skippedNoConsent: 2,
+      sendable: 2,
+    });
+    expect(mockArtifacts.mock.calls[0][0].where).toMatchObject({
+      purposeCodes: { hasSome: expect.arrayContaining(["MARKETING_COMMS"]) },
+      withdrawnAt: null,
+    });
   });
 
   it("sends a test only to the calling admin", async () => {

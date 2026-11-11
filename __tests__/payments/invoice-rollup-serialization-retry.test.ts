@@ -17,6 +17,8 @@
  * believed, and an exhausted retry is reported rather than swallowed.
  */
 
+import { runAsRegisteredPlatform } from "../fixtures/gst-registered";
+
 const mockTransaction = jest.fn();
 const mockOrgFindUnique = jest.fn();
 const mockOrgCandidates = jest.fn();
@@ -512,3 +514,6 @@ test("a multi-organization failure reports once and still invoices the next orga
     context: { organizations: ["org_bad_1", "org_bad_2"] },
   });
 });
+
+// Priced and invoiced as a GST-registered platform.
+runAsRegisteredPlatform();

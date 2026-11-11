@@ -22,6 +22,7 @@ import {
   type CheckoutDiscountInput,
 } from "@/lib/payments/pricing/derive-checkout-amount";
 import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
+import { currentGstRegime } from "@/lib/payments/tax/gst-regime";
 import {
   validatePlanCurrency,
   validateDiscountCurrency,
@@ -65,6 +66,8 @@ export async function calculateAmountAndValidate(
   /** The signed own-link cookie and whether an org funds this booking; null for neither. */
   referral: { viaToken: string | null; orgFunded: boolean } | null = null,
 ) {
+  // Refuses before any read when PLATFORM_GSTIN is set but unusable.
+  const gstRegime = currentGstRegime();
   return await prisma.$transaction(async (tx) => {
     let amount = 0;
     let plan;
@@ -514,14 +517,26 @@ export async function calculateAmountAndValidate(
     const derived = await deriveCheckoutAmount({
       basePaise: amount,
       buyerCountry,
+      gstRegime,
       serviceType: appointmentTypeToServiceType(validatedData.appointmentType),
       discount: appliedDiscount,
       welcomeDiscount: attribution.welcomeDiscount,
       creditCapBps: attribution.creditCapBps,
+      promoFeeBps: attribution.promoFeeBps,
       useReferralCredits: validatedData.useReferralCredits === true,
       resolveAvailableCreditsPaise: async () =>
         (await getUserCredits(userId, tx)).totalAvailable,
     });
+    // A code on an order whose take cannot fund promo (a fee waiver, a host org) is refused,
+    // before commit, so no redemption is spent.
+    if (appliedDiscount && derived.platformFundedCapPaise === 0) {
+      throw Object.assign(
+        new Error(
+          `Discount code refused: no platform-funded promo on this order (promoFeeBps=${attribution.promoFeeBps})`,
+        ),
+        { httpStatus: 409, code: "DISCOUNT_NOT_APPLICABLE" },
+      );
+    }
     // Original plan price before any discounts/credits, used for consultant
     // earnings — discounts are platform-funded, not consultant-funded.
     const { originalAmount, taxAmount, creditsApplied, isInternational } =
@@ -558,6 +573,7 @@ export async function calculateAmountAndValidate(
       attributionReferralId: attribution.referralId,
       platformFeeBps: attribution.platformFeeBps,
       welcomeDiscountPaise: derived.welcomeDiscountPaise,
+      gstRegime,
     };
   });
 }

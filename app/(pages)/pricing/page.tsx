@@ -17,12 +17,27 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import {
-  PAYOUT_CONSTANTS,
-  TAX_CONSTANTS,
-} from "@/lib/payments/payouts/constants";
+import { withBuildTimeRetry } from "@/lib/data/fail-open";
+import { TAX_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { PAGE_META, PRICING_DATA } from "../constants";
+import { buyerDisplayPricePaise } from "@/lib/payments/pricing/display-price";
+import {
+  describeFeeRates,
+  readActiveFeeSchedule,
+} from "@/lib/payments/pricing/platform-fee";
+import { prorate } from "@/lib/payments/utils/money";
+import { isPlatformGstRegistered } from "@/lib/pdf/supplier";
+import prisma from "@/lib/prisma";
+import {
+  PAGE_META,
+  PRICING_DATA,
+  pricingFaqs,
+  pricingHowItWorks,
+} from "../constants";
+
+// The GST wording follows PLATFORM_GSTIN and the fee the approved schedule; hourly
+// regeneration picks up a registration or a newly approved schedule.
+export const revalidate = 3600;
 
 export const metadata: Metadata = {
   title: `${PAGE_META.pricing.title} | Familiarise`,
@@ -30,12 +45,6 @@ export const metadata: Metadata = {
 };
 
 const EXAMPLE_LIST_PRICE_PAISE = 100_000;
-const exampleGstPaise = Math.round(
-  (EXAMPLE_LIST_PRICE_PAISE * TAX_CONSTANTS.GST_RATE) / 100,
-);
-const exampleFeePaise = Math.round(
-  (EXAMPLE_LIST_PRICE_PAISE * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
-);
 
 function inr(paise: number): string {
   return formatCurrencyAmount(paise, "INR");
@@ -79,7 +88,23 @@ const SERVICES = [
   },
 ] as const;
 
-export default function PricingPage() {
+export default async function PricingPage() {
+  const gstRegistered = isPlatformGstRegistered();
+  const schedule = await withBuildTimeRetry(() =>
+    readActiveFeeSchedule(prisma),
+  );
+  const { marketplaceFeePct } = describeFeeRates(schedule);
+  // The settlement's own floor(list × bps / 10 000).
+  const exampleFeePaise = prorate(
+    EXAMPLE_LIST_PRICE_PAISE,
+    schedule.marketplaceBps,
+    10_000,
+  );
+  const totalPaise = buyerDisplayPricePaise(
+    EXAMPLE_LIST_PRICE_PAISE,
+    gstRegistered,
+  );
+  const exampleGstPaise = totalPaise - EXAMPLE_LIST_PRICE_PAISE;
   return (
     <section className="w-full">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -111,7 +136,7 @@ export default function PricingPage() {
                 What stays the same for everyone is how the price is built up:
               </p>
               <div className="bg-muted p-4 rounded-lg space-y-2">
-                {PRICING_DATA.howItWorks.map((item) => (
+                {pricingHowItWorks(gstRegistered).map((item) => (
                   <p key={item} className="flex items-start gap-2">
                     <span className="text-green-600 mt-1">✓</span>
                     <span>{item}</span>
@@ -140,20 +165,24 @@ export default function PricingPage() {
                 <dl className="space-y-1 text-sm">
                   <div className="flex justify-between gap-4">
                     <dt className="text-muted-foreground">
-                      Price listed by the expert
+                      {gstRegistered
+                        ? "Price set by the expert (before GST)"
+                        : "Price listed by the expert"}
                     </dt>
                     <dd>{inr(EXAMPLE_LIST_PRICE_PAISE)}</dd>
                   </div>
-                  <div className="flex justify-between gap-4">
-                    <dt className="text-muted-foreground">
-                      GST at {TAX_CONSTANTS.GST_RATE}%
-                    </dt>
-                    <dd>{inr(exampleGstPaise)}</dd>
-                  </div>
+                  {gstRegistered && (
+                    <div className="flex justify-between gap-4">
+                      <dt className="text-muted-foreground">
+                        GST at {TAX_CONSTANTS.GST_RATE}%
+                      </dt>
+                      <dd>{inr(exampleGstPaise)}</dd>
+                    </div>
+                  )}
                   <Separator />
                   <div className="flex justify-between gap-4 font-semibold">
                     <dt>Total at checkout</dt>
-                    <dd>{inr(EXAMPLE_LIST_PRICE_PAISE + exampleGstPaise)}</dd>
+                    <dd>{inr(totalPaise)}</dd>
                   </div>
                 </dl>
               </div>
@@ -164,8 +193,7 @@ export default function PricingPage() {
                 <dl className="space-y-1 text-sm">
                   <div className="flex justify-between gap-4">
                     <dt className="text-muted-foreground">
-                      Platform fee ({PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE}%
-                      of the listed price)
+                      Platform fee ({marketplaceFeePct}% of the listed price)
                     </dt>
                     <dd>{inr(exampleFeePaise)}</dd>
                   </div>
@@ -177,12 +205,15 @@ export default function PricingPage() {
                 </dl>
               </div>
               <p className="text-xs text-muted-foreground">
-                Any discount or promotion is applied to the listed price before
-                GST is calculated. The platform fee is paid out of the
-                expert&apos;s share and is never added to your total. Tax
-                deducted at source, where the law requires it, is a separate
-                statutory deduction from the expert&apos;s payout. Buyers
-                outside India see the tax that applies to them at checkout.
+                {gstRegistered
+                  ? "Any discount or promotion is applied to the listed price before GST is calculated. The price on each card already includes this GST. "
+                  : "No GST is added at the moment, so the price you see is the price you pay. "}
+                The platform fee is paid out of the expert&apos;s share and is
+                never added to your total. Tax deducted at source, where the law
+                requires it, is a separate statutory deduction from the
+                expert&apos;s payout.
+                {gstRegistered &&
+                  " Buyers outside India see the tax that applies to them at checkout."}
               </p>
             </CardContent>
           </Card>
@@ -198,10 +229,10 @@ export default function PricingPage() {
             <CardContent className="space-y-4">
               <p className="text-muted-foreground">
                 Familiarise charges experts a platform fee of currently{" "}
-                <strong>{PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE}%</strong> of
-                the listed price on each booking made through the marketplace.
-                Learners do not pay it separately; it is already part of the
-                listed price. The fee helps us:
+                <strong>{marketplaceFeePct}%</strong> of the listed price on
+                each booking made through the marketplace. Learners do not pay
+                it separately; it is already part of the listed price. The fee
+                helps us:
               </p>
               <ul className="list-disc list-inside space-y-2 text-muted-foreground ml-4">
                 {PRICING_DATA.commissionBenefits.map((benefit) => (
@@ -298,7 +329,7 @@ export default function PricingPage() {
             </CardHeader>
             <CardContent>
               <Accordion type="single" collapsible className="w-full">
-                {PRICING_DATA.faqs.map((faq, index) => (
+                {pricingFaqs(gstRegistered).map((faq, index) => (
                   <AccordionItem key={faq.question} value={`item-${index + 1}`}>
                     <AccordionTrigger>{faq.question}</AccordionTrigger>
                     <AccordionContent>

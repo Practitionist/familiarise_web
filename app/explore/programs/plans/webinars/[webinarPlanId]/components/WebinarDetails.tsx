@@ -20,8 +20,9 @@ import {
 import { formatInTimeZone } from "date-fns-tz";
 import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
-import { useCurrency } from "@/hooks/useCurrency";
+import { BuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
+import { formatRole } from "@/components/collaborators/format";
 import type { TWebinarPlanData, TSessionStatus } from "../types";
 
 interface WebinarDetailsProps {
@@ -44,7 +45,6 @@ export function WebinarDetails({
   isWaiting,
   viewerUserId,
 }: WebinarDetailsProps) {
-  const { formatPrice } = useCurrency();
   const [timeZone, setTimeZone] = useState("UTC");
   useEffect(() => {
     setTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
@@ -127,7 +127,7 @@ export function WebinarDetails({
             </h1>
             <div className="flex items-center gap-4 text-white/80">
               <span className="text-2xl md:text-3xl font-bold text-white">
-                {formatPrice(plan.price)}
+                <BuyerPrice paise={plan.price} noteClassName="text-white/70" />
               </span>
               <span className="text-white/60">•</span>
               <span>{plan.durationInHours} hours</span>
@@ -170,8 +170,8 @@ export function WebinarDetails({
               />
               <FeatureItem
                 icon={<Video className="h-5 w-5" />}
-                label="Platform"
-                value={plan.materialProvided ?? "Zoom"}
+                label="Format"
+                value="Live online"
               />
               <FeatureItem
                 icon={<Globe className="h-5 w-5" />}
@@ -283,7 +283,7 @@ export function WebinarDetails({
                             {collab.consultantProfile.user.name}
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            {collab.role.replace(/_/g, " ")}
+                            {formatRole(collab.role)}
                           </p>
                         </div>
                       </Link>

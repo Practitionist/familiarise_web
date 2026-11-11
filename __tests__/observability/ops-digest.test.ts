@@ -111,6 +111,13 @@ const mockDb = {
   emailEvent: {
     aggregate: jest.fn(async () => ({ _max: { receivedAt: null } })),
   },
+  payment: {
+    aggregate: jest.fn(async () => ({ _sum: { amount: 0, taxAmount: 0 } })),
+  },
+  referralCreditUsage: {
+    aggregate: jest.fn(async () => ({ _sum: { amount: 0 } })),
+  },
+  refund: { aggregate: jest.fn(async () => ({ _sum: { amountPaise: 0 } })) },
 };
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
@@ -170,6 +177,7 @@ describe("daily ops digest", () => {
   });
 
   it("shows a standing config skip with the age of its streak", async () => {
+    process.env.PLATFORM_GSTIN = "06ABCDE1234F1Z5";
     standingSkip = { lastSeen: ago(60 * 60_000), firstSeen: ago(40 * DAY_MS) };
     const result = await run();
     expect(result.headline).toBe("0 new, 1 standing");
@@ -183,6 +191,16 @@ describe("daily ops digest", () => {
     ]);
     expect(sentEmail().text).toContain(
       "Config skips: irp-uploader: PLATFORM_GSTIN not configured, 40 days (paging)",
+    );
+  });
+
+  it("keeps a GST job's skip out of the paging summary while unregistered", async () => {
+    delete process.env.PLATFORM_GSTIN;
+    standingSkip = { lastSeen: ago(60 * 60_000), firstSeen: ago(40 * DAY_MS) };
+    const result = await run();
+    expect(result.standingSkips).toEqual([]);
+    expect(sentEmail().text).toContain(
+      "Expected while unregistered for GST: irp-uploader.",
     );
   });
 

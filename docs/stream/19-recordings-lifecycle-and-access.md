@@ -483,7 +483,7 @@ The recording playback, manage, publish, preview, start, stop and sync routes, t
 
 ## Replay sales
 
-Replays are not sold at launch: recordings are included with the booking. Publishing is closed (there is no publish endpoint), so no recording is listed, the Replays tab of `/explore/products` shows "Replays aren't on sale yet", and the purchase route refuses every recording as not listed. The `RecordingPurchase` model and its settlement path remain, and a pending or succeeded purchase would still exempt a recording from retention. Replays return as a `ReplayListing` product that groups a webinar run's or a class batch's recordings (#2412); see [the marketplace doc](./recordings-marketplace.md).
+Replays are not sold at launch: recordings are included with the booking. Publishing is closed (there is no publish endpoint), so no recording is listed, `/explore/products` has no Replays tab, and the purchase route refuses every recording as not listed. The `RecordingPurchase` model and its settlement path remain, and a pending or succeeded purchase would still exempt a recording from retention. Replays return as a `ReplayListing` product that groups a webinar run's or a class batch's recordings (#2412); see [the marketplace doc](./recordings-marketplace.md).
 
 ## Storage
 

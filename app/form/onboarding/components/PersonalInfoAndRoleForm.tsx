@@ -22,13 +22,14 @@ import {
 import { Check, ChevronDown, Loader2 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { PersonalInfoAndRoleFormSchema } from "@/utils/onboarding";
+import { DATE_OF_BIRTH_HELPER } from "@/lib/compliance/age";
 import { trackOnboardingEvent } from "@/utils/onboarding-telemetry";
 import { useSession } from "@/lib/auth-client";
 import { z } from "zod";
 import { UserRole, Gender } from "@prisma/client";
 
 type FormData = z.infer<typeof PersonalInfoAndRoleFormSchema>;
-// #1132 — DateOfBirthSchema accepts a Date OR a `YYYY-MM-DD` string (the wizard
+// DateOfBirthSchema accepts a Date OR a `YYYY-MM-DD` string (the wizard
 // round-trips values through JSON between steps) and always yields a Date, so
 // the schema's input and output types differ. useForm needs both spelled out;
 // inferring from the output alone makes the resolver unassignable.
@@ -360,15 +361,9 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* #1132 — DPDP age gate. India's age of majority is 18 (s.2(f)), and
-          below it processing needs verifiable parental consent (s.9); there was
-          no age check anywhere in the product before this. Collecting the DOB
-          solely to run the check is an exempt purpose (Fourth Schedule Part B
-          item 6).
-
-          Deliberately OUTSIDE the optional collapsible below: the field is
-          required, so behind a closed disclosure labelled "optional" a submit
-          failed with both the input and its error invisible. */}
+      {/* Familiarise is 18+ only. The one neutral age ask: the date of birth is required and sits outside
+          the optional collapsible below, which would hide both the input and its
+          error on a failed submit. */}
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="dateOfBirth">
@@ -394,11 +389,14 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
                       ? field.value.slice(0, 10)
                       : ""
                 }
-                onChange={(e) =>
+                onChange={(e) => {
                   field.onChange(
                     e.target.value ? new Date(e.target.value) : undefined,
-                  )
-                }
+                  );
+                  // A date input only emits a complete date, so entry is
+                  // finished here: validate now, not on the next blur.
+                  field.onBlur();
+                }}
                 aria-invalid={!!errors.dateOfBirth}
               />
             )}
@@ -407,7 +405,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
             <FieldError message={errors.dateOfBirth.message} />
           ) : (
             <p className="text-xs text-muted-foreground">
-              You must be at least 18 to use Familiarise.
+              {DATE_OF_BIRTH_HELPER}
             </p>
           )}
         </div>

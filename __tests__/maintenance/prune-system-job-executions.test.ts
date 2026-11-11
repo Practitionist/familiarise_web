@@ -56,6 +56,7 @@ jest.mock("../../lib/prisma", () => ({
       [
         "orgDataExportJob",
         "cookiePreference",
+        "newsletterSubscriber",
         "meetingPresence",
         "meetingAttendance",
       ].map((model) => [
@@ -86,6 +87,7 @@ import {
   emailEventRetentionCutoff,
   strandedCutoff,
   STRANDED_ERROR,
+  unconfirmedNewsletterRetentionCutoff,
   pruneMessagingRetentionTables,
   pruneSystemJobExecutions,
 } from "../../scripts/cleanup/prune-system-job-executions";
@@ -155,6 +157,27 @@ it("pins every retention window", () => {
   expect(adminRunRequestRetentionCutoff(NOW)).toEqual(
     new Date(NOW.getTime() - 30 * DAY),
   );
+  expect(unconfirmedNewsletterRetentionCutoff(NOW)).toEqual(
+    new Date(NOW.getTime() - 30 * DAY),
+  );
+});
+
+it("deletes only never-confirmed sign-ups 30 days after the sign-up, rechecked in the write", async () => {
+  findSecondary.mockImplementation(async (model: string) =>
+    model === "newsletterSubscriber" ? [{ id: "pending-1" }] : [],
+  );
+  deleteSecondary.mockResolvedValue({ count: 1 });
+  const result = await pruneSystemJobExecutions();
+  const cutoff = { lt: unconfirmedNewsletterRetentionCutoff(NOW) };
+  expect(deleteSecondary).toHaveBeenCalledWith("newsletterSubscriber", {
+    where: {
+      status: "PENDING",
+      createdAt: cutoff,
+      updatedAt: cutoff,
+      id: { in: ["pending-1"] },
+    },
+  });
+  expect(result.unconfirmedNewsletterPruned).toBe(1);
 });
 
 it("acquires a closed lease and caps every phase even when no HTTP limit is supplied", async () => {

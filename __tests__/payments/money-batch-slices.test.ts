@@ -7,6 +7,7 @@
  * units, and a third slice in the same window finds nothing left to do.
  */
 
+import { runAsRegisteredPlatform } from "../fixtures/gst-registered";
 const earnings = new Map<string, { status: string; payoutId: string | null }>();
 const payouts: { consultantProfileId: string; createdAt: Date }[] = [];
 const billedOrgs = new Set<string>();
@@ -200,3 +201,6 @@ it("invoices each org once across slices of two", async () => {
     [0, 0],
   ]);
 });
+
+// The accrual rollup issues GST invoices only for a GST-registered platform.
+runAsRegisteredPlatform();

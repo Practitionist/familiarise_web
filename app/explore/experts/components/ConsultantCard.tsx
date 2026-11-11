@@ -18,7 +18,10 @@ import {
   BadgeCheck,
   Building2,
 } from "lucide-react";
-import { useCurrency } from "@/hooks/useCurrency";
+import {
+  BuyerPrice,
+  useBuyerPrice,
+} from "@/components/pricing/BuyerPriceProvider";
 
 interface ConsultantCardProps {
   consultant: IConsultantCardData;
@@ -89,13 +92,7 @@ const isMeaningfulText = (
   return !/^(none|n\/?a|na|null|nil|tbd|-+|\.+)$/i.test(trimmed);
 };
 
-const SubscriptionPlanCard = ({
-  plan,
-  formatPrice,
-}: {
-  plan: SubscriptionPlanCardData;
-  formatPrice: (amountINR: number) => string;
-}) => {
+const SubscriptionPlanCard = ({ plan }: { plan: SubscriptionPlanCardData }) => {
   const formatDuration = (months: number) => {
     switch (months) {
       case 1:
@@ -115,7 +112,7 @@ const SubscriptionPlanCard = ({
     <div className="bg-card rounded-xl p-5 border border-border">
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
         <div className="text-2xl sm:text-3xl font-bold text-foreground">
-          {formatPrice(plan.price)}
+          <BuyerPrice paise={plan.price} />
         </div>
         <div className="text-xs sm:text-sm text-muted-foreground font-medium bg-muted px-2 sm:px-3 py-1 rounded-full whitespace-nowrap">
           {formatDuration(plan.durationInMonths)}
@@ -163,7 +160,7 @@ export const ConsultantCard = memo(function ConsultantCard({
   metadata: _metadata,
   onSelect,
 }: Readonly<ConsultantCardProps>) {
-  const { formatPrice } = useCurrency();
+  const { formatBuyerPriceLabel } = useBuyerPrice();
   const profileHref = `/explore/experts/${consultant.id}`;
 
   const sortedPlans =
@@ -193,6 +190,10 @@ export const ConsultantCard = memo(function ConsultantCard({
           ),
         }
       : null;
+
+  // Cheapest 1:1 plan first (the card data is ordered by price); this is the
+  // main product, so the card states it instead of showing mentorship only.
+  const cheapestSession = consultant.consultationPlans?.[0] ?? null;
 
   const durationSeen: Record<number, number> = {};
   const tabLabels = sortedPlans.map((plan) => {
@@ -409,6 +410,31 @@ export const ConsultantCard = memo(function ConsultantCard({
         {/* Right Section: Subscription Plans & Actions */}
         <div className="flex-shrink-0 lg:w-[380px] xl:w-[420px] space-y-4">
           <div className="bg-muted rounded-xl p-4">
+            {cheapestSession && (
+              <div
+                className={`flex items-baseline justify-between gap-3 ${
+                  sortedPlans.length > 0
+                    ? "mb-4 border-b border-border pb-4"
+                    : ""
+                }`}
+              >
+                <span className="text-sm text-muted-foreground">
+                  1:1 session from
+                </span>
+                <span className="text-lg font-semibold text-foreground">
+                  {formatBuyerPriceLabel(cheapestSession.price)}
+                  <span className="ml-1 text-sm font-normal text-muted-foreground">
+                    / {cheapestSession.durationInHours}{" "}
+                    {cheapestSession.durationInHours === 1 ? "hour" : "hours"}
+                  </span>
+                </span>
+              </div>
+            )}
+            {sortedPlans.length > 0 && (
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Mentorship plans
+              </p>
+            )}
             {sortedPlans.length > 0 ? (
               <Tabs defaultValue={sortedPlans[0].id} className="w-full">
                 <TabsList className="w-full mb-4 bg-card p-1 rounded-lg border border-border">
@@ -427,17 +453,16 @@ export const ConsultantCard = memo(function ConsultantCard({
                     key={`${consultant.id}-tab-content-${plan.id}`}
                     value={plan.id}
                   >
-                    <SubscriptionPlanCard
-                      plan={plan}
-                      formatPrice={formatPrice}
-                    />
+                    <SubscriptionPlanCard plan={plan} />
                   </TabsContent>
                 ))}
               </Tabs>
             ) : (
-              <div className="text-center text-muted-foreground py-8">
-                <p className="text-sm">No subscription plans available</p>
-              </div>
+              !cheapestSession && (
+                <div className="text-center text-muted-foreground py-8">
+                  <p className="text-sm">No plans available yet</p>
+                </div>
+              )
             )}
           </div>
 
@@ -466,7 +491,7 @@ export const ConsultantCard = memo(function ConsultantCard({
                 >
                   <Link href={`${profileHref}?action=trial`}>
                     {trialOffer.priceInPaise > 0
-                      ? `Trial · ${formatPrice(trialOffer.priceInPaise)}`
+                      ? `Trial · ${formatBuyerPriceLabel(trialOffer.priceInPaise)}`
                       : "Free intro call"}
                   </Link>
                 </Button>

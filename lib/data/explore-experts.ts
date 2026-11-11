@@ -259,8 +259,16 @@ export function orderByForSort(
     case "newest":
       return { createdAt: "desc" };
     case "nameAsc":
-    default:
       return { user: { name: "asc" } };
+    case "recommended":
+    default:
+      // Best-rated first, then the experts with the most rated clients, then
+      // the newest, so unrated experts do not sink in arbitrary order.
+      return [
+        ...PERSON_SCORE_ORDER,
+        { ratedClientsOneToOne: "desc" },
+        { createdAt: "desc" },
+      ];
   }
 }
 
@@ -544,6 +552,22 @@ export const getCuratedExperts = unstable_cache(
 // revalidateTag("experts") that consultant verify/edit/delete now fires via
 // purgeExpertSurfaces (lib/data/public-cache.ts); the 60s revalidate is the
 // backstop. (#945 — pairs with the route's no-store fail-open; #932 caching.)
+/** Top-rated verified experts in one field, for its category page. */
+export const getTopExpertsInDomain = unstable_cache(
+  async (domainId: string, limit: number = 12) => {
+    const rows = await prisma.consultantProfile.findMany({
+      where: { verificationStatus: "VERIFIED", deletedAt: null, domainId },
+      relationLoadStrategy: "join",
+      orderBy: orderByForSort("rating"),
+      take: limit,
+      include: consultantCardInclude,
+    });
+    return rows.map(toConsultantCard);
+  },
+  ["top-experts-in-domain"],
+  { revalidate: 300, tags: ["experts"] },
+);
+
 export const getDefaultConsultantsPage = unstable_cache(
   async (
     sort: string,

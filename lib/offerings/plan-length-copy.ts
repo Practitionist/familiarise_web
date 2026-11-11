@@ -1,6 +1,6 @@
 /**
- * How checkout names a subscription plan's length and price: a weeks plan is
- * priced for the whole plan, a months plan per month.
+ * How checkout names a subscription plan's length and price: the price is
+ * charged once and covers the whole plan, in weeks or in months.
  */
 
 export interface PlanLengthCopyInput {
@@ -18,7 +18,7 @@ export function planDurationText(plan: PlanLengthCopyInput): string {
     : countOf(plan.durationInMonths || 1, "month");
 }
 
-/** The pricing card's label for the plan's price. */
+/** The pricing card's label for the plan's price: "Plan price (6 months)". */
 export function planPriceLabel(plan: PlanLengthCopyInput): string {
-  return plan.durationInWeeks ? "Plan price" : "Monthly Fee";
+  return `Plan price (${planDurationText(plan)})`;
 }

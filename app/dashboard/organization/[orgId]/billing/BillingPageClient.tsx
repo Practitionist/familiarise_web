@@ -205,7 +205,7 @@ export function BillingPageClient({
                   {/* A wallet shortfall also accrues, so real postings keep it. */}
                   {(fundingSource === "INVOICE" ||
                     (receivables?.totalPostings ?? 0) > 0) && (
-                    <Section id="accrued-usage" title="Accrued usage">
+                    <Section id="accrued-usage" title="Usage charges">
                       <AccruedUsagePanel receivables={receivables} />
                     </Section>
                   )}

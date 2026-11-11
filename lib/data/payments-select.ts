@@ -95,6 +95,7 @@ export const BUYER_PAYMENT_DISPLAY_SELECT = {
   amount: true,
   originalAmount: true,
   taxAmount: true,
+  welcomeDiscountPaise: true,
   currency: true,
   paymentStatus: true,
   paymentMethod: true,

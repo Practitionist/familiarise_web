@@ -8,8 +8,8 @@
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-jest.mock("@sentry/nextjs", () => ({
-  captureException: jest.fn(),
+jest.mock("../../lib/observability/client-capture", () => ({
+  captureClientException: jest.fn(),
 }));
 
 import React, { act } from "react";

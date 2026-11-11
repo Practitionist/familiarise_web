@@ -76,6 +76,8 @@ Dr DISCOUNT                   max(0, originalAmount + taxAmount − Σ the four 
 
 ### Worked examples
 
+These examples show the journal shape for each funding mix. Checkout's profitability floor ([checkout and pricing](../10-money-in/01-checkout-and-pricing.md#the-profitability-floor)) caps the promotion an order can carry, so examples 2 to 4 use promotion sizes that checkout would now hold lower; the postings follow the same rules at any size.
+
 **1. Card booking.** Charlotte Brown pays ₹1,180 for Hannah Anderson's ₹1,000 consultation.
 
 | Account                       | Dir    |   Paise |    Rupees |

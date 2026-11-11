@@ -6,6 +6,7 @@
  */
 
 import type { ReactElement } from "react";
+import { payoutNoticeReason } from "@/lib/dashboard/earnings-state";
 import {
   OrgBillingReceiptEmail,
   type OrgBillingReceiptKind,
@@ -324,7 +325,7 @@ export const sendOrgPayoutFailedEmail =
               kind: args.kind,
               orgName: args.orgName,
               amountText,
-              reason: args.reason,
+              reason: sentenceCase(payoutNoticeReason(args.kind, args.reason)),
               dashboardUrl: absolute(args.dashboardUrl),
               unsubscribeUrl: r.unsubscribeUrl,
               withheldText: args.withheldText,
@@ -484,6 +485,10 @@ export const sendOrgOverageDueEmail =
 
 // ── Payout status (B2C consultant & Org) ────────────────────────────────────
 
+function sentenceCase(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 export interface PayoutStatusEmailArgs {
   userId?: string;
   recipientUserIds?: string[];
@@ -544,7 +549,10 @@ function buildPayoutStatusEmail(args: PayoutStatusEmailArgs): {
           amountText,
           payoutId: args.payoutId,
           method: args.method,
-          reason: args.reason,
+          reason:
+            args.status === "COMPLETED"
+              ? null
+              : sentenceCase(payoutNoticeReason(args.status, args.reason)),
           withheldText: args.withheldText,
           dashboardUrl: resolvedDashboardUrl,
           unsubscribeUrl: r.unsubscribeUrl,

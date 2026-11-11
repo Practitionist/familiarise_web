@@ -1,3 +1,5 @@
+"use client";
+
 import Image from "next/image";
 import Link from "next/link";
 import { FileDown, FileText } from "lucide-react";
@@ -5,11 +7,13 @@ import { FileDown, FileText } from "lucide-react";
 import type { PublicProductCard } from "@/lib/data/digital-products-public";
 import { DIGITAL_PRODUCT_CATEGORY_LABEL } from "@/lib/digital-products/constants";
 import { productPriceLabel } from "@/lib/digital-products/price-label";
+import { useBuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 
 /** The expert's files on sale; each card opens the product page to buy. */
 export function DigitalProductsSection({
   products,
 }: Readonly<{ products: PublicProductCard[] }>) {
+  const { gstRegistered } = useBuyerPrice();
   if (products.length === 0) return null;
   return (
     <section className="overflow-hidden rounded-2xl border border-border bg-card">
@@ -63,8 +67,7 @@ export function DigitalProductsSection({
                   {product.fileCount}{" "}
                   {product.fileCount === 1 ? "file" : "files"} ·{" "}
                   <span className="font-medium text-foreground">
-                    {/* Viewer-agnostic, so before GST; the product page shows this buyer's total. */}
-                    {productPriceLabel(product.pricePaise)}
+                    {productPriceLabel(product.pricePaise, gstRegistered)}
                   </span>
                 </p>
               </div>

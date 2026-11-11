@@ -41,7 +41,7 @@ export default function CorporateMentorshipPage() {
         titleAccent: "organisation funds.",
         subtitle:
           "A credit pool for 1:1 expert sessions — your people choose who to learn from, and finance keeps a single budget instead of a trail of personal expenses.",
-        primaryCta: { label: "Talk to sales", href: "/contactus" },
+        primaryCta: { label: "Book a demo", href: "/enterprise/demo" },
         secondaryCta: {
           label: "All enterprise options",
           href: "/enterprise",
@@ -68,7 +68,7 @@ export default function CorporateMentorshipPage() {
         title: "Ready for organisation-funded mentorship?",
         description:
           "Tell us team size, monthly session volume, and domains. We will size a credit pool that matches how your people actually book.",
-        primaryCta: { label: "Talk to sales", href: "/contactus" },
+        primaryCta: { label: "Book a demo", href: "/enterprise/demo" },
         secondaryCta: {
           label: "See team training",
           href: "/enterprise/team-training",

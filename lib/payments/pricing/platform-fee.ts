@@ -28,6 +28,28 @@ export async function readActiveFeeSchedule(
   );
 }
 
+/** Plain-language fee figures for public copy, from the schedule's basis points. */
+export function describeFeeRates(
+  schedule: Pick<ActiveFeeSchedule, "marketplaceBps" | "ownLinkBps">,
+): {
+  marketplaceFeePct: string;
+  ownLinkFeePct: string;
+  /** What an expert keeps: one figure when the rates match, else "80–90". */
+  keepPct: string;
+} {
+  const pct = (bps: number) => String(bps / 100);
+  const keeps = [schedule.marketplaceBps, schedule.ownLinkBps].map(
+    (bps) => 100 - bps / 100,
+  );
+  const low = Math.min(...keeps);
+  const high = Math.max(...keeps);
+  return {
+    marketplaceFeePct: pct(schedule.marketplaceBps),
+    ownLinkFeePct: pct(schedule.ownLinkBps),
+    keepPct: low === high ? String(low) : `${low}–${high}`,
+  };
+}
+
 export function feeBpsForSource(
   schedule: ActiveFeeSchedule,
   source: PaymentAttributionSource | null,
@@ -47,19 +69,33 @@ export function liveFeeWaiverWhere(
   };
 }
 
-/** True when the order carries platform-funded promo (welcome discount or a credit leg). */
+/**
+ * True when the order carries platform-funded promo: a welcome discount, a credit leg, or a
+ * code that took something off the list price (list + GST − charged − credits).
+ */
 async function carriesPromo(tx: Tx, paymentId: string): Promise<boolean> {
-  const promo = await tx.payment.findFirst({
-    where: {
-      id: paymentId,
-      OR: [
-        { welcomeDiscountPaise: { gt: 0 } },
-        { legs: { some: { source: "REFERRAL_CREDIT" } } },
-      ],
+  const payment = await tx.payment.findUnique({
+    where: { id: paymentId },
+    select: {
+      amount: true,
+      originalAmount: true,
+      taxAmount: true,
+      discountCodeId: true,
+      welcomeDiscountPaise: true,
+      legs: {
+        where: { source: "REFERRAL_CREDIT" },
+        select: { amountPaise: true },
+      },
     },
-    select: { id: true },
   });
-  return promo !== null;
+  if (!payment) return false;
+  if ((payment.welcomeDiscountPaise ?? 0) > 0 || payment.legs.length > 0) {
+    return true;
+  }
+  return (
+    payment.discountCodeId !== null &&
+    payment.originalAmount + payment.taxAmount - payment.amount > 0
+  );
 }
 
 /**

@@ -13,7 +13,10 @@ jest.mock("@/lib/auth-client", () => ({
   useSession: () => ({ data: { user: { id: "u-1" } }, isPending: false }),
 }));
 jest.mock("@/hooks/useCurrency", () => ({
-  useCurrency: () => ({ formatPrice: (p: number) => `₹${p / 100}` }),
+  useCurrency: () => ({
+    formatPrice: (p: number) => `₹${p / 100}`,
+    formatPriceExact: (p: number) => `₹${p / 100}`,
+  }),
 }));
 jest.mock("@/components/events/FreeCancellationLine", () => ({
   FreeCancellationLine: () => null,

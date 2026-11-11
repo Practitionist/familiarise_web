@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
 import { ClassPlanProgram } from "@/lib/explore/programs";
-import { useCurrency } from "@/hooks/useCurrency";
+import { useBuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { formatInTimeZone } from "date-fns-tz";
 import { eventCapacityFromCount } from "@/lib/events/capacity";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
@@ -54,7 +54,7 @@ export function ClientClassRegistration({
   const startDate = batch?.startsAt ?? batchClass?.schedulingPeriodStartsAt;
   const { data: session } = useSession();
   const router = useRouter();
-  const { formatPrice } = useCurrency();
+  const { formatBuyerPriceLabel } = useBuyerPrice();
   useRefreshOnViewerChange(viewerUserId);
 
   // Defer auth + timezone until after hydration to avoid mismatch
@@ -276,7 +276,7 @@ export function ClientClassRegistration({
           className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
         >
           <Link href={checkoutUrl} prefetch>
-            Pay {formatPrice(payPaise)} & Register Now
+            Pay {formatBuyerPriceLabel(payPaise)} & Register Now
           </Link>
         </Button>
         {isWaiting && notifyMe}

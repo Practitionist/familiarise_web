@@ -137,6 +137,17 @@ interface ConsumerInvoiceItem {
   pdfUrl: string;
 }
 
+const INVOICE_STATUS_LABEL: Record<string, string> = {
+  PAID: "Paid",
+  ISSUED: "Issued",
+  OVERDUE: "Overdue",
+  DRAFT: "Draft",
+  CANCELLED: "Cancelled",
+  VOID: "Void",
+  REFUNDED: "Refunded",
+  CREDIT_NOTED: "Credit note issued",
+};
+
 function getStatusBadge(status: string) {
   const styles: Record<string, string> = {
     PAID: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
@@ -150,7 +161,7 @@ function getStatusBadge(status: string) {
   };
   return (
     <Badge variant="outline" className={styles[status] || ""}>
-      {status.replace("_", " ")}
+      {INVOICE_STATUS_LABEL[status] ?? "Other"}
     </Badge>
   );
 }

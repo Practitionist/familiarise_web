@@ -43,7 +43,7 @@ export function loadScript(src: string): Promise<boolean> {
 }
 
 // Common error handling logic for checkout pages
-interface CheckoutApiError {
+export interface CheckoutApiError {
   error?: string;
   errorType?: string;
   message?: string;

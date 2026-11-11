@@ -2,8 +2,9 @@
  * POST /api/admin/newsletter/broadcast
  *
  * Sends one newsletter through Resend's batch API (100 per call) to a filtered
- * audience of SUBSCRIBED addresses, to the calling admin only (`test`), or to
- * the most recently confirmed N (`warmup`); `preview` only counts. Every
+ * audience of SUBSCRIBED addresses with a live MARKETING_COMMS consent, to the
+ * calling admin only (`test`), or to the most recently confirmed N (`warmup`);
+ * `preview` only counts. Every
  * message carries an unsubscribe footer and RFC 8058 one-click headers.
  */
 
@@ -25,7 +26,10 @@ import {
   BROADCAST_AUDIENCE_LIMIT,
   broadcastAudienceSchema,
 } from "@/lib/newsletter/broadcast-audience";
-import { listSendableSubscribers } from "@/lib/newsletter/service";
+import {
+  listSendableSubscribers,
+  withLiveMarketingConsent,
+} from "@/lib/newsletter/service";
 import { buildUnsubscribeUrl } from "@/lib/newsletter/tokens";
 
 const message = {
@@ -51,23 +55,29 @@ type BroadcastRequest = z.infer<typeof requestSchema>;
 
 const BATCH_SIZE = 100;
 
-/** The addresses a request would send to after suppression and the pre-launch hold. */
+/** The addresses a request would send to after the consent ledger, suppression and the pre-launch hold. */
 async function resolveRecipients(
   input: BroadcastRequest,
   adminEmail: string,
 ): Promise<{
   recipients: string[];
   matching: number;
+  skippedNoConsent: number;
   skippedSuppressed: number;
   skippedHeld: number;
 }> {
   const order = input.mode === "warmup" ? "recentFirst" : "stable";
-  const candidates =
+  const subscribed =
     input.mode === "test"
-      ? [normaliseEmail(adminEmail)]
-      : (await listSendableSubscribers(input.audience, order)).map(
-          (s) => s.email,
-        );
+      ? null
+      : await listSendableSubscribers(input.audience, order);
+  // A SUBSCRIBED row is mailable only while its MARKETING_COMMS artifact is live.
+  const candidates = subscribed
+    ? (await withLiveMarketingConsent(subscribed, new Date())).map(
+        (s) => s.email,
+      )
+    : [normaliseEmail(adminEmail)];
+  const matching = subscribed?.length ?? candidates.length;
   // A bounced or complaining address stays SUBSCRIBED only until the webhook settles it.
   const suppressed = await findSuppressed(candidates);
   const unsuppressed = candidates.filter((email) => !suppressed.has(email));
@@ -85,7 +95,8 @@ async function resolveRecipients(
   return {
     recipients:
       input.mode === "warmup" ? sendable.slice(0, input.limit) : sendable,
-    matching: candidates.length,
+    matching,
+    skippedNoConsent: matching - candidates.length,
     skippedSuppressed: candidates.length - unsuppressed.length,
     skippedHeld,
   };
@@ -106,11 +117,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
     const input = parsed.data;
 
-    const { recipients, matching, skippedSuppressed, skippedHeld } =
-      await resolveRecipients(input, auth.session.user.email);
+    const {
+      recipients,
+      matching,
+      skippedNoConsent,
+      skippedSuppressed,
+      skippedHeld,
+    } = await resolveRecipients(input, auth.session.user.email);
     const counts = {
       matching,
       sendable: recipients.length,
+      skippedNoConsent,
       skippedSuppressed,
       skippedHeld,
       limit: BROADCAST_AUDIENCE_LIMIT,

@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
+import { refusalJson } from "@/lib/errors/refusal-json";
 import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
 import { getUserCredits } from "@/lib/referrals/service";
 import { applyRateLimit, checkoutContextLimiter } from "@/lib/rate-limit";
@@ -43,6 +44,9 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ ...taxContext, referralCreditsPaise: credits });
   } catch (error) {
+    // A typed refusal (GST_CONFIG_INVALID on a malformed PLATFORM_GSTIN) is an answer, not a bug.
+    const refused = refusalJson(error);
+    if (refused) return refused;
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "checkout" } },
