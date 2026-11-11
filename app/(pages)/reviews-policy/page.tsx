@@ -8,7 +8,7 @@ import { POLICY_DATES } from "../constants";
 export const metadata = {
   title: `How Reviews & Ratings Work | ${COMPANY_INFO.name}`,
   description:
-    "Transparency policy covering verified session reviews, BIS IS 19000:2022 standards, rating tracks, human moderation, and appeals.",
+    "Transparency policy covering reviews from completed paid sessions, BIS IS 19000:2022 standards, rating tracks, human moderation, and appeals.",
 };
 
 export default function ReviewsPolicyPage() {
@@ -101,7 +101,7 @@ export default function ReviewsPolicyPage() {
               </ul>
               <p>
                 Every displayed average score is always accompanied by the
-                number of verified ratings included in that track.
+                number of ratings included in that track.
               </p>
 
               <Separator className="my-6" />

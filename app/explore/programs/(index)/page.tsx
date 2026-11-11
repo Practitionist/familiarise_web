@@ -43,7 +43,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: "Live classes and webinars | Familiarise",
   description:
-    "Join multi-session classes and one-off webinars led by verified experts. Filter by topic, level, language and price.",
+    "Join multi-session classes and one-off webinars led by founder-interviewed experts. Filter by topic, level, language and price.",
   alternates: { canonical: "/explore/programs" },
 };
 

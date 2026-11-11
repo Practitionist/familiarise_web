@@ -44,7 +44,7 @@ export const FEATURES = [
     icon: Video,
     title: "Tutoring & 1-on-1 Sessions",
     description:
-      "Personal video sessions with a verified expert, tailored to your subject and goals.",
+      "Personal video sessions with an expert, tailored to your subject and goals.",
     gradient: "from-stone-600 to-stone-800",
   },
   {
@@ -106,9 +106,9 @@ export const BENEFITS = [
     icon: Zap,
   },
   {
-    title: "Verified Experts",
+    title: "Interviewed Experts",
     description:
-      "Every listed expert is document-verified by our staff, and ratings come only from learners who attended.",
+      "Every expert is personally interviewed by our founder before taking bookings, and reviews come only from completed paid sessions.",
     icon: BadgeCheck,
   },
   {
@@ -130,7 +130,7 @@ export const HOW_IT_WORKS = [
     step: 1,
     title: "Find Your Expert",
     description:
-      "Browse our curated network of verified professionals across various domains.",
+      "Browse our curated network of professionals across various domains.",
   },
   {
     step: 2,
@@ -187,13 +187,13 @@ export const PLATFORM_FEATURES = [
     icon: Star,
     title: "Reviews & Ratings",
     description:
-      "Rate your sessions and read verified reviews to find the perfect expert.",
+      "Rate your sessions and read reviews from completed paid sessions to find the perfect expert.",
   },
   {
     icon: BadgeCheck,
-    title: "Verified Profiles",
+    title: "Interviewed Experts",
     description:
-      "Document-based verification for consultants. Staff review ensures quality experts.",
+      "Our founder personally interviews every expert, and their employer is confirmed by work email or LinkedIn.",
   },
   {
     icon: MessageSquare,
@@ -230,8 +230,9 @@ export const PLATFORM_FEATURES = [
 export const TRUST_BADGES = [
   {
     icon: Shield,
-    label: "Verified Experts",
-    description: "Every listed expert is document-verified by our staff",
+    label: "Interviewed Experts",
+    description:
+      "Every expert is personally interviewed by our founder before taking bookings",
   },
   {
     icon: Lock,
@@ -246,8 +247,8 @@ export const TRUST_BADGES = [
   },
   {
     icon: Award,
-    label: "Quality Assured",
-    description: "Ratings come only from verified session participants",
+    label: "Honest Reviews",
+    description: "Reviews come only from completed paid sessions",
   },
 ];
 
