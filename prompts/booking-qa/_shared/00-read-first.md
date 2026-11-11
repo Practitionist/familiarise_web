@@ -72,6 +72,7 @@ When the product and a doc disagree, report it, don't pick one. The references:
 
 - **Be literal.** Click what a user clicks, read what a user reads. Quote copy verbatim.
 - **Verify on every surface that shows the thing.** A booking appears on the consultant dashboard, the consultee dashboard, notifications, emails (subject only, via `NotificationOutbox`), the org dashboard when org-funded, and staff/admin views. A mismatch between any two is an **INCONSISTENCY** finding even when each looks fine alone.
+- **Find per-session actions on the row.** On the appointment detail page, "Cancel this session" (class host) and "Return to plan" (subscription consultee) are in each session row's ⋯ menu ("Actions for the … session"); the first available non-destructive action also shows inline on hover or focus. A blocked action stays in the menu with its reason under it; report a blocked action with no reason as MISSED-OPPORTUNITY. The next session's Join sits in the Next up panel, disabled with "Opens at …" until 15 minutes before the start.
 - **Check times in both zones.** Every time you see, convert it to the other party's zone and compare with what they see and with the UTC value in the DB.
 - **Think one step ahead.** After each action ask: what would the user try next, and does the screen tell them? Missing guidance is a **MISSED-OPPORTUNITY** finding.
 - **Missing preconditions mean BLOCKED**, never PASS.
