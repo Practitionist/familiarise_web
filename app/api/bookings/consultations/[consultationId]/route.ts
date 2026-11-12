@@ -27,7 +27,7 @@ import {
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
-import { soldConsultationPricePaise } from "@/lib/booking/sold-terms";
+import { agreedConsultationPricePaise } from "@/lib/booking/sold-terms";
 import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   APPROVAL_STATUSES_DETAIL_ONLY,
@@ -812,7 +812,7 @@ async function checkConsultationPayment(
 
   if (
     consultation &&
-    soldConsultationPricePaise(consultation) === 0 &&
+    agreedConsultationPricePaise(consultation) === 0 &&
     Boolean(consultation.appointment)
   ) {
     return true;

@@ -14,7 +14,7 @@ import { getSession } from "@/lib/auth-server";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 import { buildRescheduleSubject } from "@/lib/scheduling/time-picker-subject";
-import { soldTrialMinutes } from "@/lib/booking/sold-terms";
+import { bookedSessionMinutes } from "@/lib/appointments/occurrences";
 
 import { RescheduleClient } from "./RescheduleClient";
 import { TrialRescheduleClient } from "./TrialRescheduleClient";
@@ -100,7 +100,10 @@ export default async function ConsultantReschedulePage({
             appointmentId={appointmentId}
             consulteeUserId={trial.consulteeProfile.userId}
             consulteeName={consulteeName}
-            trialDurationMinutes={soldTrialMinutes(trial)}
+            trialDurationMinutes={
+              bookedSessionMinutes(appointment.occurrences) ??
+              trial.subscriptionPlan.trialDurationMinutes
+            }
             title={trial.subscriptionPlan.title}
             backHref={backHref}
           />

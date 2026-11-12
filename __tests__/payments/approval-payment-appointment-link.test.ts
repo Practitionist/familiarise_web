@@ -46,8 +46,8 @@ interface State {
   appointmentPayments: Array<Record<string, unknown>>;
   /** Whether the consultation is still payable, which gates the re-mint. */
   consultationStatus: string;
-  /** The price frozen on the request; null reads the plan. */
-  consultationPricePaise?: number | null;
+  /** The price agreed on the request; null reads the plan. */
+  agreedPricePaise?: number | null;
   /** What findExistingLivePayment's trial arm reads off Trial.payment. */
   trialPayment?: Record<string, unknown> | null;
   trialStatus?: string;
@@ -88,7 +88,7 @@ jest.mock("../../lib/prisma", () => ({
       findUnique: jest.fn(async () => ({
         id: CONS_CUID,
         status: state.consultationStatus,
-        pricePaise: state.consultationPricePaise ?? null,
+        agreedPricePaise: state.agreedPricePaise ?? null,
         consultationPlan: state.consultationPlan,
         appointment: { id: APPT_CUID, payment: state.appointmentPayments },
       })),
@@ -132,8 +132,8 @@ jest.mock("../../lib/prisma", () => ({
         id: "trial-1",
         status: state.trialStatus,
         payment: state.trialPayment,
-        // A pre-freeze row: the price falls back to the parent plan's.
-        pricePaise: null,
+        // A row from before the column: the price falls back to the parent plan's.
+        agreedPricePaise: null,
         subscriptionPlan: {
           title: "Trial Plan",
           price: 500_000,
@@ -295,13 +295,13 @@ describe("approval mint threads appointmentId (#1181)", () => {
   });
 });
 
-describe("a request is charged on its sold terms", () => {
-  it("prices at the price frozen at request, not the plan's current price", async () => {
-    state.consultationPricePaise = 400_000;
+describe("a request is charged its agreed price", () => {
+  it("a frozen consultation price is what the approval mint charges", async () => {
+    state.agreedPricePaise = 400_000;
 
     await createApprovalPaymentIntent(mintParams());
 
-    // ₹4,000 frozen plus 18% GST, while the plan now lists ₹5,000.
+    // ₹4,000 agreed plus 18% GST, while the plan now lists ₹5,000.
     expect(mockedPaymentCreate.mock.calls[0][0].data.amount).toBe(472_000);
   });
 });

@@ -4033,10 +4033,9 @@ model Consultation {
   /// Client-minted `Idempotency-Key` of the request that created this row; a retry with it replays this row.
   requestIdempotencyKey String?             @unique
   bookingSource         BookingSource       @default(REQUEST_SUBMITTED)
-  /// Price (paise) and session length frozen at request; plan edits never move
-  /// them. Null = read the plan (rows created before the freeze).
-  pricePaise            BigInt?
-  sessionMinutes        Int?
+  /// Price (paise) the buyer agreed to at request; plan edits never move it.
+  /// Null = read the plan (rows created before the column).
+  agreedPricePaise      BigInt?
   // Cancellation tracking
   cancellationReason    CancellationReason?
   cancellationNotes     String?             @db.Text
@@ -4342,10 +4341,9 @@ model Trial {
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id])
   subscriptionPlanId String
 
-  /// Trial price (paise) and length frozen at request; plan edits never move
-  /// them. Null = read the plan (rows created before the freeze).
-  pricePaise     BigInt?
-  sessionMinutes Int?
+  /// Trial price (paise) the buyer agreed to at request; plan edits never move
+  /// it. Null = read the plan (rows created before the column).
+  agreedPricePaise BigInt?
 
   // The held call, once the consultant has picked a time.
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])

@@ -106,8 +106,8 @@ export const moneyResultExtensions = {
     creditPaise: f("creditPaise"),
   },
   consultationPlan: { price: f("price") },
-  consultation: { pricePaise: fn("pricePaise") },
-  trial: { pricePaise: fn("pricePaise") },
+  consultation: { agreedPricePaise: fn("agreedPricePaise") },
+  trial: { agreedPricePaise: fn("agreedPricePaise") },
   subscriptionPlan: {
     price: f("price"),
     trialPriceInPaise: f("trialPriceInPaise"),

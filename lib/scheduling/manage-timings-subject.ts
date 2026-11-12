@@ -3,6 +3,7 @@ import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import { getClassPlanDefaults, type ClassPlanType } from "@/utils/classPlans";
 import { subscriptionPlanEnd } from "@/lib/booking/entitlement";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
+import { bookedSessionMinutes } from "@/lib/appointments/occurrences";
 
 /**
  * Turns one of the four offering types into what the "manage timings" page
@@ -27,8 +28,6 @@ export interface ManageTimingsAppointmentLike {
   slots?: OccurrenceLike[];
   consultation?: {
     id?: string | null;
-    /** Length frozen at request; null reads the plan. */
-    sessionMinutes?: number | null;
     consultationPlan?: {
       durationInHours?: number | null;
       title?: string | null;
@@ -89,18 +88,22 @@ function getEventDetails(
   appointment: ManageTimingsAppointmentLike,
 ): EventDetails {
   switch (appointment.appointmentType) {
-    case "CONSULTATION":
+    case "CONSULTATION": {
+      // The booked session's length; the plan's only with no session row.
+      const booked = bookedSessionMinutes(appointment.slots ?? []);
       return {
         eventType: "consultation",
         eventId: appointment.consultation?.id || "",
         sessionsPerWeek: 1,
         durationInMonths: 1,
-        durationInHours: appointment.consultation?.sessionMinutes
-          ? appointment.consultation.sessionMinutes / 60
-          : appointment.consultation?.consultationPlan?.durationInHours || 1,
+        durationInHours:
+          booked === null
+            ? appointment.consultation?.consultationPlan?.durationInHours || 1
+            : booked / 60,
         title:
           appointment.consultation?.consultationPlan?.title || "Consultation",
       };
+    }
     case "SUBSCRIPTION": {
       const sub = appointment.subscription;
       // The sold terms: frozen at purchase, else the plan's.

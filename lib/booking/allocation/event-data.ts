@@ -13,7 +13,10 @@ import {
   ConsultantAllocationData,
   EventConfig,
 } from "@/utils/scheduling-engine/types";
-import { intervalStartsOf } from "@/lib/appointments/occurrences";
+import {
+  bookedSessionMinutes,
+  intervalStartsOf,
+} from "@/lib/appointments/occurrences";
 import { isVoidRequestRow } from "@/lib/booking/allocation/counts";
 import { isLiveCheckoutHold } from "@/lib/booking/request-cohort";
 import { assertUnpaidApprovalFits } from "@/lib/booking/lead-time";
@@ -26,10 +29,7 @@ import {
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
 import { formatDateLabel } from "@/lib/time/display";
-import {
-  soldConsultationMinutes,
-  soldConsultationPricePaise,
-} from "@/lib/booking/sold-terms";
+import { agreedConsultationPricePaise } from "@/lib/booking/sold-terms";
 import {
   ALLOCATION_APPROVABLE_FROM,
   transitionClassEvent,
@@ -334,8 +334,7 @@ export async function fetchEventData(
       const event = await db.consultation.findUnique({
         where: { id: eventId },
         select: {
-          pricePaise: true,
-          sessionMinutes: true,
+          agreedPricePaise: true,
           consultationPlan: {
             select: {
               durationInHours: true,
@@ -375,15 +374,21 @@ export async function fetchEventData(
       // The same money predicate the approval CAS rides (SETTLED_CONSULTATION).
       settled =
         payments.some((p) => p.paymentStatus === PaymentStatus.SUCCEEDED) ||
-        soldConsultationPricePaise(event) === 0;
+        agreedConsultationPricePaise(event) === 0;
       checkoutInProgress = isLiveCheckoutHold(
         event.bookingSource,
         payments,
         new Date(),
       );
-      // The length the request was made at; a pre-freeze row reads the plan.
+      // The booked session's length; the plan's only for a booking with no session row.
+      const bookedMinutes = bookedSessionMinutes(
+        event.appointment?.occurrences ?? [],
+      );
       config = {
-        durationInHours: soldConsultationMinutes(event) / 60,
+        durationInHours:
+          bookedMinutes === null
+            ? event.consultationPlan?.durationInHours
+            : bookedMinutes / 60,
       };
       consulteeUserId = event.requestedBy?.user?.id;
       // #1319 — atom STARTS, not one entry per row. The approval gate counts

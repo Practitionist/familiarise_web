@@ -12,7 +12,7 @@ jest.mock("../../lib/prisma", () => {
     update: jest.fn(),
     updateMany: jest.fn(),
   };
-  // A terms change first stamps the requests still reading the plan.
+  // A price change first stamps the requests still reading the plan.
   const consultation = { updateMany: jest.fn(async () => ({ count: 0 })) };
   return {
     __esModule: true,

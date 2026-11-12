@@ -166,7 +166,7 @@ export async function createAppointmentFromWebhook(
 async function createConsultation(tx: Tx, data: ConsultationData) {
   const plan = await tx.consultationPlan.findUniqueOrThrow({
     where: { id: data.planId },
-    select: { price: true, durationInHours: true },
+    select: { price: true },
   });
   const consultation = await tx.consultation.create({
     data: {
@@ -175,8 +175,7 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
       requestedById: data.consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
-      pricePaise: plan.price,
-      sessionMinutes: Math.round(plan.durationInHours * 60),
+      agreedPricePaise: plan.price,
     },
     include: {
       consultationPlan: {

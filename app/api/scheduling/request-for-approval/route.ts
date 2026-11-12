@@ -535,10 +535,7 @@ export async function POST(req: NextRequest) {
                 status: AppointmentStatus.PENDING,
                 requestNotes: requestNotes,
                 requestIdempotencyKey: idempotencyKey,
-                pricePaise: consultationPlan.price,
-                sessionMinutes: Math.round(
-                  consultationPlan.durationInHours * 60,
-                ),
+                agreedPricePaise: consultationPlan.price,
                 appointment: {
                   create: {
                     appointmentType: "CONSULTATION",

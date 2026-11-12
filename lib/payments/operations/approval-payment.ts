@@ -46,8 +46,8 @@ import {
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import {
-  soldConsultationPricePaise,
-  soldTrialPricePaise,
+  agreedConsultationPricePaise,
+  agreedTrialPricePaise,
 } from "@/lib/booking/sold-terms";
 
 // ============================================================================
@@ -850,11 +850,11 @@ async function calculateAmount(
 ): Promise<ApprovalAmount> {
   if (params.appointmentType === "TRIAL") {
     // A trial is priced at the trial price it was requested on (the plan's
-    // trialPriceInPaise for a row that predates the freeze), not the plan price.
+    // trialPriceInPaise for a row that predates the column), not the plan price.
     const trial = await prisma.trial.findUnique({
       where: { id: params.trialId },
       select: {
-        pricePaise: true,
+        agreedPricePaise: true,
         subscriptionPlan: {
           select: {
             title: true,
@@ -873,7 +873,7 @@ async function calculateAmount(
     if (!plan.trialEnabled) {
       throw new Error("This plan does not offer trials");
     }
-    const trialPricePaise = soldTrialPricePaise(trial);
+    const trialPricePaise = agreedTrialPricePaise(trial);
     if (trialPricePaise <= 0) {
       // Free trials never reach a payment intent — the accept path schedules
       // them directly. Reaching here means the caller mis-routed.
@@ -895,11 +895,11 @@ async function calculateAmount(
   }
 
   if (params.appointmentType === "CONSULTATION") {
-    // The price the request was made at; the plan's only for a pre-freeze row.
+    // The price agreed at request; the plan's only for a row that predates it.
     const consultation = await prisma.consultation.findUnique({
       where: { id: params.consultationId },
       select: {
-        pricePaise: true,
+        agreedPricePaise: true,
         consultationPlan: {
           select: { title: true, price: true, priceCurrency: true },
         },
@@ -917,7 +917,10 @@ async function calculateAmount(
 
     return {
       ...(await priceWithTax(
-        planPricePaise(soldConsultationPricePaise(consultation), "plan price"),
+        planPricePaise(
+          agreedConsultationPricePaise(consultation),
+          "plan price",
+        ),
         buyerCountry,
         params.appointmentType,
       )),

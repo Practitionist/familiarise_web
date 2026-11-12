@@ -24,7 +24,7 @@ import {
 import {
   activeClientCount,
   freezeSoldTerms,
-  freezeTrialTerms,
+  freezeTrialPrice,
 } from "@/lib/booking/sold-terms";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
 import {
@@ -310,13 +310,10 @@ export async function PUT(
         }>
       | undefined;
 
-    // Trials already requested keep the price and length they were requested on.
-    const trialTermsChange =
-      (validatedData.trialDurationMinutes !== undefined &&
-        validatedData.trialDurationMinutes !==
-          existingPlan.trialDurationMinutes) ||
-      (validatedData.trialPriceInPaise !== undefined &&
-        validatedData.trialPriceInPaise !== existingPlan.trialPriceInPaise);
+    // Trials already requested keep the price they were requested at.
+    const trialPriceChange =
+      validatedData.trialPriceInPaise !== undefined &&
+      validatedData.trialPriceInPaise !== existingPlan.trialPriceInPaise;
 
     // Use transaction to ensure atomicity when updating subscription contents
     // This prevents data loss if the update fails after deleting old contents
@@ -346,7 +343,7 @@ export async function PUT(
       )
         throw new PlanLengthUnitLockedError();
       if (derived) await freezeSoldTerms(tx, subscriptionPlanId);
-      if (trialTermsChange) await freezeTrialTerms(tx, subscriptionPlanId);
+      if (trialPriceChange) await freezeTrialPrice(tx, subscriptionPlanId);
 
       return tx.subscriptionPlan.update({
         where: { id: subscriptionPlanId },

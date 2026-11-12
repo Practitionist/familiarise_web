@@ -31,9 +31,9 @@ export const SETTLED_CONSULTATION: Prisma.ConsultationWhereInput = {
         },
       },
     },
-    // Free at the price frozen at request; a pre-freeze row reads the plan.
-    { pricePaise: 0 },
-    { pricePaise: null, consultationPlan: { price: 0 } },
+    // Free at the price agreed at request; an older row reads the plan.
+    { agreedPricePaise: 0 },
+    { agreedPricePaise: null, consultationPlan: { price: 0 } },
   ],
 };
 export const UNPAID_CONSULTATION = {

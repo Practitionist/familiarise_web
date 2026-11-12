@@ -1,6 +1,6 @@
 /**
- * A sold subscription, 1:1 request or trial keeps the terms it was bought on.
- * Rows sold before the freeze read the plan, so a plan edit stamps them first.
+ * A sold subscription keeps its terms, a 1:1 request or trial its agreed price.
+ * Rows from before the freeze read the plan, so a plan edit stamps them first.
  */
 import type { PrismaLike, Tx } from "@/lib/prisma";
 import { planEndOf, weeksPlanEndOf } from "@/lib/booking/entitlement";
@@ -72,84 +72,57 @@ export async function freezeSoldTerms(
 }
 
 /**
- * Stamps the consultation plan's current price and length onto every request
- * that still reads them from the plan; same tx and ordering as freezeSoldTerms.
+ * Stamps the consultation plan's current price onto every request that still
+ * reads it from the plan; same tx and ordering as freezeSoldTerms.
  */
-export async function freezeConsultationTerms(
+export async function freezeConsultationPrice(
   tx: Pick<Tx, "consultation" | "consultationPlan">,
   consultationPlanId: string,
 ): Promise<void> {
   const plan = await tx.consultationPlan.findUnique({
     where: { id: consultationPlanId },
-    select: { price: true, durationInHours: true },
+    select: { price: true },
   });
   if (!plan) return;
   await tx.consultation.updateMany({
-    where: { consultationPlanId, pricePaise: null },
-    data: { pricePaise: plan.price },
-  });
-  await tx.consultation.updateMany({
-    where: { consultationPlanId, sessionMinutes: null },
-    data: { sessionMinutes: Math.round(plan.durationInHours * 60) },
+    where: { consultationPlanId, agreedPricePaise: null },
+    data: { agreedPricePaise: plan.price },
   });
 }
 
 /**
- * Stamps the plan's current trial price and length onto every trial that
- * still reads them from the plan; same tx and ordering as freezeSoldTerms.
+ * Stamps the plan's current trial price onto every trial that still reads it
+ * from the plan; same tx and ordering as freezeSoldTerms.
  */
-export async function freezeTrialTerms(
+export async function freezeTrialPrice(
   tx: Pick<Tx, "trial" | "subscriptionPlan">,
   subscriptionPlanId: string,
 ): Promise<void> {
   const plan = await tx.subscriptionPlan.findUnique({
     where: { id: subscriptionPlanId },
-    select: { trialPriceInPaise: true, trialDurationMinutes: true },
+    select: { trialPriceInPaise: true },
   });
   if (!plan) return;
   await tx.trial.updateMany({
-    where: { subscriptionPlanId, pricePaise: null },
-    data: { pricePaise: plan.trialPriceInPaise },
-  });
-  await tx.trial.updateMany({
-    where: { subscriptionPlanId, sessionMinutes: null },
-    data: { sessionMinutes: plan.trialDurationMinutes },
+    where: { subscriptionPlanId, agreedPricePaise: null },
+    data: { agreedPricePaise: plan.trialPriceInPaise },
   });
 }
 
-/** The price a 1:1 request runs on, in paise: frozen at request, else the plan's. */
-export function soldConsultationPricePaise(consultation: {
-  pricePaise: number | null;
+/** The price a 1:1 request runs on, in paise: agreed at request, else the plan's. */
+export function agreedConsultationPricePaise(consultation: {
+  agreedPricePaise: number | null;
   consultationPlan: { price: number };
 }): number {
-  return consultation.pricePaise ?? consultation.consultationPlan.price;
+  return consultation.agreedPricePaise ?? consultation.consultationPlan.price;
 }
 
-/** The session length a 1:1 request runs on, in minutes. */
-export function soldConsultationMinutes(consultation: {
-  sessionMinutes: number | null;
-  consultationPlan: { durationInHours: number };
-}): number {
-  return (
-    consultation.sessionMinutes ??
-    Math.round(consultation.consultationPlan.durationInHours * 60)
-  );
-}
-
-/** The price a trial runs on, in paise: frozen at request, else the plan's. */
-export function soldTrialPricePaise(trial: {
-  pricePaise: number | null;
+/** The price a trial runs on, in paise: agreed at request, else the plan's. */
+export function agreedTrialPricePaise(trial: {
+  agreedPricePaise: number | null;
   subscriptionPlan: { trialPriceInPaise: number };
 }): number {
-  return trial.pricePaise ?? trial.subscriptionPlan.trialPriceInPaise;
-}
-
-/** The session length a trial runs on, in minutes. */
-export function soldTrialMinutes(trial: {
-  sessionMinutes: number | null;
-  subscriptionPlan: { trialDurationMinutes: number };
-}): number {
-  return trial.sessionMinutes ?? trial.subscriptionPlan.trialDurationMinutes;
+  return trial.agreedPricePaise ?? trial.subscriptionPlan.trialPriceInPaise;
 }
 
 /** Live buyers of a plan: the clients a plan edit leaves on their own terms. */

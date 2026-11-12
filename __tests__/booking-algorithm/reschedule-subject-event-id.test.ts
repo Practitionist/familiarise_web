@@ -112,7 +112,8 @@ describe("buildRescheduleSubject event context", () => {
     expect(subject!.subject.eventId).toBe(
       "329c0b89-0648-4f8e-82e4-25811cdea440",
     );
-    expect(subject!.subject.durationInHours).toBe(2);
+    // The booked one-hour session decides, not the plan's current two hours.
+    expect(subject!.subject.durationInHours).toBe(1);
   });
 
   it("passes subscription eventId + eventType and hasReleasedSlots when tentative", () => {
