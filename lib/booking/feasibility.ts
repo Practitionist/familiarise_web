@@ -15,6 +15,7 @@
 
 import type { Tx } from "@/lib/prisma";
 import { dayStartInstant } from "@/lib/time/grid-zone";
+import { readUnplacedPlanMinutes } from "@/lib/booking/plan-demand";
 import { customRowDaySlices } from "@/lib/booking/allocation/search/recurrence";
 import { reportIncompleteWeeklyRows } from "@/lib/scheduling/incomplete-weekly-rows";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
@@ -56,6 +57,8 @@ export interface FeasibilityInput {
   weeks: number;
   /** Where week one starts, e.g. the plan week being filled; `notBeforeMs` when absent. */
   weeksFromMs?: number;
+  /** Per week, minutes other sold plans still need there; each week's room shrinks by it. */
+  reservedMinutesByWeek?: readonly number[];
 }
 
 export interface WeekCapacity {
@@ -244,6 +247,21 @@ export function assessFeasibility(input: FeasibilityInput): FeasibilityReport {
   );
   const weekTotal = (byDay: readonly number[], week: number) =>
     byDay.slice(week * 7, week * 7 + 7).reduce((sum, n) => sum + n, 0);
+  // Sold-but-unplaced sessions take time, not the buyer's day cap: room is the
+  // free time's uncapped session count less those minutes in this plan's lengths.
+  const reserved = input.reservedMinutesByWeek ?? [];
+  const freeUncappedByDay = reserved.some((minutes) => minutes > 0)
+    ? sessionsByStartDay(free, days, sessionMs, Infinity, input.notBeforeMs)
+    : null;
+  const roomInWeek = (week: number) => {
+    const minutes = reserved[week] ?? 0;
+    if (!freeUncappedByDay || minutes <= 0) return Infinity;
+    return Math.max(
+      0,
+      weekTotal(freeUncappedByDay, week) -
+        Math.ceil(minutes / input.sessionMinutes),
+    );
+  };
 
   const weeks: WeekCapacity[] = [];
   let bestWeekPublishedSessions = 0;
@@ -256,6 +274,7 @@ export function assessFeasibility(input: FeasibilityInput): FeasibilityReport {
       placeable: Math.min(
         input.sessionsPerWeek,
         weekTotal(placeableByDay, week),
+        roomInWeek(week),
       ),
     });
   }
@@ -293,7 +312,7 @@ export function assessFeasibility(input: FeasibilityInput): FeasibilityReport {
   if (shortWeeks > 0) {
     reasons.push({
       code: "WEEKS_SHORT",
-      message: `${shortWeeks} of the next ${weeks.length} weeks can't fit ${input.sessionsPerWeek} sessions${input.busy.length > 0 ? " around existing bookings" : ""}.`,
+      message: `${shortWeeks} of the next ${weeks.length} weeks can't fit ${input.sessionsPerWeek} sessions${input.busy.length > 0 || freeUncappedByDay ? " around existing bookings" : ""}.`,
     });
   }
   if (
@@ -398,31 +417,46 @@ export async function readFeasibilitySpans(
 
 /** Read and assess in one call: the shape every caller (editor, checkout, tray) uses. */
 export async function assessExpertFeasibility(
-  db: Pick<Tx, "consultantProfile" | "appointmentOccurrence">,
-  params: Omit<FeasibilityInput, "windows" | "busy"> & {
+  db: Pick<Tx, "consultantProfile" | "appointmentOccurrence" | "subscription">,
+  params: Omit<
+    FeasibilityInput,
+    "windows" | "busy" | "reservedMinutesByWeek"
+  > & {
     consultantProfileId: string;
     /** Plan editing ignores today's bookings; a buyer's checkout counts them. */
     countBookings: boolean;
+    /** A buyer's checkout also counts other sold plans' unplaced sessions, except these. */
+    planDemand?: { excludeSubscriptionIds: readonly string[] };
   },
   now: Date = new Date(),
 ): Promise<FeasibilityReport> {
-  const fromMs = Math.min(
-    params.weeksFromMs ?? params.notBeforeMs,
-    params.notBeforeMs,
-  );
-  const toMs =
-    (params.weeksFromMs ?? params.notBeforeMs) +
-    (params.weeks * 7 + 1) * DAY_MS;
+  const weeksFromMs = params.weeksFromMs ?? params.notBeforeMs;
+  const fromMs = Math.min(weeksFromMs, params.notBeforeMs);
+  const toMs = weeksFromMs + (params.weeks * 7 + 1) * DAY_MS;
   const spans = await readFeasibilitySpans(
     db,
     params.consultantProfileId,
     { fromMs: fromMs - DAY_MS, toMs },
     now,
   );
+  const reservedMinutesByWeek =
+    params.countBookings && params.planDemand
+      ? await readUnplacedPlanMinutes(db, {
+          consultantProfileId: params.consultantProfileId,
+          weekStarts: zoneDayBoundaries(
+            weeksFromMs,
+            params.zone,
+            params.weeks * 7,
+          ).filter((_, day) => day % 7 === 0),
+          excludeSubscriptionIds: params.planDemand.excludeSubscriptionIds,
+          now,
+        })
+      : undefined;
   return assessFeasibility({
     ...params,
     windows: spans.windows,
     busy: params.countBookings ? spans.busy : [],
+    reservedMinutesByWeek,
   });
 }
 
@@ -453,7 +487,7 @@ export interface PlanFeasibilityOutcome {
  * week to week, while the published hours are what the plan is sold against.
  */
 export async function planPublishFeasibility(
-  db: Pick<Tx, "consultantProfile" | "appointmentOccurrence">,
+  db: Pick<Tx, "consultantProfile" | "appointmentOccurrence" | "subscription">,
   params: {
     consultantProfileId: string;
     sessionsPerWeek: number;

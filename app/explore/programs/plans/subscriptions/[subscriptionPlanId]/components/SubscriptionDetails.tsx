@@ -27,7 +27,8 @@ type SubscriptionPlanDetail = NonNullable<
 
 export function SubscriptionDetails({
   plan,
-}: Readonly<{ plan: SubscriptionPlanDetail }>) {
+  fullyBooked,
+}: Readonly<{ plan: SubscriptionPlanDetail; fullyBooked: boolean }>) {
   const consultant = plan.consultantProfile;
   const mentorName = consultant?.user?.name ?? "This expert";
 
@@ -130,11 +131,23 @@ export function SubscriptionDetails({
                   )}
                 </div>
 
-                <Button asChild className="w-full h-11">
-                  <Link href={`/checkout/plans/subscription/${plan.id}`}>
-                    Start mentorship
-                  </Link>
-                </Button>
+                {fullyBooked ? (
+                  <div className="space-y-2">
+                    <Button disabled className="w-full h-11">
+                      Fully booked
+                    </Button>
+                    <p className="text-xs text-muted-foreground text-center">
+                      {mentorName} isn&apos;t taking new mentorship clients
+                      right now.
+                    </p>
+                  </div>
+                ) : (
+                  <Button asChild className="w-full h-11">
+                    <Link href={`/checkout/plans/subscription/${plan.id}`}>
+                      Start mentorship
+                    </Link>
+                  </Button>
+                )}
 
                 {consultant && (
                   <div className="pt-5 border-t border-border">

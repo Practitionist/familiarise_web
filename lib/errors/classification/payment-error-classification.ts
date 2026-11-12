@@ -561,6 +561,8 @@ const BUSINESS_ERROR_ENTRIES = [
       // A refunded seat cannot be bought again yet; a paused or unverified expert takes no new booking.
       "SEAT_REBUY_UNSUPPORTED",
       "NOT_ACCEPTING_BOOKINGS",
+      // The expert's limit on live plan clients is reached.
+      "PLAN_CLIENTS_FULL",
       "EXPERT_NOT_VERIFIED",
       // A subscription session going back to the plan.
       "RETURN_WINDOW_CLOSED",

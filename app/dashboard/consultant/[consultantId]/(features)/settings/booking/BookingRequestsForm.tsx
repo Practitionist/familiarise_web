@@ -11,6 +11,7 @@ import {
   getInitialBookingRequestSettings,
 } from "../settings";
 import { useSaveBookingRequestSettings } from "../use-save-booking-request-settings";
+import { usePlanClients } from "../use-plan-clients";
 
 /**
  * The Booking mode section's form. It sends only the fields the user
@@ -22,30 +23,42 @@ export function BookingRequestsForm({
 }: Readonly<{ consultant: TConsultantProfile }>) {
   const save = useSaveBookingRequestSettings(consultant.id);
   const { toast } = useToast();
-  const { bookingMode, acceptingRequests, maxOpenRequests } =
-    getInitialBookingRequestSettings(consultant);
-  const [settings, setSettings] = useState({
+  const {
     bookingMode,
     acceptingRequests,
     maxOpenRequests,
-  });
+    maxActivePlanClients,
+  } = getInitialBookingRequestSettings(consultant);
+  const shown = {
+    bookingMode,
+    acceptingRequests,
+    maxOpenRequests,
+    maxActivePlanClients,
+  };
+  const [settings, setSettings] = useState(shown);
+  const planClients = usePlanClients(consultant.id);
   // New server values (a save, or a change made elsewhere) replace the form.
   useEffect(() => {
-    setSettings({ bookingMode, acceptingRequests, maxOpenRequests });
-  }, [bookingMode, acceptingRequests, maxOpenRequests]);
+    setSettings({
+      bookingMode,
+      acceptingRequests,
+      maxOpenRequests,
+      maxActivePlanClients,
+    });
+  }, [bookingMode, acceptingRequests, maxOpenRequests, maxActivePlanClients]);
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
-    const change = bookingRequestSettingsChange(
-      { bookingMode, acceptingRequests, maxOpenRequests },
-      settings,
-    );
+    const change = bookingRequestSettingsChange(shown, settings);
     if (!change) {
       toast({ title: "Nothing to save" });
       return;
     }
     save.mutate(change, {
-      onSuccess: () => toast({ title: "Booking settings saved" }),
+      onSuccess: () => {
+        toast({ title: "Booking settings saved" });
+        void planClients.refetch();
+      },
     });
   };
 
@@ -57,14 +70,16 @@ export function BookingRequestsForm({
     >
       <Card>
         <CardContent className="p-6 space-y-8">
-          <BookingRequestsSection value={settings} onChange={setSettings} />
+          <BookingRequestsSection
+            value={settings}
+            onChange={setSettings}
+            activePlanClients={planClients.data?.activePlanClients ?? null}
+          />
         </CardContent>
       </Card>
       <SettingsFormActions
         isSaving={save.isPending}
-        onReset={() =>
-          setSettings({ bookingMode, acceptingRequests, maxOpenRequests })
-        }
+        onReset={() => setSettings(shown)}
       />
     </form>
   );

@@ -58,6 +58,8 @@ interface SubscriptionPlanDetails {
 
 interface ConsultantDetailsForSubscription {
   id: string;
+  /** Server-derived: the expert's limit on live plan clients is reached. */
+  planClientsFull?: boolean;
   subscriptionPlans?: SubscriptionPlanDetails[];
   user?: {
     name?: string | null;
@@ -467,9 +469,18 @@ export default function SubscriptionPricingToggle({
                 <Button
                   className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-xl h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
                   onClick={handleChoosePlan}
+                  disabled={consultantDetails.planClientsFull === true}
                 >
-                  Start mentorship
+                  {consultantDetails.planClientsFull
+                    ? "Fully booked"
+                    : "Start mentorship"}
                 </Button>
+                {consultantDetails.planClientsFull && (
+                  <p className="text-center text-xs text-zinc-400">
+                    This expert isn&apos;t taking new mentorship clients right
+                    now.
+                  </p>
+                )}
               </div>
             </motion.div>
           );

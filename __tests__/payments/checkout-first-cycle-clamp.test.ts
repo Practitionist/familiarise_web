@@ -98,6 +98,7 @@ jest.mock("../../lib/events/capacity", () => ({
   getClassCapacity: jest.fn(),
 }));
 
+import { assessExpertFeasibility } from "../../lib/booking/feasibility";
 import { handleSubscriptionCheckout } from "../../lib/payments/checkout/handlers/subscription";
 import {
   classifyError,
@@ -165,6 +166,10 @@ function makeTx(liveRows: ReturnType<typeof heldRow>[] = []) {
       create: jest.fn().mockResolvedValue({ id: "sub-1" }),
     },
     trial: { findFirst: jest.fn().mockResolvedValue(null) },
+    // No limit on live plan clients unless a test sets one.
+    consultantProfile: {
+      findUnique: jest.fn().mockResolvedValue({ maxActivePlanClients: null }),
+    },
     appointment: { create: jest.fn().mockResolvedValue({ id: "apt-1" }) },
     consulteeProfile: {
       findUnique: jest.fn().mockResolvedValue({ userId: "buyer-user" }),
@@ -209,6 +214,11 @@ it("persists end = start + 7 zone-days and sessionsTotal = 24 despite a 90-day c
   expect(data.sessionsPerWeek).toBe(2);
   expect(data.sessionMinutes).toBe(60);
   expect(data.schedulingTimezone).toBe("Asia/Kolkata");
+  // The first-week room also counts the expert's other sold, unplaced plans.
+  expect(assessExpertFeasibility).toHaveBeenCalledWith(
+    tx,
+    expect.objectContaining({ planDemand: { excludeSubscriptionIds: [] } }),
+  );
   // The buyer holds a seat on the placeholder from the moment of purchase.
   const seated = (tx.appointmentParticipant.createMany as jest.Mock).mock
     .calls[0][0].data;

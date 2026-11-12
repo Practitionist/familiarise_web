@@ -235,6 +235,8 @@ export interface BookingRequestSettings {
   bookingMode: BookingMode;
   acceptingRequests: boolean;
   maxOpenRequests: number | null;
+  /** The most live 1:1 plan clients at once; null means no limit. */
+  maxActivePlanClients: number | null;
 }
 
 /** The profile's booking settings, with the schema defaults when absent. */
@@ -244,6 +246,7 @@ export const getInitialBookingRequestSettings = (
   bookingMode: consultant?.bookingMode ?? BookingMode.INSTANT,
   acceptingRequests: consultant?.acceptingRequests ?? true,
   maxOpenRequests: consultant?.maxOpenRequests ?? null,
+  maxActivePlanClients: consultant?.maxActivePlanClients ?? null,
 });
 
 /** Only the fields the user changed, each with the value the screen showed. */
@@ -269,6 +272,10 @@ export function bookingRequestSettingsChange(
   if (shown.maxOpenRequests !== next.maxOpenRequests) {
     change.set.maxOpenRequests = next.maxOpenRequests;
     change.expect.maxOpenRequests = shown.maxOpenRequests;
+  }
+  if (shown.maxActivePlanClients !== next.maxActivePlanClients) {
+    change.set.maxActivePlanClients = next.maxActivePlanClients;
+    change.expect.maxActivePlanClients = shown.maxActivePlanClients;
   }
   return Object.keys(change.set).length > 0 ? change : null;
 }

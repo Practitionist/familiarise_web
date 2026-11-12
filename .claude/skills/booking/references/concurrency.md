@@ -32,17 +32,17 @@ Every distributed lock key in this subsystem is minted in
 `utils/appointmentlock.ts` and nowhere else, because two names for one atom is
 no lock at all.
 
-| Atom                                    | Key shape                                            | Minted by                                 |
-| --------------------------------------- | ---------------------------------------------------- | ----------------------------------------- |
-| 30 minutes of one consultant's calendar | `slot-booking:<consultantProfileId>:<atomStartISO>`  | `tryLockSlotBatch` / `lockSlotBatch`      |
-| One consultee's booking activity        | `consultee-booking:<consulteeUserId>`                | `lockConsulteeBooking`                    |
-| One sellable event or plan              | `event-checkout:<appointmentType>:<eventOrPlanId>`   | `lockEventCheckout`                       |
-| One consultant's allocation pool        | `auto-allocate:<consultantProfileId>`                | `lockAutoAllocate`                        |
-| One consultant's open-request cap       | `request-cap:<consultantProfileId>`                  | `lockRequestCap`                          |
-| One consultation approval               | `consultation-approval:<consultationId>`             | `lockConsultationApproval`                |
-| One subscription approval               | `subscription-approval:<subscriptionId>`             | `lockSubscriptionApproval`                |
-| One pay-link mint                       | `approval-payment-mint:<kind>:<id>`, kind lowercased | `lockApprovalPaymentMint`                 |
-| One appointment's lifecycle             | `appointment-lock:<appointmentId>`                   | `lockAppointment` / `withAppointmentLock` |
+| Atom                                     | Key shape                                            | Minted by                                 |
+| ---------------------------------------- | ---------------------------------------------------- | ----------------------------------------- |
+| 30 minutes of one consultant's calendar  | `slot-booking:<consultantProfileId>:<atomStartISO>`  | `tryLockSlotBatch` / `lockSlotBatch`      |
+| One consultee's booking activity         | `consultee-booking:<consulteeUserId>`                | `lockConsulteeBooking`                    |
+| One sellable event or plan               | `event-checkout:<appointmentType>:<eventOrPlanId>`   | `lockEventCheckout`                       |
+| One consultant's allocation pool         | `auto-allocate:<consultantProfileId>`                | `lockAutoAllocate`                        |
+| One consultant's requests and plan sales | `request-cap:<consultantProfileId>`                  | `lockRequestCap`, `lockExpertPlanSales`   |
+| One consultation approval                | `consultation-approval:<consultationId>`             | `lockConsultationApproval`                |
+| One subscription approval                | `subscription-approval:<subscriptionId>`             | `lockSubscriptionApproval`                |
+| One pay-link mint                        | `approval-payment-mint:<kind>:<id>`, kind lowercased | `lockApprovalPaymentMint`                 |
+| One appointment's lifecycle              | `appointment-lock:<appointmentId>`                   | `lockAppointment` / `withAppointmentLock` |
 
 Every path acquires in one global order, coarse to fine, so the families form
 a total order that cannot cycle. The locks are Redis try-locks with bounded
@@ -56,7 +56,9 @@ retries, so a path that breaks the order times out; it never hangs.
 4. `consultation-approval:` / `subscription-approval:`, then
    `approval-payment-mint:` as a leaf under the approval key.
 5. One consultant tier, never two at once: `auto-allocate:` (allocation) or
-   `request-cap:` (request-for-approval and trial requests).
+   `request-cap:` (request-for-approval, trial requests, and every plan
+   checkout, which holds it across the sold-plan counts and the new hold's
+   commit).
 6. `consultee-booking:`, exactly one.
 7. **One atomic slot batch**: every `slot-booking:` atom of every profile the
    write makes busy — the host, each ACCEPTED co-host, and the buyer's own

@@ -14,6 +14,7 @@ import {
   CHECKOUT_WAIT_RETRY_CONFIG,
   lockConsulteeBooking,
   unlockConsulteeBooking,
+  unlockRequestCap,
   extendLock,
   extendSlotInterval,
   unlockSlotInterval,
@@ -62,6 +63,7 @@ import {
   releaseCheckoutLock,
   acquireCheckoutLock,
   lockBuyerSeatAtoms,
+  lockExpertPlanSales,
 } from "@/lib/payments/checkout/locks";
 import { asSeatPaymentConflict } from "@/lib/payments/checkout/seats";
 import { SlotTakenError } from "@/lib/booking/booking-rule-error";
@@ -101,6 +103,7 @@ export const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<BusinessErrorCode> =
     "DISCOUNT_CODE_INVALID",
     "SUBSCRIPTION_ALREADY_ACTIVE",
     "NOT_PLACEABLE",
+    "PLAN_CLIENTS_FULL",
     "ALREADY_RENEWED",
     "INVALID_RENEWAL_SOURCE",
     "WELCOME_DISCOUNT_IN_USE",
@@ -137,6 +140,8 @@ export async function handleCheckout(
   // #898 follow-up — tier-2 consultee lock (acquired alongside the checkout lock
   // below; see the ordering note at STEP 2).
   let consulteeLock: ApprovalLock | null = null;
+  // A plan checkout's per-expert key (consultant tier: after event checkout, before the consultee).
+  let planSalesLock: ApprovalLock | null = null;
   // A dual-role seat buyer's own slot atoms (event → consultee → slot batch).
   let buyerSeatGrant: SlotBatchGrant | null = null;
   // TYPE-1: Properly typed payment response instead of any
@@ -249,7 +254,14 @@ export async function handleCheckout(
     // (consultation) the consultee lock is taken BEFORE the slot lock; for an
     // event-based checkout it is taken AFTER the event lock.
     const isSlotBasedCheckout = !!validatedData.startsAt;
+    const planSalesProfileId =
+      appointmentType === "SUBSCRIPTION"
+        ? planData.consultantProfile?.id
+        : undefined;
     if (isSlotBasedCheckout) {
+      if (planSalesProfileId) {
+        planSalesLock = await lockExpertPlanSales(planSalesProfileId);
+      }
       consulteeLock = await lockConsulteeBooking(
         userId,
         undefined,
@@ -269,6 +281,9 @@ export async function handleCheckout(
     );
     lockType = validatedData.startsAt ? "slot-based" : "event-based";
     if (!isSlotBasedCheckout) {
+      if (planSalesProfileId) {
+        planSalesLock = await lockExpertPlanSales(planSalesProfileId);
+      }
       consulteeLock = await lockConsulteeBooking(
         userId,
         undefined,
@@ -484,6 +499,11 @@ export async function handleCheckout(
             "Checkout took too long and its hold expired — another checkout for this slot may be already in progress. Please try again.",
           );
         }
+      }
+      if (planSalesLock && !(await extendLock(planSalesLock, ttl))) {
+        throw new Error(
+          "Checkout took too long and its hold expired — another checkout for this slot may be already in progress. Please try again.",
+        );
       }
       if (buyerSeatGrant && !(await extendSlotInterval(buyerSeatGrant, ttl))) {
         throw new Error(
@@ -1011,6 +1031,9 @@ export async function handleCheckout(
     }
     if (consulteeLock) {
       await unlockConsulteeBooking(consulteeLock);
+    }
+    if (planSalesLock) {
+      await unlockRequestCap(planSalesLock);
     }
     if (buyerSeatGrant) {
       await unlockSlotInterval(buyerSeatGrant);

@@ -24,6 +24,7 @@ import {
   firstWeekPlaceable,
 } from "@/lib/booking/feasibility";
 import { leadMsFor } from "@/lib/booking/lead-time";
+import { assertPlanClientRoom } from "@/lib/booking/plan-demand";
 import { MAX_SUBSCRIPTION_SESSIONS_PER_DAY } from "@/utils/scheduling-engine/sessionCaps";
 import type { SubscriptionCheckoutResult } from "@/lib/payments/checkout/schema";
 import {
@@ -157,8 +158,15 @@ export async function handleSubscriptionCheckout(
     );
   }
 
-  // A plan whose first week the expert's hours can't hold at all is not sold;
-  // a thin one is, because the buyer was shown the room-for-N notice.
+  // Both read under the expert's request-cap key, so concurrent buyers serialise.
+  await assertPlanClientRoom(tx, {
+    consultantProfileId: plan.consultantProfileId,
+    consulteeProfileId,
+  });
+
+  // A plan whose first week the expert's hours, less other sold plans'
+  // unplaced sessions, can't hold at all is not sold; a thin one is, because
+  // the buyer was shown the room-for-N notice.
   const firstWeek = await assessExpertFeasibility(tx, {
     consultantProfileId: plan.consultantProfileId,
     zone: schedulingTimezone,
@@ -171,6 +179,9 @@ export async function handleSubscriptionCheckout(
     ),
     weeks: 1,
     countBookings: true,
+    planDemand: {
+      excludeSubscriptionIds: priorSubscription ? [priorSubscription.id] : [],
+    },
   });
   if (firstWeekPlaceable(firstWeek) === 0) {
     throw Object.assign(

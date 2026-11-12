@@ -7,11 +7,14 @@ import { RadioGroup, RadioGroupItem } from "components/ui/radio-group";
 import { Separator } from "components/ui/separator";
 import { Switch } from "components/ui/switch";
 import type { Dispatch, SetStateAction } from "react";
+import { MAX_ACTIVE_PLAN_CLIENTS_RANGE } from "@/schemas/plan-clients";
 import type { BookingRequestSettings } from "../settings";
 
 interface BookingRequestsSectionProps {
   value: BookingRequestSettings;
   onChange: Dispatch<SetStateAction<BookingRequestSettings>>;
+  /** Distinct buyers holding one of your plans now; null while it loads. */
+  activePlanClients: number | null;
 }
 
 /** The cap's accepted range; blank means no limit (#1703 D4). */
@@ -34,6 +37,29 @@ export function parseMaxOpenRequests(
   );
 }
 
+/** Blank clears the limit; a number is truncated and clamped; anything else keeps it. */
+export function parseMaxActivePlanClients(
+  raw: string,
+  current: number | null,
+): number | null {
+  if (raw.trim() === "") return null;
+  const n = Math.trunc(Number(raw));
+  if (!Number.isFinite(n)) return current;
+  return Math.min(
+    MAX_ACTIVE_PLAN_CLIENTS_RANGE.max,
+    Math.max(MAX_ACTIVE_PLAN_CLIENTS_RANGE.min, n),
+  );
+}
+
+/** "3 of 5 active plan clients", or "3 active plan clients" with no limit. */
+export function planClientsLine(active: number, limit: number | null): string {
+  const noun = (n: number) =>
+    n === 1 ? "active plan client" : "active plan clients";
+  return limit === null
+    ? `${active} ${noun(active)}`
+    : `${active} of ${limit} ${noun(limit)}`;
+}
+
 /**
  * "Booking mode" settings. Presentational: the form saves the changed
  * fields through the booking-settings PATCH.
@@ -41,6 +67,7 @@ export function parseMaxOpenRequests(
 export function BookingRequestsSection({
   value: formData,
   onChange: setFormData,
+  activePlanClients,
 }: Readonly<BookingRequestsSectionProps>) {
   return (
     <div className="space-y-6">
@@ -144,6 +171,42 @@ export function BookingRequestsSection({
           Once this many requests are waiting on you, new ones are refused until
           you answer some. Leave blank for no limit.
         </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="max-active-plan-clients">
+          Limit mentorship plan clients to
+        </Label>
+        <Input
+          id="max-active-plan-clients"
+          type="number"
+          inputMode="numeric"
+          min={MAX_ACTIVE_PLAN_CLIENTS_RANGE.min}
+          max={MAX_ACTIVE_PLAN_CLIENTS_RANGE.max}
+          step={1}
+          placeholder="No limit"
+          className="max-w-[10rem]"
+          value={formData.maxActivePlanClients ?? ""}
+          onChange={(e) =>
+            setFormData((prev) => ({
+              ...prev,
+              maxActivePlanClients: parseMaxActivePlanClients(
+                e.target.value,
+                prev.maxActivePlanClients,
+              ),
+            }))
+          }
+        />
+        <p className="text-sm text-muted-foreground">
+          Once this many people hold one of your plans, your plans show as fully
+          booked and new buyers are refused before they pay. Current clients
+          keep their plans. Leave blank for no limit.
+        </p>
+        {activePlanClients !== null && (
+          <p className="text-sm font-medium" aria-live="polite">
+            {planClientsLine(activePlanClients, formData.maxActivePlanClients)}
+          </p>
+        )}
       </div>
     </div>
   );
