@@ -140,12 +140,7 @@ async function resolveEventCollaboratorChannelRole(
   eventId: string,
   userId: string,
 ): Promise<"channel_moderator" | undefined> {
-  if (
-    (eventType !== "webinar" && eventType !== "class") ||
-    !prisma.collaborator?.findFirst
-  ) {
-    return undefined;
-  }
+  if (eventType !== "webinar" && eventType !== "class") return undefined;
 
   const collab = await prisma.collaborator.findFirst({
     where: {

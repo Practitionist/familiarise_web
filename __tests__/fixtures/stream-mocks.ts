@@ -34,6 +34,13 @@ export const createMockPrisma = () => ({
     findFirst: jest.fn(),
     findMany: jest.fn(),
   },
+  // Collaboration reads run on every event-channel sync; default to "no co-hosts".
+  collaborator: {
+    findFirst: jest.fn(async () => null),
+    findMany: jest.fn(async () => []),
+  },
+  webinarPlan: { findMany: jest.fn(async () => []) },
+  classPlan: { findMany: jest.fn(async () => []) },
   // Why: the Stream upsert pipeline calls `checkConsent` (lib/compliance/dpdp.ts)
   // before mirroring identity into Stream.io. Without a `consentArtifact` delegate
   // on the mock, the helper crashes with `TypeError: Cannot read properties of
