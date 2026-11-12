@@ -87,7 +87,10 @@ export async function POST(_request: Request, { params }: RouteParams) {
           }),
         ]);
         if (owned) return { kind: "owned" as const };
-        if (pending?.gatewayOrderId) {
+        if (
+          pending?.gatewayOrderId &&
+          Number(pending.amountPaise) === derived.amount
+        ) {
           return {
             kind: "resumed" as const,
             purchaseId: pending.id,
@@ -95,6 +98,22 @@ export async function POST(_request: Request, { params }: RouteParams) {
             amount: pending.amountPaise,
             currency: "INR",
           };
+        }
+        if (pending?.gatewayOrderId) {
+          // The price moved since this order was minted: retire it, then mint at today's price.
+          const superseded = await prisma.digitalProductPurchase.updateMany({
+            where: { id: pending.id, status: "PENDING" },
+            data: { status: "FAILED" },
+          });
+          if (
+            superseded.count === 0 &&
+            (await prisma.digitalProductPurchase.findFirst({
+              where: { productId, buyerId, status: "SUCCEEDED" },
+              select: { id: true },
+            }))
+          ) {
+            return { kind: "owned" as const };
+          }
         }
 
         // The capture handler splits the charge from these; they sum to `amount`.

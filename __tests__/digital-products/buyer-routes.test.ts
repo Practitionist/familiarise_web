@@ -130,6 +130,19 @@ const purchaseModel = {
     rows.push(row);
     return row;
   },
+  updateMany: async ({
+    where,
+    data,
+  }: {
+    where: Partial<Row>;
+    data: Partial<Row>;
+  }) => {
+    const hit = rows.filter(
+      (r) => r.id === where.id && r.status === where.status,
+    );
+    hit.forEach((r) => Object.assign(r, data));
+    return { count: hit.length };
+  },
 };
 const deliverable = { ok: true };
 const tx = {
@@ -181,7 +194,6 @@ beforeEach(() => {
 
 it("mints one order at the quoted amount for overlapping purchases and refuses a second free claim", async () => {
   const quote = await quoteDigitalProductForBuyer({
-    productId: "dp_1",
     pricePaise: 50_000,
     buyerId: "buyer_1",
   });
@@ -198,15 +210,6 @@ it("mints one order at the quoted amount for overlapping purchases and refuses a
   expect(createRazorpayOrder.mock.calls[0]).toEqual([
     expect.objectContaining({ amount: quote.totalPaise }),
   ]);
-  // A resumed order is shown at its persisted amount.
-  rows[0].amountPaise = 61_000;
-  expect(
-    await quoteDigitalProductForBuyer({
-      productId: "dp_1",
-      pricePaise: 50_000,
-      buyerId: "buyer_1",
-    }),
-  ).toEqual({ basePaise: null, taxPaise: null, totalPaise: 61_000 });
   expect(rows).toHaveLength(1);
   expect([a.status, b.status].sort()).toEqual([200, 201]);
   expect(createRazorpayOrder.mock.calls[0]).toEqual([
@@ -218,6 +221,13 @@ it("mints one order at the quoted amount for overlapping purchases and refuses a
         taxAmountPaise: "9000",
       }),
     }),
+  ]);
+  // A pending order minted at another price is superseded, never resumed.
+  rows[0].amountPaise = 61_000;
+  expect((await purchase(req(), params)).status).toBe(201);
+  expect(rows.map((r) => [r.status, r.amountPaise])).toEqual([
+    ["FAILED", 61_000],
+    ["PENDING", 59_000],
   ]);
 
   rows.length = 0;

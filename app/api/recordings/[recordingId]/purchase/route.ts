@@ -281,17 +281,36 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
           }),
           prisma.recordingPurchase.findFirst({
             where: { recordingId, buyerId, status: "PENDING" },
-            select: { gatewayOrderId: true, amountPaise: true },
+            select: { id: true, gatewayOrderId: true, amountPaise: true },
           }),
         ]);
         if (owned) return { kind: "owned" as const };
-        if (pendingOrder) {
+        if (
+          pendingOrder &&
+          Number(pendingOrder.amountPaise) === derived.amount
+        ) {
           return {
             kind: "resumed" as const,
             orderId: pendingOrder.gatewayOrderId,
             amount: Number(pendingOrder.amountPaise),
             currency: "INR",
           };
+        }
+        if (pendingOrder) {
+          // The price moved since this order was minted: retire it, then mint at today's price.
+          const superseded = await prisma.recordingPurchase.updateMany({
+            where: { id: pendingOrder.id, status: "PENDING" },
+            data: { status: "FAILED" },
+          });
+          if (
+            superseded.count === 0 &&
+            (await prisma.recordingPurchase.findFirst({
+              where: { recordingId, buyerId, status: "SUCCEEDED" },
+              select: { id: true },
+            }))
+          ) {
+            return { kind: "owned" as const };
+          }
         }
 
         // The capture handler splits the charge from these; they sum to `amount`.
