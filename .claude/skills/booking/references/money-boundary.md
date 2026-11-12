@@ -49,8 +49,10 @@ A reload or second tab prices as if the buyer's own open order for the same item
 were released: `ownOpenOrderHolds` adds the credit that order holds to the
 available credit and subtracts its code use before the exhausted check, so the
 amount equals the open order's and it is reused (`classifyOpenOrders`). The same
-item is the same plan and exactly the same window for a 1:1, the same plan and
-first cycle for a subscription, and the same event with the seat still HELD for a
+item is the same plan and exactly the same window for a 1:1; for a subscription,
+the same plan and exactly the same first cycle for a chosen later start, or any
+live "start now" order of the plan when the start is absent or already past
+(renewals keep the exact rule); and the same event with the seat still HELD for a
 webinar or class; another window is never counted. The commit-time credit CAS
 still decides (`CREDIT_SHORTFALL`, `DISCOUNT_EXHAUSTED`). Every unpaid exit also
 returns the organisation engagement with `reverseBookingUtilization`, beside the
