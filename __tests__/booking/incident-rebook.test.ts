@@ -17,6 +17,7 @@ const state = {
   parentStatus: "SCHEDULED",
   refundOwedKey: null as string | null,
   overlap: false,
+  buyerProfileId: null as string | null,
 };
 
 jest.mock("../../lib/prisma", () => {
@@ -56,13 +57,17 @@ jest.mock("../../lib/prisma", () => {
     },
     refund: { findUnique: jest.fn(async () => null) },
     consultantProfile: {
-      findUnique: jest.fn(async () => ({
-        deletedAt: null,
-        scheduleType: "WEEKLY",
-        user: { id: "expert-user", timezone: "Asia/Kolkata" },
-        availabilityWindowsWeekly: [],
-        availabilityWindowsCustom: [],
-      })),
+      findUnique: jest.fn(async ({ where }: { where: { userId?: string } }) =>
+        where.userId
+          ? state.buyerProfileId && { id: state.buyerProfileId }
+          : {
+              deletedAt: null,
+              scheduleType: "WEEKLY",
+              user: { id: "expert-user", timezone: "Asia/Kolkata" },
+              availabilityWindowsWeekly: [],
+              availabilityWindowsCustom: [],
+            },
+      ),
     },
     trial: {
       findUnique: jest.fn(async () => ({ status: state.parentStatus })),
@@ -80,11 +85,12 @@ jest.mock("../../lib/prisma", () => {
   client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));
   return { __esModule: true, default: client };
 });
+const lockSlotBatch = jest.fn(async (..._a: unknown[]) => []);
 jest.mock("../../utils/appointmentlock", () => ({
   withAppointmentLock: (_id: string, fn: () => unknown) => fn(),
   lockConsulteeBooking: jest.fn(async () => ({})),
   unlockConsulteeBooking: jest.fn(),
-  lockSlotInterval: jest.fn(async () => []),
+  lockSlotBatch: (...a: unknown[]) => lockSlotBatch(...a),
   unlockSlotInterval: jest.fn(),
 }));
 const validate = jest.fn();
@@ -139,6 +145,7 @@ function seed(parent: Parent, overrides: Record<string, unknown> = {}) {
   state.parentStatus = "SCHEDULED";
   state.refundOwedKey = null;
   state.overlap = false;
+  state.buyerProfileId = null;
   state.remedy = {
     id: "rem-1",
     incidentId: "inc-1",
@@ -297,6 +304,17 @@ describe("a committed rebook", () => {
     expect(db.consultantEarnings.create).not.toHaveBeenCalled();
     expect(db.consultantEarnings.createMany).not.toHaveBeenCalled();
     expect(transitionConsultationRequest).not.toHaveBeenCalled();
+  });
+
+  it("takes a learner-expert's own atoms in the same batch as the host's", async () => {
+    seed("consultation");
+    state.buyerProfileId = "cp-buyer";
+    await rebook();
+    expect(lockSlotBatch).toHaveBeenCalledTimes(1);
+    expect(lockSlotBatch.mock.calls[0][0]).toEqual([
+      expect.objectContaining({ consultantProfileId: "cp-1" }),
+      expect.objectContaining({ consultantProfileId: "cp-buyer" }),
+    ]);
   });
 
   it("reopens a completed paid trial and lets its next completion start the hold again", async () => {
