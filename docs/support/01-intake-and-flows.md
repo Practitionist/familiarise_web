@@ -79,6 +79,8 @@ A flow is a tree of PROMPT and TERMINAL nodes. `walkFlow()` (`lib/support/flow-w
 
 **Priority and issue type.** `provider_no_show`, `double_charge` and `high_value_refund` are HIGH; the three safety reasons are URGENT; everything else is MEDIUM. A customer who marks the hand-off urgent gets at least HIGH, and the flag never lowers URGENT (`escalationPriority()` in `lib/support/priority.ts`). `issueTypeForReason()` maps each reason to a `SupportIssueType`; safety reasons map to `GENERAL_INQUIRY`, because the category carries the meaning.
 
+**The formal form has no priority field.** Customers do not set priority; the intake rules and staff do. The "New support case" dialog offers no priority control, and a requester-created case keeps the priority intake assigns (`ClientCreateCaseBodySchema` in `app/api/support/cases/route.ts` omits it). Option not chosen: honouring the customer's choice as a hint capped at HIGH. It was rejected because customers would get faster reply deadlines by asking for them, and staff would have to downgrade those cases. Staff change priority from the case workspace, which is unaffected.
+
 **Organization billing.** When an organization operator's appointment escalation has reason `org_billing_dispute`, the case moves to the ORG_BILLING queue only if the filer holds `supportCases.billing.manage`; otherwise it stays with operations as a billing question (`escalationOwnershipTx()`). A platform operator-billing escalation files as ORG_BILLING for a billing manager and as PERSONAL otherwise.
 
 ## References and clocks
