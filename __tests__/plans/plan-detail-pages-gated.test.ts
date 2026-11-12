@@ -39,6 +39,7 @@ jest.mock("../../lib/data/plan-details", () => ({
     mockGetConsultationPlanDetail(...a),
   getSubscriptionPlanDetail: (...a: unknown[]) =>
     mockGetSubscriptionPlanDetail(...a),
+  getExpertPlanClientsFull: async () => false,
   getWebinarPlanDetail: (...a: unknown[]) => mockGetWebinarPlanDetail(...a),
   getClassPlanDetail: (...a: unknown[]) => mockGetClassPlanDetail(...a),
 }));

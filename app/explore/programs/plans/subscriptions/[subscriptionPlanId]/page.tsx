@@ -4,9 +4,10 @@ import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getSession } from "@/lib/auth-server";
 import { reportSentryError } from "@/lib/observability/report";
 import type { Metadata } from "next";
-import { getSubscriptionPlanDetail } from "@/lib/data/plan-details";
-import prisma from "@/lib/prisma";
-import { planClientsFull } from "@/lib/booking/plan-demand";
+import {
+  getExpertPlanClientsFull,
+  getSubscriptionPlanDetail,
+} from "@/lib/data/plan-details";
 import { SubscriptionDetails } from "./components/SubscriptionDetails";
 
 // Stream behind the static layout's instant skeleton; don't prerender at build (#932).
@@ -65,7 +66,7 @@ export default async function SubscriptionDetailsPage({
   }
 
   // Read per request (the page is dynamic), so the flag is never stale.
-  const fullyBooked = await planClientsFull(prisma, plan.consultantProfileId);
+  const fullyBooked = await getExpertPlanClientsFull(plan.consultantProfileId);
 
   return (
     <>

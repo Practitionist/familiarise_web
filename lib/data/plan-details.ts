@@ -1,5 +1,6 @@
 import { cache } from "react";
 import prisma from "@/lib/prisma";
+import { planClientsFull } from "@/lib/booking/plan-demand";
 import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import { toPlain } from "@/lib/data/serialize";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
@@ -227,6 +228,11 @@ export async function fetchSubscriptionPlanDetail(subscriptionPlanId: string) {
 
 /** Cached wrapper for Server Components. */
 export const getSubscriptionPlanDetail = cache(fetchSubscriptionPlanDetail);
+
+/** Whether the plan's expert is at their plan-client limit; the limit itself stays server-side. */
+export const getExpertPlanClientsFull = cache((consultantProfileId: string) =>
+  planClientsFull(prisma, consultantProfileId),
+);
 
 // ---------------------------------------------------------------------------
 // Consultation plan detail
