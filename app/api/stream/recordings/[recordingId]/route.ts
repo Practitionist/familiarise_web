@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   RecordingListingStatus,
+  RecordingPurchaseStatus,
   RecordingStatus,
   type RecordingRemovalReason,
   RecordingStorageType,
@@ -328,14 +329,18 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       return recordingGoneResponse(recording);
     }
 
-    // Always block deletion when any PENDING or SUCCEEDED purchase exists,
-    // regardless of current listingStatus (prevents unpublish-then-delete bypass).
+    // A PENDING or SUCCEEDED purchase blocks deletion whatever the listing status.
+    const livePurchase = {
+      status: {
+        in: [
+          RecordingPurchaseStatus.PENDING,
+          RecordingPurchaseStatus.SUCCEEDED,
+        ],
+      },
+    };
     const findActivePurchase = () =>
-      prisma.recordingPurchase?.findFirst?.({
-        where: {
-          recordingId,
-          status: { in: ["PENDING", "SUCCEEDED"] },
-        },
+      prisma.recordingPurchase.findFirst({
+        where: { recordingId, ...livePurchase },
         select: { id: true },
       });
 
@@ -355,9 +360,7 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       });
     }
 
-    // If the recording was PUBLISHED, unpublish it first to close the checkout
-    // window before deleting objects from storage, then re-verify no purchase
-    // raced in while PUBLISHED.
+    // Unpublish first to close the checkout window before deleting from storage.
     if (recording.listingStatus === RecordingListingStatus.PUBLISHED) {
       await prisma.recording.update({
         where: { id: recordingId },
@@ -367,14 +370,16 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
         },
       });
       purgeRecordingSurfaces();
-      const racedPurchase = await findActivePurchase();
-      if (racedPurchase) return fileApiError("RECORDING_HAS_BUYERS");
     }
 
-    // Expire before deleting: a status change that raced this request leaves
-    // the stored objects untouched, and a failed delete is retried by expire-recordings.
+    // Expire before deleting; the claim refuses a raced status change or a purchase
+    // that landed after the check above. A failed delete is retried by expire-recordings.
     const [expired] = await prisma.recording.updateManyAndReturn({
-      where: { id: recordingId, status: recording.status },
+      where: {
+        id: recordingId,
+        status: recording.status,
+        purchases: { none: livePurchase },
+      },
       data: {
         status: RecordingStatus.EXPIRED,
         recordingUrl: "",
@@ -389,7 +394,12 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
         streamRecordingId: true,
       },
     });
-    if (!expired) return fileApiError("RECORDING_CHANGED");
+    if (!expired)
+      return fileApiError(
+        (await findActivePurchase())
+          ? "RECORDING_HAS_BUYERS"
+          : "RECORDING_CHANGED",
+      );
     // The row is already removed, so a failed notice must not fail the delete.
     await notifyAttendeesOfRemovedRecording({
       appointmentId: recording.meeting.occurrence.appointmentId,
