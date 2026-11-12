@@ -395,7 +395,7 @@ export async function recordTdsReversal(
 /**
  * Record an org-rail TDS deduction. Mirrors {@link recordTDSDeduction} with
  * the consultant columns left null; the XOR CHECK in
- * prisma/sql/check-constraints.sql is what makes that structurally correct.
+ * prisma/migrations is what makes that structurally correct.
  */
 export async function recordOrgTDSDeduction(params: {
   organizationId: string;

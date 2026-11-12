@@ -1,7 +1,7 @@
 import type { DigitalProductCategory } from "@prisma/client";
 import { goLibraryHref } from "@/lib/dashboard/go";
 
-/** 250 MB; prisma/sql/check-constraints.sql pins the same cap on the column. */
+/** 250 MB; a CHECK in prisma/migrations pins the same cap on the column. */
 export const DIGITAL_PRODUCT_MAX_FILE_BYTES = 250 * 1024 * 1024;
 export const DIGITAL_PRODUCT_MAX_FILES = 20;
 export const DIGITAL_PRODUCT_MAX_TOTAL_BYTES = 1024 * 1024 * 1024;

@@ -259,7 +259,7 @@ model OnboardingDraft {
   /// (utils/onboarding-draft.ts) that strips unknown keys and proves arrays
   /// are arrays, a `__v` generation marker so a payload from an older wizard
   /// is quarantined instead of merged, an application byte gate plus the
-  /// pg_column_size CHECK in prisma/sql/check-constraints.sql, and
+  /// pg_column_size CHECK in prisma/migrations, and
   /// prototype-chain-safe lookups wherever the wizard reads a value back out
   /// (`Object.hasOwn`, never `in`). The trade is deliberate, but it is a
   /// trade: the schema flexibility is paid for at every read site.
@@ -370,7 +370,7 @@ enum SupportFlowOutcomeKind {
 /// Unified support case owning the transcript, SLA clocks, FAM reference, flow cursor,
 /// callback schedule, and resolution CSAT. Never declare an @@index or @@unique on the
 /// ownership/scope tuple [ownershipScope, organizationId, scopeKey, requesterUserId, submitterUserId, category]
-/// so prisma db push leaves sidecar partial unique index "support_case_open_scope_key" intact.
+/// so migrate diff never proposes dropping the partial unique index "support_case_open_scope_key".
 model SupportCase {
   id              String            @id @default(uuid())
   referenceNumber String            @unique @db.VarChar(20)
@@ -719,7 +719,7 @@ model SupportCaseChatAccess {
   reviewNoticeAt  DateTime?                   @db.Timestamptz
   createdAt       DateTime                    @default(now()) @db.Timestamptz
 
-  // Live-grant, sweep and one-live-per-channel indexes are partial; they live in prisma/sql.
+  // Live-grant, sweep and one-live-per-channel indexes are partial; they live in prisma/migrations.
   @@index([caseId, createdAt])
   @@index([grantedById, createdAt])
 }
@@ -796,7 +796,7 @@ model AppointmentFeedback {
   moderationActions       ModerationAction[]
 
   // One rating per person per call AND one per person per whole appointment:
-  // the NULLS NOT DISTINCT unique appointment_feedback_level_key in prisma/sql
+  // the NULLS NOT DISTINCT unique appointment_feedback_level_key in prisma/migrations
   // on (appointmentId, appointmentOccurrenceId, userId). No @@unique/@@index
   // on that triple here (#1268).
   // Still the unit for "show me this booking's feedback".
@@ -1419,7 +1419,7 @@ model Invitation {
   // Supports the dedup pre-check (orgId + email + status=PENDING)
   // before INSERT. The invariant — "at most one pending invite per
   // (org, lower(email))" — is DB-enforced by the partial unique index
-  // `invitations_org_email_pending_key` in prisma/sql/check-constraints.sql
+  // `invitations_org_email_pending_key` in prisma/migrations
   // (#747/#685); the POST handler lowercases before write and the
   // Serializable transaction in invitations/route.ts stays as the first
   // line. Migrate to native `@@unique(..., where:)` once the
@@ -2261,7 +2261,7 @@ model OrganizationEarnings {
   updatedAt DateTime @updatedAt @db.Timestamptz
 
   // One row per (payment, organization, consultant, role, cycle): the NULLS NOT
-  // DISTINCT sidecar unique organization_earnings_split_key in prisma/sql;
+  // DISTINCT sidecar unique organization_earnings_split_key in prisma/migrations;
   // no @@unique on that set here so Postgres doesn't carry a duplicate NULLS DISTINCT index.
   @@index([paymentId, organizationId])
   @@index([consultantProfileId])
@@ -2966,10 +2966,8 @@ model UsageLedgerEntry {
 // equal to balance(WALLET account) by the reconcile cron.
 //
 // Writers (Batch 2) go through `postLedgerTxn()`, which asserts the balance
-// invariant. #776 — a deferred CONSTRAINT TRIGGER enforces it again at COMMIT
-// (Prisma has no native multi-row CHECK): see `prisma/sql/ledger-triggers.sql`,
-// applied by `npm run db:triggers` after every `db push`/reset (Prisma does not
-// manage triggers).
+// invariant. A deferred CONSTRAINT TRIGGER enforces it again at COMMIT (Prisma
+// has no multi-row CHECK): see the ledger_guards migration in prisma/migrations.
 // ───────────────────────────────────────────────────────────────────────────
 enum LedgerAccountKind {
   CASH // platform gateway/settlement cash
@@ -3759,7 +3757,7 @@ model OpsActionLog {
 }
 
 /// A money door above the second-approval threshold, held until a different ADMIN
-/// approves it; one PROPOSED row per (action, target) via the prisma/sql sidecar.
+/// approves it; one PROPOSED row per (action, target) via a partial index in prisma/migrations.
 model OpsActionProposal {
   id                     String                  @id @default(uuid())
   /// The door's withOpsAction action slug.
@@ -4087,7 +4085,7 @@ model SubscriptionPlan {
   description      String?  @db.Text
   durationInMonths Int      @default(1)
   /// Plan length in weeks (1..52) for plans created with the weeks picker;
-  /// null = durationInMonths × 4 weeks. CHECK lives in prisma/sql.
+  /// null = durationInMonths × 4 weeks. CHECK lives in prisma/migrations.
   durationInWeeks  Int?
   price            BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency    Currency @default(INR)
@@ -4210,7 +4208,7 @@ model Subscription {
   sessionsTotal Int?
 
   /// Sessions the consultee returned to the plan; each moved the plan end
-  /// 7 days later. CHECK 0..2 lives in prisma/sql.
+  /// 7 days later. CHECK 0..2 lives in prisma/migrations.
   sessionsReturned Int @default(0)
 
   /// Weekly cap and session length frozen at purchase; plan edits never move
@@ -4219,7 +4217,7 @@ model Subscription {
   sessionMinutes  Int?
 
   /// Sessions removed from the plan by a support partial refund; the
-  /// schedulable total is sessionsTotal − sessionsRefunded. CHECK in prisma/sql.
+  /// schedulable total is sessionsTotal − sessionsRefunded. CHECK in prisma/migrations.
   sessionsRefunded Int @default(0)
 
   /// Roll-forward fair rotation: the last time the Regular-time job filled it.
@@ -4259,7 +4257,7 @@ model Subscription {
 
 /// One weekly slot of a 1:1 plan's Regular time (weekday + local start in
 /// `timezone`). An edit closes the live rows (validUntil) and inserts new ones.
-/// CHECK ranges and the one-live-slot partial unique live in prisma/sql.
+/// CHECK ranges and the one-live-slot partial unique live in prisma/migrations.
 model RegularTime {
   id                String       @id @default(cuid())
   subscriptionId    String
@@ -4289,7 +4287,7 @@ enum PlanEndChoiceStatus {
 }
 
 /// The learner's plan-end choice between extra weeks and a refund of unused
-/// sessions. One per subscription; shape CHECKs live in prisma/sql.
+/// sessions. One per subscription; shape CHECKs live in prisma/migrations.
 model PlanEndChoice {
   id                 String              @id @default(cuid())
   subscriptionId     String              @unique
@@ -5094,9 +5092,8 @@ enum AppointmentsType {
 /// Scope: exactly one row has organizationId = NULL (the platform default, fixed id
 /// PLATFORM_CANCELLATION_POLICY_ID, provisioned by the seed and idempotently on first
 /// use); every other row belongs to one organization. At most one ACTIVE row per scope,
-/// enforced by the Serializable rotation in publishOrgCancellationPolicy; the structural
-/// partial unique index is staged for the reset in prisma/sql/check-constraints.sql
-/// (doctrine section 6).
+/// enforced by the Serializable rotation in publishOrgCancellationPolicy and the partial
+/// unique index cancellation_policy_one_active_per_scope in prisma/migrations.
 model CancellationPolicy {
   id                     String                   @id @default(uuid())
   organization           Organization?            @relation("CancellationPolicyByOrg", fields: [organizationId], references: [id], onDelete: Cascade)
@@ -5314,7 +5311,7 @@ enum RescheduleRequestStatus {
   // lib/booking/reschedule-proposals.ts), so keeping the member meant a live UI
   // affordance for a state the route could never produce.
   //
-  // Note for whoever next touches an enum: `prisma db push` cannot DROP an enum
+  // Note for whoever next touches an enum: a generated migration cannot DROP an enum
   // value. It renames the type, creates a replacement, casts every column with a
   // USING clause, drops the old type and renames — and the cast FAILS on any row
   // still holding the value. That is why the seed's COUNTERED rows had to go in
@@ -5502,7 +5499,7 @@ model AppointmentOccurrence {
   feedback AppointmentFeedback[]
 
   // #1554 — 1-based position; a replacement after a reschedule inherits it, the
-  // partial unique in prisma/sql ignores dead rows.
+  // partial unique in prisma/migrations ignores dead rows.
   ordinal     Int
   startsAt    DateTime @db.Timestamptz
   endsAt      DateTime @db.Timestamptz
@@ -5520,7 +5517,7 @@ model AppointmentOccurrence {
   /// on (consultantProfileId, tstzrange(startsAt, endsAt)) WHERE NOT isTentative
   /// AND deletedAt IS NULL AND completionStatus NOT IN ('CANCELLED', 'RESCHEDULED'))
   /// and CHECK constraint (occurrence_confirmed_requires_consultant_chk) live in
-  /// prisma/sql/check-constraints.sql; a violation surfaces as Postgres 23P01 → 409.
+  /// prisma/migrations; a violation surfaces as Postgres 23P01 → 409.
   consultantProfileId String?
 
   meeting     Meeting?
@@ -5555,7 +5552,7 @@ model AppointmentOccurrence {
   incidentRebook   IncidentRemedy?  @relation("IncidentRemedyRebooked")
 
   // No @@unique/@@index on (appointmentId, ordinal): the live-row unique is the
-  // partial index appointment_occurrence_live_ordinal_key in prisma/sql (#1268).
+  // partial index appointment_occurrence_live_ordinal_key in prisma/migrations.
   // OPT-3: Additional indexes for time range queries in validateSlotAvailability
   @@index([appointmentId])
   // #440 — serves the overlap recheck + the future exclusion constraint.
@@ -5918,7 +5915,7 @@ model DigitalProductAsset {
 }
 
 // One purchase attempt. Entitlement = a SUCCEEDED row for (productId, buyerId),
-// unique through a partial index in prisma/sql/check-constraints.sql.
+// unique through a partial index in prisma/migrations.
 model DigitalProductPurchase {
   id                String                       @id @default(cuid())
   product           DigitalProduct               @relation(fields: [productId], references: [id], onUpdate: Cascade, onDelete: Restrict)
@@ -6559,7 +6556,7 @@ model ConsultantEarnings {
   payout            ConsultantPayout? @relation(fields: [payoutId], references: [id])
 
   // One row per (payment, consultant, role, occurrence, cycle): the NULLS NOT
-  // DISTINCT sidecar unique consultant_earnings_occurrence_key in prisma/sql;
+  // DISTINCT sidecar unique consultant_earnings_occurrence_key in prisma/migrations;
   // no @@unique/@@index on that set here (#1268, #1766).
   @@index([consultantProfileId, status])
   @@index([status, holdUntil])
@@ -6571,7 +6568,7 @@ model ConsultantEarnings {
 /// (unreleased) hold; lib/payments/payouts/earnings-holds.ts is the only writer.
 /// Exactly one earnings FK is set (`earnings_hold_one_earning`), and one active
 /// hold per (earning, reason, sourceRef) (`earnings_hold_active_*_key`), both
-/// in prisma/sql/check-constraints.sql.
+/// in prisma/migrations.
 model EarningsHold {
   id                     String                @id @default(uuid())
   consultantEarningsId   String?
@@ -6751,7 +6748,7 @@ model TDSRecord {
   id                  String  @id @default(cuid())
   // #1354 — the deductee is a consultant XOR a host organisation. Both are
   // nullable so one table carries both rails; `tds_record_deductee_xor` in
-  // prisma/sql/check-constraints.sql is what makes "exactly one" structural.
+  // prisma/migrations is what makes "exactly one" structural.
   consultantProfileId String?
   organizationId      String?
   financialYear       String // "2026-27" format (Apr-Mar)
@@ -6814,7 +6811,7 @@ model TDSRecord {
   /// rail, each with its own rail's payout column, each doing real work.
   /// Nothing here says a row belongs to exactly one rail — that is
   /// `tds_record_deductee_xor` + `tds_record_payout_rail_matches` in
-  /// prisma/sql/check-constraints.sql, because Prisma cannot express a CHECK.
+  /// prisma/migrations, because Prisma cannot express a CHECK.
   @@unique([consultantProfileId, financialYear, quarter, payoutId, isReversal])
   @@unique([organizationId, financialYear, quarter, orgPayoutId, isReversal])
   @@index([consultantProfileId, financialYear])
@@ -7406,7 +7403,7 @@ model Collaborator {
   @@unique([consultantProfileId, webinarPlanId])
   @@unique([consultantProfileId, classPlanId])
   // One live PRESENTER per plan: the partial uniques collaborator_one_presenter_
-  // {webinar,class} in prisma/sql (#1580).
+  // {webinar,class} in prisma/migrations.
   @@index([webinarPlanId])
   @@index([classPlanId])
   @@index([status])
@@ -7795,7 +7792,7 @@ model SystemJobExecution {
 }
 
 /// An admin "Run now" for a job that answers before its run finishes; the ticker
-/// retries it until DONE or FAILED. One open request per job via the prisma/sql sidecar.
+/// retries it until DONE or FAILED. One open request per job via a partial index in prisma/migrations.
 model AdminRunRequest {
   /// Also the id of the request's OpsActionLog row, which every run of it records.
   id             String                @id @default(uuid())
@@ -7934,7 +7931,7 @@ model MaintenanceRemediationItem {
 }
 
 /// A platform outage window ops declared; never auto-declared and never edited.
-/// Every booked session overlapping it voids as PLATFORM_OUTAGE. CHECK endsAt > startsAt lives in prisma/sql.
+/// Every booked session overlapping it voids as PLATFORM_OUTAGE. CHECK endsAt > startsAt lives in prisma/migrations.
 model PlatformIncident {
   id               String    @id @default(uuid())
   startsAt         DateTime  @db.Timestamptz
@@ -8043,13 +8040,7 @@ model SsoProvider {
 }
 
 // =============================================================================
-// PR #655 enterprise lockdown — Batches 3 / 4 / 5
-//
-// The models below are the schema surface for outbound webhooks (Batch 3) and
-// DPDP §12 erasure + DPDP §11 data export (Batch 5 / Batch 6.5). The matching
-// SQL was applied via Supabase MCP under migration
-// `pr655_enterprise_lockdown_schema` — this Prisma block exists for type
-// generation and IDE intellisense; it does NOT drive db push.
+// Outbound webhooks, DPDP erasure and DPDP data export.
 // =============================================================================
 
 /// Outbound webhook destinations per organization. Each row maps an HTTPS

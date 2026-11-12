@@ -668,7 +668,7 @@ export async function reverseBookingUtilization(
   // the predicate rides the WHERE, so a counter that cannot absorb the
   // reversal matches zero rows rather than being driven negative. This used to
   // be a bare `update` — with no `CHECK (engagementsUsed >= 0)` anywhere in
-  // prisma/sql/, a drifted counter (an earlier unguarded writer, a manual fix,
+  // prisma/migrations, a drifted counter (an earlier unguarded writer, a manual fix,
   // a legacy row) turned every refund into a larger giveaway and no database
   // object objected. Each counter is guarded only where this call actually
   // decrements it, so an untouched column cannot fail the match.
