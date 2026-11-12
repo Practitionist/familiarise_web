@@ -66,6 +66,7 @@ jest.mock("../../lib/stream/recording-listing-access", () => ({
 }));
 jest.mock("../../lib/stream/recording-storage", () => ({
   isDurablyOurs: () => true,
+  durablyOursWhere: () => ({ status: "AVAILABLE", storageType: "PLATFORM" }),
 }));
 
 let mintCount = 0;
@@ -91,10 +92,12 @@ const purchaseCreate = jest.fn(async ({ data }: { data: (typeof rows)[0] }) => {
   rows.push(data);
   return data;
 });
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
+const recordingClaim = jest.fn(async (_a: unknown) => ({ count: 1 }));
+jest.mock("../../lib/prisma", () => {
+  const db = {
     user: { findUnique: async () => ({ country: "IN" }) },
+    recording: { updateMany: (a: unknown) => recordingClaim(a) },
+    $transaction: (fn: (tx: unknown) => unknown) => fn(db),
     recordingPurchase: {
       findFirst: async ({
         where,
@@ -109,8 +112,9 @@ jest.mock("../../lib/prisma", () => ({
         ) ?? null,
       create: (...a: unknown[]) => purchaseCreate(...(a as [never])),
     },
-  },
-}));
+  };
+  return { __esModule: true, default: db };
+});
 
 import { NextRequest } from "next/server";
 import { POST } from "../../app/api/recordings/[recordingId]/purchase/route";
@@ -153,5 +157,21 @@ describe("recording purchase single-mint (#1584 P2-P0-02)", () => {
     expect((await loser.json()).data.orderId).toBe("order_1");
     // The lock was released by both callers.
     expect(held.size).toBe(0);
+  });
+
+  it("refuses the purchase when the replay stops being for sale before the insert", async () => {
+    recordingClaim.mockResolvedValueOnce({ count: 0 });
+    const res = await post();
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("NOT_ELIGIBLE");
+    expect(purchaseCreate).not.toHaveBeenCalled();
+    expect(recordingClaim).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "rec_1",
+          listingStatus: "PUBLISHED",
+        }),
+      }),
+    );
   });
 });

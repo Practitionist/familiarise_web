@@ -135,16 +135,31 @@ export async function POST(_request: Request, { params }: RouteParams) {
         });
 
         try {
-          const purchase = await prisma.digitalProductPurchase.create({
-            data: {
-              productId,
-              buyerId,
-              gatewayOrderId: order.id,
-              amountPaise: derived.amount,
-              status: "PENDING",
-            },
-            select: { id: true },
+          const purchase = await prisma.$transaction(async (tx) => {
+            // A same-value write that matches only while the product is for sale: it locks the
+            // row archive, take-down and delete write, so whichever commits second sees the other.
+            const forSale = await tx.digitalProduct.updateMany({
+              where: { id: productId, status: "PUBLISHED", takenDownAt: null },
+              data: { status: "PUBLISHED" },
+            });
+            if (forSale.count === 0) return null;
+            return tx.digitalProductPurchase.create({
+              data: {
+                productId,
+                buyerId,
+                gatewayOrderId: order.id,
+                amountPaise: derived.amount,
+                status: "PENDING",
+              },
+              select: { id: true },
+            });
           });
+          if (!purchase) {
+            await cancelRazorpayOrder(order.id).catch((cancelError: unknown) =>
+              console.error("Failed to cancel stranded order:", cancelError),
+            );
+            return { kind: "not_for_sale" as const };
+          }
           return {
             kind: "minted" as const,
             purchaseId: purchase.id,
@@ -167,6 +182,12 @@ export async function POST(_request: Request, { params }: RouteParams) {
       },
     );
 
+    if (outcome.kind === "not_for_sale") {
+      return NextResponse.json(
+        { error: "This product is not available to buy", code: "NOT_FOR_SALE" },
+        { status: SALE_REFUSAL_STATUS.NOT_FOR_SALE },
+      );
+    }
     if (outcome.kind === "owned") {
       return NextResponse.json(
         { error: "You already own this product", code: "ALREADY_ENTITLED" },

@@ -150,6 +150,7 @@ const tx = {
   $executeRaw: async () => 1,
   digitalProduct: {
     findFirst: async () => (deliverable.ok ? { id: "dp_1" } : null),
+    updateMany: async () => ({ count: 1 }),
   },
   digitalProductPurchase: { ...purchaseModel, updateMany: stamp },
   digitalProductDownload: { create: downloadCreate },

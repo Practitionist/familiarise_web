@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { refusalJson } from "@/lib/errors/refusal-json";
 import type { z } from "zod";
 import prisma from "@/lib/prisma";
+import { RecordingListingStatus } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import {
   cancelRazorpayOrder,
@@ -25,7 +26,10 @@ import {
   isDiscoverablePlanPlan,
   loadOwnedListingRecording,
 } from "@/lib/stream/recording-listing-access";
-import { isDurablyOurs } from "@/lib/stream/recording-storage";
+import {
+  durablyOursWhere,
+  isDurablyOurs,
+} from "@/lib/stream/recording-storage";
 import {
   BookingLockUnavailableError,
   lockRecordingPurchase,
@@ -43,6 +47,13 @@ class OrgMembershipRequiredError extends Error {
   }
 }
 
+class RecordingNoLongerPurchasableError extends Error {
+  constructor() {
+    super("This recording is no longer available for purchase.");
+    this.name = "RecordingNoLongerPurchasableError";
+  }
+}
+
 async function persistRecordingPurchase(params: {
   recordingId: string;
   buyerId: string;
@@ -51,30 +62,31 @@ async function persistRecordingPurchase(params: {
   hostOrgId: string | null | undefined;
 }): Promise<void> {
   const { recordingId, buyerId, orderId, amountPaise, hostOrgId } = params;
-  if (!hostOrgId) {
-    await prisma.recordingPurchase.create({
-      data: {
-        recordingId,
-        buyerId,
-        gatewayOrderId: orderId,
-        amountPaise,
-        status: "PENDING",
-      },
-    });
-    return;
-  }
-
   await prisma.$transaction(async (tx) => {
-    const activeMembership = await tx.membership.findFirst({
+    // A same-value write that matches only while the replay is for sale: it locks the row a
+    // delete claims, so whichever commits second sees the other.
+    const stillListed = await tx.recording.updateMany({
       where: {
-        userId: buyerId,
-        organizationId: hostOrgId,
-        status: "ACTIVE",
+        id: recordingId,
+        listingStatus: RecordingListingStatus.PUBLISHED,
+        listPricePaise: { gt: 0 },
+        ...durablyOursWhere(),
       },
-      select: { id: true },
+      data: { listingStatus: RecordingListingStatus.PUBLISHED },
     });
-    if (!activeMembership) {
-      throw new OrgMembershipRequiredError();
+    if (stillListed.count === 0) throw new RecordingNoLongerPurchasableError();
+    if (hostOrgId) {
+      const activeMembership = await tx.membership.findFirst({
+        where: {
+          userId: buyerId,
+          organizationId: hostOrgId,
+          status: "ACTIVE",
+        },
+        select: { id: true },
+      });
+      if (!activeMembership) {
+        throw new OrgMembershipRequiredError();
+      }
     }
     await tx.recordingPurchase.create({
       data: {
@@ -382,6 +394,12 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       { status: kind === "minted" ? 201 : 200 },
     );
   } catch (error) {
+    if (error instanceof RecordingNoLongerPurchasableError) {
+      return NextResponse.json(
+        { error: error.message, code: "NOT_ELIGIBLE" },
+        { status: 409 },
+      );
+    }
     if (error instanceof OrgMembershipRequiredError) {
       return NextResponse.json(
         {
