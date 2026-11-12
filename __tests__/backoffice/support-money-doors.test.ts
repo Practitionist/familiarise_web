@@ -293,6 +293,25 @@ describe("support refund door audit", () => {
       }),
     );
   });
+
+  it("keeps the staff lock to its TTL when the refund outcome is unknown", async () => {
+    mockPerformCaseAction.mockRejectedValueOnce(new Error("socket hang up"));
+    const response = await post(
+      reviewSupportRefundDoor,
+      {
+        action: "REVIEW_REFUND",
+        clientActionId: "r-1",
+        expectedUpdatedAt: "2026-10-20T10:00:00.000Z",
+        recommendationId: "rec-1",
+        approve: true,
+        expectedRefundablePaise: 1_000_000,
+      },
+      { caseId: "case-1" },
+    );
+    expect(response.status).toBe(500);
+    expect(mockLocks.has("staff-refund:staff-1")).toBe(true);
+    expect(mockReleases).not.toHaveBeenCalled();
+  });
 });
 
 describe("support hold door audit", () => {

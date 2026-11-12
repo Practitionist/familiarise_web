@@ -38,7 +38,11 @@ import {
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
-import { fundingRailForIntent } from "@/lib/payments/funding-rail";
+import {
+  fundingRailForIntent,
+  type FundingRail,
+} from "@/lib/payments/funding-rail";
+import { creditStillUsedPaise } from "@/lib/payments/operations/credit-plan-return";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   assertBoundedRefund,
@@ -609,6 +613,20 @@ export async function quoteCaseRefund(
   };
 }
 
+/**
+ * What a remedy moves for the staff limits and the second-approver price: its
+ * cash amount, or on a credit-funded payment the referral credit it restores.
+ */
+async function remedyValuePaise(
+  db: Pick<Tx, "referralCreditUsage">,
+  rail: FundingRail,
+  recommendation: { paymentId: string; amountPaise: number | bigint },
+): Promise<number> {
+  return rail === "CREDITS"
+    ? creditStillUsedPaise(db, recommendation.paymentId)
+    : Number(recommendation.amountPaise);
+}
+
 /** The checks an approval or a retry must pass before any money moves. */
 async function assertRefundExecutable(
   tx: Tx,
@@ -640,7 +658,7 @@ async function assertRefundExecutable(
   await assertBoundedRefund(tx, actor, [
     {
       paymentId: recommendation.paymentId,
-      newPaise: amountPaise,
+      newPaise: await remedyValuePaise(tx, quote.rail, recommendation),
       priorPaise: quote.committedPaise,
     },
   ]);
@@ -675,15 +693,15 @@ export async function priceCaseRefundReview(
   const quote = await quoteCaseRefund(tx, caseId, recommendation);
   if (quote.blocked)
     throw new CaseActionError(quote.blocked.code, `${quote.blocked.reason}.`);
-  const amountPaise = Number(recommendation.amountPaise);
+  const valuePaise = await remedyValuePaise(tx, quote.rail, recommendation);
   await assertBoundedRefund(tx, actor, [
     {
       paymentId: recommendation.paymentId,
-      newPaise: amountPaise,
+      newPaise: valuePaise,
       priorPaise: quote.committedPaise,
     },
   ]);
-  return amountPaise + quote.committedPaise;
+  return valuePaise + quote.committedPaise;
 }
 
 type ActionInput<Action extends CaseAction["action"]> = Extract<
@@ -1743,7 +1761,7 @@ export async function performCaseAction(
 /**
  * Sends the approved remedy after the decision committed, keyed on the
  * recommendation so a retry resumes the same refund. `movedPaise` is the new
- * money this call sent, which the staff rolling limit sums.
+ * money or restored credit this call sent, which the staff rolling limit sums.
  */
 async function executeApprovedRefund(
   caseId: string,
@@ -1760,10 +1778,15 @@ async function executeApprovedRefund(
       },
     });
   const wasLive = isLiveRefund(recommendation.refund);
+  const rail = fundingRailForIntent(recommendation.payment.paymentIntent);
+  // Read before the restoration, which gives the consumed credit back.
+  const movedPaise = wasLive
+    ? 0
+    : await remedyValuePaise(prisma, rail, recommendation);
   const dedupeKey = `case-recommendation:${recommendation.id}`;
   const refund = await refundBookingPayment({
     paymentId: recommendation.paymentId,
-    ...(recommendation.payment.paymentIntent.startsWith("free_")
+    ...(rail === "CREDITS"
       ? {}
       : { amountPaise: Number(recommendation.amountPaise) }),
     reason: `Support remedy ${recommendation.supportCase.referenceNumber}`,
@@ -1773,8 +1796,5 @@ async function executeApprovedRefund(
     keepSeat: !recommendation.releaseSeat,
     settlesOwedByHand: true,
   }).catch((error: unknown) => refundInFlightOr(error, dedupeKey));
-  return {
-    refund,
-    movedPaise: wasLive ? 0 : Number(recommendation.amountPaise),
-  };
+  return { refund, movedPaise };
 }

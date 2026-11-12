@@ -219,6 +219,10 @@ export async function handleOrgPaymentSuccess(
         settledPaise > 0
           ? `, ₹${(settledPaise / 100).toLocaleString("en-IN")} of it settled the org's open receivable`
           : "";
+      const lateRefund = result.lateCaptureRefund;
+      const lateRefundNote = lateRefund
+        ? `; late capture ${lateRefund.refundIssued ? "refunded to the card" : "owes a card refund"} (${lateRefund.reason})`
+        : "";
       if (organizationId && result.confirmed) {
         await prisma.orgAuditLog
           .create({
@@ -227,12 +231,13 @@ export async function handleOrgPaymentSuccess(
               actorMembershipId: null,
               category: "WALLET",
               action: AUDIT_ACTIONS.WALLET.WALLET_TOPUP_CONFIRMED,
-              description: `Top-up confirmed: ₹${(paise / 100).toLocaleString("en-IN")}${settledNote}`,
+              description: `Top-up confirmed: ₹${(paise / 100).toLocaleString("en-IN")}${settledNote}${lateRefundNote}`,
               details: {
                 walletEntryOrderId,
                 providerPaymentId: razorpayPaymentId,
                 amountPaise: paise,
                 receivableSettledPaise: settledPaise,
+                lateCaptureRefund: lateRefund ?? null,
               },
             },
           })
@@ -242,7 +247,9 @@ export async function handleOrgPaymentSuccess(
               err,
             ),
           );
-
+      }
+      // A late capture sent back to the card is no top-up the owners should be told about.
+      if (organizationId && result.confirmed && !lateRefund) {
         // Novu bell notification to OWNERs. Look up org context inline
         // — the webhook is outside the HTTP session scope, so we can't
         // lean on `requireOrgAccess` to hand us `access.org`.

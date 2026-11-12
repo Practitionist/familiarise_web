@@ -41,6 +41,7 @@ import {
 import { reportSentryMessage } from "@/lib/observability/report";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
+import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import {
   transitionConsultationRequest,
   transitionOccurrenceCompletion,
@@ -400,7 +401,7 @@ async function reportLiveGatewaySkips(paymentIds: string[]): Promise<void> {
  * EXPIRED is the terminal race #1439 owns.
  */
 async function expirePendingPayments(
-  tx: Pick<Tx, "payment" | "discountCode">,
+  tx: Tx,
   payments: AbandonedPayment[],
 ): Promise<AbandonedPayment[]> {
   const expired: AbandonedPayment[] = [];
@@ -413,6 +414,10 @@ async function expirePendingPayments(
     });
     if (count === 1) {
       await returnDiscountUse(tx, payment.id);
+      await reverseBookingUtilization(tx, {
+        paymentId: payment.id,
+        reason: "Checkout abandoned",
+      });
       expired.push(payment);
     }
   }
@@ -873,6 +878,10 @@ export async function retireOrphanPendingPayment(
     if (count === 0) return false;
     await reverseCreditsForPayment(paymentId, tx);
     await returnDiscountUse(tx, paymentId);
+    await reverseBookingUtilization(tx, {
+      paymentId,
+      reason: "Orphan checkout retired",
+    });
     return true;
   });
   return { outcome: claimed ? "retired" : "skipped", errors: [] };

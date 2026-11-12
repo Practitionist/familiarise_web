@@ -60,6 +60,7 @@ import {
   DOUBLE_BOOKING_BLOCKED_NOTE,
   autoRefundPendingDescription,
   settledAutoRefundDescription,
+  unreturnedCaptureWhere,
 } from "@/lib/payments/webhooks/auto-refund-marker";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import {
@@ -100,6 +101,7 @@ import { goHref } from "@/lib/dashboard/go";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
+import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { recordReferralCaptureInSavepoint } from "@/lib/referrals/capture";
 import {
   prepareCreditsAppliedEmail,
@@ -123,6 +125,7 @@ import { getAppUrl } from "@/lib/url";
 import {
   createAppointmentFromWebhook,
   RecoveryAlreadyDoneError,
+  RecoveryRefusedError,
 } from "./legacy-appointment-creation";
 import {
   loadAppointmentForEmails,
@@ -145,7 +148,11 @@ import {
   type StagedRequestExpiredNotice,
 } from "@/lib/booking/expiry-notices";
 
-export { createAppointmentFromWebhook, RecoveryAlreadyDoneError };
+export {
+  createAppointmentFromWebhook,
+  RecoveryAlreadyDoneError,
+  RecoveryRefusedError,
+};
 
 type PaymentSuccessTxResult =
   | {
@@ -487,6 +494,15 @@ export async function handlePaymentSuccess(
             recovering &&
             payment.paymentStatus === PaymentStatus.SUCCEEDED &&
             payment.appointmentId === null;
+          // Read in this Serializable transaction so a concurrent refund or dispute aborts the booking.
+          if (
+            recoverable &&
+            (await tx.payment.count({
+              where: { id: payment.id, ...unreturnedCaptureWhere },
+            })) === 0
+          ) {
+            throw new RecoveryRefusedError(payment.id);
+          }
           // The SUCCEEDED short-circuit's own predicate; `recoverable` excluded so
           // a wrong-amount capture on an unconfirmed recovery still blocks.
           const alreadyProcessed =
@@ -1741,9 +1757,13 @@ export async function handlePaymentFailure(
       return;
     }
 
-    // Credits and the discount use consumed at order creation go back under the same CAS.
+    // Credits, the discount use and the org engagement consumed at checkout go back under the same CAS.
     await reverseCreditsForPayment(payment.id, tx);
     await returnDiscountUse(tx, payment.id);
+    await reverseBookingUtilization(tx, {
+      paymentId: payment.id,
+      reason: "Payment failed",
+    });
 
     if (payment.appointment) {
       await cleanupFailedPaymentAppointment(tx, payment.appointment.id);

@@ -34,6 +34,7 @@ import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { retireOrphanPendingPayment } from "./cleanup-abandoned-payments";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
+import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import {
   recordSystemErrorSafe,
   recordSystemEvent,
@@ -632,25 +633,39 @@ async function reconcilePaymentStatusUnlocked(
         // the predicate the reconcile would clobber that real transition back to
         // EXPIRED/FAILED. updateMany lets us add the guard; count===0 means another
         // writer already moved it — skip rather than overwrite.
-        const claimed = await prisma.$transaction(async (tx) => {
-          const res = await tx.payment.updateMany({
-            where: { id: payment.id, paymentStatus: payment.paymentStatus },
-            data: {
-              paymentStatus: mappedStatus,
-            },
-          });
-          if (
-            res.count > 0 &&
-            (mappedStatus === PaymentStatus.FAILED ||
-              mappedStatus === PaymentStatus.EXPIRED)
-          ) {
-            await reverseCreditsForPayment(payment.id, tx);
-            if (payment.paymentStatus === PaymentStatus.PENDING) {
-              await returnDiscountUse(tx, payment.id);
+        // A failed give-back (an engagement counter that cannot absorb it) rolls this payment
+        // back and is collected; the rest of the cohort still runs.
+        let claimed: { count: number };
+        try {
+          claimed = await prisma.$transaction(async (tx) => {
+            const res = await tx.payment.updateMany({
+              where: { id: payment.id, paymentStatus: payment.paymentStatus },
+              data: {
+                paymentStatus: mappedStatus,
+              },
+            });
+            if (
+              res.count > 0 &&
+              (mappedStatus === PaymentStatus.FAILED ||
+                mappedStatus === PaymentStatus.EXPIRED)
+            ) {
+              await reverseCreditsForPayment(payment.id, tx);
+              if (payment.paymentStatus === PaymentStatus.PENDING) {
+                await returnDiscountUse(tx, payment.id);
+                await reverseBookingUtilization(tx, {
+                  paymentId: payment.id,
+                  reason: `Gateway reports ${mappedStatus}`,
+                });
+              }
             }
-          }
-          return res;
-        });
+            return res;
+          });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          console.error(`   Expiry failed for ${payment.id}: ${msg}`);
+          errors.push(`Payment ${payment.id}: ${msg}`);
+          continue;
+        }
 
         if (claimed.count === 0) {
           console.log(

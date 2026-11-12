@@ -28,6 +28,11 @@ export function rethrowCaseRefusal(error: unknown): never {
   throw error;
 }
 
+function refusedBeforeMoney(error: unknown): boolean {
+  if (error instanceof CaseActionError) return error.status < 500;
+  return error instanceof OpsRefusal && error.httpStatus < 500;
+}
+
 const ReviewOutcome = z.object({
   paymentId: z.string(),
   amountPaise: z.coerce.number(),
@@ -71,7 +76,9 @@ export const reviewSupportRefundDoor = withOpsAction(
         : () => Promise.resolve();
       const data = await performCaseAction(caseId, reviewer, body).catch(
         async (error: unknown) => {
-          await release();
+          // A typed 4xx refusal is decided before money moves; anything else
+          // keeps the lock to its TTL so an uncounted refund cannot be followed by another.
+          if (refusedBeforeMoney(error)) await release();
           return rethrowCaseRefusal(error);
         },
       );

@@ -30,32 +30,19 @@ export async function deriveDigitalProductChargeForBuyer(params: {
 }
 
 export interface DigitalProductQuote {
-  /** Null on a resumed order, whose split was fixed when it was minted. */
-  basePaise: number | null;
-  taxPaise: number | null;
+  basePaise: number;
+  taxPaise: number;
   totalPaise: number;
 }
 
 /**
- * The amount the purchase route would charge this viewer next: the persisted
- * amount of their unfinished order, which the route resumes, or a fresh derivation.
+ * The amount the purchase route would charge this viewer next. The route
+ * resumes an unfinished order only at this same amount, so the quote is always fresh.
  */
 export async function quoteDigitalProductForBuyer(params: {
-  productId: string;
   pricePaise: number;
   buyerId: string | null;
 }): Promise<DigitalProductQuote> {
-  const { productId, buyerId } = params;
-  const pending = buyerId
-    ? await prisma.digitalProductPurchase.findFirst({
-        where: { productId, buyerId, status: "PENDING" },
-        orderBy: { createdAt: "desc" },
-        select: { amountPaise: true, gatewayOrderId: true },
-      })
-    : null;
-  if (pending?.gatewayOrderId) {
-    return { basePaise: null, taxPaise: null, totalPaise: pending.amountPaise };
-  }
   const { derived } = await deriveDigitalProductChargeForBuyer(params);
   return {
     basePaise: derived.originalAmount,

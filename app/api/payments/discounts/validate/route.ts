@@ -11,6 +11,8 @@ import { validateDiscountCurrency } from "@/lib/payments/validation/currency-gua
 import { currentGstRegime } from "@/lib/payments/tax/gst-regime";
 import { isRefusal } from "@/lib/errors/refusal";
 import { resolveCheckoutAttribution } from "@/lib/referrals/attribution";
+import { ownOpenOrderHoldsForCheckout } from "@/lib/payments/checkout/own-open-order";
+import { checkoutSchema } from "@/schemas/checkout";
 import {
   EXPERT_VIA_COOKIE,
   parseViaToken,
@@ -26,6 +28,8 @@ const validateDiscountRequestSchema = z
     currency: z.string().trim().toUpperCase().optional().default("INR"),
     /** The plan's expert, whose take caps the code exactly as checkout does. */
     consultantProfileId: z.string().min(1).max(64).optional(),
+    /** The item being bought; the buyer's own open order for it does not use up the code. */
+    checkout: checkoutSchema.optional(),
   })
   .refine((body) => !body.amount || body.consultantProfileId, {
     message: "consultantProfileId is required to price a discount",
@@ -107,6 +111,7 @@ export async function POST(request: NextRequest) {
       amount,
       currency: planCurrency,
       consultantProfileId,
+      checkout,
     } = parsed.data;
 
     const discountCode = await prisma.discountCode.findUnique({
@@ -136,10 +141,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if max uses reached
-    if (
+    // Check if max uses reached, not counting the buyer's own open order for this item
+    const ownUses =
+      checkout &&
       discountCode.maxUses !== null &&
       discountCode.currentUses >= discountCode.maxUses
+        ? (
+            await ownOpenOrderHoldsForCheckout(session.user.id, checkout)
+          ).discountCodeIds.filter((id) => id === discountCode.id).length
+        : 0;
+    if (
+      discountCode.maxUses !== null &&
+      discountCode.currentUses - ownUses >= discountCode.maxUses
     ) {
       return NextResponse.json<DiscountCodeResponse>(
         {

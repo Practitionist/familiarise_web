@@ -75,6 +75,10 @@ async function makeWorld(topUpPaise: number) {
       ),
       findUniqueOrThrow: jest.fn(async () => account),
     },
+    systemEvent: { findFirst: jest.fn(async () => null) },
+    organization: {
+      findUnique: jest.fn(async () => ({ status: "ACTIVE", deletedAt: null })),
+    },
   };
   // An abandoned member overage the wallet could not restore, and an invoice accrual.
   const receivable = (
@@ -120,7 +124,7 @@ async function makeWorld(topUpPaise: number) {
           s + (e.direction === "CREDIT" ? 1 : -1) * Number(e.amountPaise),
         0,
       );
-  return { account, confirm, net };
+  return { account, confirm, net, tx };
 }
 
 describe("a top-up settles the org's open receivable first", () => {
@@ -137,6 +141,27 @@ describe("a top-up settles the org's open receivable first", () => {
     expect(world.account.walletBalance).toBe(75_000);
     expect(world.net(WALLET)).toBe(75_000);
     expect(world.net(RECEIVABLE)).toBe(-40_000);
+  });
+
+  it("a late capture on an abandoned (FAILED) top-up is credited like a pending one", async () => {
+    const world = await makeWorld(100_000);
+    world.tx.walletTopUp.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    const result = await world.confirm();
+
+    expect(world.tx.walletTopUp.updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: { providerOrderId: "we_1", status: "FAILED" },
+      }),
+    );
+    expect(result).toEqual({
+      confirmed: true,
+      balanceAfter: 75_000,
+      receivableSettledPaise: 25_000,
+    });
+    expect(world.net(WALLET)).toBe(75_000);
   });
 
   it("a top-up smaller than the receivable leaves the wallet at zero", async () => {

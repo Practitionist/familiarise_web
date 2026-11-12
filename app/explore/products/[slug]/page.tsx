@@ -123,7 +123,6 @@ export default async function DigitalProductPage({
     viewer.kind === "owned" || product.pricePaise === 0
       ? null
       : await quoteDigitalProductForBuyer({
-          productId: product.id,
           pricePaise: product.pricePaise,
           buyerId: viewer.kind === "buyer" && user?.id ? user.id : null,
         });
