@@ -158,7 +158,8 @@ async function fetchPublicProductsPage(
     query.sort === "popular" ? await popularPageIds(where, query) : null;
   const [fetched, total] = await Promise.all([
     prisma.digitalProduct.findMany({
-      where: popularIds ? { id: { in: popularIds } } : where,
+      // The ranked ids still pass the visibility filter: a product can leave sale between the reads.
+      where: popularIds ? { ...where, id: { in: popularIds } } : where,
       orderBy: productOrder(query.sort),
       ...(popularIds
         ? {}

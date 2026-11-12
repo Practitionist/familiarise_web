@@ -65,6 +65,27 @@ describe("Most purchased sort", () => {
     expect(page.total).toBe(3);
   });
 
+  it("drops a product that leaves sale between ranking and hydration", async () => {
+    // b is taken down after the ranking read: only a hydration read that keeps
+    // the visibility predicate filters it out.
+    mockFindMany.mockImplementation(
+      async (args: { where: { id?: { in: string[] }; takenDownAt?: null } }) =>
+        args.where.id
+          ? args.where.id.in
+              .filter((id) => !(id === "b" && args.where.takenDownAt === null))
+              .map(row)
+          : [
+              { id: "a", publishedAt: new Date("2026-11-03") },
+              { id: "b", publishedAt: new Date("2026-11-02") },
+              { id: "c", publishedAt: new Date("2026-11-01") },
+            ],
+    );
+    const page = await listPublicDigitalProducts(
+      parseProductsQuery({ sort: "popular", q: "x" }),
+    );
+    expect(page.items.map((p) => p.id)).toEqual(["c", "a"]);
+  });
+
   it("counts only SUCCEEDED purchases", async () => {
     await listPublicDigitalProducts(
       parseProductsQuery({ sort: "popular", q: "x" }),
