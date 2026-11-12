@@ -261,6 +261,7 @@ erDiagram
         int totalRevenue
         int pendingRevenue
         boolean isIndependent
+        int maxActivePlanClients
     }
     ConsulteeProfile {
         string id
