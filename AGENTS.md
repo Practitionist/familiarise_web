@@ -10,7 +10,7 @@
 2. **No Speculative Abstractions, Flags, or State Machines**:
    - Do not add feature flags, env-var tuning knobs, fallback dual-reads, or multi-step state machines unless required by an active user flow today.
    - Delete dead code and unused exports outright; never keep `@deprecated` re-exports or "back-compat" shims for internal callers.
-3. **No JS Reconcilers for Postgres-Enforced Invariants**: before writing a reconciliation check or runtime assertion, read `prisma/AGENTS.md` and the `prisma/sql/*.sql` sidecars. Only reconcile across external vendor boundaries (Razorpay, Stream, Resend, Supabase Storage). Booking-overlap limits, which also bind `lib/appointments/` and `utils/scheduling-engine/`: `lib/booking/AGENTS.md`.
+3. **No JS Reconcilers for Postgres-Enforced Invariants**: before writing a reconciliation check or runtime assertion, read `prisma/AGENTS.md` and the hand-written migrations in `prisma/migrations/`. Only reconcile across external vendor boundaries (Razorpay, Stream, Resend, Supabase Storage). Booking-overlap limits, which also bind `lib/appointments/` and `utils/scheduling-engine/`: `lib/booking/AGENTS.md`.
 4. **No Dual Schedulers by Default**: every scheduled job runs on the one ticker, gated by `ops:active_cron_platform`; no second scheduler and no GitHub Actions schedule for a registry job. Details, which also bind `app/api/cleanup/`, `app/api/admin/system-jobs/` and `netlify/functions/`: `lib/cron/AGENTS.md`.
 5. **No Ticket-Number Archaeology in Code Comments**:
    - **NEVER** write multi-paragraph docblocks or inline comments citing historical PR/issue numbers (`#1234`, `FIX #568`, `P1-W02a`, `owner decision Q3`) or narrating what old deleted code used to do. The `Release checks` workflow (`scripts/ci/check-comment-archaeology.ts`) fails comment lines added since `prod` that cite a ticket number, a planning id or "owner decision"; narrated history is caught in review, not by CI.
@@ -23,10 +23,11 @@
 2. **Money & State Transitions**:
    - All money columns are `BigInt` paise in Postgres (mapped to `number` at the Prisma client boundary in `lib/prisma.ts`). Settlement is INR-only.
    - Every status transition on `Payment`, `Appointment`, `Refund`, or `Payout` must use conditional `updateMany` with the expected prior status in `WHERE` (CAS-in-WHERE), never read-then-update. Payment confirmation rules: `lib/payments/AGENTS.md`.
-3. **Schema & Sidecar Discipline (`prisma/schema.prisma` + `prisma/sql/*.sql`)**:
-   - One Postgres database serves dev and prod across worktrees. **Never** run `prisma db push` or the database-writing `npm run db:*` scripts; the owner runs them.
+3. **Every Schema Change Is a Migration (`prisma/schema.prisma` + `prisma/migrations/`)**:
+   - A schema change is a new `prisma/migrations/<timestamp>_<name>/migration.sql`, wrapped `BEGIN; SET LOCAL lock_timeout = '3s'; … COMMIT;`, in the same PR as the schema and code. Never edit an applied migration. Procedure: `.claude/skills/schema/references/multi-session-workflow.md`.
+   - One Postgres database serves dev and prod across worktrees, and `db-migrate.yml` applies a merged migration to it on the push to `dev`, so a merge must be expand-only; destructive changes go in a `_contract` folder the owner dispatches. **Never** run `prisma db push`, `migrate dev`, or `migrate deploy`/`resolve`/`reset` against the shared database; generate and test against a local Postgres 17 cluster in UTC.
    - Run `npx prisma generate` after editing `prisma/schema.prisma`. Everything else: `prisma/AGENTS.md`.
-   - Supabase MCP: reads run freely, several batched into one `execute_sql` call. Every write or DDL needs the owner's approval in the session, shown by the prompt from `.claude/hooks/supabase-sql-gate.ts`. Schema changes still go through `prisma/schema.prisma`, the sidecars and the human-run `db:push`; MCP DDL is only for an owner-approved emergency.
+   - Supabase MCP: reads run freely, several batched into one `execute_sql` call. Every write or DDL needs the owner's approval in the session, shown by the prompt from `.claude/hooks/supabase-sql-gate.ts`. MCP DDL is only for an owner-approved emergency, mirrored by a migration in the same PR.
 4. **Locking (`Postgres` vs `Upstash Redis`)**:
    - Cron mutual exclusion (`withCronLock` in `lib/cron/with-cron-lock.ts`) is backed by Postgres (`SystemJobExecution` lease). Do not add Redis locks for cron jobs.
    - Upstash Redis (`lib/redis.ts`, `lib/rate-limit.ts`, `utils/appointmentlock.ts`) is used only for request rate limiting, maintenance-mode / `ops:active_cron_platform` edge state, and short-lived interactive checkout/payout mutexes.
@@ -45,7 +46,7 @@
    - Lint: `npm run lint` (errors fail CI; warnings are advisory)
    - Format check: `npm run format:check`
    - Targeted Jest test: `npx jest path/to/test.ts`
-   - The owner runs `next dev`, `next build`, `prisma db push` and the database-writing `npm run db:*` scripts (push, sidecars, seed, migrate, triggers, constraints). `.claude/settings.json` deny rules block their usual command forms for Claude Code in every permission mode (the rules match command text, so they are a guard, not a boundary); `npm run db:generate` and `npm run db:preflight` stay usable.
+   - The owner runs `next dev`, `next build`, the seed and every `prisma migrate deploy`/`resolve` against the shared database (CI's `db-migrate.yml` does the deploy on merge). `.claude/settings.json` deny rules block their usual command forms for Claude Code in every permission mode (the rules match command text, so they are a guard, not a boundary); `npm run db:generate` stays usable, and migrate commands that name a `localhost` `DIRECT_URL` are for local rehearsal.
 
 ## 4. Engineering, Documentation & Review Practices
 
