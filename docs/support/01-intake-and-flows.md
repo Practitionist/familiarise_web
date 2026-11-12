@@ -4,7 +4,7 @@ type: explanation
 band: domain
 audience: sde2
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-12
 ---
 
 # Intake, flows and deflection
@@ -90,8 +90,10 @@ Clocks start at the first hand-off to a person (`receivedAt`), never at a bot tu
 | Clock                  | Rule                                                                                                                                                                                                   | Where                                                   |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
 | Acknowledgement target | URGENT 2 h, HIGH 8 h, MEDIUM and LOW 24 h. Never pauses.                                                                                                                                               | `slaDeadlinesFor()` in `lib/support/sla.ts`             |
-| Resolution target      | URGENT 1 day, HIGH 3 days, MEDIUM and LOW 7 days. Pauses while waiting on the customer, but never past the statutory deadline.                                                                         | `effectiveResolutionDueAt()`                            |
+| Resolution target      | URGENT 1 day, HIGH 3 days, MEDIUM and LOW 7 days. Pauses while waiting on the customer, but never past the statutory deadline. A reopen restarts it (see below).                                       | `effectiveResolutionDueAt()`                            |
 | Statutory deadline     | Captured at receipt and never paused: 7 days for general and grievance cases (policy `IN-2026-02:GENERAL` or `:GRIEVANCE`); the content-removal policies (36 h, 2 h, 3 h) apply to moderation reports. | `supportDeadline()` in `lib/support/deadline-policy.ts` |
+
+**A reopen restarts the resolution clock.** When a resolved human case is reopened, whether by the customer's explicit request or by staff moving it back to an active status, the resolution target is set again from the reopen time at the case's current priority (`reopenedClockPatch()` in `lib/support/sla.ts`, applied by `advanceUserTurnState()` and `buildLifecycleUpdateData()` in `lib/support/case-service.ts`). The customer-wait time banked against the old target (`pausedSeconds`) is reset to zero. The acknowledgement target is left alone, because acknowledgement means the first public agent reply and the case already has one. The statutory deadline keeps its original date, because it is a promise made at receipt. Example: Priya's HIGH case `FAM-2026-000123` is resolved on Thu 12 Nov 2026 at 10:00 IST and she reopens it on Fri 20 Nov 2026 at 09:00 IST. The new resolution target is Mon 23 Nov 2026 at 09:00 IST (3 days later), whatever the old target was. A statutory deadline of Thu 19 Nov 2026 stays as it was and is already breached.
 
 Raising the priority tightens the internal targets and never extends them. An automated receipt does not count as a human acknowledgement. Breach state is computed on read, never stored. The monthly compliance report counts human cases by IST month of receipt, acknowledgement within 24 hours and resolution by the statutory deadline (`supportMonthlyComplianceReport()`).
 

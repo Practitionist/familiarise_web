@@ -99,13 +99,13 @@ The weekly `archive-webhook-events` job (`scripts/cleanup/archive-webhook-events
 
 ## Where in code
 
-| Concern                                            | File                                                                   |
-| -------------------------------------------------- | ---------------------------------------------------------------------- |
-| Row writes, claim, terminal prefixes, health probe | `lib/webhooks/event-log.ts`                                            |
-| Recovery sweep                                     | `scripts/cleanup/sweep-stuck-webhook-events.ts`                        |
-| Stale-claim takeover                               | `lib/stream/webhook-receipt.ts` (`reclaimStaleProcessingWebhookEvent`) |
-| Razorpay dispatch and deferral                     | `app/api/webhooks/razorpay-dispatch.ts`                                |
-| Admin recover door                                 | `app/api/payments/[paymentId]/recover/route.ts`                        |
+| Concern                                            | File                                                                                                                                             |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Row writes, claim, terminal prefixes, health probe | `lib/webhooks/event-log.ts`                                                                                                                      |
+| Recovery sweep                                     | `scripts/cleanup/sweep-stuck-webhook-events.ts`                                                                                                  |
+| Stale-claim takeover                               | `lib/stream/webhook-receipt.ts` (`reclaimStaleProcessingWebhookEvent` for the sweeper; `reclaimAbandonedWebhookReceipt` for a Stream redelivery) |
+| Razorpay dispatch and deferral                     | `app/api/webhooks/razorpay-dispatch.ts`                                                                                                          |
+| Admin recover door                                 | `app/api/payments/[paymentId]/recover/route.ts`                                                                                                  |
 
 ## Related
 
