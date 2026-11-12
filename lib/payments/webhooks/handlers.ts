@@ -101,6 +101,7 @@ import { goHref } from "@/lib/dashboard/go";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
+import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { recordReferralCaptureInSavepoint } from "@/lib/referrals/capture";
 import {
   prepareCreditsAppliedEmail,
@@ -1756,9 +1757,13 @@ export async function handlePaymentFailure(
       return;
     }
 
-    // Credits and the discount use consumed at order creation go back under the same CAS.
+    // Credits, the discount use and the org engagement consumed at checkout go back under the same CAS.
     await reverseCreditsForPayment(payment.id, tx);
     await returnDiscountUse(tx, payment.id);
+    await reverseBookingUtilization(tx, {
+      paymentId: payment.id,
+      reason: "Payment failed",
+    });
 
     if (payment.appointment) {
       await cleanupFailedPaymentAppointment(tx, payment.appointment.id);

@@ -34,6 +34,7 @@ import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { retireOrphanPendingPayment } from "./cleanup-abandoned-payments";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
+import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import {
   recordSystemErrorSafe,
   recordSystemEvent,
@@ -647,6 +648,10 @@ async function reconcilePaymentStatusUnlocked(
             await reverseCreditsForPayment(payment.id, tx);
             if (payment.paymentStatus === PaymentStatus.PENDING) {
               await returnDiscountUse(tx, payment.id);
+              await reverseBookingUtilization(tx, {
+                paymentId: payment.id,
+                reason: `Gateway reports ${mappedStatus}`,
+              });
             }
           }
           return res;
