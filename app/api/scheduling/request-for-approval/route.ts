@@ -52,6 +52,12 @@ import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
+import { assertSlotsStillPublished } from "@/lib/booking/allocation/coverage";
+import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
+import {
+  TRIAL_WINDOW_REFUSAL_COPY,
+  TRIAL_WINDOW_REFUSAL_STATUS,
+} from "@/lib/trials/slot-check";
 
 import { getSession } from "@/lib/auth-server";
 import { assertNotSelfBooking } from "@/lib/booking/self-booking";
@@ -313,10 +319,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (
-      availabilityWindowWeeklyId &&
-      prisma.availabilityWindowWeekly?.findFirst
-    ) {
+    if (availabilityWindowWeeklyId) {
       const weeklyWindow = await prisma.availabilityWindowWeekly.findFirst({
         where: { id: availabilityWindowWeeklyId, consultantProfileId },
         select: { id: true },
@@ -332,10 +335,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (
-      availabilityWindowCustomId &&
-      prisma.availabilityWindowCustom?.findFirst
-    ) {
+    if (availabilityWindowCustomId) {
       const customWindow = await prisma.availabilityWindowCustom.findFirst({
         where: { id: availabilityWindowCustomId, consultantProfileId },
         select: { id: true },
@@ -475,6 +475,27 @@ export async function POST(req: NextRequest) {
                 code: atCapacity.code,
               });
             }
+            // A request is checked against published hours here only; once
+            // held, it keeps its time for every approver.
+            await assertSlotsStillPublished(
+              tx,
+              consultantProfileId,
+              slotChunkStarts,
+            ).catch((error: unknown) => {
+              if (
+                error instanceof AllocationConflictError &&
+                error.errorCode === "AVAILABILITY_CHANGED"
+              ) {
+                throw new RequestRefusal(
+                  TRIAL_WINDOW_REFUSAL_STATUS.OUTSIDE_AVAILABILITY,
+                  {
+                    error: TRIAL_WINDOW_REFUSAL_COPY.OUTSIDE_AVAILABILITY,
+                    code: "OUTSIDE_AVAILABILITY",
+                  },
+                );
+              }
+              throw error;
+            });
             const validation = await new ScheduleValidationService(
               tx,
             ).checkSlotAvailability(

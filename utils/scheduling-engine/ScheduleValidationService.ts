@@ -251,6 +251,11 @@ export class ScheduleValidationService {
        */
       overrideAvailabilityWindow?: boolean;
       /**
+       * Interval starts the booking already holds. A held time was checked
+       * against published hours when it was taken, so the window check skips it.
+       */
+      heldSlotStarts?: readonly Date[];
+      /**
        * #1554 — occurrence rows to leave out of conflicts, weekly and daily
        * counts: a reschedule replaces rows on a wrapper it keeps, so the
        * wrapper's other calls must still count while the released ones do not.
@@ -309,7 +314,9 @@ export class ScheduleValidationService {
     options: Parameters<ScheduleValidationService["validate"]>[6],
   ): Promise<ValidationResult> {
     if (!options?.overrideAvailabilityWindow) {
-      const scheduleCheck = this.validateMatchesSchedule(slots, consultant);
+      const held = new Set(options?.heldSlotStarts?.map((d) => d.getTime()));
+      const unheld = slots.filter((slot) => !held.has(slot.getTime()));
+      const scheduleCheck = this.validateMatchesSchedule(unheld, consultant);
       if (!scheduleCheck.isValid) return scheduleCheck;
     }
 

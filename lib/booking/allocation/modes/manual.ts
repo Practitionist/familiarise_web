@@ -55,6 +55,7 @@ import {
 } from "@/lib/booking/allocation/event-data";
 import {
   confirmedIntervalsOf,
+  heldIntervalStartsOf,
   releasedSessionCountOf,
   releasedOccurrenceIdsOf,
   topUpTargetSessions,
@@ -331,6 +332,11 @@ export async function manualAllocate(
       ? releasedOccurrenceIdsOf(existingAppointments)
       : [];
     const ownAppointmentIds = existingAppointments.map((a) => a.id);
+    // A time the booking already holds keeps it for every approver; only a
+    // new time is held to the published hours.
+    const heldSlotStarts = heldIntervalStartsOf(existingAppointments);
+    const held = new Set(heldSlotStarts.map((d) => d.getTime()));
+    const newSlots = slots.filter((slot) => !held.has(slot.getTime()));
 
     // #1065 — a hand-placed allocation answers a stated preference just as an
     // auto one does (it does not READ the preference — the consultant chose
@@ -467,6 +473,7 @@ export async function manualAllocate(
         leadTimeMs,
         // The consultant explicitly accepting these times as-is.
         overrideAvailabilityWindow: override,
+        heldSlotStarts,
       },
     );
 
@@ -535,7 +542,7 @@ export async function manualAllocate(
         }
         // The consultant's explicit override waives availability, here as out of tx.
         if (!override) {
-          await assertSlotsStillPublished(tx, consultantProfileId, slots);
+          await assertSlotsStillPublished(tx, consultantProfileId, newSlots);
         }
 
         // AE-2 (#784) — a webinar/class co-host is not a slot participant, so

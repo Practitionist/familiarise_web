@@ -45,6 +45,11 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
       mockCheckSlotAvailability(...(a as []));
   },
 }));
+const mockAssertSlotsStillPublished = jest.fn(async () => undefined);
+jest.mock("../../lib/booking/allocation/coverage", () => ({
+  assertSlotsStillPublished: (...a: unknown[]) =>
+    mockAssertSlotsStillPublished(...(a as [])),
+}));
 jest.mock("../../lib/novu", () => ({
   notifyNewBookingRequest: jest.fn(async () => ({ success: true })),
 }));
@@ -97,6 +102,9 @@ jest.mock("../../lib/prisma", () => {
   const db: Record<string, unknown> = {
     consulteeProfile: {
       findUnique: jest.fn(async () => ({ id: "cs_1", user: {} })),
+    },
+    availabilityWindowWeekly: {
+      findFirst: jest.fn(async () => ({ id: "aw_1" })),
     },
     consultationPlan: {
       findFirst: jest.fn(async () => ({
