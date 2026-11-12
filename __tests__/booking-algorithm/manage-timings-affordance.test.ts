@@ -7,9 +7,9 @@
  * Reschedule takes its place — the two are alternatives, and offering both
  * would hand a consultant a way around the proposal (#1082).
  *
- * Moving a published webinar to a new date sits outside that pair: attendees
- * are told and may leave in full, so a confirmed webinar offers Timings AND the
- * move; a class moves session by session and a 1:1 by Reschedule.
+ * A webinar or class is re-planned only while no seat is live. Once a seat is
+ * sold, a webinar moves by Re-time (attendees are told and may leave in full)
+ * and a class by its series re-time or cancel + make-up; never by Timings.
  */
 
 import {
@@ -36,23 +36,43 @@ const tentative: TestSlot[] = [
 ];
 const nothingAllocated: TestSlot[] = [];
 
+const isGroup = (kind: AppointmentKind) =>
+  kind === "WEBINAR" || kind === "CLASS";
+
 /** Mirrors ConsultantAppointmentsAdapter's two guards, minus the status checks. */
-function offered(kind: AppointmentKind, slots: TestSlot[]) {
-  const timings = allowsManageTimings(kind, slots);
-  return { timings, reschedule: !timings && occurrencesAllowReschedule(slots) };
+function offered(kind: AppointmentKind, slots: TestSlot[], liveSeats = 0) {
+  const timings = allowsManageTimings(kind, slots, liveSeats);
+  return {
+    timings,
+    reschedule: !isGroup(kind) && !timings && occurrencesAllowReschedule(slots),
+  };
 }
 
 /** All three menu gates together, which is how a consultant actually meets them. */
-function menu(kind: AppointmentKind, slots: TestSlot[]) {
-  return { ...offered(kind, slots), retime: allowsRetime(kind, slots) };
+function menu(kind: AppointmentKind, slots: TestSlot[], liveSeats = 0) {
+  return {
+    ...offered(kind, slots, liveSeats),
+    retime: allowsRetime(kind, slots),
+  };
 }
 
 describe("allowsManageTimings", () => {
-  it("keeps Timings on a webinar whose instance is already confirmed", () => {
-    // Attendees bought into a published schedule; there is no counterparty to
-    // send a proposal to, and thirty of them cannot each accept one.
+  it("keeps Timings on a scheduled webinar nobody has bought yet", () => {
     expect(offered("WEBINAR", confirmed)).toEqual({
       timings: true,
+      reschedule: false,
+    });
+  });
+
+  it("withdraws Timings from a webinar or class once a seat is live", () => {
+    // A full re-plan would move paid attendees with no notice and no free
+    // leave; the sold event moves by Re-time instead.
+    expect(offered("WEBINAR", confirmed, 1)).toEqual({
+      timings: false,
+      reschedule: false,
+    });
+    expect(offered("CLASS", confirmed, 3)).toEqual({
+      timings: false,
       reschedule: false,
     });
   });
@@ -125,7 +145,7 @@ describe("allowsManageTimings", () => {
     // commitment by the same test as a consultation. The consultant's menu
     // offers a trial neither action today, because the reschedule API has no
     // TRIAL branch; that gap predates this and is out of scope.
-    expect(allowsManageTimings("TRIAL", confirmed)).toBe(false);
+    expect(allowsManageTimings("TRIAL", confirmed, 0)).toBe(false);
     expect(offered("TRIAL", confirmed)).toEqual({
       timings: false,
       reschedule: true,
@@ -205,9 +225,17 @@ describe("allowsManageTimings", () => {
 });
 
 describe("allowsRetime", () => {
-  it("offers a confirmed webinar Timings AND a move to a new date, never Reschedule", () => {
+  it("offers an unsold confirmed webinar Timings AND a move to a new date, never Reschedule", () => {
     expect(menu("WEBINAR", confirmed)).toEqual({
       timings: true,
+      reschedule: false,
+      retime: true,
+    });
+  });
+
+  it("offers a sold confirmed webinar only the move", () => {
+    expect(menu("WEBINAR", confirmed, 12)).toEqual({
+      timings: false,
       reschedule: false,
       retime: true,
     });
@@ -313,7 +341,7 @@ describe("upcomingOccurrences", () => {
       },
     ];
     expect(
-      allowsManageTimings("SUBSCRIPTION", upcomingOccurrences(slots, now)),
+      allowsManageTimings("SUBSCRIPTION", upcomingOccurrences(slots, now), 0),
     ).toBe(true);
   });
 });

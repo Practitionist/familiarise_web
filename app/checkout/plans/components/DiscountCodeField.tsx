@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { FieldError, invalidProps } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";
 import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
+import type { CheckoutInput } from "@/schemas/checkout";
 import type { AppliedDiscount } from "@/types/checkout";
 
 import { appliedDiscountLabel } from "../math";
@@ -48,8 +49,10 @@ interface ValidateResponse {
 export function useDiscountCode(params: {
   amountPaise: number;
   consultantProfileId: string | undefined;
+  /** The item being bought; the buyer's own open order for it does not use up the code. */
+  checkout?: CheckoutInput | null;
 }) {
-  const { amountPaise, consultantProfileId } = params;
+  const { amountPaise, consultantProfileId, checkout } = params;
   const [input, setInputValue] = useState("");
   const [applied, setApplied] = useState<AppliedDiscount | null>(null);
   const [isApplying, setIsApplying] = useState(false);
@@ -76,6 +79,7 @@ export function useDiscountCode(params: {
           code: input,
           amount: amountPaise,
           consultantProfileId,
+          ...(checkout ? { checkout } : {}),
         }),
       });
       const data: ValidateResponse = await response.json();
@@ -95,7 +99,7 @@ export function useDiscountCode(params: {
     } finally {
       setIsApplying(false);
     }
-  }, [input, amountPaise, consultantProfileId]);
+  }, [input, amountPaise, consultantProfileId, checkout]);
 
   const remove = useCallback(() => {
     setApplied(null);

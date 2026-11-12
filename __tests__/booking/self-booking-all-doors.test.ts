@@ -67,6 +67,10 @@ jest.mock("../../lib/booking/transitions", () => ({
 jest.mock("../../lib/booking/participants", () => ({
   recordParticipants: jest.fn(async () => undefined),
 }));
+// The expiry sweep the route's module imports ends chat access; no door here reaches it.
+jest.mock("../../lib/stream/access-revocation", () => ({
+  revokeEndedBookingChatAccess: jest.fn(),
+}));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 const mockSessionUser: { id: string; consultantProfileId?: string } = {
@@ -82,6 +86,9 @@ const mockProfile = {
   maxOpenRequests: null as number | null,
   user: { id: "user_consultant", name: "Olivia" },
 };
+jest.mock("../../lib/booking/allocation/coverage", () =>
+  jest.requireActual("../fixtures/request-door-hours"),
+);
 jest.mock("../../lib/prisma", () => {
   const created = () => ({
     id: "req_1",
@@ -118,6 +125,9 @@ jest.mock("../../lib/prisma", () => {
       })),
     },
     membership: { findUnique: jest.fn(async () => mockOrgMembership) },
+    availabilityWindowWeekly: jest.requireActual(
+      "../fixtures/request-door-hours",
+    ).namedWeeklyWindow,
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(db)),
   };
   return { __esModule: true, default: db };

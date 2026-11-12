@@ -94,12 +94,50 @@ function productOrder(
   return [{ publishedAt: "desc" }, { id: "asc" }];
 }
 
+/** Most purchased ranks only the newest 5,000 matches; its total is capped to agree. */
+const POPULAR_RANK_CAP = 5_000;
+
+/**
+ * Product ids for one page, most completed purchases first (newest first on a
+ * tie). Prisma cannot order by a filtered relation count, so the matching ids
+ * are counted in one grouped read and paged here.
+ */
+async function popularPageIds(
+  where: Prisma.DigitalProductWhereInput,
+  query: ProductsQuery,
+): Promise<string[]> {
+  const candidates = await prisma.digitalProduct.findMany({
+    where,
+    select: { id: true, publishedAt: true },
+    orderBy: [{ publishedAt: "desc" }, { id: "asc" }],
+    take: POPULAR_RANK_CAP,
+  });
+  const sold = await prisma.digitalProductPurchase.groupBy({
+    by: ["productId"],
+    where: {
+      status: "SUCCEEDED",
+      productId: { in: candidates.map((c) => c.id) },
+    },
+    _count: { _all: true },
+  });
+  const soldById = new Map(sold.map((s) => [s.productId, s._count._all]));
+  return candidates
+    .map((c, index) => ({ id: c.id, index, sold: soldById.get(c.id) ?? 0 }))
+    .sort((a, b) => b.sold - a.sold || a.index - b.index)
+    .slice((query.page - 1) * PRODUCTS_PER_PAGE, query.page * PRODUCTS_PER_PAGE)
+    .map((c) => c.id);
+}
+
 async function fetchPublicProductsPage(
   query: ProductsQuery,
+  domainId?: string,
 ): Promise<PublicProductsPage> {
   const where: Prisma.DigitalProductWhereInput = {
     ...digitalProductDiscoverableWhere(),
-    consultantProfile: { deletedAt: null },
+    consultantProfile: {
+      deletedAt: null,
+      ...(domainId ? { domainId } : {}),
+    },
     ...(query.category ? { category: query.category } : {}),
     ...(query.price === "free" ? { pricePaise: 0 } : {}),
     ...(query.price === "paid" ? { pricePaise: { gt: 0 } } : {}),
@@ -117,12 +155,19 @@ async function fetchPublicProductsPage(
         }
       : {}),
   };
-  const [rows, total] = await Promise.all([
+  const popularIds =
+    query.sort === "popular" ? await popularPageIds(where, query) : null;
+  const [fetched, matching] = await Promise.all([
     prisma.digitalProduct.findMany({
-      where,
+      // The ranked ids still pass the visibility filter: a product can leave sale between the reads.
+      where: popularIds ? { ...where, id: { in: popularIds } } : where,
       orderBy: productOrder(query.sort),
-      take: PRODUCTS_PER_PAGE,
-      skip: (query.page - 1) * PRODUCTS_PER_PAGE,
+      ...(popularIds
+        ? {}
+        : {
+            take: PRODUCTS_PER_PAGE,
+            skip: (query.page - 1) * PRODUCTS_PER_PAGE,
+          }),
       select: {
         id: true,
         slug: true,
@@ -139,6 +184,9 @@ async function fetchPublicProductsPage(
     }),
     prisma.digitalProduct.count({ where }),
   ]);
+  const rows = popularIds
+    ? popularIds.flatMap((id) => fetched.filter((row) => row.id === id))
+    : fetched;
   return {
     items: rows.map(({ _count, consultantProfile, ...row }) => ({
       ...row,
@@ -148,7 +196,7 @@ async function fetchPublicProductsPage(
         name: consultantProfile.user.name,
       },
     })),
-    total,
+    total: popularIds ? Math.min(matching, POPULAR_RANK_CAP) : matching,
     page: query.page,
     perPage: PRODUCTS_PER_PAGE,
   };
@@ -160,12 +208,57 @@ const cachedProductsPage = unstable_cache(
   { revalidate: 300, tags: [PUBLIC_PRODUCTS_TAG] },
 );
 
-/** Free-text searches are not cached: every distinct term would be its own entry. */
+/**
+ * `domainId` narrows to the products of experts in one field (a product's topic
+ * is its creator's field for now). Free-text searches are not cached: every
+ * distinct term would be its own entry.
+ */
 export function listPublicDigitalProducts(
   query: ProductsQuery,
+  domainId?: string,
 ): Promise<PublicProductsPage> {
-  return query.q ? fetchPublicProductsPage(query) : cachedProductsPage(query);
+  return query.q
+    ? fetchPublicProductsPage(query, domainId)
+    : cachedProductsPage(query, domainId);
 }
+
+export interface ProductTopic {
+  id: string;
+  name: string;
+  count: number;
+}
+
+/** Fields that have at least one product on sale, with how many, most products first. */
+export const listProductTopics = unstable_cache(
+  async (): Promise<ProductTopic[]> => {
+    // One row per selling expert with a database count, so no product is left out.
+    const experts = await prisma.consultantProfile.findMany({
+      where: {
+        deletedAt: null,
+        digitalProducts: { some: digitalProductDiscoverableWhere() },
+      },
+      select: {
+        domain: { select: { id: true, name: true } },
+        _count: {
+          select: {
+            digitalProducts: { where: digitalProductDiscoverableWhere() },
+          },
+        },
+      },
+    });
+    const byId = new Map<string, ProductTopic>();
+    for (const { domain, _count } of experts) {
+      const topic = byId.get(domain.id) ?? { ...domain, count: 0 };
+      topic.count += _count.digitalProducts;
+      byId.set(domain.id, topic);
+    }
+    return [...byId.values()].sort(
+      (a, b) => b.count - a.count || a.name.localeCompare(b.name),
+    );
+  },
+  ["public-digital-product-topics"],
+  { revalidate: 300, tags: [PUBLIC_PRODUCTS_TAG] },
+);
 
 const PRODUCT_PAGE_SELECT = {
   id: true,

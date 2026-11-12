@@ -1,10 +1,11 @@
 /**
  * POST /api/admin/billing-accounts/[billingAccountId]/refund-remaining
  *
- * Returns an org's remaining wallet balance the way it came in: refunds against
+ * Returns an org's remaining top-up money the way it came in: refunds against
  * its CONFIRMED top-ups, newest first, each keyed `wallet-refund:<account>:<topUp>`.
- * Wallet spend is frozen for the run and lifted only when this run froze it and
- * the balance reached 0. A drifted wallet is refused before any money moves.
+ * Operator-granted credit stays in the wallet. Wallet spend is frozen for the run
+ * and lifted only when this run froze it and no top-up money is left. A drifted
+ * wallet is refused before any money moves.
  */
 
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
@@ -16,7 +17,10 @@ import {
   isWalletFrozen,
   unfreezeWalletSpend,
 } from "@/lib/payments/wallet-freeze";
-import { refundRemainingWalletBalance } from "@/lib/payments/operations/wallet-refund";
+import {
+  grantedWalletCreditPaise,
+  refundRemainingWalletBalance,
+} from "@/lib/payments/operations/wallet-refund";
 import { walletDriftFindings } from "@/scripts/reconcile/reconcile-ledgers";
 
 export const POST = withOpsAction(
@@ -59,8 +63,12 @@ export const POST = withOpsAction(
         billingAccountId: account.id,
         reason: body.reason,
       });
+      const retainedPaise = Math.min(
+        result.balanceAfterPaise,
+        result.grantedCreditPaise,
+      );
       const unfrozen =
-        !wasFrozen && result.balanceAfterPaise === 0
+        !wasFrozen && result.balanceAfterPaise === retainedPaise
           ? await unfreezeWalletSpend({
               billingAccountId: account.id,
               organizationId: account.ownerOrgId,
@@ -76,6 +84,10 @@ export const POST = withOpsAction(
         refundCount: result.refunds.length,
         stoppedOn: result.stoppedOn,
         frozen: !unfrozen,
+        retainedGrantedCreditPaise: retainedPaise,
+        ...(retainedPaise > 0 && {
+          note: "Operator-granted credit stays in the wallet; this door returns only top-up money.",
+        }),
       };
       return {
         target: { kind: "BillingAccount", id: account.id },
@@ -94,13 +106,18 @@ export const POST = withOpsAction(
         kind: "BillingAccount",
         id: params.billingAccountId,
       }),
-      // What the run would return: the whole cached balance.
+      // What the run would return: the cached balance less operator-granted credit.
       amountPaise: async (_body, { params }) => {
         const account = await prisma.billingAccount.findUnique({
           where: { id: params.billingAccountId },
-          select: { walletBalance: true },
+          select: { walletBalance: true, ownerOrgId: true },
         });
-        return account?.walletBalance ?? 0;
+        if (!account) return 0;
+        const granted = await grantedWalletCreditPaise(
+          prisma,
+          account.ownerOrgId,
+        );
+        return Math.max(0, (account.walletBalance ?? 0) - granted);
       },
     },
   },

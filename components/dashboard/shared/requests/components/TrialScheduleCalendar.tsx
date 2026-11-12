@@ -28,6 +28,7 @@ import {
   type SlotWithStatus,
 } from "@/lib/scheduling/booking-windows";
 import { AvailabilityReadError } from "@/lib/scheduling/use-availability-window";
+import { leadMsFor, type LeadPurpose } from "@/lib/booking/lead-time";
 import { useDisplayZone } from "@/lib/time/use-display-zone";
 import { cn } from "@/utils/tailwind";
 
@@ -87,6 +88,12 @@ interface TrialScheduleCalendarProps {
   onCancel: () => void;
   isProcessing?: boolean;
   consulteeUserName?: string;
+  /** The trial's consultee, so their busy times are greyed out too. */
+  consulteeUserId?: string;
+  /** Which writer the pick goes to; it sets the lead time the times honour. */
+  purpose?: LeadPurpose;
+  heading?: string;
+  confirmLabel?: string;
 }
 
 export function TrialScheduleCalendar({
@@ -96,7 +103,13 @@ export function TrialScheduleCalendar({
   onCancel,
   isProcessing = false,
   consulteeUserName,
+  consulteeUserId,
+  purpose = "allocate",
+  heading = "Schedule Trial",
+  confirmLabel = "Confirm Schedule",
 }: Readonly<TrialScheduleCalendarProps>) {
+  // The trial is free or already paid when its time is placed or moved.
+  const leadMs = leadMsFor(purpose, { settled: true });
   const { toast } = useToast();
   const { data: session, isPending: isSessionPending } = useSession();
   const displayZone = useDisplayZone(session?.user?.timezone ?? null);
@@ -136,7 +149,11 @@ export function TrialScheduleCalendar({
       `/api/scheduling/availability-with-allocation/${consultantId}` +
       `?startDateInUtc=${start.toISOString()}` +
       `&endDateInUtc=${end.toISOString()}` +
-      `&timezone=${encodeURIComponent(zone)}`;
+      `&timezone=${encodeURIComponent(zone)}` +
+      `&purpose=${purpose}` +
+      (consulteeUserId
+        ? `&consulteeUserId=${encodeURIComponent(consulteeUserId)}`
+        : "");
     fetch(url, { credentials: "include", signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) {
@@ -156,7 +173,15 @@ export function TrialScheduleCalendar({
         setRead({ state: "error" });
       });
     return () => controller.abort();
-  }, [zoneReady, consultantId, selectedKey, zone, retryCount]);
+  }, [
+    zoneReady,
+    consultantId,
+    selectedKey,
+    zone,
+    retryCount,
+    purpose,
+    consulteeUserId,
+  ]);
 
   const times = useMemo(() => {
     if (read.state !== "ready") return [];
@@ -165,11 +190,12 @@ export function TrialScheduleCalendar({
       trialDurationMinutes / 60,
       zone,
       now.getTime(),
+      leadMs,
     ).flatMap((window) => {
       const status = trialTimeStatus(window, now.getTime());
       return status === null ? [] : [{ window, status }];
     });
-  }, [read, trialDurationMinutes, zone, now]);
+  }, [read, trialDurationMinutes, zone, now, leadMs]);
 
   // The confirm button acts only on a pick the latest read still offers.
   const liveSelection =
@@ -267,7 +293,7 @@ export function TrialScheduleCalendar({
   return (
     <div className="space-y-6">
       <div className="border-b border-gray-200 pb-4">
-        <h2 className="text-xl font-semibold text-gray-900">Schedule Trial</h2>
+        <h2 className="text-xl font-semibold text-gray-900">{heading}</h2>
         <p className="text-sm text-gray-500 mt-1">
           {consulteeUserName
             ? `Pick a ${trialDurationMinutes}-minute time for the trial with ${consulteeUserName}`
@@ -451,7 +477,7 @@ export function TrialScheduleCalendar({
               Scheduling...
             </>
           ) : (
-            "Confirm Schedule"
+            confirmLabel
           )}
         </Button>
       </div>

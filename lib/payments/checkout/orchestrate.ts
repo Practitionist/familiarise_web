@@ -53,6 +53,7 @@ import {
 import {
   releaseSupersededHolds,
   findReusablePendingOrderPayment,
+  openOrderTargetOf,
 } from "@/lib/payments/checkout/order-reuse";
 import { buildPaymentMetadata } from "@/lib/payments/checkout/schema";
 import { tombstoneAbortedGatewayOrder } from "@/lib/payments/checkout/gateway-intent";
@@ -99,6 +100,7 @@ export const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<BusinessErrorCode> =
     "DISCOUNT_EXHAUSTED",
     "DISCOUNT_CODE_INVALID",
     "SUBSCRIPTION_ALREADY_ACTIVE",
+    "NOT_PLACEABLE",
     "ALREADY_RENEWED",
     "INVALID_RENEWAL_SOURCE",
     "WELCOME_DISCOUNT_IN_USE",
@@ -375,41 +377,20 @@ export async function handleCheckout(
     // parity (amount must equal THIS request's computation). Rejections are
     // superseded to EXPIRED so they can neither be resumed later nor re-minted
     // into a parallel charge by a third tab.
+    const openOrderTarget = openOrderTargetOf(
+      validatedData,
+      userId,
+      organizationId,
+      subscriptionSchedulingPeriod,
+    );
     const { reusable: reusableOrder, supersede: supersededOrders } =
-      await findReusablePendingOrderPayment(prisma, {
-        userId,
-        appointmentType,
-        planId: validatedData.planId,
-        eventId: validatedData.eventId,
-        organizationId,
-        paymentGateway: validatedData.paymentGateway,
-        expectedAmountPaise: amount,
-        ...(appointmentType === "CONSULTATION" &&
-        validatedData.startsAt &&
-        validatedData.endsAt
-          ? {
-              slotWindow: {
-                startsAt: new Date(validatedData.startsAt),
-                endsAt: new Date(validatedData.endsAt),
-              },
-            }
-          : {}),
-        ...(appointmentType === "SUBSCRIPTION"
-          ? {
-              schedulingPeriod:
-                subscriptionSchedulingPeriod ??
-                (validatedData.schedulingPeriodStartsAt &&
-                validatedData.schedulingPeriodEndsAt
-                  ? {
-                      startsAt: new Date(
-                        validatedData.schedulingPeriodStartsAt,
-                      ),
-                      endsAt: new Date(validatedData.schedulingPeriodEndsAt),
-                    }
-                  : null),
-            }
-          : {}),
-      });
+      openOrderTarget
+        ? await findReusablePendingOrderPayment(prisma, {
+            ...openOrderTarget,
+            expectedAmountPaise: amount,
+            expectedDiscountCodeId: priced.discountCodeId,
+          })
+        : { reusable: null, supersede: [] };
     if (supersededOrders.length > 0) {
       // #1463 — expiring the payment is only half of it; the hold it minted has
       // to come off the calendar in the same transaction or this buyer's next

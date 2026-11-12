@@ -4,7 +4,12 @@ import { z } from "zod";
 export const PRODUCTS_PER_PAGE = 24;
 const MAX_PAGE = 500;
 
-export const PRODUCT_SORTS = ["newest", "price-asc", "price-desc"] as const;
+export const PRODUCT_SORTS = [
+  "newest",
+  "popular",
+  "price-asc",
+  "price-desc",
+] as const;
 
 /** A bad or repeated value in the URL falls back to "not set" instead of failing the page. */
 const ProductsQuerySchema = z.object({

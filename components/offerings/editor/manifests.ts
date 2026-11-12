@@ -338,7 +338,8 @@ const trialSection: SectionSpec = {
       name: "trialEnabled",
       kind: "switch",
       label: "Offer a trial session",
-      description: "Trial requests arrive in Requests, under Trials.",
+      description:
+        "Learners pick a time from your open hours; the trial then shows in Appointments.",
       span: 6,
     },
     {
@@ -458,9 +459,11 @@ export const WEBINAR_MANIFEST: OfferingManifest = {
           // Required to publish. The old create path let an unparseable value
           // through and silently produced a webinar with no session at all.
           name: "scheduledAt",
-          kind: "date",
+          kind: "sessionTime",
+          durationName: "durationInHours",
           label: "Scheduled for",
-          description: "Required before publishing.",
+          description:
+            "Required before publishing. Pick a time on your own calendar; it must be on the half hour and at least an hour away.",
           required: true,
           span: 3,
         },

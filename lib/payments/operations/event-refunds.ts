@@ -36,9 +36,12 @@ import {
 import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
 import { liveParticipant } from "@/lib/booking/participants";
 import {
-  seatLedger,
-  occurrenceRefundsPaise,
+  seatLedgerFrom,
+  seatSessionsByAppointment,
+  occurrenceRefundsByPayment,
   seriesCancelRefundPaise,
+  classEndRefundPaise,
+  CLASS_END_REFUND_KEY_PREFIX,
   type SeriesSeat,
 } from "@/lib/booking/class-series";
 
@@ -93,6 +96,11 @@ type EventRefundArgs = {
   ledgers?: ReadonlyMap<string, SeriesSeat>;
   /** Scopes the seat keys to the calling door, so two doors never share one refund. */
   dedupeKeyPrefix?: string;
+  /**
+   * What a seat with a ledger is owed: everything undelivered (a cancel, the
+   * default) or only the sessions sold but never placed (class-end settlement).
+   */
+  basis?: "undelivered" | "unplaced";
 };
 
 /**
@@ -133,6 +141,10 @@ async function planEventSeats(
       .filter((p) => isFreeCreditIntent(p.paymentIntent))
       .map((p) => p.id),
   );
+  const unplacedBasis = args.basis === "unplaced";
+  const classEndPaid = unplacedBasis
+    ? await classEndRefundedPaise(db, args.eventId)
+    : new Map<string, number>();
   const plans = new Map<string, EventSeatPlan>();
   for (const p of payments) {
     if (!liveSeats.has(p.id)) {
@@ -140,14 +152,25 @@ async function planEventSeats(
       continue;
     }
     const ledger = args.ledgers?.get(p.id);
+    // Class-end settlement owes only a seat whose ledger shows unplaced sessions.
+    if (unplacedBasis && !(ledger && ledger.unplaced > 0)) {
+      plans.set(p.id, { kind: "settled" });
+      continue;
+    }
     const key = `${prefix}:${args.eventId}:pay:${p.id}`;
     const credit = creditStates.get(p.id);
     if (credit) {
       // The credits rail restores whole or not at all, so a seat delivered part
       // of the series, or already partly returned, is escalated to a human.
+      const partOwed =
+        unplacedBasis && !!ledger && ledger.unplaced < ledger.heldCount;
       if (credit.claimed && credit.stillUsedPaise <= 0) {
         plans.set(p.id, { kind: "settled" });
-      } else if ((ledger && ledger.deliveredHeld > 0) || credit.claimed) {
+      } else if (
+        (ledger && ledger.deliveredHeld > 0) ||
+        credit.claimed ||
+        partOwed
+      ) {
         plans.set(p.id, {
           kind: "escalate",
           delivered: ledger?.deliveredHeld ?? 0,
@@ -167,12 +190,10 @@ async function planEventSeats(
       continue;
     }
     const balance = refundableBalancePaise(Number(p.amount), p);
-    // Sessions already refunded one by one (occ:*) are not owed again.
-    const undelivered = ledger
-      ? Number(seriesCancelRefundPaise(ledger, p.amount)) -
-        (ledger.occRefundedPaise ?? 0)
-      : balance;
-    const owed = Math.min(undelivered, balance);
+    const owed = Math.min(
+      seatOwedPaise(ledger, p, balance, classEndPaid, unplacedBasis),
+      balance,
+    );
     plans.set(
       p.id,
       owed > 0
@@ -190,6 +211,50 @@ async function planEventSeats(
   }
   // Settlement is INR-only by design, so the seats of one event share a currency.
   return { plans, currency: payments[0]?.currency ?? "INR" };
+}
+
+/**
+ * A money seat's share before the balance clamp: its unplaced sessions net of
+ * any class-end refund already paid, or everything undelivered net of the
+ * sessions already refunded one by one (`occ:*`); the whole balance with no ledger.
+ */
+function seatOwedPaise(
+  ledger: SeriesSeat | undefined,
+  payment: { id: string; amount: bigint | number },
+  balance: number,
+  classEndPaid: ReadonlyMap<string, number>,
+  unplacedBasis: boolean,
+): number {
+  if (!ledger) return balance;
+  if (unplacedBasis) {
+    return (
+      Number(classEndRefundPaise(ledger, payment.amount)) -
+      (classEndPaid.get(payment.id) ?? 0)
+    );
+  }
+  return (
+    Number(seriesCancelRefundPaise(ledger, payment.amount)) -
+    (ledger.occRefundedPaise ?? 0)
+  );
+}
+
+/** Class-end refunds already sent or in flight on the class, by payment. */
+async function classEndRefundedPaise(
+  db: PrismaLike,
+  classId: string,
+): Promise<Map<string, number>> {
+  const rows = await db.refund.findMany({
+    where: {
+      status: { in: ["SUCCEEDED", "PENDING"] },
+      dedupeKey: { startsWith: `${CLASS_END_REFUND_KEY_PREFIX}${classId}:` },
+    },
+    select: { paymentId: true, amountPaise: true },
+  });
+  const paid = new Map<string, number>();
+  for (const r of rows) {
+    paid.set(r.paymentId, (paid.get(r.paymentId) ?? 0) + Number(r.amountPaise));
+  }
+  return paid;
 }
 
 /**
@@ -435,14 +500,15 @@ export async function refundWholeEventPayments(
 }
 
 /**
- * #1780 D-5 — each paid class seat's ledger by payment id, joined at the later
- * of its participant row and its payment (a re-bought seat reuses the row).
- * The cancel route reads this BEFORE its transaction tombstones the sessions.
+ * Each paid class seat's ledger by payment id, joined at the later of its
+ * participant row and its payment (a re-bought seat reuses the row). At most
+ * five reads on `db` whatever the roster, so a door's transaction stays short.
  */
 export async function classSeriesLedgers(
   classId: string,
+  db: PrismaLike = prisma,
 ): Promise<Map<string, SeriesSeat>> {
-  const payments = await prisma.payment.findMany({
+  const payments = await db.payment.findMany({
     where: {
       appointment: { classId },
       paymentStatus: "SUCCEEDED",
@@ -456,33 +522,110 @@ export async function classSeriesLedgers(
       appointmentId: true,
     },
   });
-  const seats = await prisma.appointmentParticipant.findMany({
+  const ledgers = new Map<string, SeriesSeat>();
+  if (payments.length === 0) return ledgers;
+  const seats = await db.appointmentParticipant.findMany({
     where: {
       appointment: { classId },
       userId: { in: payments.map((p) => p.userId) },
     },
     select: { userId: true, createdAt: true, sessionsPurchased: true },
   });
-  const ledgers = new Map<string, SeriesSeat>();
-  for (const p of payments) {
-    if (!p.appointmentId) continue;
+  const placed = payments.flatMap((p) =>
+    p.appointmentId ? [{ ...p, appointmentId: p.appointmentId }] : [],
+  );
+  const sessions = await seatSessionsByAppointment(
+    db,
+    placed.map((p) => p.appointmentId),
+  );
+  const refunded = await occurrenceRefundsByPayment(
+    db,
+    placed.map((p) => p.id),
+  );
+  const now = new Date();
+  for (const p of placed) {
     const seat = seats.find((s) => s.userId === p.userId);
     const seatAt = seat?.createdAt;
-    const joinedAt = seatAt && seatAt > p.createdAt ? seatAt : p.createdAt;
+    const { N, occurrences } = sessions.get(p.appointmentId) ?? {
+      N: 0,
+      occurrences: [],
+    };
     ledgers.set(p.id, {
-      ...(await seatLedger(
-        prisma,
-        {
-          appointmentId: p.appointmentId,
-          createdAt: joinedAt,
-          sessionsPurchased: seat?.sessionsPurchased,
-        },
-        p.amount,
-      )),
-      occRefundedPaise: await occurrenceRefundsPaise(prisma, p.id),
+      ...seatLedgerFrom({
+        N,
+        amountPaise: p.amount,
+        joinedAt: seatAt && seatAt > p.createdAt ? seatAt : p.createdAt,
+        occurrences,
+        now,
+        sessionsPurchased: seat?.sessionsPurchased,
+      }),
+      occRefundedPaise: refunded.get(p.id) ?? 0,
     });
   }
   return ledgers;
+}
+
+/** The dedupe prefix of class-end settlement; each seat's key is `class-end:<classId>:pay:<paymentId>`. */
+const CLASS_END_DEDUPE_PREFIX = CLASS_END_REFUND_KEY_PREFIX.slice(0, -1);
+
+/** What class-end settlement stamped: seats owed a refund, and credit seats queued for a human. */
+export type ClassEndSettlement = {
+  owed: number;
+  owedPaise: number;
+  escalated: number;
+};
+
+/**
+ * Class-end settlement, on the completing transaction: every live paid seat is
+ * stamped owed floor(paid × unplaced / sessions sold) for the sessions it was
+ * sold but no row ever placed, net of any class-end refund already paid, and a
+ * credit seat owed part of its value is queued for a human in the same commit.
+ * Nothing is driven here: the retry-auto-refunds sweep drives the markers, and
+ * each marker holds its payment's earnings until the refund settles. A seat
+ * whose payment owes another door's refund refuses, so the completion commits nothing.
+ */
+export async function stampClassEndRefundsOwed(
+  tx: Tx,
+  classId: string,
+): Promise<ClassEndSettlement> {
+  const plans = await stampWholeEventRefundsOwed(tx, {
+    kind: "class",
+    eventId: classId,
+    reason: "class ended with sessions that were never scheduled",
+    ledgers: await classSeriesLedgers(classId, tx),
+    dedupeKeyPrefix: CLASS_END_DEDUPE_PREFIX,
+    basis: "unplaced",
+  });
+  const settlement: ClassEndSettlement = {
+    owed: 0,
+    owedPaise: 0,
+    escalated: 0,
+  };
+  for (const [paymentId, plan] of plans) {
+    if (plan.kind === "owe") {
+      settlement.owed += 1;
+      settlement.owedPaise += plan.marker.amountPaise ?? 0;
+    } else if (plan.kind === "escalate") {
+      settlement.escalated += 1;
+      await recordSystemEvent({
+        db: tx,
+        strict: true,
+        category: "BOOKING",
+        severity: "WARN",
+        message: `Credit seat ${paymentId} needs a partial credit return`,
+        context: {
+          paymentId,
+          eventId: classId,
+          kind: "class",
+          delivered: plan.delivered,
+          partlyReturned: plan.partlyReturned,
+          cause: "class-end",
+        },
+        correlationId: `partial-credit:${paymentId}`,
+      });
+    }
+  }
+  return settlement;
 }
 
 /**

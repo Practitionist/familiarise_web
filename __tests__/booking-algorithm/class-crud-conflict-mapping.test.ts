@@ -102,7 +102,8 @@ const VALID_POST_BODY = {
   sessionDurationInHours: 1,
   topics: ["pottery"],
   learningOutcomes: ["Throw a bowl"],
-  startDate: "2026-03-02T10:00:00.000Z",
+  // Far enough ahead to clear the one-hour lead whenever the suite runs.
+  startDate: "2031-03-03T10:00:00.000Z",
   classContents: [
     { title: "Week one", description: "Wedging clay", hoursAllotted: 1 },
   ],
@@ -295,5 +296,16 @@ describe("#627/#784 — class PATCH maps its two rejections", () => {
 
     expect(response.status).not.toBe(403);
     expect(base.consultantProfile.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("class POST start time", () => {
+  it("answers 400 for a start off the half-hour grid and creates nothing", async () => {
+    const res = await POST(
+      request({ ...VALID_POST_BODY, startDate: "2031-03-03T10:10:00.000Z" }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "EVENT_TIME_INVALID" });
+    expect(transaction).not.toHaveBeenCalled();
   });
 });

@@ -73,6 +73,7 @@ import {
   assertExpectedTentativeSlotCountInTx,
   assertNoConfirmedSlots,
   guardAllocationInTx,
+  assertGroupEventUnsoldInTx,
 } from "@/lib/booking/allocation/guards";
 import {
   resolveConsumedPreferenceRequests,
@@ -90,6 +91,7 @@ import {
   reconnectEnrolledUsers,
   collectEventParticipantIds,
 } from "@/lib/booking/allocation/commit/reconnect-enrolled";
+import { bookingTransaction } from "@/lib/db/booking-transaction";
 
 export async function autoAllocate(
   eventType: EventType,
@@ -508,7 +510,7 @@ export async function autoAllocate(
     // connection, so this can start promptly; an explicit maxWait still
     // absorbs transient pool spikes (concurrency is bounded by the locks +
     // the route's eventMutationLimiter).
-    return await prisma.$transaction(
+    return await bookingTransaction(
       async (tx) => {
         await renewAllocationBatch(slotGrant);
         // #1692 — per-event serialisation first, so every re-check below
@@ -523,6 +525,8 @@ export async function autoAllocate(
           isFreshAllocation && !isTopUp,
         );
         if (lockedReplay) return lockedReplay;
+        // A sold webinar or class is re-timed, never re-planned.
+        if (!isTopUp) await assertGroupEventUnsoldInTx(tx, eventType, eventId);
         // #1766 — a stale tab must not append a second cycle: re-count the
         // held sessions under the advisory lock before writing.
         if (isTopUp) {

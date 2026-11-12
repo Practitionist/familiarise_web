@@ -71,6 +71,7 @@ import {
   splitByClash,
 } from "./retime-leave";
 import { MAKEUP_WINDOW_DAYS, MISS_WHERE, missedAt } from "./misses";
+import { eventTimeRefusal } from "./event-time-rules";
 import {
   reliabilityThresholdMet,
   seatLedger,
@@ -622,6 +623,11 @@ export async function scheduleClassMakeUp(
       "Holding a make-up past the 14-day window needs a reason.",
       400,
     );
+  }
+  // On the half-hour lattice and an hour ahead, like every host-set event time.
+  const timeRefusal = eventTimeRefusal(startsAt, "makeup");
+  if (timeRefusal) {
+    throw new BookingRuleError(timeRefusal.code, timeRefusal.message, 400);
   }
   const appointmentId = hosted.appointment.id;
   const plan = hosted.cls.classPlan;

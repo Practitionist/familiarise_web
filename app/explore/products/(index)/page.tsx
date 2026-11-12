@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { ProductTopicChips } from "@/components/explore/ProductTopicChips";
 import { ProductsFilters } from "@/components/explore/ProductsFilters";
 import { ProductsGrid } from "@/components/explore/ProductsGrid";
 import { parseProductsQuery } from "@/lib/explore/products-query";
@@ -25,6 +26,7 @@ export default async function ExploreProductsPage({
           Pay once and keep it: files from experts.
         </p>
       </header>
+      <ProductTopicChips />
       <ProductsFilters query={query} />
       <Suspense
         key={JSON.stringify(query)}

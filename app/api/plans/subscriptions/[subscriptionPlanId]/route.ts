@@ -8,6 +8,11 @@ import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
 import {
+  planPublishFeasibility,
+  type PlanFeasibilityOutcome,
+} from "@/lib/booking/feasibility";
+import { MAX_SUBSCRIPTION_SESSIONS_PER_DAY } from "@/utils/scheduling-engine/sessionCaps";
+import {
   curriculumCreateNested,
   faqReplaceNested,
 } from "@/lib/api/plans/content";
@@ -16,8 +21,18 @@ import {
   activeClientsNotice,
   subscriptionPlanTotals,
 } from "@/lib/booking/entitlement";
-import { activeClientCount, freezeSoldTerms } from "@/lib/booking/sold-terms";
+import {
+  activeClientCount,
+  freezeSoldTerms,
+  freezeTrialPrice,
+} from "@/lib/booking/sold-terms";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
+import {
+  assertSubscriptionPlanFloor,
+  claimPlanTerms,
+  editedTerms,
+  planEditRefusal,
+} from "@/lib/api/plans/plan-edit-guard";
 import {
   archivedAtForArchive,
   parsePlanArchiveBody,
@@ -191,6 +206,65 @@ export async function PUT(
         }
       : null;
 
+    // Only a short pack whose edit changes the stored price or terms is held to the pack floor.
+    const storedTerms = {
+      price: existingPlan.price,
+      sessionDurationInHours: existingPlan.sessionDurationInHours,
+      totalSessions: existingPlan.totalSessions,
+      durationInWeeks: existingPlan.durationInWeeks,
+    };
+    const { terms, changed } = editedTerms(storedTerms, {
+      price:
+        validatedData.price === undefined
+          ? undefined
+          : Math.round(validatedData.price),
+      sessionDurationInHours: validatedData.sessionDurationInHours,
+      totalSessions: derived?.totalSessions,
+      durationInWeeks,
+    });
+    if (changed) {
+      assertSubscriptionPlanFloor({
+        pricePaise: terms.price,
+        sessionDurationInHours: terms.sessionDurationInHours,
+        totalSessions: terms.totalSessions,
+        durationInWeeks: terms.durationInWeeks,
+      });
+    }
+
+    // A cadence change or a first publish must leave the plan deliverable from
+    // the expert's published hours; a published plan saved unchanged is not re-checked.
+    const cadence = editedTerms(
+      {
+        sessionsPerWeek: existingPlan.sessionsPerWeek,
+        sessionDurationInHours: existingPlan.sessionDurationInHours,
+      },
+      {
+        sessionsPerWeek: validatedData.sessionsPerWeek,
+        sessionDurationInHours: validatedData.sessionDurationInHours,
+      },
+    );
+    const effectiveStatus = validatedData.status ?? existingPlan.status;
+    const publishing =
+      effectiveStatus === "PUBLISHED" &&
+      (cadence.changed || existingPlan.status !== "PUBLISHED");
+    const feasibility: PlanFeasibilityOutcome =
+      effectiveStatus === "PUBLISHED" && !publishing
+        ? { refusal: null, warnings: [] }
+        : await planPublishFeasibility(prisma, {
+            consultantProfileId: existingPlan.consultantProfileId,
+            sessionsPerWeek: cadence.terms.sessionsPerWeek,
+            sessionMinutes: Math.round(
+              cadence.terms.sessionDurationInHours * 60,
+            ),
+            perDayCap: MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
+            publishing,
+          });
+    if (feasibility.refusal) {
+      return NextResponse.json(feasibility.refusal.body, {
+        status: feasibility.refusal.status,
+      });
+    }
+
     // Floor check on the effective post-update trial price. Untouched
     // plans are never retro-policed — only edits that set a price or
     // newly enable the trial run against the platform floor.
@@ -236,9 +310,26 @@ export async function PUT(
         }>
       | undefined;
 
+    // Trials already requested keep the price they were requested at.
+    const trialPriceChange =
+      validatedData.trialPriceInPaise !== undefined &&
+      validatedData.trialPriceInPaise !== existingPlan.trialPriceInPaise;
+
     // Use transaction to ensure atomicity when updating subscription contents
     // This prevents data loss if the update fails after deleting old contents
     const subscriptionPlan = await prisma.$transaction(async (tx) => {
+      // Save only against the price and terms this edit was validated on.
+      await claimPlanTerms(
+        tx.subscriptionPlan.updateMany({
+          where: {
+            id: subscriptionPlanId,
+            ...storedTerms,
+            sessionsPerWeek: existingPlan.sessionsPerWeek,
+            durationInMonths: existingPlan.durationInMonths,
+          },
+          data: { price: terms.price },
+        }),
+      );
       // If subscriptionContents is provided, delete existing and create new ones
       if (subscriptionContents !== undefined) {
         await tx.subscriptionContent.deleteMany({
@@ -252,6 +343,7 @@ export async function PUT(
       )
         throw new PlanLengthUnitLockedError();
       if (derived) await freezeSoldTerms(tx, subscriptionPlanId);
+      if (trialPriceChange) await freezeTrialPrice(tx, subscriptionPlanId);
 
       return tx.subscriptionPlan.update({
         where: { id: subscriptionPlanId },
@@ -328,11 +420,14 @@ export async function PUT(
       {
         data: transformTopicsToStrings(subscriptionPlan),
         activeClients,
+        feasibilityWarnings: feasibility.warnings,
         notice: activeClientsNotice(activeClients),
       },
       { status: 200 },
     );
   } catch (error) {
+    const refusal = planEditRefusal(error);
+    if (refusal) return refusal;
     if (error instanceof PlanLengthUnitLockedError) {
       return NextResponse.json(
         { error: error.message, code: "PLAN_LENGTH_UNIT_LOCKED" },

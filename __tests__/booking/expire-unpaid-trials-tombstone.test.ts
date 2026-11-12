@@ -36,6 +36,7 @@ jest.mock("../../lib/prisma", () => {
   const tx = {
     trial: { findUnique: jest.fn(), updateMany: jest.fn() },
     bookingStatusHistory: { create: jest.fn() },
+    payment: { findMany: jest.fn(async () => []) },
   };
   return {
     __esModule: true,

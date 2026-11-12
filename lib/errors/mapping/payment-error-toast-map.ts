@@ -191,6 +191,10 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     title: "You Already Have This Plan",
     description: null,
   },
+  [ErrorTypes.NOT_PLACEABLE]: {
+    title: "No Free Time In The First Week",
+    description: null,
+  },
   [ErrorTypes.CURRENCY_UNSUPPORTED]: {
     title: "Currency Not Supported",
     description: null,
@@ -383,6 +387,11 @@ const FALLBACK_DESCRIPTIONS: Partial<Record<ErrorType, string>> = {
 // ============================================================================
 // Public API
 // ============================================================================
+
+/** A type's fixed description, or null when its copy depends on the server's message. */
+export function getStaticErrorDescription(errorType: ErrorType): string | null {
+  return ERROR_TOAST_MAP[errorType].description;
+}
 
 /**
  * Resolve an errorType + optional message into a toast-ready { title, description }.

@@ -24,7 +24,12 @@ import type {
   ReschedulePreferredDays,
   ReschedulePreferredTimeOfDay,
 } from "@prisma/client";
-import { RescheduleProposalSchema } from "@/schemas/appointments";
+import {
+  RescheduleProposalSchema,
+  RescheduleSlotIdsSchema,
+} from "@/schemas/appointments";
+import type { Session } from "@/lib/auth";
+import { withIdempotency } from "@/lib/api/idempotency";
 import {
   autoConfirmRefusalIsFinal,
   autoConfirmTimesTaken,
@@ -75,13 +80,20 @@ import {
   MAX_EXPERT_RESCHEDULES,
   consulteeCapReached,
   priorReschedules as priorRescheduleCount,
+  trialCapReached,
 } from "@/lib/booking/reschedule-caps";
+import {
+  confirmTrialProposal,
+  proposedTrialWindow,
+  type TrialConfirmOutcome,
+} from "@/lib/booking/trial-reschedule";
 import type { AppointmentType } from "@/lib/payments/payouts/constants";
 import { releasedSessionsOf } from "@/lib/booking/released-sessions";
 import {
   RELEASE_ONE_WEEK_MESSAGE,
   spansPlanWeeks,
 } from "@/lib/booking/release-weeks";
+import { bookingTransaction } from "@/lib/db/booking-transaction";
 
 const RESCHEDULE_REALLOCATION_BUFFER_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -101,6 +113,18 @@ function durationWords(minutes: number): string {
  * back-office door, who is neither party and therefore never auto-confirms on
  * someone else's behalf.
  */
+/** A trial moves as one window, so a taken refusal names that window's start. */
+function trialTakenStarts(
+  outcome: TrialConfirmOutcome,
+  proposedSlots: { startsAt: Date; endsAt: Date }[] | undefined,
+): string[] {
+  if (!outcome.confirmed && outcome.takenSlotStarts?.length) {
+    return outcome.takenSlotStarts;
+  }
+  const window = proposedTrialWindow(proposedSlots ?? []);
+  return window ? [window.startsAt.toISOString()] : [];
+}
+
 function roleOf(
   isConsultee: boolean,
   isConsultant: boolean,
@@ -113,11 +137,13 @@ function roleOf(
 /**
  * POST /api/appointments/[appointmentId]/reschedule
  *
- * Releases a consultation, a whole subscription, or chosen subscription
- * sessions (`slotIds`) and opens the booking's one reschedule request: with
+ * Releases a consultation, a whole subscription, chosen subscription sessions
+ * (`slotIds`) or a trial's one session, and opens the booking's one
+ * reschedule request: with
  * `proposedSlots` it is a proposal (a consultee's may auto-confirm), without
  * them it is preference-only ("any time works") and the consultant places the
- * time. Either way the request expires back to the original time. Webinars
+ * time; a trial always names its one new window and moves once per side.
+ * Either way the request expires back to the original time. Webinars
  * re-time and class sessions cancel + make-up instead. No session within 24 h
  * moves, and no new time is within 24 h.
  */
@@ -125,16 +151,34 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
+  // A fresh, ban-aware read; the 401 / 403 / 503 shapes are the helper's.
+  const authResult = await requireApiAuth({ expectUser: true });
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+  const { appointmentId } = await params;
+  // A repeated `Idempotency-Key` replays the committed answer instead of
+  // releasing the booking a second time.
+  return await withIdempotency(
+    request,
+    {
+      scope: `booking.reschedule:${appointmentId}`,
+      userId: session.user.id,
+    },
+    (body) => requestReschedule(request, session, appointmentId, body),
+  );
+}
+
+async function requestReschedule(
+  request: NextRequest,
+  session: Session,
+  appointmentId: string,
+  body: unknown,
+): Promise<NextResponse> {
   try {
-    // #1583 D-P0-02 — fresh, ban-aware read; 401 / 403 / 503 shapes are the helper's.
-    const authResult = await requireApiAuth({ expectUser: true });
-    if (authResult.error) return authResult.error;
-    const { session } = authResult;
     // #1319 — this route triggers refunds/reallocation and had no limiter.
     const limited = await applyRateLimit(eventMutationLimiter, session.user.id);
     if (limited) return limited;
 
-    const { appointmentId } = await params;
     const apptLimited = await applyRateLimit(
       rescheduleAppointmentLimiter,
       `${session.user.id}:${appointmentId}`,
@@ -166,16 +210,27 @@ export async function POST(
     // time. Scored by the allocator, never used to exclude a candidate.
     let preferredTimeOfDay: ReschedulePreferredTimeOfDay | undefined;
     let preferredDays: ReschedulePreferredDays | undefined;
-    try {
-      const body = await request.json();
-      // Support both single slotId (legacy) and slotIds array
-      if (body?.slotIds && Array.isArray(body.slotIds)) {
-        slotIds = body.slotIds;
-      } else if (body?.slotId) {
-        // Legacy support: convert single slotId to array
-        slotIds = [body.slotId];
+    {
+      const fields = RescheduleSlotIdsSchema.safeParse(body ?? {});
+      // A malformed session list must never widen into a whole-booking release.
+      if (!fields.success) {
+        return NextResponse.json(
+          {
+            error: "Invalid sessions to reschedule",
+            code: "INVALID_SLOT_IDS",
+            details: fields.error.flatten(),
+          },
+          { status: 400 },
+        );
       }
-      const parsedProposal = RescheduleProposalSchema.safeParse(body);
+      // Support both single slotId (legacy) and slotIds array
+      if (fields.data.slotIds) {
+        slotIds = fields.data.slotIds;
+      } else if (fields.data.slotId) {
+        // Legacy support: convert single slotId to array
+        slotIds = [fields.data.slotId];
+      }
+      const parsedProposal = RescheduleProposalSchema.safeParse(body ?? {});
       if (!parsedProposal.success) {
         return NextResponse.json(
           {
@@ -195,8 +250,6 @@ export async function POST(
       reason = parsedProposal.data.reason;
       preferredTimeOfDay = parsedProposal.data.preferredTimeOfDay;
       preferredDays = parsedProposal.data.preferredDays;
-    } catch {
-      // No body or invalid JSON - that's fine, every field here is optional
     }
 
     // #1166 — resolve the funding org's admin membership BEFORE the interactive
@@ -224,6 +277,9 @@ export async function POST(
         class: {
           select: { classPlan: { select: { organizationId: true } } },
         },
+        trial: {
+          select: { subscriptionPlan: { select: { organizationId: true } } },
+        },
       },
     });
     const hostOrgId =
@@ -231,6 +287,7 @@ export async function POST(
       orgScope?.class?.classPlan?.organizationId ??
       orgScope?.consultation?.consultationPlan?.organizationId ??
       orgScope?.subscription?.subscriptionPlan?.organizationId ??
+      orgScope?.trial?.subscriptionPlan?.organizationId ??
       null;
     const hostOrgMembership = hostOrgId
       ? await prisma.membership.findUnique({
@@ -260,7 +317,7 @@ export async function POST(
     );
 
     const result = await withAppointmentLock(appointmentId, () =>
-      prisma.$transaction(
+      bookingTransaction(
         async (tx) => {
           const appointment = await tx.appointment.findUnique({
             where: { id: appointmentId },
@@ -296,6 +353,14 @@ export async function POST(
               class: {
                 include: {
                   classPlan: true,
+                },
+              },
+              trial: {
+                select: {
+                  id: true,
+                  status: true,
+                  consultantProfileId: true,
+                  consulteeProfileId: true,
                 },
               },
             },
@@ -349,6 +414,25 @@ export async function POST(
               (Boolean(consultantProfileId) &&
                 consultantProfileId === classConsultantId) ||
               isHostOrgOperator;
+          } else if (appointment.trial) {
+            // Only the trial's own two parties move it, as only they can
+            // answer the move or cancel the trial.
+            const isConsultant =
+              Boolean(consultantProfileId) &&
+              consultantProfileId === appointment.trial.consultantProfileId;
+            const isConsultee =
+              Boolean(consulteeProfileId) &&
+              consulteeProfileId === appointment.trial.consulteeProfileId;
+            isParticipant = isConsultant || isConsultee;
+            initiatorRole = roleOf(isConsultee, isConsultant);
+            if (!initiatorRole) {
+              throw Object.assign(
+                new Error(
+                  "Only the trial's expert or learner can move it. Cancel it from the back office instead.",
+                ),
+                { httpStatus: 403, code: "TRIAL_PARTY_ONLY" },
+              );
+            }
           }
 
           const isPrivilegedUser = isPrivileged(session.user.role);
@@ -395,7 +479,9 @@ export async function POST(
                 ? "WEBINAR"
                 : appointment.class
                   ? "CLASS"
-                  : null;
+                  : appointment.trial
+                    ? "TRIAL"
+                    : null;
 
           if (
             appointmentType &&
@@ -412,7 +498,9 @@ export async function POST(
           // session at a time (class cancel + make-up); it is never left undated.
           if (derivedType === "WEBINAR") {
             throw Object.assign(
-              new Error("Pick the webinar's new date with Re-time instead."),
+              new Error(
+                'Pick the webinar\'s new date with "Move to a new date" instead.',
+              ),
               { httpStatus: 400, code: "USE_RETIME" },
             );
           }
@@ -423,6 +511,16 @@ export async function POST(
               ),
               { httpStatus: 400, code: "USE_SESSION_CANCEL" },
             );
+          }
+
+          // A trial has no allocator to place it later, so it always moves to
+          // a named window; the confirm checks the length.
+          const isTrial = derivedType === "TRIAL";
+          if (isTrial && !proposedSlots?.length) {
+            throw Object.assign(new Error("Pick the new time for the trial."), {
+              httpStatus: 400,
+              code: "PROPOSAL_REQUIRED",
+            });
           }
 
           // A party releases only confirmed sessions; a parked or cancelled
@@ -451,10 +549,16 @@ export async function POST(
 
           const now = new Date();
           for (const slot of slotsToReschedule) {
-            const hoursUntilSlot =
-              (new Date(slot.startsAt).getTime() - now.getTime()) /
-              (1000 * 60 * 60);
-            if (hoursUntilSlot < RESCHEDULE_MIN_LEAD_HOURS) {
+            const startMs = new Date(slot.startsAt).getTime();
+            const hoursUntilSlot = (startMs - now.getTime()) / (1000 * 60 * 60);
+            if (
+              isTooSoonFor(
+                "reschedule",
+                { settled: true },
+                startMs,
+                now.getTime(),
+              )
+            ) {
               throw new ReschedulePolicyError(
                 hoursUntilSlot,
                 RESCHEDULE_MIN_LEAD_HOURS,
@@ -523,8 +627,12 @@ export async function POST(
           const parentStatus =
             appointment.consultation?.status ??
             appointment.subscription?.status ??
+            appointment.trial?.status ??
             null;
-          if (!parentStatus || !RESCHEDULABLE_FROM.includes(parentStatus)) {
+          const parentMovable = isTrial
+            ? parentStatus === "SCHEDULED"
+            : RESCHEDULABLE_FROM.some((status) => status === parentStatus);
+          if (!parentStatus || !parentMovable) {
             throw Object.assign(
               new Error(
                 "This appointment can no longer be rescheduled (already cancelled or completed).",
@@ -532,27 +640,46 @@ export async function POST(
               { httpStatus: 409, code: "NOT_RESCHEDULABLE" },
             );
           }
-          // An approved request waiting on its pay link moves only once it is
-          // paid or the link is gone, so no capture lands on a moved booking.
-          if (parentStatus === "APPROVED_PENDING_PAYMENT") {
-            const livePayLinks = await tx.payment.count({
-              where: {
-                appointmentId,
-                paymentStatus: "PENDING",
-                deletedAt: null,
-              },
-            });
-            if (livePayLinks > 0) {
-              throw Object.assign(
-                new Error(
-                  "This booking is waiting for payment. Pay or cancel it first, then reschedule.",
-                ),
-                { httpStatus: 409, code: "PAY_LINK_LIVE" },
-              );
-            }
+          // A booking holding its time on a live, unexpired payment moves only
+          // once it is paid or cancelled, so no capture lands on a moved booking.
+          const livePayLinks = await tx.payment.count({
+            where: {
+              appointmentId,
+              paymentStatus: "PENDING",
+              deletedAt: null,
+              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+            },
+          });
+          if (livePayLinks > 0) {
+            throw Object.assign(
+              new Error(
+                "This booking is still waiting for payment. Pay for it or cancel it first, then reschedule.",
+              ),
+              { httpStatus: 409, code: "PAY_LINK_LIVE" },
+            );
           }
 
-          if (initiatorRole && !isPrivilegedUser) {
+          if (isTrial && initiatorRole && !isPrivilegedUser) {
+            const prior = await priorRescheduleCount(tx, {
+              appointmentId,
+              role: initiatorRole,
+            });
+            if (trialCapReached(prior)) {
+              throw initiatorRole === "CONSULTANT"
+                ? Object.assign(
+                    new Error(
+                      "You've already moved this trial once. If the time no longer works, cancel it — the learner gets a full refund.",
+                    ),
+                    { httpStatus: 409, code: "EXPERT_RESCHEDULE_CAP" },
+                  )
+                : Object.assign(
+                    new Error(
+                      "You can move a trial once. If this time doesn't work either, cancel the trial.",
+                    ),
+                    { httpStatus: 422, code: "MAX_RESCHEDULES_EXCEEDED" },
+                  );
+            }
+          } else if (initiatorRole && !isPrivilegedUser) {
             const prior = await priorRescheduleCount(tx, {
               appointmentId,
               role: initiatorRole,
@@ -672,7 +799,17 @@ export async function POST(
           // capture or sweep that moved the parent since makes this a 409
           // instead of recording the wrong origin.
           try {
-            if (appointment.consultation) {
+            if (appointment.trial) {
+              // The trial stays SCHEDULED while its session is moved; a
+              // locking touch keeps a lockless sweep from ending it under us.
+              const live = await tx.trial.updateMany({
+                where: { id: appointment.trial.id, status: "SCHEDULED" },
+                data: { updatedAt: new Date() },
+              });
+              if (live.count === 0) {
+                throw new IllegalTransitionError("Trial", "SCHEDULED");
+              }
+            } else if (appointment.consultation) {
               await transitionConsultationRequest(tx, {
                 ...auditMeta,
                 appointmentId,
@@ -681,7 +818,7 @@ export async function POST(
                 // The stale-request sweep keys its PENDING cohort on
                 // requestedAt, so re-entering PENDING refreshes the clock.
                 data: { requestedAt: new Date() },
-                fromIn: [parentStatus],
+                fromIn: [appointment.consultation.status],
               });
             } else if (appointment.subscription) {
               // #448 — a per-session reschedule leaves the subscription's
@@ -694,7 +831,7 @@ export async function POST(
                 const live = await tx.subscription.updateMany({
                   where: {
                     id: appointment.subscription.id,
-                    status: parentStatus,
+                    status: appointment.subscription.status,
                   },
                   data: { updatedAt: new Date() },
                 });
@@ -708,7 +845,7 @@ export async function POST(
                   where: { id: appointment.subscription.id },
                   to: "PENDING",
                   data: { requestedAt: new Date() },
-                  fromIn: [parentStatus],
+                  fromIn: [appointment.subscription.status],
                 });
               }
             }
@@ -840,6 +977,7 @@ export async function POST(
             logContext: {
               consultationId: appointment.consultation?.id,
               subscriptionId: appointment.subscription?.id,
+              trialId: appointment.trial?.id,
             },
             rescheduleRequestId,
             proposalExpiresAt,
@@ -865,7 +1003,42 @@ export async function POST(
     // #FAMILIARISE_WEB-2W — the refusal reason used to be discarded, which
     // made a green-slot auto-confirm failure undiagnosable from the response.
     let autoConfirmReason: string | null = null;
-    if (result.rescheduleRequestId) {
+    if (result.rescheduleRequestId && result.logContext.trialId) {
+      // A trial has no allocator: the proposal confirms in place or not at all,
+      // and a time that cannot be confirmed is never left on a released trial.
+      const outcome = await confirmTrialProposal({
+        rescheduleRequestId: result.rescheduleRequestId,
+        to: "AUTO_ACCEPTED",
+      });
+      autoConfirmed = outcome.confirmed;
+      autoConfirmReason = outcome.confirmed ? null : outcome.reason;
+      const taken = autoConfirmTimesTaken(autoConfirmReason);
+      if (taken || autoConfirmRefusalIsFinal(autoConfirmReason)) {
+        const undone = await withdrawRescheduleRequest({
+          rescheduleRequestId: result.rescheduleRequestId,
+          withdrawnById: session.user.id,
+          notify: false,
+        });
+        if (undone.withdrawn) {
+          return NextResponse.json(
+            taken
+              ? {
+                  error:
+                    "That time was just taken. Your trial keeps its original time — pick another time.",
+                  code: "TIMES_TAKEN",
+                  takenSlotStarts: trialTakenStarts(outcome, proposedSlots),
+                }
+              : {
+                  error:
+                    "That time can't be booked: it isn't in the expert's open hours or it's too soon. Your trial keeps its original time — pick another time.",
+                  code: "TIME_NOT_BOOKABLE",
+                  reason: autoConfirmReason,
+                },
+            { status: 409 },
+          );
+        }
+      }
+    } else if (result.rescheduleRequestId) {
       // Only the two 1:1 kinds carry proposals; a group event never opens one.
       const proposal = result.logContext.consultationId
         ? {
@@ -972,19 +1145,39 @@ export async function POST(
               },
             },
           },
+          trial: {
+            select: {
+              subscriptionPlan: {
+                select: {
+                  title: true,
+                  consultantProfile: {
+                    select: { userId: true, user: { select: { name: true } } },
+                  },
+                },
+              },
+              consulteeProfile: {
+                select: { userId: true, user: { select: { name: true } } },
+              },
+            },
+          },
         },
       });
 
       if (appointment) {
         const consultation = appointment.consultation;
         const subscription = appointment.subscription;
+        const trial = appointment.trial;
 
         const plan =
           consultation?.consultationPlan ??
           subscription?.subscriptionPlan ??
+          trial?.subscriptionPlan ??
           null;
         const requestedBy =
-          consultation?.requestedBy ?? subscription?.requestedBy ?? null;
+          consultation?.requestedBy ??
+          subscription?.requestedBy ??
+          trial?.consulteeProfile ??
+          null;
 
         const userIds: string[] = [];
         if (plan?.consultantProfile?.userId) {
@@ -1000,7 +1193,11 @@ export async function POST(
           (id) => id !== session.user.id,
         );
 
-        const appointmentType = consultation ? "consultation" : "subscription";
+        const appointmentType = consultation
+          ? "consultation"
+          : trial
+            ? "trial"
+            : "subscription";
 
         // Earliest of the times asked for, while they are still on offer.
         const proposedAt =

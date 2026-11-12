@@ -103,11 +103,11 @@ cannot cover an atom no surface offers. It also **fails closed** on the profile
 itself — a missing or soft-deleted `ConsultantProfile` returns
 `{ scheduleType: null, weeklyRows: [], customRows: [] }`, so a deleted expert
 publishes nothing whatever rows survived the deletion. As of wave 5 (#1323)
-exactly two callers enforce this inside their transaction: checkout
-(`revalidateInsideLock` in `lib/payments/checkout/revalidate.ts`), and the trial route
-(`app/api/trials/[trialId]/route.ts`), which throws
-`OutsideAvailabilityWindowError` even when the consultant is the one scheduling,
-because a trial is a booking.
+two callers enforce this inside their transaction: checkout
+(`revalidateInsideLock` in `lib/payments/checkout/revalidate.ts`), and every trial
+time writer through `trialWindowRefusal` (`lib/trials/slot-check.ts`) — the
+learner's pick, the consultant's accept and a trial reschedule — which refuses
+even when the consultant is the one scheduling, because a trial is a booking.
 
 The display path matches: `mergeConsecutiveSlots` (`utils/scheduling-engine/intervals.ts`)
 joins free slots on **exact** adjacency — the merged end is the next start — and,
@@ -164,7 +164,7 @@ and refetched on a stale return. Freshness stays a user-experience
 concern (ADR 16, `docs/enterprise/70-design-decisions/16-slot-freshness-without-realtime.md`):
 checkout's recheck under the slot lock is the only correctness mechanism, and a
 taken slot answers 409 `code: "SLOT_TAKEN"`, which returns the buyer to a
-refetched grid with "That time was just taken — pick another."
+refetched grid with "That time was just taken — pick another." The checkout page re-asks the grid once before Pay, and skips that advisory check while the buyer's own hold marker (`checkout-hold:<planId>:<startsAt>`, in `localStorage` in `use-consultation-checkout.tsx`) is live, so a second tab of the same browser reaches checkout's resume path; a second device still gets the turn-away.
 
 The ETag (`lib/scheduling/availabilityGridMarker.ts`) folds in more than the
 rows, because three things change a cell without any row changing: the earliest
@@ -205,8 +205,10 @@ not host-cancelled, not `CANCELLED`. `RESCHEDULED` rows still occupy.
 `utils/scheduling-engine/occupancyPolicy.ts` answers "what blocks this slot".
 `OCCUPIED_REQUEST_STATUSES` is `PENDING`, `APPROVED`, `APPROVED_PENDING_PAYMENT`
 and `SCHEDULED`; `OCCUPIED_EVENT_STATUSES` is `SCHEDULED` and `IN_PROGRESS`;
-trials occupy at `SCHEDULED` and `AWAITING_PAYMENT`, because a paid trial's slot
-is reserved the moment the consultant accepts. `buildConsultantOccupancyWhere`
+trials occupy at `SCHEDULED` and `AWAITING_PAYMENT`, because a paid trial holds
+the learner's picked time from the request until it is paid or the
+expire-unpaid-trials sweep releases it (no dead-hold arm frees it earlier, so a
+late capture never meets a rival confirmed session). `buildConsultantOccupancyWhere`
 asks both questions the grid and allocator once asked separately: busy if
 connected to a live slot **or** if the appointment runs under one of their
 plans.
@@ -255,6 +257,19 @@ one file per mode: `modes/auto.ts` (`autoAllocate`), `modes/manual.ts`
 takes its own locks and opens its own write transaction. The shared write steps
 are in `commit/`, the slot search in `search/`, and the multi-tab and replay guards
 in `guards.ts` and `idempotency.ts`.
+
+Published hours are checked against a request once, at the request door
+(`assertSlotsStillPublished` inside `request-for-approval`, 400
+`OUTSIDE_AVAILABILITY`, the trial door's code and copy). After that a held
+request keeps its time for every approver. `manualAllocate` computes
+`heldIntervalStartsOf(existingAppointments)`, passes it as `heldSlotStarts` to
+`ScheduleValidationService`, and runs `assertSlotsStillPublished` on only the
+new times, unless the caller may and does set `override` (the expert or
+staff), which skips that check for new times too. `useRequestedSlots` passes its requested times as `heldSlotStarts`
+and takes no `override` argument. Do not add a re-check of held times against
+published hours at approval, and do not read an unchecked request door as
+acceptable. A consultation validator has no same-day rule: one consecutive
+block of the exact length is valid across midnight.
 
 Allocation goes through **one handler route** as of #1702:
 `lib/scheduling/allocate-route.ts` carries the whole auth → limiter → Zod →
@@ -381,20 +396,20 @@ by hue alone, and every identifying border clears 3:1 against the white card.
 `resolveSlotStatusKey` is the one place a cell's state is decided, in this
 precedence order:
 
-| Key               | Label          | Fill        | Non-colour cue                 |
-| ----------------- | -------------- | ----------- | ------------------------------ |
-| `justTaken`       | Just taken     | rose-100    | strike-through                 |
-| `selected`        | Selected       | emerald-700 | check icon                     |
-| `thisEvent`       | This booking   | indigo-200  | person icon                    |
-| `rescheduling`    | Being moved    | orange-100  | dashed border, move icon       |
-| `fullyBooked`     | Booked         | slate-300   | lock icon                      |
-| `partiallyBooked` | Partly booked  | amber-100   | amber hatch; not selectable    |
-| `unavailable`     | Unavailable    | transparent | none (outside published hours) |
-| `past`            | Past           | slate-50    | 50 % opacity                   |
-| `outsidePeriod`   | Outside period | white       | slate hatch                    |
-| `tooSoon`         | Too soon       | slate-100   | dotted border                  |
-| `limitReached`    | Limit reached  | slate-100   | cross-hatch                    |
-| `available`       | Free           | emerald-100 | solid border                   |
+| Key               | Label          | Fill        | Non-colour cue               |
+| ----------------- | -------------- | ----------- | ---------------------------- |
+| `justTaken`       | Just taken     | rose-100    | strike-through               |
+| `selected`        | Selected       | emerald-700 | check icon                   |
+| `thisEvent`       | This booking   | indigo-200  | person icon                  |
+| `rescheduling`    | Being moved    | orange-100  | dashed border, move icon     |
+| `fullyBooked`     | Booked         | slate-300   | lock icon                    |
+| `partiallyBooked` | Partly booked  | amber-100   | amber hatch; not selectable  |
+| `unavailable`     | Unavailable    | transparent | closed hatch on the gridcell |
+| `past`            | Past           | slate-50    | 50 % opacity                 |
+| `outsidePeriod`   | Outside period | white       | slate hatch                  |
+| `tooSoon`         | Too soon       | slate-100   | dotted border                |
+| `limitReached`    | Limit reached  | slate-100   | cross-hatch                  |
+| `available`       | Free           | emerald-100 | solid border                 |
 
 "Just taken" outranks "Selected": a pick that the latest poll proves gone paints
 "Just taken" for exactly one committed render, then is deselected and announced
@@ -403,6 +418,22 @@ the states the grid painted this render (`legendKeysFor`); a buyer grid explains
 four (`BUYER_LEGEND_KEYS`). Requested times are painted on the allocate grid as a
 "Requested" outline (`REQUESTED_OUTLINE`), not as a state.
 
+The week grid's layout is structure, not palette; `docs/calendar/allocate-heatmap-ux.md`
+owns it. Rules an agent must keep:
+
+- The grid is a continuous ruled canvas of 24 px half-hour rows (`WeekGrid.tsx`).
+  Closed time is a hatch on the gridcell (`CLOSED_CANVAS`); the `unavailable`
+  token itself stays paint-free.
+- Rows are cropped by the "Open hours" window (`openHoursWindow` in
+  `lib/scheduling/week-grid-model.ts`); never fold rows into strips.
+- Busy and picked runs render as `aria-hidden` blocks from `buildGridBlocks`
+  (`lib/scheduling/grid-blocks.ts`) over cells that keep their names, focus and
+  `data-slot-*` attributes; cells carry no visible text.
+- The click and the hover ghost share `expandToSession`; a click on a picked
+  session removes the whole session (`splitIntoSessions`).
+- Picks, meters, legend and actions live in `SessionTray`; facts about the plan
+  live in `SchedulingContextBar`, never in stacked banners.
+
 ## 8. Per-day rows in the display zone
 
 The grid draws per-day row lists in the display zone, never from a browser-local
@@ -410,7 +441,7 @@ The grid draws per-day row lists in the display zone, never from a browser-local
 whose start falls on that calendar date in the zone: 48 on a normal day, 46 or 50
 across an hour shift, 47 or 49 across a half-hour shift. Cells stay on the UTC
 :00/:30 grid whatever the offset, so a viewer at UTC+05:45 reads "9:15–9:45"
-labels, and the repeated fall-back hour is labelled "1:00 am (2nd)".
+labels, and the repeated fall-back hour is labelled "1:00 am (2nd)". `atomPhaseMinutes` gives a zone's phase (15 at +05:45), so a :45 host's class pattern offers :15 and :45 local starts (`lib/booking/class-pattern.ts`) and `WeekGrid` prints the hour label on the first row of each local hour. A pick that crosses local midnight is one session on the day it starts (`sessionDayKeys` in `lib/scheduling/intervalSelectionValidation.ts`). A host's picker for their own event sends `purpose=reschedule` with `classId` or `webinarId`; the grid then leaves that event's own appointment out of the busy time and folds in accepted co-hosts' hours, and the excluded id joins the ETag.
 `cellInstant` and `dayStartInstant` resolve instants through the zone's rules.
 
 The display zone is the viewer's profile zone when it is valid

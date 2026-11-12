@@ -78,6 +78,7 @@ One word per concept, in code, copy and docs.
 - The owner runs the newsletter `RENAME` script and `db:push` at release time, then deletes `WAITLIST_HMAC_SECRET` from Netlify after the deploy.
 - At go-live the owner moves Resend to Pro, sets the referral budget from Notion and approves the launch fee schedule.
 - Tax questions raised here — GST on credits and welcome discounts, TDS under section 194R on expert rewards and fee waivers, and how long consent artifacts are kept against erasure — are handed to the taxes and compliance design session.
+- **Superseded in part (2026-11-11).** The referral budget and the credit and discount values are re-set by the owner; the approved values are kept in Notion (Familiarise / Growth & Marketing / Growth & Marketing Lever Register), and the configuration fields stay as named here. Resend Pro moves from "at go-live" to a purchase on a trigger. See [the 2026-11-11 levers record](2026-11-11-cfo-csmo-levers.md).
 
 ## Deprecated & Superseded Approaches
 

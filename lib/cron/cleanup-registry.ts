@@ -539,6 +539,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       }),
   },
 
+  // A financial job (it stamps class-end refunds owed): fail-closed, and held in degraded maintenance.
   // @cleanup-twin auto-complete-appointments
   "auto-complete-appointments": {
     meta: {
@@ -575,13 +576,25 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           classesCompleted: r.classesCompleted,
           consultationsCompleted: r.consultationsCompleted,
           subscriptionsCompleted: r.subscriptionsCompleted,
+          trialsCompleted: r.trialsCompleted,
+          sessionsCompleted: r.sessionsCompleted,
+          sessionsVoided: r.sessionsVoided,
+          sessionsUnverified: r.sessionsUnverified,
+          classEndSeatsOwed: r.classEndSeatsOwed,
+          classEndOwedPaise: r.classEndOwedPaise,
+          classEndCreditSeatsEscalated: r.classEndCreditSeatsEscalated,
         }),
         items: (r) => ({
           processed:
             r.webinarsCompleted +
             r.classesCompleted +
             r.consultationsCompleted +
-            r.subscriptionsCompleted,
+            r.subscriptionsCompleted +
+            r.trialsCompleted +
+            r.sessionsCompleted +
+            r.sessionsVoided +
+            r.sessionsUnverified +
+            r.classEndSeatsOwed,
         }),
         failureMessage: "Failed to auto-complete appointments",
       }),
@@ -990,7 +1003,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     build: () =>
       cleanupRoute({
         job: "expire-stale-requests",
-        run: async (req) => {
+        run: async (req, { startedAt }) => {
           const { expireStaleRequests } =
             await import("@/scripts/appointments/expire-stale-requests");
           return expireStaleRequests({
@@ -1001,10 +1014,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
               ),
               maxSlotReleases: MAX_STALE_SLOT_RELEASES,
             },
+            startedAt,
           });
         },
         summarize: (r) => ({
           consultationsExpired: r.consultationsExpired,
+          parkedConsultationsCancelled: r.parkedConsultationsCancelled,
           subscriptionsExpired: r.subscriptionsExpired,
           subscriptionNudgesSent: r.subscriptionNudgesSent,
           paymentPendingExpired: r.paymentPendingExpired,
@@ -1014,6 +1029,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         items: (r) => ({
           processed:
             r.consultationsExpired +
+            r.parkedConsultationsCancelled +
             r.subscriptionsExpired +
             r.paymentPendingExpired,
         }),

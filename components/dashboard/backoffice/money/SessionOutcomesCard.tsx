@@ -16,6 +16,8 @@ interface NeedsHumanSession {
   outcome: OccurrenceOutcome | null;
   lostMinutes: number | null;
   meeting: { endedReason: string | null } | null;
+  /** Parked over 7 days: listed first, and its booking's settlement is waiting. */
+  aged: boolean;
 }
 
 function whyParked(s: NeedsHumanSession): string {
@@ -62,6 +64,12 @@ export function SessionOutcomesCard() {
             <span>
               {zoned(s.startsAt, "d MMM yyyy, hh:mm a")} · {whyParked(s)}
               {s.lostMinutes ? ` · ${s.lostMinutes} minutes lost` : ""}
+              {s.aged ? (
+                <span className="font-medium text-destructive">
+                  {" "}
+                  · Waiting over 7 days; settlement is on hold
+                </span>
+              ) : null}
             </span>
             <Button size="sm" variant="outline" onClick={() => setTarget(s)}>
               Set outcome

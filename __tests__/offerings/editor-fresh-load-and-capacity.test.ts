@@ -28,7 +28,11 @@ jest.mock("../../lib/auth-server", () => ({
 
 import { WebinarService } from "@/components/planner/services/events/webinar-service";
 import { ClassService } from "@/components/planner/services/events/class-service";
-import { withoutUntouchedCapacity } from "@/components/offerings/editor/adapters";
+import {
+  classStartEdited,
+  classStartForSave,
+  withoutUntouchedCapacity,
+} from "@/components/offerings/editor/adapters";
 import { loadOfferingEvent } from "@/components/offerings/editor/load-offering";
 import { planEditorResponse } from "@/lib/api/plans/detail-response";
 import type { ClassEvent, WebinarEvent } from "@/types/planner-events";
@@ -118,5 +122,33 @@ describe("the editor read", () => {
     const stranger = await answer("u-other");
     expect(stranger.status).toBe(404);
     expect(stranger.headers.get("Cache-Control")).toBe("private, no-store");
+  });
+});
+
+describe("a class start on save", () => {
+  const stored = new Date("2026-12-01T18:15:00.000Z");
+
+  it("keeps an untouched off-grid start as stored", () => {
+    const values = { schedulingStartDate: new Date(stored) };
+    const startEdited = classStartEdited(values, {
+      schedulingStartDate: stored,
+    });
+    expect(startEdited).toBe(false);
+    expect(classStartForSave(values.schedulingStartDate, { startEdited })).toBe(
+      "2026-12-01T18:15:00.000Z",
+    );
+  });
+
+  it("rounds an edited or new start up to the half-hour grid", () => {
+    const picked = new Date("2026-12-02T18:15:00.000Z");
+    const values = { schedulingStartDate: picked };
+    const startEdited = classStartEdited(values, {
+      schedulingStartDate: stored,
+    });
+    expect(startEdited).toBe(true);
+    expect(classStartForSave(picked, { startEdited })).toBe(
+      "2026-12-02T18:30:00.000Z",
+    );
+    expect(classStartEdited(values, undefined)).toBe(true);
   });
 });

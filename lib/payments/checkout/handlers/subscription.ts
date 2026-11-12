@@ -19,6 +19,12 @@ import {
 import { AppointmentsType, Prisma, AppointmentStatus } from "@prisma/client";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
+import {
+  assessExpertFeasibility,
+  firstWeekPlaceable,
+} from "@/lib/booking/feasibility";
+import { leadMsFor } from "@/lib/booking/lead-time";
+import { MAX_SUBSCRIPTION_SESSIONS_PER_DAY } from "@/utils/scheduling-engine/sessionCaps";
 import type { SubscriptionCheckoutResult } from "@/lib/payments/checkout/schema";
 import {
   resolvePlanStart,
@@ -148,6 +154,30 @@ export async function handleSubscriptionCheckout(
         `You already have this plan with ${sessionsLeft} session${sessionsLeft === 1 ? "" : "s"} left — schedule those first.`,
       ),
       { httpStatus: 409, code: "SUBSCRIPTION_ALREADY_ACTIVE" },
+    );
+  }
+
+  // A plan whose first week the expert's hours can't hold at all is not sold;
+  // a thin one is, because the buyer was shown the room-for-N notice.
+  const firstWeek = await assessExpertFeasibility(tx, {
+    consultantProfileId: plan.consultantProfileId,
+    zone: schedulingTimezone,
+    sessionMinutes: terms.sessionMinutes,
+    sessionsPerWeek: terms.sessionsPerWeek,
+    perDayCap: MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
+    notBeforeMs: Math.max(
+      startDate.getTime(),
+      Date.now() + leadMsFor("allocate", { settled: true }),
+    ),
+    weeks: 1,
+    countBookings: true,
+  });
+  if (firstWeekPlaceable(firstWeek) === 0) {
+    throw Object.assign(
+      new Error(
+        "This expert has no free time in the first week of this plan right now. Pick a later start date, or ask them to open more hours.",
+      ),
+      { httpStatus: 409, code: "NOT_PLACEABLE", reasons: firstWeek.reasons },
     );
   }
 

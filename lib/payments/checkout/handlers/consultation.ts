@@ -74,6 +74,7 @@ export async function handleConsultationCheckout(
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
+      agreedPricePaise: plan.price,
     },
   });
 

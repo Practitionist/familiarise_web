@@ -174,7 +174,8 @@ export async function withIdempotency(
     if (!existing.completedAt) {
       return NextResponse.json(
         {
-          error: "A request with this Idempotency-Key is still in progress",
+          error:
+            "Your earlier request is still being processed. Wait a moment, then refresh the page to see it.",
           code: "IDEMPOTENCY_IN_FLIGHT",
         },
         { status: 409 },

@@ -169,7 +169,7 @@ operational, not in code).
 `127.0.0.1`, and the `unknown_ip` sentinel — **but only when
 `NODE_ENV !== "production"`**. In production it returns `false` for
 every value (including the sentinel), so a header-stripping proxy can't
-silently disable a limiter. The booking-algorithm-tests + Chrome MCP
+silently disable a limiter. The `prompts/booking-qa/` + Chrome MCP
 runs need to fire hundreds of requests in a few minutes; the dev-only
 bypass keeps them unblocked without weakening production limits.
 

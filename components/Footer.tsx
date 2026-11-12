@@ -213,8 +213,8 @@ const Footer: React.FC = () => {
               </div>
             </Link>
             <p className="text-zinc-400 text-sm leading-relaxed max-w-xs">
-              Live classes, webinars, tutoring and 1-on-1 sessions with verified
-              experts.
+              Live classes, webinars, tutoring and 1-on-1 sessions with experts
+              interviewed by our founder.
             </p>
           </div>
 

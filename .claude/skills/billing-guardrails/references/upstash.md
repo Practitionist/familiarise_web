@@ -2,7 +2,7 @@
 
 ## 1. Plan and limits
 
-One database, `Familiarise`, region `ap-south-1`, on pay-as-you-go since 2026-09-25 with a monthly budget of 20 (USD; set in the console), per issue #2145 (read via the Upstash MCP on 2026-10-17). Usage in mid-October was about 12,000 commands a day, 262,238 month to date, $0.52. VERIFIED 2026-10-17 from [Upstash Redis pricing](https://upstash.com/pricing/redis): Free is 500K commands a month, 250 MB and 10 GB bandwidth; pay-as-you-go is $0.20 per 100K commands; a monthly budget applies to pay-as-you-go only, emails at 70 and 90 percent and rate-limits the database at the cap. The pricing page does not say what the Free plan does at 500K; in this repo it returned `ERR max requests limit exceeded. Limit: 500000` on every command (observed 2026-09-21). The older table in `docs/upstash/00-pricing-overview.md` was verified in April 2026 and predates the PAYG move.
+One database, `Familiarise`, region `ap-south-1`, on pay-as-you-go since 2026-09-25 with a monthly budget set in the console (the amount and the run rate: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend), with the trigger in Familiarise / Finance and Pricing / Finance Lever Register), per issue #2145. VERIFIED 2026-10-17 from [Upstash Redis pricing](https://upstash.com/pricing/redis): Free is 500K commands a month, 250 MB and 10 GB bandwidth; pay-as-you-go is $0.20 per 100K commands; a monthly budget applies to pay-as-you-go only, emails at 70 and 90 percent and rate-limits the database at the cap. The pricing page does not say what the Free plan does at 500K; in this repo it returned `ERR max requests limit exceeded. Limit: 500000` on every command (observed 2026-09-21). The older table in `docs/upstash/00-pricing-overview.md` was verified in April 2026 and predates the PAYG move.
 
 ## 2. What causes surprise bills or outages
 
@@ -24,7 +24,7 @@ One database, `Familiarise`, region `ap-south-1`, on pay-as-you-go since 2026-09
 
 ## 4. Guardrails to set
 
-Upstash console, database, Details: keep pay-as-you-go with Max Monthly Budget; set it above expected spend but low enough to bound an incident (the current 20 is about 27 times the 0.75 monthly run rate, so lower it only deliberately because the cap itself rate-limits). Create a second database for previews and point the `deploy-preview` and `branch-deploy` Netlify contexts at it.
+Upstash console, database, Details: keep pay-as-you-go with Max Monthly Budget; set it above expected spend but low enough to bound an incident (the chosen amount is in Notion; lower it only deliberately because the cap itself rate-limits). Create a second database for previews and point the `deploy-preview` and `branch-deploy` Netlify contexts at it.
 
 ## 5. Monitor
 

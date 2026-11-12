@@ -437,6 +437,17 @@ describe("paid-at-request trial capture", () => {
     expect(stamp.split("data:")[1]).not.toContain("status:");
   });
 
+  it("refunds a capture whose held trial session already started, before scheduling it", () => {
+    const [beforeSchedule] = arm.split("to: TrialStatus.SCHEDULED");
+    const refusal = beforeSchedule.split("if (startedHold) {")[1];
+    expect(beforeSchedule).toContain("startsAt: { lte: new Date() }");
+    expect(refusal).toContain("to: TrialStatus.CANCELLED");
+    expect(refusal).toContain("fromIn: [TrialStatus.AWAITING_PAYMENT]");
+    expect(refusal).toContain("autoRefundPendingDescription(");
+    expect(refusal).toContain("await parkCapture();");
+    expect(refusal).toContain('outcome: "captured_after_release"');
+  });
+
   it("answers captured_after_release when neither CAS matched (a CANCELLED trial)", () => {
     const miss = arm.split(
       "if (scheduled.count === 0 && paidAtRequest.count === 0) {",

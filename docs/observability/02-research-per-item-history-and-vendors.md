@@ -162,6 +162,13 @@ Region choice: Singapore matches the function region and is 3.5x EU per GB but t
 
 If in-country telemetry becomes a legal requirement, Grafana Cloud may cost $0 on Free or about $19 to $22 a month on Pro at 1-5 GB (ESTIMATE, if Free and all services are available in India), against $49 for SigNoz; confirm the open questions before choosing.
 
+### Two further vendor facts that bear on the choice
+
+- **GlitchTip does not implement sessions.** GlitchTip's own tracker states that session tracking is not implemented and that there is no plan to implement it, so a Sentry SDK that sends session envelopes gets a "Not Implemented" answer unless session tracking is turned off in the SDK. Release health and a "users affected" count both depend on sessions, so a switch to GlitchTip would lose them. VERIFIED [GlitchTip backend issue on sessions](https://gitlab.com/glitchtip/glitchtip-backend/-/issues/206).
+- **The official SigNoz MCP server exposes no error-tracking tools.** Its README lists 46 tools covering metrics, alerts, dashboards, services, saved views, logs, traces and notification channels, and none of them reads grouped errors or issues. An agent can only approximate it by filtering trace or log searches by error status or severity. VERIFIED [SigNoz MCP server README](https://github.com/SigNoz/signoz-mcp-server), read 2026-11-09.
+
+Better Stack's lack of an India region is already recorded in the comparison tables above.
+
 ## 8. Build order (smallest first)
 
 1. Make ingest observable before anything depends on it: record and surface 402, 403 and 5xx answers from Better Stack (today `emitTelemetryLog` awaits `fetch` and never reads the status), add a freshness check that fires through a channel independent of ingest when no gauge event has arrived for N minutes, and write a per-capability missing-data policy. Business work stays best-effort with respect to telemetry.
@@ -173,7 +180,7 @@ If in-country telemetry becomes a legal requirement, Grafana Cloud may cost $0 o
 
 ## 9. Not confirmed (UNVERIFIED list)
 
-Better Stack deep-link URL format and the retention of traces; Better Stack Mumbai/India absence beyond the three regions listed; Axiom, Honeycomb, Datadog, OpenObserve region lists; Grafana Cloud Free-tier and per-service availability in India; SigNoz India region by plan; Sentry span-query alerts and Team span retention; Supabase log retention and drain price; Highlight shutdown date; PostHog official warehouse price; BigQuery price; whether idle ticks write `SystemJobExecution` rows; actual row counts in the shared DB; DPDP cross-border position (needs counsel).
+Better Stack deep-link URL format and the retention of traces; whether GlitchTip has a server-side data scrubber; whether CubeAPM has an MCP server and what tools it exposes; whether CubeAPM is unrelated to cube.dev; whether Microsoft Clarity stores data only in the United States (its FAQ says only that data is stored in Microsoft Azure); Better Stack Mumbai/India absence beyond the three regions listed; Axiom, Honeycomb, Datadog, OpenObserve region lists; Grafana Cloud Free-tier and per-service availability in India; SigNoz India region by plan; Sentry span-query alerts and Team span retention; Supabase log retention and drain price; Highlight shutdown date; PostHog official warehouse price; BigQuery price; whether idle ticks write `SystemJobExecution` rows; actual row counts in the shared DB; DPDP cross-border position (needs counsel).
 
 ## Where this research is used
 

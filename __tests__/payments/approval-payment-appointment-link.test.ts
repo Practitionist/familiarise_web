@@ -46,6 +46,8 @@ interface State {
   appointmentPayments: Array<Record<string, unknown>>;
   /** Whether the consultation is still payable, which gates the re-mint. */
   consultationStatus: string;
+  /** The price agreed on the request; null reads the plan. */
+  agreedPricePaise?: number | null;
   /** What findExistingLivePayment's trial arm reads off Trial.payment. */
   trialPayment?: Record<string, unknown> | null;
   trialStatus?: string;
@@ -86,6 +88,8 @@ jest.mock("../../lib/prisma", () => ({
       findUnique: jest.fn(async () => ({
         id: CONS_CUID,
         status: state.consultationStatus,
+        agreedPricePaise: state.agreedPricePaise ?? null,
+        consultationPlan: state.consultationPlan,
         appointment: { id: APPT_CUID, payment: state.appointmentPayments },
       })),
     },
@@ -128,17 +132,15 @@ jest.mock("../../lib/prisma", () => ({
         id: "trial-1",
         status: state.trialStatus,
         payment: state.trialPayment,
-      })),
-    },
-    subscriptionPlan: {
-      // Trial pricing reads the parent subscription plan (trialPriceInPaise
-      // fallback path in calculateAmount).
-      findUnique: jest.fn(async () => ({
-        title: "Trial Plan",
-        price: 500_000,
-        priceCurrency: Currency.INR,
-        trialEnabled: true,
-        trialPriceInPaise: 250_000,
+        // A row from before the column: the price falls back to the parent plan's.
+        agreedPricePaise: null,
+        subscriptionPlan: {
+          title: "Trial Plan",
+          price: 500_000,
+          priceCurrency: Currency.INR,
+          trialEnabled: true,
+          trialPriceInPaise: 250_000,
+        },
       })),
     },
   },
@@ -290,6 +292,17 @@ describe("approval mint threads appointmentId (#1181)", () => {
     const intentArg = mockCreatePaymentIntent.mock.calls[0][0];
     expect(intentArg.metadata).not.toHaveProperty("appointmentId");
     expect(mockedPaymentCreate.mock.calls[0][0].data.appointmentId).toBeNull();
+  });
+});
+
+describe("a request is charged its agreed price", () => {
+  it("a frozen consultation price is what the approval mint charges", async () => {
+    state.agreedPricePaise = 400_000;
+
+    await createApprovalPaymentIntent(mintParams());
+
+    // ₹4,000 agreed plus 18% GST, while the plan now lists ₹5,000.
+    expect(mockedPaymentCreate.mock.calls[0][0].data.amount).toBe(472_000);
   });
 });
 

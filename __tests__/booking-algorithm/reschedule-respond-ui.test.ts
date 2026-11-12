@@ -130,10 +130,10 @@ describe("#1163 — the consultant inbox answers proposals", () => {
   });
 });
 
-describe("#1163 — the reschedule page refuses trial subjects", () => {
-  it("renders a friendly refusal instead of a picker that 403s at submit", () => {
+describe("the reschedule page moves a trial with the buyer's slot list", () => {
+  it("branches a trial to its own picker instead of the multi-session one", () => {
     expect(reschedulePage).toContain('appointmentType === "TRIAL"');
-    expect(reschedulePage).toContain("can&apos;t be rescheduled");
+    expect(reschedulePage).toContain("<TrialRescheduleClient");
   });
 });
 

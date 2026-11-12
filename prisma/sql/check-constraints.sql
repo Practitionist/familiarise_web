@@ -929,6 +929,18 @@ ALTER TABLE "ConsultantFeeWaiver" ADD CONSTRAINT "consultant_fee_waiver_sessions
   CHECK ("sessionsRemaining" >= 0);
 
 -- SPLIT
+-- A referral waiver names its referral; a founding waiver has none.
+ALTER TABLE "ConsultantFeeWaiver" DROP CONSTRAINT IF EXISTS "consultant_fee_waiver_referral_matches_reason";
+-- SPLIT
+ALTER TABLE "ConsultantFeeWaiver" ADD CONSTRAINT "consultant_fee_waiver_referral_matches_reason"
+  CHECK (("reason" = 'FOUNDING_EXPERT') = ("referralId" IS NULL));
+-- SPLIT
+-- One founding waiver per consultant; the admin grant maps the violation to a 409.
+CREATE UNIQUE INDEX IF NOT EXISTS "consultant_fee_waiver_one_founding_key"
+  ON "ConsultantFeeWaiver" ("consultantProfileId")
+  WHERE "reason" = 'FOUNDING_EXPERT';
+
+-- SPLIT
 -- Take rates are basis points of the gross; own-link never exceeds marketplace, and the
 -- proposer approves their own schedule only once it has stood 24 hours (sole-admin rule).
 ALTER TABLE "PlatformFeeSchedule" DROP CONSTRAINT IF EXISTS "platform_fee_schedule_valid";
@@ -966,6 +978,9 @@ ALTER TABLE "ReferralProgramConfig" ADD CONSTRAINT "referral_program_config_rang
     AND "expertWaiverSessions" >= 0
     AND "expertWaiverDays" > 0
     AND "expertReferralBudgetPaise" >= 0
+    AND "foundingWaiverSessions" >= 0
+    AND "foundingWaiverDays" > 0
+    AND "foundingExpertCap" >= 0
     AND ("holdSameIpReferrals" IS NULL OR "holdSameIpReferrals" >= 2)
     AND ("holdSameDeviceReferrals" IS NULL OR "holdSameDeviceReferrals" >= 2)
     AND ("holdWindowDays" IS NULL OR "holdWindowDays" > 0)
@@ -1578,3 +1593,14 @@ ALTER TABLE "ClassPlan" DROP CONSTRAINT IF EXISTS "class_plan_waitlist_max_min";
 -- SPLIT
 ALTER TABLE "ClassPlan" ADD CONSTRAINT "class_plan_waitlist_max_min"
   CHECK ("waitlistMax" IS NULL OR "waitlistMax" >= 1);
+-- SPLIT
+-- The price a 1:1 or a trial was agreed at is never negative.
+ALTER TABLE "Consultation" DROP CONSTRAINT IF EXISTS "consultation_agreed_price_valid";
+-- SPLIT
+ALTER TABLE "Consultation" ADD CONSTRAINT "consultation_agreed_price_valid"
+  CHECK ("agreedPricePaise" IS NULL OR "agreedPricePaise" >= 0);
+-- SPLIT
+ALTER TABLE "Trial" DROP CONSTRAINT IF EXISTS "trial_agreed_price_valid";
+-- SPLIT
+ALTER TABLE "Trial" ADD CONSTRAINT "trial_agreed_price_valid"
+  CHECK ("agreedPricePaise" IS NULL OR "agreedPricePaise" >= 0);

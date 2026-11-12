@@ -223,13 +223,17 @@ export async function GET(
     const leadMs = leadMsFor(leadQuery.data.purpose, {
       settled: leadQuery.data.unpaid !== "1",
     });
+    // A host moving their own webinar or class may land on that event's own time.
+    const movingEvent =
+      leadQuery.data.purpose === "reschedule" && Boolean(webinarId || classId);
 
     // The gates below need the caller's identity, so resolve it once. Skipped
     // on the public path, where none of these parameters is present.
     const session =
       includeAppointmentDetailsRequested ||
       requestedConsulteeUserId ||
-      requestedSubscriptionId
+      requestedSubscriptionId ||
+      movingEvent
         ? await getSession()
         : null;
     // Ownership is a fact about the database, not about the session.
@@ -478,6 +482,112 @@ export async function GET(
       };
     }
 
+    const customWindowOverlapWhere = {
+      OR: [
+        {
+          startsAt: {
+            gte: startDate,
+            lt: endDate,
+          },
+        },
+        {
+          endsAt: {
+            gt: startDate,
+            lte: endDate,
+          },
+        },
+        {
+          startsAt: { lte: startDate },
+          endsAt: { gte: endDate },
+        },
+      ],
+    };
+
+    // The event's ACCEPTED co-hosts and its appointment, read at most once:
+    // the move exclusion needs the id before the ETag, the co-host fold after.
+    const collabSelect = {
+      where: { status: "ACCEPTED" as const },
+      select: {
+        consultantProfileId: true,
+        consultantProfile: {
+          select: {
+            id: true,
+            userId: true,
+            scheduleType: true,
+            availabilityWindowsWeekly: true,
+            availabilityWindowsCustom: { where: customWindowOverlapWhere },
+            user: { select: { id: true } },
+          },
+        },
+      },
+    };
+    type EventCollaboratorRow = {
+      consultantProfileId: string;
+      consultantProfile?: {
+        id?: string;
+        userId?: string;
+        scheduleType?: string;
+        availabilityWindowsWeekly?: StoredWeeklyRow[];
+        availabilityWindowsCustom?: {
+          id: string;
+          startsAt: Date;
+          endsAt: Date;
+        }[];
+        user?: { id?: string } | null;
+      } | null;
+    };
+    type EventLookup = {
+      appointmentId: string | null;
+      collaborators: EventCollaboratorRow[] | undefined;
+    } | null;
+    const readEvent = async (): Promise<EventLookup> => {
+      if (webinarId && prisma.webinar?.findFirst) {
+        const w = await prisma.webinar.findFirst({
+          where: {
+            id: webinarId,
+            webinarPlan: { consultantProfileId: consultantId },
+          },
+          select: {
+            appointment: { select: { id: true } },
+            webinarPlan: { select: { collaborators: collabSelect } },
+          },
+        });
+        return w
+          ? {
+              appointmentId: w.appointment?.id ?? null,
+              collaborators: w.webinarPlan?.collaborators,
+            }
+          : null;
+      }
+      if (classId && prisma.class?.findFirst) {
+        const c = await prisma.class.findFirst({
+          where: {
+            id: classId,
+            classPlan: { consultantProfileId: consultantId },
+          },
+          select: {
+            appointment: { select: { id: true } },
+            classPlan: { select: { collaborators: collabSelect } },
+          },
+        });
+        return c
+          ? {
+              appointmentId: c.appointment?.id ?? null,
+              collaborators: c.classPlan?.collaborators,
+            }
+          : null;
+      }
+      return null;
+    };
+    let eventLookup: Promise<EventLookup> | null = null;
+    const loadEvent = () => (eventLookup ??= readEvent());
+    // Only the owning host's move frees the event's own sessions; everyone
+    // else still sees them busy.
+    const excludedAppointmentId =
+      movingEvent && isOwningConsultant
+        ? ((await loadEvent())?.appointmentId ?? null)
+        : null;
+
     // #1319 PR 9 — conditional GET, computed BEFORE the heavy reads.
     //
     // Every open calendar re-asks this endpoint once a minute (ADR 16: polling,
@@ -515,6 +625,7 @@ export async function GET(
           leadBucket: leadTimeBucket(now.getTime(), leadMs),
           leadMs,
           quotaFold: quotaSubject?.fold ?? null,
+          excludedAppointmentId,
         })
       : null;
     const ifNoneMatchHeader =
@@ -528,27 +639,6 @@ export async function GET(
     }
 
     // 1. Fetch consultant's availability
-    const customWindowOverlapWhere = {
-      OR: [
-        {
-          startsAt: {
-            gte: startDate,
-            lt: endDate,
-          },
-        },
-        {
-          endsAt: {
-            gt: startDate,
-            lte: endDate,
-          },
-        },
-        {
-          startsAt: { lte: startDate },
-          endsAt: { gte: endDate },
-        },
-      ],
-    };
-
     // #1691 Item 2 — When the ETag marker probe already returned the primary
     // consultant's `scheduleType`, only fetch the active availability window
     // relation (`WEEKLY` or `CUSTOM`) instead of loading both tables.
@@ -604,62 +694,7 @@ export async function GET(
     };
     const coHostProfiles: CoHostScheduleProfile[] = [];
     if (webinarId || classId) {
-      const collabSelect = {
-        where: { status: "ACCEPTED" as const },
-        select: {
-          consultantProfileId: true,
-          consultantProfile: {
-            select: {
-              id: true,
-              userId: true,
-              scheduleType: true,
-              availabilityWindowsWeekly: true,
-              availabilityWindowsCustom: { where: customWindowOverlapWhere },
-              user: { select: { id: true } },
-            },
-          },
-        },
-      };
-      let rawCollabs:
-        | Array<{
-            consultantProfileId: string;
-            consultantProfile?: {
-              id?: string;
-              userId?: string;
-              scheduleType?: string;
-              availabilityWindowsWeekly?: StoredWeeklyRow[];
-              availabilityWindowsCustom?: {
-                id: string;
-                startsAt: Date;
-                endsAt: Date;
-              }[];
-              user?: { id?: string } | null;
-            } | null;
-          }>
-        | undefined;
-      if (webinarId && prisma.webinar?.findFirst) {
-        const w = await prisma.webinar.findFirst({
-          where: {
-            id: webinarId,
-            webinarPlan: { consultantProfileId: consultantId },
-          },
-          select: {
-            webinarPlan: { select: { collaborators: collabSelect } },
-          },
-        });
-        rawCollabs = w?.webinarPlan?.collaborators;
-      } else if (classId && prisma.class?.findFirst) {
-        const c = await prisma.class.findFirst({
-          where: {
-            id: classId,
-            classPlan: { consultantProfileId: consultantId },
-          },
-          select: {
-            classPlan: { select: { collaborators: collabSelect } },
-          },
-        });
-        rawCollabs = c?.classPlan?.collaborators;
-      }
+      const rawCollabs = (await loadEvent())?.collaborators;
       if (Array.isArray(rawCollabs)) {
         for (const row of rawCollabs) {
           const cp = row.consultantProfile;
@@ -719,10 +754,15 @@ export async function GET(
       endsAt: { gt: startDate },
     };
 
+    // The moving event's own appointment, left out of host and co-host occupancy.
+    const notMovingEvent = excludedAppointmentId
+      ? [{ id: { not: excludedAppointmentId } }]
+      : [];
     const occupiedAppointmentWhere = {
       AND: [
         buildConsultantOccupancyWhere(consultantId, consultant.userId, now),
         slotsInWindow,
+        ...notMovingEvent,
       ],
     };
 
@@ -789,6 +829,7 @@ export async function GET(
                   ),
                 },
                 slotsInWindow,
+                ...notMovingEvent,
               ],
             },
             include: {

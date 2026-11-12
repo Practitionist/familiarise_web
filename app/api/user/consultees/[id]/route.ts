@@ -8,6 +8,7 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { PARTY_USER_SELECT } from "@/lib/booking/list-selects";
+import { checkConsulteeActiveBookings } from "../../consultants/utils/consultee-bookings";
 
 export async function GET(
   req: NextRequest,
@@ -187,7 +188,11 @@ export async function PATCH(
         preferredLanguage: body.preferredLanguage,
         goals: body.goals,
         careerStage: body.careerStage,
-        skillsToDevelop: body.skillsToDevelop ?? [],
+        // An omitted field leaves the stored list as it is.
+        skillsToDevelop:
+          body.skillsToDevelop === undefined
+            ? undefined
+            : (body.skillsToDevelop ?? []),
         budgetPreference: body.budgetPreference,
       },
       include: {
@@ -219,45 +224,55 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    // Require authentication
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
     const { session } = authResult;
 
-    const resolvedParams = await params;
-    const { id } = resolvedParams;
+    const { id } = await params;
 
-    // Check authorization: privileged users can delete any, others only their own
-    const canDelete =
-      isPrivileged(session.user.role) ||
-      checkOwnership(session, id, "consultee");
-
-    if (!canDelete) {
+    // The owner only, like the expert's own profile delete; operators erase
+    // accounts through the DPDP request queue.
+    const owner = await prisma.consulteeProfile.findUnique({
+      where: { id },
+      select: { userId: true },
+    });
+    if (!owner || owner.userId !== session.user.id) {
       return forbiddenResponse(
         "You can only delete your own consultee profile",
       );
     }
 
-    const existingConsultee = await prisma.consulteeProfile.findUnique({
-      where: { id: id },
-    });
-
-    if (!existingConsultee) {
+    const active = await checkConsulteeActiveBookings(id, owner.userId);
+    if (active.hasActive) {
       return NextResponse.json(
-        { error: "Consultee profile not found for deletion" },
-        { status: 404 },
+        {
+          error:
+            "Cannot delete your learner profile while you have active or upcoming bookings.",
+          code: "ACTIVE_APPOINTMENTS_BLOCK_DELETE",
+          details: active.details,
+        },
+        { status: 400 },
       );
     }
 
-    const deletedConsultee = await prisma.consulteeProfile.delete({
-      where: { id: id },
-      include: {
-        consultantReviews: { where: { deletedAt: null } },
-        user: PARTY_USER_SELECT,
-      },
+    // Refunds, credit usage and invoices all hang off a payment row, so one
+    // count covers the buyer's money history; it is kept, never cascaded away.
+    const payments = await prisma.payment.count({
+      where: { userId: owner.userId },
     });
+    if (payments > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Your learner profile has payment history, so it can't be deleted on its own. Delete your account instead; payment records are kept as the law requires.",
+          code: "MONEY_HISTORY_BLOCKS_DELETE",
+        },
+        { status: 400 },
+      );
+    }
 
-    return NextResponse.json(deletedConsultee, { status: 200 });
+    await prisma.consulteeProfile.delete({ where: { id } });
+    return NextResponse.json({ message: "Consultee profile deleted" });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

@@ -37,6 +37,7 @@ import {
   ALLOCATOR_LOCK_RETRY_CONFIG,
   renewAppointmentLock,
   withAppointmentLock,
+  withEventCheckoutLock,
 } from "@/utils/appointmentlock";
 
 /**
@@ -198,10 +199,12 @@ function allocationFailureCopy(
 }
 
 /**
- * Lock order: appointment → auto-allocate → consultee → slot batch. An event
- * that already has its booking wrapper is allocated under that wrapper's
- * appointment lock, so no cancel or reschedule interleaves; a caller already
- * holding the grant hands it over and it is renewed, never re-acquired.
+ * Lock order: event checkout → appointment → auto-allocate → consultee → slot
+ * batch. A webinar or class plans under its checkout key, so no seat is sold
+ * mid-plan; an event that already has its booking wrapper is allocated under
+ * that wrapper's appointment lock, so no cancel or reschedule interleaves. A
+ * caller already holding the grant hands it over and it is renewed, never
+ * re-acquired.
  */
 async function underAppointmentLock<T>(
   request: AllocationRequest,
@@ -211,16 +214,27 @@ async function underAppointmentLock<T>(
     await renewAppointmentLock(request.heldAppointmentLock);
     return run();
   }
-  const wrapper = await prisma.appointment.findFirst({
-    where: {
-      [`${getEventRelationField(request.eventType)}Id`]: request.eventId,
-      deletedAt: null,
-    } as Prisma.AppointmentWhereInput,
-    select: { id: true },
-  });
-  return wrapper
-    ? withAppointmentLock(wrapper.id, run, ALLOCATOR_LOCK_RETRY_CONFIG)
-    : run();
+  const underWrapper = async () => {
+    const wrapper = await prisma.appointment.findFirst({
+      where: {
+        [`${getEventRelationField(request.eventType)}Id`]: request.eventId,
+        deletedAt: null,
+      } as Prisma.AppointmentWhereInput,
+      select: { id: true },
+    });
+    return wrapper
+      ? withAppointmentLock(wrapper.id, run, ALLOCATOR_LOCK_RETRY_CONFIG)
+      : run();
+  };
+  return request.eventType === "webinar" || request.eventType === "class"
+    ? withEventCheckoutLock(
+        {
+          appointmentType: request.eventType.toUpperCase(),
+          eventId: request.eventId,
+        },
+        underWrapper,
+      )
+    : underWrapper();
 }
 
 /**
@@ -325,7 +339,6 @@ export async function dispatch(
         request.eventId,
         request.initialAllocation,
         request.idempotencyKey,
-        request.override,
         request.expectedTentativeSlotCount,
         txOptions,
       );

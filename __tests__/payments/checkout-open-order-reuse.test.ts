@@ -668,6 +668,7 @@ describe("#1220-triage — reuse gates", () => {
         organizationId: null,
         paymentGateway: "RAZORPAY" as never,
         expectedAmountPaise: 100_000,
+        expectedDiscountCodeId: null,
         slotWindow: SLOT,
       },
     );
@@ -689,11 +690,31 @@ describe("#1220-triage — reuse gates", () => {
         organizationId: null,
         paymentGateway: "RAZORPAY" as never,
         expectedAmountPaise: 100_000,
+        expectedDiscountCodeId: null,
         slotWindow: SLOT,
       },
     );
     expect(reusable?.id).toBe("pay-open");
     expect(supersede).toEqual([]);
+
+    // The same amount under another code is superseded, so the old code's use is given back.
+    const recoded = await findReusablePendingOrderPayment(
+      gateDb([{ ...row, discountCodeId: "dc-a" }]) as never,
+      {
+        userId: "user-1",
+        appointmentType: "CONSULTATION",
+        planId: "plan-1",
+        organizationId: null,
+        paymentGateway: "RAZORPAY" as never,
+        expectedAmountPaise: 100_000,
+        expectedDiscountCodeId: "dc-b",
+        slotWindow: SLOT,
+      },
+    );
+    expect(recoded.reusable).toBeNull();
+    expect(recoded.supersede).toEqual([
+      { id: "pay-open", reason: "discount-mismatch" },
+    ]);
   });
 
   test("a group order whose seat was released is superseded, not resumed", async () => {
@@ -712,6 +733,7 @@ describe("#1220-triage — reuse gates", () => {
         organizationId: null,
         paymentGateway: "RAZORPAY" as never,
         expectedAmountPaise: 100_000,
+        expectedDiscountCodeId: null,
       },
     );
     expect(reusable).toBeNull();
@@ -730,6 +752,7 @@ describe("#1220-triage — reuse gates", () => {
         organizationId: null,
         paymentGateway: "RAZORPAY" as never,
         expectedAmountPaise: 100_000,
+        expectedDiscountCodeId: null,
       },
     );
     expect(reusable).toBeNull();
@@ -759,6 +782,7 @@ describe("#1220-triage — reuse gates", () => {
         organizationId: null,
         paymentGateway: "RAZORPAY" as never,
         expectedAmountPaise: 100_000,
+        expectedDiscountCodeId: null,
         schedulingPeriod: SLOT,
       },
     );
@@ -775,6 +799,7 @@ describe("#1220-triage — reuse gates", () => {
         organizationId: null,
         paymentGateway: "RAZORPAY" as never,
         expectedAmountPaise: 100_000,
+        expectedDiscountCodeId: null,
         schedulingPeriod: null,
       },
     );

@@ -5,11 +5,7 @@
 import React, { useState } from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 
-import {
-  WeekGrid,
-  type GridFocus,
-  type NavRow,
-} from "@/components/scheduling/WeekGrid";
+import { WeekGrid, type GridFocus } from "@/components/scheduling/WeekGrid";
 import { buildWeekCells } from "@/lib/scheduling/week-grid-model";
 import { weekRowModel } from "@/lib/time/grid-zone";
 
@@ -27,11 +23,7 @@ const cells = buildWeekCells(rows, {
   nowMs: 0,
 });
 // Three visible rows (9:00, 9:30, 10:00) to keep the test readable.
-const navRows: NavRow[] = [18, 19, 20].map((axisIndex) => ({
-  kind: "cells",
-  key: `row:${rows.axis[axisIndex].key}`,
-  axisIndex,
-}));
+const VISIBLE_ROWS = { from: 18, to: 21 };
 
 function Harness({
   onPageWeek,
@@ -42,8 +34,10 @@ function Harness({
       days={days}
       axis={rows.axis}
       matrix={cells.matrix}
-      navRows={navRows}
-      bandLabelOf={() => "Unavailable"}
+      rows={VISIBLE_ROWS}
+      blocks={[]}
+      ghost={[]}
+      onPreview={() => {}}
       todayIndex={-1}
       inPeriodDays={days.map(() => false)}
       nowAtomStartMs={0}
@@ -54,7 +48,6 @@ function Harness({
       refreshing={false}
       tooltipOf={() => null}
       onActivate={() => {}}
-      onToggleBand={() => {}}
       onFocusChange={setFocus}
       onPageWeek={onPageWeek}
       gridRef={() => {}}
@@ -150,5 +143,20 @@ describe("WeekGrid keyboard", () => {
     expect(label).toMatch(/^Unavailable · Sun,? 8 Mar, 9:00/);
     expect(label).not.toMatch(/slot/i);
     expect(cellAt(grid, 0, 0)).toHaveAttribute("aria-disabled", "true");
+  });
+});
+
+describe("WeekGrid canvas", () => {
+  it("draws cells edge to edge on 24px rows, with closed time hatched on the canvas", () => {
+    render(<Harness onPageWeek={() => {}} />);
+    const grid = screen.getByRole("grid");
+    const cell = cellAt(grid, 0, 0);
+    expect(cell.className).toContain("h-6");
+    expect(cell.className).not.toMatch(/\brounded-sm\b|\bh-7\b/);
+    // Closed time paints on the gridcell, so the unavailable token stays paint-free.
+    expect(cell.closest("[role='gridcell']")?.className).toContain(
+      "repeating-linear-gradient(135deg",
+    );
+    expect(within(grid).getAllByRole("row")[1].className).not.toMatch(/gap-/);
   });
 });

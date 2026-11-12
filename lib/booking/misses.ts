@@ -77,3 +77,26 @@ export const NEEDS_HUMAN = {
     },
   ],
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** A session parked for ops longer than this escalates: its booking's settlement is waiting on it. */
+export const NEEDS_HUMAN_ESCALATE_DAYS = 7;
+
+/** Parked for ops more than {@link NEEDS_HUMAN_ESCALATE_DAYS}; read by the escalation and the ops list. */
+export function agedNeedsHumanWhere(
+  now: Date,
+): Prisma.AppointmentOccurrenceWhereInput {
+  const cutoff = new Date(
+    now.getTime() - NEEDS_HUMAN_ESCALATE_DAYS * 24 * 3_600_000,
+  );
+  return {
+    AND: [
+      NEEDS_HUMAN,
+      {
+        OR: [
+          { outcomeAt: { lt: cutoff } },
+          { outcomeAt: null, endsAt: { lt: cutoff } },
+        ],
+      },
+    ],
+  };
+}

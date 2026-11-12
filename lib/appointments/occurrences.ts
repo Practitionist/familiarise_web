@@ -142,6 +142,42 @@ export function intervalStartsOf(occurrence: {
   );
 }
 
+/**
+ * The booked session's length in minutes: the live session, else the latest row
+ * (a released or cancelled row keeps its times); null when no row has times.
+ */
+export function bookedSessionMinutes(
+  occurrences: readonly {
+    startsAt: Date | string;
+    endsAt?: Date | string | null;
+    completionStatus?: string | null;
+    deletedAt?: Date | string | null;
+  }[],
+): number | null {
+  const timed = occurrences.filter((o) => o.endsAt);
+  const live = timed.find(
+    (o) =>
+      !o.deletedAt &&
+      (o.completionStatus === "SCHEDULED" ||
+        o.completionStatus === "UNVERIFIED"),
+  );
+  const row =
+    live ??
+    timed.reduce<(typeof timed)[number] | undefined>(
+      (latest, o) =>
+        !latest ||
+        new Date(o.startsAt).getTime() > new Date(latest.startsAt).getTime()
+          ? o
+          : latest,
+      undefined,
+    );
+  if (!row?.endsAt) return null;
+  const minutes =
+    (new Date(row.endsAt).getTime() - new Date(row.startsAt).getTime()) /
+    60_000;
+  return minutes > 0 ? minutes : null;
+}
+
 export async function nextOrdinal(
   tx: PrismaLike,
   appointmentId: string,
@@ -291,11 +327,18 @@ export function occurrencesAllowReschedule(
   return !occurrences.some((row) => row.completionStatus === "RESCHEDULED");
 }
 
+/**
+ * Whether the host may re-plan this booking's times without anyone's consent.
+ * A webinar or class only while no seat is live: once sold, it is re-timed
+ * (notice plus free leave), never re-planned. The allocator enforces the same
+ * rule in its transaction (`assertGroupEventUnsoldInTx`).
+ */
 export function allowsManageTimings(
   kind: AppointmentKind,
   occurrences: Array<{ isTentative?: boolean | null }>,
+  liveSeats: number,
 ): boolean {
-  if (kind === "WEBINAR" || kind === "CLASS") return true;
+  if (kind === "WEBINAR" || kind === "CLASS") return liveSeats === 0;
   if (occurrences.length === 0) return true;
   return occurrences.every((row) => Boolean(row.isTentative));
 }
@@ -352,7 +395,10 @@ export function getOccurrenceJoinState(
 
   const joinWindowMs = opts?.joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
   const rejoinGraceMs =
-    opts?.rejoinGraceMs ?? (occurrence.endsAt != null ? REJOIN_GRACE_MS : 0);
+    opts?.rejoinGraceMs ??
+    (occurrence.endsAt !== null && occurrence.endsAt !== undefined
+      ? REJOIN_GRACE_MS
+      : 0);
   const now = (opts?.now ?? new Date()).getTime();
   const { start, end } = occurrenceTimes(occurrence);
 
@@ -418,7 +464,9 @@ export function getOccurrenceVMJoinState(
       ...opts,
       rejoinGraceMs:
         opts?.rejoinGraceMs ??
-        (occurrence.endsAt != null ? REJOIN_GRACE_MS : 0),
+        (occurrence.endsAt !== null && occurrence.endsAt !== undefined
+          ? REJOIN_GRACE_MS
+          : 0),
     },
   );
 }

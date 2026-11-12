@@ -334,7 +334,7 @@ describe("#1690 — Cross-midnight session bucketing and timezone-aware countWee
       ]);
       expect(pastEndRes.isValid).toBe(false);
       expect(
-        pastEndRes.errors.some((e) => e.includes("outside this cycle")),
+        pastEndRes.errors.some((e) => e.includes("[OUTSIDE_PLAN_WEEK]")),
       ).toBe(true);
     } finally {
       jest.useRealTimers();

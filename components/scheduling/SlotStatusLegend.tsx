@@ -37,12 +37,8 @@ export function SlotStatusLegend({
   showRequested = false,
 }: Readonly<SlotStatusLegendProps>) {
   return (
-    // Sticky so a tall grid that scrolls the page keeps its key in view.
     <ul
-      className={cn(
-        "sticky top-0 z-10 flex flex-wrap items-center gap-x-4 gap-y-2 bg-background",
-        className,
-      )}
+      className={cn("flex flex-wrap items-center gap-x-3 gap-y-1.5", className)}
       aria-label="What the colours and patterns mean"
     >
       {keys.map((key) => {

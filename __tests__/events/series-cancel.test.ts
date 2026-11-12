@@ -87,6 +87,7 @@ const ledger = {
   inProgressHeld: 0,
   remaining: [],
   neverScheduled: 5,
+  unplaced: 0,
 };
 
 it("N = 8 with 3 delivered refunds each seat 5 units, keyed on the event and payment", async () => {

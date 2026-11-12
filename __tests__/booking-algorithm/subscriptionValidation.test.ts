@@ -70,7 +70,7 @@ describe("the cycle window", () => {
     );
     expect(before.isValid).toBe(false);
     expect(after.isValid).toBe(false);
-    expect(after.errors[0]).toContain("outside this cycle");
+    expect(after.errors[0]).toContain("[OUTSIDE_PLAN_WEEK]");
   });
 
   it("stops at the plan end", async () => {
@@ -107,7 +107,7 @@ describe("the rolling cycle cap", () => {
     ]);
     expect(result.isValid).toBe(false);
     expect(result.errors).toContain(
-      "This cycle has room for 2 more sessions, but 3 were picked.",
+      "[PLAN_WEEK_FULL] This plan week has room for 2 more sessions, but 3 were picked.",
     );
   });
 
@@ -254,7 +254,7 @@ describe("an open reschedule keeps the allocator's cycle anchor", () => {
       ["occ-7"],
     );
     expect(past.isValid).toBe(false);
-    expect(past.errors[0]).toContain("outside this cycle");
+    expect(past.errors[0]).toContain("[OUTSIDE_PLAN_WEEK]");
   });
 
   it("still frees the place of a replaced confirmed row", async () => {

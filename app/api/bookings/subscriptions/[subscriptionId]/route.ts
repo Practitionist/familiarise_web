@@ -20,6 +20,7 @@ import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
 import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   APPROVAL_STATUSES_DETAIL_ONLY,
+  approvalLockRefusal,
   refuseMalformedEventId,
   NOT_BEING_MOVED,
   assertNotBeingMoved,
@@ -273,13 +274,7 @@ export async function PATCH(
           APPROVAL_LOCK_TTL_MS,
         ); // #1319 — must outlive the 30 s tx
       } catch (error) {
-        return NextResponse.json(
-          {
-            error:
-              error instanceof Error ? error.message : "Failed to acquire lock",
-          },
-          { status: 409 }, // Conflict - another approval in progress
-        );
+        return approvalLockRefusal(error);
       }
     }
 
@@ -429,6 +424,7 @@ export async function PATCH(
                 await tx.appointmentOccurrence.updateMany({
                   where: {
                     appointmentId: subscription.appointment.id,
+                    deletedAt: null,
                     completionStatus: "SCHEDULED",
                   },
                   data: { isTentative: false },

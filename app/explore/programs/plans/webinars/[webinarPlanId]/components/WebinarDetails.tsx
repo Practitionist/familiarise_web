@@ -18,6 +18,7 @@ import {
   GraduationCap,
 } from "lucide-react";
 import { formatInTimeZone } from "date-fns-tz";
+import { zoneLabel } from "@/lib/time/viewer-zone";
 import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import { BuyerPrice } from "@/components/pricing/BuyerPriceProvider";
@@ -37,6 +38,12 @@ interface WebinarDetailsProps {
   readonly viewerUserId: string | null;
 }
 
+/** A time in the page's zone, labelled the way the rest of the product names it ("IST"). */
+function zonedIn(timeZone: string) {
+  return (date: Date, pattern: string) =>
+    `${formatInTimeZone(date, timeZone, pattern)} ${zoneLabel(date, timeZone)}`;
+}
+
 export function WebinarDetails({
   plan,
   nextSession,
@@ -52,6 +59,7 @@ export function WebinarDetails({
   let sessionStatus: TSessionStatus = "To be announced";
   let formattedNextSessionDisplay = "To be announced";
 
+  const zoned = zonedIn(timeZone);
   if (
     nextSession &&
     plan.durationInHours !== null &&
@@ -66,24 +74,22 @@ export function WebinarDetails({
 
     if (now > sessionEnd) {
       sessionStatus = "Completed";
-      formattedNextSessionDisplay = `Ended on ${formatInTimeZone(sessionEnd, timeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`;
+      formattedNextSessionDisplay = `Ended on ${zoned(sessionEnd, "MMMM d, yyyy 'at' h:mm a")}`;
     } else if (now >= sessionStart && now <= sessionEnd) {
       sessionStatus = "Happening Now";
-      formattedNextSessionDisplay = `Ends at ${formatInTimeZone(sessionEnd, timeZone, "h:mm a zzz")}`;
+      formattedNextSessionDisplay = `Ends at ${zoned(sessionEnd, "h:mm a")}`;
     } else if (now < sessionStart) {
       sessionStatus = "Upcoming";
-      formattedNextSessionDisplay = formatInTimeZone(
+      formattedNextSessionDisplay = zoned(
         sessionStart,
-        timeZone,
-        "MMMM d, yyyy 'at' h:mm a zzz",
+        "MMMM d, yyyy 'at' h:mm a",
       );
     }
   } else if (nextSession) {
     sessionStatus = "Upcoming";
-    formattedNextSessionDisplay = formatInTimeZone(
+    formattedNextSessionDisplay = zoned(
       new Date(nextSession),
-      timeZone,
-      "MMMM d, yyyy 'at' h:mm a zzz",
+      "MMMM d, yyyy 'at' h:mm a",
     );
   }
 

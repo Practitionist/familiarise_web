@@ -3,10 +3,10 @@
  *
  * Settles pending `WalletTopUp` rows older than the grace window against the
  * gateway: a captured order is handed to `confirmTopUp`, an order holding no
- * payment is hard-deleted (`providerOrderId @unique` would otherwise block a
- * retry under the same client key), and anything else is kept.
+ * payment is marked FAILED (abandoned), and anything else is kept. A Razorpay
+ * order never expires, so the row stays for `confirmTopUp` to credit a late capture.
  *
- * Never deletes a top-up whose gateway order is not proven empty: a row with no
+ * Never marks a top-up whose gateway order is not proven empty: a row with no
  * minted order id is never a candidate, and a gateway failure skips the row.
  *
  * Reached through the `abandoned-org-top-ups` cleanup twin, which the ticker
@@ -57,6 +57,7 @@ export async function hasAbandonedOrgTopUpWork(
 
 export interface AbandonedOrgTopUpCleanupResult {
   success: boolean;
+  /** Marked FAILED: the gateway order held no payment. */
   reaped: number;
   /** Captured at the gateway and credited by this run. */
   confirmed: number;
@@ -110,16 +111,17 @@ async function settleOne(c: {
     return confirmed ? "confirmed" : "kept";
   }
   if (holding.kind === "live") return "kept";
-  // The predicate rides the DELETE so a webhook confirming in between wins.
-  const deleted = await prisma.walletTopUp.deleteMany({
+  // The predicate rides the write so a webhook confirming in between wins.
+  const abandoned = await prisma.walletTopUp.updateMany({
     where: {
       id: c.id,
       status: "PENDING",
       providerPaymentId: null,
       capturedAt: null,
     },
+    data: { status: "FAILED" },
   });
-  return deleted.count === 1 ? "reaped" : "kept";
+  return abandoned.count === 1 ? "reaped" : "kept";
 }
 
 async function cleanupAbandonedOrgTopUpsUnlocked(

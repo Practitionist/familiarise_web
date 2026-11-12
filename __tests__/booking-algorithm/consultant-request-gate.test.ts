@@ -48,6 +48,9 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
       mockCheckSlotAvailability(...(a as []));
   },
 }));
+jest.mock("../../lib/booking/allocation/coverage", () =>
+  jest.requireActual("../fixtures/request-door-hours"),
+);
 jest.mock("../../lib/novu", () => ({
   notifyNewBookingRequest: jest.fn(async () => ({ success: true })),
 }));
@@ -69,6 +72,10 @@ jest.mock("../../lib/booking/transitions", () => ({
 }));
 jest.mock("../../lib/booking/participants", () => ({
   recordParticipants: jest.fn(async () => undefined),
+}));
+// The expiry sweep the route's module imports ends chat access; no case here reaches it.
+jest.mock("../../lib/stream/access-revocation", () => ({
+  revokeEndedBookingChatAccess: jest.fn(),
 }));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
@@ -93,6 +100,9 @@ jest.mock("../../lib/prisma", () => {
     consulteeProfile: {
       findUnique: jest.fn(async () => ({ id: "cs_1", user: {} })),
     },
+    availabilityWindowWeekly: jest.requireActual(
+      "../fixtures/request-door-hours",
+    ).namedWeeklyWindow,
     consultationPlan: {
       findFirst: jest.fn(async () => ({
         id: "plan_1",
@@ -118,6 +128,8 @@ import { NextRequest } from "next/server";
 import prisma from "../../lib/prisma";
 import { POST } from "../../app/api/scheduling/request-for-approval/route";
 import { PROFILE_WITH_USER_SELECT } from "../../lib/booking/list-selects";
+import { AllocationConflictError } from "../../utils/scheduling-engine/errors";
+import { assertSlotsStillPublished } from "../../lib/booking/allocation/coverage";
 import {
   expectNoBareProfile,
   valuesAtKey,
@@ -203,6 +215,18 @@ describe("consultant request gate", () => {
     const body = await res.json();
     expect(body.code).toBe("REQUEST_CAP_REACHED");
     expect(body.error).not.toMatch(/limit \d/);
+  });
+
+  it("a time outside the published hours → 400 OUTSIDE_AVAILABILITY, nothing written", async () => {
+    jest
+      .mocked(assertSlotsStillPublished)
+      .mockRejectedValueOnce(
+        new AllocationConflictError("shrunk", "AVAILABILITY_CHANGED"),
+      );
+    const res = await POST(request());
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("OUTSIDE_AVAILABILITY");
+    expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
   });
 
   it("below cap → 201", async () => {

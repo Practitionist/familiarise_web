@@ -45,6 +45,14 @@ import {
 } from "@/utils/appointmentlock";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { transitionTrial } from "@/lib/booking/transitions";
+import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
+import {
+  cancelGatewayOrders,
+  expirePendingPaymentsInTx,
+  type GatewayCancel,
+} from "@/lib/booking/pending-payment-expiry";
+import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
+import { recordExpertStrike } from "@/lib/booking/expert-reliability";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isRefusal } from "@/lib/errors/refusal";
 import {
@@ -54,16 +62,7 @@ import {
 } from "@/lib/novu";
 import { UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
-import {
-  buildConsultantOccupancyWhere,
-  OCCUPYING_OCCURRENCE_WHERE,
-} from "@/utils/scheduling-engine/occupancyPolicy";
-import { consulteeHasOverlappingSession } from "@/lib/payments/checkout/occupancy-validate";
-import {
-  findUncoveredAtom,
-  loadPublishedCoverage,
-  windowAtoms,
-} from "@/utils/scheduling-engine/availabilityCoverage";
+import { trialWindowRefusal } from "@/lib/trials/slot-check";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import {
   prepareTrialScheduledEmail,
@@ -226,49 +225,6 @@ class OutsideAvailabilityWindowError extends Error {
 }
 
 /**
- * Validates that a time slot is still available for BOTH participants.
- * Runs on the scheduling transaction's client — never the global one — so the
- * check and the slot write commit or fail together.
- */
-async function validateSlotAvailability(
-  db: Tx,
-  seller: { consultantProfileId: string; userId: string },
-  consulteeUserId: string,
-  startTime: Date,
-  endTime: Date,
-  selfHoldAppointmentIds: string[],
-): Promise<boolean> {
-  // The host's calendar under checkout's own predicate: every occupying row
-  // they host, sit in as a client, or co-host, minus lapsed holds.
-  const overlapping = await db.appointmentOccurrence.findFirst({
-    where: {
-      ...OCCUPYING_OCCURRENCE_WHERE,
-      ...(selfHoldAppointmentIds.length > 0
-        ? { appointmentId: { notIn: selfHoldAppointmentIds } }
-        : {}),
-      appointment: buildConsultantOccupancyWhere(
-        seller.consultantProfileId,
-        seller.userId,
-        new Date(),
-      ),
-      startsAt: { lt: endTime },
-      endsAt: { gt: startTime },
-    },
-    select: { id: true },
-  });
-  if (overlapping) return false;
-
-  // The consultee's calendar under checkout's buyer predicate (dual-role and
-  // lapsed seats included); the GiST constraint is consultant-keyed.
-  return !(await consulteeHasOverlappingSession(db, {
-    userId: consulteeUserId,
-    startsAt: startTime,
-    endsAt: endTime,
-    selfHoldAppointmentIds,
-  }));
-}
-
-/**
  * PATCH /api/trials/[trialId]
  * Update a trial session (approve, reject, schedule, complete, etc.)
  */
@@ -365,25 +321,15 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
     // Handle status transitions
     if (status) {
-      // State machine, post-#1775:
-      //   free trial   PENDING → SCHEDULED → COMPLETED → CONVERTED
-      //   paid trial   PENDING → SCHEDULED → …   (paid at REQUEST, so accept
-      //                                              schedules it directly)
-      // REJECTED = consultant declines, CANCELLED = consultee cancels or the
-      // pay-link lapses past paymentDueAt. `AWAITING_PAYMENT` survives in the
-      // map below as a legal source state for rows written under the old
-      // accept-then-pay flow; nothing writes it any more.
+      // The doors this PATCH offers; the CAS in TRIAL_ALLOWED_FROM is the
+      // state machine. A paid trial the buyer booked holds its time while
+      // AWAITING_PAYMENT and only the capture webhook confirms it, so no
+      // PATCH moves AWAITING_PAYMENT to SCHEDULED (that would confirm an
+      // unpaid hold). PENDING is a trial with no time yet, which the
+      // consultant schedules here.
       const validTransitions: Record<TrialStatus, TrialStatus[]> = {
-        // `AWAITING_PAYMENT` is listed as a legal TARGET for the same reason it
-        // is listed in TRIAL_ALLOWED_FROM: a row written under the old
-        // accept-then-pay flow must still be able to be cancelled below. No
-        // code path selects it.
-        PENDING: ["AWAITING_PAYMENT", "SCHEDULED", "CANCELLED", "REJECTED"],
-        // Pre-#1775 shape: the capture webhook moved this to SCHEDULED. That arm
-        // is now unreachable (the accept handler schedules a paid trial
-        // directly), so nothing produces this edge today; it is kept so a legacy
-        // row is not trapped in a state the map cannot leave.
-        AWAITING_PAYMENT: ["SCHEDULED", "CANCELLED"],
+        PENDING: ["SCHEDULED", "CANCELLED", "REJECTED"],
+        AWAITING_PAYMENT: ["CANCELLED"],
         SCHEDULED: ["COMPLETED", "CANCELLED"],
         COMPLETED: ["CONVERTED"],
         CONVERTED: [],
@@ -432,6 +378,22 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         return NextResponse.json(
           { error: "Only the consultant can convert a trial" },
           { status: 403 },
+        );
+      }
+
+      // A confirmed trial ends only through DELETE, the door that owns the
+      // cancel window, the quoted refund, the strike and open reschedules.
+      if (
+        status === TrialStatus.CANCELLED &&
+        currentStatus === TrialStatus.SCHEDULED
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Cancel a scheduled trial from its cancel dialog, which shows the refund first.",
+            code: "USE_CANCEL_ENDPOINT",
+          },
+          { status: 409 },
         );
       }
 
@@ -601,36 +563,20 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           // check previously ran on the global client before the transaction
           // opened, a classic check-then-act window (#1093 §1).
           const scheduled = await prisma.$transaction(async (tx) => {
-            // The published window first — the same union coverage rule
-            // checkout applies, on this transaction's client. Enforced even
-            // when the consultant is the one scheduling: a trial is a booking.
-            const { weeklyRows, customRows } = await loadPublishedCoverage(
-              tx,
-              existingTrial.consultantProfileId,
-              startTime,
-              endTime,
-            );
-            const uncovered = findUncoveredAtom(
-              windowAtoms(startTime, endTime),
-              weeklyRows,
-              customRows,
-            );
-            if (uncovered) {
+            // The published window and both calendars, on this transaction's
+            // client: the same rule the buyer's pick and a reschedule obey.
+            const refusal = await trialWindowRefusal(tx, {
+              consultantProfileId: existingTrial.consultantProfileId,
+              consultantUserId: existingTrial.consultantProfile.user.id,
+              consulteeUserId: existingTrial.consulteeProfile.user.id,
+              startsAt: startTime,
+              endsAt: endTime,
+              selfHoldAppointmentIds: placeholderId ? [placeholderId] : [],
+            });
+            if (refusal === "OUTSIDE_AVAILABILITY") {
               throw new OutsideAvailabilityWindowError();
             }
-
-            const isAvailable = await validateSlotAvailability(
-              tx,
-              {
-                consultantProfileId: existingTrial.consultantProfileId,
-                userId: existingTrial.consultantProfile.user.id,
-              },
-              existingTrial.consulteeProfile.user.id,
-              startTime,
-              endTime,
-              placeholderId ? [placeholderId] : [],
-            );
-            if (!isAvailable) {
+            if (refusal === "SLOT_TAKEN") {
               throw new TrialSlotUnavailableError();
             }
 
@@ -1053,6 +999,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     // validTransitions check above is only the friendly error text.
     const { status: nextStatus, ...restUpdate } = updateData;
     let subscriptionBecameInactive = false;
+    let gatewayCancels: GatewayCancel[] = [];
     const updatedTrial = await prisma.$transaction(async (tx) => {
       if (
         nextStatus === TrialStatus.CONVERTED &&
@@ -1072,6 +1019,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           subscriptionBecameInactive = true;
           return null;
         }
+      }
+      // An ending trial's unpaid order dies before the status move, in the
+      // capture's lock order (payment → trial); a captured payment stays.
+      if (deferredCancellation?.appointmentId) {
+        ({ gatewayCancels } = await expirePendingPaymentsInTx(tx, {
+          appointmentId: deferredCancellation.appointmentId,
+          reason: "trial ended before payment",
+        }));
       }
       if (nextStatus !== undefined) {
         await transitionTrial(tx, {
@@ -1187,6 +1142,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (deferredCancellation) {
       if (deferredCancellation.appointmentId) {
         await softCancelTrialAppointment(deferredCancellation.appointmentId);
+        await cancelGatewayOrders(gatewayCancels, {
+          op: "trial.patch.gateway-cancel",
+          appointmentId: deferredCancellation.appointmentId,
+        });
       }
       refund = await refundCancelledTrial({
         trialId,
@@ -1331,13 +1290,27 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     // paid since the read 409s instead of being cancelled on a stale view,
     // and the tombstone and refund read the committed row, not the pre-read.
     const lockId = existingTrial.appointmentId;
-    // Only the consultee reaches DELETE without privilege, so a privileged
-    // caller is acting on the consultant's behalf.
+    // Anyone but the learner cancels on the consultant's side, so the learner
+    // is refunded in full (`consultantInitiatedPct`). Only the trial's own
+    // expert cancelling a confirmed trial earns a strike; an operator does not.
     const isConsultantInitiated =
       session.user.consulteeProfileId !== existingTrial.consulteeProfileId;
+    const isExpertCancel =
+      isConsultantInitiated &&
+      session.user.consultantProfileId === existingTrial.consultantProfileId &&
+      existingTrial.status === TrialStatus.SCHEDULED;
     const confirmedRefundPaise = await readConfirmedRefund(request);
+    let gatewayCancels: GatewayCancel[] = [];
     const cancelTrial = (owed: RefundOwedMarker | null) =>
       prisma.$transaction(async (tx) => {
+        // A held time's unpaid order dies first, in the capture's lock order
+        // (payment → trial); a captured payment is left to the quoted refund.
+        if (lockId) {
+          ({ gatewayCancels } = await expirePendingPaymentsInTx(tx, {
+            appointmentId: lockId,
+            reason: "trial cancelled before payment",
+          }));
+        }
         await transitionTrial(tx, {
           actorUserId: session.user.id,
           where: { id: trialId },
@@ -1347,7 +1320,28 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         const cancelled = await tx.trial.findUniqueOrThrow({
           where: { id: trialId },
         });
+        if (cancelled.appointmentId && isExpertCancel) {
+          const cancelledSessions = await tx.appointmentOccurrence.findMany({
+            where: {
+              appointmentId: cancelled.appointmentId,
+              ...LIVE_SLOT_WHERE,
+            },
+            select: { id: true },
+          });
+          await recordExpertStrike(tx, {
+            consultantProfileId: existingTrial.consultantProfileId,
+            cause: "EXPERT_CANCEL",
+            appointmentId: cancelled.appointmentId,
+            occurrenceIds: cancelledSessions.map((o) => o.id),
+            organizationId: cancelled.organizationId,
+          });
+        }
         if (cancelled.appointmentId) {
+          // An ending closes any open reschedule, freeing its reservation.
+          await declineOpenReschedules(tx, cancelled.appointmentId, {
+            actorUserId: session.user.id,
+            reason: "trial cancelled",
+          });
           await softCancelTrialAppointmentInTx(tx, cancelled.appointmentId);
         }
         // The confirmed refund commits with the cancel, so a death before the
@@ -1382,6 +1376,10 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     } = lockId
       ? await withAppointmentLock(lockId, quoteThenCancel)
       : await quoteThenCancel();
+    await cancelGatewayOrders(gatewayCancels, {
+      op: "trial.delete.gateway-cancel",
+      appointmentId: lockId ?? trialId,
+    });
 
     const refund = await refundCancelledTrial({
       trialId,
@@ -1389,6 +1387,24 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       quote,
       owed,
     });
+    // The learner hears "refunded" only once the money actually moved.
+    if (
+      isConsultantInitiated &&
+      refund &&
+      !refund.failed &&
+      refund.amountRefundedPaise > 0
+    ) {
+      const refundedBell = await stageTrialRefundedBell(prisma, {
+        id: trialId,
+        consulteeUserId: existingTrial.consulteeProfile.user.id,
+        planTitle: existingTrial.subscriptionPlan.title,
+        consultantName: existingTrial.consultantProfile.user.name,
+      }).catch(() => undefined);
+      await flushNotificationsAfter(
+        { bells: [refundedBell] },
+        "trial.refunded",
+      );
+    }
 
     const userIds = [
       existingTrial.consultantProfile.user.id,
