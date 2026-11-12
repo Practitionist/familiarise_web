@@ -65,6 +65,18 @@ async function leavesRefundable(paymentId: string): Promise<boolean> {
   }
 }
 
+/** A refund with no amount returns the whole balance and ends the seat; only an explicit amount reads what is left. */
+async function keepsSeat(input: {
+  paymentId: string;
+  amountPaise?: number;
+  keepSeat?: boolean;
+  keepSeatIfPartial?: boolean;
+}): Promise<boolean> {
+  if (input.keepSeat) return true;
+  if (!input.keepSeatIfPartial || input.amountPaise === undefined) return false;
+  return leavesRefundable(input.paymentId);
+}
+
 async function markParticipantsRefunded(paymentId: string): Promise<void> {
   try {
     await transitionParticipant(prisma, { paymentId }, "REFUNDED");
@@ -296,7 +308,7 @@ async function refundBookingPaymentOnRail(
      * seat live; every other refund marks the funded seat REFUNDED.
      */
     keepSeat?: boolean;
-    /** The seat stays live only while this refund leaves part of the payment refundable. */
+    /** An explicit amount keeps the seat live only while part of the payment stays refundable; no amount ends it. */
     keepSeatIfPartial?: boolean;
   } & OwedMarkerInput,
 ): Promise<RailOutcome> {
@@ -335,9 +347,7 @@ async function refundBookingPaymentOnRail(
   if (!isInternalFundedIntent(payment.paymentIntent)) {
     const r = await refundPayment(input);
     // The seat is stamped REFUNDED after the gateway refund committed, by the caller.
-    const endsSeat =
-      !input.keepSeat &&
-      !(input.keepSeatIfPartial && (await leavesRefundable(input.paymentId)));
+    const endsSeat = !(await keepsSeat(input));
     return {
       result: {
         refundId: r.refundId,
@@ -357,11 +367,8 @@ async function refundBookingPaymentOnRail(
     decided = internal.endsSeat;
     return internal.result;
   });
-  // A key already spent answers without the transaction, so the balance decides, as on the gateway rail.
-  const endsSeat =
-    decided ??
-    (!input.keepSeat &&
-      !(input.keepSeatIfPartial && (await leavesRefundable(input.paymentId))));
+  // A key already spent answers without the transaction, so the seat is decided as on the gateway rail.
+  const endsSeat = decided ?? !(await keepsSeat(input));
   return { result, payerUserId, endsSeat };
 }
 

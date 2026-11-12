@@ -355,6 +355,10 @@ Options not chosen for the retry policy:
 - **Keep the six-attempt cap for every kind and only list the abandoned rows.** Rejected: the person keeps chat and call access until a human reads the list and acts, which is the failure this ADR exists to prevent.
 - **Apply no-give-up to every kind.** Not chosen, because the owner named three kinds. `COLLAB_REVOKE`, `ORG_REVOKE`, `DM_REMOVE` and `EVENT_CHANNEL_REMOVE` still give up after six attempts (about 11 hours of backoff) with one Sentry error, and the sweep does not re-drive a given-up row of those kinds; the daily reconciler is their only backstop, and it covers event and collaborator channels but not DMs or organisation calls.
 
+How a refund ends a seat's access:
+
+- **A refund with no amount always ends the seat.** Only the two admin refund doors pass `keepSeatIfPartial`, and for them a refund given no amount means "refund everything", so `refundBookingPayment` ends the seat without reading the remaining balance. A refund given an explicit amount still reads the balance (inside the transaction on the internal rail, after the commit on the gateway rail) and keeps the seat while any of the payment stays refundable, so an unreadable balance keeps the seat only for an explicit amount. Options not chosen: write the revocation intent anyway and let the drive re-check the balance, which would teach the drive the partial rule; or record an unreadable balance on a full refund as a known limit, which leaves a fully refunded buyer with live chat and room access.
+
 ### Consequences
 
 - A user can keep access for the time between a failed removal and its retry, at most hours in the normal case, but the cancellation itself is never blocked by a Stream outage.
