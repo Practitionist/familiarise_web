@@ -628,6 +628,37 @@ describe("Reschedule Route Handler - POST", () => {
     expect(body.error).toContain("24 hours");
   });
 
+  it("refuses a session exactly 24 hours away: isTooSoonFor draws the one boundary", async () => {
+    // Only the clock is frozen; timers and microtasks run for real.
+    jest.useFakeTimers({
+      doNotFake: [
+        "nextTick",
+        "setImmediate",
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        "queueMicrotask",
+      ],
+    });
+    const now = Date.now();
+    jest.setSystemTime(now);
+    try {
+      const appointment = makeConsultationAppointment({
+        occurrences: [makeSlot("slot-1", new Date(now + 24 * 60 * 60 * 1000))],
+      });
+      mockTx.appointment.findUnique.mockResolvedValue(appointment);
+
+      const req = makeRescheduleRequest("apt-1", "CONSULTATION");
+      const res = await rescheduleHandler(req, makeParams("apt-1"));
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("RESCHEDULE_WINDOW");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("should enforce 24-hour restriction even if only one of multiple slots is near", async () => {
     const appointment = makeSubscriptionAppointment({
       occurrences: [

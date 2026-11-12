@@ -61,13 +61,19 @@ describe("no consultee door returns a session inside 24 h", () => {
     const src = read(
       "app/api/appointments/[appointmentId]/reschedule/route.ts",
     );
-    const gate = src.indexOf("hoursUntilSlot < RESCHEDULE_MIN_LEAD_HOURS");
+    const gate = src.indexOf(
+      "const startMs = new Date(slot.startsAt).getTime();",
+    );
     expect(gate).toBeGreaterThan(-1);
     // The gate loops over every slot being released, for consultee and expert alike.
     expect(src.slice(gate - 400, gate)).toContain(
       "for (const slot of slotsToReschedule)",
     );
-    expect(src.slice(gate, gate + 200)).toContain("ReschedulePolicyError");
+    // One boundary: the shared lead-time predicate decides, then the typed refusal.
+    const after = src.slice(gate, gate + 500);
+    expect(after).toContain("isTooSoonFor(");
+    expect(after).toContain('"reschedule"');
+    expect(after).toContain("ReschedulePolicyError");
   });
 
   it("offers no single-session cancel on a subscription", () => {
