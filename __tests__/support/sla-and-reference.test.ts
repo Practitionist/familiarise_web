@@ -157,10 +157,24 @@ describe("the resolution clock pauses while we are waiting on the user", () => {
 });
 
 describe("reopen", () => {
-  const resolvedCase = (statutoryDueAt: Date | null) => ({
+  const resolvedCase = (
+    statutoryDueAt: Date | null,
+    acknowledgedAt: Date | null = T0,
+  ) => ({
     resolvedAt: new Date(T0.getTime() + 2 * DAY),
+    acknowledgedAt,
     activeChannel: "HUMAN",
     statutoryDueAt,
+  });
+
+  it("restarts the first-reply deadline only for a case nobody replied to", () => {
+    const reopenedAt = new Date(T0.getTime() + 9 * DAY);
+    expect(
+      reopenedClockPatch(resolvedCase(null, null), "HIGH", reopenedAt).ackDueAt,
+    ).toEqual(new Date(reopenedAt.getTime() + 8 * HOUR));
+    expect(
+      reopenedClockPatch(resolvedCase(null), "HIGH", reopenedAt),
+    ).not.toHaveProperty("ackDueAt");
   });
 
   it("caps the new target at a statutory date that is still ahead", () => {

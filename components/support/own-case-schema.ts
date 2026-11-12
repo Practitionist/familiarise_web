@@ -15,6 +15,7 @@ export const OwnTicketCaseSchema: z.ZodType<OwnTicketCase> = z.object({
   topic: z.enum(CASE_TOPICS),
   status: z.string(),
   ackDueAt: z.string().nullish(),
+  acknowledgedAt: z.string().nullish(),
   resolvedAt: z.string().nullish(),
   csatRating: z.number().nullish(),
   createdAt: z.string(),

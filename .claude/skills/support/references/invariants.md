@@ -28,7 +28,7 @@ Full table with explanations: `docs/support/11-schema-and-invariants.md`. Before
 | Allowed status moves and actors                                        | `assertCaseTransition()` / `CASE_TRANSITIONS`                                                    |
 | Explicit reopen only, requester/submitter, undecided, 14 days          | `reopenRefusalTx()`                                                                              |
 | A reopen restarts the resolution clock; ack and statutory untouched    | `reopenedClockPatch()`                                                                           |
-| A resolution SLA notice is keyed by its deadline                       | `slaNoticeKey()`                                                                                 |
+| An SLA notice is keyed by its deadline                                 | `slaNoticeKey()`                                                                                 |
 | Compare-and-set on `updatedAt`; staff reply vs unseen customer message | `executePatchLifecycleTx()`, `advanceAgentPublicTurnState()` (`NEW_CUSTOMER_MESSAGE`)            |
 | Channel never leaves HUMAN                                             | no writer sets another value — keep it so                                                        |
 | Decision fits case; matches money; no open recommendation              | `assertDecisionFitsCase()`, `assertDecisionMatchesMoney()`, `assertNoOpenRecommendation()`       |

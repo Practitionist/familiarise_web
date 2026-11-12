@@ -366,6 +366,35 @@ describe("staff lifecycle patch", () => {
     expect(eventKinds()).toEqual(["REOPENED"]);
   });
 
+  it.each([
+    ["customer", null, true],
+    ["customer", now, false],
+    ["staff", null, true],
+    ["staff", now, false],
+  ])(
+    "a %s reopen restarts the first-reply deadline only when nobody replied (acknowledgedAt %s)",
+    async (path, acknowledgedAt, restarts) => {
+      db.supportCase.findUnique.mockResolvedValueOnce(
+        resolved({ acknowledgedAt }) as never,
+      );
+      db.supportCase.findUniqueOrThrow.mockResolvedValueOnce(
+        record({ status: "OPEN" }) as never,
+      );
+      if (path === "customer") {
+        await appendSupportCaseTurn(reply({ reopen: true }), now);
+      } else {
+        await patchSupportCaseLifecycle(patch({ status: "OPEN" }), now);
+      }
+      const data = db.supportCase.updateMany.mock.calls
+        .map(([args]) => args.data as Record<string, unknown>)
+        .find((d) => "reopenedAt" in d);
+      // MEDIUM owes a first reply within 24 hours of the reopen.
+      expect(data?.ackDueAt).toEqual(
+        restarts ? new Date(now.getTime() + DAY) : undefined,
+      );
+    },
+  );
+
   it("refuses a move the table forbids", async () => {
     db.supportCase.findUnique.mockResolvedValueOnce(
       record({ status: "CLOSED", closedAt: now }) as never,

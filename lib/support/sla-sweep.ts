@@ -189,15 +189,19 @@ function stagedSlaKeys(
   return keys;
 }
 
-/** A resolution notice is keyed by the deadline it was raised for, so a reopen's new deadline is noticed again. */
+/** A notice is keyed by the deadline it was raised for, so a restarted or tightened deadline is noticed again. */
 function slaNoticeKey(
-  row: Pick<SlaSweepCandidate, "id" | "resolutionDueAt" | "statutoryDueAt">,
+  row: Pick<
+    SlaSweepCandidate,
+    "id" | "ackDueAt" | "resolutionDueAt" | "statutoryDueAt"
+  >,
   notice: { kind: SlaNoticeKind; level: SlaNoticeLevel },
 ): string {
-  const base = `sla:${row.id}:${notice.kind}:${notice.level}`;
-  if (notice.kind === "ack") return base;
-  const due = row.resolutionDueAt ?? row.statutoryDueAt ?? null;
-  return `${base}:${due ? due.getTime() : "none"}`;
+  const due =
+    notice.kind === "ack"
+      ? row.ackDueAt
+      : (row.resolutionDueAt ?? row.statutoryDueAt ?? null);
+  return `sla:${row.id}:${notice.kind}:${notice.level}:${due ? due.getTime() : "none"}`;
 }
 
 /**

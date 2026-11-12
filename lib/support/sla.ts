@@ -54,27 +54,34 @@ export function slaDeadlinesFor(
 
 /**
  * A reopen restarts the resolution clock from `now` at the case's priority, no later than a
- * statutory date still ahead, drops the banked pause and stamps `reopenedAt`; acknowledgement
- * and `statutoryDueAt` stand.
+ * statutory date still ahead, drops the banked pause and stamps `reopenedAt`. A case nobody
+ * has replied to also restarts its first-reply deadline; `statutoryDueAt` stands.
  */
 export function reopenedClockPatch(
   existing: {
     resolvedAt: Date | null;
+    acknowledgedAt: Date | null;
     activeChannel: string;
     statutoryDueAt: Date | null;
   },
   priority: SupportPriority,
   now: Date,
-): { resolutionDueAt?: Date; pausedSeconds?: number; reopenedAt?: Date } {
+): {
+  ackDueAt?: Date;
+  resolutionDueAt?: Date;
+  pausedSeconds?: number;
+  reopenedAt?: Date;
+} {
   if (!existing.resolvedAt || existing.activeChannel !== "HUMAN") return {};
-  const target = slaDeadlinesFor(priority, now).resolutionDueAt;
+  const target = slaDeadlinesFor(priority, now);
   const statutory = existing.statutoryDueAt;
   const capped =
     statutory !== null &&
     statutory.getTime() > now.getTime() &&
-    statutory.getTime() < target.getTime();
+    statutory.getTime() < target.resolutionDueAt.getTime();
   return {
-    resolutionDueAt: capped ? statutory : target,
+    ...(existing.acknowledgedAt ? {} : { ackDueAt: target.ackDueAt }),
+    resolutionDueAt: capped ? statutory : target.resolutionDueAt,
     pausedSeconds: 0,
     reopenedAt: now,
   };
