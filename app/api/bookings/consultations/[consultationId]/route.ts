@@ -22,6 +22,7 @@ import {
   APPROVAL_LOCK_TTL_MS,
   ApprovalLockLostError,
   type ApprovalLock,
+  BookingLockUnavailableError,
   lockConsultationApproval,
   renewApprovalLock,
   unlockApproval,
@@ -295,13 +296,16 @@ export async function PATCH(
           APPROVAL_LOCK_TTL_MS,
         ); // #1319 — must outlive the 30 s tx
       } catch (error) {
-        return NextResponse.json(
-          {
-            error:
-              error instanceof Error ? error.message : "Failed to acquire lock",
-          },
-          { status: 409 }, // Conflict - another approval in progress
-        );
+        // A lock-service outage is a 503; every other failure the approval
+        // lock raises is contention with another approval.
+        if (error instanceof BookingLockUnavailableError) {
+          return NextResponse.json(
+            { error: error.message, code: error.code },
+            { status: error.httpStatus },
+          );
+        }
+        if (!(error instanceof Error)) throw error;
+        return NextResponse.json({ error: error.message }, { status: 409 });
       }
     }
 
