@@ -8,6 +8,8 @@
  *  - a click made on an unpaid screen never cancels a booking that has since
  *    been paid, and a retired payment never reads as a capture.
  */
+import "./harness-cancel-route";
+import { sessionUser } from "./harness-session";
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import prisma from "../../../lib/prisma";
@@ -75,23 +77,6 @@ jest.mock("../../../lib/booking/pending-payment-expiry", () => {
     },
   };
 });
-
-const sessionUser = { current: null as null | Record<string, unknown> };
-jest.mock("../../../lib/auth-helpers", () => ({
-  ...jest.requireActual("../../../lib/auth-helpers"),
-  requireApiAuth: async () => ({ session: { user: sessionUser.current } }),
-  isPrivileged: () => false,
-}));
-jest.mock("../../../lib/rate-limit", () =>
-  jest.requireActual("./harness-edges").rateLimitMock(),
-);
-// Every bell is a no-op: notifications are outside the race under test.
-jest.mock("../../../lib/novu", () =>
-  jest.requireActual("../../fixtures/noop-module").noopModule(),
-);
-jest.mock("../../../lib/stream/access-revocation", () =>
-  jest.requireActual("./harness-edges").chatRevocationMock(),
-);
 
 import { POST as cancel } from "../../../app/api/appointments/[appointmentId]/cancel/route";
 import { handlePaymentSuccess } from "../../../lib/payments/webhooks/handlers";

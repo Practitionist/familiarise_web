@@ -5,26 +5,12 @@
  * session far ahead. The shorter notice they gave when moving it is the notice
  * that prices the cancel.
  */
+import "./harness-cancel-route";
+import { sessionUser } from "./harness-session";
 import { NextRequest } from "next/server";
 import prisma from "../../../lib/prisma";
 import { HOUR_MS, seedConsultee, seedHost, seedOneToOne } from "./harness";
 import { publishEveryHour } from "./harness-host";
-
-const sessionUser = { current: null as null | Record<string, unknown> };
-jest.mock("../../../lib/auth-helpers", () => ({
-  ...jest.requireActual("../../../lib/auth-helpers"),
-  requireApiAuth: async () => ({ session: { user: sessionUser.current } }),
-  isPrivileged: () => false,
-}));
-jest.mock("../../../lib/rate-limit", () =>
-  jest.requireActual("./harness-edges").rateLimitMock(),
-);
-jest.mock("../../../lib/novu", () =>
-  jest.requireActual("../../fixtures/noop-module").noopModule(),
-);
-jest.mock("../../../lib/stream/access-revocation", () =>
-  jest.requireActual("./harness-edges").chatRevocationMock(),
-);
 
 import { POST as reschedule } from "../../../app/api/appointments/[appointmentId]/reschedule/route";
 import { POST as cancel } from "../../../app/api/appointments/[appointmentId]/cancel/route";
