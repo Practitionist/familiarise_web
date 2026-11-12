@@ -66,15 +66,12 @@ jest.mock("../../../lib/payments/operations/refund", () => {
     },
   );
 });
-jest.mock("../../../lib/stream/access-revocation", () => ({
-  revokeEndedSeatAccess: jest.fn(async () => undefined),
-  persistSeatRevocation: jest.fn(async () => undefined),
-  persistSeatRevocationInTx: jest.fn(async () => null),
-}));
-jest.mock("../../../lib/rate-limit", () => ({
-  ...jest.requireActual("../../../lib/rate-limit"),
-  applyRateLimit: async () => null,
-}));
+jest.mock("../../../lib/stream/access-revocation", () =>
+  jest.requireActual("./harness-edges").chatRevocationMock(),
+);
+jest.mock("../../../lib/rate-limit", () =>
+  jest.requireActual("./harness-edges").rateLimitMock(),
+);
 
 import { PATCH as patchConsultation } from "../../../app/api/bookings/consultations/[consultationId]/route";
 import { mintApprovalPaymentAfterCommit } from "../../../lib/booking/approve-request";

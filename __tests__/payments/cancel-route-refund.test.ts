@@ -75,11 +75,7 @@ const txStub = {
   systemEvent: { create: jest.fn().mockResolvedValue({}) },
   // #1851 decision 2 — an act-for-org cancel writes the org's audit row.
   orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
-  // The consultee's seat revocation commits with the cancel.
-  streamRevocationRetry: {
-    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-    createMany: jest.fn().mockResolvedValue({ count: 1 }),
-  },
+  streamRevocationRetry: createMockRevocationRetryTable(),
   // transitionOccurrenceCompletion reads the from-status, then moves the cohort with
   // updateManyAndReturn so each moved id gets its own history row.
   appointmentOccurrence: {
@@ -197,6 +193,7 @@ jest.mock("../../lib/enterprise/system-events", () => {
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
 import { RefundGatewayError } from "@/lib/payments/operations/refund";
 import { grantPlatformCancel } from "@/lib/booking/platform-cancel";
+import { createMockRevocationRetryTable } from "../fixtures/stream-mocks";
 
 const HOUR = 3_600_000;
 const APPT = "appt-1";

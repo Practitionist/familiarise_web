@@ -16,22 +16,15 @@ jest.mock("../../../lib/auth-helpers", () => ({
   requireApiAuth: async () => ({ session: { user: sessionUser.current } }),
   isPrivileged: () => false,
 }));
-jest.mock("../../../lib/rate-limit", () => ({
-  ...jest.requireActual("../../../lib/rate-limit"),
-  applyRateLimit: async () => null,
-}));
-jest.mock("../../../lib/novu", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
-jest.mock("../../../lib/stream/access-revocation", () => ({
-  revokeEndedSeatAccess: jest.fn(async () => undefined),
-  persistSeatRevocation: jest.fn(async () => undefined),
-  persistSeatRevocationInTx: jest.fn(async () => null),
-}));
+jest.mock("../../../lib/rate-limit", () =>
+  jest.requireActual("./harness-edges").rateLimitMock(),
+);
+jest.mock("../../../lib/novu", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
+jest.mock("../../../lib/stream/access-revocation", () =>
+  jest.requireActual("./harness-edges").chatRevocationMock(),
+);
 
 import { POST as reschedule } from "../../../app/api/appointments/[appointmentId]/reschedule/route";
 import { POST as cancel } from "../../../app/api/appointments/[appointmentId]/cancel/route";
