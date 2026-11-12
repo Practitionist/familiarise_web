@@ -57,7 +57,8 @@ const PROBLEM_CASCADE_CAP = 10;
 const EVIDENCE_PURGE_CAP = 5;
 // Each chat-access step is a Stream round trip or a short transaction per row.
 const CHAT_ACCESS_CAP = 10;
-// Pages of `limit` SLA candidates one run may read; the start budget usually ends it first.
+// One run reads at most SLA_SCAN_PAGE_CAP pages of SLA_SCAN_PAGE_SIZE candidates, from the lowest id.
+const SLA_SCAN_PAGE_SIZE = 200;
 const SLA_SCAN_PAGE_CAP = 10;
 
 type SlaNoticeKind = "ack" | "res";
@@ -262,8 +263,8 @@ async function fetchSlaSweepCandidates(
 }
 
 /**
- * Pages candidates by id until `limit` notices are staged, the candidates run out,
- * or the sweep's start budget is spent; a matched row that fires nothing never holds the head.
+ * Pages candidates by id until `limit` notices are staged, the candidates run out, the
+ * start budget is spent or the page cap is reached. Every run starts from the lowest id.
  */
 async function stageSlaNotices(
   now: Date,
@@ -278,7 +279,11 @@ async function stageSlaNotices(
   let afterId: string | null = null;
   for (let page = 0; page < SLA_SCAN_PAGE_CAP; page++) {
     if (Date.now() - startedAt >= AUTO_CLOSE_START_BUDGET_MS) break;
-    const rows = await fetchSlaSweepCandidates(now, limit, afterId);
+    const rows = await fetchSlaSweepCandidates(
+      now,
+      SLA_SCAN_PAGE_SIZE,
+      afterId,
+    );
     out.scanned += rows.length;
     for (const row of rows) {
       if (out.staged >= limit) return out;
@@ -293,7 +298,7 @@ async function stageSlaNotices(
       out.staged += r.staged;
       out.orgEmails += r.orgEmails;
     }
-    if (rows.length < limit) break;
+    if (rows.length < SLA_SCAN_PAGE_SIZE) break;
     afterId = rows[rows.length - 1].id;
   }
   return out;

@@ -167,8 +167,11 @@ it("pages by id past matched rows that fire nothing to reach a real breach", asy
     organization: null,
   });
   // Raw deadline passed, but banked pause moves the effective deadline two days out.
+  const silentPage = Array.from({ length: 200 }, (_, i) =>
+    row(`a${String(i).padStart(3, "0")}`, 172_800),
+  );
   db.supportCase.findMany
-    .mockResolvedValueOnce([row("a", 172_800), row("b", 172_800)] as never)
+    .mockResolvedValueOnce(silentPage as never)
     .mockResolvedValueOnce([row("c", 0)] as never);
   db.user.findMany.mockResolvedValueOnce([
     { id: "op", email: "op@example.test", name: null, role: "STAFF" },
@@ -179,8 +182,8 @@ it("pages by id past matched rows that fire nothing to reach a real breach", asy
   const result = await runSupportSlaSweep({ now, limit: 2 });
 
   expect(db.supportCase.findMany.mock.calls[1][0]).toMatchObject({
-    where: { AND: [expect.any(Object), { id: { gt: "b" } }] },
+    where: { AND: [expect.any(Object), { id: { gt: "a199" } }] },
     orderBy: { id: "asc" },
   });
-  expect(result).toMatchObject({ scanned: 3, slaNoticesStaged: 1 });
+  expect(result).toMatchObject({ scanned: 201, slaNoticesStaged: 1 });
 });

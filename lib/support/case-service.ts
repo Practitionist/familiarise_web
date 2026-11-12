@@ -857,7 +857,13 @@ async function advanceUserTurnState(
       status: existingCase.status,
       awaitingUserSince: existingCase.awaitingUserSince,
       pausedSeconds: existingCase.pausedSeconds,
-      ...(reopening ? { resolvedAt: existingCase.resolvedAt } : {}),
+      // A reopen dates its new deadline from the priority it read.
+      ...(reopening
+        ? {
+            resolvedAt: existingCase.resolvedAt,
+            priority: existingCase.priority,
+          }
+        : {}),
     },
     data: {
       messageSeq: { increment: 1 },
