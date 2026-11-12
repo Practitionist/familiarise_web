@@ -6,13 +6,13 @@
 
 ## SW-33 — DEGRADED holds the money jobs and lets the calendar jobs run (owner drill) `[sweep]`
 
-**Why it matters:** salvaged from old 008; a half-frozen system must not refund or release money, but sessions still end and reminders still go.
+**Why it matters:** salvaged from old 008; a half-frozen system must not refund or release money, and reminders still go. `auto-complete-appointments` records refund obligations at class end, so it is a financial job (`FINANCIAL_JOB_NAMES`) with a fail-closed lock: the whole job, ordinary completions and earnings-hold stamping included, pauses.
 
 **Setup (before the owner's DEGRADED window):** a QA class about to end with a never-placed session (SW-24 shape), a QA owed marker (MO-56 shape), a QA earning past its hold (SW-29 E1), a QA booking starting in 24 h + 5 min.
 
 **Steps (owner, during DEGRADED):** trigger `auto-complete-appointments`, `appointment-reminders`, `retry-auto-refunds`, `release-earnings`, `abandoned-payments`. After thaw, trigger the catch-up list from `docs/maintenance/07-post-maintenance-recovery.md` §4 in its order.
 
-**Expect:** during DEGRADED: auto-complete completes the class and **stamps** the class-end markers; reminders send; the three financial jobs refuse ("Maintenance mode is DEGRADED — <job> is a financial job and is unavailable until maintenance ends"), touching nothing. After thaw: the markers drive once, the earning releases once, the reminder isn't re-sent. Run records show the refusals and the later successes.
+**Expect:** during DEGRADED: reminders send; `auto-complete-appointments`, `retry-auto-refunds`, `release-earnings` and `abandoned-payments` refuse ("Maintenance mode is DEGRADED — <job> is a financial job and is unavailable until maintenance ends"), touching nothing. After thaw: `auto-complete-appointments` completes the class in its own short transaction (6 s) and stamps every seat's class-end marker with the flip (no class starts after 8 s of the run; a class not reached waits for the next run), its run record reports the slot tally and the class-end stamps, the markers drive once, the earning releases once, the reminder isn't re-sent. Run records show the refusals and the later successes.
 
 ```sql
 SELECT "jobName", status, "startedAt", "itemsProcessed", "errorLog" FROM "SystemJobExecution"

@@ -146,14 +146,14 @@ Refund arithmetic in depth (GST credit notes, earnings reversal across collabora
 
 **Expect:**
 
-- Step 1: the picker labels H2's own calendar only, so Y probably reads **Free** (record it).
+- Step 1: the picker sends the event, so accepted co-hosts' busy time and hours are folded in and H2's own appointment is left out: Y reads **Busy** because of H3's webinar (record the label). A picker that reads Y **Free** is a **BUG** (P2).
 - Step 2: 409 `SCHEDULE_CONFLICT`, "That time conflicts with another confirmed session on your calendar."
 - Step 3: 409 "Co-host(s) unavailable at the selected time: James Anderson" (no `code`).
 
 **Probe further:**
 
 - Step 2's copy says "your calendar"; the clash is H3's. **FALSE-INFO** (P2): H2 will look at their own calendar and find nothing.
-- The picker offers a time the server refuses. **MISSED-OPPORTUNITY**: label co-host clashes too.
+- If the picker names the cause as H2's own calendar rather than a co-host's, record it as **COPY** (P3); an unlabelled co-host clash is a **MISSED-OPPORTUNITY**.
 
 ## WE-52 — A pending co-host doesn't constrain the calendar
 

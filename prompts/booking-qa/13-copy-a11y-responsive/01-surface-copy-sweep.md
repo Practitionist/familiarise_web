@@ -85,7 +85,7 @@ Quote every finding verbatim with its route and the element.
 
 **Expect:** one name for each action across the menu, the panel, the dialog title, the toast, the API refusal and the bell.
 
-**Probe further:** the stop panel and `USE_RETIME` say "Re-time"; the menu says "Move to a new date"; the series action is "Move upcoming sessions"; the editor refusal says "Use the reschedule workflow instead" (WE-32). The pattern scheduler says a busy co-host clashes "with your calendar". Collect them in UX-14.
+**Probe further:** the stop panel and the `USE_RETIME` refusal sentences now name the real button ("Move to a new date" for a webinar, "Move upcoming sessions" for a class); only the toast title still says "use Re-time"; the editor refusal says "Use the reschedule workflow instead" (WE-32). The pattern scheduler says a busy co-host clashes "with your calendar". Collect them in UX-14.
 
 ## UX-08 — Availability editor
 

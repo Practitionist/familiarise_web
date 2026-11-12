@@ -55,10 +55,10 @@ SCHEDULED]` — which bookings may open a reschedule.
 | ------------- | ------------------------------------------------------------------ | ------------------------------- | ----------- | --------- | --------- |
 | **SCHEDULED** | — (publishing is its own edge: `EVENT_PUBLISHABLE_FROM = [DRAFT]`) | ✓ self (re-allocation re-stamp) | ✓           |           |           |
 | **COMPLETED** |                                                                    | ✓                               | ✓           |           |           |
-| **CANCELLED** |                                                                    | ✓                               | ✓           |           |           |
+| **CANCELLED** | ✓ (a draft with placed sessions is cancellable)                    | ✓                               | ✓           |           |           |
 
 DRAFT keeps its status through allocation (B2/#1060): "add a session, then
-publish" is the editor flow.
+publish" is the editor flow. A draft is cancellable (`DRAFT → CANCELLED`) so a host with placed sessions is never stuck with it; `SCHEDULED` stays unreachable from `DRAFT` except by publishing, because a reschedule re-stamp must never publish an offering as a side effect.
 
 No route other than the transition helpers writes an event status. The webinar and class `PUT` bodies are parsed by a Zod schema (`schemas/event-instance.ts`), and a body carrying `status` is refused with 409 `USE_CANCEL_ROUTE`, so cancelling always goes through the cancel route, which refunds and writes history. The allocator's own status writes go through `transitionWebinarEvent` and `transitionClassEvent`, which write history rows.
 
@@ -68,7 +68,7 @@ A class batch's enrolment state is derived, not stored, by `classEnrolmentFrom` 
 
 ## Trials
 
-`TrialStatus`, guarded by `TRIAL_ALLOWED_FROM` through `transitionTrial`. The learner picks the time at request (`bookTrialInTx`): the row is created `PENDING` and moved in the same transaction to `SCHEDULED` (free) or `AWAITING_PAYMENT` (paid, holding a tentative session), and the capture webhook moves `AWAITING_PAYMENT → SCHEDULED`. A reschedule leaves the trial `SCHEDULED` and moves only its session; trial `DELETE` is the one door from `SCHEDULED` to `CANCELLED`. A `PENDING` trial without a time is scheduled by the consultant with `paymentId` not null repeated in the CAS WHERE for a paid one. A paid `PENDING` trial the consultant never answers moves `PENDING → CANCELLED` after 48 hours with the history reason `TRIAL_UNANSWERED` and is refunded in full; an unpaid trial past its pay window moves from `PENDING` or `AWAITING_PAYMENT` to `CANCELLED` with `paymentId` null repeated in the CAS WHERE, and no money moves.
+`TrialStatus`, guarded by `TRIAL_ALLOWED_FROM` through `transitionTrial`. The learner picks the time at request (`bookTrialInTx`): the row is created `PENDING` and moved in the same transaction to `SCHEDULED` (free) or `AWAITING_PAYMENT` (paid, holding a tentative session), and the capture webhook moves `AWAITING_PAYMENT → SCHEDULED`. A reschedule leaves the trial `SCHEDULED` and moves only its session (a booking with a live `PENDING` payment cannot be rescheduled, 409 `PAY_LINK_LIVE`); every door that ends a held trial (`DELETE`, the `PATCH` cancel and decline, the expire-unpaid-trials sweep) expires its `PENDING` payment in the same transaction before the trial moves; trial `DELETE` is the one door from `SCHEDULED` to `CANCELLED`. A `PENDING` trial without a time is scheduled by the consultant with `paymentId` not null repeated in the CAS WHERE for a paid one. A paid `PENDING` trial the consultant never answers moves `PENDING → CANCELLED` after 48 hours with the history reason `TRIAL_UNANSWERED` and is refunded in full; an unpaid trial past its pay window moves from `PENDING` or `AWAITING_PAYMENT` to `CANCELLED` with `paymentId` null repeated in the CAS WHERE, and no money moves.
 
 ## Class sessions the host cancels (#1780 row 4)
 

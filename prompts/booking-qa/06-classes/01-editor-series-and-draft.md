@@ -52,7 +52,7 @@ After every save: R-02 for the host, R-03 for the class appointment, R-05.
 
 ## CL-03 — A start date in the past or off the half hour
 
-**Why it matters:** the class POST has no future or lattice check on `startDate`.
+**Why it matters:** the class POST refuses, before any write, a `startDate` that is off the UTC half-hour grid, less than an hour ahead, or unable to place every session (400 `EVENT_TIME_INVALID`).
 
 **Steps (via `evaluate_script`, copying the `qa-CL-01` body):**
 
@@ -65,10 +65,11 @@ After every save: R-02 for the host, R-03 for the class appointment, R-05.
 **Expect:**
 
 - 3–5 → 400 "Invalid input" with the cadence messages ("Sessions per week must be a whole number", "Session duration must be in 30-minute increments", "At least one session per week is required"). Never 500.
-- 1 → per decision 2 a class time must be ahead; record what happens. If the route creates a SCHEDULED class with sessions in the past, report **BUG** (P1).
-- 2 → every start is off the lattice, so `seriesStartsFrom` skips them all. Record: is it 400, or a SCHEDULED class with **zero** sessions? A published class with no sessions is **BUG** (P1).
+- 1 → 400 `EVENT_TIME_INVALID`, "Pick a start time at least 1 hour from now." Nothing is written. If the route creates a SCHEDULED class with sessions in the past, report **BUG** (P1).
+- 2 → 400 `EVENT_TIME_INVALID`, "Pick a start time on the hour or half hour." Nothing is written. A published class with no sessions is **BUG** (P1).
+- Also send a start that is valid but cannot place every session (for example a start whose series includes a wall time the clocks skip, so one session falls off the grid): 400 `EVENT_TIME_INVALID`, "That start can't place all N sessions. Pick a different day or time."
 
-**Probe further:** in the editor UI, can H2 type 18:10? (`datetime-local` allows any minute.)
+**Probe further:** in the editor UI, type 18:10 as H2: the editor rounds a class start up to the half-hour grid before it sends (18:30), so the API refusal is reachable only by a hand-made request. Record whether the rounding is shown to the host.
 
 ## CL-04 — A daylight-saving change keeps the wall time
 
@@ -94,9 +95,9 @@ After every save: R-02 for the host, R-03 for the class appointment, R-05.
 1. As H4 (Asia/Kathmandu; browser in Kathmandu if you can emulate it), new class `qa-CL-05`: 2/week, 1 month, 60 min, Start date next Monday 10:15. Publish.
 2. Repeat with 10:00.
 
-**Expect:** 10:15 → 8 sessions at 04:30Z (10:15 local). 10:00 → off the lattice (04:15Z); expect a refusal or zero sessions (see CL-03).
+**Expect:** 10:15 → 8 sessions at 04:30Z (10:15 local). 10:00 (04:15Z) typed in the editor is rounded up to 04:30Z (10:15 local) before it is sent; sent by hand it answers 400 `EVENT_TIME_INVALID` (see CL-03).
 
-**Probe further:** nothing in the editor tells a Kathmandu host to use :15/:45. Pair this with CL-17 (the pattern scheduler can't offer :15/:45 at all).
+**Probe further:** nothing in the editor tells a Kathmandu host to use :15/:45, though the pattern scheduler now offers only those (CL-17). Record whether the editor says why 10:00 became 10:15.
 
 ## CL-06 — Totals follow sessions a week × months × 4
 

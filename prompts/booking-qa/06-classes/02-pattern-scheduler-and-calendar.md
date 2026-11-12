@@ -73,18 +73,18 @@ Saving sends `PATCH /api/bookings/classes/[classId]/allocate` with `{ isAuto: fa
 
 **Probe further:** a class that runs faster finishes before its `schedulingPeriodEndsAt`; one that runs longer runs past it. Does anything else (checkout dates, batch card "Mondays") follow the real pattern?
 
-## CL-17 — Kathmandu host: no pattern can be scheduled
+## CL-17 — Kathmandu host: the scheduler offers :15 and :45
 
-**Why it matters:** the row times are :00/:30 **local**. In UTC+05:45 every such time is off the UTC lattice, and `projectPattern` skips off-lattice starts.
+**Why it matters:** the platform keeps the UTC half-hour grid, so in UTC+05:45 every legal start is :15 or :45 local. The scheduler lists only those times (`atomPhaseMinutes`, `startDatePhase`).
 
 **Steps:**
 
 1. As H4 (Asia/Kathmandu), open Manage timings for an unscheduled H4 class (create one without a start date).
-2. Read the time options in a row. Pick Mon 10:00. Read the preview and the Schedule button.
+2. Read the time options in a row and the default rows. Pick Mon 10:15. Read the preview and the Schedule button.
 
-**Expect (actual code):** time options only :00/:30; the preview shows "0 of 8 sessions" and "This pattern can't place all 8 sessions. Pick an earlier start or more days."; Schedule disabled. No choice of time ever works.
+**Expect:** time options are :15 and :45 only (the default rows read 18:15, not 18:00); Mon 10:15 previews all 8 sessions and Schedule is enabled; saving stores 04:30Z. A time that is not on the list is refused with "Pick each time from the list." (`OFF_GRID_TIME`).
 
-**Report:** **BUG** (P1 for any :45 zone; the scheduler is unusable) and **FALSE-INFO** (the shortfall copy blames the start date and days, not the zone). The ADR expected "Picking 10:15 local works"; there is no 10:15 option. Use **Use the calendar view instead** as the workaround and record whether the grid can place the class.
+**Report:** a missing 10:15 option, a default row at :00 or :30, or a disabled Schedule is a **BUG** (P1 for any :45 zone). Also open the calendar view as H4 and read the week grid's hour labels: each local hour's first row (:15) prints the hour, and every row keeps its full name for screen readers. Record any label that reads wrong.
 
 ## CL-18 — A clash with the host's calendar blocks the save
 
@@ -173,10 +173,10 @@ Saving sends `PATCH /api/bookings/classes/[classId]/allocate` with `{ isAuto: fa
 
 **Expect:**
 
-- Preview: H2's calendar only, so that Monday reads Free (record).
+- Preview: the scheduler sends the class, so H3's busy time is folded in and that Monday reads Busy (record the label); a Monday that reads Free is a **BUG** (P2).
 - Save: 409 `errorCode: "COLLABORATOR_UNAVAILABLE"` (toast "Co-host unavailable") or the conflict copy "A co-host already has a session at one of these times. Pick another time." Nothing written.
 
-**Probe further:** the preview promises a clean pattern the server refuses. **MISSED-OPPORTUNITY**: label co-host clashes. A co-host outside **their** hours: does `override: true` skip "One of these times is outside a co-host's available hours…"? Record.
+**Probe further:** if the preview still promises a clean pattern the server refuses, that is a **BUG**. Is the co-host clash labelled as H3's? **MISSED-OPPORTUNITY** if not. A co-host outside **their** hours: does `override: true` skip "One of these times is outside a co-host's available hours…"? Record.
 
 ## CL-24 — The pattern scheduler on a phone
 
@@ -202,6 +202,6 @@ Saving sends `PATCH /api/bookings/classes/[classId]/allocate` with `{ isAuto: fa
 
 **Steps:** open `/appointments/[aid]/timings` directly; read the panel. Open the Appointments row menu.
 
-**Expect:** panel "This event already has booked seats" with "Its times can't be re-planned here… Use Re-time on the event page instead…" and **Open the event**. The menu has no Timings.
+**Expect:** panel "This event already has booked seats" with "Its times can't be re-planned here… Use "Move to a new date" (a webinar) or "Move upcoming sessions" (a class) on the event page instead…" and **Open the event**. The menu has no Timings.
 
-**Probe further:** for a **class** the move is called **Move upcoming sessions** on the detail page; the panel's "Use Re-time" names nothing the host can find. **COPY** (P2).
+**Probe further:** for a **class** the panel names **Move upcoming sessions**, the button on the detail page. A panel that still says "Re-time" is **COPY** (P2).

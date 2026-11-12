@@ -72,7 +72,7 @@ Cut-offs from code (`expire-stale-requests`): a `PENDING` consultation 48 h afte
 
 **Steps:** NEEDS-OWNER-RUN `expire-stale-requests`; run again.
 
-**Expect:** P-A and P-B `CANCELLED` with a full refund under `parked-consultation:<consultationId>:<paymentId>`, the released rows closed, the buyer told "Your payment is being refunded in full."; P-C untouched. A strike only where the expert started the move (CO-90). Run 2: nothing new.
+**Expect:** P-A and P-B `CANCELLED` with a full refund under `parked-consultation:<consultationId>:<paymentId>`, the released rows closed and tombstoned (`deletedAt` set, as the cancel door does), every participant `CANCELLED`, the booking's chat access revoked after the commit, the buyer told "Your payment is being refunded in full."; P-C untouched. A strike only where the expert started the move (CO-90). Run 2: nothing new.
 
 **Probe further:** a parked booking whose payment already owes another door's partial refund waits (the code throws `ParkedRefundHeldError`); if you can build that shape, record that it's skipped and reported, not cancelled.
 

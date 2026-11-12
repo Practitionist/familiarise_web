@@ -46,7 +46,7 @@ Unified validation for all 4 event types. Takes a `PrismaClient` or transaction 
 | `validateConsultation` | Same day + consecutive + exact slot count                          |
 | `validateSubscription` | Delegates to `SubscriptionValidationService`                       |
 | `validateWebinar`      | Consecutive + exact slot count                                     |
-| `validateClass`        | Complete sessions per day + consecutive within day + weekly limits |
+| `validateClass`        | Complete sessions per day + consecutive within day + two-a-day cap |
 
 ```mermaid
 sequenceDiagram
@@ -144,7 +144,7 @@ Central React hook (exported as `useEventSlotAllocation`) managing slot selectio
 
 **Key behaviors**:
 
-- `toggleSlot()` -- event-specific interactive blocking: weekly limits (subscription), daily session limits (class), consecutive enforcement, delegated to the pure rules in `lib/scheduling/intervalSelectionValidation.ts`
+- `toggleSlot()` -- event-specific interactive blocking: weekly limits (subscription only), daily session limits (class), consecutive enforcement, delegated to the pure rules in `lib/scheduling/intervalSelectionValidation.ts`. A pick that runs past local midnight is one session, keyed to the day it starts (`sessionDayKeys`), so the per-day limits, the consecutive check and deselect all treat it as a single session
 - Auto-expansion -- when selecting a slot, auto-select consecutive adjacent slots to fill `slotsPerSession`
 - Progress tracking -- scheduled/required/remaining calls
 - Submission for manual and requested modes goes through `lib/scheduling/allocationAlgorithms.ts` (`AllocationAlgorithms.manualAllocate` / `allocateRequestedSlots`); auto mode just posts `isAuto: true` and lets the server pick

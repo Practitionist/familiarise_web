@@ -82,7 +82,7 @@ Use N-1 and N-2 from `01-cross-zone-odd-offsets-overnight.md` for bell and email
 
 **Probe further:**
 
-- Writer report (04–06): the webinar form's own check uses `getMinutes() % 30` on a browser `Date`, so in Kathmandu a valid 7:00 pm IST reads :15 and the form blocks the save; the ≥ 1 h check also blocks title-only edits. Record the copy shown.
+- Writer report (04–06): the webinar form once checked `getMinutes() % 30` on a browser `Date` and the lead in the browser. The schema now checks only the UTC lattice (`isOnEventLattice`) and the lead is the server's, so neither blocks this save. Any form refusal here is a **BUG**; record the copy shown.
 - CL-02 owns the class editor's browser-zone start date; here record only the instant saved (expect 12:30Z if read as IST, 23:00Z if read as New York) and whether anything labels the field.
 
 ## TZ-40 — Quiet hours default to the device zone

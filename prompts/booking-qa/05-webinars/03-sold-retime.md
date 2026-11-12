@@ -28,9 +28,9 @@
 
 **Expect:**
 
-- Panel title "This event already has booked seats"; body "Its times can't be re-planned here, because that would move people who already paid without notice. Use Re-time on the event page instead: attendees are told, and anyone who can't make the new time may leave with a full refund."; button **Open the event** → the appointment detail.
+- Panel title "This event already has booked seats"; body "Its times can't be re-planned here, because that would move people who already paid without notice. Use "Move to a new date" (a webinar) or "Move upcoming sessions" (a class) on the event page instead: attendees are told, and anyone who can't make the new time may leave with a full refund."; button **Open the event** → the appointment detail.
 
-**Probe further:** the panel says "Re-time"; the menu says "Move to a new date"; the dialog says "Move this webinar to a new date". A host looking for "Re-time" finds nothing by that name. **COPY / INCONSISTENCY** (P2).
+**Probe further:** the panel, the menu and the refusal sentences now all say "Move to a new date" (the dialog says "Move this webinar to a new date"). Any surface that still tells the host to use "Re-time", a name no button has, is **COPY / INCONSISTENCY** (P2); the toast title is the known one.
 
 ## WE-31 — The allocator refuses a sold webinar with USE_RETIME
 
@@ -42,7 +42,7 @@
 
 **Expect:**
 
-- 409, `errorCode: "USE_RETIME"`, `error` "This webinar already has 2 booked seats, so its times can't be re-planned. Use Re-time to move it: attendees are told and may leave with a full refund." In the UI the toast title is "This event already has booked seats — use Re-time".
+- 409, `errorCode: "USE_RETIME"`, `error` "This webinar already has 2 booked seats, so its times can't be re-planned. Use \"Move to a new date\" to move it: attendees are told and may leave with a full refund." In the UI the toast title is "This event already has booked seats — use Re-time".
 - DB unchanged (same occurrence id and times).
 
 **Probe further:** with only a `HELD` seat (a pending card payment), is the refusal the same? It should be (HELD counts as live). Use a fresh buyer, stop before paying.
@@ -65,7 +65,7 @@
 
 **Steps:** as H2 and as B2, `POST /api/appointments/[qa-WE-05 aid]/reschedule` with any body.
 
-**Expect:** 400 `USE_RETIME`, "Pick the webinar's new date with Re-time instead." (for B2, a 403/404 first is also acceptable; record it). B2's UI offers no Reschedule for a webinar seat.
+**Expect:** 400 `USE_RETIME`, "Pick the webinar's new date with \"Move to a new date\" instead." (for B2, a 403/404 first is also acceptable; record it). B2's UI offers no Reschedule for a webinar seat.
 
 **Probe further:** the copy speaks to a host; B2 receiving it would be confused.
 

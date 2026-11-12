@@ -167,7 +167,7 @@ Fixtures for this file `[local]`: as B2 book S-08 at Thu D+3 10:00 IST (**R-1**)
 
 **Steps:** on an `APPROVED_PENDING_PAYMENT` booking (03-d), as the consultee open Reschedule / POST the route.
 
-**Expect:** 409 `PAY_LINK_LIVE` "This booking is waiting for payment. Pay or cancel it first, then reschedule." The detail page hides Reschedule or explains it.
+**Expect:** 409 `PAY_LINK_LIVE` "This booking is still waiting for payment. Pay for it or cancel it first, then reschedule." The detail page hides Reschedule or explains it. Then (owner-approved) set the `PENDING` payment's `expiresAt` to 1 minute ago and POST again: the block no longer applies, because only a live, unexpired payment holds the booking.
 
 ---
 

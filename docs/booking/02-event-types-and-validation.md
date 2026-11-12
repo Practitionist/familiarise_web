@@ -10,7 +10,7 @@
 | **Slot grouping**        | Consecutive + same day    | 1 call/day max, consecutive within day                   | Consecutive               | Max 2-3 sessions/day, consecutive within session            | Single slot                      |
 | **Scheduling period**    | None                      | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               | None                             |
 | **Appointments created** | 1                         | 1 per call (many)                                        | 1                         | 1 per session (many)                                        | 1                                |
-| **Weekly limit**         | N/A                       | `sessionsPerWeek` (0-7)                                  | N/A                       | `sessionsPerWeek`                                           | N/A                              |
+| **Weekly limit**         | N/A                       | `sessionsPerWeek` (0-7)                                  | N/A                       | None (two a day at most)                                    | N/A                              |
 | **Status field**         | `status`                  | `status`                                                 | `status`                  | `status`                                                    | `status` (TrialStatus)           |
 | **Allocation modes**     | auto, manual, requested   | auto, manual, requested                                  | auto, manual              | auto, manual                                                | Consultant-scheduled             |
 | **Min duration**         | 0.5h                      | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            | 0.5h (fixed)                     |
@@ -109,7 +109,7 @@ Recurring sessions with multiple attendees over months.
 
 **Config**: `sessionDurationInHours` (per session) + `durationInMonths` + `sessionsPerWeek`
 **Total sessions**: `countWeeks(startDate, endDate) * sessionsPerWeek`
-**Rules**: Complete sessions per day (slot count % slotsPerSession == 0), consecutive within day, weekly session limit, scheduling period.
+**Rules**: Complete sessions per day (slot count % slotsPerSession == 0), consecutive within day, at most two sessions a day, scheduling period. There is no weekly limit: a host may run a class faster than the plan's `sessionsPerWeek`, and only the per-day cap limits it. This is a deliberate owner decision (2026-11-12); "enforce the plan's cadence" is the fallback if learners complain. Subscriptions keep their plan-week rules. Auto-schedule still spreads sessions at the plan's cadence.
 
 ```mermaid
 flowchart LR
@@ -118,15 +118,19 @@ flowchart LR
     C -->|No| X1[Error]
     C -->|Yes| D{Consecutive?}
     D -->|No| X2[Error]
-    D -->|Yes| E[Group by week]
-    E --> F{Weekly limit?}
+    D -->|Yes| E[Group by day]
+    E --> F{At most 2 sessions a day?}
     F -->|No| X3[Error]
     F -->|Yes| G[Valid]
 ```
 
 Consultant-scheduled. Consultees enroll via checkout; a full event reads as sold out.
 
-**Scheduling a class**: the host schedules from a weekly pattern on the Manage timings page (`ClassPatternScheduler`): a first possible day plus weekday and time rows ("Mon and Thu at 18:00"). The pattern is projected into the plan's N sessions on the host's wall clock (`projectPattern` in `lib/booking/class-pattern.ts`), so a daylight-saving change keeps 18:00 at 18:00. Each session is labelled against the host's calendar before saving, and saving sends exactly those times through the allocator's manual mode, which re-checks overlap, co-hosts and the two-a-day cap. The week grid stays available as the calendar view. The editor's start date produces the default series through the same projection (`seriesStartsFrom`). The offering card's "Schedule now" link opens the scheduler for a class with no sessions yet.
+**Scheduling a class**: the host schedules from a weekly pattern on the Manage timings page (`ClassPatternScheduler`): a first possible day plus weekday and time rows ("Mon and Thu at 18:00"). The pattern is projected into the plan's N sessions on the host's wall clock (`projectPattern` in `lib/booking/class-pattern.ts`), so a daylight-saving change keeps 18:00 at 18:00. Each session is labelled against the host's calendar before saving, and saving sends exactly those times through the allocator's manual mode, which re-checks overlap, co-hosts and the two-a-day cap. A pattern is checked against the UTC half-hour grid, so a host in a :45-offset zone such as Asia/Kathmandu is offered :15 and :45 local times (see the DST and timezone posture page). The week grid stays available as the calendar view. The editor's start date produces the default series through the same projection (`seriesStartsFrom`). The offering card's "Schedule now" link opens the scheduler for a class with no sessions yet.
+
+**Creating a class with a start**: the class create route (`app/api/bookings/classes/crud-with-plan/route.ts`) refuses with 400 `EVENT_TIME_INVALID`, before any write, a start that is off the UTC half-hour grid, less than an hour ahead, or unable to place every session of the series. The editor rounds a class start up to the next half hour before it sends it (`components/offerings/editor/adapters.ts`), so a start that was a few minutes off the grid no longer publishes an empty class.
+
+**Cancelling a draft**: a `DRAFT` webinar or class, including one with sessions already placed, can move to `CANCELLED` through the normal cancel door (`EVENT_ALLOWED_FROM` in `lib/booking/transitions.ts`), so the host is never stuck with it. `SCHEDULED` is still reachable from `DRAFT` only by publishing.
 
 **After it sells**: the allocator refuses to re-plan a class with a live buyer seat (409 `USE_RETIME`). The host either moves every session at least 24 hours away to a new pattern in one step (`retimeClassSeries`, "Move upcoming sessions"), or cancels one session and schedules a make-up within 14 days with the single-session picker. A series move records no host miss and gives every seat a free leave until `retimeBy`; a cancel counts as a miss toward learners' exit right.
 

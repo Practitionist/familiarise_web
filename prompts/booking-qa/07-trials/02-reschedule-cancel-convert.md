@@ -15,7 +15,7 @@ Fixtures: **T-1** = B4's free trial (TR-01, Tue D+8 09:00 IST). **T-2** = a free
 1. As B4 open T-1 → **Reschedule** (`/dashboard/consultee/[B4 uid]/appointments/[aid]/reschedule`). The picker is the buyer's `TrialSlotPicker` (30-min windows, 24-h lead).
 2. Pick Thu D+10 10:00 IST (free, published). Submit.
 
-**Expect:** `RescheduleRequest` `AUTO_ACCEPTED` (`initiatorRole = 'CONSULTEE'`); the **same** occurrence id now at Thu D+10 04:30Z; `Trial.status` still `SCHEDULED`; payment untouched; both notified (`appointment-rescheduled` family naming the trial's parties).
+**Expect:** `RescheduleRequest` `AUTO_ACCEPTED` (`initiatorRole = 'CONSULTEE'`); the **same** occurrence id now at Thu D+10 04:30Z; `Trial.status` still `SCHEDULED`; payment untouched; the other party (H1) is notified through the outbox (`appointment-rescheduled` family naming the trial's parties) and B4, who moved it, is not.
 
 **Cross-check:** B4 and H1 appointments; H1's grid moved the block; reminders re-timed.
 
@@ -83,7 +83,7 @@ Fixtures: **T-1** = B4's free trial (TR-01, Tue D+8 09:00 IST). **T-2** = a free
 
 **Steps:** on an `AWAITING_PAYMENT` trial (fresh paid hold), as the learner POST the reschedule route.
 
-**Expect:** a typed 409 (`PAY_LINK_LIVE` "This booking is waiting for payment. Pay or cancel it first, then reschedule." or `NOT_RESCHEDULABLE`; record). The trial page shows no Reschedule for an unpaid hold.
+**Expect:** a typed 409: `NOT_RESCHEDULABLE` first, because a trial moves only from `SCHEDULED` and the status check runs before the payment check (`PAY_LINK_LIVE`, "This booking is still waiting for payment. Pay for it or cancel it first, then reschedule.", is the answer for any other booking with a live pending payment; record which one comes back). The trial page shows no Reschedule for an unpaid hold.
 
 ## TR-29 — The expert cancels a paid trial inside the learner's 0 % tier: full refund and a strike
 

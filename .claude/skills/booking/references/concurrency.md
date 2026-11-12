@@ -66,6 +66,10 @@ retries, so a path that breaks the order times out; it never hangs.
 
 The whole-event cancel takes `event-checkout:` before `appointment-lock:`, and
 the re-time door documents the same order at its head (`lib/booking/event-retime.ts`).
+A webinar or class allocation (`lib/booking/allocation/allocate.ts`) takes the
+same `event-checkout:` key first, so a re-plan waits for seat checkouts; a held
+key answers 409 `EVENT_CHECKOUT_BUSY`. The class series move (`retimeClassSeries`)
+takes event checkout, then the appointment, then the host and co-host slot batch.
 Every allocation mode takes the consultee key only after its search or its
 reads and validation, just before the slot batch (auto in `modes/auto.ts`,
 manual in `modes/manual.ts`, requested in `modes/use-requested.ts`), so a
@@ -287,8 +291,11 @@ sessions answers 409 `USE_RETIME`: `assertGroupEventUnsoldInTx`
 `guardAllocationInTx` takes the event's advisory lock, so a seat checkout that
 commits first is always seen. A top-up that only appends sessions skips the check.
 The move for a sold event is the webinar re-time (`retimeWebinar` in
-`lib/booking/event-retime.ts`), which carries the 24-hour notice and the
-`retimeBy` free leave. The host's menu and the timings page apply the same rule
+`lib/booking/event-retime.ts`, the "Move to a new date" button) or, for a class,
+the series move (`retimeClassSeries`, "Move upcoming sessions"), which carry the
+24-hour notice and the `retimeBy` free leave. The series move reads a snapshot
+before its locks and re-reads the class status and its movable sessions inside
+the transaction, refusing with 409 `RETIME_NOT_ALLOWED` when they differ. The host's menu and the timings page apply the same rule
 through `allowsManageTimings`, but they are conveniences; the transaction is the
 control.
 

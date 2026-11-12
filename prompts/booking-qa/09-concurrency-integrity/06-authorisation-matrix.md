@@ -38,7 +38,7 @@ Rule for every case: a refusal must not reveal the other party's data (name, pri
 
 **Expect:** pages redirect or 404 without H1's data; the allocate PATCH `403` (`authorizeEventAccess` refuses non-participants; if it passes, `ALLOCATE_FORBIDDEN` "Only the expert or their organisation can set times for this booking."); the others `403`. No writes.
 
-**Probe further:** H3 as a **co-host** of an H2 webinar: can H3 open H2's webinar allocate or re-time doors? Record what a co-host may do.
+**Probe further:** H3 as a **co-host** of an H2 webinar or a **co-instructor** of an H2 class: H3 must not see Timings, "Move to a new date", "Move upcoming sessions", per-session Cancel or the make-up scheduler, and the routes refuse them. Any of these shown to H3 is a **BUG** (P2). Record what a co-host may do.
 
 **Also (salvaged from old 004 Phases 2–4):** as H3, then as B1, send `PUT /api/user/consultants/[H1 cid]` with H1's current settings body (copy it from H1's own Save in the network panel, changing nothing), and call the per-row availability doors HM-07 uses with H1's row ids (update and delete). Expect `403` each, H1's rows unchanged (R-02 before and after). Signed out: `401`.
 

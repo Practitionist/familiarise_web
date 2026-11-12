@@ -20,9 +20,9 @@ After every move: R-03, R-05; record `movedAt`, `hostCancelledAt`, `retimeBy`.
 **Expect:**
 
 - Menu: no **Timings** (record what is there).
-- API: 409 `errorCode: "USE_RETIME"`, "This class already has 2 booked seats, so its times can't be re-planned. Use Re-time to move it: attendees are told and may leave with a full refund." No change (R-03).
+- API: 409 `errorCode: "USE_RETIME"`, "This class already has 2 booked seats, so its times can't be re-planned. Use \"Move upcoming sessions\" to move it: attendees are told and may leave with a full refund." No change (R-03).
 
-**Probe further:** the refusal says "Use Re-time"; the button is "Move upcoming sessions". **COPY** (P2), as CL-26.
+**Probe further:** the refusal now names the button, "Move upcoming sessions". A refusal that still says "Use Re-time" is **COPY** (P2), as CL-26; the toast title is the known remaining one.
 
 ## CL-39 — A top-up is still allowed on a sold class
 
@@ -153,7 +153,7 @@ After every move: R-03, R-05; record `movedAt`, `hostCancelledAt`, `retimeBy`.
 
 **Expect:** 409 `SCHEDULE_CONFLICT` with the co-host's clash (record the copy). No change.
 
-**Probe further:** if the copy says "your calendar", it misleads H2 (see WE-51). The preview labels only H2's calendar.
+**Probe further:** the move's scheduler folds H3's busy time into its preview, so the clash should be labelled before saving; a clean preview that the server then refuses is a **BUG** (P2). If the refusal copy says "your calendar", it misleads H2 (see WE-51). Also sign in as H3 and open the class's detail page: H3 must not see "Move upcoming sessions", Timings, per-session Cancel or the make-up scheduler (the routes refuse a co-instructor); H2 and anyone acting on H2's dashboard do.
 
 ## CL-49 — An attendee clash is flagged, not blocking
 

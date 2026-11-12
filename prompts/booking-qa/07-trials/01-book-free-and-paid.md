@@ -71,7 +71,7 @@ Note before starting: S-11's trial is free only if `PlatformPricingConfig.minTri
 5. A window starting 09:15 IST (off grid).
 6. F-BUSY's time (Tue D+1 18:00 IST).
 
-**Expect:** 1: 400 `WINDOW_DURATION_MISMATCH`. 2 and 3: 409 `REQUEST_TOO_SOON`. 4: 400 `OUTSIDE_AVAILABILITY`. 5: a typed 400 (record the code; trials send their window as 30-min atoms). 6: 409 `SLOT_TAKEN` "That time was just taken. Pick another time." No `Trial` rows created; B2 stays eligible.
+**Expect:** 1: 400 `WINDOW_DURATION_MISMATCH`. 2 and 3: 409 `REQUEST_TOO_SOON`. 4: 400 `OUTSIDE_AVAILABILITY`. 5: a typed 400 (record the code; trials send their window as 30-min atoms). 6: 409 `SLOT_TAKEN` "That time was just taken. Pick another time." No `Trial` rows created; B2 stays eligible. A refused request costs no limiter attempt: every validity check runs before the limiter, and only a created trial spends one of B2's 3 per 24 hours. Send all six refusals, then create three trials in a row (against three different experts or after freeing the pair): the three succeed. A fourth answers 429 `RATE_LIMITED` "You've reached today's trial request limit." with `retryAfterSeconds`, `retryAt` (ISO 8601) and a `Retry-After` header, and the modal shows when B2 may retry in B2's zone. If the six refusals used up the allowance, that is a **BUG** (P2).
 
 ## TR-04 — A paid trial holds its time until payment
 
@@ -127,7 +127,7 @@ Note before starting: S-11's trial is free only if `PlatformPricingConfig.minTri
 2. Open the trial checkout page as B3.
 3. NEEDS-OWNER-RUN `expire-unpaid-trials`.
 
-**Expect:** 2: "This trial is no longer awaiting payment — it may have been cancelled, or the payment window may have closed. You can request a new trial with this expert." (or still payable until the sweep: record which). 3: `Trial` `CANCELLED`; occurrence `CANCELLED` + `deletedAt`; appointment `deletedAt`; payment `EXPIRED`; the time offered again; B3 can request a new trial with H1 (pair freed).
+**Expect:** 2: "This trial is no longer awaiting payment — it may have been cancelled, or the payment window may have closed. You can request a new trial with this expert." (or still payable until the sweep: record which). 3: `Trial` `CANCELLED`; occurrence `CANCELLED` + `deletedAt`; appointment `deletedAt`; payment `EXPIRED` in the same commit as the trial (payment first, then the trial), and the gateway order cancelled after it; the time offered again; B3 can request a new trial with H1 (pair freed).
 
 **Probe further:** the notice to B3 says "lapsed", not "cancelled by expert". H1 is told? (Not required; record.)
 
@@ -137,7 +137,7 @@ Note before starting: S-11's trial is free only if `PlatformPricingConfig.minTri
 
 **Setup:** a paid trial hold. Owner-approved: shift its occurrence to have started 10 min ago (UTC half hour) and leave `paymentDueAt` past. Then NEEDS-OWNER-RUN a capture webhook replay for its payment (or pay through the gateway if the page still allows it).
 
-**Expect:** the webhook outcome `captured_after_release`; `Trial` `CANCELLED` (never `SCHEDULED`); hold tombstoned; `Payment` `SUCCEEDED` with `description` starting "Auto-refund pending:" (for a trial already off its hold: "Auto-refund pending: capture landed on a <status> trial. Booking NOT confirmed.") and the capture parked for the automatic full refund. The brief expects the refund-owed key `trial-cancel:<trialId>:<paymentId>`; in code that key belongs to the trial cancel door (`lib/trials/cancellation.ts`), and the late-capture path parks through `parkCapture` in `lib/payments/webhooks/handlers.ts`. Record the actual `refundOwedKey`/reason and report any mismatch. `retry-auto-refunds` drives the refund (12).
+**Expect:** the webhook outcome `captured_after_release`; `Trial` `CANCELLED` (never `SCHEDULED`); hold tombstoned; `Payment` `SUCCEEDED` with `description` starting "Auto-refund pending:" (for a trial already off its hold: "Auto-refund pending: capture landed on a <status> trial. Booking NOT confirmed.") and the capture parked for the automatic full refund. Both the learner and the expert get the existing cancelled notice (`trial-session-cancelled`), staged with the release; a refund bell follows only once money moves. The brief expects the refund-owed key `trial-cancel:<trialId>:<paymentId>`; in code that key belongs to the trial cancel door (`lib/trials/cancellation.ts`), and the late-capture path parks through `parkCapture` in `lib/payments/webhooks/handlers.ts`. Record the actual `refundOwedKey`/reason and report any mismatch. `retry-auto-refunds` drives the refund (12).
 
 **Probe further:** what does B1 see between capture and refund? "Paid" with no session would be alarming: quote it.
 
@@ -145,7 +145,7 @@ Note before starting: S-11's trial is free only if `PlatformPricingConfig.minTri
 
 **Steps:** on a fresh paid hold, as the learner use the abandon door (`POST /api/bookings/[bookingId]/abandon`, or the cancel action on the pending trial).
 
-**Expect:** `Trial` `CANCELLED`; payment expired by CAS; hold released; pair freed. A capture that already committed → 409 `ALREADY_PAID`.
+**Expect:** `Trial` `CANCELLED`; payment expired by CAS; hold released; pair freed. A capture that already committed → 409 `ALREADY_PAID`. Cancelling the held trial through `DELETE`, or the expert's decline through `PATCH`, also leaves the `PENDING` payment `EXPIRED` in the same transaction (no payable order is left behind); a captured payment is untouched and goes through the quoted refund.
 
 ## TR-11 — Nobody can confirm an unpaid hold by hand
 

@@ -31,7 +31,7 @@ These label rules are owned here; 06 (class make-up and pattern rows) references
 **Probe further (report anything odd):**
 
 - Is "Schedule now" the only discovery path for an unscheduled webinar? Home has no "Needs you" item for it (the ADR lists the class one as planned). **MISSED-OPPORTUNITY** if Home is silent while a draft sits unscheduled.
-- Three names for the scheduling surface: "Timings", "Manage timings" (page title), "Set schedule". Plus "Re-time" (copy) vs "Move to a new date" (menu). Log every name you meet.
+- Three names for the scheduling surface: "Timings", "Manage timings" (page title), "Set schedule". Plus "Move to a new date" (menu and refusal copy); "Re-time" survives only in the toast title. Log every name you meet.
 - Is the event planner page (`…/planner`) still reachable for webinars? If so, does it use the same picker?
 
 ## WE-02 — The picker's layout, labels and zone
@@ -154,7 +154,7 @@ These label rules are owned here; 06 (class make-up and pattern rows) references
 
 ## WE-09 — Kathmandu host: the lattice is :15/:45 local
 
-**Why it matters:** UTC+05:45 puts every legal start at :15 or :45 local. The server and picker agree; the editor's own form check may not.
+**Why it matters:** UTC+05:45 puts every legal start at :15 or :45 local. The server, the picker and the editor's form schema agree: the schema checks the UTC lattice, not the browser's minutes.
 
 **Steps:**
 
@@ -167,10 +167,10 @@ These label rules are owned here; 06 (class make-up and pattern rows) references
 
 - Step 1: starts listed at :15 and :45 local. 10:15 and 10:45 Free (10:15–11:15, inside 10:00–12:00); 10:00 not listed.
 - Step 2: 2xx; occurrence 04:30Z.
-- Step 3: the editor's client schema checks `getMinutes() % 30` in the **browser's** zone, so with a Kathmandu browser 10:15 reads as minute 15. Expect a client-side refusal "Please select either :00 or :30 for the minutes (e.g., 9:00 or 9:30)" that blocks a start the server accepts. Report as **BUG** (P1 for Kathmandu hosts) with the screenshot.
+- Step 3: the same result as step 2 with a Kathmandu browser; the form does not refuse 10:15 (`isOnEventLattice` in `schemas/plans.ts` checks the ISO instant in UTC), and the form no longer checks the one-hour lead (the server does). A client-side "Please select either :00 or :30" refusal is a **BUG** (P1 for Kathmandu hosts); attach the screenshot.
 - Step 4: 400 `EVENT_TIME_INVALID`, "Pick a start time on the hour or half hour."
 
-**Probe further:** the client message talks about ":00 or :30" while the only legal choices on screen are :15/:45. Even if step 3 passes, that copy is wrong for this host.
+**Probe further:** step 4's server message says "on the hour or half hour" while the only legal choices on screen are :15/:45 local. Record it as **COPY** (P3) for this host.
 
 ## WE-10 — Editing a webinar that starts within the hour
 

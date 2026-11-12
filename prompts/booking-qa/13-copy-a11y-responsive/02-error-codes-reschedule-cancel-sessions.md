@@ -109,7 +109,7 @@ Where the UI never reaches a door (API-only), say so and judge the sentence for 
 
 **Trigger:** CO-59 (reschedule a booking waiting for payment).
 
-**Expect:** "This booking is waiting for payment. Pay or cancel it first, then reschedule."
+**Expect:** "This booking is still waiting for payment. Pay for it or cancel it first, then reschedule." The block covers any booking with a `PENDING` payment whose `expiresAt` is still ahead (or null), not only an approved request; a lapsed link no longer blocks.
 
 **Probe further:** does the consultee page hide Reschedule while a pay link is live (better than refusing)? For H1, "Pay or cancel it first" is addressed to the buyer.
 
@@ -133,9 +133,9 @@ Where the UI never reaches a door (API-only), say so and judge the sentence for 
 
 **Trigger:** WE-33 (reschedule a webinar) and WE-31 (allocate a sold webinar).
 
-**Expect:** reschedule: "Pick the webinar's new date with Re-time instead."; allocate: "This webinar already has N booked seats, so its times can't be re-planned. Use Re-time to move it: attendees are told and may leave with a full refund." Toast title "This event already has booked seats — use Re-time".
+**Expect:** reschedule: "Pick the webinar's new date with \"Move to a new date\" instead."; allocate: "This webinar already has N booked seats, so its times can't be re-planned. Use \"Move to a new date\" to move it: attendees are told and may leave with a full refund." (a class says \"Move upcoming sessions\"). Toast title "This event already has booked seats — use Re-time".
 
-**Probe further:** no button is called "Re-time" (UX-14). A buyer receiving the reschedule sentence (WE-33) is told to use a host tool.
+**Probe further:** the sentences name real buttons, but the toast title still says "use Re-time" and no button is called that (UX-14). A buyer receiving the reschedule sentence (WE-33) is told to use a host tool.
 
 ## UX-30 — `USE_SESSION_CANCEL` (400)
 

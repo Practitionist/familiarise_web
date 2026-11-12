@@ -117,7 +117,7 @@ Doors: `POST /api/appointments/[aid]/occurrences/[occ]/cancel`, `…/make-up` `{
 
 **Steps:** schedule a make-up at T.
 
-**Expect:** 409 `SCHEDULE_CONFLICT` naming a clash (record copy). The picker showed T as Free (H2's calendar only).
+**Expect:** the make-up picker folds H3's busy time in, so T reads Busy and cannot be picked; sent by hand, a make-up at T answers 409 `SCHEDULE_CONFLICT` naming a clash (record copy). A picker that shows T as Free is a **BUG** (P2).
 
 **Probe further:** same "your calendar" wording issue as WE-51/CL-48.
 

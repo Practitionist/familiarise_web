@@ -428,7 +428,7 @@ The grid draws per-day row lists in the display zone, never from a browser-local
 whose start falls on that calendar date in the zone: 48 on a normal day, 46 or 50
 across an hour shift, 47 or 49 across a half-hour shift. Cells stay on the UTC
 :00/:30 grid whatever the offset, so a viewer at UTC+05:45 reads "9:15–9:45"
-labels, and the repeated fall-back hour is labelled "1:00 am (2nd)".
+labels, and the repeated fall-back hour is labelled "1:00 am (2nd)". `atomPhaseMinutes` gives a zone's phase (15 at +05:45), so a :45 host's class pattern offers :15 and :45 local starts (`lib/booking/class-pattern.ts`) and `WeekGrid` prints the hour label on the first row of each local hour. A pick that crosses local midnight is one session on the day it starts (`sessionDayKeys` in `lib/scheduling/intervalSelectionValidation.ts`). A host's picker for their own event sends `purpose=reschedule` with `classId` or `webinarId`; the grid then leaves that event's own appointment out of the busy time and folds in accepted co-hosts' hours, and the excluded id joins the ETag.
 `cellInstant` and `dayStartInstant` resolve instants through the zone's rules.
 
 The display zone is the viewer's profile zone when it is valid

@@ -40,9 +40,9 @@ The rejected alternative was variable-length slots sized to each event. Uniform 
 
 ## ADR B2 — Sunday-to-Saturday weeks from one source
 
-Weekly limits (`sessionsPerWeek` for subscriptions, `sessionsPerWeek` for classes) are evaluated against weeks that begin on Sunday and end on Saturday, and the number of weeks in a scheduling period is always computed by `ScheduleCalculationService.countWeeks()`.
+The weekly limit (`sessionsPerWeek` for subscriptions) is evaluated against weeks that begin on Sunday and end on Saturday, and the number of weeks in a scheduling period is always computed by `ScheduleCalculationService.countWeeks()`.
 
-The rejected shortcut was approximating weeks as `durationInMonths * 4`. That approximation undercounts: a six-month subscription spans roughly 26 weeks, not 24, and the missing weeks would let the weekly-limit check pass schedules the period cannot actually hold. Routing every week calculation through `countWeeks` keeps the validator, the allocator, and the UI agreeing on the same week boundaries.
+The rejected shortcut was approximating weeks as `durationInMonths * 4`. That approximation undercounts: a six-month subscription spans roughly 26 weeks, not 24, and the missing weeks would let the weekly-limit check pass schedules the period cannot actually hold. Routing every week calculation through `countWeeks` keeps the validator, the allocator, and the UI agreeing on the same week boundaries. A class has no weekly limit: the host may run it faster than its plan's `sessionsPerWeek`, and only the per-day cap of two sessions limits it (owner decision, 2026-11-12, in the [scheduling surfaces ADR](../decisions/2026-11-09-scheduling-surfaces-and-feasibility.md)).
 
 ## ADR B3 — Three-layer validation pipeline
 

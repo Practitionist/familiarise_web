@@ -201,6 +201,8 @@ Groups slots by `dayKey(startTime, timeZone)`. Returns `Map<string, TimeSlot[]>`
 
 Used by: daily call limits (subscription), session count (class), completed-calls counting.
 
+The browser's copy of this grouping, `groupSlotsByDay(slots, timeZone, slotsPerSession)` in `lib/scheduling/intervalSelectionValidation.ts`, takes the session length so that a pick that runs past local midnight stays whole. `sessionDayKeys` cuts each run of back-to-back half-hour atoms into sessions of `slotsPerSession` atoms from the run's first atom and keys every atom of a session to the zone day on which the session starts. A 90-minute session picked from 23:30 to 01:00 in the scheduling zone is therefore one session on the day it starts: it counts once against the per-day limits, passes the consecutive check, deselects as a whole (`hooks/scheduling/useScheduling.ts`), and is counted once on its start day in the week header's "N fit" (`lib/scheduling/calendarUtils.ts`, `lib/scheduling/week-grid-model.ts`). The server buckets by session start in the same way.
+
 ### `groupSlotsByWeek(slots, timeZone?)`
 
 Groups slots by `weekKey(startTime, timeZone)`. Returns `Map<string, TimeSlot[]>`.
