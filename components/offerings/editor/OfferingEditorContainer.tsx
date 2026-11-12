@@ -31,6 +31,7 @@ import {
 } from "@/lib/offerings/stats";
 import {
   OFFERING_ADAPTERS,
+  classStartEdited,
   duplicateFormValues,
   type OfferingSaveContext,
 } from "./adapters";
@@ -339,6 +340,7 @@ export function OfferingEditorContainer({
             existingPlan?.maxParticipants === undefined ||
             Number(values.maxParticipants) !==
               Number(existingPlan.maxParticipants),
+          startEdited: classStartEdited(values, existingPlan),
         });
       }
       setPersistedStatus(publish ? "PUBLISHED" : "DRAFT");

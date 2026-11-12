@@ -15,10 +15,13 @@ import {
 
 type SavedPlan = SubscriptionPlanEvent["subscriptionPlan"];
 
+/** The only plan field this service reads; the rest passes through to the editor. */
+const SavedPlanIdSchema = z.object({ id: z.string().min(1) });
+
 /** The save envelope: the plan row plus what the publish check said about the expert's hours. */
 const SavedPlanSchema = z.object({
   data: z.custom<SavedPlan>(
-    (value) => typeof value === "object" && value !== null && "id" in value,
+    (value) => SavedPlanIdSchema.safeParse(value).success,
   ),
   feasibilityWarnings: z.array(z.object({ message: z.string() })).optional(),
 });

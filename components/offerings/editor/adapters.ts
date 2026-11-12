@@ -75,12 +75,30 @@ const toGridIsoDate = (value: unknown): string | null | undefined => {
   ).toISOString();
 };
 
+/** Whether a class start differs from the loaded one; a new offering counts as edited. */
+export const classStartEdited = (
+  values: Record<string, unknown>,
+  loaded: Record<string, unknown> | undefined,
+): boolean =>
+  loaded === undefined ||
+  toIsoDate(values.schedulingStartDate) !==
+    toIsoDate(loaded.schedulingStartDate);
+
+/** An untouched class start keeps its stored instant; only an edited one is rounded to the grid. */
+export const classStartForSave = (
+  value: unknown,
+  ctx: OfferingSaveContext | undefined,
+): string | null | undefined =>
+  ctx?.startEdited === false ? toIsoDate(value) : toGridIsoDate(value);
+
 /** Which group-event instance a save addresses, and its current status. */
 export interface OfferingSaveContext {
   instanceId?: string;
   instanceStatus?: string | null;
   /** False when the capacity equals what the editor loaded; the update then omits it. */
   capacityEdited?: boolean;
+  /** False when the class start equals what the editor loaded. */
+  startEdited?: boolean;
 }
 
 export interface OfferingAdapter {
@@ -373,7 +391,7 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
           classPlan: withoutUntouchedCapacity(values, ctx),
         } as never,
         consultantId,
-        toGridIsoDate(values.schedulingStartDate),
+        classStartForSave(values.schedulingStartDate, ctx),
       ),
   },
 };

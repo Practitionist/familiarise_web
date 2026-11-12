@@ -29,7 +29,14 @@ import { useAvailabilityWindow } from "@/lib/scheduling/use-availability-window"
 import { formatDateTimeLabel } from "@/lib/time/display";
 import { MAX_CLASS_SESSIONS_PER_DAY } from "@/utils/scheduling-engine/sessionCaps";
 import { formatInTimeZone } from "date-fns-tz";
+import { z } from "zod";
 import { cn } from "@/utils/tailwind";
+
+/** A refusal's text fields; any other shape falls back to the generic copy. */
+const SaveRefusalSchema = z.object({
+  error: z.string().optional(),
+  message: z.string().optional(),
+});
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const PREVIEW_DAYS = 28;
@@ -208,11 +215,11 @@ export function ClassPatternScheduler({
                 ...(hasSessions ? {} : { initialAllocation: true }),
               }),
             });
-      const body = (await response.json().catch(() => ({}))) as {
-        error?: string;
-        message?: string;
-      };
       if (!response.ok) {
+        const refusal = SaveRefusalSchema.safeParse(
+          await response.json().catch(() => null),
+        );
+        const body = refusal.success ? refusal.data : {};
         toast({
           title: "Couldn't save the schedule",
           description:

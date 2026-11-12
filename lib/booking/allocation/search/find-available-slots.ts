@@ -658,11 +658,16 @@ export async function findAvailableSlots(
    */
   // Once the budget is spent no later sweep runs, so it is reported once.
   let budgetSpent = false;
+  // Preference sweeps stop at half the time left here, so the packed sweep always gets the rest.
+  const preferenceCutoffMs =
+    searchBudget.spentMs() +
+    Math.max(0, searchBudget.limitMs - searchBudget.spentMs()) / 2;
   const sweepPeriod = (
     perfectOnly: boolean,
     spacing: Spacing = "packed",
   ): void => {
     if (budgetSpent) return;
+    const preference = perfectOnly || spacing !== "packed";
     const cursor = new Date(
       Date.UTC(
         startDate.getUTCFullYear(),
@@ -681,6 +686,7 @@ export async function findAvailableSlots(
         reportSearchBudgetSpent(searchBudget, consultant, walk);
         return;
       }
+      if (preference && searchBudget.spentMs() >= preferenceCutoffMs) return;
       while (
         selectedSlots.length < totalSlotsNeeded &&
         tryPlaceOnDay(new Date(cursor), perfectOnly, spacing)
