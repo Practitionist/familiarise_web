@@ -70,6 +70,8 @@ export interface BookTrialArgs {
   consultantUserId: string;
   /** A priced trial holds its time until the capture confirms it. */
   paid: boolean;
+  /** The plan's trial price the request was checked against, agreed on the row. */
+  agreedPricePaise: number;
   startsAt: Date;
   endsAt: Date;
   now?: Date;
@@ -130,6 +132,7 @@ export async function bookTrialInTx(tx: Tx, args: BookTrialArgs) {
       consulteeProfileId: args.consulteeProfileId,
       consultantProfileId: args.consultantProfileId,
       subscriptionPlanId: args.subscriptionPlanId,
+      agreedPricePaise: args.agreedPricePaise,
       notes: args.notes ?? null,
       status: TrialStatus.PENDING,
       organizationId: args.organizationId,

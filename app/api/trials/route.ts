@@ -567,6 +567,7 @@ export async function POST(request: NextRequest) {
               consulteeUserId,
               consultantUserId,
               paid: isPaidTrial,
+              agreedPricePaise: subscriptionPlan.trialPriceInPaise,
               startsAt,
               endsAt,
             });

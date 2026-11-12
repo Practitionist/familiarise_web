@@ -74,7 +74,7 @@
 - [ ] Subscription: max `sessionsPerWeek` per week, distributed across the scheduling period
 - [ ] Class: respects scheduling period boundaries, max sessions/day
 - [ ] Webinar: finds a single consecutive block within the search window
-- [ ] Consultation: same-day consecutive block
+- [ ] Consultation: one consecutive block of the sold length, which may cross midnight
 - [ ] There is no client-side auto-allocation engine to keep in sync — the client only pre-validates and submits `isAuto: true`; the server (`lib/booking/allocation`) always picks the slots (see `docs/booking/README.md`)
 
 ## 6. Locking & Concurrency

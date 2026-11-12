@@ -31,7 +31,9 @@ export const SETTLED_CONSULTATION: Prisma.ConsultationWhereInput = {
         },
       },
     },
-    { consultationPlan: { price: 0 } },
+    // Free at the price agreed at request; an older row reads the plan.
+    { agreedPricePaise: 0 },
+    { agreedPricePaise: null, consultationPlan: { price: 0 } },
   ],
 };
 export const UNPAID_CONSULTATION = {

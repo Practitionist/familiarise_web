@@ -258,6 +258,19 @@ takes its own locks and opens its own write transaction. The shared write steps
 are in `commit/`, the slot search in `search/`, and the multi-tab and replay guards
 in `guards.ts` and `idempotency.ts`.
 
+Published hours are checked against a request once, at the request door
+(`assertSlotsStillPublished` inside `request-for-approval`, 400
+`OUTSIDE_AVAILABILITY`, the trial door's code and copy). After that a held
+request keeps its time for every approver. `manualAllocate` computes
+`heldIntervalStartsOf(existingAppointments)`, passes it as `heldSlotStarts` to
+`ScheduleValidationService`, and runs `assertSlotsStillPublished` on only the
+new times, unless the caller may and does set `override` (the expert or
+staff), which skips that check for new times too. `useRequestedSlots` passes its requested times as `heldSlotStarts`
+and takes no `override` argument. Do not add a re-check of held times against
+published hours at approval, and do not read an unchecked request door as
+acceptable. A consultation validator has no same-day rule: one consecutive
+block of the exact length is valid across midnight.
+
 Allocation goes through **one handler route** as of #1702:
 `lib/scheduling/allocate-route.ts` carries the whole auth → limiter → Zod →
 `allocate` → typed-error contract, and each of the four `PATCH …/allocate`

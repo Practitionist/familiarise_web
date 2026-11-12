@@ -172,53 +172,6 @@ export function validateSlotDistribution(
 }
 
 /**
- * FIXED: Validates that slots are consecutive within a single day.
- * This function checks if all slots are consecutive (end time of one slot = start time of next slot)
- * Uses tolerance for timezone/precision issues (within 1 second)
- */
-export function validateDayBasedConsecutiveSlots(
-  slots: CalendarInterval[],
-  schedulingTimezone?: string,
-): boolean {
-  if (slots.length <= 1) return true;
-
-  const sortedSlots = [...slots].sort(
-    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-  );
-
-  // Check that all slots are on the same scheduling-timezone day (server parity)
-  const firstSlotDay = ScheduleCalculationService.dayKey(
-    sortedSlots[0].startTime,
-    schedulingTimezone,
-  );
-  const allSameDay = sortedSlots.every(
-    (slot) =>
-      ScheduleCalculationService.dayKey(slot.startTime, schedulingTimezone) ===
-      firstSlotDay,
-  );
-  if (!allSameDay) {
-    return false;
-  }
-
-  // Check consecutiveness with tolerance for timezone/precision issues
-  const toleranceMs = 1000; // 1 second tolerance
-  for (let i = 1; i < sortedSlots.length; i++) {
-    const prevSlot = sortedSlots[i - 1];
-    const currentSlot = sortedSlots[i];
-
-    const timeDiff = Math.abs(
-      currentSlot.startTime.getTime() - prevSlot.endTime.getTime(),
-    );
-
-    if (timeDiff > toleranceMs) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-/**
  * Calculates call progress for subscriptions
  * Returns a clean, organized string showing progress with visual hierarchy
  */

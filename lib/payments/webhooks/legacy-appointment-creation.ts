@@ -34,6 +34,8 @@ export interface ConsultationData {
   notes?: string;
   consulteeProfileId: string;
   userId: string;
+  /** The plan price the order was placed at, from the captured payment. */
+  agreedPricePaise: number;
 }
 
 export interface SubscriptionData {
@@ -116,6 +118,7 @@ export async function createAppointmentFromWebhook(
         notes,
         consulteeProfileId,
         userId,
+        agreedPricePaise: payment.originalAmount,
       });
       break;
     case AppointmentsType.SUBSCRIPTION:
@@ -183,6 +186,7 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
       requestedById: data.consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
+      agreedPricePaise: data.agreedPricePaise,
     },
     include: {
       consultationPlan: {

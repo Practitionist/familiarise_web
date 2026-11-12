@@ -35,6 +35,7 @@ import {
   subscriptionPlanEnd,
   type SubscriptionEntitlement,
 } from "@/lib/booking/entitlement";
+import { bookedSessionMinutes } from "@/lib/appointments/occurrences";
 import {
   APPOINTMENT_LIST_SELECT,
   PROFILE_WITH_USER_SELECT,
@@ -511,7 +512,12 @@ function consultationRow(
       slots: facts.slots,
       requiredSlots: Math.max(
         1,
-        Math.ceil((c.consultationPlan.durationInHours || 1) / SLOT_HOURS),
+        Math.ceil(
+          (bookedSessionMinutes(c.appointment?.occurrences ?? []) ??
+            (c.consultationPlan.durationInHours || 1) * 60) /
+            60 /
+            SLOT_HOURS,
+        ),
       ),
       tentativeSlotCount: facts.tentativeSlotCount,
       rescheduledSlotCount: facts.rescheduledSlotCount,

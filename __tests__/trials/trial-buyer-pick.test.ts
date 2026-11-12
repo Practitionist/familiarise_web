@@ -72,6 +72,7 @@ const args = (paid: boolean) => ({
   consulteeUserId: "u-buyer",
   consultantUserId: "u-expert",
   paid,
+  agreedPricePaise: paid ? 49_900 : 0,
   startsAt: START,
   endsAt: END,
   now: NOW,

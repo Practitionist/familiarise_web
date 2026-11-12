@@ -26,6 +26,7 @@ import type { StagedTrigger } from "@/lib/novu/outbox";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { isTooSoonFor } from "@/lib/booking/lead-time";
+import { bookedSessionMinutes } from "@/lib/appointments/occurrences";
 import { closeConfirmedProposal } from "@/lib/booking/reschedule-confirm";
 import { mayAutoConfirm } from "@/lib/booking/reschedule-proposals";
 import {
@@ -103,6 +104,15 @@ export async function confirmTrialProposal(args: {
       proposedTimes: { select: { startsAt: true, endsAt: true } },
       appointment: {
         select: {
+          // The session being moved carries the length the trial was sold at.
+          occurrences: {
+            select: {
+              startsAt: true,
+              endsAt: true,
+              completionStatus: true,
+              deletedAt: true,
+            },
+          },
           trial: {
             select: {
               consultantProfileId: true,
@@ -130,11 +140,15 @@ export async function confirmTrialProposal(args: {
   }
   const trial = request.appointment?.trial;
   const window = proposedTrialWindow(request.proposedTimes);
+  const trialMinutes = trial
+    ? (bookedSessionMinutes(request.appointment?.occurrences ?? []) ??
+      trial.subscriptionPlan.trialDurationMinutes)
+    : 0;
   if (
     !trial ||
     !window ||
     window.endsAt.getTime() - window.startsAt.getTime() !==
-      trial.subscriptionPlan.trialDurationMinutes * 60_000 ||
+      trialMinutes * 60_000 ||
     (window.endsAt.getTime() - window.startsAt.getTime()) % ATOM_MS !== 0
   ) {
     return { confirmed: false, reason: "VALIDATION_FAILED" };

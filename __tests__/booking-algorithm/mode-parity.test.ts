@@ -152,8 +152,8 @@ describe("getSlotLimits defensive bounds", () => {
 });
 
 describe("consecutive-atom rules at the scheduling-timezone day boundary", () => {
-  it("a consultation straddling IST midnight is rejected (same-day rule, server parity)", () => {
-    // 18:00Z–19:00Z = 23:30–00:30 IST: consecutive but on two IST days.
+  it("a consultation may cross IST midnight when its atoms are consecutive (server parity)", () => {
+    // 18:00Z–19:00Z = 23:30–00:30 IST: consecutive, on two IST days.
     const straddling = makeConsecutiveTimeSlots(
       "2026-08-03T18:00:00.000Z",
       2,
@@ -166,11 +166,25 @@ describe("consecutive-atom rules at the scheduling-timezone day boundary", () =>
       getSlotLimits("consultation", options),
       options,
     );
-    expect(verdict.isValid).toBe(false);
-    expect(verdict.errors.join(" ")).toContain("same day");
+    expect(verdict.isValid).toBe(true);
+
+    // A gap across midnight is still refused: contiguity, not the day, decides.
+    const gappy = [
+      ...makeConsecutiveTimeSlots("2026-08-03T18:00:00.000Z", 1),
+      ...makeConsecutiveTimeSlots("2026-08-03T19:00:00.000Z", 1),
+    ] as CalendarInterval[];
+    const refused = validateEventSlots(
+      gappy,
+      "consultation",
+      getEventConstraints("consultation", options),
+      getSlotLimits("consultation", options),
+      options,
+    );
+    expect(refused.isValid).toBe(false);
+    expect(refused.errors.join(" ")).toContain("consecutive");
   });
 
-  it("1.5h and 2h sessions require 3 and 4 consecutive same-day atoms", () => {
+  it("1.5h and 2h sessions require 3 and 4 consecutive atoms", () => {
     for (const [duration, atoms] of [
       [1.5, 3],
       [2, 4],

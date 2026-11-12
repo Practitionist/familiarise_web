@@ -7,7 +7,6 @@
  * - startOfWeekSunday (delegation)
  * - groupSlotsByWeek
  * - validateSlotDistribution
- * - validateDayBasedConsecutiveSlots
  * - calculateCallProgress
  */
 
@@ -19,7 +18,6 @@ import {
   startOfWeekSunday,
   groupSlotsByWeek,
   validateSlotDistribution,
-  validateDayBasedConsecutiveSlots,
   calculateCallProgress,
   groupSelectedIntoSessions,
   type CalendarInterval,
@@ -143,77 +141,6 @@ describe("validateSlotDistribution", () => {
     const result = validateSlotDistribution(slots, 2);
     expect(result.isValid).toBe(false);
     expect(result.errorMessage).toContain("Too many slots");
-  });
-});
-
-// ─── validateDayBasedConsecutiveSlots ────────────────────────────────────────
-
-describe("validateDayBasedConsecutiveSlots", () => {
-  it("should return true for single slot", () => {
-    const slots: CalendarInterval[] = [
-      makeTimeSlot(
-        "2025-01-06T09:00:00Z",
-        "2025-01-06T09:30:00Z",
-      ) as CalendarInterval,
-    ];
-    expect(validateDayBasedConsecutiveSlots(slots)).toBe(true);
-  });
-
-  it("should return true for consecutive slots on same day", () => {
-    const slots = makeConsecutiveTimeSlots("2025-01-06T09:00:00Z", 3);
-    expect(validateDayBasedConsecutiveSlots(slots as CalendarInterval[])).toBe(
-      true,
-    );
-  });
-
-  it("should return false for non-consecutive slots", () => {
-    const slots: CalendarInterval[] = [
-      makeTimeSlot(
-        "2025-01-06T09:00:00Z",
-        "2025-01-06T09:30:00Z",
-      ) as CalendarInterval,
-      makeTimeSlot(
-        "2025-01-06T10:00:00Z",
-        "2025-01-06T10:30:00Z",
-      ) as CalendarInterval,
-    ];
-    expect(validateDayBasedConsecutiveSlots(slots)).toBe(false);
-  });
-
-  it("should return false for slots on different days", () => {
-    const slots: CalendarInterval[] = [
-      makeTimeSlot(
-        "2025-01-06T09:00:00Z",
-        "2025-01-06T09:30:00Z",
-      ) as CalendarInterval,
-      makeTimeSlot(
-        "2025-01-07T09:30:00Z",
-        "2025-01-07T10:00:00Z",
-      ) as CalendarInterval,
-    ];
-    expect(validateDayBasedConsecutiveSlots(slots)).toBe(false);
-  });
-
-  it("should accept slots with sub-second tolerance", () => {
-    const slots: CalendarInterval[] = [
-      makeTimeSlot(
-        "2025-01-06T09:00:00.000Z",
-        "2025-01-06T09:30:00.000Z",
-      ) as CalendarInterval,
-      {
-        startTime: new Date(
-          new Date("2025-01-06T09:30:00.000Z").getTime() + 500,
-        ), // +500ms
-        endTime: new Date("2025-01-06T10:00:00.500Z"),
-        isAvailable: true,
-        isBooked: false,
-      },
-    ];
-    expect(validateDayBasedConsecutiveSlots(slots)).toBe(true);
-  });
-
-  it("should return true for empty array", () => {
-    expect(validateDayBasedConsecutiveSlots([])).toBe(true);
   });
 });
 
