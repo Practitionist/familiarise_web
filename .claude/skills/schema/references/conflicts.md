@@ -2,9 +2,8 @@
 
 Versioned migrations are an ordered list, and two pull requests that each add a
 migration can both be correct alone and wrong together. This reference gives the
-rules that keep the list linear when several branches and worktrees work at once.
-It applies after the cutover in `runbook-cutover.md`; before it there are no
-migration files.
+rules that keep the list linear when several branches and worktrees work at once;
+`multi-session-workflow.md` shows each failure as the CI check prints it.
 
 ## Rules
 
@@ -38,8 +37,10 @@ migration files.
      `shadowDatabaseUrl` in `prisma.config.ts` to a scratch database in CI
      ([shadow database](https://www.prisma.io/docs/orm/v7/prisma-migrate/understanding-prisma-migrate/shadow-database)).
 
-   The check is planned and does not exist yet; it belongs in `scripts/ci/` next
-   to `check-db-sidecars.ts`.
+   `scripts/ci/check-migrations.ts` is that check. It filters only the drops of the
+   `NULLS NOT DISTINCT` uniques the schema cannot declare, and it also requires every
+   file to be wrapped in `BEGIN; … COMMIT;`. Prisma itself does not notice an edited
+   applied migration: `migrate status` stayed `up to date` in the rehearsal.
 
 ## Resolving a conflict
 

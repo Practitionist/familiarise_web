@@ -1,95 +1,107 @@
 # Runbook: the cutover to versioned migrations
 
-This is the ordered checklist for the day this repository stops using
-`prisma db push` and starts using Prisma Migrate. It is **(planned)**: none of it
-has been run. Steps marked **[O]** are owner-only; an agent never runs them,
-because every one of them writes to or configures the shared database
-(root `AGENTS.md` section 2.3). The decision and the freeze table behind it are in
-`docs/prisma/02-schema-freeze-and-migration-cutover.md`; this file is the
-operational order.
+This is the ordered checklist for the day the shared database stops being managed by
+`prisma db push` and starts being rebuilt from `prisma/migrations/`. The path is a
+**reset and rebuild**, not an in-place baseline: the owner chose it on 2026-11-09
+because the database holds mock data only, so `_prisma_migrations` records real
+applications from the first day and nothing is marked applied with
+`migrate resolve --applied`. Steps marked **[O]** are run by the owner, or by Claude
+in the session only on the owner's explicit say-so, because each one writes to or
+configures the shared database. The decisions are in
+`docs/decisions/2026-11-09-schema-freeze-and-migration-cutover.md`; the day-to-day
+procedure after the cutover is `multi-session-workflow.md`.
 
-## The checklist
+## Before the window
 
-1. **Sign the freeze table. [O]** The owner accepts or rejects each drop, rename
-   and type change in `docs/prisma/02-schema-freeze-and-migration-cutover.md`.
-2. **Take a manual dump and prove it restores, before any shape change. [O]**
-   On the Free plan there are no automatic backups (`supabase.md`), and the
-   freeze table can approve drops and type changes, so the push in step 3 has no
-   other way back. Confirm the plan, run `pg_dump`, and restore the dump into a
-   scratch container to prove it is usable.
-3. **Land the shape changes with the last guarded `db push`. [O]** Run
-   `npm run db:push` once, through its preflight, so the live database matches the
-   frozen `prisma/schema.prisma`.
-4. **Push freeze and zero-drift proof. [O]** Stop all pushes. Run
-   `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`
-   and `npx tsx scripts/ci/check-db-live-drift.ts`; the only differences allowed
-   are the reviewed sidecar entries in `prisma/sql/known-drift.json`.
-5. **Rehearse in a scratch container.** Never against the shared database.
-   - Build a database from the migration history alone (steps 7 onward, run
-     locally) and catalog-diff it against a fresh restore of the live
-     database taken after step 3.
-   - Atomicity test: apply a migration whose second statement fails and record
-     whether the first statement stayed committed. This settles the reported
-     per-statement commit (`prisma-mechanics.md`). Then repeat it with the two
-     statements wrapped in `BEGIN;` and `COMMIT;` and confirm the first is rolled
-     back, which is what the constraint replacements in
-     `sidecars-as-migrations.md` rely on.
-   - `SET` versus `SET LOCAL` test: apply a migration that sets `lock_timeout`
-     each way and read the setting from a second statement in the same file.
-   - Partial-index test: declare one partial unique index in the schema and see
-     whether `migrate diff` stays clean (`sidecars-as-migrations.md`).
-   - `@ignore` test: see how Migrate treats an `@ignore`d column
-     (`expand-contract.md`).
-   - CI gate test: record the `migrate status` output for a pending-only history
-     and for a failed one, and confirm that pgfence passes a `DROP COLUMN` at
-     `--max-risk high` and fails it at `--max-risk medium` (`ci-migrations.md`).
-6. **Pin the Prisma version and add the guards.** `prisma` and every `@prisma/*`
-   package are already pinned exactly to 7.10.1 in `package.json`. Add pgfence
-   (`ci-migrations.md`) and the linear-history check (`conflicts.md`). Re-run this
-   rehearsal on every Prisma bump.
-7. **Generate `0_baseline` plus `migration_lock.toml`, and fold the sidecars into
-   an idempotent migration.** Baseline with `migrate diff --from-empty --to-schema`
-   (`prisma-mechanics.md`). Add one migration per sidecar object group after it
-   (`sidecars-as-migrations.md`), each idempotent, so a rebuilt database has the
-   money invariants and the overlap constraint.
-8. **`prisma migrate resolve --applied 0_baseline` on live, then
-   `prisma migrate status`. [O]** The baseline must be marked applied, not run.
-   Do the same for each sidecar migration whose objects already exist.
-9. **Create the dev project, deploy and seed. [O]** Follow
-   `docs/deployment/db-split-plan.md`: `migrate deploy` builds the dev schema from
-   history, then the guarded seed runs against it.
-10. **Add the GitHub secrets and merge `db-migrate.yml`. [O]** The design is
-    `ci-migrations.md`.
-11. **Decide the Netlify ordering. [O]** Pick one of the options in
-    `ci-migrations.md`.
-12. **Point previews, local and CI at the dev project. [O]** Per the table in
-    `docs/deployment/db-split-plan.md`.
-13. **Remove `db:push` and rewrite the rules.** Delete the `db:push` scripts and
-    the sidecar replay, rewrite root `AGENTS.md` section 2.3 and
-    `prisma/AGENTS.md`, and rewrite `this-repo.md` in this skill, in the same
-    pull request.
-14. **Run the first contract rehearsal.** Use the Referral contract in
-    `expand-contract.md` as the first real destructive change.
+1. **Land the in-flight schema pull requests the old way.** Every open branch that
+   changes `prisma/schema.prisma` merges and is pushed with the old flow first.
+2. **Announce the freeze.** From the baseline regeneration in step 3 until step 12, no
+   pull request that touches `prisma/` merges.
+3. **Regenerate the baseline from the final `dev` schema** on the cutover branch:
+   `scripts/db/generate-baseline.sh`. It needs no database and prints the table and type
+   counts (184 and 162 on 2026-11-09).
+4. **Rehearse locally** (the last section of `multi-session-workflow.md`): build from
+   history, `check-db-sidecars.ts`, `check-migrations.ts`, `jest.db`, the gate drills
+   and the reset drill. Record the outputs in the pull request.
+5. **Review and approve the cutover pull request.** CodeRabbit for the whole diff, plus
+   a Codex round on the migration SQL. Do not merge yet.
+6. **Add the GitHub secret `DIRECT_URL`. [O]** The Supabase **session pooler** string
+   (port 5432); runners are IPv4-only and DDL needs session mode. No shadow secret is
+   needed: CI's shadow is the job's container.
+
+## The window (about an hour, owner present)
+
+7. **Maintenance mode on. [O]** `/api/admin/maintenance`.
+8. **Dump live and prove the dump restores. [O]** Use a Postgres 17 client against the
+   15.8 server (`pg_dump -Fc`), restore it into the local 17 cluster, and run
+   `check-db-sidecars.ts` against the restore. The Free plan takes no automatic
+   backups, so this dump is the only way back.
+9. **Upgrade to Postgres 17. [O]** Disable `pgjwt` in the dashboard first (unused, and
+   deprecated on 17), then run the in-place upgrade. Record the downtime and run the
+   md5-to-SCRAM check for custom roles. If the Free plan cannot upgrade, stay on 15 and
+   pin CI's image to 15 in the same session.
+10. **Drop the Prisma-owned objects in `public`. [O]** Leave `auth`, `storage`,
+    `extensions` and `vault` untouched. Rehearsed on 2026-11-09: dropping views, tables,
+    non-extension functions and enum types in `public` with a single-transaction
+    `DO` block took 0.22 s, left the schema and its grants in place, and
+    `migrate deploy` then rebuilt a catalog identical to a fresh build. Prefer this to
+    `DROP SCHEMA public CASCADE`, which also removes the Supabase default grants on the
+    schema. Also drop `archive._gateway_drift_backup_20260728`. Then drop
+    `btree_gist` (`DROP EXTENSION IF EXISTS btree_gist`) so the extensions migration
+    creates it in `extensions`; locally `ALTER EXTENSION … SET SCHEMA` moved it, but
+    on Supabase the extension may be owned by a role `postgres` cannot act for.
+11. **Merge the cutover pull request. [O]** `db-migrate.yml` runs on the push to `dev`:
+    the gate sees every folder pending, `migrate deploy` applies `0_baseline` and the
+    nineteen migrations (1.35 s locally), `migrate status` must exit 0, and
+    `check-db-sidecars.ts` must report 170 objects and no Data API grants. If the
+    secret is not ready, the owner runs the same four commands once by hand from the
+    merged commit with `DIRECT_URL` set to the session pooler.
+12. **Seed. [O]** `npm run db:seed` with `SEED_TARGET_CONFIRM` set to the live host.
+13. **Verify.**
+    - `npx prisma migrate status`: `Database schema is up to date!`
+    - `scripts/ci/check-db-sidecars.ts`: ok.
+    - No table grants to `anon` or `authenticated`:
+      `SELECT count(*) FROM information_schema.role_table_grants WHERE table_schema = 'public' AND grantee IN ('anon', 'authenticated');` returns 0.
+    - Supabase advisors: `extension_in_public` and `function_search_path_mutable` cleared.
+    - Smoke tests: sign-in, a booking checkout on test keys, the dashboards.
+14. **Promote `dev` to `prod` if `prod`'s code needs the reset schema, then maintenance
+    mode off. [O]**
+15. **Write the experiment record** in `docs/prisma/`: timings, outputs, surprises, what
+    to change for the real launch. Stream, Novu, Razorpay test and Storage state that
+    pointed at the old mock rows is orphaned; the go-live sandbox purge clears it, so
+    add that to the go-live checklist.
+
+## After the window
+
+16. **Run the freeze as real migrations**, F1 to F5 in the decision record, each its own
+    pull request with its own migration, expand parts on merge and `_contract` parts by
+    dispatch right before the release that needs them.
+17. **Remind the owner about row-level security** and test enabling it with no policies
+    on the rebuilt database.
 
 ## When a migration fails
 
-`migrate deploy` stops on the first failure, records the migration as failed, and
-every later `migrate deploy` then refuses with `P3009`. If a statement failed
-partway, the error is `P3018`. Do not re-run `migrate deploy` hoping it passes.
+`migrate deploy` stops at the first failure and records it; every later run refuses
+with `P3009` (or `P3018` mid-run). Because every file is wrapped in
+`BEGIN; … COMMIT;`, a failed migration leaves nothing behind (rehearsed). The error
+Prisma prints (`current transaction is aborted`) is the statement after the real
+cause; reproduce with `psql -v ON_ERROR_STOP=1 --single-transaction -f <file>` on a
+scratch database.
 
-1. Run `npx prisma migrate status` and note the failed migration's name.
-2. Inspect the database to see which of its statements committed. Because of the
-   reported per-statement commit, assume some did until the rehearsal proves
-   otherwise.
-3. Choose the direction:
-   - Most of it applied: finish the rest by hand with `psql "$DIRECT_URL"`, then
-     `npx prisma migrate resolve --applied <name>`.
-   - Little of it applied: undo the committed part by hand, then
-     `npx prisma migrate resolve --rolled-back <name>`, fix the file and deploy
-     again.
-4. Run `npx prisma migrate status`, then `scripts/ci/check-db-sidecars.ts`.
+1. `npx prisma migrate status`; note the failed folder.
+2. Confirm in the catalog that none of its objects exist.
+3. `npx prisma migrate resolve --rolled-back <folder>` **[O]**.
+4. Fix the file in a pull request (it never applied, so editing it is allowed).
+5. Re-run `db-migrate.yml` (dispatch with an empty input for an expand migration).
+6. `npx prisma migrate status`, then `scripts/ci/check-db-sidecars.ts`.
 
-A migration written idempotently with one object per file (`sidecars-as-migrations.md`)
-usually needs only the rolled-back path followed by a plain re-run. The CI job
-does not retry on its own (`ci-migrations.md`). Source:
-[patching and hotfixing](https://www.prisma.io/docs/orm/v7/prisma-migrate/workflows/patching-and-hotfixing).
+Never re-run `migrate deploy` hoping it passes, and never let the workflow retry on its
+own. Source: [patching and hotfixing](https://www.prisma.io/docs/orm/v7/prisma-migrate/workflows/patching-and-hotfixing).
+
+## Deprecated & Superseded Approaches
+
+- **Baselining live in place** (`migrate resolve --applied 0_baseline` plus a resolved
+  `money_invariants` migration). Superseded by the reset, which needs no hand-marked
+  history.
+- **A last guarded `db push` to land the freeze shape.** The freeze now ships as real
+  migrations after the cutover.
