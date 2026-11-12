@@ -1,30 +1,12 @@
--- PaymentLeg funding-sum invariant, enforced only by the database: the sum of
--- non-reversal, non-REFERRAL_CREDIT legs equals Payment.amount, and every
--- *_REVERSAL leg is negative and never exceeds its original sibling in
--- magnitude. A drifted write is uncommittable for every writer, so no
--- application code re-checks it.
---
--- Semantics:
---   * funding sum  = Σ amountPaise over legs whose source does not end in
---     `_REVERSAL`
---   * a payment whose non-reversal legs are ALL 0-value LICENSE legs skips the
---     sum comparison outright: the licence is absorbed at contract time, so the
---     leg is deliberately 0 while Payment.amount stays at full price and the
---     comparison is structurally false for every one of them. The carve
---     suppresses the sum comparison ONLY — the reversal-pair loop still runs
---     over a licence-only payment, because a reversal with no original sibling
---     is corrupt.
---   * REFERRAL_CREDIT is EXCLUDED from that sum: Payment.amount is the
---     gateway charge and the credit is already netted out of it, so counting
---     the leg would demand the credit twice and fail every credit checkout
---   * reversal leg = must be negative; |reversal| ≤ Σ its original siblings
---
--- DEFERRABLE INITIALLY DEFERRED: fires at COMMIT, so multi-statement writes
--- (Payment + legs in one tx) never see a half-written state. Row-level per
--- Postgres constraint-trigger rules; each fired row re-checks its whole
--- payment, which is idempotent when several rows commit together.
+-- Deferred constraint triggers: payment legs sum to the payment, and refunds never exceed it.
+BEGIN;
+SET LOCAL lock_timeout = '3s';
 
-CREATE OR REPLACE FUNCTION assert_payment_legs_ok(p_payment_id TEXT) RETURNS void AS $$
+-- Non-reversal, non-credit legs sum to Payment.amount (licence-only payments skip the sum);
+-- each reversal leg is negative and never exceeds its original siblings.
+CREATE OR REPLACE FUNCTION assert_payment_legs_ok(p_payment_id TEXT) RETURNS void
+SET search_path = public
+AS $$
 DECLARE
   v_amount BIGINT;
   v_funding_sum BIGINT;
@@ -92,16 +74,11 @@ BEGIN
   END LOOP;
 END;
 $$ LANGUAGE plpgsql;
--- SPLIT
--- #1205-triage — a leg RE-PARENTING must validate BOTH payments: moving one
--- leg from payment A to B can leave A under-funded while B validates clean.
---
--- The column references MUST stay double-quoted. PL/pgSQL case-folds a bare
--- `NEW.paymentId` to `paymentid`, which is not a field on a Prisma-generated
--- camelCase table, so every leg write died at COMMIT on `record "new" has no
--- field "paymentid"` — the sum was never reached and the guard below never
--- actually guarded anything.
-CREATE OR REPLACE FUNCTION assert_payment_legs_on_leg_write() RETURNS trigger AS $$
+
+-- Re-parenting a leg re-checks both payments.
+CREATE OR REPLACE FUNCTION assert_payment_legs_on_leg_write() RETURNS trigger
+SET search_path = public
+AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN
     PERFORM assert_payment_legs_ok(OLD."paymentId");
@@ -114,39 +91,35 @@ BEGIN
   RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
--- SPLIT
+
 DROP TRIGGER IF EXISTS payment_legs_sum_to_amount ON "PaymentLeg";
--- SPLIT
 CREATE CONSTRAINT TRIGGER payment_legs_sum_to_amount
   AFTER INSERT OR UPDATE OR DELETE ON "PaymentLeg"
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW
   EXECUTE FUNCTION assert_payment_legs_on_leg_write();
--- SPLIT
--- #1205-triage — a DIRECT Payment.amount UPDATE escapes the leg-side trigger
--- entirely (it only fires on PaymentLeg writes). Guard the parent too.
--- SPLIT
--- Parent-side validator: same invariant from a Payment.amount write.
-CREATE OR REPLACE FUNCTION assert_payment_legs_on_payment_update() RETURNS trigger AS $$
+
+-- A direct Payment.amount write re-checks its legs.
+CREATE OR REPLACE FUNCTION assert_payment_legs_on_payment_update() RETURNS trigger
+SET search_path = public
+AS $$
 BEGIN
   PERFORM assert_payment_legs_ok(NEW.id);
   RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
--- SPLIT
+
 DROP TRIGGER IF EXISTS payment_amount_vs_legs ON "Payment";
--- SPLIT
 CREATE CONSTRAINT TRIGGER payment_amount_vs_legs
   AFTER INSERT OR UPDATE OF "amount" ON "Payment"
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW
   EXECUTE FUNCTION assert_payment_legs_on_payment_update();
--- SPLIT
--- I-3: what left a payment never exceeds what came in. A Refund write commits only
--- while Σ SUCCEEDED+PENDING refunds plus Σ lost chargebacks (LOST, CHARGE_REFUNDED:
--- the set refundPayment nets) stay ≤ Payment.amount. Dispute writes are not
--- guarded: a lost chargeback is the provider's verdict and must always be storable.
-CREATE OR REPLACE FUNCTION assert_payment_refunds_within_amount(p_payment_id TEXT) RETURNS void AS $$
+
+-- Succeeded and pending refunds plus lost chargebacks never exceed Payment.amount.
+CREATE OR REPLACE FUNCTION assert_payment_refunds_within_amount(p_payment_id TEXT) RETURNS void
+SET search_path = public
+AS $$
 DECLARE
   v_amount BIGINT;
   v_refunded BIGINT;
@@ -175,8 +148,10 @@ BEGIN
   END IF;
 END;
 $$ LANGUAGE plpgsql;
--- SPLIT
-CREATE OR REPLACE FUNCTION assert_payment_refunds_on_write() RETURNS trigger AS $$
+
+CREATE OR REPLACE FUNCTION assert_payment_refunds_on_write() RETURNS trigger
+SET search_path = public
+AS $$
 BEGIN
   IF TG_OP = 'UPDATE' AND NEW."paymentId" IS DISTINCT FROM OLD."paymentId" THEN
     PERFORM assert_payment_refunds_within_amount(OLD."paymentId");
@@ -185,11 +160,12 @@ BEGIN
   RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
--- SPLIT
+
 DROP TRIGGER IF EXISTS payment_refunds_within_amount ON "Refund";
--- SPLIT
 CREATE CONSTRAINT TRIGGER payment_refunds_within_amount
   AFTER INSERT OR UPDATE OF "status", "amountPaise", "paymentId" ON "Refund"
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW
   EXECUTE FUNCTION assert_payment_refunds_on_write();
+
+COMMIT;

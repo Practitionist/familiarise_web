@@ -16,10 +16,9 @@ permissions:
   contents: read
 
 # A newer dev tip contains the older one, so superseded runs on PRs and on dev are
-# cancelled; staging/prod pushes deploy and always finish. A label other than
-# `db-reset` gets its own group and skips every job, so it never cancels a run in flight.
+# cancelled; staging/prod pushes deploy and always finish.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ ((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'db-reset' && github.run_id) || github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/dev' }}
 
 on:
@@ -40,10 +39,8 @@ on:
     # `feat/**` is here because a sub-PR whose base is a feature branch would
     # otherwise run no checks until the integration PR.
     branches: [dev, staging, prod, "feat/**"]
-    # labeled/unlabeled: the `db-reset` label decides which database the guards
-    # and the build run against, so toggling it must re-run the job.
     # ready_for_review: draft PRs are skipped, so marking one ready starts its run.
-    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+    types: [opened, synchronize, reopened, ready_for_review]
     # Docs-only changes skip CI; the secrets manifest is re-included because the
     # workflow hygiene guard reads it.
     paths:
@@ -62,8 +59,7 @@ jobs:
     name: Lint, TypeScript & guards
     if: >-
       github.actor != 'dependabot[bot]' &&
-      (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false)) &&
-      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
+      (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false))
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
@@ -101,30 +97,30 @@ jobs:
             fi
           fi
           db=true
-          if [ "$full" = false ] && ! grep -zEq '^(prisma/|scripts/ci/check-db|jest\.db\.config|__tests__/db/|\.github/workflows/ci\.yaml$)' /tmp/all.z; then db=false; fi
+          if [ "$full" = false ] && ! grep -zEq '^(prisma/|scripts/db/|scripts/ci/(check-db|check-migrations|migrate-gate)|jest\.db\.config|__tests__/db/|\.github/workflows/ci\.yaml$)' /tmp/all.z; then db=false; fi
           echo "full=$full" >> "$GITHUB_OUTPUT"
           echo "db=$db" >> "$GITHUB_OUTPUT"
 
-      - name: Start Postgres 17
-        # Supabase runs 17; the sidecars need 15+ (NULLS NOT DISTINCT) and btree_gist.
-        # Not a `services:` container: those pull from one registry, and ECR Public's
-        # anonymous per-IP quota fails the job ("toomanyrequests"). Same official image,
-        # tried from ECR, then Google's Docker Hub mirror, then Docker Hub. Started
-        # before the install so it initialises meanwhile.
+      - name: Start Postgres 17.6
+        # Pinned to Supabase's minor; UTC like Supabase, because naive timestamp columns
+        # make seat counts depend on the session timezone. Not a `services:` container:
+        # those pull from one registry, and ECR Public's anonymous per-IP quota fails the
+        # job ("toomanyrequests"). Same official image, tried from ECR, then Google's
+        # Docker Hub mirror, then Docker Hub. Started before the install so it initialises meanwhile.
         if: steps.changed.outputs.db == 'true'
         run: |
-          for img in public.ecr.aws/docker/library/postgres:17 \
-                     mirror.gcr.io/library/postgres:17 \
-                     docker.io/library/postgres:17; do
+          for img in public.ecr.aws/docker/library/postgres:17.6 \
+                     mirror.gcr.io/library/postgres:17.6 \
+                     docker.io/library/postgres:17.6; do
             if docker pull -q "$img"; then IMG="$img"; break; fi
             echo "::warning::postgres pull failed from $img, trying next mirror"
           done
           if [ -z "${IMG:-}" ]; then
-            echo "::error::postgres:17 unavailable from every mirror"
+            echo "::error::postgres:17.6 unavailable from every mirror"
             exit 1
           fi
           docker run -d --name pg -p 5432:5432 \
-            -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=ci "$IMG"
+            -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=ci "$IMG" -c timezone=UTC
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -156,17 +152,37 @@ jobs:
           docker logs pg
           exit 1
 
-      - name: Push schema + sidecars
+      - name: Build the database from the migration history
         # Only ever the throwaway container above, and before `.env` exists, so these
-        # are the only URLs prisma.config.ts and lib/prisma.ts see. `db push` alone
-        # drops the ledger trigger and every CHECK.
+        # are the only URLs prisma.config.ts and lib/prisma.ts see. Supabase's Data API
+        # roles are created first so the REVOKE migration runs its real branch here.
         if: steps.changed.outputs.db == 'true'
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ci
           DIRECT_URL: postgresql://postgres:postgres@localhost:5432/ci
         run: |
-          node_modules/.bin/prisma db push
-          npm run db:sidecars
+          docker exec pg psql -v ON_ERROR_STOP=1 -U postgres -d ci -c "
+            DO \$\$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF;
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF;
+            END \$\$;" -c "CREATE DATABASE shadow"
+          node_modules/.bin/prisma migrate deploy
+
+      - name: Migration history lint
+        # Linear folders, no edited applied migration, BEGIN/COMMIT wrapping, and a
+        # history that produces exactly prisma/schema.prisma (diffed on the shadow database).
+        if: steps.changed.outputs.db == 'true'
+        env:
+          SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/shadow
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          base=""
+          if [ "$EVENT" = pull_request ]; then base="origin/${BASE_REF}"
+          elif [ -n "$BEFORE" ] && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then base="$BEFORE"; fi
+          node_modules/.bin/tsx scripts/ci/check-migrations.ts $base
 
       - name: Database sidecar guard
         if: steps.changed.outputs.db == 'true'
@@ -324,8 +340,7 @@ jobs:
     if: >-
       github.actor != 'dependabot[bot]' &&
       (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false)) &&
-      (github.event_name == 'workflow_dispatch' || github.base_ref == 'prod' || github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/staging') &&
-      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
+      (github.event_name == 'workflow_dispatch' || github.base_ref == 'prod' || github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/staging')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -368,8 +383,7 @@ jobs:
     if: >-
       github.actor != 'dependabot[bot]' &&
       (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false)) &&
-      (github.event_name == 'workflow_dispatch' || github.base_ref == 'prod' || github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/staging') &&
-      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
+      (github.event_name == 'workflow_dispatch' || github.base_ref == 'prod' || github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/staging')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -417,8 +431,7 @@ jobs:
     if: >-
       always() &&
       (github.actor != 'dependabot[bot]' || github.event_name == 'workflow_dispatch' || github.base_ref == 'prod' || github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/staging') &&
-      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
-      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

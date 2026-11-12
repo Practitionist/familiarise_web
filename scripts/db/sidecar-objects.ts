@@ -1,32 +1,32 @@
 /**
- * #705 / #1319 — the one parser for "which objects do the sidecars promise?".
- *
- * `scripts/db/assert-sidecar-applied.ts` (the post-push assertion) and
- * `scripts/ci/check-db-sidecars.ts` (the CI guard) both read this, so a
- * regression test guards the script instead of a copy of it. Two parsers used
- * to exist: the CI one was quote-aware and saw triggers and non-unique
- * indexes across all three .sql files, the local one saw only unique indexes
- * in check-constraints.sql and stripped comments by line prefix. They could
- * disagree about what "applied" meant; now they cannot.
- *
- * Staged-for-the-reset objects are commented out, so stripping comments is
- * what excludes them. Splitting on the STAGED banner did NOT — active SQL sat
- * below it, which is how `appointment_doc_thread_version_unique` and
- * `onboarding_draft_payload_size` went unasserted.
+ * The one parser for "which hand-written objects must the database carry?".
+ * It replays every migration after `0_baseline` in order: a CREATE adds an
+ * object, a later DROP or RENAME removes it, so the inventory is what the
+ * history leaves behind. The baseline holds only what schema.prisma declares.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 
-export type SidecarObjectKind = "constraint" | "index" | "trigger" | "view";
+export type SidecarObjectKind =
+  "constraint" | "index" | "trigger" | "view" | "rls";
 
 export interface SidecarObject {
   kind: SidecarObjectKind;
   name: string;
   table?: string;
-  /** File name inside prisma/sql, e.g. check-constraints.sql. */
+  /** Migration folder that declares it, e.g. 20261109000003_booking_guards. */
   source: string;
 }
+
+export const MIGRATIONS_DIR = path.join(
+  __dirname,
+  "..",
+  "..",
+  "prisma",
+  "migrations",
+);
+export const BASELINE = "0_baseline";
 
 /** Index just past the closing quote of a single-quoted literal opened at `i`. */
 function scanSingleQuoted(sql: string, i: number): number {
@@ -41,10 +41,7 @@ function scanDollarQuoted(sql: string, i: number, tag: string): number {
   return close === -1 ? sql.length : close + tag.length;
 }
 
-/**
- * Index just past the end of a block comment opened at `i`. Block comments
- * NEST in Postgres, unlike C, so scanning to the first close is wrong.
- */
+/** Index just past a block comment opened at `i`; Postgres block comments nest. */
 function scanBlockComment(sql: string, i: number): number {
   let depth = 1;
   let j = i + 2;
@@ -63,10 +60,8 @@ function scanBlockComment(sql: string, i: number): number {
 }
 
 /**
- * Strip SQL comments before matching. Quote-aware: a `--` inside a string
- * literal is data, and trigger bodies live in dollar-quoted blocks that
- * routinely contain `--`. A comment becomes a SPACE, never nothing: Postgres
- * treats comments as whitespace, so one can legally separate two tokens.
+ * Strip SQL comments outside string literals and dollar-quoted bodies; each
+ * comment becomes a space, because Postgres treats a comment as whitespace.
  */
 export function stripSqlComments(sql: string): string {
   let out = "";
@@ -95,65 +90,197 @@ export function stripSqlComments(sql: string): string {
   return out;
 }
 
-const CONSTRAINT_RE =
-  /ALTER\s+TABLE\s+"?(\w+)"?\s+ADD\s+CONSTRAINT\s+"?([A-Za-z0-9_]+)"?/gi;
-const INDEX_RE =
-  /CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"?([A-Za-z0-9_]+)"?/gi;
-const UNIQUE_INDEX_RE =
-  /CREATE\s+UNIQUE\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"?([A-Za-z0-9_]+)"?/gi;
-const TRIGGER_RE = /CREATE\s+(?:CONSTRAINT\s+)?TRIGGER\s+(\w+)/gi;
-const VIEW_RE = /CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+"?([A-Za-z0-9_]+)"?/gi;
-
-/** Every declared object in one sidecar file's text. */
-export function parseSidecarSql(sql: string, source: string): SidecarObject[] {
-  const active = stripSqlComments(sql);
-  const out: SidecarObject[] = [];
-  for (const m of active.matchAll(CONSTRAINT_RE)) {
-    out.push({ kind: "constraint", table: m[1], name: m[2], source });
-  }
-  for (const m of active.matchAll(INDEX_RE)) {
-    out.push({ kind: "index", name: m[1], source });
-  }
-  for (const m of active.matchAll(TRIGGER_RE)) {
-    out.push({ kind: "trigger", name: m[1], source });
-  }
-  for (const m of active.matchAll(VIEW_RE)) {
-    out.push({ kind: "view", name: m[1], source });
-  }
-  return out;
-}
-
-/** The files `db:sidecars` replays; other prisma/sql files are one-off rollouts of schema-declared objects. */
-export const SIDECAR_FILES = [
-  "check-constraints.sql",
-  "ledger-triggers.sql",
-  "payment-legs-triggers.sql",
-  "analytics-views.sql",
-] as const;
-
-/** Every declared object across the sidecar files in `dir`. */
-export function parseSidecarDirectory(dir: string): SidecarObject[] {
-  return SIDECAR_FILES.filter((f) => fs.existsSync(path.join(dir, f))).flatMap(
-    (file) =>
-      parseSidecarSql(fs.readFileSync(path.join(dir, file), "utf8"), file),
+/** Comment-free SQL with dollar-quoted bodies blanked, so DDL text inside a function is never matched. */
+function ddlOnly(sql: string): string {
+  return stripSqlComments(sql).replace(/(\$[A-Za-z_]*\$)[\s\S]*?\1/g, (body) =>
+    " ".repeat(body.length),
   );
 }
 
-export interface SidecarObjects {
-  constraints: string[];
-  indexes: string[];
+const IDENT = String.raw`"?([A-Za-z0-9_]+)"?`;
+const re = (source: string) => new RegExp(source, "gi");
+
+const ALTER_TABLE = re(
+  String.raw`ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?${IDENT}([^;]*)`,
+);
+const TABLE_CLAUSES = re(
+  String.raw`\b(?:(ADD|DROP)\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?${IDENT}|RENAME\s+CONSTRAINT\s+${IDENT}\s+TO\s+${IDENT}|(ENABLE|DISABLE)\s+ROW\s+LEVEL\s+SECURITY)`,
+);
+const INDEX_CREATE = re(
+  String.raw`CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?${IDENT}\s+ON\s+(?:ONLY\s+)?${IDENT}`,
+);
+const INDEX_DROP = re(
+  String.raw`DROP\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+EXISTS\s+)?${IDENT}`,
+);
+const INDEX_RENAME = re(
+  String.raw`ALTER\s+INDEX\s+(?:IF\s+EXISTS\s+)?${IDENT}\s+RENAME\s+TO\s+${IDENT}`,
+);
+const TRIGGER_CREATE = re(
+  String.raw`CREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\s+${IDENT}[^;]*?\bON\s+${IDENT}`,
+);
+const TRIGGER_DROP = re(
+  String.raw`DROP\s+TRIGGER\s+(?:IF\s+EXISTS\s+)?${IDENT}\s+ON\s+${IDENT}`,
+);
+const VIEW_CREATE = re(
+  String.raw`CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+${IDENT}`,
+);
+const VIEW_DROP = re(String.raw`DROP\s+VIEW\s+(?:IF\s+EXISTS\s+)?${IDENT}`);
+
+type Event = {
+  at: number;
+  kind: SidecarObjectKind;
+  op: "create" | "drop" | "rename";
+  name: string;
+  to?: string;
+  table?: string;
+};
+
+/** The CREATE / DROP / RENAME events in one file, in statement order. */
+function eventsOf(sql: string): Event[] {
+  const text = ddlOnly(sql);
+  const events: Event[] = [];
+  for (const m of text.matchAll(ALTER_TABLE)) {
+    const table = m[1];
+    const offset = (m.index ?? 0) + m[0].length - m[2].length;
+    for (const c of m[2].matchAll(TABLE_CLAUSES)) {
+      const at = offset + (c.index ?? 0);
+      if (c[1]) {
+        const op = c[1].toUpperCase() === "ADD" ? "create" : "drop";
+        events.push({ at, kind: "constraint", op, table, name: c[2] });
+      } else if (c[3]) {
+        events.push({
+          at,
+          kind: "constraint",
+          op: "rename",
+          table,
+          name: c[3],
+          to: c[4],
+        });
+      } else {
+        const op = c[5].toUpperCase() === "ENABLE" ? "create" : "drop";
+        events.push({ at, kind: "rls", op, table, name: table });
+      }
+    }
+  }
+  const add = (
+    pattern: RegExp,
+    build: (m: RegExpMatchArray) => Omit<Event, "at">,
+  ) => {
+    for (const m of text.matchAll(pattern))
+      events.push({ at: m.index ?? 0, ...build(m) });
+  };
+  add(INDEX_CREATE, (m) => ({
+    kind: "index",
+    op: "create",
+    name: m[1],
+    table: m[2],
+  }));
+  add(INDEX_DROP, (m) => ({ kind: "index", op: "drop", name: m[1] }));
+  add(INDEX_RENAME, (m) => ({
+    kind: "index",
+    op: "rename",
+    name: m[1],
+    to: m[2],
+  }));
+  add(TRIGGER_CREATE, (m) => ({
+    kind: "trigger",
+    op: "create",
+    name: m[1],
+    table: m[2],
+  }));
+  add(TRIGGER_DROP, (m) => ({
+    kind: "trigger",
+    op: "drop",
+    name: m[1],
+    table: m[2],
+  }));
+  add(VIEW_CREATE, (m) => ({ kind: "view", op: "create", name: m[1] }));
+  add(VIEW_DROP, (m) => ({ kind: "view", op: "drop", name: m[1] }));
+  return events.sort((a, b) => a.at - b.at);
+}
+
+/** Every object one file leaves behind when applied to an empty slate. */
+export function parseSidecarSql(sql: string, source: string): SidecarObject[] {
+  return replay([{ source, sql }]);
+}
+
+function replay(files: { source: string; sql: string }[]): SidecarObject[] {
+  const live = new Map<string, SidecarObject>();
+  for (const { source, sql } of files) {
+    for (const e of eventsOf(sql)) {
+      const key = `${e.kind}:${e.name}`;
+      if (e.op === "create") {
+        live.set(key, { kind: e.kind, name: e.name, table: e.table, source });
+      } else if (e.op === "drop") {
+        live.delete(key);
+      } else if (e.to && live.has(key)) {
+        const prev = live.get(key)!;
+        live.delete(key);
+        live.set(`${e.kind}:${e.to}`, { ...prev, name: e.to, source });
+      }
+    }
+  }
+  return [...live.values()];
+}
+
+/** Migration folders in the order `prisma migrate deploy` applies them. */
+export function migrationFolders(dir: string = MIGRATIONS_DIR): string[] {
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
+    .filter(
+      (d) =>
+        d.isDirectory() &&
+        fs.existsSync(path.join(dir, d.name, "migration.sql")),
+    )
+    .map((d) => d.name)
+    .sort();
+}
+
+function sidecarFiles(dir: string): { source: string; sql: string }[] {
+  return migrationFolders(dir)
+    .filter((name) => name !== BASELINE)
+    .map((name) => ({
+      source: name,
+      sql: fs.readFileSync(path.join(dir, name, "migration.sql"), "utf8"),
+    }));
+}
+
+/** Every object the migrations after the baseline leave in the database. */
+export function parseMigrationsDirectory(
+  dir: string = MIGRATIONS_DIR,
+): SidecarObject[] {
+  return replay(sidecarFiles(dir));
+}
+
+/** All post-baseline migration SQL in apply order, for tests that pin an invariant's text. */
+export function readSidecarMigrationSql(dir: string = MIGRATIONS_DIR): string {
+  return sidecarFiles(dir)
+    .map((f) => f.sql)
+    .join("\n");
 }
 
 /**
- * Back-compat shape used by the idempotency test: constraint names plus
- * UNIQUE index names from one file's text. Thin wrapper over parseSidecarSql.
+ * Unique indexes schema.prisma cannot declare (NULLS NOT DISTINCT), so every
+ * `migrate diff` against the schema proposes dropping them.
  */
-export function parseSidecarObjects(sql: string): SidecarObjects {
-  const active = stripSqlComments(sql);
-  return {
-    constraints: parseSidecarSql(sql, "inline")
-      .filter((o) => o.kind === "constraint")
+export function sidecarOwnedUniqueIndexes(
+  dir: string = MIGRATIONS_DIR,
+): Set<string> {
+  const owned = new Set<string>();
+  const live = new Set(
+    parseMigrationsDirectory(dir)
+      .filter((o) => o.kind === "index")
       .map((o) => o.name),
-    indexes: [...active.matchAll(UNIQUE_INDEX_RE)].map((m) => m[1]),
-  };
+  );
+  for (const { sql } of sidecarFiles(dir)) {
+    for (const m of ddlOnly(sql).matchAll(
+      re(
+        String.raw`CREATE\s+UNIQUE\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?${IDENT}[^;]*?NULLS\s+NOT\s+DISTINCT`,
+      ),
+    )) {
+      if (live.has(m[1])) owned.add(m[1]);
+    }
+  }
+  return owned;
 }

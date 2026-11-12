@@ -14,7 +14,7 @@
  *     passing because it has stopped looking
  */
 
-import { stripSqlComments } from "../../scripts/ci/check-db-sidecars";
+import { stripSqlComments } from "../../scripts/db/sidecar-objects";
 
 const CONSTRAINT_RE =
   /ALTER\s+TABLE\s+"(\w+)"\s+ADD\s+CONSTRAINT\s+"([^"]+)"/gi;

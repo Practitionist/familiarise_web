@@ -174,13 +174,14 @@ reviews:
         references without claiming DB checks can fence an external deletion.
     - path: "{prisma/**,lib/prisma*.ts,lib/db/**,__tests__/db/**}"
       instructions: |
-        Schema and prisma/sql sidecars jointly define the database. Check CHECK,
+        Schema and the hand-written SQL in prisma/migrations jointly define the database. Check CHECK,
         partial unique, exclusion and deferred constraint-trigger behavior before
         recommending runtime assertions. Preserve immutable ledger/funding rules,
         foreign-key history, index coverage and single-connection transaction
         safety. Do not propose db push, autonomous DDL or production data writes
-        as validation. Review migration compatibility and regenerate the Prisma
-        client when schema changes; do not assume Prisma captures sidecar indexes.
+        as validation. Every migration is BEGIN/COMMIT-wrapped with SET LOCAL
+        lock_timeout, never edits an applied migration, and keeps expand and
+        _contract changes apart; do not assume Prisma captures sidecar indexes.
     - path: "{instrumentation*.ts,sentry.*.config.ts,lib/observability/**,lib/logging/**,lib/betterstack.ts,__tests__/observability/**}"
       instructions: |
         Preserve expected-refusal classification, alert severity and stable
@@ -226,7 +227,7 @@ reviews:
     actionlint: { enabled: true }
     zizmor: { enabled: true } # GitHub Actions security
     yamllint: { enabled: true }
-    squawk: { enabled: true } # unsafe-Postgres-migration detection for prisma/sql sidecars
+    squawk: { enabled: true } # unsafe-Postgres-migration detection for prisma/migrations
     sqlfluff: { enabled: true }
     prismaLint: { enabled: true }
     ast-grep: { essential_rules: true }

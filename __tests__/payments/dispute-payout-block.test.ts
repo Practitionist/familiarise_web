@@ -62,6 +62,7 @@ jest.mock("../../lib/novu/service", () => ({
 
 import { readFileSync } from "fs";
 import path from "path";
+import { parseMigrationsDirectory } from "../../scripts/db/sidecar-objects";
 import prisma from "../../lib/prisma";
 import { processApprovedPayouts } from "../../lib/payments/payouts/payout-service";
 
@@ -185,12 +186,13 @@ describe("consultant rail — TDS_ENGINE defaults to 194O", () => {
   });
 });
 
-describe("payment-legs sum trigger — sidecar wiring (source contract)", () => {
+describe("payment-legs sum trigger — migration wiring (source contract)", () => {
   const sqlPath = path.join(
     process.cwd(),
     "prisma",
-    "sql",
-    "payment-legs-triggers.sql",
+    "migrations",
+    "20261109000006_payment_legs_triggers",
+    "migration.sql",
   );
 
   it("the trigger exists, is deferred, and guards all three write shapes", () => {
@@ -204,30 +206,10 @@ describe("payment-legs sum trigger — sidecar wiring (source contract)", () => 
     expect(sql).toMatch(/amountPaise" >= 0/);
   });
 
-  it("the apply script targets this file and is chained into db:sidecars", () => {
-    const script = readFileSync(
-      path.join(process.cwd(), "scripts", "db", "apply-sidecars.ts"),
-      "utf8",
+  it("the post-deploy catalog check asserts the trigger this migration declares", () => {
+    const declared = parseMigrationsDirectory().find(
+      (o) => o.kind === "trigger" && o.name === "payment_legs_sum_to_amount",
     );
-    expect(script).toContain("payment-legs-triggers.sql");
-
-    const pkg = JSON.parse(
-      readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
-    );
-    expect(pkg.scripts["db:sidecars"]).toBeDefined();
-
-    // The CI sidecar checker parses trigger declarations from every
-    // SIDECAR_FILES entry into expected live-catalog objects; verify ours
-    // matches the exact shape that regex is built for.
-    const checker = readFileSync(
-      // #1319 — the parser moved to the shared module both entry points use.
-      path.join(process.cwd(), "scripts", "db", "sidecar-objects.ts"),
-      "utf8",
-    );
-    expect(checker).toContain("TRIGGER\\s+(\\w+)"); // parser exists
-    const sidecarSql = readFileSync(sqlPath, "utf8");
-    const declared = sidecarSql.match(/CREATE CONSTRAINT TRIGGER (\w+)/);
-    expect(declared).not.toBeNull();
-    expect(declared![1]).toBe("payment_legs_sum_to_amount");
+    expect(declared?.source).toBe("20261109000006_payment_legs_triggers");
   });
 });

@@ -1,179 +1,104 @@
 ---
-title: Pre-launch schema freeze and migration cutover
+title: Schema freeze and migration cutover
 type: how-to
 audience: the owner, and engineers who will run the cutover
-status: planned
-last-reviewed: 2026-10-23
+status: partially shipped (tooling shipped, live reset and freeze planned)
+last-reviewed: 2026-11-09
 ---
 
-# Pre-launch schema freeze and migration cutover
+# Schema freeze and migration cutover
 
-This page is the plan for the day this database stops being managed by `prisma db push` and starts being managed by versioned Prisma Migrate files. It records one owner decision, already locked: **the shape of the schema is frozen before launch, and after launch the schema only changes by additive expand and contract.** Everything below follows from that decision, and nothing here reopens it.
+This page records the move of this database from `prisma db push` to versioned Prisma Migrate files, and the plan to finish it. It rests on owner decisions taken on 2026-11-09, recorded in [Schema freeze and the cutover from db push to versioned migrations](../decisions/2026-11-09-schema-freeze-and-migration-cutover.md): **the shape of the schema is frozen before launch, and after launch the schema only changes by additive expand and contract.** The step-by-step procedure for adding a migration is the schema skill's `.claude/skills/schema/references/multi-session-workflow.md`; this page is the background and the owner's checklist.
 
-The plan is labelled **(planned)** wherever it describes behaviour that is not on `dev` yet. The first section describes what is true today.
+Behaviour is labelled **(shipped)** when it is on `dev` and **(planned)** when it is not. Sections 1, 2, 6 and 7 describe what is shipped; section 4 separates the shipped tooling from the planned live reset; section 9 is the freeze table, executed in Phase 3.
 
 ## 1. The decision in four sentences
 
-1. Before launch, every change that is cheap now and expensive later is made once: drops, renames, `NOT NULL` tightening, type changes and enum value removals. After the freeze, the schema has the shape it will have for years.
-2. At the freeze, the live database is **baselined**: a `0_baseline` migration is generated from `prisma/schema.prisma`, and the live database is told it has already been applied, without running it.
-3. The hand-applied SQL in `prisma/sql/` (CHECK constraints, partial unique indexes, the exclusion constraint and the triggers) is folded into hand-written migrations, so a database rebuilt from the migration history comes up with every money invariant.
-4. After launch, `db push` never runs again. Every change is a reviewed migration, destructive changes are split over several deploys, and no speculative columns are added (additive columns may deploy before compatible code).
+1. Every schema change is a reviewed migration folder under `prisma/migrations/`, committed in the same pull request as the `prisma/schema.prisma` edit and the code that uses it. `db push` and the hand-applied SQL in `prisma/sql/` no longer exist **(shipped)**.
+2. The history is `0_baseline`, generated from `prisma/schema.prisma` by `scripts/db/generate-baseline.sh`, plus 19 grouped, transaction-wrapped migrations that create every object the schema cannot declare (CHECK and exclusion constraints, partial and `NULLS NOT DISTINCT` unique indexes, triggers, a view, row-level security) **(shipped)**.
+3. The live database is not baselined in place. Because its data is mock, it is dumped, upgraded to Postgres 17, emptied of its Prisma-owned objects, rebuilt by `migrate deploy` from the history and seeded, so `_prisma_migrations` records real applications from the first day. There is no `migrate resolve --applied` **(planned, Phase 2)**.
+4. Before launch every change that is cheap now and expensive later (drops, renames, `NOT NULL` tightening, type changes, enum value removals) is made once, as real migrations, in Phase 3. After the freeze, destructive changes are split over several deploys and shipped in `_contract` folders that only an owner dispatch applies.
 
 ## 2. Current state, as verified in the repository
 
-| Fact                                             | Where it is true                                                                                                                                                                                                                             |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| There is no migration history.                   | `prisma/migrations` does not exist, so there is no `_prisma_migrations` table and nothing for `prisma migrate deploy` to apply. `prisma.config.ts` already names `prisma/migrations` as the path, so the directory is the only gap.          |
-| The schema is applied with `db push`.            | `npm run db:push` runs `db:push:schema` (`scripts/db/preflight-push.ts`, then `prisma db push`, then `scripts/db/apply-sidecars.ts --all`) and finishes with `scripts/ci/check-db-sidecars.ts`.                                              |
-| Sidecars are applied by an owner, then asserted. | `prisma/sql/check-constraints.sql`, `prisma/sql/ledger-triggers.sql` and `prisma/sql/payment-legs-triggers.sql` are replayed statement by statement (split on `-- SPLIT`, each in its own short transaction with a 3 s `lock_timeout`).      |
-| One Postgres project serves everything.          | Production, every Netlify deploy preview, local development and agent QA all read the same Supabase project, through `DATABASE_URL` (pooled, used by `lib/prisma.ts`) and `DIRECT_URL` (used by `prisma.config.ts`).                         |
-| The read-only drift check is `migrate diff`.     | `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script` prints what a push would do. `scripts/ci/check-db-live-drift.ts` runs it daily in `.github/workflows/db-live-drift.yml` against `dev`'s schema. |
-| The destructive-statement allowlist is empty.    | `prisma/sql/known-drift.json` has empty `destructiveStatementsAllowed` and `enumLabelsInDbNotInSchema` lists. A populated list means a reviewed push is pending.                                                                             |
-| Pull requests are checked on a throwaway DB.     | The `db-guards` job in `.github/workflows/ci.yaml` runs `db push` plus the sidecars on a `postgres:17` container and then `scripts/ci/check-db-sidecars.ts`. It cannot see the live database by construction.                                |
+| Fact                                           | Where it is true                                                                                                                                                                                                                                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| There is a migration history.                  | `prisma/migrations/` holds `0_baseline`, 19 timestamped migrations from `20261109000001_revoke_data_api_grants` to `20261109000019_org_data_export_rls`, and `migration_lock.toml`. `prisma.config.ts` names that path.                                                               |
+| Merged migrations are applied by CI.           | `.github/workflows/db-migrate.yml` runs on a push to `dev` that changes `prisma/migrations/**`: `scripts/ci/migrate-gate.ts`, `prisma migrate deploy`, `prisma migrate status`, then `scripts/ci/check-db-sidecars.ts`, through the session pooler (`DIRECT_URL`).                    |
+| Destructive migrations need a dispatch.        | A folder ending in `_contract` is refused on push and applied only by a `workflow_dispatch` run whose input names the folder exactly.                                                                                                                                                 |
+| Every migration is transaction-wrapped.        | `BEGIN; SET LOCAL lock_timeout = '3s'; ... COMMIT;`, enforced by `lintMigrationSql` in `scripts/ci/check-migrations.ts`. The one exception is a file holding a single `CONCURRENTLY` statement.                                                                                       |
+| One Postgres project still serves everything.  | Production, every Netlify deploy preview, local development and agent QA read the same Supabase project, through `DATABASE_URL` (pooled, used by `lib/prisma.ts`) and `DIRECT_URL` (used by `prisma.config.ts`). That project is still the one built by `db push` until Phase 2 runs. |
+| Pull requests build the database from history. | The `checks` job in `.github/workflows/ci.yaml` starts Postgres 17.6 in UTC, runs `migrate deploy`, then `scripts/ci/check-migrations.ts` and `scripts/ci/check-db-sidecars.ts`, then the `jest.db` tier. `prisma.config.ts` reads `SHADOW_DATABASE_URL`, which is CI-only.           |
+| The live drift check filters three drops.      | `scripts/ci/check-db-live-drift.ts` runs `migrate diff` against the live database and tolerates only the drops of the `NULLS NOT DISTINCT` indexes that `sidecarOwnedUniqueIndexes` (`scripts/db/sidecar-objects.ts`) derives from the migrations. There is no allowlist file.        |
 
-### 2.1 Why `db push` is banned against the shared database
+### 2.1 Why `db push` is gone
 
-`prisma db push` reconciles the database to the schema file and nothing else. Two consequences make it unsafe here.
-
-First, it **drops what the schema does not mention.** The sidecar partial unique indexes use `NULLS NOT DISTINCT` and `WHERE` predicates that the Prisma schema cannot express, so they are absent from `prisma/schema.prisma` by design. The next push therefore plans to drop them. After a clean push, the only statements `migrate diff` still proposes are the three sidecar-owned drops (`appointment_feedback_level_key`, `consultant_earnings_occurrence_key` and `organization_earnings_split_key`), and the sidecars re-create the indexes straight afterwards. A bare `prisma db push` skips that re-creation and leaves the money invariants missing. The enforcer is `scripts/db/preflight-push.ts`, which refuses a plan that destroys or re-points an existing object unless the exact statement is allowlisted in `prisma/sql/known-drift.json`, and which the bare command bypasses.
-
-Second, the database is **shared**, so a push from a worktree whose schema is behind the newest columns proposes to drop them, and a push is a production write. Prisma's own data-loss prompt is not a safeguard here: it counts non-null values, so dropping a column that is null on every row raises no warning at all.
+`prisma db push` reconciles the database to the schema file and nothing else, which made two things unsafe. First, it **drops what the schema does not mention**: the sidecar partial unique indexes use `NULLS NOT DISTINCT` and `WHERE` predicates the Prisma schema cannot express, so each push planned to drop them, and a bare push left the money invariants missing. Second, the database is **shared**, so a push from a worktree whose schema was behind the newest columns proposed to drop them, and every push was a production write. Prisma's data-loss prompt is no safeguard: it counts non-null values, so dropping a column that is null on every row raises no warning. A reviewed migration file, applied once by CI after merge, removes both problems.
 
 ### 2.2 What `migrate diff` cannot see
 
-`migrate diff`, and therefore both the baseline and the drift check, compares what the Prisma schema can describe: tables, columns, enums, ordinary indexes and foreign keys. It is blind to `CHECK` constraints, exclusion constraints, partial unique indexes, functions and triggers. A live `CHECK` can therefore lag the sidecar file with `migrate diff` reporting nothing; the only comparison that catches it is `pg_get_constraintdef` against a freshly built database (step 6 below). The pieces `migrate diff` is blind to are exactly the ones that carry the money invariants: `occurrence_no_confirmed_overlap`, `ledger_txn_balanced`, `payment_legs_sum_to_amount` and the `ledger_*_immutable` triggers.
+`migrate diff` compares what the Prisma schema can describe: tables, columns, enums, ordinary indexes and foreign keys. It is blind to `CHECK` constraints, exclusion constraints, partial unique indexes, functions and triggers, which are exactly the pieces that carry the money invariants: `occurrence_no_confirmed_overlap`, `ledger_txn_balanced`, `payment_legs_sum_to_amount` and the `ledger_*_immutable` triggers. Two guards cover the blind spot. `scripts/ci/check-db-sidecars.ts` asserts that every constraint, index, trigger, view and row-level-security table declared in the migration SQL exists, and fails on any table grant to `anon` or `authenticated`. A catalog comparison of `pg_get_constraintdef` and `pg_get_triggerdef` between two databases (the rehearsal in the schema skill) catches a live object that lags the migrations. Diffing the history against the schema always proposes the same three index drops, which are not a change and are never committed.
 
 ## 3. What the clean-slate schema issue proposes, and when
 
-The clean-slate schema overhaul (#2077) proposes five groups of change. Under the locked decision, **all of it is a shape change and is either done before the freeze or becomes a multi-deploy expand and contract after launch.** None of it is explicitly post-launch; what differs is the cost of doing it late.
+The clean-slate schema overhaul (#2077) proposes five groups of change. Under the locked decision, **all of it is a shape change and is either done before the freeze or becomes a multi-deploy expand and contract after launch.** What differs is the cost of doing it late.
 
-| Group in the issue                                                                                                                 | Cost if done before the freeze                           | Cost if done after launch                                                                                      |
-| ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Primary key standardisation on `uuid` v7 and `Timestamptz` for the 280 naive `DateTime` columns                                    | One baseline; seed data is regenerated.                  | Every table is rewritten and every foreign key re-pointed; effectively a data migration of the whole database. |
-| Money and rate naming (`*Paise`, `*Bps`), including the asymmetric `ConsultantPayout` and `OrganizationPayout` columns             | One rename pass with the code.                           | Each rename is three deploys (add, dual-write and backfill, drop) per column.                                  |
-| Single-direction foreign keys (the `User.*ProfileId` mirrors, `Organization.billingAccountId` against `BillingAccount.ownerOrgId`) | Drop the mirror and its dual-write sites together.       | Needs a dual-write window and a backfill.                                                                      |
-| Transitive and write-only columns and the dead models                                                                              | A drop in the same PR as the code that stops writing it. | The same drop, but only after a release that stops writing it.                                                 |
-| Redundant indexes and missing foreign-key indexes                                                                                  | Free on empty or small tables.                           | Index builds on large tables need the concurrent-build recipe in section 6.                                    |
+| Group in the issue                                                                                                                           | Cost if done before the freeze                           | Cost if done after launch                                                                                      |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `Timestamptz` for the 280 naive `DateTime` columns (the `uuid` v7 primary-key conversion was not adopted; only new models may use `uuid(7)`) | One baseline; seed data is regenerated.                  | Every table is rewritten and every foreign key re-pointed; effectively a data migration of the whole database. |
+| Money and rate naming (`*Paise`, `*Bps`), including the asymmetric `ConsultantPayout` and `OrganizationPayout` columns                       | One rename pass with the code.                           | Each rename is three deploys (add, dual-write and backfill, drop) per column.                                  |
+| Single-direction foreign keys (the `User.*ProfileId` mirrors, `Organization.billingAccountId` against `BillingAccount.ownerOrgId`)           | Drop the mirror and its dual-write sites together.       | Needs a dual-write window and a backfill.                                                                      |
+| Transitive and write-only columns and the dead models                                                                                        | A drop in the same PR as the code that stops writing it. | The same drop, but only after a release that stops writing it.                                                 |
+| Redundant indexes and missing foreign-key indexes                                                                                            | Free on empty or small tables.                           | Index builds on large tables need the concurrent-build recipe in section 6.3.                                  |
 
-The owner decides scope. Section 9 lists the columns, enums and models that this plan puts in front of the owner as freeze candidates, with the evidence found in code at the time of writing. Several items in the issue's dead-column list have live readers today (for example `TwoFactor.failedVerificationCount` and `lockedUntil`, `RateCard.minGrossPaise` and `maxGrossPaise`, and the whole `RescheduleProposedTime` model), so the issue's list must not be executed without re-checking.
+The owner set the scope on 2026-11-09 (decisions 12 to 16 of the decision record). Section 9 lists the columns, enums and models that were put in front of the owner as freeze candidates, with the evidence found in code at the time of writing. Several items in the issue's dead-column list have live readers today (for example `TwoFactor.failedVerificationCount` and `lockedUntil`, `RateCard.minGrossPaise` and `maxGrossPaise`, and the whole `RescheduleProposedTime` model), so the issue's list must not be executed without re-checking.
 
-## 4. The cutover sequence (planned)
+## 4. The cutover sequence
 
 ```mermaid
 flowchart TD
-  A["1. Owner signs the freeze table"] --> B["2. Land shape changes with the last guarded db push"]
-  B --> C["3. Prove zero drift, then stop all pushes"]
-  C --> D["4. Generate 0_baseline from schema.prisma"]
-  D --> E["5. Fold prisma/sql into a hand-written migration"]
-  E --> F["6. Build a scratch database from the history and diff catalogs against live"]
-  F --> G["7. Mark both migrations applied on the live database"]
-  G --> H["8. Create the dev project with migrate deploy and seed it"]
-  H --> I["9. Point previews, local and CI at the dev project"]
-  I --> J["10. Delete db push, rewrite the guards, update the docs"]
+  A["Phase 1: tooling and history on dev (shipped)"] --> B["Phase 2: reset and rebuild the live database (planned)"]
+  B --> C["Phase 3: the freeze as real migrations F1 to F5 (planned)"]
+  C --> D["Launch: expand and contract only"]
 ```
 
-Run the steps in order. A human runs every command that touches a database; no agent runs `db push`, `migrate dev`, `migrate deploy` or `migrate resolve`.
+A human runs every command that touches the shared database; no agent runs `migrate deploy` or `migrate resolve` against it, and none runs `db push`, which no longer exists.
 
-### Step 1. Sign the freeze table
+### Phase 1. Tooling and history (shipped)
 
-The owner marks each row in section 9 KEEP or DROP. Rows with a reader stay unless the owner explicitly chooses a coupled change that removes the reader in the same PR.
+The cutover pull request put in place: `prisma/migrations/` with `0_baseline` and the 19 grouped migrations; `scripts/db/generate-baseline.sh`; `scripts/db/sidecar-objects.ts` and `scripts/db/plan-statements.ts`, which derive the expected objects from the migration SQL; `scripts/ci/check-migrations.ts`, `scripts/ci/migrate-gate.ts` and `scripts/ci/check-db-sidecars.ts`; `.github/workflows/db-migrate.yml`; and the CI steps "Start Postgres 17.6", "Build the database from the migration history", "Migration history lint" and "Database sidecar guard". It deleted `db:push`, `db:push:schema`, `db:preflight`, `db:sidecars`, `db:constraints`, `db:triggers`, `db:leg-triggers`, `db:migrate`, `scripts/db/preflight-push.ts`, `scripts/db/apply-sidecars.ts` and `prisma/sql/`.
 
-### Step 2. Land the shape changes (the last `db push` window)
+Two migrations deserve a mention because they are about safety, not shape. `20261109000001_revoke_data_api_grants` replays the `anon` and `authenticated` REVOKE and default-privileges block straight after the baseline, so a rebuilt table is never readable with the anon key; it is guarded by a `pg_roles` check, and CI creates the roles first so the real branch runs there. `20261109000002_btree_gist_extension` moves `btree_gist` into the `extensions` schema, and the 13 trigger functions pin `SET search_path = public`.
 
-Each approved drop, rename or type change goes through the existing guarded flow: the exact destructive statements from `npm run db:preflight -- --print` are added to `destructiveStatementsAllowed` in `prisma/sql/known-drift.json` with an owner and an expiry, the push is run once by a person, and the list is emptied again. Before that push the owner takes a manual `pg_dump` and restores it into a scratch container to prove it is usable, because the Free plan takes no automatic backups and an approved drop has no other way back. Code that reads the old shape is changed in the same PR. This is the last time the repository uses `db push` against a database that holds data.
+The baseline is regenerated with `scripts/db/generate-baseline.sh` from the final `dev` schema after the in-flight schema pull requests land, and is frozen the moment the live database has applied it.
 
-### Step 3. Prove zero drift and stop the pushes
+### Phase 2. Reset and rebuild the live database (planned, owner-run)
 
-Announce a push freeze across all worktrees, then run, read-only:
+The live database holds mock data only, so it is rebuilt rather than baselined. The owner runs these steps in order, with the site in maintenance mode:
 
-```sh
-npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script
-npx tsx -r dotenv/config scripts/ci/check-db-sidecars.ts
-```
+1. **Rebase the in-flight schema pull requests,** regenerate `0_baseline` from the final `dev` schema, and confirm the `DIRECT_URL` GitHub secret (the Supabase session pooler) exists.
+2. **Put the site in maintenance mode.**
+3. **Dump the database with a version 17 `pg_dump` client and prove the dump restores** into a scratch container. The Free plan takes no automatic backups, so this dump is the only way back.
+4. **Disable the unused `pgjwt` extension,** then upgrade the project to the latest Postgres 17 in the Supabase dashboard. If the Free-plan upgrade is unavailable, stay on 15 and pin the CI container to 15.
+5. **Drop the Prisma-owned objects in `public`** and the leftover `archive._gateway_drift_backup_20260728`.
+6. **Merge the cutover** so `db-migrate.yml` runs `migrate deploy` against the empty database, or run `npx prisma migrate deploy` once by hand from the merged commit. The rehearsal applied 20 migrations to an empty Postgres 17.11 database in 1.35 seconds.
+7. **Run the guarded seed.** `npm run db:seed` with `SEED_TARGET_CONFIRM` set to the project's host, which `prisma/seed.ts` requires.
+8. **Verify.** `npx prisma migrate status` is up to date; `scripts/ci/check-db-sidecars.ts` is green; neither `anon` nor `authenticated` holds any table grant; the Supabase security and performance advisors show nothing new; and smoke tests pass on full-row readers of the money, booking and seat models.
+9. **Promote `dev` to `prod` and turn maintenance mode off.**
 
-The diff must list only the three sidecar-owned index drops, and the sidecar assertion must report nothing missing. Anything else is drift that has to be fixed before a baseline can be trusted. If the schema is ahead of the database, the baseline would claim objects the live database does not have.
+The operational checklist, including the rehearsed drop of the app objects, the `btree_gist` drop before the deploy and the md5-to-SCRAM check after the upgrade, is `.claude/skills/schema/references/runbook-cutover.md`.
 
-### Step 4. Generate `0_baseline`
+Row-level security on every table is deferred; the app connects as `postgres`, which has `BYPASSRLS`, so enabling it later with no policies cannot break the app. Whether to enable it is decided on the rebuilt database.
 
-```sh
-mkdir -p prisma/migrations/0_baseline
-npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script \
-  > prisma/migrations/0_baseline/migration.sql
-```
+### Phase 3. The freeze as real migrations (planned)
 
-`migrate diff` does not write `prisma/migrations/migration_lock.toml`; `migrate dev` does. Create it by hand, because Prisma uses it to refuse a migration run against a different database provider, and commit it with the baseline:
-
-```sh
-test -f prisma/migrations/migration_lock.toml || printf '%s\n' \
-  '# Please do not edit this file manually' \
-  '# It should be added in your version-control system (e.g., Git)' \
-  'provider = "postgresql"' > prisma/migrations/migration_lock.toml
-git add prisma/migrations && git ls-files --error-unmatch prisma/migrations/migration_lock.toml
-```
-
-This needs no database connection. Run against `dev` at the time of writing, it produces about 6,400 lines: 170 `CREATE TABLE` statements and 150 `CREATE TYPE` statements, and nothing else of interest. It contains no `CHECK`, no exclusion constraint, no trigger and no `CONCURRENTLY`, which is exactly the blind spot described in section 2.2. Review the file by eye for any `DROP`; a baseline from empty should have none. The `0_` prefix sorts before every timestamped migration that follows.
-
-### Step 5. Fold the sidecars into a hand-written migration
-
-Create the second migration from the three sidecar files, in the order `scripts/db/apply-sidecars.ts` applies them (`prisma/sql/check-constraints.sql`, `prisma/sql/ledger-triggers.sql`, `prisma/sql/payment-legs-triggers.sql`):
-
-```sh
-mkdir -p prisma/migrations/20261101000000_money_invariants
-cat prisma/sql/check-constraints.sql prisma/sql/ledger-triggers.sql \
-    prisma/sql/payment-legs-triggers.sql \
-  > prisma/migrations/20261101000000_money_invariants/migration.sql
-```
-
-The `-- SPLIT` markers are SQL comments and are harmless in a migration file. Before committing, make three edits by hand:
-
-1. **Delete commented-out and staged blocks** (the sections of `prisma/sql/check-constraints.sql` that are comments pending a reset), and remove ticket references from comments, per AGENTS.md section 1.5.
-2. **Leave the `DROP ... IF EXISTS` then `CREATE` pairs as they are.** They make the file idempotent, which is what lets a fresh database and a retried deploy both work. They are also the reason this migration is never replayed on the live database (step 7).
-3. **Keep `CREATE EXTENSION IF NOT EXISTS btree_gist`** at the top of the exclusion-constraint section. The shadow database and the CI container must have the `contrib` extensions, which the official `postgres:17` image does.
-
-Files that only add things the Prisma schema can already express are not sidecars and are not folded in. For example, the pending `prisma/sql/reconciliation-cursors.sql` (#2309) adds nullable `lastReconciledAt` columns and ordinary indexes that are declared in `prisma/schema.prisma`; those objects are already inside `0_baseline`, so that file is deleted at cutover rather than migrated.
-
-### Step 6. Prove the history reproduces the live database
-
-Build a scratch Postgres 17 (a local container is fine; it is not the shared project), point a throwaway `DIRECT_URL` at it, and run `npx prisma migrate deploy`. Then run the same read-only catalog queries against the scratch database and the live one and diff the output:
-
-```sql
-SELECT conrelid::regclass::text AS tbl, conname, pg_get_constraintdef(oid) AS def
-  FROM pg_constraint WHERE connamespace = 'public'::regnamespace ORDER BY 1, 2;
-
-SELECT tablename, indexname, indexdef FROM pg_indexes WHERE schemaname = 'public' ORDER BY 1, 2;
-
-SELECT tgrelid::regclass::text AS tbl, tgname, pg_get_triggerdef(oid) AS def
-  FROM pg_trigger WHERE NOT tgisinternal ORDER BY 1, 2;
-
-SELECT p.proname, pg_get_functiondef(p.oid) AS def
-  FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname LIKE 'assert\_%' ORDER BY 1;
-```
-
-Any difference is a lagging or divergent live object. Fix it on the live database (an owner-run, reviewed statement) or fix the migration, and repeat until the output is identical. This is the step that protects the money invariants; the structure diff in step 3 cannot.
-
-### Step 7. Mark both migrations applied on the live database
-
-```sh
-DIRECT_URL=<live direct url> npx prisma migrate resolve --applied 0_baseline
-DIRECT_URL=<live direct url> npx prisma migrate resolve --applied 20261101000000_money_invariants
-DIRECT_URL=<live direct url> npx prisma migrate status
-```
-
-`resolve --applied` records the migration in `_prisma_migrations` without executing any SQL. Both migrations are resolved, not deployed, on the live database, because both describe objects that already exist and the second begins by dropping and re-creating unique indexes that production traffic depends on. `migrate status` must report the database schema is up to date.
-
-### Step 8. Create the dev project from the history
-
-On the new development project (section 5), run `npx prisma migrate deploy`. This applies both migrations for real, and doing so against an empty project is the final proof that the history is self-sufficient. Then run `npm run db:seed` with `SEED_TARGET_CONFIRM` set to that project's host, which `prisma/seed.ts` requires.
-
-### Step 9 and 10. Flip the environments and remove the old path
-
-Point previews, local development and CI at the dev project (section 5). Then, in one PR: delete `db:push`, `db:push:schema`, `db:preflight`, `db:sidecars`, `db:constraints`, `db:triggers`, `db:leg-triggers` and the misleading `db:migrate` (`prisma migrate dev --name init`) scripts from `package.json`; delete `scripts/db/preflight-push.ts` and `scripts/db/apply-sidecars.ts` once nothing imports them (`scripts/ci/check-db-live-drift.ts` currently imports helpers from the preflight); point `scripts/db/sidecar-objects.ts` at the migration SQL instead of `prisma/sql`; delete `prisma/sql/*.sql`; and rewrite AGENTS.md section 2.3, `.claude/skills/schema/references/this-repo.md` and `docs/prisma/README.md` for the new posture.
+The owner accepted every DROP and KEEP row of section 9 on 2026-11-09, re-audited for schema added since 2026-10-23. The freeze ships as five pull requests, F1 to F5, each under 150 files, none stacked, merged one after another: F1 drops, F2 relations and types, F3 payment renames, F4 plan and billing renames, F5 the Referral contract drill. Each is a real migration under the rules of section 6, and any destructive one lands in a `_contract` folder that the owner dispatches after the release that stopped reading the object. The Referral drill follows four steps: stop reading the columns and values, mark them `@ignore`, dispatch a `_contract` migration that remaps `QUALIFIED` to `QUALIFYING` and `REWARDED` to `VESTED`, recreates the enum and drops the columns in one transaction, then confirm `migrate diff --exit-code` exits 0.
 
 ## 5. Splitting the shared dev and prod database (planned)
 
 The blast-radius argument is in #1873 and the preview-database failure history is in #2305. This section lists what has to move.
 
-**Which project is which.** The existing project holds the real users and the real payment history, so it stays **production**. A new project becomes **development and preview**, built from the migration history and seeded (step 8). The reverse would mean copying production data, which is the riskier operation.
+**Which project is which.** The existing project holds the real users and the real payment history, so it stays **production**. A new project becomes **development and preview**, built by `npx prisma migrate deploy` from the migration history on an empty project and then seeded; the history, not a dump, is the source of truth. The reverse would mean copying production data, which is the riskier operation.
 
 **What changes, by place:**
 
@@ -194,64 +119,73 @@ The blast-radius argument is in #1873 and the preview-database failure history i
 
 ### 6.1 The authoring loop
 
-1. Edit `prisma/schema.prisma`.
-2. Generate the migration without applying it: `npx prisma migrate dev --create-only --name <change>` against the **dev project** only. Read the SQL. Replace any `DROP`/`CREATE` pair that was meant to be a rename with `ALTER TABLE ... RENAME`.
-3. Put any `CHECK`, exclusion constraint, partial index or trigger in the same migration file by hand, since `migrate diff` will not write it.
-4. Open the PR with the migration, the schema and the code together.
-5. Apply the merged migration to each project with `npx prisma migrate deploy`: the dev project on merge to `dev`, production at promotion, always **before** the application deploy that needs it. Never run it from an unmerged branch against a shared project.
-6. Run `npx prisma generate` and the checks in AGENTS.md section 3.
+The full procedure, with commands, is `.claude/skills/schema/references/multi-session-workflow.md`. In outline:
+
+1. Rebase onto the newest `dev` and build a scratch database from the history alone, on a local Postgres 17 cluster in UTC. Never a Supabase project.
+2. Edit `prisma/schema.prisma`.
+3. Generate the SQL against a shadow database: `npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --script` with `SHADOW_DATABASE_URL` set. **`prisma migrate dev` is never used,** because it writes to whatever `DIRECT_URL` points at and can offer to reset the database.
+4. Delete the three standing index drops from the output (`appointment_feedback_level_key`, `consultant_earnings_occurrence_key`, `organization_earnings_split_key`); they are `NULLS NOT DISTINCT` uniques the schema cannot declare.
+5. Create `prisma/migrations/<YYYYMMDDHHMMSS>_<what_it_does>/migration.sql` with a timestamp later than the newest on `dev`, add `_contract` to the folder name if the change is destructive, and wrap the file in `BEGIN; SET LOCAL lock_timeout = '3s'; ... COMMIT;`.
+6. Fix the SQL by hand where Prisma is wrong: replace a `DROP COLUMN` and `ADD COLUMN` pair that was meant as a rename with `ALTER TABLE ... RENAME COLUMN`, and write every sidecar object (CHECK, exclusion constraint, partial unique, trigger and its function with `SET search_path = public`) idempotently.
+7. Prove it locally: `migrate deploy` on the scratch database, `scripts/ci/check-migrations.ts`, `scripts/ci/check-db-sidecars.ts`, and for booking, money or seat changes the `jest.db` tier on a database named `ci`.
+8. Open the pull request with the migration, the schema and the code together. On merge to `dev`, `db-migrate.yml` applies an expand migration; a `_contract` folder waits for an owner dispatch naming it.
 
 ### 6.2 Expand and contract rules
 
 The full playbooks live in `.claude/skills/schema/references/expand-contract.md`. The rules that bind this repository are:
 
 1. **A migration must be compatible with the code on both sides of the deploy.** During a rolling deploy, and while a queued job or a webhook retry runs yesterday's code, the previous release still talks to the new schema. A change that breaks that is not allowed in one step.
-2. **Additive changes ship alone and early.** A nullable column, a new table, a new enum value and a non-unique index are safe to apply before the code that uses them.
+2. **Additive changes ship alone and early.** A nullable column, a new table, a new enum value and a non-unique index are safe to apply before the code that uses them. They merge to `dev` and apply at once, which is also when production sees them.
 3. **Destructive changes take at least two releases.** Drop, rename, type narrowing, `SET NOT NULL` on a populated table and enum value removal are done as expand, dual-write and backfill, cut over, and only then contract. The contract migration never ships in the release that cuts over.
 4. **No speculative columns.** A column or enum value is added in the PR that first reads or writes it. Placeholder columns "for later" are what section 9 exists to remove; after launch they cannot be removed cheaply.
 5. **Backfills are batched, restartable and outside the migration that adds the column.** Never one `UPDATE` over a whole table inside a migration.
-6. **Set `lock_timeout` on every migration** that takes an `ACCESS EXCLUSIVE` lock, as `scripts/db/apply-sidecars.ts` does today with `SET LOCAL lock_timeout = '3s'`.
-7. **Roll forward.** Recover a failed migration with `migrate resolve` and a new migration, not a down script.
-8. **Constraints that validate existing rows use `NOT VALID` then `VALIDATE`**, as `occurrence_confirmed_requires_consultant_chk` already does.
+6. **Every migration sets `lock_timeout`** with `SET LOCAL lock_timeout = '3s'` inside its `BEGIN` and `COMMIT`; `lintMigrationSql` refuses a file that does not, and refuses a session-level `SET` or `RESET`.
+7. **Roll forward.** Recover a failed migration with `migrate resolve --rolled-back` after the transaction has rolled back, and a corrected file, not a down script. The wrapped file leaves nothing behind, so Prisma then reports `P3009` on every later deploy until the owner resolves it.
+8. **Constraints that validate existing rows use `NOT VALID` then `VALIDATE`**, as `occurrence_confirmed_requires_consultant_chk` already does. A new CHECK that existing rows fail is a contract.
+9. **A pending `_contract` folder blocks every later expand,** because `migrate deploy` applies pending migrations in order and cannot skip one. Dispatch the contract promptly, or keep its pull request unmerged until its release is ready.
 
-**Worked example.** Rename `ConsultationPlan.price` to `pricePaise` after launch, for a seeded consultant's Basic Consultation plan listed at ₹2,500 (stored as `250000` paise). Release 1 adds a nullable `pricePaise`; the code writes both columns on every plan save and keeps reading `price`. A batched backfill copies `250000` into `pricePaise` for every existing plan. Release 2 switches every reader to `pricePaise` while still writing both. Release 3 stops writing `price`, and a following migration drops it. That is three releases for one rename, which is why the rename belongs in the freeze if the owner wants it at all.
+**Worked example.** Rename `ConsultationPlan.price` to `pricePaise` after launch, for a seeded consultant's Basic Consultation plan listed at ₹2,500 (stored as `250000` paise). Release 1 adds a nullable `pricePaise`; the code writes both columns on every plan save and keeps reading `price`. A batched backfill copies `250000` into `pricePaise` for every existing plan. Release 2 switches every reader to `pricePaise` while still writing both. Release 3 stops writing `price`, and a following `_contract` migration drops it. That is three releases for one rename, which is why the rename belongs in the freeze if the owner wants it at all.
 
 ### 6.3 Concurrent index builds
 
-Since Prisma 7.4.0, `CREATE INDEX CONCURRENTLY` works inside a migration ([prisma-engines#5767](https://github.com/prisma/prisma-engines/pull/5767), [7.4.0 release notes](https://github.com/prisma/prisma/releases/tag/7.4.0)). A side effect is reported but unconfirmed ([orm#30640](https://github.com/prisma/orm/issues/30640)): each statement of a Postgres migration may commit on its own, so a half-failed migration would stay half-applied and be marked failed (`P3018`). The rehearsal in `.claude/skills/schema/references/runbook-cutover.md` decides this for the pinned 7.10.1. Until then, write migrations idempotently with one logical object per file.
+Since Prisma 7.4.0, `CREATE INDEX CONCURRENTLY` works inside a migration ([prisma-engines#5767](https://github.com/prisma/prisma-engines/pull/5767), [7.4.0 release notes](https://github.com/prisma/prisma/releases/tag/7.4.0)). Postgres refuses it inside a transaction, which is why it needs its own file. The atomicity facts, rehearsed on 2026-11-09 with Prisma 7.10.1 on Postgres 17.11 (the underlying behaviour is [orm#30640](https://github.com/prisma/orm/issues/30640), still open):
 
-At the cutover the question does not bite. The sidecar files contain no `CONCURRENTLY` (checked: none of the three uses it), and `0_baseline` builds its indexes on empty tables. It matters only for a post-launch index on a large table. The recipe that does not depend on the rehearsal is:
+1. An unwrapped migration is not atomic. `migrate deploy` commits each statement on its own: a file that created two tables and then failed left both committed and the migration marked failed.
+2. An explicit `BEGIN; ... COMMIT;` restores atomicity. A wrapped file that failed left nothing behind.
+3. `SET LOCAL lock_timeout` has no effect unwrapped and works wrapped; a plain `SET` leaks into every later migration of the same run.
 
-1. The migration contains a plain `CREATE INDEX IF NOT EXISTS "<name>" ...`. On a fresh or small database this is fast and correct.
-2. Before deploying that migration to production, a person builds the same index by hand with the same name: `CREATE INDEX CONCURRENTLY "<name>" ...`, via `psql` or `npx prisma db execute --file <file>`.
-3. Verify it is valid: `SELECT indisvalid FROM pg_index WHERE indexrelid = '"<name>"'::regclass;`. A failed concurrent build leaves an **invalid** index of the same name, and `IF NOT EXISTS` would then skip it silently.
-4. Run `migrate deploy`; the statement is a no-op on production.
+So a file holding a `CONCURRENTLY` statement cannot be wrapped, and must hold **exactly one statement and nothing else**; then there is nothing to be half-applied. The recipe for an index on a large table is:
+
+1. The migration is its own folder whose `migration.sql` is the single statement `CREATE INDEX CONCURRENTLY IF NOT EXISTS "<name>" ...`.
+2. After it runs, verify the index is valid: `SELECT indisvalid FROM pg_index WHERE indexrelid = '"<name>"'::regclass;`. A failed concurrent build leaves an **invalid** index of the same name, and `IF NOT EXISTS` would then skip it silently on a retry, so drop the invalid index and rerun.
+3. If the table is so large that the build could exceed the 15-minute limit of `db-migrate.yml`, the owner builds the same index by hand first, with the same name, and the migration is then a no-op.
 
 A concurrent **unique** index is stricter: it fails if duplicates exist and rejects conflicting writes while it builds, so it follows the ordered recipe in `.claude/skills/schema/references/change-catalog.md`.
 
-## 7. The CI drift gate (planned, building on #2306)
+## 7. The CI gates
 
-The open pull request #2306 adds `scripts/ci/check-db-schema-required.ts` and a `schema-required` job in `.github/workflows/ci.yaml`. It diffs the pull request's merge-base schema against the branch schema, then asks the live catalog whether each added column, table, enum type and enum value exists, because a preview whose branch reads a column the shared database lacks returns 500 on every read of that model while its build passes. It also records 33 legacy statements in `prisma/sql/known-drift.json` so the daily monitor is green. **This plan keeps that gate and does not duplicate it.** What changes is its target and what surrounds it.
+`scripts/ci/check-db-schema-required.ts` diffs the pull request's merge-base schema against the branch schema, then asks the live catalog whether each added column, table, enum type and enum value exists, because a preview whose branch reads a column the shared database lacks returns 500 on every read of that model while its build passes. It runs as `.github/workflows/schema-required.yml`. When it fails, its message now says that the objects reach the shared database when the branch's migration merges to `dev`, that nobody should apply them by hand (a hand-applied column makes the migration fail on merge), and that the pull request is verified on a local scratch database until then.
 
-| Layer                  | Today                                                                                                                      | After the cutover (planned)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Branch builds cleanly  | `db-guards` pushes the schema and sidecars to a throwaway `postgres:17`.                                                   | `db-guards` runs `prisma migrate deploy` on the throwaway container and then `scripts/ci/check-db-sidecars.ts`. This proves the migration history, not the schema file, builds the invariants.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Schema has a migration | Not checkable; there are no migrations.                                                                                    | A new check runs `prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --script`. It needs a shadow database, and `prisma.config.ts` does not configure one today. The cutover PR adds `shadowDatabaseUrl: process.env.SHADOW_DATABASE_URL` to its `datasource` block (the field exists in the Prisma 7.10 config types). In CI that variable points at the throwaway `postgres:17` container that `db-guards` already starts; without it, Prisma would try to `CREATE DATABASE` on `DIRECT_URL`, which needs a privilege the shared Supabase role should not carry. It is never set to a Supabase project. The check also cannot use a bare `--exit-code`: the shadow database is built from the migrations, so it contains the three sidecar unique indexes (`appointment_feedback_level_key`, `consultant_earnings_occurrence_key`, `organization_earnings_split_key`) that `prisma/schema.prisma` omits by design, and the diff proposes dropping them. This is the same drift the live check sees today. The gate therefore reuses the filter in `scripts/ci/check-db-live-drift.ts`: ignore a `DROP INDEX` only for an index created by the sidecar migration, and fail on any other statement. A non-empty remainder means someone edited `prisma/schema.prisma` without a migration. |
-| Preview will not 500   | #2306's `schema-required` reads the shared live database.                                                                  | The same job reads the **dev project**, which is the only database a preview has. Only **merged** migrations reach the dev project, through one serialized promotion step: `prisma migrate deploy` runs once per merge to `dev`, never from a PR branch. This is chosen over per-PR databases because the migration history is linear and shared: two unmerged branches would race on `_prisma_migrations`, and an abandoned branch would leave a row the other branches lack, which Prisma reports as drift. A per-PR database would also add infrastructure per pull request. The cost is that a preview of a PR that adds a column shows errors until it merges; #2306's gate fails that PR's check loudly instead of letting it look green, and such a PR is verified on a local scratch database. Contract migrations follow the same path, after the code that stops using the old shape is merged.                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| Live database matches  | `.github/workflows/db-live-drift.yml` runs `migrate diff` against `dev`'s schema, with an allowlist for the sidecar drops. | `.github/workflows/db-live-drift.yml` runs, against each project, `prisma migrate status` (pending or failed migrations), `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script` (columns, enums and ordinary indexes changed by hand), and the catalog comparison from step 6 for CHECKs, exclusion constraints, triggers and functions, and keeps `scripts/ci/check-db-sidecars.ts`. `migrate status` alone only compares migration files with `_prisma_migrations`, so a manual change to the catalog leaves it green. The same three sidecar-owned index drops stay allowlisted, derived from the sidecar migration once `prisma/sql` is deleted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Layer                  | Gate (shipped)                                                                                                                                                                                                                                                                                         |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Branch builds cleanly  | The `checks` job of `.github/workflows/ci.yaml` starts Postgres 17.6, builds the `ci` database with `migrate deploy`, runs `scripts/ci/check-db-sidecars.ts` and the `jest.db` tier. This proves the migration history, not the schema file, builds the invariants.                                    |
+| Schema has a migration | "Migration history lint" runs `scripts/ci/check-migrations.ts` on a `shadow` database: linear folders, no edited applied migration, the transaction wrapper, and a history that produces exactly `prisma/schema.prisma` apart from the three standing drops derived by `sidecarOwnedUniqueIndexes`.    |
+| Preview will not 500   | `schema-required.yml` reads the shared live database today. Only merged migrations reach it, through one serialized step, `db-migrate.yml`. A preview of a pull request that adds a column shows errors until it merges, and the gate fails that pull request loudly instead of letting it look green. |
+| Live database matches  | `.github/workflows/db-live-drift.yml` runs `scripts/ci/check-db-live-drift.ts` daily, filtering only those three index drops, and fails on anything else. `migrate status` alone only compares migration files with `_prisma_migrations`, so a manual catalog change would leave it green.             |
 
-A release pull request into `prod` also runs the whole-schema form, `check-db-schema-required.ts --live`, as the "Release schema gate" job in `.github/workflows/db-live-drift.yml` (see `docs/prisma/README.md`).
-
-The workflows run on GitHub Actions, and `.github/workflows/ci.yaml` is currently disabled because the free minutes ran out. Until it is re-enabled the gate is inert and the proof is a local read-only run of the same commands. The daily monitor needs a sink outside Sentry, as noted in `docs/prisma/README.md`.
+A release pull request into `prod` also runs the whole-schema form, `check-db-schema-required.ts --live`, as the "Release schema gate" job in `.github/workflows/db-live-drift.yml` (see `docs/prisma/README.md`). After the split of section 5, the preview gate reads the dev project instead of the shared database **(planned)**. The daily monitor needs a sink outside Sentry, as noted in `docs/prisma/README.md`.
 
 ## 8. Risks specific to this repository
 
-- **In-flight branches.** Every open schema-bearing branch has no migration file. After the cutover they must be rebased and given one (`--create-only`) before merging. State the freeze date in the PR template.
-- **Failure of step 7.** If `resolve --applied` is mistyped, `_prisma_migrations` records the wrong name and the first `deploy` tries to re-run a migration. Run `migrate status` immediately after and treat any "not yet applied" line as stop.
-- **A hidden live-only constraint.** Step 6 exists because the structure diff cannot see a CHECK that exists live and not in the file, or the reverse. Do not skip it.
-- **Row-level security and the migrations table.** `_prisma_migrations` is created in the `public` schema, which Supabase exposes. Confirm the table is not reachable through the public API roles before launch (see `docs/compliance/04-rls-design-memo.md`).
+- **In-flight branches.** Every open schema-bearing branch that has no migration file fails the migration history lint. Each must be rebased and given a migration, generated against the shadow database, before merging. Two pull requests that each add a migration conflict by timestamp; whichever merges second renames its folder to sort later.
+- **A merge to `dev` is a production write.** While one database serves both, a migration that merges changes production the same minute, so only expand migrations may merge freely. A dispatched contract breaks `prod`'s older code until `dev` is promoted; before launch that window is accepted and recorded.
+- **An edited applied migration goes unnoticed by Prisma.** `migrate status` reports the database up to date after an applied file is edited, and also when the database holds migrations the local folder lacks (rehearsed). The git-based `check-migrations.ts` is the only guard, so rebase before trusting any status output.
+- **A hidden live-only object.** The structure diff cannot see a CHECK that exists live and not in the history, or the reverse. Phase 2 removes the question by rebuilding from the history; afterwards `check-db-sidecars.ts` and the catalog comparison keep it removed.
+- **Row-level security and the migrations table.** `_prisma_migrations` is created in the `public` schema, which Supabase exposes. Phase 2 verifies that neither `anon` nor `authenticated` holds any table grant (see `docs/compliance/04-rls-design-memo.md`).
 
-## 9. Shape-freeze candidates (owner decides)
+## 9. Shape-freeze candidates (owner decided)
+
+The owner accepted every DROP and KEEP row below on 2026-11-09. The freeze is executed as real migrations in Phase 3 (F1 to F5, section 4), per the decision record, which also lists extra drops found since and the clean-slate changes that ride along.
 
 Method: for each name, a repository-wide search of application code, jobs, scripts, schemas and seed files, excluding `docs/`, `.claude/` and `prisma/schema.prisma`, plus a separate search of `__tests__`. A "reader" means code that selects, filters, branches on, or returns the value. A seed file that only writes demo data is listed as a writer and does not count as a reader. Whole-row reads (a `findUnique` with no `select`) return every column without naming it, so "no reader" means no named reader; that is the remaining unverified risk, and it is why each DROP is made in the same PR as its code and test sweep.
 
@@ -288,20 +222,20 @@ If the owner accepts every DROP row, the freeze removes 27 columns, three enum t
 ## 10. Where in code
 
 - `prisma/schema.prisma`: the schema and the freeze banner at its top.
-- `prisma/sql/check-constraints.sql`, `prisma/sql/ledger-triggers.sql`, `prisma/sql/payment-legs-triggers.sql`, `prisma/sql/known-drift.json`: the sidecars and the allowlist.
-- `prisma.config.ts`: the CLI datasource (`DIRECT_URL`) and the `prisma/migrations` path.
-- `scripts/db/preflight-push.ts`, `scripts/db/apply-sidecars.ts`, `scripts/db/sidecar-objects.ts`, `scripts/db/sql-chunks.ts`: the push guard, the replay, the object parser and the splitter.
-- `scripts/ci/check-db-sidecars.ts`, `scripts/ci/check-db-live-drift.ts`: the assertion and the live drift check; `.github/workflows/ci.yaml` (`db-guards`) and `.github/workflows/db-live-drift.yml`.
+- `prisma/migrations/`: `0_baseline`, the 19 grouped migrations and `migration_lock.toml`.
+- `prisma.config.ts`: the CLI datasource (`DIRECT_URL`), the `prisma/migrations` path and `SHADOW_DATABASE_URL`.
+- `scripts/db/generate-baseline.sh`, `scripts/db/sidecar-objects.ts`, `scripts/db/plan-statements.ts`: the baseline generator, the object parser that reads the migration SQL, and the plan-statement helpers.
+- `scripts/ci/check-migrations.ts`, `scripts/ci/migrate-gate.ts`, `scripts/ci/check-db-sidecars.ts`, `scripts/ci/check-db-live-drift.ts`, `scripts/ci/check-db-schema-required.ts`: the history lint, the apply gate, the object assertion, the live drift check and the preview gate.
+- `.github/workflows/db-migrate.yml`, `.github/workflows/ci.yaml` (the `checks` job), `.github/workflows/db-live-drift.yml`, `.github/workflows/schema-required.yml`: the workflows.
 - `prisma/seed.ts`: the `SEED_TARGET_CONFIRM` host guard.
 - `lib/prisma.ts`: the runtime connection (`DATABASE_URL`).
 
-Related issues: the clean-slate schema overhaul (#2077), the preview schema gate (#2306, closing #2305), the shared-database split (#1873), the pending recovery cursor columns (#2309). Part of the finance production-readiness program (#2230).
+Related issues: the clean-slate schema overhaul (#2077), the preview schema gate (#2306, closing #2305), the shared-database split (#1873), the Session F tracker (#2700). Part of the finance production-readiness program (#2230).
 
 ## Deprecated & Superseded Approaches
 
-- **`db push` plus owner-applied sidecars as the permanent model.** This is the current posture and is superseded at the cutover by the migration history. Remove `npm run db:push`, `db:push:schema`, `db:preflight`, `db:sidecars`, `db:constraints`, `db:triggers`, `db:leg-triggers` and `scripts/db/apply-sidecars.ts` when step 10 lands, and do not re-create a parallel replay path.
-- **A "pre-MVP reset" followed by a "cutover" runbook.** Earlier docs split this into a pre-MVP reset runbook and a cutover runbook; both were retired. The reset is replaced by baselining the live database, which keeps real users and payments. References to those two files in older text are stale.
-- **The `db:migrate` script (`prisma migrate dev --name init`).** It would generate a migration against the shared database. Delete it at the cutover; use `--create-only` against the dev project only.
-- **A rehearsal database for schema-ahead branches (`REHEARSAL_DATABASE_URL`).** Removed earlier; the dev project from section 5 replaces it as the single non-production database.
-- **Staged-for-the-reset SQL blocks in `prisma/sql/check-constraints.sql`.** Commented statements waiting for a clean schema are not folded into the migration (step 5). Either apply them as ordinary reviewed migrations after launch, validating existing rows first, or delete them.
-- **Operator-applied additive SQL files beside the sidecars** (the pattern of `prisma/sql/reconciliation-cursors.sql`, #2309). After the cutover an additive change is a migration; do not create a new file under `prisma/sql`.
+- **`db push` plus owner-applied sidecars.** Removed: `db:push`, `db:push:schema`, `db:preflight`, `db:sidecars`, `db:constraints`, `db:triggers`, `db:leg-triggers`, `db:migrate`, `scripts/db/preflight-push.ts`, `scripts/db/apply-sidecars.ts`, `prisma/sql/*.sql` and the `prisma/sql/known-drift.json` allowlist. Do not re-create a parallel replay path or a drift allowlist.
+- **Baselining the live database with `migrate resolve --applied`,** and the single `money_invariants` migration folded from the three sidecar files. Superseded by the reset and rebuild of section 4 and the 19 grouped migrations.
+- **`prisma migrate dev`** against any shared database, and `migrate dev --create-only` against a dev project. Use `migrate diff` against a local shadow database.
+- **A "pre-MVP reset" runbook followed by a separate "cutover" runbook,** and a rehearsal database for schema-ahead branches (`REHEARSAL_DIRECT_URL`). Retired; the dev project of section 5 is the single non-production database.
+- **Operator-applied additive SQL files beside the sidecars.** An additive change is a migration; there is no `prisma/sql/` to put a file in.

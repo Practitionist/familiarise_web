@@ -1,144 +1,114 @@
 /**
- * CI guard — the SQL sidecars must actually be applied to the live database.
+ * Asserts the database carries every hand-written object the migration history
+ * declares after `0_baseline` (CHECKs, exclusion constraints, partial indexes,
+ * triggers, views, row-level security), and that the Data API roles hold no
+ * table grants. `prisma migrate status` only compares migration rows, so a
+ * hand-dropped trigger would leave it green; this reads the catalog.
  *
- * Prisma manages neither triggers nor CHECK/EXCLUDE constraints, so every money
- * invariant that cannot be expressed in PSL lives in `prisma/sql/*.sql` and is
- * applied by `npm run db:sidecars`. The trap is that `npm run db:push:schema`
- * exists as a standalone script: run it on its own and the ledger balance
- * trigger plus every money CHECK silently disappear, with nothing in the
- * application or the test suite noticing. The double-entry invariant would then
- * be enforced by application code alone.
- *
- * This asserts that every named object declared in the sidecars is present in
- * the live catalog. It parses the SQL rather than hard-coding a list, so adding
- * a constraint to the sidecar automatically extends the guard.
- *
- * Skips cleanly (exit 0) when DATABASE_URL is absent, so forks and PRs without
- * secrets are not punished.
+ * Skips cleanly (exit 0) when DATABASE_URL is absent.
  */
-// Without this the script reads a bare process.env, finds no DATABASE_URL, and
-// self-skips with exit 0 — which is how this guard reported success on every CI
-// run while never once executing. CI writes the secret to .env as a FILE; only
-// Next loads that implicitly. Every other DB-touching script here does the same.
+// CI writes the secret to .env as a file, which only Next loads implicitly.
 import "dotenv/config";
-import path from "node:path";
 
 import prisma from "../../lib/prisma";
-
-const ROOT = path.join(__dirname, "..", "..");
-const SQL_DIR = path.join(ROOT, "prisma", "sql");
-
 import {
-  parseSidecarDirectory,
-  stripSqlComments,
+  MIGRATIONS_DIR,
+  parseMigrationsDirectory,
   type SidecarObject,
 } from "../db/sidecar-objects";
-
-// Re-exported so the existing comment-stripping test keeps its import path;
-// the implementation lives in scripts/db/sidecar-objects.ts (#1319).
-export { stripSqlComments };
-
-type Expected = SidecarObject;
-
-function parseSidecars(): Expected[] {
-  return parseSidecarDirectory(SQL_DIR);
-}
 
 async function main(): Promise<void> {
   if (!process.env.DATABASE_URL) {
     console.warn(
-      "::warning title=Database Sidecar Check Skipped::DATABASE_URL is unset — live database sidecar verification was skipped.",
+      "::warning title=Database Sidecar Check Skipped::DATABASE_URL is unset — database sidecar verification was skipped.",
     );
     console.log("check-db-sidecars: DATABASE_URL unset — skipping");
     return;
   }
 
-  const expected = parseSidecars();
+  const expected = parseMigrationsDirectory(MIGRATIONS_DIR);
   if (expected.length === 0) {
     console.error(
-      "check-db-sidecars: parsed zero objects from prisma/sql — the parser or the sidecars changed shape",
+      "check-db-sidecars: parsed zero objects from prisma/migrations — the parser or the migrations changed shape",
     );
     process.exitCode = 1;
     return;
   }
 
-  const constraints = new Set(
-    (
-      await prisma.$queryRaw<{ conname: string }[]>`
-        SELECT c.conname FROM pg_constraint c
-        JOIN pg_namespace n ON n.oid = c.connamespace AND n.nspname = 'public'
-      `
-    ).map((r) => r.conname),
-  );
-  const indexes = new Set(
-    (
-      await prisma.$queryRaw<{ indexname: string }[]>`
-        SELECT indexname FROM pg_indexes WHERE schemaname = 'public'
-      `
-    ).map((r) => r.indexname),
-  );
-  const triggers = new Set(
-    (
-      await prisma.$queryRaw<{ tgname: string }[]>`
-        SELECT t.tgname FROM pg_trigger t
-        JOIN pg_class cl ON cl.oid = t.tgrelid
-        JOIN pg_namespace n ON n.oid = cl.relnamespace AND n.nspname = 'public'
-        WHERE NOT t.tgisinternal
-      `
-    ).map((r) => r.tgname),
-  );
+  const names = async (query: Promise<{ name: string }[]>) =>
+    new Set((await query).map((r) => r.name));
 
-  const views = new Set(
-    (
-      await prisma.$queryRaw<{ viewname: string }[]>`
-        SELECT viewname FROM pg_views WHERE schemaname = 'public'
-      `
-    ).map((r) => r.viewname),
-  );
-
-  const catalog: Record<Expected["kind"], Set<string>> = {
-    constraint: constraints,
-    index: indexes,
-    trigger: triggers,
-    view: views,
+  const catalog: Record<SidecarObject["kind"], Set<string>> = {
+    constraint: await names(prisma.$queryRaw<{ name: string }[]>`
+      SELECT c.conname AS name FROM pg_constraint c
+      JOIN pg_namespace n ON n.oid = c.connamespace AND n.nspname = 'public'
+    `),
+    index: await names(prisma.$queryRaw<{ name: string }[]>`
+      SELECT indexname AS name FROM pg_indexes WHERE schemaname = 'public'
+    `),
+    trigger: await names(prisma.$queryRaw<{ name: string }[]>`
+      SELECT t.tgname AS name FROM pg_trigger t
+      JOIN pg_class cl ON cl.oid = t.tgrelid
+      JOIN pg_namespace n ON n.oid = cl.relnamespace AND n.nspname = 'public'
+      WHERE NOT t.tgisinternal
+    `),
+    view: await names(prisma.$queryRaw<{ name: string }[]>`
+      SELECT viewname AS name FROM pg_views WHERE schemaname = 'public'
+    `),
+    rls: await names(prisma.$queryRaw<{ name: string }[]>`
+      SELECT c.relname AS name FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+      WHERE c.relrowsecurity
+    `),
   };
   const missing = expected.filter((e) => !catalog[e.kind].has(e.name));
 
-  if (missing.length > 0) {
-    console.error(
-      `check-db-sidecars: FAILED — ${missing.length} of ${expected.length} sidecar objects are missing from the live database:\n`,
-    );
-    for (const m of missing) {
+  // The roles exist only on Supabase and in CI; elsewhere this finds nothing.
+  const grants = await prisma.$queryRaw<{ grantee: string; name: string }[]>`
+    SELECT grantee, table_name AS name FROM information_schema.role_table_grants
+    WHERE table_schema = 'public' AND grantee IN ('anon', 'authenticated')
+    ORDER BY 1, 2
+  `;
+
+  if (missing.length > 0 || grants.length > 0) {
+    if (missing.length > 0) {
       console.error(
-        `  - ${m.kind} "${m.name}"${m.table ? ` on "${m.table}"` : ""} (declared in prisma/sql/${m.source})`,
+        `check-db-sidecars: FAILED — ${missing.length} of ${expected.length} migration-declared objects are missing from the database:\n`,
+      );
+      for (const m of missing) {
+        console.error(
+          `  - ${m.kind} "${m.name}"${m.table ? ` on "${m.table}"` : ""} (declared in prisma/migrations/${m.source})`,
+        );
+      }
+    }
+    if (grants.length > 0) {
+      console.error(
+        `check-db-sidecars: FAILED — the Data API roles hold ${grants.length} table grant(s) in public, e.g. ${grants
+          .slice(0, 5)
+          .map((g) => `${g.grantee} on "${g.name}"`)
+          .join(", ")}`,
       );
     }
     console.error(
-      "\nRun `npm run db:sidecars` against this database. If this fired right after a schema " +
-        "change, someone almost certainly ran `npm run db:push:schema` instead of `npm run db:push` — " +
-        "the former does not reapply the trigger or the CHECK constraints.",
+      "\nRun `prisma migrate status` against this database. A missing object means a migration did not apply " +
+        "or someone changed the catalog by hand; restore it with a new migration, never by editing an applied one.",
     );
     process.exitCode = 1;
     return;
   }
 
+  const count = (kind: SidecarObject["kind"]) =>
+    expected.filter((e) => e.kind === kind).length;
   console.log(
-    `check-db-sidecars: ok (${expected.length} sidecar objects present — ` +
-      `${expected.filter((e) => e.kind === "constraint").length} constraints, ` +
-      `${expected.filter((e) => e.kind === "index").length} indexes, ` +
-      `${expected.filter((e) => e.kind === "trigger").length} triggers, ` +
-      `${expected.filter((e) => e.kind === "view").length} views)`,
+    `check-db-sidecars: ok (${expected.length} migration-declared objects present — ` +
+      `${count("constraint")} constraints, ${count("index")} indexes, ${count("trigger")} triggers, ` +
+      `${count("view")} views, ${count("rls")} RLS tables; no Data API table grants)`,
   );
 }
 
-// Only run when invoked as a script. `stripSqlComments` is unit-tested, and a
-// bare `main()` at module scope meant importing it opened a database connection
-// and raced the test runner's teardown.
-if (process.argv[1] && /check-db-sidecars/.test(process.argv[1])) {
-  main()
-    .catch((err) => {
-      console.error("check-db-sidecars: fatal", err);
-      process.exitCode = 1;
-    })
-    .finally(() => prisma.$disconnect());
-}
+main()
+  .catch((err) => {
+    console.error("check-db-sidecars: fatal", err);
+    process.exitCode = 1;
+  })
+  .finally(() => prisma.$disconnect());

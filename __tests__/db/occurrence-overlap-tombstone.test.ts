@@ -5,24 +5,21 @@
  * re-booking a cancelled time 409 at commit. The sidecar is the schema here,
  * and the live-swap script must build the identical predicate.
  */
-import { readFileSync } from "fs";
-import path from "path";
-
-const read = (rel: string) =>
-  readFileSync(path.join(process.cwd(), rel), "utf8");
+import { readSidecarMigrationSql } from "../../scripts/db/sidecar-objects";
 
 const constraintPredicate = (sql: string): string => {
   const match =
     /ADD CONSTRAINT "occurrence_no_confirmed_overlap"[\s\S]*?WHERE\s*(\([^;]*\))\s*;/.exec(
       sql,
     );
-  if (!match) throw new Error("exclusion constraint not found in sidecar");
+  if (!match)
+    throw new Error("exclusion constraint not found in the migrations");
   return match[1].replace(/\s+/g, " ");
 };
 
 describe("occurrence_no_confirmed_overlap tombstone exemption (#1694 / #2010)", () => {
-  it("exempts soft-deleted and cancelled/rescheduled rows in the sidecar exclusion constraint", () => {
-    const sql = read("prisma/sql/check-constraints.sql");
+  it("exempts soft-deleted and cancelled/rescheduled rows in the migration exclusion constraint", () => {
+    const sql = readSidecarMigrationSql();
     const sidecar = constraintPredicate(sql);
     expect(sidecar).toContain('"consultantProfileId" IS NOT NULL');
     expect(sidecar).toContain('NOT "isTentative"');
@@ -33,7 +30,7 @@ describe("occurrence_no_confirmed_overlap tombstone exemption (#1694 / #2010)", 
   });
 
   it("enforces non-null consultantProfileId on confirmed, non-deleted, non-cancelled occurrences (#2010)", () => {
-    const sql = read("prisma/sql/check-constraints.sql");
+    const sql = readSidecarMigrationSql();
     expect(sql).toMatch(
       /ADD CONSTRAINT "occurrence_confirmed_requires_consultant_chk"\s+CHECK \(\s*"isTentative"\s+OR "deletedAt" IS NOT NULL\s+OR "consultantProfileId" IS NOT NULL\s+OR "completionStatus" IN \('CANCELLED', 'RESCHEDULED'\)\s*\) NOT VALID;/,
     );
@@ -42,4 +39,3 @@ describe("occurrence_no_confirmed_overlap tombstone exemption (#1694 / #2010)", 
     );
   });
 });
-

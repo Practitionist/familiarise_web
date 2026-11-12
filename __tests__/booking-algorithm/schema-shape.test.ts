@@ -117,26 +117,3 @@ describe("hygiene", () => {
     );
   });
 });
-
-describe("push chain", () => {
-  it("db:push is push → sidecars → assert, with the sidecars applied once", () => {
-    const pkg = JSON.parse(
-      fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
-    );
-    expect(pkg.scripts["db:push"]).toBe(
-      "npm run db:push:schema && npx tsx -r dotenv/config scripts/ci/check-db-sidecars.ts",
-    );
-    expect(pkg.scripts["db:push:schema"]).toContain("db:sidecars");
-  });
-
-  it("the reset applied the once-staged block, so nothing is left commented", () => {
-    // #1554 — the STAGED banner and its commented DDL are gone; the reset
-    // gave them a clean schema and they are live objects the guard asserts.
-    const sql = fs.readFileSync(
-      path.join(process.cwd(), "prisma/sql/check-constraints.sql"),
-      "utf8",
-    );
-    expect(sql).not.toContain("STAGED FOR THE PRE-MVP RESET");
-    expect(sql).toContain("APPLIED AT THE PRE-MVP RESET");
-  });
-});

@@ -3,8 +3,7 @@
  * OIDC-only, so anything other than an OIDC registration must be refused.
  */
 
-import fs from "node:fs";
-import path from "node:path";
+import { readSidecarMigrationSql } from "../../scripts/db/sidecar-objects";
 import {
   createProviderSchema,
   generateProviderId,
@@ -109,10 +108,7 @@ describe("generateProviderId", () => {
 
 describe("sso_provider_id_not_reserved", () => {
   test("the DB CHECK lists exactly RESERVED_PROVIDER_IDS", () => {
-    const sql = fs.readFileSync(
-      path.join(process.cwd(), "prisma/sql/check-constraints.sql"),
-      "utf8",
-    );
+    const sql = readSidecarMigrationSql();
     const match =
       /"sso_provider_id_not_reserved"\s+CHECK \(lower\(btrim\("providerId"\)\) NOT IN \(([^)]*)\)\)/.exec(
         sql,

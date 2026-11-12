@@ -138,7 +138,7 @@ import { POST as publishRoute } from "../../app/api/digital-products/[productId]
 import { POST as archiveRoute } from "../../app/api/digital-products/[productId]/archive/route";
 import { PATCH } from "../../app/api/digital-products/[productId]/route";
 import { DELETE as removeFile } from "../../app/api/digital-products/[productId]/assets/[assetId]/route";
-import { readFileSync } from "node:fs";
+import { readSidecarMigrationSql } from "../../scripts/db/sidecar-objects";
 import prisma from "../../lib/prisma";
 import { lockDeliverableDigitalProduct } from "../../lib/digital-products/product-lock";
 import { createDigitalProductSchema } from "../../schemas/digital-products";
@@ -248,7 +248,7 @@ it("prices a paid product at Razorpay's ₹1 floor or above", () => {
   const ok = (pricePaise: number) =>
     createDigitalProductSchema.safeParse({ ...listing, pricePaise }).success;
   expect([ok(0), ok(1), ok(99), ok(100)]).toEqual([true, false, false, true]);
-  expect(readFileSync("prisma/sql/check-constraints.sql", "utf8")).toContain(
+  expect(readSidecarMigrationSql()).toContain(
     `CHECK ("pricePaise" = 0 OR "pricePaise" >= ${DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE})`,
   );
 });

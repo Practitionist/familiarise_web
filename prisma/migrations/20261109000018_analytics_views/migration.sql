@@ -1,10 +1,7 @@
--- Read-only analytics views. One source for "who wants what", with no user ids
--- or emails. A view pins the columns it reads: a push that retypes one of them
--- (an enum value removed, say) fails until `DROP VIEW "demand"`, and
--- `npm run db:sidecars` recreates it.
---
--- demand: one row per interest row across the appointment waitlist (EVENT) and
--- slot backup interest (WINDOW). An event's host is its plan's consultant.
+-- Read-only analytics views, kept off the Data API.
+BEGIN;
+SET LOCAL lock_timeout = '3s';
+
 CREATE OR REPLACE VIEW "demand" WITH (security_invoker = true) AS
 SELECT
   'EVENT'::text AS "kind",
@@ -29,7 +26,7 @@ SELECT
   b."notifiedAt",
   b."bookedAt"
 FROM "WindowBackupInterest" b;
--- SPLIT
+
 -- The app reads through the owner role only; keep the view off the Data API.
 DO $$
 BEGIN
@@ -38,3 +35,5 @@ BEGIN
     REVOKE ALL ON "demand" FROM anon, authenticated;
   END IF;
 END $$;
+
+COMMIT;

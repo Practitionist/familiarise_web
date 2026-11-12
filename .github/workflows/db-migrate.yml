@@ -1,0 +1,79 @@
+name: DB Migrate
+
+# Applies merged migrations to the one database that serves dev and prod.
+# A push to dev applies expand migrations only; a `_contract` folder applies
+# only from a workflow_dispatch whose input names it exactly. Never retried
+# automatically: a half-applied migration is recovered by a person.
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "prisma/migrations/**"
+  workflow_dispatch:
+    inputs:
+      migration:
+        description: "The pending _contract folder to apply (exact name); leave empty to apply expand migrations only"
+        required: false
+        default: ""
+
+# One run at a time, and a queued run never cancels one that is mid-migration.
+concurrency:
+  group: db-migrate
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # The Supabase session pooler (port 5432): runners are IPv4-only and DDL needs session mode.
+    env:
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      DATABASE_URL: ${{ secrets.DIRECT_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        # No dependency install script runs with the database secret in the environment.
+        run: npm ci --ignore-scripts
+
+      - name: Generate Prisma client
+        run: npx --no-install prisma generate
+
+      - name: Migration gate
+        # Only a pending-only history proceeds, and a pending _contract folder only when dispatched by name.
+        env:
+          DISPATCH_MIGRATION: ${{ inputs.migration }}
+        run: |
+          test -n "$DIRECT_URL" || { echo "::error title=DB migrate::DIRECT_URL secret is not set"; exit 1; }
+          node_modules/.bin/tsx scripts/ci/migrate-gate.ts
+
+      - name: Apply migrations
+        run: node_modules/.bin/prisma migrate deploy
+
+      - name: Nothing pending or failed afterwards
+        run: node_modules/.bin/prisma migrate status
+
+      - name: Migration-declared objects present
+        run: node_modules/.bin/tsx scripts/ci/check-db-sidecars.ts
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          EXPECTED_SENTRY_PROJECT_ID: ${{ vars.EXPECTED_SENTRY_PROJECT_ID }}
+        run: bash scripts/ci/notify-ops-failure.sh "db-migrate"

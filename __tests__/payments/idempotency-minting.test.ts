@@ -7,7 +7,7 @@
 import fs from "fs";
 import path from "path";
 
-import { parseSidecarObjects } from "../../scripts/db/sidecar-objects";
+import { parseMigrationsDirectory } from "../../scripts/db/sidecar-objects";
 
 const read = (rel: string) =>
   fs.readFileSync(path.join(process.cwd(), rel), "utf8");
@@ -33,25 +33,13 @@ describe("idempotency keys are always minted (#1093 §3)", () => {
     expect(src).toContain("idempotencyKey: created.idempotencyKey");
   });
 
-  it("the sidecar applies the NOT NULL flips (live since the reset, #1554)", () => {
-    const sql = read("prisma/sql/check-constraints.sql");
-    const applied = sql.slice(sql.indexOf("APPLIED AT THE PRE-MVP RESET"));
-    expect(applied).toContain('"clientIdempotencyKey" SET NOT NULL');
-    expect(applied).toContain(
-      '"OrganizationPayout" ALTER COLUMN "idempotencyKey" SET NOT NULL',
-    );
-  });
-
   it("the drift guard sees every live object, including the once-staged ones", () => {
     // Runs the PRODUCTION parser over the real sidecar file, so this guards the
     // script rather than a copy of its regexes. The guard used to split on the
     // staged-for-reset banner, which also discarded the ACTIVE SQL below it —
     // `appointment_doc_thread_version_unique` and `onboarding_draft_payload_size`
     // were silently never asserted.
-    const { constraints, indexes } = parseSidecarObjects(
-      read("prisma/sql/check-constraints.sql"),
-    );
-    const names = [...constraints, ...indexes];
+    const names = parseMigrationsDirectory().map((o) => o.name);
 
     // Applied at the reset (#1554) — demanded of the database from now on.
     expect(names).toContain("program_assignment_no_active_overlap");

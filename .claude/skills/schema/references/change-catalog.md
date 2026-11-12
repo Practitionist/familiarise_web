@@ -203,7 +203,7 @@ removed rather than by the lock: dropping a `CHECK` that keeps a payment's legs
 summing to its amount is not in the same category as dropping a constraint that
 a later migration immediately replaces with a stricter one. The former needs the
 same review as any destructive change, and in this repository those constraints
-live in `prisma/sql/` precisely so that removing one is a visible edit.
+live in hand-written migrations, so removing one is a new migration a reviewer sees.
 
 The safe removal sequence is always the same. Stop reading the column in
 application code and deploy that. Stop writing it and deploy that. Wait long

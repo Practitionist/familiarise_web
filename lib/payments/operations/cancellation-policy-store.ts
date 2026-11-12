@@ -9,9 +9,9 @@
  * publishes a new row at `version + 1` and archives the previous one, because
  * `Appointment.cancellationPolicyId` points at the exact row that governed a sale
  * and rewriting it would rewrite terms a buyer already agreed to. And a scope has
- * at most one ACTIVE version, which the Serializable rotation in
- * `publishOrgCancellationPolicy` enforces until the staged partial unique index in
- * `prisma/sql/check-constraints.sql` is applied at the pre-MVP reset.
+ * at most one ACTIVE version: the Serializable rotation in
+ * `publishOrgCancellationPolicy` and the partial unique index
+ * `cancellation_policy_one_active_per_scope` (prisma/migrations) enforce it.
  */
 
 import { Prisma } from "@prisma/client";

@@ -1,8 +1,7 @@
 /**
  * @jest-environment node
  */
-import { readFileSync } from "node:fs";
-import path from "node:path";
+import { readSidecarMigrationSql } from "../../scripts/db/sidecar-objects";
 
 import {
   END_REASON_POLICY,
@@ -72,10 +71,7 @@ describe("Meeting end-reason vocabulary", () => {
   });
 
   it("admits exactly the vocabulary in the sidecar CHECK", () => {
-    const sql = readFileSync(
-      path.join(__dirname, "../../prisma/sql/check-constraints.sql"),
-      "utf8",
-    );
+    const sql = readSidecarMigrationSql();
     const block = sql.slice(sql.indexOf('"meeting_ended_reason_known"'));
     const inList = block.slice(block.indexOf("IN ("), block.indexOf(")"));
     const admitted = [...inList.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);

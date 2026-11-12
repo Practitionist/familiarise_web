@@ -26,5 +26,7 @@ export default defineConfig({
   datasource: {
     // For Prisma CLI (migrations, introspection) - use direct connection
     url: databaseUrl,
+    // CI-only scratch database for `migrate diff --from-migrations`; never a Supabase project.
+    shadowDatabaseUrl: process.env.SHADOW_DATABASE_URL,
   },
 });

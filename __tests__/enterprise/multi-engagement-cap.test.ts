@@ -692,7 +692,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
   });
 
   // The decrement used to be a bare `update`, and there is no
-  // `CHECK (engagementsUsed >= 0)` in prisma/sql/ — so a counter that had
+  // `CHECK (engagementsUsed >= 0)` in prisma/migrations — so a counter that had
   // already drifted went further negative on every refund and nothing objected.
   // The predicate rides the WHERE now, same shape as the forward BLOCK branch.
   describe("the counter decrement is a guarded CAS", () => {
