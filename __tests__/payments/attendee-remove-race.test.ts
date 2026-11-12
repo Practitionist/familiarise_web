@@ -107,6 +107,11 @@ function runInteractiveTransaction(fn: unknown) {
     },
     // An unpaid seat owes no refund, so no marker is stamped.
     payment: { findFirst: async () => null },
+    // The released seat's revocation intent commits with the release.
+    streamRevocationRetry: {
+      updateMany: async () => ({ count: 0 }),
+      createMany: async () => ({ count: 1 }),
+    },
   });
 }
 
