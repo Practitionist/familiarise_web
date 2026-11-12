@@ -126,4 +126,36 @@ describe("the parked-consultation sweep", () => {
     expect(await refundedPaise(booking.payment?.id ?? "")).toBe(PRICE);
     expect(await strikesFor(host.consultantProfileId)).toBe(0);
   });
+
+  it("leaves a park whose newest failed restore is recent, whatever older ones exist", async () => {
+    const { consultee, booking } = await seedParked({
+      startsInHours: 24 * 10,
+      resolvedHoursAgo: 24 * 8,
+      initiator: "CONSULTEE",
+    });
+    // Parked again yesterday: the seven days run from this one.
+    const recent = new Date(Date.now() - 24 * HOUR_MS);
+    await prisma.rescheduleRequest.create({
+      data: {
+        appointmentId: booking.appointmentId,
+        initiatorRole: "CONSULTEE",
+        initiatedById: consultee.userId,
+        status: "EXPIRED",
+        releasedOccurrenceIds: [booking.occurrenceId],
+        releasedSessions: [],
+        originStatus: "APPROVED",
+        expiresAt: recent,
+        resolvedAt: recent,
+        reason: `db tier ${randomUUID().slice(0, 6)}`,
+      },
+    });
+
+    await cancelAgedParkedConsultations();
+
+    const row = await prisma.consultation.findUniqueOrThrow({
+      where: { id: booking.consultationId ?? "" },
+      select: { status: true },
+    });
+    expect(row.status).toBe("APPROVED");
+  });
 });

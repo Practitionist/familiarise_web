@@ -539,6 +539,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       }),
   },
 
+  // A financial job (it stamps class-end refunds owed): fail-closed, and held in degraded maintenance.
   // @cleanup-twin auto-complete-appointments
   "auto-complete-appointments": {
     meta: {

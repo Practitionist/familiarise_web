@@ -63,6 +63,7 @@ export function patternProblem(
       row.weekday > 6 ||
       row.startMinutes < 0 ||
       row.startMinutes >= 24 * 60 ||
+      // A local time must land on the UTC half-hour grid: :15 or :45 in a :45-offset zone.
       (row.startMinutes - phase) % 30 !== 0
     ) {
       return "OFF_GRID_TIME";

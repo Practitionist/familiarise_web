@@ -113,13 +113,27 @@ export function agedParkedConsultationWhere(
               },
             },
             {
-              rescheduleRequests: {
-                some: {
-                  status: { in: PARK_ENDINGS },
-                  restoredAt: null,
-                  resolvedAt: { lt: parkedBefore },
+              // The clock runs from the newest failed restore: a fresher one restarts it.
+              AND: [
+                {
+                  rescheduleRequests: {
+                    some: {
+                      status: { in: PARK_ENDINGS },
+                      restoredAt: null,
+                      resolvedAt: { lt: parkedBefore },
+                    },
+                  },
                 },
-              },
+                {
+                  rescheduleRequests: {
+                    none: {
+                      status: { in: PARK_ENDINGS },
+                      restoredAt: null,
+                      resolvedAt: { gte: parkedBefore },
+                    },
+                  },
+                },
+              ],
             },
           ],
         },

@@ -60,6 +60,14 @@ The review and QA of the scheduling surfaces pull request showed that most of th
     - **Not repeated as a finding.** The claim that taking the platform offline writes no audit row was not confirmed: `setMaintenanceState` in `lib/maintenance.ts` calls `recordOpsAction` with `action: "maintenance.transition"` inside its transaction whenever a started-by or ended-by actor is passed. The audit pull request must check the paths that call it without an actor.
     - **Options considered.** None were recorded beyond the order: access first, because it carries risk, then the rest.
 
+11. **Review findings tracked for the money and sweeps follow-up** (decided, planned). Two findings from the batched review of the scheduling surfaces pull request were accepted as real and deliberately not fixed there, because neither can overpay or lose money today.
+    - The parked-consultation sweep reads its 25 oldest rows each run (`cancelAgedParkedConsultations` in `lib/booking/parked-consultation-sweep.ts`), so 25 rows that fail on every run would hold back later ones. Failures are reported once per run.
+    - The series-cancel basis of `seatOwedPaise` in `lib/payments/operations/event-refunds.ts` does not subtract an earlier class-end refund. The refundable-balance cap already prevents paying more than was paid; the follow-up first checks whether the case is reachable.
+
+    **Options considered.** Fixing both in the scheduling surfaces pull request was rejected because each is a money-path change that needs its own tests and review. Dismissing them was rejected so they stay tracked.
+
+12. **The series-move notice names every moved session** (decided, planned). Today the notice from `retimeClassSeries` in `lib/booking/class-retime.ts` carries the first old and new time and a link. Listing each pair needs a change to the shared rescheduled notification and email template, so it is part of the notifications follow-up.
+
 ## Deprecated & Superseded Approaches
 
 - **One matching picker per host surface** (the owner's choice earlier on 2026-11-12). Superseded by decision 2: three pickers, one per job.

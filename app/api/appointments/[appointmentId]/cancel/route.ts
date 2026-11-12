@@ -1101,6 +1101,8 @@ export async function POST(
                   now: cancellationData.cancelledAt,
                 });
               }
+              // An expert's own cancel of a paid booking or paid live seat records a
+              // strike; strikes are private to the expert and to operations.
               if (
                 isExpertSideCancel &&
                 hostProfileId &&
