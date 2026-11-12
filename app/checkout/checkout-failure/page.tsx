@@ -13,13 +13,18 @@ import { getStaticErrorDescription } from "@/lib/errors/mapping/payment-error-to
 
 // Only app-chosen copy renders: a known `code` shows its fixed text, anything else the generic line.
 const failureCodeSchema = z.nativeEnum(ErrorTypes);
+// A payment reference is an id, never a sentence: letters, digits and underscores only.
+const paymentReferenceSchema = z.string().regex(/^[A-Za-z0-9_]{1,64}$/);
 const GENERIC_FAILURE_MESSAGE = "Payment failed. Please try again.";
 
 function CheckoutFailureContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const paymentIntent = searchParams.get("payment_intent");
+  const parsedReference = paymentReferenceSchema.safeParse(
+    searchParams.get("payment_intent"),
+  );
+  const paymentIntent = parsedReference.success ? parsedReference.data : null;
   const failureCode = failureCodeSchema.safeParse(searchParams.get("code"));
   const error =
     (failureCode.success
@@ -35,7 +40,7 @@ function CheckoutFailureContent() {
     // E2E-audit fix — /support does not exist as a public route; the support
     // hub lives inside the dashboard. Carry the failure context in the query
     // so the dashboard landing can route it onward.
-    const supportUrl = `/dashboard?issue=payment_failed${paymentIntent ? `&payment_intent=${paymentIntent}` : ""}`;
+    const supportUrl = `/dashboard?issue=payment_failed${paymentIntent ? `&payment_intent=${encodeURIComponent(paymentIntent)}` : ""}`;
     router.push(supportUrl);
   };
 

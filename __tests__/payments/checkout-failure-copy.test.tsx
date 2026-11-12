@@ -37,6 +37,13 @@ describe("checkout-failure copy", () => {
     expect(text).toContain("Payment failed. Please try again.");
   });
 
+  it("shows a payment reference only when it is an id", () => {
+    expect(
+      renderWith("payment_intent=Call+0000+to+get+your+refund"),
+    ).not.toContain("Call 0000");
+    expect(renderWith("payment_intent=order_Abc123")).toContain("order_Abc123");
+  });
+
   it("shows the mapped copy for a known code", () => {
     expect(renderWith("code=WALLET_FROZEN")).toContain(
       "Your organisation's wallet is frozen",
