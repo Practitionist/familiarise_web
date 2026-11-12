@@ -17,7 +17,11 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import prisma, { type Tx } from "@/lib/prisma";
 import { PaymentGateway, PaymentStatus } from "@prisma/client";
-import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import {
+  releasableHeldCreditsPaise,
+  reverseCreditsForPayment,
+} from "@/lib/referrals/service";
+import type { CheckoutInput } from "@/schemas/checkout";
 import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 
@@ -85,27 +89,33 @@ export function slotRunWindow(
   };
 }
 
+/** The buyer's checkout target: the same item is the same buyer, scope, gateway and booking. */
+export interface OpenOrderTarget {
+  userId: string;
+  appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
+  planId: string;
+  eventId?: string;
+  organizationId: string | null;
+  paymentGateway: PaymentGateway;
+  /** Slot window for direct bookings — a resume must be for THIS time, not just this plan. */
+  slotWindow?: { startsAt: Date; endsAt: Date };
+  /** Subscription billing-period window; both-null rows only match a
+   *  both-null request. */
+  schedulingPeriod?: { startsAt: Date; endsAt: Date } | null;
+}
+
+type OpenOrderVerdict =
+  | {
+      order: ReusableOrder & { discountCodeId: string | null };
+      verdict: "same-item";
+    }
+  | { order: { id: string }; verdict: "superseded"; reason: string };
+
 export async function findReusablePendingOrderPayment(
-  db: Pick<typeof prisma, "payment">,
-  params: {
-    userId: string;
-    appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
-    planId: string;
-    eventId?: string;
-    organizationId: string | null;
-    paymentGateway: PaymentGateway;
-    /**
-     * #1220-triage — the CURRENT request's computed total. A candidate whose
-     * frozen amount differs (changed coupon, credit balance moved) is
-     * superseded instead of resumed, so a stale price can never be charged.
-     */
+  db: Pick<Tx, "payment">,
+  params: OpenOrderTarget & {
+    /** This request's total; a candidate at another amount is superseded, never resumed. */
     expectedAmountPaise: number;
-    /** Slot window for direct bookings — a resume must be for THIS time,
-     *  not just this plan (#1220-triage critical finding). */
-    slotWindow?: { startsAt: Date; endsAt: Date };
-    /** Subscription billing-period window; both-null rows only match a
-     *  both-null request. */
-    schedulingPeriod?: { startsAt: Date; endsAt: Date } | null;
   },
 ): Promise<{
   reusable: ReusableOrder | null;
@@ -115,6 +125,100 @@ export async function findReusablePendingOrderPayment(
    *  neither reused nor superseded. */
   supersede: Array<{ id: string; reason: string }>;
 }> {
+  const supersede: Array<{ id: string; reason: string }> = [];
+  for (const entry of await classifyOpenOrders(db, params)) {
+    if (entry.verdict === "superseded") {
+      supersede.push({ id: entry.order.id, reason: entry.reason });
+      continue;
+    }
+    // A changed coupon, credit choice or tax profile prices differently: expire and mint fresh.
+    if (entry.order.amount !== params.expectedAmountPaise) {
+      supersede.push({ id: entry.order.id, reason: "amount-mismatch" });
+      continue;
+    }
+    return { reusable: entry.order, supersede }; // newest match wins
+  }
+  return { reusable: null, supersede };
+}
+
+/** The reuse target of a checkout request; null for a type checkout never resumes. */
+export function openOrderTargetOf(
+  input: Pick<
+    CheckoutInput,
+    | "appointmentType"
+    | "planId"
+    | "eventId"
+    | "startsAt"
+    | "endsAt"
+    | "schedulingPeriodStartsAt"
+    | "schedulingPeriodEndsAt"
+    | "paymentGateway"
+  >,
+  userId: string,
+  organizationId: string | null,
+  resolvedSchedulingPeriod: { startsAt: Date; endsAt: Date } | null,
+): OpenOrderTarget | null {
+  const { appointmentType } = input;
+  if (appointmentType === "TRIAL") return null;
+  const requestedPeriod =
+    input.schedulingPeriodStartsAt && input.schedulingPeriodEndsAt
+      ? {
+          startsAt: new Date(input.schedulingPeriodStartsAt),
+          endsAt: new Date(input.schedulingPeriodEndsAt),
+        }
+      : null;
+  return {
+    userId,
+    appointmentType,
+    planId: input.planId,
+    eventId: input.eventId,
+    organizationId,
+    paymentGateway: input.paymentGateway,
+    ...(appointmentType === "CONSULTATION" && input.startsAt && input.endsAt
+      ? {
+          slotWindow: {
+            startsAt: new Date(input.startsAt),
+            endsAt: new Date(input.endsAt),
+          },
+        }
+      : {}),
+    ...(appointmentType === "SUBSCRIPTION"
+      ? { schedulingPeriod: resolvedSchedulingPeriod ?? requestedPeriod }
+      : {}),
+  };
+}
+
+/**
+ * What the buyer's own live orders for this target hold: the credit their
+ * release would make spendable, and the discount codes each spent a use of.
+ */
+export async function ownOpenOrderHolds(
+  db: Pick<Tx, "payment" | "referralCreditUsage">,
+  target: OpenOrderTarget,
+): Promise<{ creditsPaise: number; discountCodeIds: string[] }> {
+  const open = (await classifyOpenOrders(db, target)).flatMap((entry) =>
+    entry.verdict === "same-item" ? [entry.order] : [],
+  );
+  return {
+    creditsPaise: await releasableHeldCreditsPaise(
+      db,
+      target.userId,
+      open.map((order) => order.id),
+    ),
+    discountCodeIds: open.flatMap((order) =>
+      order.discountCodeId ? [order.discountCodeId] : [],
+    ),
+  };
+}
+
+/**
+ * The buyer's PENDING orders for this target, newest first: lapsed holds and
+ * released seats to supersede, and live same-item orders. Other windows are omitted.
+ */
+async function classifyOpenOrders(
+  db: Pick<Tx, "payment">,
+  params: OpenOrderTarget,
+): Promise<OpenOrderVerdict[]> {
   // Plan identity per type — events are identified by their event row (the
   // plan is 1:1 with it); direct bookings by their plan id. An undefined
   // eventId would make Prisma drop the filter entirely (matches ANY
@@ -136,7 +240,7 @@ export async function findReusablePendingOrderPayment(
     default:
       planScope = null;
   }
-  if (!planScope) return { reusable: null, supersede: [] };
+  if (!planScope) return [];
 
   const now = new Date();
   const candidates = await db.payment.findMany({
@@ -158,6 +262,7 @@ export async function findReusablePendingOrderPayment(
       currency: true,
       isMockPayment: true,
       expiresAt: true,
+      discountCodeId: true,
       appointment: {
         select: {
           occurrences: {
@@ -182,8 +287,7 @@ export async function findReusablePendingOrderPayment(
     },
   });
 
-  const reusable: ReusableOrder[] = [];
-  const supersede: Array<{ id: string; reason: string }> = [];
+  const entries: OpenOrderVerdict[] = [];
 
   for (const candidate of candidates) {
     // #1478 — a PENDING row whose hold window has lapsed is never resumed,
@@ -194,7 +298,11 @@ export async function findReusablePendingOrderPayment(
       !candidate.expiresAt ||
       candidate.expiresAt.getTime() <= now.getTime()
     ) {
-      supersede.push({ id: candidate.id, reason: "hold-expired" });
+      entries.push({
+        order: candidate,
+        verdict: "superseded",
+        reason: "hold-expired",
+      });
       continue;
     }
 
@@ -210,7 +318,11 @@ export async function findReusablePendingOrderPayment(
         params.appointmentType === "CLASS") &&
       !appt?.participants.some((seat) => seat.status === "HELD")
     ) {
-      supersede.push({ id: candidate.id, reason: "seat-released" });
+      entries.push({
+        order: candidate,
+        verdict: "superseded",
+        reason: "seat-released",
+      });
       continue;
     }
 
@@ -254,19 +366,10 @@ export async function findReusablePendingOrderPayment(
       }
     }
 
-    // Gate 2 — priced-input parity (#1220-triage Major): a changed coupon /
-    // credit balance / tax profile computes a DIFFERENT total for this
-    // request; resuming would charge the stale number. Expire-and-fresh.
-    if (candidate.amount !== params.expectedAmountPaise) {
-      supersede.push({ id: candidate.id, reason: "amount-mismatch" });
-      continue;
-    }
-
-    reusable.push(candidate);
-    break; // newest match wins
+    entries.push({ order: candidate, verdict: "same-item" });
   }
 
-  return { reusable: reusable[0] ?? null, supersede };
+  return entries;
 }
 
 /**
