@@ -69,7 +69,7 @@ export function ClassSeriesRetimeButton({
         Move upcoming sessions
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+        <DialogContent className="max-h-[90vh] max-w-3xl grid-cols-[minmax(0,1fr)] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Move upcoming sessions</DialogTitle>
             <DialogDescription>

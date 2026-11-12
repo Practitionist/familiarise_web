@@ -402,11 +402,14 @@ export function AppointmentDetailClient({
 
   const { vm } = mapped;
   // Class host controls are for the plan's host and whoever acts on that
-  // host's dashboard; the routes refuse co-hosts and co-instructors.
+  // host's dashboard; the routes refuse co-hosts and co-instructors. A
+  // cancelled or finished class has nothing left to move or make up.
   const classControls =
-    role === "consultee" ||
-    !consultantId ||
-    vm.consultantProfileId === consultantId;
+    vm.bucket !== "cancelled" &&
+    vm.bucket !== "past" &&
+    (role === "consultee" ||
+      !consultantId ||
+      vm.consultantProfileId === consultantId);
   const action = adapter.primaryAction(vm);
   const orgName =
     detail.appointment.organization?.name ??

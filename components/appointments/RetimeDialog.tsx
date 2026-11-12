@@ -57,7 +57,7 @@ export function RetimeDialog({
 
   return (
     <AlertDialog open={isOpen} onOpenChange={(open) => !open && close()}>
-      <AlertDialogContent className="max-w-2xl">
+      <AlertDialogContent className="max-w-2xl grid-cols-[minmax(0,1fr)]">
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2">
             <CalendarClock className="h-5 w-5 text-amber-500" />
