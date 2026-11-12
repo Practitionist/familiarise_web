@@ -52,7 +52,10 @@ jest.mock("../../lib/observability/report", () => ({
 
 import prisma from "../../lib/prisma";
 import { scrubWebhookPayload } from "../../lib/logging/webhook-scrub";
-import { reclaimStaleProcessingWebhookEvent } from "../../lib/stream/webhook-receipt";
+import {
+  reclaimAbandonedWebhookReceipt,
+  reclaimStaleProcessingWebhookEvent,
+} from "../../lib/stream/webhook-receipt";
 import {
   logWebhookEvent,
   markWebhookEventProcessed,
@@ -174,8 +177,8 @@ describe("the IN-PROGRESS staleness escape", () => {
   });
 });
 
-describe("reclaimStaleProcessingWebhookEvent CAS modes", () => {
-  it("Mode 1 matches exact claimedAt (never OR claimedAt: null when prior stamp existed), requires processed: false, and resets error: null", async () => {
+describe("webhook receipt reclaim CAS", () => {
+  it("the fenced reclaim matches exact claimedAt (never OR claimedAt: null when prior stamp existed), requires processed: false, and resets error: null", async () => {
     const prior = new Date("2026-10-01T10:00:00Z");
     const res = await reclaimStaleProcessingWebhookEvent("ev_m1", prior);
 
@@ -194,10 +197,8 @@ describe("reclaimStaleProcessingWebhookEvent CAS modes", () => {
     });
   });
 
-  it("Mode 2 filters processed: false with age cutoff and resets error: null", async () => {
-    const res = await reclaimStaleProcessingWebhookEvent("ev_m2", {
-      staleThresholdMs: 60_000,
-    });
+  it("the abandoned-receipt reclaim filters processed: false with age cutoff and resets error: null", async () => {
+    const res = await reclaimAbandonedWebhookReceipt("ev_m2");
 
     expect(res.reclaimed).toBe(true);
     expect(mockUpdateMany).toHaveBeenCalledWith({

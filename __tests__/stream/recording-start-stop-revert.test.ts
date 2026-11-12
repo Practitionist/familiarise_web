@@ -61,12 +61,24 @@ describe("recording start/stop reverts", () => {
       id: "m-1",
       streamCallId: "occurrence-1",
       isRecording: false,
-      occurrence: { appointment: {} },
+      endedAt: null,
+      occurrence: {
+        completionStatus: "SCHEDULED",
+        outcome: null,
+        deletedAt: null,
+        appointment: {},
+      },
     });
 
     const res = await start(post("/api/stream/recordings/start"));
 
     expect(res.status).toBe(502);
+    // The claim itself refuses an ended or classified room.
+    expect(updateMany.mock.calls[0][0].where).toMatchObject({
+      isRecording: false,
+      endedAt: null,
+      occurrence: { completionStatus: "SCHEDULED", outcome: null },
+    });
     const claimedAt = updateMany.mock.calls[0][0].data.recordingStartedAt;
     expect(updateMany).toHaveBeenLastCalledWith({
       where: {

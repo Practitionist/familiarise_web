@@ -402,6 +402,7 @@ Prisma operations and migration documentation.
 - [2026-11-11-fable-5-2-advisor-tier.md](./decisions/2026-11-11-fable-5-2-advisor-tier.md) - Fable 5.2 becomes the advisor tier, audit days run at `xhigh` and orchestration at `high`, executor pins stay on Opus and Sonnet, and the Fable 5.2 briefing rules
 - [2026-11-09-repo-notion-split.md](./decisions/2026-11-09-repo-notion-split.md) - The six Notion sections, one canonical pricing page, the delete-versus-archive rule, competitor screenshots kept out of git, and legal facts written into the compliance docs
 - [2026-11-11-notion-workspace-consolidation.md](./decisions/2026-11-11-notion-workspace-consolidation.md) - Notion page titles carry outline numbers, repository pointers name the section and page without them, and the canonical page names after the consolidation
+- [2026-11-12-bug-hunt-support-and-stream.md](./decisions/2026-11-12-bug-hunt-support-and-stream.md) - A reopened support case gets a new resolution deadline, the SLA sweep pages by id with two stated limits, one-sided attendance rows wait for Stream and then park unverified, and two ideas considered and not built
 
 ---
 

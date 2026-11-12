@@ -78,6 +78,40 @@ it("renders the customer request thread as a labelled log, with booking context"
     "href",
     "/dashboard/consultee/p1/appointments/appt-1",
   );
+  expect(screen.getAllByText(/^Our team will reply/)).toHaveLength(2);
+  qc.clear();
+});
+
+it("drops the reply-by line once the team has replied", () => {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  });
+  qc.setQueryData(supportKeys.ownCase("case-1"), {
+    key: "c_case-1",
+    caseId: "case-1",
+    appointmentId: null,
+    canReply: false,
+    subject: "Session problem",
+    reference: "SR-1",
+    topic: "session",
+    status: "IN_PROGRESS",
+    ackDueAt: "2026-10-20T13:00:00.000Z",
+    acknowledgedAt: "2026-10-20T12:30:00.000Z",
+    createdAt: "2026-10-20T12:00:00.000Z",
+    payment: null,
+    organization: null,
+    timeline: [],
+  });
+  render(
+    <QueryClientProvider client={qc}>
+      <SupportRequestView
+        caseKey="c_case-1"
+        requestsHref="/dashboard/consultee/p1/support"
+        articles={articles}
+      />
+    </QueryClientProvider>,
+  );
+  expect(screen.queryByText(/^Our team/)).not.toBeInTheDocument();
   qc.clear();
 });
 
@@ -142,6 +176,7 @@ describe("a resolved request", () => {
   it("says a reply won't reopen it and reopens only on This didn't fix it", async () => {
     const qc = renderResolved([]);
     expect(screen.getByText(/Your reply won't reopen it/)).toBeInTheDocument();
+    expect(screen.queryByText(/^Our team/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Replying reopens it/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "This didn't fix it" }));
     await waitFor(() =>

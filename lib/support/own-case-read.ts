@@ -57,6 +57,7 @@ export async function readOwnSupportCase(
     topic: ticketTopic(c),
     status: c.status,
     ackDueAt: c.ackDueAt?.toISOString() ?? null,
+    acknowledgedAt: c.acknowledgedAt?.toISOString() ?? null,
     resolvedAt: c.resolvedAt?.toISOString() ?? null,
     csatRating: redact || !canReply ? null : c.csatRating,
     filedByOrganizationNotice: redact,

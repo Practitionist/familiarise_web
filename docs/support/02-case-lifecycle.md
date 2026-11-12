@@ -4,7 +4,7 @@ type: reference
 band: domain
 audience: sde2
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-12
 ---
 
 # Case lifecycle and the transition table
@@ -141,7 +141,7 @@ Status notifications for a PATCH are staged after the transaction commits, unlik
 2. 409 `CASE_DECIDED` (with `appealUntil` and `decisionId`) when the case has a decision; the only path is an appeal;
 3. 409 `REOPEN_WINDOW_EXPIRED` when `resolvedAt` is more than 14 days old (`REOPEN_WINDOW_MS` in `lib/support/deadline-policy.ts`).
 
-A successful reopen moves the case to IN_PROGRESS if it has an assignee and OPEN otherwise, clears `resolvedAt`, and writes REOPENED. A reopened case does not regain chat grants that ended at resolution.
+A successful reopen moves the case to IN_PROGRESS if it has an assignee and OPEN otherwise, clears `resolvedAt`, and writes REOPENED. It also restarts the resolution clock: a new resolution target from the reopen time (no later than a statutory deadline that is still ahead), `pausedSeconds` back to zero, `reopenedAt` stamped, the acknowledgement and statutory deadlines unchanged (`reopenedClockPatch()` in `lib/support/sla.ts`; the rule and an example are in [intake and flows](01-intake-and-flows.md#references-and-clocks)). The SLA sweep keys each resolution notice by the deadline it was raised for, so the reopened case can be warned and breached again. A reopened case does not regain chat grants that ended at resolution.
 
 **A matching intake on a RESOLVED case** appends the description as a follow-up and returns `reused: true, dedupeReason: "resolved_case"`. If the intake asks for a person and the case is undecided, it hands the case to a person instead.
 
@@ -172,6 +172,7 @@ Case actions, appeals, external-requester intake and attachments run Serializabl
 ## Deprecated & Superseded Approaches
 
 - **Separate tickets and appointment threads.** `SupportTicket`, `SupportResponse`, `AppointmentSupportThread` and `SupportMessage` were replaced by one `SupportCase` with its messages. Names survive in identifiers only: `createSupportTicket()`, the `support-ticket-update` Novu workflow, `SupportThreadCategory`, `supportKeys.threads`. They all act on `SupportCase`. `app/api/support/tickets/route.ts` remains as a staff-only outbound intake that creates a case; nothing in the UI calls it.
+- **Resuming the original clock on reopen.** The resolution deadline used to stay as it was at receipt, so a reopened case could be born already breached. A reopen now starts a fresh target from the reopen time; the statutory deadline still keeps its date.
 - **Implicit reopen.** Any customer reply used to reopen a resolved case, including a decided one. Only an explicit reopen on an undecided case within 14 days does now. The saved replies and the RESOLVED status email now say a reply won't reopen the request and point to "This didn't fix it" within 14 days, or an appeal if the request was decided.
 - **Channel downgrade.** A resolved human case could drop back to SELF_SERVE with no audit row and leave the queues. The channel now only moves to HUMAN, with a CHANNEL_CHANGED event.
 - **Unhandled reopen collisions.** Reopening a closed case or switching intent used to hit `support_case_open_scope_key` as a 500. It is now 409 `OPEN_CASE_EXISTS` naming the open case.

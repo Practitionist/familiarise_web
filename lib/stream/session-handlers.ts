@@ -194,7 +194,7 @@ export async function reconcileWebinarAttendance(
         },
         update: {},
       });
-      await tx.meetingAttendance.updateMany?.({
+      await tx.meetingAttendance.updateMany({
         where: {
           meetingId: meeting.id,
           userId,
@@ -202,7 +202,7 @@ export async function reconcileWebinarAttendance(
         },
         data: { firstJoinedAt: summary.firstJoinedAt },
       });
-      await tx.meetingAttendance.updateMany?.({
+      await tx.meetingAttendance.updateMany({
         where: {
           meetingId: meeting.id,
           userId,
@@ -657,7 +657,7 @@ export async function handleSessionParticipantJoined(
       });
 
       if (newSessions === 0) {
-        await tx.meetingPresence.updateMany?.({
+        await tx.meetingPresence.updateMany({
           where: {
             meetingId,
             userSessionId,
@@ -684,7 +684,7 @@ export async function handleSessionParticipantJoined(
         ),
       });
 
-      await tx.meetingAttendance.updateMany?.({
+      await tx.meetingAttendance.updateMany({
         where: {
           meetingId,
           userId,
@@ -776,7 +776,7 @@ export async function handleSessionParticipantLeft(
       });
 
       if (newSessions === 0 && (event.duration_seconds ?? 0) > 0) {
-        await tx.meetingPresence.updateMany?.({
+        await tx.meetingPresence.updateMany({
           where: {
             meetingId,
             userSessionId,
@@ -817,7 +817,7 @@ export async function handleSessionParticipantLeft(
       }
 
       if ((event.duration_seconds ?? 0) > 0) {
-        await tx.meetingAttendance.updateMany?.({
+        await tx.meetingAttendance.updateMany({
           where: {
             meetingId,
             userId,

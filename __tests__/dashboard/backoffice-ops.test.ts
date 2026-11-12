@@ -76,6 +76,64 @@ describe("support SLA status badges and sla-at-risk inbox query", () => {
     ].sort(compareCasesBySla);
     expect(rows.map((r) => r.key)).toEqual(["t_sooner", "t_later"]);
   });
+
+  it("narrows only the statutory arm of sla-at-risk by the reader's reopened rule", () => {
+    const f = parseInboxFilters(
+      (k) => (k === "view" ? "sla-at-risk" : null),
+      "viewer_1",
+    );
+    const binds = {
+      OR: [{ reopenedAt: null }, { reopenedAt: { lte: "ref" } }],
+    };
+    const where = inboxCaseWhere(
+      f,
+      new Date("2026-11-12T00:00:00Z"),
+      binds as never,
+    );
+    const arms = (
+      (where.AND as Record<string, unknown>[]).find((clause) => "OR" in clause)
+        ?.OR as Record<string, unknown>[]
+    ).filter((arm) => "OR" in arm);
+    expect(arms).toHaveLength(1);
+    expect(arms[0]).toHaveProperty("statutoryDueAt");
+    expect(arms[0].OR).toEqual(binds.OR);
+  });
+
+  it("ranks a case reopened after its statutory date by its new target", () => {
+    const base = {
+      lastMessageAt: null,
+      createdAt: new Date("2026-10-01T00:00:00Z"),
+      acknowledgedAt: new Date("2026-10-02T00:00:00Z"),
+    };
+    const rows = [
+      {
+        ...base,
+        key: "reopened_past_statutory",
+        statutoryDueAt: new Date("2026-10-30T00:00:00Z"),
+        reopenedAt: new Date("2026-11-12T00:00:00Z"),
+        resolutionDueAt: new Date("2026-11-19T00:00:00Z"),
+      },
+      {
+        ...base,
+        key: "due_this_week",
+        statutoryDueAt: new Date("2026-11-14T00:00:00Z"),
+        reopenedAt: null,
+        resolutionDueAt: new Date("2026-11-14T00:00:00Z"),
+      },
+      {
+        ...base,
+        key: "reopened_before_statutory",
+        statutoryDueAt: new Date("2026-11-13T00:00:00Z"),
+        reopenedAt: new Date("2026-11-10T00:00:00Z"),
+        resolutionDueAt: new Date("2026-11-13T00:00:00Z"),
+      },
+    ].sort(compareCasesBySla);
+    expect(rows.map((r) => r.key)).toEqual([
+      "reopened_before_statutory",
+      "due_this_week",
+      "reopened_past_statutory",
+    ]);
+  });
 });
 
 describe("deriveCreditState", () => {

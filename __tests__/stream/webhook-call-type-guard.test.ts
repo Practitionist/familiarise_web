@@ -59,17 +59,15 @@ jest.mock("../../lib/stream/session-handlers", () => ({
 
 import { processStreamEvent } from "../../lib/stream/webhook-dispatch";
 
-/**
- * The real signature is (event, eventType, eventId, signature, baseEvent, opts).
- * `baseEvent.call_cid` is passed SEPARATELY from the event body, and it is what
- * the guard reads — so a test that omits it proves nothing. An earlier draft of
- * this file called the function with three arguments; the refusal assertions
- * still went green, because dispatch bailed long before the guard ran.
- */
+/** `baseEvent.call_cid` is passed separately from the body, and it is what the guard reads. */
 function dispatch(event: { type: string; call_cid: string }, eventId: string) {
-  return processStreamEvent(event, event.type, eventId, "sig", {
-    call_cid: event.call_cid,
-  });
+  return processStreamEvent(
+    event,
+    event.type,
+    eventId,
+    { call_cid: event.call_cid },
+    { claimedAt: null },
+  );
 }
 
 const RECORDING_READY = (callCid: string) => ({

@@ -38,9 +38,8 @@ export interface SlaDeadlines {
 }
 
 /**
- * Deadlines for a ticket opened at `from`. Computed ONCE at intake and stored,
- * never re-derived on read: a later change to the table above must not
- * retroactively re-date an open ticket's breach.
+ * Deadlines for a ticket opened (or reopened) at `from`. Stored, never re-derived
+ * on read: a later change to the table above must not re-date an open ticket's breach.
  */
 export function slaDeadlinesFor(
   priority: SupportPriority,
@@ -50,6 +49,41 @@ export function slaDeadlinesFor(
   return {
     ackDueAt: new Date(from.getTime() + target.ackMs),
     resolutionDueAt: new Date(from.getTime() + target.resolutionMs),
+  };
+}
+
+/**
+ * A reopen restarts the resolution clock from `now` at the case's priority, no later than a
+ * statutory date still ahead, drops the banked pause and stamps `reopenedAt`. A case nobody
+ * has replied to also restarts its first-reply deadline; `statutoryDueAt` stands.
+ */
+export function reopenedClockPatch(
+  existing: {
+    resolvedAt: Date | null;
+    acknowledgedAt: Date | null;
+    activeChannel: string;
+    statutoryDueAt: Date | null;
+  },
+  priority: SupportPriority,
+  now: Date,
+): {
+  ackDueAt?: Date;
+  resolutionDueAt?: Date;
+  pausedSeconds?: number;
+  reopenedAt?: Date;
+} {
+  if (!existing.resolvedAt || existing.activeChannel !== "HUMAN") return {};
+  const target = slaDeadlinesFor(priority, now);
+  const statutory = existing.statutoryDueAt;
+  const capped =
+    statutory !== null &&
+    statutory.getTime() > now.getTime() &&
+    statutory.getTime() < target.resolutionDueAt.getTime();
+  return {
+    ...(existing.acknowledgedAt ? {} : { ackDueAt: target.ackDueAt }),
+    resolutionDueAt: capped ? statutory : target.resolutionDueAt,
+    pausedSeconds: 0,
+    reopenedAt: now,
   };
 }
 
@@ -100,6 +134,7 @@ export interface SlaClock {
   awaitingUserSince: Date | null;
   pausedSeconds: number;
   statutoryDueAt?: Date | null;
+  reopenedAt: Date | null;
 }
 
 /**
@@ -136,9 +171,15 @@ export function effectiveResolutionDueAt(
   if (!clock.resolutionDueAt) return clock.statutoryDueAt ?? null;
   const internalDue =
     clock.resolutionDueAt.getTime() + pausedSecondsAt(clock, now) * 1000;
+  const statutory = clock.statutoryDueAt?.getTime();
+  // A case reopened after its statutory date works to its new target; that date stays for reporting.
+  const reopenedPastStatutory =
+    statutory !== undefined &&
+    clock.reopenedAt !== null &&
+    clock.reopenedAt.getTime() > statutory;
   return new Date(
-    clock.statutoryDueAt
-      ? Math.min(internalDue, clock.statutoryDueAt.getTime())
+    statutory !== undefined && !reopenedPastStatutory
+      ? Math.min(internalDue, statutory)
       : internalDue,
   );
 }

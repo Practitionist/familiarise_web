@@ -413,6 +413,9 @@ model SupportCase {
   acknowledgedAt         DateTime? @db.Timestamptz
   resolutionDueAt        DateTime? @db.Timestamptz
   resolvedAt             DateTime? @db.Timestamptz
+  /// When the case was last reopened; null = never. A reopen after `statutoryDueAt`
+  /// works to its new resolution target instead of the passed statutory date.
+  reopenedAt             DateTime? @db.Timestamptz
   autoCloseLastAttemptAt DateTime? @db.Timestamptz
   closedAt               DateTime? @db.Timestamptz
   deletedAt              DateTime? @db.Timestamptz

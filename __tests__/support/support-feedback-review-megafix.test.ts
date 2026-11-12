@@ -178,6 +178,7 @@ describe("Support, Feedback & Review Megafix invariants", () => {
           resolvedAt: new Date("2026-10-08T13:00:00Z"),
           awaitingUserSince: null,
           pausedSeconds: 0,
+          reopenedAt: null,
         },
         now,
       );
@@ -192,6 +193,7 @@ describe("Support, Feedback & Review Megafix invariants", () => {
           resolvedAt: null,
           awaitingUserSince: null,
           pausedSeconds: 0,
+          reopenedAt: null,
         },
         now,
       );

@@ -290,6 +290,11 @@ describe("Stream security, consent gates, and organization boundaries", () => {
       mockGetSession.mockResolvedValueOnce({
         user: { id: "user-no-consent", role: "CONSULTEE" },
       });
+      mockPrisma.user.findUnique.mockResolvedValueOnce({
+        id: "user-no-consent",
+        erasedAt: null,
+        banned: false,
+      });
       mockCheckConsent.mockResolvedValueOnce(false);
 
       const { tokenProvider } =

@@ -329,4 +329,36 @@ describe("alert emails with every bell off", () => {
       "support-sla-alert-org",
     ]);
   });
+
+  it("notices a restarted first-reply deadline again, and an unchanged one once", async () => {
+    const ackCase = (ackDueAt: Date) => ({
+      id: "c2",
+      referenceNumber: "SUP-2",
+      title: "t",
+      status: "OPEN",
+      assignedToId: null,
+      ackDueAt,
+      acknowledgedAt: null,
+      resolutionDueAt: null,
+      statutoryDueAt: null,
+      resolvedAt: null,
+      reopenedAt: null,
+      awaitingUserSince: null,
+      pausedSeconds: 0,
+      ownershipScope: "PERSONAL",
+      organization: null,
+    });
+    const first = new Date(now.getTime() - 3_600_000);
+    const restarted = new Date(now.getTime() + 3_600_000);
+    mockPrisma.supportCase.findMany.mockResolvedValue([ackCase(first)]);
+    await runSupportSlaSweep({ now, limit: 20 });
+    await runSupportSlaSweep({ now, limit: 20 });
+    mockPrisma.supportCase.findMany.mockResolvedValue([ackCase(restarted)]);
+    await runSupportSlaSweep({ now, limit: 20 });
+
+    expect(sent.map((s) => s.entityRef)).toEqual([
+      `sla:c2:ack:breach:${first.getTime()}`,
+      `sla:c2:ack:warn:${restarted.getTime()}`,
+    ]);
+  });
 });

@@ -23,6 +23,32 @@ import {
 } from "@/lib/documents/api-error";
 
 import { getSession } from "@/lib/auth-server";
+/** A room records only while unended and its session is still scheduled and unclassified. */
+const RECORDABLE_ROOM_WHERE = {
+  endedAt: null,
+  occurrence: {
+    completionStatus: "SCHEDULED" as const,
+    outcome: null,
+    deletedAt: null,
+  },
+};
+
+function isRecordableRoom(meeting: {
+  endedAt: Date | null;
+  occurrence: {
+    completionStatus: string;
+    outcome: string | null;
+    deletedAt: Date | null;
+  };
+}): boolean {
+  return (
+    meeting.endedAt === null &&
+    meeting.occurrence.completionStatus === "SCHEDULED" &&
+    meeting.occurrence.outcome === null &&
+    meeting.occurrence.deletedAt === null
+  );
+}
+
 const startRecordingSchema = z.object({
   meetingId: z.string().min(1, "Meeting session ID is required"),
 });
@@ -199,11 +225,13 @@ export async function POST(req: NextRequest) {
     // match zero rows. The earlier read stays because it produces the specific
     // user-facing reason; this is the part that has to be true.
     const blockOnDecline = consentRegimeFor(appointment) === "OPT_OUT";
+    if (!isRecordableRoom(meeting)) return fileApiError("APPOINTMENT_TERMINAL");
     const startedAt = new Date();
     const updated = await prisma.meeting.updateMany({
       where: {
         id: meetingId,
         isRecording: false,
+        ...RECORDABLE_ROOM_WHERE,
         ...(blockOnDecline
           ? {
               recordingConsents: {

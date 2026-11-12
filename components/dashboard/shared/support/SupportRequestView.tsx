@@ -439,6 +439,8 @@ function TicketRequest({
   }
   const closed = data.status === "CLOSED";
   const resolved = data.status === "RESOLVED";
+  // The reply-by line speaks only while the first reply is still owed.
+  const replyOwed = !closed && !resolved && !data.acknowledgedAt;
   const paymentHref =
     data.payment && props.paymentsBase
       ? `${props.paymentsBase}/${data.payment.id}`
@@ -502,7 +504,7 @@ function TicketRequest({
                   />
                 ))}
               </div>
-              {!closed && !resolved && (
+              {replyOwed && (
                 <p className="text-center text-[11px] text-muted-foreground">
                   {describeWait(data.ackDueAt)}
                 </p>
@@ -571,9 +573,11 @@ function TicketRequest({
               tone="neutral"
               size="sm"
             />
-            <p className="text-muted-foreground">
-              {describeWait(data.ackDueAt)}
-            </p>
+            {replyOwed && (
+              <p className="text-muted-foreground">
+                {describeWait(data.ackDueAt)}
+              </p>
+            )}
             {data.organization && <p>{data.organization.name}</p>}
           </div>
           {appointmentId && (
