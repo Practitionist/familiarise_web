@@ -134,9 +134,10 @@ export default async function ManageTimingsPage({
           <AlertDescription className="space-y-3">
             <p>
               Its times can&apos;t be re-planned here, because that would move
-              people who already paid without notice. Use Re-time on the event
-              page instead: attendees are told, and anyone who can&apos;t make
-              the new time may leave with a full refund.
+              people who already paid without notice. Use &ldquo;Move to a new
+              date&rdquo; (a webinar) or &ldquo;Move upcoming sessions&rdquo; (a
+              class) on the event page instead: attendees are told, and anyone
+              who can&apos;t make the new time may leave with a full refund.
             </p>
             <Button asChild size="sm">
               <Link href={detailHref}>Open the event</Link>

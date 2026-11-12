@@ -498,7 +498,9 @@ async function requestReschedule(
           // session at a time (class cancel + make-up); it is never left undated.
           if (derivedType === "WEBINAR") {
             throw Object.assign(
-              new Error("Pick the webinar's new date with Re-time instead."),
+              new Error(
+                'Pick the webinar\'s new date with "Move to a new date" instead.',
+              ),
               { httpStatus: 400, code: "USE_RETIME" },
             );
           }

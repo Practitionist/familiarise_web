@@ -106,7 +106,7 @@ export async function assertGroupEventUnsoldInTx(
   if (liveSeats > 0) {
     throw new AllocationConflictError(
       `This ${eventType} already has ${liveSeats} booked seat${liveSeats === 1 ? "" : "s"}, ` +
-        "so its times can't be re-planned. Use Re-time to move it: attendees are told and may leave with a full refund.",
+        `so its times can't be re-planned. Use "${eventType === "class" ? "Move upcoming sessions" : "Move to a new date"}" to move it: attendees are told and may leave with a full refund.`,
       "USE_RETIME",
       { liveSeats },
     );

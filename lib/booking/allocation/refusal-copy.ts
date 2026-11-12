@@ -7,7 +7,7 @@ import {
   AllocationValidationError,
 } from "@/utils/scheduling-engine/errors";
 
-/** Plain copy per validator tag; the first finding decides. */
+/** Plain copy per validator tag. */
 const COPY_BY_TAG: Record<string, string> = {
   CONFLICT: "One of these times is already booked. Pick another time.",
   COLLABORATOR_CONFLICT:
@@ -36,13 +36,20 @@ function tagOf(finding: string): string | null {
   return /^\[([A-Z_]+)\]/.exec(finding)?.[1] ?? null;
 }
 
-/** Plain copy for a list of validator findings. */
+/** Plan-week findings name the real cause when a generic one is reported beside them. */
+const PLAN_WEEK_TAGS = [
+  "PLAN_TOTAL_REACHED",
+  "PLAN_WEEK_FULL",
+  "OUTSIDE_PLAN_WEEK",
+];
+
+/** Plain copy for a list of validator findings: a plan-week finding first, else the first tagged one. */
 export function refusalCopyFor(findings: readonly string[]): string {
-  for (const finding of findings) {
-    const tag = tagOf(finding);
-    if (tag && COPY_BY_TAG[tag]) return COPY_BY_TAG[tag];
-  }
-  return FALLBACK_COPY;
+  const tags = findings.map(tagOf);
+  const tag =
+    PLAN_WEEK_TAGS.find((planTag) => tags.includes(planTag)) ??
+    tags.find((found) => found !== null && COPY_BY_TAG[found] !== undefined);
+  return tag ? COPY_BY_TAG[tag] : FALLBACK_COPY;
 }
 
 /** A failed out-of-transaction validation, as a typed 400 with plain copy. */
