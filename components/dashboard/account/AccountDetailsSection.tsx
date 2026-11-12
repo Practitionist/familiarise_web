@@ -33,6 +33,7 @@ import {
 } from "@/components/dashboard/SettingsLayout";
 import { useToast } from "@/hooks/use-toast";
 import { useSession } from "@/lib/auth-client";
+import { fetchWithReauth } from "@/lib/auth/reauth-client";
 import { actionFailureMessage, parseJsonResponse } from "@/lib/fetch-helpers";
 import { sameTimeZone } from "@/utils/schedule/weekly-projection";
 import { z } from "zod";
@@ -370,7 +371,7 @@ export function AccountDetailsSection() {
     setNameError(null);
     setIsSaving(true);
     try {
-      const res = await fetch(`/api/user/${user.id}`, {
+      const res = await fetchWithReauth(`/api/user/${user.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

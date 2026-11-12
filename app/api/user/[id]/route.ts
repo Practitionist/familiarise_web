@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { getUserDetails } from "@/lib/data/user-details";
 import { NextRequest, NextResponse } from "next/server";
 import { Gender } from "@prisma/client";
@@ -27,6 +27,7 @@ import { deleteSubscriber } from "@/lib/novu/subscriber";
 import { removeCollaboratorStanding } from "@/lib/collaborators/standing";
 import { revokeCollaboratorAccess } from "@/lib/collaborators/service";
 import { requireFreshSession } from "@/lib/auth/step-up";
+import { recordOpsAction } from "@/lib/backoffice/ops-action-log";
 import { supportRetainedHistoryCount } from "@/lib/support/erasure";
 import { purgeExpertSurfaces } from "@/lib/data/public-cache";
 /**
@@ -49,6 +50,29 @@ function parseEnumOrUndefined<T extends Record<string, string>>(
   }
   return undefined;
 }
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** An admin's edit of another user's profile writes one operator audit row. */
+function recordAdminProfileEdit(
+  tx: Tx,
+  actorUserId: string,
+  targetUserId: string,
+  change: { action: string; fields: string[] },
+) {
+  return recordOpsAction(tx, {
+    actorUserId,
+    actorRole: "ADMIN",
+    surface: "users.moderate",
+    action: change.action,
+    targetKind: "User",
+    targetId: targetUserId,
+    reason: "Admin edit of another user's profile",
+    after: { fields: change.fields },
+  });
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -100,6 +124,11 @@ export async function PUT(
     if (session.user.id !== id && session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    const adminEdit = session.user.id !== id;
+    if (adminEdit) {
+      const stale = requireFreshSession(session);
+      if (stale) return stale;
+    }
 
     // Never `role` or `email`, whatever the body says. A self-edit that set
     // role made any consultee an ADMIN, and an email rewrite skips
@@ -145,41 +174,48 @@ export async function PUT(
       );
     }
 
+    const data = {
+      name: emptyToUndefined(name),
+      image: emptyToUndefined(image),
+      phone: emptyToUndefined(phone),
+      address: emptyToUndefined(address),
+      timezone: emptyToUndefined(currentTimezone),
+      dateOfBirth: parsedDateOfBirth?.data,
+      gender: parseEnumOrUndefined(gender, Gender),
+      city: emptyToUndefined(city),
+      country: emptyToUndefined(country),
+      linkedinUrl: emptyToUndefined(linkedinUrl),
+      bio: emptyToUndefined(bio),
+    };
+    const select = {
+      id: true,
+      name: true,
+      email: true,
+      image: true,
+      phone: true,
+      address: true,
+      onboardingCompleted: true,
+      role: true,
+      timezone: true,
+      dateOfBirth: true,
+      gender: true,
+      city: true,
+      country: true,
+      linkedinUrl: true,
+      bio: true,
+    } as const;
     // Onboarding completes only through its own transaction, never a self-edit.
-    const updatedUser = await prisma.user.update({
-      where: { id: id },
-      data: {
-        name: emptyToUndefined(name),
-        image: emptyToUndefined(image),
-        phone: emptyToUndefined(phone),
-        address: emptyToUndefined(address),
-        timezone: emptyToUndefined(currentTimezone),
-        dateOfBirth: parsedDateOfBirth?.data,
-        gender: parseEnumOrUndefined(gender, Gender),
-        city: emptyToUndefined(city),
-        country: emptyToUndefined(country),
-        linkedinUrl: emptyToUndefined(linkedinUrl),
-        bio: emptyToUndefined(bio),
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        image: true,
-        phone: true,
-        address: true,
-        onboardingCompleted: true,
-        role: true,
-        timezone: true,
-        // New fields
-        dateOfBirth: true,
-        gender: true,
-        city: true,
-        country: true,
-        linkedinUrl: true,
-        bio: true,
-      },
-    });
+    const updatedUser = adminEdit
+      ? await prisma.$transaction(async (tx) => {
+          await recordAdminProfileEdit(tx, session.user.id, id, {
+            action: "user.profile.update",
+            fields: Object.entries(data)
+              .filter(([, value]) => value !== undefined)
+              .map(([key]) => key),
+          });
+          return tx.user.update({ where: { id }, data, select });
+        })
+      : await prisma.user.update({ where: { id }, data, select });
 
     if (name !== undefined || image !== undefined) {
       const expert = await prisma.consultantProfile.findUnique({
@@ -216,10 +252,21 @@ export async function PATCH(
     if (session.user.id !== id && session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    const adminEdit = session.user.id !== id;
+    if (adminEdit) {
+      const stale = requireFreshSession(session);
+      if (stale) return stale;
+    }
 
     const body = await req.json();
 
     await prisma.$transaction(async (tx) => {
+      if (adminEdit) {
+        await recordAdminProfileEdit(tx, session.user.id, id, {
+          action: "user.background.update",
+          fields: isPlainObject(body) ? Object.keys(body) : [],
+        });
+      }
       await persistProfessionalBackground(id, undefined, body, tx);
     });
 

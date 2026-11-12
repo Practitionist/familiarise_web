@@ -26,7 +26,11 @@ describe("PUT /api/user/[id] cannot escalate privilege", () => {
         src.indexOf("export async function PATCH("),
       )
       .replace(/^\s*\/\/.*$/gm, "");
-    const data = put.slice(put.indexOf("data: {"), put.indexOf("select: {"));
+    const data = put.slice(
+      put.indexOf("const data = {"),
+      put.indexOf("const select = {"),
+    );
+    expect(data).toMatch(/\bname\b/);
     expect(data).not.toMatch(/\brole\b/);
     expect(data).not.toMatch(/\bemail\b/);
     expect(put).not.toMatch(/body\.(role|email)/);

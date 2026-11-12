@@ -66,6 +66,24 @@ export const consultantPublicScalars = {
  */
 export type ConsultantPublicScalars = typeof consultantPublicScalars;
 
+/** The user fields a viewer who is not the owner sees on someone's profile. */
+export const publicProfileUserSelect = {
+  id: true,
+  name: true,
+  image: true,
+  profileDisplayImage: true,
+  bio: true,
+  city: true,
+  country: true,
+  linkedinUrl: true,
+  timezone: true,
+  workExperiences: {
+    orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+  },
+  education: { orderBy: { endYear: "desc" } },
+  certifications: { orderBy: { issueDate: "desc" } },
+} satisfies Prisma.UserSelect;
+
 /**
  * The statutory-PII scalars that `consultantPublicScalars` omits — an explicit
  * denylist for documentation and for the Zod output tripwire below. Any new
