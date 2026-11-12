@@ -95,7 +95,7 @@ it("answers the reserved PENDING refund when the gateway call throws", async () 
     settledOwed: { key: "cancel:appt_1:pay_1", stillOwedPaise: 4_900 },
   });
   expect(refundBookingPayment.mock.calls[0][0]).toMatchObject({
-    keepSeat: true,
+    keepSeatIfPartial: true,
     dedupeKey: "ops:11111111-2222-4333-8444-555555555555",
     settlesOwedByHand: true,
   });

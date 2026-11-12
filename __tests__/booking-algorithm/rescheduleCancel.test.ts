@@ -144,12 +144,23 @@ jest.mock("../../lib/payments/operations/event-refunds", () => ({
   }),
 }));
 
+jest.mock("../../lib/stream/access-revocation", () => ({
+  persistSeatRevocation: jest.fn().mockResolvedValue(null),
+  revokeEndedSeatAccess: jest.fn().mockResolvedValue(undefined),
+  fenceSeatGrants: jest.fn().mockResolvedValue({ verified: true, lost: [] }),
+  enqueueCollaboratorRevocationRetry: jest.fn().mockResolvedValue(undefined),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import type { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { notifyAppointmentCancelled } from "@/lib/novu";
+import {
+  persistSeatRevocation,
+  revokeEndedSeatAccess,
+} from "@/lib/stream/access-revocation";
 import { POST as rescheduleHandler } from "@/app/api/appointments/[appointmentId]/reschedule/route";
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
 import {
@@ -378,6 +389,8 @@ function makeMockTx() {
     appointmentParticipant: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // An event cancel reads back the seats its sweep released.
+      updateManyAndReturn: jest.fn().mockResolvedValue([]),
     },
     bookingStatusHistory: {
       create: jest.fn().mockResolvedValue({}),
@@ -1510,6 +1523,45 @@ describe("Cancel Route Handler - POST", () => {
       expect.arrayContaining(["consultant-1", "attendee-9"]),
       expect.objectContaining({ appointmentType: "CLASS" }),
     );
+  });
+
+  it("revokes the seats its own commit released, never a seat that ended earlier", async () => {
+    (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
+      makeClassAppointment({
+        class: {
+          id: "cls-1",
+          status: "SCHEDULED",
+          classPlan: {
+            title: "Weekly Cohort",
+            consultantProfileId: "cp-1",
+            consultantProfile: {
+              user: { id: "consultant-1", name: "Dr Who" },
+            },
+          },
+        },
+      }),
+    );
+    (prisma.payment.findMany as jest.Mock).mockResolvedValue([]);
+    // The pre-lock roster misses a seat that landed before the commit; an earlier
+    // leaver's seat is already released, so the sweep does not move it.
+    (prisma.appointmentParticipant.findMany as jest.Mock).mockImplementation(
+      async ({ where }: { where: { status?: { in?: string[] } } }) =>
+        where.status?.in?.includes("CANCELLED")
+          ? [{ userId: "attendee-9" }, { userId: "attendee-left" }]
+          : [{ userId: "attendee-9" }],
+    );
+    mockTx.appointmentParticipant.updateManyAndReturn.mockResolvedValue([
+      { userId: "attendee-9", role: "CONSULTEE" },
+      { userId: "attendee-late", role: "CONSULTEE" },
+      { userId: "consultant-1", role: "CONSULTANT" },
+    ]);
+
+    await cancelHandler(makeCancelRequest("apt-1"), makeParams("apt-1"));
+    (prisma.appointmentParticipant.findMany as jest.Mock).mockResolvedValue([]);
+
+    const released = ["attendee-9", "attendee-late"];
+    expect(persistSeatRevocation).toHaveBeenCalledWith("apt-1", released);
+    expect(revokeEndedSeatAccess).toHaveBeenCalledWith("apt-1", released);
   });
 
   it("tells free and credit seats too, not only paid ones (#1780 R-3)", async () => {

@@ -35,6 +35,47 @@
 
 import { Prisma, PaymentStatus, RefundStatus } from "@prisma/client";
 import { transitionParticipant } from "@/lib/booking/participants";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
+
+/**
+ * After a gateway refund commits: whether any of the payment is still refundable, by the rail's
+ * own balance maths. The last of two concurrent partials reads both rows, so together they end
+ * the seat. An unreadable balance keeps the seat and never fails the committed refund.
+ */
+async function leavesRefundable(paymentId: string): Promise<boolean> {
+  try {
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      select: { amount: true, ...REFUNDABLE_BALANCE_SELECT },
+    });
+    if (!payment) return false;
+    return refundableBalancePaise(payment.amount, payment) > 0;
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        event: "refund_balance_read_failed",
+        paymentId,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+    return true;
+  }
+}
+
+/** A refund with no amount returns the whole balance and ends the seat; only an explicit amount reads what is left. */
+async function keepsSeat(input: {
+  paymentId: string;
+  amountPaise?: number;
+  keepSeat?: boolean;
+  keepSeatIfPartial?: boolean;
+}): Promise<boolean> {
+  if (input.keepSeat) return true;
+  if (!input.keepSeatIfPartial || input.amountPaise === undefined) return false;
+  return leavesRefundable(input.paymentId);
+}
 
 async function markParticipantsRefunded(paymentId: string): Promise<void> {
   try {
@@ -198,6 +239,63 @@ export type BookingRefundResult = {
 };
 
 export async function refundBookingPayment(
+  input: Parameters<typeof refundBookingPaymentOnRail>[0],
+): Promise<BookingRefundResult> {
+  const outcome = await refundBookingPaymentOnRail(input);
+  if (!outcome.endsSeat) return outcome.result;
+  // After commit: the refunded seat loses the chat and call access the join gate no longer grants.
+  const { persistRefundRevocation, revokeRefundedSeatAccess } =
+    await import("@/lib/stream/access-revocation");
+  const intent = {
+    refundId: outcome.result.refundId,
+    payerUserId: outcome.payerUserId,
+  };
+  if (outcome.result.rail === "GATEWAY") {
+    // The intent lands first, so a failed stamp is re-stamped by the sweep.
+    await persistRefundRevocation(intent);
+    await markParticipantsRefunded(input.paymentId);
+  }
+  await revokeRefundedSeatAccess(intent, outcome.intentGeneration);
+  return outcome.result;
+}
+
+/**
+ * Re-applies a seat-ending refund's REFUNDED stamp, only while the refund stands
+ * as SUCCEEDED or PENDING; a FAILED or CANCELLED refund moved no money, so its seat stays live.
+ */
+export async function restampRefundedSeats(
+  refundId: string,
+): Promise<"stamped" | "skipped"> {
+  const refund = await prisma.refund.findUnique({
+    where: { id: refundId },
+    select: { status: true, paymentId: true },
+  });
+  if (
+    !refund ||
+    (refund.status !== RefundStatus.SUCCEEDED &&
+      refund.status !== RefundStatus.PENDING)
+  ) {
+    return "skipped";
+  }
+  await transitionParticipant(
+    prisma,
+    { paymentId: refund.paymentId },
+    "REFUNDED",
+  );
+  return "stamped";
+}
+
+/** The rail's result plus what the post-commit revocation needs. */
+type RailOutcome = {
+  result: BookingRefundResult;
+  payerUserId: string;
+  /** The rail's own decision that this refund ends the funded seat. */
+  endsSeat: boolean;
+  /** The revocation intent the refund's transaction wrote, or null when none was. */
+  intentGeneration: Date | null;
+};
+
+async function refundBookingPaymentOnRail(
   input: {
     paymentId: string;
     /** Defaults to the full remaining refundable balance. */
@@ -212,12 +310,14 @@ export async function refundBookingPayment(
      * seat live; every other refund marks the funded seat REFUNDED.
      */
     keepSeat?: boolean;
+    /** An explicit amount keeps the seat live only while part of the payment stays refundable; no amount ends it. */
+    keepSeatIfPartial?: boolean;
   } & OwedMarkerInput,
-): Promise<BookingRefundResult> {
+): Promise<RailOutcome> {
   // #781 §B — soft-deleted financial rows are retired; never refund them.
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
-    select: { paymentIntent: true, refundOwedKey: true },
+    select: { paymentIntent: true, refundOwedKey: true, userId: true },
   });
   if (!payment) {
     throw new RefundValidationError(
@@ -227,6 +327,7 @@ export async function refundBookingPayment(
   }
   if (input.settlesOwedByHand)
     await refuseIfOwedAlreadySent(input.paymentId, payment.refundOwedKey);
+  const payerUserId = payment.userId;
 
   if (isFreeCreditIntent(payment.paymentIntent)) {
     // The credits rail restores in full or not at all — honouring a partial
@@ -238,26 +339,56 @@ export async function refundBookingPayment(
         "INVALID_AMOUNT",
       );
     }
-    return withDedupe(input, "CREDITS", () => refundFreeCreditPayment(input));
+    // The credits rail always stamps the seat REFUNDED in its transaction.
+    let generation = null as Date | null;
+    const result = await withDedupe(input, "CREDITS", async () => {
+      const credits = await refundFreeCreditPayment(input);
+      generation = credits.intentGeneration;
+      return credits.result;
+    });
+    return {
+      result,
+      payerUserId,
+      endsSeat: true,
+      intentGeneration: generation,
+    };
   }
 
   if (!isInternalFundedIntent(payment.paymentIntent)) {
     const r = await refundPayment(input);
-    // #1319 A9 — the seat this payment funded is refunded (best-effort, after
-    // the gateway refund committed; the participant table is shadow-only).
-    if (!input.keepSeat) await markParticipantsRefunded(input.paymentId);
+    // The seat is stamped REFUNDED after the gateway refund committed, by the caller.
+    const endsSeat = !(await keepsSeat(input));
     return {
-      refundId: r.refundId,
-      amountRefundedPaise: r.amountRefundedPaise,
-      rail: "GATEWAY",
-      ...(r.status ? { status: r.status } : {}),
-      ...(r.settledOwed ? { settledOwed: r.settledOwed } : {}),
+      result: {
+        refundId: r.refundId,
+        amountRefundedPaise: r.amountRefundedPaise,
+        rail: "GATEWAY",
+        ...(r.status ? { status: r.status } : {}),
+        ...(r.settledOwed ? { settledOwed: r.settledOwed } : {}),
+      },
+      payerUserId,
+      endsSeat,
+      intentGeneration: null,
     };
   }
 
-  return withDedupe(input, "INTERNAL", () =>
-    refundInternalFundedPayment(input),
-  );
+  let decided = null as {
+    endsSeat: boolean;
+    intentGeneration: Date | null;
+  } | null;
+  const result = await withDedupe(input, "INTERNAL", async () => {
+    const internal = await refundInternalFundedPayment(input);
+    decided = internal;
+    return internal.result;
+  });
+  // A key already spent answers without the transaction, so the seat is decided as on the gateway rail.
+  const endsSeat = decided?.endsSeat ?? !(await keepsSeat(input));
+  return {
+    result,
+    payerUserId,
+    endsSeat,
+    intentGeneration: decided?.intentGeneration ?? null,
+  };
 }
 
 /**
@@ -313,7 +444,7 @@ async function refundFreeCreditPayment(
     dedupeKey?: string;
     supportRecommendationId?: string;
   } & OwedMarkerInput,
-): Promise<BookingRefundResult> {
+): Promise<{ result: BookingRefundResult; intentGeneration: Date }> {
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
     select: {
@@ -338,6 +469,9 @@ async function refundFreeCreditPayment(
     );
   }
 
+  // Loaded before the transaction, so no module load runs while it holds the connection.
+  const { persistRefundRevocationInTx } =
+    await import("@/lib/stream/access-revocation");
   // Staged inside the tx, attempted after it; a retried attempt re-stages.
   let notice: StagedRefundNotice | null = null;
   const result = await withSerializableRetry(() =>
@@ -415,13 +549,20 @@ async function refundFreeCreditPayment(
         });
 
         await transitionParticipant(tx, { paymentId: payment.id }, "REFUNDED");
+        const intentGeneration = await persistRefundRevocationInTx(tx, {
+          refundId: refundRow.id,
+          payerUserId: payment.userId,
+        });
         // The Refund row is ₹0; the value that came back is the restored credit.
         notice = await stageRefundNotice(tx, payment, restoredPaise);
         return {
-          refundId: refundRow.id,
-          amountRefundedPaise: 0,
-          rail: "CREDITS" as const,
-          ...(settledOwed ? { settledOwed } : {}),
+          result: {
+            refundId: refundRow.id,
+            amountRefundedPaise: 0,
+            rail: "CREDITS" as const,
+            ...(settledOwed ? { settledOwed } : {}),
+          },
+          intentGeneration,
         };
       },
       {
@@ -1137,8 +1278,13 @@ async function refundInternalFundedPayment(
     dedupeKey?: string;
     supportRecommendationId?: string;
     keepSeat?: boolean;
+    keepSeatIfPartial?: boolean;
   } & OwedMarkerInput,
-): Promise<BookingRefundResult> {
+): Promise<{
+  result: BookingRefundResult;
+  endsSeat: boolean;
+  intentGeneration: Date | null;
+}> {
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
     select: {
@@ -1175,6 +1321,9 @@ async function refundInternalFundedPayment(
       : await prepareRefundProcessedEmail(
           refundReceiptArgs(payment, input.amountPaise),
         ).catch(() => null);
+  // Loaded before the transaction, so no module load runs while it holds the connection.
+  const { persistRefundRevocationInTx } =
+    await import("@/lib/stream/access-revocation");
   const result = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
@@ -1269,19 +1418,33 @@ async function refundInternalFundedPayment(
           refundRow.id,
         );
 
-        if (!input.keepSeat) {
+        // Read inside the Serializable tx, so two partials that together return everything end the seat.
+        const partial = requested < refundable;
+        const endsSeat =
+          !input.keepSeat && !(input.keepSeatIfPartial && partial);
+        let intentGeneration: Date | null = null;
+        if (endsSeat) {
           await transitionParticipant(
             tx,
             { paymentId: payment.id },
             "REFUNDED",
           );
+          // Commits with the seat stamp, so a refunded seat always has its revocation owed.
+          intentGeneration = await persistRefundRevocationInTx(tx, {
+            refundId: refundRow.id,
+            payerUserId: payment.userId,
+          });
         }
         notice = await stageRefundNotice(tx, payment, requested, receipt);
         return {
-          refundId: refundRow.id,
-          amountRefundedPaise: requested,
-          rail: "INTERNAL" as const,
-          ...(settledOwed ? { settledOwed } : {}),
+          result: {
+            refundId: refundRow.id,
+            amountRefundedPaise: requested,
+            rail: "INTERNAL" as const,
+            ...(settledOwed ? { settledOwed } : {}),
+          },
+          endsSeat,
+          intentGeneration,
         };
       },
       {

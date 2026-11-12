@@ -18,6 +18,7 @@ import {
 import {
   liveParticipant,
   transitionParticipant,
+  transitionParticipantSeats,
 } from "@/lib/booking/participants";
 import prisma, { type Tx } from "@/lib/prisma";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
@@ -99,10 +100,9 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
 import { recordExpertStrike } from "@/lib/booking/expert-reliability";
 import {
-  revokeEndedBookingChatAccess,
-  revokeEndedEventChatAccess,
+  persistSeatRevocation,
+  revokeEndedSeatAccess,
 } from "@/lib/stream/access-revocation";
-import { bookingOrgId } from "@/lib/stream-utils";
 import { bookingTransaction } from "@/lib/db/booking-transaction";
 
 /** Audit attribution shared by every CAS this cancel drives (#1322 A12). */
@@ -1175,8 +1175,18 @@ export async function POST(
                 // is still cancellable; matching no live slot is not a conflict.
                 allowZero: true,
               });
-              // #1319 A9 — every participant of the cancelled engagement.
-              await transitionParticipant(tx, sweepScope, "CANCELLED");
+              // Every participant of the cancelled engagement; an event keeps
+              // the client seats this commit released, so it revokes only those.
+              let releasedSeatUserIds: string[] | null = null;
+              if (eventKind) {
+                releasedSeatUserIds = await transitionParticipantSeats(
+                  tx,
+                  sweepScope,
+                  "CANCELLED",
+                );
+              } else {
+                await transitionParticipant(tx, sweepScope, "CANCELLED");
+              }
 
               await declineOpenReschedules(tx, appointmentId, auditMeta);
 
@@ -1194,6 +1204,7 @@ export async function POST(
                 holdNotices,
                 eventPlans,
                 gatewayCancels: pendingExpiry?.gatewayCancels ?? [],
+                releasedSeatUserIds,
               };
             },
             {
@@ -1220,7 +1231,17 @@ export async function POST(
         if (replay) return { replay };
         throw err;
       });
-    if ("replay" in committed) return NextResponse.json(committed.replay);
+    // An event revokes the seats its commit released; a 1:1, including a replay, its consultee.
+    const revokedUserIds =
+      ("replay" in committed ? null : committed.releasedSeatUserIds) ??
+      (consulteeUserId ? [consulteeUserId] : []);
+    // A retry of a click that died after its commit still owes the revocation.
+    if ("replay" in committed) {
+      await revokeEndedSeatAccess(appointmentId, revokedUserIds);
+      return NextResponse.json(committed.replay);
+    }
+    // Persisted before the refunds below can stall or throw.
+    await persistSeatRevocation(appointmentId, revokedUserIds);
     const {
       holdNotices,
       paidPayment,
@@ -1228,6 +1249,7 @@ export async function POST(
       owed,
       gatewayCancels,
       eventPlans,
+      releasedSeatUserIds,
       ...result
     } = committed;
     await flushBackupInterestNotices(holdNotices);
@@ -1308,20 +1330,8 @@ export async function POST(
       );
     }
 
-    // Chat access ends with the booking, synchronously; a Stream failure queues a retry.
-    if (eventKind && eventId && attendees) {
-      await revokeEndedEventChatAccess(eventKind, eventId, attendees.all);
-    } else if (consulteeUserId && consultantUserId) {
-      await revokeEndedBookingChatAccess({
-        userIds: [consulteeUserId],
-        dmCounterpartUserIds: [consultantUserId],
-        dmOrganizationId: bookingOrgId({
-          consultationPlan: appointment.consultation?.consultationPlan,
-          subscriptionPlan: appointment.subscription?.subscriptionPlan,
-          appointment,
-        }),
-      });
-    }
+    // Chat and room access end with the booking, inside the request's budget.
+    await revokeEndedSeatAccess(appointmentId, revokedUserIds);
 
     // Notification metadata (for fire-and-forget notifications after transaction)
     const notificationMeta = {

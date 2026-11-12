@@ -31,6 +31,10 @@ import {
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
 import { assertValidGetOrCreateCall } from "@/lib/stream/video-contracts";
+import {
+  fenceSeatGrants,
+  releaseUnsavedRoom,
+} from "@/lib/stream/access-revocation";
 
 interface MeetingSlot {
   id: string;
@@ -335,6 +339,37 @@ export type ProvisionedMeeting =
 export async function provisionAppointmentMeeting(
   slot: MeetingSlot,
 ): Promise<ProvisionedMeeting> {
+  const granted: RoomGrant = { appointmentId: null, userIds: [] };
+  const result = await provisionRoom(slot, granted);
+  // The room is created with its seat holders as members; a cancel that committed meanwhile found no room to clear.
+  if (result.ok && granted.appointmentId) {
+    await fenceSeatGrants(granted.appointmentId, granted.userIds);
+  }
+  return result;
+}
+
+/** Who the room's create payload made a member, under the caller's authorized appointment. */
+interface RoomGrant {
+  appointmentId: string | null;
+  userIds: string[];
+}
+
+/** A reused row keeps its call id; an early-ended row is rebuilt under a fresh one. */
+function resolveStreamCallId(
+  slotId: string,
+  existingMeeting: { streamCallId: string } | null | undefined,
+  rebuildEndedEarly: boolean,
+): string {
+  if (rebuildEndedEarly) {
+    return `occurrence-${slotId}-r${Date.now().toString(36)}`;
+  }
+  return existingMeeting?.streamCallId ?? `occurrence-${slotId}`;
+}
+
+async function provisionRoom(
+  slot: MeetingSlot,
+  granted: RoomGrant,
+): Promise<ProvisionedMeeting> {
   const anchorSlot: MeetingSlot = slot;
 
   const existingMeeting = await findDbMeetingBySlot(anchorSlot.id);
@@ -357,17 +392,18 @@ export async function provisionAppointmentMeeting(
     return { ok: false, refusal: "Video is not available right now." };
   }
 
-  let streamCallId = `occurrence-${anchorSlot.id}`;
-  if (reuseExisting && existingMeeting) {
-    streamCallId = existingMeeting.streamCallId;
-  } else if (rebuildEndedEarly) {
-    streamCallId = `occurrence-${anchorSlot.id}-r${Date.now().toString(36)}`;
-  }
+  const streamCallId = resolveStreamCallId(
+    anchorSlot.id,
+    existingMeeting,
+    rebuildEndedEarly,
+  );
   const { authorUserId, payload } = await buildRoomCallPlan(authorized, {
     extendedSeconds: existingMeeting?.extendedSeconds ?? 0,
     extensionsUsed: existingMeeting?.extensionsUsed ?? 0,
   });
   const resolvedAppointmentId = authorized.slot.appointmentId;
+  granted.appointmentId = resolvedAppointmentId ?? null;
+  granted.userIds = payload.data.members?.map((m) => m.user_id) ?? [];
 
   try {
     await upsertUsersToStream([authorUserId], {
@@ -426,10 +462,16 @@ export async function provisionAppointmentMeeting(
     return { ok: true, streamCallId };
   }
 
-  await createDbMeeting(
-    { ...anchorSlot, appointmentId: resolvedAppointmentId },
-    streamCallId,
-  );
+  try {
+    await createDbMeeting(
+      { ...anchorSlot, appointmentId: resolvedAppointmentId },
+      streamCallId,
+    );
+  } catch (error) {
+    // No Meeting row means no revocation can find this call, so its new members leave it.
+    await releaseUnsavedRoom(streamCallId, granted.userIds);
+    throw error;
+  }
 
   return { ok: true, streamCallId };
 }

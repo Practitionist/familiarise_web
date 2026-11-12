@@ -4,7 +4,7 @@ import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import {
   DM_ELIGIBLE_STATUSES,
   dmEligibleStatusFilter,
-  excludeTrialBooking,
+  excludeNonDmDirectBooking,
   OPENABLE_EVENT_STATUSES,
 } from "@/lib/stream/dm-eligibility-statuses";
 
@@ -107,7 +107,7 @@ function fetchDirectBookings(directions: Direction[]) {
     prisma.consultation.findMany({
       where: {
         status: dmEligibleStatusFilter(),
-        ...excludeTrialBooking(),
+        ...excludeNonDmDirectBooking(),
         OR: directions.map((d) => ({
           consultationPlan: { consultantProfileId: d.consultantProfileId },
           requestedById: d.requestedById,
@@ -121,7 +121,7 @@ function fetchDirectBookings(directions: Direction[]) {
     prisma.subscription.findMany({
       where: {
         status: dmEligibleStatusFilter(),
-        ...excludeTrialBooking(),
+        ...excludeNonDmDirectBooking(),
         OR: directions.map((d) => ({
           subscriptionPlan: { consultantProfileId: d.consultantProfileId },
           requestedById: d.requestedById,
@@ -529,7 +529,7 @@ async function hasConsultationLink(
   const found = await prisma.consultation.findFirst({
     where: {
       status: dmEligibleStatusFilter(),
-      ...excludeTrialBooking(),
+      ...excludeNonDmDirectBooking(),
       OR: directions.map((d) => ({
         consultationPlan: { consultantProfileId: d.consultantProfileId },
         requestedById: d.requestedById,
@@ -551,7 +551,7 @@ async function hasSubscriptionLink(
   const found = await prisma.subscription.findFirst({
     where: {
       status: dmEligibleStatusFilter(),
-      ...excludeTrialBooking(),
+      ...excludeNonDmDirectBooking(),
       OR: directions.map((d) => ({
         subscriptionPlan: { consultantProfileId: d.consultantProfileId },
         requestedById: d.requestedById,

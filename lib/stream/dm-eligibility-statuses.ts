@@ -50,10 +50,24 @@ export function dmEligibleStatusFilter(): { in: AppointmentStatus[] } {
   return { in: [...DM_ELIGIBLE_STATUSES] };
 }
 
-/** A trial appointment never grants a DM, whatever status its booking row carries. */
-export function excludeTrialBooking() {
+/**
+ * A direct booking that grants no DM whatever its status: a trial, or one whose
+ * client seat was refunded while the booking row stayed scheduled.
+ */
+export function excludeNonDmDirectBooking() {
   return {
-    NOT: { appointment: { is: { appointmentType: "TRIAL" as const } } },
+    NOT: [
+      { appointment: { is: { appointmentType: "TRIAL" as const } } },
+      {
+        appointment: {
+          is: {
+            participants: {
+              some: { role: "CONSULTEE" as const, status: "REFUNDED" as const },
+            },
+          },
+        },
+      },
+    ],
   };
 }
 

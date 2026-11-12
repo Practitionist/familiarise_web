@@ -92,6 +92,8 @@ jest.mock("../../lib/novu", () => ({
 
 // ─── Imports ────────────────────────────────────────────────────────────────
 
+import type { NextRequest } from "next/server";
+import type { Session } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { authorizeEventAccess, isPrivileged } from "@/lib/auth-helpers";
@@ -102,7 +104,7 @@ import { grantPlatformReschedule } from "@/lib/booking/platform-reschedule";
 
 // ─── Session Factories ──────────────────────────────────────────────────────
 
-function makeSession(overrides: Record<string, any> = {}) {
+function makeSession(overrides: Record<string, unknown> = {}) {
   return {
     user: {
       id: "user-1",
@@ -114,7 +116,7 @@ function makeSession(overrides: Record<string, any> = {}) {
       adminProfileId: null,
       ...overrides,
     },
-  } as any;
+  } as unknown as Session;
 }
 
 function consultantSession() {
@@ -172,10 +174,13 @@ function makeRescheduleRequest(appointmentId: string, type: string) {
   return new Request(
     `http://localhost/api/appointments/${appointmentId}/reschedule?type=${type}`,
     { method: "POST" },
-  ) as any;
+  ) as unknown as NextRequest;
 }
 
-function makeCancelRequest(appointmentId: string, body?: Record<string, any>) {
+function makeCancelRequest(
+  appointmentId: string,
+  body?: Record<string, unknown>,
+) {
   const url = `http://localhost/api/appointments/${appointmentId}/cancel`;
   return new Request(url, {
     method: "POST",
@@ -185,7 +190,7 @@ function makeCancelRequest(appointmentId: string, body?: Record<string, any>) {
           headers: { "Content-Type": "application/json" },
         }
       : {}),
-  }) as any;
+  }) as unknown as NextRequest;
 }
 
 function makeParams(appointmentId: string) {
@@ -303,7 +308,7 @@ function makeClassAppointment() {
 
 // ─── Mock Transaction ───────────────────────────────────────────────────────
 
-function makeMockTx(appointmentData: any = null) {
+function makeMockTx(appointmentData: unknown = null) {
   return {
     appointment: {
       findUnique: jest.fn().mockResolvedValue(appointmentData),
@@ -352,6 +357,7 @@ function makeMockTx(appointmentData: any = null) {
     appointmentParticipant: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      updateManyAndReturn: jest.fn().mockResolvedValue([]),
     },
     bookingStatusHistory: {
       create: jest.fn().mockResolvedValue({}),
@@ -707,7 +713,7 @@ describe("Reschedule Route — Authorization", () => {
     (getSession as jest.Mock).mockResolvedValue(strangerSession());
     const mockTx = makeMockTx(makeConsultationAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
 
     const req = makeRescheduleRequest("apt-1", "CONSULTATION");
@@ -722,7 +728,7 @@ describe("Reschedule Route — Authorization", () => {
     (getSession as jest.Mock).mockResolvedValue(strangerSession());
     const mockTx = makeMockTx(makeSubscriptionAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
 
     const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION");
@@ -735,7 +741,7 @@ describe("Reschedule Route — Authorization", () => {
     (getSession as jest.Mock).mockResolvedValue(strangerSession());
     const mockTx = makeMockTx(makeWebinarAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
 
     const req = makeRescheduleRequest("apt-1", "WEBINAR");
@@ -748,7 +754,7 @@ describe("Reschedule Route — Authorization", () => {
     (getSession as jest.Mock).mockResolvedValue(strangerSession());
     const mockTx = makeMockTx(makeClassAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
 
     const req = makeRescheduleRequest("apt-1", "CLASS");
@@ -761,7 +767,7 @@ describe("Reschedule Route — Authorization", () => {
     (getSession as jest.Mock).mockResolvedValue(consultantSession());
     const mockTx = makeMockTx(makeConsultationAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
 
     const req = makeRescheduleRequest("apt-1", "CONSULTATION");
@@ -774,7 +780,7 @@ describe("Reschedule Route — Authorization", () => {
     (getSession as jest.Mock).mockResolvedValue(consulteeSession());
     const mockTx = makeMockTx(makeConsultationAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
 
     const req = makeRescheduleRequest("apt-1", "CONSULTATION");
@@ -787,7 +793,7 @@ describe("Reschedule Route — Authorization", () => {
     (getSession as jest.Mock).mockResolvedValue(adminSession());
     const mockTx = makeMockTx(makeConsultationAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
 
     const req = makeRescheduleRequest("apt-1", "CONSULTATION");
@@ -801,7 +807,7 @@ describe("Reschedule Route — Authorization", () => {
     (getSession as jest.Mock).mockResolvedValue(staffSession());
     const mockTx = makeMockTx(makeSubscriptionAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
 
     const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION");
@@ -820,7 +826,7 @@ describe("Reschedule Route — Authorization", () => {
       (getSession as jest.Mock).mockResolvedValue(session());
       const mockTx = makeMockTx(appointment());
       (prisma.$transaction as jest.Mock).mockImplementation(
-        async (callback: any) => callback(mockTx),
+        async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
       );
 
       const res = await rescheduleHandler(
@@ -841,7 +847,7 @@ describe("Reschedule Route — Authorization", () => {
     (getSession as jest.Mock).mockResolvedValue(staffSession());
     const mockTx = makeMockTx(makeConsultationAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
 
     const req = makeRescheduleRequest("apt-1", "CONSULTATION");
@@ -863,7 +869,7 @@ describe("Reschedule Route — Authorization", () => {
     );
     const mockTx = makeMockTx(makeConsultationAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
 
     const res = await rescheduleHandler(
@@ -878,7 +884,7 @@ describe("Reschedule Route — Authorization", () => {
     (getSession as jest.Mock).mockResolvedValue(consulteeSession());
     const mockTx = makeMockTx(makeWebinarAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
 
     const req = makeRescheduleRequest("apt-1", "WEBINAR");
@@ -891,7 +897,7 @@ describe("Reschedule Route — Authorization", () => {
     (getSession as jest.Mock).mockResolvedValue(consulteeSession());
     const mockTx = makeMockTx(makeClassAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
 
     const req = makeRescheduleRequest("apt-1", "CLASS");
@@ -976,7 +982,7 @@ describe("Cancel Route — Authorization", () => {
     );
     const mockTx = makeMockTx();
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
 
     const req = makeCancelRequest("apt-1");
@@ -992,7 +998,7 @@ describe("Cancel Route — Authorization", () => {
     );
     const mockTx = makeMockTx();
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
 
     const req = makeCancelRequest("apt-1");
@@ -1008,7 +1014,7 @@ describe("Cancel Route — Authorization", () => {
     );
     const mockTx = makeMockTx();
     (prisma.$transaction as jest.Mock).mockImplementation(
-      async (callback: any) => callback(mockTx),
+      async (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
     );
 
     const req = makeCancelRequest("apt-1");

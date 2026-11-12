@@ -24,6 +24,7 @@ import {
   assertValidUpdateUserPermissions,
 } from "@/lib/stream/video-contracts";
 import { reportSentryError } from "@/lib/observability/report";
+import { fenceSeatGrants } from "@/lib/stream/access-revocation";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 /** The only capabilities Stream's UpdateUserPermissions accepts; any other name fails the whole request. */
@@ -182,6 +183,28 @@ export async function POST(
             : {}),
         },
         { status: 409 },
+      );
+    }
+
+    // A cancel or refund that committed while this grant was in flight found no membership to remove.
+    const appointmentId = access.appointment?.id;
+    const fence = appointmentId
+      ? await fenceSeatGrants(appointmentId, [userId])
+      : null;
+    if (fence?.verified && fence.lost.length > 0) {
+      return NextResponse.json(
+        { error: "This booking is no longer active.", code: "BOOKING_ENDED" },
+        { status: 403 },
+      );
+    }
+    // An unread seat check never admits a client; the sweep re-checks the grant that landed.
+    if (fence && !fence.verified && access.role !== "host") {
+      return NextResponse.json(
+        {
+          error: "We could not confirm your booking. Please try again.",
+          code: "SEAT_UNVERIFIED",
+        },
+        { status: 503 },
       );
     }
 

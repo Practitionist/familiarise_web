@@ -43,7 +43,10 @@ import {
   renewAppointmentLock,
   withAppointmentLock,
 } from "@/utils/appointmentlock";
-import { revokeEndedEventChatAccess } from "@/lib/stream/access-revocation";
+import {
+  persistSeatRevocation,
+  revokeEndedSeatAccess,
+} from "@/lib/stream/access-revocation";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { BookingRuleError } from "./booking-rule-error";
 import {
@@ -499,6 +502,8 @@ export async function leaveEventSeat(args: {
     }),
   );
   if (!released) return null;
+  // Owned before the refund work below, which can stall or throw after the seat is released.
+  await persistSeatRevocation(eventAppointment.id, [args.userId]);
   // Scheduled before the refund, so a refund failure cannot drop the notice.
   await scheduleAfter(
     () => finishSeatOpenedNotices(released.seatOpened),
@@ -524,7 +529,7 @@ export async function leaveEventSeat(args: {
       initiatedByUserId: args.actorUserId,
     });
   }
-  await revokeEndedEventChatAccess(args.kind, args.eventId, [args.userId]);
+  await revokeEndedSeatAccess(eventAppointment.id, [args.userId]);
   return { refund };
 }
 

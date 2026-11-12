@@ -73,9 +73,9 @@ jest.mock("../../lib/booking/transitions", () => ({
 jest.mock("../../lib/booking/participants", () => ({
   recordParticipants: jest.fn(async () => undefined),
 }));
-// The expiry sweep the route's module imports ends chat access; no case here reaches it.
+// The expiry sweep the route's module imports ends Stream access; no case here reaches it.
 jest.mock("../../lib/stream/access-revocation", () => ({
-  revokeEndedBookingChatAccess: jest.fn(),
+  revokeEndedSeatAccess: jest.fn(),
 }));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 

@@ -28,8 +28,8 @@ jest.mock("../../../lib/novu", () => {
   );
 });
 jest.mock("../../../lib/stream/access-revocation", () => ({
-  revokeEndedBookingChatAccess: jest.fn(async () => undefined),
-  revokeEndedEventChatAccess: jest.fn(async () => undefined),
+  revokeEndedSeatAccess: jest.fn(async () => undefined),
+  persistSeatRevocation: jest.fn(async () => undefined),
 }));
 
 import { POST as reschedule } from "../../../app/api/appointments/[appointmentId]/reschedule/route";

@@ -147,6 +147,29 @@ describe("DM eligibility rules and channel provisioning", () => {
     ).resolves.toBe(false);
   });
 
+  it("never lets a booking whose client seat was refunded keep a DM open", async () => {
+    const { pairBookingContexts } =
+      await import("../../lib/stream/dm-eligibility");
+    // The store holds only a still-SCHEDULED booking whose seat was refunded.
+    const refundedOnly = async ({ where }: { where: { NOT?: unknown } }) =>
+      JSON.stringify(where.NOT ?? null).includes('"REFUNDED"')
+        ? []
+        : [
+            {
+              consultationPlan: { organizationId: null },
+              subscriptionPlan: { organizationId: null },
+              appointment: { organizationId: null },
+            },
+          ];
+    mockConsultationFindMany.mockImplementation(refundedOnly);
+    mockSubscriptionFindMany.mockImplementation(refundedOnly);
+
+    await expect(
+      pairBookingContexts("consultant-u1", "consultee-u2"),
+    ).resolves.toEqual({ personalAllowed: false, organizations: [] });
+    expect(mockConsultationFindMany).toHaveBeenCalled();
+  });
+
   it("leaves an event booking unstamped when the buyer never became a member", async () => {
     const { ensureChannelsForAppointment } =
       await import("../../lib/payments/webhooks/ensure-channels");

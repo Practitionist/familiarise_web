@@ -8,6 +8,7 @@ import {
 import { CALL_MEMBER_ROLE, STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
 import { assertValidUpdateCallMembers } from "@/lib/stream/video-contracts";
 import { reportSentryError } from "@/lib/observability/report";
+import { fenceSeatGrants } from "@/lib/stream/access-revocation";
 
 /**
  * Adds confirmed webinar or class attendees to the Stream calls already provisioned for the
@@ -60,4 +61,6 @@ export async function addSeatHoldersToOpenCalls(
       extra: { appointmentId, failed: failures.length },
     });
   }
+  // A refund that committed while these writes were in flight found no membership to remove.
+  await fenceSeatGrants(appointmentId, userIds);
 }
