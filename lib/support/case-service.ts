@@ -54,6 +54,7 @@ import {
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   openWaitSeconds,
+  reopenedClockPatch,
   slaDeadlinesFor,
   tightenDeadlinesForPriorityRaise,
   userRepliedPatch,
@@ -863,6 +864,9 @@ async function advanceUserTurnState(
       lastMessageAt: now,
       ...(reopening ? { status: nextStatus, resolvedAt: null } : {}),
       ...userRepliedPatch(existingCase, now),
+      ...(reopening
+        ? reopenedClockPatch(existingCase, existingCase.priority, now)
+        : {}),
     },
   });
   if ((moved?.count ?? 0) === 0) return false;
@@ -1565,6 +1569,9 @@ function buildLifecycleUpdateData(
       ? { legalHoldAt: input.legalHold ? now : null }
       : {}),
     ...(noteTrimmed ? { messageSeq: { increment: 1 } } : {}),
+    ...(input.status && input.status !== "RESOLVED" && input.status !== "CLOSED"
+      ? reopenedClockPatch(existing, input.priority ?? existing.priority, now)
+      : {}),
   };
 }
 

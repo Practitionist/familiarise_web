@@ -57,6 +57,8 @@ const PROBLEM_CASCADE_CAP = 10;
 const EVIDENCE_PURGE_CAP = 5;
 // Each chat-access step is a Stream round trip or a short transaction per row.
 const CHAT_ACCESS_CAP = 10;
+// Pages of `limit` SLA candidates one run may read; the start budget usually ends it first.
+const SLA_SCAN_PAGE_CAP = 10;
 
 type SlaNoticeKind = "ack" | "res";
 type SlaNoticeLevel = "warn" | "breach";
@@ -172,99 +174,34 @@ function slaNoticeTransitions(
   return notices;
 }
 
-function recordPayloadSlaBreach(
-  payload: unknown,
-  ackSet: Set<string>,
-  resSet: Set<string>,
-  stagedKeys: Set<string>,
-): void {
-  if (typeof payload !== "object" || payload === null) return;
-  const ticketId =
-    "ticketId" in payload && typeof payload.ticketId === "string"
-      ? payload.ticketId
-      : null;
-  const activity =
-    "activity" in payload && typeof payload.activity === "string"
-      ? payload.activity
-      : null;
-  if (!ticketId) return;
-  if (activity === "sla-ack-breach") {
-    ackSet.add(ticketId);
-    stagedKeys.add(`sla:${ticketId}:ack:breach`);
-  } else if (activity === "sla-res-breach") {
-    resSet.add(ticketId);
-    stagedKeys.add(`sla:${ticketId}:res:breach`);
-  }
-}
-
-function parseStagedSlaOutboxRows(
-  rows: Array<{
-    transactionId: string;
-    entityRef?: string | null;
-    payload?: unknown;
-  }>,
-): {
-  ackBreachIds: string[];
-  resBreachIds: string[];
-  ackWarnIds: string[];
-  resWarnIds: string[];
-  stagedKeys: Set<string>;
-} {
-  const ackSet = new Set<string>();
-  const resSet = new Set<string>();
-  const ackWarnSet = new Set<string>();
-  const resWarnSet = new Set<string>();
-  const stagedKeys = new Set<string>();
-
-  const recordKeyString = (raw: string | null | undefined) => {
-    if (!raw) return;
-    stagedKeys.add(raw);
-    const match = /^sla:(.+):(ack|res):(warn|breach)$/.exec(raw);
-    if (!match) return;
-    if (match[3] === "breach") {
-      if (match[2] === "ack") ackSet.add(match[1]);
-      if (match[2] === "res") resSet.add(match[1]);
-    } else if (match[3] === "warn") {
-      if (match[2] === "ack") ackWarnSet.add(match[1]);
-      if (match[2] === "res") resWarnSet.add(match[1]);
-    }
-  };
-
+/** Dedupe keys already staged: an outbox row's transaction id and entity ref. */
+function stagedSlaKeys(
+  rows: Array<{ transactionId: string; entityRef?: string | null }>,
+): Set<string> {
+  const keys = new Set<string>();
   for (const row of rows) {
-    recordKeyString(row.transactionId);
-    recordKeyString(row.entityRef);
-    recordPayloadSlaBreach(row.payload, ackSet, resSet, stagedKeys);
+    keys.add(row.transactionId);
+    if (row.entityRef) keys.add(row.entityRef);
   }
-
-  return {
-    ackBreachIds: [...ackSet],
-    resBreachIds: [...resSet],
-    ackWarnIds: [...ackWarnSet],
-    resWarnIds: [...resWarnSet],
-    stagedKeys,
-  };
+  return keys;
 }
 
-type SlaNotifiedIds = {
-  ackBreachIds: string[];
-  resBreachIds: string[];
-  ackWarnIds: string[];
-  resWarnIds: string[];
-};
+/** A resolution notice is keyed by the deadline it was raised for, so a reopen's new deadline is noticed again. */
+function slaNoticeKey(
+  row: Pick<SlaSweepCandidate, "id" | "resolutionDueAt" | "statutoryDueAt">,
+  notice: { kind: SlaNoticeKind; level: SlaNoticeLevel },
+): string {
+  const base = `sla:${row.id}:${notice.kind}:${notice.level}`;
+  if (notice.kind === "ack") return base;
+  const due = row.resolutionDueAt ?? row.statutoryDueAt ?? null;
+  return `${base}:${due ? due.getTime() : "none"}`;
+}
 
-const NO_NOTIFIED_IDS: SlaNotifiedIds = {
-  ackBreachIds: [],
-  resBreachIds: [],
-  ackWarnIds: [],
-  resWarnIds: [],
-};
-
-/** Open cases inside an SLA warn or breach window, minus cases already noticed at that level. */
-function slaNoticeCaseWhere(
-  now: Date,
-  notified: SlaNotifiedIds = NO_NOTIFIED_IDS,
-): Prisma.SupportCaseWhereInput {
-  const { ackBreachIds, resBreachIds, ackWarnIds, resWarnIds } = notified;
+/**
+ * Open cases inside an SLA warn or breach window. A case awaiting the user is paused,
+ * so only its statutory deadline (which never pauses) can newly fire.
+ */
+function slaNoticeCaseWhere(now: Date): Prisma.SupportCaseWhereInput {
   const ackWarnHorizon = new Date(now.getTime() + ACK_WARN_MS);
   const resWarnHorizon = new Date(now.getTime() + RES_WARN_MS);
   const breachCutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -274,33 +211,16 @@ function slaNoticeCaseWhere(
     OR: [
       {
         acknowledgedAt: null,
-        ackDueAt: { gte: breachCutoff, lte: now },
-        ...(ackBreachIds.length > 0 ? { id: { notIn: ackBreachIds } } : {}),
+        ackDueAt: { gte: breachCutoff, lte: ackWarnHorizon },
       },
       {
         resolvedAt: null,
-        resolutionDueAt: { gte: breachCutoff, lte: now },
-        ...(resBreachIds.length > 0 ? { id: { notIn: resBreachIds } } : {}),
-      },
-      {
-        acknowledgedAt: null,
-        ackDueAt: { gt: now, lte: ackWarnHorizon },
-        ...(ackWarnIds.length > 0 ? { id: { notIn: ackWarnIds } } : {}),
+        awaitingUserSince: null,
+        resolutionDueAt: { gte: breachCutoff, lte: resWarnHorizon },
       },
       {
         resolvedAt: null,
-        resolutionDueAt: { gt: now, lte: resWarnHorizon },
-        ...(resWarnIds.length > 0 ? { id: { notIn: resWarnIds } } : {}),
-      },
-      {
-        statutoryDueAt: { gte: breachCutoff, lte: now },
-        resolvedAt: null,
-        ...(resBreachIds.length ? { id: { notIn: resBreachIds } } : {}),
-      },
-      {
-        statutoryDueAt: { gt: now, lte: resWarnHorizon },
-        resolvedAt: null,
-        ...(resWarnIds.length ? { id: { notIn: resWarnIds } } : {}),
+        statutoryDueAt: { gte: breachCutoff, lte: resWarnHorizon },
       },
     ],
   };
@@ -309,29 +229,16 @@ function slaNoticeCaseWhere(
 async function fetchSlaSweepCandidates(
   now: Date,
   limit: number,
-  ackBreachIds: string[],
-  resBreachIds: string[],
-  ackWarnIds: string[] = [],
-  resWarnIds: string[] = [],
+  afterId: string | null,
 ): Promise<SlaSweepCandidate[]> {
-  const orgInclude = {
-    organization: {
-      select: { name: true, escalationContactEmail: true },
-    },
-  } as const;
-
   const cases = await prisma.supportCase.findMany({
-    where: slaNoticeCaseWhere(now, {
-      ackBreachIds,
-      resBreachIds,
-      ackWarnIds,
-      resWarnIds,
-    }),
-    include: orgInclude,
-    orderBy: [
-      { statutoryDueAt: { sort: "asc", nulls: "last" } },
-      { ackDueAt: "asc" },
-    ],
+    where: afterId
+      ? { AND: [slaNoticeCaseWhere(now), { id: { gt: afterId } }] }
+      : slaNoticeCaseWhere(now),
+    include: {
+      organization: { select: { name: true, escalationContactEmail: true } },
+    },
+    orderBy: { id: "asc" },
     take: limit,
   });
   return cases.map((c) => ({
@@ -352,6 +259,44 @@ async function fetchSlaSweepCandidates(
         ? null
         : (c.organization?.escalationContactEmail ?? null),
   }));
+}
+
+/**
+ * Pages candidates by id until `limit` notices are staged, the candidates run out,
+ * or the sweep's start budget is spent; a matched row that fires nothing never holds the head.
+ */
+async function stageSlaNotices(
+  now: Date,
+  limit: number,
+  startedAt: number,
+  operators: OperatorRow[],
+  stagedKeys: Set<string>,
+  errors: string[],
+  stagedBells: StagedTrigger[],
+): Promise<{ scanned: number; staged: number; orgEmails: number }> {
+  const out = { scanned: 0, staged: 0, orgEmails: 0 };
+  let afterId: string | null = null;
+  for (let page = 0; page < SLA_SCAN_PAGE_CAP; page++) {
+    if (Date.now() - startedAt >= AUTO_CLOSE_START_BUDGET_MS) break;
+    const rows = await fetchSlaSweepCandidates(now, limit, afterId);
+    out.scanned += rows.length;
+    for (const row of rows) {
+      if (out.staged >= limit) return out;
+      const r = await processCandidateSlaNotices(
+        row,
+        now,
+        operators,
+        stagedKeys,
+        errors,
+        stagedBells,
+      );
+      out.staged += r.staged;
+      out.orgEmails += r.orgEmails;
+    }
+    if (rows.length < limit) break;
+    afterId = rows[rows.length - 1].id;
+  }
+  return out;
 }
 
 async function deliverSlaNoticeEmails(
@@ -420,7 +365,7 @@ async function processSingleSlaNotice(
   errors: string[],
   stagedBells: StagedTrigger[],
 ): Promise<{ staged: number; orgEmails: number }> {
-  const dedupeKey = `sla:${row.id}:${notice.kind}:${notice.level}`;
+  const dedupeKey = slaNoticeKey(row, notice);
   if (stagedKeys.has(dedupeKey)) {
     return { staged: 0, orgEmails: 0 };
   }
@@ -1097,43 +1042,21 @@ export async function runSupportSlaSweep(opts?: {
             entityRef: { startsWith: "sla:" },
             createdAt: { gte: recentOutboxCutoff },
           },
-          select: { transactionId: true, entityRef: true, payload: true },
+          select: { transactionId: true, entityRef: true },
           orderBy: { createdAt: "desc" },
           take: 5000,
         })
         .catch(() => []),
     ]);
 
-    const { ackBreachIds, resBreachIds, ackWarnIds, resWarnIds, stagedKeys } =
-      parseStagedSlaOutboxRows(outboxRows ?? []);
-
-    const candidates = await fetchSlaSweepCandidates(
+    const sla = await stageSlaNotices(
       now,
       limit,
-      ackBreachIds.slice(0, 500),
-      resBreachIds.slice(0, 500),
-      ackWarnIds.slice(0, 500),
-      resWarnIds.slice(0, 500),
-    );
-
-    const noticeOutcomes = await runSequential(candidates, (row) =>
-      processCandidateSlaNotices(
-        row,
-        now,
-        operators,
-        stagedKeys,
-        errors,
-        stagedBells,
-      ),
-    );
-
-    const slaNoticesStaged = noticeOutcomes.reduce(
-      (sum, o) => sum + o.staged,
-      0,
-    );
-    const orgEscalationEmailsSent = noticeOutcomes.reduce(
-      (sum, o) => sum + o.orgEmails,
-      0,
+      startedAt,
+      operators,
+      stagedSlaKeys(outboxRows ?? []),
+      errors,
+      stagedBells,
     );
 
     const autoClose = await autoCloseResolvedRows(
@@ -1286,9 +1209,9 @@ export async function runSupportSlaSweep(opts?: {
 
     return {
       success: errors.length === 0,
-      scanned: candidates.length,
-      slaNoticesStaged,
-      orgEscalationEmailsSent,
+      scanned: sla.scanned,
+      slaNoticesStaged: sla.staged,
+      orgEscalationEmailsSent: sla.orgEmails,
       ...autoClose,
       incidentsCascaded: cascade.cascaded,
       incidentsHeldOpen: cascade.heldOpen.length,

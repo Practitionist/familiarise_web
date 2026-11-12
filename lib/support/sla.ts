@@ -38,9 +38,8 @@ export interface SlaDeadlines {
 }
 
 /**
- * Deadlines for a ticket opened at `from`. Computed ONCE at intake and stored,
- * never re-derived on read: a later change to the table above must not
- * retroactively re-date an open ticket's breach.
+ * Deadlines for a ticket opened (or reopened) at `from`. Stored, never re-derived
+ * on read: a later change to the table above must not re-date an open ticket's breach.
  */
 export function slaDeadlinesFor(
   priority: SupportPriority,
@@ -50,6 +49,22 @@ export function slaDeadlinesFor(
   return {
     ackDueAt: new Date(from.getTime() + target.ackMs),
     resolutionDueAt: new Date(from.getTime() + target.resolutionMs),
+  };
+}
+
+/**
+ * A reopen restarts the resolution clock from `now` at the case's priority and drops the
+ * pause banked against the old deadline; acknowledgement and `statutoryDueAt` stand.
+ */
+export function reopenedClockPatch(
+  existing: { resolvedAt: Date | null; activeChannel: string },
+  priority: SupportPriority,
+  now: Date,
+): { resolutionDueAt?: Date; pausedSeconds?: number } {
+  if (!existing.resolvedAt || existing.activeChannel !== "HUMAN") return {};
+  return {
+    resolutionDueAt: slaDeadlinesFor(priority, now).resolutionDueAt,
+    pausedSeconds: 0,
   };
 }
 

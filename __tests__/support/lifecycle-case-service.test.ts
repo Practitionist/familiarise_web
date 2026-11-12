@@ -156,7 +156,7 @@ describe("replies on a resolved case", () => {
   });
 
   it('reopens on "This didn\'t fix it" within 14 days when undecided', async () => {
-    const row = resolved({ assignedToId: "agent" });
+    const row = resolved({ assignedToId: "agent", pausedSeconds: 3600 });
     db.supportCase.findUnique.mockResolvedValueOnce(row as never);
     const result = await appendSupportCaseTurn(reply({ reopen: true }), now);
     expect(result).toMatchObject({ ok: true });
@@ -168,8 +168,14 @@ describe("replies on a resolved case", () => {
       data: expect.objectContaining({
         status: "IN_PROGRESS",
         resolvedAt: null,
+        // MEDIUM resolves in 7 days from the reopen; the statutory date is not rewritten.
+        resolutionDueAt: new Date(now.getTime() + 7 * DAY),
+        pausedSeconds: 0,
       }),
     });
+    expect(db.supportCase.updateMany.mock.calls[0][0].data).not.toHaveProperty(
+      "statutoryDueAt",
+    );
     expect(db.supportCaseEvent.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         kind: "REOPENED",

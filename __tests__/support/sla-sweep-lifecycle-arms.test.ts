@@ -60,6 +60,7 @@ jest.mock("../../lib/prisma", () => {
   };
 });
 
+import prisma from "../../lib/prisma";
 import { runSupportSlaSweep } from "../../lib/support/sla-sweep";
 
 const now = new Date("2026-10-22T00:00:00Z");
@@ -144,4 +145,42 @@ it("folds arm failures into the run's errors and reports to Sentry once", async 
   expect(result.success).toBe(false);
   expect(result.errors).toHaveLength(4);
   expect(mockReportSentryError).toHaveBeenCalledTimes(1);
+});
+
+it("pages by id past matched rows that fire nothing to reach a real breach", async () => {
+  const db = jest.mocked(prisma, { shallow: false });
+  const HOUR = 3_600_000;
+  const row = (id: string, pausedSeconds: number) => ({
+    id,
+    referenceNumber: id,
+    title: "t",
+    status: "IN_PROGRESS",
+    assignedToId: null,
+    ackDueAt: null,
+    acknowledgedAt: now,
+    resolutionDueAt: new Date(now.getTime() - HOUR),
+    statutoryDueAt: null,
+    resolvedAt: null,
+    awaitingUserSince: null,
+    pausedSeconds,
+    ownershipScope: "PERSONAL",
+    organization: null,
+  });
+  // Raw deadline passed, but banked pause moves the effective deadline two days out.
+  db.supportCase.findMany
+    .mockResolvedValueOnce([row("a", 172_800), row("b", 172_800)] as never)
+    .mockResolvedValueOnce([row("c", 0)] as never);
+  db.user.findMany.mockResolvedValueOnce([
+    { id: "op", email: "op@example.test", name: null, role: "STAFF" },
+  ] as never);
+  db.$transaction.mockImplementation(((fn: (tx: typeof db) => unknown) =>
+    fn(db)) as never);
+
+  const result = await runSupportSlaSweep({ now, limit: 2 });
+
+  expect(db.supportCase.findMany.mock.calls[1][0]).toMatchObject({
+    where: { AND: [expect.any(Object), { id: { gt: "b" } }] },
+    orderBy: { id: "asc" },
+  });
+  expect(result).toMatchObject({ scanned: 3, slaNoticesStaged: 1 });
 });
