@@ -1,25 +1,35 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
+import { z } from "zod";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CheckoutResultSkeleton } from "@/app/checkout/CheckoutSkeletons";
 import { XCircle, RefreshCw, ArrowLeft, MessageCircle } from "lucide-react";
+import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
+import { getStaticErrorDescription } from "@/lib/errors/mapping/payment-error-toast-map";
+
+// Only app-chosen copy renders: a known `code` shows its fixed text, anything else the generic line.
+const failureCodeSchema = z.nativeEnum(ErrorTypes);
+// A payment reference is an id, never a sentence: letters, digits and underscores only.
+const paymentReferenceSchema = z.string().regex(/^[A-Za-z0-9_]{1,64}$/);
+const GENERIC_FAILURE_MESSAGE = "Payment failed. Please try again.";
 
 function CheckoutFailureContent() {
-  const [error, setError] = useState<string>("");
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const paymentIntent = searchParams.get("payment_intent");
-  const errorMessage = searchParams.get("error");
-
-  useEffect(() => {
-    // Set error message from URL params or default
-    setError(errorMessage || "Payment failed. Please try again.");
-  }, [errorMessage]);
+  const parsedReference = paymentReferenceSchema.safeParse(
+    searchParams.get("payment_intent"),
+  );
+  const paymentIntent = parsedReference.success ? parsedReference.data : null;
+  const failureCode = failureCodeSchema.safeParse(searchParams.get("code"));
+  const error =
+    (failureCode.success
+      ? getStaticErrorDescription(failureCode.data)
+      : null) ?? GENERIC_FAILURE_MESSAGE;
 
   const handleRetryPayment = () => {
     // Go back to the previous page to retry
@@ -30,7 +40,7 @@ function CheckoutFailureContent() {
     // E2E-audit fix — /support does not exist as a public route; the support
     // hub lives inside the dashboard. Carry the failure context in the query
     // so the dashboard landing can route it onward.
-    const supportUrl = `/dashboard?issue=payment_failed${paymentIntent ? `&payment_intent=${paymentIntent}` : ""}`;
+    const supportUrl = `/dashboard?issue=payment_failed${paymentIntent ? `&payment_intent=${encodeURIComponent(paymentIntent)}` : ""}`;
     router.push(supportUrl);
   };
 
