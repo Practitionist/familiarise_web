@@ -5,7 +5,7 @@
 /**
  * #785 (task #23) — captured-but-uncredited wallet top-up reconciler. Re-runs the
  * idempotent confirmTopUp for top-ups whose confirm/ledger post rolled back
- * (capturedAt + providerPaymentId set outside the tx, still PENDING). Pins the
+ * (capturedAt + providerPaymentId set outside the tx, still PENDING or FAILED). Pins the
  * query shape + the recredit/already-confirmed/failure accounting.
  */
 jest.mock("../../lib/prisma", () => ({
@@ -16,12 +16,13 @@ jest.mock("../../lib/api/organizations/wallet", () => ({
   confirmTopUp: jest.fn(),
 }));
 
-
 // #476 — the sweep cores are now wrapped in withCronLock; pass through so
 // these unit tests exercise the sweep logic, not the lock (covered in
 // with-cron-lock.test.ts).
 jest.mock("../../lib/cron/with-cron-lock", () => ({
-  withCronLock: jest.fn((_job: string, _opts: unknown, fn: () => unknown) => fn()),
+  withCronLock: jest.fn((_job: string, _opts: unknown, fn: () => unknown) =>
+    fn(),
+  ),
   CronLockHeldError: class CronLockHeldError extends Error {},
   CronLockUnavailableError: class CronLockUnavailableError extends Error {},
   LONG_JOB_TTL_MS: 35 * 60 * 1000,
@@ -58,9 +59,9 @@ describe("sweepOrphanedTopupCaptures (#785)", () => {
       providerPaymentId: "pay_1",
       amountPaise: 50000,
     });
-    // query: PENDING + captured (capturedAt range, which excludes null) + paid id
+    // query: PENDING or FAILED + captured (capturedAt range, which excludes null) + paid id
     const where = mockFindMany.mock.calls[0][0].where;
-    expect(where.status).toBe("PENDING");
+    expect(where.status).toEqual({ in: ["PENDING", "FAILED"] });
     expect(where.providerPaymentId).toEqual({ not: null });
     expect(where.capturedAt).toHaveProperty("lt");
   });

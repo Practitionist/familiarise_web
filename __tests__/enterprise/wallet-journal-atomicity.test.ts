@@ -4,7 +4,7 @@
 
 /**
  * The org wallet never moves without its journal: a stale top-up is settled
- * against the gateway before it is deleted, a checkout wallet debit commits
+ * against the gateway before it is marked abandoned, a checkout wallet debit commits
  * only with its Dr WALLET line, an ops adjustment posts its balanced pair, and
  * refund-remaining never sends more than the balance left after in-flight refunds.
  */
@@ -12,7 +12,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $executeRaw: jest.fn().mockResolvedValue(1),
-    walletTopUp: { findMany: jest.fn(), deleteMany: jest.fn() },
+    walletTopUp: { findMany: jest.fn(), updateMany: jest.fn() },
     billingAccount: { findUniqueOrThrow: jest.fn() },
   },
 }));
@@ -60,7 +60,7 @@ import { cleanupAbandonedOrgTopUps } from "../../scripts/cleanup/cleanup-abandon
 import type { CheckoutCommitInput } from "../../lib/payments/checkout/commit/types";
 
 const db = prisma as unknown as {
-  walletTopUp: { findMany: jest.Mock; deleteMany: jest.Mock };
+  walletTopUp: { findMany: jest.Mock; updateMany: jest.Mock };
   billingAccount: { findUniqueOrThrow: jest.Mock };
 };
 const holding = readRazorpayOrderHolding as jest.Mock;
@@ -68,7 +68,7 @@ const holding = readRazorpayOrderHolding as jest.Mock;
 beforeEach(() => jest.clearAllMocks());
 
 describe("org wallet journal atomicity", () => {
-  it("confirms a captured stale top-up, deletes an empty one, and skips one the gateway cannot answer", async () => {
+  it("confirms a captured stale top-up, marks an empty one FAILED, and skips one the gateway cannot answer", async () => {
     const row = (id: string) => ({
       id,
       billingAccountId: "ba_1",
@@ -86,7 +86,7 @@ describe("org wallet journal atomicity", () => {
       .mockResolvedValueOnce({ kind: "empty" })
       .mockRejectedValueOnce(new Error("gateway down"));
     (confirmTopUp as jest.Mock).mockResolvedValue({ confirmed: true });
-    db.walletTopUp.deleteMany.mockResolvedValue({ count: 1 });
+    db.walletTopUp.updateMany.mockResolvedValue({ count: 1 });
 
     const r = await cleanupAbandonedOrgTopUps();
 
@@ -98,8 +98,16 @@ describe("org wallet journal atomicity", () => {
       providerPaymentId: "pay_a",
       amountPaise: 50_000,
     });
-    expect(db.walletTopUp.deleteMany).toHaveBeenCalledTimes(1);
-    expect(db.walletTopUp.deleteMany.mock.calls[0][0].where.id).toBe("b");
+    expect(db.walletTopUp.updateMany).toHaveBeenCalledTimes(1);
+    expect(db.walletTopUp.updateMany.mock.calls[0][0]).toEqual({
+      where: {
+        id: "b",
+        status: "PENDING",
+        providerPaymentId: null,
+        capturedAt: null,
+      },
+      data: { status: "FAILED" },
+    });
     expect(r).toMatchObject({ confirmed: 1, reaped: 1, success: false });
   });
 
@@ -274,7 +282,7 @@ describe("bounded top-up recovery polling", () => {
     holding.mockReset().mockResolvedValue({ kind: "live" });
     for (let i = 0; i < 3; i++) await cleanupAbandonedOrgTopUps({ limit: 10 });
     expect(new Set(holding.mock.calls.map(([id]) => id)).size).toBe(25);
-    expect(db.walletTopUp.deleteMany).not.toHaveBeenCalled();
+    expect(db.walletTopUp.updateMany).not.toHaveBeenCalled();
     stamp.mockResolvedValue(1);
   });
 });

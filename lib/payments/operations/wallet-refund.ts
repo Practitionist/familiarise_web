@@ -238,6 +238,23 @@ async function issueTopUpRefund(
   return lineOf(topUp, created, false);
 }
 
+/**
+ * Refunds one top-up's whole capture under the refund-remaining door's keys,
+ * so the two can never refund the same top-up twice.
+ */
+export async function refundTopUpCapture(
+  topUp: RefundableTopUp,
+  reason: string,
+): Promise<WalletRefundLine | null> {
+  const line = await issueTopUpRefund(
+    { topUp, existing: [], prior: undefined },
+    topUp.amountPaise,
+    reason,
+  );
+  if (line) await bookIfSucceeded(line, topUp);
+  return line;
+}
+
 type Stop = NonNullable<RefundRemainingResult["stoppedOn"]>;
 type WalkState = {
   billingAccountId: string;

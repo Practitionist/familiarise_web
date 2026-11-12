@@ -33,6 +33,8 @@ import prisma, { type Db, type Tx } from "@/lib/prisma";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { refundTopUpCapture } from "@/lib/payments/operations/wallet-refund";
+import { isWalletFrozen } from "@/lib/payments/wallet-freeze";
 
 /**
  * #1477 — an org that has run its wallet down is refusing a booking, not
@@ -365,9 +367,29 @@ export function parseMintedOrderId(
   return /razorpay_order=(order_\w+)/.exec(notes ?? "")?.[1] ?? null;
 }
 
+/** Why a late capture on an abandoned top-up goes back to the card instead of the wallet. */
+export type LateTopUpRefundReason = "WALLET_FROZEN" | "ACCOUNT_CLOSED";
+
+async function lateTopUpRefundReason(
+  tx: Tx,
+  billingAccountId: string,
+  ownerOrgId: string,
+): Promise<LateTopUpRefundReason | null> {
+  if (await isWalletFrozen(tx, billingAccountId)) return "WALLET_FROZEN";
+  const org = await tx.organization.findUnique({
+    where: { id: ownerOrgId },
+    select: { status: true, deletedAt: true },
+  });
+  return !org || org.status === "DEACTIVATED" || org.deletedAt
+    ? "ACCOUNT_CLOSED"
+    : null;
+}
+
 /**
  * Confirm a top-up from a webhook. Idempotent: if the same providerOrderId
- * is confirmed twice, the second call is a no-op.
+ * is confirmed twice, the second call is a no-op. A FAILED (abandoned) row's
+ * order can still capture; it is credited like a PENDING one, or refunded to
+ * the card when the wallet is frozen or the organisation closed.
  */
 export async function confirmTopUp(
   // #780 — must be the extended client; bare PrismaClient re-introduces bigint
@@ -382,6 +404,8 @@ export async function confirmTopUp(
   confirmed: boolean;
   balanceAfter?: number;
   receivableSettledPaise?: number;
+  /** Set when a late capture was credited and sent back to the card. */
+  lateCaptureRefund?: { reason: LateTopUpRefundReason; refundIssued: boolean };
 }> {
   // #785 — record the gateway capture OUTSIDE the tx below so it survives a
   // ledger-post rollback. The whole confirm body is one $transaction, so a
@@ -397,19 +421,26 @@ export async function confirmTopUp(
     },
   });
 
-  return prisma.$transaction(async (tx) => {
-    // Atomic idempotent claim: flip PENDING → CONFIRMED in a single
-    // conditional updateMany. Exactly one racing webhook delivery sees
+  const settled = await prisma.$transaction(async (tx) => {
+    // Atomic idempotent claim: flip PENDING (or abandoned FAILED) → CONFIRMED
+    // in a conditional updateMany. Exactly one racing webhook delivery sees
     // count===1 and proceeds to credit the wallet; a redelivery (or the
     // losing race) sees count===0 and falls through to the no-op branch.
-    const claim = await tx.walletTopUp.updateMany({
-      where: { providerOrderId: params.providerOrderId, status: "PENDING" },
-      data: {
-        status: "CONFIRMED",
-        providerPaymentId: params.providerPaymentId,
-        confirmedAt: new Date(),
-      },
-    });
+    const claimFrom = (status: "PENDING" | "FAILED") =>
+      tx.walletTopUp.updateMany({
+        where: { providerOrderId: params.providerOrderId, status },
+        data: {
+          status: "CONFIRMED",
+          providerPaymentId: params.providerPaymentId,
+          confirmedAt: new Date(),
+        },
+      });
+    let claim = await claimFrom("PENDING");
+    let lateCapture = false;
+    if (claim.count === 0) {
+      claim = await claimFrom("FAILED");
+      lateCapture = claim.count === 1;
+    }
 
     if (claim.count === 0) {
       // Already confirmed by a prior delivery, or no such top-up. Return
@@ -428,12 +459,21 @@ export async function confirmTopUp(
         where: { id: existing.billingAccountId },
         select: { walletBalance: true },
       });
-      return { confirmed: false, balanceAfter: ba.walletBalance ?? 0 };
+      return {
+        confirmed: false,
+        balanceAfter: ba.walletBalance ?? 0,
+        refund: null,
+      };
     }
 
     const topUp = await tx.walletTopUp.findUniqueOrThrow({
       where: { providerOrderId: params.providerOrderId },
-      select: { billingAccountId: true, amountPaise: true },
+      select: {
+        id: true,
+        billingAccountId: true,
+        amountPaise: true,
+        notes: true,
+      },
     });
     // #785 — credit the AUTHORIZED amount stored at initiation, and reject a
     // webhook/sweeper whose amount disagrees. The ledger idempotency key is the
@@ -452,6 +492,29 @@ export async function confirmTopUp(
       data: { walletBalance: { increment: 0 } },
       select: { ownerOrgId: true },
     });
+    const refundReason = lateCapture
+      ? await lateTopUpRefundReason(tx, topUp.billingAccountId, ownerOrgId)
+      : null;
+    if (refundReason) {
+      await tx.walletTopUp.update({
+        where: { id: topUp.id },
+        data: {
+          notes: `${topUp.notes ?? ""}; late capture refunded to card: ${refundReason}`,
+        },
+      });
+    }
+    const refund = refundReason
+      ? {
+          reason: refundReason,
+          topUp: {
+            id: topUp.id,
+            billingAccountId: topUp.billingAccountId,
+            amountPaise: topUp.amountPaise,
+            providerOrderId: params.providerOrderId,
+            providerPaymentId: params.providerPaymentId,
+          },
+        }
+      : null;
     const receivableSettledPaise = Math.min(
       topUp.amountPaise,
       await openShortfallReceivablePaise(tx, ownerOrgId),
@@ -490,6 +553,7 @@ export async function confirmTopUp(
         confirmed: true,
         balanceAfter: ba.walletBalance ?? 0,
         receivableSettledPaise,
+        refund,
       };
     }
     const result = await walletCredit(tx, {
@@ -502,8 +566,24 @@ export async function confirmTopUp(
       confirmed: true,
       balanceAfter: result.balanceAfter,
       receivableSettledPaise,
+      refund,
     };
   });
+
+  const { refund, ...outcome } = settled;
+  if (!refund) return outcome;
+  // The gateway call runs after commit; a failure leaves the credit for the refund-remaining door.
+  const refundIssued = await refundTopUpCapture(
+    refund.topUp,
+    `Late top-up capture: ${refund.reason}`,
+  ).then(
+    () => true,
+    () => false,
+  );
+  return {
+    ...outcome,
+    lateCaptureRefund: { reason: refund.reason, refundIssued },
+  };
 }
 
 /**
