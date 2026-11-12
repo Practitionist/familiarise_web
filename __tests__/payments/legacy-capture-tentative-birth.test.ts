@@ -73,6 +73,7 @@ const txStub = {
     // The appointmentId link is still a plain update — only STATUS rides a CAS.
     update: jest.fn().mockResolvedValue({}),
     updateMany: paymentUpdateMany,
+    count: jest.fn().mockResolvedValue(1),
   },
   appointmentOccurrence: {
     create: slotCreate,

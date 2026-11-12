@@ -37,7 +37,12 @@ const consultationCreate = jest.fn();
 const webhookAppointmentCreate = jest.fn();
 const webhookTx = {
   $executeRaw: jest.fn(async () => 0),
-  payment: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
+  payment: {
+    findUnique: jest.fn(),
+    update: jest.fn(),
+    updateMany: jest.fn(),
+    count: jest.fn().mockResolvedValue(1),
+  },
   consultation: {
     create: consultationCreate,
     updateMany: jest.fn(),

@@ -60,6 +60,7 @@ import {
   DOUBLE_BOOKING_BLOCKED_NOTE,
   autoRefundPendingDescription,
   settledAutoRefundDescription,
+  unreturnedCaptureWhere,
 } from "@/lib/payments/webhooks/auto-refund-marker";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import {
@@ -123,6 +124,7 @@ import { getAppUrl } from "@/lib/url";
 import {
   createAppointmentFromWebhook,
   RecoveryAlreadyDoneError,
+  RecoveryRefusedError,
 } from "./legacy-appointment-creation";
 import {
   loadAppointmentForEmails,
@@ -145,7 +147,11 @@ import {
   type StagedRequestExpiredNotice,
 } from "@/lib/booking/expiry-notices";
 
-export { createAppointmentFromWebhook, RecoveryAlreadyDoneError };
+export {
+  createAppointmentFromWebhook,
+  RecoveryAlreadyDoneError,
+  RecoveryRefusedError,
+};
 
 type PaymentSuccessTxResult =
   | {
@@ -487,6 +493,15 @@ export async function handlePaymentSuccess(
             recovering &&
             payment.paymentStatus === PaymentStatus.SUCCEEDED &&
             payment.appointmentId === null;
+          // Read in this Serializable transaction so a concurrent refund or dispute aborts the booking.
+          if (
+            recoverable &&
+            (await tx.payment.count({
+              where: { id: payment.id, ...unreturnedCaptureWhere },
+            })) === 0
+          ) {
+            throw new RecoveryRefusedError(payment.id);
+          }
           // The SUCCEEDED short-circuit's own predicate; `recoverable` excluded so
           // a wrong-amount capture on an unconfirmed recovery still blocks.
           const alreadyProcessed =

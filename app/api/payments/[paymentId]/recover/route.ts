@@ -19,6 +19,7 @@ import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { fetchRazorpayOrder } from "@/lib/payments/core/razorpay";
 import { isMockPaymentId } from "@/lib/payments/operations/mock";
+import { unreturnedCaptureWhere } from "@/lib/payments/webhooks/auto-refund-marker";
 // ============================================================================
 // GET - Fetch payment details for recovery
 // ============================================================================
@@ -154,6 +155,12 @@ const recoveryNotConfirmed = (outcome: string) =>
     `Recovery could not place the booking (${outcome}); the payment is being refunded.`,
   );
 
+const paymentReturned = () =>
+  new OpsRefusal(
+    "PAYMENT_RETURNED",
+    "This payment has a refund, an owed-refund marker or an open or lost dispute, so it cannot be booked.",
+  );
+
 const alreadyRecovered = () =>
   new OpsRefusal(
     "ALREADY_RECOVERED",
@@ -190,6 +197,10 @@ export const POST = withOpsAction(
       }
       // Already linked: the same answer the CAS miss gives below (qa-1753).
       if (payment.appointmentId) throw alreadyRecovered();
+      const unreturned = await prisma.payment.count({
+        where: { id: payment.id, ...unreturnedCaptureWhere },
+      });
+      if (unreturned === 0) throw paymentReturned();
 
       try {
         validateWebhookMetadata(body.metadata);
@@ -221,8 +232,11 @@ export const POST = withOpsAction(
       }
 
       // Import handlePaymentSuccess dynamically to avoid circular dependencies
-      const { handlePaymentSuccess, RecoveryAlreadyDoneError } =
-        await import("@/lib/payments/webhooks/handlers");
+      const {
+        handlePaymentSuccess,
+        RecoveryAlreadyDoneError,
+        RecoveryRefusedError,
+      } = await import("@/lib/payments/webhooks/handlers");
 
       // `recover: true` lets a SUCCEEDED, unlinked row past the idempotency
       // short-circuit; the link write's CAS makes two concurrent recoveries
@@ -237,7 +251,10 @@ export const POST = withOpsAction(
           { recover: true },
         );
       } catch (recoveryError) {
-        if (recoveryError instanceof RecoveryAlreadyDoneError) {
+        if (
+          recoveryError instanceof RecoveryAlreadyDoneError ||
+          recoveryError instanceof RecoveryRefusedError
+        ) {
           throw new OpsRefusal(
             recoveryError.code,
             recoveryError.message,
