@@ -94,6 +94,7 @@ function productOrder(
   return [{ publishedAt: "desc" }, { id: "asc" }];
 }
 
+/** Most purchased ranks only the newest 5,000 matches; its total is capped to agree. */
 const POPULAR_RANK_CAP = 5_000;
 
 /**
@@ -156,7 +157,7 @@ async function fetchPublicProductsPage(
   };
   const popularIds =
     query.sort === "popular" ? await popularPageIds(where, query) : null;
-  const [fetched, total] = await Promise.all([
+  const [fetched, matching] = await Promise.all([
     prisma.digitalProduct.findMany({
       // The ranked ids still pass the visibility filter: a product can leave sale between the reads.
       where: popularIds ? { ...where, id: { in: popularIds } } : where,
@@ -195,7 +196,7 @@ async function fetchPublicProductsPage(
         name: consultantProfile.user.name,
       },
     })),
-    total,
+    total: popularIds ? Math.min(matching, POPULAR_RANK_CAP) : matching,
     page: query.page,
     perPage: PRODUCTS_PER_PAGE,
   };
@@ -240,6 +241,7 @@ export const listProductTopics = unstable_cache(
           select: { domain: { select: { id: true, name: true } } },
         },
       },
+      orderBy: [{ publishedAt: "desc" }, { id: "asc" }],
       take: 5_000,
     });
     const byId = new Map<string, ProductTopic>();

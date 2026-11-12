@@ -86,6 +86,14 @@ describe("Most purchased sort", () => {
     expect(page.items.map((p) => p.id)).toEqual(["c", "a"]);
   });
 
+  it("caps the total at what the ranking can return", async () => {
+    mockCount.mockResolvedValue(6_000);
+    const page = await listPublicDigitalProducts(
+      parseProductsQuery({ sort: "popular", q: "x" }),
+    );
+    expect(page.total).toBe(5_000);
+  });
+
   it("counts only SUCCEEDED purchases", async () => {
     await listPublicDigitalProducts(
       parseProductsQuery({ sort: "popular", q: "x" }),
