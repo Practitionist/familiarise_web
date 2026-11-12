@@ -46,7 +46,7 @@ describe("nav badges reuse their page's predicate", () => {
     );
     expect(inboxBadgeFilters("u1").view).toBe("needs-reply");
     const read_ = read("lib/support/case-read.ts");
-    expect(read_).toContain("inboxCaseWhere(inboxBadgeFilters(viewerId))");
+    expect(read_).toContain("inboxWhere(inboxBadgeFilters(viewerId))");
   });
 
   it("the failed-emails tab opens on the badge's dead-letter state", () => {
