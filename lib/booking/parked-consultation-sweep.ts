@@ -33,7 +33,7 @@ import {
   BookingLockUnavailableError,
   withAppointmentLock,
 } from "@/utils/appointmentlock";
-import { revokeEndedSeatAccess } from "@/lib/stream/access-revocation";
+import { persistSeatRevocation } from "@/lib/stream/access-revocation";
 import { recordExpertStrike } from "./expert-reliability";
 import { transitionParticipant } from "./participants";
 import {
@@ -336,14 +336,14 @@ export interface ParkedConsultationSweepResult {
   errors: string[];
 }
 
-/** Ends the client's DM and room access after the cancel committed; the intent persists first and never throws. */
-async function revokeParkedAccess(
+/** Owes the client's DM and room removal after the commit; `retry-moderation-enforcement` drives it, not this money sweep. */
+async function oweParkedAccessRevocation(
   row: ParkedRow,
   appointmentId: string,
 ): Promise<void> {
   const consulteeUserId = row.requestedBy?.user?.id;
   if (!consulteeUserId) return;
-  await revokeEndedSeatAccess(appointmentId, [consulteeUserId]);
+  await persistSeatRevocation(appointmentId, [consulteeUserId]);
 }
 
 /** Cancels one aged park and returns its markers; a row another writer holds returns none. */
@@ -358,7 +358,7 @@ async function settleOneParked(
   try {
     const done = await cancelOneParked(row, appointmentId, now);
     result.cancelled += 1;
-    await revokeParkedAccess(row, appointmentId);
+    await oweParkedAccessRevocation(row, appointmentId);
     await attemptStagedRequestExpired(done.notice, EMAIL_BUDGET_MS.JOB);
     return done.markers;
   } catch (error) {
@@ -412,7 +412,8 @@ async function driveParkedRefunds(
  * predicates, the released rows close and are tombstoned, the participants are
  * cancelled, a full refund is owed in the same commit (driven after it,
  * re-driven by `retry-auto-refunds`), an expert who started the move takes a
- * strike, chat access ends, and both sides are told through the outbox.
+ * strike, the client's Stream access is owed to the revocation sweep, and both
+ * sides are told through the outbox.
  * Sentry hears once per run.
  */
 export async function cancelAgedParkedConsultations(

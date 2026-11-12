@@ -39,7 +39,7 @@ jest.mock("../../lib/booking/participants", () => ({
   transitionParticipant: (...a: unknown[]) => mockTransitionParticipant(...a),
 }));
 jest.mock("../../lib/stream/access-revocation", () => ({
-  revokeEndedSeatAccess: jest.fn(async () => undefined),
+  persistSeatRevocation: jest.fn(async () => null),
 }));
 jest.mock("../../lib/booking/transitions", () => ({
   RESCHEDULE_OPEN_STATUSES: ["PENDING_REVIEW"],
@@ -81,7 +81,7 @@ import {
   agedParkedConsultationWhere,
   cancelAgedParkedConsultations,
 } from "@/lib/booking/parked-consultation-sweep";
-import { revokeEndedSeatAccess } from "@/lib/stream/access-revocation";
+import { persistSeatRevocation } from "@/lib/stream/access-revocation";
 
 const NOW = new Date("2026-11-09T12:00:00Z");
 const HOUR = 3_600_000;
@@ -192,8 +192,8 @@ describe("cancelAgedParkedConsultations", () => {
     expect(mockDrive).toHaveBeenCalledWith(
       expect.objectContaining({ key: "parked-consultation:c1:pay-1" }),
     );
-    // The client's DM and room access end with the booking, after the commit.
-    expect(revokeEndedSeatAccess).toHaveBeenCalledWith("appt-1", ["u-buyer"]);
+    // The client's Stream access is owed after the commit; the revocation sweep drives it.
+    expect(persistSeatRevocation).toHaveBeenCalledWith("appt-1", ["u-buyer"]);
   });
 
   it("records no strike when the consultee started the move", async () => {
@@ -212,7 +212,7 @@ describe("cancelAgedParkedConsultations", () => {
     expect(result).toMatchObject({ cancelled: 0, issued: 0, errors: [] });
     expect(mockStamp).not.toHaveBeenCalled();
     expect(mockDrive).not.toHaveBeenCalled();
-    expect(revokeEndedSeatAccess).not.toHaveBeenCalled();
+    expect(persistSeatRevocation).not.toHaveBeenCalled();
   });
 
   it("waits when another door's partial refund already holds the payment", async () => {
