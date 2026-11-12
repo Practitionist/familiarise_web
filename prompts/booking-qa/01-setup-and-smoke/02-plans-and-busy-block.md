@@ -72,13 +72,13 @@ After all plan cases, run R-02 for H1 and H2 and paste the rows.
 
 **Why it matters:** the main subscription for 04 and the free-trial plan for 07.
 
-**Setup:** read the platform trial floor: `SELECT "minTrialPriceInPaise" FROM "PlatformPricingConfig" WHERE id = 'singleton';`. If it's above 0, a free trial is refused with 400 "Trial price must be at least ₹X": record it, mark the free-trial half BLOCKED, and tell 07 (its free-trial cases depend on a 0 floor).
+**Setup:** read the platform trial floor: `SELECT "minTrialPriceInPaise" FROM "PlatformPricingConfig" WHERE id = 'singleton';`. If it's above 0, a free trial is refused with 400 "Trial price must be at least ₹X": record it, enter the floor (in rupees) as the trial price in step 3 so the plan still publishes for 04, expect `trialPriceInPaise` to equal the floor, and tell 07 that only its free-trial cases are BLOCKED (they depend on a 0 floor).
 
 **Steps:**
 
 1. As H1 open `/dashboard/consultant/[H1 cid]/offerings/subscription/new`.
 2. "qa-S-11 Four-week sprint", price 6000, Sessions per week 3, Session duration 1, Plan length preset **4 weeks**. Read the plan-length summary line.
-3. Trial: switch "Offer a trial session" on; length 30; price 0.
+3. Trial: switch "Offer a trial session" on; length 30; price 0 (or the floor, per Setup).
 4. Open the network panel. Click **Publish**.
 
 **Expect:**

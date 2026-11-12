@@ -32,7 +32,10 @@ Journeys that create the money are owned by 03–07 (for example CO-01 books, CO
 ```sql
 -- MQ-1 legs, journal and invoice for one payment
 SELECT l.source, l."amountPaise", l."sourceRef" FROM "PaymentLeg" l WHERE l."paymentId" = :pid;
-SELECT "idempotencyKey", kind, "createdAt" FROM "LedgerTransaction" WHERE "idempotencyKey" IN ('booking:' || :pid) OR "idempotencyKey" LIKE 'refund:%' AND "createdAt" > :runStart ORDER BY "createdAt";
+SELECT "idempotencyKey", kind, "createdAt" FROM "LedgerTransaction"
+WHERE "idempotencyKey" = 'booking:' || :pid
+   OR ("idempotencyKey" IN (SELECT 'refund:' || r.id FROM "Refund" r WHERE r."paymentId" = :pid) AND "createdAt" > :runStart)
+ORDER BY "createdAt";
 SELECT "invoiceNumber", "taxableValuePaise", "cgstPaise", "sgstPaise", "igstPaise", "totalPaise", "buyerStateCode", "needsBuyerAddress" FROM "ConsumerInvoice" WHERE "paymentId" = :pid;
 
 -- MQ-2 credit notes for one payment

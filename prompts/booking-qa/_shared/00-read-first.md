@@ -43,7 +43,7 @@ The Chrome DevTools MCP shares one browser profile on an 8 GB machine.
 - **Take the lock before the first browser action:** `until mkdir /tmp/fw-browser.lock 2>/dev/null; do sleep 20; done`. Release it with `rmdir /tmp/fw-browser.lock` when your pages are closed, even when you stop early. Do read-only SQL while you wait.
 - At the start, `list_pages` and `close_page` everything you didn't open, so you start with one tab.
 - Use **one tab** and `navigate_page`. Switch persona by signing out and in, in the same tab.
-- A case that needs **two simultaneous personas** (races, both-sides views) may open **one** extra page with `new_page` in an isolated context (`isolatedContext: "<persona>"`). Close it when the case ends. Never more than two pages.
+- A case that needs **two pages at once** may open **one** extra page with `new_page`: two simultaneous personas (races, both-sides views) use an isolated context (`isolatedContext: "<persona>"`); one persona in two tabs (stale pages, a double submit across tabs) opens it without one, so it shares the signed-in session. Close it when the case ends. Never more than two pages.
 - Never launch puppeteer or a second Chrome. A locked profile means another agent holds the browser.
 
 ## 3. Tools

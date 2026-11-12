@@ -189,7 +189,7 @@ Every case: after a refusal, R-02 shows **no** new plan row; after a save, recor
 
 **Why it matters:** the two numbers answer different questions and must not be confused.
 
-**Setup:** `qa-SU-14` (H2, 3/week × 2.5 h, published). Find or create one confirmed H2 session on a Mon/Wed/Fri evening in the next 4 weeks: F-PL2's class series if it sits there, or ask 05 for its webinar, or as H2 publish a free 60-minute webinar `qa-SU-20` at the next Wednesday 19:00 IST (= 13:30Z = 13:30 London = 05:30 LA).
+**Setup:** `qa-SU-14` (H2, 3/week × 2.5 h, published). Find or create one confirmed H2 session on a Mon/Wed/Fri evening in the next 4 weeks: F-PL2's class series if it sits there, or ask 05 for its webinar, or as H2 publish a free 60-minute webinar `qa-SU-20` at the next Friday 19:00 IST (= 13:30Z = 13:30 London = 05:30 LA). Not Wednesday: 05's `qa-WE-05` needs next Wednesday 18:00–19:30 IST free.
 
 **Steps:**
 

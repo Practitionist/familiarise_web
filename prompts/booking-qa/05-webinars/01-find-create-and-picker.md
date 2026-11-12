@@ -93,7 +93,7 @@ These label rules are owned here; 06 (class make-up and pattern rows) references
 
 **Steps:**
 
-1. As H2, new webinar `qa-WE-05`: price ₹500, Duration 1.5, Max participants 5, a topic, Scheduled for next Wednesday 18:00 (Free). Publish.
+1. As H2, new webinar `qa-WE-05`: price ₹500, Duration 1.5, Max participants 5, a topic, Scheduled for next Wednesday 18:00 (Free). Publish. If that start is not Free, record what holds it (04's `qa-SU-20` belongs on Friday) and stop: 05-b and 05-d depend on this date.
 2. Check the network response and the DB.
 3. As B2 (London), open the public webinar page. As B3 (LA), the same.
 

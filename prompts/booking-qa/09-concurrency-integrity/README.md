@@ -29,8 +29,18 @@ async () => {
     }).then(async (r) => ({ status: r.status, replay: r.headers.get("Idempotent-Replay"), body: await r.json().catch(() => null) }));
   return "staged";
 };
-// then, as close together as the MCP allows: evaluate_script `() => window.__qaFire()` in A, then in B.
+// fire, in A and then in B, as close together as the MCP allows; never return or await the promise,
+// or evaluate_script waits for A's answer before B starts:
+() => {
+  window.__qaStartedAt = Date.now();
+  window.__qaResult = window.__qaFire();
+  return "fired";
+};
+// then read each page's result in its own call:
+async () => ({ startedAt: window.__qaStartedAt, result: await window.__qaResult });
 ```
+
+The gap between the two starts is the difference of the pages' `startedAt` values; keep it within ~200 ms.
 
 For a same-user race (double submit, two tabs of one account), use `Promise.all([window.__qaFire(), window.__qaFire()])` in one page. Record both statuses, codes and the elapsed time between them. If the two calls can't be fired within ~200 ms of each other, say so: a "race" that ran sequentially proves less.
 

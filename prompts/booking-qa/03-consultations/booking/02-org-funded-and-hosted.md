@@ -69,7 +69,7 @@ If Wipro's `fundingSource` is `PERSONAL` or B4 has no active `ProgramAssignment`
 **Expect:**
 
 - DB: card/mock `Payment` (no `org_` prefix); `Appointment.organizationId` may be Wipro (tag); `Payment.organizationId` record.
-- OS's org appointments list and "Everyone" feeds do **not** show this booking (or show it without an amount; record exactly). Showing the amount is SECURITY (P1).
+- OS's org appointments API, the dashboard's org list and its "Everyone" feed do **not** show this booking at all: a card-paid booking on a plan Wipro does not host is not the org's (`orgOwnedAppointmentWhere`, `lib/api/scope/list-appointments.ts`). A row without an amount is still a FAIL; a row showing the amount is SECURITY (P1).
 
 **Probe further:** `GET /api/appointments?orgScope=[Wipro]` as OS: the personal row must be absent (salvaged from old 017 Phase 5). As B4: `?orgScope=[Wipro]` downgrades to B4's own rows; `?orgScope=all` → 403 `ALL_REQUIRES_PRIVILEGED_ROLE`.
 

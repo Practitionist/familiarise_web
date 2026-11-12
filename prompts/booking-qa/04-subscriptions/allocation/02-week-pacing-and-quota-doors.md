@@ -37,13 +37,13 @@
 
 **Why it matters:** when a week is delivered, the next week must open and the expert must be told.
 
-**Setup:** B3's plan (SU-37, week 1 placed). Ask the owner to approve shifting B3's three week-1 sessions into the past and marking them done, and moving the plan start back one week, so "now" sits in plan week 2:
+**Setup:** B3's plan (SU-37, week 1 placed). Ask the owner to approve shifting B3's three week-1 sessions into the past and marking them done, and moving the plan start back eight days. SU-37's plan starts tomorrow, so a 7-day shift would leave today on the last day of week 1; 8 days makes today the first day of plan week 2:
 
 ```sql
 BEGIN;
-UPDATE "Subscription" SET "schedulingPeriodStartsAt" = "schedulingPeriodStartsAt" - interval '7 days',
-  "planEndsAt" = "planEndsAt" - interval '7 days' WHERE id = :sid RETURNING id;
-UPDATE "AppointmentOccurrence" SET "startsAt" = "startsAt" - interval '7 days', "endsAt" = "endsAt" - interval '7 days',
+UPDATE "Subscription" SET "schedulingPeriodStartsAt" = "schedulingPeriodStartsAt" - interval '8 days',
+  "planEndsAt" = "planEndsAt" - interval '8 days' WHERE id = :sid RETURNING id;
+UPDATE "AppointmentOccurrence" SET "startsAt" = "startsAt" - interval '8 days', "endsAt" = "endsAt" - interval '8 days',
   "completionStatus" = 'COMPLETED' WHERE "appointmentId" = :aid AND "deletedAt" IS NULL RETURNING id;
 COMMIT;
 ```
@@ -68,7 +68,7 @@ COMMIT;
 
 **Why it matters:** the old stub week asked for 3 sessions in a few hours.
 
-**Setup:** B3's plan after SU-52. Shift once more so "now" is in plan week 4 (owner-approved; same SQL with `14 days`, completing week 2 and 3 sessions you place first, or simply shift start and end by 14 more days with weeks 2–3 left empty).
+**Setup:** B3's plan after SU-52. Shift once more so today is the first day of plan week 4 (owner-approved; same SQL with `14 days`, completing week 2 and 3 sessions you place first, or simply shift start and end by 14 more days with weeks 2–3 left empty).
 
 **Steps:**
 

@@ -43,7 +43,7 @@ This suite replaces `prompts/booking-algorithm-tests/` (agents 001–020), which
 ## Running several agents
 
 - Only one agent drives the browser at a time (the `/tmp/fw-browser.lock` lock in `00-read-first.md`). Others do SQL reads while they wait.
-- At most two QA agents run at once. Give each a disjoint set of folders and a disjoint pair of buyer personas so their fixtures don't collide.
+- At most two QA agents run at once. Give each a disjoint set of folders and a disjoint pair of buyer personas so their fixtures don't collide. That is not enough when a case changes shared host state (H1 or H2 availability, booking mode, the request cap, pause): two agents never use the same host at once, so split the work by host (H1's folders vs H2's, per the run order above) or run those cases serially.
 - Each agent writes one report file, `temp/qa-reports/booking-qa-<folder>-<date>.md`, using [`_shared/reporting.md`](_shared/reporting.md). The coordinator merges them and posts one PR comment per round.
 
 ## Environments

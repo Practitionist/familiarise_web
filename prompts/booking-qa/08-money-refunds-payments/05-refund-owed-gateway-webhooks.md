@@ -40,7 +40,7 @@ WHERE "appointmentId" = :aid AND "paymentStatus" = 'SUCCEEDED' RETURNING id;
 COMMIT;
 ```
 
-**Steps:** NEEDS-OWNER-RUN `retry-auto-refunds` twice (owner: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cleanup/retry-auto-refunds?limit=50`). Record both JSON results.
+**Steps:** NEEDS-OWNER-RUN `retry-auto-refunds` twice (owner: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cleanup/retry-auto-refunds?limit=50`). Record both JSON results. The sweep pays every refund-owed marker older than its 15-minute grace in the database it points at, not just this case's; `limit=50` only caps the batch. Run it only against an isolated database holding this case's payments, or once the owner has confirmed this case's marker is the only aged one (`SELECT id FROM "Payment" WHERE "refundOwedKey" IS NOT NULL AND "refundOwedAt" < now() - interval '15 minutes';`).
 
 **Expect:** run 1: `owed.scanned ≥ 1`, `owed.refunded ≥ 1`; one `Refund` with the marker's key and `amountPaise = amount`; marker cleared. Run 2: no new `Refund` (the key is unique); the payment is not scanned.
 
@@ -146,7 +146,7 @@ SELECT (SELECT count(*) FROM "LedgerTransaction" WHERE "idempotencyKey" = 'booki
 
 journals 1, earnings 1, legs 1, status `SUCCEEDED`; the occurrence non-tentative; one booked notification per party.
 
-**Probe further:** retire synthetic events at cleanup: `UPDATE "WebhookEvent" SET error = 'permanent: qa fixture', processed = true, "processedAt" = now() WHERE "eventId" LIKE 'qa-MO-%';`.
+**Probe further:** record every event id the owner posts in this folder, and retire only those at cleanup, never by prefix (another run's fixtures share it): `UPDATE "WebhookEvent" SET error = 'permanent: qa fixture', processed = true, "processedAt" = now() WHERE "eventId" IN ('qa-MO-63-1', 'qa-MO-63-2' /* plus the ids posted in MO-64 and MO-65 */);`.
 
 ## MO-64 — Out-of-order events: `order.paid` first, a failure after success
 

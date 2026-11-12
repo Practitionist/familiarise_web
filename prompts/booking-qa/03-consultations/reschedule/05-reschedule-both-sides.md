@@ -145,7 +145,7 @@ Fixtures for this file `[local]`: as B2 book S-08 at Thu D+3 10:00 IST (**R-1**)
 
 **Why it matters:** if the original time was taken meanwhile, withdraw must refuse and leave the proposal open rather than double-book.
 
-**Setup:** B3 proposes out-of-hours on R-2 (original Fri D+4 04:30Z released but still occupying). Owner-approved: move another QA booking's live occurrence (e.g. HM-27's or CO-05's) onto Fri D+4 04:30Z–05:30Z to simulate the time being taken. Record what you moved.
+**Setup:** B3 proposes out-of-hours on R-2. R-2 is no longer at Fri D+4 04:30Z: CO-48 moved it to Sat D+5 09:30Z and CO-49/CO-50 restored it there, so read its released row's current `startsAt`/`endsAt` with R-03 first (released but still occupying). Owner-approved: move another QA booking's live occurrence (e.g. HM-27's or CO-05's) onto exactly that window to simulate the time being taken. Record both windows and what you moved.
 
 **Steps:** as B3 click **Withdraw request**.
 
@@ -270,7 +270,7 @@ Fixtures `[local]`: as B2 book S-08 at Tue D+8 10:00 IST (**R-4**); as B3 book S
 
 **Why it matters:** a booking with an open proposal or released sessions is being moved; no "decline" can end it.
 
-**Steps:** with H1's proposal open on R-5, as H1 `PATCH /api/bookings/consultations/[cid]` `{ status: "REJECTED" }`.
+**Steps:** CO-66 accepted R-5's last proposal, so first have H1 propose a fresh time on R-5 (an expert proposal never auto-confirms) and confirm the request is `PENDING_REVIEW`. With that proposal open, as H1 `PATCH /api/bookings/consultations/[cid]` `{ status: "REJECTED" }`. Withdraw the proposal afterwards.
 
 **Expect:** 409 `USE_RESCHEDULE_RESPOND` ("This booking is being moved, not requested. Keep the original time or answer the new one instead.").
 

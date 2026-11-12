@@ -1,7 +1,7 @@
 # 07-a · Trials: booking free and paid trials, holds, payment and eligibility
 
 **Needs:** 01 (F-AV1, S-11 free 30-min trial, S-12 paid ₹100 trial, F-BUSY), H1 in "Instant booking". Paying a trial needs Razorpay test mode or an owner-run capture webhook replay: `/checkout/plans/trial/[trialId]` has no Mock Pay ("Pay to confirm" hands off to `/checkout/pay/[paymentId]`). Sweeps are `[sweep]`.
-**Personas:** H1 (IST), B1 (IST), B2 (Europe/London), B3 (America/Los_Angeles), B4 (IST), DR, ST.
+**Personas:** H1 (IST), B1 (IST), B2 (Europe/London), B3 (America/Los_Angeles), B4 (IST), DR, IL (IST, the limiter case only), ST.
 **Docs under test:** `docs/booking/09-trials.md` (all), `app/api/trials/route.ts`, `lib/trials/eligibility.ts`, `lib/trials/book-trial.ts`, `app/explore/experts/[consultantId]/components/TrialBookingModal.tsx`.
 
 Rules under test (doc + code):
@@ -71,7 +71,7 @@ Note before starting: S-11's trial is free only if `PlatformPricingConfig.minTri
 5. A window starting 09:15 IST (off grid).
 6. F-BUSY's time (Tue D+1 18:00 IST).
 
-**Expect:** 1: 400 `WINDOW_DURATION_MISMATCH`. 2 and 3: 409 `REQUEST_TOO_SOON`. 4: 400 `OUTSIDE_AVAILABILITY`. 5: a typed 400 (record the code; trials send their window as 30-min atoms). 6: 409 `SLOT_TAKEN` "That time was just taken. Pick another time." No `Trial` rows created; B2 stays eligible. A refused request costs no limiter attempt: every validity check runs before the limiter, and only a created trial spends one of B2's 3 per 24 hours. Send all six refusals, then create three trials in a row (against three different experts or after freeing the pair): the three succeed. A fourth answers 429 `RATE_LIMITED` "You've reached today's trial request limit." with `retryAfterSeconds`, `retryAt` (ISO 8601) and a `Retry-After` header, and the modal shows when B2 may retry in B2's zone. If the six refusals used up the allowance, that is a **BUG** (P2).
+**Expect:** 1: 400 `WINDOW_DURATION_MISMATCH`. 2 and 3: 409 `REQUEST_TOO_SOON`. 4: 400 `OUTSIDE_AVAILABILITY`. 5: a typed 400 (record the code; trials send their window as 30-min atoms). 6: 409 `SLOT_TAKEN` "That time was just taken. Pick another time." No `Trial` rows created; B2 stays eligible. A refused request costs no limiter attempt: every validity check runs before the limiter, and only a created trial spends one of B2's 3 per 24 hours. Send all six refusals as B2. Then, as IL (who books no other trial in 07), create three trials in a row (against three different experts, or H1 three times, cancelling each to free the pair): the three succeed. A fourth answers 429 `RATE_LIMITED` "You've reached today's trial request limit." with `retryAfterSeconds`, `retryAt` (ISO 8601) and a `Retry-After` header, and the modal shows when IL may retry in IL's zone. B2's allowance must stay whole for TR-16 and 07-b's T-2: if either is refused with 429, the six refusals spent it, which is a **BUG** (P2).
 
 ## TR-04 — A paid trial holds its time until payment
 
@@ -196,7 +196,7 @@ Note before starting: S-11's trial is free only if `PlatformPricingConfig.minTri
 
 **Steps:** as B2 (eligible) book S-11's free trial at Thu D+10 09:00 IST.
 
-**Expect (from code):** the trial is `SCHEDULED` at once (no approval step). Record what actually happens. If it confirms instantly, the Settings copy is FALSE-INFO for trials (P2): either trials should follow the mode or the copy should exclude them. Quote both.
+**Expect (from code):** the trial is `SCHEDULED` at once (no approval step). Record what actually happens. If it confirms instantly, the Settings copy is FALSE-INFO for trials (P2): either trials should follow the mode or the copy should exclude them. Quote both. Then, as B2, cancel this trial: a `CANCELLED` trial frees the B2–H1 pair for 07-b's T-2.
 
 ## TR-17 — A learner who is also an expert: both calendars count
 

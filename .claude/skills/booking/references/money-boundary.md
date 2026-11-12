@@ -583,9 +583,9 @@ A subscription's terms are fixed at purchase by `purchaseTermsOf`
 (`lib/booking/entitlement.ts`): the weekly cap (`Subscription.sessionsPerWeek`),
 the session length (`sessionMinutes`), the sessions sold (`sessionsTotal` =
 weeks × sessions a week, where a months plan counts `durationInMonths × 4`
-weeks) and the plan end (`planEndsAt`). A weeks plan ends `durationInWeeks × 7`
-zone-days after the start at the same wall time (`weeksPlanEndOf`, so a DST
-change never moves the end hour); a months plan ends on the same date
+weeks) and the plan end (`planEndsAt`). A weeks plan ends at the zone midnight
+that closes its last plan week, `durationInWeeks × 7` zone-days after the start
+day (`weeksPlanEndOf`, so there is no stub week); a months plan ends on the same date
 `durationInMonths` later, clamped to the month's last day (`planEndOf`),
 exclusive. Every sweep, admin view, incident extension, document and renewal
 reads the end through `subscriptionPlanEnd` or `subscriptionIsOver`; an incident
