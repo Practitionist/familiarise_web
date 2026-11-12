@@ -750,17 +750,18 @@ const intentNotBefore = () => new Date(Date.now() + INTENT_SWEEP_GRACE_MS);
 /**
  * Ends the Stream access an ended seat or booking no longer justifies: the
  * event channel, the host and presenter DMs, and every room the appointment
- * provisioned. The obligation is persisted before any lookup or vendor call and
- * driven inside the request's budget; `retry-moderation-enforcement` owns the
- * rest. Never throws.
+ * provisioned. Without the `generation` the ending transaction wrote, the
+ * obligation is persisted before any lookup or vendor call; it is driven inside
+ * the request's budget and `retry-moderation-enforcement` owns the rest. Never throws.
  */
 export async function revokeEndedSeatAccess(
   appointmentId: string,
   userIds: string[],
+  generation?: Date | null,
 ): Promise<void> {
   const ids = Array.from(new Set(userIds.filter(Boolean)));
   if (ids.length === 0) return;
-  const generation = await persistSeatRevocation(appointmentId, ids);
+  const owned = generation ?? (await persistSeatRevocation(appointmentId, ids));
   let pending: Map<string, string>;
   try {
     pending = await driveSeatRevocation(
@@ -780,7 +781,7 @@ export async function revokeEndedSeatAccess(
     "SEAT_ACCESS_REVOKE",
     appointmentId,
     ids.filter((id) => !pending.has(id)),
-    generation,
+    owned,
   );
 }
 
@@ -804,6 +805,30 @@ export async function persistSeatRevocation(
     "seat.persistRevocation",
     { nextRetryAt: intentNotBefore() },
   );
+}
+
+/**
+ * Writes the seat revocation through the transaction that ends the seats, so both
+ * commit or roll back together. Returns the rows' generation, or null when no user is given.
+ */
+export async function persistSeatRevocationInTx(
+  tx: Tx,
+  appointmentId: string,
+  userIds: string[],
+): Promise<Date | null> {
+  const ids = Array.from(new Set(userIds.filter(Boolean)));
+  if (ids.length === 0) return null;
+  const generation = intentNotBefore();
+  await enqueueStreamRevocationRetries(
+    ids.map((userId) => ({
+      kind: "SEAT_ACCESS_REVOKE" as const,
+      userId,
+      planId: appointmentId,
+    })),
+    generation,
+    tx,
+  );
+  return generation;
 }
 
 /** How long provisioning waits on Stream to take back an unsaved room's members. */

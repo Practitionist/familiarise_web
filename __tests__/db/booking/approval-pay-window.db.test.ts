@@ -69,6 +69,7 @@ jest.mock("../../../lib/payments/operations/refund", () => {
 jest.mock("../../../lib/stream/access-revocation", () => ({
   revokeEndedSeatAccess: jest.fn(async () => undefined),
   persistSeatRevocation: jest.fn(async () => undefined),
+  persistSeatRevocationInTx: jest.fn(async () => null),
 }));
 jest.mock("../../../lib/rate-limit", () => ({
   ...jest.requireActual("../../../lib/rate-limit"),

@@ -27,6 +27,10 @@ const makeTx = () => ({
     count: async () => 0,
   },
   consultation: { findUnique: async () => ({ status: "SCHEDULED" }) },
+  streamRevocationRetry: {
+    updateMany: async () => ({ count: 0 }),
+    createMany: async () => ({ count: 1 }),
+  },
 });
 
 const appointmentRow = {

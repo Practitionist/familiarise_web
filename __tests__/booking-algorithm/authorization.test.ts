@@ -364,6 +364,11 @@ function makeMockTx(appointmentData: unknown = null) {
       // The reschedule caps count past release acts.
       groupBy: jest.fn().mockResolvedValue([]),
     },
+    // A cancel's seat revocation commits with it.
+    streamRevocationRetry: {
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      createMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     // Cancel closes any live reschedule proposal so the appointment's
     // openForAppointmentId reservation is released.
     rescheduleRequest: {

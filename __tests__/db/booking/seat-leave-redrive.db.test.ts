@@ -18,6 +18,7 @@ jest.mock("../../../lib/novu", () => {
 jest.mock("../../../lib/stream/access-revocation", () => ({
   revokeEndedSeatAccess: jest.fn(async () => undefined),
   persistSeatRevocation: jest.fn(async () => undefined),
+  persistSeatRevocationInTx: jest.fn(async () => null),
 }));
 /** The instance dies after the release commit, before its refund call returns. */
 jest.mock("../../../lib/payments/operations/event-refunds", () => ({

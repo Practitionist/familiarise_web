@@ -89,6 +89,11 @@ const txStub = {
   refund: { findMany: jest.fn().mockResolvedValue([]) },
   // An expert-side cancel of a paid booking writes a reliability strike.
   systemEvent: { create: jest.fn().mockResolvedValue({}) },
+  // The consultee's seat revocation commits with the cancel.
+  streamRevocationRetry: {
+    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    createMany: jest.fn().mockResolvedValue({ count: 1 }),
+  },
   // transitionOccurrenceCompletion reads the from-status, then moves the cohort with
   // updateManyAndReturn so each moved id gets its own history row.
   appointmentOccurrence: {

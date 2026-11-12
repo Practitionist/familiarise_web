@@ -69,6 +69,7 @@ jest.mock("../../../lib/novu", () => {
 jest.mock("../../../lib/stream/access-revocation", () => ({
   revokeEndedSeatAccess: jest.fn(async () => undefined),
   persistSeatRevocation: jest.fn(async () => undefined),
+  persistSeatRevocationInTx: jest.fn(async () => null),
 }));
 const sessionUser = { current: null as null | Record<string, unknown> };
 jest.mock("../../../lib/auth-helpers", () => ({
