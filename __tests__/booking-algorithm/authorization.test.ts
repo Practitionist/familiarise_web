@@ -93,6 +93,7 @@ jest.mock("../../lib/novu", () => ({
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import type { NextRequest } from "next/server";
+import type { Session } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { authorizeEventAccess, isPrivileged } from "@/lib/auth-helpers";
@@ -115,7 +116,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
       adminProfileId: null,
       ...overrides,
     },
-  };
+  } as unknown as Session;
 }
 
 function consultantSession() {
