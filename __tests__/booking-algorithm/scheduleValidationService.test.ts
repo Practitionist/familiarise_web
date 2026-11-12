@@ -8,8 +8,7 @@
  * - validateMatchesSchedule (weekly + custom, overlap detection)
  * - validateSchedulingPeriod (boundary checks)
  * - validateConsecutiveSlots (tolerance)
- * - validateSameDaySlots
- * - validateConsultation (duration, same-day, consecutive)
+ * - validateConsultation (duration, consecutive)
  * - validateWebinar (duration, consecutive)
  * - validateClass (per-day cap, session grouping)
  * - slotDurationMinutes fix verification
@@ -701,7 +700,7 @@ describe("validate: consultation event", () => {
     expect(result.errors[0]).toContain("requires exactly 2");
   });
 
-  it("should reject slots on different days", async () => {
+  it("should reject non-consecutive slots on different days", async () => {
     const slots = [
       new Date("2025-06-02T10:00:00Z"), // Monday
       new Date("2025-06-03T10:00:00Z"), // Tuesday
@@ -714,7 +713,7 @@ describe("validate: consultation event", () => {
       { durationInHours: 1 },
     );
     expect(result.isValid).toBe(false);
-    expect(result.errors.some((e) => e.includes("one-day event"))).toBe(true);
+    expect(result.errors.some((e) => e.includes("consecutive"))).toBe(true);
   });
 
   it("should reject non-consecutive same-day slots", async () => {

@@ -91,8 +91,6 @@ export async function useRequestedSlots(
   // here, because approving stored times is only valid for an unallocated event.
   _initialAllocation: boolean | undefined,
   idempotencyKey?: string,
-  /** Consultant accepting times outside their own published availability. */
-  overrideAvailabilityWindow?: boolean,
   expectedTentativeSlotCount?: number,
   txOptions: AllocationTxOptions = {},
 ): Promise<AllocationResult> {
@@ -256,7 +254,9 @@ export async function useRequestedSlots(
       existingAppointmentIds,
       {
         consulteeUserId,
-        overrideAvailabilityWindow,
+        // Requested times are held times: checked against published hours
+        // when requested, and kept for every approver.
+        heldSlotStarts: requestedSlots,
         // Co-host arm: the consultant's own ACCEPTED seats occupy too.
         consultantProfileId,
         leadTimeMs,

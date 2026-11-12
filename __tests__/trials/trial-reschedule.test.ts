@@ -76,6 +76,14 @@ const atom = (start: Date, i = 0) => ({
   startsAt: new Date(start.getTime() + i * 30 * 60_000),
   endsAt: new Date(start.getTime() + (i + 1) * 30 * 60_000),
 });
+const OLD_START = new Date("2026-11-12T10:00:00.000Z");
+/** The released session, still at its booked times. */
+const releasedSession = (minutes: number) => ({
+  startsAt: OLD_START,
+  endsAt: new Date(OLD_START.getTime() + minutes * 60_000),
+  completionStatus: "RESCHEDULED",
+  deletedAt: null,
+});
 
 function openRequest(overrides: Record<string, unknown> = {}) {
   return {
@@ -87,6 +95,7 @@ function openRequest(overrides: Record<string, unknown> = {}) {
     releasedOccurrenceIds: ["occ-1"],
     proposedTimes: [atom(NEW_START)],
     appointment: {
+      occurrences: [releasedSession(30)],
       trial: {
         consultantProfileId: "cp-1",
         consultantProfile: { userId: "u-expert" },
@@ -197,6 +206,26 @@ describe("confirmTrialProposal", () => {
     });
     expect(out).toEqual({ confirmed: false, reason: "VALIDATION_FAILED" });
     expect(closeConfirmedProposal).not.toHaveBeenCalled();
+  });
+
+  it("validates the move at the booked session's length after the plan's length changes", async () => {
+    const request = openRequest({
+      proposedTimes: [atom(NEW_START, 0), atom(NEW_START, 1)],
+    });
+    // Sold at 60 minutes; the plan now offers 30.
+    db.request = {
+      ...request,
+      appointment: {
+        ...request.appointment,
+        occurrences: [releasedSession(60)],
+      },
+    };
+    const out = await confirmTrialProposal({
+      rescheduleRequestId: "rr-1",
+      to: "AUTO_ACCEPTED",
+      now: NOW,
+    });
+    expect(out).toEqual({ confirmed: true });
   });
 
   it("refuses a new time inside the 24-hour reschedule lead", async () => {

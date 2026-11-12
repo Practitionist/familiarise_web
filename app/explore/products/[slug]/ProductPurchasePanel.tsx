@@ -107,13 +107,6 @@ async function confirmPurchase(purchaseId: string): Promise<PurchaseStatus> {
 }
 
 function PriceBreakdown({ quote }: Readonly<{ quote: DigitalProductQuote }>) {
-  if (quote.basePaise === null || quote.taxPaise === null) {
-    return (
-      <p className="text-xs text-muted-foreground">
-        Total of your unfinished checkout, taxes included
-      </p>
-    );
-  }
   if (quote.taxPaise === 0) {
     return <p className="text-xs text-muted-foreground">No GST applies</p>;
   }

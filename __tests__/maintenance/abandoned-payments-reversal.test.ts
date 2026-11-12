@@ -38,6 +38,7 @@ jest.mock("../../lib/prisma", () => {
     subscription: { findUnique: jest.fn(), updateMany: jest.fn() },
     // #1319 A12 — every CAS helper appends its history row in the same tx.
     bookingStatusHistory: { create: jest.fn() },
+    bookingUtilization: { findUnique: jest.fn().mockResolvedValue(null) },
   };
   const client = {
     ...tx,

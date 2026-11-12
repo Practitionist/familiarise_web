@@ -73,7 +73,8 @@ export async function POST(
       { status: 400 },
     );
   }
-  if (topUp.status !== "PENDING") {
+  // An abandoned (FAILED) top-up's order can still capture, so only CONFIRMED is final.
+  if (topUp.status === "CONFIRMED") {
     return NextResponse.json({ status: toTopUpStatus(topUp.status) });
   }
 

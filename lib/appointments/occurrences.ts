@@ -142,6 +142,42 @@ export function intervalStartsOf(occurrence: {
   );
 }
 
+/**
+ * The booked session's length in minutes: the live session, else the latest row
+ * (a released or cancelled row keeps its times); null when no row has times.
+ */
+export function bookedSessionMinutes(
+  occurrences: readonly {
+    startsAt: Date | string;
+    endsAt?: Date | string | null;
+    completionStatus?: string | null;
+    deletedAt?: Date | string | null;
+  }[],
+): number | null {
+  const timed = occurrences.filter((o) => o.endsAt);
+  const live = timed.find(
+    (o) =>
+      !o.deletedAt &&
+      (o.completionStatus === "SCHEDULED" ||
+        o.completionStatus === "UNVERIFIED"),
+  );
+  const row =
+    live ??
+    timed.reduce<(typeof timed)[number] | undefined>(
+      (latest, o) =>
+        !latest ||
+        new Date(o.startsAt).getTime() > new Date(latest.startsAt).getTime()
+          ? o
+          : latest,
+      undefined,
+    );
+  if (!row?.endsAt) return null;
+  const minutes =
+    (new Date(row.endsAt).getTime() - new Date(row.startsAt).getTime()) /
+    60_000;
+  return minutes > 0 ? minutes : null;
+}
+
 export async function nextOrdinal(
   tx: PrismaLike,
   appointmentId: string,

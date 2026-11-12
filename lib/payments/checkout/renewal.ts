@@ -1,7 +1,11 @@
 // Which prior subscription a renewal may anchor to, and when a plan starts.
 
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
-import { subscriptionPlanEnd } from "@/lib/booking/entitlement";
+import {
+  firstCycleWindow,
+  subscriptionPlanEnd,
+  type EntitlementPlanShape,
+} from "@/lib/booking/entitlement";
 import { PaymentError } from "@/lib/payments/core/types";
 import type { Tx } from "@/lib/prisma";
 import { AppointmentStatus, type Prisma } from "@prisma/client";
@@ -170,4 +174,41 @@ export async function resolvePriorSubscriptionForRenewal(
   }
 
   return priorSubscription;
+}
+
+/**
+ * The first cycle a subscription checkout books, in the expert's zone, or null
+ * when the request names neither a start nor a plan it renews.
+ */
+export async function resolveSubscriptionCheckoutPeriod(
+  tx: Tx,
+  input: {
+    schedulingPeriodStartsAt: string | undefined;
+    renewsSubscriptionId: string | undefined;
+    consulteeProfileId: string;
+    plan: EntitlementPlanShape & { id: string };
+    schedulingTimezone: string;
+    now?: Date;
+  },
+): Promise<{ startsAt: Date; endsAt: Date } | null> {
+  if (!input.schedulingPeriodStartsAt && !input.renewsSubscriptionId) {
+    return null;
+  }
+  const priorPlanEnd = await resolvePriorPlanEnd(
+    tx,
+    input.renewsSubscriptionId,
+    input.consulteeProfileId,
+    input.plan.id,
+  );
+  const effectiveStart = resolvePlanStart(
+    input.schedulingPeriodStartsAt,
+    priorPlanEnd,
+    input.now ?? new Date(),
+  );
+  const { start, end } = firstCycleWindow(
+    input.plan,
+    effectiveStart,
+    input.schedulingTimezone,
+  );
+  return { startsAt: start, endsAt: end };
 }

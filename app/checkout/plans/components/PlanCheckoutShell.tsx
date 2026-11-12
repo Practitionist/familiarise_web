@@ -41,6 +41,7 @@ import {
 import { useHandleApiError } from "../use-handle-api-error";
 import { useCheckoutTaxContext } from "../useCheckoutTaxContext";
 import { useReferralPricing } from "../useReferralPricing";
+import { useOwnOpenOrderCredits } from "../useOwnOpenOrderCredits";
 import {
   busyRetryToast,
   createHandleCheckoutSuccess,
@@ -344,11 +345,14 @@ export function PlanCheckoutShell({
   const router = useRouter();
   const { formatPriceExact, currency } = useCurrency();
   const checkoutTaxContext = useCheckoutTaxContext();
-  const { availableCredits, isLoadingCredits, creditsLoadFailed } =
-    useReferralCreditsBalance(
-      checkoutTaxContext.referralCreditsLoaded,
-      checkoutTaxContext.referralCreditsPaise,
-    );
+  const {
+    availableCredits: baseAvailableCredits,
+    isLoadingCredits: isLoadingBaseCredits,
+    creditsLoadFailed: baseCreditsLoadFailed,
+  } = useReferralCreditsBalance(
+    checkoutTaxContext.referralCreditsLoaded,
+    checkoutTaxContext.referralCreditsPaise,
+  );
   const adapter = useAdapter(planId, searchParams);
   const referralPricing = useReferralPricing(adapter.consultantProfileId);
 
@@ -358,15 +362,32 @@ export function PlanCheckoutShell({
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
   );
-  const discount = useDiscountCode({
-    amountPaise: adapter.basePricePaise,
-    consultantProfileId: adapter.consultantProfileId,
-  });
-  const appliedDiscount = discount.applied;
-  const [useReferralCredits, setUseReferralCredits] = useState(false);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
+  // The item this page buys, so its own open order's credit and code count as the buyer's.
+  const openOrderItem = useMemo(
+    () =>
+      adapter.checkoutPlanFields
+        ? createCheckoutData({
+            ...adapter.checkoutPlanFields,
+            paymentGateway: "RAZORPAY",
+            organizationId: selectedOrganizationId ?? undefined,
+          })
+        : null,
+    [adapter.checkoutPlanFields, selectedOrganizationId],
+  );
+  const held = useOwnOpenOrderCredits(openOrderItem);
+  const availableCredits = baseAvailableCredits + held.heldCredits;
+  const isLoadingCredits = isLoadingBaseCredits || held.isLoading;
+  const creditsLoadFailed = baseCreditsLoadFailed || held.loadFailed;
+  const discount = useDiscountCode({
+    amountPaise: adapter.basePricePaise,
+    consultantProfileId: adapter.consultantProfileId,
+    checkout: openOrderItem,
+  });
+  const appliedDiscount = discount.applied;
+  const [useReferralCredits, setUseReferralCredits] = useState(false);
   const billingState = useBillingState(
     checkoutTaxContext,
     selectedOrganizationId,

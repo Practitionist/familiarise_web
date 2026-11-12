@@ -43,7 +43,20 @@ superseded, so one buyer can hold two checkouts in two tabs. A replay under the
 same idempotency key must match the priced inputs it was minted with: the
 `Payment.requestFingerprint` is compared, and a mismatch mints a fresh attempt
 instead of replaying (`replayByIdempotencyKey` in
-`lib/payments/operations/checkout-replay.ts`). `PaymentStatus` has exactly
+`lib/payments/operations/checkout-replay.ts`).
+
+A reload or second tab prices as if the buyer's own open order for the same item
+were released: `ownOpenOrderHolds` adds the credit that order holds to the
+available credit and subtracts its code use before the exhausted check, so the
+amount equals the open order's and it is reused (`classifyOpenOrders`). The same
+item is the same plan and exactly the same window for a 1:1; for a subscription,
+the same plan and exactly the same first cycle for a chosen later start, or any
+live "start now" order of the plan when the start is absent or already past
+(renewals keep the exact rule); and the same event with the seat still HELD for a
+webinar or class; another window is never counted. The commit-time credit CAS
+still decides (`CREDIT_SHORTFALL`, `DISCOUNT_EXHAUSTED`). Every unpaid exit also
+returns the organisation engagement with `reverseBookingUtilization`, beside the
+credits and the code use. `PaymentStatus` has exactly
 four values — `PENDING`, `SUCCEEDED`, `FAILED`, `EXPIRED` — with no `CAPTURED`;
 `SUCCEEDED` is the success terminal and `EXPIRED` means timed out rather than
 gateway-rejected. See `references/availability.md` for when such a hold stops
@@ -90,6 +103,19 @@ follow-up, not an oversight. `originalAmount` stays the pre-tax list price
 (what earnings read as the consultant's base) and the CARD leg carries the
 taxed `amount`, matching the leg-sum identity checkout already keeps. A
 re-mint always re-derives; it never copies a prior mint's frozen figure.
+
+The list price a pay-link starts from is the price the request was made at, not
+the plan's price today: `calculateAmount` reads `Consultation.agreedPricePaise`
+through `agreedConsultationPricePaise` and `Trial.agreedPricePaise` through
+`agreedTrialPricePaise` (`lib/booking/sold-terms.ts`), and reads the plan only for
+a row whose column is null. A plan edit therefore never re-prices a pending
+request or re-mints a live link. Example: a ₹500 (50,000 paise) 60-minute 1:1 is
+requested, then the plan becomes ₹2,000 and 30 minutes; the link is ₹500 plus
+18 % GST (59,000 paise) and the booking stays 60 minutes, because its length is
+read from the held session (`bookedSessionMinutes`), not stored. Any new reader
+of a booking's price goes through the two `agreed*` helpers, never the plan row.
+`freezeConsultationPrice` and `freezeTrialPrice` stamp still-null rows in the
+plan edit's transaction before the plan's price changes.
 
 `deriveCheckoutAmount` (`lib/payments/pricing/derive-checkout-amount.ts`) is the
 only place a checkout price is computed, with two production call sites now,
@@ -694,3 +720,4 @@ and reverses the refunded share.
   class to COMPLETED after its last placed session whatever it had sold, so the
   never-placed sessions were neither delivered nor refunded and the earnings
   released in full. Class-end settlement owes them now.
+- A pending 1:1 request or trial priced from the live plan at approval, with a live pay-link re-minted at the new amount: replaced by `agreedPricePaise` read through `agreedConsultationPricePaise` / `agreedTrialPricePaise`.

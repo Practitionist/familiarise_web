@@ -1593,3 +1593,14 @@ ALTER TABLE "ClassPlan" DROP CONSTRAINT IF EXISTS "class_plan_waitlist_max_min";
 -- SPLIT
 ALTER TABLE "ClassPlan" ADD CONSTRAINT "class_plan_waitlist_max_min"
   CHECK ("waitlistMax" IS NULL OR "waitlistMax" >= 1);
+-- SPLIT
+-- The price a 1:1 or a trial was agreed at is never negative.
+ALTER TABLE "Consultation" DROP CONSTRAINT IF EXISTS "consultation_agreed_price_valid";
+-- SPLIT
+ALTER TABLE "Consultation" ADD CONSTRAINT "consultation_agreed_price_valid"
+  CHECK ("agreedPricePaise" IS NULL OR "agreedPricePaise" >= 0);
+-- SPLIT
+ALTER TABLE "Trial" DROP CONSTRAINT IF EXISTS "trial_agreed_price_valid";
+-- SPLIT
+ALTER TABLE "Trial" ADD CONSTRAINT "trial_agreed_price_valid"
+  CHECK ("agreedPricePaise" IS NULL OR "agreedPricePaise" >= 0);

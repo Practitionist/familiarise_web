@@ -164,7 +164,7 @@ and refetched on a stale return. Freshness stays a user-experience
 concern (ADR 16, `docs/enterprise/70-design-decisions/16-slot-freshness-without-realtime.md`):
 checkout's recheck under the slot lock is the only correctness mechanism, and a
 taken slot answers 409 `code: "SLOT_TAKEN"`, which returns the buyer to a
-refetched grid with "That time was just taken — pick another."
+refetched grid with "That time was just taken — pick another." The checkout page re-asks the grid once before Pay, and skips that advisory check while the buyer's own hold marker (`checkout-hold:<planId>:<startsAt>`, in `localStorage` in `use-consultation-checkout.tsx`) is live, so a second tab of the same browser reaches checkout's resume path; a second device still gets the turn-away.
 
 The ETag (`lib/scheduling/availabilityGridMarker.ts`) folds in more than the
 rows, because three things change a cell without any row changing: the earliest
@@ -257,6 +257,19 @@ one file per mode: `modes/auto.ts` (`autoAllocate`), `modes/manual.ts`
 takes its own locks and opens its own write transaction. The shared write steps
 are in `commit/`, the slot search in `search/`, and the multi-tab and replay guards
 in `guards.ts` and `idempotency.ts`.
+
+Published hours are checked against a request once, at the request door
+(`assertSlotsStillPublished` inside `request-for-approval`, 400
+`OUTSIDE_AVAILABILITY`, the trial door's code and copy). After that a held
+request keeps its time for every approver. `manualAllocate` computes
+`heldIntervalStartsOf(existingAppointments)`, passes it as `heldSlotStarts` to
+`ScheduleValidationService`, and runs `assertSlotsStillPublished` on only the
+new times, unless the caller may and does set `override` (the expert or
+staff), which skips that check for new times too. `useRequestedSlots` passes its requested times as `heldSlotStarts`
+and takes no `override` argument. Do not add a re-check of held times against
+published hours at approval, and do not read an unchecked request door as
+acceptable. A consultation validator has no same-day rule: one consecutive
+block of the exact length is valid across midnight.
 
 Allocation goes through **one handler route** as of #1702:
 `lib/scheduling/allocate-route.ts` carries the whole auth → limiter → Zod →

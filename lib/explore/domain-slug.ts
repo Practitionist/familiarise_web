@@ -14,6 +14,11 @@ export function domainPath(name: string): string {
   return `/explore/experts/c/${domainSlug(name)}`;
 }
 
+/** The digital products of one field; the products library's counterpart of `domainPath`. */
+export function productTopicPath(name: string): string {
+  return `/explore/products/c/${domainSlug(name)}`;
+}
+
 /** The domain whose name slugs to `slug`, or undefined. */
 export function findDomainBySlug<T extends { name: string }>(
   domains: readonly T[],

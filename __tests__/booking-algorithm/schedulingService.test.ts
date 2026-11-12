@@ -1922,6 +1922,8 @@ describe("fetchEventData - config extraction", () => {
         excludeOccurrenceIds: [],
         consultantProfileId: "consultant-profile-1",
         leadTimeMs: 15 * 60_000,
+        // Nothing held yet: every pick is a new time.
+        heldSlotStarts: [],
       },
     );
   });
@@ -1952,6 +1954,8 @@ describe("fetchEventData - config extraction", () => {
         excludeOccurrenceIds: [],
         consultantProfileId: "consultant-profile-1",
         leadTimeMs: 15 * 60_000,
+        // Nothing held yet: every pick is a new time.
+        heldSlotStarts: [],
       },
     );
   });
@@ -2011,6 +2015,8 @@ describe("fetchEventData - config extraction", () => {
         excludeOccurrenceIds: [],
         consultantProfileId: "consultant-profile-1",
         leadTimeMs: 15 * 60_000,
+        // Nothing held yet: every pick is a new time.
+        heldSlotStarts: [],
       },
     );
   });

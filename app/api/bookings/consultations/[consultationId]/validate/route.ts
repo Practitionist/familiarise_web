@@ -27,6 +27,7 @@ import {
 } from "@/lib/booking/validate-conflict-view";
 import { leadMsFor } from "@/lib/booking/lead-time";
 import { SETTLED_CONSULTATION } from "@/lib/booking/approve-request";
+import { bookedSessionMinutes } from "@/lib/appointments/occurrences";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
 const consultationInclude = {
@@ -45,6 +46,19 @@ const consultationInclude = {
   requestedBy: {
     include: {
       user: { select: { id: true } },
+    },
+  },
+  // The booked session carries the length the 1:1 was sold at.
+  appointment: {
+    select: {
+      occurrences: {
+        select: {
+          startsAt: true,
+          endsAt: true,
+          completionStatus: true,
+          deletedAt: true,
+        },
+      },
     },
   },
 } as const;
@@ -156,7 +170,10 @@ export async function POST(
           timezone: consultantProfile.user.timezone || undefined,
         },
         {
-          durationInHours: consultationPlan.durationInHours,
+          durationInHours:
+            (bookedSessionMinutes(
+              consultation.appointment?.occurrences ?? [],
+            ) ?? consultationPlan.durationInHours * 60) / 60,
         },
         excludeIds,
         {

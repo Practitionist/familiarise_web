@@ -314,7 +314,13 @@ function unpaidLapsedWhere(now: Date): Prisma.TrialWhereInput {
         paymentDueAt: null,
         appointmentId: null,
         requestedAt: { lt: new Date(now.getTime() - 24 * 60 * 60 * 1000) },
-        subscriptionPlan: { trialPriceInPaise: { gt: 0 } },
+        OR: [
+          { agreedPricePaise: { gt: 0 } },
+          {
+            agreedPricePaise: null,
+            subscriptionPlan: { trialPriceInPaise: { gt: 0 } },
+          },
+        ],
       },
       {
         status: TrialStatus.AWAITING_PAYMENT,

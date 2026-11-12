@@ -26,6 +26,7 @@ import {
   UNTOUCHED_CONSULTATION_PLAN,
 } from "@/lib/booking/offering-delete";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
+import { freezeConsultationPrice } from "@/lib/booking/sold-terms";
 import { isHiddenDraft } from "@/lib/api/plans/draft-access";
 import * as Sentry from "@sentry/nextjs";
 export async function GET(
@@ -160,6 +161,10 @@ export async function PUT(
     }
 
     const consultationPlan = await prisma.$transaction(async (tx) => {
+      // Requests made before the column keep the price they were made at.
+      if (terms.price !== storedTerms.price) {
+        await freezeConsultationPrice(tx, consultationPlanId);
+      }
       // Save only against the price and length this edit was validated on.
       await claimPlanTerms(
         tx.consultationPlan.updateMany({

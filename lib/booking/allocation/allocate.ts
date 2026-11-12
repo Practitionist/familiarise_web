@@ -339,7 +339,6 @@ export async function dispatch(
         request.eventId,
         request.initialAllocation,
         request.idempotencyKey,
-        request.override,
         request.expectedTentativeSlotCount,
         txOptions,
       );

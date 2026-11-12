@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { DisputeStatus, Prisma, RefundStatus } from "@prisma/client";
 
 /**
  * #1846 N2 — the durable marker of a capture the confirmation pipeline must
@@ -37,20 +37,55 @@ export const MANUAL_RECOVERY_PREFIX = "REQUIRES_MANUAL_RECOVERY:";
  * auto-refund marker): the orphan sweeps neither page, link nor refund them, and a HELD
  * seat on one opens no room.
  */
-export const notSettledElsewhereWhere: Prisma.PaymentWhereInput = {
-  OR: [
-    { description: null },
-    {
-      NOT: [
-        AUTO_REFUND_PENDING_PREFIX,
-        AUTO_REFUNDED_PREFIX,
-        AUTO_REFUND_STUCK_PREFIX,
-        REPLAY_SALE_PREFIX,
-        DIGITAL_PRODUCT_SALE_PREFIX,
-        MANUAL_RECOVERY_PREFIX,
-      ].map((prefix) => ({ description: { startsWith: prefix } })),
-    },
-  ],
+export const notSettledElsewhereWhere: Prisma.PaymentWhereInput =
+  descriptionWithoutPrefixes([
+    AUTO_REFUND_PENDING_PREFIX,
+    AUTO_REFUNDED_PREFIX,
+    AUTO_REFUND_STUCK_PREFIX,
+    REPLAY_SALE_PREFIX,
+    DIGITAL_PRODUCT_SALE_PREFIX,
+    MANUAL_RECOVERY_PREFIX,
+  ]);
+
+function descriptionWithoutPrefixes(
+  prefixes: readonly string[],
+): Prisma.PaymentWhereInput {
+  return {
+    OR: [
+      { description: null },
+      {
+        NOT: prefixes.map((prefix) => ({
+          description: { startsWith: prefix },
+        })),
+      },
+    ],
+  };
+}
+
+const REFUND_STATUSES_RETURNING_MONEY: RefundStatus[] = [
+  "PENDING",
+  "SUCCEEDED",
+];
+/** Disputes that leave the captured money with the platform. */
+const DISPUTES_KEEPING_MONEY: DisputeStatus[] = [
+  "WON",
+  "CLOSED",
+  "WARNING_CLOSED",
+];
+
+/**
+ * A capture the recover door may still book: no refund pending or paid, no
+ * owed-refund or auto-refund marker, and no dispute that is open or lost.
+ */
+export const unreturnedCaptureWhere: Prisma.PaymentWhereInput = {
+  ...descriptionWithoutPrefixes([
+    AUTO_REFUND_PENDING_PREFIX,
+    AUTO_REFUNDED_PREFIX,
+    AUTO_REFUND_STUCK_PREFIX,
+  ]),
+  refundOwedKey: null,
+  refunds: { none: { status: { in: REFUND_STATUSES_RETURNING_MONEY } } },
+  disputes: { none: { status: { notIn: DISPUTES_KEEPING_MONEY } } },
 };
 
 /**

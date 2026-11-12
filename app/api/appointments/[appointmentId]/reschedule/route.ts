@@ -549,10 +549,16 @@ async function requestReschedule(
 
           const now = new Date();
           for (const slot of slotsToReschedule) {
-            const hoursUntilSlot =
-              (new Date(slot.startsAt).getTime() - now.getTime()) /
-              (1000 * 60 * 60);
-            if (hoursUntilSlot < RESCHEDULE_MIN_LEAD_HOURS) {
+            const startMs = new Date(slot.startsAt).getTime();
+            const hoursUntilSlot = (startMs - now.getTime()) / (1000 * 60 * 60);
+            if (
+              isTooSoonFor(
+                "reschedule",
+                { settled: true },
+                startMs,
+                now.getTime(),
+              )
+            ) {
               throw new ReschedulePolicyError(
                 hoursUntilSlot,
                 RESCHEDULE_MIN_LEAD_HOURS,

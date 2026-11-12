@@ -32,10 +32,14 @@ jest.mock("../../lib/auth-helpers", () => ({
 
 const opsLogCreate = jest.fn(async (_a: unknown) => ({ id: "row" }));
 const paymentFindUnique = jest.fn();
+const paymentCount = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    payment: { findUnique: (a: unknown) => paymentFindUnique(a) },
+    payment: {
+      findUnique: (a: unknown) => paymentFindUnique(a),
+      count: (a: unknown) => paymentCount(a),
+    },
     opsActionLog: { create: (a: unknown) => opsLogCreate(a) },
   },
 }));
@@ -48,6 +52,7 @@ const handlePaymentSuccess = jest.fn(async (..._a: unknown[]) => "confirmed");
 jest.mock("../../lib/payments/webhooks/handlers", () => ({
   handlePaymentSuccess: (...a: unknown[]) => handlePaymentSuccess(...a),
   RecoveryAlreadyDoneError: class extends Error {},
+  RecoveryRefusedError: class extends Error {},
 }));
 
 import { POST } from "@/app/api/payments/[paymentId]/recover/route";
@@ -77,6 +82,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockRole = "ADMIN";
   mockSessionCreatedAt = new Date();
+  paymentCount.mockResolvedValue(1);
   paymentFindUnique.mockResolvedValue({
     id: "pay_1",
     paymentIntent: "order_abc",
@@ -111,6 +117,14 @@ it("refuses a plan the buyer did not pay for, before any earnings are written", 
   const res = await recover({ ...CHECKOUT_NOTES, planId: OTHER_PLAN });
   expect(res.status).toBe(409);
   expect((await res.json()).code).toBe("RECOVER_TARGET_MISMATCH");
+  expect(handlePaymentSuccess).not.toHaveBeenCalled();
+});
+
+it("refuses a capture that was refunded, marked for refund or disputed", async () => {
+  paymentCount.mockResolvedValue(0);
+  const res = await recover(CHECKOUT_NOTES);
+  expect(res.status).toBe(409);
+  expect((await res.json()).code).toBe("PAYMENT_RETURNED");
   expect(handlePaymentSuccess).not.toHaveBeenCalled();
 });
 

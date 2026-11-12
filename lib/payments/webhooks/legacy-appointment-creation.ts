@@ -34,6 +34,8 @@ export interface ConsultationData {
   notes?: string;
   consulteeProfileId: string;
   userId: string;
+  /** The plan price the order was placed at, from the captured payment. */
+  agreedPricePaise: number;
 }
 
 export interface SubscriptionData {
@@ -63,6 +65,18 @@ export class RecoveryAlreadyDoneError extends Error {
   constructor(paymentId: string) {
     super(`Payment ${paymentId} already has an appointment linked`);
     this.name = "RecoveryAlreadyDoneError";
+  }
+}
+
+/** Thrown when a recovery finds the capture refunded, marked for refund or disputed. */
+export class RecoveryRefusedError extends Error {
+  readonly code = "PAYMENT_RETURNED" as const;
+  readonly httpStatus = 409 as const;
+  constructor(paymentId: string) {
+    super(
+      `Payment ${paymentId} has a refund, an owed-refund marker or an open or lost dispute, so it cannot be booked.`,
+    );
+    this.name = "RecoveryRefusedError";
   }
 }
 
@@ -104,6 +118,7 @@ export async function createAppointmentFromWebhook(
         notes,
         consulteeProfileId,
         userId,
+        agreedPricePaise: payment.originalAmount,
       });
       break;
     case AppointmentsType.SUBSCRIPTION:
@@ -171,6 +186,7 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
       requestedById: data.consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
+      agreedPricePaise: data.agreedPricePaise,
     },
     include: {
       consultationPlan: {

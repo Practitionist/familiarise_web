@@ -27,7 +27,7 @@ import { WEEKLY_COVERAGE_SELECT } from "@/utils/scheduling-engine/availabilityCo
 import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
 import {
   lockConsulteeBooking,
-  lockSlotInterval,
+  lockSlotBatch,
   unlockConsulteeBooking,
   unlockSlotInterval,
   withAppointmentLock,
@@ -478,16 +478,26 @@ export async function rebookIncidentRemedy(args: {
         (voided.endsAt.getTime() - voided.startsAt.getTime()),
     ),
   };
-  // Global lock order: appointment, then consultee, then the expert's slot atoms.
+  // A learner who is also an expert holds their own calendar's atoms too.
+  const buyerProfile = await prisma.consultantProfile.findUnique({
+    where: { userId: args.userId },
+    select: { id: true },
+  });
+  const slotProfileIds = [ctx.consultantProfileId, buyerProfile?.id].filter(
+    (id, i, all): id is string => !!id && all.indexOf(id) === i,
+  );
+  // Global lock order: appointment, then consultee, then one all-or-nothing slot batch.
   const committed = await withAppointmentLock(
     voided.appointmentId,
     async () => {
       const consulteeLock = await lockConsulteeBooking(args.userId);
       try {
-        const slotLocks = await lockSlotInterval(
-          ctx.consultantProfileId,
-          ctx.startsAt,
-          ctx.endsAt,
+        const slotLocks = await lockSlotBatch(
+          slotProfileIds.map((consultantProfileId) => ({
+            consultantProfileId,
+            startsAt: ctx.startsAt,
+            endsAt: ctx.endsAt,
+          })),
         );
         try {
           return await prisma.$transaction((tx) => commitRebook(tx, ctx), {

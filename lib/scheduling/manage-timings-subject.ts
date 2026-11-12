@@ -3,6 +3,7 @@ import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import { getClassPlanDefaults, type ClassPlanType } from "@/utils/classPlans";
 import { subscriptionPlanEnd } from "@/lib/booking/entitlement";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
+import { bookedSessionMinutes } from "@/lib/appointments/occurrences";
 
 /**
  * Turns one of the four offering types into what the "manage timings" page
@@ -87,17 +88,22 @@ function getEventDetails(
   appointment: ManageTimingsAppointmentLike,
 ): EventDetails {
   switch (appointment.appointmentType) {
-    case "CONSULTATION":
+    case "CONSULTATION": {
+      // The booked session's length; the plan's only with no session row.
+      const booked = bookedSessionMinutes(appointment.slots ?? []);
       return {
         eventType: "consultation",
         eventId: appointment.consultation?.id || "",
         sessionsPerWeek: 1,
         durationInMonths: 1,
         durationInHours:
-          appointment.consultation?.consultationPlan?.durationInHours || 1,
+          booked === null
+            ? appointment.consultation?.consultationPlan?.durationInHours || 1
+            : booked / 60,
         title:
           appointment.consultation?.consultationPlan?.title || "Consultation",
       };
+    }
     case "SUBSCRIPTION": {
       const sub = appointment.subscription;
       // The sold terms: frozen at purchase, else the plan's.
@@ -206,7 +212,7 @@ function getDescription(
 ): string {
   switch (appointment.appointmentType) {
     case "CONSULTATION":
-      return "Select consecutive time slots for your consultation. All slots must be on the same day.";
+      return "Select consecutive time slots for your consultation.";
     case "SUBSCRIPTION": {
       const baseText = `Schedule ${eventDetails.sessionsPerWeek} session${eventDetails.sessionsPerWeek !== 1 ? "s" : ""} per week for ${eventDetails.durationInMonths} month${eventDetails.durationInMonths !== 1 ? "s" : ""}. Each session is ${eventDetails.sessionDurationInHours || 1} hour${(eventDetails.sessionDurationInHours || 1) > 1 ? "s" : ""}.`;
       return appendProgressText(

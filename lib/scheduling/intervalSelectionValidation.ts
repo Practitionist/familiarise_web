@@ -112,7 +112,7 @@ export function getEventConstraints(
 
     case "consultation":
       return {
-        requireConsecutive: true, // consultations are a single same-day block
+        requireConsecutive: true, // consultations are one unbroken block
         allowMultipleSessions: false,
         isDailyLimited: true,
         isOneTimeEvent: true,
@@ -753,28 +753,15 @@ function validateSubscriptionSelection(
 function validateConsultationSelection(
   slots: CalendarInterval[],
   result: ValidationResult,
-  timeZone?: string,
 ): void {
-  // Same scheduling-timezone day first (matches the server's same-day rule),
-  // then consecutiveness.
+  // One unbroken block; it may cross midnight (matches the server).
   if (slots.length <= 1) return;
-
-  const firstSlotDay = dayKey(slots[0].startTime, timeZone);
-  const allSameDay = slots.every(
-    (slot) => dayKey(slot.startTime, timeZone) === firstSlotDay,
-  );
-  if (!allSameDay) {
-    result.isValid = false;
-    result.errors.push(
-      "Consultation is a one-day event - all slots must be on the same day",
-    );
-  }
 
   result.consecutiveSlotsValid = validateConsecutiveSlots(slots);
   if (!result.consecutiveSlotsValid) {
     result.isValid = false;
     result.errors.push(
-      "Consultation slots must be consecutive within the same day",
+      "Consultation slots must be consecutive (no gaps allowed)",
     );
   }
 }
@@ -843,7 +830,7 @@ export function validateEventSlots(
       validateSubscriptionSelection(slots, options, limits, result);
       break;
     case "consultation":
-      validateConsultationSelection(slots, result, timeZone);
+      validateConsultationSelection(slots, result);
       break;
   }
 

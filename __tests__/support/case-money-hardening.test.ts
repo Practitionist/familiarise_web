@@ -64,6 +64,7 @@ const mockStore = {
   payment: {} as Row,
   keyedRefund: null as Row | null,
   refunds: [] as Row[],
+  creditUsedPaise: 0,
 };
 
 jest.mock("../../lib/prisma", () => {
@@ -128,6 +129,11 @@ jest.mock("../../lib/prisma", () => {
     },
     opsActionLog: { findMany: jest.fn(async () => mockStore.opsRows) },
     user: { count: jest.fn(async () => mockStore.admins) },
+    referralCreditUsage: {
+      aggregate: jest.fn(async () => ({
+        _sum: { amount: mockStore.creditUsedPaise },
+      })),
+    },
     $transaction: jest.fn(),
   };
   db.$transaction.mockImplementation((callback: (tx: typeof db) => unknown) =>
@@ -213,6 +219,7 @@ beforeEach(() => {
   mockStore.admins = 1;
   mockStore.keyedRefund = null;
   mockStore.refunds = [];
+  mockStore.creditUsedPaise = 0;
   mockStore.payment = {
     id: "pay-1",
     amount: 1_000_000,
@@ -307,6 +314,26 @@ describe("bounded staff refunds", () => {
         where: expect.objectContaining({ actorUserId: "staff-1" }),
       }),
     );
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("counts a credit restoration at the referral credit it returns", async () => {
+    mockStore.payment = {
+      ...mockStore.payment,
+      amount: 0,
+      paymentIntent: "free_1",
+    };
+    mockStore.recommendations = [
+      recommendation({ amountPaise: 0, payment: { paymentIntent: "free_1" } }),
+    ];
+    mockStore.creditUsedPaise = 600_000;
+    await expect(
+      performCaseAction(
+        "case-1",
+        staff,
+        review(true, { expectedRefundablePaise: 0 }),
+      ),
+    ).rejects.toMatchObject({ code: "ADMIN_REQUIRED" });
     expect(refundBookingPayment).not.toHaveBeenCalled();
   });
 

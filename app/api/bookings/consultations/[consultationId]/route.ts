@@ -27,9 +27,11 @@ import {
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
+import { agreedConsultationPricePaise } from "@/lib/booking/sold-terms";
 import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   APPROVAL_STATUSES_DETAIL_ONLY,
+  approvalLockRefusal,
   refuseMalformedEventId,
   NOT_BEING_MOVED,
   assertNotBeingMoved,
@@ -294,13 +296,7 @@ export async function PATCH(
           APPROVAL_LOCK_TTL_MS,
         ); // #1319 — must outlive the 30 s tx
       } catch (error) {
-        return NextResponse.json(
-          {
-            error:
-              error instanceof Error ? error.message : "Failed to acquire lock",
-          },
-          { status: 409 }, // Conflict - another approval in progress
-        );
+        return approvalLockRefusal(error);
       }
     }
 
@@ -412,6 +408,7 @@ export async function PATCH(
                   await tx.appointmentOccurrence.updateMany({
                     where: {
                       appointmentId: consultation.appointment.id,
+                      deletedAt: null,
                       completionStatus: "SCHEDULED",
                     },
                     data: { isTentative: false },
@@ -814,7 +811,8 @@ async function checkConsultationPayment(
   });
 
   if (
-    consultation?.consultationPlan?.price === 0 &&
+    consultation &&
+    agreedConsultationPricePaise(consultation) === 0 &&
     Boolean(consultation.appointment)
   ) {
     return true;

@@ -251,6 +251,11 @@ export class ScheduleValidationService {
        */
       overrideAvailabilityWindow?: boolean;
       /**
+       * Interval starts the booking already holds. A held time was checked
+       * against published hours when it was taken, so the window check skips it.
+       */
+      heldSlotStarts?: readonly Date[];
+      /**
        * #1554 — occurrence rows to leave out of conflicts, weekly and daily
        * counts: a reschedule replaces rows on a wrapper it keeps, so the
        * wrapper's other calls must still count while the released ones do not.
@@ -309,7 +314,9 @@ export class ScheduleValidationService {
     options: Parameters<ScheduleValidationService["validate"]>[6],
   ): Promise<ValidationResult> {
     if (!options?.overrideAvailabilityWindow) {
-      const scheduleCheck = this.validateMatchesSchedule(slots, consultant);
+      const held = new Set(options?.heldSlotStarts?.map((d) => d.getTime()));
+      const unheld = slots.filter((slot) => !held.has(slot.getTime()));
+      const scheduleCheck = this.validateMatchesSchedule(unheld, consultant);
       if (!scheduleCheck.isValid) return scheduleCheck;
     }
 
@@ -1111,46 +1118,8 @@ export class ScheduleValidationService {
   }
 
   /**
-   * UNIVERSAL VALIDATOR: Check if all slots are on the same scheduling-
-   * timezone day (ADR B9). The key never depends on the server's own
-   * timezone and matches the client's dayKey check.
-   */
-  private validateSameDaySlots(
-    slots: Date[],
-    schedulingTimezone?: string,
-  ): ValidationResult {
-    if (slots.length <= 1) {
-      return { isValid: true, errors: [], warnings: [] };
-    }
-
-    const firstSlotDay = ScheduleCalculationService.dayKey(
-      slots[0],
-      schedulingTimezone,
-    );
-    const errors: string[] = [];
-
-    for (const slot of slots) {
-      const slotDay = ScheduleCalculationService.dayKey(
-        slot,
-        schedulingTimezone,
-      );
-      if (slotDay !== firstSlotDay) {
-        errors.push(
-          `[VALIDATION] All slots must be on the same day. Found slots on ${firstSlotDay} and ${slotDay}`,
-        );
-      }
-    }
-
-    return {
-      isValid: errors.length === 0,
-      errors,
-      warnings: [],
-    };
-  }
-
-  /**
    * EVENT-SPECIFIC: Validate consultation slots
-   * Rules: Must be same day, consecutive, and match required duration
+   * Rules: one consecutive block (it may cross midnight) of the required length
    */
   private validateConsultation(
     slots: Date[],
@@ -1196,20 +1165,7 @@ export class ScheduleValidationService {
       );
     }
 
-    // Check same day (BEFORE consecutive check - more important)
-    const sameDayCheck = this.validateSameDaySlots(
-      slots,
-      config?.schedulingTimezone,
-    );
-    if (!sameDayCheck.isValid) {
-      errors.push(
-        "[VALIDATION] Consultation is a one-day event - all slots must be on the same day",
-      );
-      // Don't check consecutiveness if not same day
-      return { isValid: false, errors, warnings };
-    }
-
-    // Check consecutive
+    // Contiguity, not the calendar day, keeps the session one block.
     const consecutiveCheck = this.validateConsecutiveSlots(slots);
     if (!consecutiveCheck.isValid) {
       errors.push(
