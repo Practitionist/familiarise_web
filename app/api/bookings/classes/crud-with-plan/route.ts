@@ -1,6 +1,10 @@
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import {
+  isActiveOrgExpert,
+  NOT_ACTIVE_ORG_EXPERT_REFUSAL,
+} from "@/lib/enterprise/membership-guards";
 import { refuseForeignProfileReassignment } from "@/lib/api/plans/profile-reassignment";
 import { recordParticipants } from "@/lib/booking/participants";
 import {
@@ -680,6 +684,17 @@ export async function PATCH(request: NextRequest) {
         { error: "You do not have permission to update this class" },
         { status: 403 },
       );
+    }
+
+    if (
+      existingPlan.organizationId &&
+      !(await isActiveOrgExpert(
+        prisma,
+        existingPlan.organizationId,
+        existingPlan.consultantProfile.id,
+      ))
+    ) {
+      return NextResponse.json(NOT_ACTIVE_ORG_EXPERT_REFUSAL, { status: 403 });
     }
 
     const reassignmentRefusal = await refuseForeignProfileReassignment(

@@ -13,6 +13,10 @@ import {
   withHostSlotBatch,
 } from "@/lib/booking/host-slot-batch";
 import prisma from "@/lib/prisma";
+import {
+  isActiveOrgExpert,
+  NOT_ACTIVE_ORG_EXPERT_REFUSAL,
+} from "@/lib/enterprise/membership-guards";
 import { recordParticipants } from "@/lib/booking/participants";
 import {
   expireEventWaitlistForPlan,
@@ -637,6 +641,17 @@ export async function PATCH(request: NextRequest) {
         { error: "You do not have permission to update this webinar" },
         { status: 403 },
       );
+    }
+
+    if (
+      existingPlan.organizationId &&
+      !(await isActiveOrgExpert(
+        prisma,
+        existingPlan.organizationId,
+        existingPlan.consultantProfile.id,
+      ))
+    ) {
+      return NextResponse.json(NOT_ACTIVE_ORG_EXPERT_REFUSAL, { status: 403 });
     }
 
     const reassignmentRefusal = await refuseForeignProfileReassignment(

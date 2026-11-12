@@ -20,6 +20,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { activeOrgExpertWhere } from "@/lib/enterprise/membership-guards";
 import {
   maxParticipantsSchema,
   planLevelSchema,
@@ -142,12 +143,7 @@ export async function POST(
   // operator could point an org plan at any consultantProfileId on the
   // platform and commit a stranger to delivering it.
   const expert = await prisma.membership.findFirst({
-    where: {
-      organizationId: orgId,
-      status: "ACTIVE",
-      role: "EXPERT",
-      consultantProfileId: body.consultantProfileId,
-    },
+    where: activeOrgExpertWhere(orgId, body.consultantProfileId),
     // #1076 — the named deliverer's zone is what a class's caps bucket on.
     select: {
       id: true,
