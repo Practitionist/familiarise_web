@@ -157,7 +157,9 @@ export default function HowWeRankPage() {
                   <strong>Most purchased:</strong> (1) how many purchases have
                   completed, highest first; refunded and unpaid purchases are
                   not counted. (2) Products with the same count are ordered
-                  newest first.
+                  newest first. When more than 5,000 products match, only the
+                  5,000 most recently published are ranked, so older products do
+                  not appear in this sort.
                 </li>
                 <li>
                   <strong>Newest:</strong> (1) the date the product was

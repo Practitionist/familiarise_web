@@ -231,24 +231,25 @@ export interface ProductTopic {
 /** Fields that have at least one product on sale, with how many, most products first. */
 export const listProductTopics = unstable_cache(
   async (): Promise<ProductTopic[]> => {
-    const rows = await prisma.digitalProduct.findMany({
+    // One row per selling expert with a database count, so no product is left out.
+    const experts = await prisma.consultantProfile.findMany({
       where: {
-        ...digitalProductDiscoverableWhere(),
-        consultantProfile: { deletedAt: null },
+        deletedAt: null,
+        digitalProducts: { some: digitalProductDiscoverableWhere() },
       },
       select: {
-        consultantProfile: {
-          select: { domain: { select: { id: true, name: true } } },
+        domain: { select: { id: true, name: true } },
+        _count: {
+          select: {
+            digitalProducts: { where: digitalProductDiscoverableWhere() },
+          },
         },
       },
-      orderBy: [{ publishedAt: "desc" }, { id: "asc" }],
-      take: 5_000,
     });
     const byId = new Map<string, ProductTopic>();
-    for (const { consultantProfile } of rows) {
-      const { domain } = consultantProfile;
+    for (const { domain, _count } of experts) {
       const topic = byId.get(domain.id) ?? { ...domain, count: 0 };
-      topic.count += 1;
+      topic.count += _count.digitalProducts;
       byId.set(domain.id, topic);
     }
     return [...byId.values()].sort(
