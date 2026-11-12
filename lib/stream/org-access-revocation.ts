@@ -447,12 +447,13 @@ export async function revokeMemberStreamAccess(input: {
 }): Promise<RevokeMemberStreamResult> {
   const { userId, orgId } = input;
   const deadlineMs = input.deadlineMs ?? Infinity;
+  // Nothing was revoked, so the removal stays owed to the retry sweep.
   if (!isStreamConfigured()) {
     return {
       channelsRemoved: 0,
       tokenRevoked: false,
-      complete: true,
-      failures: [],
+      complete: false,
+      failures: ["Stream is not configured"],
     };
   }
 
