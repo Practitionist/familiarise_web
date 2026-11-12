@@ -106,6 +106,7 @@ const outboxUpdateMany = prisma.streamRevocationRetry.updateMany as jest.Mock;
 const outboxCount = prisma.streamRevocationRetry.count as jest.Mock;
 const vendorOutboxFindMany = prisma.vendorErasureRetry.findMany as jest.Mock;
 const vendorOutboxUpdate = prisma.vendorErasureRetry.update as jest.Mock;
+const vendorOutboxCount = prisma.vendorErasureRetry.count as jest.Mock;
 const erasureRequestUpdateMany = prisma.erasureRequest.updateMany as jest.Mock;
 const findUser = prisma.user.findUnique as jest.Mock;
 const enforce = applyStreamEnforcement as jest.Mock;
@@ -687,17 +688,7 @@ describe("retryModerationEnforcement", () => {
       mockStreamConfigured = false;
       findMany.mockResolvedValue([]);
       outboxCount.mockResolvedValue(3);
-      vendorOutboxFindMany.mockResolvedValueOnce([
-        {
-          id: "vr-stream",
-          erasureRequestId: "er-1",
-          vendor: "STREAM",
-          vendorRef: "u-erased",
-          payload: null,
-          attempts: 1,
-          erasureRequest: { userId: "u-erased" },
-        },
-      ]);
+      vendorOutboxCount.mockResolvedValueOnce(1);
       const warn = jest
         .spyOn(console, "warn")
         .mockImplementation(() => undefined);
@@ -711,6 +702,15 @@ describe("retryModerationEnforcement", () => {
       expect(outboxUpdate).not.toHaveBeenCalled();
       expect(vendorOutboxUpdate).not.toHaveBeenCalled();
       expect(result.streamUnconfigured).toBe(4);
+      // Counted, not fetched, so a page of STREAM rows cannot starve the other vendors.
+      expect(vendorOutboxCount).toHaveBeenCalledWith({
+        where: expect.objectContaining({ vendor: "STREAM" }),
+      });
+      expect(vendorOutboxFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ vendor: { not: "STREAM" } }),
+        }),
+      );
       expect(result.success).toBe(false);
       expect(result.errors).toEqual([
         "Stream not configured: 4 owed Stream revocations or erasures left pending",

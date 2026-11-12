@@ -627,8 +627,16 @@ async function drainVendorErasureRetries(
 ): Promise<void> {
   if (!prisma.vendorErasureRetry?.findMany) return;
   const now = new Date();
+  // Unattemptable STREAM rows are counted, not fetched, so they cannot fill the page ahead of other vendors.
+  if (!streamReady) {
+    result.streamUnconfigured += await prisma.vendorErasureRetry.count({
+      where: { ...vendorErasureDueWhere(now), vendor: "STREAM" },
+    });
+  }
   const rows = await prisma.vendorErasureRetry.findMany({
-    where: vendorErasureDueWhere(now),
+    where: streamReady
+      ? vendorErasureDueWhere(now)
+      : { ...vendorErasureDueWhere(now), vendor: { not: "STREAM" } },
     select: {
       id: true,
       erasureRequestId: true,
@@ -650,10 +658,6 @@ async function drainVendorErasureRetries(
   } = await import("@/lib/compliance/erasure/scrub-user");
 
   for (const row of rows) {
-    if (row.vendor === "STREAM" && !streamReady) {
-      result.streamUnconfigured++;
-      continue;
-    }
     const targetUserId = row.vendorRef || row.erasureRequest.userId;
     let error: string | null = null;
     try {
