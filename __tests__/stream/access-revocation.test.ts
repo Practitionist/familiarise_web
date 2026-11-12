@@ -496,17 +496,7 @@ describe("revocation when a seat or booking ends", () => {
 const refundIntent = { refundId: "refund-1", payerUserId: "payer-1" };
 
 describe("refund revocation", () => {
-  const refundedSeat = (status: string) => ({
-    userId: "client-1",
-    appointmentId: "appt-1",
-    appointment: {
-      webinar: null,
-      class: null,
-      consultation: { status },
-      subscription: null,
-      trial: null,
-    },
-  });
+  const refundedSeat = { userId: "client-1", appointmentId: "appt-1" };
 
   beforeEach(() => {
     mockRevocationPrisma.appointment.findUnique.mockResolvedValue(
@@ -515,7 +505,7 @@ describe("refund revocation", () => {
   });
 
   it("persists a refund intent before any read, then seat intents, and settles both", async () => {
-    seats.refunded = [refundedSeat("SCHEDULED")];
+    seats.refunded = [refundedSeat];
     const { revokeRefundedSeatAccess } =
       await import("../../lib/stream/access-revocation");
 
@@ -548,8 +538,12 @@ describe("refund revocation", () => {
     ]);
   });
 
-  it("leaves a cancelled booking's seat to the open intent its cancel route wrote", async () => {
-    seats.refunded = [refundedSeat("CANCELLED")];
+  it("leaves a seat leave's refunded seat to the leave's own intent, so Stream is driven once", async () => {
+    // A free webinar leave: the seat intent is persisted, the refund drives, then the leave drives.
+    mockRevocationPrisma.appointment.findUnique.mockResolvedValue(
+      webinarSeatContext,
+    );
+    seats.refunded = [refundedSeat];
     retryRows = [
       {
         id: "seat-row-1",
@@ -561,32 +555,27 @@ describe("refund revocation", () => {
         updatedAt: new Date(1_000),
       },
     ];
-    const { revokeRefundedSeatAccess } =
+    const { revokeEndedSeatAccess, revokeRefundedSeatAccess } =
       await import("../../lib/stream/access-revocation");
 
     await revokeRefundedSeatAccess(refundIntent);
+    await revokeEndedSeatAccess("appt-1", ["client-1"]);
 
-    expect(
-      mockRevocationPrisma.streamRevocationRetry.createMany,
-    ).toHaveBeenCalledTimes(1);
-    expect(mockRemoveMembers).not.toHaveBeenCalled();
-    expect(mockRevocationUpdateCallMembers).not.toHaveBeenCalled();
+    const created =
+      mockRevocationPrisma.streamRevocationRetry.createMany.mock.calls.map(
+        ([args]) => (args as { data: { kind: string }[] }).data[0].kind,
+      );
+    expect(created).toEqual(["REFUND_ACCESS_REVOKE", "SEAT_ACCESS_REVOKE"]);
+    expect(mockRemoveMembers).toHaveBeenCalledTimes(2);
+    expect(mockRemoveMembers).toHaveBeenCalledWith("team", "webinar-w1", [
+      "client-1",
+    ]);
+    expect(mockRevocationUpdateCallMembers).toHaveBeenCalledTimes(1);
   });
 
   it("revokes a cancelled trial's seat that no cancel intent owes", async () => {
     // The trial route cancels, then refunds through refundCancelledTrial, and writes no seat intent.
-    seats.refunded = [
-      {
-        ...refundedSeat("CANCELLED"),
-        appointment: {
-          webinar: null,
-          class: null,
-          consultation: null,
-          subscription: null,
-          trial: { status: "CANCELLED" },
-        },
-      },
-    ];
+    seats.refunded = [refundedSeat];
     retryRows = [
       {
         id: "seat-row-old",
