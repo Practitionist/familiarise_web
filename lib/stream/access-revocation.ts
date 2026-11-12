@@ -806,6 +806,52 @@ export async function persistSeatRevocation(
   );
 }
 
+/** How long provisioning waits on Stream to take back an unsaved room's members. */
+const UNSAVED_ROOM_RELEASE_BUDGET_MS = 5_000;
+
+/**
+ * Removes the members a room was just created with when its Meeting row could not
+ * be saved: revocation finds rooms only through Meeting rows. Best effort; never throws.
+ */
+export async function releaseUnsavedRoom(
+  streamCallId: string,
+  userIds: string[],
+): Promise<void> {
+  const ids = Array.from(new Set(userIds.filter(Boolean)));
+  if (ids.length === 0) return;
+  const deadlineMs = Date.now() + UNSAVED_ROOM_RELEASE_BUDGET_MS;
+  try {
+    // A concurrent provision that saved this call keeps it reachable, so its members stay.
+    const saved = await prisma.meeting.findFirst({
+      where: { streamCallId },
+      select: { id: true },
+    });
+    if (saved) return;
+  } catch {
+    // An unreadable row is treated as missing: removal is the safe side.
+  }
+  const kept: string[] = [];
+  try {
+    for (let i = 0; i < ids.length; i += MEMBER_CHUNK) {
+      kept.push(
+        ...(await removeChunkFromCall(
+          streamCallId,
+          ids.slice(i, i + MEMBER_CHUNK),
+          deadlineMs,
+        )),
+      );
+    }
+  } catch {
+    kept.push(...ids);
+  }
+  if (kept.length > 0) {
+    streamLogger.warn("Unsaved room kept members it could not remove", {
+      streamCallId,
+      kept: kept.length,
+    });
+  }
+}
+
 /** A fence that could not read the seats says so; the caller must not treat it as admitted. */
 export type SeatGrantFence =
   { verified: true; lost: string[] } | { verified: false };

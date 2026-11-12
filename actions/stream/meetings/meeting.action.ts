@@ -31,7 +31,10 @@ import {
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
 import { assertValidGetOrCreateCall } from "@/lib/stream/video-contracts";
-import { fenceSeatGrants } from "@/lib/stream/access-revocation";
+import {
+  fenceSeatGrants,
+  releaseUnsavedRoom,
+} from "@/lib/stream/access-revocation";
 
 interface MeetingSlot {
   id: string;
@@ -459,10 +462,16 @@ async function provisionRoom(
     return { ok: true, streamCallId };
   }
 
-  await createDbMeeting(
-    { ...anchorSlot, appointmentId: resolvedAppointmentId },
-    streamCallId,
-  );
+  try {
+    await createDbMeeting(
+      { ...anchorSlot, appointmentId: resolvedAppointmentId },
+      streamCallId,
+    );
+  } catch (error) {
+    // No Meeting row means no revocation can find this call, so its new members leave it.
+    await releaseUnsavedRoom(streamCallId, granted.userIds);
+    throw error;
+  }
 
   return { ok: true, streamCallId };
 }

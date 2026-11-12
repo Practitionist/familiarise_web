@@ -9,6 +9,8 @@ const mockCallIds: string[] = [];
 const mockSlotFindUnique = jest.fn();
 const mockMeetingFindUnique = jest.fn();
 const mockMeetingCreate = jest.fn();
+const mockMeetingFindFirst = jest.fn();
+const mockUpdateCallMembers = jest.fn();
 const mockParticipantFindMany = jest.fn();
 const mockAppointmentFindUnique = jest.fn();
 const mockVideoConfigFindUnique = jest.fn();
@@ -46,7 +48,11 @@ jest.mock("../../lib/stream-client", () => ({
     video: {
       call: (_type: string, id: string) => {
         mockCallIds.push(id);
-        return { getOrCreate: (...a: unknown[]) => mockGetOrCreate(...a) };
+        return {
+          getOrCreate: (...a: unknown[]) => mockGetOrCreate(...a),
+          updateCallMembers: (payload: unknown) =>
+            mockUpdateCallMembers(id, payload),
+        };
       },
     },
   })),
@@ -63,6 +69,7 @@ jest.mock("../../lib/prisma", () => ({
     },
     meeting: {
       findUnique: (...a: unknown[]) => mockMeetingFindUnique(...a),
+      findFirst: (...a: unknown[]) => mockMeetingFindFirst(...a),
       create: (...a: unknown[]) => mockMeetingCreate(...a),
     },
     appointmentParticipant: {
@@ -321,6 +328,76 @@ describe("provisionAppointmentMeeting", () => {
         }),
       }),
     );
+  });
+
+  it("takes the new members back out of a room whose Meeting row could not be saved", async () => {
+    const startsAt = new Date(Date.now() + 5 * 60 * 1000);
+    const endsAt = new Date(startsAt.getTime() + 30 * 60 * 1000);
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: "host-1",
+        role: "CONSULTANT",
+        consultantProfileId: "cp-host",
+      },
+    });
+    mockMeetingFindUnique.mockResolvedValue(null);
+    mockMeetingFindFirst.mockResolvedValue(null);
+    mockAppointmentFindUnique.mockResolvedValue({ organizationId: null });
+    mockMeetingCreate.mockRejectedValue(new Error("db down"));
+    mockSlotFindUnique.mockResolvedValue({
+      id: "slot-1",
+      startsAt,
+      endsAt,
+      isTentative: false,
+      completionStatus: "SCHEDULED",
+      deletedAt: null,
+      appointmentId: "appt-1",
+      consultantProfileId: "cp-host",
+      appointment: {
+        appointmentType: "TRIAL",
+        organizationId: null,
+        deletedAt: null,
+        participants: [],
+        consultation: null,
+        subscription: null,
+        webinar: null,
+        class: null,
+        trial: {
+          status: "SCHEDULED",
+          subscriptionPlan: {
+            title: "Trial Session",
+            consultantProfile: {
+              id: "cp-host",
+              userId: "host-1",
+              user: { name: "Dr. Host" },
+            },
+          },
+        },
+      },
+    });
+    mockParticipantFindMany.mockResolvedValue([
+      { user: { id: "client-1", name: "Client" } },
+    ]);
+    mockUpsertUsersToStream.mockResolvedValue({ droppedIds: [] });
+    mockGetOrCreate.mockResolvedValue({});
+    mockUpdateCallMembers.mockResolvedValue({});
+
+    await expect(
+      provisionAppointmentMeeting({
+        id: "slot-1",
+        startsAt,
+        endsAt,
+        isTentative: false,
+        appointmentId: "appt-1",
+      }),
+    ).rejects.toThrow("db down");
+
+    expect(mockMeetingFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { streamCallId: "occurrence-slot-1" } }),
+    );
+    expect(mockUpdateCallMembers).toHaveBeenCalledWith("occurrence-slot-1", {
+      remove_members: ["host-1", "client-1"],
+    });
   });
 
   it("caps a webinar room at the instance override plus headroom, excluding owner and presenter roles", async () => {
