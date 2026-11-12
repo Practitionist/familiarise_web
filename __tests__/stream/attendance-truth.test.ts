@@ -227,6 +227,27 @@ it("(f) an exhausted Stream budget defers without any write", async () => {
   expect(transition).not.toHaveBeenCalled();
 });
 
+it("(h) one-sided rows with no word from Stream wait, then park UNVERIFIED instead of HOST_ABSENT", async () => {
+  report.mockResolvedValue(null);
+  sessions.mockResolvedValue(null);
+  const learnerOnly = () => slot([presence("learner", 60)]);
+  expect(await decide(learnerOnly())).toEqual({
+    kind: "deferred",
+    reason: "stream-evidence",
+  });
+  expect(transition).not.toHaveBeenCalled();
+  const parked = await decideSlotOutcome(learnerOnly(), {
+    now: at(60 + 25 * 60),
+    outages: [],
+    witness: createStreamWitnessBudget(),
+  });
+  expect(parked).toMatchObject({
+    kind: "written",
+    to: "UNVERIFIED",
+    verdict: { outcome: "INCONCLUSIVE", hostAttributed: false },
+  });
+});
+
 it("(g) a prior segment's late leave never stamps the current room's attendance as left", async () => {
   db.meeting.findUnique
     .mockResolvedValueOnce(null) // not the current call id

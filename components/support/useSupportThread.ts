@@ -53,6 +53,7 @@ export interface SupportThread {
   supportTicket?: {
     referenceNumber: string | null;
     ackDueAt: string | null;
+    acknowledgedAt?: string | null;
   } | null;
 }
 
@@ -523,7 +524,14 @@ export function useSupportThread(
     retryTurn,
     lastActions,
     lastOutcomeId,
-    waitingLine: describeWait(thread?.supportTicket?.ackDueAt ?? lastReplyByAt),
+    // Null once the team has replied or the case is settled: no reply is owed then.
+    waitingLine:
+      isHuman &&
+      !isResolved &&
+      !isClosed &&
+      !thread?.supportTicket?.acknowledgedAt
+        ? describeWait(thread?.supportTicket?.ackDueAt ?? lastReplyByAt)
+        : null,
     handoffIndex,
   };
 }

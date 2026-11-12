@@ -52,6 +52,9 @@ import { reportSentryMessage } from "@/lib/observability/report";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { onClassSessionVoided } from "./class-sessions";
 
+/** How long past the booked end a one-sided session waits for Stream before it parks UNVERIFIED. */
+const STREAM_EVIDENCE_WAIT_MS = 24 * 60 * 60 * 1000;
+
 /** Stream reads one sweep run may spend on attendance evidence; a slot past the budget waits for the next run. */
 const STREAM_WITNESS_READS_PER_RUN = 100;
 
@@ -118,7 +121,11 @@ export interface OutcomeContext {
 export type SlotDecision =
   | {
       kind: "deferred";
-      reason: "live-overrun" | "no-show-detector" | "stream-budget";
+      reason:
+        | "live-overrun"
+        | "no-show-detector"
+        | "stream-budget"
+        | "stream-evidence";
     }
   | {
       kind: "written";
@@ -516,12 +523,15 @@ export async function decideSlotOutcome(
 
   let presences: PresenceInterval[] = slot.presences;
   let report: CallPresenceEvidence | null = null;
+  let streamAnswered = false;
   if (meeting) {
     const evidence = await readStreamEvidence(slot, meeting, ctx.witness);
     if (evidence === EXHAUSTED) {
       return { kind: "deferred", reason: "stream-budget" };
     }
     report = evidence.report;
+    streamAnswered =
+      report !== null || evidence.sessions.has(meeting.streamCallId);
     const resolved = resolvePresencesFromStream(
       slot.presences,
       meeting.streamCallId,
@@ -538,7 +548,7 @@ export async function decideSlotOutcome(
     }
   }
 
-  const verdict = classifySessionOutcome({
+  let verdict = classifySessionOutcome({
     startsAt: slot.startsAt,
     endsAt: slot.endsAt,
     hostUserIds: sessionHostUserIds(slot.appointment),
@@ -549,6 +559,22 @@ export async function decideSlotOutcome(
     report,
     maintenanceWindows: ctx.outages,
   });
+  // Webhook rows alone never mark one side absent: wait for Stream, then park for ops.
+  if (
+    meeting &&
+    !streamAnswered &&
+    (verdict.outcome === "LEARNER_ABSENT" || verdict.outcome === "HOST_ABSENT")
+  ) {
+    if (ctx.now.getTime() - slot.endsAt.getTime() < STREAM_EVIDENCE_WAIT_MS) {
+      return { kind: "deferred", reason: "stream-evidence" };
+    }
+    verdict = {
+      ...verdict,
+      outcome: "INCONCLUSIVE",
+      completionStatus: "UNVERIFIED",
+      hostAttributed: false,
+    };
+  }
   let to: OccurrenceCompletionStatus = verdict.completionStatus;
   if (verdict.outcome === "HOST_ABSENT" && slot.appointment.consultationId) {
     // D5 — the detector cancels and refunds a consultation host no-show; one it

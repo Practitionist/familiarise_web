@@ -240,34 +240,30 @@ async function addHostedPlanCollabChannels(
   collabChannelIds: Set<string>,
 ): Promise<void> {
   const [hostedWebinarPlans, hostedClassPlans] = await Promise.all([
-    prisma.webinarPlan?.findMany
-      ? prisma.webinarPlan.findMany({
-          where: {
-            consultantProfileId,
-            collaborators: {
-              some: {
-                status: "ACCEPTED",
-                consultantProfile: { deletedAt: null },
-              },
-            },
+    prisma.webinarPlan.findMany({
+      where: {
+        consultantProfileId,
+        collaborators: {
+          some: {
+            status: "ACCEPTED",
+            consultantProfile: { deletedAt: null },
           },
-          select: { id: true },
-        })
-      : Promise.resolve([]),
-    prisma.classPlan?.findMany
-      ? prisma.classPlan.findMany({
-          where: {
-            consultantProfileId,
-            collaborators: {
-              some: {
-                status: "ACCEPTED",
-                consultantProfile: { deletedAt: null },
-              },
-            },
+        },
+      },
+      select: { id: true },
+    }),
+    prisma.classPlan.findMany({
+      where: {
+        consultantProfileId,
+        collaborators: {
+          some: {
+            status: "ACCEPTED",
+            consultantProfile: { deletedAt: null },
           },
-          select: { id: true },
-        })
-      : Promise.resolve([]),
+        },
+      },
+      select: { id: true },
+    }),
   ]);
 
   for (const plan of hostedWebinarPlans) {
@@ -305,8 +301,6 @@ async function collectAcceptedCollaboratorTargets(
   selfHealEvents: { type: "webinar" | "class"; id: string }[],
   collabPresenterDmPairs: DmPair[],
 ): Promise<void> {
-  if (!prisma.collaborator?.findMany) return;
-
   const acceptedCollaborations = await prisma.collaborator.findMany({
     where: {
       consultantProfileId,

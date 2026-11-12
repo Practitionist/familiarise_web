@@ -151,6 +151,7 @@ export const SLA_RESOLUTION_AT_RISK_MS = 12 * 3_600_000;
 function inboxViewWhere(
   f: InboxFilters,
   now: Date,
+  statutoryBinds: Prisma.SupportCaseWhereInput,
 ): Prisma.SupportCaseWhereInput[] {
   switch (f.view) {
     case "needs-reply":
@@ -187,6 +188,7 @@ function inboxViewWhere(
               statutoryDueAt: {
                 lte: new Date(now.getTime() + SLA_RESOLUTION_AT_RISK_MS),
               },
+              ...statutoryBinds,
             },
             {
               acknowledgedAt: null,
@@ -211,13 +213,18 @@ function inboxViewWhere(
   }
 }
 
+/**
+ * `statutoryBinds` narrows the statutory arm to cases the date still binds; the
+ * server reader passes the column comparison, which needs the Prisma client.
+ */
 export function inboxCaseWhere(
   f: InboxFilters,
   now: Date = new Date(),
+  statutoryBinds: Prisma.SupportCaseWhereInput = {},
 ): Prisma.SupportCaseWhereInput {
   const and: Prisma.SupportCaseWhereInput[] = [
     { deletedAt: null },
-    ...inboxViewWhere(f, now),
+    ...inboxViewWhere(f, now, statutoryBinds),
   ];
   if (["mine", "unassigned", "self-serve"].includes(f.view) && !f.status)
     and.push(CASE_OPEN_WHERE);
@@ -258,6 +265,7 @@ export interface SortKey {
   ackDueAt?: Date | null;
   resolutionDueAt?: Date | null;
   statutoryDueAt?: Date | null;
+  reopenedAt?: Date | null;
 }
 
 /** Deterministic activity order shared by inbox pages. */
@@ -275,10 +283,18 @@ export function compareCasesBySla(a: SortKey, b: SortKey): number {
     const diff = aAck.getTime() - bAck.getTime();
     if (diff !== 0) return diff;
   }
-  const earliest = (row: SortKey) =>
-    [row.resolutionDueAt, row.statutoryDueAt]
-      .filter((date): date is Date => Boolean(date))
-      .sort((left, right) => left.getTime() - right.getTime())[0] ?? null;
+  // A case reopened after its statutory date ranks by its new target, as its badge reads.
+  const earliest = (row: SortKey) => {
+    const reopenedPastStatutory =
+      row.reopenedAt && row.statutoryDueAt && row.resolutionDueAt
+        ? row.reopenedAt.getTime() > row.statutoryDueAt.getTime()
+        : false;
+    return (
+      [row.resolutionDueAt, reopenedPastStatutory ? null : row.statutoryDueAt]
+        .filter((date): date is Date => Boolean(date))
+        .sort((left, right) => left.getTime() - right.getTime())[0] ?? null
+    );
+  };
   const aRes = earliest(a);
   const bRes = earliest(b);
   if (Boolean(aRes) !== Boolean(bRes)) return aRes ? -1 : 1;

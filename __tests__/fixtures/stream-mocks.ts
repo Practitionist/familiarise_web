@@ -34,6 +34,13 @@ export const createMockPrisma = () => ({
     findFirst: jest.fn(),
     findMany: jest.fn(),
   },
+  // Collaboration reads run on every event-channel sync; default to "no co-hosts".
+  collaborator: {
+    findFirst: jest.fn(async () => null),
+    findMany: jest.fn(async () => []),
+  },
+  webinarPlan: { findMany: jest.fn(async () => []) },
+  classPlan: { findMany: jest.fn(async () => []) },
   // Why: the Stream upsert pipeline calls `checkConsent` (lib/compliance/dpdp.ts)
   // before mirroring identity into Stream.io. Without a `consentArtifact` delegate
   // on the mock, the helper crashes with `TypeError: Cannot read properties of
@@ -99,35 +106,3 @@ export const createMockUserCache = () => ({
 export const createMockRoleMapper = () => ({
   mapRoleToStream: jest.fn().mockReturnValue("user"),
 });
-
-// Stream Video Call mock with real Stream enum contract validation (#1999)
-export const createMockVideoCall = () => {
-  const {
-    assertValidGetOrCreateCall,
-    assertValidUpdateCallMembers,
-    assertValidUpdateUserPermissions,
-  } =
-    require("../../lib/stream/video-contracts") as typeof import("../../lib/stream/video-contracts");
-
-  return {
-    getOrCreate: jest.fn().mockImplementation(async (payload: unknown) => {
-      assertValidGetOrCreateCall(payload);
-      return {};
-    }),
-    update: jest.fn().mockResolvedValue({}),
-    updateCallMembers: jest
-      .fn()
-      .mockImplementation(async (payload: unknown) => {
-        assertValidUpdateCallMembers(payload);
-        return {};
-      }),
-    updateUserPermissions: jest
-      .fn()
-      .mockImplementation(async (payload: unknown) => {
-        assertValidUpdateUserPermissions(payload);
-        return {};
-      }),
-    goLive: jest.fn().mockResolvedValue({}),
-    end: jest.fn().mockResolvedValue({}),
-  };
-};

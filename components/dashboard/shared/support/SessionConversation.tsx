@@ -142,7 +142,7 @@ function EscalateStep({
 
 function sessionLiveAnnouncement(t: ThreadState, offline: boolean): string {
   if (t.turnPending) return "Sending your message…";
-  if (t.isHuman) return t.waitingLine;
+  if (t.isHuman) return t.waitingLine ?? "";
   if (offline) return "You are offline. Your draft message is preserved.";
   return "";
 }
@@ -494,7 +494,7 @@ export function SessionConversation({
               />
             </div>
           ))}
-          {t.isHuman && !t.isResolved && !t.isClosed && (
+          {t.waitingLine && (
             <p className="text-center text-[11px] text-muted-foreground">
               {t.waitingLine}
             </p>

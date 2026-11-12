@@ -652,7 +652,7 @@ if (requestedUserId !== session.user.id) {
 }
 ```
 
-This is implemented in the `tokenProvider` and `chatTokenProvider` server actions (`actions/stream/chat/stream.action.ts`): both require a session, refuse to mint a token for a different user whatever the caller's role, and refuse banned users outright. The banned-user check matters because Stream token revocation is timestamp-based — a moderated user could otherwise immediately re-mint a fresh token dated after the revocation and reconnect.
+This is implemented in the `tokenProvider` and `chatTokenProvider` server actions (`actions/stream/chat/stream.action.ts`): both require a session, refuse to mint a token for a different user whatever the caller's role, refuse when the user row is missing or erased (`Forbidden: account erased`), and refuse banned users outright. The banned-user check matters because Stream token revocation is timestamp-based — a moderated user could otherwise immediately re-mint a fresh token dated after the revocation and reconnect.
 
 ### Moderation: Revocation and Deactivation
 
