@@ -81,7 +81,7 @@ async function appendHistory(
   toStatus: string,
   meta: HistoryMeta,
 ): Promise<void> {
-  if (fromStatus == null) {
+  if (fromStatus === null || fromStatus === undefined) {
     // An audit trail must not record "we don't know" quietly. The A12 pre-read
     // missed this row — `transitionOccurrenceCompletion` says so directly for a
     // row that entered the from-set after the pre-read — and the durable row is

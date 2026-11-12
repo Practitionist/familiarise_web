@@ -359,7 +359,10 @@ export function getOccurrenceJoinState(
 
   const joinWindowMs = opts?.joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
   const rejoinGraceMs =
-    opts?.rejoinGraceMs ?? (occurrence.endsAt != null ? REJOIN_GRACE_MS : 0);
+    opts?.rejoinGraceMs ??
+    (occurrence.endsAt !== null && occurrence.endsAt !== undefined
+      ? REJOIN_GRACE_MS
+      : 0);
   const now = (opts?.now ?? new Date()).getTime();
   const { start, end } = occurrenceTimes(occurrence);
 
@@ -425,7 +428,9 @@ export function getOccurrenceVMJoinState(
       ...opts,
       rejoinGraceMs:
         opts?.rejoinGraceMs ??
-        (occurrence.endsAt != null ? REJOIN_GRACE_MS : 0),
+        (occurrence.endsAt !== null && occurrence.endsAt !== undefined
+          ? REJOIN_GRACE_MS
+          : 0),
     },
   );
 }

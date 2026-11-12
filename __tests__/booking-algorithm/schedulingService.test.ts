@@ -197,7 +197,7 @@ function makeMockTx() {
 
 // ─── Event Data Factories ───────────────────────────────────────────────────
 
-function makeConsultantProfile(overrides: any = {}) {
+function makeConsultantProfile(overrides: Record<string, unknown> = {}) {
   return {
     user: { id: "consultant-1", timezone: "UTC" },
     scheduleType: ScheduleType.WEEKLY,
@@ -209,7 +209,7 @@ function makeConsultantProfile(overrides: any = {}) {
   };
 }
 
-function makeConsultationEvent(overrides: any = {}) {
+function makeConsultationEvent(overrides: Record<string, unknown> = {}) {
   return {
     id: "consult-1",
     consultationPlan: {
@@ -226,7 +226,7 @@ function makeConsultationEvent(overrides: any = {}) {
 // #1766 — the allocator places ONE CYCLE (`sessionsPerWeek` sessions) at a
 // time against the frozen entitlement, so a fixture's period no longer sets
 // the required count: `sessionsPerWeek` does.
-function makeSubscriptionEvent(overrides: any = {}) {
+function makeSubscriptionEvent(overrides: Record<string, unknown> = {}) {
   return {
     id: "sub-1",
     sessionsTotal: null,
@@ -264,7 +264,7 @@ function subscriptionPlanOf(
   };
 }
 
-function makeWebinarEvent(overrides: any = {}) {
+function makeWebinarEvent(overrides: Record<string, unknown> = {}) {
   return {
     id: "webinar-1",
     webinarPlan: {
@@ -276,7 +276,7 @@ function makeWebinarEvent(overrides: any = {}) {
   };
 }
 
-function makeClassEvent(overrides: any = {}) {
+function makeClassEvent(overrides: Record<string, unknown> = {}) {
   return {
     id: "class-1",
     classPlan: {
@@ -296,6 +296,11 @@ function makeClassEvent(overrides: any = {}) {
 
 // ─── Test Setup ─────────────────────────────────────────────────────────────
 
+type SeatRow = { appointmentId: string; role: string; userId: string };
+const prismaDb = prisma as unknown as Record<string, Record<string, jest.Mock>>;
+const lockMocks = () =>
+  jest.requireMock<Record<string, jest.Mock>>("../../utils/appointmentlock");
+
 let mockTx: ReturnType<typeof makeMockTx>;
 
 beforeEach(() => {
@@ -303,8 +308,8 @@ beforeEach(() => {
   jest.setSystemTime(new Date("2025-01-01T00:00:00Z"));
 
   mockTx = makeMockTx();
-  (prisma.$transaction as jest.Mock).mockImplementation(async (callback: any) =>
-    callback(mockTx),
+  (prisma.$transaction as jest.Mock).mockImplementation(
+    async (callback: (tx: unknown) => unknown) => callback(mockTx),
   );
 
   // #908 — reads (lock pre-fetches, fetchEventData, existing-appts,
@@ -312,11 +317,11 @@ beforeEach(() => {
   // the base client's read fns at the same mockTx instances so existing
   // per-test `mockTx.<type>.findUnique` / `mockTx.appointment.findMany` wiring
   // keeps driving them; writes still go through the txn's mockTx.
-  (prisma as any).appointment = mockTx.appointment;
-  (prisma as any).consultation.findUnique = mockTx.consultation.findUnique;
-  (prisma as any).subscription.findUnique = mockTx.subscription.findUnique;
-  (prisma as any).webinar.findUnique = mockTx.webinar.findUnique;
-  (prisma as any).class.findUnique = mockTx.class.findUnique;
+  prismaDb.appointment = mockTx.appointment;
+  prismaDb.consultation.findUnique = mockTx.consultation.findUnique;
+  prismaDb.subscription.findUnique = mockTx.subscription.findUnique;
+  prismaDb.webinar.findUnique = mockTx.webinar.findUnique;
+  prismaDb.class.findUnique = mockTx.class.findUnique;
 
   // Default full-event reads so getConsultantProfileId / getConsulteeUserId /
   // fetchEventData all resolve from one mock (factories carry the scalar
@@ -375,7 +380,7 @@ describe("allocate() - Mode routing", () => {
     const result = await allocate({
       eventType: "consultation",
       eventId: "consult-1",
-      mode: "invalid" as any,
+      mode: "invalid" as never,
     });
 
     expect(result.success).toBe(false);
@@ -1294,7 +1299,7 @@ describe("Auto allocation", () => {
     // The CONSULTEE is already booked (with another consultant) every Monday
     // 09:00 in the search window → auto-allocate must skip Monday and pick the
     // mutually-free Tuesday block.
-    const consulteeBusy: any[] = [];
+    const consulteeBusy: unknown[] = [];
     for (let week = 0; week < 8; week++) {
       const d = new Date("2025-01-06T09:00:00Z");
       d.setUTCDate(d.getUTCDate() + week * 7);
@@ -1315,8 +1320,8 @@ describe("Auto allocation", () => {
 
     expect(result.success).toBe(true);
     const createCall = mockTx.appointment.create.mock.calls[0][0];
-    const starts = createCall.data.occurrences.create.map((s: any) =>
-      new Date(s.startsAt).toISOString(),
+    const starts = createCall.data.occurrences.create.map(
+      (s: { startsAt: Date | string }) => new Date(s.startsAt).toISOString(),
     );
     // Booked the mutually-free Tuesday block, not a consultant-free Monday slot
     // that would have failed the consultee-conflict validation (#898). Without
@@ -1391,7 +1396,7 @@ describe("Auto allocation", () => {
     );
 
     // Book ALL 8 weeks of Monday 9:00 slots so none are available
-    const bookedSlots: any[] = [];
+    const bookedSlots: unknown[] = [];
     for (let week = 0; week < 8; week++) {
       const d = new Date("2025-01-06T09:00:00Z");
       d.setUTCDate(d.getUTCDate() + week * 7);
@@ -1435,7 +1440,7 @@ describe("Auto allocation", () => {
     // an APPROVED_PENDING_PAYMENT consultation whose payment has expired. The
     // validator already skips these (orphaned-payment fix); pre-RV-2 the
     // allocator did not, so the two disagreed and auto-allocate failed.
-    const blockedSlots: any[] = [];
+    const blockedSlots: unknown[] = [];
     for (let week = 0; week < 8; week++) {
       const d = new Date("2025-01-06T09:00:00Z");
       d.setUTCDate(d.getUTCDate() + week * 7);
@@ -1487,7 +1492,7 @@ describe("Auto allocation", () => {
       }),
     );
 
-    const blockedSlots: any[] = [];
+    const blockedSlots: unknown[] = [];
     for (let week = 0; week < 8; week++) {
       const d = new Date("2025-01-06T09:00:00Z");
       d.setUTCDate(d.getUTCDate() + week * 7);
@@ -1568,7 +1573,9 @@ describe("Auto allocation", () => {
       mockTx.appointment.create.mock.calls[0][0].data.occurrences.create;
     expect(occurrences).toHaveLength(8);
 
-    const sessionStarts = occurrences.map((row: any) => new Date(row.startsAt));
+    const sessionStarts = occurrences.map(
+      (row: { startsAt: Date | string }) => new Date(row.startsAt),
+    );
     // Two sessions stacked on the first Monday (09:00 and 10:00) — the
     // per-day-cap behavior the validator already allowed.
     const jan6 = sessionStarts.filter((d: Date) =>
@@ -1625,7 +1632,9 @@ describe("Auto allocation", () => {
     // Mon / Wed / Fri at 09:00, never 09:00 + 10:00 on Monday.
     expect(
       occurrences
-        .map((row: any) => new Date(row.startsAt).toISOString())
+        .map((row: { startsAt: Date | string }) =>
+          new Date(row.startsAt).toISOString(),
+        )
         .sort(),
     ).toEqual([
       "2025-01-06T09:00:00.000Z",
@@ -1689,7 +1698,8 @@ describe("Auto allocation", () => {
     for (const index of [1, 2]) {
       const { where, include } = findManyCalls[index][0];
       const boundedArm = where.AND.find(
-        (clause: any) => clause.occurrences?.some?.endsAt !== undefined,
+        (clause: { occurrences?: { some?: { endsAt?: unknown } } }) =>
+          clause.occurrences?.some?.endsAt !== undefined,
       )?.occurrences.some;
       expect(boundedArm).toBeDefined();
       // Live intervals only — past slots can never collide with a candidate.
@@ -1804,7 +1814,6 @@ describe("Auto allocation", () => {
     });
 
     // $transaction receives callback and options
-    const txCall = (prisma.$transaction as jest.Mock).mock.calls[0];
     // The second argument should be the options (our mock ignores it, but it was passed)
     // Since we mock $transaction to only use the callback, verify it was called
     expect(prisma.$transaction).toHaveBeenCalled();
@@ -2458,8 +2467,9 @@ describe("deleteExistingAppointments", () => {
         _count: { payment: 0 },
       },
     ]);
-    mockTx.appointment.deleteMany.mockImplementation(async ({ where }: any) =>
-      where.id === "old-2" ? { count: 0 } : { count: 1 },
+    mockTx.appointment.deleteMany.mockImplementation(
+      async ({ where }: { where: { id: string } }) =>
+        where.id === "old-2" ? { count: 0 } : { count: 1 },
     );
 
     const result = await allocate({
@@ -2654,13 +2664,13 @@ describe("deleteExistingAppointments", () => {
     // seats them as CONSULTANT itself, so the CONSULTEE re-seat names only
     // the learner.
     const reseatCalls = mockTx.appointmentParticipant.createMany.mock.calls;
-    const reseated = reseatCalls.flatMap((c: any[]) =>
+    const reseated = reseatCalls.flatMap((c: { data?: SeatRow[] }[]) =>
       (c[0]?.data ?? [])
         .filter(
-          (row: { appointmentId: string; role: string }) =>
+          (row: SeatRow) =>
             row.appointmentId === "new-class-apt" && row.role === "CONSULTEE",
         )
-        .map((row: { userId: string }) => row.userId),
+        .map((row: SeatRow) => row.userId),
     );
     expect(reseated).toEqual(["learner-1"]);
   });
@@ -2943,9 +2953,9 @@ describe("deleteExistingAppointments", () => {
     // Both paid attendees are re-seated on the reused appointment; the
     // consultant is not re-added (already seated). #1554
     const reseat = mockTx.appointmentParticipant.createMany.mock.calls.find(
-      (c: any[]) =>
+      (c: { data?: SeatRow[] }[]) =>
         (c[0]?.data ?? []).some(
-          (row: { appointmentId: string; role: string }) =>
+          (row: SeatRow) =>
             row.appointmentId === "paid-webinar-apt" &&
             row.role === "CONSULTEE",
         ),
@@ -3276,8 +3286,8 @@ describe("Edge cases", () => {
       "class",
     ] as const) {
       const freshTx = makeMockTx();
-      (prisma.$transaction as jest.Mock).mockImplementation(async (cb: any) =>
-        cb(freshTx),
+      (prisma.$transaction as jest.Mock).mockImplementation(
+        async (cb: (tx: unknown) => unknown) => cb(freshTx),
       );
 
       const eventFactories = {
@@ -3289,7 +3299,7 @@ describe("Edge cases", () => {
 
       // #908 — fetchEventData reads the BASE client (out of txn); writes go to
       // freshTx. Set the read on base prisma and assert the write on freshTx.
-      (prisma as any)[eventType].findUnique.mockResolvedValue(
+      prismaDb[eventType].findUnique.mockResolvedValue(
         eventFactories[eventType](),
       );
 
@@ -3303,7 +3313,7 @@ describe("Edge cases", () => {
       });
 
       // Correct model was queried (read runs on the base client now)
-      expect((prisma as any)[eventType].findUnique).toHaveBeenCalled();
+      expect(prismaDb[eventType].findUnique).toHaveBeenCalled();
       // Correct model was updated — ALL four types now go through
       // WHERE-guarded CAS transitions (updateMany): #836 for
       // consultation/subscription, EVENT_ALLOWED_FROM for webinar/class.
@@ -3316,10 +3326,7 @@ describe("Edge cases", () => {
 
 describe("Manual allocation - distributed lock", () => {
   it("should acquire and release consultant-level lock for manual allocation", async () => {
-    const {
-      lockAutoAllocate,
-      unlockAutoAllocate,
-    } = require("../../utils/appointmentlock");
+    const { lockAutoAllocate, unlockAutoAllocate } = lockMocks();
 
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
@@ -3351,10 +3358,7 @@ describe("Manual allocation - distributed lock", () => {
   });
 
   it("should release lock even when transaction fails", async () => {
-    const {
-      lockAutoAllocate,
-      unlockAutoAllocate,
-    } = require("../../utils/appointmentlock");
+    const { unlockAutoAllocate } = lockMocks();
 
     // Make the transaction throw
     (prisma.$transaction as jest.Mock).mockRejectedValueOnce(
@@ -3374,7 +3378,7 @@ describe("Manual allocation - distributed lock", () => {
   });
 
   it("should return 409 when lock acquisition fails", async () => {
-    const { lockAutoAllocate } = require("../../utils/appointmentlock");
+    const { lockAutoAllocate } = lockMocks();
 
     // Simulate lock contention: the typed refusal's stable code.
     lockAutoAllocate.mockRejectedValueOnce(
@@ -3396,10 +3400,7 @@ describe("Manual allocation - distributed lock", () => {
   // #898 follow-up — the consultee-scoped lock serializes the consultee-conflict
   // check → write so one person can't be booked across two consultants at once.
   it("#898: acquires + releases the consultee lock around the allocation", async () => {
-    const {
-      lockConsulteeBooking,
-      unlockConsulteeBooking,
-    } = require("../../utils/appointmentlock");
+    const { lockConsulteeBooking, unlockConsulteeBooking } = lockMocks();
 
     // #908 — pre-fetch + fetchEventData share one base-client read now; one
     // full event carries both consultantProfileId and requestedBy.user.id.
@@ -3419,10 +3420,7 @@ describe("Manual allocation - distributed lock", () => {
   });
 
   it("#898: fails closed when the consultee lock can't be acquired", async () => {
-    const {
-      lockConsulteeBooking,
-      unlockAutoAllocate,
-    } = require("../../utils/appointmentlock");
+    const { lockConsulteeBooking, unlockAutoAllocate } = lockMocks();
 
     (prisma.consultation.findUnique as jest.Mock).mockResolvedValue({
       consultationPlan: { consultantProfileId: "consultant-profile-1" },

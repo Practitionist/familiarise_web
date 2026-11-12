@@ -54,14 +54,14 @@ const mockPrisma = {
   subscription: {
     findUnique: jest.fn().mockResolvedValue(null),
   },
-} as any;
+};
 
 let service: ScheduleValidationService;
 
 beforeEach(() => {
   jest.useFakeTimers();
   jest.setSystemTime(new Date("2025-01-01T00:00:00Z"));
-  service = new ScheduleValidationService(mockPrisma);
+  service = new ScheduleValidationService(mockPrisma as never);
   mockPrisma.appointment.findFirst.mockResolvedValue(null);
   mockPrisma.appointment.findMany.mockResolvedValue([]);
   mockPrisma.appointmentOccurrence.findMany.mockResolvedValue([]);
@@ -94,7 +94,7 @@ const weeklyConsultant = makeConsultantData({
     makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 9, 17),
     makeWeeklyAvailabilitySlot(DayOfWeek.WEDNESDAY, 9, 17),
   ],
-}) as any;
+}) as never;
 
 const customConsultant = makeConsultantData({
   scheduleType: ScheduleType.CUSTOM,
@@ -108,7 +108,7 @@ const customConsultant = makeConsultantData({
       "2025-06-03T16:00:00.000Z",
     ),
   ],
-}) as any;
+}) as never;
 
 // ─── checkSlotAvailability ──────────────────────────────────────────────────
 
@@ -261,10 +261,13 @@ describe("checkSlotAvailability", () => {
   it("uses the fixed 30-minute slot window for the conflict envelope", async () => {
     await service.checkSlotAvailability(futureSlots(1), "user-1");
     const where = mockPrisma.appointment.findMany.mock.calls[0][0].where;
-    const slotFilter = where.AND.find((clause: any) => clause.occurrences)
-      .occurrences.some.AND;
-    const ltClause = slotFilter.find((c: any) => c.startsAt).startsAt.lt;
-    const gtClause = slotFilter.find((c: any) => c.endsAt).endsAt.gt;
+    const slotFilter = where.AND.find(
+      (clause: { occurrences?: unknown }) => clause.occurrences,
+    ).occurrences.some.AND;
+    const ltClause = slotFilter.find((c: { startsAt?: unknown }) => c.startsAt)
+      .startsAt.lt;
+    const gtClause = slotFilter.find((c: { endsAt?: unknown }) => c.endsAt)
+      .endsAt.gt;
     // A single 10:00 slot must produce a [10:00, 10:30) envelope.
     expect(ltClause.toISOString()).toBe("2025-06-01T10:30:00.000Z");
     expect(gtClause.toISOString()).toBe("2025-06-01T10:00:00.000Z");
@@ -276,8 +279,9 @@ describe("checkSlotAvailability", () => {
   it("drops tombstoned and host-cancelled rows from the conflict scan, keeps RESCHEDULED holds", async () => {
     await service.checkSlotAvailability(futureSlots(1), "user-1");
     const where = mockPrisma.appointment.findMany.mock.calls[0][0].where;
-    const slotFilter = where.AND.find((clause: any) => clause.occurrences)
-      .occurrences.some.AND;
+    const slotFilter = where.AND.find(
+      (clause: { occurrences?: unknown }) => clause.occurrences,
+    ).occurrences.some.AND;
     expect(slotFilter).toContainEqual(OCCUPYING_OCCURRENCE_WHERE);
     expect(JSON.stringify(slotFilter)).not.toContain("RESCHEDULED");
   });
@@ -943,7 +947,7 @@ describe("validate: class event", () => {
         makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 0, 1), // Tue 00:00-01:00 UTC
         makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 10, 17), // Tue 10:00-17:00 UTC
       ],
-    }) as any;
+    }) as never;
 
     // Session 1: Mon 23:30 + Tue 00:00 (cross-midnight)
     // Session 2: Tue 10:00 + Tue 10:30 (same day)
@@ -990,7 +994,7 @@ describe("validate: class event", () => {
 describe("validate: invalid event type", () => {
   it("should return error for unknown event type", async () => {
     const result = await service.validate(
-      "unknown" as any,
+      "unknown" as never,
       "event-1",
       futureSlots(1, "2025-06-02T10:00:00Z"),
       weeklyConsultant,

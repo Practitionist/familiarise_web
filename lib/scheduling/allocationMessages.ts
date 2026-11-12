@@ -336,7 +336,7 @@ const ALLOCATION_ERROR_TOASTS: Record<
     variant: "destructive",
   },
   USE_RETIME: {
-    title: "This event already has booked seats — use Re-time",
+    title: "This event already has booked seats, so move it instead",
     variant: "destructive",
   },
   // ILLEGAL_TRANSITION and RESCHEDULE_STATE_CHANGED are deliberately absent:

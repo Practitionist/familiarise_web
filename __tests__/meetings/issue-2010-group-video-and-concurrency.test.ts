@@ -20,10 +20,7 @@ import {
   assertConsultantAvailableForWindows,
   ConsultantScheduleConflictError,
 } from "@/lib/collaborators/availability";
-import {
-  CollaboratorIneligibleError,
-  respondToInvitation,
-} from "@/lib/collaborators/service";
+import { respondToInvitation } from "@/lib/collaborators/service";
 import {
   scheduleClassMakeUp,
   type HostedClass,

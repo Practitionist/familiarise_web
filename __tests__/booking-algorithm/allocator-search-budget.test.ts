@@ -125,7 +125,6 @@ import {
 import { ScheduleType } from "@prisma/client";
 
 const base = prisma as unknown as Record<string, Record<string, jest.Mock>>;
-const THIRTY_MIN_MS = 30 * 60 * 1000;
 const at = (iso: string) => new Date(iso);
 
 /** `count` non-overlapping two-hour rows, one per day, from `startIso`. */
