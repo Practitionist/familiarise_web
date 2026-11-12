@@ -10,9 +10,10 @@
 
 import { Prisma, type RefundStatus } from "@prisma/client";
 
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import { sumPaise } from "@/lib/payments/utils/money";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
   createRazorpayRefund,
@@ -122,8 +123,34 @@ export interface WalletRefundLine {
   reused: boolean;
 }
 
+/**
+ * Net operator-granted credit on the org's WALLET journal (`adjustWallet`, kind
+ * WALLET_ADJUSTMENT: credits less debits), never negative. It is not top-up money.
+ */
+export async function grantedWalletCreditPaise(
+  db: PrismaLike,
+  ownerOrgId: string,
+): Promise<number> {
+  const rows = await db.ledgerEntry.groupBy({
+    by: ["direction"],
+    where: {
+      account: { kind: "WALLET", organizationId: ownerOrgId },
+      transaction: { kind: "WALLET_ADJUSTMENT" },
+    },
+    _sum: { amountPaise: true },
+  });
+  const net = rows.reduce(
+    (sum, r) =>
+      sum + (r.direction === "CREDIT" ? 1 : -1) * sumPaise(r._sum.amountPaise),
+    0,
+  );
+  return Math.max(0, net);
+}
+
 export interface RefundRemainingResult {
   startingBalancePaise: number;
+  /** Operator-granted credit this door never returns; it stays in the wallet. */
+  grantedCreditPaise: number;
   /** Cached balance after every SUCCEEDED refund this run booked. */
   balanceAfterPaise: number;
   /** Refunds still PENDING at the gateway; the refund webhook books them. */
@@ -259,6 +286,8 @@ type Stop = NonNullable<RefundRemainingResult["stoppedOn"]>;
 type WalkState = {
   billingAccountId: string;
   reason: string;
+  /** Held back from every refund so only top-up money leaves. */
+  grantedCreditPaise: number;
   /** Gateway refunds still in flight; each debits the wallet when it lands. */
   pendingPaise: number;
   refunds: WalletRefundLine[];
@@ -308,7 +337,9 @@ async function issueNewRefunds(
   for (const l of listed) {
     if (l.prior) continue;
     const availablePaise =
-      (await cachedBalance(state.billingAccountId)) - state.pendingPaise;
+      (await cachedBalance(state.billingAccountId)) -
+      state.grantedCreditPaise -
+      state.pendingPaise;
     if (availablePaise <= 0) break;
     try {
       const line = await issueTopUpRefund(l, availablePaise, state.reason);
@@ -325,7 +356,7 @@ async function issueNewRefunds(
 
 /**
  * Refunds `min(available, top-up refundable)` against each CONFIRMED top-up,
- * newest first, until the balance is spoken for. Every top-up's gateway
+ * newest first, until the balance less operator-granted credit is spoken for. Every top-up's gateway
  * refunds are read before any money moves, so a refund still in flight on any
  * of them reserves its share of the balance. A refund already carrying a
  * top-up's dedupe key is reused, never repeated; the walk stops at the first
@@ -336,7 +367,15 @@ export async function refundRemainingWalletBalance(params: {
   reason: string;
 }): Promise<RefundRemainingResult> {
   const { billingAccountId } = params;
-  const startingBalancePaise = await cachedBalance(billingAccountId);
+  const account = await prisma.billingAccount.findUniqueOrThrow({
+    where: { id: billingAccountId },
+    select: { walletBalance: true, ownerOrgId: true },
+  });
+  const startingBalancePaise = Number(account.walletBalance ?? 0);
+  const grantedCreditPaise = await grantedWalletCreditPaise(
+    prisma,
+    account.ownerOrgId,
+  );
   const rows = await prisma.walletTopUp.findMany({
     where: {
       billingAccountId,
@@ -361,6 +400,7 @@ export async function refundRemainingWalletBalance(params: {
   const state: WalkState = {
     billingAccountId,
     reason: params.reason,
+    grantedCreditPaise,
     pendingPaise: 0,
     refunds: [],
   };
@@ -376,6 +416,7 @@ export async function refundRemainingWalletBalance(params: {
   }
   return {
     startingBalancePaise,
+    grantedCreditPaise,
     balanceAfterPaise: await cachedBalance(billingAccountId),
     pendingPaise: state.pendingPaise,
     refunds: state.refunds,

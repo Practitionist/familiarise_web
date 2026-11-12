@@ -14,6 +14,7 @@ jest.mock("../../lib/prisma", () => ({
     $executeRaw: jest.fn().mockResolvedValue(1),
     walletTopUp: { findMany: jest.fn(), updateMany: jest.fn() },
     billingAccount: { findUniqueOrThrow: jest.fn() },
+    ledgerEntry: { groupBy: jest.fn(async () => []) },
   },
 }));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
@@ -62,6 +63,7 @@ import type { CheckoutCommitInput } from "../../lib/payments/checkout/commit/typ
 const db = prisma as unknown as {
   walletTopUp: { findMany: jest.Mock; updateMany: jest.Mock };
   billingAccount: { findUniqueOrThrow: jest.Mock };
+  ledgerEntry: { groupBy: jest.Mock };
 };
 const holding = readRazorpayOrderHolding as jest.Mock;
 
@@ -251,6 +253,42 @@ describe("org wallet journal atomicity", () => {
     });
     expect(stopped.stoppedOn).toMatchObject({ topUpId: "new" });
     expect(createRazorpayRefund).not.toHaveBeenCalled();
+  });
+
+  it("returns only top-up money and leaves operator-granted credit in the wallet", async () => {
+    db.billingAccount.findUniqueOrThrow.mockResolvedValue({
+      walletBalance: 10_000,
+      ownerOrgId: "org_1",
+    });
+    db.ledgerEntry.groupBy.mockResolvedValueOnce([
+      { direction: "CREDIT", _sum: { amountPaise: BigInt(6_000) } },
+    ]);
+    db.walletTopUp.findMany.mockResolvedValue([
+      {
+        id: "t1",
+        billingAccountId: "ba_1",
+        amountPaise: 10_000,
+        providerOrderId: "we_t1",
+        providerPaymentId: "pay_t1",
+      },
+    ]);
+    (listRazorpayRefunds as jest.Mock).mockResolvedValue([]);
+    (createRazorpayRefund as jest.Mock).mockResolvedValue({
+      refundId: "rfnd_1",
+      amount: 4_000,
+      currency: "INR",
+      status: "PENDING",
+    });
+
+    const r = await refundRemainingWalletBalance({
+      billingAccountId: "ba_1",
+      reason: "offboarding",
+    });
+
+    expect(createRazorpayRefund).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 4_000 }),
+    );
+    expect(r).toMatchObject({ grantedCreditPaise: 6_000, pendingPaise: 4_000 });
   });
 });
 

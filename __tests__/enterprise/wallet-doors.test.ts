@@ -31,7 +31,7 @@ jest.mock("../../lib/prisma", () => {
       updateMany: jest.fn(),
     },
     walletTopUp: { findMany: jest.fn() },
-    ledgerEntry: { findFirst: jest.fn() },
+    ledgerEntry: { findFirst: jest.fn(), groupBy: jest.fn(async () => []) },
     user: { count: jest.fn() },
     opsActionLog: { create: jest.fn(async () => ({ id: "log" })) },
     opsActionProposal: { updateMany: jest.fn(), create: jest.fn() },
@@ -78,7 +78,7 @@ type MockDb = {
     updateMany: jest.Mock;
   };
   walletTopUp: { findMany: jest.Mock };
-  ledgerEntry: { findFirst: jest.Mock };
+  ledgerEntry: { findFirst: jest.Mock; groupBy: jest.Mock };
   user: { count: jest.Mock };
   opsActionProposal: { create: jest.Mock };
 };
