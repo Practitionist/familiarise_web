@@ -5,15 +5,16 @@
  * (auth, cap, duplicate, unverified expert, success) and capture-time consumption.
  */
 
-import fs from "node:fs";
-import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 
 import {
   hasBackofficePermission,
   type BackofficeSurface,
 } from "../../lib/auth/backoffice-permissions";
-import { parseSidecarObjects } from "../../scripts/db/sidecar-objects";
+import {
+  parseMigrationsDirectory,
+  readSidecarMigrationSql,
+} from "../../scripts/db/sidecar-objects";
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/api/after-safe", () => ({ scheduleAfter: jest.fn() }));
@@ -78,17 +79,16 @@ const config = {
   version: 4,
 };
 
-describe("founding waiver sidecar", () => {
+describe("founding waiver migration", () => {
   it("ties the reason to a null referral and allows one founding waiver per expert", () => {
-    const sql = fs.readFileSync(
-      path.join(process.cwd(), "prisma/sql/check-constraints.sql"),
-      "utf8",
-    );
-    const { constraints, indexes } = parseSidecarObjects(sql);
-    expect(constraints).toContain(
+    const sql = readSidecarMigrationSql();
+    const objects = parseMigrationsDirectory();
+    const named = (kind: string) =>
+      objects.filter((o) => o.kind === kind).map((o) => o.name);
+    expect(named("constraint")).toContain(
       "consultant_fee_waiver_referral_matches_reason",
     );
-    expect(indexes).toContain("consultant_fee_waiver_one_founding_key");
+    expect(named("index")).toContain("consultant_fee_waiver_one_founding_key");
     expect(sql).toContain(
       `CHECK (("reason" = 'FOUNDING_EXPERT') = ("referralId" IS NULL))`,
     );
