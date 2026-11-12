@@ -264,7 +264,8 @@ Published hours are checked against a request once, at the request door
 request keeps its time for every approver. `manualAllocate` computes
 `heldIntervalStartsOf(existingAppointments)`, passes it as `heldSlotStarts` to
 `ScheduleValidationService`, and runs `assertSlotsStillPublished` on only the
-new times. `useRequestedSlots` passes its requested times as `heldSlotStarts`
+new times, unless the caller may and does set `override` (the expert or
+staff), which skips that check for new times too. `useRequestedSlots` passes its requested times as `heldSlotStarts`
 and takes no `override` argument. Do not add a re-check of held times against
 published hours at approval, and do not read an unchecked request door as
 acceptable. A consultation validator has no same-day rule: one consecutive
