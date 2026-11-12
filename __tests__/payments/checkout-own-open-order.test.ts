@@ -125,6 +125,7 @@ it("prices a reload with credits like the first tab, so the open order is reused
       paymentGateway: "RAZORPAY",
       schedulingPeriod: null,
       expectedAmountPaise: reload.amount,
+      expectedDiscountCodeId: reload.discountCodeId,
     },
   );
   expect(reusable?.id).toBe("pay-open");

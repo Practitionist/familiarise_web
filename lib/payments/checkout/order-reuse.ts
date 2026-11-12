@@ -116,6 +116,8 @@ export async function findReusablePendingOrderPayment(
   params: OpenOrderTarget & {
     /** This request's total; a candidate at another amount is superseded, never resumed. */
     expectedAmountPaise: number;
+    /** This request's priced code; a candidate that spent another code's use is superseded. */
+    expectedDiscountCodeId: string | null;
   },
 ): Promise<{
   reusable: ReusableOrder | null;
@@ -134,6 +136,13 @@ export async function findReusablePendingOrderPayment(
     // A changed coupon, credit choice or tax profile prices differently: expire and mint fresh.
     if (entry.order.amount !== params.expectedAmountPaise) {
       supersede.push({ id: entry.order.id, reason: "amount-mismatch" });
+      continue;
+    }
+    // Another code at the same amount still holds that code's use: release it and mint fresh.
+    if (
+      (entry.order.discountCodeId ?? null) !== params.expectedDiscountCodeId
+    ) {
+      supersede.push({ id: entry.order.id, reason: "discount-mismatch" });
       continue;
     }
     return { reusable: entry.order, supersede }; // newest match wins

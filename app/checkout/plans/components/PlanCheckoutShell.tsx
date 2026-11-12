@@ -347,8 +347,8 @@ export function PlanCheckoutShell({
   const checkoutTaxContext = useCheckoutTaxContext();
   const {
     availableCredits: baseAvailableCredits,
-    isLoadingCredits,
-    creditsLoadFailed,
+    isLoadingCredits: isLoadingBaseCredits,
+    creditsLoadFailed: baseCreditsLoadFailed,
   } = useReferralCreditsBalance(
     checkoutTaxContext.referralCreditsLoaded,
     checkoutTaxContext.referralCreditsPaise,
@@ -377,8 +377,10 @@ export function PlanCheckoutShell({
         : null,
     [adapter.checkoutPlanFields, selectedOrganizationId],
   );
-  const heldCredits = useOwnOpenOrderCredits(openOrderItem);
-  const availableCredits = baseAvailableCredits + heldCredits;
+  const held = useOwnOpenOrderCredits(openOrderItem);
+  const availableCredits = baseAvailableCredits + held.heldCredits;
+  const isLoadingCredits = isLoadingBaseCredits || held.isLoading;
+  const creditsLoadFailed = baseCreditsLoadFailed || held.loadFailed;
   const discount = useDiscountCode({
     amountPaise: adapter.basePricePaise,
     consultantProfileId: adapter.consultantProfileId,

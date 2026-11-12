@@ -9,9 +9,16 @@ const heldCreditsSchema = z.object({
   heldCreditsPaise: z.number().int().nonnegative(),
 });
 
-/** Credit the buyer's own open order for this item holds; checkout counts it as available. */
-export function useOwnOpenOrderCredits(item: CheckoutInput | null): number {
-  const { data } = useQuery({
+/**
+ * Credit the buyer's own open order for this item holds; checkout counts it as available.
+ * Loading and failure are reported apart from zero, so a failed lookup never reads as "nothing held".
+ */
+export function useOwnOpenOrderCredits(item: CheckoutInput | null): {
+  heldCredits: number;
+  isLoading: boolean;
+  loadFailed: boolean;
+} {
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["checkout-own-open-order", item],
     enabled: item !== null,
     queryFn: async () => {
@@ -25,5 +32,5 @@ export function useOwnOpenOrderCredits(item: CheckoutInput | null): number {
       return heldCreditsSchema.parse(await res.json()).heldCreditsPaise;
     },
   });
-  return data ?? 0;
+  return { heldCredits: data ?? 0, isLoading, loadFailed: isError };
 }

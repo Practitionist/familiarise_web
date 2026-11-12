@@ -388,6 +388,7 @@ export async function handleCheckout(
         ? await findReusablePendingOrderPayment(prisma, {
             ...openOrderTarget,
             expectedAmountPaise: amount,
+            expectedDiscountCodeId: priced.discountCodeId,
           })
         : { reusable: null, supersede: [] };
     if (supersededOrders.length > 0) {

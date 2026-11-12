@@ -2,6 +2,7 @@
 // holds, so the page offers the credit and code that checkout pricing counts.
 
 import prisma from "@/lib/prisma";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import type { CheckoutInput } from "@/schemas/checkout";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import {
@@ -49,9 +50,10 @@ export async function ownOpenOrderHoldsForCheckout(
             plan.consultantProfile?.user?.timezone,
           ),
         });
-      } catch {
-        // A start checkout would refuse prices nothing, so nothing is counted.
-        return NOTHING_HELD;
+      } catch (error) {
+        // A start checkout would refuse prices nothing; any other failure reaches the route.
+        if (error instanceof BookingRuleError) return NOTHING_HELD;
+        throw error;
       }
     }
     const target = openOrderTargetOf(
