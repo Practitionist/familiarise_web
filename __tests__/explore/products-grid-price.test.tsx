@@ -55,6 +55,21 @@ describe("ProductsGrid price", () => {
   });
 });
 
+describe("ProductsGrid links", () => {
+  it("links the title to the product and the expert's name to their profile", async () => {
+    mockList.mockResolvedValue(page([card("a", 0)]));
+    render(await ProductsGrid({ query: QUERY }));
+    expect(screen.getByRole("link", { name: "Product a" })).toHaveAttribute(
+      "href",
+      "/explore/products/a",
+    );
+    expect(screen.getByRole("link", { name: "Asha" })).toHaveAttribute(
+      "href",
+      "/explore/experts/c1",
+    );
+  });
+});
+
 describe("ProductsGrid paging and empty states", () => {
   const paged = (pageNo: number, total: number, count: number) => ({
     items: Array.from({ length: count }, (_, i) => card(`p${pageNo}-${i}`, 0)),
