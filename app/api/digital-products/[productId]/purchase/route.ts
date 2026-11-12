@@ -136,13 +136,28 @@ export async function POST(_request: Request, { params }: RouteParams) {
 
         try {
           const purchase = await prisma.$transaction(async (tx) => {
-            // A same-value write that matches only while the product is for sale: it locks the
-            // row archive, take-down and delete write, so whichever commits second sees the other.
+            // A same-value write that matches only while the product is for sale at the charged
+            // price; it locks the row that archive, take-down, delete and price edits write.
             const forSale = await tx.digitalProduct.updateMany({
-              where: { id: productId, status: "PUBLISHED", takenDownAt: null },
+              where: {
+                id: productId,
+                status: "PUBLISHED",
+                takenDownAt: null,
+                pricePaise: sale.product.pricePaise,
+              },
               data: { status: "PUBLISHED" },
             });
-            if (forSale.count === 0) return null;
+            if (forSale.count === 0) {
+              const listed = await tx.digitalProduct.findFirst({
+                where: {
+                  id: productId,
+                  status: "PUBLISHED",
+                  takenDownAt: null,
+                },
+                select: { id: true },
+              });
+              return listed ? ("price_changed" as const) : null;
+            }
             return tx.digitalProductPurchase.create({
               data: {
                 productId,
@@ -154,11 +169,13 @@ export async function POST(_request: Request, { params }: RouteParams) {
               select: { id: true },
             });
           });
-          if (!purchase) {
+          if (purchase === null || purchase === "price_changed") {
             await cancelRazorpayOrder(order.id).catch((cancelError: unknown) =>
               console.error("Failed to cancel stranded order:", cancelError),
             );
-            return { kind: "not_for_sale" as const };
+            return {
+              kind: purchase ?? ("not_for_sale" as const),
+            };
           }
           return {
             kind: "minted" as const,
@@ -186,6 +203,16 @@ export async function POST(_request: Request, { params }: RouteParams) {
       return NextResponse.json(
         { error: "This product is not available to buy", code: "NOT_FOR_SALE" },
         { status: SALE_REFUSAL_STATUS.NOT_FOR_SALE },
+      );
+    }
+    if (outcome.kind === "price_changed") {
+      return NextResponse.json(
+        {
+          error:
+            "The price of this product just changed. Reload the page to see the new price.",
+          code: "PRICE_CHANGED",
+        },
+        { status: 409 },
       );
     }
     if (outcome.kind === "owned") {

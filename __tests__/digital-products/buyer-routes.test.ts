@@ -76,7 +76,7 @@ const createRazorpayOrder = jest.fn(async () => {
 });
 jest.mock("../../lib/payments/core/razorpay", () => ({
   createRazorpayOrder: (...a: unknown[]) => createRazorpayOrder(...(a as [])),
-  cancelRazorpayOrder: jest.fn(),
+  cancelRazorpayOrder: jest.fn(async () => "no_live_payment"),
 }));
 const presign = jest.fn(
   (_opts: Record<string, unknown>) => "https://r2/signed",
@@ -150,7 +150,7 @@ const tx = {
   $executeRaw: async () => 1,
   digitalProduct: {
     findFirst: async () => (deliverable.ok ? { id: "dp_1" } : null),
-    updateMany: async () => ({ count: 1 }),
+    updateMany: jest.fn(async () => ({ count: 1 })),
   },
   digitalProductPurchase: { ...purchaseModel, updateMany: stamp },
   digitalProductDownload: { create: downloadCreate },
@@ -230,6 +230,13 @@ it("mints one order at the quoted amount for overlapping purchases and refuses a
     ["FAILED", 61_000],
     ["PENDING", 59_000],
   ]);
+  // A price edit that commits before the insert refuses the stale quote and inserts nothing.
+  rows.length = 0;
+  tx.digitalProduct.updateMany.mockResolvedValueOnce({ count: 0 });
+  const moved = await purchase(req(), params);
+  expect(moved.status).toBe(409);
+  expect((await moved.json()).code).toBe("PRICE_CHANGED");
+  expect(rows).toHaveLength(0);
 
   rows.length = 0;
   product.pricePaise = 0;
