@@ -34,7 +34,7 @@ These are short records of the owner decisions that shaped the support system: t
 - **Status:** Accepted, implemented.
 - **Context.** Admin-only execution made every small goodwill refund a queue for admins, while the ₹25,000 second-admin rule could be split across recommendations and the author could approve their own.
 - **Decision.** STAFF may send up to ₹5,000 per payment, counted across every live refund and approved remedy on it, and up to ₹50,000 in any rolling 24 hours, summed from their own ops-log rows and serialized by a per-staff lock. ADMIN goes above that. Above ₹25,000 per payment, priced cumulatively, a second admin approves when two or more admins exist. The author of a recommendation cannot approve it. Platform cancels by staff count toward the same caps.
-- **Consequences.** Most refunds need no admin. The caps are app-enforced; a gateway door whose ops-log write fails after money moved is reported to Sentry but not counted. The platform cancel door has no second approver.
+- **Consequences.** Most refunds need no admin. The caps are app-enforced; a gateway door whose ops-log write fails after money moved is reported to Sentry but not counted. The platform cancel door has no second approver. Since 2026-11-12 a credit restoration counts at its credit value and the refund door keeps the staff lock on an unknown outcome; see [the money doors decision record](../decisions/2026-11-12-bug-hunt-money-doors.md).
 - **See** [money remedies](05-money-remedies.md#staff-caps-across-every-refund-door).
 
 ## SD-4: Payout holds use the shared `EarningsHold`, not a support table

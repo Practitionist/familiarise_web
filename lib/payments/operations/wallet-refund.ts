@@ -10,9 +10,10 @@
 
 import { Prisma, type RefundStatus } from "@prisma/client";
 
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import { sumPaise } from "@/lib/payments/utils/money";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
   createRazorpayRefund,
@@ -122,8 +123,34 @@ export interface WalletRefundLine {
   reused: boolean;
 }
 
+/**
+ * Net operator-granted credit on the org's WALLET journal (`adjustWallet`, kind
+ * WALLET_ADJUSTMENT: credits less debits), never negative. It is not top-up money.
+ */
+export async function grantedWalletCreditPaise(
+  db: PrismaLike,
+  ownerOrgId: string,
+): Promise<number> {
+  const rows = await db.ledgerEntry.groupBy({
+    by: ["direction"],
+    where: {
+      account: { kind: "WALLET", organizationId: ownerOrgId },
+      transaction: { kind: "WALLET_ADJUSTMENT" },
+    },
+    _sum: { amountPaise: true },
+  });
+  const net = rows.reduce(
+    (sum, r) =>
+      sum + (r.direction === "CREDIT" ? 1 : -1) * sumPaise(r._sum.amountPaise),
+    0,
+  );
+  return Math.max(0, net);
+}
+
 export interface RefundRemainingResult {
   startingBalancePaise: number;
+  /** Operator-granted credit this door never returns; it stays in the wallet. */
+  grantedCreditPaise: number;
   /** Cached balance after every SUCCEEDED refund this run booked. */
   balanceAfterPaise: number;
   /** Refunds still PENDING at the gateway; the refund webhook books them. */
@@ -152,6 +179,28 @@ async function bookIfSucceeded(
         }),
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     ),
+  );
+}
+
+/**
+ * The cached balance and the granted credit within it, read in one Repeatable Read snapshot,
+ * so an operator adjustment committing meanwhile moves both figures or neither.
+ */
+async function spendableSnapshot(
+  billingAccountId: string,
+): Promise<{ balancePaise: number; grantedCreditPaise: number }> {
+  return prisma.$transaction(
+    async (tx) => {
+      const acct = await tx.billingAccount.findUniqueOrThrow({
+        where: { id: billingAccountId },
+        select: { walletBalance: true, ownerOrgId: true },
+      });
+      return {
+        balancePaise: Number(acct.walletBalance ?? 0),
+        grantedCreditPaise: await grantedWalletCreditPaise(tx, acct.ownerOrgId),
+      };
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
   );
 }
 
@@ -238,10 +287,29 @@ async function issueTopUpRefund(
   return lineOf(topUp, created, false);
 }
 
+/**
+ * Refunds one top-up's whole capture under the refund-remaining door's keys,
+ * so the two can never refund the same top-up twice.
+ */
+export async function refundTopUpCapture(
+  topUp: RefundableTopUp,
+  reason: string,
+): Promise<WalletRefundLine | null> {
+  const line = await issueTopUpRefund(
+    { topUp, existing: [], prior: undefined },
+    topUp.amountPaise,
+    reason,
+  );
+  if (line) await bookIfSucceeded(line, topUp);
+  return line;
+}
+
 type Stop = NonNullable<RefundRemainingResult["stoppedOn"]>;
 type WalkState = {
   billingAccountId: string;
   reason: string;
+  /** Held back from every refund so only top-up money leaves; re-read before each one. */
+  grantedCreditPaise: number;
   /** Gateway refunds still in flight; each debits the wallet when it lands. */
   pendingPaise: number;
   refunds: WalletRefundLine[];
@@ -290,8 +358,10 @@ async function issueNewRefunds(
 ): Promise<Stop | null> {
   for (const l of listed) {
     if (l.prior) continue;
+    const snapshot = await spendableSnapshot(state.billingAccountId);
+    state.grantedCreditPaise = snapshot.grantedCreditPaise;
     const availablePaise =
-      (await cachedBalance(state.billingAccountId)) - state.pendingPaise;
+      snapshot.balancePaise - snapshot.grantedCreditPaise - state.pendingPaise;
     if (availablePaise <= 0) break;
     try {
       const line = await issueTopUpRefund(l, availablePaise, state.reason);
@@ -308,7 +378,7 @@ async function issueNewRefunds(
 
 /**
  * Refunds `min(available, top-up refundable)` against each CONFIRMED top-up,
- * newest first, until the balance is spoken for. Every top-up's gateway
+ * newest first, until the balance less operator-granted credit is spoken for. Every top-up's gateway
  * refunds are read before any money moves, so a refund still in flight on any
  * of them reserves its share of the balance. A refund already carrying a
  * top-up's dedupe key is reused, never repeated; the walk stops at the first
@@ -319,7 +389,8 @@ export async function refundRemainingWalletBalance(params: {
   reason: string;
 }): Promise<RefundRemainingResult> {
   const { billingAccountId } = params;
-  const startingBalancePaise = await cachedBalance(billingAccountId);
+  const { balancePaise: startingBalancePaise, grantedCreditPaise } =
+    await spendableSnapshot(billingAccountId);
   const rows = await prisma.walletTopUp.findMany({
     where: {
       billingAccountId,
@@ -344,6 +415,7 @@ export async function refundRemainingWalletBalance(params: {
   const state: WalkState = {
     billingAccountId,
     reason: params.reason,
+    grantedCreditPaise,
     pendingPaise: 0,
     refunds: [],
   };
@@ -359,6 +431,7 @@ export async function refundRemainingWalletBalance(params: {
   }
   return {
     startingBalancePaise,
+    grantedCreditPaise: state.grantedCreditPaise,
     balanceAfterPaise: await cachedBalance(billingAccountId),
     pendingPaise: state.pendingPaise,
     refunds: state.refunds,

@@ -40,7 +40,8 @@ function orphanedTopupCaptureWhere(
   tooOld: Date,
 ): Prisma.WalletTopUpWhereInput {
   return {
-    status: "PENDING",
+    // FAILED is an abandoned row whose order captured late.
+    status: { in: ["PENDING", "FAILED"] },
     providerPaymentId: { not: null },
     capturedAt: { lt: captureBefore, gte: tooOld },
   };
@@ -85,8 +86,8 @@ async function sweepOrphanedTopupCapturesUnlocked(
   const captureBefore = new Date(now - graceMinutes * 60_000);
   const tooOld = new Date(now - maxAgeHours * 3_600_000);
 
-  // Captured (capturedAt + providerPaymentId set outside the tx) but still
-  // PENDING ⇒ the confirm/ledger post rolled back. `lt/gte` on capturedAt also
+  // Captured (capturedAt + providerPaymentId set outside the tx) but not
+  // CONFIRMED ⇒ the confirm/ledger post rolled back. `lt/gte` on capturedAt also
   // excludes null (null never satisfies a comparison in Postgres).
   const orphans = await prisma.walletTopUp.findMany({
     where: orphanedTopupCaptureWhere(captureBefore, tooOld),

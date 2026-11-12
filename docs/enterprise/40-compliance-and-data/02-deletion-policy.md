@@ -49,7 +49,7 @@ Rows that exist purely as runtime state + have zero historical interest beyond t
 
 - **BetterAuth `Session` and `Account`** rows — deleted on logout or session expiry. No retention value.
 - **Tentative `AppointmentOccurrence`** rows — deleted when payment fails or the webhook rolls back an appointment (see `app/api/webhooks/utils.ts`, `lib/payments/webhooks/handlers.ts`).
-- **Abandoned `WalletTopUp` rows** (PENDING / FAILED) past the grace window — reaped by `cleanup-abandoned-org-top-ups` cron. The unconfirmed row is schema-level noise; the fact that a top-up was abandoned is captured in the audit log + the cron's output. A _confirmed_ top-up is never reaped — it owns a balanced `TOPUP` journal transaction (`LedgerEntry` rows are immutable, see Case 3).
+- **Abandoned `WalletTopUp` rows** are no longer a hard-delete case. `cleanup-abandoned-org-top-ups` marks a `PENDING` row whose gateway order held no payment `FAILED` and keeps it, because a Razorpay order cannot be cancelled and a late payment on it must still find its row (`confirmTopUp` credits it). A _confirmed_ top-up is never reaped — it owns a balanced `TOPUP` journal transaction (`LedgerEntry` rows are immutable, see Case 3).
 
 ### Case 2 — DRAFT-only entities with no commercial commitment
 

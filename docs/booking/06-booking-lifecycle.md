@@ -1053,13 +1053,15 @@ This section covers what happens when things go wrong. Understanding these scena
 1. The payment gateway sends a `payment.failed` webhook
 2. `handlePaymentFailure()` finds the payment record
 3. Idempotency check: if already FAILED, skip. If already SUCCEEDED, skip (late failure guard).
-4. Marks payment as `FAILED`
+4. Marks payment as `FAILED` by CAS, and in the same transaction gives back what checkout consumed: the referral credits, the discount-code use and the organisation's metered engagement (`reverseCreditsForPayment`, `returnDiscountUse`, `reverseBookingUtilization`)
 5. Calls `cleanupFailedPaymentAppointment()` which deletes the tentative slots
 6. Sends failure notification to consultee
 
 **Safety net**: Even if the failure webhook is missed, the `cleanup-tentative-occurrences` cron runs every 2 hours and removes tentative slots with no successful payment after 24 hours (`TENTATIVE_EXPIRATION_HOURS = 24`).
 
 **Source**: `handlePaymentFailure()` at `lib/payments/webhooks/handlers.ts`.
+
+**Every unpaid exit gives back the same things.** A payment that ends without being paid (the buyer's cancel, a superseded open order, the abandoned-payments sweep, a payment failure, the payment-status reconcile, or an expert declining a request) returns the credits, the code use and the engagement together with the hold. A decline of a direct-checkout request goes through `releaseDeclinedRequestHold` (`lib/booking/request-route-guards.ts`), which now calls `expirePendingPaymentsInTx` (`lib/booking/pending-payment-expiry.ts`) instead of flipping the payment itself. Before that, declining a request whose hold had already lapsed lost the buyer's referral credits and the discount-code use. A capture that lands on the declined request's expired payment is parked and refunded, as for any expired payment. Example: Charlotte Brown reserves a Wed 18 Nov 2026 14:00 IST consultation with ₹200.00 (20,000 paise) of referral credit applied, and does not pay. The expert declines at 15:00 IST on 19 Nov, after the hold lapsed; the ₹200.00 is back in her credit balance.
 
 ### 9b. Webinar Fills Up During Checkout
 

@@ -164,7 +164,7 @@ and refetched on a stale return. Freshness stays a user-experience
 concern (ADR 16, `docs/enterprise/70-design-decisions/16-slot-freshness-without-realtime.md`):
 checkout's recheck under the slot lock is the only correctness mechanism, and a
 taken slot answers 409 `code: "SLOT_TAKEN"`, which returns the buyer to a
-refetched grid with "That time was just taken — pick another."
+refetched grid with "That time was just taken — pick another." The checkout page re-asks the grid once before Pay, and skips that advisory check while the buyer's own hold marker (`checkout-hold:<planId>:<startsAt>`, in `localStorage` in `use-consultation-checkout.tsx`) is live, so a second tab of the same browser reaches checkout's resume path; a second device still gets the turn-away.
 
 The ETag (`lib/scheduling/availabilityGridMarker.ts`) folds in more than the
 rows, because three things change a cell without any row changing: the earliest

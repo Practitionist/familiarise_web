@@ -68,6 +68,18 @@ export class RecoveryAlreadyDoneError extends Error {
   }
 }
 
+/** Thrown when a recovery finds the capture refunded, marked for refund or disputed. */
+export class RecoveryRefusedError extends Error {
+  readonly code = "PAYMENT_RETURNED" as const;
+  readonly httpStatus = 409 as const;
+  constructor(paymentId: string) {
+    super(
+      `Payment ${paymentId} has a refund, an owed-refund marker or an open or lost dispute, so it cannot be booked.`,
+    );
+    this.name = "RecoveryRefusedError";
+  }
+}
+
 export async function createAppointmentFromWebhook(
   tx: Tx,
   metadata: Record<string, string>,

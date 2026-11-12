@@ -4,7 +4,6 @@
 import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import prisma from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
-import { firstCycleWindow } from "@/lib/booking/entitlement";
 import {
   type Currency,
   type OfferingPlanStatus,
@@ -42,11 +41,12 @@ import {
   assertSeatRemintable,
   assertClassEnrolmentOpen,
 } from "@/lib/payments/checkout/seats";
-import {
-  resolvePlanStart,
-  resolvePriorPlanEnd,
-} from "@/lib/payments/checkout/renewal";
+import { resolveSubscriptionCheckoutPeriod } from "@/lib/payments/checkout/renewal";
 import { validateSlotAvailability } from "@/lib/payments/checkout/occupancy-validate";
+import {
+  openOrderTargetOf,
+  ownOpenOrderHolds,
+} from "@/lib/payments/checkout/order-reuse";
 
 /**
  * Calculate final amount with discount and validate plan availability
@@ -246,31 +246,18 @@ export async function calculateAmountAndValidate(
           organizationId,
           plan.consultantProfile.id,
         );
-        if (
-          validatedData.schedulingPeriodStartsAt ||
-          validatedData.renewsSubscriptionId
-        ) {
-          const priorPlanEnd = await resolvePriorPlanEnd(
-            tx,
-            validatedData.renewsSubscriptionId,
-            user.consulteeProfile.id,
-            plan.id,
-          );
-          const schedulingTimezone = resolveSchedulingTimezone(
-            plan.consultantProfile?.user?.timezone,
-          );
-          const effectiveStart = resolvePlanStart(
-            validatedData.schedulingPeriodStartsAt,
-            priorPlanEnd,
-            new Date(),
-          );
-          const { start, end } = firstCycleWindow(
+        subscriptionSchedulingPeriod = await resolveSubscriptionCheckoutPeriod(
+          tx,
+          {
+            schedulingPeriodStartsAt: validatedData.schedulingPeriodStartsAt,
+            renewsSubscriptionId: validatedData.renewsSubscriptionId,
+            consulteeProfileId: user.consulteeProfile.id,
             plan,
-            effectiveStart,
-            schedulingTimezone,
-          );
-          subscriptionSchedulingPeriod = { startsAt: start, endsAt: end };
-        }
+            schedulingTimezone: resolveSchedulingTimezone(
+              plan.consultantProfile?.user?.timezone,
+            ),
+          },
+        );
         amount = plan.price;
         priceCurrency = plan.priceCurrency;
         break;
@@ -428,6 +415,20 @@ export async function calculateAmountAndValidate(
         throw new Error("Invalid appointment type");
     }
 
+    // Priced as if the buyer's own open order for this item were released, so a reload or second tab
+    // prices like the first; releaseSupersededHolds returns its holds before the commit consumes them.
+    const target = openOrderTargetOf(
+      validatedData,
+      userId,
+      organizationId,
+      subscriptionSchedulingPeriod,
+    );
+    let ownHolds: ReturnType<typeof ownOpenOrderHolds> | null = null;
+    const readOwnHolds = () =>
+      target
+        ? (ownHolds ??= ownOpenOrderHolds(tx, target))
+        : Promise.resolve({ creditsPaise: 0, discountCodeIds: [] });
+
     // Apply discount if provided - with full backend re-validation
     let discountCodeId = null;
     let appliedDiscount: CheckoutDiscountInput | null = null;
@@ -450,10 +451,15 @@ export async function calculateAmountAndValidate(
           discount.maxUses !== null &&
           discount.currentUses >= discount.maxUses
         ) {
-          throw new DiscountExhaustedError(
-            discount.currentUses,
-            discount.maxUses,
-          );
+          const ownUses = (await readOwnHolds()).discountCodeIds.filter(
+            (id) => id === discount.id,
+          ).length;
+          if (discount.currentUses - ownUses >= discount.maxUses) {
+            throw new DiscountExhaustedError(
+              discount.currentUses,
+              discount.maxUses,
+            );
+          }
         }
 
         discountCodeId = discount.id;
@@ -525,7 +531,8 @@ export async function calculateAmountAndValidate(
       promoFeeBps: attribution.promoFeeBps,
       useReferralCredits: validatedData.useReferralCredits === true,
       resolveAvailableCreditsPaise: async () =>
-        (await getUserCredits(userId, tx)).totalAvailable,
+        (await getUserCredits(userId, tx)).totalAvailable +
+        (await readOwnHolds()).creditsPaise,
     });
     // A code on an order whose take cannot fund promo (a fee waiver, a host org) is refused,
     // before commit, so no redemption is spent.
