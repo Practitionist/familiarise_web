@@ -857,6 +857,49 @@ export async function fenceSeatGrants(
 
 type RefundDrive = { error: string | null };
 
+type RefundedSeat = {
+  userId: string;
+  appointmentId: string;
+  appointment: Record<
+    "webinar" | "class" | "consultation" | "subscription" | "trial",
+    { status: string } | null
+  >;
+};
+
+/**
+ * Drops a cancelled booking's seat only while an open seat intent already owes it,
+ * which the sweep never abandons; every other refunded seat still needs its own.
+ */
+async function seatsWithoutOwedCancelIntent(
+  refunded: RefundedSeat[],
+): Promise<RefundedSeat[]> {
+  const cancelled = refunded.filter((s) => {
+    const a = s.appointment;
+    const status =
+      a.webinar?.status ??
+      a.class?.status ??
+      a.consultation?.status ??
+      a.subscription?.status ??
+      a.trial?.status;
+    return status === "CANCELLED";
+  });
+  if (cancelled.length === 0) return refunded;
+  const owed = await prisma.streamRevocationRetry.findMany({
+    where: {
+      erasureRequestId: null,
+      kind: "SEAT_ACCESS_REVOKE",
+      status: { not: "SUCCEEDED" },
+      OR: cancelled.map((s) => ({ planId: s.appointmentId, userId: s.userId })),
+    },
+    select: { planId: true, userId: true },
+  });
+  const owedKeys = new Set(owed.map((r) => `${r.planId}:${r.userId}`));
+  return refunded.filter(
+    (s) =>
+      !cancelled.includes(s) || !owedKeys.has(`${s.appointmentId}:${s.userId}`),
+  );
+}
+
 /**
  * Re-stamps the refund's seats, turns the REFUNDED ones into per-seat intents
  * and drives them; the refund intent is done once they persist.
@@ -889,17 +932,7 @@ async function driveRefundRevocation(
       },
     },
   });
-  // A cancelled booking's cancel route persisted and drove its own seat intents.
-  const seats = refunded.filter((s) => {
-    const a = s.appointment;
-    const status =
-      a.webinar?.status ??
-      a.class?.status ??
-      a.consultation?.status ??
-      a.subscription?.status ??
-      a.trial?.status;
-    return status !== "CANCELLED";
-  });
+  const seats = await seatsWithoutOwedCancelIntent(refunded);
   if (seats.length === 0) return { error: null };
   const generation = await enqueueOrReport(
     seats.map((s) => ({
