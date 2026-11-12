@@ -100,7 +100,7 @@ import { bookingTransaction } from "@/lib/db/booking-transaction";
  *    - No conflicts with existing appointments
  *
  * 3. Event-specific rules apply:
- *    - Consultations: All slots same day, consecutive
+ *    - Consultations: Consecutive slots (may cross midnight)
  *    - Subscriptions: Weekly limits enforced
  *    - Webinars: Consecutive slots required
  *    - Classes: Session grouping validated

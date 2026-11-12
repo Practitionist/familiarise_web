@@ -209,7 +209,7 @@ function getDescription(
 ): string {
   switch (appointment.appointmentType) {
     case "CONSULTATION":
-      return "Select consecutive time slots for your consultation. All slots must be on the same day.";
+      return "Select consecutive time slots for your consultation.";
     case "SUBSCRIPTION": {
       const baseText = `Schedule ${eventDetails.sessionsPerWeek} session${eventDetails.sessionsPerWeek !== 1 ? "s" : ""} per week for ${eventDetails.durationInMonths} month${eventDetails.durationInMonths !== 1 ? "s" : ""}. Each session is ${eventDetails.sessionDurationInHours || 1} hour${(eventDetails.sessionDurationInHours || 1) > 1 ? "s" : ""}.`;
       return appendProgressText(
