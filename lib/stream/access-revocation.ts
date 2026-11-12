@@ -735,8 +735,10 @@ async function driveSeatRevocation(
   }
   if (revoked.length === 0) return pending.byUser;
 
-  await removeFromEventChannel(ctx, revoked, deadlineMs, pending);
-  await removeFromSeatDms(ctx, revoked, deadlineMs, pending);
+  // Chat gets at most half the slice, so a stalled chat API never starves the room removals.
+  const chatDeadlineMs = Date.now() + (deadlineMs - Date.now()) / 2;
+  await removeFromEventChannel(ctx, revoked, chatDeadlineMs, pending);
+  await removeFromSeatDms(ctx, revoked, chatDeadlineMs, pending);
   await removeFromAppointmentCalls(appointmentId, revoked, deadlineMs, pending);
   return pending.byUser;
 }

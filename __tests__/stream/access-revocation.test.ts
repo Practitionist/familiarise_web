@@ -425,6 +425,26 @@ describe("revocation when a seat or booking ends", () => {
     expect(settledCalls()).toHaveLength(0);
   });
 
+  it("still removes the rooms when a hung chat call spends its half of the budget", async () => {
+    jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+    mockRemoveMembers.mockImplementation(() => new Promise(() => undefined));
+    const { revokeEndedSeatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    const run = revokeEndedSeatAccess("appt-1", ["attendee-1"]);
+    await jest.advanceTimersByTimeAsync(4_001);
+    await run;
+    jest.useRealTimers();
+
+    expect(mockRevocationUpdateCallMembers).toHaveBeenCalledWith(
+      "default",
+      "occurrence-0",
+      { remove_members: ["attendee-1"] },
+    );
+    // The chat removal never landed, so the intent stays owed.
+    expect(settledCalls()).toHaveLength(0);
+  });
+
   it("persists without driving when the caller still has slow work ahead", async () => {
     const { persistSeatRevocation } =
       await import("../../lib/stream/access-revocation");
