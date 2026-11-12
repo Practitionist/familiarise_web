@@ -95,6 +95,7 @@ export interface SecondaryRetentionPruneResult {
   unconfirmedNewsletterPruned: number;
   meetingPresencePruned: number;
   meetingAttendancePruned: number;
+  streamRevocationRetriesPruned: number;
   hasMore: boolean;
 }
 
@@ -304,7 +305,7 @@ async function pruneMessagingRetentionPages(
   };
 }
 
-/** Export jobs, anonymous cookie choices, unconfirmed sign-ups and meeting presence; one bounded page each. */
+/** Export jobs, anonymous cookie choices, unconfirmed sign-ups, meeting presence and settled revocation rows; one bounded page each. */
 async function pruneSecondaryRetentionPages(
   now: Date,
   limit: number,
@@ -327,6 +328,12 @@ async function pruneSecondaryRetentionPages(
   };
   const occurrenceEnded = {
     occurrence: { endsAt: { lt: meetingPresenceRetentionCutoff(now) } },
+  };
+  // Erasure rows stay with their request; an owed row is never a candidate.
+  const settledRevocationWhere: Prisma.StreamRevocationRetryWhereInput = {
+    erasureRequestId: null,
+    status: "SUCCEEDED",
+    completedAt: { lt: sentOutboxRetentionCutoff(now) },
   };
   const exportJobs = await mutateRetentionPage(
     limit,
@@ -403,15 +410,36 @@ async function pruneSecondaryRetentionPages(
         where: { ...occurrenceEnded, id: { in: ids } },
       }),
   );
+  const revocations = await mutateRetentionPage(
+    limit,
+    deadline,
+    (take) =>
+      prisma.streamRevocationRetry.findMany({
+        where: settledRevocationWhere,
+        select: { id: true },
+        orderBy: [{ completedAt: "asc" }, { id: "asc" }],
+        take,
+      }),
+    (ids) =>
+      prisma.streamRevocationRetry.deleteMany({
+        where: { ...settledRevocationWhere, id: { in: ids } },
+      }),
+  );
   return {
     dataExportJobsPruned: exportJobs.count,
     cookiePreferencesPruned: cookies.count,
     unconfirmedNewsletterPruned: unconfirmed.count,
     meetingPresencePruned: presence.count,
     meetingAttendancePruned: attendance.count,
-    hasMore: [exportJobs, cookies, unconfirmed, presence, attendance].some(
-      (p) => p.hasMore,
-    ),
+    streamRevocationRetriesPruned: revocations.count,
+    hasMore: [
+      exportJobs,
+      cookies,
+      unconfirmed,
+      presence,
+      attendance,
+      revocations,
+    ].some((p) => p.hasMore),
   };
 }
 

@@ -1423,7 +1423,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Prune job history",
       description:
-        "Remove no-op job runs past 14 days and other runs past 180, close stranded runs, and prune admin run requests, messaging, export, cookie and meeting presence rows",
+        "Remove no-op job runs past 14 days and other runs past 180, close stranded runs, and prune admin run requests, messaging, export, cookie, meeting presence and settled Stream revocation rows",
       category: "Cleanup",
       manualRun: "inline",
     },
@@ -1458,6 +1458,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           unconfirmedNewsletterPruned: r.unconfirmedNewsletterPruned,
           meetingPresencePruned: r.meetingPresencePruned,
           meetingAttendancePruned: r.meetingAttendancePruned,
+          streamRevocationRetriesPruned: r.streamRevocationRetriesPruned,
           hasMore: r.hasMore,
         }),
         items: (r) => ({
@@ -1472,7 +1473,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             r.cookiePreferencesPruned +
             r.unconfirmedNewsletterPruned +
             r.meetingPresencePruned +
-            r.meetingAttendancePruned,
+            r.meetingAttendancePruned +
+            r.streamRevocationRetriesPruned,
         }),
         failureMessage: "System job execution prune failed",
       }),
@@ -2321,8 +2323,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           accessRevocationsRecovered: r.accessRevocationsRecovered,
           stillFailing: r.stillFailing,
           gaveUp: r.gaveUp,
+          streamUnconfigured: r.streamUnconfigured,
         }),
-        status: (r) => (r.stillFailing > 0 || r.gaveUp > 0 ? 207 : 200),
+        status: (r) =>
+          r.stillFailing > 0 || r.gaveUp > 0 || r.streamUnconfigured > 0
+            ? 207
+            : 200,
         failureMessage: "Failed to retry moderation enforcement",
       }),
   },

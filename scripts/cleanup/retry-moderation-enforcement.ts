@@ -37,6 +37,13 @@ import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { SWEEP_START_DEADLINE_MS } from "@/lib/cron/run-deadline";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
+import {
+  isUncappedRevocationKind,
+  PAST_CAP_RETRY_MS,
+  REVOCATION_ATTEMPT_CAP,
+  UNCAPPED_REVOCATION_KINDS,
+} from "@/lib/stream/revocation-retry-policy";
 import {
   applyStreamEnforcement,
   restoreStreamAccess,
@@ -62,6 +69,8 @@ export interface ModerationRetryResult {
   erasureRevocationsRecovered: number;
   /** Queued cancellation, collaborator and org-removal revocations that landed. */
   accessRevocationsRecovered: number;
+  /** Owed Stream revocations and erasures left untouched because Stream's keys are missing or refused. */
+  streamUnconfigured: number;
   errors: string[];
 }
 
@@ -79,7 +88,9 @@ export interface ModerationRetryOptions {
 // Per-row give-ups and write failures collapse to one event per op per run.
 const runFailures = createRunFailureReporter("moderation");
 
-const MAX_ATTEMPTS = 6;
+const MAX_ATTEMPTS = REVOCATION_ATTEMPT_CAP;
+
+const STREAM_UNCONFIGURED_REPORT_MS = 60 * 60_000;
 
 /** A seat or refund revocation is not started with less than this left before the run deadline. */
 const MIN_SEAT_REVOCATION_SLICE_MS = 5_000;
@@ -103,14 +114,21 @@ const FAILED_ENFORCEMENT_WHERE: Prisma.ModerationActionWhereInput = {
   ],
 };
 
-/** Owed revocations due now; a row past the attempt budget already wrote its give-up. */
+/** Owed revocations due now; a capped kind past the attempt budget already wrote its give-up. */
 function streamRevocationDueWhere(
   now: Date,
 ): Prisma.StreamRevocationRetryWhereInput {
   return {
     status: { in: ["PENDING", "FAILED"] },
-    attempts: { lt: MAX_ATTEMPTS },
-    OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
+    AND: [
+      {
+        OR: [
+          { attempts: { lt: MAX_ATTEMPTS } },
+          { kind: { in: [...UNCAPPED_REVOCATION_KINDS] } },
+        ],
+      },
+      { OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }] },
+    ],
   };
 }
 
@@ -277,6 +295,7 @@ async function retryModerationEnforcementUnlocked(
     collaboratorRecovered: 0,
     erasureRevocationsRecovered: 0,
     accessRevocationsRecovered: 0,
+    streamUnconfigured: 0,
     errors: [],
   };
 
@@ -294,20 +313,59 @@ async function retryModerationEnforcementUnlocked(
   // erasures it could not land; there is no erasure sweep of its own, so this
   // one drains them.
   const settledRequestIds = new Set<string>();
-  await drainErasureRevocations(
+  const { isStreamConfigured } = await import("@/lib/stream-client");
+  const streamReady = isStreamConfigured();
+  if (streamReady) {
+    await drainErasureRevocations(
+      result,
+      limit,
+      settledRequestIds,
+      runStartedAt + SWEEP_START_DEADLINE_MS,
+    );
+  } else {
+    result.streamUnconfigured += await prisma.streamRevocationRetry.count({
+      where: streamRevocationDueWhere(new Date()),
+    });
+  }
+  await drainVendorErasureRetries(
     result,
     limit,
     settledRequestIds,
-    runStartedAt + SWEEP_START_DEADLINE_MS,
+    streamReady,
   );
-  await drainVendorErasureRetries(result, limit, settledRequestIds);
   await finalizeCompletedErasureRequests(settledRequestIds);
+  if (result.streamUnconfigured > 0) reportStreamUnconfigured(result);
 
   // #1270 review — a sweep that left enforcement unlanded did not succeed.
   // `jobs/` reads this to decide the workflow's exit code.
   result.success = result.errors.length === 0 && result.gaveUp === 0;
 
   return result;
+}
+
+/** One report per run: the rows were not attempted, so they keep their attempts and stay due. */
+function reportStreamUnconfigured(result: ModerationRetryResult): void {
+  const message = `Stream not configured: ${result.streamUnconfigured} owed Stream revocations or erasures left pending`;
+  result.errors.push(message);
+  console.warn(
+    JSON.stringify({
+      event: "cron.config-skip",
+      job: "retry-moderation-enforcement",
+      skipped: "Stream not configured",
+      rows: result.streamUnconfigured,
+    }),
+  );
+  captureThrottled(
+    "moderation.stream-unconfigured",
+    new Error(message),
+    {
+      subsystem: "moderation",
+      op: "stream-unconfigured",
+      level: "warning",
+      extra: { rows: result.streamUnconfigured },
+    },
+    STREAM_UNCONFIGURED_REPORT_MS,
+  );
 }
 
 async function executeErasureRevocationRow(
@@ -364,18 +422,24 @@ async function recordErasureOutboxOutcome(params: {
   recovered?: "erasureRevocationsRecovered" | "accessRevocationsRecovered";
   /** Access rows only: the `nextRetryAt` read with the row, which every re-arm replaces. */
   generation?: { nextRetryAt: Date | null };
+  /** Past the cap the row retries daily instead of giving up. */
+  uncapped?: boolean;
 }): Promise<void> {
   const { delegate, row, error, errorLabel, now, result, settledRequestIds } =
     params;
   const recovered = params.recovered ?? "erasureRevocationsRecovered";
   const attempts = row.attempts + 1;
-  const gaveUp = Boolean(error) && attempts >= MAX_ATTEMPTS;
+  const pastCap = attempts >= MAX_ATTEMPTS;
+  const gaveUp = Boolean(error) && pastCap && !params.uncapped;
+  const retryAt = pastCap
+    ? new Date(now.getTime() + PAST_CAP_RETRY_MS)
+    : nextRetryAt(attempts, now);
   const data = error
     ? {
         status: "FAILED" as const,
         attempts,
         lastError: error,
-        nextRetryAt: gaveUp ? null : nextRetryAt(attempts, now),
+        nextRetryAt: gaveUp ? null : retryAt,
       }
     : { status: "SUCCEEDED" as const, attempts, completedAt: now };
   if (params.generation) {
@@ -408,6 +472,14 @@ async function recordErasureOutboxOutcome(params: {
       );
     } else {
       result.stillFailing++;
+      if (attempts === MAX_ATTEMPTS) {
+        runFailures.add(
+          "revocation-past-cap",
+          new Error(`${errorLabel} retry past its attempt cap; retrying daily`),
+          { rowId: row.id, attempts, lastError: error },
+          { level: "error" },
+        );
+      }
     }
     result.errors.push(`${errorLabel} ${row.id}: ${error}`);
   } else {
@@ -530,6 +602,7 @@ async function drainErasureRevocations(
         ? "erasureRevocationsRecovered"
         : "accessRevocationsRecovered",
       ...(isErasure ? {} : { generation: { nextRetryAt: row.nextRetryAt } }),
+      uncapped: isUncappedRevocationKind(row.kind),
     });
   }
 }
@@ -546,6 +619,7 @@ async function drainVendorErasureRetries(
   result: ModerationRetryResult,
   limit: number,
   settledRequestIds: Set<string>,
+  streamReady: boolean,
 ): Promise<void> {
   if (!prisma.vendorErasureRetry?.findMany) return;
   const now = new Date();
@@ -572,6 +646,10 @@ async function drainVendorErasureRetries(
   } = await import("@/lib/compliance/erasure/scrub-user");
 
   for (const row of rows) {
+    if (row.vendor === "STREAM" && !streamReady) {
+      result.streamUnconfigured++;
+      continue;
+    }
     const targetUserId = row.vendorRef || row.erasureRequest.userId;
     let error: string | null = null;
     try {

@@ -160,6 +160,20 @@ async function settleSeatIntents(
   }
 }
 
+/** The pending reason when Stream's keys are missing or refused; the row stays owed, not done. */
+export const STREAM_UNCONFIGURED = "Stream not configured";
+
+const UNCONFIGURED_REPORT_INTERVAL_MS = 60 * 60_000;
+
+function reportStreamUnconfigured(): void {
+  captureThrottled(
+    "stream.revocation.unconfigured",
+    new Error("Stream is not configured; access revocations stay owed"),
+    { subsystem: "stream", op: "revocation.unconfigured", level: "warning" },
+    UNCONFIGURED_REPORT_INTERVAL_MS,
+  );
+}
+
 class RevocationBudgetSpent extends Error {}
 
 /** Stops waiting on a vendor call once the slice's budget is spent; the call itself may still land. */
@@ -698,7 +712,12 @@ async function driveSeatRevocation(
   deadlineMs: number,
 ): Promise<Map<string, string>> {
   const pending = new PendingRevocations();
-  if (!isStreamConfigured()) return pending.byUser;
+  if (!isStreamConfigured()) {
+    // No vendor call happened, so the intents stay owed until the keys are back.
+    pending.add(userIds, STREAM_UNCONFIGURED);
+    reportStreamUnconfigured();
+    return pending.byUser;
+  }
   let ctx: SeatContext | null;
   let revoked: string[];
   try {
@@ -1002,7 +1021,8 @@ export interface AccessRevocationRow {
 
 /**
  * Re-drives one queued revocation. Returns the error to record, or null when
- * the access is gone or Postgres has since re-granted it. A seat or refund row
+ * the access is gone or Postgres has since re-granted it; without Stream's keys
+ * nothing is done and `STREAM_UNCONFIGURED` comes back. A seat or refund row
  * stops starting Stream work at its slice or at `deadlineMs`, whichever is sooner.
  */
 export async function redriveAccessRevocation(
@@ -1013,6 +1033,7 @@ export async function redriveAccessRevocation(
     Date.now() + REDRIVE_SEAT_REVOCATION_BUDGET_MS,
     opts.deadlineMs ?? Number.POSITIVE_INFINITY,
   );
+  if (!isStreamConfigured()) return STREAM_UNCONFIGURED;
   switch (row.kind) {
     case "COLLAB_REVOKE":
       return redriveCollaboratorRevocation(row);

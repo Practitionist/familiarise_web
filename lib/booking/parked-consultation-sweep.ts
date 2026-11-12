@@ -33,8 +33,7 @@ import {
   BookingLockUnavailableError,
   withAppointmentLock,
 } from "@/utils/appointmentlock";
-import { revokeEndedBookingChatAccess } from "@/lib/stream/access-revocation";
-import { bookingOrgId } from "@/lib/stream-utils";
+import { revokeEndedSeatAccess } from "@/lib/stream/access-revocation";
 import { recordExpertStrike } from "./expert-reliability";
 import { transitionParticipant } from "./participants";
 import {
@@ -177,7 +176,6 @@ const PARKED_SELECT = {
   consultationPlan: {
     select: {
       title: true,
-      organizationId: true,
       consultantProfileId: true,
       consultantProfile: {
         select: { user: { select: { id: true, name: true } } },
@@ -338,26 +336,14 @@ export interface ParkedConsultationSweepResult {
   errors: string[];
 }
 
-/** Ends the booking's chat access after its cancel committed; a Stream failure queues its own retry. */
-async function revokeParkedChat(
+/** Ends the client's DM and room access after the cancel committed; the intent persists first and never throws. */
+async function revokeParkedAccess(
   row: ParkedRow,
-  failures: RunFailureReporter,
+  appointmentId: string,
 ): Promise<void> {
   const consulteeUserId = row.requestedBy?.user?.id;
-  const consultantUserId = row.consultationPlan?.consultantProfile?.user?.id;
-  if (!consulteeUserId || !consultantUserId) return;
-  try {
-    await revokeEndedBookingChatAccess({
-      userIds: [consulteeUserId],
-      dmCounterpartUserIds: [consultantUserId],
-      dmOrganizationId: bookingOrgId({
-        consultationPlan: row.consultationPlan,
-        appointment: row.appointment,
-      }),
-    });
-  } catch (error) {
-    failures.add("parked-consultation-chat", error, { consultationId: row.id });
-  }
+  if (!consulteeUserId) return;
+  await revokeEndedSeatAccess(appointmentId, [consulteeUserId]);
 }
 
 /** Cancels one aged park and returns its markers; a row another writer holds returns none. */
@@ -372,7 +358,7 @@ async function settleOneParked(
   try {
     const done = await cancelOneParked(row, appointmentId, now);
     result.cancelled += 1;
-    await revokeParkedChat(row, failures);
+    await revokeParkedAccess(row, appointmentId);
     await attemptStagedRequestExpired(done.notice, EMAIL_BUDGET_MS.JOB);
     return done.markers;
   } catch (error) {

@@ -64,6 +64,11 @@ jest.mock("../../lib/collaborators/service", () => ({
   revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
 }));
 
+let mockStreamConfigured = true;
+jest.mock("../../lib/stream-client", () => ({
+  isStreamConfigured: () => mockStreamConfigured,
+}));
+
 jest.mock("../../lib/stream/access-revocation", () => ({
   redriveAccessRevocation: jest.fn(async () => null),
 }));
@@ -116,6 +121,7 @@ const failedBan = (overrides: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockStreamConfigured = true;
   findUser.mockResolvedValue({ banned: true, banExpires: null });
   enforce.mockResolvedValue(undefined);
   outboxFindMany.mockResolvedValue([]);
@@ -340,7 +346,20 @@ describe("retryModerationEnforcement", () => {
 
     const result = await retryModerationEnforcement();
 
-    expect(outboxFindMany.mock.calls[0][0].where.attempts).toEqual({ lt: 6 });
+    expect(outboxFindMany.mock.calls[0][0].where.AND[0]).toEqual({
+      OR: [
+        { attempts: { lt: 6 } },
+        {
+          kind: {
+            in: [
+              "SEAT_ACCESS_REVOKE",
+              "REFUND_ACCESS_REVOKE",
+              "ERASURE_REVOKE",
+            ],
+          },
+        },
+      ],
+    });
     expect(redriveAccessRevocation).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "DM_REMOVE", userId: "client-1" }),
       { deadlineMs: expect.any(Number) },
@@ -519,22 +538,22 @@ describe("retryModerationEnforcement", () => {
     expect(result.success).toBe(true);
   });
 
-  it("never selects a Stream erasure row that already spent its attempt budget", async () => {
+  it("caps only the kinds whose give-up leaves no one with lost access", async () => {
     await retryModerationEnforcement();
 
     expect(outboxFindMany.mock.calls[0][0].where).toMatchObject({
       status: { in: ["PENDING", "FAILED"] },
-      attempts: { lt: 6 },
     });
-    // The vendor leg already carried the cap; the two legs must agree.
+    expect(outboxFindMany.mock.calls[0][0].where.attempts).toBeUndefined();
+    // The vendor leg keeps its cap.
     expect(vendorOutboxFindMany.mock.calls[0][0].where).toMatchObject({
       attempts: { lt: 6 },
     });
   });
 
-  it("gives up on a Stream erasure row once, reports it once and leaves it terminal", async () => {
+  it("keeps a Stream erasure row past the cap on a daily retry and reports the crossing once", async () => {
     findMany.mockResolvedValue([]);
-    const capped = {
+    const row = {
       id: "retry-1",
       kind: "ERASURE_REVOKE",
       userId: null,
@@ -545,46 +564,192 @@ describe("retryModerationEnforcement", () => {
       attempts: 5,
       erasureRequest: { userId: "u-erased" },
     };
-    // A row leaves the cohort once its budget is spent, so the mock has to
-    // honour the cap the way the database does: the write bumps the very
-    // attempts the next read filters on.
-    outboxFindMany.mockImplementation(
-      async ({ where }: { where: { attempts?: { lt?: number } } }) => {
-        const cap = where.attempts?.lt;
-        return cap === undefined || capped.attempts < cap ? [capped] : [];
-      },
-    );
+    outboxFindMany.mockImplementation(async () => [{ ...row }]);
     outboxUpdate.mockImplementation(
       async ({ data }: { data: { attempts: number } }) => {
-        capped.attempts = data.attempts;
+        row.attempts = data.attempts;
         return {};
       },
     );
-    // The row keeps failing, the way a permanently broken leg does.
+    // Another leg is still owed, so the erasure request stays open.
+    outboxCount.mockResolvedValue(1);
     revokeCollaboratorAccessMock.mockRejectedValue(new Error("stream down"));
 
+    const before = Date.now();
     const first = await retryModerationEnforcement();
 
-    expect(outboxUpdate).toHaveBeenCalledWith({
-      where: { id: "retry-1" },
+    const firstWrite = outboxUpdate.mock.calls[0][0] as {
+      data: { status: string; attempts: number; nextRetryAt: Date };
+    };
+    expect(firstWrite.data).toMatchObject({ status: "FAILED", attempts: 6 });
+    expect(firstWrite.data.nextRetryAt.getTime()).toBeGreaterThanOrEqual(
+      before + 24 * 60 * 60_000,
+    );
+    expect(first.gaveUp).toBe(0);
+    expect(first.stillFailing).toBe(1);
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+
+    // The next daily attempt still fails: retried again, not reported again.
+    const second = await retryModerationEnforcement();
+
+    expect(outboxUpdate).toHaveBeenCalledTimes(2);
+    expect(outboxUpdate.mock.calls[1][0]).toMatchObject({
+      data: { status: "FAILED", attempts: 7 },
+    });
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    expect(second.gaveUp).toBe(0);
+    expect(erasureRequestUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("still gives up on a capped kind at the cap", async () => {
+    const { redriveAccessRevocation } = jest.requireMock(
+      "../../lib/stream/access-revocation",
+    ) as { redriveAccessRevocation: jest.Mock };
+    findMany.mockResolvedValue([]);
+    outboxFindMany.mockResolvedValueOnce([
+      {
+        id: "retry-dm",
+        kind: "DM_REMOVE",
+        erasureRequestId: null,
+        erasureRequest: null,
+        userId: "client-1",
+        counterpartUserId: "host-1",
+        planType: null,
+        planId: "dm-client-1-host-1",
+        attempts: 5,
+        nextRetryAt: new Date(1_000),
+        createdAt: new Date(),
+      },
+    ]);
+    redriveAccessRevocation.mockResolvedValueOnce("DM removal failed");
+
+    const result = await retryModerationEnforcement();
+
+    expect(outboxUpdateMany).toHaveBeenCalledWith({
+      where: { id: "retry-dm", attempts: 5, nextRetryAt: new Date(1_000) },
       data: {
         status: "FAILED",
         attempts: 6,
-        lastError: "stream down",
+        lastError: "DM removal failed",
         nextRetryAt: null,
       },
     });
-    expect(first.gaveUp).toBe(1);
-    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    expect(result.gaveUp).toBe(1);
+  });
 
-    // The next tick: the row is at its budget, so it is neither re-driven nor
-    // re-reported.
-    const second = await retryModerationEnforcement();
+  it("re-drives a seat row capped before this change once it is due", async () => {
+    const { redriveAccessRevocation } = jest.requireMock(
+      "../../lib/stream/access-revocation",
+    ) as { redriveAccessRevocation: jest.Mock };
+    findMany.mockResolvedValue([]);
+    outboxFindMany.mockResolvedValueOnce([
+      {
+        id: "retry-old",
+        kind: "SEAT_ACCESS_REVOKE",
+        erasureRequestId: null,
+        erasureRequest: null,
+        userId: "attendee-1",
+        counterpartUserId: null,
+        planType: null,
+        planId: "appt-1",
+        attempts: 6,
+        nextRetryAt: null,
+        createdAt: new Date(),
+      },
+    ]);
 
-    expect(outboxUpdate).toHaveBeenCalledTimes(1);
-    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
-    expect(second.gaveUp).toBe(0);
-    expect(second.success).toBe(true);
+    const result = await retryModerationEnforcement();
+
+    expect(redriveAccessRevocation).toHaveBeenCalledTimes(1);
+    expect(outboxUpdateMany).toHaveBeenCalledWith({
+      where: { id: "retry-old", attempts: 6, nextRetryAt: null },
+      data: { status: "SUCCEEDED", attempts: 7, completedAt: expect.any(Date) },
+    });
+    expect(result.accessRevocationsRecovered).toBe(1);
+  });
+
+  describe("without Stream's keys", () => {
+    it("leaves every owed Stream row due, spends no attempt and reports once per run", async () => {
+      const { redriveAccessRevocation } = jest.requireMock(
+        "../../lib/stream/access-revocation",
+      ) as { redriveAccessRevocation: jest.Mock };
+      mockStreamConfigured = false;
+      findMany.mockResolvedValue([]);
+      outboxCount.mockResolvedValue(3);
+      vendorOutboxFindMany.mockResolvedValueOnce([
+        {
+          id: "vr-stream",
+          erasureRequestId: "er-1",
+          vendor: "STREAM",
+          vendorRef: "u-erased",
+          payload: null,
+          attempts: 1,
+          erasureRequest: { userId: "u-erased" },
+        },
+      ]);
+      const warn = jest
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+
+      const result = await retryModerationEnforcement();
+      warn.mockRestore();
+
+      expect(outboxFindMany).not.toHaveBeenCalled();
+      expect(redriveAccessRevocation).not.toHaveBeenCalled();
+      expect(outboxUpdateMany).not.toHaveBeenCalled();
+      expect(outboxUpdate).not.toHaveBeenCalled();
+      expect(vendorOutboxUpdate).not.toHaveBeenCalled();
+      expect(result.streamUnconfigured).toBe(4);
+      expect(result.success).toBe(false);
+      expect(result.errors).toEqual([
+        "Stream not configured: 4 owed Stream revocations or erasures left pending",
+      ]);
+      expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    });
+
+    it("drains the same rows once the keys are back", async () => {
+      const { redriveAccessRevocation } = jest.requireMock(
+        "../../lib/stream/access-revocation",
+      ) as { redriveAccessRevocation: jest.Mock };
+      findMany.mockResolvedValue([]);
+      const seat = {
+        id: "retry-seat",
+        kind: "SEAT_ACCESS_REVOKE",
+        erasureRequestId: null,
+        erasureRequest: null,
+        userId: "attendee-1",
+        counterpartUserId: null,
+        planType: null,
+        planId: "appt-1",
+        attempts: 0,
+        nextRetryAt: new Date(1_000),
+        createdAt: new Date(),
+      };
+      outboxFindMany.mockResolvedValue([seat]);
+      outboxCount.mockResolvedValue(1);
+      mockStreamConfigured = false;
+      const warn = jest
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+      await retryModerationEnforcement();
+      warn.mockRestore();
+      expect(redriveAccessRevocation).not.toHaveBeenCalled();
+
+      mockStreamConfigured = true;
+      const result = await retryModerationEnforcement();
+
+      expect(redriveAccessRevocation).toHaveBeenCalledTimes(1);
+      expect(outboxUpdateMany).toHaveBeenCalledWith({
+        where: { id: "retry-seat", attempts: 0, nextRetryAt: new Date(1_000) },
+        data: {
+          status: "SUCCEEDED",
+          attempts: 1,
+          completedAt: expect.any(Date),
+        },
+      });
+      expect(result.streamUnconfigured).toBe(0);
+      expect(result.accessRevocationsRecovered).toBe(1);
+    });
   });
 
   it("keeps the erasure request open while a leg is still outstanding", async () => {

@@ -9,6 +9,7 @@ const mockIsDmContextEligible = jest.fn();
 const mockRevocationUpdateCallMembers = jest.fn();
 const mockRevocationGetCall = jest.fn();
 const mockRestampRefundedSeats = jest.fn();
+let mockStreamConfigured = true;
 
 type RetryRow = {
   id: string;
@@ -128,7 +129,7 @@ jest.mock("../../lib/stream-client", () => ({
       }),
     },
   }),
-  isStreamConfigured: () => true,
+  isStreamConfigured: () => mockStreamConfigured,
   withStreamCircuitBreaker: <T>(fn: () => Promise<T>) => fn(),
   StreamUnavailableError: class StreamUnavailableError extends Error {},
   isExpectedStreamError: () => false,
@@ -242,6 +243,7 @@ const webinarRoster = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockStreamConfigured = true;
   seats.refunded = [];
   seats.admitted = [];
   seats.holders = [];
@@ -1309,5 +1311,143 @@ describe("a writer settles only the intent generation it wrote", () => {
 
     const [written] = writtenGenerations();
     expect(written.nextRetryAt).toBeInstanceOf(Date);
+  });
+});
+
+describe("Stream keys missing or refused", () => {
+  beforeEach(async () => {
+    const { resetThrottledCaptureForTesting } =
+      await import("../../lib/observability/throttled-capture");
+    resetThrottledCaptureForTesting();
+  });
+
+  it("keeps an immediate drive's intent owed, then a later drive with keys finishes it", async () => {
+    const { revokeEndedSeatAccess, STREAM_UNCONFIGURED } =
+      await import("../../lib/stream/access-revocation");
+    mockStreamConfigured = false;
+
+    await revokeEndedSeatAccess("appt-1", ["attendee-1"]);
+    await revokeEndedSeatAccess("appt-1", ["attendee-2"]);
+
+    expect(
+      mockRevocationPrisma.streamRevocationRetry.createMany,
+    ).toHaveBeenCalledTimes(2);
+    expect(mockRemoveMembers).not.toHaveBeenCalled();
+    expect(mockRevocationUpdateCallMembers).not.toHaveBeenCalled();
+    expect(settledCalls()).toHaveLength(0);
+    // Reported once for the window, not once per drive.
+    expect(mockReport).toHaveBeenCalledTimes(1);
+    expect(mockReport).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ op: "revocation.unconfigured" }),
+    );
+    expect(STREAM_UNCONFIGURED).toBe("Stream not configured");
+
+    mockStreamConfigured = true;
+    await revokeEndedSeatAccess("appt-1", ["attendee-1"]);
+
+    expect(mockRevocationUpdateCallMembers).toHaveBeenCalledWith(
+      "default",
+      "occurrence-0",
+      { remove_members: ["attendee-1"] },
+    );
+    expect(settledCalls()).toHaveLength(1);
+  });
+
+  it("returns the unavailable outcome from a sweep redrive, then removes access once keys return", async () => {
+    const { redriveAccessRevocation, STREAM_UNCONFIGURED } =
+      await import("../../lib/stream/access-revocation");
+    const row = {
+      kind: "SEAT_ACCESS_REVOKE" as const,
+      userId: "attendee-1",
+      planId: "appt-1",
+      planType: null,
+      counterpartUserId: null,
+      createdAt: new Date(),
+    };
+    mockStreamConfigured = false;
+
+    await expect(redriveAccessRevocation(row)).resolves.toBe(
+      STREAM_UNCONFIGURED,
+    );
+    await expect(
+      redriveAccessRevocation({
+        ...row,
+        kind: "REFUND_ACCESS_REVOKE",
+        userId: "payer-1",
+        planId: "refund-1",
+      }),
+    ).resolves.toBe(STREAM_UNCONFIGURED);
+    expect(mockRevocationPrisma.appointment.findUnique).not.toHaveBeenCalled();
+    expect(mockRestampRefundedSeats).not.toHaveBeenCalled();
+    expect(mockRevocationUpdateCallMembers).not.toHaveBeenCalled();
+
+    mockStreamConfigured = true;
+    await expect(redriveAccessRevocation(row)).resolves.toBeNull();
+    expect(mockRevocationUpdateCallMembers).toHaveBeenCalledWith(
+      "default",
+      "occurrence-0",
+      { remove_members: ["attendee-1"] },
+    );
+  });
+
+  it("keeps a refund's seat intents owed while the keys are missing", async () => {
+    mockRevocationPrisma.appointment.findUnique.mockResolvedValue(
+      directSeatContext("SCHEDULED"),
+    );
+    seats.refunded = [
+      {
+        userId: "client-1",
+        appointmentId: "appt-1",
+        appointment: {
+          webinar: null,
+          class: null,
+          consultation: { status: "SCHEDULED" },
+          subscription: null,
+          trial: null,
+        },
+      },
+    ];
+    mockStreamConfigured = false;
+    const { revokeRefundedSeatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    await revokeRefundedSeatAccess(refundIntent);
+
+    expect(
+      mockRevocationPrisma.streamRevocationRetry.createMany.mock.calls.map(
+        ([args]) => (args as { data: { kind: string }[] }).data[0].kind,
+      ),
+    ).toEqual(["REFUND_ACCESS_REVOKE", "SEAT_ACCESS_REVOKE"]);
+    // The refund row is done once its seat rows exist; the seat rows stay owed.
+    expect(settledCalls().map((c) => c.where.kind)).toEqual([
+      "REFUND_ACCESS_REVOKE",
+    ]);
+    expect(mockRevocationUpdateCallMembers).not.toHaveBeenCalled();
+  });
+});
+
+describe("an earlier revocation generation and a later valid booking", () => {
+  it("never removes a user whose seat was re-bought after the intent was written", async () => {
+    const { revokeEndedSeatAccess, redriveAccessRevocation } =
+      await import("../../lib/stream/access-revocation");
+    mockStreamConfigured = false;
+    await revokeEndedSeatAccess("appt-1", ["attendee-1"]);
+    // The user books the same appointment again before the sweep runs.
+    seats.admitted = ["attendee-1"];
+    mockStreamConfigured = true;
+
+    await expect(
+      redriveAccessRevocation({
+        kind: "SEAT_ACCESS_REVOKE",
+        userId: "attendee-1",
+        planId: "appt-1",
+        planType: null,
+        counterpartUserId: null,
+        createdAt: new Date(0),
+      }),
+    ).resolves.toBeNull();
+    expect(mockRemoveMembers).not.toHaveBeenCalled();
+    expect(mockRevocationUpdateCallMembers).not.toHaveBeenCalled();
   });
 });
