@@ -129,6 +129,7 @@ The money subsystem: checkout and pricing, capture and webhooks, the double-entr
 - [finance/90-decisions/README.md](./finance/90-decisions/README.md) - The money ADRs and the gateway decision
 - [finance/60-tax/05-gst-registration-and-tax-regime.md](./finance/60-tax/05-gst-registration-and-tax-regime.md) - The registered and unregistered GST regimes, the `Payment.gstRegime` stamp, the ₹15 lakh turnover alarm and the switch-over runbook
 - [2026-11-09-tax-compliance-and-pricing-levers.md](./decisions/2026-11-09-tax-compliance-and-pricing-levers.md) - Launch unregistered under the s.22 threshold with the regime from `PLATFORM_GSTIN`; one order pipeline; the profitability floor on every platform-funded lever; the roadmap and cited sources
+- [2026-11-12-bug-hunt-money-doors.md](./decisions/2026-11-12-bug-hunt-money-doors.md) - The recover door refuses returned or contested money, an abandoned wallet top-up is kept and a late payment credited, staff limits count credit at its value, and a reload or second tab counts the buyer's own open order; the options not chosen and the one fix not built
 - [2026-11-09-payment-gateways-one-rail.md](./decisions/2026-11-09-payment-gateways-one-rail.md) - Why only Razorpay and RazorpayX are integrated: Stripe removed, the US-entity route and the merchant-of-record platforms rejected, Cashfree, Tazapay and Xflow deferred with revisit triggers
 
 ---

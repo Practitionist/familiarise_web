@@ -43,7 +43,18 @@ superseded, so one buyer can hold two checkouts in two tabs. A replay under the
 same idempotency key must match the priced inputs it was minted with: the
 `Payment.requestFingerprint` is compared, and a mismatch mints a fresh attempt
 instead of replaying (`replayByIdempotencyKey` in
-`lib/payments/operations/checkout-replay.ts`). `PaymentStatus` has exactly
+`lib/payments/operations/checkout-replay.ts`).
+
+A reload or second tab prices as if the buyer's own open order for the same item
+were released: `ownOpenOrderHolds` adds the credit that order holds to the
+available credit and subtracts its code use before the exhausted check, so the
+amount equals the open order's and it is reused (`classifyOpenOrders`). The same
+item is the same plan and exactly the same window for a 1:1, the same plan and
+first cycle for a subscription, and the same event with the seat still HELD for a
+webinar or class; another window is never counted. The commit-time credit CAS
+still decides (`CREDIT_SHORTFALL`, `DISCOUNT_EXHAUSTED`). Every unpaid exit also
+returns the organisation engagement with `reverseBookingUtilization`, beside the
+credits and the code use. `PaymentStatus` has exactly
 four values — `PENDING`, `SUCCEEDED`, `FAILED`, `EXPIRED` — with no `CAPTURED`;
 `SUCCEEDED` is the success terminal and `EXPIRED` means timed out rather than
 gateway-rejected. See `references/availability.md` for when such a hold stops
