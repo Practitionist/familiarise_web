@@ -8,7 +8,7 @@ last-reviewed: 2026-10-23
 
 # Approval payments
 
-Some bookings are paid after the expert says yes. A buyer sends a request for a consultation or a subscription, the expert approves it, and only then does the buyer get a pay link. This page explains how that link is minted without ever leaving an order and a row out of step, how long it lives, and how an unpaid approval ends. Direct checkout, where the buyer pays first, is in [checkout and pricing](01-checkout-and-pricing.md); both flows end in the same confirmation path ([capture confirmation](02-capture-confirmation-and-webhooks.md)).
+Some bookings are paid after the expert says yes. A buyer sends a request for a consultation, or a trial is accepted, and only then does the buyer get a pay link. A subscription plan is always paid at purchase and never gets one. This page explains how that link is minted without ever leaving an order and a row out of step, how long it lives, and how an unpaid approval ends. Direct checkout, where the buyer pays first, is in [checkout and pricing](01-checkout-and-pricing.md); both flows end in the same confirmation path ([capture confirmation](02-capture-confirmation-and-webhooks.md)).
 
 ## 1. The shape of the flow
 

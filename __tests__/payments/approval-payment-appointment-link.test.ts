@@ -931,21 +931,17 @@ describe("approval routes thread the appointment (source contract)", () => {
   const read = (rel: string) =>
     fs.readFileSync(path.join(process.cwd(), rel), "utf8");
 
-  // #1775 B-9 — both request routes mint through the one shared post-commit
-  // block; the request-time appointment (the subscription's ONE wrapper —
-  // #1554, no `[0]` to pick) is threaded there.
+  // The consultation route mints through the one shared post-commit block,
+  // which threads the request-time appointment.
   it("the shared approval mint passes the request-time appointment", () => {
     const src = read("lib/booking/approve-request.ts");
     const fn = src.slice(
       src.indexOf("export async function mintApprovalPaymentAfterCommit"),
     );
     expect(fn).toContain("appointmentId: row.appointment?.id ?? undefined");
-    for (const rel of [
-      "app/api/bookings/consultations/[consultationId]/route.ts",
-      "app/api/bookings/subscriptions/[subscriptionId]/route.ts",
-    ]) {
-      expect(read(rel)).toContain("mintApprovalPaymentAfterCommit({");
-    }
+    expect(
+      read("app/api/bookings/consultations/[consultationId]/route.ts"),
+    ).toContain("mintApprovalPaymentAfterCommit({");
   });
 
   it('the metadata builder no longer carries the "pending" sentinel', () => {

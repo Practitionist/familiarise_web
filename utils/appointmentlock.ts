@@ -444,7 +444,7 @@ export async function lockSubscriptionApproval(
 }
 
 export async function lockApprovalPaymentMint(
-  kind: "CONSULTATION" | "SUBSCRIPTION" | "TRIAL",
+  kind: "CONSULTATION" | "TRIAL",
   id: string,
   ttl: number = DEFAULT_LOCK_TTL,
 ): Promise<ApprovalLock> {

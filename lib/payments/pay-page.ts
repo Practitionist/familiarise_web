@@ -5,8 +5,8 @@
  * could open it. This read decides, for the payer only, whether the order can
  * be opened as-is, must be re-minted first (EXPIRED/FAILED or past its
  * window), is already paid, or is no longer payable. The re-mint reuses the
- * existing paths — `mintApprovalPaymentAfterCommit` for consultations and
- * subscriptions, `remintTrialPayLink` for trials — never a second writer.
+ * existing paths — `mintApprovalPaymentAfterCommit` for consultations,
+ * `remintTrialPayLink` for trials — never a second writer.
  */
 
 import {
@@ -159,7 +159,7 @@ function isLive(row: PayPageRow, now: Date): boolean {
  * a stored link as "already live" and would hand the dead order back.
  */
 async function remint(row: PayPageRow): Promise<boolean> {
-  const { consultation, subscription, trial } = row.appointment ?? {};
+  const { consultation, trial } = row.appointment ?? {};
   const payable = {
     status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
   } as const;
@@ -171,17 +171,6 @@ async function remint(row: PayPageRow): Promise<boolean> {
     const out = await mintApprovalPaymentAfterCommit({
       kind: "consultation",
       id: consultation.id,
-    });
-    return out.status === "minted" || out.status === "already_live";
-  }
-  if (subscription) {
-    await prisma.subscription.updateMany({
-      where: { id: subscription.id, ...payable },
-      data: { pendingPaymentUrl: null },
-    });
-    const out = await mintApprovalPaymentAfterCommit({
-      kind: "subscription",
-      id: subscription.id,
     });
     return out.status === "minted" || out.status === "already_live";
   }
