@@ -23,9 +23,9 @@
 
 Single one-time session between consultant and consultee.
 
-**Config**: `durationInHours` (0.5-4 hours) on the plan. Each request freezes its own copy: `Consultation.pricePaise` and `Consultation.sessionMinutes` (see "Sold terms" below).
-**Slots**: `slotsPerSession = Math.ceil(sessionMinutes / 30)`, where the length is the frozen `sessionMinutes` (`soldConsultationMinutes` in `lib/booking/sold-terms.ts`), or the plan's length for a row created before the freeze.
-**Rules**: The slots must be one consecutive block of exactly the sold length. The block may cross midnight, because contiguity and length, not the calendar day, keep it one session. Exactly one Appointment is created. `validateConsultation` (`utils/scheduling-engine/ScheduleValidationService.ts`) enforces this on the server, and `validateConsultationSelection` (`lib/scheduling/intervalSelectionValidation.ts`) applies the same rule in the browser.
+**Config**: `durationInHours` (0.5-4 hours) on the plan. Each request keeps the price it was made at in `Consultation.agreedPricePaise`; the length is read from the booked session (see "Agreed price and booked length" in [the booking lifecycle](./06-booking-lifecycle.md)).
+**Slots**: `slotsPerSession = Math.ceil(minutes / 30)`, where the minutes are the length of the session the booking holds (`bookedSessionMinutes` in `lib/appointments/occurrences.ts`), or the plan's length when the booking has no session row at all.
+**Rules**: The slots must be one consecutive block of exactly the booked length. The block may cross midnight, because contiguity and length, not the calendar day, keep it one session. Exactly one Appointment is created. `validateConsultation` (`utils/scheduling-engine/ScheduleValidationService.ts`) enforces this on the server, and `validateConsultationSelection` (`lib/scheduling/intervalSelectionValidation.ts`) applies the same rule in the browser.
 
 **Example.** Hannah Anderson sells a 1-hour consultation. Priya Anderson requests Mon 16 Nov 2026 from 23:30 to 00:30 IST. That is two half-hour atoms, back to back, one on each side of midnight. The server accepts it as one session. The old rule judged the day in Asia/Kolkata for every host, so a session that crossed 18:30 UTC was refused on allocate, reschedule-accept and incident rebook even though the request door had accepted it.
 

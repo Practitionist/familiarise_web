@@ -660,8 +660,7 @@ erDiagram
         string requestedById
         AppointmentStatus status
         BookingSource bookingSource
-        bigint pricePaise
-        int sessionMinutes
+        bigint agreedPricePaise
         string pendingPaymentUrl
         CancellationReason cancellationReason
         datetime cancelledAt
@@ -695,8 +694,7 @@ erDiagram
         string organizationId
         string pendingPaymentUrl
         string paymentId
-        bigint pricePaise
-        int sessionMinutes
+        bigint agreedPricePaise
         TrialStatus status
     }
     PlatformPricingConfig {
@@ -719,7 +717,7 @@ erDiagram
     Trial ||--o| Subscription : "converts to"
 ```
 
-`Consultation.pricePaise` and `sessionMinutes`, and the same two columns on `Trial`, hold the price (paise, `BigInt`) and length (minutes) the request was made on. They are nullable: a null row predates the freeze and reads the plan. The sidecar CHECKs `consultation_sold_terms_valid` and `trial_sold_terms_valid` in `prisma/sql/check-constraints.sql` require a price of at least 0 and a length of at least 1 when set. The rules and readers are in [Booking schema reference](../booking/21-schema-reference.md).
+`Consultation.agreedPricePaise` and `Trial.agreedPricePaise` hold the price (paise, `BigInt`) the request was made at. They are nullable: a null row predates the column and reads the plan. The sidecar CHECKs `consultation_agreed_price_valid` and `trial_agreed_price_valid` in `prisma/sql/check-constraints.sql` require a price of at least 0 when set. The length is not stored; it is read from the session the booking holds. The rules and readers are in [Booking schema reference](../booking/21-schema-reference.md).
 
 ---
 

@@ -10,7 +10,7 @@ Key characteristics:
 - Priced per plan via `trialPriceInPaise`, which defaults to 0 (a free trial). A platform-wide minimum sits under every plan's trial price: admin or staff set `PlatformPricingConfig.minTrialPriceInPaise` via `PATCH /api/admin/trial-pricing`, and the plan create/update routes reject prices below it.
 - **A free trial is confirmed at once**: the request writes the trial as `SCHEDULED` with a confirmed session. **A paid trial holds its time** as `AWAITING_PAYMENT` with a tentative session until the capture confirms it, and the hold lapses through the expire-unpaid-trials sweep if nobody pays.
 - Duration configured per plan via `trialDurationMinutes` (default 30 min); `assertWindowMatchesPlanDuration` refuses any other length.
-- **The price and length are frozen at request.** `bookTrialInTx` writes `Trial.pricePaise` and `Trial.sessionMinutes` from the plan's `trialPriceInPaise` and `trialDurationMinutes`. A later plan edit never moves them (see "Sold terms" below).
+- **The price is agreed at request.** `bookTrialInTx` writes `Trial.agreedPricePaise` from the plan's `trialPriceInPaise`, and a later plan edit never moves it. The length is not stored: it is read from the session the trial holds (see "Agreed price and booked length" below).
 - Each side may **reschedule** a trial once, at least 24 hours before it starts; the **expert can cancel** a scheduled trial, which refunds the learner in full and records a reliability strike.
 - Successful trials can convert into a full subscription.
 
@@ -39,8 +39,7 @@ Key characteristics:
 | `consulteeProfileId`        | `String`           | required  | FK to ConsulteeProfile                                                      |
 | `consultantProfileId`       | `String`           | required  | FK to ConsultantProfile                                                     |
 | `subscriptionPlanId`        | `String`           | required  | FK to SubscriptionPlan (must have trial enabled)                            |
-| `pricePaise`                | `BigInt?`          | null      | Trial price frozen at request; null reads the plan (rows before the freeze) |
-| `sessionMinutes`            | `Int?`             | null      | Trial length frozen at request; null reads the plan                         |
+| `agreedPricePaise`          | `BigInt?`          | null      | Trial price agreed at request; null reads the plan (rows before the column) |
 | `appointmentId`             | `String?` (unique) | null      | FK to Appointment, created with the trial and its picked session at request |
 | `convertedToSubscriptionId` | `String?` (unique) | null      | FK to Subscription (set when CONVERTED)                                     |
 | `requestedAt`               | `DateTime`         | `now()`   | When the trial was requested                                                |
@@ -77,15 +76,15 @@ Key characteristics:
 
 ---
 
-## Sold terms
+## Agreed price and booked length
 
-A trial keeps the price and length it was requested on. `bookTrialInTx` stamps `pricePaise` and `sessionMinutes` on the row when it is created, from the plan's trial settings that the request was just checked against. If the expert later edits the plan, the plan edit route (`PUT /api/plans/subscriptions/[subscriptionPlanId]`) first calls `freezeTrialTerms` (`lib/booking/sold-terms.ts`) inside its own transaction, which stamps every trial of that plan that is still null, and only then changes the plan. The database refuses a negative price or a zero length through `trial_sold_terms_valid` in `prisma/sql/check-constraints.sql`.
+A trial keeps the price it was requested at, and the length of the session it holds. `bookTrialInTx` stamps `agreedPricePaise` on the row when it is created, from the plan's `trialPriceInPaise` that the request was just checked against. If the expert later changes the trial price, the plan edit route (`PUT /api/plans/subscriptions/[subscriptionPlanId]`) first calls `freezeTrialPrice` (`lib/booking/sold-terms.ts`) inside its own transaction, which stamps every trial of that plan that is still null, and only then changes the plan. A change to the trial length alone freezes nothing. The database refuses a negative price through `trial_agreed_price_valid` in `prisma/sql/check-constraints.sql`.
 
-The readers use `soldTrialPricePaise` and `soldTrialMinutes`: the approval pay-link price (`calculateAmount` in `lib/payments/operations/approval-payment.ts`), the trial reschedule confirmation (`confirmTrialProposal` in `lib/booking/trial-reschedule.ts`, which requires the new window to match the sold length) and the reschedule pages under `app/dashboard/`.
+The price readers use `agreedTrialPricePaise`: the approval pay-link price (`calculateAmount` in `lib/payments/operations/approval-payment.ts`). The length is never stored on the trial, because a trial holds its time from the moment it is requested and that session already records the length. `bookedSessionMinutes` (`lib/appointments/occurrences.ts`) returns the live session's length, else the latest session row's, and the plan's `trialDurationMinutes` is used only when the booking has no session row at all. The trial reschedule confirmation (`confirmTrialProposal` in `lib/booking/trial-reschedule.ts`) and the reschedule pages under `app/dashboard/` read the length that way.
 
-**Example.** Raj Anderson requests Hannah Anderson's trial when the plan says ₹200 (20,000 paise) and 30 minutes. Hannah then edits the plan to ₹500 and 45 minutes. Raj's pay link is still ₹200 plus tax, and when he moves the call the new window must still be exactly 30 minutes.
+**Example.** Raj Anderson requests Hannah Anderson's trial when the plan says ₹200 (20,000 paise) and 30 minutes. Hannah then edits the plan to ₹500 and 45 minutes. Raj's pay link is still ₹200 plus tax, and when he moves the call the new window must still be exactly 30 minutes, because his held session is 30 minutes long.
 
-**Known leftovers.** The legacy trial accept arm (`app/api/trials/[trialId]/route.ts`) and the unpaid-trial expiry job (`scripts/trials/expire-unpaid-trials.ts`) still read the plan's current trial price or length. Several display-only readers also still show the plan's current figures for a booking. A row with null columns is a row created before the freeze, so it reads the plan by design.
+**Known leftovers.** The legacy trial accept arm (`app/api/trials/[trialId]/route.ts`) and the unpaid-trial expiry job (`scripts/trials/expire-unpaid-trials.ts`) still read the plan's current trial price or length. Several display-only readers also still show the plan's current figures for a booking. A row with a null price is a row created before the column, so it reads the plan by design.
 
 ---
 
@@ -350,4 +349,4 @@ Users can disable trial notifications via `NotificationPreference.trialNotificat
 - **`PATCH` moving `AWAITING_PAYMENT` to `SCHEDULED`.** It could confirm an unpaid hold by hand; only the capture webhook confirms one now.
 - **Trials could not be rescheduled, and the consultant could not cancel a scheduled trial.** Each side moves a trial once through the shared reschedule routes, and the expert cancels through `DELETE` with a full refund and a strike.
 - **`PATCH` cancelling a scheduled trial.** It skipped the strike and any open reschedule; it now answers 409 `USE_CANCEL_ENDPOINT`.
-- **A trial priced and sized from the live plan.** A plan edit moved a pending trial's pay-link amount and the length a reschedule had to match. Superseded by the frozen `Trial.pricePaise` and `Trial.sessionMinutes`.
+- **A trial priced and sized from the live plan.** A plan edit moved a pending trial's pay-link amount and the length a reschedule had to match. Superseded by `Trial.agreedPricePaise` and the booked session's length (`bookedSessionMinutes`).
