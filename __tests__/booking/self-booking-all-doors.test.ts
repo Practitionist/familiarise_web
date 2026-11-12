@@ -45,9 +45,6 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
       mockCheckSlotAvailability(...(a as []));
   },
 }));
-jest.mock("../../lib/booking/allocation/coverage", () =>
-  jest.requireActual("../fixtures/request-door-hours"),
-);
 jest.mock("../../lib/novu", () => ({
   notifyNewBookingRequest: jest.fn(async () => ({ success: true })),
 }));
@@ -89,6 +86,9 @@ const mockProfile = {
   maxOpenRequests: null as number | null,
   user: { id: "user_consultant", name: "Olivia" },
 };
+jest.mock("../../lib/booking/allocation/coverage", () =>
+  jest.requireActual("../fixtures/request-door-hours"),
+);
 jest.mock("../../lib/prisma", () => {
   const created = () => ({
     id: "req_1",
@@ -101,9 +101,6 @@ jest.mock("../../lib/prisma", () => {
     consulteeProfile: {
       findUnique: jest.fn(async () => ({ id: "cs_1", user: {} })),
     },
-    availabilityWindowWeekly: jest.requireActual(
-      "../fixtures/request-door-hours",
-    ).namedWeeklyWindow,
     consultationPlan: {
       findFirst: jest.fn(async () => ({
         id: "plan_1",
@@ -128,6 +125,9 @@ jest.mock("../../lib/prisma", () => {
       })),
     },
     membership: { findUnique: jest.fn(async () => mockOrgMembership) },
+    availabilityWindowWeekly: jest.requireActual(
+      "../fixtures/request-door-hours",
+    ).namedWeeklyWindow,
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(db)),
   };
   return { __esModule: true, default: db };
