@@ -49,6 +49,7 @@ import {
   stampRejectionRefundOwed,
 } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { platformCancelDoorRefusal } from "@/lib/booking/platform-cancel";
 import {
   requireApiAuth,
   isPrivileged,
@@ -265,6 +266,15 @@ export async function PATCH(
       return forbiddenResponse(
         "You can only update consultations you are a participant in",
       );
+    }
+
+    // A decline refunds in full, so an operator who is not a party uses the staff door.
+    if (status === AppointmentStatus.REJECTED) {
+      const doorRefusal = platformCancelDoorRefusal(request, {
+        privileged: isPrivileged(session.user.role),
+        party: isParticipant,
+      });
+      if (doorRefusal) return doorRefusal;
     }
 
     if (

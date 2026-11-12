@@ -62,6 +62,7 @@ import {
 } from "@/lib/novu";
 import { UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
+import { platformCancelDoorRefusal } from "@/lib/booking/platform-cancel";
 import { trialWindowRefusal } from "@/lib/trials/slot-check";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import {
@@ -357,6 +358,15 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           { error: "Not a participant of this trial" },
           { status: 403 },
         );
+      }
+
+      // A decline refunds in full, so an operator who is not a party has no door here.
+      if (status === TrialStatus.REJECTED) {
+        const doorRefusal = platformCancelDoorRefusal(request, {
+          privileged: isPrivilegedUser,
+          party: isTrialConsultant || isTrialConsultee,
+        });
+        if (doorRefusal) return doorRefusal;
       }
 
       // Consultee can only cancel their trials
@@ -1257,6 +1267,15 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         { status: 404 },
       );
     }
+
+    // A cancel refunds the learner, so an operator who is not a party has no door here.
+    const doorRefusal = platformCancelDoorRefusal(request, {
+      privileged: isPrivileged(session.user.role),
+      party:
+        session.user.consulteeProfileId === existingTrial.consulteeProfileId ||
+        session.user.consultantProfileId === existingTrial.consultantProfileId,
+    });
+    if (doorRefusal) return doorRefusal;
 
     // Only allow cancellation of PENDING, pay-link-live (AWAITING_PAYMENT) or
     // SCHEDULED trials. AWAITING_PAYMENT occupies the slot (occupancyPolicy)

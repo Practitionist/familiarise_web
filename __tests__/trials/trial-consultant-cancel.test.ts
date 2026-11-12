@@ -8,9 +8,9 @@
  * marker is stamped in the cancel commit under `trial-cancel:<trial>:<payment>`
  * with the amount the dialog showed, and a strike is recorded in the same
  * transaction. A free trial owes nothing but still records the strike. The
- * learner's own cancel and an operator's cancel record no strike. From 15
- * minutes before the start nothing is cancelled, and the PATCH no longer
- * cancels a scheduled trial.
+ * learner's own cancel records no strike. An operator who is not a party is
+ * refused on DELETE and on a PATCH decline. From 15 minutes before the start
+ * nothing is cancelled, and the PATCH no longer cancels a scheduled trial.
  */
 
 const state = {
@@ -317,19 +317,16 @@ describe("cancels that record no strike", () => {
     expect(recordExpertStrike).not.toHaveBeenCalled();
   });
 
-  it("an operator's cancel refunds in full without a strike", async () => {
+  it("staff who bought the trial cancel as the learner", async () => {
     state.session = {
-      id: "u-ops",
-      role: "ADMIN",
+      id: "u-learner",
+      role: "STAFF",
       consultantProfileId: null,
-      consulteeProfileId: null,
+      consulteeProfileId: "cee-1",
     };
+    state.hoursAhead = 48;
     const res = await del({ confirmedRefundPaise: 50_000 });
     expect(res.status).toBe(200);
-    expect(stampRefundOwed).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ amountPaise: 50_000 }),
-    );
     expect(recordExpertStrike).not.toHaveBeenCalled();
   });
 
@@ -361,5 +358,43 @@ describe("one door for a scheduled trial", () => {
       typeof import("../../lib/booking/transitions")
     >("../../lib/booking/transitions");
     expect(actual.TRIAL_ALLOWED_FROM.CANCELLED).toContain("SCHEDULED");
+  });
+});
+
+describe("an operator who is not a party", () => {
+  const asOperator = (role: "ADMIN" | "STAFF") => {
+    state.session = {
+      id: "u-ops",
+      role,
+      consultantProfileId: null,
+      consulteeProfileId: null,
+    };
+  };
+
+  it.each(["ADMIN", "STAFF"] as const)(
+    "%s is refused the trial cancel and nothing is refunded",
+    async (role) => {
+      asOperator(role);
+      const res = await del({ confirmedRefundPaise: 50_000 });
+      expect(res.status).toBe(403);
+      expect((await res.json()).code).toBe("PLATFORM_CANCEL_DOOR_REQUIRED");
+      expect(transitionTrial).not.toHaveBeenCalled();
+      expect(stampRefundOwed).not.toHaveBeenCalled();
+    },
+  );
+
+  it("is refused a decline of a pending trial", async () => {
+    asOperator("STAFF");
+    state.trialStatus = "PENDING";
+    const res = await PATCH(
+      new NextRequest("http://localhost/api/trials/trial-1", {
+        method: "PATCH",
+        body: JSON.stringify({ status: "REJECTED" }),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("PLATFORM_CANCEL_DOOR_REQUIRED");
+    expect(transitionTrial).not.toHaveBeenCalled();
   });
 });

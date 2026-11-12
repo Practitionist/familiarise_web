@@ -38,6 +38,7 @@ import {
   stampRejectionRefundOwed,
 } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { platformCancelDoorRefusal } from "@/lib/booking/platform-cancel";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { assertNoLiveCheckoutHold } from "@/lib/booking/request-cohort";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
@@ -229,6 +230,15 @@ export async function PATCH(
       return forbiddenResponse(
         "You can only modify subscriptions you are a participant in",
       );
+    }
+
+    // A decline refunds in full, so an operator who is not a party uses the staff door.
+    if (status === AppointmentStatus.REJECTED) {
+      const doorRefusal = platformCancelDoorRefusal(request, {
+        privileged: isPrivileged(session.user.role),
+        party: isConsultant || isConsultee,
+      });
+      if (doorRefusal) return doorRefusal;
     }
 
     if (!existingSubscription.subscriptionPlan?.consultantProfile?.user?.id) {

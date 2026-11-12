@@ -100,19 +100,32 @@ flowchart TD
 
 Cancellation is authorized at the API layer, not merely hidden in the UI. Here is what the route checks:
 
-| Check                                    | Performed? | Details                                                                                     |
-| ---------------------------------------- | ---------- | ------------------------------------------------------------------------------------------- |
-| Is the user authenticated?               | Yes        | `getSession()` must return a valid session, or the route answers 401                        |
-| Is the user a participant?               | Yes        | The consultant on the plan or the consultee who requested it, or the route answers 403      |
-| Is the user privileged?                  | Yes        | `isPrivileged(session.user.role)` bypasses the participant check for admin and staff        |
-| Is the user an admin of the funding org? | Yes        | `isOrgAdminOfAppointment()` admits an admin of the organization funding the booking (#1166) |
-| Who may cancel a group event?            | Organiser  | Only the consultant who owns the webinar or class plan; attendees cannot cancel the event   |
-| Is the booking in a cancellable state?   | Yes        | The allowed-from set rides the `UPDATE`'s `WHERE`, so a lost race answers 409               |
-| Is a payment dispute open?               | Yes        | An open dispute answers 409, because a refund now could pay the customer twice              |
+| Check                                    | Performed? | Details                                                                                                                                                       |
+| ---------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Is the user authenticated?               | Yes        | `getSession()` must return a valid session, or the route answers 401                                                                                          |
+| Is the user a participant?               | Yes        | The consultant on the plan or the consultee who requested it, or the route answers 403                                                                        |
+| Is the user a non-party operator?        | Yes        | STAFF or ADMIN who is not a party answers 403 `PLATFORM_CANCEL_DOOR_REQUIRED` (`platformCancelDoorRefusal`) unless the request carries the staff door's grant |
+| Is the user an admin of the funding org? | Yes        | `isOrgAdminOfAppointment()` admits an admin of the organization funding the booking (#1166)                                                                   |
+| Who may cancel a group event?            | Organiser  | Only the consultant who owns the webinar or class plan; attendees cannot cancel the event                                                                     |
+| Is the booking in a cancellable state?   | Yes        | The allowed-from set rides the `UPDATE`'s `WHERE`, so a lost race answers 409                                                                                 |
+| Is a payment dispute open?               | Yes        | An open dispute answers 409, because a refund now could pay the customer twice                                                                                |
 
 **Expert cancellations and strikes (decided 2026-11-12; partly planned).** The decision is that an expert who cancels any confirmed booking, free or paid, records a strike, and that strikes are never shown on public pages. What is built today: the cancel route records an `EXPERT_CANCEL` strike (`recordExpertStrike`) only when the expert themself cancels (`isExpertSideCancel`; an operator's or an admin's cancel strikes nobody) and the booking has a paid payment, or, for a group event, a paid live seat; a trial's expert cancel strikes for a free trial too (see [the trials doc](./09-trials.md)). **(planned)** Striking a free confirmed booking, and removing the public reliability line on the expert profile (`ProfileHeader`, `showsReliabilityNotice`), are later pull requests. The owner first chose to move the public reliability line into the Reviews section and reversed that the same day, so strikes stay private and the line is simply removed from public pages; see [the scheduling surfaces record](../decisions/2026-11-09-scheduling-surfaces-and-feasibility.md), decision 17.
 
-**What this means in practice**: the two parties to a booking, a platform admin, or an admin of the organization that funds the booking can cancel it. A group event can only be cancelled by its organiser, since cancelling it ends the session for everyone enrolled.
+**What this means in practice**: the two parties to a booking, or an admin of the organization that funds the booking, can cancel it here. A platform operator (STAFF or ADMIN) who is not a party cancels only through the back-office door at `app/api/staff/appointments/[appointmentId]/cancel/route.ts`, which adds a fresh sign-in, the staff refund limits and an operator audit row, and then runs this route under a one-request grant. An operator who is a party (they bought the booking, or they are its expert) cancels as that party. The same refusal guards the request decline routes and the trial routes; see [who can decline a request or end a trial](#who-can-decline-a-request-or-end-a-trial) below. A group event can only be cancelled by its organiser, since cancelling it ends the session for everyone enrolled.
+
+### Who can decline a request or end a trial
+
+A decline refunds a paid request in full, and a trial cancel refunds the learner, so these routes apply the same rule as the cancel route through the same helper, `platformCancelDoorRefusal` in `lib/booking/platform-cancel.ts`: a STAFF or ADMIN caller who is not the learner or the expert is refused with 403 `PLATFORM_CANCEL_DOOR_REQUIRED` before anything is written.
+
+| Route                                                                                                         | What is refused to a non-party operator           |
+| ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `PATCH /api/bookings/consultations/[consultationId]` and `PATCH /api/bookings/subscriptions/[subscriptionId]` | `status: "REJECTED"` (approval is unchanged)      |
+| `PATCH /api/bookings/consultations` and `PATCH /api/bookings/subscriptions` (the list routes)                 | `status: "REJECTED"`, the only status they accept |
+| `PATCH /api/trials/[trialId]`                                                                                 | `status: "REJECTED"` on a pending trial           |
+| `DELETE /api/trials/[trialId]`                                                                                | Every cancel                                      |
+
+A paid pending 1:1 or plan request always has a tentative appointment, created with the capture, so the back-office platform cancel door ends it: its allowed-from set includes `PENDING`, and an operator's cancel is priced at the expert-side tier of the frozen policy. There is no staff door for a trial, so an operator cannot end a paid trial until one is built; only the learner or the expert can.
 
 **Where the org admin sits in the refund maths**: an org admin acts on the **payer** side, not the consultant side. That distinction is load-bearing, because a consultant-initiated cancellation settles at the policy's consultant-initiated percentage — one hundred per cent under the platform defaults — while a payer-initiated one falls to whatever tier the remaining notice earns. The route therefore computes `isConsultantInitiated` from the consultant's own user ID or from a privileged actor who is not the consultee, and an org admin matches neither.
 
