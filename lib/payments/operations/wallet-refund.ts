@@ -182,6 +182,28 @@ async function bookIfSucceeded(
   );
 }
 
+/**
+ * The cached balance and the granted credit within it, read in one Repeatable Read snapshot,
+ * so an operator adjustment committing meanwhile moves both figures or neither.
+ */
+async function spendableSnapshot(
+  billingAccountId: string,
+): Promise<{ balancePaise: number; grantedCreditPaise: number }> {
+  return prisma.$transaction(
+    async (tx) => {
+      const acct = await tx.billingAccount.findUniqueOrThrow({
+        where: { id: billingAccountId },
+        select: { walletBalance: true, ownerOrgId: true },
+      });
+      return {
+        balancePaise: Number(acct.walletBalance ?? 0),
+        grantedCreditPaise: await grantedWalletCreditPaise(tx, acct.ownerOrgId),
+      };
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+  );
+}
+
 async function cachedBalance(billingAccountId: string): Promise<number> {
   const acct = await prisma.billingAccount.findUniqueOrThrow({
     where: { id: billingAccountId },
@@ -286,7 +308,7 @@ type Stop = NonNullable<RefundRemainingResult["stoppedOn"]>;
 type WalkState = {
   billingAccountId: string;
   reason: string;
-  /** Held back from every refund so only top-up money leaves. */
+  /** Held back from every refund so only top-up money leaves; re-read before each one. */
   grantedCreditPaise: number;
   /** Gateway refunds still in flight; each debits the wallet when it lands. */
   pendingPaise: number;
@@ -336,10 +358,10 @@ async function issueNewRefunds(
 ): Promise<Stop | null> {
   for (const l of listed) {
     if (l.prior) continue;
+    const snapshot = await spendableSnapshot(state.billingAccountId);
+    state.grantedCreditPaise = snapshot.grantedCreditPaise;
     const availablePaise =
-      (await cachedBalance(state.billingAccountId)) -
-      state.grantedCreditPaise -
-      state.pendingPaise;
+      snapshot.balancePaise - snapshot.grantedCreditPaise - state.pendingPaise;
     if (availablePaise <= 0) break;
     try {
       const line = await issueTopUpRefund(l, availablePaise, state.reason);
@@ -367,15 +389,8 @@ export async function refundRemainingWalletBalance(params: {
   reason: string;
 }): Promise<RefundRemainingResult> {
   const { billingAccountId } = params;
-  const account = await prisma.billingAccount.findUniqueOrThrow({
-    where: { id: billingAccountId },
-    select: { walletBalance: true, ownerOrgId: true },
-  });
-  const startingBalancePaise = Number(account.walletBalance ?? 0);
-  const grantedCreditPaise = await grantedWalletCreditPaise(
-    prisma,
-    account.ownerOrgId,
-  );
+  const { balancePaise: startingBalancePaise, grantedCreditPaise } =
+    await spendableSnapshot(billingAccountId);
   const rows = await prisma.walletTopUp.findMany({
     where: {
       billingAccountId,
@@ -416,7 +431,7 @@ export async function refundRemainingWalletBalance(params: {
   }
   return {
     startingBalancePaise,
-    grantedCreditPaise,
+    grantedCreditPaise: state.grantedCreditPaise,
     balanceAfterPaise: await cachedBalance(billingAccountId),
     pendingPaise: state.pendingPaise,
     refunds: state.refunds,

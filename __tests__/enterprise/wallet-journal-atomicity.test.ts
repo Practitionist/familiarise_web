@@ -8,15 +8,21 @@
  * only with its Dr WALLET line, an ops adjustment posts its balanced pair, and
  * refund-remaining never sends more than the balance left after in-flight refunds.
  */
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
+jest.mock("../../lib/prisma", () => {
+  const client = {
     $executeRaw: jest.fn().mockResolvedValue(1),
     walletTopUp: { findMany: jest.fn(), updateMany: jest.fn() },
     billingAccount: { findUniqueOrThrow: jest.fn() },
     ledgerEntry: { groupBy: jest.fn(async () => []) },
-  },
-}));
+  };
+  return {
+    __esModule: true,
+    default: {
+      ...client,
+      $transaction: (fn: (tx: typeof client) => unknown) => fn(client),
+    },
+  };
+});
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: jest.fn((_j: string, _o: unknown, fn: () => unknown) => fn()),
 }));
@@ -260,9 +266,12 @@ describe("org wallet journal atomicity", () => {
       walletBalance: 10_000,
       ownerOrgId: "org_1",
     });
-    db.ledgerEntry.groupBy.mockResolvedValueOnce([
+    const granted = [
       { direction: "CREDIT", _sum: { amountPaise: BigInt(6_000) } },
-    ]);
+    ];
+    db.ledgerEntry.groupBy
+      .mockResolvedValueOnce(granted)
+      .mockResolvedValueOnce(granted);
     db.walletTopUp.findMany.mockResolvedValue([
       {
         id: "t1",
@@ -289,6 +298,31 @@ describe("org wallet journal atomicity", () => {
       expect.objectContaining({ amount: 4_000 }),
     );
     expect(r).toMatchObject({ grantedCreditPaise: 6_000, pendingPaise: 4_000 });
+
+    // A grant committing after the first read raises balance and grant together: none of it leaves.
+    (createRazorpayRefund as jest.Mock).mockClear();
+    db.billingAccount.findUniqueOrThrow
+      .mockResolvedValueOnce({ walletBalance: 10_000, ownerOrgId: "org_1" })
+      .mockResolvedValueOnce({ walletBalance: 16_000, ownerOrgId: "org_1" });
+    db.ledgerEntry.groupBy
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(granted);
+    db.walletTopUp.findMany.mockResolvedValue([
+      {
+        id: "t2",
+        billingAccountId: "ba_1",
+        amountPaise: 20_000,
+        providerOrderId: "we_t2",
+        providerPaymentId: "pay_t2",
+      },
+    ]);
+    await refundRemainingWalletBalance({
+      billingAccountId: "ba_1",
+      reason: "offboarding",
+    });
+    expect(createRazorpayRefund).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 10_000 }),
+    );
   });
 });
 

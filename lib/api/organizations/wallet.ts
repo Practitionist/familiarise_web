@@ -495,17 +495,11 @@ export async function confirmTopUp(
     const refundReason = lateCapture
       ? await lateTopUpRefundReason(tx, topUp.billingAccountId, ownerOrgId)
       : null;
-    if (refundReason) {
-      await tx.walletTopUp.update({
-        where: { id: topUp.id },
-        data: {
-          notes: `${topUp.notes ?? ""}; late capture refunded to card: ${refundReason}`,
-        },
-      });
-    }
     const refund = refundReason
       ? {
           reason: refundReason,
+          // Says the refund is owed until the post-commit gateway call succeeds.
+          owedNote: `${topUp.notes ?? ""}; late capture owes a card refund: ${refundReason}`,
           topUp: {
             id: topUp.id,
             billingAccountId: topUp.billingAccountId,
@@ -515,6 +509,12 @@ export async function confirmTopUp(
           },
         }
       : null;
+    if (refund) {
+      await tx.walletTopUp.update({
+        where: { id: topUp.id },
+        data: { notes: refund.owedNote },
+      });
+    }
     const receivableSettledPaise = Math.min(
       topUp.amountPaise,
       await openShortfallReceivablePaise(tx, ownerOrgId),
@@ -572,7 +572,7 @@ export async function confirmTopUp(
 
   const { refund, ...outcome } = settled;
   if (!refund) return outcome;
-  // The gateway call runs after commit; a failure leaves the credit for the refund-remaining door.
+  // The gateway call runs after commit; a failure is not retried and the owed note stays.
   const { refundTopUpCapture } =
     await import("@/lib/payments/operations/wallet-refund");
   const refundIssued = await refundTopUpCapture(
@@ -582,6 +582,21 @@ export async function confirmTopUp(
     () => true,
     () => false,
   );
+  if (refundIssued) {
+    await prisma.walletTopUp
+      .updateMany({
+        where: { id: refund.topUp.id, notes: refund.owedNote },
+        data: {
+          notes: `${refund.owedNote}; card refund issued`,
+        },
+      })
+      .catch((error: unknown) =>
+        console.error(
+          `Late top-up ${refund.topUp.id}: refund issued but its note was not updated`,
+          error,
+        ),
+      );
+  }
   return {
     ...outcome,
     lateCaptureRefund: { reason: refund.reason, refundIssued },
