@@ -388,6 +388,11 @@ const FALLBACK_DESCRIPTIONS: Partial<Record<ErrorType, string>> = {
 // Public API
 // ============================================================================
 
+/** A type's fixed description, or null when its copy depends on the server's message. */
+export function getStaticErrorDescription(errorType: ErrorType): string | null {
+  return ERROR_TOAST_MAP[errorType].description;
+}
+
 /**
  * Resolve an errorType + optional message into a toast-ready { title, description }.
  *
