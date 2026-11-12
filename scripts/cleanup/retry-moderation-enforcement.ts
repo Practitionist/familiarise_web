@@ -37,7 +37,8 @@ import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { SWEEP_START_DEADLINE_MS } from "@/lib/cron/run-deadline";
-import { captureThrottled } from "@/lib/observability/throttled-capture";
+import { reportSentryError } from "@/lib/observability/report";
+import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import {
   isUncappedRevocationKind,
   PAST_CAP_RETRY_MS,
@@ -89,8 +90,6 @@ export interface ModerationRetryOptions {
 const runFailures = createRunFailureReporter("moderation");
 
 const MAX_ATTEMPTS = REVOCATION_ATTEMPT_CAP;
-
-const STREAM_UNCONFIGURED_REPORT_MS = 60 * 60_000;
 
 /** A seat or refund revocation is not started with less than this left before the run deadline. */
 const MIN_SEAT_REVOCATION_SLICE_MS = 5_000;
@@ -334,7 +333,7 @@ async function retryModerationEnforcementUnlocked(
     streamReady,
   );
   await finalizeCompletedErasureRequests(settledRequestIds);
-  if (result.streamUnconfigured > 0) reportStreamUnconfigured(result);
+  if (result.streamUnconfigured > 0) await reportStreamUnconfigured(result);
 
   // #1270 review — a sweep that left enforcement unlanded did not succeed.
   // `jobs/` reads this to decide the workflow's exit code.
@@ -343,8 +342,10 @@ async function retryModerationEnforcementUnlocked(
   return result;
 }
 
-/** One report per run: the rows were not attempted, so they keep their attempts and stay due. */
-function reportStreamUnconfigured(result: ModerationRetryResult): void {
+/** The rows were not attempted, so they keep their attempts and stay due; Sentry hears once a day across instances. */
+async function reportStreamUnconfigured(
+  result: ModerationRetryResult,
+): Promise<void> {
   const message = `Stream not configured: ${result.streamUnconfigured} owed Stream revocations or erasures left pending`;
   result.errors.push(message);
   console.warn(
@@ -355,16 +356,19 @@ function reportStreamUnconfigured(result: ModerationRetryResult): void {
       rows: result.streamUnconfigured,
     }),
   );
-  captureThrottled(
-    "moderation.stream-unconfigured",
-    new Error(message),
+  await reportStandingFinding(
     {
-      subsystem: "moderation",
-      op: "stream-unconfigured",
-      level: "warning",
-      extra: { rows: result.streamUnconfigured },
+      key: "retry-moderation-enforcement:stream-unconfigured",
+      ids: ["stream-keys"],
+      message: "Stream not configured: owed Stream revocations stay pending",
     },
-    STREAM_UNCONFIGURED_REPORT_MS,
+    () =>
+      reportSentryError(new Error(message), {
+        subsystem: "moderation",
+        op: "stream-unconfigured",
+        level: "warning",
+        extra: { rows: result.streamUnconfigured },
+      }),
   );
 }
 

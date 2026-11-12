@@ -23,6 +23,17 @@ jest.mock("@sentry/nextjs", () => ({
 // reportSentryError and the shared loggers capture through @sentry/core; share the one mock.
 jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
+const mockReportStandingFinding = jest.fn(
+  async (_args: { key: string }, report?: () => void) => {
+    report?.();
+    return true;
+  },
+);
+jest.mock("../../lib/observability/standing-finding", () => ({
+  reportStandingFinding: (args: { key: string }, report?: () => void) =>
+    mockReportStandingFinding(args, report),
+}));
+
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -669,7 +680,7 @@ describe("retryModerationEnforcement", () => {
   });
 
   describe("without Stream's keys", () => {
-    it("leaves every owed Stream row due, spends no attempt and reports once per run", async () => {
+    it("leaves every owed Stream row due, spends no attempt and reports through the daily finding", async () => {
       const { redriveAccessRevocation } = jest.requireMock(
         "../../lib/stream/access-revocation",
       ) as { redriveAccessRevocation: jest.Mock };
@@ -705,6 +716,14 @@ describe("retryModerationEnforcement", () => {
         "Stream not configured: 4 owed Stream revocations or erasures left pending",
       ]);
       expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+      // Deduped across instances for a day, not per warm instance.
+      expect(mockReportStandingFinding).toHaveBeenCalledWith(
+        expect.objectContaining({
+          key: "retry-moderation-enforcement:stream-unconfigured",
+          ids: ["stream-keys"],
+        }),
+        expect.any(Function),
+      );
     });
 
     it("drains the same rows once the keys are back", async () => {
