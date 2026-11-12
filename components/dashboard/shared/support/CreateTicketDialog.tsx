@@ -42,7 +42,7 @@ import { supportKeys } from "@/lib/support/support-keys";
 import { MemberRole } from "@prisma/client";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { canRaiseAboutOrg } from "@/lib/support/about-org";
-import { SupportPriority, type SupportCaseOwnership } from "@prisma/client";
+import type { SupportCaseOwnership } from "@prisma/client";
 import {
   ISSUE_TYPE_LABELS,
   PLATFORM_ISSUE_TYPE_CATEGORIES,
@@ -77,13 +77,6 @@ const CreatedTicket = z.object({
   ackDueAt: z.string().nullish(),
 });
 
-const PRIORITY_BY_VALUE: Record<string, SupportPriority> = {
-  LOW: "LOW",
-  MEDIUM: "MEDIUM",
-  HIGH: "HIGH",
-  URGENT: "URGENT",
-};
-
 export function CreateTicketDialog({
   trigger,
   defaults,
@@ -102,7 +95,6 @@ export function CreateTicketDialog({
   const [issueType, setIssueType] = useState<string>(defaults?.issueType ?? "");
   const [title, setTitle] = useState(defaults?.title ?? "");
   const [description, setDescription] = useState(defaults?.description ?? "");
-  const [priority, setPriority] = useState<SupportPriority>("MEDIUM");
   const [ownershipScope, setOwnershipScope] = useState<
     "PERSONAL" | "ORG_OPERATIONS" | "ORG_BILLING"
   >(defaults?.ownershipScope ?? "PERSONAL");
@@ -146,7 +138,6 @@ export function CreateTicketDialog({
           clientIntakeId: clientIntakeId.current,
           title: title.trim(),
           description: description.trim(),
-          priority,
           ...(callbackRequested && callbackPhone.trim()
             ? { callbackPhone: callbackPhone.trim() }
             : {}),
@@ -171,7 +162,6 @@ export function CreateTicketDialog({
       setIssueType(defaults?.issueType ?? "");
       setTitle(defaults?.title ?? "");
       setDescription(defaults?.description ?? "");
-      setPriority("MEDIUM");
       setCallbackRequested(false);
       setCallbackPhone("");
       setPhoneError(null);
@@ -335,26 +325,6 @@ export function CreateTicketDialog({
               placeholder="What happened, what you expected, and anything you already tried."
               maxLength={4000}
             />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="new-ticket-priority">Priority</Label>
-            <Select
-              value={priority}
-              onValueChange={(v) =>
-                setPriority(PRIORITY_BY_VALUE[v] ?? "MEDIUM")
-              }
-            >
-              <SelectTrigger id="new-ticket-priority">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="LOW">Low</SelectItem>
-                <SelectItem value="MEDIUM">Medium</SelectItem>
-                <SelectItem value="HIGH">High</SelectItem>
-                <SelectItem value="URGENT">Urgent</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
 
           <div className="space-y-2">
