@@ -255,7 +255,7 @@ export async function refundBookingPayment(
     await persistRefundRevocation(intent);
     await markParticipantsRefunded(input.paymentId);
   }
-  await revokeRefundedSeatAccess(intent);
+  await revokeRefundedSeatAccess(intent, outcome.intentGeneration);
   return outcome.result;
 }
 
@@ -291,6 +291,8 @@ type RailOutcome = {
   payerUserId: string;
   /** The rail's own decision that this refund ends the funded seat. */
   endsSeat: boolean;
+  /** The revocation intent the refund's transaction wrote, or null when none was. */
+  intentGeneration: Date | null;
 };
 
 async function refundBookingPaymentOnRail(
@@ -338,10 +340,18 @@ async function refundBookingPaymentOnRail(
       );
     }
     // The credits rail always stamps the seat REFUNDED in its transaction.
-    const result = await withDedupe(input, "CREDITS", () =>
-      refundFreeCreditPayment(input),
-    );
-    return { result, payerUserId, endsSeat: true };
+    let generation = null as Date | null;
+    const result = await withDedupe(input, "CREDITS", async () => {
+      const credits = await refundFreeCreditPayment(input);
+      generation = credits.intentGeneration;
+      return credits.result;
+    });
+    return {
+      result,
+      payerUserId,
+      endsSeat: true,
+      intentGeneration: generation,
+    };
   }
 
   if (!isInternalFundedIntent(payment.paymentIntent)) {
@@ -358,18 +368,27 @@ async function refundBookingPaymentOnRail(
       },
       payerUserId,
       endsSeat,
+      intentGeneration: null,
     };
   }
 
-  let decided: boolean | null = null;
+  let decided = null as {
+    endsSeat: boolean;
+    intentGeneration: Date | null;
+  } | null;
   const result = await withDedupe(input, "INTERNAL", async () => {
     const internal = await refundInternalFundedPayment(input);
-    decided = internal.endsSeat;
+    decided = internal;
     return internal.result;
   });
   // A key already spent answers without the transaction, so the seat is decided as on the gateway rail.
-  const endsSeat = decided ?? !(await keepsSeat(input));
-  return { result, payerUserId, endsSeat };
+  const endsSeat = decided?.endsSeat ?? !(await keepsSeat(input));
+  return {
+    result,
+    payerUserId,
+    endsSeat,
+    intentGeneration: decided?.intentGeneration ?? null,
+  };
 }
 
 /**
@@ -425,7 +444,7 @@ async function refundFreeCreditPayment(
     dedupeKey?: string;
     supportRecommendationId?: string;
   } & OwedMarkerInput,
-): Promise<BookingRefundResult> {
+): Promise<{ result: BookingRefundResult; intentGeneration: Date }> {
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
     select: {
@@ -450,6 +469,9 @@ async function refundFreeCreditPayment(
     );
   }
 
+  // Loaded before the transaction, so no module load runs while it holds the connection.
+  const { persistRefundRevocationInTx } =
+    await import("@/lib/stream/access-revocation");
   // Staged inside the tx, attempted after it; a retried attempt re-stages.
   let notice: StagedRefundNotice | null = null;
   const result = await withSerializableRetry(() =>
@@ -527,13 +549,20 @@ async function refundFreeCreditPayment(
         });
 
         await transitionParticipant(tx, { paymentId: payment.id }, "REFUNDED");
+        const intentGeneration = await persistRefundRevocationInTx(tx, {
+          refundId: refundRow.id,
+          payerUserId: payment.userId,
+        });
         // The Refund row is ₹0; the value that came back is the restored credit.
         notice = await stageRefundNotice(tx, payment, restoredPaise);
         return {
-          refundId: refundRow.id,
-          amountRefundedPaise: 0,
-          rail: "CREDITS" as const,
-          ...(settledOwed ? { settledOwed } : {}),
+          result: {
+            refundId: refundRow.id,
+            amountRefundedPaise: 0,
+            rail: "CREDITS" as const,
+            ...(settledOwed ? { settledOwed } : {}),
+          },
+          intentGeneration,
         };
       },
       {
@@ -1251,7 +1280,11 @@ async function refundInternalFundedPayment(
     keepSeat?: boolean;
     keepSeatIfPartial?: boolean;
   } & OwedMarkerInput,
-): Promise<{ result: BookingRefundResult; endsSeat: boolean }> {
+): Promise<{
+  result: BookingRefundResult;
+  endsSeat: boolean;
+  intentGeneration: Date | null;
+}> {
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
     select: {
@@ -1288,6 +1321,9 @@ async function refundInternalFundedPayment(
       : await prepareRefundProcessedEmail(
           refundReceiptArgs(payment, input.amountPaise),
         ).catch(() => null);
+  // Loaded before the transaction, so no module load runs while it holds the connection.
+  const { persistRefundRevocationInTx } =
+    await import("@/lib/stream/access-revocation");
   const result = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
@@ -1386,12 +1422,18 @@ async function refundInternalFundedPayment(
         const partial = requested < refundable;
         const endsSeat =
           !input.keepSeat && !(input.keepSeatIfPartial && partial);
+        let intentGeneration: Date | null = null;
         if (endsSeat) {
           await transitionParticipant(
             tx,
             { paymentId: payment.id },
             "REFUNDED",
           );
+          // Commits with the seat stamp, so a refunded seat always has its revocation owed.
+          intentGeneration = await persistRefundRevocationInTx(tx, {
+            refundId: refundRow.id,
+            payerUserId: payment.userId,
+          });
         }
         notice = await stageRefundNotice(tx, payment, requested, receipt);
         return {
@@ -1402,6 +1444,7 @@ async function refundInternalFundedPayment(
             ...(settledOwed ? { settledOwed } : {}),
           },
           endsSeat,
+          intentGeneration,
         };
       },
       {

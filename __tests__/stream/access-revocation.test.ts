@@ -927,6 +927,58 @@ describe("room progress across sweep attempts", () => {
   });
 });
 
+describe("refund intent written inside the refund's transaction", () => {
+  it("writes through the transaction client only, and the drive settles that generation without re-persisting", async () => {
+    const tx = {
+      streamRevocationRetry: {
+        updateMany: jest.fn(async () => ({ count: 0 })),
+        createMany: jest.fn(async () => ({ count: 1 })),
+      },
+    };
+    const { persistRefundRevocationInTx, revokeRefundedSeatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    const generation = await persistRefundRevocationInTx(
+      tx as unknown as Parameters<typeof persistRefundRevocationInTx>[0],
+      refundIntent,
+    );
+
+    expect(tx.streamRevocationRetry.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          kind: "REFUND_ACCESS_REVOKE",
+          userId: "payer-1",
+          planId: "refund-1",
+          nextRetryAt: generation,
+        }),
+      ],
+      skipDuplicates: true,
+    });
+    expect(generation.getTime()).toBeGreaterThan(Date.now());
+    expect(
+      mockRevocationPrisma.streamRevocationRetry.createMany,
+    ).not.toHaveBeenCalled();
+    expect(
+      mockRevocationPrisma.streamRevocationRetry.updateMany,
+    ).not.toHaveBeenCalled();
+
+    await revokeRefundedSeatAccess(refundIntent, generation);
+
+    expect(
+      mockRevocationPrisma.streamRevocationRetry.createMany,
+    ).not.toHaveBeenCalled();
+    expect(settledCalls()).toEqual([
+      expect.objectContaining({
+        where: expect.objectContaining({
+          kind: "REFUND_ACCESS_REVOKE",
+          planId: "refund-1",
+          nextRetryAt: generation,
+        }),
+      }),
+    ]);
+  });
+});
+
 describe("refund intent keyed by the Refund row", () => {
   it("writes the intent even when every read after it fails", async () => {
     mockRevocationPrisma.refund.findUnique.mockRejectedValue(

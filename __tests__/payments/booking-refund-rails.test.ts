@@ -38,6 +38,10 @@ const mockRefundFindUnique = jest.fn();
 const mockFindDedupedRefund = jest.fn(
   async (_key?: string): Promise<unknown> => null,
 );
+/** Revocation rows a transaction wrote, kept only once its callback returns. */
+const mockCommittedRetryRows: unknown[] = [];
+const mockTxRetryCreateMany = jest.fn();
+const mockGlobalRetryWrite = jest.fn();
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -47,8 +51,13 @@ jest.mock("../../lib/prisma", () => ({
       findMany: (...a: unknown[]) => mockRefundFindMany(...a),
       findUnique: (...a: unknown[]) => mockRefundFindUnique(...a),
     },
-    $transaction: (fn: (tx: unknown) => unknown) =>
-      fn({
+    streamRevocationRetry: {
+      updateMany: (...a: unknown[]) => mockGlobalRetryWrite(...a),
+      createMany: (...a: unknown[]) => mockGlobalRetryWrite(...a),
+    },
+    $transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
+      const staged: unknown[] = [];
+      const out = await fn({
         appointmentParticipant: {
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
@@ -61,7 +70,18 @@ jest.mock("../../lib/prisma", () => ({
             return { count: 1 };
           },
         },
-      }),
+        streamRevocationRetry: {
+          updateMany: async () => ({ count: 0 }),
+          createMany: async (args: { data: unknown[] }) => {
+            mockTxRetryCreateMany(args);
+            staged.push(...args.data);
+            return { count: args.data.length };
+          },
+        },
+      });
+      mockCommittedRetryRows.push(...staged);
+      return out;
+    },
   },
 }));
 
@@ -118,16 +138,19 @@ jest.mock("../../lib/booking/participants", () => ({
 }));
 type RefundIntent = { refundId: string; payerUserId: string };
 const mockRevokeRefundedSeatAccess = jest.fn(
-  async (_intent: RefundIntent) => undefined,
+  async (_intent: RefundIntent, _generation?: Date | null) => undefined,
 );
 const mockPersistRefundRevocation = jest.fn(
   async (_intent: RefundIntent) => undefined,
 );
 jest.mock("../../lib/stream/access-revocation", () => ({
-  revokeRefundedSeatAccess: (intent: RefundIntent) =>
-    mockRevokeRefundedSeatAccess(intent),
+  revokeRefundedSeatAccess: (intent: RefundIntent, generation?: Date | null) =>
+    mockRevokeRefundedSeatAccess(intent, generation),
   persistRefundRevocation: (intent: RefundIntent) =>
     mockPersistRefundRevocation(intent),
+  persistRefundRevocationInTx: jest.requireActual(
+    "../../lib/stream/access-revocation",
+  ).persistRefundRevocationInTx,
 }));
 
 import {
@@ -155,6 +178,7 @@ function orgFundedPayment(intent: string) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockPaymentFindUnique.mockReset();
+  mockCommittedRetryRows.length = 0;
   mockRefundFindMany.mockResolvedValue([]);
   mockFindDedupedRefund.mockResolvedValue(null);
   mockRefundCreate.mockResolvedValue({ id: "refund-row-1" });
@@ -222,10 +246,10 @@ describe("refundBookingPayment", () => {
       amountRefundedPaise: 50_000,
       rail: "GATEWAY",
     });
-    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith({
-      refundId: "r1",
-      payerUserId: "payer-1",
-    });
+    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith(
+      { refundId: "r1", payerUserId: "payer-1" },
+      null,
+    );
   });
 
   it("keeps a per-session refund's chat and call access", async () => {
@@ -637,7 +661,7 @@ describe("the access revocation a seat-ending refund owes", () => {
 
     const intent = { refundId: "refund-row-9", payerUserId: "payer-1" };
     expect(mockPersistRefundRevocation).toHaveBeenCalledWith(intent);
-    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith(intent);
+    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith(intent, null);
     expect(order(mockPersistRefundRevocation)).toBeLessThan(
       order(mockTransitionParticipant),
     );
@@ -666,21 +690,50 @@ describe("the access revocation a seat-ending refund owes", () => {
     expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledTimes(1);
   });
 
-  it("internal rail: stamps inside its transaction and only drives the intent", async () => {
+  const internalPayment = () =>
     mockPaymentFindUnique
       .mockResolvedValueOnce({
         paymentIntent: "org_wallet_1_a",
         userId: "payer-1",
       })
-      .mockResolvedValueOnce(orgFundedPayment("org_wallet_1_a"));
+      .mockResolvedValueOnce({
+        ...orgFundedPayment("org_wallet_1_a"),
+        userId: "payer-1",
+      });
+
+  it("internal rail: writes the intent through its transaction and drives that generation", async () => {
+    internalPayment();
 
     await refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancel" });
 
     expect(mockPersistRefundRevocation).not.toHaveBeenCalled();
-    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith({
-      refundId: "refund-row-1",
-      payerUserId: "payer-1",
-    });
+    expect(mockGlobalRetryWrite).not.toHaveBeenCalled();
+    expect(mockCommittedRetryRows).toEqual([
+      expect.objectContaining({
+        kind: "REFUND_ACCESS_REVOKE",
+        planId: "refund-row-1",
+        userId: "payer-1",
+      }),
+    ]);
+    const { nextRetryAt } = mockCommittedRetryRows[0] as { nextRetryAt: Date };
+    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith(
+      { refundId: "refund-row-1", payerUserId: "payer-1" },
+      nextRetryAt,
+    );
+  });
+
+  it("internal rail: a transaction that throws after the intent leaves no row and drives nothing", async () => {
+    internalPayment();
+    mockNotifyRefundProcessed.mockRejectedValueOnce(new Error("db blip"));
+
+    await expect(
+      refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancel" }),
+    ).rejects.toThrow("db blip");
+
+    expect(mockTxRetryCreateMany).toHaveBeenCalledTimes(1);
+    expect(mockCommittedRetryRows).toEqual([]);
+    expect(mockGlobalRetryWrite).not.toHaveBeenCalled();
+    expect(mockRevokeRefundedSeatAccess).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -727,6 +780,7 @@ describe("the access revocation a seat-ending refund owes", () => {
 
       expect(mockPersistRefundRevocation).not.toHaveBeenCalled();
       expect(mockRevokeRefundedSeatAccess).not.toHaveBeenCalled();
+      expect(mockCommittedRetryRows).toEqual([]);
     },
   );
 });
@@ -804,10 +858,11 @@ describe("an internal-rail refund replayed by its dedupe key", () => {
     });
 
     expect(mockApplyReversal).not.toHaveBeenCalled();
-    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith({
-      refundId: "refund-row-1",
-      payerUserId: "payer-1",
-    });
+    // No transaction ran, so the post-commit drive persists the intent itself.
+    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith(
+      { refundId: "refund-row-1", payerUserId: "payer-1" },
+      null,
+    );
   });
 
   it("owes nothing when the original refund was a partial that kept the seat", async () => {
