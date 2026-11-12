@@ -33,8 +33,6 @@ import prisma, { type Db, type Tx } from "@/lib/prisma";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
-import { refundTopUpCapture } from "@/lib/payments/operations/wallet-refund";
-import { isWalletFrozen } from "@/lib/payments/wallet-freeze";
 
 /**
  * #1477 — an org that has run its wallet down is refusing a booking, not
@@ -375,6 +373,8 @@ async function lateTopUpRefundReason(
   billingAccountId: string,
   ownerOrgId: string,
 ): Promise<LateTopUpRefundReason | null> {
+  // Loaded lazily, like the refund below: importing the wallet helpers loads no database or gateway client.
+  const { isWalletFrozen } = await import("@/lib/payments/wallet-freeze");
   if (await isWalletFrozen(tx, billingAccountId)) return "WALLET_FROZEN";
   const org = await tx.organization.findUnique({
     where: { id: ownerOrgId },
@@ -573,6 +573,8 @@ export async function confirmTopUp(
   const { refund, ...outcome } = settled;
   if (!refund) return outcome;
   // The gateway call runs after commit; a failure leaves the credit for the refund-remaining door.
+  const { refundTopUpCapture } =
+    await import("@/lib/payments/operations/wallet-refund");
   const refundIssued = await refundTopUpCapture(
     refund.topUp,
     `Late top-up capture: ${refund.reason}`,
