@@ -36,14 +36,20 @@ jest.mock("../../lib/payments/checkout/occupancy-validate", () => ({
 }));
 
 import { calculateAmountAndValidate } from "@/lib/payments/checkout/pricing";
-import { findReusablePendingOrderPayment } from "@/lib/payments/checkout/order-reuse";
+import {
+  findReusablePendingOrderPayment,
+  openOrderTargetOf,
+} from "@/lib/payments/checkout/order-reuse";
 import type { CheckoutInput } from "@/schemas/checkout";
 
+// The page sends its load time as the start, which the server clamps to "now".
 const input: CheckoutInput = {
   appointmentType: "SUBSCRIPTION",
   planId: "plan-1",
   paymentGateway: "RAZORPAY",
+  schedulingPeriodStartsAt: new Date(Date.now() - 2 * 60_000).toISOString(),
 };
+const openedAt = new Date(Date.now() - 10 * 60_000);
 
 /** The buyer's own unpaid order for this plan, as the reuse lookup reads it. */
 const openOrder = (amount: number, discountCodeId: string | null = null) => ({
@@ -56,9 +62,12 @@ const openOrder = (amount: number, discountCodeId: string | null = null) => ({
   discountCodeId,
   appointment: {
     occurrences: [],
+    // A "start now" order: its start is the instant it was created.
     subscription: {
-      schedulingPeriodStartsAt: null,
-      schedulingPeriodEndsAt: null,
+      schedulingPeriodStartsAt: openedAt,
+      schedulingPeriodEndsAt: new Date(openedAt.getTime() + 7 * 86_400_000),
+      createdAt: openedAt,
+      renewedFromSubscriptionId: null,
     },
     participants: [],
   },
@@ -99,7 +108,7 @@ beforeEach(() => {
   tx.membership.findFirst.mockResolvedValue(null);
 });
 
-it("prices a reload with credits like the first tab, so the open order is reused", async () => {
+it("prices a start-now reload with credits like the first tab, so the open order is reused", async () => {
   const withCredits = { ...input, useReferralCredits: true };
   tx.referralCredit.findMany.mockResolvedValue([{ remainingAmount: 20_000 }]);
   const first = await calculateAmountAndValidate(withCredits, "buyer");
@@ -118,17 +127,48 @@ it("prices a reload with credits like the first tab, so the open order is reused
   const { reusable, supersede } = await findReusablePendingOrderPayment(
     tx as never,
     {
-      userId: "buyer",
-      appointmentType: "SUBSCRIPTION",
-      planId: "plan-1",
-      organizationId: null,
-      paymentGateway: "RAZORPAY",
-      schedulingPeriod: null,
+      ...openOrderTargetOf(
+        withCredits,
+        "buyer",
+        null,
+        reload.subscriptionSchedulingPeriod,
+      )!,
       expectedAmountPaise: reload.amount,
       expectedDiscountCodeId: reload.discountCodeId,
     },
   );
   expect(reusable?.id).toBe("pay-open");
+  expect(supersede).toEqual([]);
+});
+
+it("does not count or supersede a start-now order for a checkout with a chosen later start", async () => {
+  const later = {
+    ...input,
+    useReferralCredits: true,
+    schedulingPeriodStartsAt: new Date(
+      Date.now() + 3 * 86_400_000,
+    ).toISOString(),
+  };
+  tx.payment.findMany.mockResolvedValue([openOrder(279_047)]);
+  tx.referralCreditUsage.aggregate.mockResolvedValue({
+    _sum: { amount: BigInt(20_000) },
+  });
+  const priced = await calculateAmountAndValidate(later, "buyer");
+  expect(priced.creditsApplied).toBe(0);
+  const { reusable, supersede } = await findReusablePendingOrderPayment(
+    tx as never,
+    {
+      ...openOrderTargetOf(
+        later,
+        "buyer",
+        null,
+        priced.subscriptionSchedulingPeriod,
+      )!,
+      expectedAmountPaise: 279_047,
+      expectedDiscountCodeId: null,
+    },
+  );
+  expect(reusable).toBeNull();
   expect(supersede).toEqual([]);
 });
 

@@ -102,6 +102,24 @@ export interface OpenOrderTarget {
   /** Subscription billing-period window; both-null rows only match a
    *  both-null request. */
   schedulingPeriod?: { startsAt: Date; endsAt: Date } | null;
+  /** A non-renewal subscription whose start the server takes from its own clock. */
+  startsNow?: boolean;
+}
+
+/** Clock skew allowed between the checkout's clamped start and the row's insert time. */
+const START_NOW_SKEW_MS = 60_000;
+
+/** A non-renewal subscription whose stored start is no later than its insert: its start was clamped to "now". */
+function startedNow(sub: {
+  schedulingPeriodStartsAt: Date;
+  createdAt: Date;
+  renewedFromSubscriptionId: string | null;
+}): boolean {
+  return (
+    sub.renewedFromSubscriptionId === null &&
+    sub.schedulingPeriodStartsAt.getTime() <=
+      sub.createdAt.getTime() + START_NOW_SKEW_MS
+  );
 }
 
 type OpenOrderVerdict =
@@ -162,6 +180,7 @@ export function openOrderTargetOf(
     | "schedulingPeriodStartsAt"
     | "schedulingPeriodEndsAt"
     | "paymentGateway"
+    | "renewsSubscriptionId"
   >,
   userId: string,
   organizationId: string | null,
@@ -192,7 +211,14 @@ export function openOrderTargetOf(
         }
       : {}),
     ...(appointmentType === "SUBSCRIPTION"
-      ? { schedulingPeriod: resolvedSchedulingPeriod ?? requestedPeriod }
+      ? {
+          schedulingPeriod: resolvedSchedulingPeriod ?? requestedPeriod,
+          // No start, or one already past, is clamped by resolvePlanStart to the request's clock.
+          startsNow:
+            !input.renewsSubscriptionId &&
+            (!input.schedulingPeriodStartsAt ||
+              new Date(input.schedulingPeriodStartsAt).getTime() <= Date.now()),
+        }
       : {}),
   };
 }
@@ -285,6 +311,8 @@ async function classifyOpenOrders(
             select: {
               schedulingPeriodStartsAt: true,
               schedulingPeriodEndsAt: true,
+              createdAt: true,
+              renewedFromSubscriptionId: true,
             },
           },
           participants: {
@@ -363,9 +391,13 @@ async function classifyOpenOrders(
               endsAt: subRow.schedulingPeriodEndsAt,
             }
           : null);
-      // A live order for another window or period is another booking: left alone.
-      if (!!reqPeriod !== !!rowPeriod) continue;
+      // Two "start now" checkouts of one plan are one item while the order's hold is live;
+      // otherwise a live order for another window or period is another booking: left alone.
+      const bothStartNow =
+        params.startsNow === true && !!subRow && startedNow(subRow);
+      if (!bothStartNow && !!reqPeriod !== !!rowPeriod) continue;
       if (
+        !bothStartNow &&
         reqPeriod &&
         rowPeriod &&
         (rowPeriod.startsAt.getTime() !== reqPeriod.startsAt.getTime() ||
