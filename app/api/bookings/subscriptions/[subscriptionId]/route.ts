@@ -12,7 +12,6 @@ import {
   APPROVAL_LOCK_TTL_MS,
   ApprovalLockLostError,
   type ApprovalLock,
-  BookingLockUnavailableError,
   lockSubscriptionApproval,
   renewApprovalLock,
   unlockApproval,
@@ -21,6 +20,7 @@ import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
 import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   APPROVAL_STATUSES_DETAIL_ONLY,
+  approvalLockRefusal,
   refuseMalformedEventId,
   NOT_BEING_MOVED,
   assertNotBeingMoved,
@@ -274,16 +274,7 @@ export async function PATCH(
           APPROVAL_LOCK_TTL_MS,
         ); // #1319 — must outlive the 30 s tx
       } catch (error) {
-        // A lock-service outage is a 503; every other failure the approval
-        // lock raises is contention with another approval.
-        if (error instanceof BookingLockUnavailableError) {
-          return NextResponse.json(
-            { error: error.message, code: error.code },
-            { status: error.httpStatus },
-          );
-        }
-        if (!(error instanceof Error)) throw error;
-        return NextResponse.json({ error: error.message }, { status: 409 });
+        return approvalLockRefusal(error);
       }
     }
 

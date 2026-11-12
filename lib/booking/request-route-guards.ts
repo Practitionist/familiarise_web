@@ -11,6 +11,7 @@ import {
 import { transitionParticipant } from "./participants";
 import { declineOpenReschedules } from "./reschedule-decline";
 import { transitionOccurrenceCompletion } from "./transitions";
+import { BookingLockUnavailableError } from "@/utils/appointmentlock";
 
 import {
   EVENT_ID_INVALID_MESSAGE,
@@ -46,6 +47,21 @@ export function parseRequestListQueryOrRespond(
     };
   }
   return { query: parsed.query, response: null };
+}
+
+/**
+ * The answer when the approval lock is not granted: a lock-service outage is
+ * its typed 503; anything else the lock raises is contention with another approval.
+ */
+export function approvalLockRefusal(error: unknown): NextResponse {
+  if (error instanceof BookingLockUnavailableError) {
+    return NextResponse.json(
+      { error: error.message, code: error.code },
+      { status: error.httpStatus },
+    );
+  }
+  if (!(error instanceof Error)) throw error;
+  return NextResponse.json({ error: error.message }, { status: 409 });
 }
 
 /**
