@@ -2,18 +2,19 @@
 
 ## Quick Error Lookup
 
-| Error Pattern                            | Category           | Cause                                                                     | Fix                                                          |
-| ---------------------------------------- | ------------------ | ------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `"Slots must be consecutive"`            | Validation         | Gap between selected slots                                                | Ensure 30-min intervals with no gaps                         |
-| `"Weekly limit exceeded"`                | Subscription only  | More calls than `sessionsPerWeek` in a week (a class has no weekly limit) | Remove excess calls; check Sunday-Saturday boundaries        |
-| `"Outside scheduling period"`            | Subscription/Class | Slot before startDate or after endDate                                    | Select within [startDate, endDate]                           |
-| `"Slots in the past"`                    | Universal          | Slot < now + 5 seconds                                                    | Select future slots; 5-second buffer for processing          |
-| `"Does not match consultant's schedule"` | Universal          | Slot not within any availability window                                   | Check weekly/custom availability; ensure correct day-of-week |
-| `"No available slots found"`             | Auto allocation    | Consultant has no open slots in the search window                         | Add availability; check for conflicts                        |
-| `"Slot already booked"`                  | Conflict           | Range overlap with existing appointment                                   | Choose a different time; check for PENDING bookings          |
-| `"Invalid slot count"`                   | Manual allocation  | Count not a multiple of slotsPerSession                                   | Must be exact multiple (e.g., 2, 4, 6 for 1h sessions)       |
-| `"Duplicate slots detected"`             | Manual allocation  | Same slot provided twice                                                  | Remove duplicates from request                               |
-| `"Cannot approve requested slots"`       | Requested mode     | No appointments exist for the event                                       | Consultee needs to resubmit request                          |
+| Error Pattern                            | Category           | Cause                                                                                 | Fix                                                                                                         |
+| ---------------------------------------- | ------------------ | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `"Slots must be consecutive"`            | Validation         | Gap between selected slots                                                            | Ensure 30-min intervals with no gaps                                                                        |
+| `"Weekly limit exceeded"`                | Subscription only  | More calls than `sessionsPerWeek` in a week (a class has no weekly limit)             | Remove excess calls; check Sunday-Saturday boundaries                                                       |
+| `"Outside scheduling period"`            | Subscription/Class | Slot before startDate or after endDate                                                | Select within [startDate, endDate]                                                                          |
+| `"Slots in the past"`                    | Universal          | Slot < now + 5 seconds                                                                | Select future slots; 5-second buffer for processing                                                         |
+| `"Does not match consultant's schedule"` | Universal          | Slot not within any availability window                                               | Check weekly/custom availability; ensure correct day-of-week                                                |
+| `OUTSIDE_AVAILABILITY` (400)             | Request door       | A requested time is outside the expert's published hours at the moment of the request | Pick a time inside the expert's open hours. A request already held keeps its time if the hours shrink later |
+| `"No available slots found"`             | Auto allocation    | Consultant has no open slots in the search window                                     | Add availability; check for conflicts                                                                       |
+| `"Slot already booked"`                  | Conflict           | Range overlap with existing appointment                                               | Choose a different time; check for PENDING bookings                                                         |
+| `"Invalid slot count"`                   | Manual allocation  | Count not a multiple of slotsPerSession                                               | Must be exact multiple (e.g., 2, 4, 6 for 1h sessions)                                                      |
+| `"Duplicate slots detected"`             | Manual allocation  | Same slot provided twice                                                              | Remove duplicates from request                                                                              |
+| `"Cannot approve requested slots"`       | Requested mode     | No appointments exist for the event                                                   | Consultee needs to resubmit request                                                                         |
 
 ## Common Issues
 
@@ -643,7 +644,7 @@ After any booking algorithm change, verify:
 
 ### Per Event Type
 
-- [ ] **Consultation**: Consecutive slots, same day, correct count for duration
+- [ ] **Consultation**: Consecutive slots (may cross midnight), correct count for the sold duration
 - [ ] **Subscription**: Weekly distribution, total calls, scheduling period, 1 call/day max
 - [ ] **Webinar**: Consecutive slots, single appointment created
 - [ ] **Class**: Session distribution, weekly limits, complete sessions per day

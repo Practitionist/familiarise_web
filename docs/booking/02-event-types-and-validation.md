@@ -2,20 +2,20 @@
 
 ## Event Type Comparison
 
-| Aspect                   | Consultation              | Subscription                                             | Webinar                   | Class                                                       | Trial                            |
-| ------------------------ | ------------------------- | -------------------------------------------------------- | ------------------------- | ----------------------------------------------------------- | -------------------------------- |
-| **Relationship**         | 1:1                       | 1:1                                                      | 1:many                    | 1:many                                                      | 1:1                              |
-| **Frequency**            | One-time                  | Recurring                                                | One-time                  | Recurring                                                   | One-time (free)                  |
-| **Duration field**       | `durationInHours` (total) | `sessionDurationInHours` (per call) + `durationInMonths` | `durationInHours` (total) | `sessionDurationInHours` (per session) + `durationInMonths` | Fixed 0.5h (1 slot)              |
-| **Slot grouping**        | Consecutive + same day    | 1 call/day max, consecutive within day                   | Consecutive               | Max 2-3 sessions/day, consecutive within session            | Single slot                      |
-| **Scheduling period**    | None                      | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               | None                             |
-| **Appointments created** | 1                         | 1 per call (many)                                        | 1                         | 1 per session (many)                                        | 1                                |
-| **Weekly limit**         | N/A                       | `sessionsPerWeek` (0-7)                                  | N/A                       | None (two a day at most)                                    | N/A                              |
-| **Status field**         | `status`                  | `status`                                                 | `status`                  | `status`                                                    | `status` (TrialStatus)           |
-| **Allocation modes**     | auto, manual, requested   | auto, manual, requested                                  | auto, manual              | auto, manual                                                | Consultant-scheduled             |
-| **Min duration**         | 0.5h                      | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            | 0.5h (fixed)                     |
-| **Payment**              | Required                  | Required                                                 | Required                  | Required                                                    | Free                             |
-| **Uniqueness**           | Multiple allowed          | Multiple allowed                                         | Multiple allowed          | Multiple allowed                                            | One per consultant per consultee |
+| Aspect                   | Consultation                     | Subscription                                             | Webinar                   | Class                                                       | Trial                            |
+| ------------------------ | -------------------------------- | -------------------------------------------------------- | ------------------------- | ----------------------------------------------------------- | -------------------------------- |
+| **Relationship**         | 1:1                              | 1:1                                                      | 1:many                    | 1:many                                                      | 1:1                              |
+| **Frequency**            | One-time                         | Recurring                                                | One-time                  | Recurring                                                   | One-time (free)                  |
+| **Duration field**       | `durationInHours` (total)        | `sessionDurationInHours` (per call) + `durationInMonths` | `durationInHours` (total) | `sessionDurationInHours` (per session) + `durationInMonths` | Fixed 0.5h (1 slot)              |
+| **Slot grouping**        | Consecutive (may cross midnight) | 1 call/day max, consecutive within day                   | Consecutive               | Max 2-3 sessions/day, consecutive within session            | Single slot                      |
+| **Scheduling period**    | None                             | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               | None                             |
+| **Appointments created** | 1                                | 1 per call (many)                                        | 1                         | 1 per session (many)                                        | 1                                |
+| **Weekly limit**         | N/A                              | `sessionsPerWeek` (0-7)                                  | N/A                       | None (two a day at most)                                    | N/A                              |
+| **Status field**         | `status`                         | `status`                                                 | `status`                  | `status`                                                    | `status` (TrialStatus)           |
+| **Allocation modes**     | auto, manual, requested          | auto, manual, requested                                  | auto, manual              | auto, manual                                                | Consultant-scheduled             |
+| **Min duration**         | 0.5h                             | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            | 0.5h (fixed)                     |
+| **Payment**              | Required                         | Required                                                 | Required                  | Required                                                    | Free                             |
+| **Uniqueness**           | Multiple allowed                 | Multiple allowed                                         | Multiple allowed          | Multiple allowed                                            | One per consultant per consultee |
 
 ---
 
@@ -23,9 +23,11 @@
 
 Single one-time session between consultant and consultee.
 
-**Config**: `durationInHours` (0.5-4 hours)
-**Slots**: `slotsPerSession = Math.ceil(durationInHours / 0.5)`
-**Rules**: All slots must be consecutive and on the same day. Exactly one Appointment is created.
+**Config**: `durationInHours` (0.5-4 hours) on the plan. Each request freezes its own copy: `Consultation.pricePaise` and `Consultation.sessionMinutes` (see "Sold terms" below).
+**Slots**: `slotsPerSession = Math.ceil(sessionMinutes / 30)`, where the length is the frozen `sessionMinutes` (`soldConsultationMinutes` in `lib/booking/sold-terms.ts`), or the plan's length for a row created before the freeze.
+**Rules**: The slots must be one consecutive block of exactly the sold length. The block may cross midnight, because contiguity and length, not the calendar day, keep it one session. Exactly one Appointment is created. `validateConsultation` (`utils/scheduling-engine/ScheduleValidationService.ts`) enforces this on the server, and `validateConsultationSelection` (`lib/scheduling/intervalSelectionValidation.ts`) applies the same rule in the browser.
+
+**Example.** Hannah Anderson sells a 1-hour consultation. Priya Anderson requests Mon 16 Nov 2026 from 23:30 to 00:30 IST. That is two half-hour atoms, back to back, one on each side of midnight. The server accepts it as one session. The old rule judged the day in Asia/Kolkata for every host, so a session that crossed 18:30 UTC was refused on allocate, reschedule-accept and incident rebook even though the request door had accepted it.
 
 ```mermaid
 flowchart TD
@@ -33,9 +35,7 @@ flowchart TD
     B -->|No| X1[Error: invalid duration]
     B -->|Yes| C{Correct slot count?}
     C -->|No| X2[Error: wrong number of slots]
-    C -->|Yes| D{All same day?}
-    D -->|No| X3[Error: must be same day]
-    D -->|Yes| E{All consecutive?}
+    C -->|Yes| E{All consecutive?}
     E -->|No| X4[Error: must be consecutive]
     E -->|Yes| F[Valid]
 ```
