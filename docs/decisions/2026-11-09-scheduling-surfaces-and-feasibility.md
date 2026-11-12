@@ -1,6 +1,6 @@
 # ADR: Scheduling surfaces, feasibility before money, and booking correctness
 
-- **Status**: Accepted on 2026-11-09 by the owner. Built in the scheduling surfaces pull request (branch `feat/booking-scheduling-surfaces`) and amended by the owner on 2026-11-12 (decisions 10 to 17). Items marked **(planned)** are not built yet.
+- **Status**: Accepted on 2026-11-09 by the owner. Built in the scheduling surfaces pull request (branch `feat/booking-scheduling-surfaces`) and amended by the owner on 2026-11-12 (decisions 10 to 17). Items marked **(planned)** are not built yet. The decisions taken after the review of this pull request that are not built are in [the booking follow-up train](2026-11-12-booking-follow-up-train.md).
 - **Date**: 2026-11-09
 - **Author**: Platform engineering
 - **Related**: [Booking v2 direction](2026-11-03-booking-v2-direction.md), [Booking v2 train B](2026-11-04-booking-v2-train-b.md), [Allocate heat-map UX](../calendar/allocate-heatmap-ux.md), issues [#2586](https://github.com/Practitionist/familiarise_web/issues/2586) (colour scheme, next pass), [#2595](https://github.com/Practitionist/familiarise_web/pull/2595) (Regular time, separate)
@@ -31,6 +31,8 @@ Three read-only audits of `dev` at `b3d86d012` (math and quotas, event and trial
    - The webinar schema (`schemas/plans.ts`) checks only the UTC lattice (`isOnEventLattice`); the lead is the server's check, not the browser's.
 
 3. **One single-session picker for hosts** (`SingleSessionPicker`). It shows a strip of days and every half-hour start, labelled Free, Outside your hours, Busy or Too soon, in the host's zone, and it works on a phone. It replaces the webinar editor's date-time input, the re-time dialog's date and time select, and the make-up input. A host may run an event outside their published hours: those starts stay pickable and are only labelled.
+
+   **Superseded in direction (2026-11-12, planned).** The owner replaced "each host surface gets its own matching picker" with three pickers, one per job, built after this pull request merges; see decision 2 of [the booking follow-up train](2026-11-12-booking-follow-up-train.md). `SingleSessionPicker` stays until then.
 
 4. **Classes are scheduled from a weekly pattern** (`ClassPatternScheduler`, `lib/booking/class-pattern.ts`).
    - The host gives a first day plus weekday and time rows. The scheduler previews the N sessions and labels each one against the host's calendar.
@@ -82,19 +84,35 @@ Three read-only audits of `dev` at `b3d86d012` (math and quotas, event and trial
 
 10. **:45-offset zones keep the UTC half-hour grid** (2026-11-12). The platform has one UTC half-hour grid, and a host in a :45-offset zone such as Asia/Kathmandu is offered the local times that land on it, :15 and :45, instead of the grid moving. Enforced by `atomPhaseMinutes` (`lib/time/grid-zone.ts`), `lib/booking/class-pattern.ts` (`OFF_GRID_TIME`), `ClassPatternScheduler`, the first-row hour labels of `WeekGrid`, and `isOnEventLattice` in `schemas/plans.ts`. Weekly hours in such a zone are still refused (`weeklyZoneRefusal`).
 
+**Options considered.** Refusing hosts in :45-offset zones with a message was rejected because it makes them a second-class product. Moving the whole platform to a 15-minute grid was rejected because it changes the atom that the overlap constraint, availability and the allocator all depend on, which is too risky before launch. Keeping the one UTC half-hour grid and offering :15 and :45 local times won because it changes nothing underneath.
+
 11. **A pick across midnight is one session** (2026-11-12). A pick that crosses local midnight is one session, kept on the day it starts for the per-day limits, the consecutive check, deselect and the week header's "N fit". Enforced by `sessionDayKeys` and `groupSlotsByDay` (`lib/scheduling/intervalSelectionValidation.ts`), `lib/scheduling/calendarUtils.ts` and `hooks/scheduling/useScheduling.ts`; the server's per-day cap already keyed a session by its first slot.
+
+**Options considered.** Refusing a pick that crosses local midnight was rejected because a host who works late evenings would lose legitimate times. Treating the pick as one session on the day it starts keeps those times and matches how the server's per-day cap already keys a session.
 
 12. **Class-end settlement keeps one class per transaction** (2026-11-12). Seat slices would need a new column, and the refund retry job pays any owed marker older than 15 minutes whatever the class's status, so splitting a class could leave a marker standing for a class that had not completed. The transaction is kept short instead: the ledger reads are a fixed five queries whatever the roster (`classSeriesLedgers`), the timeout is 6 seconds, and no class starts after half of the run's start budget. `auto-complete-appointments` is a financial job (`FINANCIAL_JOB_NAMES` in `lib/cron/financial-jobs.ts`) with a fail-closed lock, so the whole job, including ordinary completions and earnings-hold stamping, pauses in degraded maintenance. Enforced in `scripts/appointments/auto-complete-appointments.ts` and `lib/cron/cleanup-registry.ts`.
 
+**Options considered.** Stamping a few seats at a time was rejected as unsafe without a new column, because the refund retry job pays any owed marker past its grace period whatever the class's status. Only shortening the timeout was rejected because a large class would fail every run. Chunking without making the job financial was rejected because refund obligations would still be written during degraded maintenance. The accepted consequence is that in degraded maintenance the whole job pauses, including ordinary completions and earnings-hold stamping.
+
 13. **The trial limiter counts only trials created** (2026-11-12). `POST /api/trials` runs every validity check before the limiter, reads the remaining allowance without spending it, and spends one only once a trial exists; a refusal carries `retryAfterSeconds` and `retryAt`. Enforced by `trialRequestRefusal` and `spendTrialRequest` in `lib/rate-limit.ts`.
+
+**Options considered.** Counting attempts against a higher cap was rejected, and so was keeping the 3-per-24-hours rule and only showing the retry time, because both still punish a buyer whose request was refused before a trial existed. Counting only trials created limits the thing the rule exists to limit.
 
 14. **Payment holds** (2026-11-12). A booking with a live `PENDING` payment (not past its `expiresAt`) cannot be rescheduled (409 `PAY_LINK_LIVE`), and cancelling, withdrawing or declining a hold expires its pending payment in the same transaction, payment first and then the trial, with the gateway order cancelled after the commit. Enforced in `app/api/appointments/[appointmentId]/reschedule/route.ts`, `app/api/trials/[trialId]/route.ts`, `scripts/trials/expire-unpaid-trials.ts` and `lib/booking/pending-payment-expiry.ts`.
 
+**Options considered.** Allowing the reschedule and re-issuing the payment order was rejected because it adds moving parts to the payment path before launch. Keeping the auto-refund after a late capture as the main defence was rejected because the buyer pays, waits and is refunded for something that could have been refused up front. Refusing the reschedule and expiring the payment with the hold won.
+
 15. **A DRAFT webinar or class with placed sessions is cancellable** (2026-11-12). The host is never stuck with a draft. `DRAFT` is in `EVENT_ALLOWED_FROM.CANCELLED` (`lib/booking/transitions.ts`); `SCHEDULED` stays unreachable from `DRAFT` except by publishing.
+
+**Options considered.** Making scheduling publish the draft was rejected because the draft would become visible and purchasable as a side effect. A Delete action for drafts was rejected because it leaves no record. Allowing the cancel keeps a record and exposes nothing.
 
 16. **A host may run a class faster than the plan's cadence** (2026-11-12). Only the per-day cap of two limits a class; the class weekly-limit validator and its client check were deleted, and subscriptions keep their plan-week rules. This is a deliberate choice. A follow-up issue will track "enforce the plan's cadence" as the fallback if learners complain. Enforced by `validatePerDaySessionCap` in `utils/scheduling-engine/ScheduleValidationService.ts`.
 
+**Options considered.** Enforcing the plan's cadence in the scheduler, the series move and the allocator was rejected for now and stays the tracked fallback if learners complain. Allowing a faster cadence only before any seat is sold was rejected because it is a second rule for hosts to learn.
+
 17. **Expert cancellations strike, and strikes stay private** (2026-11-12, decided; partly **(planned)**). An expert cancelling any confirmed booking, free or paid, records a strike, and strikes are never shown on public pages. Built today: `recordExpertStrike` in the cancel route fires only when the expert themself cancels a booking with a paid payment or a paid live seat, and a trial's expert cancel strikes for a free trial too. **(planned)** Striking a free confirmed booking, and removing the public reliability line from the expert profile (`ProfileHeader`), are later pull requests.
+
+**Options considered.** Keeping the public reliability line in the profile header in softer wording was rejected. Moving it into the Reviews section was the owner's first choice on 2026-11-12 and was reversed the same day: "we don't need to degrade our own experts or show explicitly; reviews and ratings are sufficient; in the consultant dashboard all this criticism is fine." So the line is removed from public pages and strikes stay visible only to the expert and staff. The first choice is superseded.
 
 ## Alternatives considered
 
@@ -115,6 +133,7 @@ Three read-only audits of `dev` at `b3d86d012` (math and quotas, event and trial
 ## Deprecated & Superseded Approaches
 
 - **Re-planning a live webinar or class through Manage timings.** Replaced by re-time (webinar) and the series move (class).
+- **A separate matching picker for every host surface** (decision 3's direction). Superseded on 2026-11-12 by three pickers, one per job (planned); see the booking follow-up train.
 - **`datetime-local` event times** (the webinar editor, the class make-up) and the blind re-time date and time select. Replaced by `SingleSessionPicker`.
 - **`retimeStartsOn`.** Deleted; the picker owns the lattice and the lead.
 - **Server-local `setDate` series generation for classes.** Replaced by `seriesStartsFrom`.

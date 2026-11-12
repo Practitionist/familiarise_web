@@ -65,6 +65,23 @@ The week header and the month view both say how many whole sessions each day's f
 
 `useCalendarData` starts with `loading=true` under `autoLoad`, so the first paint is `CalendarGridSkeleton` (`components/scheduling/CalendarSkeletons.tsx`), never the empty state. The skeleton draws the context row, the toolbar, the 64 px header over 24 px rows on `GRID_COLS`, and the tray, so nothing shifts when the data lands. Week navigation keeps the old grid rather than flashing the skeleton.
 
+## 9. The time pickers
+
+Eight time pickers exist today, and the owner decided on 2026-11-12 that they become three, one per job (**planned**, built after the scheduling surfaces pull request merges; see [the booking follow-up train](../decisions/2026-11-12-booking-follow-up-train.md)).
+
+| Today                                                                               | Component                                                                    |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| The week heat-map grid with its session tray                                        | `UnifiedCalendar`, `WeekGrid`, `SessionTray` (`components/scheduling/`)      |
+| The phone day list                                                                  | `MobileDayListPicker`                                                        |
+| The single-session "pill wall" (webinar editor, the move dialog, the class make-up) | `SingleSessionPicker`                                                        |
+| The weekly pattern form                                                             | `ClassPatternScheduler`                                                      |
+| The light two-pane month calendar for a trial                                       | `TrialScheduleCalendar` (`components/dashboard/shared/requests/components/`) |
+| The dark day strip for a trial                                                      | `TrialSlotPicker` (`app/explore/experts/[consultantId]/components/`)         |
+| The One-time booking dialog's date picker and slot list                             | `ConsultationPricingToggle`, with `SlotList`                                 |
+| Native date inputs (for example the organisation's allocate dialog)                 | `AllocateOrgBookingDialog` and others                                        |
+
+The three it becomes: one two-pane month calendar with a times list, in a light and a dark theme, for every "pick one time" case; the heat-map grid for placing many sessions on a week, with the phone day list as its small-screen form; and the pattern form for a repeating class pattern. For a host, the single-time picker will list free times inside published hours first, grey the booked ones, and keep the rest behind a "Show times outside my hours" switch. Trial time-picking becomes step two inside the mentorship dialog.
+
 ## Deprecated & Superseded Approaches
 
 - **Dead-hour folding.** Rows with nothing live, including mid-day gaps, folded into 24 px "Unavailable · HH:MM–HH:MM" strips that expanded on click, with a separate "Outside this booking's dates" strip. It hid the shape of the day and squeezed the text to 10 px. `lib/scheduling/dead-hour-bands.ts` is deleted; the open-hours window replaces it.

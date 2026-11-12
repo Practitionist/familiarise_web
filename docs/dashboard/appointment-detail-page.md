@@ -10,6 +10,8 @@ The page has three parts, read top to bottom.
 2. **The main column.** Notices, the open reschedule proposal, the review nudge, then the **Sessions** card and, for the host, the participants.
 3. **The right rail.** Payment, details, resources, the timeline and help, in that order. The rail stays narrow (280–340 px) so the sessions keep the width.
 
+**Decided 2026-11-12, planned; not built.** The Payment card will always sit in the right rail under Resources and Help, and one amber banner at the top will show whenever the viewer must act (pay, accept or decline new times, approve a request), with the deadline and the primary button. Today `NeedsYouCallout` carries the payment hold countdown, and the rail order is as listed above. A session inside a subscription or class is never paid on its own, so the page will show the plan-level payment. While a reschedule is open both sides will see "Being moved" with the original time. See [the booking follow-up train](../decisions/2026-11-12-booking-follow-up-train.md).
+
 Destructive booking actions (Cancel booking, Withdraw request) stay in the "Manage booking" row at the foot of the page, after Get help, so they never lead the page.
 
 ## One list of sessions

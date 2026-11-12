@@ -258,6 +258,8 @@ Additionally, the `GET /api/trials` endpoint performs an inline auto-complete ch
 
 ## Conversion to Subscription
 
+**The prompt to continue (decided 2026-11-12, planned; not built).** The buyer's trial detail page will carry a "Continue with {expert}" card, quiet before the session and prominent once it completes, and one bell and one email will go out when the trial completes. Today the consultee detail page offers a "Continue with {expert}" button for a completed one-on-one, and `trial-session-completed` is the only completion notice. Picking the trial time will also become step two inside the mentorship dialog. See [the booking follow-up train](../decisions/2026-11-12-booking-follow-up-train.md).
+
 When a consultee decides to subscribe after a trial, the trial status transitions from `COMPLETED` to `CONVERTED`:
 
 ```

@@ -406,6 +406,17 @@ last column; do not weaken a row without changing its enforcer in the same PR.
 
 See the decision record `docs/decisions/2026-11-03-booking-v2-direction.md`. A 1:1 plan that ends with unused sessions will offer the client up to 4 extra weeks (if the expert has open hours and agrees) or a refund, defaulting to a refund after 7 days; no-shows and late cancels are not compensated (#2561 / #2568). A missed class session keeps today's make-up-within-14-days-or-refund rule. A class with many misses keeps each learner's exit right, and at half the class missed a support case opens (support may cancel for everyone; nothing cancels automatically). Decided 2026-11-04 (#2563): a learner's class exit right is 3 host misses in any rolling 30 days or max(3, 15% of N) misses in total, kept once tripped unless an ops correction withdraws it before it is used (built: `exitRightFor`, `exitThresholdFor` in `lib/booking/class-series.ts`), with the support case at twice that or 3 misses in a row; an ADMIN executes a class-wide cancel (refund of unheld sessions, no second admin); staff can grant a no-money make-up ("add N sessions" / "add up to 4 weeks"); a half-missed class holds only that class's unpaid host earnings. Apart from the exit right, until these ship, don't write compensation copy.
 
+## Decided, not yet built (2026-11-12)
+
+Do not build against the older direction. The reasoning and the rejected options are in `docs/decisions/2026-11-12-booking-follow-up-train.md`; the tracking issue is #2720.
+
+- Three time pickers, one per job (a month calendar with a times list, the heat-map grid with its phone day list, the pattern form), replacing the eight that exist. Do not add a ninth, and do not give a new host surface its own picker.
+- Removing availability under live bookings stays allowed, with a confirm dialog first; do not make it a lock. Only a Weekly/Custom switch is refused (`checkActiveAppointments`).
+- One status vocabulary from one function (Requested, Awaiting payment, Confirmed, Being moved, Completed, Cancelled, Refunded); do not add a fifth label map.
+- Detail page: one amber must-act banner and the Payment card in the right rail.
+- A free cancel writes no zero-rupee refund record; free bookings notify like paid ones minus the receipt; strikes stay private (no public reliability line).
+- Trial to subscription: a "Continue with {expert}" card plus one bell and email on completion.
+
 ## Deprecated & Superseded
 
 Recognise these leftovers and delete them; never reintroduce them.
