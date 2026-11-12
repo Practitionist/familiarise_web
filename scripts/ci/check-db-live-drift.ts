@@ -1,46 +1,23 @@
 /**
- * Read-only: the live database must match prisma/schema.prisma plus the sidecars.
+ * Read-only: the live database must match prisma/schema.prisma.
  *
- * Runs `prisma migrate diff` (no writes) and fails on any planned statement that
- * is not a sidecar-owned index drop or an unexpired entry in
- * `prisma/sql/known-drift.json` (`destructiveStatementsAllowed`).
+ * Runs `prisma migrate diff` (no writes) and fails on any planned statement
+ * other than dropping a unique index schema.prisma cannot declare; those are
+ * owned by the migrations after `0_baseline`. A non-empty remainder means the
+ * catalog was changed by hand or a migration is missing.
  */
 import "dotenv/config";
 import { execFileSync } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 
 import {
   droppedIndexName,
   normalise,
-  parseKnownDivergences,
-  parseKnownDrift,
   planStatements,
-  sidecarOwnedUniqueIndexes,
-} from "../db/preflight-push";
-import { SIDECAR_FILES } from "../db/sidecar-objects";
+} from "../db/plan-statements";
+import { sidecarOwnedUniqueIndexes } from "../db/sidecar-objects";
 
 const ROOT = path.join(__dirname, "..", "..");
-const SQL_DIR = path.join(ROOT, "prisma", "sql");
-
-/** Every index a sidecar creates; the schema omits them, so each push plans to drop them. */
-function sidecarOwnedIndexes(): Set<string> {
-  const names = sidecarOwnedUniqueIndexes(SQL_DIR);
-  for (const file of SIDECAR_FILES) {
-    const sql = fs.readFileSync(path.join(SQL_DIR, file), "utf8");
-    for (const m of sql.matchAll(
-      /CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"([^"]+)"/gi,
-    )) {
-      names.add(m[1]);
-    }
-  }
-  return names;
-}
-
-/** Midnight UTC of a `YYYY-MM-DD` date, as epoch milliseconds. */
-function utcDay(date: string): number {
-  return Date.parse(`${date}T00:00:00Z`);
-}
 
 function main(): void {
   // prisma.config.ts reads only DIRECT_URL; without it the diff targets a placeholder.
@@ -48,9 +25,8 @@ function main(): void {
     console.error("::error title=DB drift check::DIRECT_URL is not set");
     process.exit(1);
   }
-  const prismaBin = path.join(ROOT, "node_modules", ".bin", "prisma");
   const plan = execFileSync(
-    prismaBin,
+    path.join(ROOT, "node_modules", ".bin", "prisma"),
     [
       "migrate",
       "diff",
@@ -62,39 +38,21 @@ function main(): void {
     { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
 
-  const owned = sidecarOwnedIndexes();
-  const driftFile = path.join(SQL_DIR, "known-drift.json");
-  const removable = parseKnownDrift(driftFile);
-  const carried = parseKnownDivergences(driftFile);
-  const known = [...removable, ...carried];
-  const today = utcDay(new Date().toISOString().slice(0, 10));
+  const owned = sidecarOwnedUniqueIndexes();
   const unexpected = planStatements(plan).filter((statement) => {
     const dropped = droppedIndexName(statement);
-    if (dropped && owned.has(dropped)) return false;
-    return !known.some(
-      (k) =>
-        normalise(k.statement) === normalise(statement) &&
-        utcDay(k.expires) >= today,
-    );
+    return !(dropped && owned.has(dropped));
   });
 
   if (unexpected.length === 0) {
-    // A tolerated divergence is still a divergence. Say how many are being
-    // carried, and that they are NOT removable yet, so the file is the place
-    // someone looks rather than a silence.
-    console.log(
-      `check-db-live-drift: ok — live database matches the schema` +
-        (carried.length
-          ? ` (${carried.length} known divergence(s) carried and not removable yet)`
-          : ""),
-    );
+    console.log("check-db-live-drift: ok — live database matches the schema");
     return;
   }
   for (const s of unexpected) {
     console.error(`::error title=Unexpected live DB drift::${normalise(s)}`);
   }
   console.error(
-    `check-db-live-drift: ${unexpected.length} unexpected statement(s). Apply the schema deliberately (never plain db push) or record the drift in prisma/sql/known-drift.json.`,
+    `check-db-live-drift: ${unexpected.length} unexpected statement(s). Restore the catalog with a reviewed migration; never edit the live schema by hand.`,
   );
   process.exit(1);
 }

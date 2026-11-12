@@ -41,7 +41,7 @@ import os from "node:os";
 import path from "node:path";
 import { Client } from "pg";
 
-import { planStatements } from "../db/preflight-push";
+import { planStatements } from "../db/plan-statements";
 
 const ROOT = path.join(__dirname, "..", "..");
 const SCHEMA = path.join(ROOT, "prisma", "schema.prisma");
@@ -512,12 +512,13 @@ async function main(): Promise<void> {
       "so this branch's preview runs against the live database. Until these objects",
       "exist, every read of them 500s with 'does not exist in the current database'.",
       "",
-      "Apply them to the shared database, then re-run this check:",
+      "They reach the shared database only when this branch's migration merges to dev",
+      "(db-migrate.yml runs `prisma migrate deploy`). Never apply them by hand: the",
+      "migration would then fail on merge. Verify on a local scratch database until then.",
+      "The branch's migration must create:",
       "",
       ...missing.map((o) => `  ${printedFix(o)}`),
       "",
-      "Do NOT run `prisma db push` from this branch. One database serves dev and prod,",
-      "and a push from a branch that predates a column proposes to drop it.",
       "docs/prisma/README.md has the ordered procedure.",
     ].join("\n"),
   );
