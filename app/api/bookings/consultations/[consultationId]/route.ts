@@ -413,6 +413,7 @@ export async function PATCH(
                   await tx.appointmentOccurrence.updateMany({
                     where: {
                       appointmentId: consultation.appointment.id,
+                      deletedAt: null,
                       completionStatus: "SCHEDULED",
                     },
                     data: { isTentative: false },
