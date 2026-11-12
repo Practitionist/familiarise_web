@@ -39,22 +39,27 @@ export function retimeLeaveUntil(now: Date, movedStart: Date): Date {
   );
 }
 
-/** Opens (or lengthens, never shortens) an event's free leave in the mover's transaction. */
+/**
+ * Opens (or lengthens, never shortens) an event's free leave in the mover's
+ * transaction, and returns the leave end the event now stores.
+ */
 export async function extendRetimeLeave(
   tx: Tx,
   kind: "webinar" | "class",
   eventId: string,
   until: Date,
-): Promise<void> {
+): Promise<Date> {
   const where = {
     id: eventId,
     OR: [{ retimeBy: null }, { retimeBy: { lt: until } }],
   };
+  const stored = { where: { id: eventId }, select: { retimeBy: true } };
   if (kind === "webinar") {
     await tx.webinar.updateMany({ where, data: { retimeBy: until } });
-  } else {
-    await tx.class.updateMany({ where, data: { retimeBy: until } });
+    return (await tx.webinar.findUnique(stored))?.retimeBy ?? until;
   }
+  await tx.class.updateMany({ where, data: { retimeBy: until } });
+  return (await tx.class.findUnique(stored))?.retimeBy ?? until;
 }
 
 /**

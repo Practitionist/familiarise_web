@@ -50,7 +50,7 @@ export async function notifyConsulteeRequestExpired(
       bellPayload(notice, dashboardUrl),
     );
     await sendAppointmentCancelledEmail(
-      emailArgs(notice, dashboardUrl),
+      emailArgs(notice, dashboardUrl, [notice.consulteeUserId]),
       EMAIL_BUDGET_MS.JOB,
     );
   } catch (error) {
@@ -75,16 +75,33 @@ export async function stageConsulteeRequestExpired(
   tx: Tx,
   notice: RequestExpiredNotice,
 ): Promise<StagedRequestExpiredNotice> {
+  return stageRequestEndedNotice(tx, notice, {
+    recipients: [notice.consulteeUserId],
+  });
+}
+
+/**
+ * A system ending told to every recipient in the caller's transaction; the
+ * refund line reaches only `refundUserIds`, so the expert never reads it.
+ */
+export async function stageRequestEndedNotice(
+  tx: Tx,
+  notice: Omit<RequestExpiredNotice, "consulteeUserId">,
+  opts: { recipients: string[]; refundText?: string; refundUserIds?: string[] },
+): Promise<StagedRequestExpiredNotice> {
+  if (opts.recipients.length === 0) return { bells: [], emails: [] };
   const dashboardUrl = notificationHref(notice.organizationId, "appointments");
   const bells = await notifyAppointmentCancelled(
-    [notice.consulteeUserId],
+    opts.recipients,
     bellPayload(notice, dashboardUrl),
     { tx },
   );
-  const emails = await stageAppointmentCancelledEmail(
-    tx,
-    emailArgs(notice, dashboardUrl),
-  );
+  const emails = await stageAppointmentCancelledEmail(tx, {
+    ...emailArgs(notice, dashboardUrl, opts.recipients),
+    ...(opts.refundText
+      ? { refundText: opts.refundText, refundUserIds: opts.refundUserIds }
+      : {}),
+  });
   return {
     bells: bells.flatMap((bell) => (bell.staged ? [bell.staged] : [])),
     emails,
@@ -102,7 +119,10 @@ export async function attemptStagedRequestExpired(
   ]);
 }
 
-function bellPayload(notice: RequestExpiredNotice, dashboardUrl: string) {
+function bellPayload(
+  notice: Omit<RequestExpiredNotice, "consulteeUserId">,
+  dashboardUrl: string,
+) {
   return {
     ...notificationScope(notice.organizationId),
     appointmentId: notice.appointmentId,
@@ -117,10 +137,14 @@ function bellPayload(notice: RequestExpiredNotice, dashboardUrl: string) {
   };
 }
 
-function emailArgs(notice: RequestExpiredNotice, dashboardUrl: string) {
+function emailArgs(
+  notice: Omit<RequestExpiredNotice, "consulteeUserId">,
+  dashboardUrl: string,
+  userIds: string[],
+) {
   return {
     appointmentId: notice.appointmentId,
-    userIds: [notice.consulteeUserId],
+    userIds,
     startsAt: notice.startsAt,
     cancelledBy: "Familiarise",
     reason: notice.reason,

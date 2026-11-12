@@ -508,7 +508,13 @@ describe("notices", () => {
 
 describe("readers that must count incident refunds and skip incident strikes", () => {
   it("counts incident refunds in a payment's per-session refunds", async () => {
-    db.refund.findMany.mockResolvedValue([{ amountPaise: BigInt(10_000) }]);
+    db.refund.findMany.mockResolvedValue([
+      {
+        paymentId: "pay-1",
+        dedupeKey: "incident:inc-1:o1:u1",
+        amountPaise: BigInt(10_000),
+      },
+    ]);
     await expect(occurrenceRefundsPaise(db as never, "pay-1")).resolves.toBe(
       10_000,
     );

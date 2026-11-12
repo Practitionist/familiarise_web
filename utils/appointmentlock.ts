@@ -14,6 +14,7 @@ import crypto from "crypto";
 import * as Sentry from "@sentry/nextjs";
 import { SCHEDULING_INTERVAL_MS } from "../lib/appointments/occurrences";
 import { SlotLockError } from "./errors/SlotLockError";
+import { Refusal } from "../lib/errors/refusal";
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -216,6 +217,9 @@ async function acquireLockWithRetry(
           timestamp: new Date().toISOString(),
         }),
       );
+      // The SET may have landed before the error: delete it only if it is ours,
+      // so neither the retry nor the next caller meets our own key as contention.
+      await releaseIfOurs(client, key, value);
 
       if (attempt === config.retryCount) {
         throw error;
@@ -277,6 +281,19 @@ async function acquireGuarded(
     throw lock;
   }
   return lock;
+}
+
+/** Best-effort compare-and-delete of a key this process may have written; never throws. */
+async function releaseIfOurs(
+  client: Redis,
+  key: string,
+  value: string,
+): Promise<void> {
+  try {
+    await withRedisTimeout(client.eval(RELEASE_LOCK_SCRIPT, [key], [value]));
+  } catch {
+    // The TTL still frees the key; the caller's own error is the one to report.
+  }
 }
 
 async function releaseLock(lock: ApprovalLock): Promise<void> {
@@ -969,17 +986,32 @@ export async function withAppointmentLock<T>(
   }
 }
 
+/** The appointment lock's grant lapsed or passed to another writer mid-operation. */
+export class LockLostError extends Refusal {
+  constructor(key: string) {
+    super({
+      code: "LOCK_LOST",
+      httpStatus: 409,
+      userMessage:
+        "This booking was being changed somewhere else while we saved. Nothing was changed; please try again.",
+      devMessage: `lock lost before renewal: ${key}`,
+    });
+    this.name = "LockLostError";
+  }
+}
+
 /**
- * Re-grant the appointment lock for one more Serializable attempt; retry loops
- * wrapped in this lock outlive its TTL. Never throws: the CAS decides whether
- * an attempt may write. Returns whether the grant is still ours.
+ * Re-grant the appointment lock for one more attempt; retry loops wrapped in
+ * this lock outlive its TTL. Throws {@link LockLostError} (409) when a held
+ * grant is no longer ours, so the attempt never runs unserialised; no lock
+ * held means nothing to renew.
  */
 export async function renewAppointmentLock(
   lock: ApprovalLock | null | undefined,
   ttl: number = APPOINTMENT_LOCK_TTL_MS,
-): Promise<boolean> {
-  if (!lock) return false;
-  return await extendLock(lock, ttl);
+): Promise<void> {
+  if (!lock) return;
+  if (!(await extendLock(lock, ttl))) throw new LockLostError(lock.key);
 }
 
 /** Another allocation for the same expert holds the consultant tier right now. */

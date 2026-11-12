@@ -312,6 +312,8 @@ export interface AvailabilityGridEtagKey {
   leadMs: number;
   /** {@link subscriptionQuotaFold} when the quota overlay was asked for. */
   quotaFold?: string | null;
+  /** The moving event's own appointment, left out of the busy time. */
+  excludedAppointmentId?: string | null;
 }
 
 const THIRTY_MIN_MS = 30 * 60 * 1000;
@@ -385,6 +387,8 @@ export function availabilityGridEtag(
     iso(marker.paymentsUpdatedAt ?? null),
     iso(marker.requestsUpdatedAt),
     iso(marker.nextHoldExpiry),
+    // Appended only when set, so every other request keeps its tag.
+    ...(key.excludedAppointmentId ? [`x:${key.excludedAppointmentId}`] : []),
   ].join(" ");
   return `"${createHash("sha256").update(material).digest("base64url")}"`;
 }

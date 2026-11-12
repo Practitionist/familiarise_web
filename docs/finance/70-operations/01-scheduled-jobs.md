@@ -46,7 +46,7 @@ The tables below were generated from `netlify/functions/cron-tick.mts`, `lib/cro
 | Job (slug)                    | Schedule (UTC)      | Bite (`limit`) | Timeout | Held in DEGRADED | What it does                                                                                           |
 | ----------------------------- | ------------------- | -------------- | ------- | ---------------- | ------------------------------------------------------------------------------------------------------ |
 | `reconcile-orphaned-payments` | every 30 min at :10 | 10             | 20 s    | yes              | Heals the stranded cohort: links a late appointment or refunds the payment.                            |
-| `auto-complete-appointments`  | every 30 min at :15 | 25             | 24 s    | no               | Marks finished sessions `COMPLETED`, which is what lets their earnings hold run out.                   |
+| `auto-complete-appointments`  | every 30 min at :15 | 25             | 24 s    | yes              | Marks finished sessions `COMPLETED`, which is what lets their earnings hold run out.                   |
 | `detect-consultant-no-shows`  | every 30 min at :20 | 10             | 24 s    | yes              | Cancels a confirmed consultant no-show and refunds 100 % through `refundBookingPayment`.               |
 | `settle-cancelled-sessions`   | every 30 min at :25 | 10             | 20 s    | yes              | Refunds each seat of a host-cancelled class session nobody made up in 14 days.                         |
 | `vest-referral-credits`       | every 30 min at :05 | 10             | 20 s    | yes              | Vests or voids `QUALIFYING` referrals once the session is delivered and its refund window has passed.  |

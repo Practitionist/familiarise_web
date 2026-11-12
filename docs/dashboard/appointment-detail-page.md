@@ -10,6 +10,8 @@ The page has three parts, read top to bottom.
 2. **The main column.** Notices, the open reschedule proposal, the review nudge, then the **Sessions** card and, for the host, the participants.
 3. **The right rail.** Payment, details, resources, the timeline and help, in that order. The rail stays narrow (280–340 px) so the sessions keep the width.
 
+**Decided 2026-11-12, planned; not built.** The Payment card will always sit in the right rail under Resources and Help, and one amber banner at the top will show whenever the viewer must act (pay, accept or decline new times, approve a request), with the deadline and the primary button. Today `NeedsYouCallout` carries the payment hold countdown, and the rail order is as listed above. A session inside a subscription or class is never paid on its own, so the page will show the plan-level payment. While a reschedule is open both sides will see "Being moved" with the original time. See [the booking follow-up train](../decisions/2026-11-12-booking-follow-up-train.md).
+
 Destructive booking actions (Cancel booking, Withdraw request) stay in the "Manage booking" row at the foot of the page, after Get help, so they never lead the page.
 
 ## One list of sessions
@@ -19,9 +21,10 @@ The Sessions card renders `SessionSchedule` (`components/appointments/detail/Ses
 - **Rows.** Each row is a day tile, the time range, a detail line ("Session 4", the length when lengths differ, "Same day as another session") and the row's status.
 - **Status.** Upcoming is the default and carries no word. The next session shows its countdown, a session in its join window shows Join, and only the states a reader must notice carry a word and a dot: Done, Cut short, No-show, Verifying, No record, Live now. Colour is kept for those exceptions; the colour palette itself is a separate pass.
 - **Per-session actions.** A row's actions come from `rowActions(session)`. The first enabled, non-destructive action also shows inline on hover or keyboard focus; every action is in the row's menu. A blocked action stays in the menu, disabled, with its reason under the label (for example why a session can't be returned to the plan). Confirmation goes through one shared `SessionConfirmDialog`.
-  - The host's "Cancel this session" for a class comes from `useClassSessionActions` (`ClassSessionControls.tsx`). Make-up work, which needs a time or a decision, renders as notices above the list.
+  - The host's "Cancel this session" for a class comes from `useClassSessionActions` (`ClassSessionControls.tsx`). Make-up work, which needs a time or a decision, renders as notices above the list; the host picks the make-up time with `SingleSessionPicker`, which labels each start Free, Outside your hours, Busy or Too soon and keeps it inside the 14-day make-up window.
   - The consultee's "Return to plan" for a subscription comes from `useSubscriptionReturnActions` (`SubscriptionReturnControls.tsx`), with the rule and the returns used as a footnote under the list.
 - **Grouping.** Past sessions fold behind "N past sessions". Upcoming sessions are grouped by week when the schedule spans weeks. Weeks are counted from the first session's day in the viewer's zone (`buildScheduleModel` in `lib/appointments/session-schedule.ts`), so a week never splits at the server's midnight. An empty week between sessions is listed as "No sessions this week", and a week with fewer sessions than the plan's weekly count says "1 of 2 this week".
+- **Moving a sold class.** The host's "Move upcoming sessions" (`ClassSeriesRetimeButton`) sits in the Sessions card header beside the schedule buttons, because it changes every session in the list.
 - **Progress.** A class shows one "N of M done" bar at the top of the card. A subscription keeps its entitlement count in the header ("1 of 4 sessions scheduled") and shows no second bar.
 - **Time zone.** The zone is named once, above the list ("Times shown in IST (UTC+05:30)"), with a switch to the device's zone when it differs. Rows never repeat the zone.
 

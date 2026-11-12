@@ -94,6 +94,7 @@ import { TimelineStrip } from "./TimelineStrip";
 import { CountdownBadge } from "../CountdownBadge";
 import { KIND_LABEL } from "../AppointmentRow";
 import { RowPrimaryAction } from "../RowPrimaryAction";
+import { ClassSeriesRetimeButton } from "./ClassSeriesRetimeButton";
 import { useClassSessionActions } from "./ClassSessionControls";
 import { useSubscriptionReturnActions } from "./SubscriptionReturnControls";
 import { SessionSchedule, type SessionRowAction } from "./SessionSchedule";
@@ -351,6 +352,8 @@ export function AppointmentDetailClient({
   // loading and error returns below, so they take the read as it stands.
   const classActions = useClassSessionActions({
     appointmentId,
+    classId: detail?.appointment.classId ?? null,
+    consultantProfileId: mapped?.vm.consultantProfileId ?? null,
     sessions: detail?.appointment.class ? detail.appointment.occurrences : [],
     role,
     // A seat's unit depends on when it was bought; the copy says "one
@@ -398,6 +401,15 @@ export function AppointmentDetailClient({
   }
 
   const { vm } = mapped;
+  // Class host controls are for the plan's host and whoever acts on that
+  // host's dashboard; the routes refuse co-hosts and co-instructors. A
+  // cancelled or finished class has nothing left to move or make up.
+  const classControls =
+    vm.bucket !== "cancelled" &&
+    vm.bucket !== "past" &&
+    (role === "consultee" ||
+      !consultantId ||
+      vm.consultantProfileId === consultantId);
   const action = adapter.primaryAction(vm);
   const orgName =
     detail.appointment.organization?.name ??
@@ -712,6 +724,24 @@ export function AppointmentDetailClient({
     detail.appointment.subscription?.subscriptionPlan?.sessionsPerWeek ??
     detail.appointment.class?.classPlan?.sessionsPerWeek ??
     null;
+  // Move every session 24 h or more away to a new weekly pattern.
+  const seriesMove =
+    role === "consultant" &&
+    classControls &&
+    vm.kind === "CLASS" &&
+    detail.appointment.class &&
+    vm.consultantProfileId ? (
+      <ClassSeriesRetimeButton
+        appointmentId={appointmentId}
+        classId={detail.appointment.class.id}
+        consultantProfileId={vm.consultantProfileId}
+        schedulingTimezone={detail.appointment.class.schedulingTimezone}
+        sessionsPerWeek={
+          detail.appointment.class.classPlan?.sessionsPerWeek ?? 1
+        }
+        onMoved={refreshDetail}
+      />
+    ) : null;
   const sessionsCard = !soleSession && (
     <Section
       title={
@@ -719,7 +749,14 @@ export function AppointmentDetailClient({
           ? `Sessions · ${heldCount} held`
           : "Sessions"
       }
-      action={scheduleActions}
+      action={
+        scheduleActions || seriesMove ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {scheduleActions}
+            {seriesMove}
+          </div>
+        ) : null
+      }
     >
       {/* Without this the stars below simply disappeared (or showed empty)
           on a call the viewer had already rated. */}
@@ -744,7 +781,7 @@ export function AppointmentDetailClient({
           />
         </div>
       )}
-      {classActions.notices && (
+      {classControls && classActions.notices && (
         <div className="mb-4">{classActions.notices}</div>
       )}
       {hasConfirmedSessions || hasTentativeSessions ? (
@@ -794,7 +831,9 @@ export function AppointmentDetailClient({
           // Schedule words only; the pay verb lives in the needs-you slot.
           heldRowLabel={presentation.sessionRowLabel}
           rowActions={(session): SessionRowAction[] => [
-            ...classActions.rowActions(session.occurrenceId),
+            ...(classControls
+              ? classActions.rowActions(session.occurrenceId)
+              : []),
             ...returnActions.rowActions(session.occurrenceId),
           ]}
           sessionsPerWeek={sessionsPerWeek}

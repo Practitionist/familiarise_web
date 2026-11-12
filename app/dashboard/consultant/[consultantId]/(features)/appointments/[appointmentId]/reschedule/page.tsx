@@ -16,6 +16,7 @@ import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 import { buildRescheduleSubject } from "@/lib/scheduling/time-picker-subject";
 
 import { RescheduleClient } from "./RescheduleClient";
+import { TrialRescheduleClient } from "./TrialRescheduleClient";
 
 /**
  * The consultant's reschedule surface.
@@ -66,9 +67,6 @@ export default async function ConsultantReschedulePage({
     notFound();
   }
 
-  const resolved = buildRescheduleSubject(detail);
-  if (!resolved) notFound();
-
   const backHref = `/dashboard/consultant/${consultantId}/appointments`;
   const opsHref = access.isInspecting
     ? operatorOpsHref(
@@ -77,6 +75,41 @@ export default async function ConsultantReschedulePage({
         appointmentId,
       )
     : null;
+
+  // A trial is one session: the trial picker proposes its one new window.
+  const trial = appointment.trial;
+  if (appointment.appointmentType === "TRIAL" && trial) {
+    const consulteeName = trial.consulteeProfile?.user?.name ?? undefined;
+    return (
+      <DashboardViewportFill className="gap-4">
+        <div className="shrink-0">
+          <PanelHeader
+            description={
+              consulteeName
+                ? `Propose a new trial time for ${consulteeName}`
+                : "Propose a new trial time"
+            }
+          />
+        </div>
+        {opsHref ? (
+          <OperatorOpsHint href={opsHref} />
+        ) : (
+          <TrialRescheduleClient
+            consultantId={consultantId}
+            appointmentId={appointmentId}
+            consulteeUserId={trial.consulteeProfile.userId}
+            consulteeName={consulteeName}
+            trialDurationMinutes={trial.subscriptionPlan.trialDurationMinutes}
+            title={trial.subscriptionPlan.title}
+            backHref={backHref}
+          />
+        )}
+      </DashboardViewportFill>
+    );
+  }
+
+  const resolved = buildRescheduleSubject(detail);
+  if (!resolved) notFound();
 
   return (
     <DashboardViewportFill className="gap-4">

@@ -8,6 +8,11 @@ import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
 import {
+  planPublishFeasibility,
+  type PlanFeasibilityOutcome,
+} from "@/lib/booking/feasibility";
+import { MAX_SUBSCRIPTION_SESSIONS_PER_DAY } from "@/utils/scheduling-engine/sessionCaps";
+import {
   curriculumCreateNested,
   faqReplaceNested,
 } from "@/lib/api/plans/content";
@@ -222,6 +227,40 @@ export async function PUT(
       });
     }
 
+    // A cadence change or a first publish must leave the plan deliverable from
+    // the expert's published hours; a published plan saved unchanged is not re-checked.
+    const cadence = editedTerms(
+      {
+        sessionsPerWeek: existingPlan.sessionsPerWeek,
+        sessionDurationInHours: existingPlan.sessionDurationInHours,
+      },
+      {
+        sessionsPerWeek: validatedData.sessionsPerWeek,
+        sessionDurationInHours: validatedData.sessionDurationInHours,
+      },
+    );
+    const effectiveStatus = validatedData.status ?? existingPlan.status;
+    const publishing =
+      effectiveStatus === "PUBLISHED" &&
+      (cadence.changed || existingPlan.status !== "PUBLISHED");
+    const feasibility: PlanFeasibilityOutcome =
+      effectiveStatus === "PUBLISHED" && !publishing
+        ? { refusal: null, warnings: [] }
+        : await planPublishFeasibility(prisma, {
+            consultantProfileId: existingPlan.consultantProfileId,
+            sessionsPerWeek: cadence.terms.sessionsPerWeek,
+            sessionMinutes: Math.round(
+              cadence.terms.sessionDurationInHours * 60,
+            ),
+            perDayCap: MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
+            publishing,
+          });
+    if (feasibility.refusal) {
+      return NextResponse.json(feasibility.refusal.body, {
+        status: feasibility.refusal.status,
+      });
+    }
+
     // Floor check on the effective post-update trial price. Untouched
     // plans are never retro-policed — only edits that set a price or
     // newly enable the trial run against the platform floor.
@@ -371,6 +410,7 @@ export async function PUT(
       {
         data: transformTopicsToStrings(subscriptionPlan),
         activeClients,
+        feasibilityWarnings: feasibility.warnings,
         notice: activeClientsNotice(activeClients),
       },
       { status: 200 },

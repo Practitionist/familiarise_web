@@ -21,6 +21,16 @@ jest.mock("../../lib/auth-client", () => ({
 jest.mock("../../hooks/use-toast", () => ({
   useToast: () => ({ toast: jest.fn() }),
 }));
+jest.mock("../../components/scheduling/SingleSessionPicker", () => ({
+  SingleSessionPicker: (props: { onChange: (iso: string | null) => void }) => (
+    <button
+      type="button"
+      onClick={() => props.onChange("2099-12-10T06:00:00.000Z")}
+    >
+      pick make-up time
+    </button>
+  ),
+}));
 
 import {
   useClassSessionActions,
@@ -30,6 +40,8 @@ import {
 function Harness({ sessions }: Readonly<{ sessions: ClassSessionRow[] }>) {
   const actions = useClassSessionActions({
     appointmentId: "apt-1",
+    classId: "class-1",
+    consultantProfileId: "profile-1",
     role: "consultant",
     unitLabel: null,
     onChanged: jest.fn(),
@@ -44,6 +56,7 @@ function Harness({ sessions }: Readonly<{ sessions: ClassSessionRow[] }>) {
           </button>
         )),
       )}
+      {actions.notices}
       {actions.dialog}
     </>
   );
@@ -101,4 +114,36 @@ it("offers no row action on a past or cancelled session", () => {
   expect(
     screen.queryByRole("button", { name: "Cancel this session" }),
   ).toBeNull();
+});
+
+it("schedules a make-up at the picked instant, unchanged", async () => {
+  mockFetchWithIdentity.mockClear();
+  const cancelledAt = new Date(Date.now() - 86_400_000);
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <Harness
+        sessions={[
+          {
+            id: "occ-1",
+            ordinal: 1,
+            startsAt: cancelledAt,
+            endsAt: new Date(cancelledAt.getTime() + 90 * 60_000),
+            completionStatus: "CANCELLED",
+            hostCancelledAt: cancelledAt,
+          },
+        ]}
+      />
+    </QueryClientProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "pick make-up time" }));
+  fireEvent.click(screen.getByRole("button", { name: "Schedule make-up" }));
+  await waitFor(() =>
+    expect(mockFetchWithIdentity).toHaveBeenCalledWith(
+      "/api/appointments/apt-1/occurrences/occ-1/make-up",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ startsAt: "2099-12-10T06:00:00.000Z" }),
+      }),
+    ),
+  );
 });

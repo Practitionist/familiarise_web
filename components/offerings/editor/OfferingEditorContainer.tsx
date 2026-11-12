@@ -31,6 +31,7 @@ import {
 } from "@/lib/offerings/stats";
 import {
   OFFERING_ADAPTERS,
+  classStartEdited,
   duplicateFormValues,
   type OfferingSaveContext,
 } from "./adapters";
@@ -49,6 +50,13 @@ import { useSession } from "@/lib/auth-client";
 import { activeClientsNotice } from "@/lib/booking/entitlement";
 import { activeClientsOf, withPricingNotice } from "./sold-terms-notice";
 import { sellHomeHref } from "@/lib/dashboard/sell-pages";
+import { SessionHostProvider } from "./session-time-field";
+import {
+  feasibilityRefusalOf,
+  feasibilityWarningsOf,
+} from "./feasibility-feedback";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { isExpectedRefusal } from "@/lib/errors/client-refusal";
 
 interface OfferingEditorContainerProps {
   type: OfferingType;
@@ -252,6 +260,9 @@ export function OfferingEditorContainer({
   // bookings": that let an unpublish through with no confirmation while the
   // real count was simply unknown.
   const bookingsUnknown = unpublishCanStrand && !stats.data;
+  const [publishRefusal, setPublishRefusal] = React.useState<string[] | null>(
+    null,
+  );
   const [pendingUnpublish, setPendingUnpublish] = React.useState<Record<
     string,
     unknown
@@ -309,6 +320,8 @@ export function OfferingEditorContainer({
     { publish }: { publish: boolean },
   ) => {
     setSavingAction(publish ? "publish" : "draft");
+    setPublishRefusal(null);
+    const wasPublishedBeforeSave = status === "PUBLISHED";
     try {
       const payload = {
         ...values,
@@ -317,16 +330,17 @@ export function OfferingEditorContainer({
         status: publish ? "SCHEDULED" : "DRAFT",
       };
 
-      const wasPublishedBeforeSave = status === "PUBLISHED";
+      let saved: unknown;
       if (onSave) {
         await onSave(payload, { publish });
       } else {
-        await adapter.save(payload, consultantId, {
+        saved = await adapter.save(payload, consultantId, {
           ...saveCtx,
           capacityEdited:
             existingPlan?.maxParticipants === undefined ||
             Number(values.maxParticipants) !==
               Number(existingPlan.maxParticipants),
+          startEdited: classStartEdited(values, existingPlan),
         });
       }
       setPersistedStatus(publish ? "PUBLISHED" : "DRAFT");
@@ -334,23 +348,36 @@ export function OfferingEditorContainer({
       void invalidateOfferingQueries(queryClient, consultantId);
       if (!(await commitStagedImage())) return;
 
-      toast(
-        savedToast({
-          publish,
-          hasRealDraft,
-          wasPublished: wasPublishedBeforeSave,
-        }),
-      );
+      const savedNotice = savedToast({
+        publish,
+        hasRealDraft,
+        wasPublished: wasPublishedBeforeSave,
+      });
+      const hoursWarnings = feasibilityWarningsOf(saved);
+      toast({
+        ...savedNotice,
+        description:
+          [savedNotice.description, ...hoursWarnings]
+            .filter(Boolean)
+            .join(" ") || undefined,
+      });
 
       router.push(returnHref ?? sellHomeHref(consultantId, type));
       router.refresh();
     } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "offerings" } },
-      );
+      // A 4xx is the server's answer, not a fault.
+      if (!isExpectedRefusal(error)) {
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "offerings" } },
+        );
+      }
+      setPublishRefusal(feasibilityRefusalOf(error));
       toast({
-        title: publish ? "Couldn't publish" : "Couldn't save",
+        title:
+          publish && !wasPublishedBeforeSave
+            ? "Couldn't publish"
+            : "Couldn't save",
         description:
           error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",
@@ -364,104 +391,126 @@ export function OfferingEditorContainer({
     <WaitingCountProvider
       value={{ plan: planWaiting, instance: instanceWaiting }}
     >
-      <OfferingEditor
-        manifest={effectiveManifest}
-        form={form}
-        planId={planId}
-        coverImage={
-          planId
-            ? {
-                staged: stagedImage,
-                // Ignored mid-save so a staged image can't pair with a stale save.
-                onStage: (image) => {
-                  if (savingAction === null) setStagedImage(image);
-                },
-              }
-            : undefined
-        }
-        status={status}
-        draftLabel={
-          hasRealDraft && status === "PUBLISHED"
-            ? "Unpublish (save as draft)"
-            : undefined
-        }
-        canSaveDraft={canSaveDraft}
-        previewHref={
-          planId && !onSave ? publicOfferingHref(type, planId) : undefined
-        }
-        savingAction={savingAction}
-        publishBlockedReason={publishBlockedReason}
-        publishOnlyFields={publishOnlyFields}
-        slots={{
-          // Shared by all four, so it is wired here rather than four times.
-          faq: <FaqEditor control={form.control} name="faqs" />,
-          // ClassPlanSchema requires at least one curriculum item, so a class
-          // literally cannot be saved without this.
-          curriculum: (
-            <ContentItemsEditor
-              control={form.control}
-              name="classContents"
-              itemNoun="sessions"
-            />
-          ),
-          roadmap: (
-            <ContentItemsEditor
-              control={form.control}
-              name="subscriptionContents"
-              itemNoun="sessions"
-            />
-          ),
-          // Group events only, and only once saved — collaborators attach to a
-          // plan id, so there is nothing to attach to while creating.
-          ...((type === "webinar" || type === "class") && planId
-            ? {
-                collaborators: (
-                  <CollaboratorsTab planType={type} planId={planId} isOwner />
-                ),
-              }
-            : {}),
-          // Files attach to a plan id, so there is nothing to list while
-          // creating (#1851 decision 8).
-          materials: planId ? (
-            <OfferingMaterials type={type} planId={planId} />
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Files attached to this offering appear here once it is saved.
-            </p>
-          ),
-          ...extraSlots,
-        }}
-        onSaveDraft={(values) => {
-          if (unpublishCanStrand && (bookings > 0 || bookingsUnknown)) {
-            setPendingUnpublish(values as Record<string, unknown>);
-            return;
+      <SessionHostProvider consultantProfileId={consultantId}>
+        {publishRefusal && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertTitle>
+              This plan can&apos;t be delivered from your published hours
+            </AlertTitle>
+            <AlertDescription>
+              <ul className="list-disc space-y-1 pl-5">
+                {publishRefusal.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+              <p className="mt-2">
+                Add hours in Availability, shorten the sessions, or lower the
+                sessions a week, then save again.
+              </p>
+            </AlertDescription>
+          </Alert>
+        )}
+        <OfferingEditor
+          manifest={effectiveManifest}
+          form={form}
+          planId={planId}
+          coverImage={
+            planId
+              ? {
+                  staged: stagedImage,
+                  // Ignored mid-save so a staged image can't pair with a stale save.
+                  onStage: (image) => {
+                    if (savingAction === null) setStagedImage(image);
+                  },
+                }
+              : undefined
           }
-          return persist(values as Record<string, unknown>, { publish: false });
-        }}
-        onPublish={(values) =>
-          persist(values as Record<string, unknown>, { publish: true })
-        }
-        onCancel={() => router.back()}
-      />
-      <ConfirmDialog
-        open={pendingUnpublish !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingUnpublish(null);
-        }}
-        title="Unpublish this offering?"
-        description={
-          bookingsUnknown
-            ? "We couldn't confirm whether anyone has booked it. Existing bookings are unaffected either way; it just stops taking new ones until you publish it again."
-            : `${bookings} ${bookings === 1 ? "person has" : "people have"} booked it. Existing bookings are unaffected; it just stops taking new ones until you publish it again.`
-        }
-        confirmLabel="Unpublish"
-        onConfirm={async () => {
-          if (pendingUnpublish) {
-            await persist(pendingUnpublish, { publish: false });
+          status={status}
+          draftLabel={
+            hasRealDraft && status === "PUBLISHED"
+              ? "Unpublish (save as draft)"
+              : undefined
           }
-          setPendingUnpublish(null);
-        }}
-      />
+          canSaveDraft={canSaveDraft}
+          previewHref={
+            planId && !onSave ? publicOfferingHref(type, planId) : undefined
+          }
+          savingAction={savingAction}
+          publishBlockedReason={publishBlockedReason}
+          publishOnlyFields={publishOnlyFields}
+          slots={{
+            // Shared by all four, so it is wired here rather than four times.
+            faq: <FaqEditor control={form.control} name="faqs" />,
+            // ClassPlanSchema requires at least one curriculum item, so a class
+            // literally cannot be saved without this.
+            curriculum: (
+              <ContentItemsEditor
+                control={form.control}
+                name="classContents"
+                itemNoun="sessions"
+              />
+            ),
+            roadmap: (
+              <ContentItemsEditor
+                control={form.control}
+                name="subscriptionContents"
+                itemNoun="sessions"
+              />
+            ),
+            // Group events only, and only once saved — collaborators attach to a
+            // plan id, so there is nothing to attach to while creating.
+            ...((type === "webinar" || type === "class") && planId
+              ? {
+                  collaborators: (
+                    <CollaboratorsTab planType={type} planId={planId} isOwner />
+                  ),
+                }
+              : {}),
+            // Files attach to a plan id, so there is nothing to list while
+            // creating.
+            materials: planId ? (
+              <OfferingMaterials type={type} planId={planId} />
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Files attached to this offering appear here once it is saved.
+              </p>
+            ),
+            ...extraSlots,
+          }}
+          onSaveDraft={(values) => {
+            if (unpublishCanStrand && (bookings > 0 || bookingsUnknown)) {
+              setPendingUnpublish(values as Record<string, unknown>);
+              return;
+            }
+            return persist(values as Record<string, unknown>, {
+              publish: false,
+            });
+          }}
+          onPublish={(values) =>
+            persist(values as Record<string, unknown>, { publish: true })
+          }
+          onCancel={() => router.back()}
+        />
+        <ConfirmDialog
+          open={pendingUnpublish !== null}
+          onOpenChange={(open) => {
+            if (!open) setPendingUnpublish(null);
+          }}
+          title="Unpublish this offering?"
+          description={
+            bookingsUnknown
+              ? "We couldn't confirm whether anyone has booked it. Existing bookings are unaffected either way; it just stops taking new ones until you publish it again."
+              : `${bookings} ${bookings === 1 ? "person has" : "people have"} booked it. Existing bookings are unaffected; it just stops taking new ones until you publish it again.`
+          }
+          confirmLabel="Unpublish"
+          onConfirm={async () => {
+            if (pendingUnpublish) {
+              await persist(pendingUnpublish, { publish: false });
+            }
+            setPendingUnpublish(null);
+          }}
+        />
+      </SessionHostProvider>
     </WaitingCountProvider>
   );
 }

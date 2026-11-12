@@ -50,3 +50,11 @@ export function consulteeCapReached(
       (prior.byOrdinal.get(ordinal) ?? 0) >= MAX_CONSULTEE_RESCHEDULES,
   );
 }
+
+/** A trial is one session: each side may move it once. */
+export const MAX_TRIAL_RESCHEDULES_PER_SIDE = 1;
+
+/** Whether this side has already moved the trial as often as it may. */
+export function trialCapReached(prior: PriorReschedules): boolean {
+  return prior.total >= MAX_TRIAL_RESCHEDULES_PER_SIDE;
+}

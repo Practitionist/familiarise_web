@@ -1476,7 +1476,7 @@ export class ScheduleValidationService {
       );
     }
 
-    // RV-5 — seed each week with this class's surviving confirmed sessions.
+    // Seed each day with this class's surviving confirmed sessions.
     // #1554 — one wrapper, N occurrences: fetch the class's live rows and
     // exclude the tentative ones (and any caller exclusions) that are about
     // to be replaced, so the seed reflects exactly the calls the allocator
@@ -1498,20 +1498,9 @@ export class ScheduleValidationService {
       ...classOccurrences.filter((o) => o.isTentative).map((o) => o.id),
     ]);
 
+    // A class may meet more often than its plan's weekly count; the per-day
+    // cap, shared with the allocator (sessionCaps.ts), still applies.
     errors.push(
-      ...this.validateClassWeeklyLimits({
-        classOccurrences,
-        excludedAppointments,
-        excludedOccurrences,
-        slots,
-        slotsPerSession,
-        sessionsPerWeek: config.sessionsPerWeek,
-        schedulingTimezone: config.schedulingTimezone,
-      }),
-      // #898 follow-up — server-side per-DAY cap (class ≤2/day). Was only enforced
-      // at allocation-selection time + the client guard, so a hand-crafted manual
-      // allocate could stack same-day sessions. Constant shared with the
-      // allocator (utils/scheduling-engine/sessionCaps.ts).
       ...this.validatePerDaySessionCap(
         classOccurrences,
         excludedAppointments,
@@ -1550,86 +1539,9 @@ export class ScheduleValidationService {
     return errors;
   }
 
-  private validateClassWeeklyLimits(params: {
-    classOccurrences: ExistingOccurrenceRow[];
-    excludedAppointments: Set<string>;
-    excludedOccurrences: Set<string>;
-    slots: Date[];
-    slotsPerSession: number;
-    sessionsPerWeek: number;
-    schedulingTimezone?: string;
-  }): string[] {
-    const {
-      classOccurrences,
-      excludedAppointments,
-      excludedOccurrences,
-      slots,
-      slotsPerSession,
-      sessionsPerWeek,
-      schedulingTimezone,
-    } = params;
-    const errors: string[] = [];
-
-    // One live occurrence = one session, keyed by its week (same
-    // scheduling-timezone key the allocator and groupSlotsByWeek use, ADR B9).
-    const existingSessionsPerWeek = new Map<string, number>();
-    for (const row of classOccurrences) {
-      if (
-        !this.countsAsExistingSession(
-          row,
-          excludedAppointments,
-          excludedOccurrences,
-        )
-      ) {
-        continue;
-      }
-      const weekKey = ScheduleCalculationService.weekKey(
-        new Date(row.startsAt),
-        schedulingTimezone,
-      );
-      existingSessionsPerWeek.set(
-        weekKey,
-        (existingSessionsPerWeek.get(weekKey) || 0) + 1,
-      );
-    }
-
-    // #1690 — Group into whole sessions of slotsPerSession atoms first, then
-    // attribute each session to the week of its sessionStart. Grouping raw
-    // 30-min atoms by week and dividing by slotsPerSession split a session
-    // crossing the Sunday/Monday midnight boundary across two weeks and
-    // Math.floor'd both halves to zero.
-    const sortedSlots = [...slots].sort((a, b) => a.getTime() - b.getTime());
-    const proposedSessionsByWeek = new Map<string, number>();
-    const tz =
-      schedulingTimezone ??
-      ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE;
-    for (
-      let i = 0;
-      i + slotsPerSession <= sortedSlots.length;
-      i += slotsPerSession
-    ) {
-      const sessionStart = sortedSlots[i];
-      const wk = ScheduleCalculationService.weekKey(sessionStart, tz);
-      proposedSessionsByWeek.set(wk, (proposedSessionsByWeek.get(wk) || 0) + 1);
-    }
-
-    proposedSessionsByWeek.forEach((proposedSessions, weekKey) => {
-      const sessionsThisWeek =
-        proposedSessions + (existingSessionsPerWeek.get(weekKey) || 0);
-      if (sessionsThisWeek > sessionsPerWeek) {
-        errors.push(
-          `[WEEKLY_LIMIT] Week of ${weekKey} has ${sessionsThisWeek} sessions but max is ${sessionsPerWeek}`,
-        );
-      }
-    });
-
-    return errors;
-  }
-
   /**
-   * #1554 — whether a stored row still counts as an existing session for the
-   * weekly and daily caps: live, not tentative, and not one of the rows the
-   * caller is replacing.
+   * Whether a stored row still counts as an existing session for the daily
+   * cap: live, not tentative, and not one of the rows the caller is replacing.
    */
   private countsAsExistingSession(
     row: ExistingOccurrenceRow,

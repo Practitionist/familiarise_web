@@ -68,6 +68,7 @@ import {
   assertExpectedTentativeSlotCountInTx,
   assertNoConfirmedSlots,
   guardAllocationInTx,
+  assertGroupEventUnsoldInTx,
   probeConfirmedOverlap,
 } from "@/lib/booking/allocation/guards";
 import { resolveConsumedPreferenceRequests } from "@/lib/booking/allocation/preference";
@@ -79,6 +80,7 @@ import {
   reconnectEnrolledUsers,
   collectEventParticipantIds,
 } from "@/lib/booking/allocation/commit/reconnect-enrolled";
+import { bookingTransaction } from "@/lib/db/booking-transaction";
 
 /**
  * MANUAL ALLOCATION: Validate and allocate user-selected slots
@@ -171,19 +173,15 @@ export async function manualAllocate(
   );
 
   const lock = await lockAutoAllocate(consultantProfileId);
-  // #898 follow-up — serialize on the consultee too (consultant → consultee
-  // lock order) so one person can't be booked with two consultants at once.
+  // Lock order: consultant → consultee → slot batch. The consultee key (one
+  // person is never booked with two experts at once) is held only from the
+  // batch to the write, so the buyer's own checkout is not refused while the
+  // expert's picks are read and validated; the in-transaction recheck reads
+  // the consultee's calendar under it.
   let consulteeLock: ApprovalLock | null = null;
   let slotGrant: SlotBatchGrant | null = null;
   try {
     const consulteeLockUserId = await getConsulteeUserId(eventType, eventId);
-    if (consulteeLockUserId) {
-      consulteeLock = await lockConsulteeBooking(
-        consulteeLockUserId,
-        undefined,
-        ALLOCATOR_LOCK_RETRY_CONFIG,
-      );
-    }
 
     // #837 TOCTOU — the pre-lock replay check can miss a concurrent first
     // submit that stamped its key while we waited on the lock. Re-check now
@@ -476,6 +474,13 @@ export async function manualAllocate(
       throw validationRefusal(validation.errors);
     }
 
+    if (consulteeLockUserId) {
+      consulteeLock = await lockConsulteeBooking(
+        consulteeLockUserId,
+        undefined,
+        ALLOCATOR_LOCK_RETRY_CONFIG,
+      );
+    }
     // Lock order: consultant → consultee → slot batch over every busy profile.
     // Picked times never wait: a held one is a typed 409 naming the times.
     slotGrant = await lockPickedSlots(
@@ -489,7 +494,7 @@ export async function manualAllocate(
     );
 
     // SHORT write-only transaction (see autoAllocate for the rationale).
-    return await prisma.$transaction(
+    return await bookingTransaction(
       async (tx) => {
         await renewAllocationBatch(slotGrant);
         // #1692 — per-event serialisation first (see autoAllocate).
@@ -502,6 +507,8 @@ export async function manualAllocate(
           slotStrings,
         );
         if (lockedReplay) return lockedReplay;
+        // A sold webinar or class is re-timed, never re-planned.
+        if (!isTopUp) await assertGroupEventUnsoldInTx(tx, eventType, eventId);
         // #1766 — see autoAllocate: a stale tab must not append twice.
         if (isTopUp) {
           await assertHeldSessionCountInTx(

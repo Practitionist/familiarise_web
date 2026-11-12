@@ -103,6 +103,7 @@ import {
   revokeEndedEventChatAccess,
 } from "@/lib/stream/access-revocation";
 import { bookingOrgId } from "@/lib/stream-utils";
+import { bookingTransaction } from "@/lib/db/booking-transaction";
 
 /** Audit attribution shared by every CAS this cancel drives (#1322 A12). */
 type CancelAuditMeta = {
@@ -845,12 +846,6 @@ export async function POST(
         ? await eventAttendeesByRail(appointmentId)
         : null;
 
-    // #1780 D-5 — each class seat's ledger, read before the transaction below
-    // tombstones the sessions: the series refunds only what was not delivered.
-    const seriesLedgers = appointment.class
-      ? await classSeriesLedgers(appointment.class.id)
-      : null;
-
     const { isConsultantInitiated, isExpertSideCancel, hostProfileId } = actor;
 
     let eventKind: "class" | "webinar" | null = null;
@@ -874,7 +869,7 @@ export async function POST(
     const runCancel = (captureLanded: boolean) =>
       withEventCheckoutLock(eventCheckoutKey, () =>
         withAppointmentLock(appointmentId, () =>
-          prisma.$transaction(
+          bookingTransaction(
             async (tx) => {
               // The CAS below is pinned to this read, so a capture committing
               // after it makes the cancel match zero rows instead of cancelling
@@ -1106,6 +1101,8 @@ export async function POST(
                   now: cancellationData.cancelledAt,
                 });
               }
+              // An expert's own cancel of a paid booking or paid live seat records a
+              // strike; strikes are private to the expert and to operations.
               if (
                 isExpertSideCancel &&
                 hostProfileId &&
@@ -1126,13 +1123,19 @@ export async function POST(
                   organizationId: appointment.organizationId,
                 });
               }
+              // Each class seat's ledger, read under the locks on this
+              // transaction and before it tombstones the sessions below, so the
+              // series refunds exactly what was not delivered as of this commit.
+              const seriesLedgers = appointment.class
+                ? await classSeriesLedgers(appointment.class.id, tx)
+                : undefined;
               const eventPlans =
                 eventKind && eventId
                   ? await stampWholeEventRefundsOwed(tx, {
                       kind: eventKind,
                       eventId,
                       reason: eventRefundReason,
-                      ledgers: seriesLedgers ?? undefined,
+                      ledgers: seriesLedgers,
                     })
                   : null;
 
@@ -1301,10 +1304,7 @@ export async function POST(
         eventId,
         eventRefundReason,
         session.user.id,
-        {
-          ledgers: seriesLedgers ?? undefined,
-          plans: eventPlans ?? undefined,
-        },
+        { plans: eventPlans ?? undefined },
       );
     }
 

@@ -232,7 +232,10 @@ export async function resolveBookingRefundContext(
   // is scoped to a payer (or the booking has exactly one: the 1:1 types).
   const singlePayer = !!payerUserId || (!ref.classId && !ref.webinarId);
   if (singlePayer && payments.length > 1) {
-    void recordSystemErrorSafe({
+    // On the caller's client and awaited: inside a transaction a global-client
+    // insert queues behind it on a one-connection pool, and a detached one outlives the commit.
+    await recordSystemErrorSafe({
+      db,
       organizationId: null,
       category: "PAYMENT",
       summary:

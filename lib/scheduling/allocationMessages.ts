@@ -335,6 +335,10 @@ const ALLOCATION_ERROR_TOASTS: Record<
     title: "Co-host unavailable",
     variant: "destructive",
   },
+  USE_RETIME: {
+    title: "This event already has booked seats, so move it instead",
+    variant: "destructive",
+  },
   // ILLEGAL_TRANSITION and RESCHEDULE_STATE_CHANGED are deliberately absent:
   // both 409s route to requestChangedElsewhere() (qa-1702, #1705).
   SLOT_TAKEN: {
@@ -453,15 +457,20 @@ export const rescheduleTimesTaken = (
 ): AllocationToast => ({
   variant: "destructive",
   title:
-    starts.length === 1
+    starts.length <= 1
       ? "This time was just taken"
       : "These times were just taken",
-  description: `${starts
-    .map(
-      (start) =>
-        `${formatDayLabel(start, { zone })} ${formatClockTime(start, { zone })}`,
-    )
-    .join(", ")}. Your booking keeps its original time — pick another time.`,
+  // The allocator's refusal does not always name which start was taken.
+  description: `${
+    starts.length > 0
+      ? `${starts
+          .map(
+            (start) =>
+              `${formatDayLabel(start, { zone })} ${formatClockTime(start, { zone })}`,
+          )
+          .join(", ")}. `
+      : ""
+  }Your booking keeps its original time — pick another time.`,
 });
 
 /** The request's tentative times moved in another tab; the page reloaded them. */

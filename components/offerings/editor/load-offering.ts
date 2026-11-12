@@ -81,8 +81,9 @@ export function wrapPlanAsEvent(
       instanceId,
     );
     // The plan row has no scheduledAt column; the first slot is the session.
+    const startsAt = webinar?.appointment?.occurrences?.[0]?.startsAt ?? null;
     const scheduledAt =
-      webinar?.appointment?.occurrences?.[0]?.startsAt ?? null;
+      startsAt instanceof Date ? startsAt.toISOString() : startsAt;
     return {
       type,
       id,

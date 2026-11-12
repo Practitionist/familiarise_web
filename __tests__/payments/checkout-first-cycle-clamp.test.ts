@@ -22,6 +22,26 @@ jest.mock("@sentry/nextjs", () => ({
   startSpan: (_o: unknown, fn: () => unknown) => fn(),
 }));
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
+// The first-week room check reads published hours; one free session by default.
+const firstWeekRoom = { placeable: 2 };
+jest.mock("../../lib/booking/feasibility", () => ({
+  __esModule: true,
+  assessExpertFeasibility: jest.fn(async () => ({
+    verdict: "ok",
+    weeks: [
+      {
+        weekStartMs: 0,
+        publishedCapacity: 2,
+        placeable: firstWeekRoom.placeable,
+      },
+    ],
+    longestWindowMinutes: 120,
+    bestWeekPublishedSessions: 2,
+    reasons: [],
+  })),
+  firstWeekPlaceable: (report: { weeks: { placeable: number }[] }) =>
+    report.weeks[0]?.placeable ?? 0,
+}));
 jest.mock("../../lib/payments/operations/refund", () => ({
   __esModule: true,
   refundPayment: jest.fn(),
@@ -286,6 +306,23 @@ describe("double-buy guard", () => {
       null,
       "policy-1",
     );
+
+  it("refuses a plan whose first week the expert's hours can't hold at all", async () => {
+    firstWeekRoom.placeable = 0;
+    try {
+      const tx = makeTx();
+      const error = await checkout(tx).catch((e: unknown) => e);
+      expect(error).toMatchObject({ httpStatus: 409, code: "NOT_PLACEABLE" });
+      expect(tx.subscription.create).not.toHaveBeenCalled();
+      expect(isBusinessErrorCode("NOT_PLACEABLE")).toBe(true);
+      expect(classifyError(error)).toMatchObject({
+        httpStatus: 409,
+        errorType: "NOT_PLACEABLE_ERROR",
+      });
+    } finally {
+      firstWeekRoom.placeable = 2;
+    }
+  });
 
   it("refuses with a typed 409 while a live row has sessions left", async () => {
     const tx = makeTx([heldRow(4)]);

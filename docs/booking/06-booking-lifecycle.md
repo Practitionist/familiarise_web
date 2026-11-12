@@ -292,6 +292,8 @@ APPROVED --> COMPLETED                (auto-complete cron, 1hr after session end
 
 The capture webhook moves a consultation to `APPROVED` only from `PENDING` or `APPROVED_PENDING_PAYMENT`; the allowed-from set rides inside the `updateMany` WHERE clause (#825 CAS doctrine), so a capture that lands after a cancellation matches zero rows and is surfaced for refund instead of resurrecting the booking. There is no catch-all.
 
+**The words people see (decided 2026-11-12, planned; not built).** The stored statuses above stay as they are. What changes is the wording: one function will turn a booking into Requested, Awaiting payment, Confirmed (Registered for a group seat), Being moved, Completed, Cancelled or Refunded for the buyer, expert, organisation and back-office surfaces, and "Approved" will appear only in a timeline when an expert actually approved. Today several label maps disagree (`lib/dashboard/money-state.ts`, `lib/labels/session-labels.ts`, `lib/appointments/status.ts`, `components/dashboard/shared/requests/labels.ts`). See [the booking follow-up train](../decisions/2026-11-12-booking-follow-up-train.md).
+
 #### Source References
 
 - `handleConsultationCheckout()`: `lib/payments/checkout/handlers/consultation.ts`

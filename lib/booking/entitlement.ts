@@ -9,12 +9,13 @@
  *
  * Prisma-free on purpose — client components import it.
  */
-import { addMonths } from "date-fns";
 import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
 
 import { formatDateLabel, formatDateRangeLabel } from "@/lib/time/display";
+import { dayStartInstant } from "@/lib/time/grid-zone";
 
-export type CycleUnit = "week" | "month";
+/** Plans are paced in plan weeks; `sessionsPerWeek` is a whole number ≥ 1 at every door. */
+export type CycleUnit = "week";
 
 export interface EntitlementOccurrence {
   /** Present where a caller must name rows (a reschedule's released ones). */
@@ -106,18 +107,9 @@ function isScheduled(o: EntitlementOccurrence): boolean {
 const toDate = (d: Date | string): Date =>
   d instanceof Date ? d : new Date(d);
 
-/**
- * `sessionsPerWeek` is `Int @default(1)` so the month arm is degenerate
- * today; it stays so a hand-zeroed plan still cycles instead of dividing by 0.
- */
-function cycleUnit(plan: EntitlementPlanShape): CycleUnit {
-  return plan.sessionsPerWeek >= 1 ? "week" : "month";
-}
-
-function cycleCapacity(plan: EntitlementPlanShape, total: number): number {
-  return cycleUnit(plan) === "week"
-    ? plan.sessionsPerWeek
-    : Math.max(1, Math.ceil(total / Math.max(1, plan.durationInMonths)));
+/** Sessions one plan week holds; a legacy zero cadence still paces at one a week. */
+function cycleCapacity(plan: EntitlementPlanShape): number {
+  return Math.max(1, plan.sessionsPerWeek);
 }
 
 /** Midnight of the calendar day that holds `instant`, read in `tz`, as a
@@ -127,15 +119,14 @@ function zoneDayOf(instant: Date, tz: string): Date {
   return new Date(wall.getFullYear(), wall.getMonth(), wall.getDate());
 }
 
-/** Exclusive end of the cycle that starts on `start`'s zone-day: midnight
- * after the seventh zone-day for a week, the same date next month for a month. */
-function cycleEnd(start: Date, unit: CycleUnit, tz: string): Date {
+/** Exclusive end of the plan week that starts on `start`'s zone-day: midnight
+ * after its seventh zone-day. */
+function cycleEnd(start: Date, tz: string): Date {
   const day = zoneDayOf(start, tz);
-  const nextCycleDay =
-    unit === "week"
-      ? new Date(day.getFullYear(), day.getMonth(), day.getDate() + 7)
-      : addMonths(day, 1);
-  return fromZonedTime(nextCycleDay, tz);
+  return fromZonedTime(
+    new Date(day.getFullYear(), day.getMonth(), day.getDate() + 7),
+    tz,
+  );
 }
 
 /** The last instant inside a half-open window ending at `end`, for labels. */
@@ -179,19 +170,23 @@ export function planEndOf(start: Date, months: number, tz: string): Date {
   });
 }
 
-/** Weeks-plan end: `start` plus `weeks` × 7 zone-days at the same wall time,
- * so a DST change inside the plan never shifts the end hour; exclusive. */
+/**
+ * Weeks-plan end: the zone midnight that closes plan week `weeks - 1`, i.e. the
+ * start of zone-day `day0 + 7 × weeks` where day0 is the purchase's zone-day.
+ * Plan weeks are whole zone-days from day0, so ending on that midnight leaves no
+ * sub-day stub week after the last one. Exclusive; a midnight the clocks skip
+ * resolves to the first minute of that day.
+ */
 export function weeksPlanEndOf(start: Date, weeks: number, tz: string): Date {
-  return shiftWallDate(start, tz, ({ y, m, d }) => {
-    const to = new Date(
-      Date.UTC(y, m - 1, d + 7 * Math.max(1, Math.trunc(weeks))),
-    );
-    return {
-      y: to.getUTCFullYear(),
-      m: to.getUTCMonth() + 1,
-      d: to.getUTCDate(),
-    };
-  });
+  if (!Number.isFinite(start.getTime())) return new Date(Number.NaN);
+  const [y, m, d] = formatInTimeZone(start, tz, "yyyy-MM-dd")
+    .split("-")
+    .map(Number);
+  // A local-noon date names the calendar day; dayStartInstant reads its fields.
+  return dayStartInstant(
+    new Date(y, m - 1, d + 7 * Math.max(1, Math.trunc(weeks)), 12),
+    tz,
+  );
 }
 
 export interface PlanEndShape {
@@ -235,7 +230,7 @@ export function subscriptionTranches(
   sessionsTotal: number,
 ): SubscriptionTranches {
   const total = Math.max(0, sessionsTotal);
-  const capacity = cycleCapacity(plan, total);
+  const capacity = cycleCapacity(plan);
   const count = Math.max(1, Math.ceil(total / capacity));
   return {
     capacity,
@@ -428,7 +423,7 @@ export function firstCycleWindow(
   start: Date,
   tz: string,
 ): { start: Date; end: Date } {
-  return { start, end: cycleEnd(start, cycleUnit(plan), tz) };
+  return { start, end: cycleEnd(start, tz) };
 }
 
 /** The frozen entitlement, or the plan's total for a pre-#1766 row. */
@@ -440,44 +435,26 @@ export function sessionsTotalOf(sub: {
 }
 
 /**
- * The start of plan cycle `k`: the plan's first zone-day plus k weeks (or k
- * months), at zone-midnight. Plan weeks are fixed calendar weeks anchored on
- * the plan start, never a window that floats with delivery.
+ * The start of plan week `k`: the plan's first zone-day plus k weeks, at
+ * zone-midnight. Plan weeks are fixed calendar weeks anchored on the plan
+ * start, never a window that floats with delivery.
  */
-function planCycleStart(
-  day0: Date,
-  k: number,
-  unit: CycleUnit,
-  tz: string,
-): Date {
-  const local =
-    unit === "week"
-      ? new Date(day0.getFullYear(), day0.getMonth(), day0.getDate() + 7 * k)
-      : addMonths(day0, k);
-  return fromZonedTime(local, tz);
+function planCycleStart(day0: Date, k: number, tz: string): Date {
+  return fromZonedTime(
+    new Date(day0.getFullYear(), day0.getMonth(), day0.getDate() + 7 * k),
+    tz,
+  );
 }
 
-/** Zero-based plan cycle holding `instant` (negative before the plan starts). */
-function planCycleIndex(
-  day0: Date,
-  instant: Date,
-  unit: CycleUnit,
-  tz: string,
-): number {
+/** Zero-based plan week holding `instant` (negative before the plan starts). */
+function planCycleIndex(day0: Date, instant: Date, tz: string): number {
   const day = zoneDayOf(instant, tz);
-  if (unit === "week") {
-    const days = Math.round(
-      (Date.UTC(day.getFullYear(), day.getMonth(), day.getDate()) -
-        Date.UTC(day0.getFullYear(), day0.getMonth(), day0.getDate())) /
-        86_400_000,
-    );
-    return Math.floor(days / 7);
-  }
-  let k =
-    (day.getFullYear() - day0.getFullYear()) * 12 +
-    (day.getMonth() - day0.getMonth());
-  if (planCycleStart(day0, k, unit, tz) > instant) k -= 1;
-  return k;
+  const days = Math.round(
+    (Date.UTC(day.getFullYear(), day.getMonth(), day.getDate()) -
+      Date.UTC(day0.getFullYear(), day0.getMonth(), day0.getDate())) /
+      86_400_000,
+  );
+  return Math.floor(days / 7);
 }
 
 /** The 1-based plan week (or month) `instant` falls in, for "Week N of W". */
@@ -493,7 +470,7 @@ export function planWeekNumber(
 ): number {
   const tz = input.schedulingTimezone;
   const day0 = zoneDayOf(toDate(input.schedulingPeriodStartsAt), tz);
-  return Math.max(0, planCycleIndex(day0, instant, cycleUnit(input), tz)) + 1;
+  return Math.max(0, planCycleIndex(day0, instant, tz)) + 1;
 }
 
 /** When plan week (or month) `k` (zero-based) starts, at zone-midnight. */
@@ -509,7 +486,7 @@ export function planWeekStartsAt(
 ): Date {
   const tz = input.schedulingTimezone;
   const day0 = zoneDayOf(toDate(input.schedulingPeriodStartsAt), tz);
-  return planCycleStart(day0, k, cycleUnit(input), tz);
+  return planCycleStart(day0, k, tz);
 }
 
 export function subscriptionEntitlement(
@@ -526,8 +503,8 @@ export function subscriptionEntitlement(
   const remaining = Math.max(0, total - held);
 
   const tz = input.schedulingTimezone;
-  const unit = cycleUnit(input);
-  const capacity = cycleCapacity(input, total);
+  const unit: CycleUnit = "week";
+  const capacity = cycleCapacity(input);
   const now = input.now ?? new Date();
   const planStart = toDate(input.schedulingPeriodStartsAt);
   const planEndsAt = subscriptionPlanEnd({
@@ -542,8 +519,8 @@ export function subscriptionEntitlement(
   // [day0 + 7k, day0 + 7k + 7). A start that cannot be read is one open cycle.
   const startOk = Number.isFinite(planStart.getTime());
   const day0 = zoneDayOf(startOk ? planStart : now, tz);
-  const indexOf = (instant: Date) => planCycleIndex(day0, instant, unit, tz);
-  const startOf = (k: number) => planCycleStart(day0, k, unit, tz);
+  const indexOf = (instant: Date) => planCycleIndex(day0, instant, tz);
+  const startOf = (k: number) => planCycleStart(day0, k, tz);
   const count = Number.isFinite(planEndMs)
     ? Math.max(1, indexOf(new Date(planEndMs - 1)) + 1)
     : Math.max(1, Math.ceil(total / capacity));
@@ -633,13 +610,13 @@ export function subscriptionCycleHeading(
   entitlement: SubscriptionEntitlement,
   opts: { zone?: string; locale?: string } = {},
 ): string {
-  const { nextBatch, windowStart, windowEnd, unit, ordinal, count } =
+  const { nextBatch, windowStart, windowEnd, ordinal, count } =
     entitlement.cycle;
   const { held, total, remaining, rescheduling } = entitlement;
   const booked = `${held} of ${total} booked`;
   const targetBatch = rescheduling > 0 ? rescheduling : nextBatch;
   const lastDay = lastInstantBefore(windowEnd);
-  const which = `${unit === "week" ? "Week" : "Month"} ${ordinal + 1} of ${count}`;
+  const which = `Week ${ordinal + 1} of ${count}`;
   if (remaining === 0 && targetBatch === 0)
     return `All ${total} sessions booked`;
   if (windowEnd <= windowStart)

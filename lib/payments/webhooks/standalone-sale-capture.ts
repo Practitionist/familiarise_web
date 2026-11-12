@@ -5,6 +5,7 @@
  * re-driven by retry-auto-refunds.
  */
 import { z } from "zod";
+import type { PaymentStatus, Prisma } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import prisma, { type Tx } from "@/lib/prisma";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
@@ -98,6 +99,32 @@ export const AUTO_REFUND_MARKERS = [
 export type CaptureOutcome =
   | { kind: "settled"; paymentId: string }
   | { kind: "refund"; paymentId: string; reason: string; marker: string };
+
+/** The order's Payment moved between the capture's read and its write. */
+export class OrderPaymentMovedError extends Error {
+  constructor(readonly paymentId: string) {
+    super(`order payment ${paymentId} changed status during its capture`);
+    this.name = "OrderPaymentMovedError";
+  }
+}
+
+/**
+ * Settles an order's pre-mint Payment by CAS on the status the capture read.
+ * A lost race throws, so the whole capture rolls back and the webhook's
+ * redelivery settles it from fresh state; nothing is written half-way.
+ */
+export async function settleOrderPayment(
+  tx: Tx,
+  orderPayment: { id: string; paymentStatus: PaymentStatus },
+  data: Omit<Prisma.PaymentUncheckedUpdateManyInput, "paymentStatus">,
+) {
+  const { count } = await tx.payment.updateMany({
+    where: { id: orderPayment.id, paymentStatus: orderPayment.paymentStatus },
+    data: { ...data, paymentStatus: "SUCCEEDED" },
+  });
+  if (count === 0) throw new OrderPaymentMovedError(orderPayment.id);
+  return tx.payment.findUniqueOrThrow({ where: { id: orderPayment.id } });
+}
 
 /** The leg trigger rejects a positive Payment without legs at commit. */
 export function cardLeg(amountPaise: number, paymentIntent: string) {

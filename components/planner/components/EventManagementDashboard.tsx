@@ -468,6 +468,14 @@ export function EventManagementDashboard({
         ? `${basePath}/offerings/${row.type}/new?from=${planId}`
         : null,
       shareAttributionHref: expertShareHref,
+      // A published class can't be sold until its sessions have times.
+      scheduleHref:
+        (row.type === "webinar" || row.type === "class") &&
+        row.instanceId &&
+        !row.startsAt &&
+        !row.isCollaborated
+          ? `/dashboard/consultant/${consultantId}/appointments/unscheduled-${row.type}-${row.instanceId}/timings`
+          : null,
       trials:
         row.type === "subscription" && planId
           ? {

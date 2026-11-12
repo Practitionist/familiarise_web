@@ -59,6 +59,12 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 jest.mock("../../lib/auth-server", () => ({ getSession: jest.fn() }));
+jest.mock("../../lib/booking/feasibility", () => ({
+  planPublishFeasibility: jest.fn(async () => ({
+    refusal: null,
+    warnings: [],
+  })),
+}));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/data/plan-details", () => ({}));
 jest.mock("../../lib/topics", () => ({
@@ -80,6 +86,7 @@ import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { planEndOf } from "@/lib/booking/entitlement";
+import { planPublishFeasibility } from "@/lib/booking/feasibility";
 import { PUT } from "@/app/api/plans/subscriptions/[subscriptionPlanId]/route";
 
 const db = prisma as unknown as {
@@ -106,6 +113,8 @@ const monthPlan = {
   durationInWeeks: null,
   trialEnabled: false,
   trialPriceInPaise: 0,
+  status: "PUBLISHED",
+  consultantProfileId: "profile-1",
   consultantProfile: { userId: "owner" },
 };
 
@@ -175,6 +184,40 @@ it("lets an unsold months plan move to weeks", async () => {
   );
 });
 
+it("refuses a terms edit the published hours can't deliver, before writing", async () => {
+  (planPublishFeasibility as jest.Mock).mockResolvedValueOnce({
+    refusal: {
+      status: 422,
+      body: {
+        error: "can't be delivered",
+        code: "PLAN_NOT_FEASIBLE",
+        reasons: [],
+      },
+    },
+    warnings: [],
+  });
+  const res = await put({ sessionsPerWeek: 7 });
+  expect(res.status).toBe(422);
+  expect(await res.json()).toMatchObject({ code: "PLAN_NOT_FEASIBLE" });
+  expect(planPublishFeasibility).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({
+      consultantProfileId: "profile-1",
+      sessionsPerWeek: 7,
+      sessionMinutes: 60,
+      perDayCap: 1,
+      publishing: true,
+    }),
+  );
+  expect(tx.subscriptionPlan.update).not.toHaveBeenCalled();
+});
+
+it("never re-polices a published plan on an edit that leaves its terms alone", async () => {
+  const res = await put({ title: "A clearer title for the plan" });
+  expect(res.status).toBe(200);
+  expect(planPublishFeasibility).not.toHaveBeenCalled();
+});
+
 it("refuses a short pack priced under the pack floor in plain words, before any write", async () => {
   db.subscriptionPlan.findUnique.mockResolvedValueOnce({
     ...monthPlan,
@@ -209,6 +252,7 @@ it("lets a full-form save that re-sends a short pack's stored price and terms th
     sessionDurationInHours: 1,
   });
   expect(res.status).toBe(200);
+  expect(planPublishFeasibility).not.toHaveBeenCalled();
 });
 
 it("answers 409 when the price or terms changed after this edit read them", async () => {

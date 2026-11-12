@@ -191,7 +191,7 @@ describe("expiry sweep × live reschedule proposals", () => {
   it("an APPROVED subscription with one COMPLETED occurrence is in neither cohort (#1766)", async () => {
     await expireStaleRequests();
 
-    // The APPROVED expiry sweep excludes any wrapper holding a live
+    // The APPROVED expiry sweep excludes any wrapper that ever held a
     // non-tentative row; a COMPLETED row is exactly that, so a plan whose first
     // cycle was delivered and is waiting on its next cycle is left alone.
     // #1775 C-4 — the nudge now reads the paid PENDING cohort instead.
@@ -207,7 +207,7 @@ describe("expiry sweep × live reschedule proposals", () => {
           ),
       );
     expect(approvedReads).toHaveLength(1);
-    const held = { isTentative: false, deletedAt: null };
+    const held = { isTentative: false };
     for (const read of approvedReads) {
       expect(read.where.AND).toEqual(
         expect.arrayContaining([
@@ -227,9 +227,16 @@ describe("expiry sweep × live reschedule proposals", () => {
           },
         ]),
       );
-      expect(read.where.AND).toContainEqual(
-        expect.objectContaining({
-          NOT: { appointment: { occurrences: { some: held } } },
+      expect(JSON.stringify(read.where.AND)).toContain(
+        JSON.stringify({
+          NOT: {
+            appointment: {
+              OR: [
+                { occurrences: { some: held } },
+                { rescheduleRequests: { some: {} } },
+              ],
+            },
+          },
         }),
       );
     }

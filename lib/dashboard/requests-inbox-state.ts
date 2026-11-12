@@ -126,7 +126,8 @@ export interface InboxRowInput {
   schedulingTimezone: string | null;
   /** A subscription's one counter; drives "Schedule the next N · a of b booked". */
   entitlement: SubscriptionEntitlement | null;
-  trial: { durationMinutes: number } | null;
+  /** The learner's user id lets the trial picker grey out their busy times. */
+  trial: { durationMinutes: number; consulteeUserId: string } | null;
   /**
    * The buyer is paying for a direct checkout right now: shown so the held
    * slot makes sense, never answerable and never counted.

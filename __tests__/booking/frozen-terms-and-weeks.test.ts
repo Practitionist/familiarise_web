@@ -35,7 +35,8 @@ describe("purchaseTermsOf", () => {
     expect(terms.sessionsTotal).toBe(78);
     expect(terms.sessionsPerWeek).toBe(3);
     expect(terms.sessionMinutes).toBe(90);
-    expect(terms.planEndsAt.toISOString()).toBe("2026-07-06T12:30:00.000Z");
+    // 26 plan weeks from the IST zone-day of 5 Jan close at 00:00 IST on 6 Jul.
+    expect(terms.planEndsAt.toISOString()).toBe("2026-07-05T18:30:00.000Z");
   });
 
   it("keeps months × 4 and the months end on a months plan", () => {
@@ -56,26 +57,45 @@ describe("purchaseTermsOf", () => {
 });
 
 describe("weeksPlanEndOf", () => {
-  it("keeps the local start time across a DST change", () => {
-    // 18:00 EST on 2 Mar; DST starts 8 Mar, so 4 weeks later is 18:00 EDT.
+  it("ends on the zone midnight that closes the last plan week", () => {
+    // Bought 18:00 EST on Mon 2 Mar; DST starts 8 Mar. Four plan weeks are the
+    // zone-days 2–29 Mar, so the plan ends at 00:00 EDT on Mon 30 Mar.
     const start = new Date("2026-03-02T23:00:00.000Z");
     const end = weeksPlanEndOf(start, 4, NEW_YORK);
     expect(formatInTimeZone(end, NEW_YORK, "yyyy-MM-dd HH:mm")).toBe(
-      "2026-03-30 18:00",
+      "2026-03-30 00:00",
     );
-    expect(end.toISOString()).toBe("2026-03-30T22:00:00.000Z");
-    expect(end.getTime() - start.getTime()).toBe(28 * 86_400_000 - 3_600_000);
+    expect(end.toISOString()).toBe("2026-03-30T04:00:00.000Z");
   });
 
-  it("moves a start inside a spring-forward gap past the gap", () => {
-    // 01:30 local on 1 Mar lands on 29 Mar 01:30, which Europe/London skips.
-    const start = new Date("2026-03-01T01:30:00.000Z");
-    const end = weeksPlanEndOf(start, 4, "Europe/London");
-    expect(end.getTime()).toBeGreaterThanOrEqual(
-      start.getTime() + 28 * 86_400_000 - 3_600_000,
+  it("leaves no stub week: a 26-week plan bought after midnight has 26 weeks", () => {
+    // 00:30 IST on Tue 6 Jan. Ending at the same wall time 26 weeks on left a
+    // 30-minute 27th week that still asked for a full week's sessions.
+    const start = new Date("2026-01-05T19:00:00.000Z");
+    const end = weeksPlanEndOf(start, 26, "Asia/Kolkata");
+    expect(formatInTimeZone(end, "Asia/Kolkata", "yyyy-MM-dd HH:mm")).toBe(
+      "2026-07-07 00:00",
     );
-    expect(formatInTimeZone(end, "Europe/London", "yyyy-MM-dd")).toBe(
-      "2026-03-29",
+    const entitlement = subscriptionEntitlement({
+      sessionsTotal: 78,
+      sessionsRefunded: 0,
+      sessionsPerWeek: 3,
+      durationInMonths: 6,
+      schedulingPeriodStartsAt: start,
+      schedulingTimezone: "Asia/Kolkata",
+      planEndsAt: end,
+      occurrences: [],
+      now: start,
+    });
+    expect(entitlement.cycle.count).toBe(26);
+  });
+
+  it("starts a day whose midnight the clocks skip at its first minute", () => {
+    // America/Santiago springs forward at 00:00 on Sun 6 Sep 2026.
+    const start = new Date("2026-08-09T15:00:00.000Z");
+    const end = weeksPlanEndOf(start, 4, "America/Santiago");
+    expect(formatInTimeZone(end, "America/Santiago", "yyyy-MM-dd HH:mm")).toBe(
+      "2026-09-06 01:00",
     );
   });
 });

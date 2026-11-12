@@ -1101,8 +1101,8 @@ export const supportArticles: SupportArticle[] = [
     category: "experts",
     title: "How do trial sessions work?",
     excerpt:
-      "Offering a trial on a subscription, answering trial requests, and what happens after.",
-    updated: "September 2026",
+      "Offering a trial on a subscription, how learners book it, and what happens after.",
+    updated: "November 2026",
     contactCategory: "consultant",
     related: ["experts/booking-requests", "experts/create-offerings"],
     sections: [
@@ -1113,9 +1113,10 @@ export const supportArticles: SupportArticle[] = [
         ],
       },
       {
-        heading: "Answering trial requests",
+        heading: "How learners book a trial",
         paragraphs: [
-          "Learners request a trial from your public page, and the request arrives in Requests under Trials. Accept it by picking a time, or decline it; a learner who paid for a declined trial is refunded automatically. Each learner can take one trial with you.",
+          "Learners pick a trial time from your open hours on your public page. A free trial is confirmed at once. A paid trial holds the time while the learner pays and is confirmed when the payment goes through. Either way it then shows in your Appointments. Each learner can take one trial with you.",
+          "Each side can move a trial once, at least 24 hours before it starts. If you cancel a confirmed trial, the learner is refunded in full and the cancellation counts against your reliability.",
         ],
       },
       {

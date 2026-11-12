@@ -35,6 +35,7 @@ import {
 import { OperatorOpsHint } from "@/components/appointments/OperatorOpsHint";
 import { AllocateOrgBookingDialog } from "../AllocateOrgBookingDialog";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
+import { createSubmissionKeys } from "@/lib/api/submission-key";
 
 export interface OrgActorDetailProps {
   orgId: string;
@@ -66,10 +67,14 @@ const fmt = (d: Date) =>
     minute: "2-digit",
   });
 
-async function postJson(url: string, body: unknown) {
+async function postJson(
+  url: string,
+  body: unknown,
+  headers: Record<string, string> = {},
+) {
   const res = await fetchWithIdentity(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
   const json = await res.json().catch(() => null);
@@ -152,6 +157,7 @@ export function OrgActorDetail({
   const router = useRouter();
   const { toast } = useToast();
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [rescheduleKeyFor] = useState(createSubmissionKeys);
   const showAllocate = Boolean(canAllocate);
   const acting = ((canCancel || canReschedule) && !opsHref) || showAllocate;
   const status = meta.status ? appointmentStatusBadge(meta.status) : null;
@@ -205,7 +211,18 @@ export function OrgActorDetail({
     const url = isSubscription
       ? `/api/appointments/${appointmentId}/reschedule?type=SUBSCRIPTION`
       : `/api/appointments/${appointmentId}/reschedule`;
-    await postJson(url, { reason });
+    const body = { reason };
+    // Keyed on the whole request and the times it releases, so a later move of
+    // the same booking never replays an earlier answer.
+    const key = rescheduleKeyFor({
+      url,
+      body,
+      releases: meta.sessions.map((s) => [
+        s.id,
+        new Date(s.startsAt).getTime(),
+      ]),
+    });
+    await postJson(url, body, { "Idempotency-Key": key });
     toast({
       title: "Reschedule requested",
       description: "The expert will pick a new time.",

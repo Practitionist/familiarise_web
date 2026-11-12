@@ -111,6 +111,8 @@ sequenceDiagram
     NC-->>U: In-app bell
 ```
 
+**Free bookings (decided 2026-11-12, planned; not built).** A free booking will notify like a paid one, minus the receipt, and a free approval and every decline will notify the buyer. Today the paid path stages its bells and emails from the capture (`lib/payments/webhooks/staged-emails.ts`, `lib/payments/webhooks/handlers.ts`); what a free booking sends has to be traced before the change. See [the booking follow-up train](../decisions/2026-11-12-booking-follow-up-train.md).
+
 **AppointmentPayload fields**: `appointmentId?`, `appointmentType` (label), `appointmentTypeCode?` (raw enum), `consultantName`, `consulteeName`, `planTitle`, `dateTime?` (recipient-zone), `dateTimeIso?`, `dashboardUrl`. Callers pass `AppointmentPayloadInput`, which holds the raw enum and an ISO instant.
 
 **AppointmentCancelledPayload** extends AppointmentPayload with: `reason` (required — a clause, or "No reason given"), `cancelledBy` (a capitalised name, or "The platform"), `cancelledByRole?` (the raw discriminator). Callers pass `AppointmentCancelledInput`, whose `cancelledBy` is still `"consultant" | "consultee" | "system"`.

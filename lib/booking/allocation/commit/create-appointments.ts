@@ -195,13 +195,18 @@ export async function createAppointments(
         : row;
     });
 
+    // A reused wrapper keeps the key its first batch stamped, so a retry of
+    // that batch still replays; a later batch stamps only a wrapper with none.
+    if (wrapperId && idempotencyKey) {
+      await tx.appointment.updateMany({
+        where: { id: wrapperId, allocationIdempotencyKey: null },
+        data: { allocationIdempotencyKey: idempotencyKey },
+      });
+    }
     const wrapper = wrapperId
       ? await tx.appointment.update({
           where: { id: wrapperId },
-          data: {
-            ...idempotencyData,
-            occurrences: { create: occurrencesToCreate },
-          },
+          data: { occurrences: { create: occurrencesToCreate } },
           include: { occurrences: true },
         })
       : await tx.appointment.create({
