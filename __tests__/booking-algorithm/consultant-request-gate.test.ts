@@ -48,11 +48,9 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
       mockCheckSlotAvailability(...(a as []));
   },
 }));
-const mockAssertSlotsStillPublished = jest.fn(async () => undefined);
-jest.mock("../../lib/booking/allocation/coverage", () => ({
-  assertSlotsStillPublished: (...a: unknown[]) =>
-    mockAssertSlotsStillPublished(...(a as [])),
-}));
+jest.mock("../../lib/booking/allocation/coverage", () =>
+  jest.requireActual("../fixtures/request-door-hours"),
+);
 jest.mock("../../lib/novu", () => ({
   notifyNewBookingRequest: jest.fn(async () => ({ success: true })),
 }));
@@ -102,9 +100,9 @@ jest.mock("../../lib/prisma", () => {
     consulteeProfile: {
       findUnique: jest.fn(async () => ({ id: "cs_1", user: {} })),
     },
-    availabilityWindowWeekly: {
-      findFirst: jest.fn(async () => ({ id: "aw_1" })),
-    },
+    availabilityWindowWeekly: jest.requireActual(
+      "../fixtures/request-door-hours",
+    ).namedWeeklyWindow,
     consultationPlan: {
       findFirst: jest.fn(async () => ({
         id: "plan_1",
@@ -131,6 +129,7 @@ import prisma from "../../lib/prisma";
 import { POST } from "../../app/api/scheduling/request-for-approval/route";
 import { PROFILE_WITH_USER_SELECT } from "../../lib/booking/list-selects";
 import { AllocationConflictError } from "../../utils/scheduling-engine/errors";
+import { assertSlotsStillPublished } from "../../lib/booking/allocation/coverage";
 import {
   expectNoBareProfile,
   valuesAtKey,
@@ -219,9 +218,11 @@ describe("consultant request gate", () => {
   });
 
   it("a time outside the published hours → 400 OUTSIDE_AVAILABILITY, nothing written", async () => {
-    mockAssertSlotsStillPublished.mockRejectedValueOnce(
-      new AllocationConflictError("shrunk", "AVAILABILITY_CHANGED"),
-    );
+    jest
+      .mocked(assertSlotsStillPublished)
+      .mockRejectedValueOnce(
+        new AllocationConflictError("shrunk", "AVAILABILITY_CHANGED"),
+      );
     const res = await POST(request());
     expect(res.status).toBe(400);
     expect((await res.json()).code).toBe("OUTSIDE_AVAILABILITY");

@@ -45,11 +45,9 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
       mockCheckSlotAvailability(...(a as []));
   },
 }));
-const mockAssertSlotsStillPublished = jest.fn(async () => undefined);
-jest.mock("../../lib/booking/allocation/coverage", () => ({
-  assertSlotsStillPublished: (...a: unknown[]) =>
-    mockAssertSlotsStillPublished(...(a as [])),
-}));
+jest.mock("../../lib/booking/allocation/coverage", () =>
+  jest.requireActual("../fixtures/request-door-hours"),
+);
 jest.mock("../../lib/novu", () => ({
   notifyNewBookingRequest: jest.fn(async () => ({ success: true })),
 }));
@@ -103,9 +101,9 @@ jest.mock("../../lib/prisma", () => {
     consulteeProfile: {
       findUnique: jest.fn(async () => ({ id: "cs_1", user: {} })),
     },
-    availabilityWindowWeekly: {
-      findFirst: jest.fn(async () => ({ id: "aw_1" })),
-    },
+    availabilityWindowWeekly: jest.requireActual(
+      "../fixtures/request-door-hours",
+    ).namedWeeklyWindow,
     consultationPlan: {
       findFirst: jest.fn(async () => ({
         id: "plan_1",
