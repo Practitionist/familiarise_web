@@ -97,7 +97,6 @@ All three rely on the session's embedded `role` field (via BetterAuth's `customS
 Decision matrix:
 
 **Strict `requireAdminAuth` (ADMIN only):**
-
 - `app/api/admin/maintenance/route.ts` + `/preflight` — toggles site-wide maintenance mode
 - `app/api/admin/system-jobs/run/route.ts` — triggers cron jobs manually
 - `app/api/admin/newsletter/send/route.ts` — sends mass email
