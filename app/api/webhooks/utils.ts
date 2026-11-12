@@ -220,8 +220,13 @@ export async function handleOrgPaymentSuccess(
           ? `, ₹${(settledPaise / 100).toLocaleString("en-IN")} of it settled the org's open receivable`
           : "";
       const lateRefund = result.lateCaptureRefund;
+      // The audit note is read by people: the reason is written in plain words, never as its code.
+      const lateRefundWhy =
+        lateRefund?.reason === "WALLET_FROZEN"
+          ? "the wallet is frozen"
+          : "the organisation is closed";
       const lateRefundNote = lateRefund
-        ? `; late capture ${lateRefund.refundIssued ? "refunded to the card" : "owes a card refund"} (${lateRefund.reason})`
+        ? `; late capture ${lateRefund.refundIssued ? "refunded to the card" : "owes a card refund"} because ${lateRefundWhy}`
         : "";
       if (organizationId && result.confirmed) {
         await prisma.orgAuditLog
