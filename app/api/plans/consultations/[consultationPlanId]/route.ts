@@ -27,7 +27,7 @@ import {
 } from "@/lib/booking/offering-delete";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
 import { freezeConsultationPrice } from "@/lib/booking/sold-terms";
-import { isHiddenDraft } from "@/lib/api/plans/draft-access";
+import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import * as Sentry from "@sentry/nextjs";
 export async function GET(
   request: NextRequest,
@@ -46,8 +46,12 @@ export async function GET(
       },
     });
 
-    // #1527 Q4 — a draft is readable by its author only.
-    if (await isHiddenDraft(consultationPlan)) {
+    // A draft or archived plan is readable by its author only; the session is
+    // read only when the plan is not public.
+    if (
+      !(await canViewPlanDetail(consultationPlan, null)) &&
+      !(await canViewPlanDetail(consultationPlan))
+    ) {
       return NextResponse.json(
         { error: "Consultation plan not found" },
         { status: 404 },

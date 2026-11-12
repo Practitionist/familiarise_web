@@ -48,7 +48,7 @@ import {
   UNTOUCHED_SUBSCRIPTION_PLAN,
 } from "@/lib/booking/offering-delete";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
-import { isHiddenDraft } from "@/lib/api/plans/draft-access";
+import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 /** A sold plan cannot switch between months and weeks. */
 class PlanLengthUnitLockedError extends Error {
   constructor() {
@@ -79,8 +79,12 @@ export async function GET(
       },
     });
 
-    // #1527 Q4 — a draft is readable by its author only.
-    if (await isHiddenDraft(subscriptionPlan)) {
+    // A draft or archived plan is readable by its author only; the session is
+    // read only when the plan is not public.
+    if (
+      !(await canViewPlanDetail(subscriptionPlan, null)) &&
+      !(await canViewPlanDetail(subscriptionPlan))
+    ) {
       return NextResponse.json(
         { error: "Subscription plan not found" },
         { status: 404 },

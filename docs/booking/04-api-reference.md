@@ -235,7 +235,7 @@ The refusals carry a `code` next to the `error` text, as the following table sho
 
 **Method**: `POST /api/appointments/[appointmentId]/reschedule/withdraw`
 
-The initiator of an open proposal may take it back, and the withdrawal restores the released slots and the request's origin status through `lib/booking/reschedule-restore.ts`. If the original time was booked while the proposal was open, the restore meets the overlap constraint (SQLSTATE 23P01), the transaction rolls back, and the route answers 409 with the code `ORIGINAL_TIME_TAKEN`. The proposal then stays open, and agreeing a new time is the way forward. A proposal the other party answered first answers 409 `PROPOSAL_NOT_OPEN`, and a caller with no open proposal of their own on the booking gets 404.
+The initiator of an open proposal may take it back, and the withdrawal restores the released slots and the request's origin status through `lib/booking/reschedule-restore.ts`. If the original time was booked while the proposal was open, the restore meets the overlap constraint (SQLSTATE 23P01), the transaction rolls back, and the route answers 409 with the code `ORIGINAL_TIME_TAKEN`. The proposal then stays open, and agreeing a new time is the way forward. A proposal the other party answered first answers 409 `PROPOSAL_NOT_OPEN`, and a caller with no open proposal of their own on the booking gets 404. The initiator must still act for the side they opened it from (`actsForRescheduleSide` in `lib/booking/reschedule-side.ts`, the same side check the respond route applies): an expert or host-organisation operator who has since lost the booking, or a paying-organisation admin who has left, gets 403 `NO_LONGER_A_PARTY`.
 
 ### Delete an offering
 
