@@ -62,6 +62,8 @@ export interface SeatLedger {
   /** Live sessions the seat holds that have not started, earliest first. */
   remaining: { startsAt: Date; movedAt: Date | null }[];
   neverScheduled: number;
+  /** Sessions sold to the seat that no row ever placed: not delivered, live or missed, by distinct ordinal. */
+  unplaced: number;
 }
 
 const DEAD = new Set<OccurrenceCompletionStatus>([
@@ -121,6 +123,7 @@ export function seatLedgerFrom(args: {
       0,
       heldCount - deliveredHeld - inProgressHeld - remaining.length,
     ),
+    unplaced: Math.max(0, heldCount - ordinals.size),
   };
 }
 
@@ -140,6 +143,23 @@ export function seriesCancelRefundPaise(
   return left > BigInt(0) ? left : BigInt(0);
 }
 
+/** The key prefix of the refund a completed class owes a seat for sessions it sold but never placed. */
+export const CLASS_END_REFUND_KEY_PREFIX = "class-end:";
+
+/**
+ * What a class completing short owes this seat for the sessions it was sold but
+ * no row ever placed: floor(amount × unplaced / heldCount), in BigInt.
+ */
+export function classEndRefundPaise(
+  ledger: SeatLedger,
+  amountPaise: bigint | number,
+): bigint {
+  if (ledger.unplaced <= 0 || ledger.heldCount <= 0) return BigInt(0);
+  return (
+    (BigInt(amountPaise) * BigInt(ledger.unplaced)) / BigInt(ledger.heldCount)
+  );
+}
+
 const LEDGER_OCCURRENCE_SELECT = {
   ordinal: true,
   startsAt: true,
@@ -149,6 +169,12 @@ const LEDGER_OCCURRENCE_SELECT = {
   hostCancelledAt: true,
   voidedAt: true,
   outcome: true,
+} as const;
+
+/** A seat's ledger counts confirmed, untombstoned rows only. */
+const LEDGER_OCCURRENCE_WHERE = {
+  deletedAt: null,
+  isTentative: false,
 } as const;
 
 /** Reads the seat's sessions and its plan size, on the caller's client. */
@@ -170,11 +196,7 @@ export async function seatLedger(
     },
   });
   const occurrences = await db.appointmentOccurrence.findMany({
-    where: {
-      appointmentId: seat.appointmentId,
-      deletedAt: null,
-      isTentative: false,
-    },
+    where: { appointmentId: seat.appointmentId, ...LEDGER_OCCURRENCE_WHERE },
     select: LEDGER_OCCURRENCE_SELECT,
   });
   return seatLedgerFrom({
@@ -185,6 +207,37 @@ export async function seatLedger(
     now,
     sessionsPurchased: seat.sessionsPurchased,
   });
+}
+
+/** {@link seatLedger}'s plan size and sessions for many wrappers, in two reads whatever their count. */
+export async function seatSessionsByAppointment(
+  db: Pick<Tx, "appointment" | "appointmentOccurrence">,
+  appointmentIds: readonly string[],
+): Promise<Map<string, { N: number; occurrences: LedgerOccurrence[] }>> {
+  const ids = [...new Set(appointmentIds)];
+  // Sequential: the caller's transaction runs one statement at a time.
+  const appointments = await db.appointment.findMany({
+    where: { id: { in: ids } },
+    select: {
+      id: true,
+      class: { select: { classPlan: { select: { totalSessions: true } } } },
+    },
+  });
+  const rows = await db.appointmentOccurrence.findMany({
+    where: { appointmentId: { in: ids }, ...LEDGER_OCCURRENCE_WHERE },
+    select: { ...LEDGER_OCCURRENCE_SELECT, appointmentId: true },
+  });
+  const sessions = new Map<
+    string,
+    { N: number; occurrences: LedgerOccurrence[] }
+  >();
+  for (const id of ids) {
+    const occurrences = rows.filter((o) => o.appointmentId === id);
+    const planSize = appointments.find((a) => a.id === id)?.class?.classPlan
+      ?.totalSessions;
+    sessions.set(id, { N: planSize ?? occurrences.length, occurrences });
+  }
+  return sessions;
 }
 
 /** #1780 decision 9 — the times a freed ordinal held before a re-plan. */
@@ -355,30 +408,63 @@ export async function seriesLedgerAfterMiss(
   };
 }
 
-/** Seat doors whose refund returns sessions of this payment: a leave (the re-time free leave included) and the exit right. */
-const SEAT_REFUND_KEY_PREFIXES = ["seat-leave:", "seat-exit:"] as const;
+/** Seat doors whose refund returns sessions of this payment: a leave (the re-time free leave included), the exit right and class-end settlement. */
+const SEAT_REFUND_KEY_PREFIXES = [
+  "seat-leave:",
+  "seat-exit:",
+  CLASS_END_REFUND_KEY_PREFIX,
+] as const;
+
+/** Per-payment refund keys end in `:pay:<paymentId>`; an incident key names no payment. */
+const PAYMENT_KEYED_PREFIXES = ["occ:", ...SEAT_REFUND_KEY_PREFIXES] as const;
+
+/** Whether a refund on `paymentId` returns sessions of it: the one dedupe-key predicate. */
+function returnsSessionsOf(dedupeKey: string | null, paymentId: string) {
+  if (!dedupeKey) return false;
+  if (dedupeKey.startsWith(INCIDENT_REFUND_KEY_PREFIX)) return true;
+  return (
+    PAYMENT_KEYED_PREFIXES.some((prefix) => dedupeKey.startsWith(prefix)) &&
+    dedupeKey.endsWith(`:pay:${paymentId}`)
+  );
+}
 
 /**
- * What this payment already got back for sessions it will not be delivered:
- * per session (`occ:*`, `incident:*`) and per seat (`seat-leave:*`, `seat-exit:*`).
+ * What each payment already got back for sessions it will not be delivered:
+ * per session (`occ:*`, `incident:*`) and per seat (`seat-leave:*`,
+ * `seat-exit:*`, `class-end:*`), in one read whatever the count.
  */
+export async function occurrenceRefundsByPayment(
+  db: Pick<Tx, "refund">,
+  paymentIds: readonly string[],
+): Promise<Map<string, number>> {
+  const totals = new Map(paymentIds.map((id) => [id, 0]));
+  if (totals.size === 0) return totals;
+  const rows = await db.refund.findMany({
+    where: {
+      paymentId: { in: [...totals.keys()] },
+      status: { in: ["SUCCEEDED", "PENDING"] },
+      OR: [INCIDENT_REFUND_KEY_PREFIX, ...PAYMENT_KEYED_PREFIXES].map(
+        (prefix) => ({ dedupeKey: { startsWith: prefix } }),
+      ),
+    },
+    select: { paymentId: true, dedupeKey: true, amountPaise: true },
+  });
+  for (const r of rows) {
+    if (!returnsSessionsOf(r.dedupeKey, r.paymentId)) continue;
+    totals.set(
+      r.paymentId,
+      (totals.get(r.paymentId) ?? 0) + Number(r.amountPaise),
+    );
+  }
+  return totals;
+}
+
+/** {@link occurrenceRefundsByPayment} for one payment. */
 export async function occurrenceRefundsPaise(
   db: Pick<Tx, "refund">,
   paymentId: string,
 ): Promise<number> {
-  const rows = await db.refund.findMany({
-    where: {
-      paymentId,
-      status: { in: ["SUCCEEDED", "PENDING"] },
-      OR: [
-        { dedupeKey: { startsWith: "occ:", endsWith: `:pay:${paymentId}` } },
-        { dedupeKey: { startsWith: INCIDENT_REFUND_KEY_PREFIX } },
-        ...SEAT_REFUND_KEY_PREFIXES.map((prefix) => ({
-          dedupeKey: { startsWith: prefix, endsWith: `:pay:${paymentId}` },
-        })),
-      ],
-    },
-    select: { amountPaise: true },
-  });
-  return rows.reduce((sum, r) => sum + Number(r.amountPaise), 0);
+  return (
+    (await occurrenceRefundsByPayment(db, [paymentId])).get(paymentId) ?? 0
+  );
 }

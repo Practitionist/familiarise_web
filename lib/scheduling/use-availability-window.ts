@@ -56,6 +56,7 @@ async function fetchWindow(
   etagCacheRef?: MutableRefObject<EtagCacheEntry | null>,
   subscriptionId?: string,
   releasing?: string,
+  eventQuery = "",
 ): Promise<AvailabilityWindowData> {
   const consulteeParam = consulteeUserId
     ? `&consulteeUserId=${encodeURIComponent(consulteeUserId)}`
@@ -63,7 +64,7 @@ async function fetchWindow(
   const subscriptionParam = subscriptionId
     ? `&subscriptionId=${encodeURIComponent(subscriptionId)}${releasing ? `&releasing=${encodeURIComponent(releasing)}` : ""}`
     : "";
-  const url = `/api/scheduling/availability-with-allocation/${consultantId}?startDateInUtc=${startUtc.toISOString()}&endDateInUtc=${endUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}${consulteeParam}${subscriptionParam}`;
+  const url = `/api/scheduling/availability-with-allocation/${consultantId}?startDateInUtc=${startUtc.toISOString()}&endDateInUtc=${endUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}${consulteeParam}${subscriptionParam}${eventQuery}`;
 
   const cachedEntry =
     !noStore && etagCacheRef?.current?.key === url
@@ -141,6 +142,23 @@ export function invalidateAvailability(
   ]).then(() => undefined);
 }
 
+/** The event a host is placing: co-hosts fold in; a move frees its own sessions. */
+export interface AvailabilityEvent {
+  classId?: string;
+  webinarId?: string;
+  moving?: boolean;
+}
+
+function eventQueryOf(event: AvailabilityEvent | undefined): string {
+  if (event?.classId) {
+    return `&classId=${encodeURIComponent(event.classId)}${event.moving ? "&purpose=reschedule" : ""}`;
+  }
+  if (event?.webinarId) {
+    return `&webinarId=${encodeURIComponent(event.webinarId)}${event.moving ? "&purpose=reschedule" : ""}`;
+  }
+  return "";
+}
+
 export function availabilityQueryKey(
   consultantId: string,
   startUtc: Date,
@@ -149,6 +167,7 @@ export function availabilityQueryKey(
   consulteeUserId?: string,
   subscriptionId?: string,
   releasing?: string,
+  eventQuery?: string,
 ) {
   const base = consulteeUserId
     ? [
@@ -166,14 +185,15 @@ export function availabilityQueryKey(
         endUtc.toISOString(),
         timezone,
       ];
-  // The plan-limit overlay changes the answer, so it keys the query too.
-  return subscriptionId
+  // The plan-limit overlay and the event change the answer, so they key it too.
+  const keyed = subscriptionId
     ? [
         ...base,
         `subscription:${subscriptionId}`,
         `releasing:${releasing ?? ""}`,
       ]
     : base;
+  return eventQuery ? [...keyed, `event:${eventQuery}`] : keyed;
 }
 
 /**
@@ -202,6 +222,7 @@ export function useAvailabilityWindow({
   consulteeUserId,
   subscriptionId,
   releasingIds,
+  event,
   enabled = true,
   bypassRef,
   keepPrevious = false,
@@ -215,6 +236,8 @@ export function useAvailabilityWindow({
   subscriptionId?: string;
   /** Sessions a reschedule is moving; the overlay counts them as free. */
   releasingIds?: readonly string[];
+  /** The event being placed or moved. */
+  event?: AvailabilityEvent;
   enabled?: boolean;
   bypassRef?: MutableRefObject<boolean>;
   /** Keep showing the last answer while a new window loads (no skeleton swap). */
@@ -225,6 +248,7 @@ export function useAvailabilityWindow({
   const releasing = releasingIds?.length
     ? [...releasingIds].sort(byCodeUnit).join(",")
     : undefined;
+  const eventQuery = eventQueryOf(event);
   const ready =
     enabled && !!consultantId && !!startUtc && !!endUtc && !!timezone;
   return useQuery({
@@ -238,6 +262,7 @@ export function useAvailabilityWindow({
             consulteeUserId,
             subscriptionId,
             releasing,
+            eventQuery,
           )
         : ["availability", "disabled"],
     queryFn: () => {
@@ -253,6 +278,7 @@ export function useAvailabilityWindow({
         etagCacheRef,
         subscriptionId,
         releasing,
+        eventQuery,
       );
     },
     enabled: ready,

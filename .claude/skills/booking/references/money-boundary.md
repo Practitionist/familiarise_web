@@ -22,6 +22,14 @@ abandoned-payments sweep mirrors it independently with a 35-minute buffer for
 legacy rows that carry a null `expiresAt`. `Payment` is indexed on
 `[expiresAt, paymentStatus]` for exactly this cohort.
 
+A paid trial holds the learner's picked time the same way: a tentative session
+while the trial is `AWAITING_PAYMENT`, with `Trial.paymentDueAt` and the order's
+`expiresAt` both at `payWindowEnd` (24 hours, never later than 15 minutes before
+the session). The capture webhook confirms it (`transitionTrial` to `SCHEDULED`,
+then `confirmExistingAppointment`), and the expire-unpaid-trials sweep cancels
+and tombstones a lapsed one (`bookTrialInTx` in `lib/trials/book-trial.ts`).
+The hold occupies its time until the sweep releases it.
+
 A webinar or class seat holds for 15 minutes instead: a 12-minute gateway
 window plus a 3-minute capture grace (`SEAT_CHECKOUT_HOLD_MS`; see
 `references/concurrency.md` §11).
@@ -345,7 +353,8 @@ the booking it stamps the per-payment marker `Payment.refundOwedPaise`,
 (`cancel:<appointmentId>:<paymentId>`, `trial-cancel:<trialId>:<paymentId>`,
 `rejection:<requestId>:<paymentId>`, `moderation:<appointmentId>:<paymentId>`,
 `freeze:<appointmentId>:<paymentId>`, `consultant-no-show:<paymentId>`,
-`event-cancel:<eventId>:pay:<paymentId>`)
+`event-cancel:<eventId>:pay:<paymentId>`, `class-end:<classId>:pay:<paymentId>`,
+`parked-consultation:<consultationId>:<paymentId>`)
 and clears the marker by CAS on the key once the refund is not PENDING. The first
 writer wins, so a second door cannot overwrite the amount owed. A death between
 commit and drive leaves CANCELLED plus SUCCEEDED plus a marker, and the
@@ -374,6 +383,9 @@ with the `dead-letter:` prefix for an operator. The refund re-checks under the
 appointment lock that the session is still `VOIDED`, so an ops un-void wins.
 `occurrenceRefundsPaise` and `voidRefundExists` read the `incident:` prefix, so
 never add a new refund-key family without teaching those two scans.
+`occurrenceRefundsPaise` also reads the per-seat `seat-leave:`, `seat-exit:` and
+`class-end:` prefixes; `voidRefundExists` stays per session, so a per-seat
+family never belongs there.
 
 How a gateway failure is classified decides who finishes the job
 (`refundBookingPayment` and `isDefinitiveRefundRefusal`). A **definitive**
@@ -482,7 +494,15 @@ plan, backed by the `subscription_sessions_returned_range` CHECK) and
 `Subscription.planEndsAt` moves seven days later in the same conditional write. No
 money moves. Refusals are typed: `RETURN_WINDOW_CLOSED`, `RETURN_CAP_REACHED`,
 `RETURN_RESCHEDULE_OPEN`, `DISPUTE_ACTIVE`, `SESSION_NOT_RETURNABLE`. Inside 24
-hours a missed session counts as delivered.
+hours a missed session counts as delivered, and no consultee door can hand it
+back: a return needs 24 hours of notice (`returnBlock` in
+`lib/booking/session-return-rules.ts`), a reschedule release needs 24 hours of
+notice on every session it moves (`RESCHEDULE_MIN_LEAD_HOURS` in the reschedule
+route), the only single-session cancel is the class host's, and a consultee who
+does not join is `LEARNER_ABSENT`, written as COMPLETED. Plan-end settlement
+therefore counts such a session as delivered and never refunds it; only host- or
+platform-caused misses (voided, never placed, or a release by the expert that was
+never re-placed) stay refundable.
 
 Reschedule caps count the release records on `RescheduleRequest`, not occurrence
 rows, because the allocator hard-deletes the occurrences a re-allocation replaces
@@ -494,6 +514,14 @@ each session (by ordinal) twice (`MAX_CONSULTEE_RESCHEDULES`; 422
 `MAX_RESCHEDULES_EXCEEDED`); an expert may reschedule a booking twice
 (`MAX_EXPERT_RESCHEDULES`) and the third answers 409 `EXPERT_RESCHEDULE_CAP`. Staff
 are exempt.
+
+A trial is one session, and each side may move it once
+(`MAX_TRIAL_RESCHEDULES_PER_SIDE`, `trialCapReached`), with the same two codes. A
+trial reschedule always names its one new window and has no allocator behind
+it: `confirmTrialProposal` (`lib/booking/trial-reschedule.ts`) moves the
+released session in place and closes the request in one transaction, at once
+for a learner's time inside open hours and on the learner's Accept for an
+expert's. No money moves on a trial reschedule.
 
 A published webinar is never rescheduled; its host re-times it
 (`POST /api/appointments/[appointmentId]/retime`, `retimeWebinar` in
@@ -511,8 +539,9 @@ through `inRetimeFreeLeave`.
 An operator of the plan's host org who cancels is recorded as the actor and
 strikes nobody; the buyer still gets 100 %.
 
-An expert-side cancel of a paid booking, or a consultant no-show claim, writes
-one reliability strike in the same transaction: a `SystemEvent` on the
+An expert-side cancel of a paid booking, an expert's cancel of a confirmed trial
+(free or paid, through trial DELETE), or a consultant no-show claim, writes one
+reliability strike in the same transaction: a `SystemEvent` on the
 `expert-reliability:<consultantProfileId>` correlation (`recordExpertStrike` in
 `lib/booking/expert-reliability.ts`). A platform-caused miss records nothing. The
 public profile shows a notice at three strikes in 90 days
@@ -538,15 +567,25 @@ exit is `session.set-outcome`; nothing is refunded or released automatically. A
 free session where nobody joined has no money to hold and completes. Widen this
 predicate, never a caller's copy of it.
 
+A parked session cannot wait silently. After 72 hours `alertStaleNeedsHuman`
+records a standing finding; after 7 days (`NEEDS_HUMAN_ESCALATE_DAYS`,
+`agedNeedsHumanWhere` in `lib/booking/misses.ts`) `escalateAgedNeedsHuman` in
+`lib/booking/session-outcome-sweep.ts`, run by `auto-complete-appointments`,
+records one standing finding and one Sentry warning per new session id per day
+(`reportStandingFinding`), naming how many sit on a plan whose end has passed,
+because plan-end settlement waits on them. `readSessionsNeedingHuman` lists
+those sessions first, oldest first, marked "Waiting over 7 days", so the list's
+cap never hides them.
+
 ## 13. A subscription settles at its fixed plan end
 
 A subscription's terms are fixed at purchase by `purchaseTermsOf`
 (`lib/booking/entitlement.ts`): the weekly cap (`Subscription.sessionsPerWeek`),
 the session length (`sessionMinutes`), the sessions sold (`sessionsTotal` =
 weeks × sessions a week, where a months plan counts `durationInMonths × 4`
-weeks) and the plan end (`planEndsAt`). A weeks plan ends `durationInWeeks × 7`
-zone-days after the start at the same wall time (`weeksPlanEndOf`, so a DST
-change never moves the end hour); a months plan ends on the same date
+weeks) and the plan end (`planEndsAt`). A weeks plan ends at the zone midnight
+that closes its last plan week, `durationInWeeks × 7` zone-days after the start
+day (`weeksPlanEndOf`, so there is no stub week); a months plan ends on the same date
 `durationInMonths` later, clamped to the month's last day (`planEndOf`),
 exclusive. Every sweep, admin view, incident extension, document and renewal
 reads the end through `subscriptionPlanEnd` or `subscriptionIsOver`; an incident
@@ -595,6 +634,32 @@ The pass resumes each tick from a checkpoint, so plans that must wait
 never starve the ones behind them. A void in the middle of a plan is not paid
 back while the session can still be re-booked; it waits for the plan end.
 
+## 14. A class settles its never-placed sessions when it completes
+
+A class completes once every placed session has ended and been decided
+(`completeClasses` in `scripts/appointments/auto-complete-appointments.ts`), and
+the same transaction that moves it to COMPLETED stamps class-end settlement
+(`stampClassEndRefundsOwed` in `lib/payments/operations/event-refunds.ts`).
+Every live paid seat is owed `floor(paid × unplaced / heldCount)` less any
+class-end refund already sent, clamped to the refundable balance. `heldCount` is
+the sessions the seat bought (`sessionsPurchased`, so N for an on-time seat and
+fewer for a late joiner), and `unplaced` is the bought sessions with no row at
+all: `SeatLedger.unplaced` in `lib/booking/class-series.ts` counts distinct
+ordinals that were delivered, are live, or were missed (host-cancelled or
+voided), because a missed session is already answered by its make-up or its
+`occ:` unit refund. A released row that was never re-placed counts as unplaced.
+A ₹100 seat of a 10-session class that ran 8 is owed ₹20.
+
+The marker is keyed `class-end:<classId>:pay:<paymentId>` and goes through
+`stampWholeEventRefundsOwed` with `basis: "unplaced"`, so a payment that already
+owes another door's refund refuses the completion and the class waits for the
+next run. A credit-funded seat owed part of its value is queued for a human
+(`partial-credit:<paymentId>`) in the same commit. Auto-complete moves no money
+itself: the `retry-auto-refunds` sweep, a financial job that pauses in DEGRADED
+maintenance, drives the markers, and each marker holds its payment's earnings
+(`RELEASABLE_PAYMENT` waits for `refundOwedKey: null`) until the refund settles
+and reverses the refunded share.
+
 ## Deprecated & Superseded Approaches
 
 - **The notice floor from history.** The floor once read `BookingStatusHistory`
@@ -625,3 +690,7 @@ back while the session can still be re-booked; it waits for the plan end.
 - **A whole-event cancel that committed without owning every seat's marker.** It
   logged the seats another door held and drove whatever marker it found; it now
   refuses, and a losing door that proceeds holds the earnings for a top-up.
+- **A class completing short with no settlement.** Auto-complete once moved a
+  class to COMPLETED after its last placed session whatever it had sold, so the
+  never-placed sessions were neither delivered nor refunded and the earnings
+  released in full. Class-end settlement owes them now.

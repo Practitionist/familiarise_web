@@ -94,24 +94,13 @@ export function categorizeValidationErrors(args: {
   conflictDetails: Map<string, ConflictDetail>;
   viewer: { userId: string; isEventConsultant: boolean };
   resolveFallbackType: (message: string) => string;
-}): SlotConflictResult & {
-  weeklyDistributionErrors: {
-    week: string;
-    slotsCount: number;
-    maxAllowed: number;
-  }[];
-} {
+}): SlotConflictResult {
   const conflicts: SlotConflictResult["conflicts"] = [];
   const outsideAvailability: SlotConflictResult["outsideAvailability"] = [];
   const tooSoon: NonNullable<SlotConflictResult["tooSoon"]> = [];
   // A finding no bucket can pin to a slot (e.g. sessions not consecutive)
   // refuses the whole set: nothing is reported valid then.
   let unplaced = false;
-  const weeklyDistributionErrors: {
-    week: string;
-    slotsCount: number;
-    maxAllowed: number;
-  }[] = [];
 
   for (const error of args.errors) {
     if (error.startsWith("[CONFLICT]")) {
@@ -146,20 +135,6 @@ export function categorizeValidationErrors(args: {
       )) {
         tooSoon.push({ slot: match[1] });
       }
-    } else if (error.startsWith("[WEEKLY_LIMIT]")) {
-      const message = error.replace("[WEEKLY_LIMIT] ", "");
-      const sessionsMatch = message.match(
-        /has (\d+) sessions but max is (\d+)/,
-      );
-      const weekMatch = message.match(/Week of (.+?) has/);
-      if (sessionsMatch && weekMatch) {
-        weeklyDistributionErrors.push({
-          week: weekMatch[1],
-          slotsCount: parseInt(sessionsMatch[1], 10),
-          maxAllowed: parseInt(sessionsMatch[2], 10),
-        });
-      }
-      unplaced = true;
     } else {
       unplaced = true;
     }
@@ -181,6 +156,5 @@ export function categorizeValidationErrors(args: {
     outsideAvailability,
     tooSoon,
     validSlots,
-    weeklyDistributionErrors,
   };
 }

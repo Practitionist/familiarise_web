@@ -7,6 +7,7 @@
  */
 
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
+import type { EventType } from "@/utils/scheduling-engine/types";
 
 // ─── startOfWeekSunday ──────────────────────────────────────────────────────
 
@@ -153,7 +154,10 @@ describe("ScheduleCalculationService.validateDuration", () => {
 
   it("should throw for null duration", () => {
     expect(() =>
-      ScheduleCalculationService.validateDuration(null as any, "myField"),
+      ScheduleCalculationService.validateDuration(
+        null as unknown as number,
+        "myField",
+      ),
     ).toThrow("myField is required but was not provided");
   });
 
@@ -195,7 +199,10 @@ describe("ScheduleCalculationService.validateDuration", () => {
 
   it("should throw for non-number type", () => {
     expect(() =>
-      ScheduleCalculationService.validateDuration("1" as any, "myField"),
+      ScheduleCalculationService.validateDuration(
+        "1" as unknown as number,
+        "myField",
+      ),
     ).toThrow("must be a number");
   });
 });
@@ -230,13 +237,19 @@ describe("ScheduleCalculationService.getSlotsPerCall", () => {
 describe("ScheduleCalculationService.calculateRequiredSlots", () => {
   it("should throw when eventType is empty", () => {
     expect(() =>
-      ScheduleCalculationService.calculateRequiredSlots("" as any, {}),
+      ScheduleCalculationService.calculateRequiredSlots(
+        "" as unknown as EventType,
+        {},
+      ),
     ).toThrow("Event type is required");
   });
 
   it("should throw for invalid event type", () => {
     expect(() =>
-      ScheduleCalculationService.calculateRequiredSlots("unknown" as any, {}),
+      ScheduleCalculationService.calculateRequiredSlots(
+        "unknown" as unknown as EventType,
+        {},
+      ),
     ).toThrow("Invalid event type");
   });
 
@@ -399,6 +412,49 @@ describe("ScheduleCalculationService.calculateRequiredSlots", () => {
           sessionDurationInHours: 1,
         }),
       ).toBe(24);
+    });
+
+    it("should size an unscheduled class from the plan total without a period", () => {
+      expect(
+        ScheduleCalculationService.calculateRequiredSlots("class", {
+          sessionsPerWeek: 3,
+          sessionDurationInHours: 2,
+          totalSessions: 72,
+        }),
+      ).toBe(288);
+    });
+
+    it("should still throw without a period when there is no plan total", () => {
+      expect(() =>
+        ScheduleCalculationService.calculateRequiredSlots("class", {
+          sessionsPerWeek: 3,
+          sessionDurationInHours: 2,
+          totalSessions: 0,
+        }),
+      ).toThrow(
+        "Start date and end date are required for class slot calculation",
+      );
+    });
+
+    it("should prefer the plan total over the period when both exist", () => {
+      expect(
+        ScheduleCalculationService.calculateRequiredSlots("class", {
+          schedulingPeriodStartsAt: new Date("2025-01-06"),
+          schedulingPeriodEndsAt: new Date("2025-01-31"),
+          sessionsPerWeek: 3,
+          sessionDurationInHours: 1,
+          totalSessions: 6,
+        }),
+      ).toBe(12);
+    });
+
+    it("should still validate sessionsPerWeek when only the plan total is set", () => {
+      expect(() =>
+        ScheduleCalculationService.calculateRequiredSlots("class", {
+          sessionDurationInHours: 2,
+          totalSessions: 72,
+        }),
+      ).toThrow("Calls per week must be a positive number");
     });
   });
 });

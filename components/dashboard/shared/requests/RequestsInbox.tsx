@@ -752,6 +752,7 @@ export function RequestsInbox({
         setTrialTarget({
           id: row.id,
           consulteeName: row.requester.name,
+          consulteeUserId: row.trial?.consulteeUserId,
           durationMinutes: row.trial?.durationMinutes ?? 30,
         });
         return;

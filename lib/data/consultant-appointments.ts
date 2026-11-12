@@ -31,7 +31,7 @@ import {
   bookingAnomalies,
   scheduleAnomalyReport,
 } from "@/lib/appointments/report-anomalies";
-import type { TAppointment } from "@/types/appointment";
+import type { TAppointmentWithSeats } from "@/types/appointment";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToPlanHostWhere, scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import {
@@ -128,7 +128,7 @@ async function olderThan(
  * the roster itself is not fetched here (#1554 — it lives on
  * AppointmentParticipant and no list consumer reads it).
  */
-export type ConsultantListAppointment = TAppointment;
+export type ConsultantListAppointment = TAppointmentWithSeats;
 
 export async function getConsultantAppointments(
   args: GetConsultantAppointmentsArgs,
@@ -349,6 +349,12 @@ export async function readConsultantAppointmentsPage(
   const hostUserSelect = { id: true, name: true, image: true } as const;
 
   const include = {
+    // Live buyer seats gate the host's Timings action on a webinar or class.
+    _count: {
+      select: {
+        participants: { where: { ...liveParticipant(), role: "CONSULTEE" } },
+      },
+    },
     occurrences: {
       where: { deletedAt: null },
       orderBy: { startsAt: "asc" },

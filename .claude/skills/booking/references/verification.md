@@ -215,14 +215,21 @@ designed, not a defect) or a finding to send back to the builder.
 
 ## 9. The agent-run E2E corpus
 
-`prompts/booking-algorithm-tests/` holds the numbered end-to-end cases, each a
-self-contained QA run that seeds via SQL, exercises the APIs, asserts database
-state and cleans up. Conventions (`prompts/README.md`): the database is the
-arbiter, each case suffixes its ids and emails with its agent number, and each
-carries its rules inline. Add a case when a bug would not have been caught by a
-unit test.
+`prompts/booking-qa/` holds the agent-run QA suite: folders `01-setup-and-smoke/`
+through `13-copy-a11y-responsive/`, one per area (consultations, subscriptions,
+webinars, classes, trials, money, concurrency, time zones, dashboards, sweeps,
+copy and accessibility). An agent drives the UI through the Chrome DevTools MCP
+(one browser, one tab, the `/tmp/fw-browser.lock` lock) and reads and seeds data
+through the Supabase MCP, whose writes need owner approval. Read its `README.md`
+and `_shared/` first: the personas and their time zones, base fixtures, SQL
+recipes (including the host overlap invariant), and the reporting taxonomy
+(verdicts plus finding types such as INCONSISTENCY, FALSE-INFO, COPY / AI-SLOP
+and MISSED-OPPORTUNITY). The database is the arbiter, every fixture is prefixed
+`qa-<caseId>`, and every state change is checked on each dashboard that shows
+it. When a booking behaviour changes, update the case that covers it in the same
+PR. Add a case when a bug would not have been caught by a unit test.
 
-## 10. QA hygiene when you drive the Wave 0 cases
+## 10. QA hygiene when you drive the agent-run cases
 
 - **Sentry may be quota-blind.** The free plan allows 5,000 errors a month, and a
   flood can leave a preview ingesting nothing. Before concluding "no error was
@@ -240,8 +247,8 @@ unit test.
   `error = 'permanent: qa fixture'` (the `permanent:` prefix is in
   `TERMINAL_ERROR_PREFIXES` in `lib/webhooks/event-log.ts`) on every synthetic
   row before cleanup so the sweep never re-drives it.
-- **Prefix every fixture** with the case's agent number and never touch a row a
-  real `Payment` points at; the database refuses the delete anyway.
+- **Prefix every fixture** with `qa-<caseId>` and never touch a row a real
+  `Payment` points at; the database refuses the delete anyway.
 - **Seed availability with its local columns.** A weekly row with NULL `timezone`
   or `local*` columns is refused by every reader, so a SQL-seeded row must set
   `timezone`, `localStartDay`, `localStartMinutes`, `localEndDay` and

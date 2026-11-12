@@ -14,6 +14,12 @@ export const CreateTrialSchema = z.object({
   // nothing — this is *attribution*, not sponsorship. Membership is
   // verified server-side before persisting.
   organizationId: z.string().optional(),
+  // The buyer's pick: one window of the plan's trial length, from the
+  // expert's open times. The route checks the length and the lead time.
+  slot: z.object({
+    startsAt: z.string().datetime({ offset: true }),
+    endsAt: z.string().datetime({ offset: true }),
+  }),
 });
 
 export const UpdateTrialSchema = z.object({

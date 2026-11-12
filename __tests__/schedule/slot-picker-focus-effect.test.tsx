@@ -84,7 +84,8 @@ function setCalendarData(overrides: Record<string, unknown> = {}) {
     consultantDetails: { id: "consultant-1" },
     availableSlots: NO_AVAILABILITY,
     serverCells: PUBLISHED_WEEK,
-    cellsWindow: null,
+    // A settled read whose window covers whatever week is shown.
+    cellsWindow: { startMs: 0, endMs: Number.MAX_SAFE_INTEGER },
     eventSlots: [],
     eventTentativeSlots: [],
     weeklyConfirmedCallCounts: {},
@@ -127,6 +128,7 @@ function resetAllocation() {
     partialOffer: null,
     dismissPartialOffer: jest.fn(),
     slotLimits: { slotsPerSession: 2, maxSlots: 10, totalSessions: 5 },
+    canAddSlot: () => true,
   };
 }
 
@@ -316,7 +318,7 @@ describe("UnifiedCalendar allocate-page states (#1764, #1766)", () => {
     expect(host.textContent).toContain("Nothing is published this week");
   });
 
-  it("collapses an entirely out-of-period week into one band with zero per-cell labels", () => {
+  it("shows an entirely out-of-period week as the full day with a note, never band strips or per-cell words", () => {
     // Every half-hour this week is published, but the request's period
     // starts after the whole visible week, so every cell is outside it.
     render({
@@ -325,12 +327,12 @@ describe("UnifiedCalendar allocate-page states (#1764, #1766)", () => {
       allowedEnd: new Date(2030, 8, 20),
     });
 
-    const bandButtons = Array.from(host.querySelectorAll("button")).filter(
-      (button) => button.textContent?.includes("Outside this booking's dates"),
+    expect(host.textContent).toContain(
+      "Nothing this week falls inside this booking's dates",
     );
-    expect(bandButtons).toHaveLength(1);
+    expect(host.querySelectorAll("[role='row'][data-row]")).toHaveLength(48);
+    expect(host.textContent).not.toMatch(/Unavailable ·|· show|· hide/);
 
-    // The old per-cell word must be gone everywhere, band open or closed.
     const exactMatches = Array.from(
       host.querySelectorAll("button, div"),
     ).filter((el) => el.textContent?.trim() === "Outside period");

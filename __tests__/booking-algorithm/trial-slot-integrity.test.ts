@@ -132,14 +132,20 @@ describe("trial route source contract (#1093 §1)", () => {
     expect(routeSource).not.toContain("lockTrialSlot");
   });
 
+  const checkSource = fs.readFileSync(
+    path.join(process.cwd(), "lib/trials/slot-check.ts"),
+    "utf8",
+  );
+
   it("validates availability on the transaction client, not the global one", () => {
-    expect(routeSource).toContain("db: Tx");
-    expect(routeSource).toMatch(/validateSlotAvailability\(\s*tx,/);
+    expect(routeSource).toMatch(/trialWindowRefusal\(\s*tx,/);
+    expect(checkSource).toContain("db: Tx");
+    expect(checkSource).toMatch(/validateSlotAvailability\(\s*db,/);
   });
 
   it("checks both calendars with checkout's own predicates and locks the buyer's own atoms", () => {
-    expect(routeSource).toContain("buildConsultantOccupancyWhere(");
-    expect(routeSource).toContain("consulteeHasOverlappingSession(");
+    expect(checkSource).toContain("buildConsultantOccupancyWhere(");
+    expect(checkSource).toContain("consulteeHasOverlappingSession(");
     expect(routeSource).toMatch(
       /lockSlotBatch\(\s*\[existingTrial\.consultantProfileId, buyerProfile\?\.id\]/,
     );

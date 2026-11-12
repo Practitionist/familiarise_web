@@ -46,6 +46,10 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
+  withEventCheckoutLock: (
+    _key: unknown,
+    fn: (renew: () => unknown) => unknown,
+  ) => fn(async () => undefined),
   lockAutoAllocate: jest
     .fn()
     .mockResolvedValue({ key: "mock-key", value: "mock-value" }),
@@ -121,7 +125,6 @@ import {
 import { ScheduleType } from "@prisma/client";
 
 const base = prisma as unknown as Record<string, Record<string, jest.Mock>>;
-const THIRTY_MIN_MS = 30 * 60 * 1000;
 const at = (iso: string) => new Date(iso);
 
 /** `count` non-overlapping two-hour rows, one per day, from `startIso`. */
@@ -185,6 +188,8 @@ const mockTx = {
   },
   collaborator: { findMany: jest.fn().mockResolvedValue([]) },
   appointmentParticipant: {
+    // Live seats on the event; a sold webinar/class refuses a re-plan.
+    count: jest.fn().mockResolvedValue(0),
     createMany: jest.fn().mockResolvedValue({ count: 1 }),
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   },

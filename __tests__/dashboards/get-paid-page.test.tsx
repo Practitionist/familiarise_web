@@ -46,6 +46,7 @@ import prisma from "@/lib/prisma";
 import { getRazorpayPayoutsService } from "@/lib/payments/payouts/razorpay-payouts";
 import { settleReversePennyDrop } from "@/lib/payments/payouts/reverse-penny-drop";
 import { payoutRequirements } from "@/lib/payments/payouts/payout-requirements";
+import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { payoutSetupNeeded } from "@/lib/data/needs-you";
 import { deriveConsultantActionItems } from "@/lib/dashboard/action-items";
 import { GetPaidView } from "@/app/dashboard/consultant/[consultantId]/(features)/settings/get-paid/GetPaidClient";
@@ -112,7 +113,7 @@ function setup(overrides: SetupOverrides = {}): PayoutSetup {
     }),
     eligibilityReason: null,
     readyAmount: 0,
-    minimumAmount: 50_000,
+    minimumAmount: PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT,
     livePayoutsEnabled: true,
     razorpayConfigured: true,
     ...overrides,

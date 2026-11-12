@@ -35,6 +35,10 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
+  withEventCheckoutLock: (
+    _key: unknown,
+    fn: (renew: () => unknown) => unknown,
+  ) => fn(async () => undefined),
   lockAutoAllocate: jest
     .fn()
     .mockResolvedValue({ key: "mock-key", value: "mock-value" }),
@@ -117,6 +121,8 @@ function makeMockTx() {
     // #1319 A9/A12 — allocation shadow-writes the participant edge and
     // appends status history inside the CAS helpers.
     appointmentParticipant: {
+      // Live seats on the event; a sold webinar/class refuses a re-plan.
+      count: jest.fn().mockResolvedValue(0),
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },

@@ -19,12 +19,9 @@ import {
   rescheduleReleasable,
 } from "@/lib/booking/reschedule-proposals";
 import { newTimeDoor } from "@/lib/appointments/new-time-door";
-import {
-  isApprovedStatus,
-  isConfirmedStatus,
-  isInactiveStatus,
-} from "@/lib/appointments/status";
+import { isConfirmedStatus, isInactiveStatus } from "@/lib/appointments/status";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
+import { rescheduleStatusOk } from "@/lib/appointments/consultee-affordances";
 import type { ConsultantTrialLike } from "@/lib/appointments/map-consultant";
 import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import { useNowTick } from "@/hooks/use-now-tick";
@@ -51,10 +48,19 @@ const TYPE_LABEL: Record<AppointmentVM["kind"], string> = {
   TRIAL: "Trial",
 };
 
-/** Webinar/class lifecycle actions are plan-owner only (API rejects collaborators). */
-function canManageBookingLifecycle(vm: AppointmentVM): boolean {
+/**
+ * Webinar/class lifecycle actions belong to the plan's host, or whoever acts on
+ * that host's dashboard; the routes refuse co-hosts and co-instructors.
+ */
+function canManageBookingLifecycle(
+  vm: AppointmentVM,
+  consultantId: string,
+): boolean {
   if (vm.kind === "WEBINAR" || vm.kind === "CLASS") {
-    return !vm.collaboratorRole || vm.collaboratorRole === "HOST";
+    return (
+      (!vm.collaboratorRole || vm.collaboratorRole === "HOST") &&
+      (!vm.consultantProfileId || vm.consultantProfileId === consultantId)
+    );
   }
   return true;
 }
@@ -68,6 +74,17 @@ function actionableRawSlots(vm: AppointmentVM) {
         ? [vm.raw.appointment]
         : [];
   return upcomingOccurrences(sources.flatMap((a) => a.occurrences ?? []));
+}
+
+/** The length of the booking's next live session, in minutes (60 when it has none). */
+function sessionMinutesOf(vm: AppointmentVM): number {
+  for (const occurrence of vm.occurrences) {
+    const span = occurrence.endsAt
+      ? occurrence.endsAt.getTime() - occurrence.startsAt.getTime()
+      : 0;
+    if (span > 0) return Math.round(span / 60_000);
+  }
+  return 60;
 }
 
 function canOfferTimings(vm: AppointmentVM, timingsOk: boolean): boolean {
@@ -88,10 +105,11 @@ function canOfferReschedule(
 ): boolean {
   return Boolean(
     vm.appointmentId &&
-    vm.kind !== "TRIAL" &&
+    vm.kind !== "WEBINAR" &&
+    vm.kind !== "CLASS" &&
     lifecycleOk &&
     !inactive &&
-    isApprovedStatus(vm.status) &&
+    rescheduleStatusOk(vm.kind, vm.status) &&
     !timingsOk &&
     occurrencesAllowReschedule(rawOccurrences) &&
     rescheduleReleasable(rawOccurrences),
@@ -174,6 +192,12 @@ export function useConsultantAppointmentsAdapter(
       trial?.appointment?.occurrences ?? vm.raw.appointment?.occurrences ?? []
     );
   };
+
+  /** The trial row's own id, which its cancel door and quote are keyed by. */
+  const trialIdOf = (vm: AppointmentVM): string | null =>
+    vm.kind === "TRIAL"
+      ? ((vm.raw.source as ConsultantTrialLike | undefined)?.id ?? null)
+      : null;
 
   const joinableSlotOf = (vm: AppointmentVM) =>
     getJoinableOccurrence(
@@ -319,7 +343,10 @@ export function useConsultantAppointmentsAdapter(
   };
 
   const primaryAction = (vm: AppointmentVM): PrimaryAction => {
-    if (vm.needsActionReason === "UNSCHEDULED") {
+    if (
+      vm.needsActionReason === "UNSCHEDULED" &&
+      canManageBookingLifecycle(vm, consultantId)
+    ) {
       const href = timingsHref(vm);
       if (href) {
         return {
@@ -345,10 +372,14 @@ export function useConsultantAppointmentsAdapter(
     const appointment = vm.raw.appointment;
     const inactive = isInactiveStatus(vm.status);
     const rawOccurrences = actionableRawSlots(vm);
-    const lifecycleOk = canManageBookingLifecycle(vm);
-    const timingsOk = allowsManageTimings(vm.kind, rawOccurrences);
+    const lifecycleOk = canManageBookingLifecycle(vm, consultantId);
+    const timingsOk = allowsManageTimings(
+      vm.kind,
+      rawOccurrences,
+      vm.raw.liveSeats ?? 0,
+    );
 
-    if (canOfferTimings(vm, timingsOk)) {
+    if (lifecycleOk && canOfferTimings(vm, timingsOk)) {
       items.push({
         key: "timings",
         label: "Timings",
@@ -365,15 +396,31 @@ export function useConsultantAppointmentsAdapter(
         onClick: () => router.push(participantsUrl),
       });
     }
-    const mayReschedule = canOfferReschedule(
-      vm,
-      lifecycleOk,
-      inactive,
-      timingsOk,
-      rawOccurrences,
-    );
+    const mayReschedule =
+      vm.kind === "TRIAL"
+        ? canOfferReschedule(
+            vm,
+            lifecycleOk,
+            inactive,
+            false,
+            trialSlotsOf(vm).map((o) => ({
+              ...o,
+              isTentative: o.isTentative ?? false,
+            })),
+          )
+        : canOfferReschedule(
+            vm,
+            lifecycleOk,
+            inactive,
+            timingsOk,
+            rawOccurrences,
+          );
+    // A trial cancels through its own door, and only once its time is set.
     const mayCancel = Boolean(
-      vm.appointmentId && vm.kind !== "TRIAL" && lifecycleOk && !inactive,
+      vm.appointmentId &&
+      lifecycleOk &&
+      !inactive &&
+      (vm.kind !== "TRIAL" || (trialIdOf(vm) && vm.status === "SCHEDULED")),
     );
     const opsHref = vm.appointmentId
       ? operatorOpsHref(viewer, isPartyTo(vm), vm.appointmentId)
@@ -425,7 +472,7 @@ export function useConsultantAppointmentsAdapter(
     } else if (mayCancel) {
       items.push({
         key: "cancel",
-        label: "Cancel booking",
+        label: vm.kind === "TRIAL" ? "Cancel trial" : "Cancel booking",
         destructive: true,
         onClick: () => openDialog(vm, "cancel"),
       });
@@ -467,7 +514,11 @@ export function useConsultantAppointmentsAdapter(
           <CancelConfirmationDialog
             isOpen={dialog === "cancel"}
             onConfirm={async (quote) => {
-              if (await actions.handleCancelConfirm(quote)) closeDialog();
+              const trialId = trialIdOf(activeVm);
+              const done = trialId
+                ? await actions.handleTrialCancel(trialId, quote)
+                : await actions.handleCancelConfirm(quote);
+              if (done) closeDialog();
             }}
             onCancel={closeDialog}
             title={activeVm.title}
@@ -475,6 +526,11 @@ export function useConsultantAppointmentsAdapter(
             appointmentType={typeLabel}
             isLoading={actions.isLoading}
             appointmentId={activeVm.appointmentId}
+            previewUrl={
+              trialIdOf(activeVm)
+                ? `/api/trials/${trialIdOf(activeVm)}/cancel/preview`
+                : null
+            }
             viewerRole="consultant"
           />
 
@@ -487,6 +543,9 @@ export function useConsultantAppointmentsAdapter(
             }}
             onCancel={closeDialog}
             title={activeVm.title}
+            consultantId={consultantId}
+            sessionMinutes={sessionMinutesOf(activeVm)}
+            webinarId={activeVm.raw.appointment?.webinarId ?? undefined}
             isLoading={actions.isLoading}
           />
         </>

@@ -53,6 +53,47 @@ jest.mock("../../lib/prisma", () => ({
     // #1008 — the cancel/reschedule routes call hasActiveDisputeForAppointment,
     // which reads prisma.dispute.findFirst. Default to no live dispute.
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
+    // The Idempotency-Key store, in memory: the unique index answers P2002.
+    idempotencyRecord: (() => {
+      const rows = new Map<string, Record<string, unknown>>();
+      const keyOf = (w: {
+        scope_key_userId: { scope: string; key: string; userId: string };
+      }) =>
+        `${w.scope_key_userId.scope}|${w.scope_key_userId.key}|${w.scope_key_userId.userId}`;
+      return {
+        rows,
+        create: jest.fn(async ({ data }: { data: Record<string, string> }) => {
+          const k = `${data.scope}|${data.key}|${data.userId}`;
+          if (rows.has(k))
+            throw Object.assign(new Error("dup"), { code: "P2002" });
+          rows.set(k, { ...data, completedAt: null });
+          return rows.get(k);
+        }),
+        findUnique: jest.fn(
+          async ({ where }: { where: Parameters<typeof keyOf>[0] }) =>
+            rows.get(keyOf(where)) ?? null,
+        ),
+        update: jest.fn(
+          async ({
+            where,
+            data,
+          }: {
+            where: Parameters<typeof keyOf>[0];
+            data: Record<string, unknown>;
+          }) => {
+            const k = keyOf(where);
+            rows.set(k, { ...rows.get(k), ...data });
+            return rows.get(k);
+          },
+        ),
+        delete: jest.fn(
+          async ({ where }: { where: Parameters<typeof keyOf>[0] }) => {
+            rows.delete(keyOf(where));
+            return {};
+          },
+        ),
+      };
+    })(),
     $disconnect: jest.fn(),
   },
 }));
@@ -935,6 +976,54 @@ describe("Reschedule Route Handler - POST", () => {
 
   // ─── Edge Cases ─────────────────────────────────────────────────────────
 
+  it("replays the committed answer for a repeated Idempotency-Key instead of releasing again", async () => {
+    mockTx.appointment.findUnique.mockResolvedValue(
+      makeConsultationAppointment(),
+    );
+    const send = () =>
+      rescheduleHandler(
+        new Request(
+          "http://localhost/api/appointments/apt-1/reschedule?type=CONSULTATION",
+          {
+            method: "POST",
+            body: JSON.stringify({}),
+            headers: {
+              "Content-Type": "application/json",
+              "Idempotency-Key": "reschedule-key-0001",
+            },
+          },
+        ) as unknown as NextRequest,
+        makeParams("apt-1"),
+      );
+
+    const first = await send();
+    const firstBody = await first.json();
+    const releases = (prisma.$transaction as jest.Mock).mock.calls.length;
+    const second = await send();
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(second.headers.get("Idempotent-Replay")).toBe("true");
+    expect(await second.json()).toEqual(firstBody);
+    expect((prisma.$transaction as jest.Mock).mock.calls.length).toBe(releases);
+  });
+
+  it("refuses a malformed session list rather than releasing the whole booking", async () => {
+    mockTx.appointment.findUnique.mockResolvedValue(
+      makeSubscriptionAppointment(),
+    );
+
+    const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION", {
+      slotIds: [42],
+    });
+    const res = await rescheduleHandler(req, makeParams("apt-1"));
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe("INVALID_SLOT_IDS");
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   it("should handle empty body gracefully", async () => {
     mockTx.appointment.findUnique.mockResolvedValue(
       makeConsultationAppointment(),
@@ -1230,7 +1319,10 @@ describe("Cancel Route Handler - POST", () => {
       expect(res.status).toBe(200);
 
       expect(mockTx.webinar.updateMany).toHaveBeenCalledWith({
-        where: { id: "web-1", status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+        where: {
+          id: "web-1",
+          status: { in: ["DRAFT", "SCHEDULED", "IN_PROGRESS"] },
+        },
         data: { status: "CANCELLED" },
       });
     });
@@ -1251,7 +1343,10 @@ describe("Cancel Route Handler - POST", () => {
       expect(res.status).toBe(200);
 
       expect(mockTx.class.updateMany).toHaveBeenCalledWith({
-        where: { id: "cls-1", status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+        where: {
+          id: "cls-1",
+          status: { in: ["DRAFT", "SCHEDULED", "IN_PROGRESS"] },
+        },
         data: { status: "CANCELLED" },
       });
     });

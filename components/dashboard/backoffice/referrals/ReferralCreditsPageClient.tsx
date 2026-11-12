@@ -118,10 +118,10 @@ interface CreditsResponse {
 interface FeeWaiverItem {
   id: string;
   consultantProfileId: string;
-  reason: "REFERRED_EXPERT" | "REFERRING_EXPERT";
+  reason: "REFERRED_EXPERT" | "REFERRING_EXPERT" | "FOUNDING_EXPERT";
   sessionsRemaining: number;
   expiresAt: string;
-  referralId: string;
+  referralId: string | null;
   createdAt: string;
   consultantProfile: {
     id: string;
@@ -136,7 +136,7 @@ interface FeeWaiverItem {
     id: string;
     status: string;
     configVersion: number | null;
-  };
+  } | null;
 }
 
 interface WaiversResponse {
@@ -1655,6 +1655,7 @@ function FeeWaiversTabPanel({
               { value: "ALL", label: "All reasons" },
               { value: "REFERRED_EXPERT", label: "Referred Expert" },
               { value: "REFERRING_EXPERT", label: "Referring Expert" },
+              { value: "FOUNDING_EXPERT", label: "Founding Expert" },
             ],
           },
           {

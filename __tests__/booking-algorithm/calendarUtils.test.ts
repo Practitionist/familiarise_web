@@ -291,33 +291,11 @@ describe("groupSelectedIntoSessions", () => {
     expect(groupSelectedIntoSessions([])).toEqual([]);
   });
 
-  it("splits a contiguous run crossing scheduling-timezone midnight", () => {
-    // 23:30–00:30 Asia/Kolkata wall clock: adjacent atoms, different days.
-    const sessions = groupSelectedIntoSessions(
-      [
-        interval("2026-11-16T18:00:00Z", "2026-11-16T18:30:00Z"),
-        interval("2026-11-16T18:30:00Z", "2026-11-16T19:00:00Z"),
-      ],
-      "Asia/Kolkata",
-    );
-    expect(sessions).toHaveLength(2);
-    expect(sessions[0].end.toISOString()).toBe("2026-11-16T18:30:00.000Z");
-    expect(sessions[1].start.toISOString()).toBe("2026-11-16T18:30:00.000Z");
-  });
-
-  it("merges the same UTC run when no zone pins the day", () => {
+  it("merges a contiguous run", () => {
     const sessions = groupSelectedIntoSessions([
       interval("2026-11-16T18:00:00Z", "2026-11-16T18:30:00Z"),
       interval("2026-11-16T18:30:00Z", "2026-11-16T19:00:00Z"),
     ]);
     expect(sessions).toHaveLength(1);
-  });
-
-  it("splits a contiguous run crossing UTC midnight with no zone", () => {
-    const sessions = groupSelectedIntoSessions([
-      interval("2026-11-16T23:30:00Z", "2026-11-17T00:00:00Z"),
-      interval("2026-11-17T00:00:00Z", "2026-11-17T00:30:00Z"),
-    ]);
-    expect(sessions).toHaveLength(2);
   });
 });

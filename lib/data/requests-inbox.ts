@@ -724,7 +724,10 @@ function trialRow(
       schedulingPeriod: null,
       schedulingTimezone: null,
       entitlement: null,
-      trial: { durationMinutes: t.subscriptionPlan.trialDurationMinutes },
+      trial: {
+        durationMinutes: t.subscriptionPlan.trialDurationMinutes,
+        consulteeUserId: t.consulteeProfile.user.id,
+      },
       checkoutHold: null,
       requestedStartPassed: false,
     },

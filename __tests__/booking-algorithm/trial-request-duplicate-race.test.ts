@@ -25,13 +25,42 @@ jest.mock("../../lib/auth-server", () => ({
 
 jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
-  trialRequestLimiter: {},
-  applyRateLimit: jest.fn(async () => null),
+  trialRequestRefusal: jest.fn(async () => null),
+  spendTrialRequest: jest.fn(async () => undefined),
 }));
 
-jest.mock("../../lib/novu", () => ({
-  __esModule: true,
-  notifyTrialRequested: jest.fn(async () => undefined),
+jest.mock("../../lib/trials/book-trial", () => ({
+  lockTrialPick: jest.fn(async () => async () => undefined),
+  // The booking's own insert stands in for the whole in-transaction write.
+  bookTrialInTx: jest.fn(
+    async (
+      tx: { trial: { create: (a: unknown) => Promise<object> } },
+      args: Record<string, unknown>,
+    ) => ({
+      ...(await tx.trial.create({ data: args })),
+      appointmentId: "apt-1",
+    }),
+  ),
+  TrialTimeRefusedError: class extends Error {},
+}));
+jest.mock("../../lib/trials/schedule-notices", () => ({
+  stageTrialScheduledNotices: jest.fn(async () => ({
+    consulteeBell: null,
+    consultantBell: null,
+    emails: [],
+  })),
+}));
+jest.mock("../../lib/email/senders/booking", () => ({
+  prepareTrialScheduledEmail: jest.fn(async () => ({
+    emailType: "TRIAL_SESSION_SCHEDULED",
+    entityRef: "trial:pending",
+    messages: [],
+    skipped: 0,
+    failed: 0,
+  })),
+}));
+jest.mock("../../lib/novu/stage-then-attempt", () => ({
+  flushNotificationsAfter: jest.fn(async () => undefined),
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
@@ -49,10 +78,11 @@ jest.mock("../../lib/prisma", () => {
       create: jest.fn(),
     },
     subscriptionPlan: { findUnique: jest.fn() },
+    consultantProfile: { findUnique: jest.fn(async () => null) },
     consulteeProfile: { findUnique: jest.fn() },
     membership: { findFirst: jest.fn() },
   };
-  // #1775 C-7 — the create runs in a transaction with the paid placeholder.
+  // The create runs in the booking transaction.
   db.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(db));
   return { __esModule: true, default: db };
 });
@@ -64,6 +94,14 @@ import { POST } from "../../app/api/trials/route";
 const CONSULTEE = "consultee-1";
 const CONSULTANT = "consultant-1";
 const PLAN = "plan-1";
+
+const pickStart = new Date(
+  Math.ceil((Date.now() + 3 * 86_400_000) / 3_600_000) * 3_600_000,
+);
+const pickedSlot = {
+  startsAt: pickStart.toISOString(),
+  endsAt: new Date(pickStart.getTime() + 30 * 60_000).toISOString(),
+};
 
 const mockedSession = getSession as jest.Mock;
 const mockedFindUnique = prisma.trial.findUnique as jest.Mock;
@@ -90,6 +128,7 @@ function request() {
       consulteeProfileId: CONSULTEE,
       consultantProfileId: CONSULTANT,
       subscriptionPlanId: PLAN,
+      slot: pickedSlot,
     }),
   }) as never;
 }
@@ -111,6 +150,8 @@ beforeEach(() => {
     title: "Career Clarity",
     consultantProfileId: CONSULTANT,
     trialEnabled: true,
+    trialDurationMinutes: 30,
+    trialPriceInPaise: 0,
     consultantProfile: {
       maxOpenRequests: null,
       user: { id: "expert-1", name: "Expert" },

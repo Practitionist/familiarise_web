@@ -13,7 +13,7 @@ This page indexes the decisions that shape the money subsystem and says where ea
 
 ## The gateway decision
 
-Razorpay is the only integrated payment gateway for collections, and RazorpayX is the only integrated rail for payouts. Stripe was removed on 4 October 2026 (UTC), together with the dormant GST-TCS and auto-top-up machinery. The `PaymentGateway` enum still carries the labels `STRIPE` and `DODO_PAYMENTS`, but they are schema-only: `UNIMPLEMENTED_GATEWAYS` (`lib/payments/constants.ts`) and `assertGatewayUsable` (`lib/payments/validation/gateway-guards.ts`) make every money path refuse them. `routeGateway` (`lib/payments/gateway-router.ts`) sends every buyer to Razorpay on an INR order, and `assertInrSettlement` (`lib/payments/validation/currency-guards.ts`) makes INR the only settlement currency; a buyer abroad pays with an international card. Other gateways were evaluated and have no code behind them. Nothing in the repository documents them as planned, and no document should describe a gateway that has no implementation.
+Razorpay is the only integrated payment gateway for collections, and RazorpayX is the only integrated rail for payouts. Stripe was removed on 4 October 2026 (UTC), together with the dormant GST-TCS and auto-top-up machinery. The `PaymentGateway` enum still carries the labels `STRIPE` and `DODO_PAYMENTS`, but they are schema-only: `UNIMPLEMENTED_GATEWAYS` (`lib/payments/constants.ts`) and `assertGatewayUsable` (`lib/payments/validation/gateway-guards.ts`) make every money path refuse them. `routeGateway` (`lib/payments/gateway-router.ts`) sends every buyer to Razorpay on an INR order, and `assertInrSettlement` (`lib/payments/validation/currency-guards.ts`) makes INR the only settlement currency; a buyer abroad pays with an international card. Other gateways were evaluated and have no code behind them; the [gateway decision record](../../decisions/2026-11-09-payment-gateways-one-rail.md) holds the evaluation and the triggers that would reopen it, and it is a record of an evaluation, not a plan. Nothing in the repository documents them as planned, and no document should describe a gateway that has no implementation as live or planned.
 
 ## Architecture decisions that govern money
 
@@ -39,13 +39,14 @@ All of these live in `docs/enterprise/70-design-decisions/`.
 
 ## Dated decisions
 
-| Decision                                                                                                       | Subject                                                                                                      |
-| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| [Pay-link GST parity](../../decisions/2026-09-19-pay-link-gst-parity.md)                                       | A pay-link payment carries the same GST as a direct checkout.                                                |
-| [Class-series money rules](../../decisions/2026-09-25-class-series-money-rules.md)                             | How refunds, credits and make-ups work for a class series.                                                   |
-| [Appointment money is per seat](../../decisions/2026-09-13-appointment-money-is-per-seat.md)                   | On a group event, money is a status per seat, and an attendee sees only their own.                           |
-| [Session outcomes](../../decisions/2026-09-25-session-outcomes.md)                                             | How presence, voids and misses decide a session's outcome, which in turn decides whether money is owed back. |
-| [RBI payment aggregator posture](../../enterprise/40-compliance-and-data/07-rbi-payment-aggregator-posture.md) | Why the platform is not a payment aggregator and what must stay true for that to hold.                       |
+| Decision                                                                                                       | Subject                                                                                                         |
+| -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| [Pay-link GST parity](../../decisions/2026-09-19-pay-link-gst-parity.md)                                       | A pay-link payment carries the same GST as a direct checkout.                                                   |
+| [Class-series money rules](../../decisions/2026-09-25-class-series-money-rules.md)                             | How refunds, credits and make-ups work for a class series.                                                      |
+| [Appointment money is per seat](../../decisions/2026-09-13-appointment-money-is-per-seat.md)                   | On a group event, money is a status per seat, and an attendee sees only their own.                              |
+| [Session outcomes](../../decisions/2026-09-25-session-outcomes.md)                                             | How presence, voids and misses decide a session's outcome, which in turn decides whether money is owed back.    |
+| [RBI payment aggregator posture](../../enterprise/40-compliance-and-data/07-rbi-payment-aggregator-posture.md) | Why the platform is not a payment aggregator and what must stay true for that to hold.                          |
+| [Payment gateways: one rail](../../decisions/2026-11-09-payment-gateways-one-rail.md)                          | Why only Razorpay and RazorpayX are integrated, what was rejected, and what is deferred with a revisit trigger. |
 
 ## Where in code
 

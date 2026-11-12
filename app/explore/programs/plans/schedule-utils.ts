@@ -1,5 +1,3 @@
-import { differenceInDays, startOfDay } from "date-fns";
-
 export type SessionStatus = "Upcoming" | "Completed" | "Happening Now";
 
 export interface SessionInfo {
@@ -40,8 +38,7 @@ export function buildSessionsFromAppointment(
         o.completionStatus !== "RESCHEDULED",
     )
     .sort(
-      (a, b) =>
-        new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+      (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
     );
 
   return sorted.map((occurrence, idx) => {
@@ -60,29 +57,4 @@ export function buildSessionsFromAppointment(
       status,
     };
   });
-}
-
-/**
- * Group sessions by week number relative to the first session's date.
- * Returns a Map of weekNumber → sessions in that week.
- */
-export function groupSessionsByWeek(
-  sessions: SessionInfo[],
-): Map<number, SessionInfo[]> {
-  const weeks = new Map<number, SessionInfo[]>();
-  if (sessions.length === 0) return weeks;
-
-  const firstDate = sessions[0].sessionStart;
-
-  for (const session of sessions) {
-    const daysDiff = differenceInDays(
-      startOfDay(session.sessionStart),
-      startOfDay(firstDate),
-    );
-    const weekNum = Math.floor(daysDiff / 7) + 1;
-    if (!weeks.has(weekNum)) weeks.set(weekNum, []);
-    weeks.get(weekNum)!.push(session);
-  }
-
-  return weeks;
 }

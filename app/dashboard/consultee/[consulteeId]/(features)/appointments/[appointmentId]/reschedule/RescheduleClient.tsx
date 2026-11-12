@@ -48,12 +48,19 @@ export function RescheduleClient({
   };
 
   const policy = rescheduleConsulteePolicy({
-    onSubmit: async ({ slotIds, proposedSlots, preference, displayZone }) => {
+    onSubmit: async ({
+      slotIds,
+      proposedSlots,
+      preference,
+      displayZone,
+      idempotencyKey,
+    }) => {
       const moved = await actions.handleReschedule(
         slotIds,
         proposedSlots,
         preference,
         displayZone,
+        idempotencyKey,
       );
       // A failure keeps the page (and the user's selection) so they can retry;
       // the hook has already explained why in a toast.

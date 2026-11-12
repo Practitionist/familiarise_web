@@ -1,7 +1,8 @@
-# Stream.io Pricing — Familiarise Reference
+# Stream.io Pricing — Public Rate Reference
 
 > **Verified:** April 23, 2026 via Chrome DevTools live calculator interaction
-> **Exchange rate:** ₹90.7/$1 (Feb 2026 baseline — verify for current rate)
+> **Exchange rate:** ₹90.7/$1 (Feb 2026 baseline, used only for the rupee conversions below; verify for the current rate)
+> **Source:** Stream's published pricing at <https://getstream.io/pricing/> and <https://getstream.io/video/docs/api/pricing-guide/>
 > **Products in use:** Video & Audio (video calls + recording), Chat Messaging
 > **Products not yet in use:** Activity Feeds, AI Moderation, Vision Agents
 
@@ -190,7 +191,7 @@ Three rules from the same guide decide what a webinar costs:
 2. Stream's own example: a viewer who receives two HD tracks (2 × 1280 × 720 = 1,843,200 pixels) is billed at the Full HD rate.
 3. A participant whose camera and microphone are both off is metered as a livestream viewer, at the cheaper livestream rates in section 2.1, even inside a normal video call.
 
-Worked example (derived from those rules and this platform's defaults, not measured). Webinar attendees join muted with their cameras off, because `buildCallSettingsOverride` in `lib/meetings/room-ready.ts` applies the backstage and muted defaults to webinars and classes, so rule 3 applies to them. The default quality is a 720p camera and a 1080p screen share (`DEFAULT_VIDEO_CONFIG` in `lib/stream/video-quality.ts`; section 8.5). One hundred attendees watching for 90 minutes is 9,000 participant minutes:
+Worked example (derived from those rules and this platform's defaults, not measured). Webinar attendees join muted with their cameras off, because `buildCallSettingsOverride` in `lib/meetings/room-ready.ts` applies the backstage and muted defaults to webinars and classes, so rule 3 applies to them. The default quality is a 720p camera and a 1080p screen share (`DEFAULT_VIDEO_CONFIG` in `lib/stream/video-quality.ts`; section 8.2). One hundred attendees watching for 90 minutes is 9,000 participant minutes:
 
 | What the attendee receives                                         | Combined pixels | Billed as a livestream viewer (rule 3)       | Billed at the call rates of section 1.2       |
 | ------------------------------------------------------------------ | --------------- | -------------------------------------------- | --------------------------------------------- |
@@ -297,7 +298,7 @@ After $100 credit: HD combined = $270 − $100 = **$170/month** (₹15,419/month
 
 ### 3.4 Where the recorded file lives
 
-The platform records HD (720p, composite, spotlight layout) unless staff raise it to Full HD on the Video quality page (section 8.5), so the HD rate in 3.2 is the one that applies by default. Stream holds each file for 14 days; the `transfer-recordings` job then copies it to Cloudflare R2, which costs $0.015 per GB-month with free egress ([R2 pricing](https://developers.cloudflare.com/r2/pricing/)). Recording capture, not storage, is the dominant cost, and the platform retention schedule (90 days for 1:1, 365 days for group sessions) bounds the stored volume. Cloudflare Stream was rejected as the host because its storage costs roughly 20 times R2; it stays a candidate only for a paid adaptive-bitrate replay library.
+The platform records HD (720p, composite, spotlight layout) unless staff raise it to Full HD on the Video quality page (section 8.2), so the HD rate in 3.2 is the one that applies by default. Stream holds each file for 14 days; the `transfer-recordings` job then copies it to Cloudflare R2, which costs $0.015 per GB-month with free egress ([R2 pricing](https://developers.cloudflare.com/r2/pricing/)). Recording capture, not storage, is the dominant cost, and the platform retention schedule (90 days for 1:1, 365 days for group sessions) bounds the stored volume. Cloudflare Stream was rejected as the host because its storage costs roughly 20 times R2; it stays a candidate only for a paid adaptive-bitrate replay library.
 
 ---
 
@@ -381,63 +382,29 @@ Overage: $25 per 1,000 excess activities.
 
 Stream waives the Chat subscription while all **three** conditions hold **simultaneously**:
 
-| Condition            | Limit                       | Familiarise status      |
-| -------------------- | --------------------------- | ----------------------- |
-| Team members         | **≤ 5**                     | ✅ Pre-launch: 2–3 devs |
-| Total funding raised | **< $100,000**              | ✅ Bootstrapped         |
-| Monthly revenue      | **< $10,000** (~₹9.07 lakh) | ✅ Pre-launch           |
+| Condition            | Limit                       |
+| -------------------- | --------------------------- |
+| Team members         | **≤ 5**                     |
+| Total funding raised | **< $100,000**              |
+| Monthly revenue      | **< $10,000** (~₹9.07 lakh) |
 
-Must be explicitly applied for in the Stream dashboard. Availability is limited and subject to re-qualification.
+Must be explicitly applied for in the Stream dashboard. Availability is limited and subject to re-qualification. Whether Familiarise meets the conditions today: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend).
 
-**Maker Chat is a modified Start Plan:** MAU capped at **2,000** (not 10K) with **hard limits** — no overage billing, service pauses at the ceiling.
+**Maker Chat is a modified Start Plan:** MAU capped at **2,000** (not 10K) with **hard limits**: no overage billing, and the service pauses at the ceiling.
 
-**Cliff:** Revenue > ₹9.07L/month OR funding > $100K OR team > 5 → Chat subscription activates at $499/mo (monthly) or $399/mo (annual). See `STREAM_ENTERPRISE_AND_MAKER.md` for full transition details.
+**Cliff:** Losing any one condition ends Maker eligibility, and Chat is then priced at $499/mo (monthly) or $399/mo (annual). Stream's public pages do not say how or when the transition happens, so arrange the paid plan with Stream before eligibility ends rather than expecting it to activate on its own. See `15-enterprise-and-maker-account.md` for the transition details.
 
 ---
 
-## 8. Familiarise Video Cost Projections
+## 8. Video cost at the design limits
 
-### 8.1 HD 30fps, 2 participants, avg 60 min/session
+Familiarise's own monthly video cost projections at expected booking volumes: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). The matrices in section 1.3 give the public arithmetic for any session size and count.
 
-| Bookings/mo | PM/mo     | PAYG cost | After $100 credit | INR/mo (billed) |
-| ----------- | --------- | --------- | ----------------- | --------------- |
-| 50          | 6,000     | $9.00     | **$0**            | ₹0              |
-| 100         | 12,000    | $18.00    | **$0**            | ₹0              |
-| 250         | 30,000    | $45.00    | **$0**            | ₹0              |
-| 500         | 60,000    | $90.00    | **$0**            | ₹0              |
-| 667         | 80,040    | $120.06   | **$20.06**        | ₹1,819          |
-| 1,000       | 120,000   | $180.00   | **$80.00**        | ₹7,256          |
-| 2,000       | 240,000   | $360.00   | **$260.00**       | ₹23,582         |
-| 5,000       | 600,000   | $900.00   | **$800.00**       | ₹72,560         |
-| 10,000      | 1,200,000 | $1,800.00 | **$1,700.00**     | ₹154,190        |
+### 8.1 The 200-participant cap
 
-### 8.2 HD 30fps — Webinar (50 attendees, 90 min/session)
+Webinars and classes are capped at 200 participants at launch ([ADR-07](./18-architecture-decision-records.md#adr-07-interactive-webrtc-with-a-200-participant-cap-not-hls-at-launch)), enforced when a plan is authored and when a seat is sold. The call's Stream `limits.max_participants` is the capacity plus a headroom of 5 and exempts the owner and the `co_presenter` and `admin` roles (`lib/meetings/room-ready.ts`), so it is a backstop, not an exact 200. The cap exists so that the largest room Familiarise can sell has a known cost. At the HD rate ($1.50 per 1,000 participant minutes), a full 200-attendee webinar of 90 minutes is 18,000 participant minutes, about $27 (roughly ₹2,450), and a full 200-student class of 60 minutes is 12,000 participant minutes, about $18 (roughly ₹1,630). Those figures count attendees only (the host and co-presenters add their own minutes) and use the plain HD call rate; section 1.5 shows how a shared screen moves a viewer to a higher tier and how muted attendees are metered at the livestream rates. Live Streaming with HLS (section 2.3) would cost more per viewer-minute and add 10 to 30 seconds of delay, which is why audiences above the cap are not routed to it. The cap can be lifted after a load test.
 
-| Sessions/mo | PM      | PAYG cost | After $100 credit | INR/mo  |
-| ----------- | ------- | --------- | ----------------- | ------- |
-| 1           | 4,500   | $6.75     | **$0**            | ₹0      |
-| 4           | 18,000  | $27.00    | **$0**            | ₹0      |
-| 10          | 45,000  | $67.50    | **$0**            | ₹0      |
-| 20          | 90,000  | $135.00   | **$35.00**        | ₹3,175  |
-| 50          | 225,000 | $337.50   | **$237.50**       | ₹21,541 |
-| 100         | 450,000 | $675.00   | **$575.00**       | ₹52,153 |
-
-### 8.3 HD 30fps — Class (20 students, 60 min/session)
-
-| Sessions/mo | PM      | PAYG cost | After $100 credit | INR/mo  |
-| ----------- | ------- | --------- | ----------------- | ------- |
-| 10          | 12,000  | $18.00    | **$0**            | ₹0      |
-| 25          | 30,000  | $45.00    | **$0**            | ₹0      |
-| 50          | 60,000  | $90.00    | **$0**            | ₹0      |
-| 100         | 120,000 | $180.00   | **$80.00**        | ₹7,256  |
-| 200         | 240,000 | $360.00   | **$260.00**       | ₹23,582 |
-| 500         | 600,000 | $900.00   | **$800.00**       | ₹72,560 |
-
-### 8.4 The 200-participant cap
-
-Webinars and classes are capped at 200 participants at launch ([ADR-07](./18-architecture-decision-records.md#adr-07-interactive-webrtc-with-a-200-participant-cap-not-hls-at-launch)), enforced when a plan is authored and when a seat is sold. The call's Stream `limits.max_participants` is the capacity plus a headroom of 5 and exempts the owner and the `co_presenter` and `admin` roles (`lib/meetings/room-ready.ts`), so it is a backstop, not an exact 200. The cap exists so that the largest room Familiarise can sell has a known cost. At the HD rate used in 8.2 ($1.50 per 1,000 participant minutes), a full 200-attendee webinar of 90 minutes is 18,000 participant minutes, about $27 (roughly ₹2,450), and a full 200-student class of 60 minutes is 12,000 participant minutes, about $18 (roughly ₹1,630). Those figures count attendees only (the host and co-presenters add their own minutes) and use the plain HD call rate; section 1.5 shows how a shared screen moves a viewer to a higher tier and how muted attendees are metered at the livestream rates. Live Streaming with HLS (section 2.3) would cost more per viewer-minute and add 10 to 30 seconds of delay, which is why audiences above the cap are not routed to it. The cap can be lifted after a load test.
-
-### 8.5 What 1080p costs
+### 8.2 What 1080p costs
 
 Staff can raise call video, screen share and recording quality on the back-office Video quality page; the defaults are the cheapest sensible choice (720p calls, 720p recordings, 1080p screen share). Two charges move when quality rises. Received video is billed per participant-minute at the received resolution (section 1.5 covers the FAQ's publishing-or-receiving reading), so 1080p is $3.00 per 1,000 participant minutes against $1.50 at 720p. Recording is billed per call minute, so Full HD is $12 per 1,000 call-minutes against $6 for HD. A 60-minute consultation with two participants is 120 participant minutes, so it costs about $0.36 in received video at 1080p against $0.18 at 720p, and 60 call minutes cost about $0.72 to record at Full HD against $0.36 at HD; a month of 500 such sessions adds about $90 of video and $180 of recording. Screen share is encoded once and counts as received video, so its 1080p default costs far less than raising every camera. Stream recording tops out at 1440p and the page does not offer 4K.
 
@@ -445,21 +412,7 @@ Staff can raise call video, screen share and recording quality on the back-offic
 
 ## 9. The Stream.io Cost Cliff
 
-Stream is free (Maker) then jumps hard. It's the single largest step-function cost event in the entire Familiarise SaaS stack.
-
-| Trigger event                                 | Before    | After       | Monthly jump |
-| --------------------------------------------- | --------- | ----------- | ------------ |
-| Maker exit (revenue > ₹9.07L or team > 4)     | $0 chat   | $399–499/mo | +₹36K–45K/mo |
-| MAU crosses 10K                               | $399/mo   | $1,049/mo   | +₹58K/mo     |
-| MAU crosses 25K                               | $1,049/mo | $1,849/mo   | +₹73K/mo     |
-| PM crosses 66,667 (HD, free credit exhausted) | $0 video  | ~$20–80/mo  | small        |
-| PM crosses ~667K (HD)                         | ~$800/mo  | gradual     | gradual      |
-
-**Planning rules:**
-
-1. Apply for Maker Account before any revenue accrues.
-2. Lock in annual Chat billing the month Maker eligibility ends ($1,200/year saved at 10K tier).
-3. Set a PM usage alert at 60,000 PM/month (90% of free credit at HD) in the Stream dashboard.
+Stream is free on the Maker Account and then steps up to the Chat plan price in section 5. The chosen tier, the projected rupee cost at each step and the planning rules: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). The public price steps are the plan tables in section 5.1.
 
 ---
 

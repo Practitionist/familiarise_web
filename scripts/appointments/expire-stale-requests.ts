@@ -43,6 +43,10 @@ import {
 } from "@/lib/booking/event-waitlist";
 import { lapseApprovedRequest } from "@/lib/booking/lapse-approved-request";
 import {
+  cancelAgedParkedConsultations,
+  hasAgedParkedConsultation,
+} from "@/lib/booking/parked-consultation-sweep";
+import {
   notifyConsulteeRequestExpired,
   PAY_LINK_LAPSED_REASON,
   UNANSWERED_REQUEST_REASON,
@@ -243,11 +247,27 @@ function stalePendingSubscriptionWhere(expirationDate: Date) {
   } satisfies Prisma.SubscriptionWhereInput;
 }
 
+// No session was ever confirmed: no confirmed row in any status, tombstones
+// included, and no release, because every party release opens a
+// RescheduleRequest over a confirmed session (a returned or stale-released row
+// stays tentative). A plan that ever had one waits for plan-end settlement.
+const NEVER_CONFIRMED = {
+  NOT: {
+    appointment: {
+      OR: [
+        { occurrences: { some: { isTentative: false } } },
+        { rescheduleRequests: { some: {} } },
+      ],
+    },
+  },
+} satisfies Prisma.SubscriptionWhereInput;
+
+/** The 30-day arm's cohort, repeated in its CAS: a plan that never started, with nothing open. */
 function approvedUnallocatedWhere(cutoff: Date) {
   return {
     status: AppointmentStatus.APPROVED,
     updatedAt: { lt: cutoff },
-    ...NO_LIVE_SESSION,
+    AND: [NEVER_CONFIRMED, noLiveProposal()],
   } satisfies Prisma.SubscriptionWhereInput;
 }
 
@@ -344,6 +364,8 @@ export async function hasStaleRequestWork(
   });
   if (consultation) return true;
   if (outOfTime()) return true;
+  if (await hasAgedParkedConsultation(db, now)) return true;
+  if (outOfTime()) return true;
   const subscription = await db.subscription.findFirst({
     where: {
       OR: [
@@ -384,6 +406,8 @@ export async function hasStaleRequestWork(
 export interface ExpireStaleRequestsResult {
   success: boolean;
   consultationsExpired: number;
+  /** Paid consultations parked after a failed restore, cancelled with a full refund. */
+  parkedConsultationsCancelled: number;
   subscriptionsExpired: number;
   /** #1703 — consultant nudges sent for paid, still-unscheduled subscriptions. */
   subscriptionNudgesSent: number;
@@ -1180,7 +1204,7 @@ async function expireApprovedUnallocatedSubscriptions(
     }
 
     console.log(
-      `Found ${stale.length} APPROVED subscriptions with zero allocated sessions for >${PENDING_EXPIRATION_DAYS} days`,
+      `Found ${stale.length} APPROVED subscriptions never scheduled for >${PENDING_EXPIRATION_DAYS} days`,
     );
 
     // #1423 — the bulk write bypassed transitionSubscriptionRequest, so a
@@ -1198,17 +1222,13 @@ async function expireApprovedUnallocatedSubscriptions(
           prisma.$transaction(
             async (tx) => {
               await transitionSubscriptionRequest(tx, {
-                where: {
-                  id: subscription.id,
-                  updatedAt: { lt: cutoff },
-                  ...NO_LIVE_SESSION,
-                },
+                where: { id: subscription.id, ...cohortWhere },
                 to: AppointmentStatus.EXPIRED,
                 // Deliberate subset of REQUEST_ALLOWED_FROM.EXPIRED: this cohort
                 // is the abandoned-APPROVED shape only.
                 fromIn: [AppointmentStatus.APPROVED],
                 actorUserId: null,
-                reason: `Auto-expired: APPROVED with zero allocated sessions for more than ${PENDING_EXPIRATION_DAYS} days`,
+                reason: `Auto-expired: APPROVED and never scheduled for more than ${PENDING_EXPIRATION_DAYS} days`,
               });
               return stageExpiredRefunds(
                 tx,
@@ -2115,6 +2135,8 @@ async function expirePaymentPendingRequests(
 // double refund; a missed run pages instead.
 export async function expireStaleRequests(opts?: {
   limits?: Partial<StaleRequestRunLimits>;
+  /** When the request began (ms epoch); defaults to this call. */
+  startedAt?: number;
 }): Promise<ExpireStaleRequestsResult> {
   const limits: StaleRequestRunLimits = {
     maxRequests: Math.min(
@@ -2127,13 +2149,15 @@ export async function expireStaleRequests(opts?: {
     maxSlotReleases:
       opts?.limits?.maxSlotReleases ?? DEFAULT_RUN_LIMITS.maxSlotReleases,
   };
+  const pastDeadline = startDeadline(opts?.startedAt);
   return withCronLock("expire-stale-requests", { failMode: "closed" }, () =>
-    expireStaleRequestsUnlocked(limits),
+    expireStaleRequestsUnlocked(limits, pastDeadline),
   );
 }
 
 async function expireStaleRequestsUnlocked(
   limits: StaleRequestRunLimits,
+  pastDeadline: () => boolean,
 ): Promise<ExpireStaleRequestsResult> {
   const allErrors: string[] = [];
 
@@ -2152,6 +2176,13 @@ async function expireStaleRequestsUnlocked(
   // Expire PENDING consultations
   const consultationResult = await expirePendingConsultations(limits);
   allErrors.push(...consultationResult.errors);
+
+  // Paid consultations parked after a failed restore and never re-placed.
+  const parkedResult = await cancelAgedParkedConsultations({
+    maxRows: limits.maxRequests,
+    pastDeadline,
+  });
+  allErrors.push(...parkedResult.errors);
 
   // Expire PENDING subscriptions
   const subscriptionResult = await expirePendingSubscriptions(limits);
@@ -2219,6 +2250,7 @@ async function expireStaleRequestsUnlocked(
   console.log(
     `   Tentative slots released with them: ${consultationResult.slotsReleased}`,
   );
+  console.log(`   Parked consultations cancelled: ${parkedResult.cancelled}`);
   console.log(
     `   Subscriptions expired (PENDING): ${subscriptionResult.expired}`,
   );
@@ -2230,7 +2262,7 @@ async function expireStaleRequestsUnlocked(
   );
   console.log(`   Unscheduled-subscription nudges sent: ${nudges.nudged}`);
   console.log(
-    `   Refunds issued/failed: ${consultationResult.issued + subscriptionResult.issued + approvedUnallocated.issued + paidUnallocated.issued}/${consultationResult.failures + subscriptionResult.failures + approvedUnallocated.failures + paidUnallocated.failures}`,
+    `   Refunds issued/failed: ${consultationResult.issued + parkedResult.issued + subscriptionResult.issued + approvedUnallocated.issued + paidUnallocated.issued}/${consultationResult.failures + parkedResult.failures + subscriptionResult.failures + approvedUnallocated.failures + paidUnallocated.failures}`,
   );
   console.log(`   Payment pending expired: ${totalPaymentPending}`);
 
@@ -2242,6 +2274,7 @@ async function expireStaleRequestsUnlocked(
   return {
     success: allErrors.length === 0,
     consultationsExpired: consultationResult.expired,
+    parkedConsultationsCancelled: parkedResult.cancelled,
     // #1423 — both subscription arms count here. The APPROVED-unallocated arm
     // used to be invisible in this field: the PENDING arm's bulk statement ran
     // unconditionally and its `count` was reported as the whole total, so the
@@ -2255,11 +2288,13 @@ async function expireStaleRequestsUnlocked(
     consultationSlotsReleased: consultationResult.slotsReleased,
     refundsIssued:
       consultationResult.issued +
+      parkedResult.issued +
       subscriptionResult.issued +
       approvedUnallocated.issued +
       paidUnallocated.issued,
     refundFailures:
       consultationResult.failures +
+      parkedResult.failures +
       subscriptionResult.failures +
       approvedUnallocated.failures +
       paidUnallocated.failures,

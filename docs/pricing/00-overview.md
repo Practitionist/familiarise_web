@@ -2,7 +2,7 @@
 title: Pricing — Overview and current state
 type: explanation
 status: live
-last-reviewed: 2026-11-09
+last-reviewed: 2026-11-11
 ---
 
 # Pricing: overview and current state
@@ -45,7 +45,7 @@ The `DiscountCode` model (`prisma/schema.prisma`) holds `code`, `discountType` (
 
 ### The referral welcome discount
 
-A buyer who signed up through a consumer referral gets a pre-tax discount on their first marketplace purchase. `resolveCheckoutAttribution()` (`lib/referrals/attribution.ts`) decides eligibility and builds the `WelcomeDiscount` (basis points, a rupee ceiling and a minimum order); `computeWelcomeDiscountPaise()` and `keepsWelcomeDiscount()` (`lib/referrals/promo-math.ts`) apply it. Its percentage is `min(ReferralProgramConfig.discountBps, platform fee bps)`, so it never exceeds the order's take rate. The amount is stored in `Payment.welcomeDiscountPaise`. The database holds the "one live welcome-discounted order per buyer" slot as the unique index `Payment_live_welcome_discount_user_key`; losing the race returns the typed 409 `WELCOME_DISCOUNT_IN_USE`. The program thresholds are configuration; their values are kept in Notion (Familiarise / Growth & Marketing).
+A buyer who signed up through a consumer referral gets a pre-tax discount on their first marketplace purchase. `resolveCheckoutAttribution()` (`lib/referrals/attribution.ts`) decides eligibility and builds the `WelcomeDiscount` (basis points, a rupee ceiling and a minimum order); `computeWelcomeDiscountPaise()` and `keepsWelcomeDiscount()` (`lib/referrals/promo-math.ts`) apply it. Its percentage is `min(ReferralProgramConfig.discountBps, platform fee bps)`, so it never exceeds the order's take rate. The amount is stored in `Payment.welcomeDiscountPaise`. The database holds the "one live welcome-discounted order per buyer" slot as the unique index `Payment_live_welcome_discount_user_key`; losing the race returns the typed 409 `WELCOME_DISCOUNT_IN_USE`. The program thresholds are configuration; their approved values are kept in Notion (Familiarise / Growth & Marketing / Growth & Marketing Lever Register).
 
 ### Referral credits
 
@@ -53,7 +53,7 @@ Credits are money a referrer has earned, spent after tax. `creditCapPaise()` (`l
 
 ### The platform fee: two rates and attribution
 
-`PlatformFeeSchedule` holds two rates in basis points, `marketplaceBps` and `ownLinkBps`, versioned with a maker and a checker; the active row is the latest approved one whose `effectiveFrom` has passed (`readActiveFeeSchedule()` in `lib/payments/pricing/platform-fee.ts`). While no row is approved both rates fall back to 20%. The owner approving a schedule is a go-live step; the values and their reasoning are kept in Notion (Familiarise / Finance).
+`PlatformFeeSchedule` holds two rates in basis points, `marketplaceBps` and `ownLinkBps`, versioned with a maker and a checker; the active row is the latest approved one whose `effectiveFrom` has passed (`readActiveFeeSchedule()` in `lib/payments/pricing/platform-fee.ts`). While no row is approved both rates fall back to 20%. The owner approving a schedule is a go-live step; the approved values are kept in Notion (Familiarise / Finance and Pricing / Finance Lever Register) and the reasoning in Notion (Familiarise / Finance and Pricing / Pricing Strategy).
 
 Which rate applies to an order depends on **attribution**, stamped on the payment as `attributionSource`:
 
@@ -67,11 +67,17 @@ The public `become-an-expert` page renders both rates from the active schedule t
 
 ### Fee waivers
 
-`ConsultantFeeWaiver` grants an expert a 0% platform fee on their next N sessions, created by the referral program for the referred and the referring expert. A waiver is consumed by compare-and-set in the capture transaction (`consumeFeeWaiver()` in `lib/payments/pricing/platform-fee.ts`). An order that carries a welcome discount or a credit leg does not consume a waiver, because the platform's take must fund that promo. Conversely `takeCannotFundPromo()` in `lib/referrals/attribution.ts` removes the welcome discount and the credit cap from any order whose expert has a live waiver, or belongs to a host organisation while `ENABLE_HOST_ORGS` is on.
+`ConsultantFeeWaiver` grants an expert a 0% platform fee on their next N sessions, created by the referral program for the referred and the referring expert, or by an ADMIN founding-expert grant (`POST /api/admin/referrals/founding-waivers`). A waiver is consumed by compare-and-set in the capture transaction (`consumeFeeWaiver()` in `lib/payments/pricing/platform-fee.ts`). An order that carries a welcome discount or a credit leg does not consume a waiver, because the platform's take must fund that promo. Conversely `takeCannotFundPromo()` in `lib/referrals/attribution.ts` removes the welcome discount and the credit cap from any order whose expert has a live waiver, or belongs to a host organisation while `ENABLE_HOST_ORGS` is on.
 
 ### Host-organisation rate cards
 
 When an expert sells under a hosting organisation, the split is set by the organisation's `RateCard` (`platformBps`, `orgBps`, `consultantBps`, summing to 10,000) rather than by the marketplace fee. The effective card is resolved by `resolveEffectiveRateCard()` in `lib/api/organizations/rate-card.ts`, and settlement is in `lib/payments/payouts/earnings-service.ts`. The detail is in [rate cards and overage](../finance/50-b2b/03-rate-cards-and-overage.md).
+
+### Price bounds
+
+`lib/payments/pricing/price-bounds.ts` holds, in code, the lowest price and a suggested default for a 1:1 session by its length, and the pack rule for short packs (≤ 4 weeks): a subscription plan sold in weeks (`durationInWeeks` set) for at most `PACK_MAX_WEEKS` weeks has its price divided by `totalSessions` held to at most `MAX_PACK_DISCOUNT_BPS` below the single-session floor for its `sessionDurationInHours`. `isShortPack()` decides it; a month-based plan or a plan longer than four weeks is a subscription and has no floor until subscriptions launch. There is no maximum. `minPriceForSession()`, `defaultPriceForSession()` and `minPriceForPack()` are pure, so the offering editor imports the default too: a new consultation plan opens at the suggested 60-minute price.
+
+`assertPlanPriceWithinBounds()` throws `PlanPriceBelowFloorError` (400, `PLAN_PRICE_BELOW_FLOOR`) with a plain sentence naming the floor. Four routes call it: the consultation plan `POST` (`app/api/plans/consultations/route.ts`) and `PUT` (`app/api/plans/consultations/[consultationPlanId]/route.ts`), and the subscription plan `POST` (`app/api/plans/subscriptions/route.ts`) and `PUT` (`app/api/plans/subscriptions/[subscriptionPlanId]/route.ts`). The subscription routes call it only for a short pack. A `PUT` checks only an edit that sets the price or the length terms, against the plan as it would be saved. Checkout charges a 1:1 or a pack only from the saved plan price (`calculateAmountAndValidate()` in `lib/payments/checkout/pricing.ts`, and the pay-link in `lib/payments/operations/approval-payment.ts`), so it has no second guard; a plan saved before the floor existed keeps its price until it is next edited. `SUGGESTED_DEFAULT_PRICE_PAISE` holds the defaults for webinars, classes, monthly subscriptions, digital products and replays, which are suggestions only until each format launches. Trials keep their own floor, `PlatformPricingConfig.minTrialPriceInPaise`.
 
 ### GST on the order
 
@@ -96,6 +102,7 @@ When an expert sells under a hosting organisation, the split is set by the organ
 | Welcome discount and credit cap           | `lib/referrals/attribution.ts`, `lib/referrals/promo-math.ts`                                                                                                          |
 | Fee schedule, waiver, attribution         | `lib/payments/pricing/platform-fee.ts`, `ExpertCustomerRelationship`                                                                                                   |
 | Host-organisation rate card               | `lib/api/organizations/rate-card.ts`                                                                                                                                   |
+| Price floors and suggested defaults       | `lib/payments/pricing/price-bounds.ts`, called by the consultation and subscription plan routes under `app/api/plans/`                                                 |
 | The checkout page for all four plan types | `PlanCheckoutShell` and the per-type adapters in `app/checkout/plans/` (`adapters/`, `components/`), with `DiscountCodeField` for the code input and its inline errors |
 | Buyer payment detail (discount amounts)   | `paymentDiscountBreakdown()` in `lib/appointments/payment-display.ts`                                                                                                  |
 

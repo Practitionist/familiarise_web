@@ -26,6 +26,11 @@ import { Prisma, TrialStatus } from "@prisma/client";
 
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { transitionTrial } from "@/lib/booking/transitions";
+import {
+  expirePendingPaymentsInTx,
+  type GatewayCancel,
+} from "@/lib/booking/pending-payment-expiry";
+import { cancelPaymentIntent } from "@/scripts/payments/cleanup-abandoned-payments";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { softCancelTrialAppointment } from "@/lib/trials/cancellation";
 import { stageTrialLifecycleEmail } from "@/lib/email/senders/booking";
@@ -141,9 +146,18 @@ async function rotateTrial(trialId: string): Promise<void> {
  * failure and rotates the row.
  */
 async function expireOneTrial(trial: LapsedTrial, now: Date): Promise<boolean> {
+  let gatewayCancels: GatewayCancel[] = [];
   try {
-    await prisma.$transaction((tx) =>
-      transitionTrial(tx, {
+    await prisma.$transaction(async (tx) => {
+      // The held time's unpaid order dies first, in the capture's lock order
+      // (payment → trial), so the cancelled trial leaves nothing payable.
+      if (trial.appointmentId) {
+        ({ gatewayCancels } = await expirePendingPaymentsInTx(tx, {
+          appointmentId: trial.appointmentId,
+          reason: "Trial pay-link lapsed without payment",
+        }));
+      }
+      await transitionTrial(tx, {
         where: { id: trial.id },
         to: TrialStatus.CANCELLED,
         fromIn: [TrialStatus.AWAITING_PAYMENT, TrialStatus.PENDING],
@@ -158,8 +172,8 @@ async function expireOneTrial(trial: LapsedTrial, now: Date): Promise<boolean> {
           paymentDueAt: null,
         },
         reason: "Trial pay-link lapsed without payment",
-      }),
-    );
+      });
+    });
   } catch (error) {
     // Scheduled or paid between the read and the write — the payment
     // wins, and there is nothing left to expire.
@@ -174,6 +188,19 @@ async function expireOneTrial(trial: LapsedTrial, now: Date): Promise<boolean> {
   // cohort below re-tombstones it on the next run.
   if (trial.appointmentId) {
     await tombstoneHeldCall(trial.id, trial.appointmentId);
+  }
+  // Best-effort: a capture that still lands on EXPIRED is parked and refunded.
+  for (const cancel of gatewayCancels) {
+    try {
+      await cancelPaymentIntent(cancel.paymentIntent, cancel.gateway);
+    } catch (error) {
+      runFailures.add(
+        "expire-unpaid-trials-gateway-cancel",
+        error,
+        { trialId: trial.id },
+        { expected: true },
+      );
+    }
   }
   // The same notice the interactive cancel path sends; never fatal.
   try {

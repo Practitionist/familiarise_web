@@ -225,7 +225,7 @@ Database: Appointment + AppointmentOccurrence records created
 **Core services:**
 
 - `utils/scheduling-engine/ScheduleCalculationService.ts` -- Pure math, no DB. Counts weeks, calculates required slots, groups by day/week.
-- `utils/scheduling-engine/ScheduleValidationService.ts` -- Business rule validation. Checks conflicts, availability match, consecutive slots, weekly limits.
+- `utils/scheduling-engine/ScheduleValidationService.ts` -- Business rule validation. Checks conflicts, availability match, consecutive slots, weekly limits (subscriptions only) and the per-day cap.
 - `lib/booking/allocation/` -- The allocator. Each mode file takes the distributed locks and opens its own write transaction; `commit/create-appointments.ts` writes the occurrences.
 
 **Frontend hook:** `app/dashboard/consultant/[consultantId]/(features)/shared/hooks/useScheduling.ts`
@@ -237,6 +237,20 @@ Database: Appointment + AppointmentOccurrence records created
 | **Auto** (`isAuto: true`)                 | Consultant clicks "Auto-allocate"             | System searches consultant's `AvailabilityWindowWeekly` for first-fit consecutive blocks. Uses Redis distributed lock (`lockAutoAllocate`) to prevent concurrent allocations. Searches forward from `schedulingPeriodStartsAt`. |
 | **Manual** (`slots: string[]`)            | Consultant selects specific times on calendar | Consultant provides exact ISO datetime strings for each slot. Must pass all validation checks (no conflicts, within availability, within scheduling period).                                                                    |
 | **Requested** (`useRequestedSlots: true`) | Consultee proposed times during checkout      | Uses slots pre-proposed by consultee in the booking request. Consultant approves by triggering allocation with this flag.                                                                                                       |
+
+### 4c. How each recurring kind gets its times
+
+- **Subscription.** The consultant places one plan week at a time on the week grid, by hand or with "Auto-schedule this week". The auto search first keeps a free day between sessions, then packs.
+  - Before any of this, the plan had to be deliverable: publishing it for the first time, or changing its cadence, ran `planPublishFeasibility` (`lib/booking/feasibility.ts`), which counts a session on the zone-day it starts. A published plan saved unchanged is not re-checked.
+  - At checkout the buyer is told when the expert's hours, counting today's bookings, have room for fewer sessions a week than the plan promises. Checkout refuses only when the first week holds nothing.
+- **Class.** The host schedules from a weekly pattern (`ClassPatternScheduler`, `lib/booking/class-pattern.ts`): "Mon and Thu at 18:00 from 1 Dec" becomes the N sessions on the host's wall clock. Saving goes through the manual mode above.
+  - The auto search for a class spaces sessions first, then places one a day, and only then stacks two on a day. A class has no weekly limit: the host may run it faster than the plan's sessions a week, and only the per-day cap of two limits it (owner decision, 2026-11-12). Subscriptions keep their plan-week rules.
+  - After a seat sells, the class moves only as a series (`retimeClassSeries`, "Move upcoming sessions") or session by session through cancel and make-up. The allocator refuses a re-plan with 409 `USE_RETIME`, and the refusal names the button. A series move re-reads the class inside its transaction and refuses with 409 `RETIME_NOT_ALLOWED` when the class or its movable sessions changed since the host planned the move. Only the host sees these controls; co-instructors do not.
+  - A class start off the UTC half-hour grid, under an hour ahead, or one that cannot place every session is refused at creation with 400 `EVENT_TIME_INVALID`.
+
+Worked example. Priya publishes a class of 12 sessions, 2 a week, 60 minutes, from her IST calendar. She picks "Tue and Fri at 19:00, from Tue 1 Dec". The scheduler lists 1, 4, 8, 11, 15… Dec at 19:00 IST (13:30 UTC), and flags 11 Dec as Busy because a 1:1 is booked at 19:00 that day. She moves Fridays to 19:30, the list is clean, and "Schedule 12 sessions" saves 24 half-hour atoms through the allocator.
+
+Three weeks in, with 8 seats sold, she needs evenings back. "Move upcoming sessions" asks for one new time for each of the 6 sessions still 24 hours or more away. She picks "Sat at 10:00", and the 6 sessions move in place. Learners are told and may leave with a full refund until `retimeBy`. Nobody's sessions are cancelled, so no miss is recorded.
 
 ### 4c. Slot Math
 
@@ -379,7 +393,7 @@ PENDING (in hold) -> READY (hold expired) -> PAID (in payout batch)
 
 1. For each consultant with READY earnings:
    - Sum `consultantShare` amounts
-   - Check >= Rs 500 minimum (`MINIMUM_PAYOUT_AMOUNT`)
+   - Check >= Rs 250 minimum (`MINIMUM_PAYOUT_AMOUNT`)
    - Check verified default `PayoutAccount` exists
    - Create `Payout` record (auto-approve if < Rs 5000, else needs admin approval)
    - Link all READY `ConsultantEarnings` to the payout

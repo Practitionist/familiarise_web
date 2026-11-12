@@ -36,7 +36,7 @@ The [ownership decision](2026-11-01-observability-ownership.md) made Better Stac
    | `emailRetries`        | 1 h                             | `retry-failed-emails`, every 15 min                           |
    | `notificationRetries` | 1 h                             | `drain-notification-outbox`, every 10 min                     |
 
-   All seven alert by email and Slack now. The four money gauges move to phone at launch with the responder seat.
+   All seven alert by email and Slack now. The four money gauges move to phone paging when the responder seat is bought (its trigger is kept in Notion, see the note under Consequences); until then they keep alerting by email and Slack, including after launch.
 
 8. **The Stuck work inbox is read-only.** One console page, `/dashboard/admin/stuck-work`, behind `systemJobs.manage` like System Jobs, lists the stuck items of the same seven queues with the age past due, the attempts and the last error, linked to the Entity trace and the existing money, invoice, compliance and System Jobs pages where the actions already live. Each queue shows its total and, when it holds more than 25 items, the oldest 25 and the newest 25 with a count of those in between, so a failure from today shows beside a backlog of 131 dead letters. Disputes are measured from `Dispute.dueBy` itself ("due in 5 h", "overdue by 42 d"); only their listing opens 48 hours early, matching the `disputesDue` gauge. It adds no mutation path. It reads eight bounded statements in sequence while every table fits on the page, and two more (the newest rows and a count) for each table that overflows (`lib/backoffice/needs-attention.ts`). It is named Stuck work because the admin Home page is already titled Needs attention. The totals, the newest items, the deadline-based dispute label and the name were approved by the owner on 2026-11-01 after deploy-preview QA. This is #2424 Phase 2 without the Retry buttons.
 
@@ -70,6 +70,7 @@ The [ownership decision](2026-11-01-observability-ownership.md) made Better Stac
 - `ENABLE_BETTERSTACK_TELEMETRY` is read at call time by the emitter; the module-load constant in `lib/feature-flags.ts` is removed.
 - The gauges are blind when the probe budget is spent or the claim is unreachable; the money alerts then open an incident by policy, and the freshness alert covers a stopped ticker.
 - On the shared database the money gauges are not zero today because of seeded and QA rows; the owner chose to create the alerts muted and unmute them after the go-live data reset, without deleting rows on the shared database.
+- **Superseded in part (2026-11-11).** The Better Stack responder seat and the Telemetry Nano bundle are no longer bought "at launch"; each moves to a trigger kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). The static-egress vendor in decision 10 is open: QuotaGuard Static or another fixed-IP HTTP or HTTPS forward proxy that supports `CONNECT` works, because the code reads only `RAZORPAYX_EGRESS_PROXY_URL` and sends through undici's `ProxyAgent` (a SOCKS-only proxy does not). The purchase stays tied to the first live platform payout. See [the 2026-11-11 levers record](2026-11-11-cfo-csmo-levers.md).
 
 ## Deprecated & Superseded Approaches
 

@@ -21,8 +21,10 @@ import {
   scheduleAnomalyReport,
 } from "@/lib/appointments/report-anomalies";
 
+// `timezone` lets the detail page show the other party's wall clock for the
+// next session; it names a zone, never a location.
 const userSelect = {
-  select: { id: true, name: true, image: true },
+  select: { id: true, name: true, image: true, timezone: true },
 } as const;
 
 const slotsInclude = {

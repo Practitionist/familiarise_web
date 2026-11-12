@@ -135,6 +135,20 @@ describe("getSlotLimits defensive bounds", () => {
     });
     expect(limits.maxSlots).toBe(0);
   });
+
+  it("an unscheduled class sizes from the plan total without a period", () => {
+    const limits = getSlotLimits("class", {
+      sessionDurationInHours: 2,
+      sessionsPerWeek: 3,
+      maxTotalCalls: 72,
+    });
+    expect(limits).toEqual({
+      minSlots: 288,
+      maxSlots: 288,
+      slotsPerSession: 4,
+      totalSessions: 72,
+    });
+  });
 });
 
 describe("consecutive-atom rules at the scheduling-timezone day boundary", () => {

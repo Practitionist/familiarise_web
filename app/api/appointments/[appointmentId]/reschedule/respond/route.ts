@@ -28,6 +28,7 @@ import {
   withAppointmentLock,
 } from "@/utils/appointmentlock";
 import type { EventType } from "@/utils/scheduling-engine/types";
+import { confirmTrialProposal } from "@/lib/booking/trial-reschedule";
 
 const RespondSchema = z.object({ action: z.enum(["accept", "decline"]) });
 
@@ -39,6 +40,10 @@ const ACCEPT_FAILURE_COPY: Record<string, string> = {
     "This proposal has expired. The released times are back with the consultant to place.",
   RESCHEDULE_NO_LONGER_OPEN:
     "This proposal was answered or expired while it was being accepted, so the booking did not move.",
+  TIMES_TAKEN:
+    "That time has been taken since it was proposed, so the booking did not move. Decline it to keep the original time.",
+  NO_AVAILABILITY:
+    "That time is no longer in the expert's open hours, so the booking did not move. Decline it to keep the original time.",
 };
 const ACCEPT_FAILURE_FALLBACK = "The proposed times could not be confirmed.";
 
@@ -55,6 +60,7 @@ type OpenRequest = {
     consultationId: string | null;
     subscriptionId: string | null;
     organizationId: string | null;
+    trial: { consultantProfileId: string } | null;
   } | null;
 };
 
@@ -74,6 +80,12 @@ async function answersFor(
   if (open.initiatorRole === "CONSULTANT") {
     if (consulteeUserId && session.user.id === consulteeUserId) return true;
     return isOrgAdminOfAppointment(session.user.id, appointment, "reschedule");
+  }
+  // A trial is answered by its own expert.
+  if (appointment.trial) {
+    return (
+      session.user.consultantProfileId === appointment.trial.consultantProfileId
+    );
   }
   const event = appointment.consultationId
     ? { type: "consultation" as const, id: appointment.consultationId }
@@ -141,6 +153,12 @@ export async function POST(
             subscription: {
               select: { requestedBy: { select: { userId: true } } },
             },
+            trial: {
+              select: {
+                consultantProfileId: true,
+                consulteeProfile: { select: { userId: true } },
+              },
+            },
           },
         },
       },
@@ -151,7 +169,8 @@ export async function POST(
     // live reschedules.
     const consulteeUserId =
       open?.appointment?.consultation?.requestedBy?.userId ??
-      open?.appointment?.subscription?.requestedBy?.userId;
+      open?.appointment?.subscription?.requestedBy?.userId ??
+      open?.appointment?.trial?.consulteeProfile.userId;
     const isCounterparty =
       !!open &&
       open.initiatedById !== session.user.id &&
@@ -234,6 +253,31 @@ export async function POST(
         },
         { status: 409 },
       );
+    }
+
+    // A trial moves its one session in place; there is no allocation flow.
+    if (open.appointment?.trial) {
+      const moved = await withAppointmentLock(appointmentId, (lock) =>
+        confirmTrialProposal({
+          rescheduleRequestId: open.id,
+          to: "ACCEPTED",
+          resolvedById: session.user.id,
+          heldAppointmentLock: lock,
+        }),
+      );
+      if (!moved.confirmed) {
+        return NextResponse.json(
+          {
+            error: ACCEPT_FAILURE_COPY[moved.reason] ?? ACCEPT_FAILURE_FALLBACK,
+            code: moved.reason,
+          },
+          { status: moved.reason === "NO_PROPOSED_TIMES" ? 422 : 409 },
+        );
+      }
+      return NextResponse.json({
+        accepted: true,
+        message: "Proposal accepted — the trial has moved to the new time.",
+      });
     }
 
     let eventType: EventType | null = null;

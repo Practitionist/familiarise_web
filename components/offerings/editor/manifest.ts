@@ -40,7 +40,8 @@ export type FieldKind =
   | "learningOutcomes"
   | "languageLevel"
   | "planLength"
-  | "image";
+  | "image"
+  | "sessionTime";
 
 export interface FieldSpec {
   /** react-hook-form path. */
@@ -61,6 +62,8 @@ export interface FieldSpec {
   step?: number;
   /** `select` only. */
   options?: { value: string; label: string }[];
+  /** `sessionTime` only — the sibling holding the session length in hours. */
+  durationName?: string;
   /** `price` only — the sibling holding the currency code. */
   currencyName?: string;
   /** `stringList` / `learningOutcomes` only. */

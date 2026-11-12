@@ -20,10 +20,7 @@ import {
   assertConsultantAvailableForWindows,
   ConsultantScheduleConflictError,
 } from "@/lib/collaborators/availability";
-import {
-  CollaboratorIneligibleError,
-  respondToInvitation,
-} from "@/lib/collaborators/service";
+import { respondToInvitation } from "@/lib/collaborators/service";
 import {
   scheduleClassMakeUp,
   type HostedClass,
@@ -311,7 +308,10 @@ describe("Issue #2010 Part 2 — Single-Active-Session Consultant Concurrency", 
     const now = new Date();
     const missedStart = new Date(now.getTime() - 3_600_000);
     const missedEnd = new Date(missedStart.getTime() + 3_600_000);
-    const makeUpStart = new Date(now.getTime() + 86_400_000);
+    // Host-set times sit on the half-hour grid.
+    const makeUpStart = new Date(
+      Math.ceil((now.getTime() + 86_400_000) / 1_800_000) * 1_800_000,
+    );
 
     const createSpy = jest
       .fn()

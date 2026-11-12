@@ -1,31 +1,42 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { TimePicker } from "@/components/scheduling/TimePicker";
+import { ClassPatternScheduler } from "@/components/scheduling/ClassPatternScheduler";
 import {
   manageTimingsPolicy,
   type TimePickerSubject,
 } from "@/components/scheduling/time-picker-policy";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
+import type { ContextChip } from "@/components/scheduling/SchedulingContextBar";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { Button } from "@/components/ui/button";
 
 /**
- * The consultant half of the manage-timings page — the allocate-mode grid
- * owns the submit here (`useEventSlotAllocation` inside it POSTs the
- * allocation and raises its own "Timings saved" toast, same as the allocate
- * route), so this only decides where to go afterwards.
+ * The consultant half of the manage-timings page. A class opens on its weekly
+ * pattern scheduler (mobile-friendly, previews all N sessions); the week grid
+ * stays one click away as the calendar view. The grid owns its own submit
+ * (`useEventSlotAllocation` POSTs and toasts), so this only decides where to
+ * go afterwards.
  */
 export function ManageTimingsClient({
   subject,
   backHref,
   title,
+  contextChips,
 }: Readonly<{
   subject: TimePickerSubject;
   backHref: string;
   title: string;
+  contextChips?: ContextChip[];
 }>) {
   const router = useRouter();
+  const { zone: viewerZone } = useViewerZone();
   // Replaces the generic "timings" crumb with the offering's own name (#1064).
   useSetBreadcrumbLabel(title);
+  const isClass = subject.eventType === "class" && Boolean(subject.eventId);
+  const [calendarView, setCalendarView] = useState(!isClass);
 
   const goBack = () => {
     router.push(backHref);
@@ -34,12 +45,48 @@ export function ManageTimingsClient({
 
   const policy = manageTimingsPolicy({ onSubmit: goBack });
 
+  if (isClass && !calendarView && subject.eventId) {
+    // The page is a fixed-height viewport fill, so the scheduler scrolls inside it.
+    return (
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <ClassPatternScheduler
+          classId={subject.eventId}
+          consultantId={subject.consultantProfileId}
+          zone={subject.schedulingTimezone ?? viewerZone}
+          sessionMinutes={Math.round(
+            (subject.sessionDurationInHours ?? 1) * 60,
+          )}
+          totalSessions={subject.totalSessions ?? subject.sessionsPerWeek ?? 1}
+          sessionsPerWeek={subject.sessionsPerWeek ?? 1}
+          hasSessions={(subject.slots?.length ?? 0) > 0}
+          onSaved={goBack}
+          onUseCalendar={() => setCalendarView(true)}
+        />
+      </div>
+    );
+  }
+
   return (
-    <TimePicker
-      className="min-h-0 flex-1"
-      policy={policy}
-      subject={subject}
-      onCancel={goBack}
-    />
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
+      {isClass && (
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setCalendarView(false)}
+          >
+            Schedule from a weekly pattern instead
+          </Button>
+        </div>
+      )}
+      <TimePicker
+        className="min-h-0 flex-1"
+        policy={policy}
+        subject={subject}
+        onCancel={goBack}
+        contextChips={contextChips}
+      />
+    </div>
   );
 }

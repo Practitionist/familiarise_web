@@ -28,6 +28,10 @@ Newsletter broadcasts, announcements versus newsletter, the appointment waitlist
 - **`tx` only:** inside `prisma.$transaction`, every helper receives and queries `tx`, never the global client. `PG_POOL_MAX=1` on Netlify deadlocks otherwise (`loadEmailRecipients(userIds, category, tx)`, `bellAudience(tx, ...)`).
 - Await every call. An un-awaited call is lost when the Netlify instance freezes after the response.
 
+## Decided, not yet built
+
+Free bookings will notify like paid ones minus the receipt, a free approval and every decline will notify the buyer, and a completed trial will send one bell and one email (`docs/decisions/2026-11-12-booking-follow-up-train.md`). Do not special-case free bookings out of a new booking notice.
+
 ## Add an event
 
 1. Add the id to `NOVU_WORKFLOWS` and a typed payload in `lib/novu/workflows.ts`.

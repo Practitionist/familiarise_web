@@ -121,7 +121,7 @@ Done on 2026-11-08 for Production, in the window of the production release promo
 ### Step 5: Environment Variables & Pre-Launch Delivery Guard Cutover
 
 - [ ] Confirm all required environment variables are configured in Netlify Dashboard and GitHub Actions secrets
-- [ ] Move Resend from Free to Pro just before launch, before the first marketing batch, or when real volume needs it, whichever comes first: Free stops sending at 100 emails a day (see [Resend billing guardrails](../../.claude/skills/billing-guardrails/references/resend.md#5-when-to-move-to-pro-owner-decision-2026-11-03))
+- [ ] Move Resend from Free to Pro on the first purchase trigger (the first marketing batch, daily volume approaching the Free cap, or go-live with more than a handful of active experts; the triggers are kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend)): Free stops sending at 100 emails a day (see [Resend billing guardrails](../../.claude/skills/billing-guardrails/references/resend.md#5-when-to-move-to-pro))
 - [ ] **Launch Cutover Gate**: Flip `EMAIL_DELIVERY_MODE=live` in the production env vars of the active application host and of the standby Netlify site (every scheduled job that sends mail runs on the Netlify ticker, so no Actions variable is read by a cron job) when opening public traffic (while unset or `allowlist`, external recipients are held safely as `DEAD_LETTER` `held:pre-launch` in `FailedEmail`)
 
 ### Step 6: Smoke Test Verification
@@ -235,8 +235,8 @@ Rotate `RESEND_API_KEY` across all four locations in lockstep so no environment 
 
 ## When You'll Need to Upgrade
 
-- **Resend Free → Pro (\$20/mo)**: When daily volume regularly exceeds ~80 emails/day, newsletter broadcasts exceed 100 subscribers in a single blast, or native Resend open/click analytics are required.
-- **Novu Free → Pro (~\$25–30/mo)**: When monthly workflow runs (one per bell recipient, Development and Production together) pass about 60 % of the 10,000-run quota, or when activity history beyond the Free plan's 24 hours is required.
+- **Resend Free → Pro (\$20/mo)**: On the owner's purchase triggers (kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend)): typically daily volume approaching the Free cap of 100 emails a day, a newsletter broadcast larger than the Free plan allows, or a need for native Resend open/click analytics.
+- **Novu Free → Pro (~\$25–30/mo)**: When monthly workflow runs (one per bell recipient, Development and Production together) pass the upgrade trigger kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend), or when activity history beyond the Free plan's 24 hours is required.
 - **Kit / Directus CMS**: Remain deferred post-launch (`lib/newsletter/convertkit.ts` and `app/api/webhooks/directus/route.ts`) until automated drip sequences or managed CMS publishing are prioritized.
 
 ---

@@ -6,7 +6,7 @@
  * vm.occurrences.
  */
 
-import type { TAppointment } from "@/types/appointment";
+import type { TAppointment, TAppointmentWithSeats } from "@/types/appointment";
 import { deriveBucket } from "./bucket";
 import { occurrencesOfAppointment } from "./occurrences";
 import {
@@ -81,7 +81,7 @@ export interface UnscheduledWebinarLike {
 }
 
 export interface ConsultantAppointmentsInput {
-  appointments: TAppointment[];
+  appointments: TAppointmentWithSeats[];
   scheduledTrials?: ConsultantTrialLike[];
   unscheduledClasses?: UnscheduledClassLike[];
   unscheduledWebinars?: UnscheduledWebinarLike[];
@@ -245,8 +245,12 @@ function nextActionableChild(
   );
 }
 
+function liveSeatsOf(rows: TAppointmentWithSeats[]): number {
+  return rows.reduce((sum, row) => sum + (row._count?.participants ?? 0), 0);
+}
+
 function mapSingle(
-  appointment: TAppointment,
+  appointment: TAppointmentWithSeats,
   consultantId: string,
   now: Date,
 ): AppointmentVM {
@@ -271,12 +275,16 @@ function mapSingle(
     pendingPaymentUrl: null,
     collaborators: [],
     collaboratorRole: collaboratorRoleOf(appointment, consultantId),
-    raw: { appointment, source: appointment },
+    raw: {
+      appointment,
+      source: appointment,
+      liveSeats: liveSeatsOf([appointment]),
+    },
   };
 }
 
 function mapGroup(
-  children: TAppointment[],
+  children: TAppointmentWithSeats[],
   consultantId: string,
   now: Date,
 ): AppointmentVM {
@@ -315,6 +323,7 @@ function mapGroup(
       appointment: target ?? first,
       groupAppointments: children,
       source: first,
+      liveSeats: liveSeatsOf(children),
     },
   };
 }
@@ -453,7 +462,7 @@ export function mapConsultantAppointments(
 
   // Group subscription/class children under their parent (one row per
   // program); everything else is a row per appointment.
-  const groups = new Map<string, TAppointment[]>();
+  const groups = new Map<string, TAppointmentWithSeats[]>();
   for (const appointment of appointments ?? []) {
     const key =
       appointment.appointmentType === "SUBSCRIPTION" &&

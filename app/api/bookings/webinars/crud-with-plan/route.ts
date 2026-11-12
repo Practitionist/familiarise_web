@@ -25,6 +25,7 @@ import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolic
 import { refuseForeignProfileReassignment } from "@/lib/api/plans/profile-reassignment";
 import { faqCreateNested, faqReplaceNested } from "@/lib/api/plans/content";
 import { NextRequest, NextResponse } from "next/server";
+import { eventEndOf, eventTimeRefusal } from "@/lib/booking/event-time-rules";
 import { z } from "zod";
 import { WebinarPlanSchema } from "@/schemas/plans";
 import { editorStatusOrRefusal } from "@/lib/api/plans/event-status";
@@ -242,15 +243,15 @@ export async function POST(request: NextRequest) {
       // Zod refine ensures parseable date if scheduledAt is a string
       const parsedStartTime = new Date(scheduledAt);
       if (!isNaN(parsedStartTime.getTime())) {
+        const timeRefusal = eventTimeRefusal(parsedStartTime, "create");
+        if (timeRefusal) {
+          return NextResponse.json(
+            { error: timeRefusal.message, code: timeRefusal.code },
+            { status: 400 },
+          );
+        }
         startTime = parsedStartTime;
-        endTime = new Date(startTime);
-        // Zod ensures durationInHours is a valid number
-        endTime.setHours(startTime.getHours() + durationInHours);
-        console.log("Calculated times:", {
-          startTime: startTime.toISOString(),
-          endTime: endTime.toISOString(),
-          durationInHours,
-        });
+        endTime = eventEndOf(startTime, durationInHours * 60);
       } else {
         // Was a silent skip: startTime stayed undefined, the nested appointment
         // create was replaced with `undefined`, and the result was a published
@@ -695,6 +696,24 @@ export async function PATCH(request: NextRequest) {
         );
       }
 
+      // The editor resends the stored time on every save; only a changed time
+      // is a new schedule and has to pass the event-time rules.
+      const currentStart = webinarToUpdate?.appointment?.occurrences?.find(
+        (s) => !isDeadOccurrence(s),
+      )?.startsAt;
+      if (
+        !currentStart ||
+        new Date(currentStart).getTime() !== scheduledDate.getTime()
+      ) {
+        const timeRefusal = eventTimeRefusal(scheduledDate, "create");
+        if (timeRefusal) {
+          return NextResponse.json(
+            { error: timeRefusal.message, code: timeRefusal.code },
+            { status: 400 },
+          );
+        }
+      }
+
       startTime = scheduledDate;
 
       // Duration needed to calculate end time. Use plan's existing if not provided in patch.
@@ -704,15 +723,7 @@ export async function PATCH(request: NextRequest) {
         throw new Error("Invalid duration for calculating end time.");
       }
 
-      endTime = new Date(
-        scheduledDate.getTime() + effectiveDuration * 60 * 60 * 1000,
-      );
-
-      console.log("Calculated slot times (PATCH):", {
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
-        effectiveDuration,
-      });
+      endTime = eventEndOf(scheduledDate, effectiveDuration * 60);
     } else if (
       durationInHours !== undefined &&
       webinarToUpdate?.appointment?.occurrences?.length

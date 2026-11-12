@@ -73,6 +73,8 @@ export interface TimePickerSubmission {
   preference?: SlotPreference;
   /** The zone the picker showed times in, for naming them back in a refusal. */
   displayZone?: string;
+  /** Sent as `Idempotency-Key`: the same submission repeated reuses it. */
+  idempotencyKey?: string;
 }
 
 export interface TimePickerPolicy {

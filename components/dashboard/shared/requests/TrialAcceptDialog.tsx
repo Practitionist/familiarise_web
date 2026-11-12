@@ -73,6 +73,8 @@ function scheduleFailureCopy(error: unknown): {
 export interface TrialAcceptTarget {
   id: string;
   consulteeName: string;
+  /** The learner, so their busy times are greyed out in the picker. */
+  consulteeUserId?: string;
   durationMinutes: number;
 }
 
@@ -161,6 +163,8 @@ export function TrialAcceptDialog({
               }}
               isProcessing={accept.isPending}
               consulteeUserName={target.consulteeName}
+              consulteeUserId={target.consulteeUserId}
+              purpose="allocate"
             />
           </div>
         )}
