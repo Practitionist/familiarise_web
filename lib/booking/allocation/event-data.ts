@@ -27,6 +27,10 @@ import {
 } from "@/lib/booking/entitlement";
 import { formatDateLabel } from "@/lib/time/display";
 import {
+  soldConsultationMinutes,
+  soldConsultationPricePaise,
+} from "@/lib/booking/sold-terms";
+import {
   ALLOCATION_APPROVABLE_FROM,
   transitionClassEvent,
   transitionConsultationRequest,
@@ -330,6 +334,8 @@ export async function fetchEventData(
       const event = await db.consultation.findUnique({
         where: { id: eventId },
         select: {
+          pricePaise: true,
+          sessionMinutes: true,
           consultationPlan: {
             select: {
               durationInHours: true,
@@ -369,14 +375,15 @@ export async function fetchEventData(
       // The same money predicate the approval CAS rides (SETTLED_CONSULTATION).
       settled =
         payments.some((p) => p.paymentStatus === PaymentStatus.SUCCEEDED) ||
-        Number(event.consultationPlan?.price ?? -1) === 0;
+        soldConsultationPricePaise(event) === 0;
       checkoutInProgress = isLiveCheckoutHold(
         event.bookingSource,
         payments,
         new Date(),
       );
+      // The length the request was made at; a pre-freeze row reads the plan.
       config = {
-        durationInHours: event.consultationPlan?.durationInHours,
+        durationInHours: soldConsultationMinutes(event) / 60,
       };
       consulteeUserId = event.requestedBy?.user?.id;
       // #1319 — atom STARTS, not one entry per row. The approval gate counts

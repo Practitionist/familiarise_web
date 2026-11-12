@@ -27,6 +27,8 @@ export interface ManageTimingsAppointmentLike {
   slots?: OccurrenceLike[];
   consultation?: {
     id?: string | null;
+    /** Length frozen at request; null reads the plan. */
+    sessionMinutes?: number | null;
     consultationPlan?: {
       durationInHours?: number | null;
       title?: string | null;
@@ -93,8 +95,9 @@ function getEventDetails(
         eventId: appointment.consultation?.id || "",
         sessionsPerWeek: 1,
         durationInMonths: 1,
-        durationInHours:
-          appointment.consultation?.consultationPlan?.durationInHours || 1,
+        durationInHours: appointment.consultation?.sessionMinutes
+          ? appointment.consultation.sessionMinutes / 60
+          : appointment.consultation?.consultationPlan?.durationInHours || 1,
         title:
           appointment.consultation?.consultationPlan?.title || "Consultation",
       };

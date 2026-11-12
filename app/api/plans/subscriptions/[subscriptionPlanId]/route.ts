@@ -21,7 +21,11 @@ import {
   activeClientsNotice,
   subscriptionPlanTotals,
 } from "@/lib/booking/entitlement";
-import { activeClientCount, freezeSoldTerms } from "@/lib/booking/sold-terms";
+import {
+  activeClientCount,
+  freezeSoldTerms,
+  freezeTrialTerms,
+} from "@/lib/booking/sold-terms";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
 import {
   assertSubscriptionPlanFloor,
@@ -306,6 +310,14 @@ export async function PUT(
         }>
       | undefined;
 
+    // Trials already requested keep the price and length they were requested on.
+    const trialTermsChange =
+      (validatedData.trialDurationMinutes !== undefined &&
+        validatedData.trialDurationMinutes !==
+          existingPlan.trialDurationMinutes) ||
+      (validatedData.trialPriceInPaise !== undefined &&
+        validatedData.trialPriceInPaise !== existingPlan.trialPriceInPaise);
+
     // Use transaction to ensure atomicity when updating subscription contents
     // This prevents data loss if the update fails after deleting old contents
     const subscriptionPlan = await prisma.$transaction(async (tx) => {
@@ -334,6 +346,7 @@ export async function PUT(
       )
         throw new PlanLengthUnitLockedError();
       if (derived) await freezeSoldTerms(tx, subscriptionPlanId);
+      if (trialTermsChange) await freezeTrialTerms(tx, subscriptionPlanId);
 
       return tx.subscriptionPlan.update({
         where: { id: subscriptionPlanId },

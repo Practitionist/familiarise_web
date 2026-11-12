@@ -136,7 +136,9 @@ export function buildRescheduleSubject(
           consulteeName: appointment.consultation?.requestedBy?.user?.name,
           title: plan?.title ?? "Consultation",
           typeLabel: "Consultation",
-          sessionDurationInHours: plan?.durationInHours,
+          sessionDurationInHours: appointment.consultation?.sessionMinutes
+            ? appointment.consultation.sessionMinutes / 60
+            : plan?.durationInHours,
           eventType: "consultation",
           eventId: appointment.consultation?.id ?? undefined,
         };

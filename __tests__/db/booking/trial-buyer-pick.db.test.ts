@@ -58,6 +58,8 @@ async function pick(
       consulteeUserId: buyer.userId,
       consultantUserId: host.userId,
       paid,
+      pricePaise: paid ? 49_900 : 0,
+      sessionMinutes: 30,
       startsAt,
       endsAt: new Date(startsAt.getTime() + 30 * 60_000),
     }),

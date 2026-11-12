@@ -59,6 +59,8 @@ async function scheduledPaidTrial() {
       consulteeUserId: buyer.userId,
       consultantUserId: host.userId,
       paid: true,
+      pricePaise: 49_900,
+      sessionMinutes: 30,
       startsAt,
       endsAt: new Date(startsAt.getTime() + 30 * 60_000),
     }),

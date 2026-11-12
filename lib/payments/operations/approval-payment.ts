@@ -45,6 +45,10 @@ import {
 } from "@/utils/appointmentlock";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
+import {
+  soldConsultationPricePaise,
+  soldTrialPricePaise,
+} from "@/lib/booking/sold-terms";
 
 // ============================================================================
 // Type Definitions
@@ -845,25 +849,32 @@ async function calculateAmount(
   buyerCountry: string,
 ): Promise<ApprovalAmount> {
   if (params.appointmentType === "TRIAL") {
-    // A trial is priced by its parent subscription plan's trialPriceInPaise,
-    // NOT the plan price — the trial is a taster of that plan, not the plan.
-    const plan = await prisma.subscriptionPlan.findUnique({
-      where: { id: params.planId },
+    // A trial is priced at the trial price it was requested on (the plan's
+    // trialPriceInPaise for a row that predates the freeze), not the plan price.
+    const trial = await prisma.trial.findUnique({
+      where: { id: params.trialId },
       select: {
-        title: true,
-        trialPriceInPaise: true,
-        trialEnabled: true,
-        priceCurrency: true,
+        pricePaise: true,
+        subscriptionPlan: {
+          select: {
+            title: true,
+            trialPriceInPaise: true,
+            trialEnabled: true,
+            priceCurrency: true,
+          },
+        },
       },
     });
 
-    if (!plan) {
-      throw new Error("Subscription plan not found");
+    if (!trial) {
+      throw new Error("Trial not found");
     }
+    const plan = trial.subscriptionPlan;
     if (!plan.trialEnabled) {
       throw new Error("This plan does not offer trials");
     }
-    if (plan.trialPriceInPaise <= 0) {
+    const trialPricePaise = soldTrialPricePaise(trial);
+    if (trialPricePaise <= 0) {
       // Free trials never reach a payment intent — the accept path schedules
       // them directly. Reaching here means the caller mis-routed.
       throw new Error("Cannot create a payment intent for a free trial");
@@ -874,7 +885,7 @@ async function calculateAmount(
 
     return {
       ...(await priceWithTax(
-        planPricePaise(plan.trialPriceInPaise, "trialPriceInPaise"),
+        planPricePaise(trialPricePaise, "trialPriceInPaise"),
         buyerCountry,
         params.appointmentType,
       )),
@@ -884,18 +895,21 @@ async function calculateAmount(
   }
 
   if (params.appointmentType === "CONSULTATION") {
-    const plan = await prisma.consultationPlan.findUnique({
-      where: { id: params.planId },
+    // The price the request was made at; the plan's only for a pre-freeze row.
+    const consultation = await prisma.consultation.findUnique({
+      where: { id: params.consultationId },
       select: {
-        title: true,
-        price: true,
-        priceCurrency: true,
+        pricePaise: true,
+        consultationPlan: {
+          select: { title: true, price: true, priceCurrency: true },
+        },
       },
     });
 
-    if (!plan) {
-      throw new Error("Consultation plan not found");
+    if (!consultation) {
+      throw new Error("Consultation not found");
     }
+    const plan = consultation.consultationPlan;
 
     const currency = plan.priceCurrency;
     // Every stage below treats the amount as INR paise, so a non-INR plan must refuse here.
@@ -903,7 +917,7 @@ async function calculateAmount(
 
     return {
       ...(await priceWithTax(
-        planPricePaise(plan.price, "plan price"),
+        planPricePaise(soldConsultationPricePaise(consultation), "plan price"),
         buyerCountry,
         params.appointmentType,
       )),

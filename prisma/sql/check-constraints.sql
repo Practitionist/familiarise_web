@@ -1593,3 +1593,16 @@ ALTER TABLE "ClassPlan" DROP CONSTRAINT IF EXISTS "class_plan_waitlist_max_min";
 -- SPLIT
 ALTER TABLE "ClassPlan" ADD CONSTRAINT "class_plan_waitlist_max_min"
   CHECK ("waitlistMax" IS NULL OR "waitlistMax" >= 1);
+-- SPLIT
+-- A 1:1's and a trial's frozen sold terms are a non-negative price and a positive length.
+ALTER TABLE "Consultation" DROP CONSTRAINT IF EXISTS "consultation_sold_terms_valid";
+-- SPLIT
+ALTER TABLE "Consultation" ADD CONSTRAINT "consultation_sold_terms_valid"
+  CHECK (("pricePaise" IS NULL OR "pricePaise" >= 0)
+    AND ("sessionMinutes" IS NULL OR "sessionMinutes" >= 1));
+-- SPLIT
+ALTER TABLE "Trial" DROP CONSTRAINT IF EXISTS "trial_sold_terms_valid";
+-- SPLIT
+ALTER TABLE "Trial" ADD CONSTRAINT "trial_sold_terms_valid"
+  CHECK (("pricePaise" IS NULL OR "pricePaise" >= 0)
+    AND ("sessionMinutes" IS NULL OR "sessionMinutes" >= 1));

@@ -27,6 +27,7 @@ import {
 } from "@/lib/booking/validate-conflict-view";
 import { leadMsFor } from "@/lib/booking/lead-time";
 import { SETTLED_CONSULTATION } from "@/lib/booking/approve-request";
+import { soldConsultationMinutes } from "@/lib/booking/sold-terms";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
 const consultationInclude = {
@@ -156,7 +157,7 @@ export async function POST(
           timezone: consultantProfile.user.timezone || undefined,
         },
         {
-          durationInHours: consultationPlan.durationInHours,
+          durationInHours: soldConsultationMinutes(consultation) / 60,
         },
         excludeIds,
         {

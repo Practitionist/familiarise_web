@@ -13,6 +13,7 @@ import {
   subscriptionEntitlement,
   type SubscriptionEntitlement,
 } from "@/lib/booking/entitlement";
+import { soldConsultationMinutes } from "@/lib/booking/sold-terms";
 
 /**
  * The one pending request the allocate page is placing.
@@ -196,6 +197,7 @@ async function readAllocationRequestOrThrow(
     select: {
       id: true,
       status: true,
+      sessionMinutes: true,
       requestedBy: requestedBySelect,
       consultationPlan: {
         select: {
@@ -224,7 +226,7 @@ async function readAllocationRequestOrThrow(
     consultantProfileId: plan.consultantProfileId,
     consulteeUserId: consultation.requestedBy?.userId,
     consulteeName: consultation.requestedBy?.user?.name,
-    durationInHours: plan.durationInHours,
+    durationInHours: soldConsultationMinutes(consultation) / 60,
     hasReleasedSlots: (consultation.appointment?.occurrences ?? []).some(
       isReleasedForReschedule,
     ),
