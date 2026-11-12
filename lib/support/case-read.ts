@@ -31,6 +31,7 @@ export const SLA_SELECT = {
   resolutionDueAt: true,
   statutoryDueAt: true,
   resolvedAt: true,
+  reopenedAt: true,
   awaitingUserSince: true,
   pausedSeconds: true,
 } as const;
@@ -96,6 +97,7 @@ export async function readInboxPage(
     ackDueAt: true,
     resolutionDueAt: true,
     statutoryDueAt: true,
+    reopenedAt: true,
   } as const;
   const rowsRead =
     filters.sort === "sla"

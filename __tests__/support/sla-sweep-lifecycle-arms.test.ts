@@ -161,6 +161,7 @@ it("pages by id past matched rows that fire nothing to reach a real breach", asy
     resolutionDueAt: new Date(now.getTime() - HOUR),
     statutoryDueAt: null,
     resolvedAt: null,
+    reopenedAt: null,
     awaitingUserSince: null,
     pausedSeconds,
     ownershipScope: "PERSONAL",

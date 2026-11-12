@@ -53,18 +53,30 @@ export function slaDeadlinesFor(
 }
 
 /**
- * A reopen restarts the resolution clock from `now` at the case's priority and drops the
- * pause banked against the old deadline; acknowledgement and `statutoryDueAt` stand.
+ * A reopen restarts the resolution clock from `now` at the case's priority, no later than a
+ * statutory date still ahead, drops the banked pause and stamps `reopenedAt`; acknowledgement
+ * and `statutoryDueAt` stand.
  */
 export function reopenedClockPatch(
-  existing: { resolvedAt: Date | null; activeChannel: string },
+  existing: {
+    resolvedAt: Date | null;
+    activeChannel: string;
+    statutoryDueAt: Date | null;
+  },
   priority: SupportPriority,
   now: Date,
-): { resolutionDueAt?: Date; pausedSeconds?: number } {
+): { resolutionDueAt?: Date; pausedSeconds?: number; reopenedAt?: Date } {
   if (!existing.resolvedAt || existing.activeChannel !== "HUMAN") return {};
+  const target = slaDeadlinesFor(priority, now).resolutionDueAt;
+  const statutory = existing.statutoryDueAt;
+  const capped =
+    statutory !== null &&
+    statutory.getTime() > now.getTime() &&
+    statutory.getTime() < target.getTime();
   return {
-    resolutionDueAt: slaDeadlinesFor(priority, now).resolutionDueAt,
+    resolutionDueAt: capped ? statutory : target,
     pausedSeconds: 0,
+    reopenedAt: now,
   };
 }
 
@@ -115,6 +127,7 @@ export interface SlaClock {
   awaitingUserSince: Date | null;
   pausedSeconds: number;
   statutoryDueAt?: Date | null;
+  reopenedAt: Date | null;
 }
 
 /**
@@ -151,9 +164,15 @@ export function effectiveResolutionDueAt(
   if (!clock.resolutionDueAt) return clock.statutoryDueAt ?? null;
   const internalDue =
     clock.resolutionDueAt.getTime() + pausedSecondsAt(clock, now) * 1000;
+  const statutory = clock.statutoryDueAt?.getTime();
+  // A case reopened after its statutory date works to its new target; that date stays for reporting.
+  const reopenedPastStatutory =
+    statutory !== undefined &&
+    clock.reopenedAt !== null &&
+    clock.reopenedAt.getTime() > statutory;
   return new Date(
-    clock.statutoryDueAt
-      ? Math.min(internalDue, clock.statutoryDueAt.getTime())
+    statutory !== undefined && !reopenedPastStatutory
+      ? Math.min(internalDue, statutory)
       : internalDue,
   );
 }

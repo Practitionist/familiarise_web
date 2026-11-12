@@ -82,6 +82,7 @@ interface SlaSweepCandidate {
   resolutionDueAt: Date | null;
   statutoryDueAt?: Date | null;
   resolvedAt: Date | null;
+  reopenedAt: Date | null;
   awaitingUserSince: Date | null;
   pausedSeconds: number;
   escalationContactEmail: string | null;
@@ -143,6 +144,7 @@ function slaNoticeTransitions(
     resolutionDueAt: Date | null;
     statutoryDueAt?: Date | null;
     resolvedAt: Date | null;
+    reopenedAt: Date | null;
     awaitingUserSince: Date | null;
     pausedSeconds: number;
   },
@@ -253,6 +255,7 @@ async function fetchSlaSweepCandidates(
     resolutionDueAt: c.resolutionDueAt,
     statutoryDueAt: c.statutoryDueAt,
     resolvedAt: c.resolvedAt,
+    reopenedAt: c.reopenedAt,
     awaitingUserSince: c.awaitingUserSince,
     pausedSeconds: c.pausedSeconds,
     escalationContactEmail:

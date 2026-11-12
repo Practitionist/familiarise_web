@@ -77,6 +77,7 @@ const record = (overrides: Record<string, unknown> = {}) => ({
   caseKind: "INCIDENT",
   activeChannel: "HUMAN",
   priority: "MEDIUM",
+  statutoryDueAt: null,
   scopeKey: "ACCOUNT",
   requesterUserId: "customer",
   submitterUserId: "customer",

@@ -629,6 +629,7 @@ it("customer waiting time cannot postpone an urgent content deadline", () => {
         resolvedAt: null,
         awaitingUserSince: now,
         pausedSeconds: 0,
+        reopenedAt: null,
       },
       new Date(now.getTime() + 3 * 3_600_000),
     ),
