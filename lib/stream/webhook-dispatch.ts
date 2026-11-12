@@ -29,9 +29,7 @@ import {
 import { handleUnreadMessageReminder } from "@/lib/stream/chat/unread-digest";
 import {
   type WebhookClaim,
-  logWebhookEvent,
   markWebhookEventProcessed,
-  isDbHealthy,
   permanentFailure,
 } from "@/lib/webhooks/event-log";
 
@@ -43,7 +41,6 @@ import {
 import { errorMessageOf } from "@/lib/observability/report";
 import { STREAM_CALL_TYPE, callTypeFromCid } from "@/lib/stream/call-cid";
 import { STREAM_EVENT_SCHEMAS } from "@/schemas/webhooks/stream";
-import { scrubStreamEventForStorage } from "@/lib/stream/webhook-payload-scrub";
 export {
   streamBaseEventSchema,
   streamCallEndedSchema,
@@ -69,10 +66,7 @@ export function isOwnCallType(callCid: string | undefined): boolean {
   return !callCid || OWNED_CALL_TYPES.has(callTypeFromCid(callCid));
 }
 
-export {
-  recordStreamEventReceipt,
-  reclaimStaleProcessingWebhookEvent,
-} from "@/lib/stream/webhook-receipt";
+export { recordStreamEventReceipt } from "@/lib/stream/webhook-receipt";
 
 export const STREAM_REPLAY_WINDOW_MS = 10 * 60 * 1000;
 export const STREAM_CLOCK_SKEW_MS = 2 * 60 * 1000;
@@ -221,10 +215,8 @@ async function executeValidatedStreamHandler(
 /**
  * Process one verified Stream event.
  *
- * Called from the route's `after()` once the delivery has been acknowledged, and
- * again from sweep-stuck-webhook-events for anything that failed. It owns its own
- * idempotency (`logWebhookEvent`) and completion bookkeeping
- * (`markWebhookEventProcessed`), so both callers can invoke it blindly.
+ * Both callers (the route's `after()` and sweep-stuck-webhook-events) hold the
+ * receipt's claim; completion is fenced on it (`markWebhookEventProcessed`).
  *
  * It never throws. The response is already sent by the time it runs, so there is
  * nobody to signal — a handler failure is stamped on the WebhookEvent row and
@@ -234,38 +226,10 @@ export async function processStreamEvent(
   event: unknown,
   eventType: string,
   eventId: string,
-  signature: string | undefined,
   baseEvent: { call_cid?: string },
-  opts: {
-    claimAlreadyHeld?: boolean;
-    claim?: WebhookClaim;
-  } = {},
+  claim: WebhookClaim,
 ): Promise<void> {
   try {
-    if (!opts.claim && !(await isDbHealthy())) {
-      streamLogger.warn(
-        `DB unhealthy — deferring Stream event ${eventId} to the sweeper`,
-      );
-      return;
-    }
-
-    let claim: WebhookClaim | undefined = opts.claim;
-    if (!opts.claimAlreadyHeld) {
-      const logged = await logWebhookEvent(
-        "stream",
-        eventId,
-        eventType,
-        scrubStreamEventForStorage(eventType, event),
-        signature,
-      );
-
-      if (!logged.isNew) {
-        streamLogger.debug(`Duplicate Stream webhook event: ${eventId}`);
-        return;
-      }
-      claim = logged.claim;
-    }
-
     streamLogger.info(`Processing Stream webhook: ${eventType}`, {
       call_cid: baseEvent.call_cid || "chat",
     });

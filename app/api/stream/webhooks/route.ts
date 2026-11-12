@@ -284,12 +284,8 @@ export async function POST(req: NextRequest) {
         event,
         eventType,
         eventId,
-        signature,
         baseEvent,
-        {
-          claimAlreadyHeld: true,
-          claim: receipt.claim,
-        },
+        receipt.claim,
       );
     });
 
