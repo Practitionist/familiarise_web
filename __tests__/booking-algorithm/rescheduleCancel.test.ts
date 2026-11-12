@@ -144,12 +144,23 @@ jest.mock("../../lib/payments/operations/event-refunds", () => ({
   }),
 }));
 
+jest.mock("../../lib/stream/access-revocation", () => ({
+  persistSeatRevocation: jest.fn().mockResolvedValue(null),
+  revokeEndedSeatAccess: jest.fn().mockResolvedValue(undefined),
+  fenceSeatGrants: jest.fn().mockResolvedValue({ verified: true, lost: [] }),
+  enqueueCollaboratorRevocationRetry: jest.fn().mockResolvedValue(undefined),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import type { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { notifyAppointmentCancelled } from "@/lib/novu";
+import {
+  persistSeatRevocation,
+  revokeEndedSeatAccess,
+} from "@/lib/stream/access-revocation";
 import { POST as rescheduleHandler } from "@/app/api/appointments/[appointmentId]/reschedule/route";
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
 import {
@@ -1510,6 +1521,44 @@ describe("Cancel Route Handler - POST", () => {
       expect.arrayContaining(["consultant-1", "attendee-9"]),
       expect.objectContaining({ appointmentType: "CLASS" }),
     );
+  });
+
+  it("revokes a seat the pre-lock roster missed, read back after the commit", async () => {
+    (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
+      makeClassAppointment({
+        class: {
+          id: "cls-1",
+          status: "SCHEDULED",
+          classPlan: {
+            title: "Weekly Cohort",
+            consultantProfileId: "cp-1",
+            consultantProfile: {
+              user: { id: "consultant-1", name: "Dr Who" },
+            },
+          },
+        },
+      }),
+    );
+    (prisma.payment.findMany as jest.Mock).mockResolvedValue([]);
+    // The live roster predates a seat checkout that the cancel's sweep then released.
+    (prisma.appointmentParticipant.findMany as jest.Mock).mockImplementation(
+      async ({ where }: { where: { status?: { in?: string[] } } }) =>
+        where.status?.in?.includes("CANCELLED")
+          ? [{ userId: "attendee-9" }, { userId: "attendee-late" }]
+          : [{ userId: "attendee-9" }],
+    );
+
+    await cancelHandler(makeCancelRequest("apt-1"), makeParams("apt-1"));
+    (prisma.appointmentParticipant.findMany as jest.Mock).mockResolvedValue([]);
+
+    expect(persistSeatRevocation).toHaveBeenCalledWith("apt-1", [
+      "attendee-9",
+      "attendee-late",
+    ]);
+    expect(revokeEndedSeatAccess).toHaveBeenCalledWith("apt-1", [
+      "attendee-9",
+      "attendee-late",
+    ]);
   });
 
   it("tells free and credit seats too, not only paid ones (#1780 R-3)", async () => {

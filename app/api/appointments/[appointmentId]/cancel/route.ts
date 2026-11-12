@@ -17,6 +17,7 @@ import {
 } from "@/lib/booking/pending-payment-expiry";
 import {
   liveParticipant,
+  RELEASED_PARTICIPANT_STATUSES,
   transitionParticipant,
 } from "@/lib/booking/participants";
 import prisma, { type Tx } from "@/lib/prisma";
@@ -501,6 +502,29 @@ async function hasPaidLiveSeat(
     },
   });
   return paid > 0;
+}
+
+/**
+ * The roster plus every released client seat, read after the commit: a seat checkout that
+ * landed after the roster read, and a replay, whose live roster is already empty.
+ */
+async function cancelledEventSeatUserIds(
+  appointmentId: string,
+  roster: string[],
+): Promise<string[]> {
+  try {
+    const seats = await prisma.appointmentParticipant.findMany({
+      where: {
+        appointmentId,
+        role: "CONSULTEE",
+        status: { in: RELEASED_PARTICIPANT_STATUSES },
+      },
+      select: { userId: true },
+    });
+    return Array.from(new Set([...roster, ...seats.map((s) => s.userId)]));
+  } catch {
+    return roster;
+  }
 }
 
 async function eventAttendeesByRail(
@@ -1219,10 +1243,13 @@ export async function POST(
         if (replay) return { replay };
         throw err;
       });
-    // Whoever loses chat and room access with this booking; read before the commit released them.
+    // Whoever loses chat and room access with this booking, including any seat the pre-lock roster missed.
     let revokedUserIds: string[] = [];
     if (eventKind && eventId && attendees) {
-      revokedUserIds = attendees.all;
+      revokedUserIds = await cancelledEventSeatUserIds(
+        appointmentId,
+        attendees.all,
+      );
     } else if (consulteeUserId) {
       revokedUserIds = [consulteeUserId];
     }
