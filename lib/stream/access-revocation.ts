@@ -250,6 +250,8 @@ const eventPlanSelect = {
 
 function loadSeatContext(appointmentId: string) {
   return prisma.appointment.findUnique({
+    // One joined statement; the default per-relation reads cost one round trip each.
+    relationLoadStrategy: "join",
     where: { id: appointmentId },
     select: {
       deletedAt: true,
