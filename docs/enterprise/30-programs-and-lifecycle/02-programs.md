@@ -378,6 +378,8 @@ payment equals the upserted `BookingUtilization.engagementsConsumed`.
 
 ### Reversal (refund path)
 
+A refund is not the only exit. Checkout meters the engagement when it mints the order, before the buyer has paid, so every unpaid exit reverses it as well: the buyer cancelling the pending checkout, the abandoned-payments sweep, a payment failure, the payment-status reconcile finding the gateway order dead, a superseded open order (`releaseSupersededHolds`) and an expert declining the request (`releaseDeclinedRequestHold`, through `expirePendingPaymentsInTx`). Before this was true for all of them, the sweep, the failure handler, the reconcile and the superseded-hold path left the engagement counted, so abandoned checkouts consumed a member's programme cap. Example: Rachel Anderson abandons a sponsored checkout; when the sweep expires it, `engagementsUsed` goes back down by one.
+
 `reverseBookingUtilization()` stamps `reversedAt = now()` and appends
 an opposing `UsageLedgerEntry` with negative `engagementsConsumed`.
 The row is never deleted because:

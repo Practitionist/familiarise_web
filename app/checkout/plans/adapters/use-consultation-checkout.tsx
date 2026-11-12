@@ -77,11 +77,11 @@ function gatewaylessConfirmationText(data: {
   return "Your consultation has been confirmed. Check your dashboard for details.";
 }
 
-// sessionStorage can throw in privacy modes; a lost marker only re-runs the advisory slot check.
-// The marker holds the hold's expiry, so once the hold has lapsed the check runs again.
+// localStorage, so a second tab sees the buyer's own hold too; it can throw in privacy modes, and a
+// lost marker only re-runs the advisory slot check. The marker holds the hold's expiry.
 function holdMarkerLive(key: string): boolean {
   try {
-    return Number(globalThis.sessionStorage?.getItem(key)) > Date.now();
+    return Number(globalThis.localStorage?.getItem(key)) > Date.now();
   } catch {
     return false;
   }
@@ -89,7 +89,7 @@ function holdMarkerLive(key: string): boolean {
 
 function writeHoldMarker(key: string): void {
   try {
-    globalThis.sessionStorage?.setItem(
+    globalThis.localStorage?.setItem(
       key,
       String(Date.now() + DIRECT_CHECKOUT_HOLD_MS),
     );
@@ -236,8 +236,8 @@ export function useConsultationCheckout(
   );
 
   // The checkout page can be reached from a stale grid, so it re-asks the grid once before Pay.
-  // The buyer's own open hold on this window reads as taken there, so a page that already
-  // started payment skips it until that hold lapses, leaving it to checkout's resume path.
+  // The buyer's own open hold on this window reads as taken there, so any tab of a browser that
+  // already started payment skips it until that hold lapses, leaving it to checkout's resume path.
   const holdMarkerKey = `checkout-hold:${planId}:${validatedSearchParams?.startsAt ?? ""}`;
   const slotOfferedQuery = useQuery({
     queryKey: [

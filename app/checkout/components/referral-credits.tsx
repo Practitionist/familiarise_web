@@ -98,7 +98,9 @@ export function ReferralCreditsBlock({
               {formatPrice(availableCredits)} available
             </div>
             <div className="text-sm text-muted-foreground">
-              Apply to this purchase
+              {creditsLoadFailed
+                ? "Some credits couldn't be loaded — reload to retry."
+                : "Apply to this purchase"}
             </div>
           </div>
           <Switch
