@@ -17,8 +17,8 @@ import {
 } from "@/lib/booking/pending-payment-expiry";
 import {
   liveParticipant,
-  RELEASED_PARTICIPANT_STATUSES,
   transitionParticipant,
+  transitionParticipantSeats,
 } from "@/lib/booking/participants";
 import prisma, { type Tx } from "@/lib/prisma";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
@@ -502,29 +502,6 @@ async function hasPaidLiveSeat(
     },
   });
   return paid > 0;
-}
-
-/**
- * The roster plus every released client seat, read after the commit: a seat checkout that
- * landed after the roster read, and a replay, whose live roster is already empty.
- */
-async function cancelledEventSeatUserIds(
-  appointmentId: string,
-  roster: string[],
-): Promise<string[]> {
-  try {
-    const seats = await prisma.appointmentParticipant.findMany({
-      where: {
-        appointmentId,
-        role: "CONSULTEE",
-        status: { in: RELEASED_PARTICIPANT_STATUSES },
-      },
-      select: { userId: true },
-    });
-    return Array.from(new Set([...roster, ...seats.map((s) => s.userId)]));
-  } catch {
-    return roster;
-  }
 }
 
 async function eventAttendeesByRail(
@@ -1198,8 +1175,18 @@ export async function POST(
                 // is still cancellable; matching no live slot is not a conflict.
                 allowZero: true,
               });
-              // #1319 A9 — every participant of the cancelled engagement.
-              await transitionParticipant(tx, sweepScope, "CANCELLED");
+              // Every participant of the cancelled engagement; an event keeps
+              // the client seats this commit released, so it revokes only those.
+              let releasedSeatUserIds: string[] | null = null;
+              if (eventKind) {
+                releasedSeatUserIds = await transitionParticipantSeats(
+                  tx,
+                  sweepScope,
+                  "CANCELLED",
+                );
+              } else {
+                await transitionParticipant(tx, sweepScope, "CANCELLED");
+              }
 
               await declineOpenReschedules(tx, appointmentId, auditMeta);
 
@@ -1217,6 +1204,7 @@ export async function POST(
                 holdNotices,
                 eventPlans,
                 gatewayCancels: pendingExpiry?.gatewayCancels ?? [],
+                releasedSeatUserIds,
               };
             },
             {
@@ -1243,16 +1231,10 @@ export async function POST(
         if (replay) return { replay };
         throw err;
       });
-    // Whoever loses chat and room access with this booking, including any seat the pre-lock roster missed.
-    let revokedUserIds: string[] = [];
-    if (eventKind && eventId && attendees) {
-      revokedUserIds = await cancelledEventSeatUserIds(
-        appointmentId,
-        attendees.all,
-      );
-    } else if (consulteeUserId) {
-      revokedUserIds = [consulteeUserId];
-    }
+    // An event revokes the seats its commit released; a 1:1, including a replay, its consultee.
+    const revokedUserIds =
+      ("replay" in committed ? null : committed.releasedSeatUserIds) ??
+      (consulteeUserId ? [consulteeUserId] : []);
     // A retry of a click that died after its commit still owes the revocation.
     if ("replay" in committed) {
       await revokeEndedSeatAccess(appointmentId, revokedUserIds);
@@ -1267,6 +1249,7 @@ export async function POST(
       owed,
       gatewayCancels,
       eventPlans,
+      releasedSeatUserIds,
       ...result
     } = committed;
     await flushBackupInterestNotices(holdNotices);

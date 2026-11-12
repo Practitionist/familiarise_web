@@ -389,6 +389,8 @@ function makeMockTx() {
     appointmentParticipant: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // An event cancel reads back the seats its sweep released.
+      updateManyAndReturn: jest.fn().mockResolvedValue([]),
     },
     bookingStatusHistory: {
       create: jest.fn().mockResolvedValue({}),
@@ -1523,7 +1525,7 @@ describe("Cancel Route Handler - POST", () => {
     );
   });
 
-  it("revokes a seat the pre-lock roster missed, read back after the commit", async () => {
+  it("revokes the seats its own commit released, never a seat that ended earlier", async () => {
     (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
       makeClassAppointment({
         class: {
@@ -1540,25 +1542,26 @@ describe("Cancel Route Handler - POST", () => {
       }),
     );
     (prisma.payment.findMany as jest.Mock).mockResolvedValue([]);
-    // The live roster predates a seat checkout that the cancel's sweep then released.
+    // The pre-lock roster misses a seat that landed before the commit; an earlier
+    // leaver's seat is already released, so the sweep does not move it.
     (prisma.appointmentParticipant.findMany as jest.Mock).mockImplementation(
       async ({ where }: { where: { status?: { in?: string[] } } }) =>
         where.status?.in?.includes("CANCELLED")
-          ? [{ userId: "attendee-9" }, { userId: "attendee-late" }]
+          ? [{ userId: "attendee-9" }, { userId: "attendee-left" }]
           : [{ userId: "attendee-9" }],
     );
+    mockTx.appointmentParticipant.updateManyAndReturn.mockResolvedValue([
+      { userId: "attendee-9", role: "CONSULTEE" },
+      { userId: "attendee-late", role: "CONSULTEE" },
+      { userId: "consultant-1", role: "CONSULTANT" },
+    ]);
 
     await cancelHandler(makeCancelRequest("apt-1"), makeParams("apt-1"));
     (prisma.appointmentParticipant.findMany as jest.Mock).mockResolvedValue([]);
 
-    expect(persistSeatRevocation).toHaveBeenCalledWith("apt-1", [
-      "attendee-9",
-      "attendee-late",
-    ]);
-    expect(revokeEndedSeatAccess).toHaveBeenCalledWith("apt-1", [
-      "attendee-9",
-      "attendee-late",
-    ]);
+    const released = ["attendee-9", "attendee-late"];
+    expect(persistSeatRevocation).toHaveBeenCalledWith("apt-1", released);
+    expect(revokeEndedSeatAccess).toHaveBeenCalledWith("apt-1", released);
   });
 
   it("tells free and credit seats too, not only paid ones (#1780 R-3)", async () => {
