@@ -291,7 +291,6 @@ async function checkConsulteeActiveBookingsBlock(
     "PENDING",
     "APPROVED",
     "APPROVED_PENDING_PAYMENT",
-    "SCHEDULED",
   ] as const;
   const [activeConsultations, activeSubscriptions, activeTrials] =
     await Promise.all([

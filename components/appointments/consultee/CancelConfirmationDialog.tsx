@@ -207,6 +207,9 @@ export function CancelConfirmationDialog({
   let dialogTitle: string;
   if (isLeave) {
     dialogTitle = `Leave ${appointmentType}?`;
+  } else if (isPendingPayment && appointmentType === "Trial") {
+    // A trial awaiting payment is a held booking, never a request.
+    dialogTitle = "Cancel this trial?";
   } else if (isPendingPayment) {
     dialogTitle = `Cancel ${appointmentType} request?`;
   } else {
@@ -398,8 +401,9 @@ export function CancelConfirmationDialog({
                 renderLeaveLine()
               ) : isPendingPayment ? (
                 <p className="text-muted-foreground">
-                  You haven&apos;t been charged — this releases the approved
-                  request without any payment.
+                  {appointmentType === "Trial"
+                    ? "You haven't been charged — this cancels the held trial and frees its time."
+                    : "You haven't been charged — this releases the approved request without any payment."}
                 </p>
               ) : (
                 <>

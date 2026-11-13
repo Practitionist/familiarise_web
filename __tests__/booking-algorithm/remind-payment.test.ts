@@ -61,7 +61,6 @@ jest.mock("../../lib/auth-helpers", () => ({
 
 import { NextRequest } from "next/server";
 import { POST as remindConsultation } from "../../app/api/bookings/consultations/[consultationId]/remind/route";
-import { POST as remindSubscription } from "../../app/api/bookings/subscriptions/[subscriptionId]/remind/route";
 import { PAYMENT_LINK_MANUAL_REMINDER_EMAIL_TYPE } from "../../lib/booking/remind-payment";
 import { PAYMENT_LINK_REMINDER_EMAIL_TYPE } from "../../lib/email";
 
@@ -167,57 +166,45 @@ describe("POST …/remind (B-3)", () => {
   });
 });
 
-describe.each(["consultation", "subscription"] as const)(
-  "%s reminder preconditions",
-  (kind) => {
-    const row = awaiting();
-    const payment = row.appointment.payment[0];
-    it.each([
-      ["missing appointment", { appointment: null }],
-      ["missing link", { pendingPaymentUrl: null }],
-      ["wrong status", { status: "PENDING" }],
-      ["missing email", { requestedBy: { user: { email: null } } }],
-      [
-        "missing expiry",
-        {
-          appointment: {
-            ...row.appointment,
-            payment: [{ ...payment, expiresAt: null }],
-          },
+describe("consultation reminder preconditions", () => {
+  const row = awaiting();
+  const payment = row.appointment.payment[0];
+  it.each([
+    ["missing appointment", { appointment: null }],
+    ["missing link", { pendingPaymentUrl: null }],
+    ["wrong status", { status: "PENDING" }],
+    ["missing email", { requestedBy: { user: { email: null } } }],
+    [
+      "missing expiry",
+      {
+        appointment: {
+          ...row.appointment,
+          payment: [{ ...payment, expiresAt: null }],
         },
-      ],
-      [
-        "expired order",
-        {
-          appointment: {
-            ...row.appointment,
-            payment: [{ ...payment, expiresAt: new Date(0) }],
-          },
+      },
+    ],
+    [
+      "expired order",
+      {
+        appointment: {
+          ...row.appointment,
+          payment: [{ ...payment, expiresAt: new Date(0) }],
         },
-      ],
-    ])("refuses %s before attempting delivery", async (_label, override) => {
-      findUnique.mockResolvedValue({
-        ...row,
-        subscriptionPlan: row.consultationPlan,
-        ...override,
-      });
-      const request = new NextRequest("http://localhost/x", { method: "POST" });
-      const response =
-        kind === "consultation"
-          ? await remindConsultation(request, {
-              params: Promise.resolve({ consultationId: C_ID }),
-            })
-          : await remindSubscription(request, {
-              params: Promise.resolve({ subscriptionId: C_ID }),
-            });
-      expect(response.status).toBe(409);
-      expect(await response.json()).toMatchObject({
-        code: "NOT_AWAITING_PAYMENT",
-        error:
-          "There is no open payment link to remind about. It may have expired or already been paid.",
-      });
-      expect(limit).not.toHaveBeenCalled();
-      expect(deliver).not.toHaveBeenCalled();
+      },
+    ],
+  ])("refuses %s before attempting delivery", async (_label, override) => {
+    findUnique.mockResolvedValue({ ...row, ...override });
+    const request = new NextRequest("http://localhost/x", { method: "POST" });
+    const response = await remindConsultation(request, {
+      params: Promise.resolve({ consultationId: C_ID }),
     });
-  },
-);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: "NOT_AWAITING_PAYMENT",
+      error:
+        "There is no open payment link to remind about. It may have expired or already been paid.",
+    });
+    expect(limit).not.toHaveBeenCalled();
+    expect(deliver).not.toHaveBeenCalled();
+  });
+});

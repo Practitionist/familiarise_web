@@ -39,6 +39,11 @@ it.each([
     "Not Available For This Booking",
   ],
   [
+    "REQUEST_APPROVAL_REQUIRED_ERROR",
+    "REQUEST_APPROVAL_REQUIRED",
+    "This Expert Reviews Requests First",
+  ],
+  [
     "SUBSCRIPTION_ALREADY_ACTIVE_ERROR",
     undefined,
     "You Already Have This Plan",

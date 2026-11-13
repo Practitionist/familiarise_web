@@ -1995,10 +1995,7 @@ export async function applyRefundCascade(
       now: new Date(),
     });
   }
-  if (
-    payment.appointment?.trial?.status === "CANCELLED" ||
-    payment.appointment?.trial?.status === "REJECTED"
-  ) {
+  if (payment.appointment?.trial?.status === "CANCELLED") {
     await stampTrialEarningsOnCancel(tx, {
       paymentId: payment.id,
       now: new Date(),

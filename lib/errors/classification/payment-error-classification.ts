@@ -76,6 +76,8 @@ export const ErrorTypes = {
   NOT_PLACEABLE: "NOT_PLACEABLE_ERROR",
   // The expert's limit on live plan clients is reached.
   PLAN_CLIENTS_FULL: "PLAN_CLIENTS_FULL_ERROR",
+  // A direct 1:1 checkout for an expert who reviews requests first.
+  REQUEST_APPROVAL_REQUIRED: "REQUEST_APPROVAL_REQUIRED_ERROR",
   CURRENCY_UNSUPPORTED: "CURRENCY_UNSUPPORTED_ERROR",
   CREDIT_SHORTFALL: "CREDIT_SHORTFALL_ERROR",
   DISCOUNT_CURRENCY_MISMATCH: "DISCOUNT_CURRENCY_MISMATCH_ERROR",
@@ -488,6 +490,11 @@ const BUSINESS_ERROR_ENTRIES = [
   {
     code: "PLAN_CLIENTS_FULL",
     errorType: ErrorTypes.PLAN_CLIENTS_FULL,
+    httpStatus: 409,
+  },
+  {
+    code: "REQUEST_APPROVAL_REQUIRED",
+    errorType: ErrorTypes.REQUEST_APPROVAL_REQUIRED,
     httpStatus: 409,
   },
   // #1564 — a non-INR plan price or settlement is a configuration the platform

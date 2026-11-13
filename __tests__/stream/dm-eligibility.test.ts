@@ -90,11 +90,7 @@ describe("DM eligibility rules and channel provisioning", () => {
 
   it("excludes APPROVED_PENDING_PAYMENT from DM_ELIGIBLE_STATUSES", () => {
     expect(DM_ELIGIBLE_STATUSES).not.toContain("APPROVED_PENDING_PAYMENT");
-    expect(DM_ELIGIBLE_STATUSES).toEqual([
-      "APPROVED",
-      "SCHEDULED",
-      "COMPLETED",
-    ]);
+    expect(DM_ELIGIBLE_STATUSES).toEqual(["APPROVED", "COMPLETED"]);
   });
 
   it("grants DM eligibility for confirmed webinar and class bookings", async () => {

@@ -190,7 +190,7 @@ Webhook handler (lib/payments/webhooks/handlers.ts):
     |-- Call createEarningsFromPayment() -> creates ConsultantEarnings
     |-- Call createInvoiceFromPayment() -> creates Invoice with GST
     |-- Send payment success notification (Novu + email)
-    |-- For Subscription: update status to APPROVED or SCHEDULED
+    |-- For Subscription: update status to APPROVED
 ```
 
 **Important:** The two-phase commit pattern is used here. Appointments are created with tentative slots (`isTentative = true`) before payment confirmation. The webhook atomically confirms them. See `docs/booking/06-booking-lifecycle.md` for the full pattern explanation.
@@ -527,7 +527,7 @@ The shared catalog in `lib/cron/schedule.ts` owns runtime ticker cadences. Recor
 | **Capacity**          | No (1:1)                                                 | Yes (per-instance `maxParticipants`; full means sold out)                                                 |
 | **Curriculum model**  | `SubscriptionContent` (session-by-session)               | `ClassContent` (ordered, with `hoursAllotted`)                                                            |
 | **Scheduling field**  | `sessionsPerWeek`                                        | `sessionsPerWeek`                                                                                         |
-| **Request model**     | `Subscription.status` (PENDING -> APPROVED -> SCHEDULED) | `Class.status` (SCHEDULED -> IN_PROGRESS -> COMPLETED)                                                    |
+| **Request model**     | `Subscription.status` (PENDING -> APPROVED -> COMPLETED) | `Class.status` (DRAFT -> SCHEDULED -> COMPLETED)                                                          |
 | **Hold period**       | 168h (7 days)                                            | 24h                                                                                                       |
 
 ---

@@ -112,24 +112,22 @@ describe("slotAtomStarts — interval → 30-minute atom keys", () => {
   });
 });
 
-describe("trial route source contract (#1093 §1)", () => {
-  const routeSource = fs.readFileSync(
-    path.join(process.cwd(), "app/api/trials/[trialId]/route.ts"),
+describe("trial time writer source contract", () => {
+  const writerSource = fs.readFileSync(
+    path.join(process.cwd(), "lib/trials/book-trial.ts"),
     "utf8",
   );
 
-  it("stamps consultantProfileId on the trial slot create", () => {
-    // The line only exists inside the slot-create block, so a whole-file
-    // containment check is exact enough.
-    expect(routeSource).toContain(
-      "consultantProfileId: existingTrial.consultantProfileId",
+  it("stamps consultantProfileId on the trial session create", () => {
+    expect(writerSource).toContain(
+      "consultantProfileId: args.consultantProfileId",
     );
   });
 
   it("locks under the shared slot-booking namespace, not a trial-only one", () => {
-    expect(routeSource).toContain("lockSlotBatch");
-    expect(routeSource).not.toContain("trial-slot-booking");
-    expect(routeSource).not.toContain("lockTrialSlot");
+    expect(writerSource).toContain("lockSlotBatch");
+    expect(writerSource).not.toContain("trial-slot-booking");
+    expect(writerSource).not.toContain("lockTrialSlot");
   });
 
   const checkSource = fs.readFileSync(
@@ -138,29 +136,23 @@ describe("trial route source contract (#1093 §1)", () => {
   );
 
   it("validates availability on the transaction client, not the global one", () => {
-    expect(routeSource).toMatch(/trialWindowRefusal\(\s*tx,/);
+    expect(writerSource).toMatch(/trialWindowRefusal\(\s*tx,/);
     expect(checkSource).toContain("db: Tx");
     expect(checkSource).toMatch(/validateSlotAvailability\(\s*db,/);
   });
 
-  it("checks both calendars with checkout's own predicates and locks the buyer's own atoms", () => {
+  it("checks both calendars with checkout's own predicates", () => {
     expect(checkSource).toContain("buildConsultantOccupancyWhere(");
     expect(checkSource).toContain("consulteeHasOverlappingSession(");
-    expect(routeSource).toMatch(
-      /lockSlotBatch\(\s*\[existingTrial\.consultantProfileId, buyerProfile\?\.id\]/,
-    );
   });
 
-  it("takes the consultee lock before the slot lock (checkout's global order, #898)", () => {
-    // The GiST net and the slot atoms are both consultant-keyed; only the
-    // consultee lock stops two trials for the same consultee booking through
-    // two different consultants concurrently (#1170 review).
-    const consulteeAt = routeSource.search(/await lockConsulteeBooking\(/);
-    const slotAt = routeSource.search(/await lockSlotBatch\(/);
+  it("takes the consultee lock before the slot lock (checkout's global order)", () => {
+    const consulteeAt = writerSource.search(/await lockConsulteeBooking\(/);
+    const slotAt = writerSource.search(/await lockSlotBatch\(/);
     expect(consulteeAt).toBeGreaterThan(-1);
     expect(slotAt).toBeGreaterThan(-1);
     expect(consulteeAt).toBeLessThan(slotAt);
-    expect(routeSource).toContain("unlockConsulteeBooking");
+    expect(writerSource).toContain("unlockConsulteeBooking");
   });
 });
 

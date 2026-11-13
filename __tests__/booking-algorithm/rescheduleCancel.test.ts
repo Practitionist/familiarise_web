@@ -351,13 +351,13 @@ function makeMockTx() {
     },
     consultation: {
       update: jest.fn(),
-      findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+      findUnique: jest.fn().mockResolvedValue({ status: "APPROVED" }),
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     subscription: {
       update: jest.fn(),
-      findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+      findUnique: jest.fn().mockResolvedValue({ status: "APPROVED" }),
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       // #448 / #1583 A-P0-03 — a PARTIAL (slotIds) subscription reschedule
@@ -1267,7 +1267,7 @@ describe("Cancel Route Handler - POST", () => {
           id: "cons-1",
           status: {
             // Pinned to the status this cancel read in its own transaction.
-            in: ["SCHEDULED"],
+            in: ["APPROVED"],
           },
         },
         data: expect.objectContaining({
@@ -1339,7 +1339,7 @@ describe("Cancel Route Handler - POST", () => {
           id: "sub-1",
           status: {
             // Pinned to the status this cancel read in its own transaction.
-            in: ["SCHEDULED"],
+            in: ["APPROVED"],
           },
           // Pinned to the removed-session count the quote was priced on.
           sessionsRefunded: 0,
@@ -1370,7 +1370,7 @@ describe("Cancel Route Handler - POST", () => {
       expect(mockTx.webinar.updateMany).toHaveBeenCalledWith({
         where: {
           id: "web-1",
-          status: { in: ["DRAFT", "SCHEDULED", "IN_PROGRESS"] },
+          status: { in: ["DRAFT", "SCHEDULED"] },
         },
         data: { status: "CANCELLED" },
       });
@@ -1394,7 +1394,7 @@ describe("Cancel Route Handler - POST", () => {
       expect(mockTx.class.updateMany).toHaveBeenCalledWith({
         where: {
           id: "cls-1",
-          status: { in: ["DRAFT", "SCHEDULED", "IN_PROGRESS"] },
+          status: { in: ["DRAFT", "SCHEDULED"] },
         },
         data: { status: "CANCELLED" },
       });
@@ -1420,7 +1420,7 @@ describe("Cancel Route Handler - POST", () => {
       where: {
         id: "cons-1",
         status: {
-          in: ["SCHEDULED"],
+          in: ["APPROVED"],
         },
       },
       data: expect.objectContaining({

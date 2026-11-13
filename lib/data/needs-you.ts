@@ -139,8 +139,8 @@ const AWAITING_CLIENT_ANSWER = {
 
 /**
  * The one "requests to answer" number: PENDING consultations and live
- * subscriptions that are real requests (never an unpaid checkout in flight),
- * plus PENDING trials. The nav badge, Home, NeedsYou and the request cap all
+ * subscriptions that are real requests (never an unpaid checkout in flight);
+ * a trial never waits on the expert. The nav badge, Home, NeedsYou and the request cap all
  * read it, so they cannot disagree. `db` lets a caller count inside its lock.
  */
 export async function countRequestsToAnswer(
@@ -149,7 +149,7 @@ export async function countRequestsToAnswer(
 ): Promise<number> {
   const cp = args.consultantProfileId;
   const scope = args.orgScope ?? { kind: "personal" };
-  const [consultations, subscriptions, trials] = await runBounded([
+  const [consultations, subscriptions] = await runBounded([
     () =>
       db.consultation.count({
         where: {
@@ -164,9 +164,8 @@ export async function countRequestsToAnswer(
           NOT: AWAITING_CLIENT_ANSWER,
         },
       }),
-    () => db.trial.count({ where: trialRequestWhere(cp, scope, ["PENDING"]) }),
   ] as const);
-  return consultations + subscriptions + trials;
+  return consultations + subscriptions;
 }
 
 /** A PENDING request asked for at or after this instant still holds its slots. */
@@ -181,7 +180,7 @@ export function holdingSince(
 /**
  * The request cap's count, across every tenant: real submitted requests
  * (PENDING, REQUEST_SUBMITTED, still inside their hold, not a booking being
- * moved) plus PENDING trial requests. No appointment arm, so an unallocated
+ * moved); a trial never waits on the expert. No appointment arm, so an unallocated
  * request counts, and no direct checkout ever does. Call it inside the cap
  * lock with `tx`.
  */
@@ -190,7 +189,7 @@ export async function countOpenRequestsForCap(
   db: RequestCounters = prisma,
   now: Date = new Date(),
 ): Promise<number> {
-  const [consultations, subscriptions, trials] = await runBounded([
+  const [consultations, subscriptions] = await runBounded([
     () =>
       db.consultation.count({
         where: {
@@ -212,9 +211,8 @@ export async function countOpenRequestsForCap(
           NOT: { appointment: BEING_MOVED },
         },
       }),
-    () => db.trial.count({ where: { consultantProfileId, status: "PENDING" } }),
   ] as const);
-  return consultations + subscriptions + trials;
+  return consultations + subscriptions;
 }
 
 // Structural, not Pick<PrismaClient>: the extended client (lib/prisma) and a

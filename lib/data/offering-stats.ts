@@ -24,7 +24,6 @@ import {
 /** A request that became a booking; PENDING/REJECTED/EXPIRED never did. */
 const BOOKED: ReadonlySet<AppointmentStatus> = new Set([
   "APPROVED",
-  "SCHEDULED",
   "COMPLETED",
 ]);
 

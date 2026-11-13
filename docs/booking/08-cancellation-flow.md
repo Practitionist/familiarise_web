@@ -34,7 +34,7 @@ Cancellation is one of the most architecturally nuanced flows in the booking sys
 2. **Nothing is deleted.** The appointment, its slots and its payment records are all preserved; the cancellation is a status change plus audit fields. `Payment.appointment` is `onDelete: Restrict`, so the database refuses to delete an appointment a payment points at; the app never tries, and the trail stays intact.
 3. **Refunds are automatic and policy-driven.** The cancellation flow computes a refund from the tiers frozen onto the booking at checkout and drives it through the payment operations, without an admin in the loop.
 
-> **Refreshed 2026-08-15 (#1013).** This chapter previously described an earlier design in which cancellation deleted the appointment, required no authentication and never touched money. All three statements were false against the route, and the walkthrough, the diagrams and the record tables below have now been rewritten against it: soft-cancel under a compare-and-set guard, participant/privileged/org-admin authorization, and automatic policy-driven refunds including the whole-event fan-out for webinars and classes (#1003). Consultees leave group events via participant self-leave (#1005), not appointment cancel. The refund maths described here is the linear per-session proration that closed #1006.
+> **Refreshed 2026-08-15 (#1013).** This chapter previously described an earlier design in which cancellation deleted the appointment, required no authentication and never touched money. All three statements were false against the route, and the walkthrough, the diagrams and the record tables below have now been rewritten against it: soft-cancel under a compare-and-set guard, participant/privileged/org-admin authorization, and automatic policy-driven refunds including the whole-event fan-out for webinars and classes (#1003). Consultees leave group events via participant self-leave (#1005), not appointment cancel. The refund maths described here is per session: a plan refunds each undelivered session at its own notice tier, one unit being the price over the sessions sold (`sessionsTotal`); see "How the amount is computed" below.
 
 Here is the complete decision tree for the cancellation endpoint, from the moment a request arrives to the final response:
 
@@ -78,7 +78,7 @@ flowchart TD
     RF -->|Yes| RF1["Policy refund:\nprorated base x tier"]
     RF -->|No| Y
     RF1 --> Y{Webinar or Class?}
-    Y -->|Yes| Z["refundWholeEventPayments()\n(every attendee, in full)"]
+    Y -->|Yes| Z["refundWholeEventPayments()\n(webinar seats in full,\nclass seats their undelivered share)"]
     Y -->|No| X
     Z --> X["void notifyAppointmentCancelled()\n(fire-and-forget)"]
     X --> AA["Return 200\n(success, refund, eventRefund)"]
@@ -740,7 +740,7 @@ flowchart TD
     G --> H{Post-transaction}
     H --> I["Notifications\n(all types)"]
     H --> J{Webinar or Class?}
-    J -->|Yes| J1["refundWholeEventPayments()\nevery attendee, in full"]
+    J -->|Yes| J1["refundWholeEventPayments()\nwebinar seats in full,\nclass seats their undelivered share"]
     J -->|No| J2["Policy refund\n(prorated base x tier)"]
 
     style Consultation fill:#e3f2fd,stroke:#1565c0
@@ -749,18 +749,18 @@ flowchart TD
 
 ### Comparison Table: All Four Event Types
 
-| Aspect                           | Consultation             | Subscription                     | Webinar                      | Class                        |
-| -------------------------------- | ------------------------ | -------------------------------- | ---------------------------- | ---------------------------- |
-| **Model updated**                | `Consultation`           | `Subscription`                   | `Webinar`                    | `Class`                      |
-| **Status field**                 | `status`                 | `status`                         | `status`                     | `status`                     |
-| **Audit fields stored**          | Yes (5 fields)           | Yes (5 fields)                   | No                           | No                           |
-| **Cancellation reason on model** | Yes                      | Yes                              | No                           | No                           |
-| **Cancelled-by tracking**        | Yes                      | Yes                              | No                           | No                           |
-| **Notification sent**            | Yes                      | Yes                              | Yes                          | Yes                          |
-| **Slots deleted**                | No — marked `CANCELLED`  | No — marked `CANCELLED`          | No — marked `CANCELLED`      | No — marked `CANCELLED`      |
-| **Appointment deleted**          | No — preserved           | No — preserved                   | No — preserved               | No — preserved               |
-| **Slot scope of the update**     | This appointment         | Whole `subscriptionId`           | This appointment             | Whole `classId`              |
-| **Refund rail**                  | Policy tier on the gross | Policy tier on the prorated base | Whole-event fan-out, in full | Whole-event fan-out, in full |
+| Aspect                           | Consultation             | Subscription                             | Webinar                      | Class                                              |
+| -------------------------------- | ------------------------ | ---------------------------------------- | ---------------------------- | -------------------------------------------------- |
+| **Model updated**                | `Consultation`           | `Subscription`                           | `Webinar`                    | `Class`                                            |
+| **Status field**                 | `status`                 | `status`                                 | `status`                     | `status`                                           |
+| **Audit fields stored**          | Yes (5 fields)           | Yes (5 fields)                           | No                           | No                                                 |
+| **Cancellation reason on model** | Yes                      | Yes                                      | No                           | No                                                 |
+| **Cancelled-by tracking**        | Yes                      | Yes                                      | No                           | No                                                 |
+| **Notification sent**            | Yes                      | Yes                                      | Yes                          | Yes                                                |
+| **Slots deleted**                | No — marked `CANCELLED`  | No — marked `CANCELLED`                  | No — marked `CANCELLED`      | No — marked `CANCELLED`                            |
+| **Appointment deleted**          | No — preserved           | No — preserved                           | No — preserved               | No — preserved                                     |
+| **Slot scope of the update**     | This appointment         | Whole `subscriptionId`                   | This appointment             | Whole `classId`                                    |
+| **Refund rail**                  | Policy tier on the gross | Each undelivered session at its own tier | Whole-event fan-out, in full | Whole-event fan-out, each seat's undelivered share |
 
 ### Consultation Cancellation (Detailed)
 
@@ -816,7 +816,7 @@ const moved = (
 ).count;
 ```
 
-A `DRAFT` webinar or class can be cancelled too: `EVENT_ALLOWED_FROM.CANCELLED` is `DRAFT`, `SCHEDULED` and `IN_PROGRESS`, so a draft with placed sessions goes through the same cancel door and its host is never stuck with it (nothing is refunded, because a draft has no seats). The group-event allowed-from sets are written as explicit `in` lists rather than as `notIn` exclusions, so that a future addition to the status enum is refused by default instead of silently becoming cancellable (#837). Classes use `CLASS_EVENT_ALLOWED_FROM.CANCELLED`, which is the same idea against a different enum.
+A `DRAFT` webinar or class can be cancelled too: `EVENT_ALLOWED_FROM.CANCELLED` is `DRAFT` and `SCHEDULED`, so a draft with placed sessions goes through the same cancel door and its host is never stuck with it (nothing is refunded, because a draft has no seats). The group-event allowed-from sets are written as explicit `in` lists rather than as `notIn` exclusions, so that a future addition to the status enum is refused by default instead of silently becoming cancellable (#837). Classes use `CLASS_EVENT_ALLOWED_FROM.CANCELLED`, which is the same idea against a different enum.
 
 **Why no audit fields**: Webinars are typically cancelled by the consultant (the host). Since webinars are group events, the system does not track individual cancellation reasons on the event model. The `status` change is sufficient for the event lifecycle. If audit data is needed, it can be reconstructed from the API logs and the `cancelledBy` information in the notification payload.
 
@@ -1093,7 +1093,9 @@ Webinar and class seats are the documented exception. One shared `Appointment` r
 
 #### How the amount is computed
 
-The refund is two multiplications, in this order: the **base** is narrowed to what the buyer has not yet received, and the **policy tier** then applies to that base.
+A plan sold with a known `sessionsTotal` is quoted per session by `quoteUnusedSessions` (`lib/payments/operations/cancellation-policy.ts`): one unit is the price divided by `sessionsTotal`, every undelivered session still on the calendar comes back at its own notice tier, every never-scheduled one at infinite notice (100 %), and a delivered or support-refunded session not at all. The floor is taken once per tier over the sessions in it. A 12-session ₹12,000 plan with 4 delivered, 2 sessions more than 24 hours out and 6 never scheduled refunds 8 × ₹1,000 = ₹8,000 on a learner cancel; if one of the two scheduled sessions were 5 hours out it would come back at 50 %, for ₹7,500.
+
+The formula below is the fallback for a row whose sold `sessionsTotal` is unknown, and for a consultation: the **base** is narrowed to what the buyer has not yet received, and the **policy tier** then applies to that base.
 
 ```
 proratedBasePaise = subscription && slotsTotal > 0
@@ -1358,7 +1360,7 @@ sequenceDiagram
         end
 
         opt Webinar or Class cancellation
-            API->>Pay: refundWholeEventPayments(every attendee, in full)
+            API->>Pay: refundWholeEventPayments (webinar seats in full, class seats their undelivered share)
             Pay-->>API: WholeEventRefundSummary
             API->>DB: findMany paid attendee payments
             DB-->>API: attendee user IDs

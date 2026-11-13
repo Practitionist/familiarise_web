@@ -158,7 +158,7 @@ function subscriptionAppointment() {
     consultation: null,
     subscription: {
       id: "sub-1",
-      status: "SCHEDULED",
+      status: "APPROVED",
       subscriptionPlan: consultationAppointment().consultation.consultationPlan,
       requestedById: "ce-001",
       requestedBy: { userId: "learner-user", user: { name: "John Doe" } },
@@ -174,7 +174,7 @@ function makeMockTx(appointment: unknown) {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     subscription: {
-      findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+      findUnique: jest.fn().mockResolvedValue({ status: "APPROVED" }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     appointmentOccurrence: {

@@ -19,6 +19,7 @@ import {
 } from "@/lib/api/plans/content";
 import { ClassPlanSchema, ClassContentSchema } from "@/schemas/plans";
 import { editorStatusOrRefusal } from "@/lib/api/plans/event-status";
+import { EventEditorStatusSchema } from "@/schemas/event-instance";
 import { refundWindowHoursSchema } from "@/lib/booking/refund-window";
 import { ClassStatus, Prisma } from "@prisma/client";
 import {
@@ -94,8 +95,8 @@ const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
   topics: z
     .array(z.string().min(1, "Topic name cannot be empty"))
     .min(1, "At least one topic is required"),
-  // Defaults to SCHEDULED with a startDate and DRAFT without one.
-  status: z.nativeEnum(ClassStatus).optional(),
+  // Create saves a draft or publishes; defaults to SCHEDULED with a startDate and DRAFT without one.
+  status: EventEditorStatusSchema.optional(),
   startDate: z
     .string()
     .optional()

@@ -33,10 +33,9 @@ import type { InboxRowInput } from "@/lib/dashboard/requests-inbox-state";
 import {
   CP,
   NOW,
-  awaitingSubscription,
+  awaitingConsultation,
   hoursAgo,
   hoursAhead,
-  pendingConsultation,
   serve,
 } from "../fixtures/requests-inbox";
 
@@ -71,130 +70,119 @@ beforeEach(() => {
   }
 });
 
-describe.each(["consultation", "subscription"] as const)(
-  "%s reminder eligibility",
-  (kind) => {
-    const base =
-      kind === "subscription"
-        ? awaitingSubscription
-        : {
-            ...pendingConsultation,
-            status: "APPROVED_PENDING_PAYMENT",
-            pendingPaymentUrl: "https://pay.example.test/consultation",
-            appointment: awaitingSubscription.appointment,
-          };
-    const appointment = base.appointment;
-    const payment = appointment.payment[0];
+// Only a 1:1 awaits payment after approval; a plan is paid at checkout.
+describe.each(["consultation"] as const)("%s reminder eligibility", (kind) => {
+  const base = awaitingConsultation;
+  const appointment = base.appointment;
+  const payment = appointment.payment[0];
 
-    async function readOne(request: Parameters<typeof serve>[0][number]) {
-      const served = serve([request]);
-      const model =
-        kind === "consultation" ? mockConsultation : mockSubscription;
-      model.findMany.mockImplementation(served.findMany);
-      model.count.mockImplementation(served.count);
-      const { rows } = await readRequestsInbox({
-        consultantProfileId: CP,
-        type: kind,
-        sort: "priority",
-        page: 1,
-        now: NOW,
-      });
-      expect(rows).toHaveLength(1);
-      return rows[0];
-    }
-
-    it("offers a live reminder without exposing the recipient email or payment link", async () => {
-      const row = await readOne(base);
-      expect(row.reminderExpiresAt).toEqual(hoursAhead(6));
-      expect(actions(row).primary).toEqual({ kind: "remind" });
-      expect(render(row)).toContain(">Remind<");
-      expect(JSON.stringify(row)).not.toContain(base.requestedBy.user.email);
-      expect(JSON.stringify(row)).not.toContain(base.pendingPaymentUrl);
+  async function readOne(request: Parameters<typeof serve>[0][number]) {
+    const served = serve([request]);
+    const model = mockConsultation;
+    model.findMany.mockImplementation(served.findMany);
+    model.count.mockImplementation(served.count);
+    const { rows } = await readRequestsInbox({
+      consultantProfileId: CP,
+      type: kind,
+      sort: "priority",
+      page: 1,
+      now: NOW,
     });
+    expect(rows).toHaveLength(1);
+    return rows[0];
+  }
 
-    it.each([
-      ["missing appointment (QA seed shape)", { ...base, appointment: null }],
-      [
-        "missing payment",
-        { ...base, appointment: { ...appointment, payment: [] } },
-      ],
-      ["missing link", { ...base, pendingPaymentUrl: null }],
-      [
-        "missing recipient email",
-        {
-          ...base,
-          requestedBy: {
-            ...base.requestedBy,
-            user: { ...base.requestedBy.user, email: null },
-          },
-        },
-      ],
-      [
-        "missing expiry",
-        {
-          ...base,
-          appointment: {
-            ...appointment,
-            payment: [{ ...payment, expiresAt: null }],
-          },
-        },
-      ],
-      [
-        "expired order",
-        {
-          ...base,
-          appointment: {
-            ...appointment,
-            payment: [{ ...payment, expiresAt: hoursAgo(1) }],
-          },
-        },
-      ],
-      [
-        "non-pending order",
-        {
-          ...base,
-          appointment: {
-            ...appointment,
-            payment: [{ ...payment, paymentStatus: "FAILED" }],
-          },
-        },
-      ],
-    ])("hides Remind for %s", async (_label, request) => {
-      const row = await readOne(request);
-      expect(row.reminderExpiresAt).toBeNull();
-      expect(actions(row).primary).toBeNull();
-      expect(render(row)).not.toContain(">Remind<");
-    });
+  it("offers a live reminder without exposing the recipient email or payment link", async () => {
+    const row = await readOne(base);
+    expect(row.reminderExpiresAt).toEqual(hoursAhead(6));
+    expect(actions(row).primary).toEqual({ kind: "remind" });
+    expect(render(row)).toContain(">Remind<");
+    expect(JSON.stringify(row)).not.toContain(base.requestedBy.user.email);
+    expect(JSON.stringify(row)).not.toContain(base.pendingPaymentUrl);
+  });
 
-    it("does not fall back to an older live order when the newest pending order expired", async () => {
-      const row = await readOne({
+  it.each([
+    ["missing appointment (QA seed shape)", { ...base, appointment: null }],
+    [
+      "missing payment",
+      { ...base, appointment: { ...appointment, payment: [] } },
+    ],
+    ["missing link", { ...base, pendingPaymentUrl: null }],
+    [
+      "missing recipient email",
+      {
+        ...base,
+        requestedBy: {
+          ...base.requestedBy,
+          user: { ...base.requestedBy.user, email: null },
+        },
+      },
+    ],
+    [
+      "missing expiry",
+      {
         ...base,
         appointment: {
           ...appointment,
-          payment: [
-            payment,
-            {
-              ...payment,
-              id: "newer",
-              createdAt: hoursAgo(1),
-              expiresAt: hoursAgo(0.5),
-            },
-          ],
+          payment: [{ ...payment, expiresAt: null }],
         },
-      });
-      expect(row.reminderExpiresAt).toBeNull();
-      expect(actions(row).primary).toBeNull();
-    });
+      },
+    ],
+    [
+      "expired order",
+      {
+        ...base,
+        appointment: {
+          ...appointment,
+          payment: [{ ...payment, expiresAt: hoursAgo(1) }],
+        },
+      },
+    ],
+    [
+      "non-pending order",
+      {
+        ...base,
+        appointment: {
+          ...appointment,
+          payment: [{ ...payment, paymentStatus: "FAILED" }],
+        },
+      },
+    ],
+  ])("hides Remind for %s", async (_label, request) => {
+    const row = await readOne(request);
+    expect(row.reminderExpiresAt).toBeNull();
+    expect(actions(row).primary).toBeNull();
+    expect(render(row)).not.toContain(">Remind<");
+  });
 
-    it("removes Remind at expiry while the page remains open, including a JSON date", async () => {
-      const row = await readOne(base);
-      const serialized = {
-        ...row,
-        reminderExpiresAt: hoursAhead(6).toISOString(),
-      };
-      expect(actions(serialized).primary).toEqual({ kind: "remind" });
-      expect(actions(serialized, hoursAhead(6)).primary).toBeNull();
-      expect(render(serialized, hoursAhead(6))).not.toContain(">Remind<");
+  it("does not fall back to an older live order when the newest pending order expired", async () => {
+    const row = await readOne({
+      ...base,
+      appointment: {
+        ...appointment,
+        payment: [
+          payment,
+          {
+            ...payment,
+            id: "newer",
+            createdAt: hoursAgo(1),
+            expiresAt: hoursAgo(0.5),
+          },
+        ],
+      },
     });
-  },
-);
+    expect(row.reminderExpiresAt).toBeNull();
+    expect(actions(row).primary).toBeNull();
+  });
+
+  it("removes Remind at expiry while the page remains open, including a JSON date", async () => {
+    const row = await readOne(base);
+    const serialized = {
+      ...row,
+      reminderExpiresAt: hoursAhead(6).toISOString(),
+    };
+    expect(actions(serialized).primary).toEqual({ kind: "remind" });
+    expect(actions(serialized, hoursAhead(6)).primary).toBeNull();
+    expect(render(serialized, hoursAhead(6))).not.toContain(">Remind<");
+  });
+});

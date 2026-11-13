@@ -12,8 +12,18 @@ export const incidentRefundKey = (
 export const MAX_REMEDY_ATTEMPTS = 3;
 export const DEAD_LETTER_PREFIX = "dead-letter:";
 
-/** A voided 1:1 may be rebooked free while its consultation or trial is in one of these statuses. */
-export const REBOOKABLE_PARENT_STATUSES: ReadonlySet<string> = new Set([
-  "SCHEDULED",
-  "COMPLETED",
-]);
+/** A voided 1:1 may be rebooked free while its booking is confirmed or completed, per kind. */
+export const REBOOKABLE_PARENT_STATUSES: Readonly<
+  Record<"consultation" | "trial", ReadonlySet<string>>
+> = {
+  consultation: new Set(["APPROVED", "COMPLETED"]),
+  trial: new Set(["SCHEDULED", "COMPLETED"]),
+};
+
+/** Whether a voided booking of this kind may still take its free rebook. */
+export function isRebookableParent(
+  kind: "consultation" | "trial",
+  status: string | null | undefined,
+): boolean {
+  return !!status && REBOOKABLE_PARENT_STATUSES[kind].has(status);
+}

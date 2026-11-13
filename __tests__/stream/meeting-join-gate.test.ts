@@ -513,7 +513,7 @@ describe("POST /api/meetings/[meetingId]/join", () => {
  *
  * `resolveMeetingAccess` refused three booking states — CANCELLED, REJECTED,
  * EXPIRED — while every dashboard's Join affordance is an allowlist of
- * {APPROVED, SCHEDULED, IN_PROGRESS}. Everything in neither set was hidden by
+ * {APPROVED, SCHEDULED}. Everything in neither set was hidden by
  * the UI and admitted by the server: PENDING, a DRAFT webinar, and above all
  * `APPROVED_PENDING_PAYMENT` and its trial twin `AWAITING_PAYMENT`. Typing
  * /meetings/<id> walked into a booking nobody had paid for. #1272 closed that in
@@ -669,14 +669,6 @@ describe("resolveMeetingAccess still admits a live session", () => {
 
   it("admits a scheduled trial", async () => {
     seedAccess(trial("SCHEDULED"));
-
-    expect((await resolveMeetingAccess("slot-abc", "user_1")).hasAccess).toBe(
-      true,
-    );
-  });
-
-  it("admits a webinar that is in progress", async () => {
-    seedAccess(webinar("IN_PROGRESS"));
 
     expect((await resolveMeetingAccess("slot-abc", "user_1")).hasAccess).toBe(
       true,

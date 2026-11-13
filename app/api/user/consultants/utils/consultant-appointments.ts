@@ -43,7 +43,6 @@ export async function checkActiveAppointments(
     "PENDING",
     "APPROVED",
     "APPROVED_PENDING_PAYMENT",
-    "SCHEDULED",
   ] as const;
 
   const futureLiveOccurrence = {
@@ -78,7 +77,7 @@ export async function checkActiveAppointments(
     db.webinar.count({
       where: {
         webinarPlan: { consultantProfileId: consultantId },
-        status: { in: ["SCHEDULED", "IN_PROGRESS"] },
+        status: "SCHEDULED",
         appointment: {
           occurrences: {
             some: { startsAt: { gte: now } },
@@ -89,7 +88,7 @@ export async function checkActiveAppointments(
     db.class.count({
       where: {
         classPlan: { consultantProfileId: consultantId },
-        status: { in: ["SCHEDULED", "IN_PROGRESS"] },
+        status: "SCHEDULED",
       },
     }),
     db.trial.count({
@@ -118,7 +117,7 @@ export async function checkActiveAppointments(
                   webinars: {
                     some: {
                       deletedAt: null,
-                      status: { in: ["SCHEDULED", "IN_PROGRESS"] },
+                      status: "SCHEDULED",
                       appointment: {
                         deletedAt: null,
                         occurrences: { some: futureLiveOccurrence },
@@ -132,7 +131,7 @@ export async function checkActiveAppointments(
                   classes: {
                     some: {
                       deletedAt: null,
-                      status: { in: ["SCHEDULED", "IN_PROGRESS"] },
+                      status: "SCHEDULED",
                       appointment: {
                         deletedAt: null,
                         occurrences: { some: futureLiveOccurrence },

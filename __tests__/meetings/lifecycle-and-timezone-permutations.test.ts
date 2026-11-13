@@ -149,7 +149,7 @@ function makeMeetingRow(overrides: Record<string, unknown> = {}) {
         webinar: null,
         class: {
           id: "cls-1",
-          status: "IN_PROGRESS",
+          status: "SCHEDULED",
           classPlan: {
             id: "cplan-1",
             title: "Distributed Systems Masterclass",

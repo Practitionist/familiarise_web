@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
 const MAX_PLANS_PER_KIND = 5_000;
 
 /** An instance a visitor can still buy or join; a draft has no public page. */
-const SELLING_STATUSES = ["SCHEDULED", "IN_PROGRESS"] as const;
+const SELLING_STATUSES = ["SCHEDULED"] as const;
 
 /**
  * The webinar and class plan ids a search engine should index: publicly

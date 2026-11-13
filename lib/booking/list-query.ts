@@ -70,7 +70,6 @@ export const APPROVAL_STATUSES_DETAIL_ONLY: ReadonlySet<AppointmentStatus> =
   new Set([
     AppointmentStatus.APPROVED,
     AppointmentStatus.APPROVED_PENDING_PAYMENT,
-    AppointmentStatus.SCHEDULED,
   ]);
 
 export const USE_DETAIL_APPROVAL_MESSAGE =

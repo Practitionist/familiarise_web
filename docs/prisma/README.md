@@ -133,10 +133,71 @@ currently hold:
   `prod` re-breaks the SLA sweep, the privacy export and staff support
   metrics.** Tracked in #2271. This is why `npm run db:preflight` still refuses
   a push: correctly.
+- **`knownDivergences` — the four booking enum swaps of the lifecycle PR**
+  (`DROP TYPE "public"."<X>Status_old"` for `ClassStatus`, `WebinarStatus`,
+  `RequestStatus` and `TrialStatus`). The branch removes `IN_PROGRESS` from
+  webinars and classes, `SCHEDULED` from consultations and plans, and `PENDING`
+  and `REJECTED` from trials, but `origin/prod` still filters on `IN_PROGRESS`
+  and creates trials as `PENDING`, so the swap waits for the release. That pull
+  request therefore merges **without a push**; until the reconcile push that
+  follows the `dev` → `prod` promotion, the database keeps the extra enum values
+  and the `Trial.status` default of `PENDING`. The new code must never meet a row
+  holding a removed value: on 2026-11-13 no row held one (the four webinars,
+  three classes and two trials that did were moved first), and the branch writes
+  none. Production keeps creating trials as `PENDING` until the release, so
+  the read below runs before the merge, before the promotion and before the
+  push. The rest of each swap (the `BEGIN`/`COMMIT` wrapper,
+  `CREATE TYPE …_new`, the column retypes and renames, and the `Trial.status`
+  default drop) is listed there too, so the daily drift check stays green while
+  the swap waits. Move the four `DROP TYPE` entries to
+  `destructiveStatementsAllowed` once the release is on prod, then preflight,
+  push, sidecars, assert, and delete every `#2746` entry.
 - **`destructiveStatementsAllowed` — the pre-#2041 recording-storage columns and
   their enum, plus six indexes the schema no longer declares** (13 statements).
   No schema declares them and no code reads them, so they are dead and a push
   may remove them.
+
+#### Rows holding a removed value
+
+Run this read (Supabase MCP `execute_sql` is read-only and needs no approval)
+before the lifecycle PR merges to `dev`, before the `dev` → `prod` promotion
+and before the push that drops the enum values. It names the mapped tables and
+columns (`Consultation` and `Subscription` store the status as `requestStatus`):
+
+```sql
+SELECT 'Trial' AS "table", "id", "status"::text AS "value" FROM "Trial" WHERE "status"::text IN ('PENDING', 'REJECTED')
+UNION ALL SELECT 'Consultation', "id", "requestStatus"::text FROM "Consultation" WHERE "requestStatus"::text = 'SCHEDULED'
+UNION ALL SELECT 'Subscription', "id", "requestStatus"::text FROM "Subscription" WHERE "requestStatus"::text = 'SCHEDULED'
+UNION ALL SELECT 'Webinar', "id", "status"::text FROM "Webinar" WHERE "status"::text = 'IN_PROGRESS'
+UNION ALL SELECT 'Class', "id", "status"::text FROM "Class" WHERE "status"::text = 'IN_PROGRESS';
+```
+
+It returned no rows on 2026-11-13. A row is never edited by hand. A `PENDING`
+trial is cancelled by an operator through `DELETE /api/trials/[trialId]` on the
+production deploy, which still understands it and refunds a paid one in full
+(an operator's cancel counts as the expert's side). Any other row stops the
+step for the owner: a `REJECTED` trial is already ended and has no door, and no
+cancel step is written for the rest
+([decision 8](../decisions/2026-11-13-product-lifecycles.md#decisions)).
+
+#### A refund the deleted retry still owed
+
+At the same three points, run this read too. It lists a cancelled paid trial
+that the old unanswered-trial sweep cancelled (history reason
+`TRIAL_UNANSWERED`) and whose keyed full refund is missing or failed:
+
+```sql
+SELECT t."id", t."paymentId"
+FROM "Trial" t
+WHERE t."status"::text = 'CANCELLED' AND t."paymentId" IS NOT NULL
+  AND EXISTS (SELECT 1 FROM "BookingStatusHistory" h WHERE h."entity"::text = 'TRIAL' AND h."entityId" = t."id" AND h."reason" = 'TRIAL_UNANSWERED' AND h."toStatus"::text = 'CANCELLED')
+  AND NOT EXISTS (SELECT 1 FROM "Refund" r WHERE r."dedupeKey" = 'trial-unanswered:' || t."paymentId" AND r."status"::text NOT IN ('FAILED', 'CANCELLED'));
+```
+
+It returned no rows on 2026-11-13. If a row exists, run the old
+`expire-unpaid-trials` job once on production before the promotion (System Jobs,
+or its `CRON_SECRET` cleanup route); its retry sends the keyed full refund. That
+retry looks back 14 days, so a row cancelled earlier goes to the owner.
 
 The reconcile push is therefore sequenced behind the `dev` → `prod` promotion:
 move the 20 entries from `knownDivergences` to `destructiveStatementsAllowed`,

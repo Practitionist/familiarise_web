@@ -48,3 +48,23 @@ it("keeps the credit wording when referral credit paid for the booking", async (
   await screen.findByText(/You paid with referral credits/);
   expect(screen.getByText(/Paid by you/)).toBeInTheDocument();
 });
+
+it("names a trial awaiting payment as a held trial, never a request", () => {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <CancelConfirmationDialog
+        isOpen
+        isPendingPayment
+        onConfirm={jest.fn()}
+        onCancel={jest.fn()}
+        title="Trial call"
+        consultant="Priya"
+        appointmentType="Trial"
+        appointmentId="apt-2"
+      />
+    </QueryClientProvider>,
+  );
+  expect(screen.getByText("Cancel this trial?")).toBeInTheDocument();
+  expect(screen.getByText(/cancels the held trial/)).toBeInTheDocument();
+  expect(screen.queryByText(/request/i)).toBeNull();
+});

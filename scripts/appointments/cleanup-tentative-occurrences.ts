@@ -34,7 +34,7 @@ import { transitionSlotsInChunks } from "@/lib/booking/slot-release";
 const TENTATIVE_EXPIRATION_HOURS = 24;
 
 const REVIEWING = ["PENDING", "APPROVED_PENDING_PAYMENT"] as const;
-const LIVE_EVENT = ["SCHEDULED", "IN_PROGRESS"] as const;
+const LIVE_EVENT = ["SCHEDULED"] as const;
 
 /**
  * A live tentative hold with no successful payment whose parent is neither

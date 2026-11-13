@@ -113,10 +113,12 @@ function buildStatusWhere(
 ): Prisma.AppointmentWhereInput | null {
   if (status === "scheduled" || status === "completed") {
     const s = status === "scheduled" ? "SCHEDULED" : "COMPLETED";
+    // A confirmed 1:1 or plan is stored APPROVED; webinars and classes are SCHEDULED.
+    const request = status === "scheduled" ? "APPROVED" : "COMPLETED";
     return {
       OR: [
-        { consultation: { status: s } },
-        { subscription: { status: s } },
+        { consultation: { status: request } },
+        { subscription: { status: request } },
         { webinar: { status: s } },
         { class: { status: s } },
       ],

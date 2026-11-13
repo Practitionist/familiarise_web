@@ -229,9 +229,7 @@ type RetroOutcome = "voided" | "relabelled" | "kept" | "skipped" | "lost";
 function settledParent(occ: RetroOccurrence): boolean {
   const { subscription, class: cls } = occ.appointment;
   if (subscription) {
-    return (
-      subscription.status !== "APPROVED" && subscription.status !== "SCHEDULED"
-    );
+    return subscription.status !== "APPROVED";
   }
   return cls?.status === "CANCELLED";
 }

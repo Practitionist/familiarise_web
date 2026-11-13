@@ -62,7 +62,7 @@ export const referralCustomizeLimiter = makeLimiter(
 );
 /** 30 per hour per user — GET /api/referrals/expert-link */
 export const expertLinkLimiter = makeLimiter(30, "1 h", "rl:expert-link");
-/** 1 per 24 hours per appointment — POST /api/bookings/{consultations,subscriptions}/[id]/remind */
+/** 1 per 24 hours per appointment — POST /api/bookings/consultations/[id]/remind */
 export const remindLimiter = makeLimiter(1, "24 h", "rl:remind");
 /** 5 per hour — support-tickets, feedbacks, reviews, report */
 export const spamLimiter = makeLimiter(5, "1 h", "rl:spam");

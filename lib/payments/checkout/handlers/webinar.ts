@@ -77,9 +77,7 @@ export async function handleWebinarCheckout(
     throw new Error(message);
   }
 
-  // BUG-A FIX: Block booking if the webinar's scheduled end time has already passed.
-  // This catches stale SCHEDULED webinars where the consultant never updated the status.
-  // Late joiners to IN_PROGRESS webinars are still allowed as long as the end time hasn't passed.
+  // A webinar stays SCHEDULED while it runs: a late joiner may buy until its end time.
   const masterSlot = webinar.appointment.occurrences[0];
   if (masterSlot.endsAt < new Date()) {
     throw new Error(

@@ -3,6 +3,7 @@
 
 import { recordParticipants } from "@/lib/booking/participants";
 import { appendCreationHistory } from "@/lib/booking/transitions";
+import { assertExpertTakesDirectCheckout } from "@/lib/booking/booking-rule-error";
 import type { Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import { AppointmentsType, AppointmentStatus } from "@prisma/client";
@@ -46,6 +47,8 @@ export async function handleConsultationCheckout(
   if (!plan) {
     throw new Error("Consultation plan not found");
   }
+  // A switch flipped while the order was minted refuses here; the abort tombstones that order.
+  assertExpertTakesDirectCheckout("CONSULTATION", plan.consultantProfile);
 
   // userId is the consultee's user ID (passed by caller — no extra DB lookup needed)
   const consultantUserId = plan.consultantProfile.user.id;

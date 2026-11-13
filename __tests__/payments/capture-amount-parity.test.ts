@@ -526,7 +526,7 @@ describe("a capture rejected for its amount opens no group room", () => {
           class: null,
           trial: null,
           webinar: {
-            status: "IN_PROGRESS",
+            status: "SCHEDULED",
             webinarPlan: { id: "wp1", consultantProfileId: "host1" },
           },
         },

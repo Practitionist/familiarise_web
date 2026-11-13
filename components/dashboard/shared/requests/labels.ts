@@ -71,8 +71,8 @@ export const EMPTY_STATE: Record<InboxType, { title: string; body: string }> = {
     body: "New plans, pay links and cycles to schedule land here.",
   },
   trial: {
-    title: "No trial requests",
-    body: "Trial requests from your plan pages land here.",
+    title: "No trials awaiting payment",
+    body: "Paid trials booked from your plan pages appear here until they are paid.",
   },
 };
 

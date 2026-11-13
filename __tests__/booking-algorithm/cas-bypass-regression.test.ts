@@ -146,7 +146,7 @@ describe("trial status writers use transitionTrial", () => {
     );
     expect(
       (src.match(/transitionTrial\(/g) ?? []).length,
-    ).toBeGreaterThanOrEqual(3);
+    ).toBeGreaterThanOrEqual(2);
   });
 });
 

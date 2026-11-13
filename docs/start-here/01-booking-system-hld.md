@@ -382,7 +382,7 @@ stateDiagram-v2
   }
 ```
 
-The approved-but-unpaid request has two honest endings. When the window runs out (the pay-link lapses, the window is too short to open, or the session starts before the money lands) the request is `EXPIRED`. When the consultant withdraws the approval, a party with standing ended it, so it is `CANCELLED` (`lapseApprovedRequest` in `lib/booking/lapse-approved-request.ts`). A webinar or class `IN_PROGRESS` status exists in the enum and the transition map, but no code path writes it: an event goes from `SCHEDULED` straight to `COMPLETED` or `CANCELLED`, and "under way" is read from the clock.
+The approved-but-unpaid request has two honest endings. When the window runs out (the pay-link lapses, the window is too short to open, or the session starts before the money lands) the request is `EXPIRED`. When the consultant withdraws the approval, a party with standing ended it, so it is `CANCELLED` (`lapseApprovedRequest` in `lib/booking/lapse-approved-request.ts`). A webinar or class has no "in progress" status: an event goes from `SCHEDULED` straight to `COMPLETED` or `CANCELLED`, and "under way" is read from the clock.
 
 A completed trial counts as converted only once a plan with the same expert is paid for. `convertCompletedTrial()` in `lib/trials/conversion.ts` moves the trial from `COMPLETED` to `CONVERTED` and stamps `convertedToSubscriptionId`, either when the subscription's payment is captured or at a checkout that settles with no gateway; a learner who starts checkout and walks away leaves the trial `COMPLETED`. Any plan of the same expert counts, not only the plan that was trialled, as long as it is paid within 30 days of the trial's completion.
 

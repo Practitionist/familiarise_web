@@ -34,7 +34,7 @@ The `/api/scheduling/appointments` GET endpoint supports status filtering. The a
 | Event Type                  | Status Enum         | Valid Values                                      |
 | --------------------------- | ------------------- | ------------------------------------------------- |
 | Consultation / Subscription | `AppointmentStatus` | PENDING, APPROVED, APPROVED_PENDING_PAYMENT, etc. |
-| Webinar / Class             | Event status        | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED      |
+| Webinar / Class             | Event status        | SCHEDULED, COMPLETED, CANCELLED                   |
 
 ---
 

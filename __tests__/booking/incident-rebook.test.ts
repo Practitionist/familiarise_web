@@ -125,7 +125,10 @@ import {
   bringIncidentRefundForward,
   rebookIncidentRemedy,
 } from "../../lib/booking/incident-rebook";
-import { incidentRefundKey } from "../../lib/booking/incident-keys";
+import {
+  incidentRefundKey,
+  isRebookableParent,
+} from "../../lib/booking/incident-keys";
 import { incidentRemedyText } from "../../lib/email/senders/incident";
 
 const db = prisma as unknown as {
@@ -142,7 +145,8 @@ function seed(parent: Parent, overrides: Record<string, unknown> = {}) {
   const now = Date.now();
   const voidedStart = new Date(now - 24 * HOUR);
   state.occ = { completionStatus: "VOIDED", seatsSettledAt: null };
-  state.parentStatus = "SCHEDULED";
+  // A confirmed 1:1 is stored APPROVED; a confirmed trial is SCHEDULED.
+  state.parentStatus = parent === "consultation" ? "APPROVED" : "SCHEDULED";
   state.refundOwedKey = null;
   state.overlap = false;
   state.buyerProfileId = null;
@@ -168,7 +172,7 @@ function seed(parent: Parent, overrides: Record<string, unknown> = {}) {
           parent === "consultation"
             ? {
                 id: "cons-1",
-                status: "SCHEDULED",
+                status: "APPROVED",
                 requestedBy: person("learner", "Ravi"),
                 consultationPlan: {
                   title: "Career chat",
@@ -306,6 +310,25 @@ describe("a committed rebook", () => {
     expect(transitionConsultationRequest).not.toHaveBeenCalled();
   });
 
+  it("a completed consultation returns to APPROVED, and a second void of the rebooked session is rebookable again", async () => {
+    seed("consultation");
+    state.parentStatus = "COMPLETED";
+    await rebook();
+    expect(transitionConsultationRequest).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({
+        where: { id: "cons-1" },
+        to: "APPROVED",
+        fromIn: ["COMPLETED"],
+      }),
+    );
+    // The rebooked session is voided too: the reopened booking is APPROVED and takes it.
+    seed("consultation");
+    transitionConsultationRequest.mockClear();
+    await expect(rebook()).resolves.toMatchObject({ occurrenceId: "occ-new" });
+    expect(transitionConsultationRequest).not.toHaveBeenCalled();
+  });
+
   it("takes a learner-expert's own atoms in the same batch as the host's", async () => {
     seed("consultation");
     state.buyerProfileId = "cp-buyer";
@@ -395,4 +418,16 @@ it("the digest offers the free rebook before the refund date, in the reader's zo
   expect(
     incidentRemedyText({ ...item, rebookable: false }, "Asia/Kolkata"),
   ).toMatch(/^You get a full refund on /);
+});
+
+describe("who may take the free rebook", () => {
+  it("is decided per kind: a 1:1 while APPROVED or COMPLETED, a trial while SCHEDULED or COMPLETED", () => {
+    expect(isRebookableParent("consultation", "APPROVED")).toBe(true);
+    expect(isRebookableParent("consultation", "COMPLETED")).toBe(true);
+    expect(isRebookableParent("consultation", "SCHEDULED")).toBe(false);
+    expect(isRebookableParent("consultation", "CANCELLED")).toBe(false);
+    expect(isRebookableParent("trial", "SCHEDULED")).toBe(true);
+    expect(isRebookableParent("trial", "COMPLETED")).toBe(true);
+    expect(isRebookableParent("trial", "APPROVED")).toBe(false);
+  });
 });

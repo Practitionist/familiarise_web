@@ -1,3 +1,5 @@
+import type { BookingMode } from "@prisma/client";
+
 /**
  * #1775 / #1780 — the booking-money refusals this train adds. Each is a state
  * the caller can act on, never a fault, so each carries its own code and a
@@ -25,6 +27,7 @@ export type BookingRuleCode =
   | "WINDOW_DURATION_MISMATCH"
   | "SEAT_REBUY_UNSUPPORTED"
   | "NOT_ACCEPTING_BOOKINGS"
+  | "REQUEST_APPROVAL_REQUIRED"
   | "PLAN_CLIENTS_FULL"
   | "EXPERT_NOT_VERIFIED"
   | "ALREADY_REGISTERED"
@@ -63,6 +66,40 @@ export class BookingRuleError extends Error {
   ) {
     super(message);
     this.name = "BookingRuleError";
+  }
+}
+
+/** A direct 1:1 checkout refused because the expert reviews requests first. */
+export const REQUEST_APPROVAL_REQUIRED_MESSAGE =
+  "This expert reviews requests before you pay. Send a request for this time instead. You have not been charged.";
+
+const NOT_ACCEPTING_BOOKINGS_MESSAGE =
+  "This expert is not taking new 1:1 bookings right now. Pick another expert, or try again later.";
+
+/**
+ * The expert's two switches a direct checkout obeys: a pause stops 1:1s and plans, review-first
+ * stops 1:1s. Pricing, the in-lock re-read and the commit all ask this, so a flip refuses alike.
+ */
+export function assertExpertTakesDirectCheckout(
+  appointmentType: string,
+  profile: { acceptingRequests: boolean; bookingMode: BookingMode } | null,
+): void {
+  const oneToOne =
+    appointmentType === "CONSULTATION" || appointmentType === "SUBSCRIPTION";
+  if (oneToOne && profile?.acceptingRequests === false) {
+    throw new BookingRuleError(
+      "NOT_ACCEPTING_BOOKINGS",
+      NOT_ACCEPTING_BOOKINGS_MESSAGE,
+    );
+  }
+  if (
+    appointmentType === "CONSULTATION" &&
+    profile?.bookingMode === "REQUEST"
+  ) {
+    throw new BookingRuleError(
+      "REQUEST_APPROVAL_REQUIRED",
+      REQUEST_APPROVAL_REQUIRED_MESSAGE,
+    );
   }
 }
 

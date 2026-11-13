@@ -22,7 +22,7 @@ import type { AppointmentStatus } from "@prisma/client";
  *
  * Deliberately EXCLUDES `PENDING` and `APPROVED_PENDING_PAYMENT`: chat opens
  * only once payment settles or an appointment is approved without pending
- * payment (`APPROVED`, `SCHEDULED`, `COMPLETED`).
+ * payment (`APPROVED`, `COMPLETED`).
  *
  * **Changing this changes what the reconciler deletes.**
  * `syncUserEventChannels` treats every `dm-`/`dmo-`/`dmh-` channel absent from
@@ -34,7 +34,6 @@ import type { AppointmentStatus } from "@prisma/client";
  */
 export const DM_ELIGIBLE_STATUSES: readonly AppointmentStatus[] = [
   "APPROVED",
-  "SCHEDULED",
   "COMPLETED",
 ] as const;
 
@@ -81,8 +80,4 @@ export function excludeNonDmDirectBooking() {
  * Deliberately narrower than the DM set: CANCELLED events must not be
  * openable, and DRAFT is author-only.
  */
-export const OPENABLE_EVENT_STATUSES = [
-  "SCHEDULED",
-  "IN_PROGRESS",
-  "COMPLETED",
-] as const;
+export const OPENABLE_EVENT_STATUSES = ["SCHEDULED", "COMPLETED"] as const;

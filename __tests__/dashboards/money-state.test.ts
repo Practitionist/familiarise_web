@@ -259,6 +259,35 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
     ]);
   });
 
+  it("a trial's timeline starts with one booking entry and never names an approval", () => {
+    const trial = (status: string, payments: PaymentInput[]) =>
+      base({
+        appointmentType: "TRIAL",
+        request: { status, kind: "TRIAL", requestedAt: PAST },
+        payments,
+      });
+    const labels = (
+      input: BookingPresentationInput,
+      viewer: "CONSULTEE" | "CONSULTANT",
+    ) =>
+      deriveBookingPresentation(input, viewer, { now: NOW }).timeline.map(
+        (e) => e.label,
+      );
+    const awaiting = trial("AWAITING_PAYMENT", [
+      pay("PENDING", 10_600, { expiresAt: IN_4D }),
+    ]);
+    expect(labels(awaiting, "CONSULTEE").slice(0, 2)).toEqual([
+      "Booked (you)",
+      expect.stringMatching(/^You pay/),
+    ]);
+    expect(labels(awaiting, "CONSULTANT")[0]).toBe("Booked by Rachel");
+    const free = trial("SCHEDULED", []);
+    for (const viewer of ["CONSULTEE", "CONSULTANT"] as const) {
+      const all = labels({ ...free, occurrences: confirmed }, viewer);
+      expect(all.some((l) => /approve|request/i.test(l))).toBe(false);
+    }
+  });
+
   it("sponsored shows the organisation and no amount; a co-pay appends", () => {
     const input = base({
       request: { status: "APPROVED", kind: "CONSULTATION" },

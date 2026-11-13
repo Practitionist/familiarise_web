@@ -178,7 +178,7 @@ async function remint(row: PayPageRow): Promise<boolean> {
     const cleared = await prisma.trial.updateMany({
       where: {
         id: trial.id,
-        status: { in: [TrialStatus.AWAITING_PAYMENT, TrialStatus.PENDING] },
+        status: TrialStatus.AWAITING_PAYMENT,
         paymentId: null,
       },
       data: { pendingPaymentUrl: null },

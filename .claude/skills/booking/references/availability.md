@@ -202,7 +202,8 @@ not host-cancelled, not `CANCELLED`. `RESCHEDULED` rows still occupy.
 
 `utils/scheduling-engine/occupancyPolicy.ts` answers "what blocks this slot".
 `OCCUPIED_REQUEST_STATUSES` is `PENDING`, `APPROVED`, `APPROVED_PENDING_PAYMENT`
-and `SCHEDULED`; `OCCUPIED_EVENT_STATUSES` is `SCHEDULED` and `IN_PROGRESS`;
+and `SCHEDULED`; `OCCUPIED_EVENT_STATUSES` is `SCHEDULED` (a published event stays
+`SCHEDULED` until it completes);
 trials occupy at `SCHEDULED` and `AWAITING_PAYMENT`, because a paid trial holds
 the learner's picked time from the request until it is paid or the
 expire-unpaid-trials sweep releases it (no dead-hold arm frees it earlier, so a

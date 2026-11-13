@@ -139,14 +139,14 @@ type SettledAnd = Prisma.AppointmentWhereInput["AND"];
 
 function completableWebinarWhere(settled: SettledAnd) {
   return {
-    status: { in: [WebinarStatus.SCHEDULED, WebinarStatus.IN_PROGRESS] },
+    status: WebinarStatus.SCHEDULED,
     appointment: { AND: settled },
   } satisfies Prisma.WebinarWhereInput;
 }
 
 function completableClassWhere(settled: SettledAnd) {
   return {
-    status: { in: [ClassStatus.SCHEDULED, ClassStatus.IN_PROGRESS] },
+    status: ClassStatus.SCHEDULED,
     // One wrapper: at least one occurrence, and every live one ended.
     appointment: { AND: settled },
   } satisfies Prisma.ClassWhereInput;
@@ -154,7 +154,7 @@ function completableClassWhere(settled: SettledAnd) {
 
 function completableConsultationWhere(bufferTime: Date) {
   return {
-    status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
+    status: AppointmentStatus.APPROVED,
     // A voided consultation is owed its make-up or refund first.
     appointment: {
       AND: [
@@ -169,7 +169,7 @@ function completableConsultationWhere(bufferTime: Date) {
 /** Every live session ended and decided, and no void left unsettled: otherwise plan-end settlement owns completion. */
 function completableSubscriptionWhere(settled: SettledAnd) {
   return {
-    status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
+    status: AppointmentStatus.APPROVED,
     appointment: { AND: settled },
   } satisfies Prisma.SubscriptionWhereInput;
 }
@@ -332,7 +332,7 @@ async function completeWebinars(
     Date.now() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
   );
 
-  // Find SCHEDULED or IN_PROGRESS webinars where all slots have ended
+  // Find SCHEDULED webinars where all slots have ended
   const webinarsToComplete = await prisma.webinar.findMany({
     orderBy: { updatedAt: "asc" },
     take: maxParents,
@@ -428,7 +428,7 @@ async function completeClasses(
     Date.now() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
   );
 
-  // Find SCHEDULED or IN_PROGRESS classes where all slots have ended
+  // Find SCHEDULED classes where all slots have ended
   const classesToComplete = await prisma.class.findMany({
     orderBy: { updatedAt: "asc" },
     take: maxParents,
@@ -519,7 +519,7 @@ async function completeConsultations(
     Date.now() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
   );
 
-  // Find APPROVED or SCHEDULED consultations where all slots have ended
+  // Find APPROVED consultations where all slots have ended
   const consultationsToComplete = await prisma.consultation.findMany({
     orderBy: { updatedAt: "asc" },
     take: maxParents,

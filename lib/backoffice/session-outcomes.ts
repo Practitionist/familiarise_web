@@ -224,8 +224,7 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
     to === "VOIDED" &&
     occ.completionStatus !== "VOIDED" &&
     plan &&
-    plan.status !== "APPROVED" &&
-    plan.status !== "SCHEDULED"
+    plan.status !== "APPROVED"
   ) {
     throw new OpsRefusal(
       "PLAN_SETTLED",
