@@ -224,10 +224,10 @@ describe("bound 2: an expert-set limit on active plan clients", () => {
       parsePlanClientLimitInput(raw),
     );
     for (const reason of reasons) {
-      expect(reason.ok).toBe(false);
-      if (!reason.ok) {
-        expect(reason.error).toContain("whole number from 1 to 500");
-      }
+      expect(reason).toEqual({
+        ok: false,
+        error: expect.stringContaining("whole number from 1 to 500"),
+      });
     }
     expect(planClientsLine(3, 5)).toBe("3 of 5 active plan clients");
     expect(planClientsLine(1, null)).toBe("1 active plan client");
