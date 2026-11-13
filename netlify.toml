@@ -41,6 +41,10 @@
 # Full record: docs/deployment/netlify.md (Section 14).
 # ─────────────────────────────────────────────────────────────────────────────
 
+# EXPERIMENT ONLY, never merge: handler memory for one cold-boot measurement (ADR 32).
+[functions."___netlify-server-handler"]
+  memory = 2048
+
 # Skip builds for Dependabot PRs
 [context.deploy-preview]
   ignore = """
