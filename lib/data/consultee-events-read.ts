@@ -284,6 +284,8 @@ export async function readConsulteeEvents(
                 },
               },
               payment: callerPayments,
+              // The caller's own seat: a HELD seat whose payment lapsed is not registered.
+              participants: { where: { userId }, select: { status: true } },
             },
           },
         },
@@ -347,6 +349,8 @@ export async function readConsulteeEvents(
                 },
               },
               payment: callerPayments,
+              // The caller's own seat: a HELD seat whose payment lapsed is not registered.
+              participants: { where: { userId }, select: { status: true } },
             },
           },
         },

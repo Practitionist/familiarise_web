@@ -185,6 +185,17 @@ export function mapAppointmentDetail(
       (a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime(),
     );
 
+  // A learner's read is scoped to their own seat and payments.
+  const group = !!appointment.webinar || !!appointment.class;
+  const ownSeat =
+    role === "consultee" && group
+      ? appointment.participants.find((p) => p.role === "CONSULTEE")
+      : undefined;
+  const pendingDeadline = appointment.payment
+    .filter((p) => p.paymentStatus === "PENDING" && p.expiresAt)
+    .map((p) => toDate(p.expiresAt!))
+    .sort((a, b) => a.getTime() - b.getTime())[0];
+
   const vm: AppointmentVM = {
     id: `appointment-${appointment.id}`,
     appointmentId: appointment.id,
@@ -208,12 +219,16 @@ export function mapAppointmentDetail(
     organizationId: appointment.organizationId ?? null,
     pendingPaymentUrl: facts.pendingPaymentUrl,
     trialId: appointment.trial?.id ?? null,
+    seatStatus: ownSeat?.status ?? null,
+    paid: appointment.payment.some((p) => p.paymentStatus === "SUCCEEDED"),
+    payDeadline: pendingDeadline ?? null,
     bookingSource:
       appointment.consultation?.bookingSource ??
       appointment.subscription?.bookingSource ??
       null,
+    // A seat's held order is the learner's own; a host never pays one.
     pendingPaymentId:
-      appointment.consultation || appointment.subscription
+      !appointment.trial && (role === "consultee" || !group)
         ? payablePaymentId(appointment.payment)
         : null,
     collaborators: facts.collaborators,

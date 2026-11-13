@@ -80,3 +80,11 @@ export function isApprovedStatus(status: string | null | undefined): boolean {
 export function isConfirmedStatus(status: string | null | undefined): boolean {
   return CONFIRMED_STATUSES.has(normalizeStatus(status));
 }
+
+/** A seat still held on a payment that never succeeded: not registered, no Join. */
+export function isUnpaidSeat(vm: {
+  seatStatus?: string | null;
+  paid?: boolean;
+}): boolean {
+  return normalizeStatus(vm.seatStatus) === "HELD" && vm.paid !== true;
+}

@@ -36,6 +36,7 @@ import {
   isConfirmedStatus,
   isInactiveStatus,
   isPendingPaymentStatus,
+  isUnpaidSeat,
 } from "@/lib/appointments/status";
 import type {
   AppointmentVM,
@@ -391,7 +392,12 @@ export function useConsulteeAppointmentsAdapter(options?: {
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
       now,
     });
-    if (joinable && isConfirmedStatus(vm.status) && vm.raw.appointment) {
+    if (
+      joinable &&
+      isConfirmedStatus(vm.status) &&
+      !isUnpaidSeat(vm) &&
+      vm.raw.appointment
+    ) {
       return {
         kind: "join",
         label: "Join",

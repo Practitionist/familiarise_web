@@ -97,6 +97,16 @@ function groupProgress(
   };
 }
 
+/** The viewer's own seat status on a webinar or class row. */
+function ownSeatStatus(
+  appointment:
+    | { id: string; participants?: ReadonlyArray<{ status: string }> }
+    | null
+    | undefined,
+): string | null {
+  return appointment?.participants?.[0]?.status ?? null;
+}
+
 /** What a list row knows about payment and an open reschedule, for its status chip. */
 function listStatusFacts(
   appointment:
@@ -223,6 +233,8 @@ function mapWebinar(w: TConsulteeWebinar, now: Date): AppointmentVM {
     meta: null,
     organizationId: w.appointment?.organizationId ?? null,
     pendingPaymentUrl: null,
+    seatStatus: ownSeatStatus(w.appointment),
+    ...listStatusFacts(w.appointment, occurrences),
     collaborators: collaborators(w.webinarPlan.collaborators),
     collaboratorRole: null,
     raw: {
@@ -253,6 +265,8 @@ function mapClass(c: TConsulteeClass, now: Date): AppointmentVM {
     meta: null,
     organizationId: target?.organizationId ?? null,
     pendingPaymentUrl: null,
+    seatStatus: ownSeatStatus(target),
+    ...listStatusFacts(target, occurrences),
     collaborators: collaborators(c.classPlan.collaborators),
     collaboratorRole: null,
     raw: {
