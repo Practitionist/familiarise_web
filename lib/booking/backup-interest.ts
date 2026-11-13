@@ -10,6 +10,7 @@
 import { AppointmentsType, BackupInterestStatus, Prisma } from "@prisma/client";
 
 import prisma, { type Tx, type PrismaLike } from "@/lib/prisma";
+import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageBell } from "@/lib/novu/stage-bell";
@@ -250,6 +251,30 @@ export function markBackupInterestBooked(
     where: { ...overlapping(window), userId, status: { in: OPEN_INTEREST } },
     data: { status: BackupInterestStatus.BOOKED, bookedAt: now },
   });
+}
+
+/** A confirmed 1:1 marks the booker's waits on each of its live host windows BOOKED. */
+export async function markAppointmentWindowsBooked(
+  tx: Pick<Tx, "appointmentOccurrence" | "windowBackupInterest">,
+  appointmentId: string,
+  userId: string,
+) {
+  const windows = await tx.appointmentOccurrence.findMany({
+    where: {
+      appointmentId,
+      ...liveOccurrenceWhere,
+      consultantProfileId: { not: null },
+    },
+    select: { consultantProfileId: true, startsAt: true, endsAt: true },
+  });
+  for (const w of windows) {
+    if (!w.consultantProfileId) continue;
+    await markBackupInterestBooked(tx, userId, {
+      consultantProfileId: w.consultantProfileId,
+      windowStart: w.startsAt,
+      windowEnd: w.endsAt,
+    });
+  }
 }
 
 // Shared by the expiry write and the stale-request sweep's idle probe.
