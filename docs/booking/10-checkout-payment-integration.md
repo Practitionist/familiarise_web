@@ -148,6 +148,18 @@ When `isMockPayment = true`:
 - The payment record is immediately set to `PaymentStatus.SUCCEEDED`
 - No webhook confirmation needed
 
+### The checkout page
+
+**Files**: `app/checkout/plans/components/PlanCheckoutShell.tsx`, the four adapters under `app/checkout/plans/adapters/`, `app/checkout/components/RazorpayCheckout.tsx`
+
+The four plan checkouts share one shell; each adapter supplies the plan's details and its price. The details print the plan level through `planLevelLabel` and every date and time in the buyer's profile zone (`useViewerZone`), with short times and a short zone name ("10:00 AM - 10:30 AM (IST)").
+
+- **A free order.** The server reports a zero-amount order only when it answers the click (`isZeroAmountOrder`, returned as `isZeroAmountPayment`), so the page derives "free" from the total it already shows: zero, with no referral credit applied. A free order shows one "Confirm booking" button and no payer selector, billing state, credit switch, payment card or refund-timing copy, and its request carries no organisation and no credits. The server stays the authority: it confirms the booking with a `free_` payment, or, if it priced the order otherwise, returns a gateway order that the same button opens.
+- **"Includes".** Only what the expert entered (`whatsIncluded`) and facts from the plan's own fields; the row is hidden when empty (`planIncludes`).
+- **The pay button.** It is busy from the click, guards against a second run, and runs the page's pre-check (`onBeforeCheckout`: the billing state, a webinar's fresh seat count) behind that busy state; a missing billing state takes focus so its error is seen.
+
+Example: Charlotte Brown opens Hannah Anderson's free 30-minute consultation for Monday 10:00 IST. The total reads ₹0 and the only button is "Confirm booking"; the click confirms the booking with no gateway, and Charlotte lands on her dashboard.
+
 ---
 
 ## Locking During Checkout
@@ -302,3 +314,8 @@ For subscriptions specifically, the legacy flow logs a warning since all new sub
 | Approval payments (pay-later) flow                 | `docs/finance/10-money-in/05-approval-payments.md`             |
 | Cancellation and refund flows                      | `docs/finance/30-refunds-disputes/01-refunds.md`               |
 | Cron jobs (expired payment cleanup, earnings sync) | `docs/booking/13-cron-jobs-and-background-tasks.md`            |
+
+## Deprecated & Superseded Approaches
+
+- **A ₹0 checkout that offered "Pay with Razorpay", the payer choice and a 5–7 day refund note, and invented "Includes" lines.** Replaced by the free-order rules above.
+- **Checkout times in the device zone with seconds, and raw plan levels.** Replaced by the profile zone and `planLevelLabel`.
