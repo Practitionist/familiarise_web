@@ -300,6 +300,13 @@ export function CancelConfirmationDialog({
       );
     }
     if (asConsultant) {
+      if (preview.freeBooking) {
+        return (
+          <p className="text-muted-foreground text-sm">
+            {FREE_BOOKING_REFUND_LINE}
+          </p>
+        );
+      }
       return consultantRefundLine({
         paise: preview.estimatedRefundPaise,
         currency: preview.currency,
@@ -336,6 +343,10 @@ export function CancelConfirmationDialog({
       </>
     );
   };
+
+  // An expert's button promises a refund only when there is one to give.
+  const nothingToRefund =
+    !!preview && (preview.paid === false || !!preview.freeBooking);
 
   /** What the click binds to: the quote shown, or the unpaid screen of an approval awaiting payment. */
   const shownQuote = (): ShownCancelQuote | undefined => {
@@ -414,7 +425,7 @@ export function CancelConfirmationDialog({
               </>
             ) : isLeave ? (
               "Yes, Leave"
-            ) : asConsultant ? (
+            ) : asConsultant && !nothingToRefund ? (
               "Cancel and refund"
             ) : (
               "Cancel booking"

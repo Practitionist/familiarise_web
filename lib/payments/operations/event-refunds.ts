@@ -26,6 +26,7 @@ import {
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import {
   isFreeCreditIntent,
+  isPriceFreePayment,
   type FundingRail,
 } from "@/lib/payments/funding-rail";
 import { computeRefundPct } from "./cancellation-policy";
@@ -74,6 +75,18 @@ export type WholeEventRefundSummary = {
 /** Seats refunded inline before the rest is left to the retry sweep. */
 const INLINE_SEAT_LIMIT = 10;
 const INLINE_BUDGET_MS = 10_000;
+
+function isPriceFreeSeat(p: {
+  paymentIntent: string;
+  amount: number | bigint;
+  originalAmount: number | bigint;
+}): boolean {
+  return isPriceFreePayment({
+    paymentIntent: p.paymentIntent,
+    amountPaise: Number(p.amount),
+    listPricePaise: Number(p.originalAmount),
+  });
+}
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -129,6 +142,7 @@ async function planEventSeats(
       id: true,
       userId: true,
       amount: true,
+      originalAmount: true,
       currency: true,
       paymentIntent: true,
       ...REFUNDABLE_BALANCE_SELECT,
@@ -147,7 +161,8 @@ async function planEventSeats(
     : new Map<string, number>();
   const plans = new Map<string, EventSeatPlan>();
   for (const p of payments) {
-    if (!liveSeats.has(p.id)) {
+    // A free seat owes nothing and writes no refund record.
+    if (!liveSeats.has(p.id) || isPriceFreeSeat(p)) {
       plans.set(p.id, { kind: "settled" });
       continue;
     }
@@ -734,6 +749,7 @@ export async function refundRemovedAttendeeSeat(args: {
       select: {
         id: true,
         amount: true,
+        originalAmount: true,
         paymentIntent: true,
         currency: true,
         organizationId: true,
@@ -742,6 +758,10 @@ export async function refundRemovedAttendeeSeat(args: {
       },
     });
     if (!payment) return null;
+    // A free seat owes nothing and writes no refund record.
+    if (isPriceFreeSeat(payment)) {
+      return { amountRefundedPaise: 0, refundPct: 100, rail: null };
+    }
     organizationId = payment.organizationId;
     const dedupeKey = args.dedupeKey
       ? `${args.dedupeKey}:pay:${payment.id}`

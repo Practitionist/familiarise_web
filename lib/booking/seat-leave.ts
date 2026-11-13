@@ -33,6 +33,7 @@ import {
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
 import { refundRemovedAttendeeSeat } from "@/lib/payments/operations/event-refunds";
+import { isPriceFreePayment } from "@/lib/payments/funding-rail";
 import {
   driveRefundOwed,
   heldMarkerRefusal,
@@ -145,6 +146,8 @@ function seatPayment(tx: Tx, kind: EventKind, eventId: string, userId: string) {
     select: {
       id: true,
       amount: true,
+      originalAmount: true,
+      paymentIntent: true,
       currency: true,
       createdAt: true,
       ...REFUNDABLE_BALANCE_SELECT,
@@ -549,6 +552,15 @@ function seatRefundOwed(
   plan: SeatRefundPlan,
   key: string,
 ): RefundOwedMarker | null {
+  // A free seat owes nothing and writes no refund record.
+  if (
+    isPriceFreePayment({
+      paymentIntent: payment.paymentIntent,
+      amountPaise: Number(payment.amount),
+      listPricePaise: Number(payment.originalAmount),
+    })
+  )
+    return null;
   const balance = refundableBalancePaise(Number(payment.amount), payment);
   const amountPaise =
     "mode" in plan ? null : Math.min(plan.amountPaise, balance);

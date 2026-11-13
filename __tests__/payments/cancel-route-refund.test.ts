@@ -282,6 +282,8 @@ function bookingRows(opts: {
   /** Defaults to a gateway-funded payment. */
   paymentAmount?: number;
   paymentIntent?: string;
+  /** The plan price before discounts and credits; zero on a free booking. */
+  listPricePaise?: number;
   /**
    * #1766 — the plan entitlement the unused-session quote measures against.
    * Defaults to every slot the fixture holds, which is the pre-Z2 denominator.
@@ -322,6 +324,7 @@ function bookingRows(opts: {
             {
               id: "pay-1",
               amount: opts.paymentAmount ?? GROSS,
+              originalAmount: opts.listPricePaise ?? GROSS,
               paymentIntent: opts.paymentIntent ?? "pi_gateway_1",
               refunds: opts.paymentRefunds ?? [],
               disputes: [],
@@ -507,6 +510,28 @@ describe("an expert's cancel of a free confirmed booking", () => {
 
     expect(res.status).toBe(200);
     expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+    expect(txStub.systemEvent.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes no refund record for a free checkout booking and still strikes", async () => {
+    mockGetSession.mockResolvedValue(sessionAs("consultant"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({
+        liveSlotHours: [48],
+        paymentAmount: 0,
+        listPricePaise: 0,
+        paymentIntent: "free_1",
+      }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+    const body = await res.json();
+
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+    expect(txStub.payment.updateMany).not.toHaveBeenCalled();
+    expect(body.refund).toMatchObject({ amountRefundedPaise: 0 });
+    expect(body.refund.rail).toBeUndefined();
     expect(txStub.systemEvent.create).toHaveBeenCalledTimes(1);
   });
 });

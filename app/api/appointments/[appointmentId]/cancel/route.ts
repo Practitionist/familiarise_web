@@ -52,6 +52,7 @@ import { creditStillUsedPaise } from "@/lib/payments/operations/credit-plan-retu
 import {
   isFreeCreditIntent,
   isInternalFundedIntent,
+  isPriceFreePayment,
   type FundingRail,
 } from "@/lib/payments/funding-rail";
 import {
@@ -511,7 +512,13 @@ async function eventAttendeesByRail(
   const [payments, seats] = await Promise.all([
     prisma.payment.findMany({
       where: { appointmentId, ...LIVE_SUCCEEDED_PAYMENT_WHERE },
-      select: { id: true, userId: true, paymentIntent: true },
+      select: {
+        id: true,
+        userId: true,
+        paymentIntent: true,
+        amount: true,
+        originalAmount: true,
+      },
     }),
     prisma.appointmentParticipant.findMany({
       where: { appointmentId, role: "CONSULTEE", ...liveParticipant() },
@@ -531,6 +538,14 @@ async function eventAttendeesByRail(
   for (const p of payments) {
     // A seat given back earlier was already told (and refunded) when it left.
     if (!seated.has(p.userId)) continue;
+    if (
+      isPriceFreePayment({
+        paymentIntent: p.paymentIntent,
+        amountPaise: Number(p.amount),
+        listPricePaise: Number(p.originalAmount),
+      })
+    )
+      continue;
     paid.add(p.userId);
     out.payerOf.set(p.id, p.userId);
     if (isFreeCreditIntent(p.paymentIntent)) out.credits.push(p.userId);
@@ -1046,9 +1061,10 @@ export async function POST(
               }
 
               // The refund this cancel owes commits with the cancel, so a death
-              // before the refund leaves a marker the retry sweep drives.
+              // before the refund leaves a marker the retry sweep drives. A free
+              // booking owes none: no refund record and no refund notice.
               const owed =
-                quote && paidPayment
+                quote && paidPayment && !isPriceFreePayment(paidPayment)
                   ? cancelRefundOwed(
                       appointmentId,
                       paidPayment.id,
