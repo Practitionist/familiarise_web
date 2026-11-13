@@ -108,7 +108,17 @@ replacement (`lib/booking/allocation/preference.ts`). There is no release withou
 a request (reschedule route, `app/api/appointments/[appointmentId]/reschedule/route.ts`;
 409 `NO_RESCHEDULABLE_SLOTS` when there is nothing to move). The allocator never
 closes the consultant's own open proposal that names times, because that waits
-on the client's consent: placing over it answers 409 `PROPOSAL_AWAITING_CLIENT`.
+on the client's consent: placing over it answers 409 `PROPOSAL_AWAITING_CLIENT`;
+nor does it place over the consultant's own bare release of a paid session
+(409 `PROPOSE_TIMES_REQUIRED`): the expert proposes times or the expiry restores.
+A move from or to a time less than 24 hours away is an agreed move: it needs
+proposed times, never auto-confirms (`needsOtherSideAcceptance`), expires at the
+session's start, and a released session is never placed under 24 hours away
+without an accepted proposal (`assertReplacementNotice`, 409 `NEEDS_ACCEPTANCE`).
+An allocate on a consultation that already has a confirmed session is 409
+`ALREADY_ALLOCATED` whatever the client sends (`mustBeUnscheduled`): moving it is
+the reschedule door's job. Decision record:
+`docs/decisions/2026-11-14-allocation-reschedule-and-short-notice-moves.md`.
 A booking with an open proposal or released sessions is being moved, not
 requested, so no decline door ends it (`assertNotBeingMoved`, 409
 `USE_RESCHEDULE_RESPOND` / `USE_CANCEL_ENDPOINT`). The release records

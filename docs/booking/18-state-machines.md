@@ -165,13 +165,24 @@ export const PARTICIPANT_ALLOWED_FROM: Record<
   it right after the reschedule route opens a consultee's proposal, when the
   proposed times sit inside the consultant's published availability and both
   calendars are free; nothing waits for a reply, and a consultant's proposal
-  never auto-confirms. Its map entry is empty (`AUTO_ACCEPTED: []`) because
-  the confirming hook (`closeConfirmedProposal`) is its one writer.
+  never auto-confirms. Nor does a proposal about a session, or naming a time,
+  less than 24 hours away: it answers `NEEDS_ACCEPTANCE` and waits for the
+  other side (`needsOtherSideAcceptance`). Its map entry is empty
+  (`AUTO_ACCEPTED: []`) because the confirming hook (`closeConfirmedProposal`)
+  is its one writer.
 - `ACCEPTED ← [PENDING_REVIEW]`; `DECLINED ←` open state; `WITHDRAWN ←` open
   state (initiator only); `EXPIRED ← [PENDING_REVIEW]` (reschedule-proposals sweep, every 15 minutes).
   `openForAppointmentId @unique` enforces at most one live reschedule per
-  appointment.
-- Decline, withdrawal, and expiry all restore the released slots and the
+  appointment. `expiresAt` is stored at creation (`computeProposalExpiry`):
+  the earlier of 72 hours and 24 hours before the earliest released session,
+  or that session's start when the request was opened inside those 24 hours.
+  An accept after `expiresAt` is refused (`PROPOSAL_EXPIRED`).
+- An expert's request with no proposed times on a paid booking is never
+  answered by a placement: the allocator refuses it with 409
+  `PROPOSE_TIMES_REQUIRED`, and the request ends by withdrawal or expiry.
+- Decline, withdrawal, and expiry all restore the released slots (each as
+  the release found it: firm, or an unpaid hold left tentative, read from
+  `releasedSessions[i].tentative`) and the
   parent's origin status through the shared `restoreRescheduledBooking` in
   `lib/booking/reschedule-restore.ts` inside the same `Serializable`
   transaction under the appointment lock. If the original time was booked while
