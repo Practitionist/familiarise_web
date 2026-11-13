@@ -1,12 +1,11 @@
 "use client";
 
-import { leadMsForPlan } from "@/lib/booking/lead-time";
+import { HELD_BY_SOMEONE_ELSE } from "@/components/booking/NotifyWhenFreeButton";
 import {
-  HELD_BY_SOMEONE_ELSE,
-  NotifyWhenFreeButton,
-  type BackupWindowRequest,
-} from "@/components/booking/NotifyWhenFreeButton";
-import { CalendarIcon } from "@/assets/icons";
+  SingleTimePicker,
+  TIME_JUST_TAKEN_MESSAGE,
+  type SingleTimeValue,
+} from "@/components/scheduling/SingleTimePicker";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,12 +14,11 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import * as Sentry from "@sentry/nextjs";
 import { motion } from "framer-motion";
-import { ClockIcon, CheckCircle2, RefreshCw } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { ApiResponseError, requireJsonResponse } from "@/lib/fetch-helpers";
 import {
@@ -29,14 +27,16 @@ import {
 } from "@/lib/errors/client-refusal";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from "react";
 import { PricingOption } from "../defaults";
-import { TIntervalTiming } from "@/types/slots";
-import { useNowTick } from "@/hooks/use-now-tick";
-import { useJustTaken } from "@/lib/scheduling/use-just-taken";
 import { ZoneSwitch } from "@/components/scheduling/ZoneSwitch";
 import type { DisplayZone } from "@/lib/time/use-display-zone";
-import { calendarDayOf } from "@/lib/time/grid-zone";
 import {
   consumePurchaseIntent,
   stashPurchaseIntent,
@@ -50,22 +50,10 @@ import {
   CONSULTANT_PAUSED_HINT,
   consultationCtaFor,
 } from "@/lib/booking/booking-mode";
-import { SlotList } from "./SlotList";
-import { durationPhrase } from "./slot-list-policy";
-import {
-  isBookableWindow,
-  sameWindow,
-  windowsForDay,
-  type SlotWithStatus,
-} from "@/lib/scheduling/booking-windows";
-
-/** What the dialog says when a poll or the server shows the pick is gone. */
-export const TIME_JUST_TAKEN_MESSAGE =
-  "That time was just taken — pick another.";
 
 interface ConsultantDetailsForBooking {
   id: string;
-  /** #1703 D1 — absent on older payloads; INSTANT is the pre-#1703 behaviour. */
+  /** Absent on older payloads; INSTANT then. */
   bookingMode?: BookingMode;
   /** False while the expert has paused new bookings of every kind. */
   acceptingRequests?: boolean;
@@ -78,19 +66,16 @@ interface ConsultantDetailsForBooking {
 interface ConsultationPricingToggleProps {
   consultationOptions: PricingOption[];
   consultantDetails: ConsultantDetailsForBooking;
-  handleConsultationBooking: (consultationPlanId: string) => void;
-  selectedDate: Date | null;
-  setSelectedDate: (date: Date | null) => void;
-  currentDate: Date;
-  setCurrentDate: (date: Date) => void;
-  renderCalendar: () => JSX.Element[];
-  slotTimings: TIntervalTiming[];
-  /** True once the selected day's read has answered, so an absent pick means gone. */
-  slotsReady: boolean;
-  selectedSlot: TIntervalTiming | null;
-  setSelectedSlot: (slot: TIntervalTiming | null) => void;
+  handleConsultationBooking: (
+    consultationPlanId: string,
+    pick: SingleTimeValue,
+  ) => void;
   /** The zone every time in the dialog is drawn in, with its device-zone switch. */
   displayZone: DisplayZone;
+  /** The signed-in buyer, so their own busy times read taken. */
+  consulteeUserId?: string;
+  /** Set when the page is entered after a taken-time refusal; the next read skips the cache. */
+  bypassRef?: MutableRefObject<boolean>;
   onRefreshSlots?: () => void;
   onDurationChange?: (durationInHours: number) => void;
 }
@@ -98,17 +83,10 @@ interface ConsultationPricingToggleProps {
 export default function ConsultationPricingToggle({
   consultationOptions,
   handleConsultationBooking,
-  selectedDate,
-  setSelectedDate,
-  currentDate,
-  setCurrentDate,
-  renderCalendar,
-  slotTimings,
-  slotsReady,
-  selectedSlot,
-  setSelectedSlot,
   displayZone,
   consultantDetails,
+  consulteeUserId,
+  bypassRef,
   onRefreshSlots,
   onDurationChange,
 }: Readonly<ConsultationPricingToggleProps>) {
@@ -116,21 +94,17 @@ export default function ConsultationPricingToggle({
   const router = useRouter();
   const { toast } = useToast();
   const { gstRegistered, formatBuyerPrice, noteFor } = useBuyerPrice();
-  const timezone = displayZone.zone;
-  // The lead-time cut moves with the clock, not only with new data: a 304
-  // poll keeps the data's identity, and a time crossing the 15-minute lead
-  // must still leave the list.
-  const now = useNowTick(60_000);
   // Track the active plan by id so plans that share a duration (e.g. two
   // 1-hour consultations) remain independently selectable and bookable.
   const [activeConsultationOption, setActiveConsultationOption] =
     useState<string>(consultationOptions[0]?.id ?? "");
-  const [isRequestingApproval, setIsRequestingApproval] = useState(false);
-  // #1778 — the window another learner holds, offered as "notify me".
-  const [heldWindow, setHeldWindow] = useState<BackupWindowRequest | null>(
-    null,
+  const [dialogPlanId, setDialogPlanId] = useState<string | null>(null);
+  const [pick, setPick] = useState<SingleTimeValue | null>(null);
+  // Times the request door said someone else holds: shown taken with "Notify me".
+  const [heldStarts, setHeldStarts] = useState<ReadonlySet<number>>(
+    () => new Set(),
   );
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isRequestingApproval, setIsRequestingApproval] = useState(false);
 
   const activePlanOption = useMemo(
     () =>
@@ -139,141 +113,62 @@ export default function ConsultationPricingToggle({
   );
 
   const selectedDuration = activePlanOption?.durationInHours ?? 1;
-  // The list never offers a time request-for-approval refuses.
-  const requestMode =
-    (consultantDetails.bookingMode ?? "INSTANT") === "REQUEST";
-  const leadMs = leadMsForPlan(requestMode, activePlanOption?.price);
+  const mode = consultantDetails.bookingMode ?? "INSTANT";
+  const requestMode = mode === "REQUEST";
 
   useEffect(() => {
     onDurationChange?.(selectedDuration);
   }, [selectedDuration, onDurationChange]);
 
   const paused = consultantDetails.acceptingRequests === false;
+  const cta = consultationCtaFor(mode);
 
-  const availableSlots = useMemo((): SlotWithStatus[] => {
-    if (!slotTimings || slotTimings.length === 0 || !selectedDate) return [];
-    return windowsForDay(
-      slotTimings,
-      selectedDuration,
-      timezone,
-      now.getTime(),
-      leadMs,
-    );
-  }, [slotTimings, selectedDuration, timezone, selectedDate, now, leadMs]);
+  const choosePlan = (planId: string) => {
+    setActiveConsultationOption(planId);
+    // A pick belongs to one session length; another plan has other windows.
+    setPick(null);
+    setHeldStarts(new Set());
+  };
 
-  // The pick is re-read from the latest windows every render; the CTA only
-  // ever acts on this live copy, never on the object the buyer clicked.
-  const liveSelection = useMemo(() => {
-    if (!selectedSlot) return null;
-    const live = availableSlots.find((slot) => sameWindow(slot, selectedSlot));
-    return live && isBookableWindow(live) ? live : null;
-  }, [availableSlots, selectedSlot]);
-  const staleSelection =
-    selectedSlot !== null && slotsReady && liveSelection === null
-      ? [selectedSlot.startsAt]
-      : [];
-  const dropTakenSelection = useCallback(() => {
-    setSelectedSlot(null);
-    toast({ title: TIME_JUST_TAKEN_MESSAGE, variant: "destructive" });
-  }, [setSelectedSlot, toast]);
-  const justTakenKeys = useJustTaken(staleSelection, dropTakenSelection);
-  const justTakenSlot: SlotWithStatus | null =
-    selectedSlot && justTakenKeys.has(selectedSlot.startsAt)
-      ? {
-          ...selectedSlot,
-          isAllocated: selectedSlot.isAllocated ?? false,
-          bookingStatus: selectedSlot.bookingStatus ?? "available",
-          _isPast: false,
-        }
-      : null;
-
-  // #1703 D1 — REQUEST routes every slot through approval; INSTANT keeps the
-  // contended-slot-only arm. Decided once here so the button and its hint agree.
-  const cta = consultationCtaFor(
-    consultantDetails.bookingMode ?? "INSTANT",
-    liveSelection?.isAllocated ?? false,
-  );
-
-  // #booking-journey — restore a slot stashed before the auth bounce. Runs
-  // once per mount, and only once slots have actually loaded: the stashed
-  // pick is only applied when it still exists in the calendar (not past, not
-  // fully booked), so a stale intent can never select an invalid slot.
+  // A pick stashed before the sign-in bounce comes back once per mount; the
+  // picker clears it if the time has gone since.
   const purchaseIntentConsumedRef = useRef(false);
-  // One Idempotency-Key per (plan, slot) attempt; a retry of the same attempt resends it.
+  // One Idempotency-Key per (plan, time) attempt; a retry of the same attempt resends it.
   const requestAttemptRef = useRef<{ selection: string; key: string } | null>(
     null,
   );
+  const userId = session?.user?.id;
   useEffect(() => {
-    if (purchaseIntentConsumedRef.current) return;
-    if (availableSlots.length === 0 || !session?.user?.id) return;
+    if (purchaseIntentConsumedRef.current || !userId) return;
     purchaseIntentConsumedRef.current = true;
-
     const intent = consumePurchaseIntent(consultantDetails.id);
     if (!intent) return;
-
     const intentPlan = consultationOptions.find(
       (opt) => opt.id === intent.consultationPlanId,
     );
-    if (intentPlan) setActiveConsultationOption(intentPlan.id);
+    if (!intentPlan) return;
+    setActiveConsultationOption(intentPlan.id);
+    setDialogPlanId(intentPlan.id);
+    setPick({ startsAt: intent.slot.startsAt, endsAt: intent.slot.endsAt });
+    toast({
+      title: "Welcome back",
+      description: "The time you picked before signing in is selected.",
+    });
+  }, [userId, consultantDetails.id, consultationOptions, toast]);
 
-    // Matched against the intent plan's own windows and lead, so the restored
-    // pick is still live once the plan tab switches to it.
-    const match = windowsForDay(
-      slotTimings,
-      intentPlan?.durationInHours ?? selectedDuration,
-      timezone,
-      Date.now(),
-      intentPlan ? leadMsForPlan(requestMode, intentPlan.price) : leadMs,
-    ).find((slot) => sameWindow(slot, intent.slot) && isBookableWindow(slot));
-    if (match) {
-      setSelectedSlot(match);
-      toast({
-        title: "Welcome back",
-        description: "The time you picked before signing in is still free.",
-      });
-    }
-  }, [
-    availableSlots,
-    slotTimings,
-    selectedDuration,
-    timezone,
-    leadMs,
-    requestMode,
-    consultationOptions,
-    consultantDetails.id,
-    session?.user?.id,
-    setActiveConsultationOption,
-    setSelectedSlot,
-    toast,
-  ]);
-
-  const handleRequestForApproval = async () => {
-    const pick = liveSelection;
-    if (!pick || !consultantDetails) {
+  const handleRequestForApproval = async (planId: string) => {
+    if (!pick) {
       toast({ title: "Pick a time first", variant: "destructive" });
       return;
     }
 
     if (!session?.user?.id) {
-      // B9 (booking-journey audit) — redirect to sign-in with a callback URL
-      // instead of dead-ending in a toast. The Buy path already does this
-      // implicitly: /checkout/* is middleware-protected and bounces here with
-      // callbackUrl. The request-for-approval path runs client-side, so it
-      // must build the same redirect itself or guests hit a wall.
-      //
-      // #booking-journey — the profile-page callbackUrl alone would lose the
-      // picked slot (the user returns to an unselected calendar). Stash the
-      // full selection in sessionStorage; ConsultationPricingToggle restores
-      // it on the next authenticated render.
+      // Guests sign in first; the pick rides through the bounce in session
+      // storage and is restored above.
       stashPurchaseIntent({
         consultantId: consultantDetails.id,
-        consultationPlanId: activeConsultationOption,
-        slot: {
-          startsAt: pick.startsAt,
-          endsAt: pick.endsAt,
-          type: pick.type,
-          availabilityWindowId: pick.availabilityWindowId,
-        },
+        consultationPlanId: planId,
+        slot: { startsAt: pick.startsAt, endsAt: pick.endsAt },
       });
       const callbackUrl = `${window.location.pathname}${window.location.search}`;
       router.push(
@@ -282,13 +177,9 @@ export default function ConsultationPricingToggle({
       return;
     }
 
-    // Look up the plan by the user's active tab selection (not by slot
-    // duration) so duplicate-duration plans resolve to the correct one.
     const activePlan = consultantDetails.consultationPlans.find(
-      (plan: { id: string; durationInHours: number }) =>
-        plan.id === activeConsultationOption,
+      (plan) => plan.id === planId,
     );
-
     if (!activePlan) {
       toast({
         title: "This consultation isn't available right now",
@@ -298,28 +189,7 @@ export default function ConsultationPricingToggle({
     }
 
     setIsRequestingApproval(true);
-
     try {
-      const requestBody: {
-        consultantProfileId: string;
-        startsAt: string;
-        endsAt: string;
-        consultationPlanId: string;
-        availabilityWindowWeeklyId?: string;
-        availabilityWindowCustomId?: string;
-      } = {
-        consultantProfileId: consultantDetails.id,
-        startsAt: pick.startsAt,
-        endsAt: pick.endsAt,
-        consultationPlanId: activePlan.id,
-      };
-
-      if (pick.type === "WEEKLY") {
-        requestBody.availabilityWindowWeeklyId = pick.availabilityWindowId;
-      } else {
-        requestBody.availabilityWindowCustomId = pick.availabilityWindowId;
-      }
-
       const selection = `${activePlan.id}|${pick.startsAt}|${pick.endsAt}`;
       if (requestAttemptRef.current?.selection !== selection) {
         requestAttemptRef.current = {
@@ -334,12 +204,16 @@ export default function ConsultationPricingToggle({
           "Content-Type": "application/json",
           "Idempotency-Key": requestAttemptRef.current.key,
         },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify({
+          consultantProfileId: consultantDetails.id,
+          startsAt: pick.startsAt,
+          endsAt: pick.endsAt,
+          consultationPlanId: activePlan.id,
+        }),
       });
 
       // Never bare response.json(): an edge 504/HTML page would throw a
       // SyntaxError into the toast instead of the server's reason.
-      // requireJsonResponse throws on !ok, so reaching here means success.
       await requireJsonResponse(
         response,
         "Failed to submit request for approval",
@@ -352,8 +226,7 @@ export default function ConsultationPricingToggle({
           "The expert will confirm or decline soon. You pay only once they confirm.",
         variant: "default",
       });
-
-      setSelectedSlot(null);
+      setPick(null);
     } catch (error) {
       console.warn("Request for approval failed", error);
       if (
@@ -361,16 +234,9 @@ export default function ConsultationPricingToggle({
         error.code &&
         HELD_BY_SOMEONE_ELSE.has(error.code)
       ) {
-        setHeldWindow({
-          consultantProfileId: consultantDetails.id,
-          windowStart: pick.startsAt,
-          windowEnd: pick.endsAt,
-          planKind: "CONSULTATION",
-          planId: activePlan.id,
-        });
-      }
-      if (error instanceof ApiResponseError && error.code === "SLOT_TAKEN") {
-        setSelectedSlot(null);
+        const heldAt = Date.parse(pick.startsAt);
+        setHeldStarts((held) => new Set([...held, heldAt]));
+        setPick(null);
         onRefreshSlots?.();
         toast({ title: TIME_JUST_TAKEN_MESSAGE, variant: "destructive" });
         return;
@@ -398,10 +264,9 @@ export default function ConsultationPricingToggle({
     }
   };
 
-  const handleBookNowClick = () => {
-    const today = calendarDayOf(new Date(), timezone);
-    setSelectedDate(today);
-    setCurrentDate(new Date(today.getFullYear(), today.getMonth(), 1));
+  const handleBookNowClick = (planId: string) => {
+    if (planId !== activeConsultationOption) choosePlan(planId);
+    setDialogPlanId(planId);
   };
 
   if (consultationOptions.length === 0) {
@@ -431,11 +296,7 @@ export default function ConsultationPricingToggle({
   return (
     <Tabs
       value={activeConsultationOption}
-      onValueChange={(value) => {
-        setActiveConsultationOption(value);
-        // A pick belongs to one session length; another plan has other windows.
-        setSelectedSlot(null);
-      }}
+      onValueChange={choosePlan}
       className="w-full space-y-5"
     >
       {/* Segmented pill duration toggle */}
@@ -533,15 +394,18 @@ export default function ConsultationPricingToggle({
                 </Link>
               </Button>
 
-              <Dialog>
-                <DialogTrigger asChild>
-                  <Button
-                    className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-xl h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
-                    onClick={handleBookNowClick}
-                  >
-                    Book Now
-                  </Button>
-                </DialogTrigger>
+              <Button
+                className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-xl h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
+                onClick={() => handleBookNowClick(option.id)}
+              >
+                Book Now
+              </Button>
+              <Dialog
+                open={dialogPlanId === option.id}
+                onOpenChange={(open) =>
+                  setDialogPlanId(open ? option.id : null)
+                }
+              >
                 {/* Centred, with a gutter on every side and never taller than the
                     screen: the header and the checkout button stay put and only
                     the middle scrolls. Width steps up with the screen. */}
@@ -559,131 +423,31 @@ export default function ConsultationPricingToggle({
                       usingDeviceZone={displayZone.usingDeviceZone}
                       canSwitch={displayZone.canSwitch}
                       onToggle={displayZone.toggle}
-                      now={now}
                       className="pt-1 text-zinc-400 [&_button]:text-zinc-100"
                     />
                   </DialogHeader>
                   <DialogBody>
-                    <div className="grid grid-cols-1 gap-6 p-4 sm:p-6 md:grid-cols-2 md:gap-8 lg:gap-10 lg:p-8">
-                      {/* Calendar Section */}
-                      <div className="min-w-0">
-                        <h3 className="text-lg font-semibold mb-4 sm:mb-5 flex items-center text-white">
-                          <CalendarIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
-                          Select a Date
-                        </h3>
-                        <div className="bg-zinc-800/60 p-3 sm:p-5 lg:p-6 rounded-xl border border-zinc-700/50">
-                          <div className="flex flex-wrap justify-between items-center gap-2 mb-4 sm:mb-5">
-                            <span className="font-semibold text-white text-lg">
-                              {currentDate.toLocaleString("default", {
-                                month: "long",
-                                year: "numeric",
-                              })}
-                            </span>
-                            <div className="flex items-center gap-1">
-                              {/* Back to the current month and today's date. */}
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 px-3"
-                                onClick={handleBookNowClick}
-                              >
-                                Today
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="default"
-                                aria-label="Previous month"
-                                className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 w-9 text-lg"
-                                onClick={() =>
-                                  setCurrentDate(
-                                    new Date(
-                                      currentDate.getFullYear(),
-                                      currentDate.getMonth() - 1,
-                                      1,
-                                    ),
-                                  )
-                                }
-                              >
-                                &lt;
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="default"
-                                aria-label="Next month"
-                                className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 w-9 text-lg"
-                                onClick={() =>
-                                  setCurrentDate(
-                                    new Date(
-                                      currentDate.getFullYear(),
-                                      currentDate.getMonth() + 1,
-                                      1,
-                                    ),
-                                  )
-                                }
-                              >
-                                &gt;
-                              </Button>
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-7 gap-1 sm:gap-2 text-center text-sm sm:text-base font-medium text-zinc-400 mb-3">
-                            <div>Mo</div>
-                            <div>Tu</div>
-                            <div>We</div>
-                            <div>Th</div>
-                            <div>Fr</div>
-                            <div>Sa</div>
-                            <div>Su</div>
-                          </div>
-                          <div className="grid grid-cols-7 gap-1 sm:gap-2">
-                            {renderCalendar()}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Available Slots Section */}
-                      <div className="min-w-0">
-                        <div className="flex items-center justify-between mb-4 sm:mb-5">
-                          <h3 className="text-lg font-semibold flex items-center text-white">
-                            <ClockIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
-                            Available {durationPhrase(selectedDuration)} times
-                          </h3>
-                          {onRefreshSlots && (
-                            <button
-                              type="button"
-                              className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-700/50 transition-colors"
-                              title="Refresh the available times"
-                              aria-label="Refresh the available times"
-                              onClick={async () => {
-                                setIsRefreshing(true);
-                                try {
-                                  await onRefreshSlots();
-                                } finally {
-                                  setIsRefreshing(false);
-                                }
-                              }}
-                              disabled={isRefreshing}
-                            >
-                              <RefreshCw
-                                className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
-                              />
-                            </button>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-1 gap-3">
-                          <SlotList
-                            slots={availableSlots}
-                            selectedSlot={liveSelection}
-                            justTaken={justTakenSlot}
-                            onSelect={setSelectedSlot}
-                            bookingMode={
-                              consultantDetails.bookingMode ?? "INSTANT"
-                            }
-                          />
-                        </div>
-                      </div>
+                    <div className="p-4 sm:p-6 lg:p-8">
+                      <SingleTimePicker
+                        consultantId={consultantDetails.id}
+                        sessionMinutes={Math.round(
+                          (option.durationInHours ?? 1) * 60,
+                        )}
+                        zone={displayZone.zone}
+                        theme="dark"
+                        audience="buyer"
+                        purpose={requestMode ? "request" : "book"}
+                        settled={Number(option.price ?? 0) <= 0}
+                        consulteeUserId={consulteeUserId}
+                        heldStarts={heldStarts}
+                        notifyPlan={{
+                          planKind: "CONSULTATION",
+                          planId: option.id,
+                        }}
+                        bypassRef={bypassRef}
+                        value={pick}
+                        onChange={setPick}
+                      />
                     </div>
                   </DialogBody>
                   <div className="shrink-0 bg-zinc-800/50 px-4 sm:px-6 lg:px-8 py-4 sm:py-5 flex flex-col items-stretch sm:items-end gap-2 rounded-b-2xl border-t border-zinc-800">
@@ -694,21 +458,17 @@ export default function ConsultationPricingToggle({
                     )}
                     <Button
                       className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-8 h-12 text-base w-full sm:w-auto"
-                      onClick={
-                        cta.action === "request"
-                          ? handleRequestForApproval
-                          : () => handleConsultationBooking(option.id)
-                      }
-                      disabled={
-                        !liveSelection || paused || isRequestingApproval
-                      }
+                      onClick={() => {
+                        if (cta.action === "request") {
+                          void handleRequestForApproval(option.id);
+                        } else if (pick) {
+                          handleConsultationBooking(option.id, pick);
+                        }
+                      }}
+                      disabled={!pick || paused || isRequestingApproval}
                     >
                       {isRequestingApproval ? "Submitting..." : cta.label}
                     </Button>
-                    {heldWindow &&
-                      heldWindow.windowStart === liveSelection?.startsAt && (
-                        <NotifyWhenFreeButton window={heldWindow} />
-                      )}
                   </div>
                 </DialogContent>
               </Dialog>

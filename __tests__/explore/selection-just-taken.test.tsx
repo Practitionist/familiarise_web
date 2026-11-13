@@ -1,12 +1,27 @@
 /**
- * The public booking dialog never acts on a stale pick: a poll that takes the
- * selected time disables the CTA at once, paints it "Just taken" for one
- * render, then clears it with a toast; and a time crossing the 15-minute lead
- * leaves the list on the clock alone, with no new data.
+ * The public One-time dialog: a poll that takes the selected time clears the
+ * pick and disables the button; "Book Now" on a second plan card books that
+ * card's plan; a time the request door says is held reads taken.
  */
 import * as React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 
+let mockMonth: Record<string, unknown[]> = {};
+jest.mock("@/lib/scheduling/use-availability-window", () => ({
+  ...jest.requireActual("@/lib/scheduling/use-availability-window"),
+  useAvailabilityMonth: ({ timezone }: { timezone: string | null }) => ({
+    data: timezone ? mockMonth : undefined,
+    isPending: !timezone,
+    isError: false,
+    refetch: jest.fn(),
+  }),
+}));
 const mockToast = jest.fn();
 jest.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: mockToast }),
@@ -17,15 +32,16 @@ jest.mock("@/lib/auth-client", () => ({
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
 }));
-jest.mock("@/hooks/useCurrency", () => ({
-  useCurrency: () => ({
-    formatPrice: (value: number) => `₹${value}`,
-    formatPriceExact: (value: number) => `₹${value}`,
+jest.mock("@/components/pricing/BuyerPriceProvider", () => ({
+  useBuyerPrice: () => ({
+    gstRegistered: false,
+    formatBuyerPrice: (value: number) => `₹${value}`,
+    noteFor: () => null,
   }),
 }));
 jest.mock("@/components/booking/NotifyWhenFreeButton", () => ({
-  HELD_BY_SOMEONE_ELSE: new Set<string>(),
-  NotifyWhenFreeButton: () => null,
+  HELD_BY_SOMEONE_ELSE: new Set(["SLOT_TAKEN", "LOCK_CONTENTION"]),
+  NotifyWhenFreeButton: () => <span>Notify me if this time opens</span>,
 }));
 jest.mock("@/utils/purchase-intent", () => ({
   consumePurchaseIntent: () => null,
@@ -33,189 +49,109 @@ jest.mock("@/utils/purchase-intent", () => ({
 }));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
-import ConsultationPricingToggle, {
-  TIME_JUST_TAKEN_MESSAGE,
-} from "@/app/explore/experts/[consultantId]/components/ConsultationPricingToggle";
-import type { TIntervalTiming } from "@/types/slots";
+import ConsultationPricingToggle from "@/app/explore/experts/[consultantId]/components/ConsultationPricingToggle";
+import type { BookingMode } from "@prisma/client";
 
-const DAY = new Date(2026, 10, 2, 12);
+const DAY = Date.parse("2026-11-04T00:00:00.000Z");
+const HOUR = 3_600_000;
 
-function atom(
-  iso: string,
-  extra: Partial<TIntervalTiming> = {},
-): TIntervalTiming {
-  const start = new Date(iso);
-  return {
-    slotId: `atom-${iso}`,
-    dateInISO: iso,
-    dayOfWeek: "MONDAY",
-    startsAt: start.toISOString(),
-    endsAt: new Date(start.getTime() + 30 * 60_000).toISOString(),
-    availabilityWindowId: "aw-1",
-    appointmentOccurrenceId: "",
-    localStartTime: "",
-    localEndTime: "",
-    type: "WEEKLY",
-    isAllocated: false,
-    bookingStatus: "available",
-    ...extra,
-  };
+function atoms(booked: number[] = []) {
+  return [10, 10.5, 11, 11.5].map((h) => ({
+    startsAt: new Date(DAY + h * HOUR).toISOString(),
+    endsAt: new Date(DAY + (h + 0.5) * HOUR).toISOString(),
+    bookingStatus: booked.includes(h) ? "fully-booked" : "available",
+  }));
 }
 
-const zone = {
-  zone: "UTC",
-  usingDeviceZone: false,
-  canSwitch: false,
-  toggle: () => undefined,
-};
+const plan = (id: string, title: string) => ({
+  id,
+  title,
+  description: "",
+  price: 500,
+  priceCurrency: "INR",
+  duration: "30 minutes",
+  durationInHours: 0.5,
+});
 
-function Harness({
-  slots,
-  onSelectionChange,
-}: Readonly<{
-  slots: TIntervalTiming[];
-  onSelectionChange?: (slot: TIntervalTiming | null) => void;
-}>) {
-  const [selected, setSelected] = React.useState<TIntervalTiming | null>(null);
+function Dialog({ mode = "INSTANT" }: Readonly<{ mode?: BookingMode }>) {
   return (
     <ConsultationPricingToggle
-      consultationOptions={[
-        {
-          id: "plan-30",
-          title: "30 min",
-          description: "",
-          price: 500,
-          priceCurrency: "INR",
-          duration: "30 minutes",
-          durationInHours: 0.5,
-        },
-      ]}
+      consultationOptions={[plan("plan-a", "A"), plan("plan-b", "B")]}
       consultantDetails={{
         id: "cp-1",
-        bookingMode: "INSTANT",
+        bookingMode: mode,
         acceptingRequests: true,
-        consultationPlans: [{ id: "plan-30", durationInHours: 0.5 }],
+        consultationPlans: [
+          { id: "plan-a", durationInHours: 0.5 },
+          { id: "plan-b", durationInHours: 0.5 },
+        ],
       }}
       handleConsultationBooking={jest.fn()}
-      selectedDate={DAY}
-      setSelectedDate={jest.fn()}
-      currentDate={DAY}
-      setCurrentDate={jest.fn()}
-      renderCalendar={() => []}
-      slotTimings={slots}
-      slotsReady
-      selectedSlot={selected}
-      setSelectedSlot={(slot) => {
-        onSelectionChange?.(slot);
-        setSelected(slot);
+      displayZone={{
+        zone: "UTC",
+        usingDeviceZone: false,
+        canSwitch: false,
+        toggle: () => undefined,
       }}
-      displayZone={zone}
     />
   );
 }
 
-function timeButton(hhmm: RegExp) {
-  return screen.getByRole("button", { name: hhmm });
-}
-
-function cta() {
-  return screen.getByRole("button", { name: "Continue to Checkout" });
-}
-
+const fetchMock = jest.fn();
+beforeAll(() => {
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  globalThis.crypto.randomUUID ??= () => "00000000-0000-4000-8000-000000000000";
+});
 beforeEach(() => {
   jest.useFakeTimers();
   jest.setSystemTime(new Date("2026-11-02T09:00:00.000Z"));
+  mockMonth = { "2026-11-04": atoms() };
   mockToast.mockReset();
+  fetchMock.mockReset();
+});
+afterEach(() => jest.useRealTimers());
+
+const time = (name: RegExp) => screen.getByRole("button", { name });
+const bookNow = (index: number) =>
+  fireEvent.click(screen.getAllByRole("button", { name: "Book Now" })[index]);
+
+it("clears a pick a poll shows taken and disables the button", () => {
+  const { rerender } = render(<Dialog />);
+  bookNow(0);
+  fireEvent.click(time(/^10:00 am to 10:30 am, free/));
+  const cta = screen.getByRole("button", { name: "Continue to Checkout" });
+  expect(cta).toBeEnabled();
+  mockMonth = { "2026-11-04": atoms([10]) };
+  act(() => rerender(<Dialog />));
+  expect(cta).toBeDisabled();
+  expect(screen.queryByRole("button", { name: /^10:00 am/ })).toBeNull();
+  expect(screen.getByText("1 time already taken")).toBeVisible();
 });
 
-afterEach(() => {
-  jest.useRealTimers();
-});
-
-describe("the public dialog's selection", () => {
-  it("disables the CTA, paints Just taken once, then clears the pick with a toast", () => {
-    const free = [
-      atom("2026-11-02T10:00:00.000Z"),
-      atom("2026-11-02T11:00:00.000Z"),
-    ];
-    const selections: (TIntervalTiming | null)[] = [];
-    const { rerender } = render(
-      <Harness slots={free} onSelectionChange={(s) => selections.push(s)} />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Book Now" }));
-    fireEvent.click(timeButton(/10:00/));
-    expect(cta()).toBeEnabled();
-
-    // The poll lands: 10:00 is now someone else's.
-    const observer = new MutationObserver(() => undefined);
-    observer.observe(document.body, { subtree: true, childList: true });
-    act(() => {
-      rerender(
-        <Harness
-          slots={[
-            atom("2026-11-02T10:00:00.000Z", {
-              bookingStatus: "fully-booked",
-              isAllocated: true,
-            }),
-            free[1],
-          ]}
-          onSelectionChange={(s) => selections.push(s)}
-        />,
-      );
-    });
-    const painted = observer
-      .takeRecords()
-      .flatMap((record) => [...record.addedNodes])
-      .some(
-        (node) =>
-          node instanceof HTMLElement &&
-          (node.matches("[data-just-taken]") ||
-            node.querySelector("[data-just-taken]") !== null),
-      );
-    observer.disconnect();
-
-    expect(painted).toBe(true);
-    expect(document.querySelector("[data-just-taken]")).toBeNull();
-    expect(selections.at(-1)).toBeNull();
-    expect(mockToast).toHaveBeenCalledWith(
-      expect.objectContaining({ title: TIME_JUST_TAKEN_MESSAGE }),
-    );
-    expect(cta()).toBeDisabled();
-    expect(screen.queryByRole("button", { name: /10:00/ })).toBeNull();
+it("books the second card's plan, and reads a held time as taken", async () => {
+  fetchMock.mockResolvedValue({
+    ok: false,
+    status: 409,
+    headers: {
+      get: (name: string) =>
+        name.toLowerCase() === "content-type" ? "application/json" : null,
+    },
+    json: async () => ({ error: "Taken", code: "SLOT_TAKEN" }),
+    text: async () => JSON.stringify({ error: "Taken", code: "SLOT_TAKEN" }),
   });
-
-  it("drops a time that crosses the 15-minute lead on the clock alone", () => {
-    jest.setSystemTime(new Date("2026-11-02T09:40:00.000Z"));
-    render(<Harness slots={[atom("2026-11-02T10:00:00.000Z")]} />);
-    fireEvent.click(screen.getByRole("button", { name: "Book Now" }));
-    expect(timeButton(/10:00/)).toBeInTheDocument();
-
-    // 9:56 — inside the lead. Same data object, only the clock moved.
-    act(() => {
-      jest.advanceTimersByTime(16 * 60_000);
-    });
-    expect(screen.queryByRole("button", { name: /10:00/ })).toBeNull();
-  });
-
-  it("never lists a time the server marks too soon", () => {
-    render(
-      <Harness
-        slots={[
-          atom("2026-11-02T10:00:00.000Z", { tooSoon: true }),
-          atom("2026-11-02T12:00:00.000Z"),
-        ]}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Book Now" }));
-    expect(screen.queryByRole("button", { name: /10:00/ })).toBeNull();
-    expect(timeButton(/12:00/)).toBeInTheDocument();
-  });
-
-  it("names half-hour times without the word slot", () => {
-    render(<Harness slots={[atom("2026-11-02T10:00:00.000Z")]} />);
-    fireEvent.click(screen.getByRole("button", { name: "Book Now" }));
-    expect(screen.getByText("Available half-hour times")).toBeInTheDocument();
-    expect(document.body.textContent).not.toMatch(/\bslots?\b/i);
-    expect(document.body.textContent).not.toMatch(/prefers/);
-  });
+  render(<Dialog mode="REQUEST" />);
+  bookNow(1);
+  expect(screen.getByRole("heading", { name: /Book B Consultation/ }));
+  fireEvent.click(time(/^11:00 am to 11:30 am, free/));
+  fireEvent.click(screen.getByRole("button", { name: "Request this time" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  const [, init] = fetchMock.mock.calls[0];
+  expect(JSON.parse(init.body).consultationPlanId).toBe("plan-b");
+  await waitFor(() =>
+    expect(time(/^11:00 am to 11:30 am, taken, someone else/)).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    ),
+  );
+  expect(screen.getByText("Notify me if this time opens")).toBeVisible();
 });
