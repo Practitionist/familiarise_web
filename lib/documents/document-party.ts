@@ -52,10 +52,7 @@ const CONFIRMED_REQUEST_STATUSES: readonly AppointmentStatus[] = [
   "SCHEDULED",
   "COMPLETED",
 ];
-const TERMINAL_TRIAL_STATUSES: readonly TrialStatus[] = [
-  "CANCELLED",
-  "REJECTED",
-];
+const TERMINAL_TRIAL_STATUSES: readonly TrialStatus[] = ["CANCELLED"];
 const CONFIRMED_TRIAL_STATUSES: readonly TrialStatus[] = [
   "SCHEDULED",
   "COMPLETED",

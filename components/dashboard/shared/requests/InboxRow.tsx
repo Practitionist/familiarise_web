@@ -61,8 +61,6 @@ export type RowAction =
   | { kind: "withdraw" }
   | { kind: "allocate-next" }
   | { kind: "propose-times" }
-  | { kind: "pick-time" }
-  | { kind: "trial-decline" }
   | { kind: "accept-proposal" }
   | { kind: "place-new-time" }
   | { kind: "keep-original" }
@@ -80,8 +78,6 @@ const ACTION_LABEL: Record<RowAction["kind"], string> = {
   withdraw: "Withdraw approval",
   "allocate-next": "Allocate",
   "propose-times": "Propose new times",
-  "pick-time": "Pick a time",
-  "trial-decline": "Decline",
   "accept-proposal": "Accept new times",
   "place-new-time": "Pick a new time",
   "keep-original": "Keep the original time",
@@ -129,9 +125,7 @@ export function isDialogFreeApproval(row: InboxRowInput): boolean {
 }
 
 const isDestructive = (action: RowAction) =>
-  action.kind === "decline" ||
-  action.kind === "withdraw" ||
-  action.kind === "trial-decline";
+  action.kind === "decline" || action.kind === "withdraw";
 
 /**
  * A booking being moved is answered, never declined: the client's proposal is
@@ -179,16 +173,8 @@ export function rowActions(
   if (row.kind === "next-cycle" || nextAction.kind === "ALLOCATE") {
     return { primary: { kind: "allocate-next" }, secondary: [] };
   }
-  if (row.kind === "trial") {
-    // A paid trial's reminder has no route yet: the countdown alone (#1775).
-    if (nextAction.kind === "APPROVE_OR_DECLINE") {
-      return {
-        primary: { kind: "pick-time" },
-        secondary: [{ kind: "trial-decline" }],
-      };
-    }
-    return { primary: null, secondary: [] };
-  }
+  // A trial never waits on the expert; a paid one awaiting payment shows its countdown only.
+  if (row.kind === "trial") return { primary: null, secondary: [] };
   if (
     nextAction.kind === "APPROVE_OR_DECLINE" &&
     row.requestedStartPassed &&

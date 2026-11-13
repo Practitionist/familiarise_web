@@ -15,10 +15,7 @@ import {
 
 import type { Tx } from "@/lib/prisma";
 import { recordParticipants } from "@/lib/booking/participants";
-import {
-  appendCreationHistory,
-  transitionTrial,
-} from "@/lib/booking/transitions";
+import { appendCreationHistory } from "@/lib/booking/transitions";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { payWindowEnd } from "@/lib/payments/operations/approval-payment";
 import {
@@ -127,6 +124,8 @@ export async function bookTrialInTx(tx: Tx, args: BookTrialArgs) {
     },
   );
 
+  // The row is born in its final state: a free trial is confirmed, a paid one holds its time until paid.
+  const to = args.paid ? TrialStatus.AWAITING_PAYMENT : TrialStatus.SCHEDULED;
   const created = await tx.trial.create({
     data: {
       consulteeProfileId: args.consulteeProfileId,
@@ -134,40 +133,25 @@ export async function bookTrialInTx(tx: Tx, args: BookTrialArgs) {
       subscriptionPlanId: args.subscriptionPlanId,
       agreedPricePaise: args.agreedPricePaise,
       notes: args.notes ?? null,
-      status: TrialStatus.PENDING,
+      status: to,
       organizationId: args.organizationId,
       appointmentId: appointment.id,
+      // The pay window closes 15 minutes before the session at the latest.
+      ...(args.paid
+        ? { paymentDueAt: payWindowEnd(args.now ?? new Date(), args.startsAt) }
+        : {}),
     },
     include: TRIAL_CREATED_INCLUDE,
   });
 
-  const audit = {
+  await appendCreationHistory(tx, "TRIAL", created.id, to, {
     appointmentId: appointment.id,
     actorUserId: args.consulteeUserId,
     organizationId: args.organizationId,
-  };
-  await appendCreationHistory(tx, "TRIAL", created.id, TrialStatus.PENDING, {
-    ...audit,
     reason: "trial requested",
   });
-  const to = args.paid ? TrialStatus.AWAITING_PAYMENT : TrialStatus.SCHEDULED;
-  await transitionTrial(tx, {
-    where: { id: created.id },
-    to,
-    fromIn: [TrialStatus.PENDING],
-    ...audit,
-    reason: "buyer picked the time",
-    // The pay window closes 15 minutes before the session at the latest.
-    ...(args.paid
-      ? {
-          data: {
-            paymentDueAt: payWindowEnd(args.now ?? new Date(), args.startsAt),
-          },
-        }
-      : {}),
-  });
 
-  return { ...created, status: to, appointmentId: appointment.id };
+  return { ...created, appointmentId: appointment.id };
 }
 
 /**

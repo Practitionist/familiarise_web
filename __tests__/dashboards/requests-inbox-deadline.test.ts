@@ -134,7 +134,7 @@ function subscription(
 
 function trial(
   id: string,
-  status: "PENDING" | "AWAITING_PAYMENT",
+  status: "AWAITING_PAYMENT",
   requestedAt: Date,
   paymentDueAt: Date | null,
 ) {
@@ -270,7 +270,7 @@ describe("Deadline sort: the effective deadline on a ranked window", () => {
 
   it("sorts a row with no clock after every dated row", async () => {
     only("trial", [
-      trial("t-undated", "PENDING", hoursAgo(48), null),
+      trial("t-undated", "AWAITING_PAYMENT", hoursAgo(48), null),
       trial("t-late", "AWAITING_PAYMENT", hoursAgo(24), hoursAhead(40)),
       trial("t-soon", "AWAITING_PAYMENT", hoursAgo(1), hoursAhead(3)),
     ]);

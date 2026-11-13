@@ -27,7 +27,7 @@ export type InboxChip = (typeof INBOX_CHIPS)[number];
 export const CHIPS_FOR_TYPE: Record<InboxType, InboxChip[]> = {
   consultation: ["answer-today", "awaiting-payment", "declined"],
   subscription: ["answer-today", "awaiting-payment", "next-cycle", "declined"],
-  trial: ["answer-today", "awaiting-payment", "declined"],
+  trial: ["awaiting-payment"],
 };
 
 export const INBOX_SORTS = [

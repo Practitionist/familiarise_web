@@ -538,18 +538,14 @@ export async function transitionOccurrenceCompletion(
 
 //////////////////////////////////////////////// Trial ////////////////////////////////////////////////
 
-// #1319 — trials were the one lifecycle with no helper: accept, reject, cancel,
-// auto-complete and convert all wrote `status` bare. The capture webhook and
-// the unpaid-expiry sweep already narrowed their updateMany by status; this
-// makes the rest match. PENDING is entry-only. Keyed by TARGET.
+// A trial is created SCHEDULED (free) or AWAITING_PAYMENT (paid); neither entry state has an
+// edge into it. Keyed by TARGET.
 export const TRIAL_ALLOWED_FROM: Record<TrialStatus, TrialStatus[]> = {
-  PENDING: [],
-  AWAITING_PAYMENT: ["PENDING"],
-  SCHEDULED: ["PENDING", "AWAITING_PAYMENT"],
+  AWAITING_PAYMENT: [],
+  SCHEDULED: ["AWAITING_PAYMENT"],
   COMPLETED: ["SCHEDULED"],
   CONVERTED: ["COMPLETED"],
-  CANCELLED: ["PENDING", "AWAITING_PAYMENT", "SCHEDULED"],
-  REJECTED: ["PENDING"],
+  CANCELLED: ["AWAITING_PAYMENT", "SCHEDULED"],
 };
 
 export async function transitionTrial(
@@ -590,8 +586,7 @@ export async function transitionTrial(
       from: before?.status ?? null,
     });
   }
-  // A PENDING trial has no appointment yet, so the id is null until acceptance
-  // places the session — the scalar is nullable for exactly that reason.
+  // Every trial carries its appointment from creation; the scalar stays nullable for legacy rows.
   await appendHistory(tx, "TRIAL", args.where.id, before?.status, args.to, {
     ...args,
     appointmentId: args.appointmentId ?? before?.appointmentId ?? null,

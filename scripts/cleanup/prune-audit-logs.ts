@@ -110,12 +110,7 @@ const TERMINAL_EVENT: (WebinarStatus & ClassStatus)[] = [
   "COMPLETED",
   "CANCELLED",
 ];
-const TERMINAL_TRIAL: TrialStatus[] = [
-  "COMPLETED",
-  "CONVERTED",
-  "CANCELLED",
-  "REJECTED",
-];
+const TERMINAL_TRIAL: TrialStatus[] = ["COMPLETED", "CONVERTED", "CANCELLED"];
 
 /**
  * History rows of an appointment whose every parent is terminal and whose last

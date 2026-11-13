@@ -420,11 +420,8 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Only a live or already-delivered trial blocks a new request. A declined,
-    // withdrawn or lapsed-unpaid trial frees the pair — never paying isn't the
-    // same as having used your trial. The freed row must be deleted rather than
-    // left in place, because the pair is @@unique. See lib/trials/eligibility.ts
-    // for the abuse trade-off and how to tighten it if this gets gamed.
+    // Only a live or delivered trial blocks a new request; a cancelled or lapsed
+    // one frees the pair and its row is deleted, because the pair is @@unique.
     if (existingTrial) {
       if (blocksNewTrialRequest(existingTrial.status)) {
         return NextResponse.json(

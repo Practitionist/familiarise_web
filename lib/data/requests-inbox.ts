@@ -1033,14 +1033,10 @@ function planSources(
     };
     return byChip[key] ?? [];
   }
-  // A trial has no hold clock, so "answer today" is every pending one.
-  const trialStatuses: Partial<
-    Record<ChipKey, ("PENDING" | "AWAITING_PAYMENT" | "REJECTED")[]>
-  > = {
-    all: ["PENDING", "AWAITING_PAYMENT"],
-    "answer-today": ["PENDING"],
+  // A trial never waits on the expert: the only one listed is a paid trial awaiting payment.
+  const trialStatuses: Partial<Record<ChipKey, "AWAITING_PAYMENT"[]>> = {
+    all: ["AWAITING_PAYMENT"],
     "awaiting-payment": ["AWAITING_PAYMENT"],
-    declined: ["REJECTED"],
   };
   const statuses = trialStatuses[key];
   return statuses

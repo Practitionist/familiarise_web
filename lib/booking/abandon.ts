@@ -85,7 +85,7 @@ const ABANDONABLE_REQUEST_FROM = [
   "PENDING",
   "APPROVED_PENDING_PAYMENT",
 ] as const;
-const ABANDONABLE_TRIAL_FROM = ["PENDING", "AWAITING_PAYMENT"] as const;
+const ABANDONABLE_TRIAL_FROM = ["AWAITING_PAYMENT"] as const;
 
 /**
  * Rule 5's money predicate for a request, repeated inside the CAS. The OR

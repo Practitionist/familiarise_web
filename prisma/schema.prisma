@@ -4335,7 +4335,7 @@ enum AppointmentStatus {
 
 model Trial {
   id     String      @id @default(cuid())
-  status TrialStatus @default(PENDING)
+  status TrialStatus // Written at request: SCHEDULED (free) or AWAITING_PAYMENT (paid)
   notes  String?     @db.Text // Consultee's questions/goals
 
   // One trial per consultant per consultee
@@ -4382,11 +4382,11 @@ model Trial {
   completedAt DateTime? @db.Timestamptz
 
   /// Deadline for a paid trial's pay link: request + the 24 h pay window (#1775).
-  /// The expiry job cancels a PENDING or AWAITING_PAYMENT trial still unpaid past it.
+  /// The expiry job cancels an AWAITING_PAYMENT trial still unpaid past it.
   paymentDueAt DateTime? @db.Timestamptz
 
   // No `deletedAt` tombstone. TrialStatus already has a value for every terminal
-  // outcome — COMPLETED / CONVERTED / CANCELLED / REJECTED — and each is written
+  // outcome — COMPLETED / CONVERTED / CANCELLED — and each is written
   // through `transitionTrial`, so the status IS the retirement record and a
   // second marker on the same row could only ever disagree with it. #1319 added
   // the column as a mirror of Appointment.deletedAt and nothing wrote it; the
@@ -4411,13 +4411,11 @@ model Trial {
 }
 
 enum TrialStatus {
-  PENDING // Requested, awaiting consultant action; a paid trial is paid here (#1775)
-  AWAITING_PAYMENT // Legacy: accepted before payment; new paid trials pay at request
-  SCHEDULED // Time slot confirmed
+  AWAITING_PAYMENT // A paid trial holding its picked time until paid or its pay window ends
+  SCHEDULED // A free trial at request, or a paid one once captured
   COMPLETED // Trial call held
   CONVERTED // Consultee subscribed after trial
-  CANCELLED // Cancelled by consultee, lapsed unpaid, or TRIAL_UNANSWERED after 48 h
-  REJECTED // Declined by consultant
+  CANCELLED // Cancelled by either party or lapsed unpaid
 }
 
 enum BookingSource {

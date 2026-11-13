@@ -190,11 +190,10 @@ describe("consultant request gate", () => {
     );
   });
 
-  it("counts real submitted requests and trial requests, never checkout holds", async () => {
+  it("counts real submitted requests, never checkout holds or trials", async () => {
     mockProfile.maxOpenRequests = 3;
     mockConsultationCount.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
-    mockSubscriptionCount.mockResolvedValueOnce(0);
-    mockTrialCount.mockResolvedValueOnce(2);
+    mockSubscriptionCount.mockResolvedValueOnce(2);
     const res = await POST(request());
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("CONSULTANT_AT_CAPACITY");
@@ -206,6 +205,7 @@ describe("consultant request gate", () => {
       status: "PENDING",
       bookingSource: "REQUEST_SUBMITTED",
     });
+    expect(mockTrialCount).not.toHaveBeenCalled();
   });
 
   it("answers the consultee's own cap with a typed code and plain copy", async () => {

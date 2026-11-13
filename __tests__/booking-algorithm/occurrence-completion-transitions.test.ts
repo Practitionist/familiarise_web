@@ -153,13 +153,11 @@ describe("transitionOccurrenceCompletion", () => {
 describe("TRIAL_ALLOWED_FROM", () => {
   it("pins every edge (mirror of the route's validTransitions, keyed by target)", () => {
     expect(TRIAL_ALLOWED_FROM).toEqual({
-      PENDING: [],
-      AWAITING_PAYMENT: ["PENDING"],
-      SCHEDULED: ["PENDING", "AWAITING_PAYMENT"],
+      AWAITING_PAYMENT: [],
+      SCHEDULED: ["AWAITING_PAYMENT"],
       COMPLETED: ["SCHEDULED"],
       CONVERTED: ["COMPLETED"],
-      CANCELLED: ["PENDING", "AWAITING_PAYMENT", "SCHEDULED"],
-      REJECTED: ["PENDING"],
+      CANCELLED: ["AWAITING_PAYMENT", "SCHEDULED"],
     });
   });
 

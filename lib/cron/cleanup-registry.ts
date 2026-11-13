@@ -62,7 +62,7 @@ const MAX_NO_SHOW_CANDIDATES = 10;
 const MAX_STALE_REQUESTS_PER_ARM = 20;
 /** Slot rows the stale-RESCHEDULED arm may release; a pure row-lock pass. */
 const MAX_STALE_SLOT_RELEASES = 200;
-/** Unpaid trials per run; the unanswered arm refunds per payment. */
+/** Unpaid trials per run. */
 const MAX_UNPAID_TRIALS = 25;
 /** Lapsed proposals per run; each takes the appointment lock and a restore. */
 const MAX_RESCHEDULE_PROPOSALS = 25;
@@ -1041,8 +1041,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
   "expire-unpaid-trials": {
     meta: {
       title: "Expire unpaid trials",
-      description:
-        "Expire unpaid trials and refund paid trials nobody answered",
+      description: "Cancel paid trials whose pay window ended unpaid",
       category: "Appointments",
       manualRun: "inline",
     },

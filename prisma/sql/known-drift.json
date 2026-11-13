@@ -104,6 +104,24 @@
       "reason": "Pre-#2041 recording-storage column and its enum. No schema declares them and no code reads them.",
       "trackedBy": "#2270",
       "expires": "2026-11-21"
+    },
+    {
+      "statement": "DROP TYPE \"public\".\"ClassStatus_old\"",
+      "reason": "The rename-swap Prisma uses to drop IN_PROGRESS, which nothing wrote from ClassStatus. Move the live rows holding a removed value first, or the column cast fails.",
+      "trackedBy": "#2746",
+      "expires": "2026-11-27"
+    },
+    {
+      "statement": "DROP TYPE \"public\".\"TrialStatus_old\"",
+      "reason": "The rename-swap Prisma uses to drop PENDING and REJECTED, which no live path commits from TrialStatus. Move the live rows holding a removed value first, or the column cast fails.",
+      "trackedBy": "#2746",
+      "expires": "2026-11-27"
+    },
+    {
+      "statement": "DROP TYPE \"public\".\"WebinarStatus_old\"",
+      "reason": "The rename-swap Prisma uses to drop IN_PROGRESS, which nothing wrote from WebinarStatus. Move the live rows holding a removed value first, or the column cast fails.",
+      "trackedBy": "#2746",
+      "expires": "2026-11-27"
     }
   ],
   "knownDivergences": [

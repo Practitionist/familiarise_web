@@ -12,7 +12,6 @@ export type TrialAndSubscriptionEmailKind =
   | "TRIAL_REQUESTED"
   | "TRIAL_COMPLETED"
   | "TRIAL_CANCELLED"
-  | "TRIAL_REJECTED"
   | "SUBSCRIPTION_STARTED"
   | "SUBSCRIPTION_RENEWED";
 
@@ -43,8 +42,6 @@ export function trialAndSubscriptionSubject(
       return `Trial completed: ${args.planTitle}`;
     case "TRIAL_CANCELLED":
       return `Trial cancelled: ${args.planTitle}`;
-    case "TRIAL_REJECTED":
-      return `Trial request declined: ${args.planTitle}`;
     case "SUBSCRIPTION_STARTED":
       return `Your subscription to ${args.planTitle} is active`;
     case "SUBSCRIPTION_RENEWED":
@@ -144,12 +141,6 @@ function renderTrialAndSubscriptionBody(args: {
             </>
           ) : null}{" "}
           has been cancelled.
-        </Text>
-      );
-    case "TRIAL_REJECTED":
-      return (
-        <Text style={paragraph}>
-          {`Your trial session request for ${planTitle}${consultantName ? ` with ${consultantName}` : ""} could not be accommodated at this time.`}
         </Text>
       );
     case "SUBSCRIPTION_STARTED":

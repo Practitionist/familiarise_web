@@ -906,31 +906,14 @@ export async function handlePaymentSuccess(
               }),
             );
 
-            const paidAtRequest =
-              scheduled.count === 0
-                ? await tx.trial.updateMany({
-                    where: {
-                      id: metadata.trialId,
-                      status: TrialStatus.PENDING,
-                      paymentId: null,
-                    },
-                    data: {
-                      paymentId: payment.id,
-                      pendingPaymentUrl: null,
-                      paymentDueAt: null,
-                    },
-                  })
-                : { count: 0 };
-
-            if (scheduled.count === 0 && paidAtRequest.count === 0) {
+            if (scheduled.count === 0) {
               const trial = await tx.trial.findUnique({
                 where: { id: metadata.trialId },
                 select: { status: true, paymentId: true },
               });
               const alreadyOurs =
                 trial?.paymentId === payment.id
-                  ? trial.status === TrialStatus.SCHEDULED ||
-                    trial.status === TrialStatus.PENDING
+                  ? trial.status === TrialStatus.SCHEDULED
                   : trial?.status === TrialStatus.SCHEDULED &&
                     trial.paymentId === null;
               if (!alreadyOurs) {

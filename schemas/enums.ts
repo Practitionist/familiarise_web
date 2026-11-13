@@ -89,34 +89,11 @@ export const SupportIssueTypeEnum = z.enum([
   "OTHER",
 ]);
 
-/**
- * Statuses a CLIENT may request via PATCH /api/trials/[trialId].
- *
- * Deliberately narrower than the Prisma `TrialStatus` enum: AWAITING_PAYMENT
- * is excluded, so accepting it from a request body can never let a caller mark
- * their own trial as awaiting payment, or worse, sidestep the pay step.
- * Cancelling one still works, because CANCELLED is listed.
- *
- * Note on AWAITING_PAYMENT: this comment used to claim the accept handler
- * assigns it and the webhook clears it. NEITHER IS TRUE. Since #1775 made the
- * trial rail payment-before-approval the accept handler writes SCHEDULED for a
- * paid trial exactly as it does for a free one, and the capture webhook's
- * `fromIn: [AWAITING_PAYMENT]` arm is a miss that falls through to the #1775 C-8
- * PENDING arm below it. The enum member survives because it is read in ~40
- * places (occupancy, pay-link re-mint, the expiry sweep, both pending-payment
- * dashboards) and because the pre-reset database may still hold a row in it;
- * writing it is impossible, which is why the exclusion above still matters.
- *
- * This list is hand-maintained rather than z.nativeEnum(TrialStatus) precisely
- * so the omission is a decision instead of drift.
- */
+/** Statuses a client may request via PATCH /api/trials/[trialId]; only the capture webhook confirms a trial. */
 export const TrialSessionStatusEnum = z.enum([
-  "PENDING",
-  "SCHEDULED",
   "COMPLETED",
   "CONVERTED",
   "CANCELLED",
-  "REJECTED",
 ]);
 
 export const RequestStatusEnum = z.enum([

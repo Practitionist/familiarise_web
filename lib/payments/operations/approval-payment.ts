@@ -255,12 +255,9 @@ async function requestStillPayable(
   if (params.appointmentType === "TRIAL" && params.trialId) {
     const trial = await prisma.trial.findUnique({
       where: { id: params.trialId },
-      select: { status: true, paymentId: true },
+      select: { status: true },
     });
-    return (
-      trial?.status === TrialStatus.AWAITING_PAYMENT ||
-      (trial?.status === TrialStatus.PENDING && trial.paymentId === null)
-    );
+    return trial?.status === TrialStatus.AWAITING_PAYMENT;
   }
   if (params.appointmentType === "CONSULTATION" && params.consultationId) {
     const row = await prisma.consultation.findUnique({
@@ -1071,10 +1068,7 @@ async function findExistingTrialPayment(
   if (!payment || !reusable.includes(payment.paymentStatus)) {
     return null;
   }
-  // A paid-at-request trial is payable while PENDING and not yet captured (#1775 C-7).
-  const requestIsPayable =
-    trial?.status === TrialStatus.AWAITING_PAYMENT ||
-    (trial?.status === TrialStatus.PENDING && trial.paymentId === null);
+  const requestIsPayable = trial?.status === TrialStatus.AWAITING_PAYMENT;
   return { ...payment, requestIsPayable };
 }
 

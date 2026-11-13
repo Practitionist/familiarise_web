@@ -229,17 +229,14 @@ describe("GET /api/bookings/inbox (A-2)", () => {
 });
 
 describe("countRequestsToAnswer", () => {
-  it("sums the REQUESTED arms only and asks trials for PENDING alone", async () => {
+  it("sums the REQUESTED arms only; a trial never waits on the expert", async () => {
     const m = prisma as unknown as Record<string, Record<string, jest.Mock>>;
     m.consultation.count.mockResolvedValue(2);
     m.subscription.count.mockResolvedValue(3);
     m.trial.count.mockResolvedValue(4);
     await expect(
       countRequestsToAnswer({ consultantProfileId: CP }),
-    ).resolves.toBe(9);
-    expect(m.trial.count).toHaveBeenCalledTimes(1);
-    expect(m.trial.count.mock.calls[0][0].where.status).toEqual({
-      in: ["PENDING"],
-    });
+    ).resolves.toBe(5);
+    expect(m.trial.count).not.toHaveBeenCalled();
   });
 });

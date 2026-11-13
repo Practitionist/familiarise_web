@@ -489,7 +489,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
-    // #1775 C-12 — staged with the decline or the 48 h no-answer sweep.
+    // Staged when the expert cancels a paid trial and it is refunded in full.
     workflowId: W.TRIAL_REFUNDED,
     name: "Trial refunded",
     description:

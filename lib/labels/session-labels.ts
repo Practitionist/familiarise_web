@@ -131,14 +131,7 @@ export const appointmentStatusBadge = (
 // ───────────────────────────── TrialStatus ─────────────────────────────
 
 export const TRIAL_STATUS_BADGE: Record<TrialStatus, StatusBadgeStyle> = {
-  PENDING: {
-    label: "Pending",
-    className: "bg-amber-100 text-amber-900 border-amber-200",
-    dotClassName: "bg-amber-500",
-  },
-  // Accepted by the consultant, waiting on the learner to pay. Amber like
-  // PENDING because both are "waiting", but the label names who we're
-  // waiting on — that distinction is the whole reason this status exists.
+  // A paid trial holding its picked time until the learner pays.
   AWAITING_PAYMENT: {
     label: "Awaiting payment",
     className: "bg-amber-100 text-amber-900 border-amber-200",
@@ -163,11 +156,6 @@ export const TRIAL_STATUS_BADGE: Record<TrialStatus, StatusBadgeStyle> = {
     label: "Cancelled",
     className: "bg-zinc-100 text-zinc-600 border-zinc-200",
     dotClassName: "bg-zinc-400",
-  },
-  REJECTED: {
-    label: "Rejected",
-    className: "bg-red-100 text-red-900 border-red-200",
-    dotClassName: "bg-red-500",
   },
 };
 
