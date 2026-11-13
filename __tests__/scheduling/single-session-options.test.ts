@@ -103,6 +103,16 @@ describe("buyerTimeOptions", () => {
     expect(takenTimesToggleLabel(1, true)).toBe("Hide taken times");
   });
 
+  it("keeps a stored 15-minute length instead of stretching it to 30", () => {
+    const [first] = buyerTimeOptions({
+      ...base,
+      sessionMinutes: 15,
+      atoms: atoms(10, 11),
+      nowMs: DAY_START,
+    });
+    expect(first.endMs - first.startMs).toBe(15 * 60_000);
+  });
+
   it("keeps a session across midnight on the day it starts", () => {
     const options = optionsForDay(new Date(2026, 10, 20, 12), {
       audience: "buyer",

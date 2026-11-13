@@ -189,7 +189,8 @@ export function buyerTimeOptions(input: {
   allowedStartMs?: number;
   allowedEndMs?: number;
 }): SingleSessionOption[] {
-  const sessionMs = Math.max(ATOM_MS, input.sessionMinutes * 60_000);
+  // A stored length under half an hour (an old 15-minute trial) keeps its own end.
+  const sessionMs = input.sessionMinutes * 60_000;
   const free = new Map<number, AvailabilityWindowRef>(
     windowsForDay(
       input.atoms,
