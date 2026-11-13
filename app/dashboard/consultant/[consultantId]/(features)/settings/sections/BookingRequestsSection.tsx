@@ -112,8 +112,9 @@ export function BookingRequestsSection({
             <Label htmlFor="booking-mode-instant" className="font-normal">
               <span className="font-medium">Instant booking</span>
               <span className="block text-sm text-muted-foreground">
-                A free slot is paid and confirmed on the spot. Only a time
-                someone else is already holding comes to you as a request.
+                Learners pay for a free time and it is confirmed on the spot. A
+                time someone else holds shows as taken, with &quot;Notify
+                me&quot; for the learner; nothing comes to you as a request.
               </span>
             </Label>
           </div>
