@@ -116,6 +116,8 @@ type RazorpayCheckoutProps = RazorpayCheckoutSource & {
    * sits open, so without this the buyer pays into a rejection.
    */
   onBeforeCheckout?: () => Promise<boolean>;
+  /** The idle button text; a free order reads "Confirm booking". */
+  label?: string;
 };
 
 interface GatewayOrder {
@@ -141,6 +143,7 @@ export default function RazorpayCheckout({
   userPhone,
   description,
   onBeforeCheckout,
+  label = "Pay with Razorpay",
 }: RazorpayCheckoutProps) {
   const { toast } = useToast();
   const { emiEnabled } = useCheckoutFlags();
@@ -423,7 +426,7 @@ export default function RazorpayCheckout({
 
   return (
     <Button onClick={handleCheckout} disabled={isProcessing || disabled}>
-      {isProcessing ? "Processing..." : "Pay with Razorpay"}
+      {isProcessing ? "Processing..." : label}
     </Button>
   );
 }

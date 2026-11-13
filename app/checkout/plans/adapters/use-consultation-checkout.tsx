@@ -32,7 +32,7 @@ import {
 } from "../components/PlanCheckoutShell";
 import { CheckoutTotalNotes } from "../components/CheckoutTotals";
 import { reportPaymentsError, type CheckoutApiError } from "../utils";
-import { loadErrorMessage, searchParamsKey } from "./shared";
+import { loadErrorMessage, planIncludes, searchParamsKey } from "./shared";
 
 // price arrives as number: extended client + JSON serialization
 type ConsultationPlanWithConsultant = Omit<ConsultationPlan, "price"> & {
@@ -71,7 +71,7 @@ function gatewaylessConfirmationText(data: {
   isMockPayment?: boolean;
 }): string {
   if (data.isZeroAmountPayment) {
-    return "Payment completed via referral credits. Your consultation has been confirmed.";
+    return "Nothing to pay. Your consultation has been confirmed.";
   }
   if (data.isMockPayment) {
     return "Mock payment processed. Your consultation has been confirmed. Check your dashboard for details.";
@@ -378,15 +378,9 @@ export function useConsultationCheckout(
     basePricePaise: eventData?.data?.price || 0,
     pricingTitle: "Consultation Pricing",
     feeLabel: "Session Fee",
-    includes: (
-      <>
-        <li>One-on-one session</li>
-        <li>Personalized guidance</li>
-        <li>Session notes</li>
-        <li>Follow-up resources</li>
-        {eventData?.data?.recordingEnabled && <li>Session recording</li>}
-      </>
-    ),
+    includes: planIncludes(eventData?.data?.whatsIncluded, [
+      eventData?.data?.recordingEnabled && "Session recording",
+    ]),
     renderFooter: (ctx) => (
       <>
         <CheckoutTotalNotes

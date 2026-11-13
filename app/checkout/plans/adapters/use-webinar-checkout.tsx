@@ -38,6 +38,7 @@ import { reportPaymentsError } from "../utils";
 import {
   eventMockErrorCopy,
   loadErrorMessage,
+  planIncludes,
   searchParamsKey,
 } from "./shared";
 
@@ -333,14 +334,10 @@ export function useWebinarCheckout(
     basePricePaise: planDetails?.price || 0,
     pricingTitle: "Webinar Pricing",
     feeLabel: "Registration Fee",
-    includes: (
-      <>
-        <li>Live webinar access</li>
-        <li>Q&A session</li>
-        {planDetails?.recordingEnabled && <li>Recording access</li>}
-        {planDetails?.certificateProvided && <li>Certificate of attendance</li>}
-      </>
-    ),
+    includes: planIncludes(planDetails?.whatsIncluded, [
+      planDetails?.recordingEnabled && "Recording access",
+      planDetails?.certificateProvided && "Certificate of attendance",
+    ]),
     renderFooter: (ctx) => (
       <>
         {/* The host's free-cancellation window. */}

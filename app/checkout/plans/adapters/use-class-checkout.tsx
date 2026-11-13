@@ -36,6 +36,7 @@ import { reportPaymentsError } from "../utils";
 import {
   eventMockErrorCopy,
   loadErrorMessage,
+  planIncludes,
   searchParamsKey,
 } from "./shared";
 
@@ -294,21 +295,15 @@ export function useClassCheckout(
     basePricePaise: batchPricePaise,
     pricingTitle: "Class Pricing",
     feeLabel: "Enrollment Fee",
-    includes: (
-      <>
-        <li>
-          {totalSessions || sessionsPerWeek * durationInMonths * 4} total
-          sessions (
-          {planDetails?.totalHours || sessionsPerWeek * durationInMonths * 4}{" "}
-          hours)
-        </li>
-        <li>{sessionsPerWeek} sessions per week</li>
-        {planDetails?.materialProvided &&
-          planDetails.materialProvided !== "None" && <li>Course materials</li>}
-        {planDetails?.recordingEnabled && <li>Session recordings</li>}
-        {planDetails?.certificateProvided && <li>Certificate of completion</li>}
-      </>
-    ),
+    includes: planIncludes(planDetails?.whatsIncluded, [
+      `${totalSessions || sessionsPerWeek * durationInMonths * 4} total sessions (${planDetails?.totalHours || sessionsPerWeek * durationInMonths * 4} hours)`,
+      `${sessionsPerWeek} sessions per week`,
+      planDetails?.materialProvided &&
+        planDetails.materialProvided !== "None" &&
+        "Course materials",
+      planDetails?.recordingEnabled && "Session recordings",
+      planDetails?.certificateProvided && "Certificate of completion",
+    ]),
     renderFooter: (ctx) => (
       <>
         {/* The host's free-cancellation window. */}

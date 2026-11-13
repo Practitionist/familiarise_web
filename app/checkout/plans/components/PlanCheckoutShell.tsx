@@ -133,7 +133,8 @@ export interface CheckoutPlanAdapter {
   basePricePaise: number;
   pricingTitle: string;
   feeLabel: string;
-  includes: ReactNode;
+  /** Only what the plan states; an empty list hides the row. */
+  includes: string[];
   renderFooter: (ctx: FooterContext) => ReactNode;
   /** Null hides the Razorpay button (nothing to buy yet). */
   checkoutPlanFields: CheckoutPlanFields | null;
@@ -466,6 +467,50 @@ export function PlanCheckoutShell({
     ],
   );
 
+  // Calculate pricing before any early return to keep hook order stable.
+  const pricing = useMemo(() => {
+    let discountPercent = 0;
+    let discountAmount = 0;
+    if (appliedDiscount) {
+      // The preview's own amount already includes the maxDiscount cap and the
+      // profitability floor.
+      if (appliedDiscount.discountAmount !== undefined) {
+        discountAmount = appliedDiscount.discountAmount;
+      } else if (appliedDiscount.discountType === "PERCENTAGE") {
+        discountPercent = appliedDiscount.discountValue / 100;
+      } else if (appliedDiscount.discountType === "FIXED_AMOUNT") {
+        discountAmount = appliedDiscount.discountValue;
+      }
+    }
+    return calculatePricing(adapter.basePricePaise, {
+      discountPercent: discountAmount > 0 ? 0 : discountPercent,
+      discountAmount,
+      creditsApplied: useReferralCredits ? availableCredits : 0,
+      welcomeDiscount:
+        appliedDiscount || selectedOrganizationId
+          ? null
+          : referralPricing?.welcomeDiscount,
+      creditCapBps: referralPricing?.creditCapBps,
+      promoFeeBps: referralPricing?.promoFeeBps,
+      isInternational: checkoutTaxContext.isInternational,
+      exportZeroRated: checkoutTaxContext.exportZeroRated,
+      gstRegistered: checkoutTaxContext.gstRegistered,
+    });
+  }, [
+    referralPricing,
+    selectedOrganizationId,
+    adapter.basePricePaise,
+    appliedDiscount,
+    useReferralCredits,
+    availableCredits,
+    checkoutTaxContext.isInternational,
+    checkoutTaxContext.exportZeroRated,
+    checkoutTaxContext.gstRegistered,
+  ]);
+
+  // Nothing to pay and no credit spent: one confirm button, no payer, method or refund copy.
+  const isFree = pricing.total === 0 && pricing.creditsApplied === 0;
+
   const buildCheckoutData = useCallback(
     (gateway: SupportedCheckoutGateway): CheckoutInput | null => {
       if (!adapter.checkoutPlanFields) return null;
@@ -474,15 +519,19 @@ export function PlanCheckoutShell({
         paymentGateway: gateway,
         discountCode: appliedDiscount?.code,
         displayCurrency: currency,
-        useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
-        organizationId: selectedOrganizationId ?? undefined,
-        ...billingState.bodyField,
+        useReferralCredits:
+          isFree || selectedOrganizationId ? false : useReferralCredits,
+        organizationId: isFree
+          ? undefined
+          : (selectedOrganizationId ?? undefined),
+        ...(isFree ? {} : billingState.bodyField),
       });
     },
     [
       adapter.checkoutPlanFields,
       appliedDiscount?.code,
       currency,
+      isFree,
       selectedOrganizationId,
       useReferralCredits,
       billingState.bodyField,
@@ -593,54 +642,13 @@ export function PlanCheckoutShell({
     ],
   );
 
-  // Calculate pricing before any early return to keep hook order stable.
-  const pricing = useMemo(() => {
-    let discountPercent = 0;
-    let discountAmount = 0;
-    if (appliedDiscount) {
-      // The preview's own amount already includes the maxDiscount cap and the
-      // profitability floor.
-      if (appliedDiscount.discountAmount !== undefined) {
-        discountAmount = appliedDiscount.discountAmount;
-      } else if (appliedDiscount.discountType === "PERCENTAGE") {
-        discountPercent = appliedDiscount.discountValue / 100;
-      } else if (appliedDiscount.discountType === "FIXED_AMOUNT") {
-        discountAmount = appliedDiscount.discountValue;
-      }
-    }
-    return calculatePricing(adapter.basePricePaise, {
-      discountPercent: discountAmount > 0 ? 0 : discountPercent,
-      discountAmount,
-      creditsApplied: useReferralCredits ? availableCredits : 0,
-      welcomeDiscount:
-        appliedDiscount || selectedOrganizationId
-          ? null
-          : referralPricing?.welcomeDiscount,
-      creditCapBps: referralPricing?.creditCapBps,
-      promoFeeBps: referralPricing?.promoFeeBps,
-      isInternational: checkoutTaxContext.isInternational,
-      exportZeroRated: checkoutTaxContext.exportZeroRated,
-      gstRegistered: checkoutTaxContext.gstRegistered,
-    });
-  }, [
-    referralPricing,
-    selectedOrganizationId,
-    adapter.basePricePaise,
-    appliedDiscount,
-    useReferralCredits,
-    availableCredits,
-    checkoutTaxContext.isInternational,
-    checkoutTaxContext.exportZeroRated,
-    checkoutTaxContext.gstRegistered,
-  ]);
-
   // Always declared, even when it will not render, so hook order is stable.
   const razorpayData = buildCheckoutData("RAZORPAY");
   const { beforePay } = adapter;
   const onBeforeCheckout = useCallback(async () => {
-    if (!validateBillingState()) return false;
+    if (!isFree && !validateBillingState()) return false;
     return beforePay ? await beforePay() : true;
-  }, [validateBillingState, beforePay]);
+  }, [isFree, validateBillingState, beforePay]);
 
   if (adapter.isLoading) return <CheckoutPlanSkeleton />;
   if (adapter.error) return <LoadError message={adapter.error} />;
@@ -672,34 +680,42 @@ export function PlanCheckoutShell({
         </div>
         {/* Shown before anyone picks who pays. */}
         {adapter.groupDisclosure && <GroupSessionDisclosure />}
-        <Separator className="bg-border" />
-        <OrgPayerSelector
-          selectedOrganizationId={selectedOrganizationId}
-          planType={adapter.appointmentType}
-          planId={planId}
-          onSelect={(id) => {
-            setSelectedOrganizationId(id);
-            // An organisation payer forces referral credits off.
-            if (id) setUseReferralCredits(false);
-          }}
-        />
-        <Separator className="bg-border" />
-        <BillingStateSelect {...billingState.selectProps} />
+        {!isFree && (
+          <>
+            <Separator className="bg-border" />
+            <OrgPayerSelector
+              selectedOrganizationId={selectedOrganizationId}
+              planType={adapter.appointmentType}
+              planId={planId}
+              onSelect={(id) => {
+                setSelectedOrganizationId(id);
+                // An organisation payer forces referral credits off.
+                if (id) setUseReferralCredits(false);
+              }}
+            />
+            <Separator className="bg-border" />
+            <BillingStateSelect {...billingState.selectProps} />
+          </>
+        )}
         <Separator className="bg-border" />
         <DiscountCodeField
           discount={discount}
           formatPrice={formatPriceExact}
           listPricePaise={adapter.basePricePaise}
         />
-        <Separator className="bg-border" />
-        <ReferralCreditsBlock
-          availableCredits={availableCredits}
-          isLoadingCredits={isLoadingCredits}
-          creditsLoadFailed={creditsLoadFailed}
-          useReferralCredits={useReferralCredits}
-          onCheckedChange={setUseReferralCredits}
-          formatPrice={formatPriceExact}
-        />
+        {!isFree && (
+          <>
+            <Separator className="bg-border" />
+            <ReferralCreditsBlock
+              availableCredits={availableCredits}
+              isLoadingCredits={isLoadingCredits}
+              creditsLoadFailed={creditsLoadFailed}
+              useReferralCredits={useReferralCredits}
+              onCheckedChange={setUseReferralCredits}
+              formatPrice={formatPriceExact}
+            />
+          </>
+        )}
       </div>
       <div className="flex min-w-0 flex-col gap-8 p-6 sm:p-8 bg-card">
         <Card className="border-border shadow-sm">
@@ -714,14 +730,20 @@ export function PlanCheckoutShell({
                 <div>{adapter.feeLabel}</div>
                 <div>{formatPriceExact(adapter.basePricePaise)}</div>
               </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <span className="font-semibold">Includes</span>
+              {adapter.includes.length > 0 && (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center">
+                    <span className="font-semibold">Includes</span>
+                  </div>
+                  <div className="font-semibold">
+                    <ul className="list-disc">
+                      {adapter.includes.map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
-                <div className="font-semibold">
-                  <ul className="list-disc">{adapter.includes}</ul>
-                </div>
-              </div>
+              )}
             </div>
             <Separator className="bg-border" />
             <div className="grid gap-2">
@@ -744,28 +766,47 @@ export function PlanCheckoutShell({
                 formatPrice={formatPriceExact}
                 taxContext={checkoutTaxContext}
               />
-              {adapter.renderFooter(footerCtx)}
+              {!isFree && adapter.renderFooter(footerCtx)}
             </div>
           </CardContent>
         </Card>
-        <PaymentGatewayCards
-          adapter={adapter}
-          isCheckoutProcessing={isCheckoutProcessing}
-          processingGateway={processingGateway}
-          isMaintenanceBlocked={isMaintenanceBlocked}
-          onMockPay={(gateway) => void handleMockCheckout(gateway)}
-          razorpay={
-            razorpayData ? (
+        {isFree ? (
+          <div className="flex justify-end">
+            {adapter.soldOut ? (
+              <Button variant="outline" disabled>
+                {adapter.soldOutLabel ?? "Sold out"}
+              </Button>
+            ) : razorpayData ? (
               <RazorpayCheckout
                 checkoutData={razorpayData}
                 onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                 onPaymentError={onPaymentError}
                 onBeforeCheckout={onBeforeCheckout}
-                disabled={isMaintenanceBlocked || adapter.soldOut}
+                disabled={isMaintenanceBlocked}
+                label="Confirm booking"
               />
-            ) : null
-          }
-        />
+            ) : null}
+          </div>
+        ) : (
+          <PaymentGatewayCards
+            adapter={adapter}
+            isCheckoutProcessing={isCheckoutProcessing}
+            processingGateway={processingGateway}
+            isMaintenanceBlocked={isMaintenanceBlocked}
+            onMockPay={(gateway) => void handleMockCheckout(gateway)}
+            razorpay={
+              razorpayData ? (
+                <RazorpayCheckout
+                  checkoutData={razorpayData}
+                  onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
+                  onPaymentError={onPaymentError}
+                  onBeforeCheckout={onBeforeCheckout}
+                  disabled={isMaintenanceBlocked || adapter.soldOut}
+                />
+              ) : null
+            }
+          />
+        )}
       </div>
     </>
   );

@@ -35,7 +35,7 @@ import {
 } from "../components/PlanCheckoutShell";
 import { CheckoutTotalNotes } from "../components/CheckoutTotals";
 import { reportPaymentsError } from "../utils";
-import { loadErrorMessage, searchParamsKey } from "./shared";
+import { loadErrorMessage, planIncludes, searchParamsKey } from "./shared";
 
 // price arrives as number: extended client + JSON serialization
 type SubscriptionPlanWithConsultant = Omit<SubscriptionPlan, "price"> & {
@@ -69,7 +69,7 @@ function confirmationText(data: {
   isMockPayment?: boolean;
 }): string {
   if (data.isZeroAmountPayment) {
-    return "Payment completed via referral credits. Your subscription is now active.";
+    return "Nothing to pay. Your subscription is now active.";
   }
   if (data.isMockPayment) {
     return "Mock payment processed. Your subscription is now active. Check your dashboard for details.";
@@ -343,21 +343,12 @@ export function useSubscriptionCheckout(
     basePricePaise: plan?.price || 0,
     pricingTitle: "Subscription Pricing",
     feeLabel: planPriceLabel(plan ?? {}),
-    includes: (
-      <>
-        <li>
-          {plan?.totalSessions || computedSessions} total sessions (
-          {plan?.totalHours || computedSessions * sessionDurationInHours} hours)
-        </li>
-        <li>{sessionsPerWeek} sessions per week</li>
-        <li>{sessionDurationInHours} hour sessions</li>
-        <li>
-          {PLAN_EMAIL_SUPPORT_LABEL[plan?.emailSupport ?? "GENERAL"]} email
-          support
-        </li>
-        <li>Learning materials</li>
-      </>
-    ),
+    includes: planIncludes(plan?.whatsIncluded, [
+      `${plan?.totalSessions || computedSessions} total sessions (${plan?.totalHours || computedSessions * sessionDurationInHours} hours)`,
+      `${sessionsPerWeek} sessions per week`,
+      `${sessionDurationInHours} hour sessions`,
+      `${PLAN_EMAIL_SUPPORT_LABEL[plan?.emailSupport ?? "GENERAL"]} email support`,
+    ]),
     renderFooter: (ctx) => (
       <>
         {/* Plans are paid at purchase; the 48 h promise. */}
