@@ -222,7 +222,6 @@ export interface ModerationReview {
   reviewer: {
     profileId: string;
     name: string | null;
-    email: string;
     image: string | null;
   };
   createdAt: string;
