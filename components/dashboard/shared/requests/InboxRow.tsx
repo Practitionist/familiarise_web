@@ -115,6 +115,8 @@ export function isDialogFreeApproval(row: InboxRowInput): boolean {
   return (
     (row.kind === "consultation" || row.kind === "subscription") &&
     row.bookingSource === "REQUEST_SUBMITTED" &&
+    // Only a request still awaiting the expert's answer; an approved one awaits payment.
+    row.presentation.request?.status === "PENDING" &&
     !row.requestedStartPassed &&
     row.rescheduledSlotCount === 0 &&
     row.proposal === null &&
