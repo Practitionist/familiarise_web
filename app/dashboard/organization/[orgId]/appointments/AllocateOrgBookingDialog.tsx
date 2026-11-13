@@ -31,6 +31,8 @@ import { byCodeUnit } from "@/lib/scheduling/code-unit-order";
 import { formatDateTimeLabel } from "@/lib/time/display";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 
+const ATOM_MS = 30 * 60_000;
+
 export interface AllocateOrgBookingDialogProps {
   orgId: string;
   appointmentId: string;
@@ -88,7 +90,14 @@ export function AllocateOrgBookingDialog({
         setError("Add at least one time for manual allocation.");
         return;
       }
-      isoSlots = [...starts].sort(byCodeUnit);
+      // Manual allocation takes every 30-minute atom of each session.
+      isoSlots = starts
+        .flatMap((start) =>
+          Array.from({ length: Math.ceil(sessionMinutes / 30) }, (_, i) =>
+            new Date(Date.parse(start) + i * ATOM_MS).toISOString(),
+          ),
+        )
+        .sort(byCodeUnit);
     }
 
     setSubmitting(true);
