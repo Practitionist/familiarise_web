@@ -180,6 +180,25 @@ step for the owner: a `REJECTED` trial is already ended and has no door, and no
 cancel step is written for the rest
 ([decision 8](../decisions/2026-11-13-product-lifecycles.md#decisions)).
 
+#### A refund the deleted retry still owed
+
+At the same three points, run this read too. It lists a cancelled paid trial
+that the old unanswered-trial sweep cancelled (history reason
+`TRIAL_UNANSWERED`) and whose keyed full refund is missing or failed:
+
+```sql
+SELECT t."id", t."paymentId"
+FROM "Trial" t
+WHERE t."status"::text = 'CANCELLED' AND t."paymentId" IS NOT NULL
+  AND EXISTS (SELECT 1 FROM "BookingStatusHistory" h WHERE h."entity"::text = 'TRIAL' AND h."entityId" = t."id" AND h."reason" = 'TRIAL_UNANSWERED' AND h."toStatus"::text = 'CANCELLED')
+  AND NOT EXISTS (SELECT 1 FROM "Refund" r WHERE r."dedupeKey" = 'trial-unanswered:' || t."paymentId" AND r."status"::text NOT IN ('FAILED', 'CANCELLED'));
+```
+
+It returned no rows on 2026-11-13. If a row exists, run the old
+`expire-unpaid-trials` job once on production before the promotion (System Jobs,
+or its `CRON_SECRET` cleanup route); its retry sends the keyed full refund. That
+retry looks back 14 days, so a row cancelled earlier goes to the owner.
+
 The reconcile push is therefore sequenced behind the `dev` → `prod` promotion:
 move the 20 entries from `knownDivergences` to `destructiveStatementsAllowed`,
 preflight, push, sidecars, assert, then empty both lists again.

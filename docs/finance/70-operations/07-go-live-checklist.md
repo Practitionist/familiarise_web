@@ -219,6 +219,7 @@ The release that carries the booking lifecycle change drops four enum values the
 
 - [ ] Run the read in [Rows holding a removed value](../../prisma/README.md#rows-holding-a-removed-value) and expect no rows.
 - [ ] Cancel a `PENDING` trial it finds through the trial cancel door on the production deploy, as an operator, which refunds a paid one in full; never edit a row by hand. Take any other row to the owner ([decision 8](../../decisions/2026-11-13-product-lifecycles.md#decisions)).
+- [ ] Run the read in [A refund the deleted retry still owed](../../prisma/README.md#a-refund-the-deleted-retry-still-owed). If a row exists, run the old `expire-unpaid-trials` job once on production before the promotion, which sends the keyed full refund.
 
 ## Where in code
 
