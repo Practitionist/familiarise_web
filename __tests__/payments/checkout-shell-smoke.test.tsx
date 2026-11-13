@@ -6,7 +6,7 @@
  * paise, and Razorpay is offered.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { Suspense } from "react";
 
@@ -22,10 +22,22 @@ jest.mock("@/hooks/useMaintenanceGuard", () => ({
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
 }));
+// Pressed on a page that showed the order free, the server answers with ₹1,179.41 to pay.
 jest.mock("@/app/checkout/components/RazorpayCheckout", () => ({
   __esModule: true,
-  default: ({ label = "Pay with Razorpay" }: { label?: string }) => (
-    <button type="button">{label}</button>
+  default: ({
+    label = "Pay with Razorpay",
+    onPaidWhenFree,
+  }: {
+    label?: string;
+    onPaidWhenFree?: (order: { amount: number; currency: string }) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() => onPaidWhenFree?.({ amount: 117941, currency: "INR" })}
+    >
+      {label}
+    </button>
   ),
 }));
 jest.mock("@/app/checkout/components/OrgPayerSelector", () => ({
@@ -225,6 +237,39 @@ describe("shared plan checkout", () => {
     expect(screen.queryByText(/Billing state/)).toBeNull();
     expect(screen.queryByText("Includes")).toBeNull();
     expect(screen.queryByText(/If you cancel/)).toBeNull();
+  });
+
+  it("a free order the server prices stops, shows the new price and asks again", async () => {
+    PLANS["/api/plans/consultations/stale"] = {
+      data: { ...basePlan, price: 0 },
+    };
+    renderPage(
+      <ConsultationCheckoutPage
+        params={resolved({ planId: "stale" })}
+        searchParams={search({
+          startsAt: future(48),
+          endsAt: future(49),
+          availabilityWindowWeeklyId: "aw1",
+        })}
+      />,
+    );
+    const confirm = await screen.findByRole(
+      "button",
+      { name: "Confirm booking" },
+      { timeout: 4000 },
+    );
+    PLANS["/api/plans/consultations/stale"] = { data: basePlan };
+    fireEvent.click(confirm);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "The price changed to ₹1,179.41.",
+    );
+    expect(
+      await screen.findByRole("button", { name: "Pay with Razorpay" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Confirm booking" }),
+    ).toBeNull();
+    expect(await screen.findByText("₹1,179.41")).toBeTruthy();
   });
 
   it("a fully booked subscription checkout says so on its disabled pay button", async () => {

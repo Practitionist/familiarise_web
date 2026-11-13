@@ -118,6 +118,11 @@ type RazorpayCheckoutProps = RazorpayCheckoutSource & {
   onBeforeCheckout?: () => Promise<boolean>;
   /** The idle button text; a free order reads "Confirm booking". */
   label?: string;
+  /**
+   * Set where the page showed the order free: an answer that needs payment
+   * comes here instead of opening the sheet, so the buyer sees the price first.
+   */
+  onPaidWhenFree?: (order: { amount: number; currency: string }) => void;
 };
 
 interface GatewayOrder {
@@ -144,6 +149,7 @@ export default function RazorpayCheckout({
   description,
   onBeforeCheckout,
   label = "Pay with Razorpay",
+  onPaidWhenFree,
 }: RazorpayCheckoutProps) {
   const { toast } = useToast();
   const { emiEnabled } = useCheckoutFlags();
@@ -172,6 +178,10 @@ export default function RazorpayCheckout({
           }
         : await createOrder();
       if (!order) return;
+      if (onPaidWhenFree) {
+        onPaidWhenFree({ amount: order.amount, currency: order.currency });
+        return;
+      }
       gatewayOpened = await openGateway(order);
     } catch (error) {
       reportPaymentsError(error);

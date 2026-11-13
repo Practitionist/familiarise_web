@@ -1,6 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 
@@ -357,6 +359,7 @@ export function PlanCheckoutShell({
     checkoutTaxContext.referralCreditsPaise,
   );
   const adapter = useAdapter(planId, searchParams);
+  const queryClient = useQueryClient();
   const referralPricing = useReferralPricing(adapter.consultantProfileId);
 
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
@@ -508,8 +511,14 @@ export function PlanCheckoutShell({
     checkoutTaxContext.gstRegistered,
   ]);
 
+  // The server's price when it answered a free-looking order with a payment.
+  const [priceChange, setPriceChange] = useState<{
+    amount: number;
+    currency: string;
+  } | null>(null);
   // Nothing to pay and no credit spent: one confirm button, no payer, method or refund copy.
-  const isFree = pricing.total === 0 && pricing.creditsApplied === 0;
+  const isFree =
+    pricing.total === 0 && pricing.creditsApplied === 0 && priceChange === null;
   // A free order is the buyer's own: a payer picked before the price fell to zero is cleared.
   if (isFree && selectedOrganizationId) setSelectedOrganizationId(null);
 
@@ -763,6 +772,19 @@ export function PlanCheckoutShell({
                   <div>-{formatPriceExact(pricing.discountAmount)}</div>
                 </div>
               )}
+              {priceChange && (
+                <p
+                  role="status"
+                  className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+                >
+                  The price changed to{" "}
+                  {formatCurrencyAmount(
+                    priceChange.amount,
+                    priceChange.currency,
+                  )}
+                  .
+                </p>
+              )}
               <CheckoutTotals
                 pricing={pricing}
                 formatPrice={formatPriceExact}
@@ -786,6 +808,13 @@ export function PlanCheckoutShell({
                 onBeforeCheckout={onBeforeCheckout}
                 disabled={isMaintenanceBlocked}
                 label="Confirm booking"
+                onPaidWhenFree={(order) => {
+                  // Nothing opens: the buyer reads the new price and presses again.
+                  setPriceChange(order);
+                  void queryClient.invalidateQueries({
+                    queryKey: ["checkout-plan", planId],
+                  });
+                }}
               />
             ) : null}
           </div>

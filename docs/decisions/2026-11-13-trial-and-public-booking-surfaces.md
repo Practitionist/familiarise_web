@@ -1,6 +1,6 @@
 # ADR: Trial and public booking surfaces — free checkout, private strikes, free cancels without a refund record, and two trial lengths
 
-- **Status**: Accepted (owner decisions 2026-11-12 and 2026-11-13). Decisions 1 to 14 are **built** on the branch that carries this record (`feat/train2-single-time-picker`); decisions 10 to 14 are the time pickers.
+- **Status**: Accepted (owner decisions 2026-11-12 and 2026-11-13). Decisions 1 to 15 are **built** on the branch that carries this record (`feat/train2-single-time-picker`); decisions 10 to 14 are the time pickers.
 - **Date**: 2026-11-13
 - **Author**: Platform engineering
 - **Related**: [The booking follow-up train](2026-11-12-booking-follow-up-train.md) (decisions 2, 8 and 9), [Scheduling surfaces and feasibility](2026-11-09-scheduling-surfaces-and-feasibility.md) (decision 17), [Cancellation flow](../booking/08-cancellation-flow.md), [Trial sessions](../booking/09-trials.md), [Checkout and payment integration](../booking/10-checkout-payment-integration.md), the tracking issue [#2720](https://github.com/Practitionist/familiarise_web/issues/2720) (train 2)
@@ -82,7 +82,14 @@ Hannah Anderson offers a free 30-minute consultation. Charlotte Brown books Mond
     - **Enforced by** `components/scheduling/SingleTimePicker.tsx` and `components/booking/NotifyWhenFreeButton.tsx`; `__tests__/scheduling/single-time-picker.test.tsx`, `__tests__/explore/selection-just-taken.test.tsx` and `__tests__/growth/notify-toggle-wrappers.test.tsx` pin the disclosure, the refusal and the button's states.
     - **Options not chosen.** Listing only held times, with a new grid field telling a hold from a confirmed booking: rejected, a confirmed booking frees on a cancel too. An expert setting that lets buyers request a taken time: rejected, a request on a taken time is a booking the expert would have to refuse. An expert opt-out of the list: rejected, waiting reserves nothing. Building it as before (Notify only after a refusal): superseded by this decision.
 
+15. **A free order the server prices stops and shows the new price** (owner decision 2026-11-13, built).
+    - **What the buyer sees.** When the page showed a free order ("Confirm booking") and the server answers that it needs a payment, that click opens no payment sheet. The summary says "The price changed to ₹X.", the page reads the plan again for its price breakdown, the payer, billing-state and payment blocks appear as for any paid order, and the button reads the paid label; the buyer presses again to pay. The reverse case (the page showed a price and the server answers free) confirms as before.
+    - **What the first click creates.** The server mints the gateway order and writes the PENDING payment with its tentative hold, exactly as for any paid checkout; nothing is charged because no sheet opens. The second click pays that same order and hold: it carries the same priced fields, so it replays under the same idempotency key, and a fresh key resumes the open order through `lib/payments/checkout/order-reuse.ts` (same buyer and plan, same amount and code). If the buyer changes the payer or credits first, the amount differs, the first order is superseded and its hold released, and one new order is minted.
+    - **Enforced by** `onPaidWhenFree` in `app/checkout/components/RazorpayCheckout.tsx` and `priceChange` in `app/checkout/plans/components/PlanCheckoutShell.tsx`; `__tests__/payments/checkout-shell-smoke.test.tsx` pins the stop, the notice and the paid button.
+    - **Option not chosen.** Opening the payment sheet on that first click, as first built: the buyer would be asked to pay under a button that said "Confirm booking".
+
 ## Honest limits
+
 
 - **`TrialScheduleCalendar` remains** behind the expert's "accept a trial" dialog (`TrialAcceptDialog`), which is being removed in a separate pull request; the file goes with it.
 - **A trial with a `free_` ₹0 payment and a zero list price** would still restore through the trial door (`lib/trials/cancellation.ts` was not changed). It cannot occur today: a free trial carries no payment.
