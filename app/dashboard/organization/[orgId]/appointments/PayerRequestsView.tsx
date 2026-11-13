@@ -50,6 +50,7 @@ export function PayerRequestsView({
                     planTitle={row.planTitle}
                     expertName={row.expertName}
                     learnerName={row.learnerName}
+                    learnerUserId={row.learnerUserId}
                     consultantProfileId={row.consultantProfileId}
                     sessionMinutes={row.sessionMinutes}
                   />

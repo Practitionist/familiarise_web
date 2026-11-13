@@ -39,6 +39,8 @@ export interface AllocateOrgBookingDialogProps {
   planTitle: string;
   expertName?: string | null;
   learnerName?: string | null;
+  /** The learner, so their own busy times read as taken. */
+  learnerUserId?: string | null;
   /** The delivering expert, whose open hours the times come from. */
   consultantProfileId: string;
   sessionMinutes: number;
@@ -52,6 +54,7 @@ export function AllocateOrgBookingDialog({
   planTitle,
   expertName,
   learnerName,
+  learnerUserId,
   consultantProfileId,
   sessionMinutes,
   trigger,
@@ -215,6 +218,7 @@ export function AllocateOrgBookingDialog({
                 <Label>Session times</Label>
                 <SingleTimePicker
                   consultantId={consultantProfileId}
+                  consulteeUserId={learnerUserId ?? undefined}
                   sessionMinutes={sessionMinutes}
                   zone={zone}
                   theme="light"

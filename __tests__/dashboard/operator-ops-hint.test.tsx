@@ -258,6 +258,7 @@ describe("OrgActorDetail", () => {
       status: "APPROVED" as const,
       expertName: "Expert",
       learnerName: "Learner",
+      learnerUserId: "u-learner",
       consultantProfileId: "cp-1",
       sessionMinutes: 60,
       sessions: [],

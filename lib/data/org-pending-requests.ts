@@ -32,6 +32,8 @@ export interface OrgPendingRequest {
   kind: "CONSULTATION" | "SUBSCRIPTION";
   planTitle: string;
   learnerName: string | null;
+  /** The learner's user id, so the picker can read their own busy times. */
+  learnerUserId: string;
   expertName: string | null;
   /** The delivering expert, whose calendar the allocate picker reads. */
   consultantProfileId: string;
@@ -76,7 +78,7 @@ export async function readOrgPendingRequests(
     consultantProfile: { select: { user: { select: { name: true } } } },
   } as const;
   const learnerSelect = {
-    select: { user: { select: { name: true } } },
+    select: { user: { select: { id: true, name: true } } },
   } as const;
 
   const [consultations, subscriptions] = await Promise.all([
@@ -132,6 +134,7 @@ export async function readOrgPendingRequests(
       kind: "CONSULTATION" as const,
       planTitle: c.consultationPlan.title,
       learnerName: c.requestedBy.user.name,
+      learnerUserId: c.requestedBy.user.id,
       expertName: c.consultationPlan.consultantProfile.user.name,
       consultantProfileId: c.consultationPlan.consultantProfileId,
       // The booked session's length, as the allocator reads it; the plan's only with no session row.
@@ -147,6 +150,7 @@ export async function readOrgPendingRequests(
       kind: "SUBSCRIPTION" as const,
       planTitle: s.subscriptionPlan.title,
       learnerName: s.requestedBy.user.name,
+      learnerUserId: s.requestedBy.user.id,
       expertName: s.subscriptionPlan.consultantProfile.user.name,
       consultantProfileId: s.subscriptionPlan.consultantProfileId,
       sessionMinutes: soldSessionMinutes(s),

@@ -87,6 +87,21 @@ async function fetchWindow(
   }
 
   let response = await fetch(url, init);
+  // An operator may not read the learner's calendar: fall back to the expert's alone.
+  if (response.status === 403 && consulteeUserId) {
+    return fetchWindow(
+      consultantId,
+      startUtc,
+      endUtc,
+      timezone,
+      noStore,
+      undefined,
+      etagCacheRef,
+      subscriptionId,
+      releasing,
+      eventQuery,
+    );
+  }
   if (response.status === 304) {
     if (cachedEntry) {
       return cachedEntry.data;
