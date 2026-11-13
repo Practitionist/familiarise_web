@@ -70,6 +70,7 @@ mcp__streamio__app_get_rate_limits   {}
    - Consultee-to-consultee peer DMs are prohibited (`canDirectMessage` in `lib/stream/dm-eligibility.ts`).
 2. **Paid / Confirmed Gate (`DM_ELIGIBLE_STATUSES = ["APPROVED", "COMPLETED"]`)**:
    - Confirmed webinar/class enrollments (`OPENABLE_EVENT_STATUSES`) provision both the group `team` channel (`webinar-<id>` / `class-<id>`) and a 1:1 personal DM with the host, preserving `ACCEPTED` collaborators in `syncUserEventChannels`.
+   - Event channel and call members = plan owner + `ACCEPTED` collaborators + `CONSULTEE` seats matching `paidParticipant()`. Every roster writer reads it (`ensureChannelsForAppointment`, `getEventData`, `loadEventChannelData`, `isEventParticipant`); never build a roster from `SUCCEEDED` payments, which outlive a leave, removal or refund (`docs/decisions/2026-11-14-event-membership-follows-seats.md`).
 3. **A Free Trial (`TRIAL`) Never Grants Chat**:
    - No provisioning: `ensureChannelsForAppointment` (`lib/payments/webhooks/ensure-channels.ts`, not `handlers.ts`) stamps and returns `skipped: "trial_chat_blocked"`.
    - No DM: `canDirectMessage` / `pairBookingContexts` exclude consultations and subscriptions whose appointment is a `TRIAL` or whose client seat is `REFUNDED` (`excludeNonDmDirectBooking`).
@@ -186,5 +187,6 @@ that load request authentication. Current background dispatch is Netlify-specifi
 - **R2-only recording deletes**: Marked a recording `EXPIRED` while Stream's copy stayed playable for up to 14 days and the thumbnail stayed public. Superseded by `recording-stream-delete.ts` plus a purge that clears the thumbnail and transcript.
 - **Chat file and image uploads**: The channel types allowed `upload-file`, but there was no storage or moderation story and the community page advertising it did not exist. Superseded by `uploads: false`, the base attachment grants stripped by the script, and the deleted page.
 - **Instant skeleton on a socket blip, a badge summed over the loaded page, and a `null` client committed by an overlapping connect**: Superseded by the reconnect grace window, `total_unread_count` minus org-tagged unread, and single-flight connects with a generation token.
+- **Event rosters from `SUCCEEDED` payments (registration sync) or `liveParticipant()` (create route)**: Re-added departed learners on the next registration and gave unpaid holds chat. Superseded by `paidParticipant()` seats.
 - **Client-cooperative revocation (sync gates), unfreeze-on-open, DM Clear chat**: Superseded by synchronous revocation plus the retry queue and daily reconciler, get-or-create collaborator channels, and hiding truncate on managed channels.
 - **Booking cards posted on DM open (`booking-ctx-`, caller-authored and then `system-booking-context`)**: Read as a support message, dated the first session, written for both people even unanswered. Superseded by the verified booking tag; old cards are hidden.

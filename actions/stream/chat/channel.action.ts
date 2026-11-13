@@ -20,7 +20,7 @@
 
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import { paidParticipant } from "@/lib/booking/participants";
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { markChannelExists } from "@/lib/stream-cache";
@@ -320,7 +320,7 @@ async function loadEventChannelData(
           appointment: {
             include: {
               participants: {
-                where: liveParticipant(),
+                where: paidParticipant(),
                 select: { userId: true },
               },
             },
@@ -380,7 +380,7 @@ async function loadEventChannelData(
           appointment: {
             include: {
               participants: {
-                where: liveParticipant(),
+                where: paidParticipant(),
                 select: { userId: true },
               },
             },
@@ -537,7 +537,7 @@ export async function getEventChannelData(
 
 /**
  * Create a webinar channel with all participants (host, accepted collaborators,
- * and live appointment participants).
+ * and seats holding access).
  */
 export async function createWebinarChannel(
   webinarId: string,
@@ -569,7 +569,7 @@ export async function createWebinarChannel(
 
 /**
  * Create a class channel with all participants (host, accepted collaborators,
- * and live appointment participants).
+ * and seats holding access).
  */
 export async function createClassChannel(
   classId: string,

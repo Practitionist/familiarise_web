@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { paidParticipant } from "@/lib/booking/participants";
 import { addUserToEventChannel } from "@/lib/stream/event-channel-service";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
 import { streamLogger } from "@/lib/stream-logger";
@@ -113,6 +114,12 @@ export async function ensureChannelsForAppointment(
         select: { userId: true },
         orderBy: { createdAt: "asc" },
       },
+      // A payment outlives the seat it bought, so event members come from seats holding access.
+      participants: {
+        where: { role: "CONSULTEE", ...paidParticipant() },
+        select: { userId: true },
+        orderBy: { createdAt: "asc" },
+      },
       consultation: {
         select: {
           id: true,
@@ -192,10 +199,16 @@ export async function ensureChannelsForAppointment(
     return { ensured: false, reason: "consultant_not_resolved" };
   }
 
-  const paidBuyerIds = appointment.payment?.map((p) => p.userId) ?? [];
+  const isGroupEvent = eventType === "WEBINAR" || eventType === "CLASS";
+  const paidBuyerIds = isGroupEvent
+    ? appointment.participants.map((p) => p.userId)
+    : (appointment.payment?.map((p) => p.userId) ?? []);
   const buyerIds = resolveBuyerIds(paidBuyerIds, buyerUserIds);
   if (buyerIds.length === 0) {
-    return { ensured: false, reason: "no_succeeded_payment" };
+    return {
+      ensured: false,
+      reason: isGroupEvent ? "no_seat_holding_access" : "no_succeeded_payment",
+    };
   }
 
   const dmOrgId = bookingOrgId({

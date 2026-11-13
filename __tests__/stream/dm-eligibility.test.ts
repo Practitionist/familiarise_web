@@ -178,6 +178,7 @@ describe("DM eligibility rules and channel provisioning", () => {
       appointmentType: "WEBINAR",
       organizationId: null,
       payment: [{ userId: "buyer-1" }],
+      participants: [{ userId: "buyer-1" }],
       consultation: null,
       subscription: null,
       webinar: {
@@ -232,6 +233,7 @@ describe("DM eligibility rules and channel provisioning", () => {
       appointmentType: "WEBINAR",
       organizationId: "org-1",
       payment: [{ userId: "buyer-1" }],
+      participants: [{ userId: "buyer-1" }],
       consultation: null,
       subscription: null,
       webinar: {
