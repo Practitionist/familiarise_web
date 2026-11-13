@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  useCallback,
+} from "react";
 import { useSearchParams } from "next/navigation";
 import { CalendarDays, List } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -62,12 +69,17 @@ const TABS: Record<Viewer, Array<{ value: TabValue; label: string }>> = {
 
 type EmptyCopy = { title: string; description: string };
 
-const EMPTY_COPY: Record<Exclude<TabValue, "needsAction">, EmptyCopy> & {
-  needsAction: Record<Viewer, EmptyCopy>;
-} = {
+/** Each tab's empty state, worded for the learner or the expert. */
+const EMPTY_COPY: Record<TabValue, Record<Viewer, EmptyCopy>> = {
   upcoming: {
-    title: "No upcoming appointments",
-    description: "Sessions you book will show up here.",
+    consultee: {
+      title: "No upcoming appointments",
+      description: "Sessions you book will show up here.",
+    },
+    consultant: {
+      title: "No upcoming sessions",
+      description: "Sessions learners book with you will show up here.",
+    },
   },
   needsAction: {
     consultee: {
@@ -81,32 +93,62 @@ const EMPTY_COPY: Record<Exclude<TabValue, "needsAction">, EmptyCopy> & {
     },
   },
   waiting: {
-    title: "Nothing waiting on an expert",
-    description: "Requests you send stay here until the expert approves them.",
+    consultee: {
+      title: "Nothing waiting on an expert",
+      description: "Requests you send stay here until the expert answers.",
+    },
+    consultant: {
+      title: "Nothing waiting",
+      description: "Requests waiting on you live in Requests.",
+    },
   },
-  // Never a tab: consultant pre-confirmation rows show under All only.
   inRequests: {
-    title: "No requests",
-    description: "Pending requests live in Requests.",
+    consultee: {
+      title: "No requests",
+      description: "Requests you send stay here until the expert answers.",
+    },
+    consultant: {
+      title: "No requests",
+      description: "Requests waiting on you live in Requests.",
+    },
   },
   past: {
-    title: "No past appointments",
-    description: "Completed sessions will appear here.",
+    consultee: {
+      title: "No past appointments",
+      description: "Sessions you have attended will appear here.",
+    },
+    consultant: {
+      title: "No past sessions",
+      description: "Sessions you have delivered will appear here.",
+    },
   },
   cancelled: {
-    title: "No cancelled appointments",
-    description: "Cancelled or rejected bookings will appear here.",
+    consultee: {
+      title: "No cancelled appointments",
+      description:
+        "Bookings that ended without their session, and why, will appear here.",
+    },
+    consultant: {
+      title: "No cancelled sessions",
+      description:
+        "Bookings that ended without their session, and why, will appear here.",
+    },
   },
   all: {
-    title: "No appointments found",
-    description: "Try clearing the filters, or book a session to get started.",
+    consultee: {
+      title: "No appointments found",
+      description:
+        "Try clearing the filters, or book a session to get started.",
+    },
+    consultant: {
+      title: "No sessions found",
+      description: "Try clearing the filters.",
+    },
   },
 };
 
 function emptyCopyOf(value: TabValue, viewer: Viewer): EmptyCopy {
-  return value === "needsAction"
-    ? EMPTY_COPY.needsAction[viewer]
-    : EMPTY_COPY[value];
+  return EMPTY_COPY[value][viewer];
 }
 
 /** `?tab=` → a tab this viewer has; legacy values land somewhere sensible. */
@@ -151,6 +193,8 @@ interface AppointmentsShellProps {
   requestsHref?: string;
   /** Under the bucket tabs: the consultant's window notice + "Load older". */
   footer?: ReactNode;
+  /** A compact strip right under the next appointment (the learner's alerts). */
+  afterHero?: ReactNode;
 }
 
 export function AppointmentsShell({
@@ -162,6 +206,7 @@ export function AppointmentsShell({
   highlightedId = null,
   requestsHref,
   footer,
+  afterHero,
 }: AppointmentsShellProps) {
   const searchParams = useSearchParams();
   const { data: session } = useSession();
@@ -188,11 +233,14 @@ export function AppointmentsShell({
       ? "calendar"
       : "list";
   const view = localView ?? urlView;
-  const setTab = (value: string) => {
-    const next = resolveTab(value, viewer);
-    setLocalTab(next);
-    replaceQueryParam("tab", next);
-  };
+  const setTab = useCallback(
+    (value: string) => {
+      const next = resolveTab(value, viewer);
+      setLocalTab(next);
+      replaceQueryParam("tab", next);
+    },
+    [viewer],
+  );
   const setView = (value: View) => {
     setLocalView(value);
     replaceQueryParam("view", value);
@@ -310,9 +358,13 @@ export function AppointmentsShell({
     const needsAction = vms.filter((vm) => vm.bucket === "needsAction").length;
     return [
       { value: thisWeek, label: "sessions this week" },
-      { value: needsAction, label: "need action" },
+      {
+        value: needsAction,
+        label: "need action",
+        onSelect: () => setTab("needsAction"),
+      },
     ];
-  }, [vms]);
+  }, [vms, setTab]);
 
   // Row/hero/calendar click → the summary Sheet. Track by id so the sheet
   // re-renders fresh data after a mutation invalidates the list query.
@@ -334,6 +386,7 @@ export function AppointmentsShell({
         stats={stats}
         onOpen={openVm}
       />
+      {afterHero}
 
       <Tabs value={tab} onValueChange={setTab}>
         <div className="flex items-center justify-between gap-3 flex-wrap">

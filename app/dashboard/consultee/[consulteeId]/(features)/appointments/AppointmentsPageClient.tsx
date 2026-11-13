@@ -40,7 +40,6 @@ export default function AppointmentsPageClient({
         title="Appointments"
         description="Your consultations, subscriptions, webinars, and classes"
       />
-      <MyAlerts viewerZone={viewerZone} />
       <IncidentRemedyBanner consulteeId={consulteeId} zone={viewerZone.zone} />
       <div>
         {isLoading && !eventsData ? (
@@ -57,6 +56,7 @@ export default function AppointmentsPageClient({
               vms={vms}
               adapter={adapter}
               viewerZone={viewerZone}
+              afterHero={<MyAlerts viewerZone={viewerZone} />}
             />
           </DisplayZoneProvider>
         )}
