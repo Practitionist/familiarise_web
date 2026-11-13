@@ -102,17 +102,23 @@ describe("NotifyWhenFreeButton", () => {
     planKind: "CONSULTATION" as const,
     planId: "p1",
   };
-  const waiting = {
-    data: [{ id: "w1", status: "WAITING", ...window }],
-  };
 
-  it("POSTs the window, then reads Waiting with a withdraw; shows a refusal inline", async () => {
-    let listed = false;
+  it("POSTs the window, then reads Waiting with a withdraw even when the re-read fails; shows a refusal inline", async () => {
+    let gets = 0;
     calls = [];
     global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
       calls.push({ url, method, body: init?.body as string });
-      if (method === "POST") listed = true;
+      if (method === "POST") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: { id: "w1", status: "WAITING" } }),
+        };
+      }
+      if (method === "GET" && ++gets > 1) {
+        return { ok: false, status: 503, json: async () => ({}) };
+      }
       if (method === "DELETE") {
         return {
           ok: false,
@@ -120,11 +126,7 @@ describe("NotifyWhenFreeButton", () => {
           json: async () => ({ error: "Could not withdraw" }),
         };
       }
-      return {
-        ok: true,
-        status: 200,
-        json: async () => (listed ? waiting : { data: [] }),
-      };
+      return { ok: true, status: 200, json: async () => ({ data: [] }) };
     }) as unknown as typeof fetch;
     wrap(<NotifyWhenFreeButton window={window} timeLabel="10:00 am" />);
     const notify = await screen.findByRole("button", {
