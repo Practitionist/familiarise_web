@@ -1,6 +1,6 @@
 # ADR: Trial and public booking surfaces — free checkout, private strikes, free cancels without a refund record, and two trial lengths
 
-- **Status**: Accepted (owner decisions 2026-11-12 and 2026-11-13). Decisions 1 to 15 are **built** on the branch that carries this record (`feat/train2-single-time-picker`); decisions 10 to 14 are the time pickers.
+- **Status**: Accepted (owner decisions 2026-11-12 and 2026-11-13). Decisions 1 to 15 are **built**; decision 16 records a rule for a case that cannot occur today on the branch that carries this record (`feat/train2-single-time-picker`); decisions 10 to 14 are the time pickers.
 - **Date**: 2026-11-13
 - **Author**: Platform engineering
 - **Related**: [The booking follow-up train](2026-11-12-booking-follow-up-train.md) (decisions 2, 8 and 9), [Scheduling surfaces and feasibility](2026-11-09-scheduling-surfaces-and-feasibility.md) (decision 17), [Cancellation flow](../booking/08-cancellation-flow.md), [Trial sessions](../booking/09-trials.md), [Checkout and payment integration](../booking/10-checkout-payment-integration.md), the tracking issue [#2720](https://github.com/Practitionist/familiarise_web/issues/2720) (train 2)
@@ -87,6 +87,11 @@ Hannah Anderson offers a free 30-minute consultation. Charlotte Brown books Mond
     - **What the first click creates.** The server mints the gateway order and writes the PENDING payment with its tentative hold, exactly as for any paid checkout; nothing is charged because no sheet opens. The second click pays that same order and hold: it carries the same priced fields, so it replays under the same idempotency key, and a fresh key resumes the open order through `lib/payments/checkout/order-reuse.ts` (same buyer and plan, same amount and code). If the buyer changes the payer or credits first, the amount differs, the first order is superseded and its hold released, and one new order is minted.
     - **Enforced by** `onPaidWhenFree` in `app/checkout/components/RazorpayCheckout.tsx` and `priceChange` in `app/checkout/plans/components/PlanCheckoutShell.tsx`; `__tests__/payments/checkout-shell-smoke.test.tsx` pins the stop, the notice and the paid button.
     - **Option not chosen.** Opening the payment sheet on that first click, as first built: the buyer would be asked to pay under a button that said "Confirm booking".
+
+16. **A priced booking cannot reach ₹0 without credit; if it ever can, keep the refund record and send no refund notice** (owner decision 2026-11-13, nothing built).
+    - **Why nothing is built.** A discount code, the welcome discount and referral credits together are capped by `platformFundedCapPaise` (`lib/payments/pricing/platform-funded-cap.ts`): the platform fee minus the gateway estimate, always below the list price. A remainder of 1 to 99 paise is refused at checkout (`MINIMUM_CHECKOUT_AMOUNT_PAISE` in `lib/payments/checkout/pricing.ts`). On 2026-11-13 all 176 `free_` ₹0 payments in the shared database had a zero list price.
+    - **The rule if a pricing change makes it reachable.** Keep the ₹0 refund record, because its cascade (`applyRefundCascade`) reverses the expert's earnings, which are created on the list price; send no refund notice, and tell the learner only that nothing was paid so there is nothing to refund.
+    - **Options not chosen.** Treating such a booking as fully free with no refund record (its earnings would stand). Keeping the record and the "₹0.00" refund notice with accurate dialog copy.
 
 ## Honest limits
 
