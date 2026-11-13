@@ -26,7 +26,7 @@ export type InboxChip = (typeof INBOX_CHIPS)[number];
 /** Which chips a tab offers; a next cycle only exists on a subscription. */
 export const CHIPS_FOR_TYPE: Record<InboxType, InboxChip[]> = {
   consultation: ["answer-today", "awaiting-payment", "declined"],
-  subscription: ["answer-today", "awaiting-payment", "next-cycle", "declined"],
+  subscription: ["answer-today", "next-cycle", "declined"],
   trial: ["awaiting-payment"],
 };
 

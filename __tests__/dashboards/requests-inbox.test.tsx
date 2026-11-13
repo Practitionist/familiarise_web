@@ -115,7 +115,7 @@ describe("Requests inbox anatomy (A-4)", () => {
         NOW,
       );
     };
-    expect(actionsOf("s-awaiting")).toEqual({
+    expect(actionsOf("c-awaiting")).toEqual({
       primary: { kind: "remind" },
       secondary: [{ kind: "withdraw" }],
     });

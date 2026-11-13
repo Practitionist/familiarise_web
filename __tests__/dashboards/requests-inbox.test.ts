@@ -91,15 +91,15 @@ describe("readRequestsInbox (A-1)", () => {
     // Priority within a bucket: amount desc, then the nearer clock first.
     expect(rows.map((r) => [r.id, r.kind])).toEqual([
       ["c-pending", "consultation"],
+      ["c-awaiting", "consultation"],
       ["s-next", "next-cycle"],
-      ["s-awaiting", "subscription"],
       ["t-awaiting", "trial"],
     ]);
     const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
     // PENDING → the 48 h hold; awaiting payment → the pay link's clock;
     // next cycle → the window start; a paid trial → paymentDueAt.
     expect(new Date(byId["c-pending"].deadline!)).toEqual(hoursAhead(18));
-    expect(new Date(byId["s-awaiting"].deadline!)).toEqual(hoursAhead(6));
+    expect(new Date(byId["c-awaiting"].deadline!)).toEqual(hoursAhead(6));
     expect(new Date(byId["s-next"].deadline!)).toEqual(NOW);
     expect(new Date(byId["t-awaiting"].deadline!)).toEqual(hoursAhead(20));
     expect(rows.map((r) => r.bucket)).toEqual([
@@ -117,12 +117,12 @@ describe("readRequestsInbox (A-1)", () => {
     });
     expect(byId["t-awaiting"].amountPaise).toBe(50000);
     expect(subscriptions.meta).toMatchObject({
-      total: 2,
-      counts: { consultation: 1, subscription: 2, trial: 1 },
+      total: 1,
+      counts: { consultation: 2, subscription: 1, trial: 1 },
     });
     // The presentation reads the row through money-state, not a status switch.
     const { bookingState, moneyState } = deriveBookingPresentation(
-      byId["s-awaiting"].presentation,
+      byId["c-awaiting"].presentation,
       "CONSULTANT",
       { now: NOW },
     );
@@ -131,16 +131,16 @@ describe("readRequestsInbox (A-1)", () => {
   });
 
   it("sort=deadline orders by the clock and chip=awaiting-payment narrows to one", async () => {
-    const sorted = await read({ type: "subscription", sort: "deadline" });
-    expect(sorted.rows.map((r) => r.id)).toEqual(["s-next", "s-awaiting"]);
+    const sorted = await read({ type: "consultation", sort: "deadline" });
+    expect(sorted.rows.map((r) => r.id)).toEqual(["c-awaiting", "c-pending"]);
     const chipped = await read({
-      type: "subscription",
+      type: "consultation",
       chip: "awaiting-payment",
     });
-    expect(chipped.rows.map((r) => r.id)).toEqual(["s-awaiting"]);
+    expect(chipped.rows.map((r) => r.id)).toEqual(["c-awaiting"]);
     expect(chipped.meta.total).toBe(1);
     // Deadline pages in SQL by the request clock, oldest first, id tiebreaker.
-    const call = (prisma.subscription.findMany as jest.Mock).mock.calls.find(
+    const call = (prisma.consultation.findMany as jest.Mock).mock.calls.find(
       ([args]) => args.orderBy,
     )![0];
     expect(call.orderBy).toEqual([{ requestedAt: "asc" }, { id: "asc" }]);

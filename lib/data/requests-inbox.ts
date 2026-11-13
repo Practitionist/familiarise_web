@@ -6,8 +6,9 @@
  * way the payment history builds its own (lifecycleOf / planOf), so the inbox,
  * Home and the detail page cannot disagree about a booking.
  *
- * Sources per type: consultation and subscription requests in PENDING and
- * APPROVED_PENDING_PAYMENT (the needs-you predicates), subscriptions whose
+ * Sources per type: consultation requests in PENDING and
+ * APPROVED_PENDING_PAYMENT, subscription requests in PENDING (the needs-you
+ * predicates), subscriptions whose
  * live cycle is finished, trials in PENDING / AWAITING_PAYMENT, and unpaid
  * direct checkouts still inside their pay window (listed, never counted).
  * Chips narrow the sources server-side. A time sort over one source pages in
@@ -990,17 +991,12 @@ function planSources(
     return byChip[key] ?? [];
   }
   if (type === "subscription") {
+    // A plan is paid at checkout, so it is never awaiting payment.
     const pending = pendingSubscriptionWhere(cp, scope);
-    const awaiting = subscriptionSource(
-      cp,
-      subscriptionRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
-      now,
-    );
     const nextCycle = nextCycleSource(cp, scope, now);
     const byChip: Partial<Record<ChipKey, InboxSource[]>> = {
       all: [
         subscriptionSource(cp, pending, now),
-        awaiting,
         nextCycle,
         subscriptionSource(
           cp,
@@ -1021,7 +1017,6 @@ function planSources(
           now,
         ),
       ],
-      "awaiting-payment": [awaiting],
       "next-cycle": [nextCycle],
       declined: [
         subscriptionSource(
