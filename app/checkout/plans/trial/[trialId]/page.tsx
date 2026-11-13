@@ -153,7 +153,8 @@ export default async function TrialCheckoutPage({
     (!trial.paymentDueAt || trial.paymentDueAt > new Date());
 
   return (
-    <main className="mx-auto max-w-xl px-4 py-16">
+    // Spans both columns of the checkout grid, so the single card sits centred.
+    <main className="col-span-full mx-auto w-full max-w-xl px-4 py-16">
       <Card>
         <CardHeader>
           <CardTitle>
