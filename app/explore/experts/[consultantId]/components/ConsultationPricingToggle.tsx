@@ -101,8 +101,8 @@ export default function ConsultationPricingToggle({
   const [dialogPlanId, setDialogPlanId] = useState<string | null>(null);
   const [pick, setPick] = useState<SingleTimeValue | null>(null);
   // Times the request door said someone else holds: shown taken with "Notify me".
-  const [heldStarts, setHeldStarts] = useState<ReadonlySet<number>>(
-    () => new Set(),
+  const [heldStarts, setHeldStarts] = useState<ReadonlyMap<number, number>>(
+    () => new Map(),
   );
   const [isRequestingApproval, setIsRequestingApproval] = useState(false);
   // A taken time the visitor asked to wait on before signing in.
@@ -129,7 +129,7 @@ export default function ConsultationPricingToggle({
     setActiveConsultationOption(planId);
     // A pick belongs to one session length; another plan has other windows.
     setPick(null);
-    setHeldStarts(new Set());
+    setHeldStarts(new Map());
   };
 
   // A pick stashed before the sign-in bounce comes back once per mount; the
@@ -275,8 +275,10 @@ export default function ConsultationPricingToggle({
       ) {
         const heldAt = Date.parse(pick.startsAt);
         // The picker says so inline and opens its taken times.
-        setHeldStarts((held) => new Set([...held, heldAt]));
+        setHeldStarts((held) => new Map([...held, [heldAt, Date.now()]]));
         setPick(null);
+        // The next read skips the browser cache, so it answers for this time.
+        if (bypassRef) bypassRef.current = true;
         onRefreshSlots?.();
         return;
       }

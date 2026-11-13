@@ -67,8 +67,11 @@ export interface SingleTimePickerProps {
   consulteeUserId?: string;
   /** The event being placed or moved: a move frees its own sessions. */
   event?: AvailabilityEvent;
-  /** Starts the booking door reported as held by someone else; a new one opens the taken list. */
-  heldStarts?: ReadonlySet<number>;
+  /**
+   * Starts the booking door reported as held by someone else, each with when it
+   * said so; a grid read newer than that answers for the start again. A new one opens the taken list.
+   */
+  heldStarts?: ReadonlyMap<number, number>;
   /** The plan a "Notify me" on a taken time registers for; `onSignIn` is set for a signed-out visitor. */
   notifyPlan?: {
     planKind: "CONSULTATION" | "SUBSCRIPTION";
@@ -212,7 +215,9 @@ export function SingleTimePicker({
   const [seenHeld, setSeenHeld] = useState(heldStarts);
   if (heldStarts !== seenHeld) {
     setSeenHeld(heldStarts);
-    if ([...(heldStarts ?? [])].some((start) => !seenHeld?.has(start))) {
+    if (
+      [...(heldStarts?.keys() ?? [])].some((start) => !seenHeld?.has(start))
+    ) {
       setNotice(TIME_JUST_TAKEN_MESSAGE);
       setTakenOpen(true);
     }
@@ -236,6 +241,14 @@ export function SingleTimePicker({
     event,
     bypassRef,
   });
+  // A refusal overrides only a grid answer read before it.
+  const readAt = query.dataUpdatedAt;
+  const liveHeldStarts = useMemo(() => {
+    const live = [...(heldStarts ?? [])]
+      .filter(([, refusedAt]) => refusedAt >= readAt)
+      .map(([start]) => start);
+    return live.length > 0 ? new Set(live) : undefined;
+  }, [heldStarts, readAt]);
   const input: DayOptionsInput = useMemo(
     () => ({
       audience,
@@ -244,7 +257,7 @@ export function SingleTimePicker({
       sessionMinutes,
       nowMs,
       leadMs,
-      heldStarts,
+      heldStarts: liveHeldStarts,
       allowedStartMs,
       allowedEndMs,
     }),
@@ -255,7 +268,7 @@ export function SingleTimePicker({
       sessionMinutes,
       nowMs,
       leadMs,
-      heldStarts,
+      liveHeldStarts,
       allowedStartMs,
       allowedEndMs,
     ],

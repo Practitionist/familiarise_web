@@ -14,10 +14,12 @@ import {
 } from "@testing-library/react";
 
 let mockMonth: Record<string, unknown[]> = {};
+let mockReadAt = 0;
 jest.mock("@/lib/scheduling/use-availability-window", () => ({
   ...jest.requireActual("@/lib/scheduling/use-availability-window"),
   useAvailabilityMonth: ({ timezone }: { timezone: string | null }) => ({
     data: timezone ? mockMonth : undefined,
+    dataUpdatedAt: mockReadAt,
     isPending: !timezone,
     isError: false,
     refetch: jest.fn(),
@@ -104,6 +106,7 @@ beforeAll(() => {
   globalThis.crypto.randomUUID ??= () => "00000000-0000-4000-8000-000000000000";
 });
 beforeEach(() => {
+  mockReadAt = 0;
   jest.useFakeTimers();
   jest.setSystemTime(new Date("2026-11-02T09:00:00.000Z"));
   mockMonth = { "2026-11-04": atoms() };

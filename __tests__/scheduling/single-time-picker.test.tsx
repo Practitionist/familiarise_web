@@ -9,10 +9,12 @@ import * as React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
 let mockMonth: Record<string, unknown[]> = {};
+let mockReadAt = 0;
 jest.mock("@/lib/scheduling/use-availability-window", () => ({
   ...jest.requireActual("@/lib/scheduling/use-availability-window"),
   useAvailabilityMonth: ({ timezone }: { timezone: string | null }) => ({
     data: timezone ? mockMonth : undefined,
+    dataUpdatedAt: mockReadAt,
     isPending: !timezone,
     isError: false,
     refetch: jest.fn(),
@@ -69,6 +71,7 @@ function Harness(
 }
 
 beforeEach(() => {
+  mockReadAt = 0;
   jest.useFakeTimers();
   jest.setSystemTime(new Date("2026-11-02T09:00:00.000Z"));
   mockMonth = { "2026-11-04": atoms(9, 13, [11]) };
@@ -94,7 +97,7 @@ it("moves through the month with the keyboard", () => {
 it("shows a buyer free times and lists booked and held ones behind a disclosure", () => {
   render(
     <Harness
-      heldStarts={new Set([DAY + 9 * HOUR])}
+      heldStarts={new Map([[DAY + 9 * HOUR, Date.now()]])}
       notifyPlan={{ planKind: "CONSULTATION", planId: "plan-1" }}
     />,
   );
@@ -169,4 +172,11 @@ it("keeps the pick's availability row current when a save re-ids it", () => {
     rerender(<Harness onPick={(v) => picks.push(v)} />);
   });
   expect(picks.at(-1)?.window).toEqual({ id: "row-b", type: "WEEKLY" });
+});
+
+it("lets a grid read newer than a refusal answer for that time again", () => {
+  const held = new Map([[DAY + 9 * HOUR, Date.now()]]);
+  mockReadAt = Date.now() + 1;
+  render(<Harness heldStarts={held} />);
+  expect(time(/^9:00 am to 10:00 am, free/)).toBeEnabled();
 });
