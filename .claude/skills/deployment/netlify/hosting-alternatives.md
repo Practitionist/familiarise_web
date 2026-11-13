@@ -89,6 +89,15 @@ When migrating primary compute into **Mumbai (`< 4 ms` RTT to Supabase `ap-south
 3. **Fly.io (`bom` Mumbai — `88/100`)** & **DigitalOcean App Platform (`blr1` Bangalore — `87/100`)**: Best zero-seat-tax container PaaS alternatives inside India with native `50 MB` upload support.
 4. **Cloudflare Workers (`@opennextjs/cloudflare` — `60/100`, Disqualified)**: Hard `128 MB` isolate memory ceiling across concurrent SSR + Prisma WASM executions (`Error 1102`) and no Linux `fork`/`dlopen` for `@sparticuz/chromium`, `sharp`, or native `bcrypt`.
 
+## Added 2026-11-13: an unmeasured layout, Fluid on a cold pool, and Netlify Server
+
+This section is research, not a decision; the full review is `docs/infrastructure/08-jobs-runtime-and-cold-start-review.md`.
+
+- **A layout nobody measured.** Every option above moves compute to Mumbai. Moving the database to Singapore instead would co-locate it with Netlify's `sin` functions with no app migration. Same-region statements should cost about 1–3 ms (an estimate from the `bom1` probe, not a measurement). The cost is the privacy page's statement that the database is hosted in Mumbai. A Supabase project cannot change region in place (search summary, no vendor page read), so the region is chosen when a project is created. Issue #2751 holds the comparison and the two measurements to run first.
+- **Co-location does not fix cold starts.** It removes the per-statement round trip. A cold boot is CPU-bound module loading (ADR 32), and its frequency comes from one request per instance.
+- **Fluid compute barely helps a burst onto a cold project.** In the 2026-10-31 lab, 17 of 20 requests in a first burst still got new instances; the repeat burst ran on 7 instances with none cold (`docs/maintenance/experiments/2026-10-31-job-runtime/08-vercel-fluid-prisma-qstash-workflows.md`). Shared instances cut cold starts once a pool is warm. They do not remove the first one after a deploy, after idle or during a scale-out. The real app's cold boot on Vercel is unmeasured, because the app has not booted there.
+- **Netlify Server (early access, announced 2026-11-10).** Long-lived instances that serve many requests and scale to zero (search summary, no vendor page read). Whether `@netlify/plugin-nextjs` can target it, its regions and its plans are unknown. Watch it; do not plan on it.
+
 ## Sources
 
 - Vercel fluid compute (concurrency, bytecode caching, durations): https://vercel.com/docs/fluid-compute

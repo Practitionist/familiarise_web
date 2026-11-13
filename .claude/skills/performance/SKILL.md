@@ -10,7 +10,7 @@ allowed-tools: Read, Grep, Glob, Edit, Write, Bash
 You are working on performance, Core Web Vitals (LCP, TBT, INP, CLS), or Lighthouse audit scores in the Familiarise Next.js 15 codebase. Read the relevant docs before editing:
 
 - `docs/performance/05-lighthouse-audit-and-cwv-playbook.md` — Lighthouse MCP workflow, CWV bottleneck root-cause catalog, accessibility/SEO rules, and anti-runaway billing guardrails
-- `docs/performance/04-optimization-backlog.md` — Server-side & database query latency optimizations
+- `docs/performance/06-database-round-trips-and-join-loading.md` — Why statement count dominates server latency, and the join-loading conventions that keep it low
 - `docs/deployment/netlify.md` — Next.js 15 cold-start (`preloadEntriesOnStart: false`), 250 MB Lambda limit, and ISR caching architecture
 
 ---
