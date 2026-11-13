@@ -2,6 +2,7 @@ import { splitIntoSessions } from "@/lib/scheduling/calendarUtils";
 import {
   expandToSession,
   fitLabel,
+  ownHoldStarts,
   sessionsThatFit,
   weekDayFits,
 } from "@/lib/scheduling/week-grid-model";
@@ -117,5 +118,37 @@ describe("weekDayFits", () => {
 
   it("labels the count the way the header prints it", () => {
     expect([0, 1, 4].map(fitLabel)).toEqual(["None fit", "1 fits", "4 fit"]);
+  });
+});
+
+describe("ownHoldStarts: a request's own hold stays pickable", () => {
+  const at = "2026-12-01T09:00:00.000Z";
+  const plus = (minutes: number) =>
+    new Date(Date.parse(at) + minutes * 60_000).toISOString();
+  it.each([30, 60])("covers every atom of a %i-minute hold", (minutes) => {
+    const starts = ownHoldStarts([
+      {
+        startsAt: at,
+        endsAt: plus(minutes),
+        isTentative: true,
+        completionStatus: "SCHEDULED",
+      },
+      // A released session and a confirmed one are not holds.
+      {
+        startsAt: plus(120),
+        endsAt: plus(150),
+        isTentative: true,
+        completionStatus: "RESCHEDULED",
+      },
+      {
+        startsAt: plus(240),
+        endsAt: plus(270),
+        isTentative: false,
+        completionStatus: "SCHEDULED",
+      },
+    ]);
+    expect([...starts]).toEqual(
+      Array.from({ length: minutes / 30 }, (_, i) => Date.parse(plus(i * 30))),
+    );
   });
 });

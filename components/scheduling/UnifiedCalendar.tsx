@@ -96,6 +96,7 @@ import {
   sessionsThatFit,
   weekDayFits,
   selectionConflicts,
+  ownHoldStarts,
   type AtomContext,
   type CellView,
   type RowWindow,
@@ -835,6 +836,10 @@ export function UnifiedCalendar({
   const offer = partialOffer ?? shownOffer;
 
   const eventStarts = useMemo(() => startsOf(eventSlots), [eventSlots]);
+  const holdStarts = useMemo(
+    () => ownHoldStarts(eventOccurrences),
+    [eventOccurrences],
+  );
   const tentativeStarts = useMemo(
     () => startsOf(eventTentativeSlots),
     [eventTentativeSlots],
@@ -1277,12 +1282,25 @@ export function UnifiedCalendar({
         else toast(pastSessionBlocked());
         return;
       }
-      // A session of this booking under 24 hours away cannot be moved.
+      // The request's own hold may be picked up to the allocate lead; a
+      // confirmed session of this booking under 24 hours away is not moved here.
+      const isOwnHold = holdStarts.has(cell.startMs);
       if (
         cell.isThisEvent &&
+        !isOwnHold &&
         cell.startMs < Date.now() + TWENTY_FOUR_HOURS_IN_MS
       ) {
         toast(sessionTooSoon());
+        return;
+      }
+      if (
+        isOwnHold &&
+        cell.startMs <= Date.now() + (leadMs ?? MINIMUM_BOOKING_LEAD_TIME_MS)
+      ) {
+        toast({
+          title: "Too soon",
+          description: `That time starts in less than ${leadLabel(leadMs ?? MINIMUM_BOOKING_LEAD_TIME_MS)} — pick a later one.`,
+        });
         return;
       }
       if (cell.isInPast) {
@@ -1348,6 +1366,7 @@ export function UnifiedCalendar({
       buildAutoExpandGroup,
       slotLimits.slotsPerSession,
       weekCells,
+      holdStarts,
     ],
   );
 

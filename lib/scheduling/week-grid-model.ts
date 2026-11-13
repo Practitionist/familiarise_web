@@ -359,3 +359,33 @@ export function selectionConflicts(
   }
   return conflicts;
 }
+
+/**
+ * The atoms this booking holds as an unconfirmed request (tentative, not
+ * released): the approver may pick them up to the allocate lead, not 24 hours.
+ */
+export function ownHoldStarts(
+  occurrences: ReadonlyArray<{
+    startsAt: Date | string;
+    endsAt: Date | string;
+    isTentative: boolean;
+    completionStatus: string | null;
+    deletedAt?: Date | string | null;
+  }>,
+): ReadonlySet<number> {
+  const starts = new Set<number>();
+  for (const row of occurrences) {
+    if (!row.isTentative || row.deletedAt) continue;
+    if (row.completionStatus !== "SCHEDULED") continue;
+    const endMs = new Date(row.endsAt).getTime();
+    for (
+      let atom =
+        Math.floor(new Date(row.startsAt).getTime() / ATOM_MS) * ATOM_MS;
+      atom < endMs;
+      atom += ATOM_MS
+    ) {
+      starts.add(atom);
+    }
+  }
+  return starts;
+}
