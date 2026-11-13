@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { publicProfileUserSelect } from "@/lib/data/consultant-public";
 import { NextRequest, NextResponse } from "next/server";
 import {
   requireApiAuth,
@@ -27,25 +28,41 @@ export async function GET(request: NextRequest) {
     // Calculate offset
     const skip = (page - 1) * limit;
 
-    const consultees = await prisma.consulteeProfile.findMany({
-      include: {
-        consultantReviews: { where: { deletedAt: null } },
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-          },
-        },
-      },
-      skip,
-      take: limit,
-    });
+    // ADMIN reads the whole learner record; STAFF read only what any other
+    // viewer of a profile sees, as on the single-learner read.
+    const consultees =
+      session.user.role === "ADMIN"
+        ? await prisma.consulteeProfile.findMany({
+            include: {
+              consultantReviews: { where: { deletedAt: null } },
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                },
+              },
+            },
+            skip,
+            take: limit,
+          })
+        : await prisma.consulteeProfile.findMany({
+            select: {
+              id: true,
+              userId: true,
+              user: { select: publicProfileUserSelect },
+            },
+            skip,
+            take: limit,
+          });
 
     return NextResponse.json(consultees, { status: 200 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     console.error("Error getting consultees:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },

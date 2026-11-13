@@ -7,6 +7,8 @@ import {
   HOST_PROFILE_SELECT,
   PARTY_PROFILE_SELECT,
   PUBLIC_USER_SELECT,
+  isStaffNonParty,
+  publicRequester,
 } from "@/lib/booking/list-selects";
 
 /** What a caller may read of an appointment: every attendee's rows, only their own, or nothing. */
@@ -222,7 +224,28 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ data: appointment }, { status: 200 });
+    const request = appointment.consultation ?? appointment.subscription;
+    const hostProfileId =
+      appointment.consultation?.consultationPlan.consultantProfileId ??
+      appointment.subscription?.subscriptionPlan.consultantProfileId;
+    const isParty =
+      (!!request &&
+        request.requestedById === session.user.consulteeProfileId) ||
+      (!!hostProfileId && hostProfileId === session.user.consultantProfileId);
+    const data = isStaffNonParty(session.user.role, isParty)
+      ? {
+          ...appointment,
+          consultation: appointment.consultation && {
+            ...appointment.consultation,
+            requestedBy: publicRequester(appointment.consultation.requestedBy),
+          },
+          subscription: appointment.subscription && {
+            ...appointment.subscription,
+            requestedBy: publicRequester(appointment.subscription.requestedBy),
+          },
+        }
+      : appointment;
+    return NextResponse.json({ data }, { status: 200 });
   } catch (error) {
     console.error("Error fetching appointment:", error);
     Sentry.captureException(

@@ -42,6 +42,8 @@ import {
   HOST_PROFILE_SELECT,
   PARTY_PROFILE_SELECT,
   PARTY_USER_SELECT,
+  isStaffNonParty,
+  publicRequester,
 } from "@/lib/booking/list-selects";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
@@ -119,7 +121,13 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ data: consultationData }, { status: 200 });
+    const data = isStaffNonParty(session.user.role, isParticipant)
+      ? {
+          ...consultationData,
+          requestedBy: publicRequester(consultationData.requestedBy),
+        }
+      : consultationData;
+    return NextResponse.json({ data }, { status: 200 });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&

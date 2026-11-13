@@ -1,4 +1,8 @@
-import { PROFILE_WITH_USER_SELECT } from "@/lib/booking/list-selects";
+import {
+  PROFILE_WITH_USER_SELECT,
+  isStaffNonParty,
+  publicRequester,
+} from "@/lib/booking/list-selects";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
   recordParticipants,
@@ -176,7 +180,13 @@ export async function GET(request: NextRequest, context: RouteContext) {
       });
     }
 
-    return NextResponse.json({ data: trial });
+    const isParty =
+      trial.consulteeProfileId === session.user.consulteeProfileId ||
+      trial.consultantProfileId === session.user.consultantProfileId;
+    const data = isStaffNonParty(session.user.role, isParty)
+      ? { ...trial, consulteeProfile: publicRequester(trial.consulteeProfile) }
+      : trial;
+    return NextResponse.json({ data });
   } catch (error) {
     console.error("Error fetching trial session:", error);
     return NextResponse.json(
