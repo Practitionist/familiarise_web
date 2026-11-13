@@ -210,6 +210,30 @@ export interface RefundRailAmounts {
   currency: string;
   refundPct: number;
   prorated: boolean;
+  /** Nothing was paid, in money or in referral credit: a free booking. */
+  freeBooking?: boolean;
+}
+
+/** The sentence for a booking that cost nothing; shared by the dialog, the toast and the preview. */
+export const FREE_BOOKING_REFUND_LINE =
+  "Nothing was paid for this, so there is nothing to refund.";
+
+/**
+ * A SUCCEEDED payment worth nothing: no gateway amount and no referral credit
+ * leg. A credit-funded booking also has amount 0 but carries a credit leg.
+ */
+export function isFreePayment(p: {
+  amount: PaiseLike;
+  paymentMethod: string;
+  legs?: PaymentDisplayLike["legs"];
+}): boolean {
+  if (Number(p.amount) !== 0 || ORG_METHODS.has(p.paymentMethod)) return false;
+  if (!p.legs) return false;
+  return !p.legs.some(
+    (l) =>
+      ORG_LEG_SOURCES.has(l.source) ||
+      (l.source === "REFERRAL_CREDIT" && Number(l.amountPaise ?? 0) > 0),
+  );
 }
 
 /**
@@ -222,6 +246,7 @@ export function refundRailLine(
   fundingRail: RefundRail,
   amounts: RefundRailAmounts,
 ): string {
+  if (amounts.freeBooking) return FREE_BOOKING_REFUND_LINE;
   if (fundingRail === "CREDITS") {
     return amounts.refundPct === 100
       ? "You paid with referral credits — they'll be restored to your balance."

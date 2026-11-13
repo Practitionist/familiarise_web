@@ -27,6 +27,7 @@ import { normalizeStatus } from "@/lib/appointments/status";
 import { paymentDisplayStatus } from "@/lib/appointments/seat-payments";
 import {
   isSponsoredPayment,
+  isFreePayment,
   paymentFunding,
   paymentRailLabel,
   type PaymentDisplayLike,
@@ -940,6 +941,8 @@ function completedRefundLabel(
 function refundTimeline(input: BookingPresentationInput): TimelineEvent[] {
   const paid = input.payments.find((x) => x.paymentStatus === "SUCCEEDED");
   if (!paid) return [];
+  // A free booking has no money to refund, so its ₹0 refund row is no step.
+  if (isFreePayment(paid)) return [];
   const funding = paymentFunding(paid);
   const eta = REFUND_ETA[funding] ?? REFUND_ETA_CARD_OR_UPI;
   return input.refunds.map((r): TimelineEvent => {

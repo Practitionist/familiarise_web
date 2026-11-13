@@ -15,6 +15,7 @@ import { Loader2, AlertTriangle } from "lucide-react";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import {
   payerSentence,
+  FREE_BOOKING_REFUND_LINE,
   refundRailLine,
 } from "@/lib/appointments/payment-display";
 import {
@@ -261,7 +262,7 @@ export function CancelConfirmationDialog({
     if (preview.paid === false) {
       return (
         <p className="text-muted-foreground text-sm">
-          Nothing was paid for this, so there is nothing to refund.
+          {FREE_BOOKING_REFUND_LINE}
         </p>
       );
     }
@@ -317,7 +318,7 @@ export function CancelConfirmationDialog({
             % of it.
           </p>
         )}
-        {preview.fundingRail && (
+        {preview.fundingRail && !preview.freeBooking && (
           <p className="text-muted-foreground text-sm">
             {payerSentence(
               preview.fundingRail === "INTERNAL" ? "ORG" : "SELF",
@@ -343,6 +344,7 @@ export function CancelConfirmationDialog({
       estimatedRefundPaise: preview.estimatedRefundPaise,
       creditRestoresInFull: preview.creditRestoresInFull,
       expectedPaid: preview.expectedPaid,
+      freeBooking: preview.freeBooking,
     };
   };
 

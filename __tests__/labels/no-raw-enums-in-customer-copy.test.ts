@@ -12,6 +12,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import {
+  PLAN_EMAIL_SUPPORT_LABEL,
+  planLevelLabel,
+} from "@/lib/labels/plan-labels";
 import ALREADY_WORDS from "./raw-enum-already-words.json";
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -171,5 +175,31 @@ describe("customer-facing copy never prints a raw enum", () => {
     expect(RAW_FIELD.test("`HTTP error (${res.status})`")).toBe(false);
     expect(RAW_FIELD.test("<Tab key={t} value={tab.status} />")).toBe(false);
     expect(RAW_FIELD.test("<span>{LABEL[row.status]}</span>")).toBe(false);
+  });
+});
+
+describe("the subscription checkout details", () => {
+  const source = fs.readFileSync(
+    path.join(
+      ROOT,
+      "app/checkout/plans/adapters/use-subscription-checkout.tsx",
+    ),
+    "utf8",
+  );
+
+  it("prints the level and email support through their labels, never the enum", () => {
+    expect(source).not.toMatch(/\{\s*plan\?\.(level|emailSupport)\b/);
+    expect(source).toContain("planLevelLabel(");
+    expect(source).toContain("PLAN_EMAIL_SUPPORT_LABEL[");
+  });
+
+  it("labels every plan level and email support tier", () => {
+    expect(planLevelLabel("BEGINNER")).toBe("Beginner");
+    expect(PLAN_EMAIL_SUPPORT_LABEL.GENERAL).toBe("General");
+    expect(Object.values(PLAN_EMAIL_SUPPORT_LABEL)).toEqual([
+      "General",
+      "Priority",
+      "Dedicated",
+    ]);
   });
 });
