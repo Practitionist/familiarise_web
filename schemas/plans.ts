@@ -292,6 +292,16 @@ export const SubscriptionContentSchema = ClassContentSchema.omit({
   subscriptionPlanId: z.string().optional(),
 });
 
+/** One sitting (a 1:1 call or a webinar) on the 30-minute booking grid, 30 min to 8 h. */
+export const sittingDurationInHoursSchema = z
+  .number()
+  .min(0.5, "Duration must be at least 30 minutes")
+  .max(8, "Duration cannot exceed 8 hours")
+  .refine(
+    (val) => (val * 60) % 30 === 0,
+    "Duration must be in 30-minute increments",
+  );
+
 // #1527 Q4 — absent means PUBLISHED (the column default), so older API
 // clients keep publishing exactly as before.
 const offeringPlanStatusSchema = z.nativeEnum(OfferingPlanStatus).optional();
@@ -302,14 +312,7 @@ export const ConsultationPlanSchema = z.object({
   // Required at the validation edge even though the DB column stays nullable
   // (relaxed so legacy rows survive); authoring always has a description.
   description: requiredDescriptionSchema,
-  durationInHours: z
-    .number()
-    .min(0.5, "Duration must be at least 30 minutes")
-    .max(8, "Duration cannot exceed 8 hours")
-    .refine(
-      (val) => (val * 60) % 30 === 0,
-      "Duration must be in 30-minute increments",
-    ),
+  durationInHours: sittingDurationInHoursSchema,
   price: priceSchema,
   priceCurrency: z.nativeEnum(Currency).default(Currency.INR),
   language: z.string().min(1, "Language is required"),
@@ -472,14 +475,7 @@ export const WebinarPlanSchema = BaseEventPlanSchema.extend({
   ...waitlistShape,
   ...recordingShape,
   shareRecordingsWithAllAttendees: z.boolean().default(false),
-  durationInHours: z
-    .number()
-    .min(0.5, "Duration must be at least 30 minutes")
-    .max(8, "Duration cannot exceed 8 hours")
-    .refine(
-      (val) => (val * 60) % 30 === 0,
-      "Duration must be in 30-minute increments",
-    ),
+  durationInHours: sittingDurationInHoursSchema,
   scheduledAt: z
     .string()
     .min(1, "Start time is required")

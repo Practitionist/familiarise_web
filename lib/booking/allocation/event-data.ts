@@ -16,6 +16,7 @@ import {
 import {
   bookedSessionMinutes,
   intervalStartsOf,
+  liveOccurrenceWhere,
 } from "@/lib/appointments/occurrences";
 import { isVoidRequestRow } from "@/lib/booking/allocation/counts";
 import { isLiveCheckoutHold } from "@/lib/booking/request-cohort";
@@ -136,6 +137,45 @@ export async function approveByMoney<
     actorUserId,
   });
   return "awaiting_payment";
+}
+
+/**
+ * A class's stored scheduling period starts at its first live session and
+ * reaches at least its last, so every reader of the period agrees with the sessions.
+ */
+export async function followClassSessions(
+  tx: Pick<Tx, "appointmentOccurrence" | "class">,
+  classId: string,
+): Promise<void> {
+  const live = {
+    ...liveOccurrenceWhere,
+    appointment: { classId, deletedAt: null },
+  };
+  const first = await tx.appointmentOccurrence.findFirst({
+    where: live,
+    orderBy: { startsAt: "asc" },
+    select: { startsAt: true },
+  });
+  const last = await tx.appointmentOccurrence.findFirst({
+    where: live,
+    orderBy: { endsAt: "desc" },
+    select: { endsAt: true },
+  });
+  if (!first || !last) return;
+  await tx.class.updateMany({
+    where: { id: classId },
+    data: { schedulingPeriodStartsAt: first.startsAt },
+  });
+  await tx.class.updateMany({
+    where: {
+      id: classId,
+      OR: [
+        { schedulingPeriodEndsAt: null },
+        { schedulingPeriodEndsAt: { lt: last.endsAt } },
+      ],
+    },
+    data: { schedulingPeriodEndsAt: last.endsAt },
+  });
 }
 
 /**
@@ -262,6 +302,7 @@ export async function updateEventStatus(
           });
         }
       }
+      await followClassSessions(tx, eventId);
       break;
     }
   }

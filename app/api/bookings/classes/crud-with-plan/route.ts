@@ -45,7 +45,10 @@ import { getSession } from "@/lib/auth-server";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import { seriesStartsFrom } from "@/lib/booking/class-pattern";
 import { eventTimeRefusal } from "@/lib/booking/event-time-rules";
-import { buildOccurrence } from "@/lib/appointments/occurrences";
+import {
+  buildOccurrence,
+  liveOccurrenceWhere,
+} from "@/lib/appointments/occurrences";
 import {
   assertCollaboratorsAvailableForWindows,
   assertConsultantAvailableForWindows,
@@ -736,6 +739,26 @@ export async function PATCH(request: NextRequest) {
     ) {
       return NextResponse.json(
         { error: "Cannot update status or dates: no class instance found" },
+        { status: 400 },
+      );
+    }
+
+    // A class goes live only once it has sessions.
+    if (
+      status === "SCHEDULED" &&
+      classToUpdate?.status === "DRAFT" &&
+      (await prisma.appointmentOccurrence.count({
+        where: {
+          ...liveOccurrenceWhere,
+          appointment: { classId: classToUpdate.id, deletedAt: null },
+        },
+      })) === 0
+    ) {
+      return NextResponse.json(
+        {
+          error: "Set the class's times before you publish it.",
+          code: "EVENT_TIME_INVALID",
+        },
         { status: 400 },
       );
     }

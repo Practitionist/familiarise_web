@@ -760,6 +760,24 @@ export async function PATCH(request: NextRequest) {
       }
     }
 
+    // A webinar goes live only once it has a time.
+    if (
+      status === "SCHEDULED" &&
+      webinarToUpdate?.status === "DRAFT" &&
+      !startTime &&
+      !webinarToUpdate.appointment?.occurrences?.some(
+        (s) => !isDeadOccurrence(s),
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error: "Set a time for this webinar before you publish it.",
+          code: "EVENT_TIME_INVALID",
+        },
+        { status: 400 },
+      );
+    }
+
     const effectiveDurationForSlots =
       durationInHours ?? existingPlan.durationInHours;
 
