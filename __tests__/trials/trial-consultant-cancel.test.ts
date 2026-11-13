@@ -9,7 +9,7 @@
  * with the amount the dialog showed, and a strike is recorded in the same
  * transaction. A free trial owes nothing but still records the strike. The
  * learner's own cancel records no strike. An operator who is not a party is
- * refused on DELETE and on a PATCH decline. From 15 minutes before the start
+ * refused on DELETE and on every PATCH status. From 15 minutes before the start
  * nothing is cancelled, and the PATCH no longer cancels a scheduled trial.
  */
 
@@ -383,13 +383,19 @@ describe("an operator who is not a party", () => {
     },
   );
 
-  it("is refused a decline of a pending trial", async () => {
+  it.each([
+    ["PENDING", "REJECTED"],
+    ["PENDING", "CANCELLED"],
+    ["PENDING", "SCHEDULED"],
+    ["SCHEDULED", "COMPLETED"],
+  ])("is refused moving a %s trial to %s", async (from, to) => {
     asOperator("STAFF");
-    state.trialStatus = "PENDING";
+    state.trialStatus = from;
+    state.paid = false;
     const res = await PATCH(
       new NextRequest("http://localhost/api/trials/trial-1", {
         method: "PATCH",
-        body: JSON.stringify({ status: "REJECTED" }),
+        body: JSON.stringify({ status: to }),
       }),
       ctx,
     );

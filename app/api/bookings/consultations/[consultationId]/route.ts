@@ -276,14 +276,12 @@ export async function PATCH(
       );
     }
 
-    // A decline refunds in full, so an operator who is not a party uses the staff door.
-    if (status === AppointmentStatus.REJECTED) {
-      const doorRefusal = platformCancelDoorRefusal(request, {
-        privileged: isPrivileged(session.user.role),
-        party: isParticipant,
-      });
-      if (doorRefusal) return doorRefusal;
-    }
+    // An operator who is not a party answers requests only through the staff door.
+    const doorRefusal = platformCancelDoorRefusal(request, {
+      privileged: isPrivileged(session.user.role),
+      party: isParticipant,
+    });
+    if (doorRefusal) return doorRefusal;
 
     if (
       APPROVAL_STATUSES_DETAIL_ONLY.has(status) &&

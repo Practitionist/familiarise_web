@@ -370,14 +370,12 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         );
       }
 
-      // A decline refunds in full, so an operator who is not a party has no door here.
-      if (status === TrialStatus.REJECTED) {
-        const doorRefusal = platformCancelDoorRefusal(request, {
-          privileged: isPrivilegedUser,
-          party: isTrialConsultant || isTrialConsultee,
-        });
-        if (doorRefusal) return doorRefusal;
-      }
+      // An operator who is not a party moves no trial through this route.
+      const doorRefusal = platformCancelDoorRefusal(request, {
+        privileged: isPrivilegedUser,
+        party: isTrialConsultant || isTrialConsultee,
+      });
+      if (doorRefusal) return doorRefusal;
 
       // Consultee can only cancel their trials
       if (isTrialConsultee && !isTrialConsultant && !isPrivilegedUser) {

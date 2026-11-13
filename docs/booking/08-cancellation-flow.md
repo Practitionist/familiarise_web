@@ -116,14 +116,14 @@ Cancellation is authorized at the API layer, not merely hidden in the UI. Here i
 
 ### Who can decline a request or end a trial
 
-A decline refunds a paid request in full, and a trial cancel refunds the learner, so these routes apply the same rule as the cancel route through the same helper, `platformCancelDoorRefusal` in `lib/booking/platform-cancel.ts`: a STAFF or ADMIN caller who is not the learner or the expert is refused with 403 `PLATFORM_CANCEL_DOOR_REQUIRED` before anything is written.
+A decline refunds a paid request in full, and a trial cancel refunds the learner, so these routes apply the same rule as the cancel route through the same helper, `platformCancelDoorRefusal` in `lib/booking/platform-cancel.ts`: a STAFF or ADMIN caller who is not the learner or the expert is refused with 403 `PLATFORM_CANCEL_DOOR_REQUIRED` before anything is written, whatever status the request names. Party identity is checked first, so an expert or a learner whose account is STAFF or ADMIN keeps that party's rights.
 
-| Route                                                                                                         | What is refused to a non-party operator           |
-| ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `PATCH /api/bookings/consultations/[consultationId]` and `PATCH /api/bookings/subscriptions/[subscriptionId]` | `status: "REJECTED"` (approval is unchanged)      |
-| `PATCH /api/bookings/consultations` and `PATCH /api/bookings/subscriptions` (the list routes)                 | `status: "REJECTED"`, the only status they accept |
-| `PATCH /api/trials/[trialId]`                                                                                 | `status: "REJECTED"` on a pending trial           |
-| `DELETE /api/trials/[trialId]`                                                                                | Every cancel                                      |
+| Route                                                                                                         | What is refused to a non-party operator                     |
+| ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `PATCH /api/bookings/consultations/[consultationId]` and `PATCH /api/bookings/subscriptions/[subscriptionId]` | Every status, approval and decline alike                    |
+| `PATCH /api/bookings/consultations` and `PATCH /api/bookings/subscriptions` (the list routes)                 | `status: "REJECTED"`, the only status they accept           |
+| `PATCH /api/trials/[trialId]`                                                                                 | Every status (decline, cancel, schedule, complete, convert) |
+| `DELETE /api/trials/[trialId]`                                                                                | Every cancel                                                |
 
 A paid pending 1:1 or plan request always has a tentative appointment, created with the capture, so the back-office platform cancel door ends it: its allowed-from set includes `PENDING`, and an operator's cancel is priced at the expert-side tier of the frozen policy. There is no staff door for a trial, so an operator cannot end a paid trial until one is built; only the learner or the expert can.
 

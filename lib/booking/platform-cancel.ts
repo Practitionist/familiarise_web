@@ -32,7 +32,7 @@ export function platformCancelGrant(
 }
 
 /**
- * The 403 every participant cancel, reject or trial-cancel route answers a
+ * The 403 the participant cancel, request status and trial routes answer a
  * privileged caller who is not a party and whose request carries no grant.
  */
 export function platformCancelDoorRefusal(
@@ -45,7 +45,7 @@ export function platformCancelDoorRefusal(
   return NextResponse.json(
     {
       error:
-        "Only the learner or the expert can end this booking here. Operators end bookings from the back office so the refund is audited.",
+        "Only the learner or the expert can do this here. Operators act on bookings from the back office, so any refund is audited.",
       code: "PLATFORM_CANCEL_DOOR_REQUIRED",
     },
     { status: 403 },
