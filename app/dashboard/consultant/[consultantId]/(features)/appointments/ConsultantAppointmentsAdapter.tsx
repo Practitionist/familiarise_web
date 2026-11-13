@@ -193,11 +193,9 @@ export function useConsultantAppointmentsAdapter(
     );
   };
 
-  /** The trial row's own id, which its cancel door and quote are keyed by. */
+  /** The trial row's own id, which its cancel door and quote are keyed by (list and detail alike). */
   const trialIdOf = (vm: AppointmentVM): string | null =>
-    vm.kind === "TRIAL"
-      ? ((vm.raw.source as ConsultantTrialLike | undefined)?.id ?? null)
-      : null;
+    vm.kind === "TRIAL" ? (vm.trialId ?? null) : null;
 
   const joinableSlotOf = (vm: AppointmentVM) =>
     getJoinableOccurrence(
