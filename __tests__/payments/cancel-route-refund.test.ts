@@ -194,6 +194,7 @@ import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/ca
 import { RefundGatewayError } from "@/lib/payments/operations/refund";
 import { grantPlatformCancel } from "@/lib/booking/platform-cancel";
 import { createMockRevocationRetryTable } from "../fixtures/stream-mocks";
+import { notifyAppointmentCancelled } from "@/lib/novu";
 
 const HOUR = 3_600_000;
 const APPT = "appt-1";
@@ -533,6 +534,14 @@ describe("an expert's cancel of a free confirmed booking", () => {
     expect(body.refund).toMatchObject({ amountRefundedPaise: 0 });
     expect(body.refund.rail).toBeUndefined();
     expect(txStub.systemEvent.create).toHaveBeenCalledTimes(1);
+    // Both sides still hear about the cancellation; only the refund notice is dropped.
+    expect(notifyAppointmentCancelled).toHaveBeenCalledWith(
+      expect.arrayContaining([CONSULTANT_USER]),
+      expect.objectContaining({ appointmentId: APPT }),
+    );
+    expect(
+      (notifyAppointmentCancelled as jest.Mock).mock.calls[0][0],
+    ).toHaveLength(2);
   });
 });
 
