@@ -510,6 +510,8 @@ export function PlanCheckoutShell({
 
   // Nothing to pay and no credit spent: one confirm button, no payer, method or refund copy.
   const isFree = pricing.total === 0 && pricing.creditsApplied === 0;
+  // A free order is the buyer's own: a payer picked before the price fell to zero is cleared.
+  if (isFree && selectedOrganizationId) setSelectedOrganizationId(null);
 
   const buildCheckoutData = useCallback(
     (gateway: SupportedCheckoutGateway): CheckoutInput | null => {
