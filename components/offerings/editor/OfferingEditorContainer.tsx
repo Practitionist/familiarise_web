@@ -293,7 +293,7 @@ export function OfferingEditorContainer({
   } else if (type === "class") {
     publishOnlyFields = ["schedulingStartDate"];
     if (!watchedStartDate) {
-      publishBlockedReason = "Add a start date before publishing.";
+      publishBlockedReason = "Add the first session before publishing.";
     }
   }
 

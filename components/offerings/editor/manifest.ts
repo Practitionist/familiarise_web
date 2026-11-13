@@ -33,7 +33,6 @@ export type FieldKind =
   | "textarea"
   | "number"
   | "price"
-  | "date"
   | "select"
   | "switch"
   | "stringList"

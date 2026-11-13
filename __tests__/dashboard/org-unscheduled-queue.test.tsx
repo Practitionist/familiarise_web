@@ -42,6 +42,8 @@ const row = (id: string, status: string) => ({
   appointment: { id: `appt-${id}` },
   consultationPlan: {
     title: "Plan",
+    consultantProfileId: "cp-1",
+    durationInHours: 1,
     consultantProfile: { user: { name: "Expert" } },
   },
   requestedBy: { user: { name: "Learner" } },

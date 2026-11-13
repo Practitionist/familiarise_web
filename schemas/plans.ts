@@ -530,7 +530,8 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
   // Named for the manifest field that authors it. It was `startDate` here and
   // `schedulingStartDate` on the form, so the resolver stripped the value and
   // no class ever sent a start date to the API.
-  schedulingStartDate: z.date().optional().nullable(),
+  // The editor's time picker writes an ISO string; a loaded value is a Date.
+  schedulingStartDate: z.coerce.date().optional().nullable(),
   endDate: z.date().optional().nullable(),
   // #1819 — empty means "until session 1"; the route caps it at totalSessions.
   lateJoinUntilSession: z
