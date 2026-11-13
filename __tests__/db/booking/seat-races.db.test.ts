@@ -59,27 +59,21 @@ jest.mock("../../../lib/compliance/dpdp", () => ({
   checkConsent: jest.fn(async () => true),
 }));
 // Every bell is a no-op: notifications are outside the race under test.
-jest.mock("../../../lib/novu", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
-jest.mock("../../../lib/stream/access-revocation", () => ({
-  revokeEndedSeatAccess: jest.fn(async () => undefined),
-  persistSeatRevocation: jest.fn(async () => undefined),
-}));
+jest.mock("../../../lib/novu", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
+jest.mock("../../../lib/stream/access-revocation", () =>
+  jest.requireActual("./harness-edges").chatRevocationMock(),
+);
 const sessionUser = { current: null as null | Record<string, unknown> };
 jest.mock("../../../lib/auth-helpers", () => ({
   ...jest.requireActual("../../../lib/auth-helpers"),
   requireApiAuth: async () => ({ session: { user: sessionUser.current } }),
   isPrivileged: () => false,
 }));
-jest.mock("../../../lib/rate-limit", () => ({
-  ...jest.requireActual("../../../lib/rate-limit"),
-  applyRateLimit: async () => null,
-}));
+jest.mock("../../../lib/rate-limit", () =>
+  jest.requireActual("./harness-edges").rateLimitMock(),
+);
 /** Parks a whole-event cancel inside its transaction, event key held. */
 const cancelGate = { current: null as ReturnType<typeof gate> | null };
 jest.mock("../../../lib/payments/operations/event-refunds", () => {

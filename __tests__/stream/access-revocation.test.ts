@@ -474,6 +474,55 @@ describe("revocation when a seat or booking ends", () => {
     expect(mockRemoveMembers).not.toHaveBeenCalled();
   });
 
+  it("writes the seat intent through the ending transaction and settles that generation after", async () => {
+    const tx = {
+      streamRevocationRetry: {
+        updateMany: jest.fn(async () => ({ count: 0 })),
+        createMany: jest.fn(async () => ({ count: 1 })),
+      },
+    };
+    const { persistSeatRevocationInTx, revokeEndedSeatAccess } =
+      await import("../../lib/stream/access-revocation");
+
+    const generation = await persistSeatRevocationInTx(
+      tx as unknown as Parameters<typeof persistSeatRevocationInTx>[0],
+      "appt-1",
+      ["attendee-1", "attendee-1"],
+    );
+
+    expect(tx.streamRevocationRetry.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          kind: "SEAT_ACCESS_REVOKE",
+          userId: "attendee-1",
+          planId: "appt-1",
+          nextRetryAt: generation,
+        }),
+      ],
+      skipDuplicates: true,
+    });
+    expect(generation?.getTime()).toBeGreaterThan(Date.now());
+    expect(
+      mockRevocationPrisma.streamRevocationRetry.createMany,
+    ).not.toHaveBeenCalled();
+
+    await revokeEndedSeatAccess("appt-1", ["attendee-1"], generation);
+
+    expect(
+      mockRevocationPrisma.streamRevocationRetry.createMany,
+    ).not.toHaveBeenCalled();
+    expect(settledCalls()).toEqual([
+      expect.objectContaining({
+        where: expect.objectContaining({
+          kind: "SEAT_ACCESS_REVOKE",
+          planId: "appt-1",
+          userId: { in: ["attendee-1"] },
+          nextRetryAt: generation,
+        }),
+      }),
+    ]);
+  });
+
   it("keeps the intent owed when the seat lookup fails", async () => {
     mockRevocationPrisma.appointment.findUnique.mockRejectedValue(
       new Error("db timeout"),

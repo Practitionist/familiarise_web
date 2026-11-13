@@ -100,7 +100,7 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
 import { recordExpertStrike } from "@/lib/booking/expert-reliability";
 import {
-  persistSeatRevocation,
+  persistSeatRevocationInTx,
   revokeEndedSeatAccess,
 } from "@/lib/stream/access-revocation";
 import { bookingTransaction } from "@/lib/db/booking-transaction";
@@ -1187,6 +1187,15 @@ export async function POST(
               } else {
                 await transitionParticipant(tx, sweepScope, "CANCELLED");
               }
+              // An event revokes the seats this commit released; a 1:1 its consultee.
+              const revokedUserIds =
+                releasedSeatUserIds ??
+                (consulteeUserId ? [consulteeUserId] : []);
+              const seatRevocation = await persistSeatRevocationInTx(
+                tx,
+                appointmentId,
+                revokedUserIds,
+              );
 
               await declineOpenReschedules(tx, appointmentId, auditMeta);
 
@@ -1204,7 +1213,8 @@ export async function POST(
                 holdNotices,
                 eventPlans,
                 gatewayCancels: pendingExpiry?.gatewayCancels ?? [],
-                releasedSeatUserIds,
+                revokedUserIds,
+                seatRevocation,
               };
             },
             {
@@ -1231,17 +1241,14 @@ export async function POST(
         if (replay) return { replay };
         throw err;
       });
-    // An event revokes the seats its commit released; a 1:1, including a replay, its consultee.
-    const revokedUserIds =
-      ("replay" in committed ? null : committed.releasedSeatUserIds) ??
-      (consulteeUserId ? [consulteeUserId] : []);
-    // A retry of a click that died after its commit still owes the revocation.
+    // A replayed 1:1 click runs no transaction, so its consultee's row is persisted here.
     if ("replay" in committed) {
-      await revokeEndedSeatAccess(appointmentId, revokedUserIds);
+      await revokeEndedSeatAccess(
+        appointmentId,
+        consulteeUserId ? [consulteeUserId] : [],
+      );
       return NextResponse.json(committed.replay);
     }
-    // Persisted before the refunds below can stall or throw.
-    await persistSeatRevocation(appointmentId, revokedUserIds);
     const {
       holdNotices,
       paidPayment,
@@ -1249,7 +1256,8 @@ export async function POST(
       owed,
       gatewayCancels,
       eventPlans,
-      releasedSeatUserIds,
+      revokedUserIds,
+      seatRevocation,
       ...result
     } = committed;
     await flushBackupInterestNotices(holdNotices);
@@ -1330,8 +1338,8 @@ export async function POST(
       );
     }
 
-    // Chat and room access end with the booking, inside the request's budget.
-    await revokeEndedSeatAccess(appointmentId, revokedUserIds);
+    // Chat and room access end with the booking; this settles the rows the cancel committed.
+    await revokeEndedSeatAccess(appointmentId, revokedUserIds, seatRevocation);
 
     // Notification metadata (for fire-and-forget notifications after transaction)
     const notificationMeta = {

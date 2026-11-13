@@ -29,6 +29,7 @@ export function chatRevocationMock(): object {
   return {
     revokeEndedSeatAccess: jest.fn(async () => undefined),
     persistSeatRevocation: jest.fn(async () => undefined),
+    persistSeatRevocationInTx: jest.fn(async () => null),
   };
 }
 
