@@ -622,8 +622,7 @@ export function breakDownSlotsByDuration(
   durationInHours: number,
   appointmentSlots: AppointmentSlot[],
   timezone: string,
-  // #907 — optional pre-built index; built lazily from appointmentSlots if
-  // omitted so existing callers (e.g. TrialScheduleCalendar) stay unchanged.
+  // Optional pre-built index; built lazily from appointmentSlots when omitted.
   index?: AppointmentIndex,
 ): (TIntervalTiming & {
   isAllocated: boolean;
