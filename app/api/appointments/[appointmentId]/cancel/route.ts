@@ -502,7 +502,7 @@ async function hasConfirmedSeat(
 }
 
 /**
- * #1780 R-3 — every attendee of a group event, sorted by how their seat was
+ * Every attendee of a group event, sorted by how their seat was
  * funded: a paid seat by its payment's rail, a seat with no payment as free.
  * Read off the seats as well as the payments, so a free seat is not skipped.
  */
