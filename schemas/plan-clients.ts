@@ -22,19 +22,31 @@ export const maxActivePlanClientsSchema = z
   })
   .nullable();
 
+/** A number input's entry: its text, or null when the browser cannot read it (`validity.badInput`). */
+export function limitDraftFromInput(input: {
+  value: string;
+  validity: { badInput: boolean };
+}): string | null {
+  return input.validity.badInput ? null : input.value;
+}
+
 /** The limit the count line reads: what is typed when it is valid, else the saved one. */
 export function shownPlanClientLimit(
-  draft: string,
+  draft: string | null,
   saved: number | null,
 ): number | null {
   const checked = parsePlanClientLimitInput(draft);
   return checked.ok ? checked.value : saved;
 }
 
-/** What the expert typed, checked by the route's own schema: blank is no limit; never altered. */
+/**
+ * What the expert typed, checked by the route's own schema: blank is no limit;
+ * never altered. Null is an entry the number input cannot read (`1e`), refused.
+ */
 export function parsePlanClientLimitInput(
-  raw: string,
+  raw: string | null,
 ): { ok: true; value: number | null } | { ok: false; error: string } {
+  if (raw === null) return { ok: false, error: LIMIT_RULE };
   const typed = raw.trim();
   const parsed = maxActivePlanClientsSchema.safeParse(
     typed === "" ? null : Number(typed),

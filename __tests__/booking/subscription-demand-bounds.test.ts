@@ -36,6 +36,7 @@ import {
 } from "@/utils/appointmentlock";
 import { buildDeadHoldFilter } from "@/utils/scheduling-engine/occupancyPolicy";
 import {
+  limitDraftFromInput,
   maxActivePlanClientsSchema,
   parsePlanClientLimitInput,
   shownPlanClientLimit,
@@ -253,6 +254,24 @@ describe("bound 2: an expert-set limit on active plan clients", () => {
     expect(shownPlanClientLimit("1e", 5)).toBe(5);
     expect(shownPlanClientLimit("7", 5)).toBe(7);
     expect(shownPlanClientLimit("", 5)).toBeNull();
+    // `1e` in a number input reads as "" with validity.badInput: refused, not "no limit".
+    const unreadable = limitDraftFromInput({
+      value: "",
+      validity: { badInput: true },
+    });
+    expect(unreadable).toBeNull();
+    expect(parsePlanClientLimitInput(unreadable)).toEqual({
+      ok: false,
+      error: expect.stringContaining("whole number from 1 to 500"),
+    });
+    expect(shownPlanClientLimit(unreadable, 1)).toBe(1);
+    // A truly empty field still means no limit.
+    const empty = limitDraftFromInput({
+      value: "",
+      validity: { badInput: false },
+    });
+    expect(parsePlanClientLimitInput(empty)).toEqual({ ok: true, value: null });
+    expect(shownPlanClientLimit(empty, 1)).toBeNull();
     expect(planClientsLine(3, 5)).toBe("3 of 5 active plan clients");
     expect(planClientsLine(1, null)).toBe("1 active plan client");
   });

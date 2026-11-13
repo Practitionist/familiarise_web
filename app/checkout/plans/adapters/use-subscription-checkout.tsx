@@ -361,6 +361,7 @@ export function useSubscriptionCheckout(
     checkoutPlanFields,
     // The server's per-viewer answer: an existing client of the expert is never blocked.
     soldOut: subscriptionCheckoutBlocked(feasibility),
+    soldOutLabel: "Fully booked",
     mockFlow: {
       kind: "direct",
       successTitle: "✅ Subscription Activated Successfully!",

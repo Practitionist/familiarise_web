@@ -7,7 +7,10 @@ import { RadioGroup, RadioGroupItem } from "components/ui/radio-group";
 import { Separator } from "components/ui/separator";
 import { Switch } from "components/ui/switch";
 import type { Dispatch, SetStateAction } from "react";
-import { MAX_ACTIVE_PLAN_CLIENTS_RANGE } from "@/schemas/plan-clients";
+import {
+  limitDraftFromInput,
+  MAX_ACTIVE_PLAN_CLIENTS_RANGE,
+} from "@/schemas/plan-clients";
 import type { BookingRequestSettings } from "../settings";
 
 interface BookingRequestsSectionProps {
@@ -16,11 +19,11 @@ interface BookingRequestsSectionProps {
   /** Distinct buyers holding one of your plans now; null while it loads. */
   activePlanClients: number | null;
   /** The plan-client limit exactly as typed, and why it is refused (null when valid). */
-  limitDraft: string;
+  limitDraft: string | null;
   limitError: string | null;
   /** The limit the count line names: a valid typed value, else the saved one. */
   countLimit: number | null;
-  onLimitDraftChange: (raw: string) => void;
+  onLimitDraftChange: (raw: string | null) => void;
 }
 
 /** The cap's accepted range; blank means no limit (#1703 D4). */
@@ -182,12 +185,12 @@ export function BookingRequestsSection({
           step={1}
           placeholder="No limit"
           className="max-w-[10rem]"
-          value={limitDraft}
+          value={limitDraft ?? ""}
           aria-invalid={limitError !== null}
           aria-describedby={
             limitError ? "max-active-plan-clients-error" : undefined
           }
-          onChange={(e) => onLimitDraftChange(e.target.value)}
+          onChange={(e) => onLimitDraftChange(limitDraftFromInput(e.target))}
         />
         {limitError && (
           <p

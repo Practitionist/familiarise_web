@@ -45,7 +45,9 @@ export function BookingRequestsForm({
   };
   const [settings, setSettings] = useState(shown);
   // The limit as typed; it reaches `settings` only once the route's schema accepts it.
-  const [limitDraft, setLimitDraft] = useState(limitText(maxActivePlanClients));
+  const [limitDraft, setLimitDraft] = useState<string | null>(
+    limitText(maxActivePlanClients),
+  );
   const limitCheck = parsePlanClientLimitInput(limitDraft);
   const planClients = usePlanClients(consultant.id);
   // New server values (a save, or a change made elsewhere) replace the form.
@@ -59,7 +61,7 @@ export function BookingRequestsForm({
     setLimitDraft(limitText(maxActivePlanClients));
   }, [bookingMode, acceptingRequests, maxOpenRequests, maxActivePlanClients]);
 
-  const onLimitDraftChange = (raw: string) => {
+  const onLimitDraftChange = (raw: string | null) => {
     setLimitDraft(raw);
     const checked = parsePlanClientLimitInput(raw);
     if (checked.ok) {

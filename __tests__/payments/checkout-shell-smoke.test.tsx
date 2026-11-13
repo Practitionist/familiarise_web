@@ -200,6 +200,40 @@ describe("shared plan checkout", () => {
     expect(screen.getByText("Pay with Razorpay")).toBeTruthy();
   });
 
+  it("a fully booked subscription checkout says so on its disabled pay button", async () => {
+    const answer = global.fetch as jest.Mock;
+    const routed = answer.getMockImplementation()!;
+    answer.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).startsWith("/api/plans/subscriptions/plan1/feasibility")
+        ? {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              verdict: "ok",
+              firstWeekPlaceable: 2,
+              sessionsPerWeek: 2,
+              notice: null,
+              fullyBooked: true,
+            }),
+          }
+        : routed(input),
+    );
+    renderPage(
+      <SubscriptionCheckoutPage
+        params={params}
+        searchParams={search({ schedulingPeriodStartsAt: future(96) })}
+      />,
+    );
+    const button = await screen.findByRole(
+      "button",
+      { name: "Fully booked" },
+      { timeout: 4000 },
+    );
+    expect(button).toHaveProperty("disabled", true);
+    expect(screen.queryByText("Pay with Razorpay")).toBeNull();
+    expect(screen.queryByText("Sold out")).toBeNull();
+  });
+
   it("renders the subscription checkout with the pay-now line", async () => {
     renderPage(
       <SubscriptionCheckoutPage params={params} searchParams={search({})} />,
