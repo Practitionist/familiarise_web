@@ -475,8 +475,18 @@ export async function POST(req: NextRequest) {
         // budget sits well inside the 60 s slot lock held above.
         const consultation = await prisma.$transaction(
           async (tx) => {
-            // Cap and availability are read on this transaction, after every
-            // lock, so the insert below commits against what they saw.
+            // Mode, cap and availability are read on this transaction, after
+            // every lock, so the insert below commits against what they saw.
+            const mode = await tx.consultantProfile.findUnique({
+              where: { id: consultantProfileId },
+              select: { bookingMode: true },
+            });
+            if (mode?.bookingMode !== "REQUEST") {
+              throw new RequestRefusal(409, {
+                error: REQUEST_NOT_OFFERED_MESSAGE,
+                code: "REQUEST_NOT_OFFERED",
+              });
+            }
             const atCapacity = await capacityRefusal(
               tx,
               consultationPlan.consultantProfile,

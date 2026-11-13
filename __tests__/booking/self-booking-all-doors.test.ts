@@ -102,6 +102,11 @@ jest.mock("../../lib/prisma", () => {
     consulteeProfile: {
       findUnique: jest.fn(async () => ({ id: "cs_1", user: {} })),
     },
+    consultantProfile: {
+      findUnique: jest.fn(async () => ({
+        bookingMode: mockProfile.bookingMode,
+      })),
+    },
     consultationPlan: {
       findFirst: jest.fn(async () => ({
         id: "plan_1",

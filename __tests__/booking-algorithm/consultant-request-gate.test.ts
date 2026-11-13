@@ -101,6 +101,11 @@ jest.mock("../../lib/prisma", () => {
     consulteeProfile: {
       findUnique: jest.fn(async () => ({ id: "cs_1", user: {} })),
     },
+    consultantProfile: {
+      findUnique: jest.fn(async () => ({
+        bookingMode: mockProfile.bookingMode,
+      })),
+    },
     availabilityWindowWeekly: jest.requireActual(
       "../fixtures/request-door-hours",
     ).namedWeeklyWindow,
@@ -185,6 +190,17 @@ describe("consultant request gate", () => {
         "This expert takes instant bookings. Pick a free time and continue to checkout.",
     });
     expect(mockLockSlotBooking).not.toHaveBeenCalled();
+  });
+
+  it("a switch to instant booking while the request waits for its lock → 409, nothing written", async () => {
+    mockLockRequestCap.mockImplementationOnce(async () => {
+      mockProfile.bookingMode = "INSTANT";
+      return { key: "request-cap" };
+    });
+    const res = await POST(request());
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("REQUEST_NOT_OFFERED");
+    expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
   });
 
   it("at cap → 409 CONSULTANT_AT_CAPACITY, counted inside the slot lock", async () => {
