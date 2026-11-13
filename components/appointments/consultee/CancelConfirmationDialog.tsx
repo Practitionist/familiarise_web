@@ -307,6 +307,14 @@ export function CancelConfirmationDialog({
         </p>
       );
     }
+    // No captured payment funds the booking (an unpaid hold or request): nothing to refund.
+    if (preview.expectedPaid === false) {
+      return (
+        <p className="text-muted-foreground text-sm">
+          {FREE_BOOKING_REFUND_LINE}
+        </p>
+      );
+    }
     if (asConsultant) {
       if (preview.freeBooking) {
         return (
@@ -354,7 +362,10 @@ export function CancelConfirmationDialog({
 
   // An expert's button promises a refund only when there is one to give.
   const nothingToRefund =
-    !!preview && (preview.paid === false || !!preview.freeBooking);
+    !!preview &&
+    (preview.paid === false ||
+      !!preview.freeBooking ||
+      ("expectedPaid" in preview && preview.expectedPaid === false));
 
   /** What the click binds to: the quote shown, or the unpaid screen of an approval awaiting payment. */
   const shownQuote = (): ShownCancelQuote | undefined => {
