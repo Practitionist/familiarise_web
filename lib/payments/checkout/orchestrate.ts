@@ -177,15 +177,6 @@ export async function handleCheckout(
     assertOrgBillingAvailable(currentGstRegime());
   }
 
-  // A buyer-paid domestic supply gets a consumer tax invoice, which must carry
-  // the buyer's state; org rails bill on the org series and exports have none.
-  if (
-    buyerCountry === "IN" &&
-    (!fundingSource || fundingSource === "PERSONAL")
-  ) {
-    consumerBuyerStateSchema.parse(validatedData);
-  }
-
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
     const priced = await calculateAmountAndValidate(
@@ -208,6 +199,16 @@ export async function handleCheckout(
       creditsApplied,
       subscriptionSchedulingPeriod,
     } = priced;
+
+    // A buyer-paid domestic supply gets a consumer tax invoice, which must carry
+    // the buyer's state; org rails, exports and a free order with no credit get none.
+    if (
+      buyerCountry === "IN" &&
+      (!fundingSource || fundingSource === "PERSONAL") &&
+      (amount > 0 || creditsApplied > 0)
+    ) {
+      consumerBuyerStateSchema.parse(validatedData);
+    }
 
     // INVOICE fundingSource: fast-fail on the credit limit before any lock is
     // taken. #1744 row 4 — the booking itself counts: `exposure >= limit` let

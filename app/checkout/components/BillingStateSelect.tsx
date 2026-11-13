@@ -158,6 +158,8 @@ export function useBillingState(
   const validate = useCallback(() => {
     const ok = !required || value !== null;
     setSubmitBlocked(!ok);
+    // The field sits in the other column from the pay button; focus brings its error into view.
+    if (!ok) document.getElementById("billing-state")?.focus();
     return ok;
   }, [required, value]);
 

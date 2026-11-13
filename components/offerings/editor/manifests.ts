@@ -18,6 +18,7 @@ import {
   Video,
 } from "lucide-react";
 import { MAX_GROUP_SESSION_PARTICIPANTS } from "@/lib/events/capacity";
+import { TRIAL_DURATION_MINUTES } from "@/schemas/trial-length";
 import type { FieldSpec, OfferingManifest, SectionSpec } from "./manifest";
 
 /** Identity and framing. Identical for all four types. */
@@ -344,12 +345,9 @@ const trialSection: SectionSpec = {
     },
     {
       name: "trialDurationMinutes",
-      kind: "number",
-      label: "Trial length (minutes)",
-      min: 15,
-      max: 120,
-      step: 15,
-      description: "From 15 to 120 minutes.",
+      kind: "minutesChoice",
+      label: "Trial length",
+      minuteChoices: TRIAL_DURATION_MINUTES,
       span: 3,
     },
     {
@@ -501,17 +499,16 @@ export const CLASS_MANIFEST: OfferingManifest = {
     {
       id: "sessions",
       title: "Sessions",
-      description:
-        "Pick a start date; sessions are generated from the cadence above.",
+      description: "Pick the first session; the rest follow the cadence above.",
       icon: CalendarRange,
       fields: [
         {
-          // Was plain useState outside the form, with a hand-rolled error
-          // message and a manual guard, so nothing validated it.
           name: "schedulingStartDate",
-          kind: "date",
-          label: "Start date",
-          description: "Required before publishing.",
+          kind: "sessionTime",
+          durationName: "sessionDurationInHours",
+          label: "First session",
+          description:
+            "Required before publishing. Pick a time on your own calendar; it must be on the half hour and at least an hour away.",
           required: true,
           span: 3,
         },

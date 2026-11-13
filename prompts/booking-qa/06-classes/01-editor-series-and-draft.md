@@ -4,9 +4,9 @@
 **Personas:** H2 (IST) host; H3 (America/New_York) for the DST series; H4 (Asia/Kathmandu); B2 (Europe/London) and B3 (America/Los_Angeles) to read the public page; OH for the org catalog door.
 **Docs under test:** decision 4 and 7 of `docs/decisions/2026-11-09-scheduling-surfaces-and-feasibility.md`; `lib/booking/class-pattern.ts` (`seriesStartsFrom`, `projectPattern`); `app/api/bookings/classes/crud-with-plan/route.ts`; `schemas/plans.ts` (`ClassPlanSchema`); `docs/booking/16-recurring-events-journey.md` §2b and §3b-i.
 
-The class editor is `/dashboard/consultant/[cid]/offerings/class/new` (or `…/class/[planId]/edit`), reached from Sell → Group programs → Classes. "Pricing & cadence" holds Price, Duration (months), Sessions per week, Session duration (hours) ("Hours per session, in 30-minute steps, up to 4."), Max participants and the waitlist. "Sessions" ("Pick a start date; sessions are generated from the cadence above.") holds **Start date** ("Required before publishing."), **Let learners join until session N** and **Share past recordings with members who join late**.
+The class editor is `/dashboard/consultant/[cid]/offerings/class/new` (or `…/class/[planId]/edit`), reached from Sell → Group programs → Classes. "Pricing & cadence" holds Price, Duration (months), Sessions per week, Session duration (hours) ("Hours per session, in 30-minute steps, up to 4."), Max participants and the waitlist. "Sessions" ("Pick the first session; the rest follow the cadence above.") holds **First session** (the host's time picker; "Required before publishing. Pick a time on your own calendar; it must be on the half hour and at least an hour away."), **Let learners join until session N** and **Share past recordings with members who join late**.
 
-**Series rule (code):** total sessions N = sessions a week × months × 4. From the first session (the Start date's weekday and time, read in the host's profile zone), `seriesStartsFrom` lays out a weekly pattern: 2 a week → day 0 and day 0 + 3; 3 a week → every other day; then N starts on the host's wall clock. A start that isn't on the UTC half hour is **skipped**, not moved.
+**Series rule (code):** total sessions N = sessions a week × months × 4. From the first session (the First session's weekday and time, read in the host's profile zone), `seriesStartsFrom` lays out a weekly pattern: 2 a week → day 0 and day 0 + 3; 3 a week → every other day; then N starts on the host's wall clock. A start that isn't on the UTC half hour is **skipped**, not moved.
 
 Zone line: Mon 18:00 IST = 12:30Z = 12:30 London = 04:30 Los Angeles = 07:30 New York.
 
@@ -19,7 +19,7 @@ After every save: R-02 for the host, R-03 for the class appointment, R-05.
 **Steps:**
 
 1. As H2, new class `qa-CL-01`: ₹1,000, Duration 1 month, Sessions per week 2, Session duration 1, Max participants 5, one curriculum item, a topic.
-2. **Start date**: next Monday 18:00 (read what the control is: date only, or date and time). Publish.
+2. **First session**: in the picker, next Monday, then 18:00. Publish.
 3. As B2 and B3, open the public class page.
 
 **Expect:**
@@ -35,20 +35,23 @@ After every save: R-02 for the host, R-03 for the class appointment, R-05.
 - Thursday 18:00 is outside H2's Thursday hours (07:00–09:00). The editor said nothing. Is that fine for a class? (The pattern scheduler labels it, CL-14.)
 - Does any surface show all 8 dates before publishing? **MISSED-OPPORTUNITY** if the host commits blind.
 
-## CL-02 — The editor's Start date is read in the browser's zone
+## CL-02 — The editor's First session is picked in the host's profile zone
 
-**Why it matters:** decision 3 removed browser-zone `datetime-local` inputs for webinars; the class Start date is still one (`OfferingFields` renders kind `date` as `datetime-local`).
+**Why it matters:** the class's start used to be a `datetime-local` box read in the browser's zone; it is now the host's time picker (Sessions → **First session**), drawn in the profile zone whatever the browser says.
 
 **Steps:**
 
-1. Emulate the browser in `America/Los_Angeles` (DevTools MCP `emulate`). As H2 (profile IST), new class `qa-CL-02`, Start date next Monday 18:00 as typed. Publish.
+1. Emulate the browser in `America/Los_Angeles` (DevTools MCP `emulate`). As H2 (profile IST), new class `qa-CL-02`. In Sessions → **First session**, read the zone line, open next Wednesday and pick 18:00 (CL-01 holds Monday 18:00). Publish.
 2. Read the first occurrence.
+3. Reopen `qa-CL-02` in the editor and look at next Wednesday 18:00 in the picker. Save without edits.
 
-**Expect (per decision 3's intent):** the series at 18:00 IST.
+**Expect:**
 
-**Likely actual:** the typed 18:00 is read as 18:00 Los Angeles = 02:00Z next day = 07:30 IST Tuesday; the series becomes Tuesdays and Fridays 07:30 IST. Report **BUG** (P1: the host's class lands on the wrong day and time) with the SQL rows. If emulation isn't supported, mark BLOCKED and say why; 10 (`TZ-`) can retry.
+- Step 1: the picker says "Times in Asia/Kolkata"; Wednesday lists 18:00 as a free button (60-minute sessions inside 18:00–21:00).
+- Step 2: the series starts Wednesday 18:00 IST (12:30Z), whatever the browser zone. A series at 07:30 IST Thursday (the browser's 18:00) is a **BUG** (P1) with the SQL rows. If emulation isn't supported, run step 1 without it and say so; 10 (`TZ-`) can retry.
+- Step 3: the class's own first session reads free, not **Booked** (the editor passes the saved class as a move), and the unchanged save leaves the occurrence where it was.
 
-**Probe further:** reopen the editor: does it show the stored instant back in the browser's zone (it should, per #1060), and does saving without edits leave it unchanged?
+**Probe further:** pick a time on a day with another H2 booking: is it tagged **Booked** and refused as a pick?
 
 ## CL-03 — A start date in the past or off the half hour
 
@@ -79,7 +82,7 @@ After every save: R-02 for the host, R-03 for the class appointment, R-05.
 
 **Steps:**
 
-1. As H3, new class `qa-CL-04`: 2/week, 1 month, 60 min, Start date Monday 1 March 2027 18:00 (H3's browser in New York, or a correct-zone ISO via the API).
+1. As H3, new class `qa-CL-04`: 2/week, 1 month, 60 min, First session Monday 1 March 2027 18:00 (H3's browser in New York, or a correct-zone ISO via the API).
 2. Read all 8 occurrences.
 
 **Expect:** Mondays and Thursdays 18:00 New York: up to Thursday 11 March at 23:00Z; from Monday 15 March (after the 14 March change) at 22:00Z. Never 17:00 or 19:00 local.
@@ -92,12 +95,12 @@ After every save: R-02 for the host, R-03 for the class appointment, R-05.
 
 **Steps:**
 
-1. As H4 (Asia/Kathmandu; browser in Kathmandu if you can emulate it), new class `qa-CL-05`: 2/week, 1 month, 60 min, Start date next Monday 10:15. Publish.
-2. Repeat with 10:00.
+1. As H4 (Asia/Kathmandu; browser in Kathmandu if you can emulate it), new class `qa-CL-05`: 2/week, 1 month, 60 min. In **First session**, open next Monday and read the starts the picker lists between 09:00 and 12:00; pick 10:15. Publish.
+2. Via `evaluate_script`, send the class POST with a first session at 10:00 local (04:15Z).
 
-**Expect:** 10:15 → 8 sessions at 04:30Z (10:15 local). 10:00 (04:15Z) typed in the editor is rounded up to 04:30Z (10:15 local) before it is sent; sent by hand it answers 400 `EVENT_TIME_INVALID` (see CL-03).
+**Expect:** step 1 lists only :15 and :45 starts (10:00 is not offered); 10:15 → 8 sessions at 04:30Z (10:15 local), matching the pick. Step 2 answers 400 `EVENT_TIME_INVALID` (see CL-03).
 
-**Probe further:** nothing in the editor tells a Kathmandu host to use :15/:45, though the pattern scheduler now offers only those (CL-17). Record whether the editor says why 10:00 became 10:15.
+**Probe further:** does anything tell a Kathmandu host why their starts sit at :15 and :45? The pattern scheduler offers only those too (CL-17).
 
 ## CL-06 — Totals follow sessions a week × months × 4
 
@@ -126,7 +129,7 @@ After every save: R-02 for the host, R-03 for the class appointment, R-05.
 
 **Steps:**
 
-1. Open F-PL2's DRAFT class (or create `qa-CL-08` with no Start date and save as draft).
+1. Open F-PL2's DRAFT class (or create `qa-CL-08` with no First session and save as draft).
 2. As B2, look for it on H2's page and open its URL.
 3. As H2, open Offerings and Appointments.
 
@@ -142,7 +145,7 @@ After every save: R-02 for the host, R-03 for the class appointment, R-05.
 
 **Steps:**
 
-1. As H2, try to publish `qa-CL-08` without a Start date.
+1. As H2, try to publish `qa-CL-08` without a First session.
 2. Via `evaluate_script`, PATCH `crud-with-plan` with `status: "SCHEDULED"` and no `startDate`.
 
 **Expect:** refused (record status, code, copy); still DRAFT. The editor's "Required before publishing." should explain it before the save.
@@ -151,7 +154,7 @@ After every save: R-02 for the host, R-03 for the class appointment, R-05.
 
 **Steps:**
 
-1. As H2, change `qa-CL-01`'s Start date to the following Wednesday 19:00. Save.
+1. As H2, change `qa-CL-01`'s First session to the following Wednesday 19:00. Save.
 2. Read the occurrences.
 
 **Expect:** the series is regenerated: 8 sessions on Wednesdays and Saturdays 19:00 IST (13:30Z) (gap 3), old rows gone or replaced (record ids). R-05 zero rows.

@@ -7,6 +7,7 @@ import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import { CancellationPolicyNote } from "@/components/booking/CancellationPolicyNote";
 import { useToast } from "@/hooks/use-toast";
 import { eventCapacityFromCount } from "@/lib/events/capacity";
+import { planLevelLabel } from "@/lib/labels/plan-labels";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatForViewer } from "@/lib/time/viewer-zone";
 import {
@@ -37,6 +38,7 @@ import { reportPaymentsError } from "../utils";
 import {
   eventMockErrorCopy,
   loadErrorMessage,
+  planIncludes,
   searchParamsKey,
 } from "./shared";
 
@@ -318,7 +320,7 @@ export function useWebinarCheckout(
           {planDetails?.language || "English"}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Level">
-          {planDetails?.level || "All Levels"}
+          {planLevelLabel(planDetails?.level)}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Prerequisites">
           {planDetails?.prerequisites || "None"}
@@ -332,14 +334,10 @@ export function useWebinarCheckout(
     basePricePaise: planDetails?.price || 0,
     pricingTitle: "Webinar Pricing",
     feeLabel: "Registration Fee",
-    includes: (
-      <>
-        <li>Live webinar access</li>
-        <li>Q&A session</li>
-        {planDetails?.recordingEnabled && <li>Recording access</li>}
-        {planDetails?.certificateProvided && <li>Certificate of attendance</li>}
-      </>
-    ),
+    includes: planIncludes(planDetails?.whatsIncluded, [
+      planDetails?.recordingEnabled && "Recording access",
+      planDetails?.certificateProvided && "Certificate of attendance",
+    ]),
     renderFooter: (ctx) => (
       <>
         {/* The host's free-cancellation window. */}

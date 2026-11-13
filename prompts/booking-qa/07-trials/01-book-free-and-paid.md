@@ -2,11 +2,11 @@
 
 **Needs:** 01 (F-AV1, S-11 free 30-min trial, S-12 paid ₹100 trial, F-BUSY), H1 in "Instant booking". Paying a trial needs Razorpay test mode or an owner-run capture webhook replay: `/checkout/plans/trial/[trialId]` has no Mock Pay ("Pay to confirm" hands off to `/checkout/pay/[paymentId]`). Sweeps are `[sweep]`.
 **Personas:** H1 (IST), B1 (IST), B2 (Europe/London), B3 (America/Los_Angeles), B4 (IST), DR, IL (IST, the limiter case only), ST.
-**Docs under test:** `docs/booking/09-trials.md` (all), `app/api/trials/route.ts`, `lib/trials/eligibility.ts`, `lib/trials/book-trial.ts`, `app/explore/experts/[consultantId]/components/TrialBookingModal.tsx`.
+**Docs under test:** `docs/booking/09-trials.md` (all), `app/api/trials/route.ts`, `lib/trials/eligibility.ts`, `lib/trials/book-trial.ts`, `app/explore/experts/[consultantId]/components/SubscriptionPricingToggle.tsx` (the mentorship dialog), `app/explore/experts/[consultantId]/components/MentorshipTrialStep.tsx`, `components/scheduling/SingleTimePicker.tsx`.
 
 Rules under test (doc + code):
 
-- The buyer picks one window of the plan's trial length in `TrialBookingModal` (next two weeks, `TrialSlotPicker`). Lead: 15 min for a free trial, 2 h for a paid one.
+- The buyer picks one window of the plan's trial length on step two of the dark mentorship dialog: "Book Trial" on the plan card (or on the dialog's start-date step, "When do you want to start?", which picks its date on a month grid) opens "Pick a time for a <N>-minute trial." with the single-time picker (a month, then the day's free times; the day's taken times behind "Show N taken times", without "Notify me" on this step) and **Back** to the start-date step. Lead: 15 min for a free trial, 2 h for a paid one.
 - Free trial: `SCHEDULED` at once with a confirmed session. Paid trial: `AWAITING_PAYMENT`, tentative session, HELD seats, `paymentDueAt` = `Payment.expiresAt` = min(now + 24 h, start − 15 min). The capture confirms the same session in place.
 - One live or delivered trial per learner–expert pair (`TRIAL_ALREADY_REQUESTED`); `CANCELLED` and `REJECTED` free the pair (the old row is deleted on the new request).
 - After every case: R-03 (the `Trial` row via the appointment), R-04, R-05 (H1), R-07, and this:
@@ -24,9 +24,9 @@ Note before starting: S-11's trial is free only if `PlatformPricingConfig.minTri
 
 **Steps:**
 
-1. As B4 open `/explore/experts/[H1 cid]`, find "qa-S-11 Four-week sprint" and its trial offer. Open the trial modal.
-2. Read: "Pick a day", "Pick a time", the notes field ("What would you like to discuss? (Optional)" / "This helps the consultant prepare for your session"), "Your trial is confirmed as soon as you book it.", the button **Book trial**.
-3. Pick Tue D+8 09:00 IST (30 min). Note "qa-TR-01". **Book trial**.
+1. As B4 open `/explore/experts/[H1 cid]`, find "qa-S-11 Four-week sprint" and press **Book Trial (Free, 30 min)** (record the exact label). The dark dialog opens on its trial step.
+2. Read: the heading "Pick a time for a 30-minute trial.", the plan card with "Free trial", "Times in <zone>" under the day heading, the notes field ("What would you like to discuss? (Optional)"), "Your trial is confirmed as soon as you book it.", **Back** and **Book trial**. Press **Back**: the start-date step ("When do you want to start?") opens; pick a start date there, press **Book Trial** to return, then **Back** again: the date you picked is still selected.
+3. In the month, pick Tue D+8, then 09:00 IST (30 min). Note "qa-TR-01". **Book trial**.
 
 **Expect:**
 
@@ -36,27 +36,27 @@ Note before starting: S-11's trial is free only if `PlatformPricingConfig.minTri
 
 **Cross-check:** B4 appointments (Tue D+8 9:00 am IST, labelled as a trial); H1 home and appointments; H1 Requests → Trials tab (record what a confirmed trial shows there, "Trial requests arrive in Requests, under Trials" per the editor copy); H1's grid Booked block 09:00–09:30; outbox `trial-session-scheduled` to both.
 
-**Probe further:** the picker should hide F-BUSY's time and anything within 15 min. Does the modal say the trial is 30 minutes and free? Does B4's appointment explain what happens after the trial (subscribe)? MISSED-OPPORTUNITY if not.
+**Probe further:** the picker should not list F-BUSY's time among the free ones (it sits under "Show N taken times") nor anything within 15 min. Does the step say the trial is 30 minutes and free? At 390 px, is the month above the times with no horizontal scroll? Does B4's appointment explain what happens after the trial (subscribe)? MISSED-OPPORTUNITY if not.
 
-## TR-02 — The modal's gates: signed out, no learner profile, ineligible
+## TR-02 — The trial step's gates: signed out, no learner profile, ineligible
 
 **Why it matters:** each gate must explain itself before the buyer picks a time.
 
 **Steps:**
 
-1. Signed out: open the trial modal. Read it.
-2. As a persona with no consultee profile (H2, if H2 has none): open it.
-3. As B4 (after TR-01): open it again.
+1. Signed out: press **Book Trial**. Read the step.
+2. As a persona with no consultee profile (H2, if H2 has none): open the step, pick a time and press **Book trial**.
+3. As B4 (after TR-01): open the step again, pick a time and press **Book trial**.
 4. `GET /api/trials/check-eligibility?consulteeProfileId=…&consultantProfileId=…` (record the query shape from the network panel) for B4 and B2.
 
 **Expect:**
 
-1. "Sign in to request a trial session" with **Sign In to Continue**; after sign-in you return to the modal.
-2. "Finish your profile first" / "You need a learner profile to request a trial. Complete your profile setup, then try again."
-3. "You are not eligible for a trial with this consultant" (eligibility reason "You have already requested or completed a trial with this consultant").
+1. "Sign in to pick a time for a trial with <H1 name>." with **Sign in to continue**; after sign-in you return to the expert page (record whether the dialog reopens on the trial step).
+2. A refusal naming the missing learner profile (record the toast title and text).
+3. A "Not eligible" toast with the eligibility reason "You have already requested or completed a trial with this consultant".
 4. B4 ineligible with that reason; B2 eligible.
 
-**Probe further:** step 3: does the expert page hide the trial CTA for B4 up front, or only fail inside the modal? The latter is a MISSED-OPPORTUNITY.
+**Probe further:** steps 2 and 3: does the expert page hide the trial CTA up front, or only refuse after the buyer has picked a time? The latter is a MISSED-OPPORTUNITY.
 
 ## TR-03 — Trial window refusals
 
@@ -71,7 +71,7 @@ Note before starting: S-11's trial is free only if `PlatformPricingConfig.minTri
 5. A window starting 09:15 IST (off grid).
 6. F-BUSY's time (Tue D+1 18:00 IST).
 
-**Expect:** 1: 400 `WINDOW_DURATION_MISMATCH`. 2 and 3: 409 `REQUEST_TOO_SOON`. 4: 400 `OUTSIDE_AVAILABILITY`. 5: a typed 400 (record the code; trials send their window as 30-min atoms). 6: 409 `SLOT_TAKEN` "That time was just taken. Pick another time." No `Trial` rows created; B2 stays eligible. A refused request costs no limiter attempt: every validity check runs before the limiter, and only a created trial spends one of B2's 3 per 24 hours. Send all six refusals as B2. Then, as IL (who books no other trial in 07), create three trials in a row (against three different experts, or H1 three times, cancelling each to free the pair): the three succeed. A fourth answers 429 `RATE_LIMITED` "You've reached today's trial request limit." with `retryAfterSeconds`, `retryAt` (ISO 8601) and a `Retry-After` header, and the modal shows when IL may retry in IL's zone. B2's allowance must stay whole for TR-16 and 07-b's T-2: if either is refused with 429, the six refusals spent it, which is a **BUG** (P2).
+**Expect:** 1: 400 `WINDOW_DURATION_MISMATCH`. 2 and 3: 409 `REQUEST_TOO_SOON`. 4: 400 `OUTSIDE_AVAILABILITY`. 5: a typed 400 (record the code; trials send their window as 30-min atoms). 6: 409 `SLOT_TAKEN` "That time was just taken. Pick another time." No `Trial` rows created; B2 stays eligible. A refused request costs no limiter attempt: every validity check runs before the limiter, and only a created trial spends one of B2's 3 per 24 hours. Send all six refusals as B2. Then, as IL (who books no other trial in 07), create three trials in a row (against three different experts, or H1 three times, cancelling each to free the pair): the three succeed. A fourth answers 429 `RATE_LIMITED` "You've reached today's trial request limit." with `retryAfterSeconds`, `retryAt` (ISO 8601) and a `Retry-After` header, and the trial step shows when IL may retry in IL's zone. B2's allowance must stay whole for TR-16 and 07-b's T-2: if either is refused with 429, the six refusals spent it, which is a **BUG** (P2).
 
 ## TR-04 — A paid trial holds its time until payment
 
@@ -79,7 +79,7 @@ Note before starting: S-11's trial is free only if `PlatformPricingConfig.minTri
 
 **Steps:**
 
-1. As B1 open S-12's trial modal (₹100, 30 min). Read the button (**Continue to payment**) and any price line.
+1. As B1 press S-12's **Book Trial** (₹100, 30 min). Read the button (**Continue to payment**) and the price on the plan card.
 2. Pick Wed D+9 17:00 IST. Continue.
 3. On `/checkout/plans/trial/[trialId]` read "Complete your trial booking", the amount, the held session in B1's zone, when the hold lapses, and **Pay to confirm**. Don't pay yet.
 
@@ -97,9 +97,9 @@ Note before starting: S-11's trial is free only if `PlatformPricingConfig.minTri
 
 **Steps:** as B2 try S-12 trial (or S-11 free) at Wed D+9 17:00 IST.
 
-**Expect:** the picker doesn't offer 17:00; a forced POST → 409 `SLOT_TAKEN`. An `AWAITING_PAYMENT` trial occupies its time.
+**Expect:** 17:00 is not among the free times; it is listed under "Show N taken times"; a forced POST → 409 `SLOT_TAKEN`. An `AWAITING_PAYMENT` trial occupies its time.
 
-**Probe further:** two buyers racing the same free time (one wins, one `SLOT_TAKEN`, the modal drops the pick and re-reads) is the doc's worked example; run it lightly with two pages if you can, depth in 09.
+**Probe further:** two buyers racing the same free time (one wins, one `SLOT_TAKEN`; the loser's pick clears, the pane says "That time was just taken — pick another." and the taken list opens) is the doc's worked example; run it lightly with two pages if you can, depth in 09.
 
 ## TR-06 — The capture confirms the held session in place
 
@@ -172,21 +172,21 @@ Note before starting: S-11's trial is free only if `PlatformPricingConfig.minTri
 
 ## TR-14 — A paused expert takes no trials
 
-**Steps:** as H1 switch off "Taking new 1:1 bookings and trials"; as B2 open the trial modal and POST. Switch back on.
+**Steps:** as H1 switch off "Taking new 1:1 bookings and trials"; as B2 open the trial step and POST. Switch back on.
 
-**Expect:** 409 `NOT_ACCEPTING_BOOKINGS` "This expert is not taking new 1:1 bookings or trials right now. Pick another expert, or try again later." The page shows the paused state before the modal. TR-01's existing trial is unaffected.
+**Expect:** 409 `NOT_ACCEPTING_BOOKINGS` "This expert is not taking new 1:1 bookings or trials right now. Pick another expert, or try again later." The page shows the paused state before the dialog. TR-01's existing trial is unaffected.
 
 ## TR-15 — An expert with no room in the next two weeks
 
-**Why it matters:** the modal must say there's nothing to pick and what to do, not show an empty list.
+**Why it matters:** the step must say there's nothing to pick and what to do, not show an empty list.
 
 **Setup:** H4 (custom schedule). As H4 create a subscription "qa-TR-15" with a free 30-min trial and publish. In H4's custom editor remove every date in the next 14 days and add one date 30 days out (10:15–12:15 NPT). Save. Restore S-05's rows at the end.
 
-**Steps:** as B2 open qa-TR-15's trial modal and page through the days.
+**Steps:** as B2 open qa-TR-15's trial step and move through the month.
 
-**Expect:** no times in the two-week window, with a clear message (quote it) and a next step (another expert, notify me, or a later date if the picker can page). No console errors.
+**Expect:** no day in the next two weeks carries a free dot; on a chosen day the pane says "No free times on this day" with "Next free: <date>" pointing 30 days out (the picker reads the following month when this one has nothing left). No console errors.
 
-**Probe further:** does the expert page itself say "no trial times available" before the modal? (The subscription feasibility gate also bites here: publishing a plan with no hours in 4 weeks may be refused with `PLAN_NOT_FEASIBLE`; if so, publish before removing the dates.)
+**Probe further:** does the expert page itself say "no trial times available" before the dialog? (The subscription feasibility gate also bites here: publishing a plan with no hours in 4 weeks may be refused with `PLAN_NOT_FEASIBLE`; if so, publish before removing the dates.)
 
 ## TR-16 — "Review requests first" and trials
 

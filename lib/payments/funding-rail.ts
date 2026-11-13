@@ -11,6 +11,19 @@ export function isFreeCreditIntent(paymentIntent: string): boolean {
   return paymentIntent.startsWith("free_");
 }
 
+/** A `free_` payment for a zero list price: nothing paid and no credit spent, so a cancel writes no refund. */
+export function isPriceFreePayment(p: {
+  paymentIntent: string;
+  amountPaise: number;
+  listPricePaise: number;
+}): boolean {
+  return (
+    isFreeCreditIntent(p.paymentIntent) &&
+    p.amountPaise === 0 &&
+    p.listPricePaise === 0
+  );
+}
+
 /**
  * The rail a payment refunds on, decided before anything moves, so the
  * cancellation quote and the refund itself can never name different rails.

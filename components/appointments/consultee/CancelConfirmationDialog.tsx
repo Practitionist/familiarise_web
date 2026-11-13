@@ -13,6 +13,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { EXPERT_CANCEL_RELIABILITY_LINE } from "@/lib/booking/expert-reliability-rules";
 import {
   payerSentence,
   FREE_BOOKING_REFUND_LINE,
@@ -41,6 +42,7 @@ type SeatLeavePreview =
       estimatedRefundPaise: number;
       remainingSessions: number | null;
       currency: string;
+      freeBooking: boolean;
     };
 
 interface CancelConfirmationDialogProps {
@@ -171,6 +173,13 @@ export function CancelConfirmationDialog({
         </p>
       );
     }
+    if (seatPreview?.seated && seatPreview.freeBooking) {
+      return (
+        <p className="text-muted-foreground text-sm">
+          {FREE_BOOKING_REFUND_LINE}
+        </p>
+      );
+    }
     if (seatPreview?.seated) {
       const amount = formatCurrencyAmount(
         seatPreview.estimatedRefundPaise,
@@ -207,8 +216,8 @@ export function CancelConfirmationDialog({
     dialogTitle = `Cancel ${appointmentType}?`;
   }
 
-  // The consultant's line names the client's full refund and the reliability
-  // cost; the cost stands even when the quote could not be loaded.
+  // The consultant's line names the client's full refund; the reliability line
+  // below it stands even when the quote could not be loaded.
   const consultantRefundLine = (quoted?: {
     paise: number;
     currency: string;
@@ -224,7 +233,7 @@ export function CancelConfirmationDialog({
       ) : (
         <>If they paid, {consultant} gets a full refund</>
       )}
-      . Cancelling a paid booking counts against your reliability.
+      .
     </p>
   );
 
@@ -301,7 +310,22 @@ export function CancelConfirmationDialog({
         </p>
       );
     }
+    // No captured payment funds the booking (an unpaid hold or request): nothing to refund.
+    if (preview.expectedPaid === false) {
+      return (
+        <p className="text-muted-foreground text-sm">
+          {FREE_BOOKING_REFUND_LINE}
+        </p>
+      );
+    }
     if (asConsultant) {
+      if (preview.freeBooking) {
+        return (
+          <p className="text-muted-foreground text-sm">
+            {FREE_BOOKING_REFUND_LINE}
+          </p>
+        );
+      }
       return consultantRefundLine({
         paise: preview.estimatedRefundPaise,
         currency: preview.currency,
@@ -338,6 +362,13 @@ export function CancelConfirmationDialog({
       </>
     );
   };
+
+  // An expert's button promises a refund only when there is one to give.
+  const nothingToRefund =
+    !!preview &&
+    (preview.paid === false ||
+      !!preview.freeBooking ||
+      ("expectedPaid" in preview && preview.expectedPaid === false));
 
   /** What the click binds to: the quote shown, or the unpaid screen of an approval awaiting payment. */
   const shownQuote = (): ShownCancelQuote | undefined => {
@@ -385,6 +416,11 @@ export function CancelConfirmationDialog({
                   appointmentType === "Trial"
                     ? renderRefundLine()
                     : null}
+                  {asConsultant && (
+                    <p className="text-muted-foreground text-sm">
+                      {EXPERT_CANCEL_RELIABILITY_LINE}
+                    </p>
+                  )}
                 </>
               )}
             </div>
@@ -412,7 +448,7 @@ export function CancelConfirmationDialog({
               </>
             ) : isLeave ? (
               "Yes, Leave"
-            ) : asConsultant ? (
+            ) : asConsultant && !nothingToRefund ? (
               "Cancel and refund"
             ) : (
               `Cancel ${appointmentType === "Trial" ? "trial" : "booking"}`

@@ -111,7 +111,7 @@ After every move: R-03, R-05; record `movedAt`, `hostCancelledAt`, `retimeBy`.
 
 ## CL-44 — The editor can't move a sold class's dates
 
-**Steps:** as H2, change `qa-CL-38`'s Start date in the editor. Save. Then change only the title.
+**Steps:** as H2, change `qa-CL-38`'s First session in the editor. Save. Then change only the title.
 
 **Expect:** the date change → 409 "Cannot modify class schedule with enrolled participants. Use the reschedule workflow instead."; title → 200.
 

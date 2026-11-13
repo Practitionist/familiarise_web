@@ -29,7 +29,7 @@ export const AVAILABILITY_READ_FAILED_MESSAGE =
   "We couldn't load the available times. Check your connection and try again.";
 
 /** A failed grid read. `message` is user copy; the server's own text stays in `detail`. */
-export class AvailabilityReadError extends Error {
+class AvailabilityReadError extends Error {
   readonly status: number;
   readonly detail: unknown;
   constructor(status: number, detail: unknown) {
@@ -299,6 +299,9 @@ export function monthKeyOf(monthStart: Date): string {
 }
 
 /** The first to last instant of the calendar month `monthStart` names, read in `timezone`. */
+/** The month read runs this far into the next day, so a session starting on the last evening can cross midnight; it stays inside the route's 32-day cap. */
+const MONTH_READ_TAIL_MS = 12 * 60 * 60 * 1000;
+
 export function monthBounds(
   monthStart: Date,
   timezone: string,
@@ -328,35 +331,48 @@ export function useAvailabilityMonth({
   monthStart,
   timezone,
   consulteeUserId,
+  event,
+  bypassRef,
   enabled = true,
 }: {
   consultantId: string | undefined;
   monthStart: Date;
   timezone: string | null;
   consulteeUserId?: string;
+  /** The event being placed or moved. */
+  event?: AvailabilityEvent;
+  /** Set to true to send the next read past the browser cache once. */
+  bypassRef?: MutableRefObject<boolean>;
   enabled?: boolean;
 }) {
   const etagCacheRef = useRef<EtagCacheEntry | null>(null);
   const pollOptions = useGridPollOptions();
   const ready = enabled && !!consultantId && !!timezone;
   const monthKey = monthKeyOf(monthStart);
-  const queryKey = consulteeUserId
+  const eventQuery = eventQueryOf(event);
+  const baseKey = consulteeUserId
     ? ["availability-month", consultantId, monthKey, timezone, consulteeUserId]
     : ["availability-month", consultantId, monthKey, timezone];
+  const queryKey = eventQuery ? [...baseKey, `event:${eventQuery}`] : baseKey;
   const activeQueryKey = ready ? queryKey : ["availability-month", "disabled"];
   return useQuery({
     queryKey: activeQueryKey,
     queryFn: () => {
       const zone = timezone as string;
       const { start, end } = monthBounds(monthStart, zone);
+      const noStore = bypassRef?.current ?? false;
+      if (bypassRef) bypassRef.current = false;
       return fetchWindow(
         consultantId as string,
         start,
-        end,
+        new Date(end.getTime() + MONTH_READ_TAIL_MS),
         zone,
-        false,
+        noStore,
         consulteeUserId,
         etagCacheRef,
+        undefined,
+        undefined,
+        eventQuery,
       );
     },
     enabled: ready,

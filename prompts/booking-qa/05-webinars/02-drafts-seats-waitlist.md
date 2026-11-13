@@ -42,7 +42,7 @@ Buyers reach a webinar from the expert page or `/explore/programs/plans/webinars
 
 **Probe further:**
 
-- This path uses the week grid, not the SingleSessionPicker the editor uses. Same rules? Try an off-hours cell (grid) vs Outside your hours (picker): do they agree that a host may run a webinar outside hours?
+- This path uses the week grid, not the `SingleTimePicker` the editor uses. Same rules? Try an off-hours cell (grid) vs Outside your hours (picker): do they agree that a host may run a webinar outside hours?
 - At 390×844 the grid shows the desktop-only notice. Can a phone host schedule a draft webinar at all? The editor's picker works on a phone; does "Schedule now" send them to the editor instead?
 
 ## WE-17 — A draft can't be published without a time; status changes only through the editor or cancel

@@ -83,6 +83,7 @@ const mockTrialCount = jest.fn(async () => 0);
 const mockProfile = {
   id: "cp_1",
   acceptingRequests: true,
+  bookingMode: "REQUEST" as "REQUEST" | "INSTANT",
   maxOpenRequests: null as number | null,
   user: { id: "user_consultant", name: "Olivia" },
 };
@@ -100,6 +101,11 @@ jest.mock("../../lib/prisma", () => {
   const db: Record<string, unknown> = {
     consulteeProfile: {
       findUnique: jest.fn(async () => ({ id: "cs_1", user: {} })),
+    },
+    consultantProfile: {
+      findUnique: jest.fn(async () => ({
+        bookingMode: mockProfile.bookingMode,
+      })),
     },
     consultationPlan: {
       findFirst: jest.fn(async () => ({

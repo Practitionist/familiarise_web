@@ -95,23 +95,68 @@ describe("NotifyMeButton", () => {
 });
 
 describe("NotifyWhenFreeButton", () => {
-  it("POSTs the window and then locks as notified", async () => {
-    mockFetch();
-    const window = {
-      consultantProfileId: "c1",
-      windowStart: "2030-01-01T10:00:00.000Z",
-      windowEnd: "2030-01-01T11:00:00.000Z",
-      planKind: "CONSULTATION" as const,
-      planId: "p1",
-    };
-    wrap(<NotifyWhenFreeButton window={window} />);
-    fireEvent.click(screen.getByText("Notify me if this time opens"));
-    const done = await screen.findByText("You'll be notified");
-    expect(calls[0]).toMatchObject({
-      url: "/api/scheduling/backup-interest",
-      method: "POST",
+  const window = {
+    consultantProfileId: "c1",
+    windowStart: "2030-01-01T10:00:00.000Z",
+    windowEnd: "2030-01-01T11:00:00.000Z",
+    planKind: "CONSULTATION" as const,
+    planId: "p1",
+  };
+
+  it("POSTs the window, then reads Waiting with a withdraw even when the re-read fails; shows a refusal inline", async () => {
+    let gets = 0;
+    calls = [];
+    global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      calls.push({ url, method, body: init?.body as string });
+      if (method === "POST") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: { id: "w1", status: "WAITING" } }),
+        };
+      }
+      if (method === "GET" && ++gets > 1) {
+        return { ok: false, status: 503, json: async () => ({}) };
+      }
+      if (method === "DELETE") {
+        return {
+          ok: false,
+          status: 409,
+          json: async () => ({ error: "Could not withdraw" }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({ data: [] }) };
+    }) as unknown as typeof fetch;
+    wrap(<NotifyWhenFreeButton window={window} timeLabel="10:00 am" />);
+    const notify = await screen.findByRole("button", {
+      name: "Notify me if 10:00 am opens",
     });
-    expect(JSON.parse(calls[0].body ?? "{}")).toEqual(window);
-    expect(done.closest("button")?.hasAttribute("disabled")).toBe(true);
+    await waitFor(() => expect(notify).toBeEnabled());
+    fireEvent.click(notify);
+    await screen.findByText("Waiting");
+    const post = calls.find((call) => call.method === "POST");
+    expect(JSON.parse(post?.body ?? "{}")).toEqual(window);
+    fireEvent.click(
+      screen.getByRole("button", { name: /stop waiting on 10:00 am/ }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not withdraw",
+    );
+  });
+
+  it("sends a signed-out visitor to sign in instead of posting", () => {
+    mockFetch();
+    const onSignIn = jest.fn();
+    wrap(
+      <NotifyWhenFreeButton
+        window={window}
+        timeLabel="10:00 am"
+        onSignIn={onSignIn}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Notify me/ }));
+    expect(onSignIn).toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
   });
 });

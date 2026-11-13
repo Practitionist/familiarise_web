@@ -570,14 +570,16 @@ through `inRetimeFreeLeave`.
 An operator of the plan's host org who cancels is recorded as the actor and
 strikes nobody; the buyer still gets 100 %.
 
-An expert-side cancel of a paid booking, an expert's cancel of a confirmed trial
-(free or paid, through trial DELETE), or a consultant no-show claim, writes one
-reliability strike in the same transaction: a `SystemEvent` on the
-`expert-reliability:<consultantProfileId>` correlation (`recordExpertStrike` in
-`lib/booking/expert-reliability.ts`). A platform-caused miss records nothing. The
-public profile shows a notice at three strikes in 90 days
-(`EXPERT_STRIKE_THRESHOLD`), the completion rate reads them, and ops reads them
-from `GET /api/admin/sessions/expert-strikes`. No money is taken from the expert.
+An expert-side cancel of a confirmed booking or seat (free or paid), an expert's
+cancel of a confirmed trial (free or paid, through trial DELETE), or a consultant
+no-show claim, writes one reliability strike in the same transaction: a
+`SystemEvent` on the `expert-reliability:<consultantProfileId>` correlation
+(`recordExpertStrike` in `lib/booking/expert-reliability.ts`). A platform-caused
+miss records nothing. Strikes never reach a public page: the expert reads their
+own through `GET /api/user/consultants/[id]/strikes` (`readOwnStrikes`), and ops
+reads them from `GET /api/admin/sessions/expert-strikes`, where 3 in 90 days
+(`EXPERT_STRIKE_THRESHOLD`) marks an expert for review. No money is taken from
+the expert.
 
 No strike lands inside a declared platform incident. `classifySessionOutcome`
 returns `PLATFORM_OUTAGE` first when the booked interval overlaps a declared

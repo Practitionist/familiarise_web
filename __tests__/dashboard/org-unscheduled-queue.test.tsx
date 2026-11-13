@@ -42,6 +42,8 @@ const row = (id: string, status: string) => ({
   appointment: { id: `appt-${id}` },
   consultationPlan: {
     title: "Plan",
+    consultantProfileId: "cp-1",
+    durationInHours: 1,
     consultantProfile: { user: { name: "Expert" } },
   },
   requestedBy: { user: { name: "Learner" } },
@@ -80,6 +82,31 @@ it("reads PENDING and APPROVED-unallocated rows on bookings the org owns", async
   expect(
     Object.fromEntries(rows.map((r) => [r.id, r.awaitingExpertApproval])),
   ).toEqual({ pending: true, approved: false });
+});
+
+it("sizes a pick from the booked session, not a plan edited since", async () => {
+  consultationFindMany.mockResolvedValue([
+    {
+      ...row("approved", "APPROVED"),
+      appointment: {
+        id: "appt-approved",
+        occurrences: [
+          {
+            startsAt: new Date("2026-10-05T09:00:00Z"),
+            endsAt: new Date("2026-10-05T10:00:00Z"),
+            deletedAt: null,
+            completionStatus: "RESCHEDULED",
+          },
+        ],
+      },
+      consultationPlan: {
+        ...row("x", "APPROVED").consultationPlan,
+        durationInHours: 2,
+      },
+    },
+  ]);
+  const [approved] = await readOrgPendingRequests("o1");
+  expect(approved.sessionMinutes).toBe(60);
 });
 
 it("offers Allocate only on the approved row", async () => {

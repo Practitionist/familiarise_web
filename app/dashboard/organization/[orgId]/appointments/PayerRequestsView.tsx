@@ -55,6 +55,8 @@ export function PayerRequestsView({
                     planTitle={row.planTitle}
                     expertName={row.expertName}
                     learnerName={row.learnerName}
+                    consultantProfileId={row.consultantProfileId}
+                    sessionMinutes={row.sessionMinutes}
                   />
                 )
             : undefined

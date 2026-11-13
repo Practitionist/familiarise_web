@@ -60,7 +60,12 @@ function matchesPrefix(pathname: string, prefix: string): boolean {
   return pathname === normalised || pathname.startsWith(`${normalised}/`);
 }
 
+/** Checkout pages that are one centred card, so they keep the site header. */
+const CHROME_SHOWN_PREFIXES = ["/checkout/plans/trial/"] as const;
+
 export function isChromeHidden(pathname: string): boolean {
+  if (CHROME_SHOWN_PREFIXES.some((prefix) => matchesPrefix(pathname, prefix)))
+    return false;
   return NO_CHROME_PREFIXES.some((prefix) => matchesPrefix(pathname, prefix));
 }
 

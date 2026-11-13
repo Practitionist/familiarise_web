@@ -9,9 +9,12 @@ import {
   CONSULTEE_BACKUP_INTEREST_QUERY_KEY,
   EVENT_WAITLIST_QUERY_KEY,
 } from "@/lib/booking/interest/query-keys";
+import {
+  backupBookHref,
+  fetchBackupInterest,
+} from "@/lib/booking/interest/backup-interest-list";
 import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
 import {
-  BackupInterestListResponseSchema,
   EventWaitlistListResponseSchema,
   type BackupInterestEntry,
   type EventWaitlistAlert,
@@ -23,15 +26,6 @@ async function fetchEventWaitlist(): Promise<EventWaitlistAlert[]> {
   const res = await fetch("/api/scheduling/event-waitlist");
   if (!res.ok) return [];
   const parsed = EventWaitlistListResponseSchema.safeParse(
-    await res.json().catch(() => null),
-  );
-  return parsed.success ? parsed.data.data : [];
-}
-
-async function fetchBackupInterest(): Promise<BackupInterestEntry[]> {
-  const res = await fetch("/api/scheduling/backup-interest");
-  if (!res.ok) return [];
-  const parsed = BackupInterestListResponseSchema.safeParse(
     await res.json().catch(() => null),
   );
   return parsed.success ? parsed.data.data : [];
@@ -66,17 +60,6 @@ function backupStatusText(entry: BackupInterestEntry, nowMs: number): string {
   return entry.status === "NOTIFIED"
     ? " · This time opened"
     : " · Waiting for this time to open";
-}
-
-function backupBookHref(entry: BackupInterestEntry): string {
-  if (entry.planId && entry.planKind === "CONSULTATION") {
-    const qs = new URLSearchParams({
-      startsAt: entry.windowStart,
-      endsAt: entry.windowEnd,
-    });
-    return `/checkout/plans/consultation/${entry.planId}?${qs.toString()}`;
-  }
-  return `/explore/experts/${entry.consultantProfileId}`;
 }
 
 /**

@@ -6,19 +6,21 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { useEventActions } from "@/components/appointments/consultee/useEventActions";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
-import { TrialSlotPicker } from "@/app/explore/experts/[consultantId]/components/TrialSlotPicker";
+import {
+  SingleTimePicker,
+  type SingleTimeValue,
+} from "@/components/scheduling/SingleTimePicker";
+import { ZoneSwitch } from "@/components/scheduling/ZoneSwitch";
 import { useSession } from "@/lib/auth-client";
-import { leadMsFor } from "@/lib/booking/lead-time";
-import type { SlotWithStatus } from "@/lib/scheduling/booking-windows";
 import { useDisplayZone } from "@/lib/time/use-display-zone";
 import { trialProposalAtoms } from "@/lib/trials/proposal-atoms";
 import { createSubmissionKeys } from "@/lib/api/submission-key";
 
 /**
- * The consultee's trial reschedule: the expert page's slot list at the
- * reschedule lead (24 h), one new window of the trial's length. A time in the
- * expert's open hours that both calendars have free confirms at once; the
- * route refuses a second move by the same side.
+ * The consultee's trial reschedule: the single-time picker at the reschedule
+ * lead (24 h), one new time of the trial's length. A time in the expert's open
+ * hours that both calendars have free confirms at once; the route refuses a
+ * second move by the same side.
  */
 export function TrialRescheduleClient({
   appointmentId,
@@ -37,7 +39,7 @@ export function TrialRescheduleClient({
   useSetBreadcrumbLabel(title);
   const { data: session } = useSession();
   const zone = useDisplayZone(session?.user?.timezone ?? null);
-  const [selected, setSelected] = useState<SlotWithStatus | null>(null);
+  const [selected, setSelected] = useState<SingleTimeValue | null>(null);
   const [submissionKeyFor] = useState(createSubmissionKeys);
   const actions = useEventActions({
     appointmentId,
@@ -70,19 +72,27 @@ export function TrialRescheduleClient({
   };
 
   return (
-    <div className="mx-auto w-full max-w-xl space-y-4">
+    <div className="mx-auto w-full max-w-4xl space-y-4">
       <p className="text-sm text-muted-foreground">
         A trial can be moved once by each side, at least 24 hours before it
         starts. Pick a new time from the expert&apos;s open hours.
       </p>
-      <TrialSlotPicker
+      <ZoneSwitch
+        zone={zone.zone}
+        usingDeviceZone={zone.usingDeviceZone}
+        canSwitch={zone.canSwitch}
+        onToggle={zone.toggle}
+      />
+      <SingleTimePicker
         consultantId={consultantId}
         consulteeUserId={session?.user?.id}
-        trialDurationMinutes={trialDurationMinutes}
-        leadMs={leadMsFor("reschedule")}
-        timezone={zone.zone}
-        selected={selected}
-        onSelect={setSelected}
+        sessionMinutes={trialDurationMinutes}
+        zone={zone.zone}
+        theme="light"
+        audience="buyer"
+        purpose="reschedule"
+        value={selected}
+        onChange={setSelected}
       />
       <div className="flex justify-end gap-3">
         <Button variant="outline" onClick={goBack} disabled={actions.isLoading}>

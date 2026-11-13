@@ -51,6 +51,7 @@ import { planSaleRefusal } from "@/lib/api/plans/visibility";
 import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
+import { REQUEST_NOT_OFFERED_MESSAGE } from "@/lib/booking/booking-mode";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { assertSlotsStillPublished } from "@/lib/booking/allocation/coverage";
 import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
@@ -259,6 +260,7 @@ export async function POST(req: NextRequest) {
           select: {
             id: true,
             acceptingRequests: true,
+            bookingMode: true,
             maxOpenRequests: true,
             user: { select: { id: true } },
           },
@@ -297,6 +299,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: paused.message, code: paused.code },
         { status: 409 },
+      );
+    }
+
+    // An instant-booking expert sells a free time at checkout; a held one is taken.
+    if (consultationPlan.consultantProfile.bookingMode !== "REQUEST") {
+      return bookingRuleResponse(
+        new BookingRuleError(
+          "REQUEST_NOT_OFFERED",
+          REQUEST_NOT_OFFERED_MESSAGE,
+        ),
       );
     }
 
@@ -463,8 +475,18 @@ export async function POST(req: NextRequest) {
         // budget sits well inside the 60 s slot lock held above.
         const consultation = await prisma.$transaction(
           async (tx) => {
-            // Cap and availability are read on this transaction, after every
-            // lock, so the insert below commits against what they saw.
+            // Mode, cap and availability are read on this transaction, after
+            // every lock, so the insert below commits against what they saw.
+            const mode = await tx.consultantProfile.findUnique({
+              where: { id: consultantProfileId },
+              select: { bookingMode: true },
+            });
+            if (mode?.bookingMode !== "REQUEST") {
+              throw new RequestRefusal(409, {
+                error: REQUEST_NOT_OFFERED_MESSAGE,
+                code: "REQUEST_NOT_OFFERED",
+              });
+            }
             const atCapacity = await capacityRefusal(
               tx,
               consultationPlan.consultantProfile,

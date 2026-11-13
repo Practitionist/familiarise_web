@@ -284,7 +284,7 @@ describe("request-for-approval × webinar publish", () => {
     await publishEveryHour(host);
     await prisma.consultantProfile.update({
       where: { id: host.consultantProfileId },
-      data: { acceptingRequests: true },
+      data: { acceptingRequests: true, bookingMode: "REQUEST" },
     });
     const plan = await prisma.consultationPlan.create({
       data: {

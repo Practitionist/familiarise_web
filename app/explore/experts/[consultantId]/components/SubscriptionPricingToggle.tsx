@@ -13,19 +13,25 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
-import { CalendarIcon, CheckCircle2, Gift, BookOpen } from "lucide-react";
+import { CheckCircle2, Gift, BookOpen } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
-import { zoneDisplayLabel } from "@/lib/time/viewer-zone";
+import { formatInViewerZone, zoneDisplayLabel } from "@/lib/time/viewer-zone";
 import Link from "next/link";
 import { useState, useMemo, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
-import { format } from "date-fns";
 import { firstCycleWindow, lastInstantBefore } from "@/lib/booking/entitlement";
 import { useBuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { buyerDisplayPricePaise } from "@/lib/payments/pricing/display-price";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { TrialBookingModal } from "./TrialBookingModal";
+import { MonthGrid } from "@/components/scheduling/MonthGrid";
+import {
+  calendarDateKey,
+  calendarDayOf,
+  dayRangeBounds,
+} from "@/lib/time/grid-zone";
+import { MentorshipTrialStep } from "./MentorshipTrialStep";
 import { usePlanBuyBlocked } from "../hooks/usePlanBuyBlocked";
 
 interface SubscriptionContentItem {
@@ -97,18 +103,27 @@ export default function SubscriptionPricingToggle({
   // 3-month subscriptions) remain independently selectable and bookable.
   const [activeSubscriptionOption, setActiveSubscriptionOption] =
     useState<string>(subscriptionOptions[0]?.id ?? "");
+  // Back from sign-in on the trial step (?action=trial&plan=…): that plan is the active one.
+  const returnPlanId = useSearchParams()?.get("plan") ?? null;
+  const [appliedReturnPlan, setAppliedReturnPlan] = useState<string | null>(
+    null,
+  );
+  if (
+    autoOpenTrial &&
+    returnPlanId &&
+    returnPlanId !== appliedReturnPlan &&
+    subscriptionOptions.some((opt) => opt.id === returnPlanId)
+  ) {
+    setAppliedReturnPlan(returnPlanId);
+    setActiveSubscriptionOption(returnPlanId);
+  }
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  // Step one chooses the start; step two picks a trial's time.
+  const [step, setStep] = useState<"start" | "trial">("start");
   const [schedulingStartDate, setSchedulingStartDate] = useState<Date | null>(
     null,
   );
-  const [isTrialModalOpen, setIsTrialModalOpen] = useState(false);
-  const [selectedTrialPlan, setSelectedTrialPlan] = useState<{
-    id: string;
-    title: string;
-    trialDurationMinutes: number;
-    trialPriceInPaise: number;
-    priceCurrency: string;
-  } | null>(null);
+  const [startMonth, setStartMonth] = useState<Date | null>(null);
   const [trialEligibility, setTrialEligibility] = useState<{
     isEligible: boolean;
     reason?: string;
@@ -209,28 +224,27 @@ export default function SubscriptionPricingToggle({
     consultantDetails?.id,
   ]);
 
-  // Auto-open trial modal when navigated with ?action=trial
+  const trialOpen =
+    selectedPlanDetails?.trialEnabled === true &&
+    trialEligibility.isEligible &&
+    !trialEligibility.isLoading;
+  const openTrialStep = useCallback(() => {
+    setStep("trial");
+    setIsDialogOpen(true);
+  }, []);
+
+  // ?action=trial opens the mentorship dialog on its trial step, once.
+  const [autoTrialHandled, setAutoTrialHandled] = useState(false);
   useEffect(() => {
-    if (
-      autoOpenTrial &&
-      selectedPlanDetails?.trialEnabled &&
-      trialEligibility.isEligible &&
-      !trialEligibility.isLoading
-    ) {
-      setSelectedTrialPlan({
-        id: selectedPlanDetails.id,
-        title: selectedPlanDetails.title,
-        trialDurationMinutes: selectedPlanDetails.trialDurationMinutes ?? 0,
-        trialPriceInPaise: selectedPlanDetails.trialPriceInPaise ?? 0,
-        priceCurrency: selectedPlanDetails.priceCurrency ?? "INR",
-      });
-      setIsTrialModalOpen(true);
-    }
-  }, [autoOpenTrial, selectedPlanDetails, trialEligibility]);
+    if (!autoOpenTrial || !trialOpen || autoTrialHandled) return;
+    setAutoTrialHandled(true);
+    openTrialStep();
+  }, [autoOpenTrial, trialOpen, autoTrialHandled, openTrialStep]);
 
   // #1766 — the buyer picks a START only; the window is the first cycle and
   // the server derives it again in the consultant's zone. Shown here in the
   // viewer's zone so the summary reads in their own calendar.
+  // The picked calendar day starts at midnight in the viewer's zone.
   const firstCycle = useMemo(() => {
     if (!schedulingStartDate || !selectedOption) return null;
     return firstCycleWindow(
@@ -238,33 +252,28 @@ export default function SubscriptionPricingToggle({
         sessionsPerWeek: selectedOption.sessionsPerWeek ?? 1,
         durationInMonths: selectedOption.durationInMonths ?? 1,
       },
-      schedulingStartDate,
+      dayRangeBounds(schedulingStartDate, schedulingStartDate, timezone).start,
       timezone,
     );
   }, [schedulingStartDate, selectedOption, timezone]);
 
-  const validatePeriod = useCallback(
-    (start: Date | null): { valid: boolean; message?: string } => {
-      if (!start) {
-        return { valid: false, message: "Please pick a start date" };
-      }
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      if (start < today) {
-        return { valid: false, message: "Start date cannot be in the past" };
-      }
-      return { valid: true };
-    },
-    [],
-  );
-
-  const validation = useMemo(
-    () => validatePeriod(schedulingStartDate),
-    [schedulingStartDate, validatePeriod],
-  );
+  // Today in the viewer's zone; the past is never offered.
+  const today = calendarDayOf(new Date(), timezone);
+  const todayKey = calendarDateKey(today);
+  const validation = useMemo((): { valid: boolean; message?: string } => {
+    if (!schedulingStartDate) {
+      return { valid: false, message: "Please pick a start date" };
+    }
+    if (calendarDateKey(schedulingStartDate) < todayKey) {
+      return { valid: false, message: "Start date cannot be in the past" };
+    }
+    return { valid: true };
+  }, [schedulingStartDate, todayKey]);
 
   const handleChoosePlan = () => {
-    setSchedulingStartDate(new Date());
+    setSchedulingStartDate(today);
+    setStartMonth(null);
+    setStep("start");
     setIsDialogOpen(true);
   };
 
@@ -285,7 +294,7 @@ export default function SubscriptionPricingToggle({
 
     // The end travels for the checkout URL's shape only; the server ignores it.
     handleSubscriptionBooking(selectedOption, {
-      startDate: schedulingStartDate,
+      startDate: firstCycle.start,
       endDate: firstCycle.end,
     });
 
@@ -430,17 +439,7 @@ export default function SubscriptionPricingToggle({
                         });
                         return;
                       }
-                      setSelectedTrialPlan({
-                        id: selectedPlanDetails.id,
-                        title: selectedPlanDetails.title,
-                        trialDurationMinutes:
-                          selectedPlanDetails.trialDurationMinutes ?? 0,
-                        trialPriceInPaise:
-                          selectedPlanDetails.trialPriceInPaise ?? 0,
-                        priceCurrency:
-                          selectedPlanDetails.priceCurrency ?? "INR",
-                      });
-                      setIsTrialModalOpen(true);
+                      openTrialStep();
                     }}
                   >
                     <Gift className="w-4 h-4 mr-2" />
@@ -491,109 +490,157 @@ export default function SubscriptionPricingToggle({
         })}
       </div>
 
-      {/* Start-date dialog (#1766) */}
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+      {/* The mentorship dialog: choose a start, or step on to a trial. */}
+      <Dialog
+        open={isDialogOpen}
+        onOpenChange={(open) => {
+          setIsDialogOpen(open);
+          if (!open) setStep("start");
+        }}
+      >
         {/* Same shell as the consultation booking dialog: centred, inside a
             gutter, header and button fixed, only the middle scrolls. */}
-        <DialogContent className="flex max-h-[min(calc(100dvh-1.5rem),44rem)] w-[calc(100vw-1.5rem)] flex-col gap-0 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 p-0 text-white shadow-2xl sm:max-w-[550px] sm:rounded-2xl lg:max-w-[650px]">
+        <DialogContent
+          className={`flex max-h-[min(calc(100dvh-1.5rem),52rem)] w-[calc(100vw-1.5rem)] flex-col gap-0 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 p-0 text-white shadow-2xl sm:rounded-2xl ${
+            step === "trial"
+              ? "sm:max-w-[640px] md:max-w-[880px] lg:max-w-[960px]"
+              : "sm:max-w-[550px] lg:max-w-[650px]"
+          }`}
+        >
           <DialogHeader className="shrink-0 border-b border-zinc-800 p-4 pr-12 sm:p-6 sm:pr-14">
             <DialogTitle className="text-xl font-semibold">
-              When do you want to start?
+              {step === "trial"
+                ? `Book a trial with ${consultantDetails?.user?.name || "this expert"}`
+                : "When do you want to start?"}
             </DialogTitle>
             <DialogDescription className="text-zinc-400">
-              Your consultant schedules one cycle at a time; the first cycle
-              starts on the date you pick.
+              {step === "trial"
+                ? `Pick a time for a ${selectedPlanDetails?.trialDurationMinutes ?? 0}-minute trial.`
+                : "Your consultant schedules one cycle at a time; the first cycle starts on the date you pick."}
             </DialogDescription>
           </DialogHeader>
 
-          <DialogBody className="space-y-6 p-4 sm:p-8">
-            {/* Start Date */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium flex items-center gap-2 text-zinc-400">
-                <CalendarIcon className="h-4 w-4" />
-                Start Date
-              </label>
-              <input
-                type="date"
-                value={
-                  schedulingStartDate
-                    ? format(schedulingStartDate, "yyyy-MM-dd")
-                    : ""
+          {step === "trial" && selectedPlanDetails ? (
+            <DialogBody className="flex min-h-0 flex-col p-0">
+              <MentorshipTrialStep
+                consultantProfileId={consultantDetails?.id || ""}
+                consultantName={consultantDetails?.user?.name || "this expert"}
+                subscriptionPlanId={selectedPlanDetails.id}
+                planTitle={selectedPlanDetails.title}
+                trialDurationMinutes={
+                  selectedPlanDetails.trialDurationMinutes ?? 0
                 }
-                onChange={(e) => {
-                  // Local midnight of the picked calendar day: `new Date("yyyy-MM-dd")`
-                  // is UTC midnight, a day early west of Greenwich.
-                  const [y, m, d] = e.target.value.split("-").map(Number);
-                  setSchedulingStartDate(
-                    e.target.value ? new Date(y, m - 1, d) : null,
-                  );
+                trialPriceInPaise={selectedPlanDetails.trialPriceInPaise ?? 0}
+                trialCurrency={selectedPlanDetails.priceCurrency ?? "INR"}
+                zone={timezone}
+                onBack={() => setStep("start")}
+                onDone={() => {
+                  setIsDialogOpen(false);
+                  setStep("start");
                 }}
-                min={format(new Date(), "yyyy-MM-dd")}
-                className="w-full px-5 py-3.5 bg-zinc-800/60 border-2 border-zinc-700/50 rounded-xl text-white text-base font-medium focus:outline-none focus:ring-2 focus:ring-zinc-500/50 focus:border-zinc-500 transition-all hover:border-zinc-600 cursor-pointer"
-                style={{ colorScheme: "dark" }}
               />
-            </div>
+            </DialogBody>
+          ) : (
+            <>
+              <DialogBody className="space-y-6 p-4 sm:p-8">
+                <div className="rounded-xl border border-zinc-700/50 bg-zinc-800/60 p-3 sm:p-5">
+                  <MonthGrid
+                    month={
+                      startMonth ??
+                      new Date(
+                        (schedulingStartDate ?? today).getFullYear(),
+                        (schedulingStartDate ?? today).getMonth(),
+                        1,
+                        12,
+                      )
+                    }
+                    onMonthChange={(month) =>
+                      setStartMonth(
+                        new Date(month.getFullYear(), month.getMonth(), 1, 12),
+                      )
+                    }
+                    selectedKey={
+                      schedulingStartDate
+                        ? calendarDateKey(schedulingStartDate)
+                        : null
+                    }
+                    onSelect={setSchedulingStartDate}
+                    today={today}
+                    isDisabled={(day) => calendarDateKey(day) < todayKey}
+                    canGoBack={
+                      calendarDateKey(
+                        startMonth ?? schedulingStartDate ?? today,
+                      ).slice(0, 7) > todayKey.slice(0, 7)
+                    }
+                    canGoForward
+                    theme="dark"
+                  />
+                </div>
 
-            {/* First-cycle summary */}
-            {schedulingStartDate && firstCycle && selectedOption && (
-              <div className="p-4 bg-zinc-800/50 rounded-xl border border-zinc-700/50">
-                <p className="text-sm text-zinc-500 mb-1">First cycle:</p>
-                <p className="text-white font-semibold text-lg">
-                  {format(firstCycle.start, "MMM dd, yyyy")} →{" "}
-                  {format(lastInstantBefore(firstCycle.end), "MMM dd, yyyy")}
-                </p>
-                <p className="text-sm text-zinc-500 mt-1">
-                  {selectedOption.sessionsPerWeek ?? 1} session
-                  {(selectedOption.sessionsPerWeek ?? 1) === 1 ? "" : "s"} per
-                  cycle · {selectedOption.totalSessions ?? "—"} in the plan
-                </p>
+                {/* First-cycle summary */}
+                {schedulingStartDate && firstCycle && selectedOption && (
+                  <div className="p-4 bg-zinc-800/50 rounded-xl border border-zinc-700/50">
+                    <p className="text-sm text-zinc-500 mb-1">First cycle:</p>
+                    <p className="text-white font-semibold text-lg">
+                      {formatInViewerZone(
+                        firstCycle.start,
+                        timezone,
+                        "MMM dd, yyyy",
+                      )}{" "}
+                      →{" "}
+                      {formatInViewerZone(
+                        lastInstantBefore(firstCycle.end),
+                        timezone,
+                        "MMM dd, yyyy",
+                      )}
+                    </p>
+                    <p className="text-sm text-zinc-500 mt-1">
+                      {selectedOption.sessionsPerWeek ?? 1} session
+                      {(selectedOption.sessionsPerWeek ?? 1) === 1
+                        ? ""
+                        : "s"}{" "}
+                      per cycle · {selectedOption.totalSessions ?? "—"} in the
+                      plan
+                    </p>
+                  </div>
+                )}
+
+                {!validation.valid && validation.message && (
+                  <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+                    <p className="text-sm text-red-400">{validation.message}</p>
+                  </div>
+                )}
+
+                <div className="p-4 bg-zinc-800/40 border border-zinc-700/50 rounded-xl">
+                  <p className="text-sm text-zinc-400">
+                    Times shown in {zoneDisplayLabel(new Date(), timezone)}
+                  </p>
+                </div>
+              </DialogBody>
+
+              <div className="shrink-0 bg-zinc-800/50 px-4 sm:px-6 py-4 flex flex-col-reverse gap-3 rounded-b-2xl border-t border-zinc-800 sm:flex-row sm:justify-end">
+                {trialOpen && (
+                  <Button
+                    variant="outline"
+                    onClick={() => setStep("trial")}
+                    className="w-full sm:w-auto border-zinc-700 bg-transparent text-zinc-200 hover:bg-zinc-800 hover:text-white"
+                  >
+                    <Gift aria-hidden="true" className="mr-2 h-4 w-4" />
+                    Book Trial ({trialCtaPrice})
+                  </Button>
+                )}
+                <Button
+                  onClick={handleContinueToCheckout}
+                  disabled={!validation.valid || buyBlocked}
+                  className="w-full sm:w-auto bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-6"
+                >
+                  Continue to Checkout
+                </Button>
               </div>
-            )}
-
-            {/* Validation Message */}
-            {!validation.valid && validation.message && (
-              <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
-                <p className="text-sm text-red-400">{validation.message}</p>
-              </div>
-            )}
-
-            {/* Timezone Info */}
-            <div className="p-4 bg-zinc-800/40 border border-zinc-700/50 rounded-xl">
-              <p className="text-sm text-zinc-400">
-                Times shown in {zoneDisplayLabel(new Date(), timezone)}
-              </p>
-            </div>
-          </DialogBody>
-
-          <div className="shrink-0 bg-zinc-800/50 px-4 sm:px-6 py-4 flex justify-center gap-3 rounded-b-2xl border-t border-zinc-800">
-            <Button
-              onClick={handleContinueToCheckout}
-              disabled={!validation.valid}
-              className="w-full sm:w-auto bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-6"
-            >
-              Continue to Checkout
-            </Button>
-          </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
-
-      {/* Trial Booking Modal */}
-      {selectedTrialPlan && (
-        <TrialBookingModal
-          isOpen={isTrialModalOpen}
-          onClose={() => {
-            setIsTrialModalOpen(false);
-            setSelectedTrialPlan(null);
-          }}
-          consultantProfileId={consultantDetails?.id || ""}
-          consultantName={consultantDetails?.user?.name || "Consultant"}
-          subscriptionPlanId={selectedTrialPlan.id}
-          planTitle={selectedTrialPlan.title}
-          trialDurationMinutes={selectedTrialPlan.trialDurationMinutes}
-          trialPriceInPaise={selectedTrialPlan.trialPriceInPaise}
-          trialCurrency={selectedTrialPlan.priceCurrency}
-        />
-      )}
     </Tabs>
   );
 }

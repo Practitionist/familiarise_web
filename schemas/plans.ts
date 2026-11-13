@@ -6,6 +6,7 @@ import {
   isProfanityFree,
 } from "@/utils/contentValidation";
 import { experienceValidation } from "./shared";
+import { TRIAL_DURATION_MINUTES } from "./trial-length";
 import { MAX_GROUP_SESSION_PARTICIPANTS } from "@/lib/events/capacity";
 import { isOnEventLattice } from "@/lib/booking/event-time-rules";
 
@@ -368,11 +369,12 @@ export const SubscriptionPlanSchema = z.object({
   price: priceSchema,
   priceCurrency: z.nativeEnum(Currency).default(Currency.INR),
   trialEnabled: z.boolean().optional(),
+  // Checked on write only: a stored length outside the two keeps booking as it is.
   trialDurationMinutes: z
     .number()
-    .int("Trial duration must be a whole number of minutes")
-    .min(15, "Trial duration must be at least 15 minutes")
-    .max(120, "Trial duration cannot exceed 120 minutes")
+    .refine((m) => TRIAL_DURATION_MINUTES.some((allowed) => allowed === m), {
+      message: "A trial is 30 or 60 minutes.",
+    })
     .optional(),
   // ₹0 stays allowed — the plan form adds deliberate friction instead.
   trialPriceInPaise: z
@@ -528,7 +530,8 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
   // Named for the manifest field that authors it. It was `startDate` here and
   // `schedulingStartDate` on the form, so the resolver stripped the value and
   // no class ever sent a start date to the API.
-  schedulingStartDate: z.date().optional().nullable(),
+  // The editor's time picker writes an ISO string; a loaded value is a Date.
+  schedulingStartDate: z.coerce.date().optional().nullable(),
   endDate: z.date().optional().nullable(),
   // #1819 — empty means "until session 1"; the route caps it at totalSessions.
   lateJoinUntilSession: z

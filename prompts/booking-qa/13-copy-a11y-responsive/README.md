@@ -1,6 +1,6 @@
 # 13-copy-a11y-responsive (UX-)
 
-A copy sweep of every booking surface (truth, usefulness, plain words, raw values, one name per thing); one case per booking error code (code → what the user reads → is there a next step?); a missed-opportunity checklist per surface; keyboard and accessibility-tree passes of the grid, `SingleSessionPicker`, the pattern scheduler, dialogs, checkout and toasts; colour-only signals and contrast (recorded, no palettes); four viewports; zoom; loading, empty and error states.
+A copy sweep of every booking surface (truth, usefulness, plain words, raw values, one name per thing); one case per booking error code (code → what the user reads → is there a next step?); a missed-opportunity checklist per surface; keyboard and accessibility-tree passes of the grid, `SingleTimePicker`, the pattern scheduler, dialogs, checkout and toasts; colour-only signals and contrast (recorded, no palettes); four viewports; zoom; loading, empty and error states.
 
 | File | Cases | Count | What |
 | --- | --- | --- | --- |
@@ -8,7 +8,7 @@ A copy sweep of every booking surface (truth, usefulness, plain words, raw value
 | [02-error-codes-reschedule-cancel-sessions.md](02-error-codes-reschedule-cancel-sessions.md) | UX-15 – UX-44 | 30 | Reschedule codes (window, lead, caps, open, one week, taken, not bookable, proposal shape, pay link live, not reschedulable, no slots, USE_RETIME, USE_SESSION_CANCEL, trial party, platform doors, dispute); cancel codes (in progress, delivered, quote changed, refund window, cancel-door codes); class session codes (not cancellable, make-up window, exists, not skippable, exit); trial booking codes |
 | [03-error-codes-scheduling-checkout-events.md](03-error-codes-scheduling-checkout-events.md) | UX-45 – UX-77 | 33 | Event-time and re-time codes; allocator `VALIDATION_ERROR` vs the inbox's sentence; conflicts, locks, timeouts, shortage, idempotency; host and org allocate refusals; feasibility; `NOT_PLACEABLE`'s two meanings; checkout slot codes; plan start; seats, enrolment, waitlist; request caps and leads; self-booking; org checkout; availability contract; grid endpoint; platform refusals; generic fallbacks; reminders |
 | [04-missed-opportunities.md](04-missed-opportunities.md) | UX-78 – UX-87 | 10 | Checklists: expert page, checkout, allocate, reschedule, cancel, timings and moves, appointment detail, inbox and Home, money, plan editors and availability |
-| [05-a11y-viewports-states.md](05-a11y-viewports-states.md) | UX-88 – UX-100 | 13 | Grid keyboard beyond HM-48; `SingleSessionPicker`; pattern scheduler; dialog focus; checkout; toasts; colour-only grid states; badges; four viewports; zoom and text spacing; loading, empty, error; focus after navigation; reduced motion |
+| [05-a11y-viewports-states.md](05-a11y-viewports-states.md) | UX-88 – UX-100 | 13 | Grid keyboard beyond HM-48; `SingleTimePicker` and the taken-times disclosure; pattern scheduler; dialog focus; checkout; toasts; colour-only grid states; badges; four viewports; zoom and text spacing; loading, empty, error; focus after navigation; reduced motion |
 
 Total: 100 cases.
 

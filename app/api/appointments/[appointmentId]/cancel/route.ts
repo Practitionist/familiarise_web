@@ -52,6 +52,7 @@ import { creditStillUsedPaise } from "@/lib/payments/operations/credit-plan-retu
 import {
   isFreeCreditIntent,
   isInternalFundedIntent,
+  isPriceFreePayment,
   type FundingRail,
 } from "@/lib/payments/funding-rail";
 import {
@@ -479,21 +480,17 @@ type AttendeesByRail = {
   payerOf: Map<string, string>;
 };
 
-/**
- * #1780 R-3 — every attendee of a group event, sorted by how their seat was
- * funded: a paid seat by its payment's rail, a seat with no payment as free.
- * Read off the seats as well as the payments, so a free seat is not skipped.
- */
-/** A seat still held under a SUCCEEDED payment, read on the cancel's own transaction. */
-async function hasPaidLiveSeat(
+/** A buyer seat that is confirmed, or held under a SUCCEEDED payment, read on the cancel's own transaction. */
+async function hasConfirmedSeat(
   tx: Tx,
   appointmentId: string,
 ): Promise<boolean> {
   const seats = await tx.appointmentParticipant.findMany({
     where: { appointmentId, role: "CONSULTEE", ...liveParticipant() },
-    select: { userId: true },
+    select: { userId: true, status: true },
   });
   if (seats.length === 0) return false;
+  if (seats.some((seat) => seat.status !== "HELD")) return true;
   const paid = await tx.payment.count({
     where: {
       appointmentId,
@@ -504,13 +501,24 @@ async function hasPaidLiveSeat(
   return paid > 0;
 }
 
+/**
+ * Every attendee of a group event, sorted by how their seat was
+ * funded: a paid seat by its payment's rail, a seat with no payment as free.
+ * Read off the seats as well as the payments, so a free seat is not skipped.
+ */
 async function eventAttendeesByRail(
   appointmentId: string,
 ): Promise<AttendeesByRail> {
   const [payments, seats] = await Promise.all([
     prisma.payment.findMany({
       where: { appointmentId, ...LIVE_SUCCEEDED_PAYMENT_WHERE },
-      select: { id: true, userId: true, paymentIntent: true },
+      select: {
+        id: true,
+        userId: true,
+        paymentIntent: true,
+        amount: true,
+        originalAmount: true,
+      },
     }),
     prisma.appointmentParticipant.findMany({
       where: { appointmentId, role: "CONSULTEE", ...liveParticipant() },
@@ -530,6 +538,14 @@ async function eventAttendeesByRail(
   for (const p of payments) {
     // A seat given back earlier was already told (and refunded) when it left.
     if (!seated.has(p.userId)) continue;
+    if (
+      isPriceFreePayment({
+        paymentIntent: p.paymentIntent,
+        amountPaise: Number(p.amount),
+        listPricePaise: Number(p.originalAmount),
+      })
+    )
+      continue;
     paid.add(p.userId);
     out.payerOf.set(p.id, p.userId);
     if (isFreeCreditIntent(p.paymentIntent)) out.credits.push(p.userId);
@@ -1045,9 +1061,10 @@ export async function POST(
               }
 
               // The refund this cancel owes commits with the cancel, so a death
-              // before the refund leaves a marker the retry sweep drives.
+              // before the refund leaves a marker the retry sweep drives. A free
+              // booking owes none: no refund record and no refund notice.
               const owed =
-                quote && paidPayment
+                quote && paidPayment && !isPriceFreePayment(paidPayment)
                   ? cancelRefundOwed(
                       appointmentId,
                       paidPayment.id,
@@ -1096,14 +1113,15 @@ export async function POST(
                   now: cancellationData.cancelledAt,
                 });
               }
-              // An expert's own cancel of a paid booking or paid live seat records a
-              // strike; strikes are private to the expert and to operations.
+              // An expert's own cancel of a confirmed booking or seat, free or paid,
+              // records a strike; strikes are private to the expert and to operations.
               if (
                 isExpertSideCancel &&
                 hostProfileId &&
                 (paidPayment !== null ||
+                  observedStatus === "APPROVED" ||
                   (eventKind !== null &&
-                    (await hasPaidLiveSeat(tx, appointmentId))))
+                    (await hasConfirmedSeat(tx, appointmentId))))
               ) {
                 const cancelledSessions =
                   await tx.appointmentOccurrence.findMany({

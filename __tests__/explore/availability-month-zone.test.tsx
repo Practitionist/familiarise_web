@@ -72,7 +72,8 @@ describe("month marks in the display zone", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const url = String(fetchMock.mock.calls[0][0]);
     expect(url).toContain("startDateInUtc=2026-09-30T18:30:00.000Z");
-    expect(url).toContain("endDateInUtc=2026-10-31T18:30:00.000Z");
+    // Twelve hours past the month, for a session that crosses its last midnight.
+    expect(url).toContain("endDateInUtc=2026-11-01T06:30:00.000Z");
   });
 });
 

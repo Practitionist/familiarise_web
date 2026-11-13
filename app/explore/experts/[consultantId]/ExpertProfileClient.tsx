@@ -2,20 +2,20 @@
 
 import { useToast } from "@/components/ui/use-toast";
 import type { ConsultantDetailData } from "./types";
-import { TIntervalTiming } from "@/types/slots";
+import type { SingleTimeValue } from "@/components/scheduling/SingleTimePicker";
 import { TUserWithProfessionalBackground } from "@/types/user";
 import type {
   TPublicConsultantReview,
   TReviewTrackPresence,
 } from "@/types/review";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
-import { differenceInCalendarDays } from "date-fns";
 import { useSession } from "@/lib/auth-client";
+import { consultationCheckoutHref } from "@/lib/booking/picked-time";
 import { AboutSection } from "./components/AboutSection";
 import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
 import { DigitalProductsSection } from "./components/DigitalProductsSection";
@@ -30,17 +30,10 @@ import {
 import { ReviewsSection } from "./components/ReviewsSection";
 import { ProfileReviewComposer } from "@/components/reviews/ProfileReviewComposer";
 import { useNowTick } from "@/hooks/use-now-tick";
-import { calendarDateKey, calendarDayOf } from "@/lib/time/grid-zone";
-import { useDisplayZone, type DisplayZone } from "@/lib/time/use-display-zone";
-import {
-  AVAILABILITY_READ_FAILED_MESSAGE,
-  invalidateAvailability,
-  useAvailabilityMonth,
-  useAvailabilityWindow,
-} from "@/lib/scheduling/use-availability-window";
-import { dayState, isSelectableDay } from "./day-state";
+import { calendarDayOf } from "@/lib/time/grid-zone";
+import { useDisplayZone } from "@/lib/time/use-display-zone";
+import { invalidateAvailability } from "@/lib/scheduling/use-availability-window";
 import { useNextAvailableLabel } from "./use-next-available";
-import { zonedWeekWindow } from "./utils/time";
 import { cn } from "@/utils/tailwind";
 
 interface ExpertProfileClientProps {
@@ -48,8 +41,6 @@ interface ExpertProfileClientProps {
   userDetails: TUserWithProfessionalBackground;
   reviews: TPublicConsultantReview[];
   reviewTracks: TReviewTrackPresence;
-  /** Strikes in the last 90 days, only when they reach the public threshold. */
-  reliabilityStrikes: number | null;
   digitalProducts: PublicProductCard[];
 }
 
@@ -58,7 +49,6 @@ export function ExpertProfileClient({
   userDetails,
   reviews,
   reviewTracks,
-  reliabilityStrikes,
   digitalProducts,
 }: ExpertProfileClientProps) {
   const searchParams = useSearchParams();
@@ -69,11 +59,6 @@ export function ExpertProfileClient({
   const pricingRef = useRef<HTMLDivElement>(null);
   const [autoOpenTrial, setAutoOpenTrial] = useState(false);
 
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
-  const [selectedSlot, setSelectedSlot] = useState<TIntervalTiming | null>(
-    null,
-  );
   const [selectedDuration, setSelectedDuration] = useState<number>(() =>
     consultantDetails.consultationPlans.length > 0
       ? Math.min(
@@ -85,69 +70,24 @@ export function ExpertProfileClient({
   // Every time on the page is drawn in the VIEWER's profile zone, switchable
   // to the device zone. Reads wait for the session and the device zone so the
   // first request is already in the right zone.
-  const zone = useDisplayZone(session?.user?.timezone ?? null);
+  const displayZone = useDisplayZone(session?.user?.timezone ?? null);
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   const zoneReady = mounted && !isSessionPending;
-  const timezone = zone.zone;
+  const timezone = displayZone.zone;
   const now = useNowTick(60_000);
-  const { toggle: toggleZone } = zone;
-  const switchZone = useCallback(() => {
-    toggleZone();
-    setSelectedSlot(null);
-  }, [toggleZone]);
-  const displayZone = useMemo<DisplayZone>(
-    () => ({
-      zone: zone.zone,
-      usingDeviceZone: zone.usingDeviceZone,
-      canSwitch: zone.canSwitch,
-      toggle: switchZone,
-    }),
-    [zone.zone, zone.usingDeviceZone, zone.canSwitch, switchZone],
-  );
 
   const consulteeUserId =
     session?.user?.id && session.user.id !== consultantDetails.userId
       ? session.user.id
       : undefined;
 
-  // #1591 J1-P1-04 — the grid answer is `private, max-age=30`, so a return
-  // after a checkout 409 re-read the stale green cell. Entered with
-  // `?conflict=1`, or restored from the back/forward cache, the next fetch
-  // bypasses the browser cache once.
+  // The grid answer is `private, max-age=30`, so a return after a checkout
+  // 409 would re-read the stale free time. Entered with `?conflict=1`, or
+  // restored from the back/forward cache, the next read skips the cache once.
   const bypassCacheOnce = useRef(searchParams.get("conflict") === "1");
 
-  // The week containing the selected day is read once per week window; day
-  // clicks inside a loaded week cost zero requests (staleTime 30s).
-  // Calendar dates (local fields) on both sides: today is today in the
-  // display zone, and seven calendar days are a week across DST.
   const today = calendarDayOf(now, timezone);
-  const selectedWeekOffset = selectedDate
-    ? Math.max(0, Math.floor(differenceInCalendarDays(selectedDate, today) / 7))
-    : 0;
-  const pricingWeek = selectedDate
-    ? zonedWeekWindow(now, selectedWeekOffset, timezone)
-    : null;
-
-  const dayQuery = useAvailabilityWindow({
-    consultantId: consultantDetails?.id,
-    startUtc: pricingWeek?.start ?? null,
-    endUtc: pricingWeek?.end ?? null,
-    timezone: zoneReady ? timezone : null,
-    consulteeUserId,
-    bypassRef: bypassCacheOnce,
-  });
-
-  // #1785 L-4 — one read for the visible month drives the day marks. It is
-  // keyed on the month, so paging the calendar costs one request per month
-  // and re-opening the dialog on a loaded month costs none.
-  const monthQuery = useAvailabilityMonth({
-    consultantId: consultantDetails?.id,
-    monthStart: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1),
-    timezone: zoneReady ? timezone : null,
-    consulteeUserId,
-  });
-
   const nextAvailableLabel = useNextAvailableLabel({
     consultantId: consultantDetails?.id,
     today,
@@ -157,25 +97,6 @@ export function ExpertProfileClient({
     consulteeUserId,
     durationInHours: selectedDuration,
   });
-
-  const selectedDateKey =
-    selectedDate && zoneReady ? calendarDateKey(selectedDate) : null;
-  const slotTimings: TIntervalTiming[] =
-    (selectedDateKey && dayQuery.data?.[selectedDateKey]) || [];
-
-  // A failed background poll keeps the last good answer on screen, so only a
-  // read with nothing to show is worth a toast. The server's own text stays
-  // in the console (useAvailabilityWindow logs it).
-  const dayQueryHasData = dayQuery.data !== undefined;
-  useEffect(() => {
-    if (dayQuery.error && !dayQueryHasData) {
-      toast({
-        title: "Couldn't load the available times",
-        description: AVAILABILITY_READ_FAILED_MESSAGE,
-        variant: "destructive",
-      });
-    }
-  }, [dayQuery.error, dayQueryHasData, toast]);
 
   const refreshSlots = useCallback(
     () => invalidateAvailability(queryClient, consultantDetails?.id),
@@ -211,45 +132,18 @@ export function ExpertProfileClient({
   }, [refreshSlots]);
 
   const handleConsultationBooking = useCallback(
-    async (consultationPlanId: string) => {
-      if (!selectedSlot || !consultantDetails) {
-        toast({ title: "Pick a time first", variant: "destructive" });
-        return;
-      }
-
+    (consultationPlanId: string, pick: SingleTimeValue) => {
       const activePlan = consultantDetails.consultationPlans.find(
         (plan) => plan.id === consultationPlanId,
       );
-
       if (!activePlan) {
         toast({ title: "Consultation unavailable", variant: "destructive" });
         return;
       }
 
-      const params = new URLSearchParams();
-      const startsAt = new Date(selectedSlot.startsAt);
-      const endsAt = new Date(selectedSlot.endsAt);
-      if (selectedSlot.type === "WEEKLY") {
-        params.append(
-          "availabilityWindowWeeklyId",
-          selectedSlot.availabilityWindowId,
-        );
-      } else {
-        params.append(
-          "availabilityWindowCustomId",
-          selectedSlot.availabilityWindowId,
-        );
-      }
-      params.append("startsAt", startsAt.toISOString());
-      params.append("endsAt", endsAt.toISOString());
-
-      const checkoutUrl = `/checkout/plans/consultation/${activePlan.id}?${params.toString()}`;
-      // #booking-journey — route guests through sign-in EXPLICITLY, carrying
-      // the full checkout URL (plan + slot params) as the callback. Letting
-      // them hit /checkout first works only via a middleware 302 onto a
-      // generic sign-in page with no purchase context; doing it here keeps
-      // one full-page load out of the funnel and reads as intentional.
-      // SPA navigation (router.push) so the client bundle stays warm.
+      const checkoutUrl = consultationCheckoutHref(activePlan.id, pick);
+      // Guests go through sign-in explicitly, carrying the full checkout URL
+      // (plan and time) as the callback, so the purchase resumes untouched.
       if (!session?.user?.id) {
         router.push(
           `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`,
@@ -258,7 +152,7 @@ export function ExpertProfileClient({
       }
       router.push(checkoutUrl);
     },
-    [selectedSlot, consultantDetails, session?.user?.id, router, toast],
+    [consultantDetails, session?.user?.id, router, toast],
   );
 
   const handleSubscriptionBooking = useCallback(
@@ -314,125 +208,6 @@ export function ExpertProfileClient({
     [consultantDetails, session?.user?.id, router, toast],
   );
 
-  // Day cells carry their state without colour (#1785 L-4): a ring and a bold
-  // number on a day with a bookable time, plain grey and disabled on a day
-  // without, dimmed and disabled in the past, a dot under today. The marks
-  // come from the month read; while it loads the cells pulse, and if it
-  // fails the cells stay plain and clickable under a one-line notice.
-  const renderCalendar = useCallback(() => {
-    const daysInMonth = new Date(
-      currentDate.getFullYear(),
-      currentDate.getMonth() + 1,
-      0,
-    ).getDate();
-    const firstDayOfMonth = new Date(
-      currentDate.getFullYear(),
-      currentDate.getMonth(),
-      1,
-    ).getDay();
-
-    const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
-    const days = [];
-    const marks = monthQuery.data ?? null;
-    const marksLoading = monthQuery.isPending && zoneReady;
-    const selectedKey = selectedDate ? calendarDateKey(selectedDate) : null;
-
-    for (let i = 0; i < adjustedFirstDay; i++) {
-      days.push(
-        <div key={`empty-${i}`} className="aspect-square w-full"></div>,
-      );
-    }
-
-    for (let i = 1; i <= daysInMonth; i++) {
-      // A calendar date: only its local fields are read, and the grid keys
-      // its days `yyyy-MM-dd` in the display zone.
-      const date = new Date(
-        currentDate.getFullYear(),
-        currentDate.getMonth(),
-        i,
-        12,
-      );
-      const key = calendarDateKey(date);
-      const isSelected = selectedKey === key;
-      const state = dayState(
-        date,
-        now,
-        marks ? (marks[key] ?? []) : null,
-        timezone,
-        selectedDuration,
-      );
-      const isToday = state.startsWith("today");
-      const selectable = isSelectableDay(state);
-      const bookable = state === "bookable" || state === "today+bookable";
-
-      days.push(
-        <button
-          key={i}
-          type="button"
-          disabled={!selectable}
-          aria-pressed={isSelected}
-          aria-label={`${date.toLocaleDateString(undefined, { day: "numeric", month: "long" })}${isToday ? ", today" : ""}${bookable ? ", times available" : ""}`}
-          className={cn(
-            // A fluid square, capped at the old 44px: seven fixed 40–44px cells
-            // do not fit a phone-width dialog, so they overflowed it.
-            "relative mx-auto flex aspect-square w-full max-w-[2.75rem] items-center justify-center rounded-full text-sm transition-all duration-200 sm:text-base",
-            isSelected && "bg-white font-medium text-zinc-900 shadow-md",
-            !isSelected &&
-              bookable &&
-              "ring-1 ring-white/40 font-semibold text-zinc-100 hover:bg-zinc-700/60",
-            !isSelected &&
-              (state === "unknown" || state === "today+unknown") &&
-              "font-medium text-zinc-300 hover:bg-zinc-700/60",
-            !isSelected &&
-              (state === "none" || state === "today+none") &&
-              "text-zinc-500",
-            state === "past" && "opacity-40 text-zinc-500",
-            marksLoading &&
-              state !== "past" &&
-              !isSelected &&
-              "animate-pulse ring-1 ring-white/10",
-          )}
-          onClick={() => {
-            setSelectedDate(date);
-            setSelectedSlot(null);
-          }}
-        >
-          {i}
-          {isToday && (
-            <span
-              aria-hidden="true"
-              className="absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-current"
-            />
-          )}
-        </button>,
-      );
-    }
-
-    if (monthQuery.isError) {
-      days.push(
-        <p
-          key="marks-error"
-          role="status"
-          className="col-span-7 pt-2 text-center text-xs text-zinc-500"
-        >
-          Couldn&apos;t load availability marks — pick a day to see its times.
-        </p>,
-      );
-    }
-
-    return days;
-  }, [
-    currentDate,
-    selectedDate,
-    timezone,
-    now,
-    zoneReady,
-    selectedDuration,
-    monthQuery.data,
-    monthQuery.isPending,
-    monthQuery.isError,
-  ]);
-
   return (
     <main className="bg-muted">
       {/* Back Navigation */}
@@ -477,7 +252,6 @@ export function ExpertProfileClient({
                 userDetails={userDetails}
                 consultantDetails={consultantDetails}
                 reviewCount={consultantDetails._count.reviews}
-                reliabilityStrikes={reliabilityStrikes}
               />
 
               <div id="about" className={PROFILE_SECTION_SCROLL_MARGIN}>
@@ -512,16 +286,9 @@ export function ExpertProfileClient({
               consultantDetails={consultantDetails}
               handleConsultationBooking={handleConsultationBooking}
               handleSubscriptionBooking={handleSubscriptionBooking}
-              selectedDate={selectedDate}
-              setSelectedDate={setSelectedDate}
-              currentDate={currentDate}
-              setCurrentDate={setCurrentDate}
-              renderCalendar={renderCalendar}
-              slotTimings={slotTimings}
-              slotsReady={dayQueryHasData && selectedDateKey !== null}
-              selectedSlot={selectedSlot}
-              setSelectedSlot={setSelectedSlot}
               displayZone={displayZone}
+              consulteeUserId={consulteeUserId}
+              bypassRef={bypassCacheOnce}
               autoOpenTrial={autoOpenTrial}
               onRefreshSlots={refreshSlots}
               onDurationChange={setSelectedDuration}
