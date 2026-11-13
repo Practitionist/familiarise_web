@@ -753,6 +753,25 @@ export function AppointmentDetailClient({
     stickyCta = <RowPrimaryAction action={action} size="default" />;
   }
 
+  // A class session the host cancelled stays listed with its make-up state.
+  const classRows = detail.appointment.class
+    ? detail.appointment.occurrences
+    : [];
+  const classCancelledNote = (session: { occurrenceId: string }) => {
+    const row = classRows.find((r) => r.id === session.occurrenceId);
+    if (!row?.hostCancelledAt || row.deletedAt) return null;
+    if (row.seatsSettledAt) return "Cancelled by the host · refunded instead";
+    const makeUp = classRows.find(
+      (r) =>
+        r.ordinal === row.ordinal &&
+        r.id !== row.id &&
+        !isDeadOccurrence(r) &&
+        r.completionStatus !== "VOIDED",
+    );
+    return makeUp
+      ? `Cancelled by the host · make-up ${format(new Date(makeUp.startsAt), "EEE d MMM, h:mm a")}`
+      : "Cancelled by the host · make-up owed";
+  };
   // The plan's weekly count, so the schedule can call out a short week.
   const sessionsPerWeek =
     detail.appointment.subscription?.sessionsPerWeek ??
@@ -873,6 +892,7 @@ export function AppointmentDetailClient({
           ]}
           sessionsPerWeek={sessionsPerWeek}
           footnote={returnActions.footnote}
+          cancelledNote={classCancelledNote}
         />
       ) : (
         <p className="text-sm text-muted-foreground">
