@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import {
   PARTY_PROFILE_SELECT,
   PROFILE_OWNER_SELECT,
@@ -172,7 +173,9 @@ export async function PUT(
       );
     }
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
 
     // Validate input with Zod schema (partial for updates)
     const validationResult = SubscriptionPlanSchema.partial().safeParse(body);

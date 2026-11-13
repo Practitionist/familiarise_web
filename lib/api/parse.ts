@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { z } from "zod";
 
 /**
@@ -34,22 +34,41 @@ export function parseRequestBody<S extends z.ZodTypeAny>(
  */
 export async function parseJsonRequest<S extends z.ZodTypeAny>(
   schema: S,
-  req: Pick<NextRequest, "json">,
+  req: Pick<Request, "json">,
   message = "Invalid request body",
   errorExtra?: Record<string, unknown>,
 ): Promise<
   { data: z.infer<S>; error?: never } | { data?: never; error: NextResponse }
 > {
-  let body: unknown;
+  const read = await readJsonBody(req);
+  if (read.error) return { error: read.error };
+  return parseRequestBody(schema, read.body, message, errorExtra);
+}
+
+/** What `Request.json()` resolves to; callers validate it before use. */
+type JsonBody = Awaited<ReturnType<Request["json"]>>;
+
+/**
+ * The one JSON body reader: malformed JSON answers 400 here, never a 500 the
+ * route's catch would report to Sentry.
+ */
+export async function readJsonBody(
+  req: Pick<Request, "json">,
+): Promise<
+  { body: JsonBody; error?: never } | { body?: never; error: NextResponse }
+> {
   try {
-    body = await req.json();
+    return { body: await req.json() };
   } catch {
     return {
       error: NextResponse.json(
-        { error: "Malformed JSON body" },
+        {
+          error:
+            "This request couldn't be read. Reload the page and try again.",
+          code: "MALFORMED_JSON",
+        },
         { status: 400 },
       ),
     };
   }
-  return parseRequestBody(schema, body, message, errorExtra);
 }

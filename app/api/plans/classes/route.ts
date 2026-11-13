@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { CollaboratorStatus, PlanEmailSupport, Prisma } from "@prisma/client";
@@ -92,7 +93,9 @@ export async function POST(request: NextRequest) {
     if (authResult.error) return authResult.error;
     const { session } = authResult;
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     const {
       title,
       description,

@@ -9,6 +9,7 @@
  * 2. ScheduleValidationService - Validates business rules (conflicts, availability, etc.)
  */
 
+import { readJsonBody } from "@/lib/api/parse";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
@@ -77,7 +78,9 @@ export async function POST(
       eventIdSchema.parse(webinarId);
 
       // Validate request body and get typed data
-      const body = validationRequestSchema.parse(await request.json());
+      const read = await readJsonBody(request);
+      if (read.error) return read.error;
+      const body = validationRequestSchema.parse(read.body);
 
       // Fetch webinar with necessary relations
       const webinar = await prisma.webinar.findUnique({

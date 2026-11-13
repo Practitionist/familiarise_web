@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import prisma from "@/lib/prisma";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
@@ -106,7 +107,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     const { consultantProfileId, ...planData } = body;
 
     if (!consultantProfileId) {

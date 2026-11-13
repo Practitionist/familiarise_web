@@ -10,6 +10,7 @@
  * 3. SubscriptionValidationService - Validates subscription-specific rules (cycle window and cap, plan total)
  */
 
+import { readJsonBody } from "@/lib/api/parse";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
@@ -95,7 +96,9 @@ export async function POST(
       eventIdSchema.parse(subscriptionId);
 
       // Validate request body and get typed data
-      const body = validationRequestSchema.parse(await request.json());
+      const read = await readJsonBody(request);
+      if (read.error) return read.error;
+      const body = validationRequestSchema.parse(read.body);
 
       // Fetch subscription with necessary relations
       const subscription = await prisma.subscription.findUnique({

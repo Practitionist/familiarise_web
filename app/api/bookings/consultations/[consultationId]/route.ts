@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import * as Sentry from "@sentry/nextjs";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { assertNoLiveCheckoutHold } from "@/lib/booking/request-cohort";
@@ -203,7 +204,9 @@ export async function PATCH(
     const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
     if (rl) return rl;
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     const { consultationId } = await params;
     const malformedId = refuseMalformedEventId(consultationId);
     if (malformedId) return malformedId;

@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import * as Sentry from "@sentry/nextjs";
 import { checkoutSchema } from "@/schemas/checkout";
 import { handleCheckout } from "@/lib/payments/checkout";
@@ -68,7 +69,9 @@ export async function POST(req: NextRequest) {
     if (rl) return rl;
 
     // Validate request body
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
     const validatedData = checkoutSchema.parse(body);
 
     // Only allow mock payments in development — prevent client-side bypass in production

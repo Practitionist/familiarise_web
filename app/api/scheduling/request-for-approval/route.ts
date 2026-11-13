@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import { NextRequest, NextResponse } from "next/server";
 import { assertRequestLeadFits } from "@/lib/booking/lead-time";
 import prisma from "@/lib/prisma";
@@ -166,7 +167,9 @@ export async function POST(req: NextRequest) {
     }
     const idempotencyKey = keyResult?.data ?? null;
 
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
     const parseResult = RequestForApprovalSchema.safeParse(body);
     if (!parseResult.success) {
       // #1583 E-P1-03 — a typed refusal (grid / lead time) rides `params.code`.

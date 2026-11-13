@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireApiAuth } from "@/lib/auth-helpers";
@@ -80,7 +81,9 @@ export async function POST(
       `${session.user.id}:${appointmentId}`,
     );
     if (apptLimited) return apptLimited;
-    const parsed = RespondSchema.safeParse(await request.json());
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const parsed = RespondSchema.safeParse(read.body);
     if (!parsed.success) {
       return NextResponse.json(
         { error: 'action must be "accept" or "decline"' },

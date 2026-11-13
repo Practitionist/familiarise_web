@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import { isStaffNonParty, publicRequester } from "@/lib/booking/list-selects";
 import prisma from "@/lib/prisma";
 import { blocksNewTrialRequest } from "@/lib/trials/eligibility";
@@ -307,7 +308,9 @@ export async function POST(request: NextRequest) {
     if (authResult.error) return authResult.error;
     const { session } = authResult;
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     const result = CreateTrialSchema.safeParse(body);
     if (!result.success) {
       return NextResponse.json(
