@@ -145,7 +145,8 @@ currently hold:
   holding a removed value: on 2026-11-13 no row held one (the four webinars,
   three classes and two trials that did were moved first), and the branch writes
   none. Production keeps creating trials as `PENDING` until the release, so
-  repeat the zero-row read immediately before the promotion and before the push. The rest of each swap (the `BEGIN`/`COMMIT` wrapper,
+  the read below runs before the merge, before the promotion and before the
+  push. The rest of each swap (the `BEGIN`/`COMMIT` wrapper,
   `CREATE TYPE …_new`, the column retypes and renames, and the `Trial.status`
   default drop) is listed there too, so the daily drift check stays green while
   the swap waits. Move the four `DROP TYPE` entries to
@@ -155,6 +156,29 @@ currently hold:
   their enum, plus six indexes the schema no longer declares** (13 statements).
   No schema declares them and no code reads them, so they are dead and a push
   may remove them.
+
+#### Rows holding a removed value
+
+Run this read (Supabase MCP `execute_sql` is read-only and needs no approval)
+before the lifecycle PR merges to `dev`, before the `dev` → `prod` promotion
+and before the push that drops the enum values. It names the mapped tables and
+columns (`Consultation` and `Subscription` store the status as `requestStatus`):
+
+```sql
+SELECT 'Trial' AS "table", "id", "status"::text AS "value" FROM "Trial" WHERE "status"::text IN ('PENDING', 'REJECTED')
+UNION ALL SELECT 'Consultation', "id", "requestStatus"::text FROM "Consultation" WHERE "requestStatus"::text = 'SCHEDULED'
+UNION ALL SELECT 'Subscription', "id", "requestStatus"::text FROM "Subscription" WHERE "requestStatus"::text = 'SCHEDULED'
+UNION ALL SELECT 'Webinar', "id", "status"::text FROM "Webinar" WHERE "status"::text = 'IN_PROGRESS'
+UNION ALL SELECT 'Class', "id", "status"::text FROM "Class" WHERE "status"::text = 'IN_PROGRESS';
+```
+
+It returned no rows on 2026-11-13. A row is never edited by hand. A `PENDING`
+trial is cancelled by an operator through `DELETE /api/trials/[trialId]` on the
+production deploy, which still understands it and refunds a paid one in full
+(an operator's cancel counts as the expert's side). Any other row stops the
+step for the owner: a `REJECTED` trial is already ended and has no door, and no
+cancel step is written for the rest
+([decision 8](../decisions/2026-11-13-product-lifecycles.md#decisions)).
 
 The reconcile push is therefore sequenced behind the `dev` → `prod` promotion:
 move the 20 entries from `knownDivergences` to `destructiveStatementsAllowed`,
