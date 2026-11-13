@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/dashboard/DataCard";
 import { SettingsSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { ProfileSection } from "../sections/ProfileSection";
 import { SettingsFormActions } from "../SettingsFormActions";
+import { AvailabilitySaveConfirm } from "../AvailabilitySaveConfirm";
 import { useConsultantSettingsForm } from "../use-consultant-settings-form";
 
 /** The Profile section's form — the domain lists ride in with `content`. */
@@ -65,6 +66,12 @@ export function ProfileForm({
         </CardContent>
       </Card>
       <SettingsFormActions isSaving={form.isSaving} onReset={form.reset} />
+      <AvailabilitySaveConfirm
+        consultantId={consultant.id}
+        preview={form.pendingSave?.preview ?? null}
+        onConfirm={form.confirmPendingSave}
+        onCancel={form.cancelPendingSave}
+      />
     </form>
   );
 }

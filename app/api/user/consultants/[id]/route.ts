@@ -41,6 +41,7 @@ import {
 } from "@/lib/scheduling/availability-contract";
 import {
   NONE_UNCOVERED,
+  previewNewlyUncovered,
   settleAvailabilityWrite,
   type UncoveredUpcoming,
 } from "@/lib/scheduling/uncovered-upcoming";
@@ -51,7 +52,10 @@ import {
   WeeklyOffsetConflictError,
   weeklyLocalColumnsForSave,
 } from "@/lib/scheduling/weeklyUtcOffset";
-import { isKnownTimeZone } from "@/utils/schedule/weekly-projection";
+import {
+  isKnownTimeZone,
+  partitionWeeklyRows,
+} from "@/utils/schedule/weekly-projection";
 // Zod schema for UUID validation
 const uuidSchema = z.string().uuid();
 
@@ -518,6 +522,26 @@ export async function PUT(
         );
       }
       mergedCustom = mergeAdjacentCustomRows(customSlotData);
+    }
+
+    // The settings form asks first which bookings the new hours would leave
+    // outside, and how many custom dates a weekly save removes; nothing is written.
+    if (request.nextUrl.searchParams.get("preview") === "availability") {
+      return NextResponse.json({
+        preview: await previewNewlyUncovered(prisma, id, {
+          scheduleType,
+          weeklyRows: partitionWeeklyRows(
+            mergedWeekly.map((row) => ({
+              timezone: row.timezone ?? null,
+              localStartDay: row.localStartDay ?? null,
+              localStartMinutes: row.localStartMinutes ?? null,
+              localEndDay: row.localEndDay ?? null,
+              localEndMinutes: row.localEndMinutes ?? null,
+            })),
+          ).usable,
+          customRows: mergedCustom,
+        }),
+      });
     }
 
     class SwitchBlockedInTx extends Error {

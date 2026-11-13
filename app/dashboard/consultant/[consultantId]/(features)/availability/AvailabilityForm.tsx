@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { SettingsSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { AvailabilitySection } from "../settings/sections/AvailabilitySection";
 import { SettingsFormActions } from "../settings/SettingsFormActions";
+import { AvailabilitySaveConfirm } from "../settings/AvailabilitySaveConfirm";
 import { useConsultantSettingsForm } from "../settings/use-consultant-settings-form";
 
 /**
@@ -47,6 +48,12 @@ export function AvailabilityForm({
         </CardContent>
       </Card>
       <SettingsFormActions isSaving={form.isSaving} onReset={form.reset} />
+      <AvailabilitySaveConfirm
+        consultantId={consultant.id}
+        preview={form.pendingSave?.preview ?? null}
+        onConfirm={form.confirmPendingSave}
+        onCancel={form.cancelPendingSave}
+      />
     </form>
   );
 }

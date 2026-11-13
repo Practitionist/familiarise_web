@@ -34,6 +34,12 @@ import {
 } from "./settings";
 import type { Option } from "./sections/ProfileSection";
 
+/** What a save would change under live bookings, shown before it runs. */
+export interface AvailabilitySavePreview {
+  sessions: { appointmentId: string; startsAt: string; held: boolean }[];
+  customDatesRemoved: number;
+}
+
 /**
  * Which extra reads a section needs on top of the profile it was given.
  * `content` is the domain/sub-domain/tag lists the Profile section renders;
@@ -70,6 +76,10 @@ export function useConsultantSettingsForm(
     profileTimezone ?? timezone ?? "UTC",
   );
   const [isSaving, setIsSaving] = useState(false);
+  const [pendingSave, setPendingSave] = useState<{
+    payload: Record<string, unknown>;
+    preview: AvailabilitySavePreview;
+  } | null>(null);
   const [isContentLoading, setIsContentLoading] = useState(content);
   const [contentError, setContentError] = useState(false);
   const [weeklySlots, setWeeklySlots] = useState<SlotsType>({});
@@ -432,82 +442,127 @@ export function useConsultantSettingsForm(
         offeringFormats: formData.offeringFormats || [],
       };
 
-      const response = await fetch(`/api/user/consultants/${consultant.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updatedData),
-      });
-
-      // The route answers validation refusals as 400s with a sentence; dropping
-      // the body turned each into a captured fault and a blank toast (FAMILIARISE_WEB-2T).
-      const saved = (await requireJsonResponse(
-        response,
-        "Failed to update settings",
-      )) as {
-        uncoveredUpcoming?: {
-          count: number;
-          appointmentIds: string[];
-          awaitingConfirmation?: number;
-        };
-      };
-
-      const updatedResponse = await fetch(
-        `/api/user/consultants/${consultant.id}`,
+      // Ask first when the new hours leave bookings outside them or a weekly
+      // save would remove custom dates; the save waits for the confirm.
+      const previewResponse = await fetch(
+        `/api/user/consultants/${consultant.id}?preview=availability`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updatedData),
+        },
       );
-      if (updatedResponse.ok) {
-        const { data: updatedConsultant } = await updatedResponse.json();
-        setWeeklySlots(getInitialWeeklySlots(updatedConsultant));
-        setCustomSlots(
-          getInitialCustomSlots(updatedConsultant, timezone || "UTC"),
-        );
-        setFormData(getInitialFormData(updatedConsultant));
-        setScheduleType(updatedConsultant.scheduleType);
+      const { preview } = (await requireJsonResponse(
+        previewResponse,
+        "Failed to update settings",
+      )) as { preview: AvailabilitySavePreview };
+      if (preview.sessions.length > 0 || preview.customDatesRemoved > 0) {
+        setPendingSave({ payload: updatedData, preview });
+        return;
       }
-
-      // #1703 D4 — the Requests page reads the same query for its paused banner.
-      await queryClient.invalidateQueries({
-        queryKey: consultantSettingsQueryKey(consultant.id),
-      });
-
-      // A booking keeps its time when the hours shrink; say how many sit
-      // outside the new hours instead of refusing (docs/onboarding/03-availability-contract.md).
-      const uncovered = saved.uncoveredUpcoming?.count ?? 0;
-      const awaiting = saved.uncoveredUpcoming?.awaitingConfirmation ?? 0;
-      const awaitingNote =
-        awaiting > 0
-          ? ` ${awaiting} of them ${awaiting === 1 ? "is" : "are"} still awaiting payment or approval.`
-          : "";
-      toast({
-        title: "Settings updated",
-        description:
-          uncovered > 0
-            ? `Saved. ${uncovered} upcoming ${uncovered === 1 ? "session now falls" : "sessions now fall"} outside your published hours — they keep their time; reschedule or cancel from Appointments if needed.${awaitingNote}`
-            : "Your profile settings have been successfully updated.",
-      });
+      await save(updatedData);
     } catch (error) {
-      // formatSlotsForApi throws rather than degrading, so a slot-formatting
-      // regression lands here instead of shipping a short payload (#1125).
-      if (!isExpectedRefusal(error)) {
-        reportSentryError(error, {
-          subsystem: "consultants",
-          op: "ConsultantSettingsForm.save",
-          extra: { consultantId: consultant.id, scheduleType },
-        });
-      }
-      console.error("Error updating settings:", error);
-      toast({
-        title: "Error",
-        description: isExpectedRefusal(error)
-          ? userMessageFrom(error)
-          : "Failed to update settings. Please try again.",
-        variant: "destructive",
-      });
+      reportSaveFailure(error);
     } finally {
       setIsSaving(false);
     }
   };
 
+  /** The save the confirm dialog was holding. */
+  const confirmPendingSave = async () => {
+    if (!pendingSave) return;
+    const { payload } = pendingSave;
+    setPendingSave(null);
+    setIsSaving(true);
+    try {
+      await save(payload);
+    } catch (error) {
+      reportSaveFailure(error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const save = async (updatedData: Record<string, unknown>) => {
+    if (!consultant?.id) return;
+    const response = await fetch(`/api/user/consultants/${consultant.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updatedData),
+    });
+
+    // The route answers validation refusals as 400s with a sentence; dropping
+    // the body turned each into a captured fault and a blank toast.
+    const saved = (await requireJsonResponse(
+      response,
+      "Failed to update settings",
+    )) as {
+      uncoveredUpcoming?: {
+        count: number;
+        appointmentIds: string[];
+        awaitingConfirmation?: number;
+      };
+    };
+
+    const updatedResponse = await fetch(
+      `/api/user/consultants/${consultant.id}`,
+    );
+    if (updatedResponse.ok) {
+      const { data: updatedConsultant } = await updatedResponse.json();
+      setWeeklySlots(getInitialWeeklySlots(updatedConsultant));
+      setCustomSlots(
+        getInitialCustomSlots(updatedConsultant, timezone || "UTC"),
+      );
+      setFormData(getInitialFormData(updatedConsultant));
+      setScheduleType(updatedConsultant.scheduleType);
+    }
+
+    // The Requests page reads the same query for its paused banner.
+    await queryClient.invalidateQueries({
+      queryKey: consultantSettingsQueryKey(consultant.id),
+    });
+
+    // A booking keeps its time when the hours shrink; say how many sit
+    // outside the new hours instead of refusing (docs/onboarding/03-availability-contract.md).
+    const uncovered = saved.uncoveredUpcoming?.count ?? 0;
+    const awaiting = saved.uncoveredUpcoming?.awaitingConfirmation ?? 0;
+    const awaitingNote =
+      awaiting > 0
+        ? ` ${awaiting} of them ${awaiting === 1 ? "is" : "are"} still awaiting payment or approval.`
+        : "";
+    toast({
+      title: "Settings updated",
+      description:
+        uncovered > 0
+          ? `Saved. ${uncovered} upcoming ${uncovered === 1 ? "session now falls" : "sessions now fall"} outside your published hours — they keep their time; reschedule or cancel from Appointments if needed.${awaitingNote}`
+          : "Your profile settings have been successfully updated.",
+    });
+  };
+
+  const reportSaveFailure = (error: unknown) => {
+    // formatSlotsForApi throws rather than degrading, so a slot-formatting
+    // regression lands here instead of shipping a short payload.
+    if (!isExpectedRefusal(error)) {
+      reportSentryError(error, {
+        subsystem: "consultants",
+        op: "ConsultantSettingsForm.save",
+        extra: { consultantId: consultant?.id, scheduleType },
+      });
+    }
+    console.error("Error updating settings:", error);
+    toast({
+      title: "Error",
+      description: isExpectedRefusal(error)
+        ? userMessageFrom(error)
+        : "Failed to update settings. Please try again.",
+      variant: "destructive",
+    });
+  };
+
   return {
+    pendingSave,
+    confirmPendingSave,
+    cancelPendingSave: () => setPendingSave(null),
     timezoneLoading,
     browserTimezone: timezone,
     profileTimezone,
