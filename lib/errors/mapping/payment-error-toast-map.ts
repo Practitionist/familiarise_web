@@ -14,6 +14,7 @@ import {
   ErrorTypes,
   type ErrorType,
 } from "../classification/payment-error-classification";
+import { PLAN_CLIENTS_FULL_MESSAGE } from "@/schemas/plan-clients";
 
 // ============================================================================
 // Toast message definitions
@@ -197,8 +198,7 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
   },
   [ErrorTypes.PLAN_CLIENTS_FULL]: {
     title: "This Expert Is Fully Booked",
-    description:
-      "This expert isn't taking new mentorship clients right now. Pick another expert, or try again later. You have not been charged.",
+    description: PLAN_CLIENTS_FULL_MESSAGE,
   },
   [ErrorTypes.CURRENCY_UNSUPPORTED]: {
     title: "Currency Not Supported",

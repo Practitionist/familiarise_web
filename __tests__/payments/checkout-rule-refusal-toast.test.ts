@@ -6,6 +6,7 @@
 // gateway's "Payment Failed … contact your bank" fallback.
 
 import { createRazorpayCheckoutHandlers } from "@/app/checkout/plans/utils";
+import { PLAN_CLIENTS_FULL_MESSAGE } from "@/schemas/plan-clients";
 
 const toasts: { title?: unknown; description?: unknown }[] = [];
 const { onPaymentError } = createRazorpayCheckoutHandlers(((t: object) => {
@@ -25,7 +26,8 @@ it("a full expert gets its own fully-booked copy, with no raw code", () => {
   });
   const [toast] = toasts;
   expect(toast.title).toBe("This Expert Is Fully Booked");
-  expect(String(toast.description)).toContain("You have not been charged.");
+  // The same sentence the checkout banner and the server refusal use.
+  expect(toast.description).toBe(PLAN_CLIENTS_FULL_MESSAGE);
   expect(JSON.stringify(toast)).not.toMatch(/contact your bank|PLAN_CLIENTS/);
 });
 

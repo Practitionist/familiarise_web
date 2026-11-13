@@ -12,7 +12,10 @@ import {
 } from "../settings";
 import { useSaveBookingRequestSettings } from "../use-save-booking-request-settings";
 import { usePlanClients } from "../use-plan-clients";
-import { parsePlanClientLimitInput } from "@/schemas/plan-clients";
+import {
+  parsePlanClientLimitInput,
+  shownPlanClientLimit,
+} from "@/schemas/plan-clients";
 
 /** The saved limit as the input shows it: blank for no limit. */
 const limitText = (limit: number | null) =>
@@ -101,6 +104,7 @@ export function BookingRequestsForm({
             activePlanClients={planClients.data?.activePlanClients ?? null}
             limitDraft={limitDraft}
             limitError={limitCheck.ok ? null : limitCheck.error}
+            countLimit={shownPlanClientLimit(limitDraft, maxActivePlanClients)}
             onLimitDraftChange={onLimitDraftChange}
           />
         </CardContent>

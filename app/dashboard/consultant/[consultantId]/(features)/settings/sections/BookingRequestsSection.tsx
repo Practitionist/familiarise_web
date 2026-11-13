@@ -18,6 +18,8 @@ interface BookingRequestsSectionProps {
   /** The plan-client limit exactly as typed, and why it is refused (null when valid). */
   limitDraft: string;
   limitError: string | null;
+  /** The limit the count line names: a valid typed value, else the saved one. */
+  countLimit: number | null;
   onLimitDraftChange: (raw: string) => void;
 }
 
@@ -60,6 +62,7 @@ export function BookingRequestsSection({
   activePlanClients,
   limitDraft,
   limitError,
+  countLimit,
   onLimitDraftChange,
 }: Readonly<BookingRequestsSectionProps>) {
   return (
@@ -202,7 +205,7 @@ export function BookingRequestsSection({
         </p>
         {activePlanClients !== null && (
           <p className="text-sm font-medium" aria-live="polite">
-            {planClientsLine(activePlanClients, formData.maxActivePlanClients)}
+            {planClientsLine(activePlanClients, countLimit)}
           </p>
         )}
       </div>

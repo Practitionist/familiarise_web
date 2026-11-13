@@ -12,6 +12,7 @@ import type { Prisma } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import type { ReservedSessions } from "@/lib/booking/feasibility";
+import { PLAN_CLIENTS_FULL_MESSAGE } from "@/schemas/plan-clients";
 import {
   soldSessionMinutes,
   soldTermsOf,
@@ -220,9 +221,6 @@ export async function assertPlanClientRoom(
   );
   if (clients.includes(params.consulteeProfileId)) return;
   if (clients.length >= limit) {
-    throw new BookingRuleError(
-      "PLAN_CLIENTS_FULL",
-      "This expert's mentorship plans are fully booked right now. Pick another expert, or try again later. You have not been charged.",
-    );
+    throw new BookingRuleError("PLAN_CLIENTS_FULL", PLAN_CLIENTS_FULL_MESSAGE);
   }
 }

@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+/** The one sentence for a buyer the expert's plan-client limit turns away: refusal, toast and banner. */
+export const PLAN_CLIENTS_FULL_MESSAGE =
+  "This expert's mentorship plans are fully booked right now. Pick another expert, or try again later. You have not been charged.";
+
 /** The limit's accepted range; the ceiling only keeps a typo inside the Int column. */
 export const MAX_ACTIVE_PLAN_CLIENTS_RANGE = { min: 1, max: 500 } as const;
 
@@ -17,6 +21,15 @@ export const maxActivePlanClientsSchema = z
     message: `The limit can be at most 500. ${LIMIT_RULE}`,
   })
   .nullable();
+
+/** The limit the count line reads: what is typed when it is valid, else the saved one. */
+export function shownPlanClientLimit(
+  draft: string,
+  saved: number | null,
+): number | null {
+  const checked = parsePlanClientLimitInput(draft);
+  return checked.ok ? checked.value : saved;
+}
 
 /** What the expert typed, checked by the route's own schema: blank is no limit; never altered. */
 export function parsePlanClientLimitInput(

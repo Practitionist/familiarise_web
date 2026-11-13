@@ -38,7 +38,9 @@ import { buildDeadHoldFilter } from "@/utils/scheduling-engine/occupancyPolicy";
 import {
   maxActivePlanClientsSchema,
   parsePlanClientLimitInput,
+  shownPlanClientLimit,
 } from "@/schemas/plan-clients";
+import { subscriptionCheckoutBlocked } from "@/schemas/plan-feasibility";
 import { planClientsLine } from "@/app/dashboard/consultant/[consultantId]/(features)/settings/sections/BookingRequestsSection";
 
 const HOUR = 3_600_000;
@@ -211,6 +213,23 @@ describe("bound 2: an expert-set limit on active plan clients", () => {
     });
   });
 
+  it("checkout's pay button follows the server's per-viewer answer", () => {
+    const read = {
+      verdict: "ok" as const,
+      firstWeekPlaceable: 3,
+      sessionsPerWeek: 3,
+      notice: null,
+    };
+    expect(subscriptionCheckoutBlocked({ ...read, fullyBooked: true })).toBe(
+      true,
+    );
+    // An existing client is answered fullyBooked: false, so they can still pay.
+    expect(subscriptionCheckoutBlocked({ ...read, fullyBooked: false })).toBe(
+      false,
+    );
+    expect(subscriptionCheckoutBlocked(null)).toBe(false);
+  });
+
   it("validates the setting: a whole number of at least 1, or blank for none", () => {
     expect(maxActivePlanClientsSchema.safeParse(5).success).toBe(true);
     expect(maxActivePlanClientsSchema.safeParse(null).success).toBe(true);
@@ -229,6 +248,11 @@ describe("bound 2: an expert-set limit on active plan clients", () => {
         error: expect.stringContaining("whole number from 1 to 500"),
       });
     }
+    // The count line never follows a partial or refused entry.
+    expect(shownPlanClientLimit("501", 5)).toBe(5);
+    expect(shownPlanClientLimit("1e", 5)).toBe(5);
+    expect(shownPlanClientLimit("7", 5)).toBe(7);
+    expect(shownPlanClientLimit("", 5)).toBeNull();
     expect(planClientsLine(3, 5)).toBe("3 of 5 active plan clients");
     expect(planClientsLine(1, null)).toBe("1 active plan client");
   });

@@ -11,3 +11,10 @@ export const planFeasibilitySchema = z.object({
 });
 
 export type PlanFeasibility = z.infer<typeof planFeasibilitySchema>;
+
+/** Checkout's pay button is off only when the server says this viewer is turned away. */
+export function subscriptionCheckoutBlocked(
+  feasibility: PlanFeasibility | null,
+): boolean {
+  return feasibility?.fullyBooked === true;
+}

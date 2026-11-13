@@ -11,7 +11,11 @@ import {
   planPriceLabel,
 } from "@/lib/offerings/plan-length-copy";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
-import { planFeasibilitySchema } from "@/schemas/plan-feasibility";
+import {
+  planFeasibilitySchema,
+  subscriptionCheckoutBlocked,
+} from "@/schemas/plan-feasibility";
+import { PLAN_CLIENTS_FULL_MESSAGE } from "@/schemas/plan-clients";
 import {
   subscriptionSearchParamsSchema,
   type SubscriptionSearchParams,
@@ -236,9 +240,7 @@ export function useSubscriptionCheckout(
               role="alert"
               className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-foreground"
             >
-              This expert isn&apos;t taking new mentorship clients right now.
-              Pick another expert, or try again later. You have not been
-              charged.
+              {PLAN_CLIENTS_FULL_MESSAGE}
             </div>
           ) : feasibility?.firstWeekPlaceable === 0 ? (
             <div
@@ -357,7 +359,8 @@ export function useSubscriptionCheckout(
       </>
     ),
     checkoutPlanFields,
-    soldOut: false,
+    // The server's per-viewer answer: an existing client of the expert is never blocked.
+    soldOut: subscriptionCheckoutBlocked(feasibility),
     mockFlow: {
       kind: "direct",
       successTitle: "✅ Subscription Activated Successfully!",
