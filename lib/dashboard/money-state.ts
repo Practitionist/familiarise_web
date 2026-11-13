@@ -154,6 +154,23 @@ export type RefundInput = {
 
 export type DisputeInput = { status: string };
 
+/** One lifecycle edge; `by` is the side that wrote it, null for the system. */
+export type HistoryEdgeInput = {
+  fromStatus: string;
+  toStatus: string;
+  reason?: string | null;
+  by?: "CONSULTANT" | "REQUESTER" | "OTHER" | null;
+  createdAt?: Date | string | null;
+};
+
+/** An open reschedule: who proposed it, the first proposed and the original start. */
+export interface OpenRescheduleInput {
+  by: "CONSULTANT" | "REQUESTER";
+  proposedStartsAt: Date | string | null;
+  originalStartsAt: Date | string | null;
+  expiresAt: Date | string | null;
+}
+
 export interface BookingPresentationInput {
   appointmentType: string;
   /**
@@ -191,7 +208,13 @@ export interface BookingPresentationInput {
    * and `toStatus` without it cannot tell them apart, which is why the readers
    * widen their `where` as well as their `select` where a reason matters.
    */
-  history?: { fromStatus: string; toStatus: string; reason?: string | null }[];
+  history?: HistoryEdgeInput[];
+  /** How the booking began: a pay-first checkout hold or a submitted request. */
+  source?: string | null;
+  /** The open reschedule proposal; null when none is open. */
+  reschedule?: OpenRescheduleInput | null;
+  /** The viewer's own seat on a webinar or class; null for a host or a 1:1. */
+  seatStatus?: string | null;
   /** Plan price for the not-due arithmetic line; null when the read lacks it. */
   plan?: {
     pricePaise: bigint | number | string;

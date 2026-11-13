@@ -14,6 +14,7 @@ import {
 import { isSponsoredPayment } from "./payment-display";
 import { normalizeOccurrences } from "./normalize";
 import { seriesLedgerFrom } from "@/lib/booking/class-series";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import {
   requestHoldDeadline,
   type BookingPresentationInput,
@@ -205,10 +206,34 @@ export function toPresentationInput(
     sponsorOrgName: sponsored ? args.sponsorOrgName : null,
     holdExpiresAt,
     history: a.statusHistory,
+    source:
+      a.consultation?.bookingSource ?? a.subscription?.bookingSource ?? null,
+    reschedule: openReschedule(a),
+    seatStatus:
+      a.webinar || a.class
+        ? (a.participants.find(
+            (p) => p.userId === args.viewerId && p.role === "CONSULTEE",
+          )?.status ?? null)
+        : null,
     plan: planOf(a),
     names: args.names,
     entitlement: entitlementSummary(detailEntitlement(a)),
     series: classSeriesSummary(a),
+  };
+}
+
+/** The open proposal with the original start it would move; null when none is open. */
+function openReschedule(a: Detail): BookingPresentationInput["reschedule"] {
+  const open = a.rescheduleRequests[0];
+  if (!open) return null;
+  const original = normalizeOccurrences(a.occurrences).find(
+    (o) => !o.deletedAt && isReleasedForReschedule(o),
+  );
+  return {
+    by: open.initiatorRole === "CONSULTANT" ? "CONSULTANT" : "REQUESTER",
+    proposedStartsAt: open.proposedTimes[0]?.startsAt ?? null,
+    originalStartsAt: original?.startsAt ?? null,
+    expiresAt: open.expiresAt,
   };
 }
 
