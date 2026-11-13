@@ -22,6 +22,8 @@ import { CareerStage, BudgetPreference } from "@prisma/client";
 import { EducationSection } from "@/app/form/onboarding/components/experience/EducationSection";
 import type { Education as EducationForm } from "@/app/form/onboarding/components/experience/EducationSection";
 import { WorkExperienceSection } from "@/app/form/onboarding/components/experience/WorkExperienceSection";
+import { useUser } from "../../../UserContext";
+import { fetchWithReauth } from "@/lib/auth/reauth-client";
 import type { WorkExperience as WorkExperienceForm } from "@/app/form/onboarding/components/experience/WorkExperienceSection";
 
 interface LearningProfileFormProps {
@@ -46,6 +48,7 @@ export default function LearningProfileForm({
   consulteeId,
 }: Readonly<LearningProfileFormProps>) {
   const { toast } = useToast();
+  const { userDetails } = useUser();
   const [isSaving, setIsSaving] = React.useState(false);
 
   const settingsQuery = createConsulteeQueries(consulteeId).settings;
@@ -100,20 +103,18 @@ export default function LearningProfileForm({
         skillsToDevelop: consulteeData.skillsToDevelop ?? [],
         budgetPreference: consulteeData.budgetPreference ?? null,
       } satisfies ProfileFormData,
-      educationList: (user?.education ?? []).map(
-        (edu): EducationForm => ({
-          id: edu.id,
-          institution: edu.institution,
-          institutionDomain: edu.institutionDomain ?? undefined,
-          degree: edu.degree,
-          fieldOfStudy: edu.fieldOfStudy ?? undefined,
-          startYear: edu.startYear ?? undefined,
-          endYear: edu.endYear ?? undefined,
-          grade: edu.grade ?? undefined,
-          activities: edu.activities ?? undefined,
-          description: edu.description ?? undefined,
-        }),
-      ),
+      educationList: (user?.education ?? []).map((edu): EducationForm => ({
+        id: edu.id,
+        institution: edu.institution,
+        institutionDomain: edu.institutionDomain ?? undefined,
+        degree: edu.degree,
+        fieldOfStudy: edu.fieldOfStudy ?? undefined,
+        startYear: edu.startYear ?? undefined,
+        endYear: edu.endYear ?? undefined,
+        grade: edu.grade ?? undefined,
+        activities: edu.activities ?? undefined,
+        description: edu.description ?? undefined,
+      })),
       workExperienceList: (user?.workExperiences ?? []).map(
         (we): WorkExperienceForm => ({
           id: we.id,
@@ -177,7 +178,7 @@ export default function LearningProfileForm({
       // Get userId from consultee data
       const userId = consulteeData?.user?.id;
       if (userId) {
-        const bgResponse = await fetch(`/api/user/${userId}`, {
+        const bgResponse = await fetchWithReauth(`/api/user/${userId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -260,6 +261,20 @@ export default function LearningProfileForm({
         error={error}
         onRetry={() => void refetch()}
       />
+    );
+  }
+
+  // Only the learner edits this profile; an operator viewing it gets no form to save.
+  if (consulteeData?.user?.id !== userDetails?.id) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Learning profile</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm text-muted-foreground">
+          Only the learner can see and edit their learning profile.
+        </CardContent>
+      </Card>
     );
   }
 

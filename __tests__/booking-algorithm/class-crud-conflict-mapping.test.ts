@@ -40,6 +40,7 @@ jest.mock("../../lib/prisma", () => ({
     // The PATCH's slot batch reads the live sessions and the accepted co-hosts.
     appointmentOccurrence: { findMany: jest.fn().mockResolvedValue([]) },
     collaborator: { findMany: jest.fn().mockResolvedValue([]) },
+    membership: { count: jest.fn().mockResolvedValue(0) },
   },
 }));
 
@@ -306,6 +307,31 @@ describe("class POST start time", () => {
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ code: "EVENT_TIME_INVALID" });
+    expect(transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("class PATCH on an organisation's plan", () => {
+  it("refuses a named expert who is no longer an active member", async () => {
+    base.classPlan.findUnique.mockResolvedValue({
+      id: "plan-1",
+      organizationId: "org-1",
+      consultantProfileId: "cp-1",
+      consultantProfile: { id: "cp-1", userId: "user-1" },
+    });
+
+    const response = await PATCH(request({ id: "plan-1", title: "Renamed" }));
+
+    expect(response.status).toBe(403);
+    expect((await response.json()).code).toBe("NOT_ACTIVE_ORG_EXPERT");
+    expect(base.membership.count).toHaveBeenCalledWith({
+      where: {
+        organizationId: "org-1",
+        consultantProfileId: "cp-1",
+        status: "ACTIVE",
+        role: "EXPERT",
+      },
+    });
     expect(transaction).not.toHaveBeenCalled();
   });
 });

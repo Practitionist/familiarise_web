@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import type { Session } from "@/lib/auth";
-import type { RescheduleInitiatorRole } from "@prisma/client";
-import { requireApiAuth, resolveEventHostActor } from "@/lib/auth-helpers";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import {
   applyRateLimit,
   eventMutationLimiter,
@@ -17,11 +15,12 @@ import {
 import type { RescheduleRespondCode } from "@/lib/booking/reschedule-proposals";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
-import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
 import {
-  isSuspendedInFundingOrg,
-  membershipSuspendedResponse,
-} from "@/lib/enterprise/suspended-member-sessions";
+  actsForRescheduleSide,
+  isSuspendedLearnerOf,
+  RESCHEDULE_SIDE_APPOINTMENT_SELECT,
+} from "@/lib/booking/reschedule-side";
+import { membershipSuspendedResponse } from "@/lib/enterprise/suspended-member-sessions";
 import {
   AppointmentBusyError,
   BookingLockUnavailableError,
@@ -53,49 +52,6 @@ const DECLINE_OUTCOME_COPY: Record<RescheduleRespondCode, string> = {
   RELEASED:
     "Proposal declined. That original time has since been booked, so the consultant will place those sessions at new times.",
 };
-
-type OpenRequest = {
-  initiatorRole: RescheduleInitiatorRole;
-  appointment: {
-    consultationId: string | null;
-    subscriptionId: string | null;
-    organizationId: string | null;
-    trial: { consultantProfileId: string } | null;
-  } | null;
-};
-
-/**
- * Whether this caller answers for the side that did not open the request,
- * judged by the request's own side: a consultant-side proposal (the expert or
- * a host-org operator) is answered by the consultee or the paying org's admin;
- * a consultee-side one by the expert or a host-org operator.
- */
-async function answersFor(
-  open: OpenRequest,
-  session: Session,
-  consulteeUserId: string | undefined,
-): Promise<boolean> {
-  const appointment = open.appointment;
-  if (!appointment) return false;
-  if (open.initiatorRole === "CONSULTANT") {
-    if (consulteeUserId && session.user.id === consulteeUserId) return true;
-    return isOrgAdminOfAppointment(session.user.id, appointment, "reschedule");
-  }
-  // A trial is answered by its own expert.
-  if (appointment.trial) {
-    return (
-      session.user.consultantProfileId === appointment.trial.consultantProfileId
-    );
-  }
-  const event = appointment.consultationId
-    ? { type: "consultation" as const, id: appointment.consultationId }
-    : appointment.subscriptionId
-      ? { type: "subscription" as const, id: appointment.subscriptionId }
-      : null;
-  if (!event) return false;
-  const host = await resolveEventHostActor(session, event.type, event.id);
-  return host === "consultant" || host === "host-org";
-}
 
 /**
  * POST /api/appointments/[appointmentId]/reschedule/respond
@@ -142,39 +98,21 @@ export async function POST(
         id: true,
         initiatedById: true,
         initiatorRole: true,
-        appointment: {
-          select: {
-            consultationId: true,
-            subscriptionId: true,
-            organizationId: true,
-            consultation: {
-              select: { requestedBy: { select: { userId: true } } },
-            },
-            subscription: {
-              select: { requestedBy: { select: { userId: true } } },
-            },
-            trial: {
-              select: {
-                consultantProfileId: true,
-                consulteeProfile: { select: { userId: true } },
-              },
-            },
-          },
-        },
+        appointment: { select: RESCHEDULE_SIDE_APPOINTMENT_SELECT },
       },
     });
 
     // "No open request", "not a participant" and "you are the initiator" all
     // answer 404, so this route cannot be walked to learn which bookings hold
     // live reschedules.
-    const consulteeUserId =
-      open?.appointment?.consultation?.requestedBy?.userId ??
-      open?.appointment?.subscription?.requestedBy?.userId ??
-      open?.appointment?.trial?.consulteeProfile.userId;
     const isCounterparty =
       !!open &&
       open.initiatedById !== session.user.id &&
-      (await answersFor(open, session, consulteeUserId));
+      (await actsForRescheduleSide(
+        open.initiatorRole === "CONSULTANT" ? "CONSULTEE" : "CONSULTANT",
+        open.appointment,
+        session,
+      ));
     if (!open || !isCounterparty) {
       return NextResponse.json(
         { error: "No open reschedule request for this booking." },
@@ -183,13 +121,7 @@ export async function POST(
     }
     // #1527 decision 6 — after the anti-oracle gate: a suspended learner
     // can't answer a proposal on an org-funded booking.
-    if (
-      session.user.id === consulteeUserId &&
-      (await isSuspendedInFundingOrg(
-        session.user.id,
-        open.appointment?.organizationId,
-      ))
-    ) {
+    if (await isSuspendedLearnerOf(open.appointment, session.user.id)) {
       return membershipSuspendedResponse();
     }
 

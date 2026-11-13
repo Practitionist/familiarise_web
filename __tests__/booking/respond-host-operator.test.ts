@@ -92,6 +92,7 @@ describe("reschedule answers on org-hosted plans", () => {
       expect.objectContaining({ user: session.current }),
       "consultation",
       "cons-1",
+      { asParty: true },
     );
     expect(mockDecline).toHaveBeenCalledWith({
       rescheduleRequestId: "req-1",

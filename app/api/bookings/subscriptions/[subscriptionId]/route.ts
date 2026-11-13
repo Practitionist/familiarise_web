@@ -31,6 +31,8 @@ import {
   HOST_PROFILE_SELECT,
   PARTY_PROFILE_SELECT,
   PARTY_USER_SELECT,
+  isStaffNonParty,
+  publicRequester,
 } from "@/lib/booking/list-selects";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
@@ -38,6 +40,7 @@ import {
   stampRejectionRefundOwed,
 } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { platformCancelDoorRefusal } from "@/lib/booking/platform-cancel";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { assertNoLiveCheckoutHold } from "@/lib/booking/request-cohort";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
@@ -115,7 +118,13 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ data: subscriptionData }, { status: 200 });
+    const data = isStaffNonParty(session.user.role, isConsultant || isConsultee)
+      ? {
+          ...subscriptionData,
+          requestedBy: publicRequester(subscriptionData.requestedBy),
+        }
+      : subscriptionData;
+    return NextResponse.json({ data }, { status: 200 });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -230,6 +239,13 @@ export async function PATCH(
         "You can only modify subscriptions you are a participant in",
       );
     }
+
+    // An operator who is not a party answers requests only through the staff door.
+    const doorRefusal = platformCancelDoorRefusal(request, {
+      privileged: isPrivileged(session.user.role),
+      party: isConsultant || isConsultee,
+    });
+    if (doorRefusal) return doorRefusal;
 
     if (!existingSubscription.subscriptionPlan?.consultantProfile?.user?.id) {
       return NextResponse.json(

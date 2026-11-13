@@ -8,6 +8,12 @@ import {
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/errors";
 import { withdrawRescheduleRequest } from "@/lib/booking/reschedule-withdraw";
+import {
+  actsForRescheduleSide,
+  isSuspendedLearnerOf,
+  RESCHEDULE_SIDE_APPOINTMENT_SELECT,
+} from "@/lib/booking/reschedule-side";
+import { membershipSuspendedResponse } from "@/lib/enterprise/suspended-member-sessions";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import {
   AppointmentBusyError,
@@ -55,7 +61,12 @@ export async function POST(
         status: { in: RESCHEDULE_OPEN_STATUSES },
       },
       orderBy: { createdAt: "desc" },
-      select: { id: true, initiatedById: true },
+      select: {
+        id: true,
+        initiatedById: true,
+        initiatorRole: true,
+        appointment: { select: RESCHEDULE_SIDE_APPOINTMENT_SELECT },
+      },
     });
 
     // Authorization is identity, not role: whoever opened it may take it back,
@@ -73,6 +84,30 @@ export async function POST(
         { error: "No open reschedule request for this booking." },
         { status: 404 },
       );
+    }
+
+    // The initiator still has to act for the side they opened it from, as on
+    // the respond route; an expert removed from the host org has lost that.
+    if (
+      !(await actsForRescheduleSide(
+        open.initiatorRole,
+        open.appointment,
+        session,
+      ))
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "You no longer act for this booking, so you can't withdraw its reschedule.",
+          code: "NO_LONGER_A_PARTY",
+        },
+        { status: 403 },
+      );
+    }
+
+    // A suspended learner on an org-funded booking moves nothing, as on open and respond.
+    if (await isSuspendedLearnerOf(open.appointment, session.user.id)) {
+      return membershipSuspendedResponse();
     }
 
     const result = await withdrawRescheduleRequest({

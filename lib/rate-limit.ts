@@ -211,6 +211,8 @@ export const inviteAcceptIpLimiter = makeLimiter(
   "rl:org-invite-accept",
 );
 export const inviteAcceptLimiter = inviteAcceptIpLimiter;
+/** 30 per minute per IP — GET /api/invitations/preview */
+export const invitePreviewLimiter = makeLimiter(30, "1 m", "rl:invite-preview");
 /** 10 per minute per IP — GET /api/referrals/code/check/[code] */
 export const referralCheckLimiter = makeLimiter(10, "1 m", "rl:referral-check");
 /** 20 per hour per admin — POST /api/admin/team/members and setup-link */

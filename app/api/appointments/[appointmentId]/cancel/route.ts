@@ -35,7 +35,7 @@ import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
 
 import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
-import { platformCancelGrant } from "@/lib/booking/platform-cancel";
+import { platformCancelDoorRefusal } from "@/lib/booking/platform-cancel";
 import {
   recordSystemErrorSafe,
   recordSystemEvent,
@@ -708,16 +708,11 @@ export async function POST(
 
     // A platform operator who is not a party cancels only through the audited,
     // money-bounded door, which grants this request.
-    if (isPrivilegedUser && !isParticipant && !platformCancelGrant(request)) {
-      return NextResponse.json(
-        {
-          error:
-            "Cancel this booking from the back office so the refund is audited.",
-          code: "PLATFORM_CANCEL_DOOR_REQUIRED",
-        },
-        { status: 403 },
-      );
-    }
+    const doorRefusal = platformCancelDoorRefusal(request, {
+      privileged: isPrivilegedUser,
+      party: isParticipant,
+    });
+    if (doorRefusal) return doorRefusal;
 
     if (!actor.authorized) {
       return NextResponse.json(

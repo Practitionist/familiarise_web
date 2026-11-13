@@ -4,7 +4,11 @@ import {
   dehydrate,
 } from "@tanstack/react-query";
 import AppointmentsPageClient from "./AppointmentsPageClient";
-import { getConsultantAppointments } from "@/lib/data/consultant-appointments";
+import {
+  getConsultantAppointments,
+  withPublicRequesterForStaff,
+} from "@/lib/data/consultant-appointments";
+import { getSession } from "@/lib/auth-server";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { getViewerZone } from "@/lib/time/viewer-zone-server";
 
@@ -19,7 +23,8 @@ export default async function AppointmentsPage({
   // Ownership is enforced HERE, not by the layout: the layout is a client
   // component, so its check runs after this server render has already read
   // and streamed the data. See lib/auth/personal-dashboard-access.ts.
-  await requirePersonalProfileAccess("consultant", consultantId);
+  const access = await requirePersonalProfileAccess("consultant", consultantId);
+  const viewer = access.isInspecting ? (await getSession())?.user : undefined;
   // Read here and passed down: the server render and the hydrating client
   // then format every time from the same zone (hydration #418).
   const viewerZone = await getViewerZone();
@@ -42,11 +47,15 @@ export default async function AppointmentsPage({
   await Promise.allSettled([
     queryClient.prefetchQuery({
       queryKey: ["consultant-appointments", consultantId, "personal"],
-      queryFn: () =>
-        getConsultantAppointments({
+      queryFn: async () => {
+        const rows = await getConsultantAppointments({
           consultantProfileId: consultantId,
           scope: { kind: "personal" },
-        }),
+        });
+        return viewer
+          ? rows.map((row) => withPublicRequesterForStaff(row, viewer))
+          : rows;
+      },
     }),
   ]);
 

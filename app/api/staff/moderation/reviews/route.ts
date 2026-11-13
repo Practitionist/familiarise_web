@@ -88,10 +88,11 @@ export async function GET(req: NextRequest) {
               user: { select: { name: true, email: true, image: true } },
             },
           },
+          // The reviewer is a learner: STAFF read their public identity only.
           consulteeProfile: {
             select: {
               id: true,
-              user: { select: { name: true, email: true, image: true } },
+              user: { select: { name: true, image: true } },
             },
           },
         },
@@ -115,7 +116,6 @@ export async function GET(req: NextRequest) {
       reviewer: {
         profileId: review.consulteeProfile.id,
         name: review.consulteeProfile.user.name,
-        email: review.consulteeProfile.user.email,
         image: review.consulteeProfile.user.image,
       },
       createdAt: review.createdAt,

@@ -1,4 +1,8 @@
-import { PROFILE_WITH_USER_SELECT } from "@/lib/booking/list-selects";
+import {
+  PROFILE_WITH_USER_SELECT,
+  isStaffNonParty,
+  publicRequester,
+} from "@/lib/booking/list-selects";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
   recordParticipants,
@@ -62,6 +66,7 @@ import {
 } from "@/lib/novu";
 import { UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
+import { platformCancelDoorRefusal } from "@/lib/booking/platform-cancel";
 import { trialWindowRefusal } from "@/lib/trials/slot-check";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import {
@@ -175,7 +180,13 @@ export async function GET(request: NextRequest, context: RouteContext) {
       });
     }
 
-    return NextResponse.json({ data: trial });
+    const isParty =
+      trial.consulteeProfileId === session.user.consulteeProfileId ||
+      trial.consultantProfileId === session.user.consultantProfileId;
+    const data = isStaffNonParty(session.user.role, isParty)
+      ? { ...trial, consulteeProfile: publicRequester(trial.consulteeProfile) }
+      : trial;
+    return NextResponse.json({ data });
   } catch (error) {
     console.error("Error fetching trial session:", error);
     return NextResponse.json(
@@ -358,6 +369,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           { status: 403 },
         );
       }
+
+      // An operator who is not a party moves no trial through this route.
+      const doorRefusal = platformCancelDoorRefusal(request, {
+        privileged: isPrivilegedUser,
+        party: isTrialConsultant || isTrialConsultee,
+      });
+      if (doorRefusal) return doorRefusal;
 
       // Consultee can only cancel their trials
       if (isTrialConsultee && !isTrialConsultant && !isPrivilegedUser) {
@@ -1257,6 +1275,15 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         { status: 404 },
       );
     }
+
+    // A cancel refunds the learner, so an operator who is not a party has no door here.
+    const doorRefusal = platformCancelDoorRefusal(request, {
+      privileged: isPrivileged(session.user.role),
+      party:
+        session.user.consulteeProfileId === existingTrial.consulteeProfileId ||
+        session.user.consultantProfileId === existingTrial.consultantProfileId,
+    });
+    if (doorRefusal) return doorRefusal;
 
     // Only allow cancellation of PENDING, pay-link-live (AWAITING_PAYMENT) or
     // SCHEDULED trials. AWAITING_PAYMENT occupies the slot (occupancyPolicy)

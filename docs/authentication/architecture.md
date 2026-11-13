@@ -516,7 +516,8 @@ sequenceDiagram
   `lib/auth/step-up.ts`): `/two-factor/disable`,
   `/two-factor/generate-backup-codes`, `/change-password`, `/change-email`,
   `/passkey/generate-register-options`. App routes (`requireFreshSession`):
-  self-deletion (`DELETE /api/user/[id]`), consultant payout account and
+  self-deletion (`DELETE /api/user/[id]`), an ADMIN's edit of another user
+  (`PUT` and `PATCH /api/user/[id]`, audited), consultant payout account and
   instant payout writes, org payout account, expert payout routing and payout
   writes, back-office payout processing and refunds. Back office
   (`withOpsAction({ stepUp: true })`): team member create, suspend,
