@@ -43,7 +43,6 @@ export {
   notifyFeedbackReceived,
   notifyNewReview,
   // Trials
-  notifyTrialRequested,
   notifyTrialScheduled,
   notifyTrialCompleted,
   notifyTrialCancelled,

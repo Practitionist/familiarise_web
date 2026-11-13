@@ -9,7 +9,6 @@ import {
 } from "@/emails/components/styles";
 
 export type TrialAndSubscriptionEmailKind =
-  | "TRIAL_REQUESTED"
   | "TRIAL_COMPLETED"
   | "TRIAL_CANCELLED"
   | "SUBSCRIPTION_STARTED"
@@ -36,8 +35,6 @@ export function trialAndSubscriptionSubject(
   >,
 ): string {
   switch (args.kind) {
-    case "TRIAL_REQUESTED":
-      return `New trial request: ${args.consulteeName ?? "A client"} for ${args.planTitle}`;
     case "TRIAL_COMPLETED":
       return `Trial completed: ${args.planTitle}`;
     case "TRIAL_CANCELLED":
@@ -96,20 +93,6 @@ function renderTrialAndSubscriptionBody(args: {
       ));
 
   switch (kind) {
-    case "TRIAL_REQUESTED":
-      return (
-        <Text style={paragraph}>
-          <strong>{consulteeName ?? "A client"}</strong> requested a trial
-          session for <strong>{planTitle}</strong>
-          {startsAtText ? (
-            <>
-              {" "}
-              on <strong>{startsAtText}</strong>
-            </>
-          ) : null}
-          . Open your dashboard to accept or propose another time.
-        </Text>
-      );
     case "TRIAL_COMPLETED": {
       const otherParty = isConsultantRecipient
         ? consulteeName
@@ -194,9 +177,6 @@ export function TrialAndSubscriptionEmail({
     consultantName,
   });
 
-  const actionLabel =
-    kind === "TRIAL_REQUESTED" ? "Review request" : "Open dashboard";
-
   return (
     <EmailLayout preview={subject} unsubscribeUrl={unsubscribeUrl}>
       <Text style={heading}>{subject}</Text>
@@ -216,7 +196,7 @@ export function TrialAndSubscriptionEmail({
 
       <Section style={buttonContainer}>
         <Button style={button} href={dashboardUrl}>
-          {actionLabel}
+          Open dashboard
         </Button>
       </Section>
     </EmailLayout>

@@ -396,7 +396,6 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
       }
 
       const trialKinds: TrialAndSubscriptionEmailKind[] = [
-        "TRIAL_REQUESTED",
         "TRIAL_COMPLETED",
         "TRIAL_CANCELLED",
         "SUBSCRIPTION_STARTED",
