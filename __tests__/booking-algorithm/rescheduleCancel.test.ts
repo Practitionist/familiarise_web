@@ -53,6 +53,8 @@ jest.mock("../../lib/prisma", () => ({
     // #1008 — the cancel/reschedule routes call hasActiveDisputeForAppointment,
     // which reads prisma.dispute.findFirst. Default to no live dispute.
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
+    // A repeated cancel reads back what the first click committed.
+    consultation: { findUnique: jest.fn().mockResolvedValue(null) },
     // The Idempotency-Key store, in memory: the unique index answers P2002.
     idempotencyRecord: (() => {
       const rows = new Map<string, Record<string, unknown>>();
@@ -144,8 +146,9 @@ jest.mock("../../lib/payments/operations/event-refunds", () => ({
   }),
 }));
 
+const seatGeneration = new Date("2030-01-01T00:02:00Z");
 jest.mock("../../lib/stream/access-revocation", () => ({
-  persistSeatRevocation: jest.fn().mockResolvedValue(null),
+  persistSeatRevocationInTx: jest.fn(async () => seatGeneration),
   revokeEndedSeatAccess: jest.fn().mockResolvedValue(undefined),
   fenceSeatGrants: jest.fn().mockResolvedValue({ verified: true, lost: [] }),
   enqueueCollaboratorRevocationRetry: jest.fn().mockResolvedValue(undefined),
@@ -158,7 +161,7 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { notifyAppointmentCancelled } from "@/lib/novu";
 import {
-  persistSeatRevocation,
+  persistSeatRevocationInTx,
   revokeEndedSeatAccess,
 } from "@/lib/stream/access-revocation";
 import { POST as rescheduleHandler } from "@/app/api/appointments/[appointmentId]/reschedule/route";
@@ -1560,8 +1563,56 @@ describe("Cancel Route Handler - POST", () => {
     (prisma.appointmentParticipant.findMany as jest.Mock).mockResolvedValue([]);
 
     const released = ["attendee-9", "attendee-late"];
-    expect(persistSeatRevocation).toHaveBeenCalledWith("apt-1", released);
-    expect(revokeEndedSeatAccess).toHaveBeenCalledWith("apt-1", released);
+    expect(persistSeatRevocationInTx).toHaveBeenCalledTimes(1);
+    expect(persistSeatRevocationInTx).toHaveBeenCalledWith(
+      mockTx,
+      "apt-1",
+      released,
+    );
+    expect(revokeEndedSeatAccess).toHaveBeenCalledWith(
+      "apt-1",
+      released,
+      seatGeneration,
+    );
+  });
+
+  it("writes a 1:1 consultee's seat row in the cancel commit and settles that generation", async () => {
+    const res = await cancelHandler(
+      makeCancelRequest("apt-1"),
+      makeParams("apt-1"),
+    );
+
+    expect(res.status).toBe(200);
+    expect(persistSeatRevocationInTx).toHaveBeenCalledWith(mockTx, "apt-1", [
+      "user-1",
+    ]);
+    expect(revokeEndedSeatAccess).toHaveBeenCalledWith(
+      "apt-1",
+      ["user-1"],
+      seatGeneration,
+    );
+  });
+
+  it("a replayed 1:1 cancel runs no transaction write and persists its consultee's row itself", async () => {
+    mockTx.consultation.updateMany.mockResolvedValue({ count: 0 });
+    (
+      prisma as unknown as { consultation: { findUnique: jest.Mock } }
+    ).consultation.findUnique.mockResolvedValueOnce({
+      status: "CANCELLED",
+      cancelledBy: "user-1",
+      cancelledAt: new Date(),
+      cancellationReason: null,
+    });
+
+    const res = await cancelHandler(
+      makeCancelRequest("apt-1"),
+      makeParams("apt-1"),
+    );
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).replayed).toBe(true);
+    expect(persistSeatRevocationInTx).not.toHaveBeenCalled();
+    expect(revokeEndedSeatAccess).toHaveBeenCalledWith("apt-1", ["user-1"]);
   });
 
   it("tells free and credit seats too, not only paid ones (#1780 R-3)", async () => {

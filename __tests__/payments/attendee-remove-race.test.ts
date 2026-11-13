@@ -84,6 +84,7 @@ jest.mock("../../lib/appointments/live-event-slot", () => ({
 import { Prisma } from "@prisma/client";
 import { DELETE as deleteWebinarParticipant } from "../../app/api/participants/webinar/[webinarId]/route";
 import { DELETE as deleteClassParticipant } from "../../app/api/participants/class/[classId]/route";
+import { createMockRevocationRetryTable } from "../fixtures/stream-mocks";
 
 const ORGANISER = {
   id: "user-organiser",
@@ -107,6 +108,7 @@ function runInteractiveTransaction(fn: unknown) {
     },
     // An unpaid seat owes no refund, so no marker is stamped.
     payment: { findFirst: async () => null },
+    streamRevocationRetry: createMockRevocationRetryTable(),
   });
 }
 

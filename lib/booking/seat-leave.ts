@@ -44,7 +44,7 @@ import {
   withAppointmentLock,
 } from "@/utils/appointmentlock";
 import {
-  persistSeatRevocation,
+  persistSeatRevocationInTx,
   revokeEndedSeatAccess,
 } from "@/lib/stream/access-revocation";
 import { scheduleAfter } from "@/lib/api/after-safe";
@@ -467,6 +467,11 @@ export async function leaveEventSeat(args: {
             role: "CONSULTEE",
           });
           if (count === 0) return null;
+          const seatRevocation = await persistSeatRevocationInTx(
+            tx,
+            eventAppointment.id,
+            [args.userId],
+          );
           const payment = await seatPayment(
             tx,
             args.kind,
@@ -491,7 +496,7 @@ export async function leaveEventSeat(args: {
             seat.appointmentId,
             now,
           );
-          return { seat, plan, payment, owed, seatOpened };
+          return { seat, plan, payment, owed, seatOpened, seatRevocation };
         },
         {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -502,8 +507,6 @@ export async function leaveEventSeat(args: {
     }),
   );
   if (!released) return null;
-  // Owned before the refund work below, which can stall or throw after the seat is released.
-  await persistSeatRevocation(eventAppointment.id, [args.userId]);
   // Scheduled before the refund, so a refund failure cannot drop the notice.
   await scheduleAfter(
     () => finishSeatOpenedNotices(released.seatOpened),
@@ -529,7 +532,11 @@ export async function leaveEventSeat(args: {
       initiatedByUserId: args.actorUserId,
     });
   }
-  await revokeEndedSeatAccess(eventAppointment.id, [args.userId]);
+  await revokeEndedSeatAccess(
+    eventAppointment.id,
+    [args.userId],
+    released.seatRevocation,
+  );
   return { refund };
 }
 

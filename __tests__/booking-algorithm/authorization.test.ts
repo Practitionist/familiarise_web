@@ -101,6 +101,7 @@ import { POST as rescheduleHandler } from "@/app/api/appointments/[appointmentId
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
 import { grantPlatformCancel } from "@/lib/booking/platform-cancel";
 import { grantPlatformReschedule } from "@/lib/booking/platform-reschedule";
+import { createMockRevocationRetryTable } from "../fixtures/stream-mocks";
 
 // ─── Session Factories ──────────────────────────────────────────────────────
 
@@ -364,6 +365,7 @@ function makeMockTx(appointmentData: unknown = null) {
       // The reschedule caps count past release acts.
       groupBy: jest.fn().mockResolvedValue([]),
     },
+    streamRevocationRetry: createMockRevocationRetryTable(),
     // Cancel closes any live reschedule proposal so the appointment's
     // openForAppointmentId reservation is released.
     rescheduleRequest: {

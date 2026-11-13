@@ -27,6 +27,7 @@ const makeTx = () => ({
     count: async () => 0,
   },
   consultation: { findUnique: async () => ({ status: "SCHEDULED" }) },
+  streamRevocationRetry: createMockRevocationRetryTable(),
 });
 
 const appointmentRow = {
@@ -211,6 +212,7 @@ jest.mock("../../../lib/email/senders/booking", () => ({
 import { NextRequest } from "next/server";
 import { notifyAppointmentCancelled } from "../../../lib/novu";
 import { POST } from "../../../app/api/appointments/[appointmentId]/cancel/route";
+import { createMockRevocationRetryTable } from "../../fixtures/stream-mocks";
 
 type Write = { data?: Record<string, unknown> };
 
