@@ -668,8 +668,17 @@ export async function PATCH(
 
     const parsed = bookingRequestSettingsSchema.safeParse(await request.json());
     if (!parsed.success) {
+      // The plan-client limit's own sentence; anything else is a stale or hand-built body.
+      const limitIssue = parsed.error.issues.find((issue) =>
+        issue.path.includes("maxActivePlanClients"),
+      );
       return NextResponse.json(
-        { error: "Validation failed", details: parsed.error.format() },
+        {
+          error:
+            limitIssue?.message ??
+            "These booking settings could not be saved. Reload the page and try again.",
+          details: parsed.error.format(),
+        },
         { status: 400 },
       );
     }

@@ -12,6 +12,11 @@ import {
 } from "../settings";
 import { useSaveBookingRequestSettings } from "../use-save-booking-request-settings";
 import { usePlanClients } from "../use-plan-clients";
+import { parsePlanClientLimitInput } from "@/schemas/plan-clients";
+
+/** The saved limit as the input shows it: blank for no limit. */
+const limitText = (limit: number | null) =>
+  limit === null ? "" : String(limit);
 
 /**
  * The Booking mode section's form. It sends only the fields the user
@@ -36,6 +41,9 @@ export function BookingRequestsForm({
     maxActivePlanClients,
   };
   const [settings, setSettings] = useState(shown);
+  // The limit as typed; it reaches `settings` only once the route's schema accepts it.
+  const [limitDraft, setLimitDraft] = useState(limitText(maxActivePlanClients));
+  const limitCheck = parsePlanClientLimitInput(limitDraft);
   const planClients = usePlanClients(consultant.id);
   // New server values (a save, or a change made elsewhere) replace the form.
   useEffect(() => {
@@ -45,10 +53,27 @@ export function BookingRequestsForm({
       maxOpenRequests,
       maxActivePlanClients,
     });
+    setLimitDraft(limitText(maxActivePlanClients));
   }, [bookingMode, acceptingRequests, maxOpenRequests, maxActivePlanClients]);
+
+  const onLimitDraftChange = (raw: string) => {
+    setLimitDraft(raw);
+    const checked = parsePlanClientLimitInput(raw);
+    if (checked.ok) {
+      setSettings((prev) => ({ ...prev, maxActivePlanClients: checked.value }));
+    }
+  };
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
+    if (!limitCheck.ok) {
+      toast({
+        title: "Check the plan-client limit",
+        description: limitCheck.error,
+        variant: "destructive",
+      });
+      return;
+    }
     const change = bookingRequestSettingsChange(shown, settings);
     if (!change) {
       toast({ title: "Nothing to save" });
@@ -74,12 +99,18 @@ export function BookingRequestsForm({
             value={settings}
             onChange={setSettings}
             activePlanClients={planClients.data?.activePlanClients ?? null}
+            limitDraft={limitDraft}
+            limitError={limitCheck.ok ? null : limitCheck.error}
+            onLimitDraftChange={onLimitDraftChange}
           />
         </CardContent>
       </Card>
       <SettingsFormActions
         isSaving={save.isPending}
-        onReset={() => setSettings(shown)}
+        onReset={() => {
+          setSettings(shown);
+          setLimitDraft(limitText(maxActivePlanClients));
+        }}
       />
     </form>
   );

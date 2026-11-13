@@ -35,11 +35,11 @@ import {
   RequestCapBusyError,
 } from "@/utils/appointmentlock";
 import { buildDeadHoldFilter } from "@/utils/scheduling-engine/occupancyPolicy";
-import { maxActivePlanClientsSchema } from "@/schemas/plan-clients";
 import {
-  parseMaxActivePlanClients,
-  planClientsLine,
-} from "@/app/dashboard/consultant/[consultantId]/(features)/settings/sections/BookingRequestsSection";
+  maxActivePlanClientsSchema,
+  parsePlanClientLimitInput,
+} from "@/schemas/plan-clients";
+import { planClientsLine } from "@/app/dashboard/consultant/[consultantId]/(features)/settings/sections/BookingRequestsSection";
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -217,9 +217,18 @@ describe("bound 2: an expert-set limit on active plan clients", () => {
     for (const bad of [0, -1, 2.5, 501]) {
       expect(maxActivePlanClientsSchema.safeParse(bad).success).toBe(false);
     }
-    expect(parseMaxActivePlanClients("", 4)).toBeNull();
-    expect(parseMaxActivePlanClients("0", null)).toBe(1);
-    expect(parseMaxActivePlanClients("abc", 4)).toBe(4);
+    expect(parsePlanClientLimitInput("")).toEqual({ ok: true, value: null });
+    expect(parsePlanClientLimitInput(" 7 ")).toEqual({ ok: true, value: 7 });
+    // Refused with a reason, never rounded or clamped into range.
+    const reasons = ["0", "-3", "2.7", "501", "abc"].map((raw) =>
+      parsePlanClientLimitInput(raw),
+    );
+    for (const reason of reasons) {
+      expect(reason.ok).toBe(false);
+      if (!reason.ok) {
+        expect(reason.error).toContain("whole number from 1 to 500");
+      }
+    }
     expect(planClientsLine(3, 5)).toBe("3 of 5 active plan clients");
     expect(planClientsLine(1, null)).toBe("1 active plan client");
   });

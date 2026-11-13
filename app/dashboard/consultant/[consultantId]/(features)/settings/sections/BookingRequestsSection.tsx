@@ -15,6 +15,10 @@ interface BookingRequestsSectionProps {
   onChange: Dispatch<SetStateAction<BookingRequestSettings>>;
   /** Distinct buyers holding one of your plans now; null while it loads. */
   activePlanClients: number | null;
+  /** The plan-client limit exactly as typed, and why it is refused (null when valid). */
+  limitDraft: string;
+  limitError: string | null;
+  onLimitDraftChange: (raw: string) => void;
 }
 
 /** The cap's accepted range; blank means no limit (#1703 D4). */
@@ -37,20 +41,6 @@ export function parseMaxOpenRequests(
   );
 }
 
-/** Blank clears the limit; a number is truncated and clamped; anything else keeps it. */
-export function parseMaxActivePlanClients(
-  raw: string,
-  current: number | null,
-): number | null {
-  if (raw.trim() === "") return null;
-  const n = Math.trunc(Number(raw));
-  if (!Number.isFinite(n)) return current;
-  return Math.min(
-    MAX_ACTIVE_PLAN_CLIENTS_RANGE.max,
-    Math.max(MAX_ACTIVE_PLAN_CLIENTS_RANGE.min, n),
-  );
-}
-
 /** "3 of 5 active plan clients", or "3 active plan clients" with no limit. */
 export function planClientsLine(active: number, limit: number | null): string {
   const noun = (n: number) =>
@@ -68,6 +58,9 @@ export function BookingRequestsSection({
   value: formData,
   onChange: setFormData,
   activePlanClients,
+  limitDraft,
+  limitError,
+  onLimitDraftChange,
 }: Readonly<BookingRequestsSectionProps>) {
   return (
     <div className="space-y-6">
@@ -186,17 +179,22 @@ export function BookingRequestsSection({
           step={1}
           placeholder="No limit"
           className="max-w-[10rem]"
-          value={formData.maxActivePlanClients ?? ""}
-          onChange={(e) =>
-            setFormData((prev) => ({
-              ...prev,
-              maxActivePlanClients: parseMaxActivePlanClients(
-                e.target.value,
-                prev.maxActivePlanClients,
-              ),
-            }))
+          value={limitDraft}
+          aria-invalid={limitError !== null}
+          aria-describedby={
+            limitError ? "max-active-plan-clients-error" : undefined
           }
+          onChange={(e) => onLimitDraftChange(e.target.value)}
         />
+        {limitError && (
+          <p
+            id="max-active-plan-clients-error"
+            role="alert"
+            className="text-sm text-destructive"
+          >
+            {limitError}
+          </p>
+        )}
         <p className="text-sm text-muted-foreground">
           Once this many people hold one of your plans, your plans show as fully
           booked and new buyers are refused before they pay. Current clients
