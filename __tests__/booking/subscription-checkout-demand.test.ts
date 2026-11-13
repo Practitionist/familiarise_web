@@ -22,7 +22,7 @@ jest.mock("../../lib/payments/checkout/subscription-demand", () => ({
 
 import { handleCheckout } from "../../lib/payments/checkout";
 import { assertSubscriptionDemandRoom } from "../../lib/payments/checkout/subscription-demand";
-import { resetDouble } from "./repro/checkout-harness/setup";
+import { calls, resetDouble } from "./repro/checkout-harness/setup";
 import { lockRequestCap, unlockRequestCap } from "../../utils/appointmentlock";
 
 const demandRoom = assertSubscriptionDemandRoom as jest.Mock;
@@ -150,4 +150,34 @@ it("a second buyer of the same expert is checked only after the first commits", 
   expect(createPaymentIntent).toHaveBeenCalledTimes(1);
   // The first buyer's checkout succeeded: `checkout` resolves null on success.
   expect(firstOutcome).toBeNull();
+});
+
+it("a pause flipped while the order is minted is refused by the commit, which tombstones the order", async () => {
+  let paused = false;
+  resetDouble({
+    ...rows,
+    "subscriptionPlan.findUnique": () =>
+      paused
+        ? {
+            ...plan,
+            consultantProfile: {
+              ...plan.consultantProfile,
+              acceptingRequests: false,
+            },
+          }
+        : plan,
+  });
+  createPaymentIntent.mockImplementation(async () => {
+    paused = true;
+    return { id: "order_paused", client_secret: "s" };
+  });
+  expect(await checkout()).toMatchObject({
+    httpStatus: 409,
+    code: "NOT_ACCEPTING_BOOKINGS",
+  });
+  expect(createPaymentIntent).toHaveBeenCalledTimes(1);
+  expect(calls.some((c) => c.path === "subscription.create")).toBe(false);
+  expect(calls.find((c) => c.path === "payment.create")?.args).toMatchObject({
+    data: { paymentIntent: "order_paused", paymentStatus: "EXPIRED" },
+  });
 });
