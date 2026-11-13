@@ -28,8 +28,8 @@ export async function GET(request: NextRequest) {
     // Calculate offset
     const skip = (page - 1) * limit;
 
-    // ADMIN reads the whole learner record; STAFF read only what any other
-    // viewer of a profile sees, as on the single-learner read.
+    // ADMIN reads the whole learner record; STAFF read the shared
+    // public-field selection, as on the single-learner read.
     const consultees =
       session.user.role === "ADMIN"
         ? await prisma.consulteeProfile.findMany({

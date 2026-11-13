@@ -24,8 +24,8 @@ export async function GET(
     const resolvedParams = await params;
     const { id } = resolvedParams;
 
-    // The owner and ADMIN read the whole profile; STAFF read only what any
-    // other viewer of a profile sees.
+    // The owner and ADMIN read the whole profile; STAFF read the shared
+    // public-field selection; anyone else is refused.
     const isOwner = checkOwnership(session, id, "consultee");
     const fullRead = isOwner || session.user.role === "ADMIN";
     if (!fullRead && !isPrivileged(session.user.role)) {
