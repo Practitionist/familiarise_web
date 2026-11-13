@@ -16,3 +16,26 @@ export async function fetchBackupInterest(): Promise<BackupInterestEntry[]> {
   if (!parsed.success) throw new Error("Could not read your waiting list");
   return parsed.data.data;
 }
+
+/**
+ * Where "Book this time" leads: the expert's page with the plan's booking
+ * dialog open on that time. The page's own read decides whether it is still
+ * free and which availability row it comes from.
+ */
+export function backupBookHref(entry: {
+  consultantProfileId: string;
+  planKind?: string | null;
+  planId?: string | null;
+  windowStart: string;
+  windowEnd: string;
+}): string {
+  const page = `/explore/experts/${entry.consultantProfileId}`;
+  if (!entry.planId || entry.planKind !== "CONSULTATION") return page;
+  const query = new URLSearchParams({
+    action: "book",
+    plan: entry.planId,
+    startsAt: entry.windowStart,
+    endsAt: entry.windowEnd,
+  });
+  return `${page}?${query.toString()}`;
+}

@@ -20,7 +20,10 @@ import {
   type StagedRecipientEmail,
 } from "@/lib/email/senders/booking";
 import { BookingRuleError } from "./booking-rule-error";
-import { BACKUP_INTEREST_CAP } from "./interest/backup-interest-list";
+import {
+  BACKUP_INTEREST_CAP,
+  backupBookHref,
+} from "./interest/backup-interest-list";
 import {
   OPEN_INTEREST,
   notifiableInterest,
@@ -138,24 +141,6 @@ export function listBackupInterest(userId: string) {
   });
 }
 
-/** Where the notice sends the learner: the plan's checkout, window pre-filled. */
-function bookHref(row: {
-  consultantProfileId: string;
-  planKind: AppointmentsType;
-  planId: string | null;
-  windowStart: Date;
-  windowEnd: Date;
-}): string {
-  if (row.planId && row.planKind === AppointmentsType.CONSULTATION) {
-    const q = new URLSearchParams({
-      startsAt: row.windowStart.toISOString(),
-      endsAt: row.windowEnd.toISOString(),
-    });
-    return `/checkout/plans/consultation/${row.planId}?${q.toString()}`;
-  }
-  return `/explore/experts/${row.consultantProfileId}`;
-}
-
 export interface StagedBackupInterestNotices {
   bells: StagedTrigger[];
   emails: StagedRecipientEmail[];
@@ -217,7 +202,11 @@ export async function stageBackupInterestNotices(
     });
     if (claimed.count === 0) continue;
     const consultantName = row.consultantProfile.user.name ?? "your consultant";
-    const href = bookHref(row);
+    const href = backupBookHref({
+      ...row,
+      windowStart: row.windowStart.toISOString(),
+      windowEnd: row.windowEnd.toISOString(),
+    });
     const viewer = await tx.user.findUnique({
       where: { id: row.userId },
       select: { timezone: true },

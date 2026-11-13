@@ -26,7 +26,8 @@ import {
   userMessageFrom,
 } from "@/lib/errors/client-refusal";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { z } from "zod";
 import {
   useEffect,
   useMemo,
@@ -50,6 +51,14 @@ import {
   CONSULTANT_PAUSED_HINT,
   consultationCtaFor,
 } from "@/lib/booking/booking-mode";
+
+/** "Book this time" from a waitlist notice: the plan's dialog opens on that time. */
+const bookLinkSchema = z.object({
+  action: z.literal("book"),
+  plan: z.string().min(1),
+  startsAt: z.string().datetime(),
+  endsAt: z.string().datetime(),
+});
 
 interface ConsultantDetailsForBooking {
   id: string;
@@ -191,6 +200,23 @@ export default function ConsultationPricingToggle({
           });
           sendToSignIn();
         };
+
+  // A notice link opens its plan's dialog once, with the time picked; the
+  // picker then reads whether it is still free and which row it comes from.
+  const searchParams = useSearchParams();
+  const bookLinkConsumedRef = useRef(false);
+  useEffect(() => {
+    if (bookLinkConsumedRef.current || !searchParams) return;
+    const link = bookLinkSchema.safeParse(
+      Object.fromEntries(searchParams.entries()),
+    );
+    if (!link.success) return;
+    if (!consultationOptions.some((opt) => opt.id === link.data.plan)) return;
+    bookLinkConsumedRef.current = true;
+    setActiveConsultationOption(link.data.plan);
+    setDialogPlanId(link.data.plan);
+    setPick({ startsAt: link.data.startsAt, endsAt: link.data.endsAt });
+  }, [searchParams, consultationOptions]);
 
   const handleRequestForApproval = async (planId: string) => {
     if (!pick) {

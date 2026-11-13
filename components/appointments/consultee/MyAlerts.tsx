@@ -9,7 +9,10 @@ import {
   CONSULTEE_BACKUP_INTEREST_QUERY_KEY,
   EVENT_WAITLIST_QUERY_KEY,
 } from "@/lib/booking/interest/query-keys";
-import { fetchBackupInterest } from "@/lib/booking/interest/backup-interest-list";
+import {
+  backupBookHref,
+  fetchBackupInterest,
+} from "@/lib/booking/interest/backup-interest-list";
 import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
 import {
   EventWaitlistListResponseSchema,
@@ -57,17 +60,6 @@ function backupStatusText(entry: BackupInterestEntry, nowMs: number): string {
   return entry.status === "NOTIFIED"
     ? " · This time opened"
     : " · Waiting for this time to open";
-}
-
-function backupBookHref(entry: BackupInterestEntry): string {
-  if (entry.planId && entry.planKind === "CONSULTATION") {
-    const qs = new URLSearchParams({
-      startsAt: entry.windowStart,
-      endsAt: entry.windowEnd,
-    });
-    return `/checkout/plans/consultation/${entry.planId}?${qs.toString()}`;
-  }
-  return `/explore/experts/${entry.consultantProfileId}`;
 }
 
 /**

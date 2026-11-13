@@ -32,8 +32,10 @@ jest.mock("@/hooks/use-toast", () => ({
 jest.mock("@/lib/auth-client", () => ({
   useSession: () => ({ data: { user: { id: "buyer-1", role: "consultee" } } }),
 }));
+let mockSearch = new URLSearchParams();
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
+  useSearchParams: () => mockSearch,
 }));
 jest.mock("@/components/pricing/BuyerPriceProvider", () => ({
   useBuyerPrice: () => ({
@@ -52,6 +54,7 @@ jest.mock("@/utils/purchase-intent", () => ({
 }));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
+import { backupBookHref } from "@/lib/booking/interest/backup-interest-list";
 import ConsultationPricingToggle from "@/app/explore/experts/[consultantId]/components/ConsultationPricingToggle";
 import type { BookingMode } from "@prisma/client";
 
@@ -76,6 +79,8 @@ const plan = (id: string, title: string) => ({
   durationInHours: 0.5,
 });
 
+const mockBook = jest.fn();
+
 function Dialog({ mode = "INSTANT" }: Readonly<{ mode?: BookingMode }>) {
   return (
     <ConsultationPricingToggle
@@ -89,7 +94,7 @@ function Dialog({ mode = "INSTANT" }: Readonly<{ mode?: BookingMode }>) {
           { id: "plan-b", durationInHours: 0.5 },
         ],
       }}
-      handleConsultationBooking={jest.fn()}
+      handleConsultationBooking={mockBook}
       displayZone={{
         zone: "UTC",
         usingDeviceZone: false,
@@ -107,6 +112,8 @@ beforeAll(() => {
 });
 beforeEach(() => {
   mockReadAt = 0;
+  mockSearch = new URLSearchParams();
+  mockBook.mockReset();
   jest.useFakeTimers();
   jest.setSystemTime(new Date("2026-11-02T09:00:00.000Z"));
   mockMonth = { "2026-11-04": atoms() };
@@ -168,4 +175,31 @@ it("books the second card's plan, and reads a held time as taken", async () => {
   expect(
     screen.getByRole("button", { name: "Request this time" }),
   ).toBeDisabled();
+});
+
+it("a waitlist notice link opens its plan's dialog on that time, ready for checkout", () => {
+  const href = backupBookHref({
+    consultantProfileId: "cp-1",
+    planKind: "CONSULTATION",
+    planId: "plan-b",
+    windowStart: new Date(DAY + 11 * HOUR).toISOString(),
+    windowEnd: new Date(DAY + 11.5 * HOUR).toISOString(),
+  });
+  mockSearch = new URL(href, "https://x.test").searchParams;
+  render(<Dialog />);
+  expect(
+    screen.getByRole("heading", { name: /Book B Consultation/ }),
+  ).toBeVisible();
+  expect(time(/^11:00 am to 11:30 am, free/)).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Continue to Checkout" }));
+  expect(mockBook).toHaveBeenCalledWith(
+    "plan-b",
+    expect.objectContaining({
+      startsAt: new Date(DAY + 11 * HOUR).toISOString(),
+      window: expect.objectContaining({ type: "WEEKLY" }),
+    }),
+  );
 });
